@@ -99,11 +99,14 @@ appstoreconnect.apple.com -> **Apps** -> **+** -> **New App**
 
 - Platform: iOS
 - Name: `Donggeurami Town`. The store name must be unique across the entire
-  App Store, and it is independent of `CFBundleDisplayName` — the home screen
-  icon still reads `동그라미타운`. The two are allowed to differ and Apple does
-  not object; if you ever want them to agree, `CFBundleDisplayName` in
-  `mobile/ios/Info.plist` is the side to change, because renaming the record
-  is the harder one.
+  App Store. `CFBundleDisplayName` in `mobile/ios/Info.plist` was set to match
+  it, so the home screen label and the store listing agree. They are allowed to
+  differ — Apple does not object — but if you ever want them to, change the
+  plist rather than the record: renaming the record is the harder side.
+
+  Android still labels the icon `동그라미타운`
+  (`mobile/android/app/src/main/AndroidManifest.xml`). The two platforms
+  deliberately disagree; there is no Play listing yet to match.
 - Primary language: English (U.S.). This matches the `en` that
   `$(DEVELOPMENT_LANGUAGE)` resolves to for `CFBundleDevelopmentRegion`.
 - Bundle ID: `town.donggeurami.app`, the identifier from 1.1
@@ -125,10 +128,14 @@ upload at the end fails — there is nowhere to put it.
    automatically — apps do not each get their own.
 2. **Match the key name.** `integrations.app_store_connect` in
    `codemagic.yaml` is a lookup by *name* into **Team settings** ->
-   **Integrations** -> **Developer Portal** -> **Manage keys**. Whatever the
-   key is called there is what has to appear in the YAML — it is the name, not
-   the Key ID. Getting this wrong fails the build immediately, before any
+   **Integrations** -> **Developer Portal** -> **Manage keys**. It is the name,
+   not the Key ID. Getting this wrong fails the build immediately, before any
    compiling, which at least makes it cheap to discover.
+
+   Here the key is named **`codemagicflutter`** — inherited from the Flutter
+   app this account already ships, since the integration is team-level. The
+   name has nothing to do with this project and is not a mistake to correct;
+   renaming the key in Codemagic would break the other app.
 
 ---
 

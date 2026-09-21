@@ -6,7 +6,7 @@
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<!-- What shows under the icon on the home screen. -->
 	<key>CFBundleDisplayName</key>
-	<string>동그라미타운</string>
+	<string>Donggeurami Town</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
