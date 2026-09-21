@@ -98,12 +98,19 @@ Issuer ID from the top of the page and the Key ID from the row with it.)
 appstoreconnect.apple.com -> **Apps** -> **+** -> **New App**
 
 - Platform: iOS
-- Name: `동그라미타운`. This must be unique across the entire App Store. If it
-  is taken, Apple tells you here and you pick another — the store name is
-  independent of `CFBundleDisplayName`, so only this record changes.
-- Primary language: Korean
+- Name: `Donggeurami Town`. The store name must be unique across the entire
+  App Store, and it is independent of `CFBundleDisplayName` — the home screen
+  icon still reads `동그라미타운`. The two are allowed to differ and Apple does
+  not object; if you ever want them to agree, `CFBundleDisplayName` in
+  `mobile/ios/Info.plist` is the side to change, because renaming the record
+  is the harder one.
+- Primary language: English (U.S.). This matches the `en` that
+  `$(DEVELOPMENT_LANGUAGE)` resolves to for `CFBundleDevelopmentRegion`.
 - Bundle ID: `town.donggeurami.app`, the identifier from 1.1
-- SKU: anything private and stable, e.g. `donggeurami-town-001`
+- SKU: `donggeurami-town-001`
+
+Registered 2026-09-21. None of this is visible from the repo, which is why it
+is written down: the record is the thing `submit_to_testflight` uploads into.
 
 Without this record the build still compiles and signs, but the TestFlight
 upload at the end fails — there is nowhere to put it.
