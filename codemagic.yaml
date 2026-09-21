@@ -1,0 +1,201 @@
+# Codemagic CI/CD — builds 동그라미타운 for iOS and ships it to TestFlight.
+#
+# Why this file exists: an iOS binary can only be produced on macOS, and this
+# project is developed on Windows. Codemagic rents the Mac. Nothing here needs
+# a Mac of your own — not even to create the signing certificate, because the
+# App Store Connect API key lets Codemagic mint one on Apple's servers.
+#
+# ---------------------------------------------------------------------------
+# One-time setup, all of it in a browser. IOS.md walks through it in order.
+#
+# The App Store Connect API key is ALREADY DONE — the Developer Portal
+# integration is team-level, so the key added for the other app on this
+# account covers this one too, and Codemagic reuses the distribution
+# certificate it already holds the private key for rather than burning
+# another against Apple's per-account limit. Two things remain:
+#
+#  1. Apple Developer > Identifiers: register the App ID `town.donggeurami.app`.
+#  2. App Store Connect > Apps > "+": create the app record against that same
+#     bundle ID. `submit_to_testflight` fails without it.
+#
+# One thing to check rather than assume: the existing key needs the
+# "App Manager" role. A "Developer" key cannot create provisioning profiles
+# and the build dies at the signing step with an error that never mentions
+# the role. App Store Connect > Users and Access > Integrations shows it.
+#
+# `integrations.app_store_connect` below must match that key's name in
+# Codemagic > Team settings > Integrations > Developer Portal > Manage keys —
+# the name, not the Key ID.
+#
+# Then push a tag to run it:  git tag ios-1.0.0 && git push origin ios-1.0.0
+# or just press "Start new build" in the Codemagic UI.
+# ---------------------------------------------------------------------------
+
+definitions:
+  scripts:
+    - &install_rust
+      name: Install Rust and the iOS targets
+      script: |
+        set -e
+        # Rust is not on the Codemagic macOS image. rustup honours
+        # rust-toolchain.toml, so this lands on the same stable the desktop
+        # build uses.
+        if [ ! -x "$HOME/.cargo/bin/rustup" ]; then
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+            | sh -s -- -y --profile minimal --default-toolchain stable
+        fi
+        export PATH="$HOME/.cargo/bin:$PATH"
+        rustup target add aarch64-apple-ios aarch64-apple-ios-sim
+        rustc --version
+        # Both $HOME/.cargo (the shims and the registry) and $HOME/.rustup
+        # (the toolchain itself) are cached below. Caching only the first
+        # leaves a rustup that cannot find a compiler.
+        # build_rust.sh puts cargo on PATH itself, so nothing is exported.
+
+    - &install_xcodegen
+      name: Install XcodeGen
+      script: |
+        set -e
+        command -v xcodegen >/dev/null 2>&1 || brew install xcodegen
+        xcodegen --version
+
+    - &generate_project
+      name: Generate the Xcode project
+      script: |
+        set -e
+        cd mobile/ios
+        xcodegen generate
+        xcodebuild -project RoundTown.xcodeproj -list
+
+  cache: &rust_cache
+    cache_paths:
+      - $HOME/.cargo
+      - $HOME/.rustup
+      # A cold Bevy build is 10-20 minutes; a warm one is a couple. Worth
+      # caching on a 500-minute-a-month budget.
+      - $CM_BUILD_DIR/target
+
+  env: &shared_env
+    # `latest` rather than a pin: Apple requires submissions to be built with
+    # the current major SDK (iOS 26 since 2026-04-28) and that requirement
+    # moves every year. If a new Xcode ever breaks the build, pin it here.
+    xcode: latest
+    vars:
+      XCODE_PROJECT: mobile/ios/RoundTown.xcodeproj
+      XCODE_SCHEME: RoundTown
+      BUNDLE_ID: town.donggeurami.app
+      HOMEBREW_NO_AUTO_UPDATE: 1
+      HOMEBREW_NO_INSTALL_CLEANUP: 1
+
+workflows:
+
+  # ==========================================================================
+  ios-testflight:
+    name: iOS · TestFlight
+    instance_type: mac_mini_m2
+    max_build_duration: 120
+
+    integrations:
+      app_store_connect: codemagic
+
+    environment:
+      <<: *shared_env
+      ios_signing:
+        # Codemagic fetches the distribution certificate and the provisioning
+        # profile from Apple with the API key above, creating them if they do
+        # not exist yet. This is the step that would otherwise need a Mac to
+        # generate a certificate signing request.
+        distribution_type: app_store
+        bundle_identifier: town.donggeurami.app
+
+    cache: *rust_cache
+
+    triggering:
+      # Not on every push: a cold build costs a fifth of the free monthly
+      # minutes. Tag a release, or start a build by hand in the UI.
+      events:
+        - tag
+      tag_patterns:
+        - pattern: 'ios-*'
+          include: true
+
+    scripts:
+      - *install_rust
+      - *install_xcodegen
+
+      - name: Stamp the build number
+        script: |
+          set -e
+          # App Store Connect rejects an upload whose CFBundleVersion is not
+          # higher than the last one. Codemagic's $BUILD_NUMBER only ever goes
+          # up, so use it directly.
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${BUILD_NUMBER:-1}" mobile/ios/Info.plist
+          echo "version $(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' mobile/ios/Info.plist)" \
+               "build $(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' mobile/ios/Info.plist)"
+
+      - *generate_project
+
+      - name: Apply the signing identity Codemagic fetched
+        script: xcode-project use-profiles --project "$XCODE_PROJECT"
+
+      - name: Build the IPA
+        script: |
+          xcode-project build-ipa \
+            --project "$XCODE_PROJECT" \
+            --scheme "$XCODE_SCHEME" \
+            --config Release
+
+      - name: Describe what came out
+        script: |
+          xcode-project ipa-info build/ios/ipa/*.ipa || true
+
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
+
+    publishing:
+      app_store_connect:
+        auth: integration
+        submit_to_testflight: true
+        # Flip to true once TestFlight looks right on a real device. It opens
+        # a review submission, so leave it off while iterating.
+        submit_to_app_store: false
+
+  # ==========================================================================
+  ios-simulator:
+    name: iOS · Simulator smoke test + store screenshots
+    instance_type: mac_mini_m2
+    max_build_duration: 120
+
+    environment:
+      <<: *shared_env
+
+    cache: *rust_cache
+
+    scripts:
+      - *install_rust
+      - *install_xcodegen
+      - *generate_project
+
+      - name: Build for the simulator
+        script: |
+          set -e
+          # ARCHS=arm64 pins it to the one simulator slice the M2 machine can
+          # run, so there is no x86_64 Rust target to install or build.
+          xcodebuild build \
+            -project "$XCODE_PROJECT" \
+            -scheme "$XCODE_SCHEME" \
+            -configuration Release \
+            -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath build/sim \
+            ARCHS=arm64 ONLY_ACTIVE_ARCH=NO \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=""
+
+      - name: Launch it and capture screenshots
+        script: bash mobile/ios/simulator_screenshots.sh
+
+    artifacts:
+      - screenshots/*.png
+      - screenshots/*.log
+      - build/sim/Build/Products/**/*.app

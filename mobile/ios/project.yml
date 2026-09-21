@@ -1,0 +1,89 @@
+# XcodeGen spec. `xcodegen generate` turns this into RoundTown.xcodeproj.
+#
+# The .xcodeproj is NOT committed — it is generated on the macOS build machine.
+# A pbxproj is a 300-line plist that nobody can review from Windows, and the
+# only thing it would carry that this file does not is the signing settings,
+# which Codemagic rewrites at build time anyway.
+#
+# The target compiles nothing. `build_rust.sh` produces the executable and
+# Xcode does the bundling, signing and packaging around it — see that file.
+
+name: RoundTown
+
+options:
+  bundleIdPrefix: town.donggeurami
+  deploymentTarget:
+    # Xcode 26 supports iOS 15 and up. 16.0 is the floor for an A11-or-better
+    # device, which is roughly what this scene needs to hold frame rate.
+    # Lowering it is a one-line change here and in nothing else.
+    iOS: "16.0"
+  createIntermediateGroups: true
+
+configs:
+  Debug: debug
+  Release: release
+
+settings:
+  base:
+    # build_rust.sh writes the app executable, i.e. outside the directories a
+    # sandboxed script phase may touch. Xcode 26 defaults this to YES.
+    ENABLE_USER_SCRIPT_SANDBOXING: NO
+
+targets:
+  RoundTown:
+    type: application
+    platform: iOS
+    deploymentTarget: "16.0"
+
+    sources:
+      # A *folder reference*, not a group: the whole tree is copied verbatim to
+      # RoundTown.app/assets/, which is where Bevy looks for it. bevy_asset's
+      # get_base_path() resolves to current_exe()'s parent directory, and on
+      # iOS that is the .app bundle root.
+      - path: ../../assets
+        name: assets
+        type: folder
+        buildPhase: resources
+      - path: Assets.xcassets
+        buildPhase: resources
+      # Must sit at the bundle root, so it is a plain resource.
+      - path: PrivacyInfo.xcprivacy
+        buildPhase: resources
+
+    settings:
+      base:
+        PRODUCT_NAME: RoundTown
+        PRODUCT_BUNDLE_IDENTIFIER: town.donggeurami.app
+        INFOPLIST_FILE: Info.plist
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        TARGETED_DEVICE_FAMILY: "1,2"   # 1 = iPhone, 2 = iPad
+        CODE_SIGN_STYLE: Manual         # Codemagic injects the real identity
+        # Xcode links nothing here, so there is no object code for dsymutil to
+        # read and no dSYM to produce. Asking for one only logs a warning.
+        DEBUG_INFORMATION_FORMAT: dwarf
+        # The game has never been run on macOS under Apple silicon, so don't
+        # let the store offer it there.
+        SUPPORTS_MACCATALYST: NO
+        SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: NO
+        ENABLE_USER_SCRIPT_SANDBOXING: NO
+
+    preBuildScripts:
+      # Invoked through `bash <path>` rather than executed directly: the repo is
+      # authored on Windows and git there does not reliably carry the +x bit.
+      - name: Build Rust
+        script: bash "$SRCROOT/build_rust.sh"
+        basedOnDependencyAnalysis: false
+        outputFiles:
+          - $(TARGET_BUILD_DIR)/$(EXECUTABLE_PATH)
+
+# Declared explicitly so the scheme is *shared*. Schemes Xcode auto-creates
+# live in the per-user data and `xcodebuild -scheme` on CI would not find them.
+schemes:
+  RoundTown:
+    build:
+      targets:
+        RoundTown: all
+    run:
+      config: Debug
+    archive:
+      config: Release

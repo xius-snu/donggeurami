@@ -1,0 +1,22 @@
+# The repo is authored on Windows but the iOS build runs on macOS.
+#
+# A shell script checked out with CRLF turns its shebang into
+# `/usr/bin/env bash\r`, which fails as
+#     env: bash\r: No such file or directory
+# — an error that says nothing about line endings. Pin the files the Mac
+# executes to LF no matter what core.autocrlf is set to locally.
+*.sh            text eol=lf
+*.yml           text eol=lf
+*.yaml          text eol=lf
+*.plist         text eol=lf
+*.xcprivacy     text eol=lf
+*.pbxproj       text eol=lf
+
+# Never line-ending-normalise these.
+*.glb     binary
+*.blend   binary
+*.blend1  binary
+*.png     binary
+*.jar     binary
+*.apk     binary
+*.exe     binary

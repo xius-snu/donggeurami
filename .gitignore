@@ -1,0 +1,25 @@
+/target
+/*.exe
+/*.apk
+mobile/android/local.properties
+**/*.rs.bk
+.idea/
+.vscode/
+
+# Android
+mobile/android/.gradle/
+mobile/android/build/
+mobile/android/app/build/
+mobile/android/app/src/main/jniLibs/
+mobile/android/local.properties
+mobile/android/.cxx/
+
+# iOS -- the Xcode project is generated from mobile/ios/project.yml by
+# `xcodegen generate` on the build machine, so it is not committed.
+mobile/ios/*.xcodeproj/
+mobile/ios/build/
+mobile/ios/DerivedData/
+
+# CI output
+/build/
+/screenshots/

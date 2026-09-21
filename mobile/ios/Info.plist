@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>$(DEVELOPMENT_LANGUAGE)</string>
+	<!-- What shows under the icon on the home screen. -->
+	<key>CFBundleDisplayName</key>
+	<string>동그라미타운</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>$(PRODUCT_NAME)</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+
+	<!-- The marketing version: what buyers see. Bump by hand for a release. -->
+	<key>CFBundleShortVersionString</key>
+	<string>1.0</string>
+	<!-- The build number. Must increase on every upload or App Store Connect
+	     rejects the build; CI overwrites this line with $BUILD_NUMBER. -->
+	<key>CFBundleVersion</key>
+	<string>1</string>
+
+	<!-- Required whenever the icon comes from an asset catalog. -->
+	<key>CFBundleIconName</key>
+	<string>AppIcon</string>
+	<key>LSRequiresIPhoneOS</key>
+	<true/>
+
+	<!-- An empty UILaunchScreen dict is the file-free way to declare a launch
+	     screen (iOS 14+). Without one the app is letterboxed into a legacy
+	     screen size instead of filling the display. -->
+	<key>UILaunchScreen</key>
+	<dict/>
+
+	<key>UIRequiredDeviceCapabilities</key>
+	<array>
+		<string>arm64</string>
+		<string>metal</string>
+	</array>
+
+	<!-- Matches Android's android:screenOrientation="sensorLandscape".
+	     Note iPadOS 26 ignores this in windowed mode; the HUD is laid out in
+	     vw/vh units (hud_layout in src/lib.rs) so it reflows either way. -->
+	<key>UISupportedInterfaceOrientations</key>
+	<array>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+	<key>UISupportedInterfaceOrientations~ipad</key>
+	<array>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+
+	<!-- The status bar and home indicator are hidden by winit, from
+	     prefers_status_bar_hidden / prefers_home_indicator_hidden in
+	     window_settings(). Do not add UIViewControllerBasedStatusBarAppearance
+	     = false here; that takes the decision away from winit. -->
+
+	<!-- Answers the export-compliance question once, instead of on every
+	     single upload. True only while the game does no networking and uses
+	     no encryption beyond Apple's own. -->
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
+</dict>
+</plist>

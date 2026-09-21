@@ -1,0 +1,45 @@
+[package]
+name = "donggeurami_town"
+version = "0.1.0"
+edition = "2024"
+description = "동그라미타운 — a third-person 3D Bevy world"
+publish = false
+default-run = "donggeurami_town_pc"
+
+# Desktop: `cargo run` uses the bin. The `_pc` suffix keeps MSVC .pdb names
+# distinct from the lib (Cargo maps hyphens to underscores on Windows).
+# Android: cargo-ndk builds this cdylib into libdonggeurami_town.so
+# iOS: nothing links the staticlib. Bevy 0.19 ships iOS apps as a plain
+# Rust binary, so mobile/ios/build_rust.sh builds the [[bin]] below for
+# aarch64-apple-ios and Xcode just bundles the result. The staticlib stays
+# as the escape hatch if that ever changes.
+[lib]
+name = "donggeurami_town"
+crate-type = ["lib", "cdylib", "staticlib"]
+
+[[bin]]
+name = "donggeurami_town_pc"
+path = "src/main.rs"
+
+[dependencies]
+# `android-game-activity` is required by Bevy's Android GameActivity path.
+# It is a no-op on Windows/iOS.
+bevy = { version = "0.19.1", features = ["android-game-activity"] }
+
+# Faster debug iteration without tanking frame rate.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+
+# Android NDK + thin LTO is slow and can fail the linker. Keep an installable
+# optimized lib without LTO.
+[profile.release-android]
+inherits = "release"
+lto = false
+codegen-units = 8
