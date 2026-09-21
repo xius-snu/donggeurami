@@ -23,9 +23,11 @@
 # and the build dies at the signing step with an error that never mentions
 # the role. App Store Connect > Users and Access > Integrations shows it.
 #
-# `integrations.app_store_connect` below must match that key's name in
-# Codemagic > Team settings > Integrations > Developer Portal > Manage keys —
-# the name, not the Key ID.
+# `integrations.app_store_connect` below is `codemagicflutter`, which is what
+# the key is called in Codemagic > Team settings > Integrations > Developer
+# Portal > Manage keys. It is a lookup by name, not by Key ID, and the name is
+# left over from the Flutter app this account already ships — it says nothing
+# about this project. Do not "tidy" it to `codemagic`.
 #
 # Then push a tag to run it:  git tag ios-1.0.0 && git push origin ios-1.0.0
 # or just press "Start new build" in the Codemagic UI.
@@ -96,7 +98,7 @@ workflows:
     max_build_duration: 120
 
     integrations:
-      app_store_connect: codemagic
+      app_store_connect: codemagicflutter
 
     environment:
       <<: *shared_env
