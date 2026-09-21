@@ -81,8 +81,33 @@ XcodeGen only applies it to targets that have no explicit
 This account already ships another app through Codemagic, and the Developer
 Portal integration is **team-level**: the key added for that app authorises
 this one too. Codemagic also holds the private key for the distribution
-certificate it created back then, so it reuses that certificate instead of
-minting a second one against Apple's per-account limit. Nothing to do.
+certificate from that app, and a distribution certificate is shared across all
+apps on the account, so it is reused rather than minting a second one against
+Apple's per-account limit.
+
+**But a working key and certificate are not enough, and this is the trap.** The
+`ios_signing` block in `codemagic.yaml` does not ask Apple for anything. It is
+a lookup over the signing files already stored in **Team settings** -> **Code
+signing identities**, and a *provisioning profile is per bundle ID* even though
+the certificate is not. The other app having shipped successfully proves the
+key, the role and the certificate all work, and proves nothing whatsoever about
+this app.
+
+So before the first TestFlight build, generate the profile once: Codemagic ->
+**Team settings** -> **Code signing identities** -> **iOS provisioning
+profiles**, using the API key, bundle ID `town.donggeurami.app`, type **App
+Store**. Skipping this fails the build inside Codemagic's own signing step,
+before any script runs, with a single line and no other log output:
+
+```
+No matching profiles found for bundle identifier "town.donggeurami.app"
+and distribution type "app_store"
+```
+
+That message names profiles, so it reads like an Apple permissions problem. It
+is not. Do not go audit the key role, the identifier or the certificate — they
+are almost certainly fine. The alternative, if you would rather the build be
+self-sufficient, is the CLI path in the note at the end of this section.
 
 One thing worth checking rather than assuming, at appstoreconnect.apple.com ->
 **Users and Access** -> **Integrations**: the key needs the **App Manager**

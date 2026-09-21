@@ -103,10 +103,21 @@ workflows:
     environment:
       <<: *shared_env
       ios_signing:
-        # Codemagic fetches the distribution certificate and the provisioning
-        # profile from Apple with the API key above, creating them if they do
-        # not exist yet. This is the step that would otherwise need a Mac to
-        # generate a certificate signing request.
+        # THIS DOES NOT CREATE ANYTHING ON APPLE'S SERVERS. It is a lookup over
+        # the signing files already stored in Codemagic > Team settings > Code
+        # signing identities, filtered by these two fields. The API key above is
+        # not used at this step at all.
+        #
+        # A bundle ID that has never been signed has no profile to find, and the
+        # build then dies inside Codemagic's built-in signing step — before any
+        # script runs, so the log is the single line
+        #   No matching profiles found for bundle identifier ... "app_store"
+        # and nothing else. That is not a key, role, certificate or identifier
+        # problem, and hours can be lost treating it as one.
+        #
+        # Generate the profile once in Code signing identities, or switch to the
+        # `app-store-connect fetch-signing-files --create` CLI path, which does
+        # create it. See IOS.md 1.2.
         distribution_type: app_store
         bundle_identifier: town.donggeurami.app
 
