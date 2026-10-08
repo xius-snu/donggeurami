@@ -522,6 +522,12 @@ impl Island {
     pub(crate) fn sweep(&self, from: Vec3, to: Vec3, radius: f32) -> Option<f32> {
         self.faces.sweep(from, to, radius)
     }
+
+    /// Whether a ball of `radius` at `at` is clear of the island: touching
+    /// none of it, and not buried inside any of it.
+    pub(crate) fn room_for(&self, at: Vec3, radius: f32) -> bool {
+        !self.faces.touch(at, radius) && !self.blocked(at.xz(), at.y, at.y)
+    }
 }
 
 /// How many faces are left in a box before it is split no further.
@@ -607,6 +613,30 @@ impl Faces {
             }
         }
         first
+    }
+
+    /// Whether any face comes within `radius` of `at`.
+    fn touch(&self, at: Vec3, radius: f32) -> bool {
+        let mut next = Vec::with_capacity(32);
+        if !self.boxes.is_empty() {
+            next.push(0);
+        }
+        while let Some(index) = next.pop() {
+            let bounds: &Bounds = &self.boxes[index];
+            if at.distance_squared(at.clamp(bounds.low, bounds.high)) >= radius * radius {
+                continue;
+            }
+            if bounds.count == 0 {
+                next.extend([index + 1, bounds.first as usize]);
+                continue;
+            }
+            let start = bounds.first as usize;
+            let faces = &self.faces[start..start + bounds.count as usize];
+            if faces.iter().any(|face| face.touches(at, radius)) {
+                return true;
+            }
+        }
+        false
     }
 }
 
@@ -710,6 +740,25 @@ impl Face {
                     .filter_map(|corner| meets_corner(from, way, reach, radius, corner)),
             )
             .reduce(f32::min)
+    }
+
+    /// Whether some of it is within `radius` of `at`.
+    fn touches(&self, at: Vec3, radius: f32) -> bool {
+        let height = self.normal.dot(at - self.a);
+        if height.abs() >= radius {
+            return false;
+        }
+        if self.holds(at - self.normal * height) {
+            return true;
+        }
+        // Beside the flat of it, the nearest of it is on an edge.
+        [(self.a, self.b), (self.b, self.c), (self.c, self.a)]
+            .into_iter()
+            .any(|(start, end)| {
+                let edge = end - start;
+                let along = ((at - start).dot(edge) / edge.length_squared()).clamp(0.0, 1.0);
+                at.distance_squared(start + edge * along) < radius * radius
+            })
     }
 
     /// The middle of it.
@@ -987,5 +1036,21 @@ mod sweep_tests {
         // And the vertical questions still see the top and the walls.
         assert_eq!(island.floor(Vec2::ZERO, 3.0), Some(2.0));
         assert!(island.walls(Vec2::new(1.2, 0.0), 0.45, 0.75, 1.6).next().is_some());
+    }
+
+    #[test]
+    fn room_for_a_ball() {
+        let island = Island::new(&cube());
+        // Clear of it, beside it and over it.
+        assert!(island.room_for(Vec3::new(1.4, 1.0, 0.0), 0.3));
+        assert!(island.room_for(Vec3::new(0.0, 2.4, 0.0), 0.3));
+        // Touching a side, an edge and a corner from outside.
+        assert!(!island.room_for(Vec3::new(1.2, 1.0, 0.0), 0.3));
+        assert!(!island.room_for(Vec3::new(1.2, 2.2, 0.0), 0.3));
+        assert!(!island.room_for(Vec3::new(1.15, 2.15, 1.15), 0.3));
+        // Off the corner by more than the ball.
+        assert!(island.room_for(Vec3::new(1.2, 2.2, 1.2), 0.3));
+        // Deep inside, nowhere near a face.
+        assert!(!island.room_for(Vec3::new(0.0, 1.0, 0.0), 0.3));
     }
 }

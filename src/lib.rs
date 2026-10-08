@@ -137,6 +137,12 @@ const CAMERA_RADIUS: f32 = 0.2;
 /// metres a second, so that it keeps up with you turning it round a room.
 const CAMERA_BACK_OUT_SECS: f32 = 0.3;
 const CAMERA_BACK_OUT_SPEED: f32 = 12.0;
+/// How quickly it comes in when something comes between it and you, the same
+/// way: swept in over a moment rather than there at once. Hajun found it
+/// jumping in front of you as a wall came between (2026-10-08). It only lags
+/// where it has room to: in free air behind what is in the way, never in it.
+const CAMERA_PULL_IN_SECS: f32 = 0.12;
+const CAMERA_PULL_IN_SPEED: f32 = 10.0;
 /// This close to as far out as you zoomed it, it is as far out as you zoomed
 /// it.
 const CAMERA_SETTLED: f32 = 1e-3;
@@ -233,8 +239,8 @@ struct ThirdPersonCamera;
 #[derive(Component, Default, Clone, Copy, PartialEq)]
 struct CameraFit {
     /// How far out it stands from the point on you it looks at, while that is
-    /// nearer than you zoomed it: pulled in the moment something is in the
-    /// way, and eased back out once nothing is.
+    /// nearer than you zoomed it: eased in when something comes in the way,
+    /// and back out once nothing is.
     distance: Option<f32>,
     /// What it looked at last frame.
     pivot: Option<Vec3>,
@@ -243,7 +249,9 @@ struct CameraFit {
 impl CameraFit {
     /// How far out the camera stands `dt` seconds on, now that the island
     /// leaves it `clear` of the `full` way out you zoomed it: all of that at
-    /// once if it is starting again.
+    /// once if it is starting again. Coming in, this can be further out than
+    /// `clear`, behind what is in the way; [`place_camera`] sees that it is
+    /// not in it.
     fn distance_toward(self, clear: f32, full: f32, cut: bool, dt: f32) -> Option<f32> {
         if cut {
             return (clear < full - CAMERA_SETTLED).then_some(clear);
@@ -252,15 +260,15 @@ impl CameraFit {
             None if clear >= full - CAMERA_SETTLED => None,
             shown => {
                 let shown = shown.unwrap_or(full).min(full);
-                // Only going out is eased. Whatever pulls it in is in the way
-                // now.
-                let eased = if clear <= shown {
-                    clear
+                let (secs, speed) = if clear < shown {
+                    (CAMERA_PULL_IN_SECS, CAMERA_PULL_IN_SPEED)
                 } else {
-                    let gap = clear - shown;
-                    let most = gap * (1.0 - (-dt / CAMERA_BACK_OUT_SECS).exp());
-                    shown + most.max((CAMERA_BACK_OUT_SPEED * dt).min(gap))
+                    (CAMERA_BACK_OUT_SECS, CAMERA_BACK_OUT_SPEED)
                 };
+                let gap = (clear - shown).abs();
+                let most = gap * (1.0 - (-dt / secs).exp());
+                let step = most.max((speed * dt).min(gap));
+                let eased = if clear < shown { shown - step } else { shown + step };
                 (eased < full - CAMERA_SETTLED).then_some(eased)
             }
         }
@@ -1471,11 +1479,12 @@ pub(crate) fn animate_walk(
 
 
 /// Puts the camera where you turned it, or as near there as the island
-/// allows: never inside a wall or a ceiling, and never with one between it and
-/// you. It always points the way you turned it, so that every bit of a swipe
-/// turns it by as much wherever you are. Whatever is in the way only brings it
-/// nearer, straight in along that line, and once the way is clear it eases
-/// back out. Brought in near you, it rises straight up toward your eyes, and
+/// allows: never inside a wall or a ceiling, and with one between it and you
+/// only for the moment it takes to come in past it. It always points the way
+/// you turned it, so that every bit of a swipe turns it by as much wherever
+/// you are. Whatever is in the way only brings it nearer, straight in along
+/// that line, swept in rather than there at once, and once the way is clear
+/// it eases back out. Brought in near you, it rises straight up toward your eyes, and
 /// once it is so near that it is inside you, it sees what you would, from as
 /// high as in first person, and you are not drawn.
 ///
@@ -1595,8 +1604,9 @@ fn rise(at: Vec3, up: f32, island: Option<&Island>) -> Vec3 {
 /// Where the camera stands this frame, `dt` seconds after it stood as `fit`
 /// says, turned as `orbit` is round `player` on `island`, and how much nearer
 /// that is than you zoomed it: on the line you turned it along, or, near you,
-/// risen straight up from a point of it toward your eyes. Until the island
-/// has loaded, nothing is in the way.
+/// risen straight up from a point of it toward your eyes. Coming in, it can be
+/// behind something for a moment, but never in it. Until the island has
+/// loaded, nothing is in the way.
 fn place_camera(
     orbit: &OrbitCamera,
     player: &Transform,
@@ -1613,8 +1623,18 @@ fn place_camera(
         .unwrap_or(full);
     let pivot = player.translation + Vec3::Y * LOOK_HEIGHT;
     let cut = fit.pivot.is_none_or(|last| last.distance(pivot) > CAMERA_CUT);
+    let mut distance = fit.distance_toward(clear, full, cut, dt);
+    // Still on its way in, it is behind what is in the way. Should that put it
+    // in it, or touching it, it goes the rest of the way in at once rather than
+    // show it from inside.
+    if let (Some(island), Some(behind)) = (island, distance)
+        && behind > clear
+        && !island.room_for(aim + way * behind, CAMERA_RADIUS)
+    {
+        distance = Some(clear);
+    }
     let next = CameraFit {
-        distance: fit.distance_toward(clear, full, cut, dt),
+        distance,
         pivot: Some(pivot),
     };
     // In along the same line, so that it still looks the same way.
@@ -1716,16 +1736,23 @@ mod camera_tests {
         ]
     }
 
+    /// How many frames in a row the camera may be unable to see you while it
+    /// comes in past what came between: half a second.
+    const CATCH_UP: u32 = 60;
+
     /// One frame of the camera, checked: it looks exactly the way you turned
     /// it, from along the line you turned it along or straight over a point of
     /// it, risen no higher than your eyes, no further out than you zoomed it,
-    /// clear of every box, and able to see you.
+    /// clear of every box, and able to see you, or at least not unable to for
+    /// longer than [`CATCH_UP`]. `hidden` counts the frames in a row it has
+    /// not seen you.
     fn check(
         view: &Transform,
         you: &OrbitCamera,
         player: &Transform,
         island: &Island,
         boxes: &[(Vec3, Vec3)],
+        hidden: &mut u32,
         when: &str,
     ) {
         let (yours, aim) = camera_view(you, player, look_up(you.pitch));
@@ -1747,7 +1774,8 @@ mod camera_tests {
             && island
                 .sweep(under, view.translation, CAMERA_RADIUS)
                 .is_none_or(|clear| clear >= risen - 0.02);
-        assert!(seen, "{when}: cannot see you from {}", view.translation);
+        *hidden = if seen { 0 } else { *hidden + 1 };
+        assert!(*hidden <= CATCH_UP, "{when}: has not seen you for {hidden} frames, from {}", view.translation);
         for &(low, high) in &boxes[1..] {
             let off = view.translation.distance(view.translation.clamp(low, high));
             assert!(off >= CAMERA_RADIUS - 0.02, "{when}: {off} from a wall at {}", view.translation);
@@ -1772,12 +1800,13 @@ mod camera_tests {
         let island = island(&boxes);
         let player = Transform::from_xyz(5.55, 0.0, 0.0);
         for pitch in [0.0, 0.38, 1.2] {
-            let mut fit = CameraFit::default();
+            let (mut fit, mut hidden) = (CameraFit::default(), 0);
             for frame in 0..480 {
                 let you = orbit(frame as f32 * DT, pitch, 10.0);
                 let (view, next) = place_camera(&you, &player, 0.0, Some(&island), fit, DT);
                 fit = next;
-                check(&view, &you, &player, &island, &boxes, &format!("pitch {pitch}, frame {frame}"));
+                let when = format!("pitch {pitch}, frame {frame}");
+                check(&view, &you, &player, &island, &boxes, &mut hidden, &when);
             }
         }
     }
@@ -1790,14 +1819,15 @@ mod camera_tests {
         let island = island(&boxes);
         for (x, z) in [(0.0, -4.0), (-3.2, -7.7), (3.2, -0.8)] {
             let player = Transform::from_xyz(x, 0.0, z);
-            let mut fit = CameraFit::default();
+            let (mut fit, mut hidden) = (CameraFit::default(), 0);
             for frame in 0..480 {
                 let time = frame as f32 * DT;
                 let you = orbit(time * 3.0, 0.6 + 0.6 * (time * 2.0).sin(), 15.0);
                 let look = look_up(you.pitch);
                 let (view, next) = place_camera(&you, &player, look, Some(&island), fit, DT);
                 fit = next;
-                check(&view, &you, &player, &island, &boxes, &format!("at {x} {z}, frame {frame}"));
+                let when = format!("at {x} {z}, frame {frame}");
+                check(&view, &you, &player, &island, &boxes, &mut hidden, &when);
             }
         }
     }
@@ -1807,14 +1837,14 @@ mod camera_tests {
         let boxes = room();
         let island = island(&boxes);
         let player = Transform::from_xyz(-3.2, 0.0, -7.7);
-        let mut fit = CameraFit::default();
+        let (mut fit, mut hidden) = (CameraFit::default(), 0);
         for frame in 0..480 {
             let time = frame as f32 * DT;
             let you = orbit(time * 2.0, -0.6 - 0.5 * (time * 3.0).sin(), 10.0);
             let (view, next) =
                 place_camera(&you, &player, look_up(you.pitch), Some(&island), fit, DT);
             fit = next;
-            check(&view, &you, &player, &island, &boxes, &format!("frame {frame}"));
+            check(&view, &you, &player, &island, &boxes, &mut hidden, &format!("frame {frame}"));
         }
     }
 
@@ -1824,14 +1854,16 @@ mod camera_tests {
         let island = island(&boxes);
         let you = orbit(0.0, 1.2, 15.0);
         for x in [0.0, 0.2, -0.5] {
-            let mut fit = CameraFit::default();
+            let (mut fit, mut hidden) = (CameraFit::default(), 0);
             let path = (0..=230).map(|step| 6.0 - step as f32 * 7.0 * DT);
             for (step, z) in path.clone().chain(path.rev()).enumerate() {
                 let player = Transform::from_xyz(x, 0.0, z);
                 let (view, next) = place_camera(&you, &player, 0.0, Some(&island), fit, DT);
                 fit = next;
-                check(&view, &you, &player, &island, &boxes, &format!("x {x}, step {step}"));
-                if z < -1.0 {
+                let when = format!("x {x}, step {step}");
+                check(&view, &you, &player, &island, &boxes, &mut hidden, &when);
+                // Seeing you, unless it is still on its way down over the roof.
+                if z < -1.0 && hidden == 0 {
                     let at = view.translation;
                     let in_room = at.x.abs() < 3.7 && at.z > -8.2 && at.z < -0.3 && at.y < 3.0;
                     assert!(in_room, "x {x}, z {z}: camera not in the room, at {at}");
@@ -1857,7 +1889,7 @@ mod camera_tests {
             let island = island(boxes);
             let (view, _) =
                 place_camera(&you, &player, 0.0, Some(&island), CameraFit::default(), DT);
-            check(&view, &you, &player, &island, boxes, "at the wall");
+            check(&view, &you, &player, &island, boxes, &mut 0, "at the wall");
             (view.translation, eye_view(&you, &player, Some(&island)).translation)
         };
         let (behind, eyes) = place(&open);
@@ -1879,18 +1911,62 @@ mod camera_tests {
         // Clear again: out, but not all at once.
         let out = fit(Some(3.0)).distance_toward(15.0, 15.0, false, 0.1).unwrap();
         assert!(out > 3.0 && out < 15.0, "{out}");
-        // Something back in the way pulls it straight in.
-        assert_eq!(fit(Some(out)).distance_toward(3.0, 15.0, false, 0.1), Some(3.0));
-        // A little more room is taken at once, rather than lagged behind.
+        // Something back in the way: in, but not all at once either.
+        let back = fit(Some(out)).distance_toward(3.0, 15.0, false, DT).unwrap();
+        assert!(back > 3.0 && back < out, "{back}");
+        // A little more room is taken at once, rather than lagged behind, and
+        // a little less given up at once.
         assert_eq!(fit(Some(3.0)).distance_toward(3.05, 15.0, false, DT), Some(3.05));
+        assert_eq!(fit(Some(3.05)).distance_toward(3.0, 15.0, false, DT), Some(3.0));
         // Given long enough, it is as far out as you zoomed it.
         let mut distance = Some(3.0);
         for _ in 0..120 {
             distance = fit(distance).distance_toward(15.0, 15.0, false, DT);
         }
         assert_eq!(distance, None);
+        // And as far in as the way is clear.
+        for _ in 0..60 {
+            distance = fit(distance).distance_toward(3.0, 15.0, false, DT);
+        }
+        assert_eq!(distance, Some(3.0));
         // Zoomed in nearer than it stood, it comes in with you.
         assert_eq!(fit(Some(8.0)).distance_toward(5.0, 5.0, false, DT), None);
+        // Starting again, it is where it can see you at once.
+        assert_eq!(fit(None).distance_toward(3.0, 15.0, true, DT), Some(3.0));
+    }
+
+    #[test]
+    fn a_wall_coming_between_sweeps_it_in() {
+        // Turned round past the end of a wall 2 m off, so that the wall comes
+        // between it and you all at once: from behind the wall, it comes in
+        // over a moment rather than in one frame, and is never in the wall.
+        let end = (Vec3::new(2.0, -0.1, -20.0), Vec3::new(2.5, 6.0, 1.0));
+        let boxes = [GROUND, end];
+        let island = island(&boxes);
+        let player = Transform::default();
+        let (mut fit, mut hidden, mut longest) = (CameraFit::default(), 0, 0);
+        let (mut was, mut was_clear) = (10.0, 10.0);
+        let (mut biggest, mut biggest_clear) = (0.0f32, 0.0f32);
+        for frame in 0..180 {
+            let you = orbit(frame as f32 * DT, 0.38, 10.0);
+            let (view, next) = place_camera(&you, &player, 0.0, Some(&island), fit, DT);
+            fit = next;
+            check(&view, &you, &player, &island, &boxes, &mut hidden, &format!("frame {frame}"));
+            longest = longest.max(hidden);
+            let (yours, aim) = camera_view(&you, &player, 0.0);
+            let clear = island.sweep(aim, yours.translation, CAMERA_RADIUS).unwrap_or(10.0);
+            let shown = fit.distance.unwrap_or(10.0);
+            biggest = biggest.max(was - shown);
+            biggest_clear = biggest_clear.max(was_clear - clear);
+            (was, was_clear) = (shown, clear);
+        }
+        // The way in was cut short by metres in one frame.
+        assert!(biggest_clear > 5.0, "{biggest_clear}");
+        // It was behind the wall for a moment, and came in a little at a time.
+        assert!(longest > 5, "{longest}");
+        assert!(biggest < biggest_clear * 0.3, "{biggest} in one frame");
+        // And it ends up in front of the wall, seeing you.
+        assert_eq!(hidden, 0);
     }
 
     #[test]
