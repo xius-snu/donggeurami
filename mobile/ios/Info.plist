@@ -20,7 +20,7 @@
 
 	<!-- The marketing version: what buyers see. Bump by hand for a release. -->
 	<key>CFBundleShortVersionString</key>
-	<string>1.0.3</string>
+	<string>1.0.2</string>
 	<!-- The build number. Must increase on every upload or App Store Connect
 	     rejects the build; CI overwrites this line with $BUILD_NUMBER. -->
 	<key>CFBundleVersion</key>
