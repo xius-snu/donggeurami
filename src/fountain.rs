@@ -80,6 +80,15 @@ const FOAM: f32 = 0.06;
 const SIDES: u32 = 32;
 /// The jet is narrower, and has fewer.
 const JET_SIDES: u32 = 16;
+/// How far apart the streaks on the running water are, round the fountain, in
+/// metres: a few broad ones, as the rest of the town is drawn, rather than
+/// many fine ones. Until Hajun found them "tooooo detailed" (2026-10-08)
+/// every sheet had 40, however small.
+const STREAK: f32 = 0.28;
+/// The same for the foam where the water lands, in broad soft patches, and
+/// for the narrow column of the jet.
+const FOAM_PATCH: f32 = 0.45;
+const JET_STREAK: f32 = 0.14;
 
 /// How often the jet goes up, in seconds by the clock.
 const JET_EVERY: f64 = 8.0;
@@ -91,9 +100,14 @@ const JET_EVERY: f64 = 8.0;
 const JET_RISE: f32 = 0.2;
 const JET_HOLD: f32 = 0.8;
 const JET_FALL: f32 = 0.5;
-/// How high the jet goes over the top of the tower, in metres. Whoever it
-/// throws goes as high over the top bowl.
-const JET_HEIGHT: f32 = 4.5;
+/// How high the jet goes over the top of the tower, in metres.
+const JET_HEIGHT: f32 = 6.0;
+/// How high the jet throws whoever stands in the top bowl, over it, in
+/// metres: out of the top of the jet and on up. Hajun asked for more than
+/// the 4.5 m it was at first, the jet's own height then (2026-10-08). The
+/// server takes a throw up to about 13 m as a move a body could make
+/// (`MOST_RISE` and `BURST`, and a test of this in `server/src/players.rs`).
+const THROW_HEIGHT: f32 = 9.0;
 /// How much the jet's height wavers while it is up.
 const JET_WAVER: f32 = 0.03;
 
@@ -309,11 +323,16 @@ fn crown() -> Path {
         .collect()
 }
 
-/// `path` turned round the axis, `sides` times: `uv.x` round it, from 0 to 1,
-/// `uv.y` along the path in metres, and the colour's alpha how solid it is.
-fn lathe(path: &Path, sides: u32) -> Mesh {
+/// `path` turned round the axis, `sides` times, with streaks round it about
+/// `streak` metres apart (`fountain.wgsl`): `uv.x` round it in streaks, one
+/// to each whole number, as many whole streaks as fit round the middle of
+/// the path, and at least three; `uv.y` along the path in metres; and the
+/// colour's alpha how solid it is.
+fn lathe(path: &Path, sides: u32, streak: f32) -> Mesh {
     let rings = path.len();
     let across = sides as usize + 1;
+    let middle = path.iter().map(|&(point, _)| point.x).sum::<f32>() / rings.max(1) as f32;
+    let streaks = (middle * TAU / streak).round().max(3.0);
     let mut positions = Vec::with_capacity(rings * across);
     let mut normals = Vec::with_capacity(rings * across);
     let mut uvs = Vec::with_capacity(rings * across);
@@ -332,7 +351,7 @@ fn lathe(path: &Path, sides: u32) -> Mesh {
             let (sin, cos) = (share * TAU).sin_cos();
             positions.push([point.x * cos, point.y, point.x * sin]);
             normals.push([facing.x * cos, facing.y, facing.x * sin]);
-            uvs.push([share, along]);
+            uvs.push([share * streaks, along]);
             colors.push([1.0, 1.0, 1.0, solid]);
         }
     }
@@ -388,10 +407,10 @@ fn throwing(phase: f32) -> bool {
     phase < JET_RISE + JET_HOLD
 }
 
-/// How fast the jet throws a body up: as fast as takes it [`JET_HEIGHT`]
+/// How fast the jet throws a body up: as fast as takes it [`THROW_HEIGHT`]
 /// higher, as gravity takes bodies.
 fn throw_speed() -> f32 {
-    (2.0 * GRAVITY * JET_HEIGHT).sqrt()
+    (2.0 * GRAVITY * THROW_HEIGHT).sqrt()
 }
 
 /// The column of the jet.
@@ -547,21 +566,21 @@ fn spawn_water(
         ))
         .with_children(|water| {
             for sheet in &sheets {
-                water.spawn((Mesh3d(meshes.add(lathe(sheet, SIDES))), MeshMaterial3d(falls.clone())));
+                water.spawn((Mesh3d(meshes.add(lathe(sheet, SIDES, STREAK))), MeshMaterial3d(falls.clone())));
             }
             for ring in &rings {
-                water.spawn((Mesh3d(meshes.add(lathe(ring, SIDES))), MeshMaterial3d(foam.clone())));
+                water.spawn((Mesh3d(meshes.add(lathe(ring, SIDES, FOAM_PATCH))), MeshMaterial3d(foam.clone())));
             }
             water.spawn((
                 Jet,
-                Mesh3d(meshes.add(lathe(&column(), JET_SIDES))),
+                Mesh3d(meshes.add(lathe(&column(), JET_SIDES, JET_STREAK))),
                 MeshMaterial3d(jet.clone()),
                 Transform::from_xyz(0.0, fountain.tip, 0.0),
                 Visibility::Hidden,
             ));
             water.spawn((
                 Crown,
-                Mesh3d(meshes.add(lathe(&crown(), SIDES))),
+                Mesh3d(meshes.add(lathe(&crown(), SIDES, STREAK))),
                 MeshMaterial3d(jet),
                 Transform::from_xyz(0.0, fountain.tip + JET_HEIGHT, 0.0),
                 Visibility::Hidden,
@@ -586,9 +605,9 @@ struct Look {
     tint: Vec4,
     /// The streaks, linear, and in `w` how solid they are at most.
     streak: Vec4,
-    /// How fast the water runs, in metres a second; how many streaks there
-    /// are round the fountain; how long a streak and the gap after it are, in
-    /// metres; and how wide a streak is, as a share of the room between two.
+    /// How fast the water runs, in metres a second; how far apart the swells
+    /// passing down a streak are, in metres; how wide a streak is, as a share
+    /// of the room it has; and nothing.
     flow: Vec4,
 }
 
@@ -596,27 +615,27 @@ impl FlowingWater {
     /// Spilling over the brims and welling out of the top.
     fn falls() -> Self {
         Self::new(
-            Color::srgba(0.75, 0.90, 1.0, 0.14),
-            Color::srgba(1.0, 1.0, 1.0, 0.75),
-            [2.0, 40.0, 0.45, 0.45],
+            Color::srgba(0.78, 0.91, 1.0, 0.22),
+            Color::srgba(1.0, 1.0, 1.0, 0.6),
+            [1.5, 0.5, 0.8, 0.0],
         )
     }
 
     /// Foam where the falling water lands.
     fn foam() -> Self {
         Self::new(
-            Color::srgba(0.90, 0.96, 1.0, 0.25),
-            Color::srgba(1.0, 1.0, 1.0, 0.75),
-            [0.3, 48.0, 0.08, 0.9],
+            Color::srgba(0.92, 0.97, 1.0, 0.3),
+            Color::srgba(1.0, 1.0, 1.0, 0.5),
+            [0.2, 0.3, 0.95, 0.0],
         )
     }
 
     /// The jet.
     fn jet() -> Self {
         Self::new(
-            Color::srgba(0.78, 0.92, 1.0, 0.35),
-            Color::srgba(1.0, 1.0, 1.0, 0.85),
-            [7.0, 12.0, 0.8, 0.5],
+            Color::srgba(0.8, 0.93, 1.0, 0.4),
+            Color::srgba(1.0, 1.0, 1.0, 0.7),
+            [6.0, 1.0, 0.8, 0.0],
         )
     }
 
@@ -807,12 +826,13 @@ mod tests {
 
     #[test]
     fn a_throw_comes_down_after_the_jet_stops_throwing() {
-        // As high as the jet goes.
+        // As high as it throws, and higher than the jet goes.
         let speed = throw_speed();
-        assert!(close(speed * speed / (2.0 * GRAVITY), JET_HEIGHT));
+        assert!(close(speed * speed / (2.0 * GRAVITY), THROW_HEIGHT));
+        assert!(THROW_HEIGHT > JET_HEIGHT);
         // Up, then down from there: all of it longer than the jet throws, so
         // nobody it throws lands back in it while it can throw them again.
-        let flight = speed / GRAVITY + (2.0 * JET_HEIGHT / FALL_GRAVITY).sqrt();
+        let flight = speed / GRAVITY + (2.0 * THROW_HEIGHT / FALL_GRAVITY).sqrt();
         assert!(flight > JET_RISE + JET_HOLD, "{flight}");
     }
 
@@ -841,15 +861,17 @@ mod tests {
             (Vec2::new(0.5, 0.7), 1.0),
             (Vec2::new(0.6, 0.3), 0.0),
         ];
-        let mesh = lathe(&path, 8);
+        // Streaks a metre apart round a path 3.35 m round its middle: three.
+        let mesh = lathe(&path, 8, 1.0);
         assert_eq!(mesh.count_vertices(), 3 * 9);
         assert_eq!(mesh.indices().map(|indices| indices.len()), Some(2 * 8 * 6));
         let Some(VertexAttributeValues::Float32x2(uvs)) = mesh.attribute(Mesh::ATTRIBUTE_UV_0)
         else {
             panic!("no uvs");
         };
-        // Round from 0 to 1, along in metres.
-        assert_eq!(uvs[8], [1.0, 0.0]);
+        // Round in streaks, from 0 to 3, along in metres.
+        assert_eq!(uvs[4], [1.5, 0.0]);
+        assert_eq!(uvs[8], [3.0, 0.0]);
         assert!(close(uvs[9][1], 0.3));
         assert!(close(uvs[18][1], 0.3 + 0.1f32.hypot(0.4)));
         let Some(VertexAttributeValues::Float32x4(colors)) = mesh.attribute(Mesh::ATTRIBUTE_COLOR)
