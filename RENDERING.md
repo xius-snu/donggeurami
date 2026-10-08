@@ -11,10 +11,14 @@ Engine: Bevy 0.19.1. Device the Android findings come from: **Galaxy S26 Ultra
 
 ## The one rule
 
-**Windows and Android run the same rendering code.** `src/day_night.rs` has zero
-`#[cfg(target_os = ...)]` in it and should stay that way. The sea, sky, clouds,
-sun, moon and stars are identical code on both platforms, using real
-`AlphaMode::Blend` and `AlphaMode::Add`.
+**Windows and Android run the same rendering code.** `src/sky.rs` has zero
+`#[cfg(target_os = ...)]` in it and should stay that way. The sea, sky, clouds
+and sun are identical code on both platforms, using real `AlphaMode::Blend` and
+`AlphaMode::Add`.
+
+(When this was written there was also a day–night cycle, with a moon and stars.
+It has since been removed — the sun is fixed at mid-morning — so where the
+history below mentions the moon, the stars or night, that is what it refers to.)
 
 There is exactly **one** Android-specific rendering line in the whole project:
 
@@ -57,9 +61,8 @@ the first thing to try.
 
 `NoIndirectDrawing` (`bevy::render::view::NoIndirectDrawing`) drops the camera
 back to direct draws. Bevy's docs note it "generally reduces rendering
-performance" because it gives up GPU culling. At this scene's size — ~160 stars,
-~144 cloud puffs, a handful of meshes, three directional lights — that is not
-measurable. If the world grows a lot, revisit whether it can be scoped more
+performance" because it gives up GPU culling. At this scene's size — ~144 cloud
+puffs, a handful of meshes, two directional lights — that is not measurable. If the world grows a lot, revisit whether it can be scoped more
 narrowly. It must be added **when the camera is first spawned**; adding or
 removing it later is documented as unspecified behaviour.
 
@@ -79,7 +82,7 @@ each:
 | Tonemapping | LUTs are `include_bytes!`-embedded at compile time, so there is no Android asset-loading difference. |
 | sRGB surface format | Bevy explicitly prefers `Rgba8UnormSrgb`/`Bgra8UnormSrgb` and adds an sRGB view format otherwise. Gamma matches. |
 | Directional light limits | `MAX_DIRECTIONAL_LIGHTS` (10) and `MAX_CASCADES_PER_LIGHT` (4) are only reduced under WebGL, never Android. |
-| GPU clustering | Bevy disables it on all Android and falls back to CPU clustering. Expected, logged, and irrelevant here — it only affects point and spot lights, and this scene has none. |
+| GPU clustering | Bevy disables it on all Android and falls back to CPU clustering. Expected and logged. It only affects point and spot lights, and the scene has none. (For a while each tree carried a `PointLight`; that was removed on 2026-09-26. If point lights come back, the CPU path on the phone is untested — that is where to look if their lighting looks wrong on device.) |
 
 ---
 
@@ -90,7 +93,7 @@ Things that are easy to get wrong and hard to notice:
 **`unlit = true` ignores `emissive` completely.** In `bevy_pbr/src/render/pbr.wgsl`
 the unlit branch is `out.color = pbr_input.material.base_color;` — emissive is
 only applied inside `apply_pbr_lighting`, which unlit skips. Several materials in
-`day_night.rs` still set `emissive` on unlit materials; those assignments do
+`sky.rs` still set `emissive` on unlit materials; those assignments do
 nothing. Harmless, but don't tune them expecting a result. For an unlit material,
 **`base_color` is the whole story.**
 
@@ -102,9 +105,7 @@ colour attachment, so no `INDEPENDENT_BLEND` requirement either.
 
 **The GPU blends in linear space.** If you ever composite a translucent colour by
 hand, convert to linear first, mix, and emit `Color::linear_rgb`. Mixing the sRGB
-component values directly lands on a visibly different colour. Note that the sky
-gradient constants in `day_night.rs` *are* interpolated in sRGB space — that is
-fine, they are authored that way, but it is not the same operation as a blend.
+component values directly lands on a visibly different colour.
 
 **`ClearColor` is not tonemapped, but fragments are.** So a translucent surface
 blended over the sky is a tonemapped colour over a non-tonemapped one. Exact
@@ -192,9 +193,6 @@ adb exec-out screencap -p > shot.png     # then read the PNG
 - **Drive the camera with `adb shell input swipe`.** A swipe outside the stick
   and jump circles is the look control. Swiping **up** tilts the view up toward
   the sky; swiping horizontally orbits. Screen is 3120×1440 in landscape.
-- **Wait for night to check stars.** `TIME_SCALE = 20` makes a full cycle 60 s:
-  ~30 s day, ~4.5 s sunset, ~21 s night, ~4.5 s sunrise. Stars are hidden unless
-  `stars > 0.02`, so a daytime screenshot proves nothing about them.
 - **Read Bevy's own log lines** with
   `adb logcat -d | grep RustStdoutStderr`. `AdapterInfo`, the clustering line and
   the GPU preprocessing line all print at INFO and tell you which paths are
@@ -202,12 +200,77 @@ adb exec-out screencap -p > shot.png     # then read the PNG
 
 ---
 
+## Measuring performance on the phone
+
+Measured 2026-09-27 on the same SM-S948N, at 1440×3120 with 4× MSAA. The
+things that looked like the obvious tools did not work:
+
+- **Bevy's per-pass GPU timers (`RenderDiagnosticsPlugin`) are meaningless on
+  the Adreno.** Every render pass reads about 0.0005 ms: a tiling GPU does the
+  real work after the timestamps are written. Only compute passes and the
+  final upscaling blit (0.33 ms) read true. Measure a feature by switching it
+  off and comparing, not by its timer.
+- **`dumpsys SurfaceFlinger --latency` returns no frames on Android 16.** Use
+  timestats instead: `--timestats -clear -enable`, play for a while, then
+  `--timestats -dump` and read the block for
+  `SurfaceView[town.donggeurami.app/…]`. Its `present2present` histogram is
+  the frame pacing (at 120 fps, `8ms` is on time and `12ms` a late frame).
+- **GPU load and clock:** `/sys/class/kgsl/kgsl-3d0/gpu_busy_percentage` and
+  `clock_mhz` (the maximum is 1300). **CPU per thread:**
+  `/proc/<pid>/task/*/stat`, fields 14–15, at 100 ticks a second.
+- **Temperatures:** `dumpsys thermalservice`, the *Current temperatures from
+  HAL* block. The block printed before it is a stale cache.
+- **The phone has to be unlocked with the game in front.** A locked phone
+  draws nothing, and every number reads idle. `settings put global
+  stay_on_while_plugged_in 7` keeps it awake for a session; put it back to 0.
+- **Charging heats it.** Plugged in and after a few minutes at 120 fps, Android
+  caps the GPU at about 750 MHz even while it is 98% busy. Numbers from a cool
+  phone and a hot one are not comparable, so note the temperature with each.
+
+What it found, at 120 fps: the GPU is the limit. Its work per frame, roughly
+(busy × clock ÷ frame rate, from runs at different temperatures):
+
+| Setting | GPU work per frame |
+|---|---|
+| Four shadow maps (Bevy's default) | ~7.4 M cycles |
+| **Two shadow maps (what `sky.rs` uses)** | **~4.4 M** |
+| 2× MSAA instead of 4× | ~6.1 M |
+| 1024² shadow maps instead of 2048² | ~6.7 M |
+
+Also found: asking Android for the 1080×2340 display mode through
+`preferredDisplayModeId` is ignored (the game stays at 1440×3120; since
+2026-10-03 `MainActivity` shrinks the game's own surface with
+`setFixedSize` instead, on trial and not yet measured), and
+`ClusterConfig::None` on the camera crashes Bevy 0.19 on its first frame
+("clustering dummy texture"), where `ClusterConfig::Single` works.
+
+---
+
+## Mirrors: tried and taken out (2026-10-02)
+
+A reflecting mirror was built and worked on desktop: a second camera behind
+the glass, opposite your eye, with an off-axis projection cut to the glass
+and the glass as its near plane, drawing into a small HDR texture laid on the
+glass, and switched on only while the glass was in sight. Hajun had it taken
+out as too costly for the phone, before it was measured there.
+
+The cost that decided it: **Bevy 0.19 gives every active camera its own sun
+shadow maps** (`Cascades` in `bevy_light/src/cascade.rs` is per view), and
+there is no setting to turn them off for one camera. So any second camera
+that draws the world — a mirror, a portal, a picture-in-picture — adds the
+two shadow maps again, roughly the 3 M cycles a frame that going from four
+maps to two saved, on top of drawing the scene again. Weigh that before
+adding one. The code is not in git history (it was never committed).
+
+---
+
 ## Build gotchas
 
 - Use the **`release-android`** profile, not `release`. NDK + thin LTO is slow
   and can fail the linker; `release-android` sets `lto = false`,
-  `codegen-units = 8`. The comment in `mobile/android/app/build.gradle` still
-  says `build --release` and is wrong.
+  `codegen-units = 8`. The comment at the end of
+  `mobile/android/app/build.gradle` has the right commands (it once said
+  `build --release`).
 - **`cargo ndk` does not strip for a custom profile.** The library comes out at
   162 MB instead of 85 MB, nearly all `.symtab` and `.strtab`. Strip it with the
   NDK's `llvm-strip`, then confirm `GameActivity_onCreate` survives in `.dynsym`
@@ -215,6 +278,16 @@ adb exec-out screencap -p > shot.png     # then read the PNG
 - The target-dir and jniLibs copies of the `.so` are **hardlinked**, so strip
   with `-o` to a temp file and move it over rather than editing in place.
 - Only `gradlew.bat` exists. From git bash, run it through `cmd //c`.
+- **The APK leaves out what the game never loads**: every name in
+  `mobile/android/app/assets-left-out.txt`, handed to aapt as
+  `ignoreAssetsPattern` in `build.gradle`. That is Blender's `.blend` and
+  `.blend1` files, a reference photo and the models no longer used; 12.6 MB
+  of a 111 MB APK on 2026-10-03, before Hajun deleted most of the unused
+  models outright. The patterns match names, not paths: a name on the list
+  leaves out every file called that, in any folder. A reference picture or a
+  retired model added later goes on the list by hand. `cargo test` fails if a piece the
+  shop sells would be left out (`build::tests::no_piece_is_left_out_of_the_apk`).
+  The iOS app still bundles the whole of `assets/` (`mobile/ios/project.yml`).
 
 ---
 

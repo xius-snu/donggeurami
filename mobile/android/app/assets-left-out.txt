@@ -1,0 +1,24 @@
+# Files under assets/ that the game never loads, kept out of the APK
+# (build.gradle hands these to aapt as its ignoreAssetsPattern).
+#
+# One pattern a line, as aapt takes them: a file or folder name, or a name
+# with one * at its start or at its end. Names, not paths: a pattern leaves
+# out every file of that name, in whatever folder. `cargo test` fails if a
+# piece the shop sells would be left out (build::tests::
+# no_piece_is_left_out_of_the_apk).
+
+# Blender's own files. The game reads the .glb exported from each.
+*.blend
+*.blend1
+
+# A reference photo: the Cloud Sofa, since taken out of the game, was
+# modelled from it.
+cloudsofaimage.png
+
+# Models nothing loads any more: the first map, and the coin.
+map.glb
+coin.glb
+
+# Everything blender/make_build_items.py made, in assets/build/: out of the
+# shop since 2026-10-03, which sells only Hajun's own pieces, in mybuilds/.
+<dir>build

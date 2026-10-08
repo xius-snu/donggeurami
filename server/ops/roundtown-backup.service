@@ -1,0 +1,8 @@
+# The nightly copy of the database; see roundtown-backup.sh.
+[Unit]
+Description=Donggeurami Town database backup
+After=postgresql.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/roundtown/roundtown-backup.sh

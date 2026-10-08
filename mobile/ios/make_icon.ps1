@@ -9,8 +9,8 @@
 # 1024x1024, and it must have no alpha channel (an icon with transparency is
 # rejected at upload). Hence Format24bppRgb.
 #
-# The palette is the game's own — SKY_DAY and the cloud/land colours from
-# src/day_night.rs and src/lib.rs — so the icon and the first frame agree.
+# The palette is the game's own — SKY and the cloud/land colours from
+# src/sky.rs and src/lib.rs — so the icon and the first frame agree.
 #
 # There is deliberately no text. At the 60x60 the icon is actually drawn at on
 # a home screen, "동그라미타운" is an illegible smudge, and Apple's Human
@@ -27,7 +27,7 @@ $g.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQuality
 
 function C([int]$r, [int]$gr, [int]$b) { [System.Drawing.Color]::FromArgb(255, $r, $gr, $b) }
 
-$skyTop   = C 106 186 224   # SKY_DAY, a shade deeper at the zenith
+$skyTop   = C 106 186 224   # SKY, a shade deeper at the zenith
 $skyLow   = C 190 228 242   # paler toward the horizon
 $ocean    = C  43 108 163
 $sand     = C 232 213 163

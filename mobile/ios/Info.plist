@@ -20,7 +20,7 @@
 
 	<!-- The marketing version: what buyers see. Bump by hand for a release. -->
 	<key>CFBundleShortVersionString</key>
-	<string>1.0</string>
+	<string>1.0.1</string>
 	<!-- The build number. Must increase on every upload or App Store Connect
 	     rejects the build; CI overwrites this line with $BUILD_NUMBER. -->
 	<key>CFBundleVersion</key>
@@ -63,10 +63,14 @@
 	     window_settings(). Do not add UIViewControllerBasedStatusBarAppearance
 	     = false here; that takes the decision away from winit. -->
 
-	<!-- Answers the export-compliance question once, instead of on every
-	     single upload. True only while the game does no networking and uses
-	     no encryption beyond Apple's own. -->
-	<key>ITSAppUsesNonExemptEncryption</key>
-	<false/>
+	<!-- No ITSAppUsesNonExemptEncryption, on purpose (Hajun's call,
+	     2026-10-08). It was `false` while the game did no networking and used
+	     no encryption beyond Apple's own. Since 2026-10-08 it plays online,
+	     encrypting with code of its own: TLS (rustls) for the login,
+	     ChaCha20-Poly1305 (netcode) for the game. With the key left out, each
+	     upload waits in TestFlight as "Missing Compliance" until the
+	     questions are answered on its page in App Store Connect. Once the
+	     right answer is known, put the key back with it: see IOS.md,
+	     "Export compliance". -->
 </dict>
 </plist>

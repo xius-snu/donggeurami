@@ -1,6 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-feature android:glEsVersion="0x00030000" android:required="true" />
+    <!-- Playing online: without it Android refuses every connection, the game
+         server's UDP included. -->
+    <uses-permission android:name="android.permission.INTERNET" />
 
     <application
         android:label="동그라미타운"

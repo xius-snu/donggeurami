@@ -268,12 +268,12 @@ Still to fill in by hand, in App Store Connect:
 
 | Item | Notes |
 |---|---|
-| Privacy policy URL | **Required for every app.** A GitHub Pages page saying the game collects no data is enough. This is the item that most often blocks a first submission. |
-| App Privacy | Answer *Data Not Collected*. It is true — the game has no networking. |
-| Age rating | The questionnaire. All "None" for this game. |
+| Privacy policy URL | **Required for every app.** This is the item that most often blocks a first submission. Since 2026-10-08 the game plays online and keeps an account for every device (`SERVER.md`), so the policy has to say what is kept and why; `MULTIPLAYER.md`, "Before a public online release", lists what Korea's privacy law asks of it. |
+| App Privacy | No longer *Data Not Collected* (that was true while the game had no networking). Online it keeps, per device: an account id, a generated name, coins and their history, and what is built in House Builder, all to run the game, none for tracking. |
+| Age rating | The questionnaire. Online, players see each other's generated names and houses: answer its user-content questions accordingly. |
 | Category | Games, then likely Adventure or Casual |
 | Description, keywords, support URL | Free text |
-| Export compliance | Already answered by `ITSAppUsesNonExemptEncryption` in `Info.plist`, so it will not ask on every upload. |
+| Export compliance | **Answered by hand on every upload, for now.** `ITSAppUsesNonExemptEncryption` was `false` in `Info.plist`, written while the game used no encryption beyond Apple's own. Since 2026-10-08 it encrypts with code of its own: TLS through rustls for the login, and ChaCha20-Poly1305 through netcode for the game's packets. So from 1.0.1 the key is left out (Hajun's call, 2026-10-08), and each build waits in TestFlight as *Missing Compliance*, unavailable to testers, until the questions are answered on its page (TestFlight -> the build -> *Manage*). Standard algorithms in a game usually qualify for the mass-market exemption, but that is a legal answer to get right, not to guess (`MULTIPLAYER.md` also notes France). Once it is settled, put the key back in `Info.plist` with that answer so uploads stop asking. |
 
 When TestFlight looks right on the phone, flip `submit_to_app_store` to `true`
 in `codemagic.yaml`, or press *Submit for Review* in App Store Connect. A first
@@ -303,7 +303,7 @@ review is typically 24–48 hours.
   unnecessary, and it does give up GPU culling — but "probably" is the word
   that wasted two days on Android. If you want it gone on iOS, prove it on a
   device first.
-- **Do not add `#[cfg(target_os = "ios")]` to `src/day_night.rs`.** One shared
+- **Do not add `#[cfg(target_os = "ios")]` to `src/sky.rs`.** One shared
   rendering path across all three platforms is the rule that made the APK
   correct. iOS does not get an exception.
 - **Do not commit the generated `.xcodeproj`.** It will drift from

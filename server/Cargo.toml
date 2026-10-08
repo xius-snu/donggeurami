@@ -1,0 +1,36 @@
+[package]
+name = "roundtown_server"
+version = "0.1.0"
+edition = "2024"
+description = "동그라미타운's game server: every room, House Builder's included"
+publish = false
+
+[[bin]]
+name = "roundtown-server"
+path = "src/main.rs"
+
+[dependencies]
+roundtown_net = { path = "../shared" }
+# No window, no renderer, no assets: the ECS, the clock, states and logging.
+bevy = { version = "0.19.1", default-features = false, features = [
+    "std",
+    "bevy_state",
+    "bevy_log",
+] }
+bevy_replicon = { version = "=0.44.3", default-features = false, features = ["server"] }
+bevy_replicon_renet = { version = "=0.20.0", default-features = false, features = [
+    "server",
+    "renet_netcode",
+] }
+fastrand = "2"
+# One socket for both IPv4 and IPv6, which std cannot ask for.
+socket2 = "0.6"
+# Accounts (phase 2): Postgres on the same VM, reached over its local socket
+# from threads of their own, never from the game's loop; the login's small
+# HTTP server, behind Caddy, which does the HTTPS; and the hash a device's
+# secret is kept under.
+postgres = "0.19"
+tiny_http = "0.12"
+sha2 = "0.10"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"

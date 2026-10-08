@@ -1,0 +1,18 @@
+# The login, over HTTPS on TCP 443, for the game server behind it on
+# 127.0.0.1:8080. Its certificate is the server's own (made by setup.sh,
+# pinned in the app by its SHA-256, `src/login.rs`): there is no domain. No
+# HTTP/3, which would take UDP 443 from the game. Installed by setup.sh as
+# /etc/caddy/Caddyfile.
+{
+	auto_https off
+	admin off
+	default_sni 141.164.62.193
+	servers {
+		protocols h1 h2
+	}
+}
+
+https://:443 {
+	tls /etc/roundtown/login.crt /etc/roundtown/login.key
+	reverse_proxy 127.0.0.1:8080
+}

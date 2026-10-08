@@ -1,0 +1,11 @@
+# Every night at 04:00 Korean time (19:00 UTC), when the fewest are playing.
+[Unit]
+Description=Nightly Donggeurami Town database backup
+
+[Timer]
+OnCalendar=*-*-* 19:00:00 UTC
+Persistent=true
+RandomizedDelaySec=10min
+
+[Install]
+WantedBy=timers.target

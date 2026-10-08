@@ -10,13 +10,16 @@
 #
 # The App Store Connect API key is ALREADY DONE — the Developer Portal
 # integration is team-level, so the key added for the other app on this
-# account covers this one too, and Codemagic reuses the distribution
-# certificate it already holds the private key for rather than burning
-# another against Apple's per-account limit. Two things remain:
+# account covers this one too. The App ID `town.donggeurami.app` and the App
+# Store Connect app record are both registered as well. One thing remains:
 #
-#  1. Apple Developer > Identifiers: register the App ID `town.donggeurami.app`.
-#  2. App Store Connect > Apps > "+": create the app record against that same
-#     bundle ID. `submit_to_testflight` fails without it.
+#  1. Codemagic > Team settings > Environment variables: a group named
+#     `code-signing` holding CERTIFICATE_PRIVATE_KEY, marked secure. It is an
+#     RSA private key in PEM form; the build mints the Apple Distribution
+#     certificate from it. Apple's API returns certificates but never private
+#     keys, so this cannot be generated on the build machine — or rather it
+#     can, but a machine-generated one would burn a fresh certificate on every
+#     build and Apple allows only three. IOS.md 1.2 has the command.
 #
 # One thing to check rather than assume: the existing key needs the
 # "App Manager" role. A "Developer" key cannot create provisioning profiles
@@ -102,24 +105,21 @@ workflows:
 
     environment:
       <<: *shared_env
-      ios_signing:
-        # THIS DOES NOT CREATE ANYTHING ON APPLE'S SERVERS. It is a lookup over
-        # the signing files already stored in Codemagic > Team settings > Code
-        # signing identities, filtered by these two fields. The API key above is
-        # not used at this step at all.
-        #
-        # A bundle ID that has never been signed has no profile to find, and the
-        # build then dies inside Codemagic's built-in signing step — before any
-        # script runs, so the log is the single line
-        #   No matching profiles found for bundle identifier ... "app_store"
-        # and nothing else. That is not a key, role, certificate or identifier
-        # problem, and hours can be lost treating it as one.
-        #
-        # Generate the profile once in Code signing identities, or switch to the
-        # `app-store-connect fetch-signing-files --create` CLI path, which does
-        # create it. See IOS.md 1.2.
-        distribution_type: app_store
-        bundle_identifier: town.donggeurami.app
+      # There is deliberately no `ios_signing:` block here. That block is a
+      # *lookup* over files already stored in Codemagic > Team settings > Code
+      # signing identities — it creates nothing — so a bundle ID that has never
+      # been signed fails inside Codemagic's own signing step, before any script
+      # runs, with the single line
+      #   No matching profiles found for bundle identifier ... "app_store"
+      # The signing script below creates the profile instead. See IOS.md 1.2.
+      groups:
+        # Codemagic > Team settings > Environment variables. One variable:
+        # CERTIFICATE_PRIVATE_KEY, the RSA private key the distribution
+        # certificate is minted from. Apple's API hands back certificates but
+        # never private keys, so this is the one secret that cannot be derived
+        # on the build machine. If the group or the variable is missing the
+        # build fails at once, which is cheap — the long Bevy compile is later.
+        - code-signing
 
     cache: *rust_cache
 
@@ -133,6 +133,31 @@ workflows:
           include: true
 
     scripts:
+      # Signing goes first on purpose: a misconfiguration here surfaces in about
+      # a minute, instead of after the 15-minute cold Bevy compile.
+      - name: Create the distribution certificate and the App Store profile
+        script: |
+          set -e
+          keychain initialize
+          # The integration above exports APP_STORE_CONNECT_ISSUER_ID,
+          # APP_STORE_CONNECT_KEY_IDENTIFIER and APP_STORE_CONNECT_PRIVATE_KEY,
+          # and the CLI reads all three without being told. Unlike the
+          # `ios_signing` block this replaces, it really does create what is
+          # missing on Apple's servers — that is the whole point of the change.
+          #
+          # --strict-match-identifier is load-bearing. Bundle IDs are matched by
+          # substring by default, and the retired `town.donggeurami` is still
+          # registered under Identifiers (IOS.md 1.1), so a loose match finds
+          # two and tries to sign for one that has no app record behind it.
+          app-store-connect fetch-signing-files "$BUNDLE_ID" \
+            --platform IOS \
+            --type IOS_APP_STORE \
+            --strict-match-identifier \
+            --create
+          # Installs the .p12 the step above wrote to
+          # ~/Library/MobileDevice/Certificates into the build keychain.
+          keychain add-certificates
+
       - *install_rust
       - *install_xcodegen
 
@@ -148,7 +173,7 @@ workflows:
 
       - *generate_project
 
-      - name: Apply the signing identity Codemagic fetched
+      - name: Point the Xcode project at the profile that was created
         script: xcode-project use-profiles --project "$XCODE_PROJECT"
 
       - name: Build the IPA

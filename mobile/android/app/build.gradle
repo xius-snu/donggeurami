@@ -35,6 +35,18 @@ android {
             assets.srcDirs += files('../../../assets')
         }
     }
+    androidResources {
+        // What the game never loads stays out of the APK: Blender's own files
+        // and the rest named in assets-left-out.txt, after what aapt leaves
+        // out anyway (its default: hidden files, version control).
+        ignoreAssetsPattern = ([
+            '!.svn', '!.git', '!.ds_store', '!*.scc', '.*', '<dir>_*', '!CVS',
+            '!thumbs.db', '!picasa.ini', '!*~',
+        ] + file('assets-left-out.txt').readLines()
+            .collect { it.trim() }
+            .findAll { it && !it.startsWith('#') }
+            .collect { '!' + it }).join(':')
+    }
 }
 
 dependencies {
@@ -43,6 +55,16 @@ dependencies {
     implementation libs.games.activity
 }
 
-// Native lib is produced separately (not run by default):
-//   cargo ndk -t arm64-v8a -P 26 -o mobile/android/app/src/main/jniLibs build --release
-// Then: ./gradlew installDebug
+// Native lib is produced separately (not run by default). Use the
+// `release-android` profile, not `release`: NDK + thin LTO is slow and can fail
+// the linker. cargo ndk does not strip for a custom profile either, so the .so
+// comes out at 162 MB instead of 85 MB and has to be stripped by hand — and the
+// target-dir and jniLibs copies are hardlinked, so strip to a temp file and move
+// it over rather than editing in place. See RENDERING.md, "Build gotchas".
+//
+//   cargo ndk -t arm64-v8a -P 26 -o mobile/android/app/src/main/jniLibs \
+//       build --profile release-android --lib
+//   llvm-strip -o tmp.so mobile/android/app/src/main/jniLibs/arm64-v8a/libdonggeurami_town.so
+//   mv tmp.so mobile/android/app/src/main/jniLibs/arm64-v8a/libdonggeurami_town.so
+//
+// Then: ./gradlew assembleRelease

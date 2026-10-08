@@ -1,0 +1,20 @@
+[package]
+name = "roundtown_net"
+version = "0.1.0"
+edition = "2024"
+description = "What 동그라미타운 and its server say to each other"
+publish = false
+
+[dependencies]
+# Only the ECS, the app and the maths: the server builds on this too, and it
+# has no window, no renderer and no assets.
+bevy = { version = "0.19.1", default-features = false, features = ["std", "bevy_state"] }
+# Pinned exactly: replicon breaks its API often (MULTIPLAYER.md, "Risks").
+# Neither side's features here: the game turns on `client`, the server
+# `server`.
+bevy_replicon = { version = "=0.44.3", default-features = false }
+bytes = "1"
+serde = { version = "1.0", features = ["derive"] }
+
+[dev-dependencies]
+postcard = { version = "1", features = ["alloc"] }

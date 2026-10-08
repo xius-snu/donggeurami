@@ -1,3 +1,11 @@
+# The game is the root crate. Beside it: what it and its server say to each
+# other (`shared/`), and the server (`server/`), a headless Bevy app built for
+# Linux. `cargo build` here builds the game alone; the server is
+# `cargo build -p roundtown_server`, never `--workspace`, which would build
+# the game with the server's half of replicon too.
+[workspace]
+members = ["shared", "server"]
+
 [package]
 name = "donggeurami_town"
 version = "0.1.0"
@@ -25,6 +33,30 @@ path = "src/main.rs"
 # `android-game-activity` is required by Bevy's Android GameActivity path.
 # It is a no-op on Windows/iOS.
 bevy = { version = "0.19.1", features = ["android-game-activity"] }
+
+# The town save. JSON rather than RON so the one document a player's map lives
+# in can go straight into a server column later without a second encoder. Both
+# crates already come in under Bevy, so this costs no extra build time.
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# The AI players' dice. Already built for Bevy's task executor on every
+# target, so this costs no extra build time either.
+fastrand = "2"
+
+# Playing online (MULTIPLAYER.md): the protocol shared with the server, and
+# the client halves of replicon and renet. Pure Rust, UDP, no async runtime.
+roundtown_net = { path = "shared" }
+bevy_replicon = { version = "=0.44.3", default-features = false, features = ["client"] }
+bevy_replicon_renet = { version = "=0.20.0", default-features = false, features = [
+    "client",
+    "renet_netcode",
+] }
+# The login, over HTTPS, trusting nothing but the server's own certificate
+# (`login`): rustls with ring, which the NDK, Xcode and MSVC all build.
+# Not aws-lc-rs, rustls's default, which wants CMake and NASM besides.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+ring = "0.17"
 
 # Faster debug iteration without tanking frame rate.
 [profile.dev]
