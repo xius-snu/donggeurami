@@ -246,31 +246,45 @@ Also found: asking Android for the 1080×2340 display mode through
 
 ---
 
-## Lights are clustered on the CPU everywhere (2026-10-08)
+## The iPhone's black screen: the render world on one thread (2026-10-08)
 
-Bevy 0.19 sorts point lights, spot lights, probes and decals into the cells of
-each view, and on most GPUs it does that on the GPU: compute passes, and a
-raster pass whose fragment shader adds to storage buffers with atomics, with
-readbacks to grow its lists. `make_global_cluster_settings` in
-`bevy_pbr/src/cluster/mod.rs` turns that path off on Android and in the iOS
-simulator (`target_abi = "sim"`), and on nowhere else, so a real iPhone was
-the one device it ran on that had never been seen working.
+iOS 1.0.1 to 1.0.3 opened on a black screen and stayed there. The phone's own
+`log.txt` (Files app, `src/log_file.rs`) had it in one line:
 
-iOS 1.0.1 opened on a black screen and stayed there. With no Mac there was no
-device log, but the server had one: the iPhone made its account at the login
-(a thread of its own, started on the first frame) and never joined the game,
-which the main loop does a moment later. That is what a render thread that
-dies on its first frame does in Bevy 0.19: `renderer_extract` finds it gone
-and asks the app to quit, winit ignores that on iOS ("`ControlFlow::Exit`
-ignored on iOS"), and the app stops updating, still open, with nothing drawn.
+```
+PANIC on the unnamed thread: ... raw-window-metal ...: can only access UIView on the main thread
+  ... wgpu_hal::metal ... create_surface
+  ... bevy_render::view::window::create_surfaces
+  ... SingleThreadedExecutor ... PipelinedRenderingPlugin (the render thread)
+```
 
-So `cluster_lights_on_the_cpu` in `src/lib.rs` sets `gpu_clustering` to
-`None` at startup (Bevy's own switch, on `GlobalClusterSettings`), on every
-platform: the world has no light to cluster, only the sun and the fill,
-which are directional, so it costs nothing, and every platform now takes the
-path Android always has. It is the suspect, not a proven cause: if an iPhone
-still comes up black, its `log.txt` (Files app, `src/log_file.rs`) has the
-panic, if there is one.
+`create_surfaces`, which makes the window's surface, has to run on the main
+thread on iOS and macOS (it takes a `NonSendMarker` there and nowhere else),
+as it touches the window's UIView. With pipelined rendering the render world
+runs on a thread of its own, and Bevy's multi-threaded executor hands such a
+system back to the main thread. `one_thread_per_world` in `src/lib.rs` had put
+every schedule of the render world on the single-threaded executor, which
+runs everything on the thread it is on: the render thread. It panicked on the
+first frame; `renderer_extract` found it gone and asked the app to quit;
+winit ignores that on iOS ("`ControlFlow::Exit` ignored on iOS"); and the app
+stopped, still open, having drawn nothing. Android and Windows have no such
+system, which is why they ran. The render world now keeps Bevy's executor on
+Apple platforms.
+
+Before the log there were two guesses. The server's log showed the iPhone
+making its account at the login, a thread of its own started on the first
+frame, and never joining the game, which the main loop does a moment later:
+a render thread dying on its first frame, rightly read. Its cause was guessed
+to be GPU light clustering, which Bevy 0.19 runs on an iPhone but neither on
+Android nor in the iOS simulator (`make_global_cluster_settings` in
+`bevy_pbr/src/cluster/mod.rs`), and 1.0.2 turned it off, to no effect. It
+stays off, on every platform (`cluster_lights_on_the_cpu`): the world has no
+light to cluster, only the sun and the fill, which are directional, so on the
+CPU it is nothing at all, where the GPU still ran compute and raster passes
+for it every frame.
+
+**A device-only failure: get the device's log before guessing.** It took one
+build to add the log and one look at it, after two builds of inference.
 
 ---
 

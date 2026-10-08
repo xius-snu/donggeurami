@@ -27,10 +27,10 @@ tested on the actual phone, and what not to try again. The short version:
   per cycle.
 - **Lights are sorted into clusters on the CPU, on every platform**
   (`cluster_lights_on_the_cpu` in `src/lib.rs`, since 2026-10-08). Bevy 0.19
-  does it on the GPU everywhere but Android and the iOS simulator, so a real
-  iPhone was the one place running that path, and 1.0.1 sat on a black
-  screen there: its render thread died on the first frame (`RENDERING.md`).
-  The world has no light to cluster, so it costs nothing either way.
+  does it on the GPU everywhere but Android and the iOS simulator. The world
+  has no light to cluster, so on the CPU it is nothing at all, and every
+  platform takes Android's path. It was turned off as the suspect for the
+  iPhone's black screen, which it was not (`RENDERING.md`).
 - **The town's fountain has a material and a shader of its own**
   (`src/fountain.rs`, `src/fountain.wgsl`): see-through running water whose
   streaks the GPU moves by the frame's time. It is the one custom shader;
@@ -83,7 +83,12 @@ second, 168% of a CPU core and 45 W on the GPU, and the machine ran hot
 - **Every schedule runs its systems on one thread** (`one_thread_per_world` in
   `src/lib.rs`). Handing them to Bevy's worker pool cost more than the work:
   one thread per world took the game from 121% to 87% of a core on the phone
-  and from 87% to 46% on the laptop, at 120 frames a second.
+  and from 87% to 46% on the laptop, at 120 frames a second. **Except the
+  render world on an iPhone** (and a Mac): there the system that makes the
+  window's surface must run on the main thread, which only Bevy's own
+  executor arranges. On one thread it ran on the render thread and panicked
+  on the first frame ("can only access UIView on the main thread"), and iOS
+  1.0.1 to 1.0.3 opened on a black screen and stayed there.
 - **The audio and gamepad plugins are off** (`src/lib.rs`). Nothing uses them,
   and left in, one kept an audio stream open playing silence and the other
   polled for controllers every 8 ms. Turn them back on when there is a sound
@@ -129,7 +134,9 @@ compiles and tests, as `log_file` and `map::kept_in_library` do.
 in the app's Documents, which the Files app shows under On My iPhone >
 Donggeurami Town. Everything Bevy logged in the last launch, and any panic
 with its thread. iOS keeps the app's real log where only a Mac can read it,
-so this is how a black screen says why.
+so this is how a black screen says why: the first `log.txt` Hajun sent
+(2026-10-08) named the black screen's cause on its own, after two builds of
+guessing. Ask for it before guessing.
 
 ## Models
 

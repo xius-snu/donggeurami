@@ -561,9 +561,20 @@ fn one_thread_per_world(app: &mut App) {
         }
     }
     each_schedule(app.world_mut());
-    // Before `app.run()` moves the render world onto its own thread.
-    if let Some(render) = app.get_sub_app_mut(bevy::render::RenderApp) {
-        each_schedule(render.world_mut());
+    // Before `app.run()` moves the render world onto its own thread. Not on
+    // an iPhone, nor a Mac: there one of the render world's systems has to run
+    // on the main thread, the one that makes the window's surface, which
+    // touches its UIView. Bevy's own executor hands such a system back to the
+    // main thread, and one thread cannot: it ran on the render thread, which
+    // panicked on the first frame ("can only access UIView on the main
+    // thread"), Bevy asked to quit, iOS does not let an app, and 1.0.1 to
+    // 1.0.3 opened on a black screen and stayed there (2026-10-08, read off
+    // the phone's own log.txt).
+    #[cfg(not(target_vendor = "apple"))]
+    {
+        if let Some(render) = app.get_sub_app_mut(bevy::render::RenderApp) {
+            each_schedule(render.world_mut());
+        }
     }
 }
 
@@ -649,13 +660,12 @@ fn setup_world(mut commands: Commands) {
 /// There is nothing to sort: the world's only lights are the sun and the fill,
 /// directional lights, which are never clustered (see `ClusterConfig::Single`
 /// in `setup_world`). On the GPU the sorting is still compute and raster
-/// passes every frame, and it is a path Bevy 0.19 takes on an iPhone but
-/// neither on Android nor in the iOS simulator. The iPhone's 1.0.1 never drew
-/// a frame (2026-10-08): the screen stayed black, and the server's log shows
-/// that it made its login and never joined the game, which is what a render
-/// thread that dies on its first frame does (Bevy then asks to quit, which
-/// iOS does not allow, and stops). That path is the suspect, not yet proven
-/// on the phone; with it off, every platform takes the one Android takes.
+/// passes every frame, for nothing; on the CPU it is nothing at all, and every
+/// platform takes the one path Android always has. It was turned off on
+/// 2026-10-08 as the suspect for the iPhone's black screen, being the one
+/// path Bevy 0.19 takes on an iPhone but neither on Android nor in the iOS
+/// simulator; it was not that (`one_thread_per_world` was), and it stays off
+/// for what it saves.
 fn cluster_lights_on_the_cpu(settings: Option<ResMut<GlobalClusterSettings>>) {
     if let Some(mut settings) = settings {
         settings.gpu_clustering = None;
