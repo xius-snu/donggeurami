@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The app's icon: Hajun's picture of the town, made into
+     ic_launcher_foreground.png at each density by mobile/make_icons.ps1. The
+     picture covers the whole layer, so the background never shows. -->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@color/ic_launcher_background" />
+    <foreground android:drawable="@mipmap/ic_launcher_foreground" />
+</adaptive-icon>
