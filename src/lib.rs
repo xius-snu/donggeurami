@@ -58,6 +58,36 @@ const GRAVITY: f32 = 22.0;
 const FALL_GRAVITY: f32 = GRAVITY * 1.5;
 const PLAYER_HEIGHT: f32 = 1.6;
 const PLAYER_RADIUS: f32 = 0.45;
+/// How far out from the middle of a body its legs reach, in metres: the
+/// model's legs, side by side, are 0.42 m across, where its body and arms
+/// are 0.86 ([`PLAYER_RADIUS`]). A body stands on whatever is under its legs
+/// (`support`), and below [`HIP_HEIGHT`] its legs are all of it there is to
+/// bump into anything (`resolve_player_solids`).
+const LEG_RADIUS: f32 = 0.21;
+/// How high over its feet a body's legs go before it widens into its body
+/// and arms, in metres: the top of the model's legs. It is as wide as it
+/// gets by [`WAIST_HEIGHT`].
+const HIP_HEIGHT: f32 = 0.65;
+const WAIST_HEIGHT: f32 = 0.8;
+/// How much higher the ground under a body's legs can be than the ground
+/// under the middle of it and still be the one slope, in metres: the bridge,
+/// the steepest ground there is at 15°, rises 0.06 m across the legs. Higher
+/// than that, the body is standing on an edge (`support`).
+const EDGE_RISE: f32 = 0.15;
+/// Points round the middle of a body's feet, as far out as its legs reach.
+const UNDER_THE_LEGS: [Vec2; 8] = {
+    let (r, d) = (LEG_RADIUS, LEG_RADIUS * std::f32::consts::FRAC_1_SQRT_2);
+    [
+        Vec2::new(r, 0.0),
+        Vec2::new(d, d),
+        Vec2::new(0.0, r),
+        Vec2::new(-d, d),
+        Vec2::new(-r, 0.0),
+        Vec2::new(-d, -d),
+        Vec2::new(0.0, -r),
+        Vec2::new(d, -d),
+    ]
+};
 const TREE_TRUNK_RADIUS: f32 = 1.1;
 const TREE_TRUNK_HEIGHT: f32 = 6.5;
 const WATER_JUMP_SLOP: f32 = 0.22;
@@ -1039,11 +1069,31 @@ fn wading(pos: Vec3) -> bool {
 
 /// What the feet come to rest on at `pos`: the highest ground on the island
 /// within a step of them, or, with none, the sea bed the player wades on.
+///
+/// The ground under the middle of the body, unless the ground under its
+/// legs, round that, is higher by more than a slope makes it ([`EDGE_RISE`]):
+/// then it is standing on an edge, its middle out past it, and the edge holds
+/// it up. Until 2026-10-08 only the middle counted. A body that came down
+/// with its legs on an edge and its middle just past it went on down past it,
+/// half into it, and once the edge was over its knees, was shoved out
+/// sideways and dropped (Hajun: it "glitch steps").
 fn support(island: &Island, pos: Vec3, elapsed: f32) -> f32 {
     let sea = water_rest_y(elapsed);
-    island
-        .floor(pos.xz(), pos.y + LAND_STEP_UP)
-        .map_or(sea, |ground| ground.max(sea))
+    let reach = pos.y + LAND_STEP_UP;
+    let under = |at: Vec2| island.floor(at, reach).map_or(sea, |ground| ground.max(sea));
+    let middle = under(pos.xz());
+    // Standing on it, as nearly everyone nearly always is, that is all there
+    // is to it: only a body off it, in the air or out over an edge, looks
+    // under its legs. Beside the fountain's tower that is eight more looks
+    // through its thousands of triangles.
+    if pos.y <= middle {
+        return middle;
+    }
+    let legs = UNDER_THE_LEGS
+        .iter()
+        .map(|&round| under(pos.xz() + round))
+        .fold(middle, f32::max);
+    if legs > middle + EDGE_RISE { legs } else { middle }
 }
 
 /// The dry ground a body at `pos` would stand on — the highest within a step
@@ -1168,11 +1218,22 @@ fn resolve_player_solids(pos: &mut Vec3, solids: &[(Vec3, Collider)], island: &I
         }
     }
     // Whatever on the island stands higher than a step above the feet: the
-    // shore, seen from the water, and fences and trunks from anywhere.
-    let body = (pos.y + LAND_STEP_UP, pos.y + PLAYER_HEIGHT);
-    for (low, high) in island.walls(pos.xz(), PLAYER_RADIUS, body.0, body.1) {
-        let (min, max) = (Vec3::new(low.x, 0.0, low.y), Vec3::new(high.x, 0.0, high.y));
-        resolve_circle_aabb(pos, PLAYER_RADIUS, min, max);
+    // shore, seen from the water, and fences and trunks from anywhere. Up to
+    // the hips only the legs meet it, and from there up the body and arms
+    // too: standing on the fountain's middle bowl, the top bowl is at the
+    // thighs, clear of the legs, where the whole width of the body would have
+    // been shoved off it. The hips are rounded off, half way between the two,
+    // so that a body coming down just past an edge is eased off it rather
+    // than shoved all at once as the edge reaches its waist.
+    let feet = pos.y;
+    let shape = [
+        (LEG_RADIUS, feet + LAND_STEP_UP, feet + HIP_HEIGHT),
+        ((LEG_RADIUS + PLAYER_RADIUS) * 0.5, feet + HIP_HEIGHT, feet + WAIST_HEIGHT),
+        (PLAYER_RADIUS, feet + WAIST_HEIGHT, feet + PLAYER_HEIGHT),
+    ];
+    for (min, max, radius) in island.walls_round(pos.xz(), &shape) {
+        let (min, max) = (Vec3::new(min.x, 0.0, min.y), Vec3::new(max.x, 0.0, max.y));
+        resolve_circle_aabb(pos, radius, min, max);
     }
     pos.x = pos.x.clamp(-OCEAN_LIMIT, OCEAN_LIMIT);
     pos.z = pos.z.clamp(-OCEAN_LIMIT, OCEAN_LIMIT);
@@ -1401,7 +1462,39 @@ pub(crate) fn move_bodies(
         // that someone standing still is not taken for someone who moved,
         // which would have their whole skeleton placed again every frame.
         let mut transform = *body;
+        let motion = Motion {
+            island,
+            solids: &solids,
+            stays_ashore,
+            dt,
+            elapsed,
+        };
+        motion.step(&mut transform, &mut jump, intent);
+        body.set_if_neq(transform);
+    }
+}
 
+/// What one body's own motion over a frame depends on, besides the body.
+struct Motion<'a> {
+    island: &'a Island,
+    /// Everyone and everything else on the island to bump into.
+    solids: &'a [(Vec3, Collider)],
+    stays_ashore: bool,
+    dt: f32,
+    /// The game's time, which the sea bobs by.
+    elapsed: f32,
+}
+
+impl Motion<'_> {
+    /// Walks, jumps and drops `transform`, as `intent` asks, for one frame.
+    fn step(&self, transform: &mut Transform, jump: &mut PlayerJump, intent: &Intent) {
+        let Motion {
+            island,
+            solids,
+            stays_ashore,
+            dt,
+            elapsed,
+        } = *self;
         let support_y = support(island, transform.translation, elapsed);
         let grounded = transform.translation.y <= support_y + WATER_JUMP_SLOP;
         let slowed = wading(transform.translation);
@@ -1419,8 +1512,8 @@ pub(crate) fn move_bodies(
             let steps = (distance / island::LATTICE).ceil().max(1.0);
             for _ in 0..steps as u32 {
                 let from = transform.translation;
-                apply_planar_move(&mut transform, intent.walk, distance / steps, dt / steps);
-                resolve_player_solids(&mut transform.translation, &solids, island);
+                apply_planar_move(transform, intent.walk, distance / steps, dt / steps);
+                resolve_player_solids(&mut transform.translation, solids, island);
                 if stays_ashore && strands(island, from, transform.translation) {
                     transform.translation = from;
                     break;
@@ -1476,8 +1569,7 @@ pub(crate) fn move_bodies(
         }
         // Only once the feet have settled, so that the ground they are about to
         // land on does not first read as a wall at the height of their shins.
-        resolve_player_solids(&mut transform.translation, &solids, island);
-        body.set_if_neq(transform);
+        resolve_player_solids(&mut transform.translation, solids, island);
     }
 }
 
@@ -2099,5 +2191,112 @@ mod ground_tests {
             Vec3::new(7.5, 0.0, 0.0),
             Vec3::new(9.0, 0.0, 0.0)
         ));
+    }
+}
+
+#[cfg(test)]
+mod body_tests {
+    use super::camera_tests::island;
+    use super::*;
+
+    const DT: f32 = 1.0 / 120.0;
+
+    /// A body on `island` for `frames` frames, from `at`, walking `walk` and
+    /// jumping on frame `jump_on`: where it is after each.
+    fn frames(island: &Island, at: Vec3, walk: Vec3, jump_on: Option<usize>, frames: usize) -> Vec<Vec3> {
+        let mut transform = Transform::from_translation(at);
+        let mut jump = PlayerJump::default();
+        (0..frames)
+            .map(|frame| {
+                let motion = Motion {
+                    island,
+                    solids: &[],
+                    stays_ashore: false,
+                    dt: DT,
+                    elapsed: frame as f32 * DT,
+                };
+                let intent = Intent {
+                    walk,
+                    jump: jump_on == Some(frame),
+                };
+                motion.step(&mut transform, &mut jump, &intent);
+                transform.translation
+            })
+            .collect()
+    }
+
+    /// The furthest a body went sideways in one frame.
+    fn biggest_shove(path: &[Vec3]) -> f32 {
+        path.windows(2)
+            .map(|pair| pair[0].xz().distance(pair[1].xz()))
+            .fold(0.0, f32::max)
+    }
+
+    const GROUND: (Vec3, Vec3) = (Vec3::new(-20.0, -2.0, -20.0), Vec3::new(20.0, 0.0, 20.0));
+    /// A block a metre high, its near edge at x = 1.
+    const BLOCK: (Vec3, Vec3) = (Vec3::new(1.0, -0.1, -3.0), Vec3::new(3.0, 1.0, 3.0));
+
+    #[test]
+    fn coming_down_with_the_legs_on_an_edge_stands_on_it() {
+        let island = island(&[GROUND, BLOCK]);
+        // The middle of the body 0.15 m short of the edge, the legs over it.
+        let path = frames(&island, Vec3::new(0.85, 2.0, 0.0), Vec3::ZERO, None, 120);
+        let end = *path.last().unwrap();
+        assert!((end.y - 1.0).abs() < 1e-4, "came down at {end}, not on the block");
+        assert!(biggest_shove(&path) < 1e-4, "shoved {} sideways", biggest_shove(&path));
+    }
+
+    #[test]
+    fn jumping_onto_a_ledge_from_beside_it_lands_on_it() {
+        // A long one, so that a second of running stays on it.
+        let island = island(&[GROUND, (BLOCK.0, BLOCK.1.with_x(15.0))]);
+        // Running at the block and jumping just short of it.
+        let path = frames(&island, Vec3::new(0.2, 0.0, 0.0), Vec3::X, Some(1), 120);
+        let end = *path.last().unwrap();
+        assert!((end.y - 1.0).abs() < 1e-4, "ended at {end}, not on the block");
+        // Never pushed back the way it came.
+        for pair in path.windows(2) {
+            assert!(pair[1].x >= pair[0].x - 1e-4, "pushed back from {} to {}", pair[0], pair[1]);
+        }
+    }
+
+    #[test]
+    fn standing_on_a_slope_is_not_standing_on_an_edge() {
+        // The bridge's slope, 15°, the steepest ground there is: the feet are
+        // on the ground under the middle of them, not on the ground uphill.
+        let rise = 15f32.to_radians().tan();
+        let corner = |x: f32, z: f32| Vec3::new(x, x * rise, z);
+        let ramp = Island::new_for_tests(&[
+            [corner(-5.0, -5.0), corner(-5.0, 5.0), corner(5.0, 5.0)],
+            [corner(-5.0, -5.0), corner(5.0, 5.0), corner(5.0, -5.0)],
+        ]);
+        let feet = support(&ramp, Vec3::new(1.0, rise, 0.0), 0.0);
+        assert!((feet - rise).abs() < 1e-4, "{feet} on the slope at {rise}");
+    }
+
+    /// The fountain across its middle, as boxes: the floor of the basin, the
+    /// stem, the middle bowl to 0.736 m out and 0.94 m up, and over it the top
+    /// bowl, to 0.491 m out, 1.15 to 1.45 m up.
+    fn fountain() -> Island {
+        let v = Vec3::new;
+        island(&[
+            (v(-3.0, -1.0, -3.0), v(3.0, 0.05, 3.0)),
+            (v(-0.1, 0.05, -3.0), v(0.1, 1.8, 3.0)),
+            (v(-0.736, 0.83, -3.0), v(0.736, 0.94, 3.0)),
+            (v(-0.491, 1.15, -3.0), v(0.491, 1.45, 3.0)),
+        ])
+    }
+
+    #[test]
+    fn the_middle_bowl_of_the_fountain_can_be_stood_on() {
+        let fountain = fountain();
+        // Down onto it from a jump, with the legs over its brim and clear of
+        // the top bowl over it.
+        for x in [0.72, 0.8, 0.9] {
+            let path = frames(&fountain, Vec3::new(x, 2.5, 0.0), Vec3::ZERO, None, 180);
+            let end = *path.last().unwrap();
+            assert!((end.y - 0.94).abs() < 1e-4, "from {x}: ended at {end}, not on the middle bowl");
+            assert!(biggest_shove(&path) < 0.12, "from {x}: shoved {}", biggest_shove(&path));
+        }
     }
 }

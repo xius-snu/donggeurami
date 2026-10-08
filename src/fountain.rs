@@ -204,11 +204,12 @@ impl Fountain {
         (falls, foams)
     }
 
-    /// Whether a body with its feet at `feet` stands in the top bowl, or on
-    /// the spout over it, where the jet comes up.
+    /// Whether a body with its feet at `feet` stands in the top bowl, on its
+    /// brim, on the edge of it with its legs, or on the spout over it: where
+    /// the jet comes up.
     fn in_the_jet(&self, feet: Vec3) -> bool {
         let top = &self.pools[0];
-        let reach = top.brim.map_or(top.radius, |brim| brim.radius);
+        let reach = top.brim.map_or(top.radius, |brim| brim.radius) + crate::LEG_RADIUS;
         let from = feet - self.at;
         from.xz().length() <= reach && (top.height - 0.15..=self.tip + 0.3).contains(&from.y)
     }
@@ -820,12 +821,14 @@ mod tests {
         let at = Vec3::new(3.0, 0.2, -1.0);
         let fountain = town(at);
         let feet = |x: f32, y: f32, z: f32| at + Vec3::new(x, y, z);
-        // Standing in the top bowl, on its brim, and on the spout.
+        // Standing in the top bowl, on its brim, on its edge with the legs,
+        // and on the spout.
         assert!(fountain.in_the_jet(feet(0.15, 1.40, 0.1)));
         assert!(fountain.in_the_jet(feet(0.0, 1.45, -0.45)));
+        assert!(fountain.in_the_jet(feet(0.6, 1.45, 0.0)));
         assert!(fountain.in_the_jet(feet(0.02, 1.80, 0.0)));
-        // Off its edge, in the bowl under it, in the basin, and high over it.
-        assert!(!fountain.in_the_jet(feet(0.55, 1.45, 0.0)));
+        // Past its edge, in the bowl under it, in the basin, and high over it.
+        assert!(!fountain.in_the_jet(feet(0.75, 1.45, 0.0)));
         assert!(!fountain.in_the_jet(feet(0.0, 0.85, 0.6)));
         assert!(!fountain.in_the_jet(feet(1.2, 0.05, 0.0)));
         assert!(!fountain.in_the_jet(feet(0.1, 3.0, 0.0)));

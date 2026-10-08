@@ -447,6 +447,59 @@ impl Island {
             .map(|corner| (corner, corner + LATTICE))
     }
 
+    /// The squares of the lattice round a body at `centre` that something on
+    /// the island fills where the body is, as their lowest and highest
+    /// corners and how far out from its middle the body reaches there.
+    /// `shape` is the body, up from its feet: a radius over each band of
+    /// heights, in the world. A square filled in more than one band comes
+    /// once, with the widest of them; one no band reaches is not looked at.
+    /// A body kept that far out of each square is clear of the island.
+    ///
+    /// Each square is looked down through once, whatever the bands: beside
+    /// the fountain's tower that is a couple of thousand triangles a look.
+    pub(crate) fn walls_round(
+        &self,
+        centre: Vec2,
+        shape: &[(f32, f32, f32)],
+    ) -> Vec<(Vec2, Vec2, f32)> {
+        let widest = shape.iter().map(|&(radius, ..)| radius).fold(0.0, f32::max);
+        let first = ((centre - widest) / LATTICE).floor().as_ivec2();
+        let last = ((centre + widest) / LATTICE).floor().as_ivec2();
+        let mut walls = Vec::new();
+        let mut column = Vec::new();
+        for row in first.y..=last.y {
+            for across in first.x..=last.x {
+                let low = IVec2::new(across, row).as_vec2() * LATTICE;
+                let high = low + LATTICE;
+                // How near the body comes to the square: a band no wider than
+                // that never meets it.
+                let near = centre.distance(centre.clamp(low, high));
+                if near >= widest {
+                    continue;
+                }
+                column.clear();
+                column.extend(
+                    self.crossings(low + LATTICE * 0.5)
+                        .map(|(y, tri)| (tri.part, y, tri.faces_up())),
+                );
+                tidy(&mut column);
+                let reach = shape
+                    .iter()
+                    .filter(|&&(radius, bottom, top)| {
+                        radius > near
+                            && (column.iter().any(|&(_, y, _)| y > bottom && y < top)
+                                || self.buried(&column, bottom, top))
+                    })
+                    .map(|&(radius, ..)| radius)
+                    .reduce(f32::max);
+                if let Some(radius) = reach {
+                    walls.push((low, high, radius));
+                }
+            }
+        }
+        walls
+    }
+
     /// Whether something at `at` fills any of the heights between `low` and
     /// `high`.
     pub(crate) fn blocked(&self, at: Vec2, low: f32, high: f32) -> bool {
@@ -457,22 +510,25 @@ impl Island {
             }
             crossings.push((tri.part, y, tri.faces_up()));
         }
-        // Nothing passes through the band, but it can still be buried inside
-        // something, like the middle of a trunk. Count the surfaces on either
-        // side of it: from above a top is a way in and a bottom a way out, and
-        // from below the other way round. For a closed shape the two agree; a
-        // shape left open at one end, like a trunk with no lid where it meets
-        // its branches, still shows up from the other.
+        tidy(&mut crossings);
+        self.buried(&crossings, low, high)
+    }
+
+    /// Whether the band between `low` and `high`, which none of the surfaces
+    /// a vertical line crosses (`crossings`, tidied) passes through, is buried
+    /// inside something all the same, like the middle of a trunk.
+    fn buried(&self, crossings: &[(u32, f32, bool)], low: f32, high: f32) -> bool {
+        // Count the surfaces on either side of it: from above a top is a way
+        // in and a bottom a way out, and from below the other way round. For a
+        // closed shape the two agree; a shape left open at one end, like a
+        // trunk with no lid where it meets its branches, still shows up from
+        // the other.
         //
         // Each part is counted on its own, and only if it reaches the band's
         // heights. A part that is not closed, like a blanket that is only a
         // sheet, would otherwise throw out the count for all that stands over
         // or under it: a bed upstairs filled the room under it, and a chair
         // downstairs the floor over it, with invisible walls.
-        crossings.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.total_cmp(&b.1)));
-        crossings.dedup_by(|next, kept| {
-            next.0 == kept.0 && next.2 == kept.2 && next.1 - kept.1 < SEAM
-        });
         let middle = (low + high) * 0.5;
         crossings
             .chunk_by(|a, b| a.0 == b.0)
@@ -528,6 +584,14 @@ impl Island {
     pub(crate) fn room_for(&self, at: Vec3, radius: f32) -> bool {
         !self.faces.touch(at, radius) && !self.blocked(at.xz(), at.y, at.y)
     }
+}
+
+/// Puts what a vertical line crosses in order, part by part and up each part,
+/// with a surface met twice, on the seam between two of its triangles, kept
+/// once.
+fn tidy(crossings: &mut Vec<(u32, f32, bool)>) {
+    crossings.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.total_cmp(&b.1)));
+    crossings.dedup_by(|next, kept| next.0 == kept.0 && next.2 == kept.2 && next.1 - kept.1 < SEAM);
 }
 
 /// How many faces are left in a box before it is split no further.
@@ -1036,6 +1100,55 @@ mod sweep_tests {
         // And the vertical questions still see the top and the walls.
         assert_eq!(island.floor(Vec2::ZERO, 3.0), Some(2.0));
         assert!(island.walls(Vec2::new(1.2, 0.0), 0.45, 0.75, 1.6).next().is_some());
+    }
+
+    #[test]
+    fn walls_round_a_body_are_the_walls_of_each_of_its_bands() {
+        // A scatter of blocks, and a body of three widths at three heights
+        // stood about among them: each square comes with the widest band it
+        // fills that reaches it, exactly the squares each band's own `walls`
+        // has there.
+        let mut seed = 11u32;
+        let mut next = move || {
+            seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            (seed >> 8) as f32 / 16_777_216.0
+        };
+        let mut corners = Vec::new();
+        for _ in 0..60 {
+            let low = Vec3::new(next() * 20.0 - 10.0, next() * 2.0, next() * 20.0 - 10.0);
+            let size = Vec3::new(next(), next(), next()) * 2.0 + 0.1;
+            for tri in cube() {
+                corners.push(tri.map(|corner| low + (corner + 1.0) * 0.5 * size));
+            }
+        }
+        let island = Island::new(&corners);
+        for _ in 0..300 {
+            let centre = Vec2::new(next() * 20.0 - 10.0, next() * 20.0 - 10.0);
+            let feet = next() * 2.0;
+            let shape = [
+                (0.21, feet + 0.495, feet + 0.65),
+                (0.33, feet + 0.65, feet + 0.8),
+                (0.45, feet + 0.8, feet + 1.6),
+            ];
+            let round = island.walls_round(centre, &shape);
+            for &(radius, low, high) in &shape {
+                let reaching = |square: (Vec2, Vec2)| {
+                    centre.distance(centre.clamp(square.0, square.1)) < radius
+                };
+                let each: Vec<(Vec2, Vec2)> =
+                    island.walls(centre, radius, low, high).filter(|&s| reaching(s)).collect();
+                for square in &each {
+                    assert!(
+                        round.iter().any(|&(a, b, r)| (a, b) == *square && r >= radius),
+                        "{square:?} of the band {low}..{high} is not in {round:?}"
+                    );
+                }
+            }
+            for &(a, b, radius) in &round {
+                let (_, low, high) = *shape.iter().find(|band| band.0 == radius).unwrap();
+                assert!(island.walls(centre, radius, low, high).any(|s| s == (a, b)), "{a} {b}");
+            }
+        }
     }
 
     #[test]
