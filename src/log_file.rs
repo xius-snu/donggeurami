@@ -80,7 +80,8 @@ mod tests {
             custom_layer: in_documents,
             ..default()
         };
-        assert_eq!(plugin.custom_layer as usize, in_documents as usize);
+        let ours: fn(&mut App) -> Option<BoxedLayer> = in_documents;
+        assert!(std::ptr::fn_addr_eq(plugin.custom_layer, ours));
     }
 
     #[test]
