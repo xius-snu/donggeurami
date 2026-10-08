@@ -25,6 +25,17 @@ tested on the actual phone, and what not to try again. The short version:
 - **Test on the device, don't infer from the engine source.** The adb
   build-install-screenshot loop is in `RENDERING.md` and takes about ten seconds
   per cycle.
+- **Lights are sorted into clusters on the CPU, on every platform**
+  (`cluster_lights_on_the_cpu` in `src/lib.rs`, since 2026-10-08). Bevy 0.19
+  does it on the GPU everywhere but Android and the iOS simulator, so a real
+  iPhone was the one place running that path, and 1.0.1 sat on a black
+  screen there: its render thread died on the first frame (`RENDERING.md`).
+  The world has no light to cluster, so it costs nothing either way.
+- **The town's fountain has a material and a shader of its own**
+  (`src/fountain.rs`, `src/fountain.wgsl`): see-through running water whose
+  streaks the GPU moves by the frame's time. It is the one custom shader;
+  Bevy compiles it on each platform like its own, built into the binary
+  rather than loaded from `assets/`.
 
 ## It aims for 120 frames a second on Windows and Android
 
@@ -99,11 +110,26 @@ what the game loads: whatever `mobile/android/app/assets-left-out.txt` names
 stays out (Blender files, reference pictures, retired models), and
 `cargo test` fails if that would leave out a piece the shop sells.
 
+The app icon, on both phones, is Hajun's picture `mobile/appiconroundtown.png`
+(since 2026-10-08). `mobile/make_icons.ps1` makes the iOS icon and Android's
+adaptive icon from it; run it again after changing the picture.
+
 iOS cannot be built on Windows at all — it needs macOS. `codemagic.yaml` rents
 one per build and ships the result to TestFlight. **Read `IOS.md` before
 touching anything under `mobile/ios`**; it covers the Apple-side setup, why the
 `.xcodeproj` is generated rather than committed, and what breaks if the shell
-scripts are checked out with CRLF line endings.
+scripts are checked out with CRLF line endings. A TestFlight build is made by
+pushing a tag, `ios-<version>`, after bumping `CFBundleShortVersionString`
+in `mobile/ios/Info.plist`; the build number is Codemagic's own. Code behind
+`target_os = "ios"` cannot even be type-checked here (`ring` wants Apple's
+SDK), so keep it to call sites and put the logic in code every platform
+compiles and tests, as `log_file` and `map::kept_in_library` do.
+
+**An iPhone writes its own log** (`src/log_file.rs`, since 1.0.2): `log.txt`
+in the app's Documents, which the Files app shows under On My iPhone >
+Donggeurami Town. Everything Bevy logged in the last launch, and any panic
+with its thread. iOS keeps the app's real log where only a Mac can read it,
+so this is how a black screen says why.
 
 ## Models
 
@@ -250,7 +276,14 @@ re-export, and the collision follows.
   in Blender, and leaves it out of collision, so players stand on the bottom,
   not the surface. The fountain's is 0.45 m up, over a floor at 0.05 and under
   a rim at 0.55: from inside, the rim looks a hand's width over the water, but
-  it is half a metre over your feet.
+  it is half a metre over your feet. Since 2026-10-08 (Hajun asked for water
+  in the "second and third smaller circle" too) the tower's two bowls hold
+  water as well, `Water_fountain_water_middle` at 0.915 m and
+  `Water_fountain_water_top` at 1.44 m, each 1 cm under its brim, with the
+  tower's own 32 corners so its edge lies on the bowl's wall. They were added
+  to `circlemap1.blend` by script and exported with the exporter's defaults,
+  which reproduce Hajun's export of the town byte for byte (checked first);
+  nothing else in the file changed.
 - **`circlemap1.glb` had a stray `Icosphere` in it** (found 2026-09-30): 2 m
   across, with no material, at the middle of the fountain, read as land, so
   that it bulged out round the foot of the tower. It is not in Hajun's exports
@@ -304,21 +337,64 @@ re-export, and the collision follows.
   objects from the town save below, and House Builder's pieces while you
   build, can be edited.
 
+## The fountain runs
+
+Water wells out of the top of the fountain's tower into its top bowl, spills
+over each bowl's brim into the one below and into the basin, with foam where
+it lands; and every 8 s a jet shoots 4.5 m up out of the top, for a second and
+a half (`src/fountain.rs`; Hajun, 2026-10-08).
+
+- **Stand in the top bowl when the jet comes up and it throws you** as high as
+  it goes, 4.5 m over the bowl (`throw`, which sets your jump's speed: it is a
+  jump, as far as everything else is concerned). Getting up there takes a
+  running jump from the basin's rim or floor: the lower bowl cannot be stood
+  on, as the top bowl is in its way at head height. Only while the jet goes
+  up and stays up, less time than a throw takes to come down, so nobody is
+  thrown twice by one jet. AIs never get up there.
+- **The jet goes by the clock** (`jet_phase`, the time since 1970 modulo 8 s),
+  not by the game's time, so every device's goes up together and everyone
+  online sees the same jet throw the same player. A throw is the thrower's
+  own device's, like a jump, and the server takes it as one: it rises little
+  faster than a jump, well inside the server's slack for one (`MOST_RISE`
+  and `BURST` in `server/src/players.rs`, which a test there keeps in step).
+- **Everything is read off the model** once the town has spawned
+  (`Fountain::read`): the tower, by its name `Water_fountain_tower`, for its
+  axis and its top; every piece of `water` on its axis for the pools; and for
+  each bowl, the widest the tower is within 12 cm of its water for the brim
+  the water spills over. Move or reshape the fountain in Blender, and the
+  water follows; take its water out, and nothing runs.
+- **The running water is see-through sheets turned round the axis** (`lathe`),
+  a few thousand triangles in eight draws, drawn with `FlowingWater`: unlit,
+  white streaks on pale blue, which the GPU moves along by the frame's time,
+  so nothing about them is written from one frame to the next. Only the jet's
+  two parts are, while it is up (`spout`). See-through things are drawn
+  furthest first by the middle of their bounds, which is why foam floats 6 mm
+  over its pool: so that it comes after it.
+
 ## The camera keeps out of the island
 
 The camera orbits you as you turn it (`OrbitCamera`), but never stands inside
-the island's shape or with any of it between the camera and you
-(`follow_camera` in `src/lib.rs`). While you build and rate houses in House
-Builder you can swap it for your own eyes (`FirstPerson`, below), turned by
-the same yaw and pitch, and then none of this applies.
+the island's shape, nor with any of it between the camera and you for longer
+than it takes to come in past it (`follow_camera` in `src/lib.rs`). While you
+build and rate houses in House Builder you can swap it for your own eyes
+(`FirstPerson`, below), turned by the same yaw and pitch, and then none of
+this applies.
 
 - **It always points exactly the way you turned it.** Walls and ceilings only
   change how far out it stands along that line: a ball 0.2 m in radius
   (`CAMERA_RADIUS`) is swept from the point on you it looks at out to where
-  you zoomed it, and the camera stands where the ball stops. It is pulled in
-  the moment something is in the way and eases back out once the way is clear
-  (`CameraFit`). Walk into a room with the camera up in the sky and it comes in
-  under the ceiling; walk out and it goes back up. The one other way it
+  you zoomed it, and the camera stands where the ball stops. It is swept in
+  when something comes in the way and eases back out once the way is clear
+  (`CameraFit`). Coming in, it stands behind what came between, in the open,
+  and never in it: should the sweep put it in or against it, it goes the rest
+  of the way in at once (`Island::room_for`). Turned past the end of a wall, it
+  is out of sight of you for about a quarter of a second, moving in at most
+  about a metre a frame, where it used to come all the way in in one frame
+  (Hajun found it jumping in front of them, 2026-10-08;
+  `CAMERA_PULL_IN_SECS`). Turned straight into a long wall, it still slides
+  in front of it as fast as the wall requires: lagging there would put it
+  inside the wall. Walk into a room with the camera up in the sky and it comes
+  down over the roof and in under the ceiling; walk out and it goes back up. The one other way it
   moves: brought in near you, it rises straight up toward your eyes
   (`toward_your_eyes`), a little from 1.2 m out of sight and all the way by
   the time you are out of sight, and never through a ceiling. Its turn is
@@ -351,9 +427,10 @@ the same yaw and pitch, and then none of this applies.
   camera passes through them; the trees modelled into the town are in it.
 - It is cheap: one sweep a frame, a few microseconds even round the fountain's
   2,400 triangles. `cargo test --lib` checks, frame by frame, that the camera
-  looks exactly the way you turned it, on that line, and clear of the walls,
-  turning into a wall at your back, round a room from its middle and its
-  corners, looking up, and walking in and out through the doorway.
+  looks exactly the way you turned it, on that line, clear of the walls, and
+  out of sight of you for no more than half a second at a time, turning into
+  a wall at your back, past the end of one, round a room from its middle and
+  its corners, looking up, and walking in and out through the doorway.
 - **A jump stops the head just under a ceiling** (`headroom`, in
   `move_bodies`). Before 2026-09-28 the head went into it at the top of the
   jump, the body's collision read the ceiling as a wall there, and anyone
@@ -402,8 +479,10 @@ tap-to-edit menu that writes to it.
   path. Bump `SAVE_VERSION` if that shape changes.
 - It lives outside the repo, so a rebuild never wipes a town:
   `%APPDATA%\donggeurami_town\town.json` on Windows, the app's internal
-  storage on Android, `Documents` in the sandbox on iOS. Delete it to start
-  over from `default_town`.
+  storage on Android, `Library/Application Support` in the sandbox on iOS
+  (`Documents` until 1.0.2, when the Files app was given Documents for the
+  log; what 1.0.1 left there is moved). Delete it to start over from
+  `default_town`.
 - **Editing only reaches the town, and only while you are in it.** Going home,
   or into a game, puts away whatever was being edited.
 - **Editing on desktop needs the cursor free — press `Escape`.** While it is

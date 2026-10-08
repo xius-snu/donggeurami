@@ -280,7 +280,17 @@ instead of guessing from a black screenshot.
 
 **Treat a clean simulator run as "it starts", not "it renders correctly."** The
 simulator's Metal is not the phone's Metal. `RENDERING.md` is a long argument
-for trusting hardware over inference, and it applies here too.
+for trusting hardware over inference, and it applies here too. Bevy itself
+takes different paths on the two: GPU light clustering, and cube-array shadow
+maps, only on a device.
+
+**On the phone itself, the game keeps a log you can read** (since 1.0.2,
+`src/log_file.rs`): `log.txt` in its Documents, which the Files app shows
+under On My iPhone -> Donggeurami Town (`UIFileSharingEnabled` in
+`Info.plist`). It is the last launch's log, from the GPU Bevy found to every
+warning, and any panic with the thread it happened on; share it from Files.
+Nothing else is in Documents: the town save and the device's secret are in
+Library.
 
 Still to fill in by hand, in App Store Connect:
 
@@ -311,7 +321,8 @@ review is typically 24–48 hours.
 | `ITMS-91053: Missing API declaration` | A required-reason API Apple found in the binary is missing from `PrivacyInfo.xcprivacy`. The mail names the category; add it with the matching reason code. `NSPrivacyAccessedAPICategoryUserDefaults` / `CA92.1` is the likely next one. |
 | `90474` ... `you need to include all of the ... orientations to support iPad multitasking` | `UIRequiresFullScreen` came out of `Info.plist`. A landscape-only iPad app has to opt out of multitasking with it. From the iOS 27 SDK on it no longer opts out (TN3192), and the iPad has to take every orientation. |
 | Build stuck in *Processing* | Normal. 5–30 minutes. |
-| Runs in the simulator, dies on the phone | The hard case, because reading device logs normally needs a Mac. Without one: App Store Connect -> TestFlight -> **Crashes**. |
+| Runs in the simulator, dies on the phone | The hard case, because reading device logs normally needs a Mac. Without one: App Store Connect -> TestFlight -> **Crashes**, and since 1.0.2 the game's own `log.txt`, below. |
+| Opens on a black screen and stays open | A panic on the render thread: Bevy asks to quit, iOS refuses, and the app stops with nothing drawn. 1.0.1 did this on Hajun's iPhone (2026-10-08); the suspect, GPU light clustering, which Bevy runs only on a real device, is off since 1.0.2 (`RENDERING.md`). A login with no join in the server's log is this. Open **Files -> On My iPhone -> Donggeurami Town -> `log.txt`**: the last launch's log, with any panic and the thread it was on. |
 
 ---
 

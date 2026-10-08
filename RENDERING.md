@@ -246,6 +246,34 @@ Also found: asking Android for the 1080×2340 display mode through
 
 ---
 
+## Lights are clustered on the CPU everywhere (2026-10-08)
+
+Bevy 0.19 sorts point lights, spot lights, probes and decals into the cells of
+each view, and on most GPUs it does that on the GPU: compute passes, and a
+raster pass whose fragment shader adds to storage buffers with atomics, with
+readbacks to grow its lists. `make_global_cluster_settings` in
+`bevy_pbr/src/cluster/mod.rs` turns that path off on Android and in the iOS
+simulator (`target_abi = "sim"`), and on nowhere else, so a real iPhone was
+the one device it ran on that had never been seen working.
+
+iOS 1.0.1 opened on a black screen and stayed there. With no Mac there was no
+device log, but the server had one: the iPhone made its account at the login
+(a thread of its own, started on the first frame) and never joined the game,
+which the main loop does a moment later. That is what a render thread that
+dies on its first frame does in Bevy 0.19: `renderer_extract` finds it gone
+and asks the app to quit, winit ignores that on iOS ("`ControlFlow::Exit`
+ignored on iOS"), and the app stops updating, still open, with nothing drawn.
+
+So `cluster_lights_on_the_cpu` in `src/lib.rs` sets `gpu_clustering` to
+`None` at startup (Bevy's own switch, on `GlobalClusterSettings`), on every
+platform: the world has no light to cluster, only the sun and the fill,
+which are directional, so it costs nothing, and every platform now takes the
+path Android always has. It is the suspect, not a proven cause: if an iPhone
+still comes up black, its `log.txt` (Files app, `src/log_file.rs`) has the
+panic, if there is one.
+
+---
+
 ## Mirrors: tried and taken out (2026-10-02)
 
 A reflecting mirror was built and worked on desktop: a second camera behind
