@@ -319,6 +319,24 @@ re-export, and the collision follows.
   tops, like the bookshelf's rows). An AI cannot jump, so it never steps
   down anything it could not step back up (`strands`, and the walks it
   picks in `ai::dry_all_the_way`): it keeps out of the fountain's basin.
+- **A body is the shape of the model** (since 2026-10-08): its legs, 0.42 m
+  across (`LEG_RADIUS`), up to its hips at 0.65 m, then rounded out to its
+  body and arms, 0.9 m across (`PLAYER_RADIUS`), from 0.8 m up to its head
+  (`resolve_player_solids`, through `Island::walls_round`, which looks down
+  each square of the lattice once for all three widths). Until then it was
+  the full width from half a metre up, and the fountain's middle bowl could
+  not be stood on: the top bowl, at the thighs of anyone on it, shoved them
+  off into the basin.
+- **A body stands on whatever is under its legs** (`support`): the ground
+  under its middle, unless the ground under its legs, round that, is higher
+  by more than a slope makes it (`EDGE_RISE`, 0.15 m), and then it is
+  standing on an edge. Until 2026-10-08 only the middle counted: coming down
+  with the legs on an edge and the middle just past it, a body sank past
+  the edge, half into it, and was shoved out sideways once it reached its
+  knees (Hajun: it "glitch steps", "any time" onto an edge). Missing an
+  edge by more than the legs, the wider body above them is still eased off
+  it, 0.12 m at most in a frame. Standing on the ground under its middle,
+  as it nearly always is, a body does not look under its legs at all.
 - **A solid has to be a closed shape.** Bodies are tested by dropping a
   vertical line through every triangle (`Island::blocked`), and where the
   surfaces it meets do not add up, the space is taken for the inside of
@@ -341,22 +359,27 @@ re-export, and the collision follows.
 
 Water wells out of the top of the fountain's tower into its top bowl, spills
 over each bowl's brim into the one below and into the basin, with foam where
-it lands; and every 8 s a jet shoots 4.5 m up out of the top, for a second and
+it lands; and every 8 s a jet shoots 6 m up out of the top, for a second and
 a half (`src/fountain.rs`; Hajun, 2026-10-08).
 
-- **Stand in the top bowl when the jet comes up and it throws you** as high as
-  it goes, 4.5 m over the bowl (`throw`, which sets your jump's speed: it is a
-  jump, as far as everything else is concerned). Getting up there takes a
-  running jump from the basin's rim or floor: the lower bowl cannot be stood
-  on, as the top bowl is in its way at head height. Only while the jet goes
-  up and stays up, less time than a throw takes to come down, so nobody is
-  thrown twice by one jet. AIs never get up there.
+- **Stand in the top bowl when the jet comes up and it throws you** 9 m up
+  over the bowl, out of the top of the jet (`THROW_HEIGHT`; Hajun asked for
+  more than the jet's own 4.5 m it was at first), with `throw`, which sets
+  your jump's speed: it is a jump, as far as everything else is concerned,
+  and so does standing on its
+  brim or on its edge with the legs. Getting up there takes a running jump
+  from the basin's rim, or one from the middle bowl, which can be stood on
+  between 0.7 and 0.95 m out from the middle: any nearer and the legs are on
+  the top bowl's rim, and stand there. Only while the jet goes up and stays
+  up, less time than a throw takes to come down, so nobody is thrown twice
+  by one jet. AIs never get up there.
 - **The jet goes by the clock** (`jet_phase`, the time since 1970 modulo 8 s),
   not by the game's time, so every device's goes up together and everyone
   online sees the same jet throw the same player. A throw is the thrower's
-  own device's, like a jump, and the server takes it as one: it rises little
-  faster than a jump, well inside the server's slack for one (`MOST_RISE`
-  and `BURST` in `server/src/players.rs`, which a test there keeps in step).
+  own device's, like a jump, and the server takes it as one: it rises over
+  twice as fast as a jump, inside the server's slack for one, which allows
+  a throw up to about 13 m (`MOST_RISE` and `BURST` in
+  `server/src/players.rs`, which a test there keeps in step).
 - **Everything is read off the model** once the town has spawned
   (`Fountain::read`): the tower, by its name `Water_fountain_tower`, for its
   axis and its top; every piece of `water` on its axis for the pools; and for
@@ -365,8 +388,12 @@ a half (`src/fountain.rs`; Hajun, 2026-10-08).
   water follows; take its water out, and nothing runs.
 - **The running water is see-through sheets turned round the axis** (`lathe`),
   a few thousand triangles in eight draws, drawn with `FlowingWater`: unlit,
-  white streaks on pale blue, which the GPU moves along by the frame's time,
-  so nothing about them is written from one frame to the next. Only the jet's
+  a few broad, soft white streaks on pale blue, a gentle swell passing down
+  each, which the GPU moves along by the frame's time, so nothing about them
+  is written from one frame to the next. A sheet has as many streaks as fit
+  round it 0.28 m apart (`STREAK`; the foam's patches 0.45 m): until Hajun
+  found them "tooooo detailed" for the rest of the town (2026-10-08), every
+  sheet had 40 fine ones, and the foam was a ring of dots. Only the jet's
   two parts are, while it is up (`spout`). See-through things are drawn
   furthest first by the middle of their bounds, which is why foam floats 6 mm
   over its pool: so that it comes after it.
