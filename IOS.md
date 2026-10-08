@@ -149,18 +149,36 @@ upload at the end fails — there is nowhere to put it.
 
 1. **Connect the repository** and add it as a new app. Codemagic finds
    `codemagic.yaml` at the repo root by itself; there is nothing to configure
-   in the UI. The team's existing Developer Portal integration applies
-   automatically — apps do not each get their own.
+   in the UI. The Developer Portal integration of the account the app is in
+   (your personal account, or a team) applies automatically — apps do not
+   each get their own, but an app sees only its own account's keys.
 2. **Match the key name.** `integrations.app_store_connect` in
-   `codemagic.yaml` is a lookup by *name* into **Team settings** ->
+   `codemagic.yaml` is a lookup by *name* into that account's settings ->
    **Integrations** -> **Developer Portal** -> **Manage keys**. It is the name,
    not the Key ID. Getting this wrong fails the build immediately, before any
-   compiling, which at least makes it cheap to discover.
+   compiling, which at least makes it cheap to discover:
 
-   Here the key is named **`codemagicflutter`** — inherited from the Flutter
-   app this account already ships, since the integration is team-level. The
-   name has nothing to do with this project and is not a mistake to correct;
-   renaming the key in Codemagic would break the other app.
+   ```
+   App Store Connect integration "codemagicflutter" does not exist
+   ```
+
+   Here the key is named **`xius`** (Key ID `V7LWVPD7Z9`). Until 2026-10-08
+   the file said `codemagicflutter`, a name taken for the Flutter app's key on
+   the belief that the integration was shared; the app's account has no key
+   by that name, and the 1.0.1 build stopped on the line above. Renaming a
+   key in Codemagic would break any other app that names it.
+3. **Add the signing secret.** In the app's settings -> **Environment
+   variables**: name `CERTIFICATE_PRIVATE_KEY`, group `code-signing`,
+   **Secret** ticked, and as the value the whole of a private key made once
+   with
+
+   ```
+   ssh-keygen -t rsa -b 2048 -m PEM -f ios_distribution_private_key -q -N ""
+   ```
+
+   BEGIN and END lines included. The first build mints an Apple Distribution
+   certificate from it and later builds reuse that one. Keep the file: a new
+   key means another certificate, and Apple allows three.
 
 ---
 
