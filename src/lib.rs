@@ -511,9 +511,6 @@ pub fn main() {
         ),
     );
 
-    #[cfg(target_os = "ios")]
-    app.add_systems(Update, read_pinch_gesture);
-
     #[cfg(target_os = "android")]
     app.add_systems(PreUpdate, keep_ui_size);
 
@@ -606,10 +603,16 @@ fn window_settings() -> Window {
         mode: WindowMode::BorderlessFullscreen(MonitorSelection::Primary),
         #[cfg(any(target_os = "android", target_os = "ios"))]
         resizable: true,
-        #[cfg(target_os = "ios")]
-        recognize_pinch_gesture: true,
-        #[cfg(target_os = "ios")]
-        recognize_rotation_gesture: true,
+        // No pinch or rotation recognizers on iOS. A UIKit gesture recognizer
+        // cancels the touches it recognizes its gesture in (winit 0.30 leaves
+        // `cancelsTouchesInView` as UIKit has it, on), and two thumbs, one on
+        // the stick and one on the jump button or turning the camera, read as
+        // a pinch or a turn once either moves: the stick goes dead, mid-jump
+        // as like as not, until it is lifted and put down again. That is the
+        // likeliest reason a running jump onto the fountain fell short on the
+        // iPhone (Hajun, iOS 1.0.2 build 15), read off winit's source, not
+        // yet seen on the phone. A pinch zooms through `read_touch_controls`,
+        // as it always has on Android.
         #[cfg(target_os = "ios")]
         prefers_home_indicator_hidden: true,
         #[cfg(target_os = "ios")]
@@ -1003,17 +1006,6 @@ fn read_mouse_look(
     }
     for event in motion.read() {
         orbit.turn(event.delta, first_person.0);
-    }
-}
-
-#[cfg(target_os = "ios")]
-fn read_pinch_gesture(
-    first_person: Res<FirstPerson>,
-    mut pinch: MessageReader<bevy::input::gestures::PinchGesture>,
-    mut orbit: ResMut<OrbitCamera>,
-) {
-    for event in pinch.read() {
-        orbit.zoom_by_ratio((1.0 - event.0).clamp(0.7, 1.4), first_person.0);
     }
 }
 

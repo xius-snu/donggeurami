@@ -336,6 +336,13 @@ review is typically 24–48 hours.
 - **Do not add `#[cfg(target_os = "ios")]` to `src/sky.rs`.** One shared
   rendering path across all three platforms is the rule that made the APK
   correct. iOS does not get an exception.
+- **Do not turn on `recognize_pinch_gesture` or `recognize_rotation_gesture`**
+  in `window_settings`. A UIKit recognizer cancels the touches it recognizes
+  its gesture in, and a thumb on the stick with another on the jump button
+  reads as a pinch or a turn: the stick went dead until lifted, and a
+  running jump onto the fountain fell short (1.0.2 build 15; found in
+  winit's source, both off in the builds after it). Pinching zooms through
+  the game's own two-finger reading, as on Android.
 - **Do not commit the generated `.xcodeproj`.** It will drift from
   `project.yml`, and then nobody can tell which one is authoritative.
 - **Do not edit `CFBundleVersion` by hand.** CI overwrites it with the
