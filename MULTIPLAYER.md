@@ -642,7 +642,10 @@ a nightly backup, restored.
 - **Phase 3:** the server runs House Builder; devices follow it. Pieces go to
   the server as they are put down, and everyone builds everyone else's for
   the visits. The tap on the time skips only where the server allows it
-  (`RT_ALLOW_SKIP`, on on the VM for testing).
+  (`RT_ALLOW_SKIP`, on on the VM for testing). Since 2026-10-09 it also
+  pays every place its prize (Hajun's: +500 for first down to +0 for last),
+  each in a transaction like the fee, and ends a game 15 s after its
+  results come up.
 
 **Where it differs from the plan:**
 

@@ -82,6 +82,7 @@ pub(crate) fn plugin(app: &mut App, db: Option<String>) {
     app.insert_resource(bank)
         .add_message::<Loaded>()
         .add_message::<Charged>()
+        .add_message::<Credited>()
         .add_systems(PreUpdate, answers);
 }
 
@@ -114,6 +115,19 @@ impl Bank {
     pub(crate) fn charge(&self, id: u64, amount: u32, why: &'static str, game: Option<u32>) {
         if let Self::Database { jobs, .. } = self {
             let _ = jobs.send(Job::Charge {
+                id,
+                amount,
+                why,
+                game,
+            });
+        }
+    }
+
+    /// Gives the account `id` `amount` more, saying why; the answer comes as
+    /// [`Credited`].
+    pub(crate) fn credit(&self, id: u64, amount: u32, why: &'static str, game: Option<u32>) {
+        if let Self::Database { jobs, .. } = self {
+            let _ = jobs.send(Job::Credit {
                 id,
                 amount,
                 why,
@@ -156,9 +170,23 @@ pub(crate) struct Charged {
     pub left: Option<u32>,
 }
 
+/// What the account has now, or `None` if nothing could be given it: there is
+/// no such account any more, say.
+#[derive(Message)]
+pub(crate) struct Credited {
+    pub id: u64,
+    pub left: Option<u32>,
+}
+
 pub(crate) enum Job {
     Load(u64),
     Charge {
+        id: u64,
+        amount: u32,
+        why: &'static str,
+        game: Option<u32>,
+    },
+    Credit {
         id: u64,
         amount: u32,
         why: &'static str,
@@ -169,10 +197,16 @@ pub(crate) enum Job {
 pub(crate) enum Done {
     Loaded(Loaded),
     Charged(Charged),
+    Credited(Credited),
 }
 
 /// Passes on what the database's thread has answered.
-pub(crate) fn answers(bank: Res<Bank>, mut loaded: MessageWriter<Loaded>, mut charged: MessageWriter<Charged>) {
+pub(crate) fn answers(
+    bank: Res<Bank>,
+    mut loaded: MessageWriter<Loaded>,
+    mut charged: MessageWriter<Charged>,
+    mut credited: MessageWriter<Credited>,
+) {
     let Bank::Database { done, .. } = &*bank else {
         return;
     };
@@ -186,6 +220,9 @@ pub(crate) fn answers(bank: Res<Bank>, mut loaded: MessageWriter<Loaded>, mut ch
             }
             Done::Charged(answer) => {
                 charged.write(answer);
+            }
+            Done::Credited(answer) => {
+                credited.write(answer);
             }
         }
     }
@@ -230,10 +267,11 @@ fn work(url: &str, jobs: &Receiver<Job>, done: &Sender<Done>) {
                 }
             }
         }
-        // Given up: nothing loaded, and nothing taken.
+        // Given up: nothing loaded, nothing taken and nothing given.
         let answer = answer.unwrap_or(match job {
             Job::Load(id) => Done::Loaded(Loaded { id, record: None }),
             Job::Charge { id, .. } => Done::Charged(Charged { id, left: None }),
+            Job::Credit { id, .. } => Done::Credited(Credited { id, left: None }),
         });
         if done.send(answer).is_err() {
             return;
@@ -286,6 +324,32 @@ fn run(db: &mut Client, job: &Job) -> Result<Done, postgres::Error> {
             Ok(Done::Charged(Charged {
                 id,
                 left: Some(left.get::<_, i64>(0).clamp(0, i64::from(u32::MAX)) as u32),
+            }))
+        }
+        Job::Credit {
+            id,
+            amount,
+            why,
+            game,
+        } => {
+            // The coins and the line saying why change together, or not at
+            // all.
+            let mut transaction = db.transaction()?;
+            let now = transaction.query_opt(
+                "UPDATE players SET coins = coins + $2 WHERE id = $1 RETURNING coins",
+                &[&(id as i64), &i64::from(amount)],
+            )?;
+            let Some(now) = now else {
+                return Ok(Done::Credited(Credited { id, left: None }));
+            };
+            transaction.execute(
+                "INSERT INTO coin_changes (player, amount, reason, game) VALUES ($1, $2, $3, $4)",
+                &[&(id as i64), &i64::from(amount), &why, &game.map(i64::from)],
+            )?;
+            transaction.commit()?;
+            Ok(Done::Credited(Credited {
+                id,
+                left: Some(now.get::<_, i64>(0).clamp(0, i64::from(u32::MAX)) as u32),
             }))
         }
     }

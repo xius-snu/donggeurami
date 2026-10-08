@@ -4,9 +4,9 @@
 //! Each tag is a line of text laid out once, at the top left of the screen,
 //! and moved over its body's head without being laid out again, the way the
 //! House Builder's bubble is (`builder::place_bubble`). It is put away while
-//! its body is on another island, behind the camera, off the screen or
-//! further off than [`READ_RANGE`]. Offline the town is as it always was, and
-//! nobody has one.
+//! its body is on another island, behind the camera, off the screen, further
+//! off than [`READ_RANGE`] or under House Builder's results ([`HidesNames`]).
+//! Offline the town is as it always was, and nobody has one.
 //!
 //! The AIs this device runs in the town have one too: online they are
 //! players like anyone else.
@@ -40,6 +40,11 @@ const TAG_LAYER: i32 = -1;
 /// A name on the screen, and the body it is over.
 #[derive(Component)]
 struct Nametag(Entity);
+
+/// Something on the screen that no name is shown under: House Builder's
+/// results, which a name behind would show through, among their own names.
+#[derive(Component)]
+pub(crate) struct HidesNames;
 
 /// A body with its name over it.
 #[derive(Component)]
@@ -108,13 +113,15 @@ fn untag(
 }
 
 /// Keeps each name over its body's head, wherever the camera goes, and puts it
-/// away when it could not be read.
+/// away when it could not be read, or would be under something that hides
+/// names.
 fn place_tags(
     me: Query<(&Transform, &Venue), With<Player>>,
     cameras: Query<(&Camera, &Transform), With<ThirdPersonCamera>>,
     bodies: Query<(&Transform, &Venue), With<Tagged>>,
     windows: Query<&Window>,
     in_a_game: Res<OnlinePlot>,
+    hiding: Query<(&ComputedNode, &UiGlobalTransform, &InheritedVisibility), With<HidesNames>>,
     mut tags: Query<(&Nametag, &mut Visibility, &mut UiTransform, &ComputedNode)>,
 ) {
     let (Ok((you, &here)), Ok((camera, eye)), Ok(window)) =
@@ -130,6 +137,15 @@ fn place_tags(
     } else {
         0.0
     };
+    // Where they are, in the window's logical pixels, as names are placed.
+    let hidden: Vec<Rect> = hiding
+        .iter()
+        .filter(|(.., shown)| shown.get())
+        .map(|(node, place, _)| {
+            let scale = node.inverse_scale_factor();
+            Rect::from_center_size(place.translation * scale, node.size() * scale)
+        })
+        .collect();
     for (tag, mut shown, mut place, node) in &mut tags {
         let point = bodies
             .get(tag.0)
@@ -153,6 +169,10 @@ fn place_tags(
         let Some(corner) = point
             .map(|point| Vec2::new(point.x - size.x * 0.5, point.y - size.y))
             .filter(|corner| corner.y >= top)
+            .filter(|&corner| {
+                let name = Rect::from_corners(corner, corner + size);
+                hidden.iter().all(|hider| hider.intersect(name).is_empty())
+            })
         else {
             shown.set_if_neq(Visibility::Hidden);
             continue;

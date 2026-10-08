@@ -44,8 +44,11 @@ use serde::{Deserialize, Serialize};
 /// client is told about.
 pub const PROTOCOL_ID: u64 = u64::from_be_bytes(*b"DGRMTOWN");
 
-/// Bumped whenever what a message means changes without its shape changing,
-/// which the protocol hash would not notice on its own.
+/// Bumped whenever what is sent changes: a field added, taken out or turned
+/// to mean something else. replicon's protocol hash is made of the names of
+/// the types [`protocol`] registers and their order, and nothing of what is
+/// in them (`ProtocolHasher` in bevy_replicon 0.44), so it notices a type
+/// added or renamed, and nothing else.
 pub const PROTOCOL_VERSION: u32 = 1;
 
 /// The UDP port the game server listens on. 443, where QUIC goes, because a
@@ -245,6 +248,36 @@ pub mod rules {
     pub const VISIT_SECS: f32 = 15.0;
     /// The most stars a house can be given.
     pub const MOST_STARS: u8 = 5;
+    /// What each place pays, in coins, first to last (Hajun's, 2026-10-08).
+    pub const PRIZES: [u32; super::GAME_SEATS] = [500, 400, 300, 200, 100, 50, 25, 0];
+    /// How long the results are up, in seconds, before everyone who has not
+    /// asked to play again is sent back to the town.
+    pub const RESULTS_SECS: f32 = 15.0;
+}
+
+/// Every plot in the order it came, first to last: by its stars, most first,
+/// a tie settled by `lot`. The seats are shuffled by the lot before they are
+/// put in order of their stars, and the order keeps those with the same stars
+/// as the shuffle left them.
+///
+/// The server's lot is its game's [`Round::theme`], drawn at random when the
+/// game opens and sent to everyone in it, so that every device works out the
+/// same places from the stars as the server pays out on, without being told
+/// them.
+pub fn standings(stars: &[u32; GAME_SEATS], lot: u8) -> [u8; GAME_SEATS] {
+    let mut order: [u8; GAME_SEATS] = std::array::from_fn(|seat| seat as u8);
+    // Fisher and Yates' shuffle, drawing on xorshift32 seeded from the lot:
+    // odd, so never the zero xorshift cannot leave.
+    let mut state = u32::from(lot).wrapping_mul(0x9E37_79B9) | 1;
+    for last in (1..GAME_SEATS).rev() {
+        state ^= state << 13;
+        state ^= state >> 17;
+        state ^= state << 5;
+        order.swap(last, (state % (last as u32 + 1)) as usize);
+    }
+    // A stable sort: those with the same stars stay as the shuffle put them.
+    order.sort_by_key(|&plot| std::cmp::Reverse(stars[usize::from(plot)]));
+    order
 }
 
 /// A game of House Builder as everyone in it sees it: how far it has got, how
@@ -253,8 +286,11 @@ pub mod rules {
 pub struct Round {
     pub stage: Stage,
     /// Whole seconds left of this stage, rounded up: what the board shows.
+    /// Once the game is over, how long the results are up for.
     pub left: u16,
-    /// Which of the game's themes, by its place in `builder::THEMES`.
+    /// Which of the game's themes, by its place in `builder::THEMES`, going
+    /// round again past the last. Also the lot its ties are settled by
+    /// ([`standings`]).
     pub theme: u8,
 }
 
@@ -268,8 +304,9 @@ pub enum Stage {
     Build,
     /// Everyone at the house on this plot, rating it.
     Visit(u8),
-    /// Done: the house on `winner` had the most stars, and these are every
-    /// house's, by plot.
+    /// Done: the house on `winner` came first, and these are every house's
+    /// stars, by plot, which the rest of the places are worked out from
+    /// ([`standings`]).
     Over { winner: u8, stars: [u32; GAME_SEATS] },
 }
 
@@ -418,6 +455,40 @@ mod tests {
             for b in &spots[i + 1..] {
                 assert!(a.distance(*b) > 2.0, "{a} and {b}");
             }
+        }
+    }
+
+    #[test]
+    fn the_most_stars_come_first() {
+        let stars = [12, 30, 7, 25, 18, 3, 22, 9];
+        for lot in 0..=u8::MAX {
+            assert_eq!(standings(&stars, lot), [1, 3, 6, 4, 0, 7, 2, 5], "lot {lot}");
+        }
+    }
+
+    #[test]
+    fn a_tie_goes_either_way_by_lot() {
+        let mut stars = [5; GAME_SEATS];
+        stars[1] = 20;
+        stars[6] = 20;
+        let firsts: Vec<u8> = (0..=u8::MAX).map(|lot| standings(&stars, lot)[0]).collect();
+        assert!(firsts.iter().all(|&first| first == 1 || first == 6));
+        assert!(firsts.contains(&1) && firsts.contains(&6));
+        // All eight tied: every one of them comes first by some lot, and last
+        // by another.
+        let level = [10; GAME_SEATS];
+        for plot in 0..GAME_SEATS as u8 {
+            assert!((0..=u8::MAX).any(|lot| standings(&level, lot)[0] == plot), "{plot} first");
+            assert!((0..=u8::MAX).any(|lot| standings(&level, lot)[7] == plot), "{plot} last");
+        }
+    }
+
+    #[test]
+    fn every_plot_has_a_place() {
+        for lot in 0..=u8::MAX {
+            let mut order = standings(&[4, 4, 9, 0, 4, 9, 1, 4], lot);
+            order.sort_unstable();
+            assert_eq!(order, [0, 1, 2, 3, 4, 5, 6, 7], "lot {lot}");
         }
     }
 

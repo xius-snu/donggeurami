@@ -69,10 +69,14 @@ in with the key made for the VM, `~/.ssh/roundtown_vultr`.
 **Deploy the server with every change to `shared/`.** The app and the server
 register the same things in the same order; replicon hashes that, and an app
 whose hash differs from the server's is told it is out of date ("A new
-version is out") and stays offline. Bump `PROTOCOL_VERSION` in `shared/` when
-what a message means changes without its shape changing. Phones keep the
-app they have until they update, so think twice before changing what is sent
-once real players have it.
+version is out") and stays offline. The hash is only the names of the types
+registered and their order, not what is in them: bump `PROTOCOL_VERSION` in
+`shared/` whenever a field is added to anything sent, taken out, or made to
+mean something else, or an old app connects and breaks instead. Phones keep
+the app they have until they update, so think twice before changing what is
+sent once real players have it. The prizes (deployed 2026-10-09) changed
+nothing sent, so the apps already out kept playing online with the new
+server.
 
 A fresh VM is set up with `server/setup.sh`: packages, the `roundtown` user,
 the firewall, SSH by key only, the certificate, the settings, the database,
@@ -117,9 +121,13 @@ coin_changes  player, amount, reason, game, at
 ```
 
 The server makes the tables when it starts (`accounts::SCHEMA`). Coins change
-only in one transaction with a line in `coin_changes` saying why. Deleting an
-account (in the app: the button beside the balance) deletes its row, and its
-devices and coin history with it.
+only in one transaction with a line in `coin_changes` saying why: so far
+`starting balance` (+1,000, as the login makes the account), `House
+Builder entry` (-100) and `House Builder prize` (+500 down to +25, by
+place; 8th place pays nothing and writes no line). A prize carries its
+game's number; a fee, the number of the game filling when it was paid, and
+none if none was yet. Deleting an account (in the app: the button beside
+the balance) deletes its row, and its devices and coin history with it.
 
 **Backups:** `/var/backups/roundtown/`, the last 14 nights, root only. To
 restore one:

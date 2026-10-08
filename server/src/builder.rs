@@ -5,7 +5,9 @@
 //! ([`Round`]), who is playing ([`Seats`]) and every piece put down
 //! ([`Built`]) — send what their player does ([`Ask::Play`], [`Ask::Rate`],
 //! [`Ask::Put`], [`Ask::Take`], [`Ask::Leave`]), and are moved by it: to the
-//! lobby, to their plots, round the houses and to the winner's.
+//! lobby, to their plots, round the houses and to the winner's, where the
+//! results are up for [`RESULTS_SECS`] before everyone still there is sent
+//! back to the town.
 //!
 //! A game is a room of its own ([`Room::Game`]): its lobby, its plots,
 //! everyone in it and every piece down in it. Whoever wants to play goes into
@@ -17,9 +19,10 @@
 //! Every game is kept in [`Games`]; the entity its room is sent, with its
 //! [`Round`] and [`Seats`], only mirrors it.
 //!
-//! The fee is taken here when you join. Coins are kept in memory for now, so
-//! every connection starts with [`STARTING_BALANCE`], as every launch of the
-//! app does.
+//! The fee is taken when you join, and every place is paid its prize
+//! ([`PRIZES`]) once the game is over: in the database, each in one
+//! transaction with the line saying why (`accounts`), or without one, in
+//! memory, which every connection starts again at [`STARTING_BALANCE`].
 
 use std::collections::HashMap;
 
@@ -28,10 +31,11 @@ use bevy_replicon::prelude::*;
 use roundtown_net::rules::*;
 use roundtown_net::{
     Ask, At, Built, GAME_SEATS, Member, Refusal, Round, Seats, Spot, Stage, Tell, Venue, arrival,
+    standings,
 };
 
 use crate::Config;
-use crate::accounts::{Bank, Charged};
+use crate::accounts::{Bank, Charged, Credited};
 use crate::players::{Body, Everyone, Plays, Who, move_to, tell};
 use crate::rooms::{InRoom, Room, Towns};
 
@@ -46,9 +50,6 @@ const BOT_NAMES: &[&str] = &[
 /// How long after building ends a piece put down still counts, in seconds: a
 /// device puts down whatever it still had out once it hears the time is up.
 const GRACE: f32 = 3.0;
-/// How long a game is kept once it is over, for anyone who has not left it,
-/// in seconds: then they are sent back to the town.
-const OVER_KEEP: f32 = 600.0;
 /// How long a game goes on with nobody connected to it, in seconds, before it
 /// is given up.
 const ABANDONED: f32 = 120.0;
@@ -66,7 +67,10 @@ pub(crate) fn plugin(app: &mut App) {
             PreUpdate,
             (
                 hear.after(ServerSystems::Receive),
-                paid.after(crate::accounts::answers),
+                // A prize is always asked for before a fee for the next game,
+                // and the database answers in the order it was asked: read
+                // in that order, a body is left with the later of the two.
+                (credited, paid).chain().after(crate::accounts::answers),
             )
                 .run_if(in_state(ServerState::Running)),
         )
@@ -148,7 +152,7 @@ impl Game {
         Round {
             stage: self.stage,
             left: match self.stage {
-                Stage::Queue | Stage::Over { .. } => 0,
+                Stage::Queue => 0,
                 _ => self.left.max(0.0).ceil() as u16,
             },
             theme: self.theme,
@@ -298,6 +302,32 @@ fn paid(
             member,
             now,
         );
+    }
+}
+
+/// A prize paid into the database: whoever it was for, if they are still
+/// here, has that much to spend now, and their device is told so.
+fn credited(
+    mut credited: MessageReader<Credited>,
+    everyone: Res<Everyone>,
+    mut bodies: Query<&mut Body>,
+    mut tells: MessageWriter<ToClients<Tell>>,
+) {
+    for answer in credited.read() {
+        let Some(left) = answer.left else {
+            continue;
+        };
+        let Some(mut body_of) = everyone
+            .0
+            .get(&Who(answer.id))
+            .and_then(|&body| bodies.get_mut(body).ok())
+        else {
+            continue;
+        };
+        body_of.coins = left;
+        if let Some(client) = body_of.client {
+            tell(&mut tells, client, Tell::Balance(left));
+        }
     }
 }
 
@@ -471,7 +501,8 @@ fn sane(at: &At) -> bool {
 }
 
 /// Moves every game on: fills its room, sends everyone to their plots, round
-/// the houses, and to the winner's; and gives it up once nobody is left.
+/// the houses, and to the winner's, pays out, and ends it once the results
+/// have been up their while, or once nobody is left.
 #[allow(clippy::too_many_arguments)]
 fn run_games(
     time: Res<Time>,
@@ -479,6 +510,7 @@ fn run_games(
     mut bodies: Bodies,
     mut everyone: ResMut<Everyone>,
     mut towns: ResMut<Towns>,
+    bank: Res<Bank>,
     mut tells: MessageWriter<ToClients<Tell>>,
     mut commands: Commands,
 ) {
@@ -546,7 +578,8 @@ fn run_games(
                     if usize::from(next) < game.seats.len() {
                         visit(&mut commands, &mut tells, &mut bodies, game, next, now);
                     } else {
-                        let winner = winner(&game.stars);
+                        let order = standings(&game.stars, game.theme);
+                        let winner = order[0];
                         for (seat, &body) in game.seats.iter().enumerate() {
                             let plot = Venue::Plot(winner);
                             send(&mut commands, &mut tells, &mut bodies, body, room, plot, seat as u8, now);
@@ -555,9 +588,10 @@ fn run_games(
                             winner,
                             stars: game.stars,
                         };
-                        game.left = OVER_KEEP;
+                        game.left = RESULTS_SECS;
+                        pay_out(game, &order, &bank, &mut bodies, &mut tells);
                         info!(
-                            "House Builder game {}: plot {winner} won, with {:?}",
+                            "House Builder game {}: plots {order:?} in that order, with {:?} stars",
                             game.id, game.stars
                         );
                     }
@@ -646,11 +680,38 @@ fn tally(game: &mut Game, plot: u8) {
     game.stars[usize::from(plot)] += sum;
 }
 
-/// The house with the most stars, a tie settled by lot.
-fn winner(stars: &[u32; GAME_SEATS]) -> u8 {
-    let most = stars.iter().copied().max().unwrap_or(0);
-    let best: Vec<usize> = (0..GAME_SEATS).filter(|&plot| stars[plot] == most).collect();
-    best[fastrand::usize(..best.len())] as u8
+/// Pays every person in `game` what their place, in `order`, is worth
+/// ([`PRIZES`]): into their account in the database, whose answer tells
+/// their device ([`credited`]), or without one, onto their body, if it is
+/// still here. Wherever they are now: someone who dropped out still came
+/// where they came. The computer's players have nowhere to be paid into.
+fn pay_out(
+    game: &Game,
+    order: &[u8; GAME_SEATS],
+    bank: &Bank,
+    bodies: &mut Bodies,
+    tells: &mut MessageWriter<ToClients<Tell>>,
+) {
+    for (&plot, &prize) in order.iter().zip(&PRIZES) {
+        let seat = usize::from(plot);
+        let (Some(member), Some(false)) = (game.members.get(seat), game.bot.get(seat).copied()) else {
+            continue;
+        };
+        if prize == 0 {
+            continue;
+        }
+        if bank.kept() {
+            bank.credit(member.id, prize, "House Builder prize", Some(game.id));
+            continue;
+        }
+        let Ok((mut body_of, ..)) = bodies.get_mut(game.seats[seat]) else {
+            continue;
+        };
+        body_of.coins = body_of.coins.saturating_add(prize);
+        if let Some(client) = body_of.client {
+            tell(tells, client, Tell::Balance(body_of.coins));
+        }
+    }
 }
 
 /// The computer, in the next seat of `game`, standing in the lobby under a
@@ -737,24 +798,6 @@ fn end(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn the_most_stars_win() {
-        let mut stars = [0; GAME_SEATS];
-        stars[3] = 30;
-        stars[5] = 12;
-        assert_eq!(winner(&stars), 3);
-    }
-
-    #[test]
-    fn a_tie_goes_to_one_of_those_tied() {
-        let mut stars = [0; GAME_SEATS];
-        stars[1] = 20;
-        stars[6] = 20;
-        for _ in 0..50 {
-            assert!(matches!(winner(&stars), 1 | 6));
-        }
-    }
 
     #[test]
     fn a_piece_has_to_be_somewhere() {

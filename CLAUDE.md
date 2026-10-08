@@ -173,9 +173,9 @@ from the town (below).
   `assets/coin.png`. Offline it starts at 1,000 (`lobby::STARTING_BALANCE`)
   and is not saved, so every launch starts at 1,000 again. Online it is the
   server's: kept with your account in Postgres, which a new account starts
-  with 1,000 in, and sent to the device (`Tell::Balance`). The only thing that
-  changes it is House Builder's entry fee. `assets/coin.glb` is still in the
-  repo, but nothing loads it.
+  with 1,000 in, and sent to the device (`Tell::Balance`). The only things
+  that change it are House Builder's entry fee and its prizes (below).
+  `assets/coin.glb` is still in the repo, but nothing loads it.
 - The text is Bevy's built-in font, which is plain ASCII: no Hangul, and no ★,
   `…` or `·` either. The rating star is drawn in code (`builder::star_image`).
 
@@ -201,7 +201,12 @@ where things come from, not what they are.
   `roundtown_net::protocol`; `server/` is the server, a headless Bevy app
   with replicon and renet over UDP 443. **Deploy the server with every change
   to `shared/`**: an app whose protocol differs from the server's is told "A
-  new version is out" and stays offline.
+  new version is out" and stays offline. replicon's protocol hash is only the
+  names of the types registered and their order (read in its source,
+  2026-10-08), so it misses a field added to one or a field meaning
+  something new: bump `PROTOCOL_VERSION` for those, or an old app connects
+  and breaks. A change that leaves what is sent as it was keeps the apps
+  already on phones playing online, as the prizes did.
 - **Your body is yours.** It is moved here, at once, as offline; where it is
   goes to the server 15 times a second while it moves and not at all while
   it stands (`net::tell_where_i_am`). The server checks a move could have been
@@ -219,9 +224,14 @@ where things come from, not what they are.
   (`net::SERVERS`, `login::PINNED`): a new VM means a new app.
 - **House Builder online is the server's** (`server/src/builder.rs`): the
   queue (10 s for people, then the computer one seat at a time; Hajun's
-  choice), the stages and their clock, the fee (in a Postgres transaction),
-  the stars and the winner. The device follows its `Round` and `Seats`
-  (`builder::follow_round`) and is moved by it. Pieces put down go to the
+  choice), the stages and their clock, the fee and every prize (each in a
+  Postgres transaction, with its line in `coin_changes`), the stars, the
+  places, and the results' 15 s, after which it sends whoever is left back
+  to the town. The device follows its `Round` and `Seats`
+  (`builder::follow_round`) and is moved by it. The places are not sent:
+  both sides work them out from the stars with `roundtown_net::standings`,
+  the lot being the game's `Round::theme`, so that the apps already out
+  could keep playing online when the prizes came in. Pieces put down go to the
   server as they are (`build::report_pieces`), and everyone else's are built
   from what it says (`build::raise_shadows`, `build::Shadow`), on their plots,
   for the visits. The computer's players stand where they arrive: the server
@@ -584,9 +594,26 @@ before, and 5.5 m before that), over any jump.
 - **Then everyone visits each plot for 15 s**, in seat order, yours first. At
   anyone else's, you give it 1–5 stars along the bottom of the screen (on
   desktop, keys 1–5 as well); nobody rates their own, and the AIs rate at
-  random. The most stars wins, a tie settled by lot, and everyone stands at
-  the winner's plot while the results dialog offers Play again (another 100)
-  or Exit, back to the town.
+  random.
+- **Then the results, as a leaderboard down the right of the screen**
+  (`builder::spawn_results`; Hajun, 2026-10-08, in place of a dialog that
+  only named the winner). Every house is placed by its stars, most first,
+  a tie settled by lot (`roundtown_net::standings`; the lot for every place
+  is my reading, the winner's was before), and everyone stands at the
+  winner's plot. All eight rows: the place, the first three on gold, silver
+  and bronze medals in bold (the built-in font has one weight: the number
+  is drawn twice, a hair apart), the name, the stars, and what the place
+  paid. **Every place pays** (`rules::PRIZES`, Hajun's): +500, +400, +300,
+  +200, +100, +50, +25 and +0, the computer's players too offline; online
+  only people, into their accounts. **It is not a dialog**: you walk and
+  jump round the winner's house with it up, and only a press on it is its
+  own. Play again (another 100, greyed out without it, and lit up once the
+  prize brings it) or Exit; nothing pressed, you are back in the town after
+  15 s (`rules::RESULTS_SECS`), counted down on it. On desktop Enter plays
+  again, and Escape frees the cursor for clicking it, as anywhere else. It
+  slides in from the right, 52 wide and 62 tall in shares of the short side,
+  which keeps it above a phone's jump button; online, names over heads that
+  would show through it are put away (`tags::HidesNames`).
 - **Building and visiting are seen in third person**, as the town is, unless
   you swap to first person (`FirstPerson`, set by `builder::publish_view`):
   the camera is then your eyes, 2.2 m up (`EYE_HEIGHT`, above), wider (about
@@ -611,8 +638,8 @@ before, and 5.5 m before that), over any jump.
   if it was taken before (`cursor_for_dialogs` in `src/lib.rs`); Enter says
   yes and Escape no.
 - **Everything a game spawns carries `builder::InGame`** — plots, AIs, the
-  board, the stars — and is despawned when you leave or play again. Only your
-  own body comes back. There is no winner's prize: the balance only goes down.
+  board, the stars, the results — and is despawned when you leave or play
+  again. Only your own body comes back.
 - **Testing on desktop:** posted clicks are dropped unless the real cursor is
   over the game window, but picking takes a finger's taps from
   `WindowEvent::TouchInput`, so writing those from a throwaway system presses

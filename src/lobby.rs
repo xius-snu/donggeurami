@@ -94,7 +94,8 @@ pub(crate) struct Lobby {
 pub(crate) const STARTING_BALANCE: u32 = 1000;
 
 /// What a player has to spend. Everyone starts on `STARTING_BALANCE`, and for
-/// now only House Builder's entry fee takes from it; nothing adds to it.
+/// now only House Builder changes it: its entry fee takes from it, and its
+/// prizes add to it.
 #[derive(Component, PartialEq)]
 pub(crate) struct Balance(pub u32);
 

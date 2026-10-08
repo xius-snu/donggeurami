@@ -16,9 +16,14 @@
 //! computer's players build nothing.
 //! Then everyone visits every plot in turn, seat by seat, [`VISIT_SECS`] at
 //! each, and gives the house there one to five stars. Nobody rates their own,
-//! and the computer's players rate at random. The house with the most stars
-//! wins, a tie being settled by lot, and a dialog says whose it was, with the
-//! choice of playing again or going back to the town.
+//! and the computer's players rate at random. The houses are placed by their
+//! stars, most first, a tie being settled by lot (`roundtown_net::standings`),
+//! and every place is paid its prize ([`PRIZES`]), the computer's players'
+//! too. Everyone goes to the winner's plot, where the results come up down
+//! the right of the screen — everyone's place, stars and prize — with the
+//! choice of playing again or going back to the town. They are not a dialog:
+//! you can walk round the winner's house and jump meanwhile. Whoever has not
+//! chosen within [`RESULTS_SECS`] is sent back to the town.
 //!
 //! Tapping the timer at the top of the screen ends the wait early. That is for
 //! trying the game out, and not meant to stay.
@@ -40,10 +45,13 @@ use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use bevy::world_serialization::WorldInstanceReady;
 
 use bevy_replicon::prelude::Remote;
-// What a game costs, how long each part of it lasts and the most stars a
-// house can have: the rules the server plays by online, kept with it.
-use roundtown_net::rules::{BUILD_SECS, ENTRY, FULL_HOLD, MOST_STARS, QUEUE_FILL, VISIT_SECS};
-use roundtown_net::{Round, Seats, Tell};
+// What a game costs, how long each part of it lasts, the most stars a house
+// can have and what each place pays: the rules the server plays by online,
+// kept with it.
+use roundtown_net::rules::{
+    BUILD_SECS, ENTRY, FULL_HOLD, MOST_STARS, PRIZES, QUEUE_FILL, RESULTS_SECS, VISIT_SECS,
+};
+use roundtown_net::{Round, Seats, Tell, standings};
 
 use crate::hud::{self, DOOR, DialogUp, GOLD, PANEL, TakesPress};
 use crate::island::{self, Islands, Venue};
@@ -51,6 +59,7 @@ use crate::lobby::{self, Balance, Lobby, Member, SEATS, STARTING_BALANCE, Seat, 
 use crate::net::Online;
 use crate::shop;
 use crate::sky::Water;
+use crate::tags::HidesNames;
 use crate::{
     Collider, ColliderShape, FirstPerson, LAND_TOP, OrbitCamera, PLAYER_HEIGHT, PLAYER_RADIUS,
     Player, ThirdPersonCamera, WalkCycle,
@@ -175,6 +184,37 @@ const PRICE_ICON: f32 = 5.5;
 const PRICE_TEXT: f32 = 5.0;
 /// Dialogs are over everything else on the screen.
 pub(crate) const DIALOG_LAYER: i32 = 10;
+/// The results, down the right of the screen: wide enough for a name of
+/// eleven letters on a row, and at about 62 tall, short enough to stay above
+/// a phone's jump button, whose top is 29 up from the bottom.
+const RESULTS_WIDTH: f32 = 52.0;
+const RESULTS_PAD: f32 = 2.2;
+const RESULTS_GAP: f32 = 1.0;
+const RESULTS_TITLE: f32 = 4.6;
+/// A row for each player, and what is in it: their place, their name, their
+/// stars and their prize.
+const ROW: f32 = 4.3;
+const ROW_GAP: f32 = 0.35;
+const ROW_TEXT: f32 = 3.0;
+const ROW_ICON: f32 = 2.8;
+const MEDAL: f32 = 3.9;
+const MEDAL_TEXT: f32 = 3.1;
+/// How far to the side a medal's number is drawn a second time, which makes
+/// it bold: the built-in font comes in one weight.
+const BOLDEN: f32 = 0.12;
+/// The columns the stars and the prizes stand in, wide enough for "35" and
+/// "+500" with a picture after each.
+const STARS_COLUMN: f32 = 7.2;
+const PRIZE_COLUMN: f32 = 10.8;
+const COUNTDOWN_TEXT: f32 = 3.0;
+const EXIT_WIDTH: f32 = 17.0;
+const AGAIN_WIDTH: f32 = 26.0;
+const RESULTS_BUTTON: f32 = 8.4;
+const RESULTS_BUTTON_TEXT: f32 = 3.4;
+const AGAIN_PRICE_TEXT: f32 = 2.6;
+/// How long the results take to slide in from the edge of the screen, in
+/// seconds.
+const SLIDE_SECS: f32 = 0.35;
 
 const BUBBLE: Color = Color::srgba(1.0, 1.0, 1.0, 0.96);
 const HINT_COLOUR: Color = Color::srgb(0.36, 0.50, 0.62);
@@ -192,6 +232,16 @@ pub(crate) const WARN: Color = Color::srgb(1.0, 0.62, 0.55);
 /// A star given, and one not.
 const STAR_ON: Color = GOLD;
 const STAR_OFF: Color = Color::srgba(1.0, 1.0, 1.0, 0.4);
+/// Behind the results: a little more see-through than a dialog, with the
+/// world going on behind them.
+const RESULTS_FILL: Color = Color::srgba(0.0, 0.0, 0.0, 0.7);
+const ROW_FILL: Color = Color::srgba(1.0, 1.0, 1.0, 0.07);
+const YOUR_ROW: Color = Color::srgba(1.0, 0.84, 0.3, 0.26);
+/// The medals of the second and third places. The first's is gold.
+const SILVER: Color = Color::srgb(0.80, 0.84, 0.90);
+const BRONZE: Color = Color::srgb(0.86, 0.56, 0.33);
+/// A prize of nothing, and its coin.
+const NO_PRIZE: Color = Color::srgba(1.0, 1.0, 1.0, 0.45);
 
 /// Something asked of House Builder, by a tap, a click or a key.
 #[derive(Message, Clone, Copy, PartialEq, Eq, Debug)]
@@ -238,20 +288,38 @@ struct Talk {
 #[derive(Component)]
 struct Bubble;
 
-/// Which of House Builder's dialogs is up, if either.
+/// Whether House Builder's dialog is up. The results at the end of a game are
+/// not a dialog ([`spawn_results`]): they go with the game.
 #[derive(Resource, Default, Clone, Copy, PartialEq, Eq, Debug)]
 enum Showing {
     #[default]
     Nothing,
     /// Whether to play.
     Offer,
-    /// Who won, and whether to play again.
-    Results,
 }
 
-/// The root of one of the dialogs.
+/// The root of the dialog.
 #[derive(Component)]
 struct Dialog;
+
+/// The results down the right of the screen at the end of a game, sliding in
+/// from the edge for as long as this says they have been.
+#[derive(Component)]
+struct SlideIn(f32);
+
+/// The line on the results saying how long until you are back in the town.
+#[derive(Component)]
+struct Countdown;
+
+/// Play again, on the results, and whether it shows that you can pay for it:
+/// online, your prize comes in after them.
+#[derive(Component)]
+struct PlayAgain(bool);
+
+/// The line on Play again under its name: what it costs, or that you have not
+/// got that.
+#[derive(Component)]
+struct AgainPrice;
 
 /// Everything a game has put in the world or on the screen, to go with it.
 #[derive(Component)]
@@ -342,6 +410,9 @@ struct Game {
     stage: Stage,
     /// What every house is to be, this game.
     theme: Theme,
+    /// What its ties are settled by (`standings`): drawn as it starts
+    /// offline, and online the server's.
+    lot: u8,
     /// The stars each house has been given so far, by plot.
     stars: [u32; SEATS],
     /// The stars you have given the house being visited, if any yet.
@@ -358,11 +429,17 @@ enum Stage {
     Build { left: f32 },
     /// Everyone at the house on `plot`, rating it.
     Visit { plot: usize, left: f32 },
-    /// Done: the house on `winner` had the most stars.
-    Over { winner: usize },
+    /// Done: the results are up, with every plot in the order it came, first
+    /// to last, for `left` more seconds.
+    Over { order: [usize; SEATS], left: f32 },
 }
 
 impl Game {
+    /// The game is over, and its results are up.
+    fn over(&self) -> bool {
+        matches!(self.stage, Stage::Over { .. })
+    }
+
     /// A house is being visited that you may rate: anyone's but yours.
     fn rating(&self) -> bool {
         matches!(self.stage, Stage::Visit { plot, .. } if plot != self.me)
@@ -436,7 +513,15 @@ pub(crate) fn plugin(app: &mut App) {
                     .before(crate::read_player_input)
                     .before(island::show_where_i_am),
                 place_bubble.after(crate::follow_camera),
-                (show_board, show_rating, show_view_button, light_buttons).after(GameSystems),
+                (
+                    show_board,
+                    show_rating,
+                    show_view_button,
+                    show_results,
+                    slide_in,
+                    light_buttons,
+                )
+                    .after(GameSystems),
             ),
         );
 }
@@ -556,8 +641,10 @@ fn ask(click: On<Pointer<Click>>, buttons: Query<&AsksFor>, mut asks: MessageWri
 }
 
 /// Keys, for desktop: Enter to say yes to a dialog and Escape to say no, 1 to
-/// 5 for the stars to give the house being visited, and V for the button that
-/// swaps the view, whenever it is there.
+/// 5 for the stars to give the house being visited, V for the button that
+/// swaps the view, whenever it is there, and Enter to play again from the
+/// results. Escape does not leave them: they are not a dialog, and there it
+/// frees the cursor for clicking their buttons, as it does anywhere else.
 fn keys(
     keyboard: Res<ButtonInput<KeyCode>>,
     showing: Res<Showing>,
@@ -578,11 +665,8 @@ fn keys(
         Showing::Offer if no => {
             asks.write(Ask::Cancel);
         }
-        Showing::Results if yes => {
+        Showing::Nothing if yes && !up.0 && game.as_ref().is_some_and(|game| game.over()) => {
             asks.write(Ask::Join);
-        }
-        Showing::Results if no => {
-            asks.write(Ask::Leave);
         }
         Showing::Nothing if game.is_some_and(|game| game.rating()) => {
             const STAR_KEYS: [[KeyCode; 2]; MOST_STARS as usize] = [
@@ -602,8 +686,9 @@ fn keys(
     }
 }
 
-/// Puts the dialogs up and takes them down, and takes you into a game and out
-/// of it again. Online it is the server that takes the fee and seats you
+/// Puts the dialog up and takes it down, and takes you into a game and out of
+/// it again: from the offer, or from the results of the last for another.
+/// Online it is the server that takes the fee and seats you
 /// ([`join_online`]), and sends you back to the town after.
 #[allow(clippy::too_many_arguments)]
 fn answer(
@@ -627,21 +712,27 @@ fn answer(
         asks.clear();
         return;
     };
+    // A game's results are up, to play again from or leave: until either is
+    // done.
+    let mut over = game.as_ref().is_some_and(|game| game.over());
     for &ask in asks.read() {
-        match (ask, *showing) {
-            (Ask::Talk, Showing::Nothing) if game.is_none() => {
+        match ask {
+            Ask::Talk if *showing == Showing::Nothing && game.is_none() => {
                 offer(&mut commands, &assets, balance.0 >= ENTRY);
                 show(&mut showing, &mut up, Showing::Offer);
             }
-            (Ask::Cancel, Showing::Offer) => {
+            Ask::Cancel if *showing == Showing::Offer => {
                 take_down(&dialogs, &mut commands);
                 show(&mut showing, &mut up, Showing::Nothing);
             }
-            (Ask::Join, Showing::Offer | Showing::Results) if balance.0 >= ENTRY => {
-                take_down(&dialogs, &mut commands);
+            Ask::Join if (*showing == Showing::Offer || over) && balance.0 >= ENTRY => {
+                if *showing == Showing::Offer {
+                    take_down(&dialogs, &mut commands);
+                    show(&mut showing, &mut up, Showing::Nothing);
+                }
                 // The last game, if this is the next.
                 clear_away(&in_game, &mut commands);
-                show(&mut showing, &mut up, Showing::Nothing);
+                over = false;
                 if online.is() {
                     commands.remove_resource::<Game>();
                     requests.write(roundtown_net::Ask::Play);
@@ -652,16 +743,14 @@ fn answer(
                 commands.insert_resource(game);
                 lobby::send(&mut bodies, &mut orbit, you, Venue::Lobby, YOU);
             }
-            (Ask::Leave, Showing::Results) => {
-                take_down(&dialogs, &mut commands);
-                clear_away(&in_game, &mut commands);
-                show(&mut showing, &mut up, Showing::Nothing);
-                let online_game = game.as_ref().is_some_and(|game| game.online);
-                commands.remove_resource::<Game>();
-                if online_game && online.is() {
+            Ask::Leave if over => {
+                over = false;
+                if game.as_ref().is_some_and(|game| game.online) && online.is() {
+                    clear_away(&in_game, &mut commands);
+                    commands.remove_resource::<Game>();
                     requests.write(roundtown_net::Ask::Leave);
                 } else {
-                    lobby::send(&mut bodies, &mut orbit, you, Venue::Town, seat.0);
+                    back_to_town(&mut commands, &in_game, &mut bodies, &mut orbit, you, seat.0);
                 }
             }
             _ => {}
@@ -675,17 +764,14 @@ fn answer(
 /// away, from the end of the last game, you are sent back to the town.
 ///
 /// Sent back to the town or home by the server with a game still up, that
-/// game is over for you: the server has closed it, or let it go while the
-/// connection was gone.
+/// game is over for you: the server has closed it, its results having been up
+/// their while, or let it go while the connection was gone.
 #[allow(clippy::too_many_arguments)]
 fn join_online(
     mut tells: MessageReader<Tell>,
     game: Option<ResMut<Game>>,
     me: Query<(Entity, &Venue), With<Player>>,
     in_game: Query<Entity, With<InGame>>,
-    dialogs: Query<Entity, With<Dialog>>,
-    mut showing: ResMut<Showing>,
-    mut up: ResMut<DialogUp>,
     assets: Res<AssetServer>,
     water: Res<Water>,
     star: Res<StarImage>,
@@ -702,11 +788,9 @@ fn join_online(
                 venue: Venue::Town | Venue::Home,
                 ..
             } if game.as_ref().is_some_and(|game| game.online) => {
-                take_down(&dialogs, &mut commands);
                 clear_away(&in_game, &mut commands);
                 commands.remove_resource::<Game>();
                 game = None;
-                show(&mut showing, &mut up, Showing::Nothing);
             }
             Tell::Joined { seat } => {
                 let seat = usize::from(*seat);
@@ -736,16 +820,17 @@ fn join_online(
 /// Online, the game is the server's: whatever it says the round is, this
 /// shows — the stage and the time left, who is in it, the theme — and as it
 /// moves on, what goes with that here: the theme across the screen as
-/// building begins, and the results at the end.
+/// building begins, and the results at the end, in the places the server paid
+/// out on.
 #[allow(clippy::too_many_arguments)]
 fn follow_round(
     game: Option<ResMut<Game>>,
     rounds: Query<(&Round, &Seats), With<Remote>>,
     themes: Query<Entity, With<ThemeHeadline>>,
     me: Query<&Balance, With<Player>>,
-    mut showing: ResMut<Showing>,
-    mut up: ResMut<DialogUp>,
+    windows: Query<&Window>,
     assets: Res<AssetServer>,
+    star: Res<StarImage>,
     mut commands: Commands,
 ) {
     let Some(mut game) = game else {
@@ -761,6 +846,7 @@ fn follow_round(
         game.seats.clone_from(&seats.0);
     }
     game.theme = THEMES[usize::from(round.theme) % THEMES.len()];
+    game.lot = round.theme;
     let left = f32::from(round.left);
     let stage = match round.stage {
         roundtown_net::Stage::Queue => Stage::Queue { waited: 0.0 },
@@ -770,8 +856,9 @@ fn follow_round(
             plot: usize::from(plot),
             left,
         },
-        roundtown_net::Stage::Over { winner, .. } => Stage::Over {
-            winner: usize::from(winner),
+        roundtown_net::Stage::Over { winner, stars } => Stage::Over {
+            order: placed(&stars, round.theme, winner),
+            left,
         },
     };
     let was = game.stage;
@@ -792,15 +879,28 @@ fn follow_round(
     {
         game.mine = None;
     }
-    if let (Stage::Over { winner }, roundtown_net::Stage::Over { stars, .. }) =
+    if let (Stage::Over { order, .. }, roundtown_net::Stage::Over { stars, .. }) =
         (stage, round.stage)
         && !matches!(was, Stage::Over { .. })
     {
         game.stars = stars;
+        // Your prize comes after this, and Play again lights up once it has
+        // ([`show_results`]).
         let affordable = me.single().is_ok_and(|balance| balance.0 >= ENTRY);
-        results(&mut commands, &assets, &game, winner, affordable);
-        show(&mut showing, &mut up, Showing::Results);
+        spawn_results(&mut commands, &assets, &star, &game, &order, affordable, vmin(&windows));
     }
+}
+
+/// Every plot in the order it came, first to last, as the server placed them:
+/// worked out from the stars as it works them out, with `winner`, whose plot
+/// everyone stands on, first whatever the lot. A server that settled its ties
+/// some other way would otherwise have the results crown someone else.
+fn placed(stars: &[u32; SEATS], lot: u8, winner: u8) -> [usize; SEATS] {
+    let mut order = standings(stars, lot);
+    if let Some(at) = order.iter().position(|&plot| plot == winner) {
+        order[..=at].rotate_right(1);
+    }
+    order.map(usize::from)
 }
 
 /// Online, the connection gone in the middle of a game: it waits a moment
@@ -813,9 +913,6 @@ fn cut_off(
     game: Option<ResMut<Game>>,
     me: Query<(Entity, &Seat), With<Player>>,
     in_game: Query<Entity, With<InGame>>,
-    dialogs: Query<Entity, With<Dialog>>,
-    mut showing: ResMut<Showing>,
-    mut up: ResMut<DialogUp>,
     mut bodies: Whereabouts,
     mut orbit: ResMut<OrbitCamera>,
     mut commands: Commands,
@@ -841,15 +938,26 @@ fn cut_off(
     let Ok((you, seat)) = me.single() else {
         return;
     };
-    take_down(&dialogs, &mut commands);
-    clear_away(&in_game, &mut commands);
-    commands.remove_resource::<Game>();
-    show(&mut showing, &mut up, Showing::Nothing);
-    lobby::send(&mut bodies, &mut orbit, you, Venue::Town, seat.0);
+    back_to_town(&mut commands, &in_game, &mut bodies, &mut orbit, you, seat.0);
     hud::announce(&mut commands, None, "Lost the connection", hud::CAPTION, 3.0);
 }
 
-/// Says which dialog is up, and so whether one is.
+/// Back to the town after a game, where `seat` arrives there, with
+/// everything the game put up taken away, and the game with it.
+fn back_to_town(
+    commands: &mut Commands,
+    in_game: &Query<Entity, With<InGame>>,
+    bodies: &mut Whereabouts,
+    orbit: &mut OrbitCamera,
+    you: Entity,
+    seat: usize,
+) {
+    clear_away(in_game, commands);
+    commands.remove_resource::<Game>();
+    lobby::send(bodies, orbit, you, Venue::Town, seat);
+}
+
+/// Says whether the dialog is up.
 fn show(showing: &mut ResMut<Showing>, up: &mut ResMut<DialogUp>, what: Showing) {
     showing.set_if_neq(what);
     up.set_if_neq(DialogUp(what != Showing::Nothing));
@@ -899,28 +1007,32 @@ fn start(
         cut_off: None,
         stage: Stage::Queue { waited: 0.0 },
         theme: THEMES[fastrand::usize(..THEMES.len())],
+        lot: fastrand::u8(..),
         stars: [0; SEATS],
         mine: None,
     }
 }
 
 /// Moves the game on: fills the room, sends everyone to their plots, round the
-/// houses, and to the winner's; and takes the stars you give. Online all of
-/// that is the server's, and the stars you give, and a tap on the time, go to
-/// it.
+/// houses, and to the winner's, pays out, and once the results have been up
+/// their while, sends you back to the town; and takes the stars you give.
+/// Online all of that is the server's, and the stars you give, and a tap on
+/// the time, go to it.
 #[allow(clippy::too_many_arguments)]
 fn play(
     time: Res<Time>,
     mut asks: MessageReader<Ask>,
     game: Option<ResMut<Game>>,
     lobby: Res<Lobby>,
-    me: Query<&Balance, With<Player>>,
+    me: Query<(Entity, &Seat), With<Player>>,
+    mut balances: Query<&mut Balance>,
     themes: Query<Entity, With<ThemeHeadline>>,
+    in_game: Query<Entity, With<InGame>>,
     mut bodies: Whereabouts,
     mut orbit: ResMut<OrbitCamera>,
-    mut showing: ResMut<Showing>,
-    mut up: ResMut<DialogUp>,
+    windows: Query<&Window>,
     assets: Res<AssetServer>,
+    star: Res<StarImage>,
     mut requests: MessageWriter<roundtown_net::Ask>,
     mut commands: Commands,
 ) {
@@ -1020,23 +1132,41 @@ fn play(
             if plot + 1 < game.bodies.len() {
                 visit(game, plot + 1, &mut bodies, &mut orbit);
             } else {
-                let winner = winner(&game.stars);
+                let order = standings(&game.stars, game.lot).map(usize::from);
+                let winner = Venue::Plot(order[0] as u8);
                 for (seat, &body) in game.bodies.iter().enumerate() {
-                    lobby::send(
-                        &mut bodies,
-                        &mut orbit,
-                        body,
-                        Venue::Plot(winner as u8),
-                        seat,
-                    );
+                    lobby::send(&mut bodies, &mut orbit, body, winner, seat);
                 }
-                game.stage = Stage::Over { winner };
-                let affordable = me.single().is_ok_and(|balance| balance.0 >= ENTRY);
-                results(&mut commands, &assets, game, winner, affordable);
-                show(&mut showing, &mut up, Showing::Results);
+                for (&plot, &prize) in order.iter().zip(&PRIZES) {
+                    if let Some(mut balance) = game
+                        .bodies
+                        .get(plot)
+                        .and_then(|&body| balances.get_mut(body).ok())
+                    {
+                        balance.0 += prize;
+                    }
+                }
+                game.stage = Stage::Over {
+                    order,
+                    left: RESULTS_SECS,
+                };
+                let you = game.bodies[game.me];
+                let affordable = balances.get(you).is_ok_and(|balance| balance.0 >= ENTRY);
+                spawn_results(&mut commands, &assets, &star, game, &order, affordable, vmin(&windows));
             }
         }
-        Stage::Over { .. } => {}
+        Stage::Over { order, left } if left > dt => {
+            game.stage = Stage::Over {
+                order,
+                left: left - dt,
+            };
+        }
+        // Nothing chosen: back to the town.
+        Stage::Over { .. } => {
+            if let Ok((you, seat)) = me.single() {
+                back_to_town(&mut commands, &in_game, &mut bodies, &mut orbit, you, seat.0);
+            }
+        }
     }
 }
 
@@ -1110,15 +1240,6 @@ fn tally(game: &mut Game, plot: usize) {
         };
         game.stars[plot] += u32::from(stars);
     }
-}
-
-/// The house with the most stars, a tie settled by lot.
-fn winner(stars: &[u32]) -> usize {
-    let most = stars.iter().copied().max().unwrap_or(0);
-    let best: Vec<usize> = (0..stars.len())
-        .filter(|&plot| stars[plot] == most)
-        .collect();
-    best[fastrand::usize(..best.len())]
 }
 
 // ------------------------------------------------------------- the bubble
@@ -1548,12 +1669,380 @@ fn eye() -> impl Bundle {
     ]
 }
 
+// ------------------------------------------------------------- the results
+
+/// How far out past the right edge of the screen the results start, to slide
+/// in from: their width, and the gap they keep from the edge.
+const SLIDE_FROM: f32 = RESULTS_WIDTH + hud::EDGE;
+
+/// The results, down the right of the screen once the game is over: how you
+/// came, everyone in the order they came with their stars and what their
+/// place paid, how long until you are back in the town, and Exit or Play
+/// again. Not a dialog: the world goes on round them, you walk and jump as
+/// ever, and only a press on them is theirs. They slide in from the edge of
+/// the screen ([`slide_in`]), and go with the game.
+fn spawn_results(
+    commands: &mut Commands,
+    assets: &AssetServer,
+    star: &StarImage,
+    game: &Game,
+    order: &[usize; SEATS],
+    affordable: bool,
+    vmin: f32,
+) {
+    let place = order.iter().position(|&plot| plot == game.me).unwrap_or(0);
+    let title = match place {
+        0 => "You won!".to_owned(),
+        _ => format!("You came {}", ordinal(place + 1)),
+    };
+    let left = match game.stage {
+        Stage::Over { left, .. } => left,
+        _ => RESULTS_SECS,
+    };
+    let coin = assets.load(hud::COIN_ICON);
+    commands
+        .spawn((
+            InGame,
+            SlideIn(0.0),
+            TakesPress,
+            HidesNames,
+            Node {
+                position_type: PositionType::Absolute,
+                top: Val::VMin(hud::EDGE),
+                right: Val::VMin(hud::EDGE),
+                width: Val::VMin(RESULTS_WIDTH),
+                flex_direction: FlexDirection::Column,
+                row_gap: Val::VMin(RESULTS_GAP),
+                padding: UiRect::all(Val::VMin(RESULTS_PAD)),
+                border_radius: BorderRadius::all(Val::VMin(3.5)),
+                ..default()
+            },
+            BackgroundColor(RESULTS_FILL),
+            UiTransform::from_translation(Val2::new(Val::VMin(SLIDE_FROM), Val::ZERO)),
+        ))
+        .with_children(|panel| {
+            panel.spawn(hud::words(title, RESULTS_TITLE, GOLD));
+            panel
+                .spawn((
+                    Node {
+                        flex_direction: FlexDirection::Column,
+                        row_gap: Val::VMin(ROW_GAP),
+                        ..default()
+                    },
+                    Pickable::IGNORE,
+                ))
+                .with_children(|rows| {
+                    for (place, &plot) in order.iter().enumerate() {
+                        let yours = plot == game.me;
+                        let name = match game.seats.get(plot) {
+                            _ if yours => "You",
+                            Some(seat) => seat.name.as_str(),
+                            None => "",
+                        };
+                        let stars = game.stars[plot];
+                        standing(rows, place, name, stars, yours, star, &coin, vmin);
+                    }
+                });
+            panel.spawn((Countdown, label(back_in(left), COUNTDOWN_TEXT, SOFT)));
+            panel
+                .spawn((
+                    Node {
+                        justify_content: JustifyContent::Center,
+                        column_gap: Val::VMin(3.0),
+                        ..default()
+                    },
+                    Pickable::IGNORE,
+                ))
+                .with_children(|choices| {
+                    choices.spawn(exit_button());
+                    choices.spawn(again_button(affordable));
+                });
+        });
+}
+
+/// One row of the results: the `place`, 0 for first, who came there, their
+/// stars and what the place paid. The first three places are on medals, gold,
+/// silver and bronze, in bold. Yours is lit up.
+#[allow(clippy::too_many_arguments)]
+fn standing(
+    rows: &mut ChildSpawnerCommands,
+    place: usize,
+    name: &str,
+    stars: u32,
+    yours: bool,
+    star: &StarImage,
+    coin: &Handle<Image>,
+    vmin: f32,
+) {
+    let medal = match place {
+        0 => Some(GOLD),
+        1 => Some(SILVER),
+        2 => Some(BRONZE),
+        _ => None,
+    };
+    let prize = PRIZES[place];
+    rows.spawn((
+        Node {
+            height: Val::VMin(ROW),
+            align_items: AlignItems::Center,
+            column_gap: Val::VMin(1.2),
+            padding: UiRect::horizontal(Val::VMin(1.0)),
+            border_radius: BorderRadius::all(Val::VMin(ROW * 0.5)),
+            ..default()
+        },
+        BackgroundColor(if yours { YOUR_ROW } else { ROW_FILL }),
+        Pickable::IGNORE,
+    ))
+    .with_children(|row| {
+        row.spawn((
+            Node {
+                width: Val::VMin(MEDAL),
+                height: Val::VMin(MEDAL),
+                flex_shrink: 0.0,
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                border_radius: BorderRadius::all(Val::Percent(50.0)),
+                ..default()
+            },
+            BackgroundColor(medal.unwrap_or(Color::NONE)),
+            Pickable::IGNORE,
+        ))
+        .with_children(|disc| {
+            let number = (place + 1).to_string();
+            if medal.is_some() {
+                // Drawn again a hair to the side, which thickens every
+                // stroke: the built-in font has no bold of its own.
+                disc.spawn((
+                    cell(number, MEDAL_TEXT, DOOR),
+                    TextShadow {
+                        offset: Vec2::new(BOLDEN * vmin, 0.0),
+                        color: DOOR,
+                    },
+                ));
+            } else {
+                disc.spawn(cell(number, ROW_TEXT, SOFT));
+            }
+        });
+        // A name too long for its room is cut off at the edge of it.
+        row.spawn((
+            Node {
+                flex_grow: 1.0,
+                min_width: Val::ZERO,
+                overflow: Overflow::clip_x(),
+                ..default()
+            },
+            Pickable::IGNORE,
+        ))
+        .with_child(cell(name, ROW_TEXT, Color::WHITE));
+        row.spawn(column(STARS_COLUMN)).with_children(|column| {
+            column.spawn(cell(stars.to_string(), ROW_TEXT, Color::WHITE));
+            column.spawn(icon(star.0.clone(), STAR_ON));
+        });
+        let (ink, tint) = if prize > 0 {
+            (GOLD, Color::WHITE)
+        } else {
+            (NO_PRIZE, NO_PRIZE)
+        };
+        row.spawn(column(PRIZE_COLUMN)).with_children(|column| {
+            column.spawn(cell(format!("+{}", hud::money(prize)), ROW_TEXT, ink));
+            column.spawn(icon(coin.clone(), tint));
+        });
+    });
+}
+
+/// One of the columns a row of the results ends in, `width` wide: a number
+/// and its picture, against the right of it, so that the numbers in every row
+/// end in line.
+fn column(width: f32) -> impl Bundle {
+    (
+        Node {
+            width: Val::VMin(width),
+            flex_shrink: 0.0,
+            justify_content: JustifyContent::FlexEnd,
+            align_items: AlignItems::Center,
+            column_gap: Val::VMin(0.5),
+            ..default()
+        },
+        Pickable::IGNORE,
+    )
+}
+
+/// A star or a coin after a number in a row of the results.
+fn icon(image: Handle<Image>, tint: Color) -> impl Bundle {
+    (
+        ImageNode::new(image).with_color(tint),
+        Node {
+            width: Val::VMin(ROW_ICON),
+            height: Val::VMin(ROW_ICON),
+            flex_shrink: 0.0,
+            ..default()
+        },
+        Pickable::IGNORE,
+    )
+}
+
+/// Words in a row of the results, on one line.
+fn cell(text: impl Into<String>, size_vmin: f32, colour: Color) -> impl Bundle {
+    (
+        Text::new(text),
+        TextFont {
+            font_size: FontSize::VMin(size_vmin),
+            ..default()
+        },
+        TextColor(colour),
+        TextLayout::no_wrap(),
+        Pickable::IGNORE,
+    )
+}
+
+/// `Back to the town in 0:12`.
+fn back_in(left: f32) -> String {
+    format!("Back to the town in {}", clock(left))
+}
+
+/// Exit, on the results: back to the town now, rather than once they are
+/// over.
+fn exit_button() -> impl Bundle {
+    (
+        AsksFor(Ask::Leave),
+        TakesPress,
+        Button,
+        Node {
+            width: Val::VMin(EXIT_WIDTH),
+            height: Val::VMin(RESULTS_BUTTON),
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            border_radius: BorderRadius::all(Val::VMin(RESULTS_BUTTON * 0.5)),
+            ..default()
+        },
+        BackgroundColor(QUIET),
+        Fill {
+            idle: QUIET,
+            lit: QUIET_LIT,
+        },
+        children![label("Exit", RESULTS_BUTTON_TEXT, Color::WHITE)],
+    )
+}
+
+/// Play again, on the results, with what it costs under its name. It shows
+/// whether you can pay for it ([`again_look`]), and goes on showing it as
+/// that changes ([`show_results`]).
+fn again_button(able: bool) -> impl Bundle {
+    let (fill, ink, price_ink, price) = again_look(able);
+    (
+        PlayAgain(able),
+        AsksFor(Ask::Join),
+        TakesPress,
+        Button,
+        Node {
+            width: Val::VMin(AGAIN_WIDTH),
+            height: Val::VMin(RESULTS_BUTTON),
+            flex_direction: FlexDirection::Column,
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            border_radius: BorderRadius::all(Val::VMin(RESULTS_BUTTON * 0.5)),
+            ..default()
+        },
+        BackgroundColor(fill.idle),
+        fill,
+        children![
+            label("Play again", RESULTS_BUTTON_TEXT, ink),
+            (AgainPrice, label(price, AGAIN_PRICE_TEXT, price_ink)),
+        ],
+    )
+}
+
+/// How Play again looks — its fill, its name's colour, and the line under it,
+/// in its colour — when you can pay for it, gold, and when you cannot, greyed
+/// out, saying what it needs in the colour of a warning.
+fn again_look(able: bool) -> (Fill, Color, Color, String) {
+    let price = hud::money(ENTRY);
+    if able {
+        let fill = Fill {
+            idle: GOLD,
+            lit: GOLD_LIT,
+        };
+        (fill, DOOR, DOOR, format!("{price} coins"))
+    } else {
+        let fill = Fill { idle: OFF, lit: OFF };
+        (fill, OFF_TEXT, WARN, format!("Need {price} coins"))
+    }
+}
+
+/// Counts the results down, and lights Play again up once you can pay for it,
+/// or greys it out once you cannot.
+fn show_results(
+    game: Option<Res<Game>>,
+    me: Query<&Balance, With<Player>>,
+    mut countdowns: Query<&mut Text, With<Countdown>>,
+    mut agains: Query<(&mut PlayAgain, &mut Fill, &mut BackgroundColor, &Children)>,
+    mut lines: Query<(&mut Text, &mut TextColor, Has<AgainPrice>), Without<Countdown>>,
+) {
+    let Some(Stage::Over { left, .. }) = game.map(|game| game.stage) else {
+        return;
+    };
+    let line = back_in(left);
+    for mut text in &mut countdowns {
+        if text.0 != line {
+            text.0.clone_from(&line);
+        }
+    }
+    let able = me.single().is_ok_and(|balance| balance.0 >= ENTRY);
+    for (mut again, mut fill, mut colour, children) in &mut agains {
+        if again.0 == able {
+            continue;
+        }
+        again.0 = able;
+        let (look, ink, price_ink, price) = again_look(able);
+        *fill = look;
+        colour.0 = look.idle;
+        let mut words = lines.iter_many_mut(children);
+        while let Some((mut text, mut text_colour, is_price)) = words.fetch_next() {
+            if is_price {
+                text.0.clone_from(&price);
+                text_colour.0 = price_ink;
+            } else {
+                text_colour.0 = ink;
+            }
+        }
+    }
+}
+
+/// Slides the results in from the right edge of the screen as they come up,
+/// slowing as they arrive. Once in, they are left alone.
+fn slide_in(
+    time: Res<Time>,
+    mut panels: Query<(Entity, &mut SlideIn, &mut UiTransform)>,
+    mut commands: Commands,
+) {
+    for (panel, mut slide, mut place) in &mut panels {
+        slide.0 += time.delta_secs();
+        let done = (slide.0 / SLIDE_SECS).min(1.0);
+        let out = SLIDE_FROM * (1.0 - done).powi(3);
+        place.set_if_neq(UiTransform::from_translation(Val2::new(
+            Val::VMin(out),
+            Val::ZERO,
+        )));
+        if done >= 1.0 {
+            commands.entity(panel).remove::<SlideIn>();
+        }
+    }
+}
+
+/// A hundredth of the short side of the window, in logical pixels: what a
+/// size in `Val::VMin` comes to.
+fn vmin(windows: &Query<&Window>) -> f32 {
+    windows
+        .single()
+        .map_or(7.2, |window| window.width().min(window.height()) / 100.0)
+}
+
 // ---------------------------------------------------------------- dialogs
 
 /// Whether to play: what the game is, what it costs, and Cancel or Play.
 fn offer(commands: &mut Commands, assets: &AssetServer, affordable: bool) {
     // A tap on the dark round it is a no.
-    dialog(commands, Some(Ask::Cancel)).with_children(|panel| {
+    dialog(commands, Ask::Cancel).with_children(|panel| {
         panel.spawn(hud::words(NAME, TITLE, GOLD));
         panel.spawn(label(RULES, BODY, Color::WHITE));
         panel.spawn(price(assets, "to play"));
@@ -1571,60 +2060,10 @@ fn offer(commands: &mut Commands, assets: &AssetServer, affordable: bool) {
     });
 }
 
-/// Who won and with how many stars, how you did, and Exit or Play again.
-fn results(
-    commands: &mut Commands,
-    assets: &AssetServer,
-    game: &Game,
-    winner: usize,
-    affordable: bool,
-) {
-    let won = winner == game.me;
-    let yours = game.stars[game.me];
-    let place = 1 + game.stars.iter().filter(|&&stars| stars > yours).count();
-    let tied = (0..game.seats.len()).any(|plot| plot != game.me && game.stars[plot] == yours);
-    dialog(commands, None).with_children(|panel| {
-        panel.spawn(hud::words(
-            if won { "You won!" } else { "Winner!" },
-            TITLE,
-            GOLD,
-        ));
-        panel.spawn(label(
-            format!("{}, with {}", game.whose(winner), stars(game.stars[winner])),
-            BODY,
-            Color::WHITE,
-        ));
-        if !won {
-            let came = if tied { "tied for" } else { "came" };
-            panel.spawn(label(
-                format!("You {came} {}, with {}", ordinal(place), stars(yours)),
-                SMALL,
-                SOFT,
-            ));
-        }
-        panel.spawn(price(assets, "to play again"));
-        if !affordable {
-            panel.spawn(label(
-                format!("You need {ENTRY} coins to play again."),
-                SMALL,
-                WARN,
-            ));
-        }
-        panel.spawn(choices()).with_children(|choices| {
-            choices.spawn(button("Exit", Ask::Leave, true));
-            choices.spawn(button("Play again", Ask::Join, affordable));
-        });
-    });
-}
-
-/// One of House Builder's dialogs: the screen dimmed behind a panel, over
-/// everything else ([`dimmed`]). A tap on the dark, if it does anything, asks
-/// `on_dark`.
-fn dialog<'a>(commands: &'a mut Commands, on_dark: Option<Ask>) -> EntityCommands<'a> {
-    match on_dark {
-        Some(ask) => dimmed(commands, (Dialog, AsksFor(ask))),
-        None => dimmed(commands, Dialog),
-    }
+/// House Builder's dialog: the screen dimmed behind a panel, over everything
+/// else ([`dimmed`]). A tap on the dark asks `on_dark`.
+fn dialog<'a>(commands: &'a mut Commands, on_dark: Ask) -> EntityCommands<'a> {
+    dimmed(commands, (Dialog, AsksFor(on_dark)))
 }
 
 /// The screen dimmed behind a panel, over everything else, and taking every
@@ -1759,15 +2198,6 @@ pub(crate) fn label(text: impl Into<String>, size_vmin: f32, colour: Color) -> i
         TextLayout::justify(Justify::Center),
         Pickable::IGNORE,
     )
-}
-
-/// `1 star`, `28 stars`.
-fn stars(count: u32) -> String {
-    if count == 1 {
-        "1 star".into()
-    } else {
-        format!("{count} stars")
-    }
 }
 
 /// `1st`, `2nd`, `3rd`, `4th`: only ever up to eighth.
