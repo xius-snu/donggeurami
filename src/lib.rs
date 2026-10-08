@@ -14,7 +14,8 @@ use bevy::audio::AudioPlugin;
 use bevy::gilrs::GilrsPlugin;
 use bevy::gltf::GltfPlugin;
 use bevy::gltf::convert_coordinates::GltfConvertCoordinates;
-use bevy::light::cluster::ClusterConfig;
+use bevy::light::cluster::{ClusterConfig, GlobalClusterSettings};
+use bevy::log::LogPlugin;
 use bevy::prelude::*;
 use bevy::render::view::NoIndirectDrawing;
 use bevy::window::WindowResolution;
@@ -28,6 +29,7 @@ mod editor;
 mod fountain;
 mod hud;
 mod island;
+mod log_file;
 mod lobby;
 mod login;
 mod map;
@@ -428,12 +430,19 @@ pub fn main() {
             // app is, and the other wakes a thread every 8 ms on Windows to
             // look for controllers. Put them back when there is a use for them.
             .disable::<AudioPlugin>()
-            .disable::<GilrsPlugin>(),
+            .disable::<GilrsPlugin>()
+            .set(LogPlugin {
+                // An iPhone keeps its log where only a Mac can read it, so it
+                // writes one of its own as well, which the Files app shows.
+                #[cfg(target_os = "ios")]
+                custom_layer: log_file::in_documents,
+                ..default()
+            }),
     )
     .init_resource::<TouchControls>()
     .init_resource::<OrbitCamera>()
     .init_resource::<FirstPerson>()
-    .add_systems(Startup, setup_world);
+    .add_systems(Startup, (setup_world, cluster_lights_on_the_cpu));
     sky::plugin(&mut app);
     island::plugin(&mut app);
     // The town's fountain, running, and its jet.
@@ -602,6 +611,25 @@ fn setup_world(mut commands: Commands) {
         // on the first frame. A point light added later needs this taken out.
         ClusterConfig::Single,
     ));
+}
+
+/// Sorts lights into the camera's clusters on the CPU, as Bevy already does on
+/// Android, rather than on the GPU, as it does everywhere else.
+///
+/// There is nothing to sort: the world's only lights are the sun and the fill,
+/// directional lights, which are never clustered (see `ClusterConfig::Single`
+/// in `setup_world`). On the GPU the sorting is still compute and raster
+/// passes every frame, and it is a path Bevy 0.19 takes on an iPhone but
+/// neither on Android nor in the iOS simulator. The iPhone's 1.0.1 never drew
+/// a frame (2026-10-08): the screen stayed black, and the server's log shows
+/// that it made its login and never joined the game, which is what a render
+/// thread that dies on its first frame does (Bevy then asks to quit, which
+/// iOS does not allow, and stops). That path is the suspect, not yet proven
+/// on the phone; with it off, every platform takes the one Android takes.
+fn cluster_lights_on_the_cpu(settings: Option<ResMut<GlobalClusterSettings>>) {
+    if let Some(mut settings) = settings {
+        settings.gpu_clustering = None;
+    }
 }
 
 /// The stick and the jump button.

@@ -339,12 +339,29 @@ pub(crate) fn data_file(name: &str) -> Option<PathBuf> {
 
 #[cfg(target_os = "ios")]
 pub(crate) fn data_file(name: &str) -> Option<PathBuf> {
-    // The app sandbox's Documents directory, which iOS also backs up.
-    Some(
-        PathBuf::from(std::env::var_os("HOME")?)
-            .join("Documents")
-            .join(name),
-    )
+    Some(kept_in_library(&PathBuf::from(std::env::var_os("HOME")?), name))
+}
+
+/// Where an iPhone keeps the file called `name`, in the app's sandbox at
+/// `home`: in its Library, which is the app's own and which iOS backs up, and
+/// not in Documents, which the Files app shows since 1.0.2 for the log
+/// (`log_file`): the device's secret is nobody's to see. 1.0.1 kept them in
+/// Documents, and what it left there is moved the first time it is looked
+/// for.
+#[cfg_attr(not(target_os = "ios"), allow(dead_code))]
+fn kept_in_library(home: &Path, name: &str) -> PathBuf {
+    let path = home.join("Library").join("Application Support").join(name);
+    let old = home.join("Documents").join(name);
+    if !path.exists() && old.exists() {
+        let moved = path
+            .parent()
+            .map_or(Ok(()), fs::create_dir_all)
+            .and_then(|()| fs::rename(&old, &path));
+        if let Err(error) = moved {
+            warn!("could not move {} to {}: {error}", old.display(), path.display());
+        }
+    }
+    path
 }
 
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
@@ -362,4 +379,25 @@ pub(crate) fn data_file(name: &str) -> Option<PathBuf> {
             })
     }?;
     Some(base.join(APP_DIR).join(name))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn what_1_0_1_left_in_documents_moves_to_library() {
+        let home = std::env::temp_dir().join(format!("roundtown-home-{}", std::process::id()));
+        let documents = home.join("Documents");
+        fs::create_dir_all(&documents).unwrap();
+        fs::write(documents.join("device.id"), "secret").unwrap();
+        let path = kept_in_library(&home, "device.id");
+        assert_eq!(path, home.join("Library").join("Application Support").join("device.id"));
+        assert_eq!(fs::read_to_string(&path).unwrap(), "secret");
+        assert!(!documents.join("device.id").exists());
+        // Nothing to move: only where it goes.
+        let town = kept_in_library(&home, "town.json");
+        assert!(!town.exists());
+        let _ = fs::remove_dir_all(&home);
+    }
 }

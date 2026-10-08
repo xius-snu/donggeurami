@@ -20,7 +20,7 @@
 
 	<!-- The marketing version: what buyers see. Bump by hand for a release. -->
 	<key>CFBundleShortVersionString</key>
-	<string>1.0.1</string>
+	<string>1.0.2</string>
 	<!-- The build number. Must increase on every upload or App Store Connect
 	     rejects the build; CI overwrites this line with $BUILD_NUMBER. -->
 	<key>CFBundleVersion</key>
@@ -65,6 +65,17 @@
 	     once codemagic.yaml's `xcode: latest` builds with that SDK, the iPad
 	     will have to take portrait and resized windows too. -->
 	<key>UIRequiresFullScreen</key>
+	<true/>
+
+	<!-- The Files app shows the app's Documents, under On My iPhone >
+	     Donggeurami Town, and the game writes log.txt there: everything it
+	     logged in the last launch, and any panic (src/log_file.rs). iOS keeps
+	     the app's own log where only a Mac can read it, and there is none
+	     here (IOS.md). Nothing else is kept in Documents: the town save and
+	     the device's secret are in Library (map::data_file). -->
+	<key>UIFileSharingEnabled</key>
+	<true/>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
 	<true/>
 
 	<!-- The status bar and home indicator are hidden by winit, from
