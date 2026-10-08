@@ -57,6 +57,15 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+	<!-- Landscape only is allowed on iPad only by opting out of multitasking
+	     (Split View, Slide Over, resizable windows). Without this the upload
+	     is refused with ITMS-90474, asking for all four orientations; that
+	     stopped the 1.0.1 upload (2026-10-08). Apple deprecated the key in
+	     iPadOS 26 (TN3192), and from the iOS 27 SDK on it no longer opts out:
+	     once codemagic.yaml's `xcode: latest` builds with that SDK, the iPad
+	     will have to take portrait and resized windows too. -->
+	<key>UIRequiresFullScreen</key>
+	<true/>
 
 	<!-- The status bar and home indicator are hidden by winit, from
 	     prefers_status_bar_hidden / prefers_home_indicator_hidden in

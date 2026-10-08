@@ -309,6 +309,7 @@ review is typically 24–48 hours.
 | `does not contain a scheme named "RoundTown"` | `xcodegen generate` did not run, or the `schemes:` block was deleted. Schemes Xcode auto-creates are per-user and invisible to `xcodebuild`. |
 | `Invalid Bundle. ... does not contain a bundle executable` | `lipo` wrote somewhere other than the archive. `$TARGET_BUILD_DIR` is the correct variable for both normal and archive builds, but upstream Bevy only ever exercises the normal one — this is the least-proven line in the pipeline. |
 | `ITMS-91053: Missing API declaration` | A required-reason API Apple found in the binary is missing from `PrivacyInfo.xcprivacy`. The mail names the category; add it with the matching reason code. `NSPrivacyAccessedAPICategoryUserDefaults` / `CA92.1` is the likely next one. |
+| `90474` ... `you need to include all of the ... orientations to support iPad multitasking` | `UIRequiresFullScreen` came out of `Info.plist`. A landscape-only iPad app has to opt out of multitasking with it. From the iOS 27 SDK on it no longer opts out (TN3192), and the iPad has to take every orientation. |
 | Build stuck in *Processing* | Normal. 5–30 minutes. |
 | Runs in the simulator, dies on the phone | The hard case, because reading device logs normally needs a Mac. Without one: App Store Connect -> TestFlight -> **Crashes**. |
 
