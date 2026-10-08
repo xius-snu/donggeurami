@@ -654,4 +654,28 @@ mod tests {
         let mut pace = Pace::new(0.0);
         assert!(!pace.take(&spot(580.0, 0.0, 0.0), &spot(582.0, 0.0, 0.0), 0.5));
     }
+
+    #[test]
+    fn the_fountain_throwing_you_up_is_a_rise_a_body_can_make() {
+        // The town's fountain throws whoever stands in its top bowl, 1.4 m
+        // up, as high as its jet goes, 4.5 m (the game's `fountain`): up at
+        // the speed that takes them that high under the game's gravity, 22
+        // m/s², a little faster than a jump, and down at one and a half times
+        // that. Moves are sent fifteen times a second; the game moves 120.
+        let floor = 1.4f32;
+        let (mut y, mut rising) = (floor, (2.0f32 * 22.0 * 4.5).sqrt());
+        let mut pace = Pace::new(0.0);
+        let mut at = spot(0.0, y, 0.0);
+        for step in 1..=30 {
+            for _ in 0..8 {
+                let dt = 1.0 / 120.0;
+                rising -= if rising > 0.0 { 22.0 } else { 33.0 } * dt;
+                y = (y + rising * dt).max(floor);
+            }
+            let next = spot(0.0, y, 0.0);
+            assert!(pace.take(&at, &next, f64::from(step) / 15.0), "step {step}, {y} m up");
+            at = next;
+        }
+        assert_eq!(y, floor, "back down in the bowl");
+    }
 }

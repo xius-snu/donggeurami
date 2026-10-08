@@ -74,7 +74,7 @@ const STEEPEST_FLOOR: f32 = 0.643;
 /// What a map's water is called in Blender. A part with this material is
 /// drawn with the sea's material, whatever it looked like in Blender, and is
 /// left out of what players stand on and bump into.
-const WATER_MATERIAL: &str = "water";
+pub(crate) const WATER_MATERIAL: &str = "water";
 
 /// Which island something is on: the town, your home, House Builder's lobby,
 /// or one builder's plot in a game of it, by their seat. It is the same type

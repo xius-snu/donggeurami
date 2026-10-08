@@ -25,6 +25,7 @@ mod ai;
 mod build;
 mod builder;
 mod editor;
+mod fountain;
 mod hud;
 mod island;
 mod lobby;
@@ -435,6 +436,8 @@ pub fn main() {
     .add_systems(Startup, setup_world);
     sky::plugin(&mut app);
     island::plugin(&mut app);
+    // The town's fountain, running, and its jet.
+    fountain::plugin(&mut app);
     // Everything standing on the town comes from the town save, so the map
     // has to be there before the editor can be pointed at any of it.
     map::plugin(&mut app);
