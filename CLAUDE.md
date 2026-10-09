@@ -324,13 +324,16 @@ re-export, and the collision follows.
   simple:** a text object is exported as a mesh of every letter, front, back
   and sides, and in Calibri Bold the two signs were 47,000 of the town's
   62,000 triangles, about 1,500 a letter. In Blender's built-in font, as
-  Hajun set them the same night, they are 5,600 of 22,000 (of 17,800 since
+  Hajun set them the same night, they are 5,600 of 22,000 (of 19,000 since
   2026-10-10).
 - **The exporter leaves modifiers off by default**, in the town as in the
-  pieces. `outerdottedlines`, the dashes round the outer road, is one dash
-  and a Geometry Nodes Array in `circlemap1.blend`, and Hajun's export of
-  2026-10-10 has the one dash (12 triangles of 1,152), with no material.
-  Apply the modifier, or tick Apply Modifiers when exporting.
+  pieces. `outerdottedlines`, the dashes round the outer road, came as one
+  dash and a Geometry Nodes Array, with no material, in Hajun's export of
+  2026-10-10, and the game got the one dash. At Hajun's asking the Array was
+  applied in `circlemap1.blend` the same day and the dashes given
+  `roadwhite`, as the town's other dotted lines have: 1,152 triangles, 1 cm
+  high on the road. Apply a modifier, or tick Apply Modifiers when
+  exporting.
 - **Normals must point out of the land** (Mesh > Normals > Recalculate Outside).
   Up and down are read from the winding, so a top turned inside out is fallen
   through, even though the double-sided material hides it on screen.
