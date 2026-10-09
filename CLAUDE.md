@@ -381,8 +381,9 @@ re-export, and the collision follows.
 
 Water wells out of the top of the fountain's tower into its top bowl, spills
 over each bowl's brim into the one below and into the basin, with foam where
-it lands; and every 8 s a jet shoots 6 m up out of the top, for a second and
-a half (`src/fountain.rs`; Hajun, 2026-10-08).
+it lands; and every 4 s a jet shoots 6 m up out of the top, for a second and
+a half (`src/fountain.rs`; Hajun, 2026-10-08; every 8 s until Hajun asked
+for 4 on 2026-10-10).
 
 - **Stand in the top bowl when the jet comes up and it throws you** 9 m up
   over the bowl, out of the top of the jet (`THROW_HEIGHT`; Hajun asked for
@@ -395,7 +396,7 @@ a half (`src/fountain.rs`; Hajun, 2026-10-08).
   the top bowl's rim, and stand there. Only while the jet goes up and stays
   up, less time than a throw takes to come down, so nobody is thrown twice
   by one jet. AIs never get up there.
-- **The jet goes by the clock** (`jet_phase`, the time since 1970 modulo 8 s),
+- **The jet goes by the clock** (`jet_phase`, the time since 1970 modulo 4 s),
   not by the game's time, so every device's goes up together and everyone
   online sees the same jet throw the same player. A throw is the thrower's
   own device's, like a jump, and the server takes it as one: it rises over

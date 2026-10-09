@@ -90,8 +90,9 @@ const STREAK: f32 = 0.28;
 const FOAM_PATCH: f32 = 0.45;
 const JET_STREAK: f32 = 0.14;
 
-/// How often the jet goes up, in seconds by the clock.
-const JET_EVERY: f64 = 8.0;
+/// How often the jet goes up, in seconds by the clock: every 8 until Hajun
+/// asked for every 4 (2026-10-10).
+const JET_EVERY: f64 = 4.0;
 /// How long the jet takes to shoot up, how long it stays up, and how long it
 /// takes to fall back, in seconds. It throws only until it starts to fall,
 /// which is sooner than anyone it throws comes back down
