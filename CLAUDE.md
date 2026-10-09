@@ -725,6 +725,14 @@ it, or `Escape` shuts it.
   dragged toward 12 cm short of the edge's end and 10 cm off its line went
   to exactly flush and in line, and along its front to flush and level with
   its end.
+- **Furniture always turns** (`build::turned_clear`; Hajun, 2026-10-09: up
+  against a wall or another piece, it would not turn at all). Turned into a
+  wall or another piece, it moves out of it as little as it takes, tried 16
+  ways round (`ROOM_WAYS`), over the same floor and never through a wall, and
+  snaps into line as a drag would leave it; with nowhere clear near enough,
+  it turns where it is. Checked in a scripted run: the Cafe Desk Edge, long
+  side flush against a wall of the Square House, turned 45° and came straight
+  out 0.55 m. A house still turns only where it fits on the land.
 - **Every door swings open by itself** (`build::swing_doors`: the Classic
   Door since 2026-09-30, three more since 2026-10-03, the Classic Window Door
   since 2026-10-04). Each is Hajun's, in `assets/mybuilds/`. A leaf, the

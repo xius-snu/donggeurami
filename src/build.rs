@@ -131,6 +131,12 @@ const HOUSE_REACH: f32 = 12.0;
 const EDGE_STEP: f32 = 0.2;
 /// A new piece faces you, turned to the nearest of these.
 const TURN_STEP_DEG: f32 = 45.0;
+/// How a piece turned into a wall or another piece is moved out of it: tried
+/// this many ways round, at spots this far apart, in metres, out to this much
+/// further than the corner of it furthest from its middle.
+const ROOM_WAYS: u32 = 16;
+const ROOM_STEP: f32 = 0.1;
+const ROOM_SPARE: f32 = 0.5;
 /// How much of a house is drawn while it is a ghost: its own colours, a little
 /// see-through. Only a house is: everything else is drawn as it will be once
 /// it is down (Hajun, 2026-10-01).
@@ -1305,15 +1311,22 @@ fn ahead_of(island: &Island, you: Vec3, spot: Vec3, bounds: Bounds, turn: Quat) 
 /// rather than on the lattice bodies are, so that a piece can stand flush
 /// against a wall, or another piece.
 fn walled(island: &Island, at: Vec3, bounds: Bounds, turn: Quat) -> bool {
+    caught(island, at, bounds, turn).next().is_some()
+}
+
+/// Where round the edge of a piece of `bounds`, turned by `turn` and standing
+/// at `at`, and at its middle, it would be in a wall or in anything else it
+/// could not be carried onto, as [`walled`] tests it, on the ground.
+fn caught(island: &Island, at: Vec3, bounds: Bounds, turn: Quat) -> impl Iterator<Item = Vec2> {
     let margin = Vec2::splat(TOUCH);
     let (low, high) = (bounds.low.xz() + margin, bounds.high.xz() - margin);
     let size = high - low;
     let steps = (size / EDGE_STEP).ceil().max(Vec2::ONE);
-    let across = (0..=steps.x as u32).flat_map(|i| {
+    let across = (0..=steps.x as u32).flat_map(move |i| {
         let x = low.x + size.x * i as f32 / steps.x;
         [Vec2::new(x, low.y), Vec2::new(x, high.y)]
     });
-    let along = (0..=steps.y as u32).flat_map(|j| {
+    let along = (0..=steps.y as u32).flat_map(move |j| {
         let z = low.y + size.y * j as f32 / steps.y;
         [Vec2::new(low.x, z), Vec2::new(high.x, z)]
     });
@@ -1321,8 +1334,83 @@ fn walled(island: &Island, at: Vec3, bounds: Bounds, turn: Quat) -> bool {
     across
         .chain(along)
         .chain(std::iter::once((low + high) * 0.5))
-        .map(|edge| at.xz() + (turn * Vec3::new(edge.x, 0.0, edge.y)).xz())
-        .any(|spot| island.blocked(spot, bottom, top))
+        .map(move |edge| at.xz() + (turn * Vec3::new(edge.x, 0.0, edge.y)).xz())
+        .filter(move |&spot| island.blocked(spot, bottom, top))
+}
+
+/// Where a piece of `bounds`, standing at `at` on `island`, stands once it is
+/// turned to `turn`, so that it always turns (Hajun, 2026-10-09: up against a
+/// wall or another piece, it would not turn at all). Where it is, if it is
+/// clear there; otherwise as near as it is clear, out of whatever it would be
+/// in, over the same floor and never through a wall, and snapped into line
+/// among `stops` as a drag would leave it. Where it is, in whatever it would
+/// be in, if there is nowhere near enough.
+fn turned_clear(island: &Island, at: Vec3, bounds: Bounds, turn: Quat, stops: &[Stop]) -> Vec3 {
+    let fits = |spot: Vec3| !walled(island, spot, bounds, turn);
+    if fits(at) {
+        return at;
+    }
+    // Every way round, the way out of what it would be in first: away from
+    // the middle of where it meets it.
+    let (sum, count) = caught(island, at, bounds, turn)
+        .fold((Vec2::ZERO, 0.0), |(sum, count), spot| (sum + spot, count + 1.0));
+    let away = (at.xz() - sum / count).normalize_or_zero();
+    let mut ways: Vec<Vec2> = (0..ROOM_WAYS)
+        .map(|way| Vec2::from_angle(way as f32 * std::f32::consts::TAU / ROOM_WAYS as f32))
+        .collect();
+    ways.sort_by(|a, b| b.dot(away).total_cmp(&a.dot(away)));
+    // `far` out `way`, on the floor it stands on.
+    let out = |way: Vec2, far: f32| {
+        let spot = at.xz() + way * far;
+        editor::drop_height(island, spot, at.y)
+            .filter(|y| (y - at.y).abs() <= crate::LAND_STEP_UP)
+            .map(|y| Vec3::new(spot.x, y, spot.y))
+    };
+    // As little way out `way` as it takes, from somewhere it is clear `far`
+    // out, found to within a millimetre by halving.
+    let least = |way: Vec2, far: f32| {
+        let (mut short, mut long) = (far - ROOM_STEP, far);
+        for _ in 0..7 {
+            let middle = (short + long) * 0.5;
+            if out(way, middle).is_some_and(fits) {
+                long = middle;
+            } else {
+                short = middle;
+            }
+        }
+        long
+    };
+    // The nearest it is clear: of every way it is clear at the first step
+    // out it is clear at all, the one it moves least to be.
+    let reach = bounds.low.xz().abs().max(bounds.high.xz().abs()).length() + ROOM_SPARE;
+    let found = (1..=(reach / ROOM_STEP).ceil() as u32).find_map(|step| {
+        let far = step as f32 * ROOM_STEP;
+        ways.iter()
+            .filter(|&&way| {
+                out(way, far).is_some_and(|spot| fits(spot) && open_between(island, at, spot))
+            })
+            .map(|&way| (way, least(way, far)))
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+    });
+    let Some((way, far)) = found else {
+        return at;
+    };
+    let spot = out(way, far).unwrap_or(at);
+    snaps(spot, turn, bounds, stops)
+        .into_iter()
+        .filter_map(|snap| editor::drop_height(island, snap.xz(), spot.y).map(|y| snap.with_y(y)))
+        .find(|&snap| fits(snap))
+        .unwrap_or(spot)
+}
+
+/// Whether the middle of a piece goes from `from` to `to` without going
+/// through anything it could not be carried onto: never through a wall.
+fn open_between(island: &Island, from: Vec3, to: Vec3) -> bool {
+    let (bottom, top) = (from.y + crate::LAND_STEP_UP, from.y + crate::PLAYER_HEIGHT);
+    let steps = (from.xz().distance(to.xz()) / EDGE_STEP).ceil().max(1.0);
+    (1..=steps as u32)
+        .map(|step| from.xz().lerp(to.xz(), step as f32 / steps))
+        .all(|spot| !island.blocked(spot, bottom, top))
 }
 
 /// Something a piece carried over the floor can be pushed flush against:
@@ -1808,27 +1896,37 @@ fn edit_pieces(
                 }
             }
             Edit::Turn(target, angle) => {
+                // What it can go flush against, as it can when dragged.
+                let stops = pieces
+                    .get(target)
+                    .is_ok_and(|(_, piece, ..)| piece.def.mount == Mount::Floor)
+                    .then(|| stops_on(&pieces, &walls, venue, target))
+                    .unwrap_or_default();
                 let Ok((_, piece, mut transform, _, bounds, ..)) = pieces.get_mut(target) else {
                     continue;
                 };
                 let turned = Quat::from_rotation_y(angle) * transform.rotation;
                 let at = transform.translation;
-                let fits = match (piece.def.mount, bounds) {
+                match (piece.def.mount, bounds) {
                     // A house turns only where it still fits on the land.
-                    (Mount::House, Some(&bounds)) => islands.ground(venue).is_some_and(|ground| {
-                        house_fits(ground, bounds, turned, at.xz()).is_some()
-                    }),
-                    // Anything else not into a wall, unless it is in one
-                    // already and being turned out of it.
-                    (Mount::Floor, Some(&bounds)) => islands.get(venue).is_none_or(|island| {
-                        walled(island, at, bounds, transform.rotation)
-                            || !walled(island, at, bounds, turned)
-                    }),
-                    (Mount::House | Mount::Floor, None) => true,
-                    _ => false,
-                };
-                if fits {
-                    transform.rotation = turned;
+                    (Mount::House, Some(&bounds)) => {
+                        let fits = islands.ground(venue).is_some_and(|ground| {
+                            house_fits(ground, bounds, turned, at.xz()).is_some()
+                        });
+                        if fits {
+                            transform.rotation = turned;
+                        }
+                    }
+                    // Anything else always turns, out of a wall or another
+                    // piece it would turn into.
+                    (Mount::Floor, Some(&bounds)) => {
+                        if let Some(island) = islands.get(venue) {
+                            transform.translation = turned_clear(island, at, bounds, turned, &stops);
+                        }
+                        transform.rotation = turned;
+                    }
+                    (Mount::House | Mount::Floor, None) => transform.rotation = turned,
+                    _ => {}
                 }
             }
             Edit::Confirm(target) => {
@@ -3092,6 +3190,58 @@ mod tests {
         // Not from further off.
         let at = drag_over_floor(&island, Vec3::ZERO, Vec2::new(1.2, 0.0), bounds, Quat::IDENTITY, &[wall]);
         assert!((at - Vec3::new(1.2, 0.0, 0.0)).length() < 1e-4, "{at}");
+    }
+
+    #[test]
+    fn furniture_always_turns_out_of_a_wall() {
+        // A floor, and a wall across it at x = 2.
+        let mut shape = block(Vec3::new(-20.0, -1.0, -20.0), Vec3::new(20.0, 0.0, 20.0));
+        shape.extend(block(Vec3::new(2.0, 0.0, -5.0), Vec3::new(2.3, 2.8, 5.0)));
+        let island = Island::new_for_tests(&shape);
+        // The edge desk with its long side flush against the wall, turned 45°
+        // more: a corner of it would be 0.56 m into the wall, so it comes
+        // straight out from the wall that far, and no further.
+        let along = Quat::from_rotation_y(FRAC_PI_2);
+        let at = Vec3::new(1.5, 0.0, 0.0);
+        assert!(!walled(&island, at, DESK_EDGE, along));
+        let turned = Quat::from_rotation_y(FRAC_PI_4) * along;
+        assert!(walled(&island, at, DESK_EDGE, turned));
+        let out = turned_clear(&island, at, DESK_EDGE, turned, &[]);
+        assert!(!walled(&island, out, DESK_EDGE, turned), "{out}");
+        let corner = FRAC_PI_4.cos() * 1.0 + FRAC_PI_4.sin() * 0.5;
+        assert!((out.x - (2.0 - corner)).abs() < 0.005, "{out}");
+        assert!(out.z.abs() < 1e-3 && out.y == 0.0, "{out}");
+        // Clear where it is, it turns where it is.
+        let free = Vec3::new(-3.0, 0.0, 0.0);
+        assert_eq!(turned_clear(&island, free, DESK_EDGE, turned, &[]), free);
+        // It never goes through a wall to get anywhere.
+        assert!(open_between(&island, at, Vec3::new(1.0, 0.0, 4.0)));
+        assert!(!open_between(&island, at, Vec3::new(3.0, 0.0, 0.0)));
+    }
+
+    #[test]
+    fn furniture_always_turns_out_of_another_piece() {
+        // The corner desk flush against the end of the edge desk, turned 45°:
+        // a corner of it would be in the edge desk, so it comes out away from
+        // it, as far as it takes.
+        let (island, desk) = desk_down(DESK_EDGE, Quat::IDENTITY, Vec3::ZERO);
+        let at = Vec3::new(1.5, 0.0, 0.0);
+        let turned = Quat::from_rotation_y(FRAC_PI_4);
+        assert!(walled(&island, at, DESK_CORNER, turned));
+        let out = turned_clear(&island, at, DESK_CORNER, turned, &[desk]);
+        assert!(!walled(&island, out, DESK_CORNER, turned), "{out}");
+        let corner = FRAC_PI_4.cos();
+        assert!((out.x - (1.0 + corner)).abs() < 0.005 && out.z.abs() < 1e-3, "{out}");
+        // Between two walls too near for it to turn between, it turns where
+        // it is, rather than go through either.
+        let mut shape = block(Vec3::new(-20.0, -1.0, -20.0), Vec3::new(20.0, 0.0, 20.0));
+        shape.extend(block(Vec3::new(-0.85, 0.0, -10.0), Vec3::new(-0.6, 2.8, 10.0)));
+        shape.extend(block(Vec3::new(0.6, 0.0, -10.0), Vec3::new(0.85, 2.8, 10.0)));
+        let corridor = Island::new_for_tests(&shape);
+        let along = Quat::from_rotation_y(FRAC_PI_2);
+        assert!(!walled(&corridor, Vec3::ZERO, DESK_EDGE, along));
+        let across = turned_clear(&corridor, Vec3::ZERO, DESK_EDGE, Quat::IDENTITY, &[]);
+        assert_eq!(across, Vec3::ZERO);
     }
 
     #[test]
