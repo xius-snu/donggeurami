@@ -310,20 +310,27 @@ re-export, and the collision follows.
   across, with no material, at the middle of the fountain, read as land, so
   that it bulged out round the foot of the tower. It is not in Hajun's exports
   of the town since 2026-10-03 (no part without a material is).
-- **The town has eleven trees and a second house** (Hajun's export of
-  2026-10-04): the trees round the fountain and out toward the edge, the
-  house across the road from the House Builder's, with a sign of its own,
-  `Text.002`, as high as theirs. Being part of the model, they are land like
-  the rest: bodies bump into the trunks, and a trunk or leaves between the
-  camera and you fade (`see_through`), as a town object such as the
-  catalogue's tree does. One trunk is
-  in twice, `Cylinder.009` and `Cylinder.011` in one place: harmless, as the
-  game merges surfaces met twice at one height. Each trunk is closed but for
-  a disc left inside it, which nothing can reach. **Keep the signs' font
+- **The town has three trees and a second house** (Hajun's export of
+  2026-10-10; eleven trees from 2026-10-04 until then): the trees round the
+  fountain, each one object (`tree`, `tree2`, `tree3`), and the house across
+  the road from the House Builder's, with a sign of its own,
+  `spahgettitext` (`Text.002` until 2026-10-10), as high as theirs. Being
+  part of the model, they are land like the rest: bodies bump into the
+  trunks, and a trunk or leaves between the camera and you fade
+  (`see_through`), as a town object such as the catalogue's tree does. One
+  trunk is in twice: `Cylinder.011` stands inside `tree2`'s, harmless, as
+  the game merges surfaces met twice at one height. Each trunk is closed but
+  for a disc left inside it, which nothing can reach. **Keep the signs' font
   simple:** a text object is exported as a mesh of every letter, front, back
   and sides, and in Calibri Bold the two signs were 47,000 of the town's
   62,000 triangles, about 1,500 a letter. In Blender's built-in font, as
-  Hajun set them the same night, they are 5,600 of 22,000.
+  Hajun set them the same night, they are 5,600 of 22,000 (of 17,800 since
+  2026-10-10).
+- **The exporter leaves modifiers off by default**, in the town as in the
+  pieces. `outerdottedlines`, the dashes round the outer road, is one dash
+  and a Geometry Nodes Array in `circlemap1.blend`, and Hajun's export of
+  2026-10-10 has the one dash (12 triangles of 1,152), with no material.
+  Apply the modifier, or tick Apply Modifiers when exporting.
 - **Normals must point out of the land** (Mesh > Normals > Recalculate Outside).
   Up and down are read from the winding, so a top turned inside out is fallen
   through, even though the double-sided material hides it on screen.
@@ -598,8 +605,9 @@ in Blender moves where the game is offered. Nothing about them is placed in
 code: the game only gives them a collider and hangs their arms at their sides
 like everyone else's (the model has them out). Over their door, in raised
 white letters, is "BUILD TO IMPRESS" ("Build Your Own House" until
-2026-10-04), the text object `Text.001` in `circlemap1.blend` (it was added
-as `HouseBuilderSign`): part of the model, and so of the town's shape, but
+2026-10-04), the object `buildtext` in `circlemap1.blend` (added as
+`HouseBuilderSign`, then `Text.001` until 2026-10-10): part of the model, and
+so of the town's shape, but
 from 7.5 to 10.8 m up (since Hajun's export of 2026-10-04; about 6 m the day
 before, and 5.5 m before that), over any jump.
 
