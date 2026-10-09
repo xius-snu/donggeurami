@@ -522,6 +522,21 @@ pub(crate) fn disc(left: f32, top: f32, size: f32) -> impl Bundle {
     )
 }
 
+/// A person, head and shoulders: you.
+pub(crate) fn person() -> impl Bundle {
+    children![
+        disc(37.0, 16.0, 26.0),
+        (
+            Node {
+                border_radius: BorderRadius::top(Val::Percent(50.0)),
+                ..frame(23.0, 47.0, 54.0, 33.0)
+            },
+            BackgroundColor(ICON),
+            Pickable::IGNORE,
+        ),
+    ]
+}
+
 /// A house with a pitched roof, a chimney and a door. The roof is a square
 /// turned on its corner, its lower half hidden in the walls.
 fn house() -> impl Bundle {

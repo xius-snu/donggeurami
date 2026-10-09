@@ -90,7 +90,7 @@ fn spawn_button(bars: Query<Entity, With<BarLeft>>, mut commands: Commands) {
         },
         BorderColor::all(Color::srgba(1.0, 1.0, 1.0, 0.5)),
         Visibility::Hidden,
-        children![(hud::picture(), builder::person())],
+        children![(hud::picture(), hud::person())],
     ));
 }
 

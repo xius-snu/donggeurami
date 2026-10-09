@@ -1,6 +1,7 @@
 # 동그라미타운 (RoundTown)
 
-A third-person 3D world in Bevy 0.19. One codebase, three targets: Windows
+A third-person 3D world in Bevy 0.19, zoomed into first person all the way
+in. One codebase, three targets: Windows
 (`src/main.rs`), Android (`mobile/android`, built as a cdylib via cargo-ndk),
 iOS (`mobile/ios`, built as a plain Rust binary that Xcode bundles).
 
@@ -36,6 +37,10 @@ tested on the actual phone, and what not to try again. The short version:
   streaks the GPU moves by the frame's time. It is the one custom shader;
   Bevy compiles it on each platform like its own, built into the binary
   rather than loaded from `assets/`.
+- **What stands between the camera and you is drawn see-through**
+  (`src/see_through.rs`, since 2026-10-09): a blended copy of its own
+  material, in the transparent phase like the sea and the clouds, so on the
+  phone it needs `NoIndirectDrawing` as they do. Not yet seen on a phone.
 
 ## It aims for 120 frames a second on Windows and Android
 
@@ -309,9 +314,9 @@ re-export, and the collision follows.
   2026-10-04): the trees round the fountain and out toward the edge, the
   house across the road from the House Builder's, with a sign of its own,
   `Text.002`, as high as theirs. Being part of the model, they are land like
-  the rest: bodies bump into the trunks, and the camera keeps out of trunks
-  and leaves alike, so it pulls in when a tree comes between it and you (a
-  town object, such as the catalogue's tree, it passes through). One trunk is
+  the rest: bodies bump into the trunks, and a trunk or leaves between the
+  camera and you fade (`see_through`), as a town object such as the
+  catalogue's tree does. One trunk is
   in twice, `Cylinder.009` and `Cylinder.011` in one place: harmless, as the
   game merges surfaces met twice at one height. Each trunk is closed but for
   a disc left inside it, which nothing can reach. **Keep the signs' font
@@ -415,66 +420,87 @@ a half (`src/fountain.rs`; Hajun, 2026-10-08).
   furthest first by the middle of their bounds, which is why foam floats 6 mm
   over its pool: so that it comes after it.
 
-## The camera keeps out of the island
+## The camera stands where you zoomed it
 
-The camera orbits you as you turn it (`OrbitCamera`), but never stands inside
-the island's shape, nor with any of it between the camera and you for longer
-than it takes to come in past it (`follow_camera` in `src/lib.rs`). While you
-build and rate houses in House Builder you can swap it for your own eyes
-(`FirstPerson`, below), turned by the same yaw and pitch, and then none of
-this applies.
+There is one view (Hajun, 2026-10-09): the camera orbits you as you turn and
+zoom it (`OrbitCamera`, `follow_camera` in `src/lib.rs`), 2.5 to 18 m out
+behind you, and zoomed all the way in it is your own eyes. Nothing in the
+world moves it: walls, ceilings and trees never bring it in nearer you.
+Whatever stands between it and you is drawn see-through instead, and a tap
+goes through it (`src/see_through.rs`). That is Hajun's call (2026-10-09):
+"at all times u should be able to zoom out to the current max zoom out even
+when ur inside a room or covered by some wall and the camera should not
+automatically go near the player". In a house in House Builder, zoomed out,
+the camera is outside it looking in, and you tap what is in there with you
+through its wall.
 
-- **It always points exactly the way you turned it.** Walls and ceilings only
-  change how far out it stands along that line: a ball 0.2 m in radius
-  (`CAMERA_RADIUS`) is swept from the point on you it looks at out to where
-  you zoomed it, and the camera stands where the ball stops. It is swept in
-  when something comes in the way and eases back out once the way is clear
-  (`CameraFit`). Coming in, it stands behind what came between, in the open,
-  and never in it: should the sweep put it in or against it, it goes the rest
-  of the way in at once (`Island::room_for`). Turned past the end of a wall, it
-  is out of sight of you for about a quarter of a second, moving in at most
-  about a metre a frame, where it used to come all the way in in one frame
-  (Hajun found it jumping in front of them, 2026-10-08;
-  `CAMERA_PULL_IN_SECS`). Turned straight into a long wall, it still slides
-  in front of it as fast as the wall requires: lagging there would put it
-  inside the wall. Walk into a room with the camera up in the sky and it comes
-  down over the roof and in under the ceiling; walk out and it goes back up. The one other way it
-  moves: brought in near you, it rises straight up toward your eyes
-  (`toward_your_eyes`), a little from 1.2 m out of sight and all the way by
-  the time you are out of sight, and never through a ceiling. Its turn is
-  the same either way.
-- **Keep it that way.** An earlier version slid the camera along walls and
-  climbed it up them to keep it 3 m off. Hajun found it glitchy (2026-09-27):
-  in a room and at a wall, the camera jittered against the way they swiped,
-  some of a turn had "so much friction" and some went too fast, it stuck in
-  room corners, and tucked into a corner it would not turn at all. Every bit of
-  a swipe has to turn the camera by as much, wherever you are; only the
-  distance may give.
-- **Brought in so far that it would be inside you, it hides your body**
-  (`inside_you`) and sees what you would: turned into a wall you stand against,
-  or into a corner you are tucked in. `island::show_where_i_am` leaves your
-  body to the camera for that reason.
-- **Your eyes are 2.2 m up** (`EYE_HEIGHT`), higher than your head (1.7 m),
-  in first person and in third person brought in to you alike. Hajun asked
-  for the view of a taller person (2026-10-03); the height is mine, not yet
-  tried by their hand. Their houses and furniture are built big (a door 3.35
-  m, a counter 1.5 m), and from 1.44 m, as it was, a counter's top was at
-  eye level. Under a ceiling lower than that, the eyes stop just under it.
-- **What it keeps out of is every triangle of the island's model, walls
-  included** (`island::Faces`, kept as boxes inside boxes so that a sweep only
-  tries the triangles near it), and on a House Builder plot whatever has been
-  built there, with a screen across every doorway (`build::screen`, halfway
-  through the wall) that only the camera meets: in a house it stays inside
-  rather than going out through the door, and out of one it stays out (Hajun
-  found it going out through the door, 2026-10-01). The players, the House
-  Builder and town objects like the catalogue's tree are not in it, and the
-  camera passes through them; the trees modelled into the town are in it.
-- It is cheap: one sweep a frame, a few microseconds even round the fountain's
-  2,400 triangles. `cargo test --lib` checks, frame by frame, that the camera
-  looks exactly the way you turned it, on that line, clear of the walls, and
-  out of sight of you for no more than half a second at a time, turning into
-  a wall at your back, past the end of one, round a room from its middle and
-  its corners, looking up, and walking in and out through the doorway.
+- **It always points exactly the way you turned it, and stands as far out as
+  you zoomed it**: 2.5 to 18 m (`CAMERA_DISTANCE_MIN`, `_MAX`; 15 m at most
+  until Hajun asked for "a slight bit more", 2026-10-09). It tips down as far
+  as straight down (`PITCH_MAX`, a right angle; about 69° until Hajun asked,
+  the same day), for a view of the tops of things, a roof fading to show the
+  rooms under it. Until 2026-10-09 the island brought it in: a
+  ball was swept out from you to where you zoomed it and the camera stood
+  where the ball stopped, eased in and out (`CameraFit`), with a screen
+  across every doorway to keep it in a house (`build::screen`). All of that
+  is gone. Before that, a version slid it along walls and climbed it up them,
+  and Hajun found it glitchy (2026-09-27): every bit of a swipe has to turn
+  the camera by as much, wherever you are. **Keep both**: nothing moves it off
+  where you turned and zoomed it.
+- **What stands between it and you fades to a quarter of itself** (`SEEN`,
+  0.25, as much as Roblox's Invisicam leaves of what it fades) over 0.15 s,
+  and back once it does not (`FADE_SECS`). Every frame the straight lines
+  from the camera to three points on you, the bottom of your body, your chest
+  and your head (1.15, 1.4 and 1.65 m up, `SEEN_AT`), are tried against
+  everything drawn on your island: the box round each part first, then its
+  triangles, read once per mesh into boxes inside boxes (`island::Faces`) and
+  again whenever the mesh changes, like a wall a door has just cut. What
+  hides only your legs, like a bed you stand behind, is not in the way. A
+  part fades with a blended copy of its own material that shows only its near
+  side, so that a wall is one pane rather than two, and has its own back once
+  it is solid again. It costs 5 to 13 µs a frame in a debug build (measured
+  in the town and on a plot).
+- **What fades:** a piece of furniture, a door, a window or a town object
+  fades whole; a house and the island a part at a time, each as modelled in
+  Blender: a wall, the roof, a floor, a tree's trunk or its leaves. Bodies
+  never fade (skinned meshes are left out), nor water, glass, ghosts or the
+  sky, which are blended already, nor a piece being put down, nor whatever
+  the edit menu is open on. Seen through a doorway, the door fades and the
+  wall round it does not.
+- **A tap goes through whatever is see-through** (`see_through::InTheWay`,
+  which `editor::pick` skips as it does `Untappable`, for as long as any of
+  it is see-through): only what is not in the way of you can be tapped.
+  Checked in a scripted run (2026-10-09): standing in the Square House with
+  the camera 15 m out, its front wall faded, and a tap on the bed through it
+  opened the menu on the bed. A house you are standing in still cannot be
+  tapped (`build::untappable_from_inside`), whatever the camera sees.
+- **Zoomed all the way in, it is your eyes, and that is as far in as it
+  zooms** (Hajun, 2026-10-09: "the max zoom point is the point at which it
+  becomes first person view ... as soon as you zoom out u are back to third
+  person view"). Zoomed in past 2.5 m it goes into them, and zoomed out of
+  them it is straight back behind you at 2.5 m; either way it takes a tenth
+  more zoom than the camera can follow (`SWAP_ZOOM`), a notch of the wheel,
+  so that fingers that waver as a pinch ends do not swap it back and forth.
+  There is no view button any more (from 2026-09-29 it swapped first and
+  third person while you built and rated), and no zooming the view in your
+  eyes (it narrowed to 23°). It takes in 66° top to bottom (`CAMERA_FOV`),
+  near and far: first person's width; behind you it was 45° until then.
+- **Your eyes are inside your head, as high as the model's eyes, 1.57 m**
+  (`EYE_HEIGHT`, under the top of the head at 1.71 m; Hajun, 2026-10-09).
+  They were 2.2 m up from 2026-10-03, over your head, for the view of a
+  taller person, and 1.44 m before that. Under a ceiling lower than that,
+  the eyes stop just under it (`rise`). Your body is not drawn while the
+  camera is in it (`inside_you`), which is why `island::show_where_i_am`
+  leaves your body to the camera; through your eyes nothing is in the way.
+- **Ahead is the way the camera faces along the ground** (`camera_ahead`):
+  where the stick's up walks you and where a piece from the shop comes up.
+  Looking straight down, it is the top of the screen.
+- `cargo test --lib` checks that walls never bring it in, that you are in
+  sight of it behind you at every tilt and as near as it comes, that zoomed
+  all the way in it is your eyes, that the zoom goes into them and back out
+  as it should, that it looks straight down with ahead still ahead, and which
+  of a house's walls, its roof and a bed are in the way from inside the house
+  and from outside it.
 - **A jump stops the head just under a ceiling** (`headroom`, in
   `move_bodies`). Before 2026-09-28 the head went into it at the top of the
   jump, the body's collision read the ceiling as a wall there, and anyone
@@ -508,7 +534,7 @@ tap-to-edit menu that writes to it.
   itself goes on the screen (`clear_of_the_top` in `follow`): a house up the
   screen is ringed lower down its front, a small or far thing keeps them on
   it, and one that has gone up off the screen takes them with it. Only with its
-  middle behind the camera (first person, in a house) are they round the part
+  middle behind the camera (in your eyes, in a house) are they round the part
   of it that is on the screen.
   The turn buttons' circular arrows are drawn in code (`editor::turn_image`),
   the way the rating star is.
@@ -614,23 +640,12 @@ before, and 5.5 m before that), over any jump.
   slides in from the right, 52 wide and 62 tall in shares of the short side,
   which keeps it above a phone's jump button; online, names over heads that
   would show through it are put away (`tags::HidesNames`).
-- **Building and visiting are seen in third person**, as the town is, unless
-  you swap to first person (`FirstPerson`, set by `builder::publish_view`):
-  the camera is then your eyes, 2.2 m up (`EYE_HEIGHT`, above), wider (about
-  66° top to bottom, `FIRST_PERSON_FOV`), and your body is not drawn. First
-  person was the
-  default until 2026-09-29, when Hajun found third person better. The lobby
-  and the winner's plot are always third person.
-- **A round button over the hammer swaps third person for first and back**
-  (on desktop, V as well). It is there while you build and while you visit,
-  where the hammer would be, and shows the view it swaps to: an eye in third
-  person, a person in first. The choice lasts as long as the app is open
-  (`builder::FromBehind`, true until swapped), from one game to the next.
-- **A pinch zooms first person as it zooms third** (the wheel, on desktop):
-  the view narrows to about 23° top to bottom or widens to 77°
-  (`FIRST_PERSON_FOV_MIN`, `_MAX`), and each view keeps its own zoom
-  (`OrbitCamera::fov`). Zoomed in, a swipe turns the camera less, in
-  proportion, so the world keeps pace with the finger (`OrbitCamera::turn`).
+- **Building and visiting are seen as the town is** (above, "The camera
+  stands where you zoomed it"): from behind you, or, zoomed all the way in,
+  through your own eyes. From 2026-09-29 to 2026-10-09 a round button over
+  the hammer (V on desktop) swapped first person for third while you built
+  and visited; Hajun had it taken out when zooming in became the way into
+  your eyes.
 - **Tapping the time top centre skips to the end of the wait** — the build,
   or a visit. It is for trying the game out, and meant to go.
 - **While a dialog is up you stand still, and presses reach only it.** On
@@ -672,8 +687,11 @@ it, or `Escape` shuts it.
   later and it is picked back up, a ghost until the tick; all but the house
   you are standing in (since 2026-09-30), which from inside nearly every tap
   landed on: a tap goes through it (`build::untappable_from_inside`, which
-  reads inside off its `Floor...` objects). Only one thing is a
-  ghost at a time: the hammer is put away until it is down. On desktop the
+  reads inside off its `Floor...` objects); and all but what stands between
+  the camera and you, which is see-through and which a tap goes through as
+  well (since 2026-10-09; "The camera stands where you zoomed it"). Only one
+  thing is a ghost at a time: the hammer is put away until it is down. On
+  desktop the
   cursor is let go for as long as it is (`hud::WantsPointer`).
 - **One house to a plot**, and doors, windows and what hangs on walls need
   one: the shop greys out what cannot be chosen, with the reason over the grid.
@@ -790,13 +808,13 @@ it, or `Escape` shuts it.
   facing the stairs downstairs, a square window and a classic door both came
   up on the front wall.
 - **What is down is part of the plot** (`island::Islands::build_on`): walked
-  into, stood on, kept out of by the camera. Houses (walls with their holes
-  cut) and furniture count; doors, windows and hangings do not, the hole is
-  what counts; ghosts never do. A window's hole, though, is filled with a
-  box the size of it (`build::pane`), its glass as far as bodies and the
-  camera go: drawn open, shut to them, so that a window is never a way in
-  and the camera meets it as it meets a wall. A door's hole is open to
-  bodies, and shut to the camera by a screen (`build::screen`).
+  into and stood on. Houses (walls with their holes cut) and furniture count;
+  doors, windows and hangings do not, the hole is what counts; ghosts never
+  do. A window's hole, though, is filled with a box the size of it
+  (`build::pane`), its glass as far as bodies go: drawn open, shut to them,
+  so that a window is never a way in. A door's hole is open to bodies. What
+  stands between the camera and you is see-through, and a tap goes through
+  it (above, "The camera stands where you zoomed it").
 - **When the time runs out**, any ghost is put down where it is and nothing
   can be changed any more. Nothing is saved: every piece carries
   `builder::InGame` and goes with the game.
@@ -839,8 +857,9 @@ it, or `Escape` shuts it.
   indoors; Hajun then asked for the pieces to make sense next to the players.
   The cottage is 6 m square with 2.8 m walls, a door is 2.3 m high, and a
   mattress is 0.55 m off the floor: it was low enough to step up onto, until
-  the step limit went to 0.5 m (2026-09-30), and now takes a jump. In third
-  person the camera has little room indoors and comes in close behind you.
+  the step limit went to 0.5 m (2026-09-30), and now takes a jump. Indoors
+  the camera no longer comes in close behind you (since 2026-10-09): zoomed
+  out, it stands outside the house, and the walls between fade.
 - **`square_house` is Hajun's own model, and is loaded as they made it.**
   `assets/mybuilds/` holds their `.blend`, the `.glb` exported from it and the
   `.png` the shop shows; the piece is `my_house(...)` in `build::PIECES`, and

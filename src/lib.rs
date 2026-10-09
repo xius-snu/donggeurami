@@ -1,5 +1,5 @@
-//! Round Town and your home, two islands played third person with WASD or
-//! touch.
+//! Round Town and your home, two islands played from behind you, or through
+//! your own eyes, with WASD or touch.
 //!
 //! The app opens in the town, with you and seven others already standing in
 //! it (`lobby`). A button top right takes you home and back again (`hud`). The
@@ -36,6 +36,7 @@ mod map;
 mod net;
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 mod pace;
+mod see_through;
 mod shop;
 mod sky;
 mod tags;
@@ -116,8 +117,17 @@ const WATER_MOVE_SCALE: f32 = 0.72;
 const LAND_STEP_UP: f32 = 0.495;
 const OCEAN_LIMIT: f32 = 580.0;
 const CAMERA_DISTANCE: f32 = 10.0;
+/// The nearest the camera stands behind you, in metres. Zoomed in nearer, it
+/// goes into your eyes ([`SWAP_ZOOM`]).
 const CAMERA_DISTANCE_MIN: f32 = 2.5;
-const CAMERA_DISTANCE_MAX: f32 = 15.0;
+/// The furthest it stands, in metres: 15 until Hajun asked for a little more
+/// (2026-10-09).
+const CAMERA_DISTANCE_MAX: f32 = 18.0;
+/// How much further a zoom has to go than the camera can, as a ratio, before
+/// it goes on into your eyes from as near as it stands behind you, or back
+/// out behind you from your eyes: a tenth, a notch of the wheel, so that
+/// fingers that waver as a pinch ends do not swap it back and forth.
+const SWAP_ZOOM: f32 = 1.1;
 const ZOOM_WHEEL: f32 = 0.12;
 const CAMERA_FAR: f32 = 4000.0;
 const STICK_DEADZONE: f32 = 0.18;
@@ -129,62 +139,32 @@ const JUMP_RIGHT_VW: f32 = 8.0;
 const JUMP_BOTTOM_VH: f32 = 11.0;
 const LOOK_SENSITIVITY: f32 = 0.0045;
 const PITCH_MIN: f32 = -1.22;
-const PITCH_MAX: f32 = 1.20;
+/// As far down as the camera tips: straight down, for a view of the tops of
+/// things (Hajun, 2026-10-09). It stopped at 1.2, about 69°, until then.
+const PITCH_MAX: f32 = std::f32::consts::FRAC_PI_2;
 const CAMERA_LOOK_UP_DISTANCE: f32 = 2.72;
 const CAMERA_LOOK_UP_HEIGHT: f32 = 0.58;
 const LOOK_UP_FOCUS_HEIGHT: f32 = PLAYER_HEIGHT * 0.9;
 const LOOK_UP_EXTRA_PITCH: f32 = 0.52;
-const CAMERA_FOV: f32 = std::f32::consts::FRAC_PI_4;
-const CAMERA_LOOK_UP_FOV: f32 = 1.1;
-/// How high over your feet the camera sees from when it is your eyes: in
-/// first person, and in third person once it is brought in so near that you
-/// are out of sight (`toward_your_eyes`). Higher than the top of your head,
-/// 1.7 m, as a good deal taller person would see: Hajun asked for the view to
-/// feel like that (2026-10-03). The height is mine, to be tried: Hajun's
-/// houses and furniture are built big, a door 3.35 m high and a counter 1.5
-/// m, and from here they look the size they would to someone of a person's
-/// size. It was 1.44 m, nine tenths of a body's height, until then.
-pub(crate) const EYE_HEIGHT: f32 = 2.2;
-/// How far out from where you are out of sight the camera, brought in near
-/// you, starts to rise toward your eyes, in metres. It rises the nearer it
-/// comes, and is all the way up as you go out of sight.
-const EYES_RISE: f32 = 0.6;
-/// How much the camera takes in, top to bottom, in first person, until a pinch
-/// or the wheel zooms it: about 66°, which is 98° across a 16:9 screen and
-/// 110° across a 20:9 phone. Wide, so that while you build, a piece and the
-/// room it goes in are on the screen together.
-const FIRST_PERSON_FOV: f32 = 1.15;
-/// How far first person zooms: in to about 23° top to bottom, which shows the
-/// world three times the size, and out to about 77°. Any wider and the edges
-/// of the screen stretch out of shape.
-const FIRST_PERSON_FOV_MIN: f32 = 0.4;
-const FIRST_PERSON_FOV_MAX: f32 = 1.35;
-/// How far the camera keeps from the island, in metres: further than the
-/// corners of its near plane reach from it, 0.18 m at the widest, looking up
-/// on a 20:9 phone, so that a wall or a ceiling it is pressed up against is
-/// never cut open on screen. No further, so that turning it into a wall you
-/// stand against brings it in no faster than it has to.
+/// How much the camera takes in, top to bottom: about 66°, which is 98°
+/// across a 16:9 screen and 110° across a 20:9 phone. Wide, so that while you
+/// build, a piece and the room it goes in are on the screen together. It was
+/// first person's own until that became the only view (Hajun, 2026-10-09);
+/// third person took in 45°.
+const CAMERA_FOV: f32 = 1.15;
+/// How high over your feet your eyes are, which the camera is in when it is
+/// zoomed all the way in: inside your head, as high as the model's eyes, 1.54
+/// to 1.6 m up, under the top of the head at 1.71 m (Hajun, 2026-10-09). It
+/// was 2.2 m from 2026-10-03, over your head, for the view of a taller
+/// person, and 1.44 m before that.
+pub(crate) const EYE_HEIGHT: f32 = 1.57;
+/// How far your eyes keep from a ceiling lower than them, in metres: further
+/// than the corners of the camera's near plane reach from it, 0.18 m at the
+/// widest, looking up on a 20:9 phone, so that it is never cut open on screen.
 const CAMERA_RADIUS: f32 = 0.2;
-/// How quickly the camera backs out again once the way behind it is clear:
-/// most of the way in this many seconds, and never slower than this many
-/// metres a second, so that it keeps up with you turning it round a room.
-const CAMERA_BACK_OUT_SECS: f32 = 0.3;
-const CAMERA_BACK_OUT_SPEED: f32 = 12.0;
-/// How quickly it comes in when something comes between it and you, the same
-/// way: swept in over a moment rather than there at once. Hajun found it
-/// jumping in front of you as a wall came between (2026-10-08). It only lags
-/// where it has room to: in free air behind what is in the way, never in it.
-const CAMERA_PULL_IN_SECS: f32 = 0.12;
-const CAMERA_PULL_IN_SPEED: f32 = 10.0;
-/// This close to as far out as you zoomed it, it is as far out as you zoomed
-/// it.
-const CAMERA_SETTLED: f32 = 1e-3;
 /// How far past what you bump into with the camera still counts as inside
 /// you, in metres: your arms and the top of your head reach that far.
 const CAMERA_INSIDE: f32 = 0.15;
-/// Further than this from one frame to the next, you went somewhere rather
-/// than walked there, and the camera starts again behind you.
-const CAMERA_CUT: f32 = 3.0;
 const WALK_STRIDE_FREQ: f32 = 7.6;
 const WALK_THIGH: f32 = 0.42;
 const WALK_SHIN: f32 = 0.28;
@@ -266,48 +246,6 @@ pub(crate) enum ColliderShape {
 #[derive(Component)]
 struct ThirdPersonCamera;
 
-/// How much nearer you the camera stands than you zoomed it, to keep the
-/// island out from between it and you. It always points the way you turned
-/// it: only how far out it stands along that way ever changes.
-#[derive(Component, Default, Clone, Copy, PartialEq)]
-struct CameraFit {
-    /// How far out it stands from the point on you it looks at, while that is
-    /// nearer than you zoomed it: eased in when something comes in the way,
-    /// and back out once nothing is.
-    distance: Option<f32>,
-    /// What it looked at last frame.
-    pivot: Option<Vec3>,
-}
-
-impl CameraFit {
-    /// How far out the camera stands `dt` seconds on, now that the island
-    /// leaves it `clear` of the `full` way out you zoomed it: all of that at
-    /// once if it is starting again. Coming in, this can be further out than
-    /// `clear`, behind what is in the way; [`place_camera`] sees that it is
-    /// not in it.
-    fn distance_toward(self, clear: f32, full: f32, cut: bool, dt: f32) -> Option<f32> {
-        if cut {
-            return (clear < full - CAMERA_SETTLED).then_some(clear);
-        }
-        match self.distance {
-            None if clear >= full - CAMERA_SETTLED => None,
-            shown => {
-                let shown = shown.unwrap_or(full).min(full);
-                let (secs, speed) = if clear < shown {
-                    (CAMERA_PULL_IN_SECS, CAMERA_PULL_IN_SPEED)
-                } else {
-                    (CAMERA_BACK_OUT_SECS, CAMERA_BACK_OUT_SPEED)
-                };
-                let gap = (clear - shown).abs();
-                let most = gap * (1.0 - (-dt / secs).exp());
-                let step = most.max((speed * dt).min(gap));
-                let eased = if clear < shown { shown - step } else { shown + step };
-                (eased < full - CAMERA_SETTLED).then_some(eased)
-            }
-        }
-    }
-}
-
 #[cfg(any(target_os = "android", target_os = "ios"))]
 #[derive(Component)]
 struct JoystickKnob;
@@ -334,21 +272,21 @@ struct TouchControls {
     edit_id: Option<u64>,
 }
 
-/// Whether the camera is your eyes rather than following you round: while you
-/// build and while you rate houses in House Builder, if you have swapped to it
-/// (`builder`).
-#[derive(Resource, Default, PartialEq)]
-pub(crate) struct FirstPerson(pub(crate) bool);
-
+/// How you have turned and zoomed the camera: the one view there is, behind
+/// you, or zoomed all the way in, through your own eyes (Hajun, 2026-10-09,
+/// in place of a button that swapped between the two).
 #[derive(Resource)]
 struct OrbitCamera {
     yaw: f32,
     pitch: f32,
+    /// How far out the camera stands behind you, from
+    /// [`CAMERA_DISTANCE_MIN`] to [`CAMERA_DISTANCE_MAX`]; or 0, in your eyes.
     distance: f32,
-    /// How much the camera takes in, top to bottom, while it is your eyes
-    /// ([`FirstPerson`]): what a pinch or the wheel zooms there, the way it
-    /// zooms `distance` in third person. Each keeps its own.
-    fov: f32,
+    /// How much further the zoom has gone, as a ratio, than the camera could
+    /// go with it: in, from as near as it stands behind you, or out, from
+    /// your eyes. At [`SWAP_ZOOM`] either way it goes into your eyes, or back
+    /// out of them.
+    past: f32,
 }
 
 impl Default for OrbitCamera {
@@ -357,7 +295,7 @@ impl Default for OrbitCamera {
             yaw: 0.0,
             pitch: 0.38,
             distance: CAMERA_DISTANCE,
-            fov: FIRST_PERSON_FOV,
+            past: 1.0,
         }
     }
 }
@@ -373,33 +311,51 @@ impl OrbitCamera {
         }
     }
 
-    /// Zooms in, for a `ratio` under 1, or out: in third person the camera
-    /// stands that much nearer you or further off, and in first person it
-    /// takes in that much less or more, so that the world on the screen grows
-    /// or shrinks with the fingers.
-    fn zoom_by_ratio(&mut self, ratio: f32, first_person: bool) {
-        if first_person {
-            let half = ((self.fov * 0.5).tan() * ratio).atan();
-            self.fov = (half * 2.0).clamp(FIRST_PERSON_FOV_MIN, FIRST_PERSON_FOV_MAX);
+    /// Zooms in, for a `ratio` under 1, or out: the camera stands that much
+    /// nearer you or further off. Zoomed in on past as near as it stands, it
+    /// goes into your eyes, and that is as far in as it zooms; zoomed out
+    /// from there, it is straight back behind you, as near as it stands
+    /// (Hajun, 2026-10-09).
+    fn zoom_by_ratio(&mut self, ratio: f32) {
+        if self.distance <= 0.0 {
+            self.past = (self.past * ratio).max(1.0);
+            if self.past >= SWAP_ZOOM {
+                self.distance = CAMERA_DISTANCE_MIN;
+                self.past = 1.0;
+            }
+            return;
+        }
+        let wanted = self.distance * ratio;
+        if wanted >= CAMERA_DISTANCE_MIN {
+            self.distance = wanted.min(CAMERA_DISTANCE_MAX);
+            self.past = 1.0;
+            return;
+        }
+        self.past *= wanted / CAMERA_DISTANCE_MIN;
+        if self.past <= 1.0 / SWAP_ZOOM {
+            self.distance = 0.0;
+            self.past = 1.0;
         } else {
-            self.distance =
-                (self.distance * ratio).clamp(CAMERA_DISTANCE_MIN, CAMERA_DISTANCE_MAX);
+            self.distance = CAMERA_DISTANCE_MIN;
         }
     }
 
     /// Turns the camera by a swipe or a move of the mouse of `delta` pixels.
-    /// In first person, zoomed in, the same swipe turns it less, so that the
-    /// world still moves across the screen as fast as it does unzoomed rather
-    /// than racing past the finger.
-    fn turn(&mut self, delta: Vec2, first_person: bool) {
-        let zoom = if first_person {
-            (self.fov * 0.5).tan() / (FIRST_PERSON_FOV * 0.5).tan()
-        } else {
-            1.0
-        };
-        let per_pixel = LOOK_SENSITIVITY * zoom;
-        self.yaw -= delta.x * per_pixel;
-        self.pitch = (self.pitch + delta.y * per_pixel).clamp(PITCH_MIN, PITCH_MAX);
+    fn turn(&mut self, delta: Vec2) {
+        self.yaw -= delta.x * LOOK_SENSITIVITY;
+        self.pitch = (self.pitch + delta.y * LOOK_SENSITIVITY).clamp(PITCH_MIN, PITCH_MAX);
+    }
+}
+
+/// Which way along the ground `camera` faces: the way it looks, or, looking
+/// straight down, the way the top of the screen is. What the stick's up
+/// walks you toward, and where a piece from the shop comes up.
+pub(crate) fn camera_ahead(camera: &Transform) -> Vec3 {
+    let looking = camera.forward().with_y(0.0);
+    if looking.length_squared() > 1e-4 {
+        looking.normalize()
+    } else {
+        camera.up().with_y(0.0).normalize_or(Vec3::NEG_Z)
     }
 }
 
@@ -471,7 +427,6 @@ pub fn main() {
     )
     .init_resource::<TouchControls>()
     .init_resource::<OrbitCamera>()
-    .init_resource::<FirstPerson>()
     .add_systems(Startup, (setup_world, cluster_lights_on_the_cpu));
     sky::plugin(&mut app);
     island::plugin(&mut app);
@@ -498,6 +453,9 @@ pub fn main() {
     builder::plugin(&mut app);
     shop::plugin(&mut app);
     build::plugin(&mut app);
+    // Whatever stands between the camera and you, see-through, and out of a
+    // tap's reach.
+    see_through::plugin(&mut app);
 
     #[cfg(any(target_os = "android", target_os = "ios"))]
     app.add_systems(Startup, setup_hud).add_systems(
@@ -626,7 +584,6 @@ fn window_settings() -> Window {
 fn setup_world(mut commands: Commands) {
     commands.spawn((
         ThirdPersonCamera,
-        CameraFit::default(),
         Camera3d::default(),
         IsDefaultUiCamera,
         Projection::from(PerspectiveProjection {
@@ -750,20 +707,6 @@ fn jump_icon_bar(left: f32, top: f32, width: f32, height: f32, rotation_deg: f32
     )
 }
 
-fn flatten_basis(transform: &Transform) -> (Vec3, Vec3) {
-    let mut forward = *transform.forward();
-    forward.y = 0.0;
-    let forward = forward.normalize_or_zero();
-    let mut right = *transform.right();
-    right.y = 0.0;
-    let right = right.normalize_or_zero();
-    if forward.length_squared() <= f32::EPSILON {
-        (Vec3::NEG_Z, Vec3::X)
-    } else {
-        (forward, right)
-    }
-}
-
 #[cfg(any(target_os = "android", target_os = "ios"))]
 fn in_circle(point: Vec2, center: Vec2, radius: f32) -> bool {
     point.distance_squared(center) <= radius * radius
@@ -775,7 +718,6 @@ fn read_touch_controls(
     windows: Query<&Window>,
     mut controls: ResMut<TouchControls>,
     mut orbit: ResMut<OrbitCamera>,
-    first_person: Res<FirstPerson>,
     menu: Res<editor::EditMenu>,
     presses: hud::Presses,
     mut pointer: ResMut<editor::EditPointer>,
@@ -908,7 +850,7 @@ fn read_touch_controls(
         let dist = a.distance(b);
         if dist > 8.0 && controls.pinch_last_dist > 8.0 {
             let ratio = (controls.pinch_last_dist / dist).clamp(0.82, 1.22);
-            orbit.zoom_by_ratio(ratio, first_person.0);
+            orbit.zoom_by_ratio(ratio);
         }
         controls.pinch_last_dist = dist;
         controls.look_last = a;
@@ -917,7 +859,7 @@ fn read_touch_controls(
         if let Some(pos) = look_pos {
             let delta = pos - controls.look_last;
             controls.look_last = pos;
-            orbit.turn(delta, first_person.0);
+            orbit.turn(delta);
         }
     }
 }
@@ -992,7 +934,6 @@ fn cursor_for_dialogs(
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 fn read_mouse_look(
     cursors: Query<&CursorOptions, With<PrimaryWindow>>,
-    first_person: Res<FirstPerson>,
     mut motion: MessageReader<MouseMotion>,
     mut orbit: ResMut<OrbitCamera>,
 ) {
@@ -1005,14 +946,13 @@ fn read_mouse_look(
         return;
     }
     for event in motion.read() {
-        orbit.turn(event.delta, first_person.0);
+        orbit.turn(event.delta);
     }
 }
 
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 fn read_mouse_zoom(
     dialog: Res<hud::DialogUp>,
-    first_person: Res<FirstPerson>,
     mut scroll: MessageReader<MouseWheel>,
     mut orbit: ResMut<OrbitCamera>,
 ) {
@@ -1026,7 +966,7 @@ fn read_mouse_zoom(
             MouseScrollUnit::Line => event.y,
             MouseScrollUnit::Pixel => event.y / MouseScrollUnit::SCROLL_UNIT_CONVERSION_FACTOR,
         };
-        orbit.zoom_by_ratio((1.0 - lines * ZOOM_WHEEL).clamp(0.7, 1.4), first_person.0);
+        orbit.zoom_by_ratio((1.0 - lines * ZOOM_WHEEL).clamp(0.7, 1.4));
     }
 }
 
@@ -1354,10 +1294,8 @@ fn read_player_input(
         return;
     }
     let slowed = wading(transform.translation);
-    let (cam_forward, cam_right) = cameras
-        .single()
-        .map(flatten_basis)
-        .unwrap_or((Vec3::NEG_Z, Vec3::X));
+    let cam_forward = cameras.single().map_or(Vec3::NEG_Z, camera_ahead);
+    let cam_right = cam_forward.cross(Vec3::Y);
 
     let mut wish = Vec3::ZERO;
     let stick = controls.stick_value;
@@ -1603,85 +1541,38 @@ pub(crate) fn animate_walk(
 }
 
 
-/// Puts the camera where you turned it, or as near there as the island
-/// allows: never inside a wall or a ceiling, and with one between it and you
-/// only for the moment it takes to come in past it. It always points the way
-/// you turned it, so that every bit of a swipe turns it by as much wherever
-/// you are. Whatever is in the way only brings it nearer, straight in along
-/// that line, swept in rather than there at once, and once the way is clear
-/// it eases back out. Brought in near you, it rises straight up toward your eyes, and
-/// once it is so near that it is inside you, it sees what you would, from as
-/// high as in first person, and you are not drawn.
-///
-/// In [`FirstPerson`] it is your eyes, turned the same way, wider unless it is
-/// zoomed in, and with you never drawn.
+/// Puts the camera where you turned and zoomed it, whatever is in the way:
+/// nothing ever brings it in nearer you. Whatever stands between it and you
+/// is drawn see-through instead (`see_through`). Behind you it circles you,
+/// looking down at you, as far as straight down, or looking up past you from
+/// low behind you. Zoomed all the way in it is your eyes, turned the same
+/// way, and you are not drawn.
 pub(crate) fn follow_camera(
-    time: Res<Time>,
     orbit: Res<OrbitCamera>,
-    first_person: Res<FirstPerson>,
     islands: Res<Islands>,
     mut players: Query<(&Transform, &Venue, &mut Visibility), With<Player>>,
-    mut cameras: Query<
-        (&mut Transform, &mut Projection, &mut CameraFit),
-        (With<ThirdPersonCamera>, Without<Player>),
-    >,
+    mut cameras: Query<&mut Transform, (With<ThirdPersonCamera>, Without<Player>)>,
 ) {
     let Ok((player, &venue, mut body)) = players.single_mut() else {
         return;
     };
-    let Ok((mut eye, mut projection, mut fit)) = cameras.single_mut() else {
+    let Ok(mut eye) = cameras.single_mut() else {
         return;
     };
-
-    let look_up = if orbit.pitch < 0.0 {
-        (orbit.pitch / PITCH_MIN).clamp(0.0, 1.0)
-    } else {
-        0.0
-    };
+    let view = camera_view(&orbit, player, islands.get(venue));
     // Both only written when they change, so that a camera at rest is not
     // taken for one that moved.
-    let fov = if first_person.0 {
-        orbit.fov
-    } else {
-        CAMERA_FOV + (CAMERA_LOOK_UP_FOV - CAMERA_FOV) * look_up
-    };
-    if let Projection::Perspective(perspective) = &*projection
-        && (perspective.fov != fov || perspective.far != CAMERA_FAR)
-    {
-        *projection = Projection::Perspective(PerspectiveProjection {
-            fov,
-            far: CAMERA_FAR,
-            ..perspective.clone()
-        });
-    }
-    if first_person.0 {
-        body.set_if_neq(Visibility::Hidden);
-        // Back out of your eyes, it starts again behind you rather than easing
-        // out from wherever it last stood.
-        fit.set_if_neq(CameraFit::default());
-        eye.set_if_neq(eye_view(&orbit, player, islands.get(venue)));
-        return;
-    }
-    let (view, next) = place_camera(
-        &orbit,
-        player,
-        look_up,
-        islands.get(venue),
-        *fit,
-        time.delta_secs(),
-    );
     body.set_if_neq(if inside_you(view.translation, player) {
         Visibility::Hidden
     } else {
         Visibility::Inherited
     });
-    fit.set_if_neq(next);
     eye.set_if_neq(view);
 }
 
 /// Whether the camera at `at` is inside you, or so near your arms or head that
 /// you would fill the screen from within: anywhere over where you stand up to
-/// your eyes, which are higher than your head.
+/// the top of your head.
 fn inside_you(at: Vec3, player: &Transform) -> bool {
     let feet = player.translation;
     at.xz().distance(feet.xz()) < PLAYER_RADIUS + CAMERA_INSIDE
@@ -1689,31 +1580,29 @@ fn inside_you(at: Vec3, player: &Transform) -> bool {
         && at.y < feet.y + PLAYER_HEIGHT.max(EYE_HEIGHT) + CAMERA_INSIDE
 }
 
-/// Your own eyes, looking the way `orbit` is turned. In third person the same
-/// yaw and pitch swing the camera round you to look the same way, so a swipe
-/// turns the view alike in both. They are higher than your head, so under a
-/// ceiling lower than them they stop short of it, the way a jump stops your
-/// head.
+/// Where the camera stands and which way it looks, turned and zoomed as
+/// `orbit` is round `player` on `island`: as far out behind you as you zoomed
+/// it, or in your eyes.
+fn camera_view(orbit: &OrbitCamera, player: &Transform, island: Option<&Island>) -> Transform {
+    if orbit.distance <= 0.0 {
+        return eye_view(orbit, player, island);
+    }
+    let look_up = if orbit.pitch < 0.0 {
+        (orbit.pitch / PITCH_MIN).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    behind_you(orbit, player, look_up, orbit.distance)
+}
+
+/// Your own eyes, inside your head, looking the way `orbit` is turned: the
+/// same yaw and pitch swing the camera round you to look the same way when it
+/// is behind you, so a swipe turns the view alike in both. Under a ceiling
+/// lower than them they stop short of it, the way a jump stops your head.
 fn eye_view(orbit: &OrbitCamera, player: &Transform, island: Option<&Island>) -> Transform {
     let chest = player.translation + Vec3::Y * LOOK_HEIGHT;
     Transform::from_translation(rise(chest, EYE_HEIGHT - LOOK_HEIGHT, island))
         .with_rotation(Quat::from_rotation_y(orbit.yaw) * Quat::from_rotation_x(-orbit.pitch))
-}
-
-/// Where the camera at `at`, in third person, stands once it has risen toward
-/// your eyes: not at all out where it sees you whole, a little more the
-/// nearer it comes to you, and as high as [`EYE_HEIGHT`] by the time you are
-/// out of sight, so that it then sees what you would in first person. Only
-/// ever up, straight up, so that it still looks the way you turned it.
-fn toward_your_eyes(at: Vec3, player: &Transform, island: Option<&Island>) -> Vec3 {
-    let out = at.xz().distance(player.translation.xz()) - (PLAYER_RADIUS + CAMERA_INSIDE);
-    let near = 1.0 - (out / EYES_RISE).clamp(0.0, 1.0);
-    let share = near * near * (3.0 - 2.0 * near);
-    let short = player.translation.y + EYE_HEIGHT - at.y;
-    if share <= 0.0 || short <= 0.0 {
-        return at;
-    }
-    rise(at, short * share, island)
 }
 
 /// As far as `up` straight up from `at` as the camera gets before it meets a
@@ -1726,68 +1615,27 @@ fn rise(at: Vec3, up: f32, island: Option<&Island>) -> Vec3 {
     at + Vec3::Y * clear
 }
 
-/// Where the camera stands this frame, `dt` seconds after it stood as `fit`
-/// says, turned as `orbit` is round `player` on `island`, and how much nearer
-/// that is than you zoomed it: on the line you turned it along, or, near you,
-/// risen straight up from a point of it toward your eyes. Coming in, it can be
-/// behind something for a moment, but never in it. Until the island has
-/// loaded, nothing is in the way.
-fn place_camera(
-    orbit: &OrbitCamera,
-    player: &Transform,
-    look_up: f32,
-    island: Option<&Island>,
-    fit: CameraFit,
-    dt: f32,
-) -> (Transform, CameraFit) {
-    let (mut view, aim) = camera_view(orbit, player, look_up);
-    let (way, full) = (view.translation - aim).normalize_and_length();
-    let clear = island
-        .filter(|_| full > 1e-3)
-        .and_then(|island| island.sweep(aim, view.translation, CAMERA_RADIUS))
-        .unwrap_or(full);
-    let pivot = player.translation + Vec3::Y * LOOK_HEIGHT;
-    let cut = fit.pivot.is_none_or(|last| last.distance(pivot) > CAMERA_CUT);
-    let mut distance = fit.distance_toward(clear, full, cut, dt);
-    // Still on its way in, it is behind what is in the way. Should that put it
-    // in it, or touching it, it goes the rest of the way in at once rather than
-    // show it from inside.
-    if let (Some(island), Some(behind)) = (island, distance)
-        && behind > clear
-        && !island.room_for(aim + way * behind, CAMERA_RADIUS)
-    {
-        distance = Some(clear);
-    }
-    let next = CameraFit {
-        distance,
-        pivot: Some(pivot),
-    };
-    // In along the same line, so that it still looks the same way.
-    if let Some(distance) = next.distance {
-        view.translation = aim + way * distance;
-    }
-    view.translation = toward_your_eyes(view.translation, player, island);
-    (view, next)
-}
-
-/// Where the camera stands and which way it looks, for `orbit` round `player`,
-/// and the point on you it looks toward, which nothing may come between.
-fn camera_view(orbit: &OrbitCamera, player: &Transform, look_up: f32) -> (Transform, Vec3) {
+/// Where the camera stands `distance` out from you, turned as `orbit` is, and
+/// which way it looks: down at the point on you it circles, straight down
+/// from right over it at the most, or, looking up, from low behind you and
+/// nearer, up past you.
+fn behind_you(orbit: &OrbitCamera, player: &Transform, look_up: f32, distance: f32) -> Transform {
     let mut camera = Transform::default();
     let yaw = Quat::from_rotation_y(orbit.yaw);
     if orbit.pitch >= 0.0 {
+        // Turned as your eyes would be, which is looking at that point from
+        // out here, and still says which way is ahead looking straight down.
+        let turn = yaw * Quat::from_rotation_x(-orbit.pitch);
         let look_at = player.translation + Vec3::Y * LOOK_HEIGHT;
-        let offset =
-            yaw * Quat::from_rotation_x(-orbit.pitch) * Vec3::new(0.0, 0.0, orbit.distance);
-        camera.translation = look_at + offset;
-        camera.look_at(look_at, Vec3::Y);
-        return (camera, look_at);
+        camera.translation = look_at + turn * Vec3::new(0.0, 0.0, distance);
+        camera.rotation = turn;
+        return camera;
     }
 
     let back = yaw * Vec3::Z;
     let cam_height = LOOK_HEIGHT + (CAMERA_LOOK_UP_HEIGHT - LOOK_HEIGHT) * look_up;
-    let look_up_distance = orbit.distance * (CAMERA_LOOK_UP_DISTANCE / CAMERA_DISTANCE);
-    let distance = orbit.distance + (look_up_distance - orbit.distance) * look_up;
+    let look_up_distance = distance * (CAMERA_LOOK_UP_DISTANCE / CAMERA_DISTANCE);
+    let distance = distance + (look_up_distance - distance) * look_up;
     let focus_height = LOOK_HEIGHT + (LOOK_UP_FOCUS_HEIGHT - LOOK_HEIGHT) * look_up;
     camera.translation = player.translation + back * distance + Vec3::Y * cam_height;
     camera.translation.y = camera.translation.y.max(player.translation.y + CAMERA_LOOK_UP_HEIGHT);
@@ -1795,14 +1643,12 @@ fn camera_view(orbit: &OrbitCamera, player: &Transform, look_up: f32) -> (Transf
     let focus = player.translation + Vec3::Y * focus_height;
     camera.look_at(focus, Vec3::Y);
     camera.rotate_local_x(LOOK_UP_EXTRA_PITCH * look_up);
-    (camera, focus)
+    camera
 }
 
 #[cfg(test)]
 mod camera_tests {
     use super::*;
-
-    const DT: f32 = 1.0 / 120.0;
 
     fn orbit(yaw: f32, pitch: f32, distance: f32) -> OrbitCamera {
         OrbitCamera {
@@ -1813,18 +1659,11 @@ mod camera_tests {
         }
     }
 
-    fn look_up(pitch: f32) -> f32 {
-        if pitch < 0.0 {
-            (pitch / PITCH_MIN).clamp(0.0, 1.0)
-        } else {
-            0.0
-        }
-    }
-
-    /// Closed boxes, from their lowest to their highest corners, wound out.
-    pub(super) fn island(boxes: &[(Vec3, Vec3)]) -> Island {
+    /// The triangles of closed boxes, from their lowest to their highest
+    /// corners, wound out.
+    pub(crate) fn boxes(list: &[(Vec3, Vec3)]) -> Vec<[Vec3; 3]> {
         let mut corners = Vec::new();
-        for &(l, h) in boxes {
+        for &(l, h) in list {
             let p = |x: f32, y: f32, z: f32| Vec3::new(x, y, z);
             let quads = [
                 [p(l.x, l.y, l.z), p(h.x, l.y, l.z), p(h.x, l.y, h.z), p(l.x, l.y, h.z)],
@@ -1839,12 +1678,15 @@ mod camera_tests {
                 corners.push([q[0], q[2], q[3]]);
             }
         }
-        Island::new_for_tests(&corners)
+        corners
+    }
+
+    /// Closed boxes, from their lowest to their highest corners, wound out.
+    pub(super) fn island(list: &[(Vec3, Vec3)]) -> Island {
+        Island::new_for_tests(&boxes(list))
     }
 
     const GROUND: (Vec3, Vec3) = (Vec3::new(-40.0, -2.0, -40.0), Vec3::new(40.0, 0.0, 40.0));
-    /// A tall wall from x = 6.
-    const WALL: (Vec3, Vec3) = (Vec3::new(6.0, -0.1, -20.0), Vec3::new(6.5, 6.0, 20.0));
 
     /// The room in `testhomemap.glb`: 3 m high inside, its doorway facing +z.
     fn room() -> Vec<(Vec3, Vec3)> {
@@ -1861,280 +1703,140 @@ mod camera_tests {
         ]
     }
 
-    /// How many frames in a row the camera may be unable to see you while it
-    /// comes in past what came between: half a second.
-    const CATCH_UP: u32 = 60;
-
-    /// One frame of the camera, checked: it looks exactly the way you turned
-    /// it, from along the line you turned it along or straight over a point of
-    /// it, risen no higher than your eyes, no further out than you zoomed it,
-    /// clear of every box, and able to see you, or at least not unable to for
-    /// longer than [`CATCH_UP`]. `hidden` counts the frames in a row it has
-    /// not seen you.
-    fn check(
-        view: &Transform,
-        you: &OrbitCamera,
-        player: &Transform,
-        island: &Island,
-        boxes: &[(Vec3, Vec3)],
-        hidden: &mut u32,
-        when: &str,
-    ) {
-        let (yours, aim) = camera_view(you, player, look_up(you.pitch));
-        assert_eq!(view.rotation, yours.rotation, "{when}: not turned the way you turned it");
-        let (way, full) = (yours.translation - aim).normalize_and_length();
-        // The point of the line it stands on, or straight over.
-        let out = (view.translation - aim).xz().dot(way.xz()) / way.xz().length_squared();
-        let under = aim + way * out;
-        assert!(out <= full + 1e-4, "{when}: {out} out, further than {full}");
-        let off = view.translation.xz().distance(under.xz());
-        assert!(off < 1e-3, "{when}: {off} off the line you turned it along");
-        let risen = view.translation.y - under.y;
-        let eyes = player.translation.y + EYE_HEIGHT;
-        assert!(risen > -1e-4, "{when}: {risen} under the line you turned it along");
-        assert!(risen < 1e-4 || view.translation.y < eyes + 1e-4, "{when}: over your eyes");
-        let seen = island
-            .sweep(aim, under, CAMERA_RADIUS)
-            .is_none_or(|clear| clear >= out - 0.02)
-            && island
-                .sweep(under, view.translation, CAMERA_RADIUS)
-                .is_none_or(|clear| clear >= risen - 0.02);
-        *hidden = if seen { 0 } else { *hidden + 1 };
-        assert!(*hidden <= CATCH_UP, "{when}: has not seen you for {hidden} frames, from {}", view.translation);
-        for &(low, high) in &boxes[1..] {
-            let off = view.translation.distance(view.translation.clamp(low, high));
-            assert!(off >= CAMERA_RADIUS - 0.02, "{when}: {off} from a wall at {}", view.translation);
-        }
-    }
-
     #[test]
-    fn open_ground_leaves_it_alone() {
-        let island = island(&[GROUND]);
-        let player = Transform::default();
-        let you = orbit(0.4, 0.38, 10.0);
-        let (view, fit) = place_camera(&you, &player, 0.0, Some(&island), CameraFit::default(), DT);
-        assert_eq!(view, camera_view(&you, &player, 0.0).0);
-        assert_eq!(fit.distance, None);
-    }
-
-    #[test]
-    fn turning_it_into_a_wall_only_brings_it_in() {
-        // Pressed against the wall, and turned round into it and out the
-        // other side, level and from high up.
-        let boxes = [GROUND, WALL];
-        let island = island(&boxes);
-        let player = Transform::from_xyz(5.55, 0.0, 0.0);
-        for pitch in [0.0, 0.38, 1.2] {
-            let (mut fit, mut hidden) = (CameraFit::default(), 0);
-            for frame in 0..480 {
-                let you = orbit(frame as f32 * DT, pitch, 10.0);
-                let (view, next) = place_camera(&you, &player, 0.0, Some(&island), fit, DT);
-                fit = next;
-                let when = format!("pitch {pitch}, frame {frame}");
-                check(&view, &you, &player, &island, &boxes, &mut hidden, &when);
-            }
-        }
-    }
-
-    #[test]
-    fn turning_it_round_a_room_follows_your_hand() {
-        // In the middle of the room and tucked into a corner of it: turned all
-        // the way round, fast, and tipped up and down as it goes.
-        let boxes = room();
-        let island = island(&boxes);
-        for (x, z) in [(0.0, -4.0), (-3.2, -7.7), (3.2, -0.8)] {
+    fn walls_never_bring_it_in() {
+        // In the middle of the room, tucked into a corner of it, and outside
+        // with the room between the camera and you: turned all the way round
+        // and tipped up and down, it stands as far out as you zoomed it,
+        // room or no room, and you are in sight of it.
+        let island = island(&room());
+        for (x, z) in [(0.0, -4.0), (-3.2, -7.7), (0.0, 3.0)] {
             let player = Transform::from_xyz(x, 0.0, z);
-            let (mut fit, mut hidden) = (CameraFit::default(), 0);
-            for frame in 0..480 {
-                let time = frame as f32 * DT;
-                let you = orbit(time * 3.0, 0.6 + 0.6 * (time * 2.0).sin(), 15.0);
-                let look = look_up(you.pitch);
-                let (view, next) = place_camera(&you, &player, look, Some(&island), fit, DT);
-                fit = next;
-                let when = format!("at {x} {z}, frame {frame}");
-                check(&view, &you, &player, &island, &boxes, &mut hidden, &when);
-            }
-        }
-    }
-
-    #[test]
-    fn looking_up_in_a_room_stays_inside_it() {
-        let boxes = room();
-        let island = island(&boxes);
-        let player = Transform::from_xyz(-3.2, 0.0, -7.7);
-        let (mut fit, mut hidden) = (CameraFit::default(), 0);
-        for frame in 0..480 {
-            let time = frame as f32 * DT;
-            let you = orbit(time * 2.0, -0.6 - 0.5 * (time * 3.0).sin(), 10.0);
-            let (view, next) =
-                place_camera(&you, &player, look_up(you.pitch), Some(&island), fit, DT);
-            fit = next;
-            check(&view, &you, &player, &island, &boxes, &mut hidden, &format!("frame {frame}"));
-        }
-    }
-
-    #[test]
-    fn walking_into_a_room_from_the_sky_view_and_out() {
-        let boxes = room();
-        let island = island(&boxes);
-        let you = orbit(0.0, 1.2, 15.0);
-        for x in [0.0, 0.2, -0.5] {
-            let (mut fit, mut hidden) = (CameraFit::default(), 0);
-            let path = (0..=230).map(|step| 6.0 - step as f32 * 7.0 * DT);
-            for (step, z) in path.clone().chain(path.rev()).enumerate() {
-                let player = Transform::from_xyz(x, 0.0, z);
-                let (view, next) = place_camera(&you, &player, 0.0, Some(&island), fit, DT);
-                fit = next;
-                let when = format!("x {x}, step {step}");
-                check(&view, &you, &player, &island, &boxes, &mut hidden, &when);
-                // Seeing you, unless it is still on its way down over the roof.
-                if z < -1.0 && hidden == 0 {
-                    let at = view.translation;
-                    let in_room = at.x.abs() < 3.7 && at.z > -8.2 && at.z < -0.3 && at.y < 3.0;
-                    assert!(in_room, "x {x}, z {z}: camera not in the room, at {at}");
+            for step in 0..96 {
+                let turn = step as f32 / 96.0;
+                let tilt = (1.2 * (turn * 9.0).sin()).clamp(PITCH_MIN, PITCH_MAX);
+                let you = orbit(turn * std::f32::consts::TAU * 2.0, tilt, 15.0);
+                let view = camera_view(&you, &player, Some(&island));
+                assert_eq!(view, camera_view(&you, &player, None), "at {x} {z}");
+                if you.pitch >= 0.0 {
+                    let middle = player.translation + Vec3::Y * LOOK_HEIGHT;
+                    let out = view.translation.distance(middle);
+                    assert!((out - 15.0).abs() < 1e-3, "at {x} {z}: {out} out");
                 }
+                assert!(!inside_you(view.translation, &player), "at {x} {z}");
             }
-            // Back outside, it is as far out as you zoomed it again.
-            for _ in 0..240 {
-                let player = Transform::from_xyz(x, 0.0, 6.0);
-                fit = place_camera(&you, &player, 0.0, Some(&island), fit, DT).1;
-            }
-            assert_eq!(fit.distance, None, "x {x}");
         }
     }
 
     #[test]
-    fn brought_in_to_you_it_sees_from_your_eyes() {
-        // Your back to the wall, and the camera turned round behind you into
-        // it: it comes in to you, and up to your eyes, with you out of sight.
-        let open = [GROUND, WALL];
-        let player = Transform::from_xyz(5.55, 0.0, 0.0);
-        let you = orbit(std::f32::consts::FRAC_PI_2, 0.38, 10.0);
-        let place = |boxes: &[(Vec3, Vec3)]| {
-            let island = island(boxes);
-            let (view, _) =
-                place_camera(&you, &player, 0.0, Some(&island), CameraFit::default(), DT);
-            check(&view, &you, &player, &island, boxes, &mut 0, "at the wall");
-            (view.translation, eye_view(&you, &player, Some(&island)).translation)
-        };
-        let (behind, eyes) = place(&open);
-        assert!((behind.y - EYE_HEIGHT).abs() < 1e-3, "{behind}");
-        assert!(inside_you(behind, &player), "{behind}");
-        assert_eq!(eyes.y, EYE_HEIGHT);
-        // Under a ceiling lower than your eyes, as high as it goes under it,
-        // in third person and in first.
-        let low = (Vec3::new(-20.0, 2.3, -20.0), Vec3::new(6.0, 2.6, 20.0));
-        let (behind, eyes) = place(&[GROUND, WALL, low]);
-        for at in [behind, eyes] {
-            assert!((at.y - (2.3 - CAMERA_RADIUS)).abs() < 1e-3, "{at}");
-        }
-    }
-
-    #[test]
-    fn eases_back_out() {
-        let fit = |distance| CameraFit { distance, pivot: None };
-        // Clear again: out, but not all at once.
-        let out = fit(Some(3.0)).distance_toward(15.0, 15.0, false, 0.1).unwrap();
-        assert!(out > 3.0 && out < 15.0, "{out}");
-        // Something back in the way: in, but not all at once either.
-        let back = fit(Some(out)).distance_toward(3.0, 15.0, false, DT).unwrap();
-        assert!(back > 3.0 && back < out, "{back}");
-        // A little more room is taken at once, rather than lagged behind, and
-        // a little less given up at once.
-        assert_eq!(fit(Some(3.0)).distance_toward(3.05, 15.0, false, DT), Some(3.05));
-        assert_eq!(fit(Some(3.05)).distance_toward(3.0, 15.0, false, DT), Some(3.0));
-        // Given long enough, it is as far out as you zoomed it.
-        let mut distance = Some(3.0);
-        for _ in 0..120 {
-            distance = fit(distance).distance_toward(15.0, 15.0, false, DT);
-        }
-        assert_eq!(distance, None);
-        // And as far in as the way is clear.
-        for _ in 0..60 {
-            distance = fit(distance).distance_toward(3.0, 15.0, false, DT);
-        }
-        assert_eq!(distance, Some(3.0));
-        // Zoomed in nearer than it stood, it comes in with you.
-        assert_eq!(fit(Some(8.0)).distance_toward(5.0, 5.0, false, DT), None);
-        // Starting again, it is where it can see you at once.
-        assert_eq!(fit(None).distance_toward(3.0, 15.0, true, DT), Some(3.0));
-    }
-
-    #[test]
-    fn a_wall_coming_between_sweeps_it_in() {
-        // Turned round past the end of a wall 2 m off, so that the wall comes
-        // between it and you all at once: from behind the wall, it comes in
-        // over a moment rather than in one frame, and is never in the wall.
-        let end = (Vec3::new(2.0, -0.1, -20.0), Vec3::new(2.5, 6.0, 1.0));
-        let boxes = [GROUND, end];
-        let island = island(&boxes);
+    fn behind_you_you_are_always_in_sight() {
+        // As near as it stands, looking up past you and down at you, as far
+        // as straight down.
         let player = Transform::default();
-        let (mut fit, mut hidden, mut longest) = (CameraFit::default(), 0, 0);
-        let (mut was, mut was_clear) = (10.0, 10.0);
-        let (mut biggest, mut biggest_clear) = (0.0f32, 0.0f32);
-        for frame in 0..180 {
-            let you = orbit(frame as f32 * DT, 0.38, 10.0);
-            let (view, next) = place_camera(&you, &player, 0.0, Some(&island), fit, DT);
-            fit = next;
-            check(&view, &you, &player, &island, &boxes, &mut hidden, &format!("frame {frame}"));
-            longest = longest.max(hidden);
-            let (yours, aim) = camera_view(&you, &player, 0.0);
-            let clear = island.sweep(aim, yours.translation, CAMERA_RADIUS).unwrap_or(10.0);
-            let shown = fit.distance.unwrap_or(10.0);
-            biggest = biggest.max(was - shown);
-            biggest_clear = biggest_clear.max(was_clear - clear);
-            (was, was_clear) = (shown, clear);
+        for pitch in [PITCH_MIN, -0.6, 0.0, 0.38, 1.2, PITCH_MAX] {
+            let you = orbit(0.3, pitch, CAMERA_DISTANCE_MIN);
+            let view = camera_view(&you, &player, None);
+            assert!(!inside_you(view.translation, &player), "pitch {pitch}");
         }
-        // The way in was cut short by metres in one frame.
-        assert!(biggest_clear > 5.0, "{biggest_clear}");
-        // It was behind the wall for a moment, and came in a little at a time.
-        assert!(longest > 5, "{longest}");
-        assert!(biggest < biggest_clear * 0.3, "{biggest} in one frame");
-        // And it ends up in front of the wall, seeing you.
-        assert_eq!(hidden, 0);
     }
 
     #[test]
-    fn zooming_in_first_person_narrows_the_view() {
+    fn zoomed_all_the_way_in_it_is_your_eyes() {
+        let player = Transform::from_xyz(1.0, 0.5, -2.0);
+        for pitch in [PITCH_MIN, 0.0, 0.38, PITCH_MAX] {
+            let you = orbit(0.7, pitch, 0.0);
+            let view = camera_view(&you, &player, None);
+            assert_eq!(view, eye_view(&you, &player, None));
+            // Inside your head, at the height of your eyes, and you not drawn.
+            let eyes = view.translation - player.translation;
+            assert_eq!(eyes.xz(), Vec2::ZERO);
+            assert!((eyes.y - EYE_HEIGHT).abs() < 1e-5, "{eyes}");
+            assert!(eyes.y > 1.5 && eyes.y < 1.71, "{eyes}");
+            assert!(inside_you(view.translation, &player));
+        }
+    }
+
+    #[test]
+    fn it_looks_straight_down_from_right_overhead() {
+        // Tipped down as far as it goes.
+        let mut you = orbit(0.9, 0.38, 12.0);
+        you.turn(Vec2::new(0.0, 1e4));
+        assert_eq!(you.pitch, std::f32::consts::FRAC_PI_2);
+        let player = Transform::from_xyz(3.0, 0.0, -1.0);
+        let view = camera_view(&you, &player, None);
+        let middle = player.translation + Vec3::Y * LOOK_HEIGHT;
+        assert!(view.translation.xz().distance(middle.xz()) < 1e-4, "{}", view.translation);
+        assert!((view.translation.y - (middle.y + 12.0)).abs() < 1e-4);
+        assert!(view.forward().dot(Vec3::NEG_Y) > 1.0 - 1e-6);
+        // Ahead is still the way it was turned: the top of the screen, which
+        // is where the stick's up walks you.
+        let turned = Quat::from_rotation_y(0.9) * Vec3::NEG_Z;
+        assert!(camera_ahead(&view).distance(turned) < 1e-4);
+        let nearly = camera_view(&orbit(0.9, PITCH_MAX - 0.05, 12.0), &player, None);
+        assert!(camera_ahead(&nearly).distance(turned) < 1e-4);
+        // And so it is in your eyes, looking at your feet.
+        let feet = camera_view(&OrbitCamera { distance: 0.0, ..you }, &player, None);
+        assert!(camera_ahead(&feet).distance(turned) < 1e-4);
+    }
+
+    #[test]
+    fn your_eyes_stop_under_a_low_ceiling() {
+        let player = Transform::default();
+        let you = orbit(0.0, 0.38, 0.0);
+        let eyes =
+            |boxes: &[(Vec3, Vec3)]| eye_view(&you, &player, Some(&island(boxes))).translation;
+        assert!((eyes(&[GROUND]).y - EYE_HEIGHT).abs() < 1e-6);
+        // Under a ceiling lower than your eyes, as high as they go under it.
+        let low = (Vec3::new(-20.0, 1.7, -20.0), Vec3::new(20.0, 2.0, 20.0));
+        let under = eyes(&[GROUND, low]);
+        assert!((under.y - (1.7 - CAMERA_RADIUS)).abs() < 1e-3, "{under}");
+    }
+
+    #[test]
+    fn zoomed_in_past_as_near_as_it_stands_it_is_in_your_eyes() {
         let mut you = OrbitCamera::default();
-        // Fingers twice as far apart: the world twice the size on the screen.
-        you.zoom_by_ratio(0.5, true);
-        let half = (FIRST_PERSON_FOV * 0.5).tan() * 0.5;
-        assert!(((you.fov * 0.5).tan() - half).abs() < 1e-5, "{}", you.fov);
-        // And back again.
-        you.zoom_by_ratio(2.0, true);
-        assert!((you.fov - FIRST_PERSON_FOV).abs() < 1e-5, "{}", you.fov);
-        // Third person keeps its own zoom.
-        assert_eq!(you.distance, CAMERA_DISTANCE);
-        // No further than it goes, either way.
-        for _ in 0..50 {
-            you.zoom_by_ratio(0.8, true);
+        // In, as near as it stands behind you and never nearer, and then a
+        // little further in, into your eyes...
+        while you.distance > 0.0 {
+            you.zoom_by_ratio(0.9);
+            assert!(you.distance == 0.0 || you.distance >= CAMERA_DISTANCE_MIN, "{}", you.distance);
         }
-        assert_eq!(you.fov, FIRST_PERSON_FOV_MIN);
-        for _ in 0..50 {
-            you.zoom_by_ratio(1.25, true);
+        // ...which is as far in as it goes.
+        for _ in 0..20 {
+            you.zoom_by_ratio(0.8);
         }
-        assert_eq!(you.fov, FIRST_PERSON_FOV_MAX);
+        assert_eq!(you.distance, 0.0);
+        // A pinch out that wavers back stays in your eyes; out a tenth
+        // further than that, it is straight back behind you, as near as it
+        // stands.
+        you.zoom_by_ratio(1.05);
+        you.zoom_by_ratio(0.95);
+        you.zoom_by_ratio(1.05);
+        assert_eq!(you.distance, 0.0);
+        you.zoom_by_ratio(1.05);
+        assert_eq!(you.distance, CAMERA_DISTANCE_MIN);
+        // A notch of the wheel each way, from as near as it stands.
+        you.zoom_by_ratio(0.88);
+        assert_eq!(you.distance, 0.0);
+        you.zoom_by_ratio(1.12);
+        assert_eq!(you.distance, CAMERA_DISTANCE_MIN);
+        // Out as far as it goes, and no further.
+        for _ in 0..30 {
+            you.zoom_by_ratio(1.25);
+        }
+        assert_eq!(you.distance, CAMERA_DISTANCE_MAX);
     }
 
     #[test]
-    fn zoomed_in_a_swipe_turns_less() {
+    fn a_swipe_turns_it_alike_however_far_out() {
         let swipe = Vec2::new(40.0, -25.0);
-        let mut unzoomed = OrbitCamera::default();
-        unzoomed.turn(swipe, true);
-        let mut zoomed = OrbitCamera::default();
-        zoomed.zoom_by_ratio(0.5, true);
-        zoomed.turn(swipe, true);
-        // The world twice the size, half the turn: it moves as far on the
-        // screen either way.
-        let start = OrbitCamera::default();
-        let turned = |you: &OrbitCamera| Vec2::new(you.yaw - start.yaw, you.pitch - start.pitch);
-        assert!((turned(&zoomed) * 2.0 - turned(&unzoomed)).length() < 1e-5);
-        // In third person, zooming never changes how far a swipe turns it.
-        let mut behind = OrbitCamera::default();
-        behind.zoom_by_ratio(0.5, false);
-        behind.turn(swipe, false);
-        assert_eq!(turned(&behind), turned(&unzoomed));
+        let turned = |distance: f32| {
+            let mut you = orbit(0.0, 0.38, distance);
+            you.turn(swipe);
+            Vec2::new(you.yaw, you.pitch)
+        };
+        assert_eq!(turned(0.0), turned(CAMERA_DISTANCE));
+        assert_eq!(turned(CAMERA_DISTANCE_MIN), turned(CAMERA_DISTANCE_MAX));
     }
 }
 

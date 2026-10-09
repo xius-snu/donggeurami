@@ -22,13 +22,11 @@ use crate::builder::{self, Building, DIALOG_LAYER, DIM, InGame, QUIET};
 use crate::hud::{self, DOOR, DialogUp, GOLD, TakesPress};
 
 /// Where the hammer sits: below and in from where the button that goes home
-/// sits in the town, which is put away while you build. The button that swaps
-/// the view sits over it (`builder`), as big and in line with it.
+/// sits in the town, which is put away while you build.
 const HAMMER_TOP: f32 = hud::EDGE + HAMMER + 3.0;
-pub(crate) const HAMMER_RIGHT: f32 = hud::EDGE + 6.0;
-/// How big the hammer is, and the button over it: a little bigger than the
-/// button that goes home.
-pub(crate) const HAMMER: f32 = 13.5;
+const HAMMER_RIGHT: f32 = hud::EDGE + 6.0;
+/// How big the hammer is: a little bigger than the button that goes home.
+const HAMMER: f32 = 13.5;
 /// The window's share of the screen, and how far down from the top of it the
 /// window starts, as a share of its short side: under the time and the theme,
 /// which stay in sight while you shop.

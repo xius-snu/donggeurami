@@ -82,7 +82,8 @@ const BEHIND: f64 = 2.0 / TICK_HZ;
 const CARRY_ON: f64 = 0.1;
 
 /// How far apart two updates can be, in metres, and still be a walk between
-/// them rather than a jump to the second: the camera's own `CAMERA_CUT`.
+/// them rather than a jump to the second: further than anyone runs between
+/// two of them.
 const LEAP: f32 = 3.0;
 
 /// How fast the estimate of the server's clock drifts back, in seconds a

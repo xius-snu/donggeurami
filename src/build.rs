@@ -30,11 +30,13 @@
 //!   body walks: up a step, onto a bed, through a door, and right up to a
 //!   wall, but never into one, any of it.
 //!
-//! What is down is part of the plot from then on: stood on, bumped into and
-//! kept out of by the camera like the island itself
-//! (`island::Islands::build_on`). Doors, windows and what hangs on the walls are
-//! not: the hole in the wall is what counts. When the time to build runs out,
-//! whatever is still a ghost is put down where it is, and nothing can be
+//! What is down is part of the plot from then on: stood on and bumped into
+//! like the island itself (`island::Islands::build_on`). Doors, windows and
+//! what hangs on the walls are not: the hole in the wall is what counts. Like
+//! everything else, what stands between the camera and you is see-through,
+//! and a tap goes through it (`see_through`): from outside a house, zoomed
+//! out, you can tap what is inside it with you. When the time to build runs
+//! out, whatever is still a ghost is put down where it is, and nothing can be
 //! changed any more.
 //!
 //! The models, and the pictures the shop shows of them, are in `assets/build/`,
@@ -1165,7 +1167,7 @@ fn place_fresh(
         return;
     };
     let venue = Venue::Plot(plot);
-    let ahead = eye.forward().with_y(0.0).normalize_or(Vec3::NEG_Z);
+    let ahead = crate::camera_ahead(eye);
     for (piece, kind, bounds, span, mut transform, house) in &mut fresh {
         commands.entity(piece).remove::<Fresh>();
         match kind.def.mount {
@@ -2167,26 +2169,14 @@ fn carve_walls(
 }
 
 /// What fills the hole a window taking up `span` cuts in `wall`, in the
-/// window's own space: its glass, as far as bodies and the camera go. Drawn,
-/// the hole is open; to them it is shut, so that nobody comes in through a
-/// window, however low it is or however high they jump.
+/// window's own space: its glass, as far as bodies go. Drawn, the hole is
+/// open; to them it is shut, so that nobody comes in through a window,
+/// however low it is or however high they jump.
 fn pane(span: Span, wall: &Wall) -> Mesh {
     let thick = wall.thin().1;
     let low = Vec3::new(-span.half, -span.below, -thick);
     let high = Vec3::new(span.half, span.above, thick);
     Mesh::from(Cuboid::from_corners(low, high)).translated_by((low + high) * 0.5)
-}
-
-/// What shuts the hole a door taking up `span` cuts to the camera, the door
-/// standing at `place`: a sheet across the hole, halfway through the wall.
-/// Bodies walk through it; the camera, which would otherwise go out through
-/// the doorway of a house you are in, and in through it when you are out,
-/// stays on your side of it, as it does of the walls.
-fn screen(span: Span, place: &GlobalTransform) -> [[Vec3; 3]; 2] {
-    let corner = |x: f32, y: f32| place.transform_point(Vec3::new(x, y, 0.0));
-    let (a, b) = (corner(-span.half, -span.below), corner(span.half, -span.below));
-    let (c, d) = (corner(span.half, span.above), corner(-span.half, span.above));
-    [[a, b, c], [a, c, d]]
 }
 
 /// A wall as a mesh: the boxes [`carve`] leaves of it.
@@ -2316,28 +2306,26 @@ fn reshape_plot(
     if !std::mem::take(&mut reshape.0) {
         return;
     }
-    // Each plot's triangles, a list to each piece, and those only the camera
-    // meets.
-    let mut plots: Vec<(Venue, Vec<Vec<[Vec3; 3]>>, Vec<[Vec3; 3]>)> = Vec::new();
+    // Each plot's triangles, a list to each piece.
+    let mut plots: Vec<(Venue, Vec<Vec<[Vec3; 3]>>)> = Vec::new();
     for (root, piece, &venue) in &tops {
         if !piece.def.solid() {
             continue;
         }
-        let at = match plots.iter().position(|(on, ..)| *on == venue) {
+        let at = match plots.iter().position(|(on, _)| *on == venue) {
             Some(at) => at,
             None => {
-                plots.push((venue, Vec::new(), Vec::new()));
+                plots.push((venue, Vec::new()));
                 plots.len() - 1
             }
         };
-        let (_, pieces, screens) = &mut plots[at];
+        let (_, pieces) = &mut plots[at];
         pieces.push(Vec::new());
         let Some(corners) = pieces.last_mut() else {
             continue;
         };
         // Down through it, leaving out a ghost, and what goes on the walls:
-        // all but the glass of a window, which fills its hole, and what
-        // shuts a doorway to the camera.
+        // all but the glass of a window, which fills its hole.
         let mut next = vec![root];
         while let Some(entity) = next.pop() {
             let left_out = entity != root
@@ -2346,17 +2334,12 @@ fn reshape_plot(
             if left_out {
                 if !ghosts.contains(entity)
                     && let Ok(kind) = kinds.get(entity)
+                    && kind.def.mount == Mount::Window
                     && let Ok((on, span)) = panes.get(entity)
                     && let Ok(wall) = walls.get(on.wall)
                     && let Ok(place) = placement.compute_global_transform(entity)
                 {
-                    match kind.def.mount {
-                        Mount::Window => {
-                            island::add_mesh(corners, &pane(*span, wall), &place);
-                        }
-                        Mount::Door => screens.extend(screen(*span, &place)),
-                        _ => {}
-                    }
+                    island::add_mesh(corners, &pane(*span, wall), &place);
                 }
                 continue;
             }
@@ -2372,12 +2355,12 @@ fn reshape_plot(
         }
     }
     for venue in islands.built_on() {
-        if !plots.iter().any(|(on, ..)| *on == venue) {
-            islands.build_on(venue, &[], &[]);
+        if !plots.iter().any(|(on, _)| *on == venue) {
+            islands.build_on(venue, &[]);
         }
     }
-    for (venue, pieces, screens) in plots {
-        islands.build_on(venue, &pieces, &screens);
+    for (venue, pieces) in plots {
+        islands.build_on(venue, &pieces);
     }
 }
 
@@ -3053,28 +3036,19 @@ mod tests {
     }
 
     #[test]
-    fn the_camera_stays_on_your_side_of_a_doorway() {
+    fn anyone_walks_through_a_doorway() {
         // A classic door in the middle of a front wall, the house toward +z.
         let mut wall = two_floor_wall(12.1);
         let on = at(0.0, 0.1, 1.0);
         wall.holes = vec![[-CLASSIC.half, on.up, CLASSIC.half, on.up + CLASSIC.above]];
         let mut corners = Vec::new();
         island::add_mesh(&mut corners, &wall_mesh(&wall), &GlobalTransform::IDENTITY);
-        let screens = screen(CLASSIC, &GlobalTransform::from(wall.place(true, on)));
-        let open = Island::new_for_tests(&corners);
-        let shut = Island::screened_for_tests(&corners, &screens);
-        // Someone just inside it, with the camera wanting to be behind them,
-        // out through the doorway.
-        let (you, behind) = (Vec3::new(0.0, 1.2, -4.5), Vec3::new(0.0, 2.0, -12.0));
-        assert!(open.sweep(you, behind, 0.2).is_none(), "the doorway alone lets it out");
-        let far = shut.sweep(you, behind, 0.2).expect("the screen keeps it in");
-        let stops = you + (behind - you).normalize() * far;
-        assert!(stops.z > -5.75 && stops.z < -5.5, "{stops}");
-        // And anyone walks through it.
+        let island = Island::new_for_tests(&corners);
+        // Nothing in the doorway, and the wall either side of it.
         let feet = on.up;
-        let doorway = Vec2::new(0.0, -5.75);
         let (low, high) = (feet + crate::LAND_STEP_UP, feet + crate::PLAYER_HEIGHT);
-        assert!(shut.walls(doorway, 0.0, low, high).next().is_none());
+        assert!(island.walls(Vec2::new(0.0, -5.75), 0.0, low, high).next().is_none());
+        assert!(island.walls(Vec2::new(3.0, -5.75), 0.0, low, high).next().is_some());
     }
 
     #[test]

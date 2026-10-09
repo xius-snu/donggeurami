@@ -36,9 +36,13 @@
 //! Outside). A top turned inside out reads as an underside, and the player
 //! drops straight through it.
 //!
-//! The camera asks along any line at all: how far a ball can travel down it
-//! before it touches the model ([`Island::sweep`]). For that every face counts,
-//! walls and all, from either side.
+//! Your eyes, which the camera is in zoomed all the way in, ask along a line
+//! straight up: how far a ball can travel up it before it touches the model
+//! ([`Island::sweep`]), so that under a ceiling lower than them they stop
+//! short of it. For that every face counts, walls and all, from either side.
+//! Otherwise the camera asks nothing of the island: it stands where you
+//! turned and zoomed it, and whatever is in the way of you is drawn
+//! see-through (`see_through`).
 //!
 //! [`WATER_Y`]: crate::WATER_Y
 
@@ -149,17 +153,12 @@ impl Islands {
     }
 
     /// `venue` as its model has it, with the triangles of everything built on
-    /// it, `on_top`, standing there too, one list to each piece, and `screens`
-    /// that only the camera meets; or as its model has it again, with nothing.
-    /// Until the model has loaded there is nothing to build on.
-    pub(crate) fn build_on(
-        &mut self,
-        venue: Venue,
-        on_top: &[Vec<[Vec3; 3]>],
-        screens: &[[Vec3; 3]],
-    ) {
+    /// it, `on_top`, standing there too, one list to each piece; or as its
+    /// model has it again, with nothing. Until the model has loaded there is
+    /// nothing to build on.
+    pub(crate) fn build_on(&mut self, venue: Venue, on_top: &[Vec<[Vec3; 3]>]) {
         self.built.retain(|(on, _)| *on != venue);
-        if on_top.is_empty() && screens.is_empty() {
+        if on_top.is_empty() {
             return;
         }
         let Some((_, ground)) = self.grounds.iter().find(|(read, _)| *read == model(venue))
@@ -169,7 +168,7 @@ impl Islands {
         let parts: Vec<&[[Vec3; 3]]> = std::iter::once(ground.as_slice())
             .chain(on_top.iter().map(Vec::as_slice))
             .collect();
-        self.built.push((venue, Island::of_parts(&parts, screens)));
+        self.built.push((venue, Island::of_parts(&parts)));
     }
 
     /// Every island something is built on.
@@ -339,20 +338,18 @@ pub(crate) struct Island {
     corner: Vec2,
     columns: usize,
     rows: usize,
-    /// Every triangle again, walls included, for the camera.
+    /// Every triangle again, walls included, for your eyes to rise against.
     faces: Faces,
 }
 
 impl Island {
     fn new(corners: &[[Vec3; 3]]) -> Self {
-        Self::of_parts(&[corners], &[])
+        Self::of_parts(&[corners])
     }
 
     /// The island of `parts`, each one told apart from the rest in asking
-    /// whether a body is buried inside something ([`Island::blocked`]), with
-    /// `screens` that only the camera meets: what shuts a doorway to it, while
-    /// bodies walk through.
-    fn of_parts(parts: &[&[[Vec3; 3]]], screens: &[[Vec3; 3]]) -> Self {
+    /// whether a body is buried inside something ([`Island::blocked`]).
+    fn of_parts(parts: &[&[[Vec3; 3]]]) -> Self {
         let tris: Vec<Tri> = parts
             .iter()
             .zip(0..)
@@ -397,15 +394,7 @@ impl Island {
             corner: low,
             columns,
             rows,
-            faces: Faces::new(
-                parts
-                    .iter()
-                    .copied()
-                    .flatten()
-                    .chain(screens)
-                    .filter_map(|&[a, b, c]| Face::new(a, b, c))
-                    .collect(),
-            ),
+            faces: Faces::of(parts.iter().copied().flatten()),
         }
     }
 
@@ -578,12 +567,6 @@ impl Island {
     pub(crate) fn sweep(&self, from: Vec3, to: Vec3, radius: f32) -> Option<f32> {
         self.faces.sweep(from, to, radius)
     }
-
-    /// Whether a ball of `radius` at `at` is clear of the island: touching
-    /// none of it, and not buried inside any of it.
-    pub(crate) fn room_for(&self, at: Vec3, radius: f32) -> bool {
-        !self.faces.touch(at, radius) && !self.blocked(at.xz(), at.y, at.y)
-    }
 }
 
 /// Puts what a vertical line crosses in order, part by part and up each part,
@@ -597,10 +580,11 @@ fn tidy(crossings: &mut Vec<(u32, f32, bool)>) {
 /// How many faces are left in a box before it is split no further.
 const FEW_FACES: usize = 4;
 
-/// Every triangle of an island, walls included, as the camera sees them: in
-/// boxes inside boxes, so that a ball is only tried against the few triangles
-/// near its path. The fountain alone is thousands.
-struct Faces {
+/// Every triangle of a shape, walls included, in boxes inside boxes, so that
+/// a ball or a line is only tried against the few triangles near its path:
+/// an island's, which the fountain alone has thousands of, or one mesh's, to
+/// ask whether it hides you from the camera (`see_through`).
+pub(crate) struct Faces {
     faces: Vec<Face>,
     /// The first holds every face, and each of the rest half of the faces in
     /// the box it sits in.
@@ -618,12 +602,22 @@ struct Bounds {
 }
 
 impl Faces {
-    fn new(mut faces: Vec<Face>) -> Self {
+    /// The faces of the triangles with these corners.
+    pub(crate) fn of<'a>(corners: impl IntoIterator<Item = &'a [Vec3; 3]>) -> Self {
+        let mut faces: Vec<Face> = corners
+            .into_iter()
+            .filter_map(|&[a, b, c]| Face::new(a, b, c))
+            .collect();
         let mut boxes = Vec::with_capacity(2 * faces.len() / FEW_FACES + 1);
         if !faces.is_empty() {
             fill(&mut boxes, &mut faces, 0);
         }
         Self { faces, boxes }
+    }
+
+    /// Whether the straight line from `from` to `to` goes through any face.
+    pub(crate) fn crosses(&self, from: Vec3, to: Vec3) -> bool {
+        from.distance_squared(to) > 1e-12 && self.sweep(from, to, 0.0).is_some()
     }
 
     fn sweep(&self, from: Vec3, to: Vec3, radius: f32) -> Option<f32> {
@@ -678,30 +672,6 @@ impl Faces {
         }
         first
     }
-
-    /// Whether any face comes within `radius` of `at`.
-    fn touch(&self, at: Vec3, radius: f32) -> bool {
-        let mut next = Vec::with_capacity(32);
-        if !self.boxes.is_empty() {
-            next.push(0);
-        }
-        while let Some(index) = next.pop() {
-            let bounds: &Bounds = &self.boxes[index];
-            if at.distance_squared(at.clamp(bounds.low, bounds.high)) >= radius * radius {
-                continue;
-            }
-            if bounds.count == 0 {
-                next.extend([index + 1, bounds.first as usize]);
-                continue;
-            }
-            let start = bounds.first as usize;
-            let faces = &self.faces[start..start + bounds.count as usize];
-            if faces.iter().any(|face| face.touches(at, radius)) {
-                return true;
-            }
-        }
-        false
-    }
 }
 
 /// Puts a box round `faces`, which begin `offset` into all of them, and two
@@ -740,7 +710,7 @@ fn fill(boxes: &mut Vec<Bounds>, faces: &mut [Face], offset: usize) {
     boxes[at].count = 0;
 }
 
-/// One triangle of an island, walls included, as the camera sees it.
+/// One triangle of a shape, walls included, as a ball or a line meets it.
 struct Face {
     a: Vec3,
     b: Vec3,
@@ -804,25 +774,6 @@ impl Face {
                     .filter_map(|corner| meets_corner(from, way, reach, radius, corner)),
             )
             .reduce(f32::min)
-    }
-
-    /// Whether some of it is within `radius` of `at`.
-    fn touches(&self, at: Vec3, radius: f32) -> bool {
-        let height = self.normal.dot(at - self.a);
-        if height.abs() >= radius {
-            return false;
-        }
-        if self.holds(at - self.normal * height) {
-            return true;
-        }
-        // Beside the flat of it, the nearest of it is on an edge.
-        [(self.a, self.b), (self.b, self.c), (self.c, self.a)]
-            .into_iter()
-            .any(|(start, end)| {
-                let edge = end - start;
-                let along = ((at - start).dot(edge) / edge.length_squared()).clamp(0.0, 1.0);
-                at.distance_squared(start + edge * along) < radius * radius
-            })
     }
 
     /// The middle of it.
@@ -965,12 +916,8 @@ impl Island {
         Self::new(corners)
     }
 
-    pub(crate) fn screened_for_tests(corners: &[[Vec3; 3]], screens: &[[Vec3; 3]]) -> Self {
-        Self::of_parts(&[corners], screens)
-    }
-
     pub(crate) fn of_parts_for_tests(parts: &[&[[Vec3; 3]]]) -> Self {
-        Self::of_parts(parts, &[])
+        Self::of_parts(parts)
     }
 }
 
@@ -1152,18 +1099,17 @@ mod sweep_tests {
     }
 
     #[test]
-    fn room_for_a_ball() {
-        let island = Island::new(&cube());
-        // Clear of it, beside it and over it.
-        assert!(island.room_for(Vec3::new(1.4, 1.0, 0.0), 0.3));
-        assert!(island.room_for(Vec3::new(0.0, 2.4, 0.0), 0.3));
-        // Touching a side, an edge and a corner from outside.
-        assert!(!island.room_for(Vec3::new(1.2, 1.0, 0.0), 0.3));
-        assert!(!island.room_for(Vec3::new(1.2, 2.2, 0.0), 0.3));
-        assert!(!island.room_for(Vec3::new(1.15, 2.15, 1.15), 0.3));
-        // Off the corner by more than the ball.
-        assert!(island.room_for(Vec3::new(1.2, 2.2, 1.2), 0.3));
-        // Deep inside, nowhere near a face.
-        assert!(!island.room_for(Vec3::new(0.0, 1.0, 0.0), 0.3));
+    fn a_line_through_a_box_crosses_it() {
+        let faces = Faces::of(&cube());
+        // Through it, into it, and out of it from inside.
+        assert!(faces.crosses(Vec3::new(5.0, 1.0, 0.0), Vec3::new(-5.0, 1.0, 0.0)));
+        assert!(faces.crosses(Vec3::new(5.0, 1.0, 0.0), Vec3::new(0.0, 1.0, 0.0)));
+        assert!(faces.crosses(Vec3::new(0.0, 1.0, 0.0), Vec3::new(0.0, 9.0, 0.0)));
+        // Short of it, over it, and wide of it.
+        assert!(!faces.crosses(Vec3::new(5.0, 1.0, 0.0), Vec3::new(1.5, 1.0, 0.0)));
+        assert!(!faces.crosses(Vec3::new(5.0, 2.5, 0.0), Vec3::new(-5.0, 2.5, 0.0)));
+        assert!(!faces.crosses(Vec3::new(5.0, 1.0, 3.0), Vec3::new(-5.0, 1.0, 3.0)));
+        // Nowhere at all.
+        assert!(!faces.crosses(Vec3::new(5.0, 1.0, 0.0), Vec3::new(5.0, 1.0, 0.0)));
     }
 }

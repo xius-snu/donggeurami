@@ -15,6 +15,8 @@
 //!
 //! It only reaches what is on the island you are standing on: the town's
 //! objects are there to be tapped while you are in the town, not from home.
+//! Nor does it reach what stands between the camera and you, which is drawn
+//! see-through (`see_through`): a tap goes through that to what is behind it.
 //!
 //! Hit testing is done here rather than with `bevy_picking` so that a tap tests
 //! the same shapes the rest of the game already knows about: the island and the
@@ -30,6 +32,7 @@ use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 
 use crate::island::{Island, Islands, Venue};
 use crate::map::{MapObject, Town};
+use crate::see_through::InTheWay;
 use crate::{ColliderShape, LAND_STEP_UP, Player, ThirdPersonCamera};
 
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
@@ -334,6 +337,11 @@ impl EditMenu {
         self.target.is_some()
     }
 
+    /// What the menu is open on, if it is open.
+    pub(crate) fn target(&self) -> Option<Entity> {
+        self.target
+    }
+
     /// Whether a press at `pos` is on one of the menu's buttons, and so the
     /// menu's alone. Only touch has to ask: a mouse that is free to press
     /// anything is not looking round.
@@ -524,6 +532,7 @@ type Things<'w, 's> = Query<
         &'static GlobalTransform,
         &'static InheritedVisibility,
         Has<Untappable>,
+        Has<InTheWay>,
     ),
 >;
 
@@ -808,11 +817,13 @@ fn edit_town(
 /// The nearest thing that can be edited under `ray`. Distance from the player
 /// does not come into it: if you can see it well enough to tap it, you can
 /// change it. And if you cannot see it — it is on another island — you cannot,
-/// nor anything [`Untappable`] just now.
+/// nor anything [`Untappable`] just now, nor anything see-through for standing
+/// between the camera and you ([`InTheWay`]): a tap goes through to what is
+/// behind it, like what is in a house with you, seen from outside it.
 fn pick(things: &Things, ray: Ray3d) -> Option<Entity> {
     let mut best: Option<(f32, Entity)> = None;
-    for (entity, thing, place, shown, untappable) in things.iter() {
-        if !shown.get() || untappable {
+    for (entity, thing, place, shown, untappable, in_the_way) in things.iter() {
+        if !shown.get() || untappable || in_the_way {
             continue;
         }
         let Some(distance) = ray_hit(ray, place, thing.touch) else {
@@ -1306,7 +1317,7 @@ mod tests {
         let orbit = OrbitCamera::default();
         let mut camera = Camera::default();
         camera.computed.clip_from_view = PerspectiveProjection {
-            fov: orbit.fov,
+            fov: crate::CAMERA_FOV,
             aspect_ratio: window.width() / window.height(),
             ..default()
         }
@@ -1462,32 +1473,22 @@ mod tests {
     #[test]
     fn a_house_as_it_comes_up_has_its_bin_clear_of_the_time() {
         // Where the shop puts a house: straight ahead of you on the ring
-        // round the middle of the plot, in third person and through your
-        // own eyes. Its middle is high up the screen, and a tap on the time
-        // skips the wait, so the bin must not be over it.
+        // round the middle of the plot, seen from behind you, as the camera
+        // starts, and through your own eyes. Its middle is high up the
+        // screen, and a tap on the time skips the wait, so the bin must not
+        // be over it.
         let window = window();
         let you = crate::island::arrival(0);
         let cottage_ahead = you.translation
             + Vec3::NEG_Z * (crate::PLAYER_RADIUS + crate::build::HOUSE_IN_FRONT + 3.35);
         let orbit = OrbitCamera::default();
 
-        let (first, _) = first_person(&window);
+        let (camera, _) = first_person(&window);
         let first_eye = GlobalTransform::from(crate::eye_view(&orbit, &you, None));
+        let third_eye = GlobalTransform::from(crate::camera_view(&orbit, &you, None));
 
-        // With nothing in the way, as on the open grass of a plot.
-        let (third_view, _) =
-            crate::place_camera(&orbit, &you, 0.0, None, crate::CameraFit::default(), 0.0);
-        let mut third = first.clone();
-        third.computed.clip_from_view = PerspectiveProjection {
-            fov: crate::CAMERA_FOV,
-            aspect_ratio: window.width() / window.height(),
-            ..default()
-        }
-        .get_clip_from_view();
-        let third_eye = GlobalTransform::from(third_view);
-
-        for (name, camera, eye) in [("first", &first, &first_eye), ("third", &third, &third_eye)] {
-            let menu = menu_on(&window, camera, eye, cottage_ahead);
+        for (name, eye) in [("eyes", &first_eye), ("behind", &third_eye)] {
+            let menu = menu_on(&window, &camera, eye, cottage_ahead);
             assert!(menu.shown, "{name}");
             assert!(
                 bin_clear_of_the_top(&menu, &window),

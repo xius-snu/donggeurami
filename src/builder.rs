@@ -28,16 +28,15 @@
 //! Tapping the timer at the top of the screen ends the wait early. That is for
 //! trying the game out, and not meant to stay.
 //!
-//! Building and visiting are seen from behind you, as the town is. A button
-//! over the hammer swaps that for a view through your own eyes, and back.
+//! Building and visiting are seen as the town is: from behind you, or, zoomed
+//! all the way in, through your own eyes (`follow_camera`).
 //!
 //! Everything a game puts in the world or on the screen carries [`InGame`] and
 //! goes when the game does. Your own body is the only thing that comes back.
 //!
 //! Every button here says what it is for with [`AsksFor`], and a click on one
 //! becomes an [`Ask`], the same as a key: [`answer`] deals with coming and
-//! going, [`play`] with the game itself, and [`publish_view`] with how you see
-//! it.
+//! going, and [`play`] with the game itself.
 
 use bevy::asset::RenderAssetUsages;
 use bevy::prelude::*;
@@ -57,12 +56,11 @@ use crate::hud::{self, DOOR, DialogUp, GOLD, PANEL, TakesPress};
 use crate::island::{self, Islands, Venue};
 use crate::lobby::{self, Balance, Lobby, Member, SEATS, STARTING_BALANCE, Seat, Whereabouts};
 use crate::net::Online;
-use crate::shop;
 use crate::sky::Water;
 use crate::tags::HidesNames;
 use crate::{
-    Collider, ColliderShape, FirstPerson, LAND_TOP, OrbitCamera, PLAYER_HEIGHT, PLAYER_RADIUS,
-    Player, ThirdPersonCamera, WalkCycle,
+    Collider, ColliderShape, LAND_TOP, OrbitCamera, PLAYER_HEIGHT, PLAYER_RADIUS, Player,
+    ThirdPersonCamera, WalkCycle,
 };
 
 /// How long the theme stays across the screen when building begins.
@@ -259,9 +257,6 @@ enum Ask {
     Rate(u8),
     /// Go back to the town after a game.
     Leave,
-    /// See yourself from behind rather than through your own eyes while you
-    /// build and rate, or the other way round.
-    SwapView,
 }
 
 /// What a button asks for when it is clicked or tapped.
@@ -329,31 +324,6 @@ pub(crate) struct InGame;
 /// nothing.
 #[derive(Resource, Default, PartialEq)]
 pub(crate) struct Building(pub Option<u8>);
-
-/// Whether you see yourself from behind while you build and rate, rather than
-/// through your own eyes: from behind, until the button over the hammer is
-/// pressed. Kept for as long as the app is open, from one game to the next.
-#[derive(Resource)]
-struct FromBehind(bool);
-
-impl Default for FromBehind {
-    fn default() -> Self {
-        Self(true)
-    }
-}
-
-/// The button over the hammer that swaps the view.
-#[derive(Component)]
-struct ViewButton;
-
-/// One of the pictures on it: the view it swaps to. Only that one is shown.
-#[derive(Component, Clone, Copy, PartialEq, Eq)]
-enum ViewPicture {
-    /// A person: you, seen from behind.
-    Behind,
-    /// An eye: through your own.
-    Eyes,
-}
 
 /// The theme, across the screen as building begins. When the time is cut
 /// short it goes with the building rather than staying up over the rating.
@@ -445,13 +415,6 @@ impl Game {
         matches!(self.stage, Stage::Visit { plot, .. } if plot != self.me)
     }
 
-    /// Everyone is building or visiting: up close to a house, and seeing it
-    /// from behind themselves unless they would rather see it through their
-    /// own eyes.
-    fn up_close(&self) -> bool {
-        matches!(self.stage, Stage::Build { .. } | Stage::Visit { .. })
-    }
-
     /// Whose house `plot` is, as it is written on the screen.
     fn whose(&self, plot: usize) -> String {
         if plot == self.me {
@@ -487,12 +450,11 @@ pub(crate) fn plugin(app: &mut App) {
         .init_resource::<Talk>()
         .init_resource::<Showing>()
         .init_resource::<Building>()
-        .init_resource::<FromBehind>()
         .init_resource::<OnlinePlot>()
         .init_resource::<OfflineGame>()
         .add_observer(find_house_builder)
         .add_observer(ask)
-        .add_systems(Startup, (draw_star, spawn_bubble, spawn_view_button))
+        .add_systems(Startup, (draw_star, spawn_bubble))
         .add_systems(
             Update,
             (
@@ -506,7 +468,6 @@ pub(crate) fn plugin(app: &mut App) {
                     cut_off,
                     play,
                     publish_building,
-                    publish_view,
                 )
                     .chain()
                     .in_set(GameSystems)
@@ -516,7 +477,6 @@ pub(crate) fn plugin(app: &mut App) {
                 (
                     show_board,
                     show_rating,
-                    show_view_button,
                     show_results,
                     slide_in,
                     light_buttons,
@@ -641,10 +601,10 @@ fn ask(click: On<Pointer<Click>>, buttons: Query<&AsksFor>, mut asks: MessageWri
 }
 
 /// Keys, for desktop: Enter to say yes to a dialog and Escape to say no, 1 to
-/// 5 for the stars to give the house being visited, V for the button that
-/// swaps the view, whenever it is there, and Enter to play again from the
-/// results. Escape does not leave them: they are not a dialog, and there it
-/// frees the cursor for clicking their buttons, as it does anywhere else.
+/// 5 for the stars to give the house being visited, and Enter to play again
+/// from the results. Escape does not leave them: they are not a dialog, and
+/// there it frees the cursor for clicking their buttons, as it does anywhere
+/// else.
 fn keys(
     keyboard: Res<ButtonInput<KeyCode>>,
     showing: Res<Showing>,
@@ -654,10 +614,6 @@ fn keys(
 ) {
     let yes = keyboard.any_just_pressed([KeyCode::Enter, KeyCode::NumpadEnter]);
     let no = keyboard.just_pressed(KeyCode::Escape);
-    let viewing = !up.0 && game.as_ref().is_some_and(|game| game.up_close());
-    if viewing && keyboard.just_pressed(KeyCode::KeyV) {
-        asks.write(Ask::SwapView);
-    }
     match *showing {
         Showing::Offer if yes => {
             asks.write(Ask::Join);
@@ -1192,26 +1148,6 @@ fn publish_building(
     offline.set_if_neq(OfflineGame(game.is_some_and(|game| !game.online)));
 }
 
-/// Sees you from behind while you build and while you rate, as the town is
-/// seen, unless you would rather look through your own eyes, so that looking
-/// round a house is looking round a room: the button over the hammer swaps the
-/// one for the other. The lobby and the winner's plot are always seen from
-/// behind you.
-fn publish_view(
-    mut asks: MessageReader<Ask>,
-    game: Option<Res<Game>>,
-    mut behind: ResMut<FromBehind>,
-    mut view: ResMut<FirstPerson>,
-) {
-    let up_close = game.is_some_and(|game| game.up_close());
-    for &ask in asks.read() {
-        if ask == Ask::SwapView && up_close {
-            behind.0 = !behind.0;
-        }
-    }
-    view.set_if_neq(FirstPerson(up_close && !behind.0));
-}
-
 /// Everyone to the house on `plot`, to rate it.
 fn visit(game: &mut Game, plot: usize, bodies: &mut Whereabouts, orbit: &mut OrbitCamera) {
     for (seat, &body) in game.bodies.iter().enumerate() {
@@ -1549,124 +1485,6 @@ fn light_buttons(
             Interaction::Hovered | Interaction::Pressed => fill.lit,
         }));
     }
-}
-
-// --------------------------------------------------------------- the view
-
-/// The button over the hammer that swaps seeing through your own eyes for
-/// seeing yourself from behind, and back. Like the button that goes home, it
-/// shows where it takes you: a person, to see yourself, or an eye, to see
-/// through your own. Put away until it is wanted ([`show_view_button`]).
-fn spawn_view_button(mut commands: Commands) {
-    commands.spawn((
-        ViewButton,
-        AsksFor(Ask::SwapView),
-        TakesPress,
-        Button,
-        // Over the hammer, as big and in line with it, and as high up as the
-        // button that goes home is in the town.
-        Node {
-            position_type: PositionType::Absolute,
-            top: Val::VMin(hud::EDGE),
-            right: Val::VMin(shop::HAMMER_RIGHT),
-            width: Val::VMin(shop::HAMMER),
-            height: Val::VMin(shop::HAMMER),
-            border: UiRect::all(Val::Px(2.0)),
-            border_radius: BorderRadius::all(Val::Percent(50.0)),
-            ..default()
-        },
-        BackgroundColor(PANEL),
-        Fill {
-            idle: PANEL,
-            lit: PANEL_LIT,
-        },
-        BorderColor::all(Color::srgba(1.0, 1.0, 1.0, 0.5)),
-        Visibility::Hidden,
-        children![
-            (
-                ViewPicture::Behind,
-                hud::picture(),
-                person(),
-                Visibility::Hidden
-            ),
-            (ViewPicture::Eyes, hud::picture(), eye()),
-        ],
-    ));
-}
-
-/// The button is there while you build and while you rate, unless a dialog or
-/// the shop is up, with the picture of the view it swaps to.
-fn show_view_button(
-    game: Option<Res<Game>>,
-    up: Res<DialogUp>,
-    behind: Res<FromBehind>,
-    mut buttons: Query<&mut Visibility, (With<ViewButton>, Without<ViewPicture>)>,
-    mut pictures: Query<(&ViewPicture, &mut Visibility), Without<ViewButton>>,
-) {
-    let shown = !up.0 && game.is_some_and(|game| game.up_close());
-    for mut visibility in &mut buttons {
-        visibility.set_if_neq(if shown {
-            Visibility::Inherited
-        } else {
-            Visibility::Hidden
-        });
-    }
-    let next = if behind.0 {
-        ViewPicture::Eyes
-    } else {
-        ViewPicture::Behind
-    };
-    for (picture, mut visibility) in &mut pictures {
-        visibility.set_if_neq(if *picture == next {
-            Visibility::Inherited
-        } else {
-            Visibility::Hidden
-        });
-    }
-}
-
-/// A person, head and shoulders: you, the way you are seen from behind.
-pub(crate) fn person() -> impl Bundle {
-    children![
-        hud::disc(37.0, 16.0, 26.0),
-        (
-            Node {
-                border_radius: BorderRadius::top(Val::Percent(50.0)),
-                ..hud::frame(23.0, 47.0, 54.0, 33.0)
-            },
-            BackgroundColor(hud::ICON),
-            Pickable::IGNORE,
-        ),
-    ]
-}
-
-/// An eye: the white of it, the iris and a glint. The white is a square on its
-/// corner, rounded off and squashed flat.
-fn eye() -> impl Bundle {
-    children![
-        (
-            hud::picture(),
-            UiTransform::from_scale(Vec2::new(1.0, 0.56)),
-            children![(
-                Node {
-                    border_radius: BorderRadius::all(Val::Percent(22.0)),
-                    ..hud::frame(26.0, 26.0, 48.0, 48.0)
-                },
-                BackgroundColor(hud::ICON),
-                UiTransform::from_rotation(Rot2::degrees(45.0)),
-                Pickable::IGNORE,
-            )],
-        ),
-        (
-            Node {
-                border_radius: BorderRadius::all(Val::Percent(50.0)),
-                ..hud::frame(37.0, 37.0, 26.0, 26.0)
-            },
-            BackgroundColor(DOOR),
-            Pickable::IGNORE,
-        ),
-        hud::disc(52.0, 40.0, 8.0),
-    ]
 }
 
 // ------------------------------------------------------------- the results
