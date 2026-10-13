@@ -3,26 +3,33 @@
 //!
 //! The camera stands where you turned and zoomed it, walls or no walls
 //! (`follow_camera`): in a house, zoomed out, it is outside the house looking
-//! in. Every frame the straight lines from it to your body, your chest and
-//! your head are tried against everything drawn on your island, and whatever
-//! any of them goes through fades to a quarter of itself, as Roblox's
-//! Invisicam fades it, and back once none does (Hajun, 2026-10-09). Zoomed
-//! all the way in, through your own eyes, there is nothing between.
+//! in. Every frame the straight lines from it to points all over you, from
+//! your legs to the top of your head and out to your sides ([`RINGS`]), are
+//! tried against everything drawn on your island, and whatever any of them
+//! goes through fades to a quarter of itself, as Roblox's Invisicam fades it,
+//! and back once none does. So whatever hides any of you, however little, is
+//! out of the way (Hajun, 2026-10-13); until then only what hid the middle of
+//! your body, your chest or your head was (2026-10-09). Zoomed all the way
+//! in, through your own eyes, there is nothing between.
 //!
 //! A piece of furniture, a door, a window or a town object fades whole. A
 //! house, and the island itself, fade a part at a time, each part as it was
-//! modelled in Blender: a wall, the roof, a floor, a tree's leaves. Bodies
-//! never fade, nor water and glass, which are see-through already, nor a
-//! piece being put down, nor whatever the edit menu is open on.
+//! modelled in Blender: a wall, the roof, a floor, a tree's leaves. Whatever
+//! is in a part fades with it, so that no door stands solid in a wall you see
+//! through ([`inside_of`]): the doors, windows and sign of a house in the
+//! town, and the doors, windows and hangings in a wall of a house built in
+//! House Builder. Bodies never fade, nor water and glass for being in the way,
+//! as they are see-through already, nor a piece being put down, nor whatever
+//! the edit menu is open on, nor the ground ([`ground`]).
 //!
 //! Something a tap can reach (`editor::Editable`) is out of its reach for as
 //! long as any of it is see-through ([`InTheWay`]): a tap goes through it, so
 //! that from outside a house you can reach in and tap what is in there with
 //! you. Only what is not in the way of you can be tapped.
 //!
-//! A part is drawn see-through with a copy of its own material, blended, as
-//! everything see-through in this world is, so that both platforms draw it
-//! alike (`RENDERING.md`).
+//! A part is drawn see-through with a copy of its own material, drawn with
+//! alpha to coverage, so that it is one even pane however its parts overlap
+//! ([`see_through`]), on both platforms alike (`RENDERING.md`).
 
 use std::collections::{HashMap, HashSet};
 
@@ -32,22 +39,53 @@ use bevy::mesh::skinning::SkinnedMesh;
 use bevy::prelude::*;
 use bevy::render::render_resource::Face;
 
-use crate::build::{Ghost, Mount, Piece};
+use crate::build::{Ghost, Mount, OnWall, Piece};
 use crate::editor::{EditMenu, EditSystems, Editable};
 use crate::island::{self, Faces};
 use crate::map::MapObject;
 use crate::{Player, ThirdPersonCamera};
 
 /// How much of something in the way of you is drawn: a quarter of it, as
-/// much as Roblox's Invisicam leaves of what it fades.
+/// much as Roblox's Invisicam leaves of what it fades. None of it was tried
+/// on 2026-10-13, and Hajun found that too much; what they minded in a
+/// quarter was the edges of a part showing through it, which drawing it
+/// with alpha to coverage takes away ([`see_through`]).
 const SEEN: f32 = 0.25;
 /// How long something takes to fade, and to come back, in seconds.
 const FADE_SECS: f32 = 0.15;
-/// What of you the camera has to see, as heights over your feet: the bottom
-/// of your body, where your legs end, your chest and your head. Whatever
-/// hides any of them is in the way; what hides only your legs, like a bed you
-/// stand behind, is not.
-const SEEN_AT: [f32; 3] = [1.15, 1.4, 1.65];
+/// What of you the camera has to see: rings round you at these heights over
+/// your feet, each as wide across you and as deep front to back as you are
+/// there, the middle of each ring and points round it ([`ROUND`]). Whatever
+/// hides any of them is in the way: until 2026-10-13 only the middle of you
+/// counted, at 1.15, 1.4 and 1.65 m, and a wall that hid your side or your
+/// legs stayed as it was.
+///
+/// Each is a little inside the model (`limbperson.glb`), so that a wall you
+/// stand against is not in the way of a camera on your side of it: legs 0.42
+/// m across and 0.16 deep, then a body 0.78 across and 0.28 deep from 0.65 m
+/// up, and a head 0.41 across from 1.3 m to 1.71. The legs' rings are no
+/// wider than the legs reach (`LEG_RADIUS`), and the lowest is higher than
+/// any edge the legs stand over without stepping up onto it (`EDGE_RISE`),
+/// so that the step you are on is never in the way; the shoes, under it, are
+/// not tried. Something thinner than the gaps between the points, about a
+/// quarter of a metre, like a bar across a window, can cross you unseen.
+const RINGS: [(f32, f32, f32); 8] = [
+    (0.2, 0.17, 0.06),
+    (0.42, 0.17, 0.06),
+    (0.62, 0.17, 0.06),
+    (0.85, 0.36, 0.11),
+    (1.05, 0.36, 0.11),
+    (1.25, 0.36, 0.11),
+    (1.42, 0.15, 0.15),
+    (1.6, 0.15, 0.15),
+];
+/// How many points round each ring of [`RINGS`], besides its middle.
+const ROUND: usize = 8;
+/// The top of your head, as high as the camera has to see of you.
+const CROWN: f32 = 1.68;
+/// How far out of the box round a part of a house or of the island something
+/// else of it can reach and still be in it, and go with it, in metres.
+const IN_IT: f32 = 0.05;
 
 /// Out of a tap's reach, while some of it is see-through for standing between
 /// the camera and you: a tap goes through it to whatever is behind (`editor`).
@@ -62,7 +100,9 @@ struct SeeThrough {
     solid: Handle<StandardMaterial>,
     /// The see-through copy of it that it is drawn with meanwhile.
     look: Handle<StandardMaterial>,
-    /// How much of it is drawn, from 1, solid, down to [`SEEN`].
+    /// How solid its own material is: 1, or less for glass and water.
+    alpha: f32,
+    /// How much of that it is drawn with, from 1, as it is, down to [`SEEN`].
     shown: f32,
     /// What it is part of that a tap could reach, if anything.
     owner: Option<Entity>,
@@ -123,11 +163,13 @@ fn find_what_hides_you(
     parts: Parts,
     lineage: Lineage,
     children: Query<&Children>,
+    on_walls: Query<(Entity, &OnWall)>,
     menu: Res<EditMenu>,
     meshes: Res<Assets<Mesh>>,
     materials: Res<Assets<StandardMaterial>>,
     mut changed: MessageReader<AssetEvent<Mesh>>,
     mut shapes: Local<HashMap<AssetId<Mesh>, Faces>>,
+    mut inside: Local<HashMap<Entity, Vec<Entity>>>,
     mut hiding: ResMut<Hiding>,
 ) {
     // A mesh changed since it was read, like a wall with a new hole in it, is
@@ -146,11 +188,23 @@ fn find_what_hides_you(
     if *drawn == Visibility::Hidden {
         return;
     }
-    let lines = SEEN_AT.map(|up| (eye.translation, you.translation + Vec3::Y * up));
+    let from = eye.translation;
+    let points = points_on(you);
+    // The box round every line, which nearly everything is nowhere near.
+    let (reach_low, reach_high) = points
+        .iter()
+        .fold((from, from), |(low, high), &point| (low.min(point), high.max(point)));
     let mut found = Vec::new();
+    let mut near = Vec::with_capacity(points.len());
     for (part, mesh, material, bounds, place, shown, see_through) in &parts {
-        // The box round it first, which nearly everything is nowhere near.
-        if !shown.get() || !lines.iter().any(|&(from, to)| in_box(from, to, bounds, place)) {
+        if !shown.get() {
+            continue;
+        }
+        let (low, high) = world_box(bounds, place);
+        if low.cmpgt(reach_high).any()
+            || high.cmplt(reach_low).any()
+            || ground(part, high.y, &lineage)
+        {
             continue;
         }
         // Only what is drawn solid, or is see-through already for being in
@@ -159,24 +213,128 @@ fn find_what_hides_you(
         if !materials.get(own).is_some_and(drawn_solid) {
             continue;
         }
+        // Then the lines that go through the box round it.
+        near.clear();
+        near.extend(
+            points
+                .iter()
+                .copied()
+                .filter(|&to| line_meets_box(from, to, low, high)),
+        );
+        if near.is_empty() {
+            continue;
+        }
         let Some(shape) = shape_of(mesh, &meshes, &mut shapes) else {
             continue;
         };
         let into = place.affine().inverse();
-        let through = |&(from, to): &(Vec3, Vec3)| {
-            shape.crosses(into.transform_point3(from), into.transform_point3(to))
-        };
-        if lines.iter().any(through) {
+        let start = into.transform_point3(from);
+        if near
+            .iter()
+            .any(|&to| shape.crosses(start, into.transform_point3(to)))
+        {
             found.push(part);
         }
     }
+    let target = menu.target();
     for part in found {
         if hiding.0.contains_key(&part) {
             continue;
         }
-        if let Some((fellows, owner)) = fades_with(part, &lineage, &children, &parts, menu.target())
+        let Some((fellows, owner)) = fades_with(part, &lineage, &children, &parts, target) else {
+            continue;
+        };
+        // What goes with it: what is inside it, which is read once, as what
+        // is in a part of a house or of the island stays in it; and if it is
+        // a wall, whatever is in the wall now.
+        let within = inside
+            .entry(part)
+            .or_insert_with(|| inside_of(&fellows, &lineage, &children, &parts));
+        let along: Vec<Entity> = within
+            .iter()
+            .copied()
+            .chain(
+                on_walls
+                    .iter()
+                    .filter(|(_, on)| fellows.contains(&on.wall))
+                    .map(|(piece, _)| piece),
+            )
+            .collect();
+        hiding.0.extend(fellows.into_iter().map(|fellow| (fellow, owner)));
+        for other in along {
+            if hiding.0.contains_key(&other) {
+                continue;
+            }
+            if let Some((fellows, owner)) = fades_with(other, &lineage, &children, &parts, target) {
+                hiding.0.extend(fellows.into_iter().map(|fellow| (fellow, owner)));
+            }
+        }
+    }
+}
+
+/// What has to fade along with `fellows`, a part of a house or of the island
+/// fading as a whole, so that nothing of it is left standing solid in it:
+/// whatever else of the same house or island is inside the box round it,
+/// like the doors, windows and sign of a house in the town, which are
+/// objects of their own in the model. Nothing, for anything else, which
+/// fades whole already. (What is in a wall of a house built in House Builder
+/// fades with it too, by `build::OnWall`.)
+fn inside_of(
+    fellows: &[Entity],
+    lineage: &Lineage,
+    children: &Query<&Children>,
+    parts: &Parts,
+) -> Vec<Entity> {
+    let mut inside = Vec::new();
+    let Some(&first) = fellows.first() else {
+        return inside;
+    };
+    let model = model_of(first, lineage);
+    let whole = lineage
+        .get(model)
+        .is_ok_and(|(.., piece, town_object, _, _)| {
+            town_object || piece.is_some_and(|piece| piece.def.mount != Mount::House)
+        });
+    if whole {
+        return inside;
+    }
+    let Some((low, high)) = fellows
+        .iter()
+        .filter_map(|&fellow| parts.get(fellow).ok())
+        .map(|(_, _, _, bounds, place, ..)| world_box(bounds, place))
+        .reduce(|(low, high), (l, h)| (low.min(l), high.max(h)))
+    else {
+        return inside;
+    };
+    let (low, high) = (low - IN_IT, high + IN_IT);
+    for inner in children.iter_descendants(model) {
+        let Ok((.., bounds, place, _, _)) = parts.get(inner) else {
+            continue;
+        };
+        let (l, h) = world_box(bounds, place);
+        if !fellows.contains(&inner)
+            && l.cmpge(low).all()
+            && h.cmple(high).all()
+            && model_of(inner, lineage) == model
         {
-            hiding.0.extend(fellows.into_iter().map(|fellow| (fellow, owner)));
+            inside.push(inner);
+        }
+    }
+    inside
+}
+
+/// What `part` is part of: the piece or town object it is in, or else the
+/// island it is on.
+fn model_of(part: Entity, lineage: &Lineage) -> Entity {
+    let mut at = part;
+    loop {
+        let Ok((parent, _, piece, town_object, ..)) = lineage.get(at) else {
+            return at;
+        };
+        match parent {
+            _ if piece.is_some() || town_object => return at,
+            Some(parent) => at = parent.parent(),
+            None => return at,
         }
     }
 }
@@ -204,22 +362,27 @@ fn fade_what_hides_you(
         let Ok(own) = looks.get(part) else {
             continue;
         };
-        let Some(solid) = materials.get(&own.0).filter(|solid| drawn_solid(solid)).cloned() else {
+        let Some((solid, alpha)) = materials
+            .get(&own.0)
+            .and_then(|solid| Some((solid.clone(), own_alpha(solid)?)))
+        else {
             continue;
         };
-        let look = materials.add(see_through(solid));
+        let look = materials.add(see_through(solid, alpha));
         commands.entity(part).try_insert((
             SeeThrough {
                 solid: own.0.clone(),
                 look: look.clone(),
+                alpha,
                 shown: 1.0,
                 owner,
             },
             MeshMaterial3d(look),
         ));
     }
-    // Each a step nearer as much of it as should be drawn: a quarter while it
-    // is in the way, all of it once it is not, and then its own material back.
+    // Each a step nearer as much of it as should be drawn: none of it while
+    // it is in the way, all of it once it is not, and then its own material
+    // back.
     let step = time.delta_secs() / FADE_SECS * (1.0 - SEEN);
     for (part, mut see) in &mut fading {
         out_of_reach.extend(see.owner);
@@ -241,7 +404,7 @@ fn fade_what_hides_you(
             }
             solid.try_remove::<SeeThrough>();
         } else if let Some(mut look) = materials.get_mut(&see.look) {
-            look.base_color.set_alpha(shown);
+            look.base_color.set_alpha(see.alpha * shown);
         }
     }
     for owner in &marked {
@@ -256,18 +419,45 @@ fn fade_what_hides_you(
     }
 }
 
-/// Whether `material` is drawn solid, and so can be made see-through: not
-/// water, glass, a ghost or the sky, which are blended already.
+/// Whether `material` is drawn solid, and so can be in the way: not water,
+/// glass, a ghost or the sky, which are blended already.
 fn drawn_solid(material: &StandardMaterial) -> bool {
     matches!(material.alpha_mode, AlphaMode::Opaque)
 }
 
-/// `solid` as a part in the way is drawn: blended, in its own colours, and
-/// only the side of it facing the camera, so that a wall is one pane rather
-/// than its two faces one over the other. It starts as solid as it was.
-fn see_through(mut look: StandardMaterial) -> StandardMaterial {
-    look.alpha_mode = AlphaMode::Blend;
-    look.base_color.set_alpha(1.0);
+/// How solid something drawn with `material` is, if it can fade: 1 for
+/// anything solid, and its own alpha for glass and water, which fade along
+/// with what they are in. `None` for anything else, like the sun's glow,
+/// which is added to what is behind it.
+fn own_alpha(material: &StandardMaterial) -> Option<f32> {
+    match material.alpha_mode {
+        AlphaMode::Opaque => Some(1.0),
+        AlphaMode::Blend => Some(material.base_color.alpha()),
+        _ => None,
+    }
+}
+
+/// `solid` as a part in the way is drawn: in its own colours, only the side
+/// of it facing the camera, and starting as solid as it was, `alpha`.
+///
+/// What is solid is drawn with alpha to coverage: with the camera's 4x MSAA,
+/// a quarter of it covers one of the four samples in each pixel, writes its
+/// depth there, and leaves the other three to what is behind. Whatever of it
+/// is nearest the camera in a pixel hides the rest of it there, so a house
+/// in the way is one even pane, however its parts overlap. Blended, as it
+/// was until 2026-10-13, every face of it over another added another layer,
+/// and the edges of its parts showed through each other, darker, which
+/// Hajun found dirty. Glass and water stay blended, as they are drawn, and
+/// so does anything with a texture, whose alpha Bevy sharpens to all or
+/// nothing under alpha to coverage (`pbr_fragment.wgsl`): of the shop's
+/// pieces, the Cabinet and the Soft Couch, which are one mesh each.
+fn see_through(mut look: StandardMaterial, alpha: f32) -> StandardMaterial {
+    look.alpha_mode = if look.alpha_mode == AlphaMode::Blend || look.base_color_texture.is_some() {
+        AlphaMode::Blend
+    } else {
+        AlphaMode::AlphaToCoverage
+    };
+    look.base_color.set_alpha(alpha);
     look.cull_mode = Some(Face::Back);
     look.double_sided = false;
     look
@@ -289,13 +479,56 @@ fn shape_of<'a>(
     shapes.get(&id)
 }
 
-/// Whether the straight line from `from` to `to` goes through the box round a
-/// part standing at `place`, which fits in `bounds` in its own space.
-fn in_box(from: Vec3, to: Vec3, bounds: &Aabb, place: &GlobalTransform) -> bool {
+/// The points on `you` that the camera has to see ([`RINGS`]), where you
+/// stand and the way you face.
+fn points_on(you: &Transform) -> Vec<Vec3> {
+    let (across, ahead) = (you.right().as_vec3(), you.forward().as_vec3());
+    let round: [(f32, f32); ROUND] = std::array::from_fn(|step| {
+        (step as f32 * std::f32::consts::TAU / ROUND as f32).sin_cos()
+    });
+    let mut points = Vec::with_capacity(RINGS.len() * (ROUND + 1) + 1);
+    for (up, wide, deep) in RINGS {
+        let middle = you.translation + Vec3::Y * up;
+        points.push(middle);
+        for (sin, cos) in round {
+            points.push(middle + across * (wide * cos) + ahead * (deep * sin));
+        }
+    }
+    points.push(you.translation + Vec3::Y * CROWN);
+    points
+}
+
+/// Whether `part`, whose box goes no higher than `top`, is the ground: the
+/// island's own, not anything built or put on it, and no higher than a step
+/// over the land, as the town's paving, roads and grass are, and a plot's.
+/// The ground never fades. What it hides of you is your feet, below a kerb
+/// or a step up from you, or your legs while you are in the sea, and made
+/// see-through it would take the whole island with it: the town's paving is
+/// one piece 140 m across.
+fn ground(part: Entity, top: f32, lineage: &Lineage) -> bool {
+    if top > crate::LAND_TOP + crate::LAND_STEP_UP {
+        return false;
+    }
+    let mut at = Some(part);
+    while let Some(entity) = at {
+        let Ok((parent, _, piece, town_object, ..)) = lineage.get(entity) else {
+            break;
+        };
+        if piece.is_some() || town_object {
+            return false;
+        }
+        at = parent.map(ChildOf::parent);
+    }
+    true
+}
+
+/// The box round a part standing at `place`, which fits in `bounds` in its
+/// own space, from its lowest corner to its highest.
+fn world_box(bounds: &Aabb, place: &GlobalTransform) -> (Vec3, Vec3) {
     let affine = place.affine();
     let middle = Vec3::from(affine.transform_point3a(bounds.center));
     let half = Vec3::from(affine.matrix3.abs() * bounds.half_extents);
-    line_meets_box(from, to, middle - half, middle + half)
+    (middle - half, middle + half)
 }
 
 /// Whether the straight line from `from` to `to` goes through the box from
@@ -330,8 +563,9 @@ fn line_meets_box(from: Vec3, to: Vec3, low: Vec3, high: Vec3) -> bool {
 ///
 /// A piece of furniture, a door, a window or a town object fades whole. A
 /// house, and the island, fade a part at a time: the meshes the glTF loader
-/// made of one object in Blender, one for each of its materials, or a wall the
-/// game made again (`build`).
+/// made of one object in Blender, one for each of its materials, and of the
+/// objects parented to it, like a door's handles; or a wall the game made
+/// again (`build`).
 fn fades_with(
     part: Entity,
     lineage: &Lineage,
@@ -370,9 +604,7 @@ fn fades_with(
             .filter(|&fellow| parts.contains(fellow))
             .collect(),
         (None, Some(object)) => children
-            .get(object)
-            .into_iter()
-            .flat_map(|meshes| meshes.iter())
+            .iter_descendants(object)
             .filter(|&fellow| parts.contains(fellow))
             .collect(),
         (None, None) => vec![part],
@@ -395,17 +627,20 @@ mod tests {
     /// bed is 0.95 m high, and on a floor 0.1 m up.
     const BED: (Vec3, Vec3) = (Vec3::new(-1.5, 0.1, 1.0), Vec3::new(1.5, 1.05, 3.0));
 
-    /// Whether the box from `low` to `high` hides you, standing at the
-    /// origin, from a camera at `eye`: tried as a part is, against the box
-    /// round it and then its triangles.
-    fn hides(eye: Vec3, (low, high): (Vec3, Vec3)) -> bool {
+    /// Whether the box from `low` to `high` hides any of you, standing at the
+    /// origin and facing -z, from a camera at `eye`.
+    fn hides(eye: Vec3, part: (Vec3, Vec3)) -> bool {
+        hides_you(eye, &Transform::IDENTITY, part)
+    }
+
+    /// Whether the box from `low` to `high` hides any of `you` from a camera
+    /// at `eye`: tried as a part is, against the box round it and then its
+    /// triangles.
+    fn hides_you(eye: Vec3, you: &Transform, (low, high): (Vec3, Vec3)) -> bool {
         let shape = Faces::of(&crate::camera_tests::boxes(&[(low, high)]));
-        let bounds = Aabb::from_min_max(low, high);
-        let place = GlobalTransform::IDENTITY;
-        SEEN_AT.iter().any(|&up| {
-            let to = Vec3::Y * up;
-            in_box(eye, to, &bounds, &place) && shape.crosses(eye, to)
-        })
+        points_on(you)
+            .into_iter()
+            .any(|to| line_meets_box(eye, to, low, high) && shape.crosses(eye, to))
     }
 
     #[test]
@@ -418,17 +653,108 @@ mod tests {
         assert!(!hides(level, ROOF));
         assert!(hides(high, ROOF));
         for eye in [level, high] {
-            // Never what is behind you, beside you or under you, nor a bed,
-            // which hides only your legs.
-            for (name, part) in [("back", BACK), ("left", LEFT), ("floor", FLOOR), ("bed", BED)] {
+            // Never what is behind you, beside you or under you.
+            for (name, part) in [("back", BACK), ("left", LEFT), ("floor", FLOOR)] {
                 assert!(!hides(eye, part), "{name} from {eye}");
             }
         }
-        // From in the room with you, nothing.
+        // A bed in front of you hides your legs from a camera nearly level
+        // with you, and is in the way; from high up it hides nothing.
+        assert!(hides(level, BED));
+        assert!(!hides(high, BED));
+        // From in the room with you, only the bed, which you stand behind:
+        // looking down past it, the camera cannot see your feet.
         let inside = Vec3::new(0.0, 2.5, 4.5);
-        for part in [FLOOR, FRONT, BACK, LEFT, ROOF, BED] {
+        for part in [FLOOR, FRONT, BACK, LEFT, ROOF] {
             assert!(!hides(inside, part));
         }
+        assert!(hides(inside, BED));
+    }
+
+    #[test]
+    fn a_wall_that_hides_only_your_side_is_in_the_way() {
+        // Between the camera and you, ending a little to the right of the
+        // straight line from it to your middle: it hides your right arm and
+        // shoulder, and nothing else of you.
+        let eye = Vec3::new(0.0, 2.0, 10.0);
+        let wall = (Vec3::new(0.15, 0.0, 3.0), Vec3::new(5.0, 3.0, 3.3));
+        let shape = Faces::of(&crate::camera_tests::boxes(&[wall]));
+        for up in [0.2, 1.05, 1.4, 1.68] {
+            assert!(!shape.crosses(eye, Vec3::Y * up), "your middle, {up} m up");
+        }
+        assert!(hides(eye, wall));
+        // Turned round, facing the camera, you are as wide, and it still is.
+        let turned = Transform::from_rotation(Quat::from_rotation_y(std::f32::consts::PI));
+        assert!(hides_you(eye, &turned, wall));
+        // A little further out, it hides none of you.
+        let clear = (Vec3::new(0.4, 0.0, 3.0), Vec3::new(5.0, 3.0, 3.3));
+        assert!(!hides(eye, clear));
+    }
+
+    #[test]
+    fn a_wall_you_stand_against_is_in_the_way_only_from_its_far_side() {
+        // On your right, as near as your body comes to it.
+        let wall = (
+            Vec3::new(crate::PLAYER_RADIUS, 0.0, -5.0),
+            Vec3::new(crate::PLAYER_RADIUS + 0.5, 3.0, 5.0),
+        );
+        for eye in [Vec3::new(0.0, 2.0, 10.0), Vec3::new(-3.0, 5.0, 8.0), Vec3::new(0.0, 13.2, 0.0)] {
+            assert!(!hides(eye, wall), "from {eye}");
+        }
+        assert!(hides(Vec3::new(4.0, 2.0, 9.0), wall));
+        // And something under your hips beside your legs, as near as they
+        // come to it.
+        let low = (
+            Vec3::new(crate::LEG_RADIUS, 0.0, -1.0),
+            Vec3::new(1.0, crate::HIP_HEIGHT - 0.05, 1.0),
+        );
+        assert!(!hides(Vec3::new(0.0, 2.0, 10.0), low));
+        assert!(!hides(Vec3::new(-3.0, 1.0, 8.0), low));
+    }
+
+    #[test]
+    fn looking_straight_down_the_roof_is_in_the_way_and_the_floor_is_not() {
+        let eye = Vec3::new(0.0, 13.2, 0.0);
+        assert!(hides(eye, ROOF));
+        assert!(!hides(eye, FLOOR));
+        // Nor the floor you stand on from as low as the camera goes behind
+        // you, looking up past you.
+        assert!(!hides(Vec3::new(0.0, 0.58, 2.72), FLOOR));
+    }
+
+    #[test]
+    fn every_point_on_you_is_inside_you_and_turns_with_you() {
+        let feet = Vec3::new(3.0, 0.5, -2.0);
+        let facing = Transform::from_translation(feet);
+        let turned = facing.with_rotation(Quat::from_rotation_y(1.1));
+        for you in [facing, turned] {
+            let points = points_on(&you);
+            assert_eq!(points.len(), RINGS.len() * (ROUND + 1) + 1);
+            for point in points {
+                let (up, out) = (point.y - feet.y, point.xz().distance(feet.xz()));
+                // Over any edge your legs stand over, and under the top of
+                // your head.
+                assert!(up > crate::EDGE_RISE && up < 1.71, "{up} up");
+                // Inside whatever you bump into things with at that height.
+                let reach = if up < crate::HIP_HEIGHT {
+                    crate::LEG_RADIUS
+                } else {
+                    assert!(up > crate::WAIST_HEIGHT, "{up} up, in your hips");
+                    crate::PLAYER_RADIUS
+                };
+                assert!(out < reach, "{out} out, {up} up");
+            }
+        }
+        // Across you, the way you face: your body is wide across and thin
+        // front to back.
+        let across = |you: &Transform| {
+            points_on(you)
+                .into_iter()
+                .map(|point| (point - you.translation).dot(you.right().as_vec3()))
+                .fold(0.0f32, f32::max)
+        };
+        assert!((across(&facing) - 0.36).abs() < 1e-5);
+        assert!((across(&turned) - 0.36).abs() < 1e-5);
     }
 
     #[test]
@@ -440,9 +766,10 @@ mod tests {
             std::f32::consts::FRAC_PI_2,
         )));
         let into = place.affine().inverse();
+        let (low, high) = world_box(&bounds, &place);
         let tried = |eye: Vec3| {
-            let to = Vec3::Y * SEEN_AT[1];
-            in_box(eye, to, &bounds, &place)
+            let to = Vec3::Y * 1.4;
+            line_meets_box(eye, to, low, high)
                 && shape.crosses(into.transform_point3(eye), into.transform_point3(to))
         };
         assert!(tried(Vec3::new(10.0, 2.0, 0.0)));
@@ -462,7 +789,7 @@ mod tests {
     }
 
     #[test]
-    fn see_through_is_blended_and_starts_solid() {
+    fn see_through_is_alpha_to_coverage_and_starts_solid() {
         let solid = StandardMaterial {
             base_color: Color::srgb(0.8, 0.6, 0.4),
             double_sided: true,
@@ -470,11 +797,37 @@ mod tests {
             ..default()
         };
         assert!(drawn_solid(&solid));
-        let look = see_through(solid.clone());
+        assert_eq!(own_alpha(&solid), Some(1.0));
+        let look = see_through(solid.clone(), 1.0);
         assert!(!drawn_solid(&look));
-        assert_eq!(look.alpha_mode, AlphaMode::Blend);
+        assert_eq!(look.alpha_mode, AlphaMode::AlphaToCoverage);
         assert_eq!(look.base_color.alpha(), 1.0);
         assert_eq!(look.cull_mode, Some(Face::Back));
         assert_eq!(look.base_color.with_alpha(1.0), solid.base_color);
+        // Glass is never in the way, but fades with the window it is in,
+        // from as see-through as it is, and stays blended.
+        let glass = StandardMaterial {
+            base_color: Color::srgba(0.8, 0.9, 1.0, 0.2),
+            alpha_mode: AlphaMode::Blend,
+            ..default()
+        };
+        assert!(!drawn_solid(&glass));
+        assert_eq!(own_alpha(&glass), Some(0.2));
+        let pane = see_through(glass, 0.2);
+        assert_eq!(pane.alpha_mode, AlphaMode::Blend);
+        assert_eq!(pane.base_color.alpha(), 0.2);
+        // Something with a texture would go all or nothing under alpha to
+        // coverage, and is blended.
+        let textured = StandardMaterial {
+            base_color_texture: Some(Handle::default()),
+            ..default()
+        };
+        assert_eq!(see_through(textured, 1.0).alpha_mode, AlphaMode::Blend);
+        // And what is added to what is behind it does not fade at all.
+        let glow = StandardMaterial {
+            alpha_mode: AlphaMode::Add,
+            ..default()
+        };
+        assert_eq!(own_alpha(&glow), None);
     }
 }

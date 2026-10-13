@@ -19,6 +19,10 @@ cloudsofaimage.png
 map.glb
 coin.glb
 
+# Hajun's model of a house's size, to model pieces against, in mybuilds/:
+# not sold in the shop.
+housesizereference.glb
+
 # Everything blender/make_build_items.py made, in assets/build/: out of the
 # shop since 2026-10-03, which sells only Hajun's own pieces, in mybuilds/.
 <dir>build

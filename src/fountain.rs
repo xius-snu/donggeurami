@@ -89,6 +89,12 @@ const STREAK: f32 = 0.28;
 /// for the narrow column of the jet.
 const FOAM_PATCH: f32 = 0.45;
 const JET_STREAK: f32 = 0.14;
+/// How many times brighter than its colours the running water is drawn. It is
+/// unlit, and still goes through the camera's tonemapping, which shows white
+/// as a light grey, as the clouds were (`sky::UNLIT_GAIN`): until 2026-10-13
+/// its white streaks were grey and its pale blue a grey-blue. Brighter than
+/// this, at four times, the water looks milky.
+const WATER_GAIN: f32 = 2.5;
 
 /// How often the jet goes up, in seconds by the clock: every 8 until Hajun
 /// asked for every 4 (2026-10-10).
@@ -642,10 +648,15 @@ impl FlowingWater {
 
     /// `flow` as [`Look::flow`] has it.
     fn new(tint: Color, streak: Color, flow: [f32; 4]) -> Self {
+        // As bright as [`WATER_GAIN`] makes it, and as solid as it says.
+        let bright = |color: Color| {
+            let linear = color.to_linear().to_vec4();
+            (linear.truncate() * WATER_GAIN).extend(linear.w)
+        };
         Self {
             look: Look {
-                tint: tint.to_linear().to_vec4(),
-                streak: streak.to_linear().to_vec4(),
+                tint: bright(tint),
+                streak: bright(streak),
                 flow: Vec4::from_array(flow),
             },
         }

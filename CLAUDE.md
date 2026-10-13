@@ -38,9 +38,22 @@ tested on the actual phone, and what not to try again. The short version:
   Bevy compiles it on each platform like its own, built into the binary
   rather than loaded from `assets/`.
 - **What stands between the camera and you is drawn see-through**
-  (`src/see_through.rs`, since 2026-10-09): a blended copy of its own
-  material, in the transparent phase like the sea and the clouds, so on the
-  phone it needs `NoIndirectDrawing` as they do. Not yet seen on a phone.
+  (`src/see_through.rs`, since 2026-10-09): a copy of its own material at a
+  quarter, drawn with alpha to coverage since 2026-10-13 (blended until
+  then), so in the opaque phase, writing depth, under the camera's 4x MSAA.
+  Not yet seen on a phone, neither way; the Adreno has never drawn alpha to
+  coverage for this game. If it looks wrong there, `see_through::see_through`
+  is where to go back to `AlphaMode::Blend`, which needs `NoIndirectDrawing`
+  as the sea and the clouds do.
+- **Unlit things are drawn brighter than their colours** (since 2026-10-13).
+  Bevy's tonemapping (TonyMcMapface, its default) runs on unlit materials
+  too, and shows white as a light grey: the clouds were grey and the sun a
+  dull mustard. The clouds and the sun's disc are drawn at five times their
+  colour (`sky::UNLIT_GAIN`), the fountain's running water at two and a half
+  (`fountain::WATER_GAIN`). `ClearColor`, the sky, is not tonemapped. The
+  same day the light was rebalanced, the blue fill turned down: Hajun found
+  the whole world a greyish blue, "like a privacy screen filter".
+  `RENDERING.md`, "Colour", has what was tried and what Hajun turned down.
 
 ## It aims for 120 frames a second on Windows and Android
 
@@ -458,29 +471,76 @@ through its wall.
   and Hajun found it glitchy (2026-09-27): every bit of a swipe has to turn
   the camera by as much, wherever you are. **Keep both**: nothing moves it off
   where you turned and zoomed it.
-- **What stands between it and you fades to a quarter of itself** (`SEEN`,
-  0.25, as much as Roblox's Invisicam leaves of what it fades) over 0.15 s,
-  and back once it does not (`FADE_SECS`). Every frame the straight lines
-  from the camera to three points on you, the bottom of your body, your chest
-  and your head (1.15, 1.4 and 1.65 m up, `SEEN_AT`), are tried against
-  everything drawn on your island: the box round each part first, then its
-  triangles, read once per mesh into boxes inside boxes (`island::Faces`) and
-  again whenever the mesh changes, like a wall a door has just cut. What
-  hides only your legs, like a bed you stand behind, is not in the way. A
-  part fades with a blended copy of its own material that shows only its near
-  side, so that a wall is one pane rather than two, and has its own back once
-  it is solid again. It costs 5 to 13 µs a frame in a debug build (measured
-  in the town and on a plot).
+- **Whatever hides any of you from it fades to a quarter of itself**
+  (`SEEN`, 0.25, as much as Roblox's Invisicam leaves) over 0.15 s, and
+  back once it hides none of you (`FADE_SECS`): "even little bit of the
+  player is covered, that wall becomes invisible" (Hajun, 2026-10-13).
+  Every frame the straight lines from the camera to 73 points on you
+  (`RINGS`: eight rings from 0.2 m up to your head, each as wide and deep
+  as the model is there, a little inside it, its middle and eight points
+  round it, and the top of your head) are tried against everything drawn on
+  your island: the box round all the lines first, then the box round each
+  part, then its triangles, read once per mesh into boxes inside boxes
+  (`island::Faces`) and again whenever the mesh changes, like a wall a door
+  has just cut. From 2026-10-09 until then it was three points down your
+  middle, at 1.15, 1.4 and 1.65 m (`SEEN_AT`): a wall that hid your side or
+  your legs stayed, and Hajun saw one fade only once it covered your
+  middle. The rings are inside what you bump into things with
+  (`LEG_RADIUS`, `PLAYER_RADIUS`) and higher than any edge your legs stand
+  over (`EDGE_RISE`), so a wall you stand against, from your side of it,
+  and the step you stand on are never in the way; a bed you stand behind
+  now is. It costs, in an optimized build on the laptop (release-android),
+  11 to 15 µs a frame in the open, 28 to 37 next to a house of the town and
+  40 to 48 while one is faded (measured 2026-10-13; 5 to 13 in a debug build
+  with the three points).
+- **A faded part is one even pane, however its parts overlap.** It is drawn
+  with a copy of its own material that shows only its near side, with
+  alpha to coverage (`see_through::see_through`): a quarter of it covers
+  one of the four MSAA samples of a pixel and writes its depth there, so
+  wherever two faded faces overlap only the nearer shows. Blended, as it
+  was until 2026-10-13, each overlapping face added a layer, and Hajun
+  found "the edges of the models get revealed sometime in a slightly dirty
+  way": compared in a scripted run the same day, a faded Square House's
+  roof showed three shades where its panels overlapped, and the faded door
+  sat on its faded wall with its handles; with alpha to coverage, one
+  layer. The same day, faded parts drawn not at all were tried first, and
+  Hajun found that "a bit too much". Glass and water stay blended, and so
+  does anything with a texture, which alpha to coverage would show all or
+  nothing (`RENDERING.md`): the Soft Couch and the Cabinet.
 - **What fades:** a piece of furniture, a door, a window or a town object
   fades whole; a house and the island a part at a time, each as modelled in
-  Blender: a wall, the roof, a floor, a tree's trunk or its leaves. Bodies
-  never fade (skinned meshes are left out), nor water, glass, ghosts or the
-  sky, which are blended already, nor a piece being put down, nor whatever
-  the edit menu is open on. Seen through a doorway, the door fades and the
-  wall round it does not.
-- **A tap goes through whatever is see-through** (`see_through::InTheWay`,
+  Blender: a wall, the roof, a floor, a tree's trunk or its leaves. Whatever
+  is in a part fades with it, so that no door stands solid in a wall you see
+  through (`see_through::inside_of`): of a house or the island, the rest of it that
+  is inside the box round the part, like the doors, windows, handles and
+  sign of a house in the town, which are objects of their own, or the water
+  in the fountain's basin; and the doors, windows and hangings in a wall in
+  House Builder (`build::OnWall`). Glass and water fade from as see-through
+  as they are. Bodies never fade (skinned meshes are left out), nor ghosts
+  or the sky, nor glass or water for being in the way, nor a piece being put
+  down, nor whatever the edit menu is open on. **Nor the ground**
+  (`see_through::ground`): the island's own parts no higher than a step
+  over the land, like the town's paving, roads and grass. What the ground
+  hides of you is your feet below a kerb or your legs in the sea, and the
+  town's paving is one piece 140 m across. Seen through a doorway, the door
+  fades and the wall round it does not.
+- **Checked in a scripted run (2026-10-13)**, beside the front corner of
+  the town's red house (it stands turned 30°), the camera swept round past
+  the corner a degree at a time: 10° short of where the corner lines up
+  with your middle it hid 3 of the 73 points, and the house faded, with its
+  doors, windows, handles and sign; the three points of before saw nothing
+  until 3° short. Swimming 2 m off the edge of the town with the camera
+  low, the edge hid 36 points of your legs and the island stayed. Standing
+  in the fountain's basin with the camera low outside it, the basin faded,
+  and the water in it. In House Builder, standing in a Square House with a
+  door in its front wall and a table before you: from outside the front
+  only the door and the table faded (you were in sight through the
+  doorway), from a corner the two near walls, the roof and the door in its
+  wall, from above the roof, from behind the back wall.
+- **A tap goes through whatever is out of the way** (`see_through::InTheWay`,
   which `editor::pick` skips as it does `Untappable`, for as long as any of
-  it is see-through): only what is not in the way of you can be tapped.
+  it is faded): only what is not in the way of you can be tapped, and since
+  2026-10-13 that includes a door or window whose wall is in the way.
   Checked in a scripted run (2026-10-09): standing in the Square House with
   the camera 15 m out, its front wall faded, and a tap on the bed through it
   opened the menu on the bed. A house you are standing in still cannot be
@@ -509,9 +569,11 @@ through its wall.
 - `cargo test --lib` checks that walls never bring it in, that you are in
   sight of it behind you at every tilt and as near as it comes, that zoomed
   all the way in it is your eyes, that the zoom goes into them and back out
-  as it should, that it looks straight down with ahead still ahead, and which
+  as it should, that it looks straight down with ahead still ahead, which
   of a house's walls, its roof and a bed are in the way from inside the house
-  and from outside it.
+  and from outside it, that a wall hiding only your side is in the way and
+  one you stand against is not from your side of it, and that every point
+  tried on you is inside you, over the step you are on, and turns with you.
 - **A jump stops the head just under a ceiling** (`headroom`, in
   `move_bodies`). Before 2026-09-28 the head went into it at the top of the
   jump, the body's collision read the ceiling as a wall there, and anyone
@@ -851,7 +913,19 @@ it, or `Escape` shuts it.
   Edge and Cafe Desk Corner (`cafedeskedge`, `cafedeskcorner`), counters 1.5
   m high, 2 m by 1 and 1 m by 1, one mesh each with a wood front, a cream top
   and a dark plinth, and since 2026-10-04 a grey strip along the top's edge
-  (`desktopedge`). Nothing is in Decorations.
+  (`desktopedge`). Since 2026-10-13 ("add some of the new models in
+  assets/mybuilds", then "i put 2 more models"), ten more, the names on
+  the cards mine: the Frame Bed (`Bed_Single`, 2 m by 3.9, a thin dark
+  frame, red blanket), Nightstand (`NightStand_2`, 0.95 m cube), Wooden
+  Chair (`wooden_chair`, a ladder back to 1.77 m), Soft Couch (`softcouch`,
+  blue, 3.75 m) and Cabinet (`Cabinet_medium`, a chest of drawers 2.3 m high
+  with a picture, a box and a cactus on it), Fridge (`Kitchen_Fridge`, 3.3 m
+  tall, as tall as a door), Oven (`Kitchen_Oven`, an oven between drawers),
+  Large Oven (`Kitchen_Oven_Large`, a stove with four rings), Bathtub
+  (`Bathroom_Bathtub`, 3.9 m long) and Bathroom Sink (`Bathroom_Sink`, hung
+  0.15 m off the floor, as against a wall). The Soft Couch and the Cabinet
+  are coloured by a palette texture embedded in their glbs, the only
+  textures in the game. Nothing is in Decorations.
   The script's pieces are no longer in `build::PIECES`: its five houses,
   three doors and three windows since 2026-09-30 (Hajun deleted their files
   on 2026-10-03, all but the tall window's), and its furniture and
@@ -984,6 +1058,20 @@ it, or `Escape` shuts it.
   picture: the thumbnail sun sits in `glTF_not_exported`, which is not
   rendered, so only the even sky lights it; the sofa's picture was rendered
   with the sun linked into the scene.
+- **Every material has to reach an output set to All, through a Principled
+  BSDF**, or the glTF exporter writes it bare (`{"name": ...}`), which glTF
+  reads as white and fully metallic. Eight of the ten pieces of 2026-10-13
+  (all but the Couch and the Cabinet) came from Blender with two outputs to
+  each material, the Principled BSDF on one set to EEVEE and a Diffuse BSDF
+  on one set to Cycles, and their exports had no colour at all; and the
+  ovens' glass was a Transparent BSDF, which glTF has no way to say. Fixed in
+  their `.blend`s: the EEVEE output set to All (the Cycles one left as it
+  was), the glass made a Principled BSDF in its own tint at 0.3 alpha,
+  blended, as Hajun's windows' glass is; then exported with the defaults,
+  which gave the same nodes and vertices byte for byte, and their pictures
+  rendered with the thumbnail camera, sun and sky every other piece has,
+  added to each file. Check a new model's exported materials
+  (`pbrMetallicRoughness` in the glb's JSON) before selling it.
 - **Nobody gets in through a window** (since 2026-09-30, when Hajun found
   they could). Their windows came up 1.28 m up (in 6 m walls), a jump reaches 1.64 m, and
   at 2 m tall a window is taller than a body, so with the hole open a jump

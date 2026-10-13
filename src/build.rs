@@ -88,6 +88,16 @@ pub(crate) const PIECES: &[PieceDef] = &[
     my_floor("circletable", "Circle Table", Tab::Furniture),
     my_floor("cafedeskedge", "Cafe Desk Edge", Tab::Furniture),
     my_floor("cafedeskcorner", "Cafe Desk Corner", Tab::Furniture),
+    my_floor("Bed_Single", "Frame Bed", Tab::Furniture),
+    my_floor("NightStand_2", "Nightstand", Tab::Furniture),
+    my_floor("wooden_chair", "Wooden Chair", Tab::Furniture),
+    my_floor("softcouch", "Soft Couch", Tab::Furniture),
+    my_floor("Cabinet_medium", "Cabinet", Tab::Furniture),
+    my_floor("Kitchen_Fridge", "Fridge", Tab::Furniture),
+    my_floor("Kitchen_Oven", "Oven", Tab::Furniture),
+    my_floor("Kitchen_Oven_Large", "Large Oven", Tab::Furniture),
+    my_floor("Bathroom_Bathtub", "Bathtub", Tab::Furniture),
+    my_floor("Bathroom_Sink", "Bathroom Sink", Tab::Furniture),
 ];
 
 /// How far up its storey a window's hole starts, as a share of the storey's
@@ -487,8 +497,10 @@ impl Span {
 
 /// Where on a wall of its house a door, a window or a hanging is.
 #[derive(Component, Clone, Copy, PartialEq, Debug)]
-struct OnWall {
-    wall: Entity,
+pub(crate) struct OnWall {
+    /// The wall, which it disappears along with when the wall is in the way
+    /// of the camera (`see_through`).
+    pub(crate) wall: Entity,
     /// How far along the wall, and up it: to the middle of the bottom of a
     /// hole, to the middle of a hanging.
     along: f32,

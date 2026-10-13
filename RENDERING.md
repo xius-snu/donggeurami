@@ -97,6 +97,27 @@ only applied inside `apply_pbr_lighting`, which unlit skips. Several materials i
 nothing. Harmless, but don't tune them expecting a result. For an unlit material,
 **`base_color` is the whole story.**
 
+**Unlit is still tonemapped.** The camera is not HDR, so tonemapping runs in
+every material's fragment shader (`TONEMAP_IN_SHADER`), unlit ones and the
+fountain's own shader included, and Bevy's default, TonyMcMapface, shows a
+`base_color` of white as a light grey, about 0.8 in sRGB. To come out white,
+an unlit colour has to be several times over 1 in linear: `sky.rs` draws the
+clouds and the sun's disc at five times their colour (`UNLIT_GAIN`), and
+`fountain.rs` its running water at two and a half (`WATER_GAIN`). Until
+2026-10-13 they were drawn at their colours, and the clouds were grey.
+
+**`AlphaMode::AlphaToCoverage` is drawn in the opaque phase, and writes depth.**
+With MSAA on, the fragment's alpha decides how many of the pixel's samples it
+covers (four steps with 4x MSAA), and the resolve averages them: see-through
+without sorting, and where two such surfaces overlap only the nearer shows.
+`see_through.rs` draws what is in the way of the camera so since 2026-10-13
+(blended until then, which showed every overlapping face). Two catches: with
+MSAA off it is `Mask(0.5)`, all or nothing; and with a base colour texture
+Bevy sharpens the alpha (`pbr_fragment.wgsl`, "Sharpen alpha edges"), so a
+material-wide alpha goes all or nothing too, so a textured material fades
+blended instead: of the shop's pieces, the Cabinet and the Soft Couch, which
+have a palette texture (2026-10-13). Not yet seen on the Adreno.
+
 **`AlphaMode::Add` is premultiplied blending, not a separate blend state.** It
 compiles to `BlendState::PREMULTIPLIED_ALPHA_BLENDING` and the shader writes
 alpha 0 (`pbr_functions.wgsl::premultiply_alpha`), which turns
@@ -303,6 +324,51 @@ that draws the world — a mirror, a portal, a picture-in-picture — adds the
 two shadow maps again, roughly the 3 M cycles a frame that going from four
 maps to two saved, on top of drawing the scene again. Weigh that before
 adding one. The code is not in git history (it was never committed).
+
+---
+
+## Colour: taking out the grey (2026-10-13)
+
+Hajun found the whole world "slightly greyish blue", "like i have a mobile
+privacy screen filter": not their models' colours, the light and the sky.
+Seen on the desktop build, not yet on a phone. What it was:
+
+- **The fill light cancelled the sun.** The sun, 7,000 lux of a warm white,
+  and the fill, 3,600 lux of pale blue from above, lit a white surface facing
+  up to (2.39, 2.49, 2.48) in linear, a cool grey; and nearly everything on
+  screen faces up: paving, roads, roofs. Now the sun is 7,800 lux, the fill
+  2,000 and the ambient light 445 (from 340): the same surface comes to
+  (2.32, 2.32, 2.19), a little warm of white, and only what faces away from
+  the sun is cool. Measured on screenshots, the paving went from (189, 192,
+  193) to (188, 188, 185), and seen from above, in the shade of the trees,
+  from (160, 165, 170) to (155, 158, 158).
+- **The clouds were grey and the sun a dull mustard**: unlit, and still
+  tonemapped (above). Now drawn at five times their colours.
+- **The sea showed a steel grey.** At 0.58 alpha, what is behind it, the
+  pale sky, made up nearly half of it. Now (0.10, 0.40, 0.56) at 0.70.
+- **The sky** went from (0.53, 0.80, 0.92) to (0.55, 0.82, 0.97), a little
+  brighter and no bluer.
+
+Tried and turned down, the same day:
+
+- **A deeper blue sky**, (0.40, 0.68, 1.0). Hajun saw it in a test window and
+  found it "too blue".
+- **Other tonemappers.** Under the same light, the grass that TonyMcMapface
+  shows as (93, 207, 75) came out (35, 234, 23) under KhronosPbrNeutral,
+  (52, 226, 45) with none at all, (64, 221, 57) under
+  SomewhatBoringDisplayTransform, and (127, 217, 83) under ACES Fitted, which
+  also took the red house from (149, 75, 75) to (117, 38, 41). They change
+  how every model looks, which was not what Hajun was asking about.
+  TonyMcMapface stays.
+- **`ColorGrading::post_saturation` at 1.25** turned the grass neon too.
+
+How it was compared: a throwaway module behind an environment variable set
+each look at runtime (the lights, `ClearColor`, the camera's `Tonemapping`,
+`Exposure` and `ColorGrading`, the sea's and the clouds' materials) and had
+the game save a screenshot of each from the same few views in one run
+(`Screenshot::primary_window()` with `save_to_disk`), then contact sheets and
+the average colour of a few patches of each picture. A change of tonemapper
+recompiles every pipeline: give it three seconds before the screenshot.
 
 ---
 

@@ -19,31 +19,51 @@ const SUN_AZIMUTH_DEG: f32 = 40.0;
 /// are the whole shadow-casting world drawn twice more every frame. With it
 /// off Bevy makes no shadow maps at all.
 const SUN_SHADOWS: bool = false;
-const SUN_ILLUMINANCE: f32 = 7_000.0;
+/// 7,000 lux until 2026-10-13, when the fill below was turned down: Hajun
+/// found the whole world a greyish blue, "like a privacy screen filter".
+const SUN_ILLUMINANCE: f32 = 7_800.0;
 const SUN_COLOR: [f32; 3] = [1.0, 0.97, 0.90];
 /// Skylight from above and a little away from the sun, so the side of anything
 /// facing away from it is a cool blue rather than black. Casts no shadows.
-const FILL_ILLUMINANCE: f32 = 3_600.0;
+/// It was 3,600 lux until 2026-10-13: at half the sun, its blue cancelled the
+/// sun's warmth on everything facing up, and the paving, the roads and the
+/// roofs all came out a cool blue-grey. Now what faces up is lit a little
+/// warm of white, and only what faces away from the sun is cool.
+const FILL_ILLUMINANCE: f32 = 2_000.0;
 const FILL_COLOR: [f32; 3] = [0.80, 0.90, 1.0];
-const AMBIENT_BRIGHTNESS: f32 = 340.0;
+/// 340 until 2026-10-13: raised with the fill turned down, so that what
+/// faces away from the sun is no darker than it was.
+const AMBIENT_BRIGHTNESS: f32 = 445.0;
 
 const SKY_DISTANCE: f32 = 170.0;
 const LIGHT_DISTANCE: f32 = 48.0;
 const SUN_DISC_RADIUS: f32 = 7.5;
 const CLOUD_COUNT: u32 = 24;
 
-const SKY: [f32; 3] = [0.53, 0.80, 0.92];
+/// A clear light blue: a little brighter than the (0.53, 0.80, 0.92) it was
+/// until 2026-10-13, which looked greyish, and no bluer. A deeper blue,
+/// (0.40, 0.68, 1.0), was tried that day, and Hajun found it too blue.
+const SKY: [f32; 3] = [0.55, 0.82, 0.97];
 const SUN_DISC: [f32; 3] = [1.0, 0.93, 0.52];
 const CLOUD: [f32; 3] = [0.96, 0.97, 1.0];
 const CLOUD_ALPHA: f32 = 0.84;
+/// How many times brighter than their colours the sun's disc and the clouds
+/// are drawn. Unlit, they still go through the camera's tonemapping, which
+/// shows white as a light grey: until 2026-10-13 the clouds were grey and the
+/// sun a dull mustard yellow. At five times they come out white and a pale
+/// yellow-white. (`ClearColor`, the sky itself, is not tonemapped, and is
+/// shown as it is.)
+const UNLIT_GAIN: f32 = 5.0;
 
 /// Wide enough that its edge is never in sight from anywhere a player can get
 /// to, with the camera pulled all the way back.
 const SEA_SIZE: f32 = 1200.0;
-/// A mid ocean blue, blended over whatever is below it. The same colour the
-/// sea had before it was taken out, which was checked on the phone.
-const SEA: [f32; 3] = [0.08, 0.30, 0.46];
-const SEA_ALPHA: f32 = 0.58;
+/// A clear sea blue, blended over whatever is below it, which is mostly the
+/// sky. It was (0.08, 0.30, 0.46) at 0.58 until 2026-10-13, the colour the
+/// sea had before it was taken out and checked on the phone; so much of the
+/// pale sky came through it that it showed a steel grey.
+const SEA: [f32; 3] = [0.10, 0.40, 0.56];
+const SEA_ALPHA: f32 = 0.70;
 const SEA_BOB_AMP: f32 = 0.035;
 const SEA_BOB_SPEED: f32 = 0.65;
 
@@ -282,7 +302,7 @@ fn cloud_puffs(seed: u32) -> [(Vec3, Vec3); 6] {
 fn sun_core_material() -> StandardMaterial {
     let rgb = SUN_DISC;
     StandardMaterial {
-        base_color: srgb(rgb),
+        base_color: bright(rgb, 1.0),
         emissive: LinearRgba::rgb(rgb[0] * 2.2, rgb[1] * 1.9, rgb[2] * 1.1),
         unlit: true,
         fog_enabled: false,
@@ -328,10 +348,22 @@ fn cloud_material() -> StandardMaterial {
         perceptual_roughness: 1.0,
         reflectance: 0.0,
         fog_enabled: false,
-        base_color: Color::srgba(CLOUD[0], CLOUD[1], CLOUD[2], CLOUD_ALPHA),
+        base_color: bright(CLOUD, CLOUD_ALPHA),
         alpha_mode: AlphaMode::Blend,
         ..default()
     }
+}
+
+/// `rgb`, as much as `alpha` of it, as bright as something unlit is drawn so
+/// that it comes out that colour on screen ([`UNLIT_GAIN`]).
+fn bright(rgb: [f32; 3], alpha: f32) -> Color {
+    let linear = srgb(rgb).to_linear();
+    Color::linear_rgba(
+        linear.red * UNLIT_GAIN,
+        linear.green * UNLIT_GAIN,
+        linear.blue * UNLIT_GAIN,
+        alpha,
+    )
 }
 
 fn lerp(a: f32, b: f32, t: f32) -> f32 {

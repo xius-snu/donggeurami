@@ -634,11 +634,18 @@ impl Faces {
             (near <= far && far >= 0.0 && near <= reach).then_some(near)
         };
         let mut first: Option<f32> = None;
-        let mut next = Vec::with_capacity(32);
-        if !self.boxes.is_empty() {
-            next.push(0);
-        }
-        while let Some(at) = next.pop() {
+        // The boxes still to be looked in, the last one first. Looking in a
+        // box puts the two inside it in its place, and they halve its faces,
+        // so there are never more waiting than the boxes are deep, plus one:
+        // 31 at most, for all the faces a `u32` can count. Kept here rather
+        // than in a `Vec`, which cost an allocation every time a line was
+        // tried, up to 73 of them a frame for each part near the camera
+        // (`see_through`).
+        let mut next = [0usize; 64];
+        let mut waiting = usize::from(!self.boxes.is_empty());
+        while waiting > 0 {
+            waiting -= 1;
+            let at = next[waiting];
             let bounds: &Bounds = &self.boxes[at];
             let reach = first.unwrap_or(length);
             if enters(bounds.low, bounds.high, reach).is_none() {
@@ -652,11 +659,14 @@ impl Faces {
                     let inner = &self.boxes[index];
                     enters(inner.low, inner.high, reach).unwrap_or(f32::INFINITY)
                 };
-                if far(one) < far(other) {
-                    next.extend([other, one]);
+                let (later, sooner) = if far(one) < far(other) {
+                    (other, one)
                 } else {
-                    next.extend([one, other]);
-                }
+                    (one, other)
+                };
+                next[waiting] = later;
+                next[waiting + 1] = sooner;
+                waiting += 2;
                 continue;
             }
             let start = bounds.first as usize;
