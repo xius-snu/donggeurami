@@ -17,8 +17,9 @@ and sun are identical code on both platforms, using real `AlphaMode::Blend` and
 `AlphaMode::Add`.
 
 (When this was written there was also a day–night cycle, with a moon and stars.
-It has since been removed — the sun is fixed at mid-morning — so where the
-history below mentions the moon, the stars or night, that is what it refers to.)
+It was taken out on 2026-09-23, the sun fixed at mid-morning, and came back on
+2026-10-16 with street lamps lit through the night: "Night and the street
+lamps", below.)
 
 There is exactly **one** Android-specific rendering line in the whole project:
 
@@ -82,7 +83,7 @@ each:
 | Tonemapping | LUTs are `include_bytes!`-embedded at compile time, so there is no Android asset-loading difference. |
 | sRGB surface format | Bevy explicitly prefers `Rgba8UnormSrgb`/`Bgra8UnormSrgb` and adds an sRGB view format otherwise. Gamma matches. |
 | Directional light limits | `MAX_DIRECTIONAL_LIGHTS` (10) and `MAX_CASCADES_PER_LIGHT` (4) are only reduced under WebGL, never Android. |
-| GPU clustering | Bevy disables it on all Android and falls back to CPU clustering. Expected and logged. It only affects point and spot lights, and the scene has none. (For a while each tree carried a `PointLight`; that was removed on 2026-09-26. If point lights come back, the CPU path on the phone is untested — that is where to look if their lighting looks wrong on device.) |
+| GPU clustering | Bevy disables it on all Android and falls back to CPU clustering. Expected and logged. It only affects point and spot lights. (For a while each tree carried a `PointLight`; that was removed on 2026-09-26. Point lights came back on 2026-10-16, one to each street lamp, lit at night: the CPU path with lights in it is untested on the phone — that is where to look if their lighting looks wrong on device.) |
 
 ---
 
@@ -105,6 +106,14 @@ an unlit colour has to be several times over 1 in linear: `sky.rs` draws the
 clouds and the sun's disc at five times their colour (`UNLIT_GAIN`), and
 `fountain.rs` its running water at two and a half (`WATER_GAIN`). Until
 2026-10-13 they were drawn at their colours, and the clouds were grey.
+
+**A lit material's `emissive` is taken down by the camera's exposure.** In
+`pbr_functions.wgsl`, `emissive_light * mix(1.0, view.exposure, emissive.a)`:
+with the alpha at 1, as `LinearRgba::rgb` makes it, it is multiplied by the
+exposure, which at Bevy's default EV100 of 9.7 is about 0.001. So a bulb has
+to glow at thousands to show: `lamps::BULB_GLOW` is 4,000, four times its
+colour on screen. Scaling a `LinearRgba` by a number scales its alpha too,
+which then lands in that `mix`: build it with `LinearRgba::rgb` instead.
 
 **`AlphaMode::AlphaToCoverage` is drawn in the opaque phase, and writes depth.**
 With MSAA on, the fragment's alpha decides how many of the pixel's samples it
@@ -370,6 +379,53 @@ the game save a screenshot of each from the same few views in one run
 (`Screenshot::primary_window()` with `save_to_disk`), then contact sheets and
 the average colour of a few patches of each picture. A change of tonemapper
 recompiles every pipeline: give it three seconds before the screenshot.
+
+---
+
+## Night and the street lamps (2026-10-16)
+
+Hajun asked for the day and night back, with the town's new street lamps lit
+"for close to normal visibility during night", and the lamp in the shop.
+`sky.rs` has the day, `lamps.rs` the lamps. Seen on the desktop build in
+scripted runs (the game saving its own screenshots at a pinned
+`RT_TIME_OF_DAY`), not yet on a phone.
+
+- **Noon is the 2026-10-13 light, exactly**: the sun at 45° and 40° round,
+  7,800 lux, the fill at 2,000, the ambient at 445, the same sky and clouds
+  (`sky::tests::noon_is_the_town_as_hajun_chose_its_light`). The sun is
+  over 30° from a tenth of the day to nine tenths, so most of the day looks
+  like that.
+- **One light is the sun's and the moon's.** Directional lights are drawn
+  for every pixel, clustered or not, so a third one for the moon would have
+  cost the day as much as the night. One of them is always under the
+  horizon, its light out, when the other is up.
+- **The lamps have to come on before the light goes.** First tried coming on
+  as the sun went from 6° up to 2° under the horizon, the middle of the
+  sunset came out darker than midnight: the sky's light gone, the lamps
+  barely on, while at midnight they were full. They come on from 11° to the
+  horizon instead.
+- **The night's light**: the moon at 320 lux, a blue fill at 130 and the
+  ambient at 55, about a twentieth of the noon sky's light on the ground.
+  450, 160 and 70 were tried first: the town was lit all over like a bright
+  moonlit evening, and the lamps' pools hardly stood out.
+- **Cost, on the laptop** (RTX 5070, 120 fps, the town from the spawn): the
+  GPU 8% busy at noon, 12-14% at midnight with the lamps reaching 20 m, and
+  11-12% with them reaching 16 m, which looked the same side by side; 23.5,
+  29 and 27 W. The CPU the same day and night, about half a core (Bevy
+  sorting 24 lights into its clusters costs nothing that shows). On the
+  phone, where the GPU is what limits 120 frames a second, the night will
+  cost more than the day; not measured.
+- **The camera's clusters.** It had `ClusterConfig::Single`, one cell, while
+  there was no light to sort; with one cell every pixel would light itself
+  with every lamp in sight. It has Bevy's default grid now.
+- **Things that looked like bugs and were not:**
+  a lamp's pole right by the camera, between it and you, fades
+  (`see_through`) and fills a strip of the screen with a faint column; the
+  low sun at sunset makes a glare on the grass straight under it, which is
+  the grass's own gloss (roughness 0.5); and on the paving by the inner
+  road, under a lamp low over it, two of the paving's faces meet in a faint
+  straight line: their normals differ a little, which the sun, from higher
+  up, never shows.
 
 ---
 

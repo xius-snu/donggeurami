@@ -17,9 +17,19 @@ tested on the actual phone, and what not to try again. The short version:
   Without it the Adreno 840 silently drops Bevy's sorted transparent phase and
   the water, clouds and sun glow all disappear — with no error in logcat. Do
   not remove it as a cleanup.
-- **There is no day–night cycle.** The sun is fixed at mid-morning so that
-  everything casts a visible shadow; `src/sky.rs` sets it once at startup and
-  nothing moves it.
+- **A day and a night pass every twenty minutes** (`src/sky.rs`, since
+  2026-10-16, Hajun: "re-add daynight cycle"; from 2026-09-23 the sun stood
+  still at mid-morning): ten minutes of day, a minute and a half of sunset,
+  seven of night and a minute and a half of sunrise. It goes by the clock,
+  not the game's time, as the fountain's jet does, so every device online
+  shows the same sky. Noon is exactly the light Hajun chose on 2026-10-13
+  (a test keeps it so); the sun climbs to it quickly and stays near it most
+  of the day, then goes down orange into a pink and a deep blue sky, with a
+  moon and stars through the night. The sun and the moon are one directional
+  light, so the night has no more lights to draw than the day. Only what
+  has changed is written, a quarter of a second at a time. `RT_TIME_OF_DAY`
+  (seconds into the cycle, or `day`, `sunset`, `night`, `sunrise`) stops it
+  at one time, for trying things out. Shadows are still off (`SUN_SHADOWS`).
 - **Don't fake transparency with opaque geometry.** An earlier attempt added an
   opaque haze dome and giant "sun wash" spheres; that is what made the sky look
   grey and washed out. `RENDERING.md` has the details and the anti-patterns.
@@ -28,10 +38,25 @@ tested on the actual phone, and what not to try again. The short version:
   per cycle.
 - **Lights are sorted into clusters on the CPU, on every platform**
   (`cluster_lights_on_the_cpu` in `src/lib.rs`, since 2026-10-08). Bevy 0.19
-  does it on the GPU everywhere but Android and the iOS simulator. The world
-  has no light to cluster, so on the CPU it is nothing at all, and every
+  does it on the GPU everywhere but Android and the iOS simulator. The only
+  lights it sorts are the street lamps', and only at night (below): by day
+  there is nothing to sort, which on the CPU is nothing at all, and every
   platform takes Android's path. It was turned off as the suspect for the
-  iPhone's black screen, which it was not (`RENDERING.md`).
+  iPhone's black screen, which it was not (`RENDERING.md`). The camera has
+  Bevy's own cluster grid since the lamps came; before them it had one cell
+  (`ClusterConfig::Single`).
+- **Street lamps light the night** (`src/lamps.rs`, since 2026-10-16): every
+  bulb in a model, a part whose material is `lightbulb`, glows from dusk to
+  dawn, and each lamp, its bulbs taken together, throws a point light from
+  between them (2,000,000 lm, out to 16 m: right under it the ground is lit
+  about two thirds as brightly as by the noon sky). The town's 23 and the
+  shop's Street Lamp. By day there are no lights at all; at night at most
+  24 at once, the nearest the camera on your island. No shadows. On the
+  laptop the night costs about a third more GPU than the day (8% to 11%)
+  and no more CPU (measured 2026-10-16); not yet seen or measured on a
+  phone, where Bevy's CPU clustering has point lights in it for the first
+  time. The night's own light, the moon's, is a twentieth of the noon
+  sky's on the ground, enough to find your way on an island with no lamps.
 - **The town's fountain has a material and a shader of its own**
   (`src/fountain.rs`, `src/fountain.wgsl`): see-through running water whose
   streaks the GPU moves by the frame's time. It is the one custom shader;
@@ -54,6 +79,10 @@ tested on the actual phone, and what not to try again. The short version:
   same day the light was rebalanced, the blue fill turned down: Hajun found
   the whole world a greyish blue, "like a privacy screen filter".
   `RENDERING.md`, "Colour", has what was tried and what Hajun turned down.
+  Since the night came back, the clouds and the sun's disc take the colours
+  of the time of day, and the fountain's running water is drawn as brightly
+  as the sky lights the ground, never less than 0.3 of noon
+  (`sky::Daylight::unlit`): unlit, it would shine through the night.
 
 ## It aims for 120 frames a second on Windows and Android
 
@@ -265,9 +294,11 @@ where things come from, not what they are.
   that neither takes the mouse. `RT_SERVER=<address>[,<address>]` points a
   desktop build at another server, `RT_SERVER=off` keeps it offline, and in a
   debug build `RT_UNSECURE=1` skips the login, for a server run without
-  `RT_KEY`. The VM allows the tap on the time that skips House Builder's
-  waits (`RT_ALLOW_SKIP=1`): take that out of `/etc/roundtown/env` before
-  real players come.
+  `RT_KEY`. `RT_TIME_OF_DAY=night` (or `day`, `sunset`, `sunrise`, or
+  seconds into the twenty minutes) stops the day at one time. The VM allows
+  the tap on the time that skips House Builder's waits
+  (`RT_ALLOW_SKIP=1`): take that out of `/etc/roundtown/env` before real
+  players come.
 
 ## The islands are Blender models
 
@@ -323,22 +354,35 @@ re-export, and the collision follows.
   across, with no material, at the middle of the fountain, read as land, so
   that it bulged out round the foot of the tower. It is not in Hajun's exports
   of the town since 2026-10-03 (no part without a material is).
-- **The town has three trees and a second house** (Hajun's export of
-  2026-10-10; eleven trees from 2026-10-04 until then): the trees round the
-  fountain, each one object (`tree`, `tree2`, `tree3`), and the house across
-  the road from the House Builder's, with a sign of its own,
+- **The town has one tree, a second house and 23 street lamps** (Hajun's
+  export of 2026-10-16; three trees round the fountain from 2026-10-10, and
+  eleven from 2026-10-04): the tree, `tree2`, beside the fountain, and the
+  house across the road from the House Builder's, with a sign of its own,
   `spahgettitext` (`Text.002` until 2026-10-10), as high as theirs. Being
   part of the model, they are land like the rest: bodies bump into the
-  trunks, and a trunk or leaves between the camera and you fade
-  (`see_through`), as a town object such as the catalogue's tree does. One
-  trunk is in twice: `Cylinder.011` stands inside `tree2`'s, harmless, as
-  the game merges surfaces met twice at one height. Each trunk is closed but
-  for a disc left inside it, which nothing can reach. **Keep the signs' font
-  simple:** a text object is exported as a mesh of every letter, front, back
-  and sides, and in Calibri Bold the two signs were 47,000 of the town's
-  62,000 triangles, about 1,500 a letter. In Blender's built-in font, as
-  Hajun set them the same night, they are 5,600 of 22,000 (of 19,000 since
-  2026-10-10).
+  trunk and the lamps' poles, and a trunk, leaves or a lamp between the
+  camera and you fade (`see_through`), as a town object such as the
+  catalogue's tree does. The trunk is closed but for a disc left inside it,
+  which nothing can reach.
+- **Each street lamp is an object of its own**, `streetlamp.001` to `.023`:
+  3 round the fountain 12 m out, 8 along the inner road and 12 along the
+  outer, each Hajun's lamp, 7.4 m tall with two bulbs on a 2.5 m arm.
+  Hajun's export came with them joined into three objects, one to a ring,
+  and a lamp faded for being in the way would have faded its whole ring and
+  everything of the town inside the ring's box with it
+  (`see_through::inside_of`). On 2026-10-16 they were split in
+  `circlemap1.blend` by script, one object to a lamp with its origin at the
+  foot of its pole, every triangle where it was (checked against Hajun's
+  export, to 6 µm). The same day a second, empty House Builder armature and
+  two empties named after the road paths, which had come along with the lamp
+  from `streetlamp.blend`, were taken out of the town. Keep a new lamp an
+  object of its own (Shift+D, not joined to another).
+- **Keep the signs' font simple:** a text object is exported as a mesh of
+  every letter, front, back and sides, and in Calibri Bold the two signs
+  were 47,000 of the town's 62,000 triangles, about 1,500 a letter. In
+  Blender's built-in font, as Hajun set them on 2026-10-04, they are 5,600
+  of 22,000 (of 19,000 on 2026-10-10, and of 56,000 since 2026-10-16, when
+  the lamps came, 39,000 of them: 1,680 to a lamp).
 - **The exporter leaves modifiers off by default**, in the town as in the
   pieces. `outerdottedlines`, the dashes round the outer road, came as one
   dash and a Geometry Nodes Array, with no material, in Hajun's export of
@@ -923,7 +967,14 @@ it, or `Escape` shuts it.
   2026-10-04 a grey strip along the top's edge (`desktopedge`); and, since
   2026-10-13, their Soft Couch (`softcouch`, blue, 3.75 m; the name on the
   card mine), coloured by a palette texture embedded in its glb, the only
-  texture in the game. Nothing is in Decorations.
+  texture in the game; and since 2026-10-16 ("add streetlamp as one of the
+  furnitures"), their Street Lamp (`streetlamp`, the name on the card mine),
+  the lamp the town's are, 7.4 m tall, lit at night as they are (`lamps`).
+  Its `.blend` was a copy of the town's with everything but the lamp taken
+  out, all but the House Builder's armature and two road path empties,
+  which were then taken out of it too, and it had no picture: it was given
+  the thumbnail camera, sun and sky every piece has and its picture
+  rendered. Nothing is in Decorations.
   On 2026-10-16 Hajun had ten pieces taken out of the game, their files
   deleted (`.blend`, `.glb`, `.png`): the Three Leg Table
   (`threelegcircletable`, of 2026-10-03) and nine of the ten added on

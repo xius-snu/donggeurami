@@ -40,6 +40,7 @@ use bevy::shader::{Shader, ShaderRef};
 use bevy::world_serialization::WorldInstanceReady;
 
 use crate::island::{Venue, WATER_MATERIAL};
+use crate::sky::{self, Daylight};
 use crate::{GRAVITY, Intent, PlayerJump};
 
 /// What the fountain's tower is called in the town's model.
@@ -132,7 +133,14 @@ pub(crate) fn plugin(app: &mut App) {
         .expect("the fountain's shader has a handle of its own");
     app.add_plugins(MaterialPlugin::<FlowingWater>::default())
         .add_observer(find_fountain)
-        .add_systems(Update, (spout, throw.before(crate::move_bodies)));
+        .add_systems(
+            Update,
+            (
+                spout,
+                throw.before(crate::move_bodies),
+                dim_at_night.after(sky::DaySystems),
+            ),
+        );
 }
 
 /// The fountain, as the town's model has it: its tower standing at `at`, and
@@ -603,10 +611,13 @@ fn spawn_water(
 pub(crate) struct FlowingWater {
     #[uniform(0)]
     look: Look,
+    /// How it looks by day, which it is drawn a share of at night
+    /// ([`dim_at_night`]).
+    day: Look,
 }
 
 /// What [`FlowingWater`] hands its shader.
-#[derive(Clone, Copy, Debug, ShaderType)]
+#[derive(Clone, Copy, Debug, PartialEq, ShaderType)]
 struct Look {
     /// The water between the streaks, linear, and in `w` how solid it is.
     tint: Vec4,
@@ -653,12 +664,44 @@ impl FlowingWater {
             let linear = color.to_linear().to_vec4();
             (linear.truncate() * WATER_GAIN).extend(linear.w)
         };
+        let look = Look {
+            tint: bright(tint),
+            streak: bright(streak),
+            flow: Vec4::from_array(flow),
+        };
+        Self { look, day: look }
+    }
+}
+
+impl Look {
+    /// As bright as `share` of it, and as solid as it is.
+    fn shaded(self, share: f32) -> Self {
+        let shade = |color: Vec4| (color.truncate() * share).extend(color.w);
         Self {
-            look: Look {
-                tint: bright(tint),
-                streak: bright(streak),
-                flow: Vec4::from_array(flow),
-            },
+            tint: shade(self.tint),
+            streak: shade(self.streak),
+            ..self
+        }
+    }
+}
+
+/// Draws the running water as brightly as the time of day has something
+/// unlit drawn (`sky::Daylight::unlit`): being unlit, it would otherwise
+/// shine through the night as brightly as at noon.
+fn dim_at_night(daylight: Res<Daylight>, mut waters: ResMut<Assets<FlowingWater>>) {
+    // Every frame, so that water made at night is dimmed from its first,
+    // and only written to when it is not already as it should be.
+    let ids: Vec<AssetId<FlowingWater>> = waters.ids().collect();
+    for id in ids {
+        let Some(look) = waters
+            .get(id)
+            .map(|water| water.day.shaded(daylight.unlit))
+            .filter(|look| waters.get(id).is_some_and(|water| water.look != *look))
+        else {
+            continue;
+        };
+        if let Some(mut water) = waters.get_mut(id) {
+            water.look = look;
         }
     }
 }

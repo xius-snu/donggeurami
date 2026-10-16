@@ -14,7 +14,7 @@ use bevy::audio::AudioPlugin;
 use bevy::gilrs::GilrsPlugin;
 use bevy::gltf::GltfPlugin;
 use bevy::gltf::convert_coordinates::GltfConvertCoordinates;
-use bevy::light::cluster::{ClusterConfig, GlobalClusterSettings};
+use bevy::light::cluster::GlobalClusterSettings;
 use bevy::log::LogPlugin;
 use bevy::prelude::*;
 use bevy::render::view::NoIndirectDrawing;
@@ -29,6 +29,7 @@ mod editor;
 mod fountain;
 mod hud;
 mod island;
+mod lamps;
 mod log_file;
 mod lobby;
 mod login;
@@ -429,6 +430,8 @@ pub fn main() {
     .init_resource::<OrbitCamera>()
     .add_systems(Startup, (setup_world, cluster_lights_on_the_cpu));
     sky::plugin(&mut app);
+    // The street lamps, lit through the night.
+    lamps::plugin(&mut app);
     island::plugin(&mut app);
     // The town's fountain, running, and its jet.
     fountain::plugin(&mut app);
@@ -603,29 +606,29 @@ fn setup_world(mut commands: Commands) {
         // transparent pass back. Verified on an SM-S948N.
         #[cfg(any(target_os = "android", target_os = "ios"))]
         NoIndirectDrawing,
-        // Clustering sorts point and spot lights, light probes and decals into
-        // cells of the view, and the world has none of them: the sun and the
-        // fill are directional lights, which light everything and are never
-        // clustered. One cell instead of Bevy's thousands is the same picture
-        // for less work. `ClusterConfig::None` would be less still, but Bevy
-        // 0.19 then fails to create its "clustering dummy texture" and quits
-        // on the first frame. A point light added later needs this taken out.
-        ClusterConfig::Single,
+        // Bevy's own clusters: the view cut into a few thousand cells, each
+        // told which street lamps reach it (`lamps`), so that a spot is lit
+        // by the few lamps near it rather than every lamp in sight. Until the
+        // lamps (2026-10-16) the world had no light to sort, and the camera
+        // had one cell, `ClusterConfig::Single`. Not `ClusterConfig::None`:
+        // Bevy 0.19 then fails to create its "clustering dummy texture" and
+        // quits on the first frame.
     ));
 }
 
 /// Sorts lights into the camera's clusters on the CPU, as Bevy already does on
 /// Android, rather than on the GPU, as it does everywhere else.
 ///
-/// There is nothing to sort: the world's only lights are the sun and the fill,
-/// directional lights, which are never clustered (see `ClusterConfig::Single`
-/// in `setup_world`). On the GPU the sorting is still compute and raster
-/// passes every frame, for nothing; on the CPU it is nothing at all, and every
-/// platform takes the one path Android always has. It was turned off on
-/// 2026-10-08 as the suspect for the iPhone's black screen, being the one
-/// path Bevy 0.19 takes on an iPhone but neither on Android nor in the iOS
-/// simulator; it was not that (`one_thread_per_world` was), and it stays off
-/// for what it saves.
+/// The only lights it sorts are the street lamps' (`lamps`), and only at
+/// night: the sun, the moon and the fill are directional lights, which are
+/// never clustered, and by day the lamps are out. So by day there is nothing
+/// to sort, which on the CPU is nothing at all, where on the GPU it is
+/// still compute and raster passes every frame; at night, a couple of dozen
+/// lights. Every platform takes the one path Android always has. It was
+/// turned off on 2026-10-08 as the suspect for the iPhone's black screen,
+/// being the one path Bevy 0.19 takes on an iPhone but neither on Android
+/// nor in the iOS simulator; it was not that (`one_thread_per_world` was),
+/// and it stays off for what it saves.
 fn cluster_lights_on_the_cpu(settings: Option<ResMut<GlobalClusterSettings>>) {
     if let Some(mut settings) = settings {
         settings.gpu_clustering = None;

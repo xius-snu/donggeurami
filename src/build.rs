@@ -88,6 +88,8 @@ pub(crate) const PIECES: &[PieceDef] = &[
     my_floor("cafedeskedge", "Cafe Desk Edge", Tab::Furniture),
     my_floor("cafedeskcorner", "Cafe Desk Corner", Tab::Furniture),
     my_floor("softcouch", "Soft Couch", Tab::Furniture),
+    // Lit at night like the town's, which it is the model of (`lamps`).
+    my_floor("streetlamp", "Street Lamp", Tab::Furniture),
 ];
 
 /// How far up its storey a window's hole starts, as a share of the storey's
