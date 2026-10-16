@@ -561,22 +561,33 @@ through its wall.
   in the fountain's basin; and the doors, windows and hangings in a wall in
   House Builder (`build::OnWall`). Glass and water fade from as see-through
   as they are. Bodies never fade (skinned meshes are left out), nor ghosts
-  or the sky, nor glass or water for being in the way, nor a piece being put
-  down, nor whatever the edit menu is open on. **Nor the ground**
+  or the sky, nor glass or water for being in the way (but for the glass of
+  a door or a window in a wall in House Builder: below), nor a piece being
+  put down, nor whatever the edit menu is open on. **Nor the ground**
   (`see_through::ground`): the island's own parts no higher than a step
   over the land, like the town's paving, roads and grass. What the ground
   hides of you is your feet below a kerb or your legs in the sea, and the
-  town's paving is one piece 140 m across. Seen through a doorway, the door
-  fades and the wall round it does not.
+  town's paving is one piece 140 m across. Seen through a doorway in the
+  town, the door fades and the wall round it does not; in House Builder the
+  wall fades too (below).
 - **Standing in a house in House Builder, any of its walls in the way takes
   its whole ceiling with it** (Hajun, 2026-10-16): everything of the house
   wholly over your head (`see_through::over_your_head`), its roof and
   gables, and downstairs the floor upstairs, fades with the wall and comes
   back with it, so the room you are in is open to the camera from above as
   well. The house you stand in carries `build::YouAreIn`, set where it is
-  made untappable from inside. A door alone in the way (seen through its
-  doorway) does not take the ceiling, nor does a wall of a house you are
-  outside of. Not yet tried in the game.
+  made untappable from inside. A wall of a house you are outside of takes
+  no ceiling.
+- **A door or a window in a wall is in the way as its wall is, glass and
+  all** (`see_through::in_a_wall`; Hajun, 2026-10-16: seen from outside
+  through a Glass Door or a window, nothing faded, as glass was never in
+  the way). Its glass, its frame or its leaf between the camera and you
+  fades the wall it is in, with everything in that wall, and from inside
+  the house the ceiling. Before, a door or window frame in the way faded
+  only itself. Checked in a scripted run the same day: standing 2.6 m inside
+  a Square House behind a shut Glass Door (further in than the 1.5 m that
+  opens it), the camera 9 m out, nearly level, the front wall, the door and
+  the roof faded. Not yet tried by hand or on a phone.
 - **Checked in a scripted run (2026-10-13)**, beside the front corner of
   the town's red house (it stands turned 30°), the camera swept round past
   the corner a degree at a time: 10° short of where the corner lines up

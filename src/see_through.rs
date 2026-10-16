@@ -18,11 +18,13 @@
 //! is in a part fades with it, so that no door stands solid in a wall you see
 //! through ([`inside_of`]): the doors, windows and sign of a house in the
 //! town, and the doors, windows and hangings in a wall of a house built in
-//! House Builder. Standing in a house, any of its walls in the way of you
-//! takes the house's ceiling with it ([`over_your_head`]). Bodies never
-//! fade, nor water and glass for being in the way, as they are see-through
-//! already, nor a piece being put down, nor whatever the edit menu is open
-//! on, nor the ground ([`ground`]).
+//! House Builder. A door or a window in one of those walls, glass and all, is
+//! in the way as its wall is ([`in_a_wall`]): seen through one, the wall goes
+//! see-through with everything in it. Standing in a house, any of its walls
+//! in the way of you takes the house's ceiling with it ([`over_your_head`]).
+//! Bodies never fade, nor water and any other glass for being in the way, as
+//! they are see-through already, nor a piece being put down, nor whatever
+//! the edit menu is open on, nor the ground ([`ground`]).
 //!
 //! Something a tap can reach (`editor::Editable`) is out of its reach for as
 //! long as any of it is see-through ([`InTheWay`]): a tap goes through it, so
@@ -212,11 +214,19 @@ fn find_what_hides_you(
             continue;
         }
         // Only what is drawn solid, or is see-through already for being in
-        // the way: water and glass are see-through as they are.
+        // the way: water and glass are see-through as they are. But a door
+        // or a window, glass and all, is in the way as the wall it is in
+        // would be (Hajun, 2026-10-16): seen through one, the wall goes
+        // see-through, and what is in it with it.
         let own = see_through.map_or(&material.0, |see| &see.solid);
-        if !materials.get(own).is_some_and(drawn_solid) {
+        let Some(look) = materials.get(own) else {
             continue;
-        }
+        };
+        let stands_for = match in_a_wall(part, &lineage, &on_walls) {
+            Some(wall) => wall,
+            None if drawn_solid(look) => part,
+            None => continue,
+        };
         // Then the lines that go through the box round it.
         near.clear();
         near.extend(
@@ -237,7 +247,7 @@ fn find_what_hides_you(
             .iter()
             .any(|&to| shape.crosses(start, into.transform_point3(to)))
         {
-            found.push(part);
+            found.push(stands_for);
         }
     }
     // Standing in a house, any of its walls in the way of you takes its
@@ -347,6 +357,16 @@ fn inside_of(
     inside
 }
 
+/// The wall that `part` is a part of a door, a window or a hanging in, if it
+/// is: of a house built in House Builder (`build::OnWall`), its glass as well
+/// as its frame. In the way, it is the wall that is.
+fn in_a_wall(part: Entity, lineage: &Lineage, on_walls: &Query<(Entity, &OnWall)>) -> Option<Entity> {
+    on_walls
+        .get(model_of(part, lineage))
+        .ok()
+        .map(|(_, on)| on.wall)
+}
+
 /// What `part` is part of: the piece or town object it is in, or else the
 /// island it is on.
 fn model_of(part: Entity, lineage: &Lineage) -> Entity {
@@ -444,7 +464,8 @@ fn fade_what_hides_you(
 }
 
 /// Whether `material` is drawn solid, and so can be in the way: not water,
-/// glass, a ghost or the sky, which are blended already.
+/// glass, a ghost or the sky, which are blended already. (The glass of a
+/// door or a window is in the way all the same, as its wall: [`in_a_wall`].)
 fn drawn_solid(material: &StandardMaterial) -> bool {
     matches!(material.alpha_mode, AlphaMode::Opaque)
 }
