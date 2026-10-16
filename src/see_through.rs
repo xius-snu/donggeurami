@@ -474,7 +474,7 @@ fn own_alpha(material: &StandardMaterial) -> Option<f32> {
 /// Hajun found dirty. Glass and water stay blended, as they are drawn, and
 /// so does anything with a texture, whose alpha Bevy sharpens to all or
 /// nothing under alpha to coverage (`pbr_fragment.wgsl`): of the shop's
-/// pieces, the Cabinet and the Soft Couch, which are one mesh each.
+/// pieces, the Soft Couch, which is one mesh.
 fn see_through(mut look: StandardMaterial, alpha: f32) -> StandardMaterial {
     look.alpha_mode = if look.alpha_mode == AlphaMode::Blend || look.base_color_texture.is_some() {
         AlphaMode::Blend

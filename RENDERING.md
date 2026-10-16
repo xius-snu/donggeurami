@@ -115,8 +115,9 @@ without sorting, and where two such surfaces overlap only the nearer shows.
 MSAA off it is `Mask(0.5)`, all or nothing; and with a base colour texture
 Bevy sharpens the alpha (`pbr_fragment.wgsl`, "Sharpen alpha edges"), so a
 material-wide alpha goes all or nothing too, so a textured material fades
-blended instead: of the shop's pieces, the Cabinet and the Soft Couch, which
-have a palette texture (2026-10-13). Not yet seen on the Adreno.
+blended instead: of the shop's pieces, the Soft Couch, which has a palette
+texture (2026-10-13; the Cabinet had one too, until it was taken out of the
+game on 2026-10-16). Not yet seen on the Adreno.
 
 **`AlphaMode::Add` is premultiplied blending, not a separate blend state.** It
 compiles to `BlendState::PREMULTIPLIED_ALPHA_BLENDING` and the shader writes

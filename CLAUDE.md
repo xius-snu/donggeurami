@@ -506,7 +506,7 @@ through its wall.
   layer. The same day, faded parts drawn not at all were tried first, and
   Hajun found that "a bit too much". Glass and water stay blended, and so
   does anything with a texture, which alpha to coverage would show all or
-  nothing (`RENDERING.md`): the Soft Couch and the Cabinet.
+  nothing (`RENDERING.md`): the Soft Couch.
 - **What fades:** a piece of furniture, a door, a window or a town object
   fades whole; a house and the island a part at a time, each as modelled in
   Blender: a wall, the roof, a floor, a tree's trunk or its leaves. Whatever
@@ -915,26 +915,25 @@ it, or `Escape` shuts it.
   3 m by 4.5, 0.95 m high, a jump to get onto, made of stacked boxes whose
   touching faces the game reads correctly; and, since 2026-10-03, their Cafe
   Chair (`cafechair`), a round seat 0.75 m up in a wooden ring, with a curved
-  back to 1.375 m, on four splayed legs; their Three Leg Table
-  (`threelegcircletable`; "Three Leg Circle Table" wrapped onto two lines of
-  a 16:9 shop card) and Circle Table (`circletable`), round tops 2 m across
-  and 1.2 m high on three curved legs and on a pedestal; and their Cafe Desk
-  Edge and Cafe Desk Corner (`cafedeskedge`, `cafedeskcorner`), counters 1.5
-  m high, 2 m by 1 and 1 m by 1, one mesh each with a wood front, a cream top
-  and a dark plinth, and since 2026-10-04 a grey strip along the top's edge
-  (`desktopedge`). Since 2026-10-13 ("add some of the new models in
-  assets/mybuilds", then "i put 2 more models"), ten more, the names on
-  the cards mine: the Frame Bed (`Bed_Single`, 2 m by 3.9, a thin dark
-  frame, red blanket), Nightstand (`NightStand_2`, 0.95 m cube), Wooden
-  Chair (`wooden_chair`, a ladder back to 1.77 m), Soft Couch (`softcouch`,
-  blue, 3.75 m) and Cabinet (`Cabinet_medium`, a chest of drawers 2.3 m high
-  with a picture, a box and a cactus on it), Fridge (`Kitchen_Fridge`, 3.3 m
-  tall, as tall as a door), Oven (`Kitchen_Oven`, an oven between drawers),
-  Large Oven (`Kitchen_Oven_Large`, a stove with four rings), Bathtub
-  (`Bathroom_Bathtub`, 3.9 m long) and Bathroom Sink (`Bathroom_Sink`, hung
-  0.15 m off the floor, as against a wall). The Soft Couch and the Cabinet
-  are coloured by a palette texture embedded in their glbs, the only
-  textures in the game. Nothing is in Decorations.
+  back to 1.375 m, on four splayed legs; their Circle Table
+  (`circletable`), a round top 2 m across and 1.2 m high on a pedestal; and
+  their Cafe Desk Edge and Cafe Desk Corner (`cafedeskedge`,
+  `cafedeskcorner`), counters 1.5 m high, 2 m by 1 and 1 m by 1, one mesh
+  each with a wood front, a cream top and a dark plinth, and since
+  2026-10-04 a grey strip along the top's edge (`desktopedge`); and, since
+  2026-10-13, their Soft Couch (`softcouch`, blue, 3.75 m; the name on the
+  card mine), coloured by a palette texture embedded in its glb, the only
+  texture in the game. Nothing is in Decorations.
+  On 2026-10-16 Hajun had ten pieces taken out of the game, their files
+  deleted (`.blend`, `.glb`, `.png`): the Three Leg Table
+  (`threelegcircletable`, of 2026-10-03) and nine of the ten added on
+  2026-10-13, all but the Soft Couch: the Frame Bed (`Bed_Single`),
+  Nightstand (`NightStand_2`), Wooden Chair (`wooden_chair`), Cabinet
+  (`Cabinet_medium`), Fridge (`Kitchen_Fridge`), Oven (`Kitchen_Oven`),
+  Large Oven (`Kitchen_Oven_Large`), Bathtub (`Bathroom_Bathtub`) and
+  Bathroom Sink (`Bathroom_Sink`). Pieces go over the network by their kind's
+  name, and one this app does not sell is skipped (`build::raise_shadows`),
+  so an older app's on a plot does no harm.
   The script's pieces are no longer in `build::PIECES`: its five houses,
   three doors and three windows since 2026-09-30 (Hajun deleted their files
   on 2026-10-03, all but the tall window's), and its furniture and
@@ -1030,7 +1029,8 @@ it, or `Escape` shuts it.
   The two cafe desks and the two round tables came the same way
   (2026-10-03), with no picture yet and their render still pointed at
   another piece's (`square_house.png`, and for the Circle Table, copied from
-  the other, `threelegcircletable.png`); only the camera and the path were
+  the other, the Three Leg Table, since removed, `threelegcircletable.png`);
+  only the camera and the path were
   changed, and each `.glb` is Hajun's export. A round table's camera is
   fitted to its corners rather than its box, which a disc does not fill: fitted
   to the box, the table came out small in its card. The Circle Table's
@@ -1079,7 +1079,8 @@ it, or `Escape` shuts it.
   blended, as Hajun's windows' glass is; then exported with the defaults,
   which gave the same nodes and vertices byte for byte, and their pictures
   rendered with the thumbnail camera, sun and sky every other piece has,
-  added to each file. Check a new model's exported materials
+  added to each file. Those eight were all taken out of the game on
+  2026-10-16, but the lesson stands: check a new model's exported materials
   (`pbrMetallicRoughness` in the glb's JSON) before selling it.
 - **Nobody gets in through a window** (since 2026-09-30, when Hajun found
   they could). Their windows came up 1.28 m up (in 6 m walls), a jump reaches 1.64 m, and
