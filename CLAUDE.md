@@ -578,6 +578,18 @@ through its wall.
   well. The house you stand in carries `build::YouAreIn`, set where it is
   made untappable from inside. A wall of a house you are outside of takes
   no ceiling.
+- **And the ceiling, when the camera looks down into the room at a slant,
+  takes the walls on the camera's side** (`see_through::on_the_camera_side`;
+  Hajun, 2026-10-16): standing in a house with its ceiling see-through,
+  every wall of it whose way in is within 60° of the way the camera looks
+  (`ON_THE_CAMERA_SIDE`) fades too, so the room is open the way the camera
+  looks in: looking square on, the near wall; across a corner, the two near
+  walls. Looking down steeper than 75° (`STRAIGHT_DOWN_DEG`), the ceiling
+  goes alone; looking level or up, only a wall in the way goes. Both angles
+  are my reading of "slightly angled down" and "rly top down". Checked in a
+  scripted run the same day, standing in the middle of a Square House: 40°
+  down over the front, the roof and the front wall faded; 83° down, the
+  roof alone; 40° down across a corner, the roof and that corner's two walls.
 - **A door or a window in a wall is in the way as its wall is, glass and
   all** (`see_through::in_a_wall`; Hajun, 2026-10-16: seen from outside
   through a Glass Door or a window, nothing faded, as glass was never in

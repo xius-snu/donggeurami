@@ -732,6 +732,11 @@ impl Wall {
         (if self.along_x() { at.z } else { at.x }) - self.thin().0
     }
 
+    /// Which way into the house is from it, in the house's own space.
+    pub(crate) fn way_in(&self) -> Vec3 {
+        self.inside
+    }
+
     /// Which way into the house is, along [`Self::across`]: toward the side
     /// with floor beside it, or failing that toward the house's middle.
     fn inward(&self, floors: &[(Vec3, Vec3)]) -> f32 {

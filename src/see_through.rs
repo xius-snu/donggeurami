@@ -21,7 +21,9 @@
 //! House Builder. A door or a window in one of those walls, glass and all, is
 //! in the way as its wall is ([`in_a_wall`]): seen through one, the wall goes
 //! see-through with everything in it. Standing in a house, any of its walls
-//! in the way of you takes the house's ceiling with it ([`over_your_head`]).
+//! in the way of you takes the house's ceiling with it ([`over_your_head`]),
+//! and the ceiling in the way of a camera looking down into the room at a
+//! slant takes the walls on the camera's side ([`on_the_camera_side`]).
 //! Bodies never fade, nor water and any other glass for being in the way, as
 //! they are see-through already, nor a piece being put down, nor whatever
 //! the edit menu is open on, nor the ground ([`ground`]).
@@ -90,6 +92,15 @@ const CROWN: f32 = 1.68;
 /// How far out of the box round a part of a house or of the island something
 /// else of it can reach and still be in it, and go with it, in metres.
 const IN_IT: f32 = 0.05;
+/// How steeply the camera has to look down on the house you are in, its
+/// ceiling see-through, for the room to be open to it by the ceiling alone:
+/// from straight overhead to this, only the ceiling goes; any less steep, the
+/// walls on the camera's side go with it ([`on_the_camera_side`]). Over 75°
+/// a 5 m wall hides less than a metre and a half of the floor along it.
+const STRAIGHT_DOWN_DEG: f32 = 75.0;
+/// How far round from the way the camera looks a wall's way in can be, as
+/// the cosine of the angle, for the wall to be on the camera's side: 60°.
+const ON_THE_CAMERA_SIDE: f32 = 0.5;
 
 /// Out of a tap's reach, while some of it is see-through for standing between
 /// the camera and you: a tap goes through it to whatever is behind (`editor`).
@@ -168,8 +179,8 @@ fn find_what_hides_you(
     lineage: Lineage,
     children: Query<&Children>,
     on_walls: Query<(Entity, &OnWall)>,
-    walls: Query<&ChildOf, With<Wall>>,
-    house_you_are_in: Query<Entity, With<YouAreIn>>,
+    walls: Query<(Entity, &ChildOf, &Wall)>,
+    house_you_are_in: Query<(Entity, &GlobalTransform), With<YouAreIn>>,
     menu: Res<EditMenu>,
     meshes: Res<Assets<Mesh>>,
     materials: Res<Assets<StandardMaterial>>,
@@ -250,25 +261,47 @@ fn find_what_hides_you(
             found.push(stands_for);
         }
     }
-    // Standing in a house, any of its walls in the way of you takes its
-    // ceiling with it, so that the room you are in is open to the camera
-    // from above as well (Hajun, 2026-10-16).
-    if let Ok(house) = house_you_are_in.single()
-        && found
+    if let Ok((house, house_place)) = house_you_are_in.single() {
+        let ceiling_of_it = |part: Entity| {
+            !walls.contains(part)
+                && model_of(part, &lineage) == house
+                && parts.get(part).is_ok_and(|(.., bounds, place, _, _)| {
+                    over_your_head(world_box(bounds, place).0.y, you)
+                })
+        };
+        // Standing in a house, its ceiling in the way of a camera looking
+        // down into the room at a slant takes the walls on the camera's side
+        // with it, so that the room is open the way the camera looks in;
+        // looking from straight overhead, the ceiling goes alone (Hajun,
+        // 2026-10-16).
+        if found.iter().any(|&part| ceiling_of_it(part)) {
+            let look = eye.forward().as_vec3();
+            let near: Vec<Entity> = walls
+                .iter()
+                .filter(|(_, of, wall)| {
+                    of.parent() == house
+                        && on_the_camera_side(
+                            look,
+                            house_place.affine().transform_vector3(wall.way_in()),
+                        )
+                })
+                .map(|(wall, ..)| wall)
+                .collect();
+            found.extend(near);
+        }
+        // Standing in a house, any of its walls in the way of you takes its
+        // ceiling with it, so that the room you are in is open to the camera
+        // from above as well (Hajun, 2026-10-16).
+        if found
             .iter()
-            .any(|&part| walls.get(part).is_ok_and(|wall| wall.parent() == house))
-    {
-        let ceiling: Vec<Entity> = children
-            .iter_descendants(house)
-            .filter(|&part| {
-                !walls.contains(part)
-                    && model_of(part, &lineage) == house
-                    && parts.get(part).is_ok_and(|(.., bounds, place, _, _)| {
-                        over_your_head(world_box(bounds, place).0.y, you)
-                    })
-            })
-            .collect();
-        found.extend(ceiling);
+            .any(|&part| walls.get(part).is_ok_and(|(_, of, _)| of.parent() == house))
+        {
+            let ceiling: Vec<Entity> = children
+                .iter_descendants(house)
+                .filter(|&part| ceiling_of_it(part))
+                .collect();
+            found.extend(ceiling);
+        }
     }
     let target = menu.target();
     for part in found {
@@ -552,6 +585,22 @@ fn over_your_head(bottom: f32, you: &Transform) -> bool {
     bottom > you.translation.y + CROWN
 }
 
+/// Whether a wall of the house you are in, into which is the way `way_in`,
+/// goes with its see-through ceiling for a camera looking `look`: the camera
+/// looking down into the room at a slant, rather than from straight overhead
+/// ([`STRAIGHT_DOWN_DEG`]), and in over the wall, the wall facing no more
+/// than 60° off the way it looks ([`ON_THE_CAMERA_SIDE`]). Across a corner,
+/// that is both walls on the camera's side; looking square on, the one.
+fn on_the_camera_side(look: Vec3, way_in: Vec3) -> bool {
+    let down = -look.normalize_or_zero().y;
+    let slant = down > 0.0 && down < STRAIGHT_DOWN_DEG.to_radians().sin();
+    let (across, into) = (
+        look.with_y(0.0).normalize_or_zero(),
+        way_in.with_y(0.0).normalize_or_zero(),
+    );
+    slant && across.dot(into) > ON_THE_CAMERA_SIDE
+}
+
 /// Whether `part`, whose box goes no higher than `top`, is the ground: the
 /// island's own, not anything built or put on it, and no higher than a step
 /// over the land, as the town's paving, roads and grass are, and a plot's.
@@ -792,6 +841,35 @@ mod tests {
         let upstairs = Transform::from_xyz(0.0, upper.1.y, 0.0);
         assert!(!over_your_head(upper.0.y, &upstairs));
         assert!(over_your_head(roof, &upstairs));
+    }
+
+    #[test]
+    fn looking_down_at_a_slant_the_walls_on_the_camera_s_side_go_with_the_ceiling() {
+        // In the middle of the house, the camera up over its front and
+        // looking down into it at about 45°: the roof is in the way, and the
+        // front wall, into which is -z, is on the camera's side; the back
+        // wall and the side walls are not.
+        let eye = Vec3::new(0.0, 10.0, 9.0);
+        let look = Vec3::new(0.0, 1.0, 0.0) - eye;
+        assert!(hides(eye, ROOF));
+        assert!(on_the_camera_side(look, Vec3::NEG_Z), "the front wall");
+        assert!(!on_the_camera_side(look, Vec3::Z), "the back wall");
+        assert!(!on_the_camera_side(look, Vec3::X), "the left wall");
+        assert!(!on_the_camera_side(look, Vec3::NEG_X), "the right wall");
+        // Looking down across the front right corner, both walls there.
+        let corner = Vec3::new(-6.0, -8.0, -6.0);
+        assert!(on_the_camera_side(corner, Vec3::NEG_Z) && on_the_camera_side(corner, Vec3::NEG_X));
+        assert!(!on_the_camera_side(corner, Vec3::Z) && !on_the_camera_side(corner, Vec3::X));
+        // From straight overhead, or nearly, the ceiling alone.
+        for steep in [90.0f32, 80.0, 76.0] {
+            let look = Vec3::new(0.0, -steep.to_radians().sin(), -steep.to_radians().cos());
+            assert!(!on_the_camera_side(look, Vec3::NEG_Z), "{steep}°");
+        }
+        assert!(on_the_camera_side(Vec3::new(0.0, -74f32.to_radians().sin(), -74f32.to_radians().cos()), Vec3::NEG_Z));
+        // Looking level, or up, this is not what takes any wall: a wall in
+        // the way is.
+        assert!(!on_the_camera_side(Vec3::NEG_Z, Vec3::NEG_Z));
+        assert!(!on_the_camera_side(Vec3::new(0.0, 0.3, -1.0), Vec3::NEG_Z));
     }
 
     #[test]
