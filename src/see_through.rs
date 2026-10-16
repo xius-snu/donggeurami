@@ -18,9 +18,11 @@
 //! is in a part fades with it, so that no door stands solid in a wall you see
 //! through ([`inside_of`]): the doors, windows and sign of a house in the
 //! town, and the doors, windows and hangings in a wall of a house built in
-//! House Builder. Bodies never fade, nor water and glass for being in the way,
-//! as they are see-through already, nor a piece being put down, nor whatever
-//! the edit menu is open on, nor the ground ([`ground`]).
+//! House Builder. Standing in a house, any of its walls in the way of you
+//! takes the house's ceiling with it ([`over_your_head`]). Bodies never
+//! fade, nor water and glass for being in the way, as they are see-through
+//! already, nor a piece being put down, nor whatever the edit menu is open
+//! on, nor the ground ([`ground`]).
 //!
 //! Something a tap can reach (`editor::Editable`) is out of its reach for as
 //! long as any of it is see-through ([`InTheWay`]): a tap goes through it, so
@@ -39,7 +41,7 @@ use bevy::mesh::skinning::SkinnedMesh;
 use bevy::prelude::*;
 use bevy::render::render_resource::Face;
 
-use crate::build::{Ghost, Mount, OnWall, Piece};
+use crate::build::{Ghost, Mount, OnWall, Piece, Wall, YouAreIn};
 use crate::editor::{EditMenu, EditSystems, Editable};
 use crate::island::{self, Faces};
 use crate::map::MapObject;
@@ -164,6 +166,8 @@ fn find_what_hides_you(
     lineage: Lineage,
     children: Query<&Children>,
     on_walls: Query<(Entity, &OnWall)>,
+    walls: Query<&ChildOf, With<Wall>>,
+    house_you_are_in: Query<Entity, With<YouAreIn>>,
     menu: Res<EditMenu>,
     meshes: Res<Assets<Mesh>>,
     materials: Res<Assets<StandardMaterial>>,
@@ -235,6 +239,26 @@ fn find_what_hides_you(
         {
             found.push(part);
         }
+    }
+    // Standing in a house, any of its walls in the way of you takes its
+    // ceiling with it, so that the room you are in is open to the camera
+    // from above as well (Hajun, 2026-10-16).
+    if let Ok(house) = house_you_are_in.single()
+        && found
+            .iter()
+            .any(|&part| walls.get(part).is_ok_and(|wall| wall.parent() == house))
+    {
+        let ceiling: Vec<Entity> = children
+            .iter_descendants(house)
+            .filter(|&part| {
+                !walls.contains(part)
+                    && model_of(part, &lineage) == house
+                    && parts.get(part).is_ok_and(|(.., bounds, place, _, _)| {
+                        over_your_head(world_box(bounds, place).0.y, you)
+                    })
+            })
+            .collect();
+        found.extend(ceiling);
     }
     let target = menu.target();
     for part in found {
@@ -498,6 +522,15 @@ fn points_on(you: &Transform) -> Vec<Vec3> {
     points
 }
 
+/// Whether a part of the house you are in, whose box goes no lower than
+/// `bottom`, is its ceiling over `you`: wholly over your head, like its roof
+/// and gables, and downstairs the floor upstairs, but not the floor you stand
+/// on, its walls or its stairs. It fades along with any of the house's walls
+/// in the way of you.
+fn over_your_head(bottom: f32, you: &Transform) -> bool {
+    bottom > you.translation.y + CROWN
+}
+
 /// Whether `part`, whose box goes no higher than `top`, is the ground: the
 /// island's own, not anything built or put on it, and no higher than a step
 /// over the land, as the town's paving, roads and grass are, and a plot's.
@@ -720,6 +753,24 @@ mod tests {
         // Nor the floor you stand on from as low as the camera goes behind
         // you, looking up past you.
         assert!(!hides(Vec3::new(0.0, 0.58, 2.72), FLOOR));
+    }
+
+    #[test]
+    fn standing_in_a_house_its_ceiling_is_what_is_over_your_head() {
+        // On the floor of the house: its roof is, its floor and walls are not.
+        let downstairs = Transform::from_xyz(0.0, FLOOR.1.y, 0.0);
+        assert!(over_your_head(ROOF.0.y, &downstairs));
+        for (name, part) in [("floor", FLOOR), ("front", FRONT), ("left", LEFT)] {
+            assert!(!over_your_head(part.0.y, &downstairs), "{name}");
+        }
+        // With a floor upstairs 5 m up, as in Hajun's Two Floor House, and
+        // its roof 5 m higher: downstairs both are, upstairs only the roof.
+        let upper = (Vec3::new(-6.0, 4.9, -6.0), Vec3::new(4.0, 5.1, 6.0));
+        let roof = ROOF.0.y + 5.0;
+        assert!(over_your_head(upper.0.y, &downstairs));
+        let upstairs = Transform::from_xyz(0.0, upper.1.y, 0.0);
+        assert!(!over_your_head(upper.0.y, &upstairs));
+        assert!(over_your_head(roof, &upstairs));
     }
 
     #[test]

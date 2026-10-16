@@ -462,6 +462,11 @@ struct Solid(Handle<StandardMaterial>);
 #[derive(Component)]
 struct Rooms(Vec<(Vec3, Vec3)>);
 
+/// The house you are standing in, while you are ([`Rooms::hold`]): any of its
+/// walls in the way of the camera takes its ceiling with it (`see_through`).
+#[derive(Component)]
+pub(crate) struct YouAreIn;
+
 impl Rooms {
     /// Whether someone standing at `at`, in the house's own space, is inside
     /// it: over one of its floors, and lower than the top of it, `top`.
@@ -559,7 +564,7 @@ enum Height {
 /// One wall of a house, made again from the box it was modelled as, with
 /// holes in it for its doors and windows.
 #[derive(Component)]
-struct Wall {
+pub(crate) struct Wall {
     /// Its corners, in the house's own space.
     low: Vec3,
     high: Vec3,
@@ -2029,7 +2034,8 @@ fn finish_building(
 /// A house you are standing in cannot be tapped. From inside, nearly every tap
 /// lands on it — a wall, the floor, the ceiling — and picked back up it is a
 /// ghost, no longer there to stand in or bump into. What is in there with you,
-/// and the doors, windows and hangings in its walls, still can be.
+/// and the doors, windows and hangings in its walls, still can be. It is
+/// also marked as the house you are in ([`YouAreIn`]).
 fn untappable_from_inside(
     me: Query<(&Transform, &Venue), With<Player>>,
     houses: Query<(
@@ -2049,9 +2055,9 @@ fn untappable_from_inside(
             on == venue && rooms.hold(at, bounds.high.y)
         });
         if inside && !untappable {
-            commands.entity(house).insert(Untappable);
+            commands.entity(house).insert((Untappable, YouAreIn));
         } else if !inside && untappable {
-            commands.entity(house).remove::<Untappable>();
+            commands.entity(house).remove::<(Untappable, YouAreIn)>();
         }
     }
 }

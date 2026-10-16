@@ -524,6 +524,15 @@ through its wall.
   hides of you is your feet below a kerb or your legs in the sea, and the
   town's paving is one piece 140 m across. Seen through a doorway, the door
   fades and the wall round it does not.
+- **Standing in a house in House Builder, any of its walls in the way takes
+  its whole ceiling with it** (Hajun, 2026-10-16): everything of the house
+  wholly over your head (`see_through::over_your_head`), its roof and
+  gables, and downstairs the floor upstairs, fades with the wall and comes
+  back with it, so the room you are in is open to the camera from above as
+  well. The house you stand in carries `build::YouAreIn`, set where it is
+  made untappable from inside. A door alone in the way (seen through its
+  doorway) does not take the ceiling, nor does a wall of a house you are
+  outside of. Not yet tried in the game.
 - **Checked in a scripted run (2026-10-13)**, beside the front corner of
   the town's red house (it stands turned 30°), the camera swept round past
   the corner a degree at a time: 10° short of where the corner lines up
