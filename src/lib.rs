@@ -2254,38 +2254,43 @@ mod body_tests {
 
     #[test]
     fn a_body_dropped_onto_the_car_anywhere_stays_on_it() {
-        // Hajun's car, as its model is now, standing on the road: dropped
-        // onto it anywhere a body is wholly over it, half a metre apart, into
-        // its seats or onto its hood or its back, the body comes to rest on
-        // it, and is never shoved off through its sides. Each object of the
-        // model is one shape, all its materials together: the first car's
-        // body alone, without the seats sunk into it, was a box with no top
-        // over them, which a body in them was shoved out of.
-        let (pieces, low, high) = car::tests::hajuns_car();
-        let slices: Vec<&[[Vec3; 3]]> = pieces.iter().map(Vec::as_slice).collect();
-        let shape = Island::of_parts_for_tests(&slices);
-        let road = island(&[ROAD]);
-        let standing = car::Place {
-            at: Vec3::new(0.0, -0.2 - low.y, 0.0),
-            turn: Quat::IDENTITY,
-        };
-        let over = standing.at.y + high.y + 0.5;
-        let margin = PLAYER_RADIUS + 0.3;
-        let mut dropped = 0;
-        let mut x = low.x + margin;
-        while x <= high.x - margin {
-            let mut z = low.z + margin;
-            while z <= high.z - margin {
-                let path = ride(&road, &shape, |_| standing, Vec3::new(x, over, z), Vec3::ZERO, None, 180);
-                let (end, footing) = *path.last().unwrap();
-                assert_eq!(footing, Some(Underfoot::Deck(0)), "dropped at {x}, {z}, ended at {end}");
-                assert!(end.x > low.x && end.x < high.x && end.z > low.z && end.z < high.z, "{end} out of it");
-                dropped += 1;
-                z += 0.5;
+        // Each of Hajun's cars, as its model is now, standing on the road:
+        // dropped onto it anywhere a body is wholly over it, half a metre
+        // apart, into its seats or onto its hood or its back, the body comes
+        // to rest on it, and is never shoved off through its sides. Each
+        // object of the model is one shape, all its materials together: the
+        // first car's body alone, without the seats sunk into it, was a box
+        // with no top over them, which a body in them was shoved out of.
+        for model in car::CARS {
+            let (pieces, low, high) = car::tests::hajuns_car(model);
+            let slices: Vec<&[[Vec3; 3]]> = pieces.iter().map(Vec::as_slice).collect();
+            let shape = Island::of_parts_for_tests(&slices);
+            let road = island(&[ROAD]);
+            let standing = car::Place {
+                at: Vec3::new(0.0, -0.2 - low.y, 0.0),
+                turn: Quat::IDENTITY,
+            };
+            let over = standing.at.y + high.y + 0.5;
+            let margin = PLAYER_RADIUS + 0.3;
+            let mut dropped = 0;
+            let mut x = low.x + margin;
+            while x <= high.x - margin {
+                let mut z = low.z + margin;
+                while z <= high.z - margin {
+                    let path = ride(&road, &shape, |_| standing, Vec3::new(x, over, z), Vec3::ZERO, None, 180);
+                    let (end, footing) = *path.last().unwrap();
+                    assert_eq!(footing, Some(Underfoot::Deck(0)), "{model}: dropped at {x}, {z}, ended at {end}");
+                    assert!(
+                        end.x > low.x && end.x < high.x && end.z > low.z && end.z < high.z,
+                        "{model}: {end} out of it"
+                    );
+                    dropped += 1;
+                    z += 0.5;
+                }
+                x += 0.5;
             }
-            x += 0.5;
+            assert!(dropped >= 10, "{model}: only {dropped} drops");
         }
-        assert!(dropped >= 10, "only {dropped} drops");
     }
 
     #[test]

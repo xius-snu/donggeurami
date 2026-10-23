@@ -1,29 +1,31 @@
-//! The town's car, driving round its roads by itself, which anyone can jump
-//! onto and ride (Hajun, 2026-10-23).
+//! The town's cars, driving round its roads by themselves, which anyone can
+//! jump onto and ride (Hajun, 2026-10-23).
 //!
-//! The car is Hajun's model, `assets/mybuilds/car.glb`, and it is the shape of
-//! its model: what bodies stand on and bump into is every triangle of it,
-//! read once it has spawned ([`Hull`]), and carried round with it as an
-//! island of its own that moves. Seats, windows and a roof put in the model
-//! are seats to stand on, windows to bump into and a roof over your head, as
-//! a house's are. Its front is the end of its longer side that is Blender's
-//! -X, as it is modelled, or -Y, Blender's front, as every other model faces.
+//! The cars are Hajun's models, [`CARS`], and each is the shape of its
+//! model: what bodies stand on and bump into is every triangle of it, read
+//! once it has spawned ([`Hull`]), and carried round with it as an island of
+//! its own that moves. Seats, windows and a roof put in a model are seats to
+//! stand on, windows to bump into and a roof over your head, as a house's
+//! are. A car's front is the end of its longer side that is Blender's -X, as
+//! the first car is modelled, or -Y, Blender's front, as every other model
+//! faces.
 //!
-//! Where it goes is the town's roads, every lane of every one of them, read
-//! off the town's model (`roads`). Where it is goes by the clock, as the
-//! fountain's jet does: its way round takes a whole number of seconds, and it
-//! is that far into it at every moment, by the time since 1970 ([`place_at`]),
-//! so that everyone in the town sees it in the same place with nothing about
-//! it going over the network. `RT_CAR_AT` (seconds into its way round) stops
-//! it there, for trying things out.
+//! Where they go is the town's roads, every lane of every one of them, read
+//! off the town's model (`roads`), one after the other round the same loop.
+//! Where each is goes by the clock, as the fountain's jet does: the loop
+//! takes a whole number of seconds, and a car is that far into it at every
+//! moment, by the time since 1970, less how far behind the first it goes
+//! ([`place_at`]), so that everyone in the town sees each in the same place
+//! with nothing about them going over the network. `RT_CAR_AT` (seconds into
+//! the loop) stops them there, for trying things out.
 //!
-//! Standing on it, or in the air off it, a body is carried along with it
+//! Standing on a car, or in the air off it, a body is carried along with it
 //! (`crate::move_bodies`, `crate::Riding`): every move it makes, the body
 //! makes with it, turning as it turns, until the body comes down on anything
 //! else. Online, where a rider is goes to everyone else as a place on the car
-//! (`roundtown_net::Spot::aboard`), and they put the rider on the car as they
-//! see it (`net`): two people riding it are seen riding it, and nobody is
-//! seen gliding along the road beside it.
+//! (`roundtown_net::Spot::aboard`), which goes by its number, and they put
+//! the rider on the car as they see it (`net`): two people riding one are
+//! seen riding it, and nobody is seen gliding along the road beside it.
 
 use std::f32::consts::TAU;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -39,18 +41,12 @@ use bevy::world_serialization::WorldInstanceReady;
 use crate::island::{self, Island, Islands, Venue};
 use crate::roads::{self, Paint, Route};
 
-/// Hajun's cars, under `assets/`: the first, with its seats sunk into it, and
-/// the Roadster, since 2026-10-23 ("try using car2 instead of car"). Both go
-/// in the app, so that either can drive.
+/// The town's cars, Hajun's models under `assets/`, each going by the number
+/// it has here: the first, with its seats sunk into it, and the Roadster
+/// (Hajun, 2026-10-23: "put both car and car2 on the road at different
+/// points on the same path"). Every device online has to have the same cars
+/// in the same order, as a rider is sent as a place on one, by its number.
 pub(crate) const CARS: [&str; 2] = ["mybuilds/car.glb", "mybuilds/car2.glb"];
-
-/// Which of [`CARS`] drives round the town: 1, the Roadster. Back to the
-/// first car is 0. Every device online has to drive the same one, as a rider
-/// is sent as a place on it.
-const DRIVING: usize = 1;
-
-/// The car's model, under `assets/`.
-pub(crate) const MODEL: &str = CARS[DRIVING];
 
 /// What the car's wheels are called in its model: every part with it in its
 /// name, but a steering wheel. Each wheel turns about its own middle as the
@@ -63,10 +59,17 @@ fn is_wheel(name: &str) -> bool {
     name.contains(WHEEL) && !name.contains("steering")
 }
 
-/// The car: the number it goes by online.
+/// A car: the number it goes by online, its place in [`CARS`].
 #[derive(Component)]
 pub(crate) struct Car {
     pub(crate) number: u8,
+}
+
+impl Car {
+    /// Its model, under `assets/`.
+    fn model(&self) -> &'static str {
+        CARS[usize::from(self.number)]
+    }
 }
 
 /// The car's shape, read off its model once it has spawned, in its own space.
@@ -84,6 +87,9 @@ pub(crate) struct Hull {
     lowest: f32,
     /// How far from its own middle any of it reaches, across the ground.
     pub(crate) reach: f32,
+    /// Half its length and half its width, along its front and across it:
+    /// the room it takes on the road.
+    half: Vec2,
 }
 
 /// Where something stands and which way it is turned about the upright.
@@ -172,8 +178,8 @@ impl CarClock {
 }
 
 /// What the town's model has to say about its roads, kept from the moment it
-/// spawns until its shape has been read too and the car's way round can be
-/// worked out.
+/// spawns until its shape and every car's have been read too, and the cars'
+/// way round can be worked out.
 #[derive(Resource)]
 struct TownRoads {
     road: Vec<[Vec3; 3]>,
@@ -183,8 +189,9 @@ struct TownRoads {
 pub(crate) fn plugin(app: &mut App) {
     app.insert_resource(CarClock::from_env())
         .add_observer(read_roads)
+        .add_systems(Startup, spawn_cars)
         .add_systems(PreUpdate, drive)
-        .add_systems(Update, (plan_the_way, spawn_car, turn_wheels).chain());
+        .add_systems(Update, (plan_the_way, turn_wheels).chain());
 }
 
 /// Reads the town's roads out of its model once it has spawned: their
@@ -227,15 +234,25 @@ fn read_roads(
     commands.insert_resource(TownRoads { road, markings });
 }
 
-/// Works out the car's way round the town once both its roads and its shape
-/// have been read.
-fn plan_the_way(roads: Option<Res<TownRoads>>, islands: Res<Islands>, mut commands: Commands) {
+/// Works out the cars' way round the town once its roads, its shape and the
+/// shape of every car have been read: turning, none of any of them is to go
+/// off the road.
+fn plan_the_way(
+    roads: Option<Res<TownRoads>>,
+    islands: Res<Islands>,
+    hulls: Query<&Hull, With<Car>>,
+    mut commands: Commands,
+) {
     let Some(roads) = roads else {
         return;
     };
     let Some(land) = islands.ground(Venue::Town) else {
         return;
     };
+    if hulls.iter().count() < CARS.len() {
+        return;
+    }
+    let car = hulls.iter().fold(Vec2::ZERO, |most, hull| most.max(hull.half));
     commands.remove_resource::<TownRoads>();
     let road = Island::new(&roads.road);
     let paint = Paint {
@@ -243,13 +260,15 @@ fn plan_the_way(roads: Option<Res<TownRoads>>, islands: Res<Islands>, mut comman
         road: &road,
         markings: &roads.markings,
     };
-    match Route::read(&paint) {
+    match Route::read(&paint, car, CARS.len()) {
         Some(route) => {
+            let behind: Vec<f64> = (0..CARS.len() as u8).map(|number| route.behind(number)).collect();
             info!(
-                "the car's way round the town: {} lanes, {:.0} m, in {} s",
+                "the cars' way round the town: {} lanes, {:.0} m, in {} s, each car {:?} s behind the first",
                 route.lanes(),
                 route.length(),
-                route.lap()
+                route.lap(),
+                behind
             );
             commands.insert_resource(route);
         }
@@ -257,28 +276,22 @@ fn plan_the_way(roads: Option<Res<TownRoads>>, islands: Res<Islands>, mut comman
     }
 }
 
-/// The car, once it has its way round.
-fn spawn_car(
-    route: Option<Res<Route>>,
-    cars: Query<(), With<Car>>,
-    assets: Res<AssetServer>,
-    mut commands: Commands,
-) {
-    if route.is_none() || !cars.is_empty() {
-        return;
+/// Every car, from the start: nowhere, until its shape has been read, the
+/// way round worked out and it is put on the road (`drive`), and from then
+/// on the town, drawn there and met there.
+fn spawn_cars(assets: Res<AssetServer>, mut commands: Commands) {
+    for (number, model) in (0..).zip(CARS) {
+        commands
+            .spawn((
+                Name::new("Car"),
+                Car { number },
+                Driven::default(),
+                WorldAssetRoot(assets.load(GltfAssetLabel::Scene(0).from_asset(model))),
+                Transform::default(),
+                Visibility::Hidden,
+            ))
+            .observe(read_car);
     }
-    // On the town, drawn there and met there, once its shape has been read
-    // and it has been put on the road: until then it is nowhere.
-    commands
-        .spawn((
-            Name::new("Car"),
-            Car { number: 0 },
-            Driven::default(),
-            WorldAssetRoot(assets.load(GltfAssetLabel::Scene(0).from_asset(MODEL))),
-            Transform::default(),
-            Visibility::Hidden,
-        ))
-        .observe(read_car);
 }
 
 /// Reads the car's shape out of its model once it has spawned, every mesh of
@@ -293,6 +306,7 @@ fn spawn_car(
 #[allow(clippy::too_many_arguments)]
 fn read_car(
     ready: On<WorldInstanceReady>,
+    cars: Query<&Car>,
     children: Query<&Children>,
     parts: Query<(&Mesh3d, Option<&MeshMaterial3d<StandardMaterial>>), Without<SkinnedMesh>>,
     parents: Query<&ChildOf>,
@@ -302,7 +316,7 @@ fn read_car(
     mut commands: Commands,
 ) {
     let car = ready.entity;
-    let Ok(root) = placement.compute_global_transform(car) else {
+    let (Ok(model), Ok(root)) = (cars.get(car).map(Car::model), placement.compute_global_transform(car)) else {
         return;
     };
     let into_car = root.affine().inverse();
@@ -323,7 +337,7 @@ fn read_car(
             .get(&mesh.0)
             .is_some_and(|asset| island::add_mesh(&mut corners, asset, &in_car));
         if !read {
-            warn!("{MODEL}: could not read one of its meshes, so bodies will pass through it");
+            warn!("{model}: could not read one of its meshes, so bodies will pass through it");
             continue;
         }
         match pieces.iter_mut().find(|(of, _)| *of == object) {
@@ -342,7 +356,7 @@ fn read_car(
     }
     let all: Vec<Vec3> = pieces.iter().flat_map(|(_, triangles)| triangles.iter().flatten()).copied().collect();
     if all.is_empty() {
-        warn!("{MODEL} has nothing in it to stand on");
+        warn!("{model} has nothing in it to stand on");
         return;
     }
     let (low, high) = all
@@ -357,6 +371,7 @@ fn read_car(
         middle: ((low + high) * 0.5).xz(),
         lowest: low.y,
         reach: all.iter().map(|corner| corner.xz().length()).fold(0.0, f32::max),
+        half: half(low, high),
     };
     let across = hull.front.perp();
     let axle = Vec3::new(across.x, 0.0, across.y);
@@ -382,7 +397,7 @@ fn read_car(
     for (part, ..) in &wheels {
         commands.entity(*part).insert(Visibility::Hidden);
     }
-    commands.entity(car).insert((hull, Venue::Town));
+    commands.entity(car).insert(hull);
 }
 
 /// Which way the front of a car whose model fits between `low` and `high`, in
@@ -395,11 +410,19 @@ fn front(low: Vec3, high: Vec3) -> Vec2 {
     if size.x >= size.z { Vec2::X } else { Vec2::NEG_Y }
 }
 
-/// Where the car is, and which way it is turned, `seconds` since 1970: its
-/// footprint's middle on the middle of its lane, its front the way the lane
-/// goes, and its wheels on the road.
-pub(crate) fn place_at(route: &Route, hull: &Hull, seconds: f64) -> (Place, f64) {
-    let (on_road, way, distance) = route.at(seconds);
+/// Half the length and half the width of a car whose model fits between
+/// `low` and `high`, in its own space: along its front ([`front`]) and across.
+fn half(low: Vec3, high: Vec3) -> Vec2 {
+    let size = (high - low) * 0.5;
+    if front(low, high) == Vec2::X { Vec2::new(size.x, size.z) } else { Vec2::new(size.z, size.x) }
+}
+
+/// Where the car numbered `number` is, and which way it is turned, `seconds`
+/// since 1970: its footprint's middle on the middle of its lane, its front
+/// the way the lane goes, and its wheels on the road. With how far it has
+/// come.
+pub(crate) fn place_at(route: &Route, hull: &Hull, number: u8, seconds: f64) -> (Place, f64) {
+    let (on_road, way, distance) = route.at(seconds - route.behind(number));
     let turn = Quat::from_rotation_y(heading(way) - heading(hull.front));
     let middle = turn * Vec3::new(hull.middle.x, 0.0, hull.middle.y);
     let at = on_road - middle - Vec3::Y * hull.lowest;
@@ -411,19 +434,21 @@ fn heading(way: Vec2) -> f32 {
     (-way.x).atan2(-way.y)
 }
 
-/// Puts the car where the clock says it is, keeping where it was the frame
-/// before for whoever is riding it. Only what has changed is written.
+/// Puts each car where the clock says it is, keeping where it was the frame
+/// before for whoever is riding it, and on the town, the first time. Only
+/// what has changed is written.
 fn drive(
     clock: Res<CarClock>,
     route: Option<Res<Route>>,
-    mut cars: Query<(&Hull, &mut Transform, &mut Driven), With<Car>>,
+    mut cars: Query<(Entity, &Car, &Hull, &mut Transform, &mut Driven, Has<Venue>)>,
+    mut commands: Commands,
 ) {
     let Some(route) = route else {
         return;
     };
     let seconds = clock.now();
-    for (hull, mut transform, mut driven) in &mut cars {
-        let (place, distance) = place_at(&route, hull, seconds);
+    for (entity, car, hull, mut transform, mut driven, on_the_town) in &mut cars {
+        let (place, distance) = place_at(&route, hull, car.number, seconds);
         let then = if driven.placed { driven.now } else { place };
         *driven = Driven {
             now: place,
@@ -433,6 +458,9 @@ fn drive(
             placed: true,
         };
         transform.set_if_neq(Transform::from_translation(place.at).with_rotation(place.turn));
+        if !on_the_town {
+            commands.entity(entity).insert(Venue::Town);
+        }
     }
 }
 
@@ -664,27 +692,33 @@ pub(crate) struct Cars<'w, 's> {
 }
 
 impl Cars<'_, '_> {
-    /// The car numbered `number`, and where it is now.
+    /// The car numbered `number`, and where it is now, once it is on the
+    /// road.
     pub(crate) fn numbered(&self, number: u8) -> Option<(Entity, Place)> {
         self.cars
             .iter()
-            .find(|(_, car, ..)| car.number == number)
+            .find(|(_, car, _, driven)| car.number == number && driven.placed)
             .map(|(entity, .., driven)| (entity, driven.now))
     }
 
-    /// The number of the car `entity`, and where it is now.
+    /// The number of the car `entity`, and where it is now, once it is on
+    /// the road.
     pub(crate) fn of(&self, entity: Entity) -> Option<(u8, Place)> {
         self.cars
             .get(entity)
             .ok()
+            .filter(|(.., driven)| driven.placed)
             .map(|(_, car, _, driven)| (car.number, driven.now))
     }
 
     /// Where the car numbered `number` was `ago` seconds before now.
     pub(crate) fn before(&self, number: u8, ago: f64) -> Option<Place> {
         let route = self.route.as_ref()?;
-        let (_, _, hull, driven) = self.cars.iter().find(|(_, car, ..)| car.number == number)?;
-        Some(place_at(route, hull, self.clock.before(driven.seconds, ago)).0)
+        let (_, _, hull, driven) = self
+            .cars
+            .iter()
+            .find(|(_, car, _, driven)| car.number == number && driven.placed)?;
+        Some(place_at(route, hull, number, self.clock.before(driven.seconds, ago)).0)
     }
 }
 
@@ -692,9 +726,10 @@ impl Cars<'_, '_> {
 pub(crate) mod tests {
     use super::*;
 
-    /// Hajun's car, as `car.glb` has it, in its own space.
-    pub(crate) fn hajuns_car() -> (Vec<Vec<[Vec3; 3]>>, Vec3, Vec3) {
-        let pieces = crate::island::glb::objects(&crate::island::glb::read(MODEL));
+    /// One of Hajun's cars, as its file `model` has it, in its own space:
+    /// each object's triangles, and the box round them all.
+    pub(crate) fn hajuns_car(model: &str) -> (Vec<Vec<[Vec3; 3]>>, Vec3, Vec3) {
+        let pieces = crate::island::glb::objects(&crate::island::glb::read(model));
         let (low, high) = pieces
             .iter()
             .flatten()
@@ -705,47 +740,82 @@ pub(crate) mod tests {
         (pieces, low, high)
     }
 
-    #[test]
-    fn a_car_faces_along_its_longer_side() {
-        // Modelled along Blender's x, as Hajun's is, its hood at -x: +x here.
-        assert_eq!(front(Vec3::new(-3.0, -0.3, -1.75), Vec3::new(3.0, 1.0, 1.75)), Vec2::X);
-        // Turned to face Blender's -Y, as every other model faces: -z here.
-        assert_eq!(front(Vec3::new(-1.75, -0.3, -3.0), Vec3::new(1.75, 1.0, 3.0)), Vec2::NEG_Y);
-        // And Hajun's is one or the other, whatever has been done to it.
-        let (_, low, high) = hajuns_car();
-        let size = high - low;
-        let way = front(low, high);
-        assert!(if way == Vec2::X { size.x >= size.z } else { size.z > size.x });
+    /// Half the length and half the width of each of the cars, in the order
+    /// of [`CARS`].
+    pub(crate) fn sizes() -> Vec<Vec2> {
+        CARS.iter()
+            .map(|model| {
+                let (_, low, high) = hajuns_car(model);
+                half(low, high)
+            })
+            .collect()
     }
 
-    #[test]
-    fn the_car_stands_on_the_road_facing_the_way_it_goes() {
-        let (land, road, markings) = crate::roads::tests::round_town();
-        let route = Route::read(&Paint { land: &land, road: &road, markings: &markings }).unwrap();
-        let (pieces, low, high) = hajuns_car();
+    /// The car `model`'s shape, as the game reads it.
+    fn hull_of(model: &str) -> Hull {
+        let (pieces, low, high) = hajuns_car(model);
         let parts: Vec<&[[Vec3; 3]]> = pieces.iter().map(Vec::as_slice).collect();
-        let hull = Hull {
+        Hull {
             shape: Island::of_parts_for_tests(&parts),
             front: front(low, high),
             middle: ((low + high) * 0.5).xz(),
             lowest: low.y,
             reach: 3.6,
-        };
-        for step in 0..40 {
-            let seconds = 1.76e9 + step as f64 * 4.9;
-            let (place, _) = place_at(&route, &hull, seconds);
-            let (soon, _) = place_at(&route, &hull, seconds + 0.05);
-            // Its wheels on the road, -0.2 m, and its front the way it goes.
-            assert!((place.outward(Vec3::Y * low.y).y + 0.2).abs() < 0.02, "{place:?}");
-            let ahead = place.turn * Vec3::new(hull.front.x, 0.0, hull.front.y);
-            let went = (soon.at - place.at).normalize_or_zero();
-            if went != Vec3::ZERO {
-                assert!(ahead.dot(went) > 0.9, "facing {ahead}, going {went}");
-            }
-            // Never faster than its top speed.
-            let speed = soon.at.distance(place.at) / 0.05;
-            assert!(speed < roundtown_net::cars::TOP_SPEED * 1.05, "{speed} m/s");
+            half: half(low, high),
         }
+    }
+
+    #[test]
+    fn a_car_faces_along_its_longer_side() {
+        // Modelled along Blender's x, as Hajun's first is, its hood at -x: +x
+        // here.
+        let (low, high) = (Vec3::new(-3.0, -0.3, -1.75), Vec3::new(3.0, 1.0, 1.75));
+        assert_eq!(front(low, high), Vec2::X);
+        assert_eq!(half(low, high), Vec2::new(3.0, 1.75));
+        // Turned to face Blender's -Y, as every other model faces: -z here.
+        let (low, high) = (Vec3::new(-1.75, -0.3, -3.0), Vec3::new(1.75, 1.0, 3.0));
+        assert_eq!(front(low, high), Vec2::NEG_Y);
+        assert_eq!(half(low, high), Vec2::new(3.0, 1.75));
+        // And each of Hajun's is one or the other, whatever has been done to
+        // it.
+        for model in CARS {
+            let (_, low, high) = hajuns_car(model);
+            let size = high - low;
+            let way = front(low, high);
+            assert!(if way == Vec2::X { size.x >= size.z } else { size.z > size.x }, "{model}");
+        }
+    }
+
+    #[test]
+    fn the_cars_stand_on_the_road_facing_the_way_they_go() {
+        let (land, road, markings) = crate::roads::tests::round_town();
+        let hulls: Vec<Hull> = CARS.iter().map(|model| hull_of(model)).collect();
+        let car = hulls.iter().fold(Vec2::ZERO, |most, hull| most.max(hull.half));
+        let route = Route::read(&Paint { land: &land, road: &road, markings: &markings }, car, CARS.len()).unwrap();
+        for (number, hull) in (0..).zip(&hulls) {
+            for step in 0..40 {
+                let seconds = 1.76e9 + step as f64 * 4.9;
+                let (place, _) = place_at(&route, hull, number, seconds);
+                let (soon, _) = place_at(&route, hull, number, seconds + 0.05);
+                // Its wheels on the road, -0.2 m, and its front the way it goes.
+                assert!((place.outward(Vec3::Y * hull.lowest).y + 0.2).abs() < 0.02, "{place:?}");
+                let ahead = place.turn * Vec3::new(hull.front.x, 0.0, hull.front.y);
+                let went = (soon.at - place.at).normalize_or_zero();
+                if went != Vec3::ZERO {
+                    assert!(ahead.dot(went) > 0.9, "car {number} facing {ahead}, going {went}");
+                }
+                // Never faster than its top speed.
+                let speed = soon.at.distance(place.at) / 0.05;
+                assert!(speed < roundtown_net::cars::TOP_SPEED * 1.05, "{speed} m/s");
+            }
+        }
+        // The second car where the first was, as far behind it as it goes.
+        let behind = route.behind(1);
+        assert!(behind > 0.0 && behind < route.lap());
+        let (first, _) = place_at(&route, &hulls[0], 0, 1.76e9);
+        let (second, _) = place_at(&route, &hulls[1], 1, 1.76e9 + behind);
+        let middle = |place: &Place, hull: &Hull| place.outward(Vec3::new(hull.middle.x, 0.0, hull.middle.y)).xz();
+        assert!(middle(&first, &hulls[0]).distance(middle(&second, &hulls[1])) < 1e-3);
     }
 
     #[test]
@@ -762,33 +832,35 @@ pub(crate) mod tests {
 
     #[test]
     fn the_wheels_are_four_pieces_round_their_own_middles() {
-        let parts = crate::island::glb::read(MODEL);
-        let wheel: Vec<&crate::island::glb::Part> =
-            parts.iter().filter(|part| is_wheel(&part.node)).collect();
-        assert!(!wheel.is_empty());
-        // Each of its meshes broken into its pieces, and the pieces about the
-        // same middle taken together: four wheels, at the car's corners.
-        let mut boxes: Vec<(Vec3, Vec3)> = Vec::new();
-        for part in &wheel {
-            let points: Vec<Vec3> = part.triangles.iter().flatten().copied().collect();
-            let order: Vec<u32> = (0..points.len() as u32).collect();
-            for piece in loose_pieces(&points, &order) {
-                boxes.push(
-                    piece
-                        .iter()
-                        .map(|&at| points[at as usize])
-                        .fold((Vec3::INFINITY, Vec3::NEG_INFINITY), |(l, h), p| (l.min(p), h.max(p))),
-                );
+        for model in CARS {
+            let parts = crate::island::glb::read(model);
+            let wheel: Vec<&crate::island::glb::Part> = parts.iter().filter(|part| is_wheel(&part.node)).collect();
+            assert!(!wheel.is_empty(), "{model}");
+            // Each of its meshes broken into its pieces, and the pieces about
+            // the same middle taken together: four wheels, at the car's
+            // corners.
+            let mut boxes: Vec<(Vec3, Vec3)> = Vec::new();
+            for part in &wheel {
+                let points: Vec<Vec3> = part.triangles.iter().flatten().copied().collect();
+                let order: Vec<u32> = (0..points.len() as u32).collect();
+                for piece in loose_pieces(&points, &order) {
+                    boxes.push(
+                        piece
+                            .iter()
+                            .map(|&at| points[at as usize])
+                            .fold((Vec3::INFINITY, Vec3::NEG_INFINITY), |(l, h), p| (l.min(p), h.max(p))),
+                    );
+                }
             }
-        }
-        let wheels = gather(&boxes);
-        assert_eq!(wheels.len(), 4, "{wheels:?}");
-        for (low, high, _) in wheels {
-            // Round, side on, and out toward a corner of the car.
-            let (tall, long) = (high.y - low.y, (high.x - low.x).max(high.z - low.z));
-            assert!((tall - long).abs() < tall * 0.2, "{tall} tall, {long} long");
-            let middle = (low + high) * 0.5;
-            assert!(middle.x.abs() > 0.5 && middle.z.abs() > 0.5, "{middle}");
+            let wheels = gather(&boxes);
+            assert_eq!(wheels.len(), 4, "{model}: {wheels:?}");
+            for (low, high, _) in wheels {
+                // Round, side on, and out toward a corner of the car.
+                let (tall, long) = (high.y - low.y, (high.x - low.x).max(high.z - low.z));
+                assert!((tall - long).abs() < tall * 0.2, "{model}: {tall} tall, {long} long");
+                let middle = (low + high) * 0.5;
+                assert!(middle.x.abs() > 0.5 && middle.z.abs() > 0.5, "{model}: {middle}");
+            }
         }
         // Called a wheel, however else it is called, but a steering wheel.
         assert!(is_wheel("wheels") && is_wheel("Roadster wheel front left") && is_wheel("Wheel.003"));

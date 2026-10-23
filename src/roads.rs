@@ -5,28 +5,32 @@
 //! dashed line down its middle in [`MARKING`]. Nothing here knows where any
 //! road is. Once the town has spawned, its dashes are read out of it
 //! ([`dashes`]), and every dash in line with the next makes a road's middle,
-//! round on itself or open at both ends ([`middles`]); how far the road
-//! reaches either side of it, measured off the model, is how wide it is
+//! round on itself or open at both ends, drawn through them once they have
+//! been evened out ([`middles`], [`even_out`]); how far the road reaches
+//! either side of it, measured off the model, is how wide it is
 //! ([`widths`]). A middle that runs out with its last dash goes on to the
 //! middle of the road it meets, if it meets one within [`REACH`], and there
 //! the two join. Where roads join, or cross, each is cut, and what is left
 //! between two joins is one stretch of road ([`network`]). Reshape the roads
 //! in Blender, paint their middles, and the car drives the new ones.
 //!
-//! The car keeps to the right, as Korea drives, so every stretch has two
+//! The cars keep to the right, as Korea drives, so every stretch has two
 //! lanes, one each way, each halfway out from the middle to the edge on its
-//! side ([`lanes`]). It drives every lane of every stretch, both ways down
+//! side ([`lanes`]). They drive every lane of every stretch, both ways down
 //! every road, in one loop through the town ([`plan`]), turning from lane to
-//! lane where roads join and never back the way it came, but where a road
-//! ends. A loop that drives each lane exactly once is not always to be had:
-//! with only T-junctions, as Round Town has, it never is, as every way of
-//! taking the turns leaves the lanes in an even number of loops. Then one
-//! stretch is driven twice, each way, the shortest that makes it one loop.
+//! lane where roads join, all of each car on the road ([`turning`]), and
+//! never back the way they came, but where a road ends. A loop that drives
+//! each lane exactly once is not always to be had: with only T-junctions, as
+//! Round Town has, it never is, as every way of taking the turns leaves the
+//! lanes in an even number of loops. Then one stretch is driven twice, each
+//! way, the shortest that makes it one loop.
 //!
-//! How fast the car goes along the loop is worked out from how sharply it
+//! How fast a car goes along the loop is worked out from how sharply it
 //! turns ([`Route::drive`]), and how long the loop takes is a whole number of
-//! seconds, so that every device, whatever its arithmetic, puts the car in the
-//! same place at the same time (`car`).
+//! seconds, so that every device, whatever its arithmetic, puts each car in
+//! the same place at the same time (`car`). The cars go round it one behind
+//! the other, each an even share of it behind the one before, near enough
+//! never to meet where it crosses itself ([`Route::spread`]).
 
 use bevy::prelude::*;
 
@@ -51,6 +55,13 @@ const GAP: f32 = 3.0;
 const IN_LINE: f32 = 0.866;
 /// The fewest dashes that make a road.
 const FEWEST_DASHES: usize = 3;
+/// How far each dash's middle is moved toward the middle of the two either
+/// side of it, and then back away from theirs, in evening a road's middle
+/// out ([`even_out`]): halfway in takes out all that goes from one side to
+/// the other and back from dash to dash, and a little more than that back
+/// out puts back what it took off a bend (Taubin's smoothing).
+const SHRINK: f32 = 0.5;
+const SWELL: f32 = -0.53;
 /// How many points a road's middle is drawn through between two dashes.
 const BETWEEN_DASHES: usize = 8;
 /// How far past its last dash a road's middle is followed to the middle of
@@ -75,6 +86,23 @@ const OVER_THE_ROAD: f32 = 1.0;
 const ROOM_TO_TURN: f32 = 3.0;
 /// The most of a lane that is cut off its two ends together to turn from.
 const MOST_CUT: f32 = 0.7;
+/// How much nearer a join than the room left at it a lane is followed before
+/// it is turned from, a step at a time, in metres, where turning from the room
+/// left would take the car off the road; and the nearest a turn leaves a
+/// lane or joins one to the join.
+const NEARER: f32 = 0.5;
+const NEAREST: f32 = 1.0;
+/// How far inside the road's edge the car keeps all of itself, turning, in
+/// metres.
+const KERB: f32 = 0.25;
+/// How far apart the points round the car are that are felt for the road
+/// under them, in metres.
+const FEEL: f32 = 0.25;
+/// How near the cars come to each other at the least, in metres, where the
+/// loop crosses itself, and how often, in seconds, how near they come is
+/// looked at round it.
+const APART: f32 = 1.0;
+const LOOK_EVERY: f64 = 0.2;
 /// How far apart the points along the car's loop are, in metres.
 const SPACING: f32 = 0.5;
 /// How hard the car can turn, as the push it can take sideways, in metres a
@@ -282,6 +310,7 @@ fn middles(dashes: &[Dash]) -> Vec<Middle> {
         .filter(|(chain, _)| chain.len() >= FEWEST_DASHES)
         .map(|(chain, closed)| {
             let at: Vec<Vec2> = chain.iter().map(|&dash| dashes[dash].at).collect();
+            let at = even_out(&at, closed);
             let mut tops: Vec<f32> = chain.iter().map(|&dash| dashes[dash].top).collect();
             tops.sort_by(f32::total_cmp);
             Middle {
@@ -292,6 +321,32 @@ fn middles(dashes: &[Dash]) -> Vec<Middle> {
             }
         })
         .collect()
+}
+
+/// The middles of a road's dashes, `points`, evened out. Hajun's do not all
+/// lie on one smooth line: round the rings, every other dash is a few
+/// centimetres in from the rest, 3.6 cm round the inner road and 11 round the
+/// outer, and a line through every one of them wove in and out by as much,
+/// the car on it turning out and in, out and in, all the way round. Each is
+/// moved halfway to the middle of the two either side of it, then back away
+/// from theirs by a little more ([`SHRINK`], [`SWELL`]): what went from side
+/// to side between dashes is gone, a circle stays the circle it was, to a
+/// centimetre, and a straight line stays straight. The ends of an open road
+/// stay where they are.
+fn even_out(points: &[Vec2], closed: bool) -> Vec<Vec2> {
+    let n = points.len();
+    let pass = |points: &[Vec2], by: f32| -> Vec<Vec2> {
+        (0..n)
+            .map(|at| {
+                if n < 3 || !closed && (at == 0 || at == n - 1) {
+                    return points[at];
+                }
+                let (before, after) = (points[(at + n - 1) % n], points[(at + 1) % n]);
+                points[at] + ((before + after) * 0.5 - points[at]) * by
+            })
+            .collect()
+    };
+    pass(&pass(points, SHRINK), SWELL)
 }
 
 /// A smooth line through `points`, round from the last back to the first if
@@ -353,6 +408,19 @@ fn point_at(points: &[Vec2], so_far: &[f32], s: f32) -> Vec2 {
     let span = so_far[after] - so_far[after - 1];
     let share = if span > 0.0 { ((s - so_far[after - 1]) / span).clamp(0.0, 1.0) } else { 0.0 };
     a.lerp(b, share)
+}
+
+/// The point `s` along `points`, whose distances along are `so_far`, and
+/// which way they go there: from [`SPACING`] before it to as far after, so
+/// that on a bend it is the way the bend goes at the point. The way of the
+/// side of `points` it was on was the way the bend went half a side back, and
+/// a turn that set off that way from a lane round a ring, or joined one so,
+/// swung the car's front out at the start of it and back in.
+fn heading_at(points: &[Vec2], so_far: &[f32], s: f32) -> (Vec2, Vec2) {
+    let whole = *so_far.last().unwrap();
+    let (back, on) = ((s - SPACING).max(0.0), (s + SPACING).min(whole));
+    let way = (point_at(points, so_far, on) - point_at(points, so_far, back)).normalize_or_zero();
+    (point_at(points, so_far, s), way)
 }
 
 /// The stretch of `points` from `from` to `to` along it: round past its start,
@@ -652,8 +720,8 @@ fn network(paint: &Paint) -> Network {
     Network { joins, stretches }
 }
 
-/// One lane: one way down one stretch, kept to the right of its middle, with
-/// its ends cut back from the joins to leave room to turn.
+/// One lane: one way down one stretch, kept to the right of its middle, from
+/// the join it starts at to the one it ends at.
 #[derive(Clone, Debug)]
 struct Lane {
     points: Vec<Vec2>,
@@ -665,12 +733,24 @@ struct Lane {
     ahead: bool,
     /// How high the road's paint is.
     top: f32,
+    /// How far short of each end it is left, to turn from: the half of the
+    /// widest road at the join, which a turn crosses, and some room. A turn
+    /// from there that would take the car off the road is turned from nearer
+    /// the join ([`turning`]).
+    room: (f32, f32),
+}
+
+impl Lane {
+    /// How long it is, from join to join.
+    fn length(&self) -> f32 {
+        *along(&self.points, false).last().unwrap()
+    }
 }
 
 /// Both lanes of every stretch of `network`.
 fn lanes(network: &Network) -> Vec<Lane> {
-    // How far back from each join a lane stops: the half of the widest road
-    // there, which a turn crosses, and some room.
+    // How far back from each join a lane is left to turn from: the half of
+    // the widest road there, which a turn crosses, and some room.
     let mut room = vec![0.0f32; network.joins.len()];
     for stretch in &network.stretches {
         for join in [stretch.from, stretch.to] {
@@ -705,12 +785,13 @@ fn lanes(network: &Network) -> Vec<Lane> {
                 end *= scale;
             }
             lanes.push(Lane {
-                points: stretch(&lane, false, start, whole - end),
+                points: lane,
                 from,
                 to,
                 stretch: index,
                 ahead,
                 top: road.top,
+                room: (start, end),
             });
         }
     }
@@ -825,7 +906,7 @@ fn plan(lanes: &[Lane], joins: usize) -> Option<Vec<usize>> {
         lanes
             .iter()
             .filter(|lane| lane.stretch == stretch)
-            .map(|lane| *along(&lane.points, false).last().unwrap())
+            .map(|lane| lane.length() - lane.room.0 - lane.room.1)
             .sum::<f32>()
             .round() as i64
     };
@@ -862,6 +943,122 @@ fn turn(from: Vec2, from_way: Vec2, to: Vec2, to_way: Vec2) -> Vec<Vec2> {
         .collect()
 }
 
+/// A turn from one lane into the next: how far short of the end of the one
+/// it leaves it, how far along the other it joins it, and its points between.
+#[derive(Clone, Debug)]
+struct Turn {
+    leave: f32,
+    join: f32,
+    points: Vec<Vec2>,
+}
+
+/// The turn from the end of `this` lane into the start of `next`, at the
+/// join between, for a car `car` long and wide, as half its length and half
+/// its width, its middle on the line. From the room left at the end of the
+/// one and the start of the other ([`Lane::room`]), unless that would take
+/// any of the car off the road. Then from nearer the join, either or both, a
+/// step of [`NEARER`] at a time: the first turn tried that keeps all of the
+/// car [`KERB`] inside the road's edge, the furthest from the join first.
+/// From the room left, turning right, as the car keeps to the right, the
+/// side of it nearer the corner went over the kerb; following the lanes
+/// further in, it turns more sharply, nearer the join, and clear of it.
+fn turning(this: &Lane, next: &Lane, paint: &Paint, car: Vec2) -> Turn {
+    let (this_far, next_far) = (along(&this.points, false), along(&next.points, false));
+    let this_whole = *this_far.last().unwrap();
+    let top = this.top.max(next.top);
+    let on_road = |at: Vec2| paint.on_road(at, top);
+    let outline = outline(car + KERB);
+    let steps = |room: f32| ((room - NEAREST) / NEARER).floor().max(0.0) as usize;
+    let mut tries: Vec<(usize, usize)> = (0..=steps(this.room.1))
+        .flat_map(|leave| (0..=steps(next.room.0)).map(move |join| (leave, join)))
+        .collect();
+    tries.sort_by_key(|&(leave, join)| (leave + join, leave.abs_diff(join), leave));
+    let shaped = |&(leave, join): &(usize, usize)| {
+        let (leave, join) = (this.room.1 - leave as f32 * NEARER, next.room.0 - join as f32 * NEARER);
+        let (from, from_way) = heading_at(&this.points, &this_far, this_whole - leave);
+        let (to, to_way) = heading_at(&next.points, &next_far, join);
+        let points = turn(from, from_way, to, to_way);
+        // All the car goes over that it did not, turning from the room left:
+        // the lanes further in, and the turn.
+        let mut path = stretch(&this.points, false, this_whole - this.room.1, this_whole - leave);
+        path.extend_from_slice(&points);
+        path.extend(stretch(&next.points, false, join, next.room.0));
+        (Turn { leave, join, points }, path)
+    };
+    if let Some((turn, _)) = tries
+        .iter()
+        .map(shaped)
+        .find(|(_, path)| off_the_road(path, &outline, on_road, 1) == 0)
+    {
+        return turn;
+    }
+    // None clear of the edge: the one that goes over it least.
+    let (turn, path) = tries
+        .iter()
+        .map(shaped)
+        .min_by_key(|(_, path)| off_the_road(path, &outline, on_road, usize::MAX))
+        .unwrap();
+    warn!(
+        "the car's turn at {} goes off the road, by {} of the points round it",
+        path[path.len() / 2],
+        off_the_road(&path, &outline, on_road, usize::MAX)
+    );
+    turn
+}
+
+/// Points all the way round a box `half` long and wide each way, along it and
+/// across, no more than [`FEEL`] apart: its corners, and between them along
+/// its sides.
+fn outline(half: Vec2) -> Vec<Vec2> {
+    let corners = [
+        Vec2::new(half.x, half.y),
+        Vec2::new(-half.x, half.y),
+        Vec2::new(-half.x, -half.y),
+        Vec2::new(half.x, -half.y),
+    ];
+    let mut points = Vec::new();
+    for side in 0..4 {
+        let (a, b) = (corners[side], corners[(side + 1) % 4]);
+        let steps = (a.distance(b) / FEEL).ceil().max(1.0) as usize;
+        points.extend((0..steps).map(|step| a.lerp(b, step as f32 / steps as f32)));
+    }
+    points
+}
+
+/// How many of the points `outline` round the car, along it and across it,
+/// are off the road, as its middle goes along `path`, facing the way it goes:
+/// counted as far as `enough`, and no further.
+fn off_the_road(path: &[Vec2], outline: &[Vec2], on_road: impl Fn(Vec2) -> bool, enough: usize) -> usize {
+    let mut off = 0;
+    let mut way = Vec2::ZERO;
+    for (at, &point) in path.iter().enumerate() {
+        let (before, after) = (path[at.saturating_sub(1)], path[(at + 1).min(path.len() - 1)]);
+        way = (after - before).try_normalize().unwrap_or(way);
+        if way == Vec2::ZERO {
+            continue;
+        }
+        for corner in outline {
+            if !on_road(point + way * corner.x + way.perp() * corner.y) {
+                off += 1;
+                if off >= enough {
+                    return off;
+                }
+            }
+        }
+    }
+    off
+}
+
+/// Whether two boxes `half` long and wide each way, along them and across,
+/// one round `a` facing `a_way` and the other round `b` facing `b_way`,
+/// overlap: neither has a side the other is wholly beyond.
+fn boxes_meet(a: Vec2, a_way: Vec2, b: Vec2, b_way: Vec2, half: Vec2) -> bool {
+    let reach = |way: Vec2, axis: Vec2| half.x * way.dot(axis).abs() + half.y * way.perp().dot(axis).abs();
+    [a_way, a_way.perp(), b_way, b_way.perp()]
+        .into_iter()
+        .all(|axis| (b - a).dot(axis).abs() <= reach(a_way, axis) + reach(b_way, axis))
+}
+
 /// The way the car drives round the town: one loop through every lane, its
 /// points [`SPACING`] apart, and when it passes each.
 #[derive(Resource, Clone, Debug)]
@@ -878,30 +1075,38 @@ pub(crate) struct Route {
     distances: Vec<f64>,
     /// The lanes driven, in order, as their stretch and which way along it.
     driven: Vec<(usize, bool)>,
+    /// How far behind the first car each car goes round, in seconds.
+    behind: Vec<f64>,
 }
 
 impl Route {
-    /// The car's way round the roads in `paint`, if they make one.
-    pub(crate) fn read(paint: &Paint) -> Option<Self> {
+    /// The way round the roads in `paint`, if they make one, for `cars` cars
+    /// as long and wide as `car` at the most, as half the length of the
+    /// longest and half the width of the widest.
+    pub(crate) fn read(paint: &Paint, car: Vec2, cars: usize) -> Option<Self> {
         let network = network(paint);
         let lanes = lanes(&network);
         let order = plan(&lanes, network.joins.len())?;
-        Some(Self::through(&lanes, &order, paint.road))
+        let mut route = Self::through(&lanes, &order, paint, car);
+        route.behind = route.spread(cars, car);
+        Some(route)
     }
 
     /// The loop through `lanes` in `order`, turning from each into the next,
-    /// on the road `road`.
-    fn through(lanes: &[Lane], order: &[usize], road: &Island) -> Self {
+    /// on the roads in `paint`, for a car `car` long and wide, as half each.
+    fn through(lanes: &[Lane], order: &[usize], paint: &Paint, car: Vec2) -> Self {
+        let count = order.len();
+        let turns: Vec<Turn> = (0..count)
+            .map(|index| turning(&lanes[order[index]], &lanes[order[(index + 1) % count]], paint, car))
+            .collect();
         let mut line: Vec<Vec2> = Vec::new();
         let mut tops: Vec<f32> = Vec::new();
         for (index, &lane) in order.iter().enumerate() {
-            let this = &lanes[lane].points;
-            let next = &lanes[order[(index + 1) % order.len()]].points;
-            line.extend_from_slice(this);
-            let end_way = (this[this.len() - 1] - this[this.len() - 2]).normalize_or_zero();
-            let start_way = (next[1] - next[0]).normalize_or_zero();
-            line.extend(turn(this[this.len() - 1], end_way, next[0], start_way));
-            tops.resize(line.len(), lanes[lane].top);
+            let lane = &lanes[lane];
+            let start = turns[(index + count - 1) % count].join;
+            line.extend(stretch(&lane.points, false, start, lane.length() - turns[index].leave));
+            line.extend_from_slice(&turns[index].points);
+            tops.resize(line.len(), lane.top);
         }
         // Evenly spaced round it, each on the road under it.
         let so_far = along(&line, true);
@@ -914,7 +1119,7 @@ impl Route {
             let near = so_far.partition_point(|&d| d <= s).saturating_sub(1).min(tops.len() - 1);
             let top = tops[near];
             let last = points.last().map_or(top, |point| point.y);
-            let ground = road.floor(at, top + OVER_THE_ROAD).unwrap_or(last);
+            let ground = paint.road.floor(at, top + OVER_THE_ROAD).unwrap_or(last);
             points.push(Vec3::new(at.x, ground, at.y));
         }
         let ways: Vec<Vec2> = (0..count)
@@ -929,9 +1134,51 @@ impl Route {
             times: Vec::new(),
             distances: Vec::new(),
             driven: order.iter().map(|&lane| (lanes[lane].stretch, lanes[lane].ahead)).collect(),
+            behind: vec![0.0],
         };
         route.drive();
         route
+    }
+
+    /// How far behind the first car each of `cars` cars goes round, in whole
+    /// seconds, for cars `car` long and wide, as half each: an even share of
+    /// the loop behind the one before, or, where that would have two of them
+    /// meet where the loop crosses itself, the nearest to it, a second at a
+    /// time, that keeps every two [`APART`] all the way round.
+    fn spread(&self, cars: usize, car: Vec2) -> Vec<f64> {
+        let lap = self.lap();
+        let mut behind: Vec<f64> = Vec::with_capacity(cars);
+        for number in 0..cars {
+            let even = (lap * number as f64 / cars as f64).round();
+            let most = (lap / cars as f64 * 0.5).floor() as i64;
+            let clear = std::iter::once(0)
+                .chain((1..=most).flat_map(|off| [off, -off]))
+                .map(|off| even + off as f64)
+                .find(|&mine| behind.iter().all(|&other| !self.meet(mine, other, car)));
+            behind.push(clear.unwrap_or_else(|| {
+                warn!("car {number} meets another wherever on the loop it goes");
+                even
+            }));
+        }
+        behind
+    }
+
+    /// Whether two cars `car` long and wide, as half each, one `a` seconds
+    /// behind the first and the other `b`, ever come within [`APART`] of each
+    /// other going round.
+    fn meet(&self, a: f64, b: f64, car: Vec2) -> bool {
+        let looks = (self.lap() / LOOK_EVERY).ceil() as usize;
+        (0..looks).any(|look| {
+            let seconds = look as f64 * LOOK_EVERY;
+            let ((one, one_way, _), (other, other_way, _)) = (self.at(seconds - a), self.at(seconds - b));
+            boxes_meet(one.xz(), one_way, other.xz(), other_way, car + APART * 0.5)
+        })
+    }
+
+    /// How far behind the first car the car numbered `car` goes round, in
+    /// seconds.
+    pub(crate) fn behind(&self, car: u8) -> f64 {
+        self.behind.get(usize::from(car)).copied().unwrap_or(0.0)
     }
 
     /// Works out when the car passes each point: as fast as it can take how
@@ -1046,6 +1293,9 @@ pub(crate) mod tests {
     use std::f32::consts::{FRAC_PI_2, TAU};
 
     use super::*;
+
+    /// Half the length and half the width of a car as big as Hajun's first.
+    pub(crate) const CAR: Vec2 = Vec2::new(3.1, 1.45);
 
     /// A flat ring of ground from `inner` to `outer` out from the middle,
     /// `top` high, with a bottom at `bottom`, in `sides` pieces round.
@@ -1247,7 +1497,7 @@ pub(crate) mod tests {
     fn the_car_drives_every_lane_of_every_road_both_ways() {
         let (land, road, markings) = read_town();
         let paint = Paint { land: &land, road: &road, markings: &markings };
-        let route = Route::read(&paint).expect("a way round");
+        let route = Route::read(&paint, CAR, 2).expect("a way round");
         for stretch in 0..12 {
             for ahead in [true, false] {
                 assert!(route.driven.contains(&(stretch, ahead)), "stretch {stretch}, {ahead}");
@@ -1307,7 +1557,7 @@ pub(crate) mod tests {
             assert!((stretch.left - 5.0).abs() < 0.2, "left {}", stretch.left);
             assert!((stretch.right - 5.0).abs() < 0.2, "right {}", stretch.right);
         }
-        let route = Route::read(&paint).expect("a way round the town");
+        let route = Route::read(&paint, CAR, 2).expect("a way round the town");
         for stretch in 0..12 {
             for ahead in [true, false] {
                 assert!(route.driven.contains(&(stretch, ahead)), "stretch {stretch}, {ahead}");
@@ -1360,6 +1610,7 @@ pub(crate) mod tests {
                     stretch,
                     ahead,
                     top: 0.0,
+                    room: (0.0, 0.0),
                 })
             })
             .collect();
@@ -1371,6 +1622,110 @@ pub(crate) mod tests {
             let (a, b) = (&lanes[lane], &lanes[order[(index + 1) % order.len()]]);
             assert_eq!(a.to, b.from);
             assert!(!(a.stretch == b.stretch && a.ahead != b.ahead), "turned back");
+        }
+    }
+
+    /// How far round from the way `points` go into each to the way they go out
+    /// of it, round the loop they make, anticlockwise from above taken as less
+    /// than none.
+    fn turns(points: &[Vec2]) -> Vec<f32> {
+        let n = points.len();
+        (0..n)
+            .map(|at| {
+                let (before, here, after) = (points[(at + n - 1) % n], points[at], points[(at + 1) % n]);
+                (here - before).normalize().perp_dot((after - here).normalize())
+            })
+            .collect()
+    }
+
+    #[test]
+    fn dashes_every_other_one_in_from_the_rest_make_a_round_road() {
+        // A ring of 96 dashes 57 m out, every other one 11 cm in, as Hajun's
+        // outer road's are: evened out, all of them are on one circle, to a
+        // centimetre, and the line through them turns one way all the way
+        // round, by as much at every point, near enough.
+        let dashes: Vec<Vec2> = (0..96)
+            .map(|k| Vec2::from_angle(k as f32 / 96.0 * TAU) * (57.0 - 0.11 * (k % 2) as f32))
+            .collect();
+        let even = even_out(&dashes, true);
+        let radius = even.iter().map(|at| at.length()).sum::<f32>() / 96.0;
+        assert!((radius - 56.945).abs() < 0.01, "{radius}");
+        for at in &even {
+            assert!((at.length() - radius).abs() < 0.001, "{at} off the circle {radius}");
+        }
+        let round = turns(&smooth(&even, true));
+        let mean = round.iter().sum::<f32>() / round.len() as f32;
+        for turn in &round {
+            assert!((turn - mean).abs() < mean.abs() * 0.1, "turned {turn}, not {mean}");
+        }
+        // Through the dashes as they are, it went back and forth.
+        assert!(turns(&smooth(&dashes, true)).iter().any(|turn| turn.signum() != mean.signum()));
+        // A straight road of them, every other one 2 cm to the side, is
+        // straight, and its ends stay where they were.
+        let dashes: Vec<Vec2> = (0..12).map(|k| Vec2::new(k as f32 * 3.0, 0.02 * (k % 2) as f32)).collect();
+        let even = even_out(&dashes, false);
+        assert_eq!((even[0], even[11]), (dashes[0], dashes[11]));
+        for at in &even[2..10] {
+            assert!((at.y - 0.01).abs() < 0.002, "{at}");
+        }
+    }
+
+    #[test]
+    fn round_each_of_round_town_s_rings_the_car_turns_one_way() {
+        // Round each lane of each ring the car turns the one way, never back:
+        // through every dash it wove in and out by a few centimetres, and its
+        // front swung out and in all the way round (Hajun, 2026-10-23: "it
+        // shouldnt rotate outward ever").
+        let (land, road, markings) = round_town();
+        let route = Route::read(&Paint { land: &land, road: &road, markings: &markings }, CAR, 2).unwrap();
+        let points: Vec<Vec2> = route.points.iter().map(|point| point.xz()).collect();
+        let round = turns(&points);
+        let lane_at = |at: Vec2| [15.5, 20.5, 54.5, 59.5].into_iter().position(|lane| (at.length() - lane).abs() < 0.1);
+        // Each run of points round one lane of a ring, but its ends.
+        let mut runs: Vec<Vec<usize>> = Vec::new();
+        for at in 0..points.len() {
+            match (lane_at(points[at]), runs.last_mut()) {
+                (Some(lane), Some(run)) if at > 0 && run.last() == Some(&(at - 1)) && lane_at(points[at - 1]) == Some(lane) => {
+                    run.push(at)
+                }
+                (Some(_), _) => runs.push(vec![at]),
+                _ => {}
+            }
+        }
+        let runs: Vec<&[usize]> = runs.iter().filter(|run| run.len() > 10).map(|run| &run[3..run.len() - 3]).collect();
+        assert!(runs.len() >= 8, "{} runs round the rings", runs.len());
+        for run in runs {
+            let way = round[run[0]].signum();
+            for &at in run {
+                assert!(round[at].signum() == way, "turned back at {}", points[at]);
+            }
+        }
+    }
+
+    #[test]
+    fn round_town_s_cars_keep_all_of_themselves_on_the_road_and_never_meet() {
+        // Turning, the side of the car nearer the corner went over the kerb,
+        // into the inner road and out of it (Hajun, 2026-10-23: "it kind of
+        // almost steps onto the rock").
+        let (land, road, markings) = round_town();
+        let paint = Paint { land: &land, road: &road, markings: &markings };
+        let sizes = crate::car::tests::sizes();
+        let car = sizes.iter().fold(Vec2::ZERO, |most, &size| most.max(size));
+        let route = Route::read(&paint, car, sizes.len()).unwrap();
+        let points: Vec<Vec2> = route.points.iter().map(|point| point.xz()).collect();
+        for &size in &sizes {
+            let off = off_the_road(&points, &outline(size), |at| paint.on_road(at, -0.19), usize::MAX);
+            assert_eq!(off, 0, "a car {size} each way goes off the road");
+        }
+        // And the two, half the loop or so apart, never meet where it crosses
+        // itself.
+        let behind = route.behind(1);
+        assert!((behind - route.lap() * 0.5).abs() < route.lap() * 0.25, "{behind} s behind");
+        let looks = (route.lap() / 0.1) as usize;
+        for look in 0..looks {
+            let seconds = look as f64 * 0.1;
+            let ((one, one_way, _), (other, other_way, _)) = (route.at(seconds), route.at(seconds - behind));
+            assert!(!boxes_meet(one.xz(), one_way, other.xz(), other_way, car), "they meet at {one}");
         }
     }
 }

@@ -185,11 +185,11 @@ Has to change:
 - **Your device sends** your position, in whole centimetres, and your
   facing, as a 16-bit angle: about ten bytes. It sends them 15 times a second
   while they change and nothing while you stand still. Unreliable: a lost
-  update is replaced by the next. Riding the town's car (since 2026-10-23,
-  `PROTOCOL_VERSION` 2), they are a place on the car, in its own space, and
-  the car's number: the car goes by the clock on every device, and everyone
-  draws a rider on the car where they see it (`net::drawn`). Standing still
-  on the moving car sends nothing.
+  update is replaced by the next. Riding one of the town's cars (since
+  2026-10-23, `PROTOCOL_VERSION` 2), they are a place on the car, in its own
+  space, and the car's number: the cars go by the clock on every device, and
+  everyone draws a rider on the car where they see it (`net::drawn`).
+  Standing still on a moving car sends nothing.
 - **The server sends** each player one packet per update, holding everyone
   in their room who has moved since. replicon only replicates components
   that changed, the same idea as `set_if_neq` everywhere else in this game.
