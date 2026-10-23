@@ -2253,12 +2253,14 @@ mod body_tests {
     const ROAD: (Vec3, Vec3) = (Vec3::new(-80.0, -2.0, -80.0), Vec3::new(80.0, -0.2, 80.0));
 
     #[test]
-    fn a_body_dropped_into_the_car_s_seats_stays_in_them() {
-        // Hajun's car, as its model is now, standing on the road: dropped in
-        // over its seats, a body comes to rest on them, in it, and is not
-        // shoved out through its sides. Each object of the model is one
-        // shape, all its materials together: its body alone, without the
-        // seats sunk into it, would be a box with no top over them.
+    fn a_body_dropped_onto_the_car_anywhere_stays_on_it() {
+        // Hajun's car, as its model is now, standing on the road: dropped
+        // onto it anywhere a body is wholly over it, half a metre apart, into
+        // its seats or onto its hood or its back, the body comes to rest on
+        // it, and is never shoved off through its sides. Each object of the
+        // model is one shape, all its materials together: the first car's
+        // body alone, without the seats sunk into it, was a box with no top
+        // over them, which a body in them was shoved out of.
         let (pieces, low, high) = car::tests::hajuns_car();
         let slices: Vec<&[[Vec3; 3]]> = pieces.iter().map(Vec::as_slice).collect();
         let shape = Island::of_parts_for_tests(&slices);
@@ -2267,13 +2269,23 @@ mod body_tests {
             at: Vec3::new(0.0, -0.2 - low.y, 0.0),
             turn: Quat::IDENTITY,
         };
-        for x in [-1.5, -0.75] {
-            let path = ride(&road, &shape, |_| standing, Vec3::new(x, 2.0, 0.0), Vec3::ZERO, None, 120);
-            let (end, footing) = *path.last().unwrap();
-            assert_eq!(footing, Some(Underfoot::Deck(0)), "dropped at {x}, ended at {end}");
-            assert!(end.y > -0.1 && end.y < standing.at.y + high.y, "{end}");
-            assert!(end.x > low.x && end.x < high.x && end.z > low.z && end.z < high.z, "{end} out of it");
+        let over = standing.at.y + high.y + 0.5;
+        let margin = PLAYER_RADIUS + 0.3;
+        let mut dropped = 0;
+        let mut x = low.x + margin;
+        while x <= high.x - margin {
+            let mut z = low.z + margin;
+            while z <= high.z - margin {
+                let path = ride(&road, &shape, |_| standing, Vec3::new(x, over, z), Vec3::ZERO, None, 180);
+                let (end, footing) = *path.last().unwrap();
+                assert_eq!(footing, Some(Underfoot::Deck(0)), "dropped at {x}, {z}, ended at {end}");
+                assert!(end.x > low.x && end.x < high.x && end.z > low.z && end.z < high.z, "{end} out of it");
+                dropped += 1;
+                z += 0.5;
+            }
+            x += 0.5;
         }
+        assert!(dropped >= 10, "only {dropped} drops");
     }
 
     #[test]

@@ -3494,14 +3494,15 @@ mod tests {
                 }
             }
         }
-        // Nor the town's car, which drives its roads.
-        for name in crate::car::MODEL.split('/') {
-            if let Some(pattern) = patterns.iter().find(|pattern| matches(pattern, name)) {
-                panic!(
-                    "{} drives round the town, but `{pattern}` in \
-                     mobile/android/app/assets-left-out.txt leaves it out of the APK",
-                    crate::car::MODEL
-                );
+        // Nor either of the town's cars, whichever drives its roads.
+        for car in crate::car::CARS {
+            for name in car.split('/') {
+                if let Some(pattern) = patterns.iter().find(|pattern| matches(pattern, name)) {
+                    panic!(
+                        "{car} can drive round the town, but `{pattern}` in \
+                         mobile/android/app/assets-left-out.txt leaves it out of the APK"
+                    );
+                }
             }
         }
     }

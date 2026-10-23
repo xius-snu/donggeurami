@@ -503,32 +503,41 @@ A car drives round the town's roads by itself, and anyone can jump on and
 ride it (Hajun, 2026-10-23: "the car that automatically goes around in the
 circlemap1 ... it goes on every part of the road ... both lane 1 and lane
 2"; "dont hardcode the moving logic", as the model is to get seats and
-windows). It is Hajun's `assets/mybuilds/car.glb` (`car::MODEL`), not sold
-in the shop (`src/car.rs`, `src/roads.rs`). Nothing about it is in the code
-but its speeds: its shape is its model's, and its way round is the town's
-roads.
+windows). Since the same day it is Hajun's Roadster,
+`assets/mybuilds/car2.glb` ("try using car2 instead of car but make it so
+i can switch back to car later"); their first car, `car.glb`, a red slab
+with its seats sunk into it, is kept to go back to. **`car::DRIVING` picks
+which of `car::CARS` drives**: 1 for the Roadster, 0 for the first car. Both
+go in the app (the APK test keeps either from being left out), and every
+device online has to drive the same one, as a rider is sent as a place on
+it. Neither is sold in the shop (`src/car.rs`, `src/roads.rs`). Nothing
+about the car is in the code but its speeds: its shape is its model's, and
+its way round is the town's roads.
 
 - **The car is the shape of its model**, every triangle of it, read once it
   has spawned (`car::Hull`) and moved about with it as an island of its own:
   bodies stand on it and bump into it as they do the island (`Deck`,
-  `Ground` in `src/lib.rs`). Its seats, sunk 0.75 m into it, are a floor with walls round
-  it; the windscreen, glass and frame, is solid. Seats, windows or a roof
+  `Ground` in `src/lib.rs`). Its seats are a floor with walls round them,
+  the Roadster's cushions 0.6 m over the road; its windscreen, glass and
+  frame, is solid. Seats, windows or a roof
   modelled in later are what they are modelled as, the roof over your head
   in a jump and over your eyes zoomed in. **Each object in Blender is one
   solid, all its materials together**: the glTF loader makes a mesh of each
-  material, and the body's red alone, without the dark grey of the seats,
-  is a box with no top over them, which `Island::blocked` took for the
+  material, and the first car's red alone, without the dark grey of its
+  seats, is a box with no top over them, which `Island::blocked` took for the
   inside of something and shoved everyone out of (found the day it was
   made). Keep each solid a closed shell, as anywhere.
-- **Its front is along its longer side**, toward Blender's -X, the hood as
-  Hajun modelled it, or toward -Y, Blender's front, should it be turned to
-  face the way every other model does (`car::front`). Its wheels' bottoms
+- **Its front is along its longer side**, toward Blender's -Y, Blender's
+  front, as the Roadster faces and every other model does (its front
+  wheels are named so), or toward -X, as the first car's hood is
+  (`car::front`). Its wheels' bottoms
   stand on the road, its footprint's middle on the middle of its lane.
-- **Its wheels turn**: every part of an object whose name begins `wheel` is
-  broken into its loose pieces, those about one middle taken as one wheel,
-  and each turned about its own middle as far as the car has gone over its
-  radius (`split_wheels`, `turn_wheels`). The four are one object in
-  Hajun's model (`wheels`); as four objects they would turn the same. The
+- **Its wheels turn**: every part of an object with `wheel` in its name,
+  but a steering wheel (`car::is_wheel`), is broken into its loose pieces,
+  those about one middle taken as one wheel, and each turned about its own
+  middle as far as the car has gone over its radius (`split_wheels`,
+  `turn_wheels`). The Roadster's are four objects, `Roadster wheel front
+  left` and so on, the first car's one, `wheels`: they turn alike. The
   wheels as modelled are hidden, and copies of them, one to each, turn.
 - **Its way round is read off the town** (`roads`): a road is where the top
   of the town is `road`, its middle the dashes painted down it in
@@ -570,8 +579,8 @@ roads.
   along with it, turning as it turns (`Riding`, `move_bodies`), until it
   comes down on anything else. So a jump on it comes down where it went up,
   and walking off its side, you come down on the road with nothing carrying
-  you on. The car's top and the rim of its seats are 1.3 m over the road,
-  which a jump (1.64 m) clears from beside it at a run. It shoves out of
+  you on. The Roadster's doors are 1.0 to 1.2 m over the road (the first
+  car's sides 1.3), which a jump (1.64 m) clears from beside it at a run. It shoves out of
   its way whoever it drives into, AIs too. AIs cannot jump, so never ride.
   **The camera does not turn with it**: nothing turns it but you (above);
   the car turns under you, as the island does.
@@ -593,12 +602,14 @@ roads.
   you got on than the car could have taken you (`Pace`, `MOST_RIDE`): it
   cannot tell where the car is. Checked with two copies on this PC and a
   server on it (2026-10-23): one put in the car, the other watching, for a
-  loop and a half. **This is `PROTOCOL_VERSION` 2**: the apps on phones
-  before it are told to update once the server is deployed with it.
+  loop and a half. **This is `PROTOCOL_VERSION` 2**, on the VM since
+  2026-10-23: the apps on phones from before it are told to update.
 - **Not yet tried**: on a phone, or by hand; jumping on was tried in tests
-  only (`body_tests` in `src/lib.rs`), and riding in scripted runs. The cost is not
-  measured: only bodies within the car's reach of it test its 4,000
-  triangles, 3,600 of them its wheels.
+  only (`body_tests` in `src/lib.rs`), and riding in scripted runs, in both
+  cars. Dropped anywhere over either, a body comes to rest on it
+  (`a_body_dropped_onto_the_car_anywhere_stays_on_it`). The cost is not
+  measured: only bodies within the car's reach of it test its triangles,
+  the Roadster's 1,800 (the first car's 4,200).
 
 ## The camera stands where you zoomed it
 

@@ -39,13 +39,29 @@ use bevy::world_serialization::WorldInstanceReady;
 use crate::island::{self, Island, Islands, Venue};
 use crate::roads::{self, Paint, Route};
 
-/// The car's model, under `assets/`.
-pub(crate) const MODEL: &str = "mybuilds/car.glb";
+/// Hajun's cars, under `assets/`: the first, with its seats sunk into it, and
+/// the Roadster, since 2026-10-23 ("try using car2 instead of car"). Both go
+/// in the app, so that either can drive.
+pub(crate) const CARS: [&str; 2] = ["mybuilds/car.glb", "mybuilds/car2.glb"];
 
-/// What the car's wheels are called in its model: every part whose name
-/// begins with it. Each wheel turns about its own middle as the car goes,
-/// however many of them are one object in Blender.
+/// Which of [`CARS`] drives round the town: 1, the Roadster. Back to the
+/// first car is 0. Every device online has to drive the same one, as a rider
+/// is sent as a place on it.
+const DRIVING: usize = 1;
+
+/// The car's model, under `assets/`.
+pub(crate) const MODEL: &str = CARS[DRIVING];
+
+/// What the car's wheels are called in its model: every part with it in its
+/// name, but a steering wheel. Each wheel turns about its own middle as the
+/// car goes, however many of them are one object in Blender.
 const WHEEL: &str = "wheel";
+
+/// Whether a part called `name` is one of the car's wheels.
+fn is_wheel(name: &str) -> bool {
+    let name = name.to_lowercase();
+    name.contains(WHEEL) && !name.contains("steering")
+}
 
 /// The car: the number it goes by online.
 #[derive(Component)]
@@ -318,7 +334,7 @@ fn read_car(
         let is_wheel = [Some(part), object].into_iter().flatten().any(|entity| {
             names
                 .get(entity)
-                .is_ok_and(|name| name.as_str().to_lowercase().starts_with(WHEEL))
+                .is_ok_and(|name| is_wheel(name.as_str()))
         });
         if is_wheel {
             wheels.push((part, mesh.0.clone(), material.map(|m| m.0.clone()), in_car.affine()));
@@ -721,7 +737,7 @@ pub(crate) mod tests {
             let (soon, _) = place_at(&route, &hull, seconds + 0.05);
             // Its wheels on the road, -0.2 m, and its front the way it goes.
             assert!((place.outward(Vec3::Y * low.y).y + 0.2).abs() < 0.02, "{place:?}");
-            let ahead = place.turn * Vec3::X;
+            let ahead = place.turn * Vec3::new(hull.front.x, 0.0, hull.front.y);
             let went = (soon.at - place.at).normalize_or_zero();
             if went != Vec3::ZERO {
                 assert!(ahead.dot(went) > 0.9, "facing {ahead}, going {went}");
@@ -748,7 +764,7 @@ pub(crate) mod tests {
     fn the_wheels_are_four_pieces_round_their_own_middles() {
         let parts = crate::island::glb::read(MODEL);
         let wheel: Vec<&crate::island::glb::Part> =
-            parts.iter().filter(|part| part.node.starts_with(WHEEL)).collect();
+            parts.iter().filter(|part| is_wheel(&part.node)).collect();
         assert!(!wheel.is_empty());
         // Each of its meshes broken into its pieces, and the pieces about the
         // same middle taken together: four wheels, at the car's corners.
@@ -768,11 +784,14 @@ pub(crate) mod tests {
         let wheels = gather(&boxes);
         assert_eq!(wheels.len(), 4, "{wheels:?}");
         for (low, high, _) in wheels {
-            // Round, side on, and out at a corner of the car.
+            // Round, side on, and out toward a corner of the car.
             let (tall, long) = (high.y - low.y, (high.x - low.x).max(high.z - low.z));
             assert!((tall - long).abs() < tall * 0.2, "{tall} tall, {long} long");
             let middle = (low + high) * 0.5;
-            assert!(middle.x.abs() > 1.0 && middle.z.abs() > 1.0, "{middle}");
+            assert!(middle.x.abs() > 0.5 && middle.z.abs() > 0.5, "{middle}");
         }
+        // Called a wheel, however else it is called, but a steering wheel.
+        assert!(is_wheel("wheels") && is_wheel("Roadster wheel front left") && is_wheel("Wheel.003"));
+        assert!(!is_wheel("Roadster") && !is_wheel("steering wheel") && !is_wheel("Steering_Wheel"));
     }
 }
