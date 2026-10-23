@@ -575,9 +575,11 @@ roads.
   its way whoever it drives into, AIs too. AIs cannot jump, so never ride.
   **The camera does not turn with it**: nothing turns it but you (above);
   the car turns under you, as the island does.
-- **What hides you of the car fades**, the car whole, as a town object
-  does; the car you are riding only once it hides you from the waist up,
-  not for its seats round your legs (`see_through`).
+- **The car never fades** (Hajun, 2026-10-23: "make it so that the car
+  never become transparent even if camera blocks the player through the
+  car"): whatever of you it hides, from a camera behind it or down in its
+  seats, stays hidden (`see_through::of_the_car`). The same day it was
+  first made to fade whole when it hid you, as a town object does.
 - **Online, a rider is a place on the car** (`Spot::aboard`, the car's
   number): where you are goes to the server in the car's own space, and
   standing still on it is standing still, sending nothing. Everyone else
@@ -670,8 +672,8 @@ through its wall.
   sign of a house in the town, which are objects of their own, or the water
   in the fountain's basin; and the doors, windows and hangings in a wall in
   House Builder (`build::OnWall`). Glass and water fade from as see-through
-  as they are. Bodies never fade (skinned meshes are left out), nor ghosts
-  or the sky, nor glass or water for being in the way (but for the glass of
+  as they are. Bodies never fade (skinned meshes are left out), nor the
+  town's car, nor ghosts or the sky, nor glass or water for being in the way (but for the glass of
   a door or a window in a wall in House Builder: below), nor a piece being
   put down, nor whatever the edit menu is open on. **Nor the ground**
   (`see_through::ground`): the island's own parts no higher than a step

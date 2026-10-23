@@ -12,10 +12,8 @@
 //! your body, your chest or your head was (2026-10-09). Zoomed all the way
 //! in, through your own eyes, there is nothing between.
 //!
-//! A piece of furniture, a door, a window, a town object or the car fades
-//! whole: the car you are riding only once it hides you from the waist up,
-//! not for the sides of its seats round your legs. A house, and the island
-//! itself, fade a part at a time, each part as it was modelled in Blender: a
+//! A piece of furniture, a door, a window or a town object fades whole. A
+//! house, and the island itself, fade a part at a time, each part as it was modelled in Blender: a
 //! wall, the roof, a floor, a tree's leaves. Whatever is in a part fades with
 //! it, so that no door stands solid in a wall you see through
 //! ([`inside_of`]): the doors, windows and sign of a house in the
@@ -26,9 +24,10 @@
 //! in the way of you takes the house's ceiling with it ([`over_your_head`]),
 //! and the ceiling in the way of a camera looking down into the room at a
 //! slant takes the walls on the camera's side ([`on_the_camera_side`]).
-//! Bodies never fade, nor water and any other glass for being in the way, as
-//! they are see-through already, nor a piece being put down, nor whatever
-//! the edit menu is open on, nor the ground ([`ground`]).
+//! Bodies never fade, nor the town's car ([`of_the_car`]), nor water and any
+//! other glass for being in the way, as they are see-through already, nor a
+//! piece being put down, nor whatever the edit menu is open on, nor the
+//! ground ([`ground`]).
 //!
 //! Something a tap can reach (`editor::Editable`) is out of its reach for as
 //! long as any of it is see-through ([`InTheWay`]): a tap goes through it, so
@@ -52,7 +51,7 @@ use crate::car::Car;
 use crate::editor::{EditMenu, EditSystems, Editable};
 use crate::island::{self, Faces};
 use crate::map::MapObject;
-use crate::{Player, Riding, ThirdPersonCamera, WAIST_HEIGHT};
+use crate::{Player, ThirdPersonCamera};
 
 /// How much of something in the way of you is drawn: a quarter of it, as
 /// much as Roblox's Invisicam leaves of what it fades. None of it was tried
@@ -177,7 +176,7 @@ type Lineage<'w, 's> = Query<
 /// camera to you go through, and what fades along with it.
 #[allow(clippy::too_many_arguments)]
 fn find_what_hides_you(
-    me: Query<(&Transform, &Visibility, &Riding), With<Player>>,
+    me: Query<(&Transform, &Visibility), With<Player>>,
     cameras: Query<&Transform, (With<ThirdPersonCamera>, Without<Player>)>,
     parts: Parts,
     lineage: Lineage,
@@ -203,7 +202,7 @@ fn find_what_hides_you(
     hiding.0.clear();
     // Through your eyes, or so near them that you are not drawn, there is
     // nothing between the camera and you.
-    let (Ok((you, drawn, riding)), Ok(eye)) = (me.single(), cameras.single()) else {
+    let (Ok((you, drawn)), Ok(eye)) = (me.single(), cameras.single()) else {
         return;
     };
     if *drawn == Visibility::Hidden {
@@ -211,13 +210,6 @@ fn find_what_hides_you(
     }
     let from = eye.translation;
     let points = points_on(you);
-    // What the car you ride can hide of you before it is in the way: your
-    // legs, down in its seats.
-    let upper: Vec<Vec3> = points
-        .iter()
-        .copied()
-        .filter(|point| point.y - you.translation.y > WAIST_HEIGHT)
-        .collect();
     // The box round every line, which nearly everything is nowhere near.
     let (reach_low, reach_high) = points
         .iter()
@@ -232,6 +224,7 @@ fn find_what_hides_you(
         if low.cmpgt(reach_high).any()
             || high.cmplt(reach_low).any()
             || ground(part, high.y, &lineage)
+            || of_the_car(part, &lineage)
         {
             continue;
         }
@@ -250,14 +243,9 @@ fn find_what_hides_you(
             None => continue,
         };
         // Then the lines that go through the box round it.
-        let tried = if riding.0.is_some_and(|car| model_of(part, &lineage) == car) {
-            &upper
-        } else {
-            &points
-        };
         near.clear();
         near.extend(
-            tried
+            points
                 .iter()
                 .copied()
                 .filter(|&to| line_meets_box(from, to, low, high)),
@@ -375,8 +363,8 @@ fn inside_of(
     let model = model_of(first, lineage);
     let whole = lineage
         .get(model)
-        .is_ok_and(|(_, _, piece, town_object, _, _, car)| {
-            town_object || car || piece.is_some_and(|piece| piece.def.mount != Mount::House)
+        .is_ok_and(|(_, _, piece, town_object, ..)| {
+            town_object || piece.is_some_and(|piece| piece.def.mount != Mount::House)
         });
     if whole {
         return inside;
@@ -421,11 +409,11 @@ fn in_a_wall(part: Entity, lineage: &Lineage, on_walls: &Query<(Entity, &OnWall)
 fn model_of(part: Entity, lineage: &Lineage) -> Entity {
     let mut at = part;
     loop {
-        let Ok((parent, _, piece, town_object, _, _, car)) = lineage.get(at) else {
+        let Ok((parent, _, piece, town_object, ..)) = lineage.get(at) else {
             return at;
         };
         match parent {
-            _ if piece.is_some() || town_object || car => return at,
+            _ if piece.is_some() || town_object => return at,
             Some(parent) => at = parent.parent(),
             None => return at,
         }
@@ -617,6 +605,24 @@ fn on_the_camera_side(look: Vec3, way_in: Vec3) -> bool {
     slant && across.dot(into) > ON_THE_CAMERA_SIDE
 }
 
+/// Whether `part` is part of the town's car (`car`), which never fades:
+/// standing in its seats, or behind it from the camera, whatever of you it
+/// hides stays hidden, and the car is always there to be seen whole (Hajun,
+/// 2026-10-23).
+fn of_the_car(part: Entity, lineage: &Lineage) -> bool {
+    let mut at = Some(part);
+    while let Some(entity) = at {
+        let Ok((parent, .., car)) = lineage.get(entity) else {
+            return false;
+        };
+        if car {
+            return true;
+        }
+        at = parent.map(ChildOf::parent);
+    }
+    false
+}
+
 /// Whether `part`, whose box goes no higher than `top`, is the ground: the
 /// island's own, not anything built or put on it, and no higher than a step
 /// over the land, as the town's paving, roads and grass are, and a plot's.
@@ -630,10 +636,10 @@ fn ground(part: Entity, top: f32, lineage: &Lineage) -> bool {
     }
     let mut at = Some(part);
     while let Some(entity) = at {
-        let Ok((parent, _, piece, town_object, _, _, car)) = lineage.get(entity) else {
+        let Ok((parent, _, piece, town_object, ..)) = lineage.get(entity) else {
             break;
         };
-        if piece.is_some() || town_object || car {
+        if piece.is_some() || town_object {
             return false;
         }
         at = parent.map(ChildOf::parent);
@@ -698,7 +704,7 @@ fn fades_with(
     let (mut whole, mut owner) = (None, None);
     let mut at = Some(part);
     while let Some(entity) = at {
-        let Ok((parent, _, piece, town_object, editable, ghost, car)) = lineage.get(entity) else {
+        let Ok((parent, _, piece, town_object, editable, ghost, _)) = lineage.get(entity) else {
             break;
         };
         if ghost || (editable && menu == Some(entity)) {
@@ -709,7 +715,7 @@ fn fades_with(
         }
         // A piece is the furthest up a part goes: a door is in its house, but
         // fades on its own.
-        if piece.is_some() || town_object || car {
+        if piece.is_some() || town_object {
             if piece.is_none_or(|piece| piece.def.mount != Mount::House) {
                 whole = Some(entity);
             }
@@ -952,6 +958,25 @@ mod tests {
         // Along an axis, in it and beside it.
         assert!(line_meets_box(Vec3::new(0.0, 0.0, 5.0), Vec3::new(0.0, 0.0, -5.0), low, high));
         assert!(!line_meets_box(Vec3::new(3.0, 0.0, 5.0), Vec3::new(3.0, 0.0, -5.0), low, high));
+    }
+
+    #[test]
+    fn the_car_and_everything_of_it_never_fades() {
+        use bevy::ecs::system::SystemState;
+        let mut world = World::new();
+        let car = world.spawn(Car { number: 0 }).id();
+        let object = world.spawn(ChildOf(car)).id();
+        let mesh = world.spawn(ChildOf(object)).id();
+        let island = world.spawn_empty().id();
+        let part = world.spawn(ChildOf(island)).id();
+        let mut state: SystemState<Lineage> = SystemState::new(&mut world);
+        let lineage = state.get(&world).expect("the lineage of everything");
+        for of_it in [car, object, mesh] {
+            assert!(of_the_car(of_it, &lineage));
+        }
+        for not in [island, part] {
+            assert!(!of_the_car(not, &lineage));
+        }
     }
 
     #[test]
