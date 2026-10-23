@@ -12,7 +12,11 @@
 //! one is checked against the last before it is passed on ([`Pace`]): no
 //! faster than a body runs, no higher than a jump, not off the edge of the
 //! world. One that fails is dropped and the device is put back where it was.
-//! Walking through walls is not checked: the server has no islands.
+//! Walking through walls is not checked: the server has no islands. Nor where
+//! the town's car is, which every device works out from the clock: a body
+//! riding it moves in the car's own space ([`Spot::aboard`]), checked there
+//! as anywhere else, and getting off it, it can be no further from where it
+//! got on than the car could have taken it.
 //!
 //! Who a device is, [`Who`], comes with its connection. In netcode's secure
 //! mode it is the account its token from the login names, loaded from the
@@ -27,7 +31,7 @@ use bevy::prelude::*;
 use bevy_replicon::prelude::*;
 use bevy_replicon::shared::backend::connected_client::NetworkId;
 use bevy_replicon_renet::netcode::NetcodeServerTransport;
-use roundtown_net::{Ask, Member, Moved, Refusal, Spot, Tell, Venue, arrival};
+use roundtown_net::{Ask, Member, Moved, Refusal, Spot, Tell, Venue, arrival, cars};
 use sha2::{Digest, Sha256};
 
 use crate::accounts::{Bank, Loaded, Record};
@@ -47,6 +51,10 @@ const BURST: f32 = 4.0;
 /// How far out from the middle of every island a body can be, in metres: the
 /// game's `OCEAN_LIMIT`, and a little.
 const EDGE_OF_THE_WORLD: f32 = 581.0;
+/// How fast the car can take a body riding it across the island, in metres a
+/// second: its top speed, with the same slack as a run's, and a run on top,
+/// along it.
+const MOST_RIDE: f32 = cars::TOP_SPEED * 1.3 + MOST_SPEED;
 
 /// The names a player is given, with a number after: plain ASCII, as the
 /// game's font is. The game's own AIs go by the same names without one.
@@ -150,12 +158,21 @@ impl Body {
 /// What a body has in hand to move with: it is earned as time passes, at the
 /// fastest a body could go, and spent as it goes. A move that costs more than
 /// there is in hand could not have been made.
+///
+/// On the car, the same goes in the car's own space: walking and jumping on
+/// it are walks and jumps. Getting on, the body can be anywhere on it, as the
+/// server cannot tell where the car is; getting off, it can be no further
+/// from where it got on than the car could have taken it in the time
+/// between, and it run.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Pace {
     /// When the last move was taken, in the server's seconds.
     at: f64,
     across: f32,
     up: f32,
+    /// Where on the island the body got onto the car it is riding, and when:
+    /// `None` off it, or on it since before the server knew it.
+    boarded: Option<(Vec3, f64)>,
 }
 
 impl Pace {
@@ -164,6 +181,7 @@ impl Pace {
             at: now,
             across: BURST,
             up: BURST,
+            boarded: None,
         }
     }
 
@@ -174,17 +192,50 @@ impl Pace {
         let across = (self.across + since * MOST_SPEED).min(BURST);
         let up = (self.up + since * MOST_RISE).min(BURST);
         let (a, b) = (from.translation(), to.translation());
-        let went = a.xz().distance(b.xz());
-        let rose = (b.y - a.y).max(0.0);
-        let edge = b.x.abs().max(b.z.abs());
-        if went > across || rose > up || edge > EDGE_OF_THE_WORLD {
-            return false;
+        let on_the_car = b.length() <= cars::REACH;
+        let in_the_world = b.x.abs().max(b.z.abs()) <= EDGE_OF_THE_WORLD;
+        let mut spent = (0.0, 0.0);
+        match (from.aboard, to.aboard) {
+            // Getting on: anywhere on the car.
+            (None, Some(_)) => {
+                if !on_the_car {
+                    return false;
+                }
+                self.boarded = Some((a, now));
+            }
+            // From one car onto another, the same.
+            (Some(was), Some(is)) if was != is => {
+                if !on_the_car {
+                    return false;
+                }
+            }
+            // Getting off: as far from where it got on as the car could have
+            // gone since.
+            (Some(_), None) => {
+                let ridden = self.boarded.is_none_or(|(on, when)| {
+                    let far = MOST_RIDE * (now - when).max(0.0) as f32 + BURST;
+                    b.xz().distance(on.xz()) <= far
+                });
+                if !ridden || !in_the_world {
+                    return false;
+                }
+                self.boarded = None;
+            }
+            // Within one space, the island's or the car's: a walk, a jump or
+            // a fall, and on the car, never far from it.
+            (_, is) => {
+                let went = a.xz().distance(b.xz());
+                let rose = (b.y - a.y).max(0.0);
+                let kept = if is.is_some() { on_the_car } else { in_the_world };
+                if went > across || rose > up || !kept {
+                    return false;
+                }
+                spent = (went, rose);
+            }
         }
-        *self = Self {
-            at: now,
-            across: across - went,
-            up: up - rose,
-        };
+        self.at = now;
+        self.across = across - spent.0;
+        self.up = up - spent.1;
         true
     }
 }
@@ -653,6 +704,38 @@ mod tests {
         // Off the edge of the world.
         let mut pace = Pace::new(0.0);
         assert!(!pace.take(&spot(580.0, 0.0, 0.0), &spot(582.0, 0.0, 0.0), 0.5));
+    }
+
+    #[test]
+    fn riding_the_car_is_a_walk_on_it_and_getting_off_is_where_it_went() {
+        let on = |x: f32, y: f32, z: f32| spot(x, y, z).aboard(Some(0));
+        let mut pace = Pace::new(0.0);
+        // Running up to the car, 25 m out on the inner road, and jumping on.
+        let road = spot(25.0, -0.2, 3.0);
+        assert!(pace.take(&spot(24.6, -0.2, 3.0), &road, 1.0 / 15.0));
+        assert!(pace.take(&road, &on(-2.5, 1.0, 0.4), 2.0 / 15.0));
+        // Standing on it while it drives, and walking about on it: still,
+        // then a walk, in its own space.
+        let mut at = on(-2.5, 1.0, 0.4);
+        for step in 3..=40 {
+            let next = on(-2.5 + (step - 3) as f32 * 0.2, 1.0, 0.4);
+            assert!(pace.take(&at, &next, f64::from(step) / 15.0), "step {step}");
+            at = next;
+        }
+        // Thirty seconds on, off it where it has taken you: up to its top
+        // speed all that time, and a run, from where you got on.
+        let off = spot(25.0 + 30.0 * cars::TOP_SPEED, -0.2, 3.0);
+        assert!(pace.take(&at, &off, 30.0 + 40.0 / 15.0));
+        // Further than it could have taken you is a leap.
+        let mut pace = Pace::new(0.0);
+        assert!(pace.take(&road, &on(0.0, 1.0, 0.0), 1.0));
+        assert!(!pace.take(&on(0.0, 1.0, 0.0), &spot(-400.0, 0.0, 300.0), 3.0));
+        // Nor is anywhere far off the car a place on it.
+        let mut pace = Pace::new(0.0);
+        assert!(!pace.take(&road, &on(40.0, 1.0, 0.0), 1.0));
+        let mut pace = Pace::new(0.0);
+        assert!(pace.take(&road, &on(0.0, 1.0, 0.0), 1.0));
+        assert!(!pace.take(&on(0.0, 1.0, 0.0), &on(0.0, 1.0, 30.0), 1.1));
     }
 
     #[test]

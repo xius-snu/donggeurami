@@ -343,13 +343,13 @@ pub(crate) struct Island {
 }
 
 impl Island {
-    fn new(corners: &[[Vec3; 3]]) -> Self {
+    pub(crate) fn new(corners: &[[Vec3; 3]]) -> Self {
         Self::of_parts(&[corners])
     }
 
     /// The island of `parts`, each one told apart from the rest in asking
     /// whether a body is buried inside something ([`Island::blocked`]).
-    fn of_parts(parts: &[&[[Vec3; 3]]]) -> Self {
+    pub(crate) fn of_parts(parts: &[&[[Vec3; 3]]]) -> Self {
         let tris: Vec<Tri> = parts
             .iter()
             .zip(0..)
@@ -928,6 +928,150 @@ impl Island {
 
     pub(crate) fn of_parts_for_tests(parts: &[&[[Vec3; 3]]]) -> Self {
         Self::of_parts(parts)
+    }
+}
+
+/// A model read straight out of its file, for tests that want the real thing:
+/// every triangle of every mesh in it, placed as the game places them.
+#[cfg(test)]
+pub(crate) mod glb {
+    use bevy::prelude::*;
+    use serde_json::Value;
+
+    /// One mesh of a model, of one material: the object in Blender it is a
+    /// mesh of, the material, whether it is skinned, and its triangles.
+    pub(crate) struct Part {
+        pub(crate) node: String,
+        pub(crate) material: Option<String>,
+        pub(crate) skinned: bool,
+        pub(crate) triangles: Vec<[Vec3; 3]>,
+    }
+
+    /// The triangles of each object in `parts`, all its materials together.
+    pub(crate) fn objects(parts: &[Part]) -> Vec<Vec<[Vec3; 3]>> {
+        let mut objects: Vec<(&str, Vec<[Vec3; 3]>)> = Vec::new();
+        for part in parts {
+            match objects.iter_mut().find(|(node, _)| *node == part.node) {
+                Some((_, triangles)) => triangles.extend_from_slice(&part.triangles),
+                None => objects.push((&part.node, part.triangles.clone())),
+            }
+        }
+        objects.into_iter().map(|(_, triangles)| triangles).collect()
+    }
+
+    /// Every mesh of `path`, under `assets/`, placed where the game places
+    /// it: the glTF loader turns every model half round about the upright
+    /// (`GltfConvertCoordinates`), so that x and z come out the other way.
+    pub(crate) fn read(path: &str) -> Vec<Part> {
+        let file = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets").join(path);
+        let data = std::fs::read(&file).unwrap_or_else(|error| panic!("{}: {error}", file.display()));
+        let word = |at: usize| u32::from_le_bytes(data[at..at + 4].try_into().unwrap()) as usize;
+        assert_eq!(word(0), 0x4654_6C67, "{path} is not a glb");
+        let json_length = word(12);
+        let json: Value = serde_json::from_slice(&data[20..20 + json_length]).unwrap();
+        let bin_at = 20 + json_length;
+        let bin = &data[bin_at + 8..bin_at + 8 + word(bin_at)];
+        let list = |name: &str| json[name].as_array().cloned().unwrap_or_default();
+        let (nodes, meshes, materials) = (list("nodes"), list("meshes"), list("materials"));
+        let (accessors, views) = (list("accessors"), list("bufferViews"));
+        let number = |value: &Value| value.as_u64().unwrap() as usize;
+        // The values of accessor `index`, each as up to three numbers.
+        let read = |index: usize| -> Vec<[f32; 3]> {
+            let accessor = &accessors[index];
+            let view = &views[number(&accessor["bufferView"])];
+            let start = view["byteOffset"].as_u64().unwrap_or(0) as usize
+                + accessor["byteOffset"].as_u64().unwrap_or(0) as usize;
+            let width = match accessor["type"].as_str().unwrap() {
+                "SCALAR" => 1,
+                "VEC3" => 3,
+                other => panic!("{other} accessor"),
+            };
+            let (size, kind) = match accessor["componentType"].as_u64().unwrap() {
+                5121 => (1, 'b'),
+                5123 => (2, 's'),
+                5125 => (4, 'i'),
+                5126 => (4, 'f'),
+                other => panic!("component type {other}"),
+            };
+            let stride = view["byteStride"].as_u64().map_or(size * width, |stride| stride as usize);
+            (0..number(&accessor["count"]))
+                .map(|n| {
+                    let mut value = [0.0; 3];
+                    for (k, slot) in value.iter_mut().enumerate().take(width) {
+                        let at = start + n * stride + k * size;
+                        let bytes = &bin[at..at + size];
+                        *slot = match kind {
+                            'b' => f32::from(bytes[0]),
+                            's' => f32::from(u16::from_le_bytes(bytes.try_into().unwrap())),
+                            'i' => u32::from_le_bytes(bytes.try_into().unwrap()) as f32,
+                            _ => f32::from_le_bytes(bytes.try_into().unwrap()),
+                        };
+                    }
+                    value
+                })
+                .collect()
+        };
+        let three = |value: &Value, default: [f32; 3]| -> Vec3 {
+            value.as_array().map_or(Vec3::from(default), |v| {
+                Vec3::new(v[0].as_f64().unwrap() as f32, v[1].as_f64().unwrap() as f32, v[2].as_f64().unwrap() as f32)
+            })
+        };
+        let local = |node: &Value| -> Mat4 {
+            if let Some(matrix) = node["matrix"].as_array() {
+                let cells: Vec<f32> = matrix.iter().map(|cell| cell.as_f64().unwrap() as f32).collect();
+                return Mat4::from_cols_slice(&cells);
+            }
+            let turn = node["rotation"].as_array().map_or(Quat::IDENTITY, |q| {
+                Quat::from_xyzw(
+                    q[0].as_f64().unwrap() as f32,
+                    q[1].as_f64().unwrap() as f32,
+                    q[2].as_f64().unwrap() as f32,
+                    q[3].as_f64().unwrap() as f32,
+                )
+            });
+            Mat4::from_scale_rotation_translation(three(&node["scale"], [1.0; 3]), turn, three(&node["translation"], [0.0; 3]))
+        };
+        let half_round = Mat4::from_quat(Quat::from_xyzw(0.0, 1.0, 0.0, 0.0));
+        let mut parts = Vec::new();
+        let mut waiting: Vec<(usize, Mat4)> = json["scenes"][0]["nodes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|root| (number(root), half_round))
+            .collect();
+        while let Some((index, above)) = waiting.pop() {
+            let node = &nodes[index];
+            let place = above * local(node);
+            for child in node["children"].as_array().cloned().unwrap_or_default() {
+                waiting.push((number(&child), place));
+            }
+            let Some(mesh) = node["mesh"].as_u64() else {
+                continue;
+            };
+            for primitive in meshes[mesh as usize]["primitives"].as_array().unwrap() {
+                let corners: Vec<Vec3> = read(number(&primitive["attributes"]["POSITION"]))
+                    .into_iter()
+                    .map(|corner| place.transform_point3(Vec3::from(corner)))
+                    .collect();
+                let order: Vec<usize> = match primitive["indices"].as_u64() {
+                    Some(indices) => read(indices as usize).into_iter().map(|index| index[0] as usize).collect(),
+                    None => (0..corners.len()).collect(),
+                };
+                parts.push(Part {
+                    node: node["name"].as_str().unwrap_or_default().to_owned(),
+                    material: primitive["material"]
+                        .as_u64()
+                        .and_then(|material| materials[material as usize]["name"].as_str())
+                        .map(str::to_owned),
+                    skinned: node.get("skin").is_some(),
+                    triangles: order
+                        .chunks_exact(3)
+                        .map(|tri| [corners[tri[0]], corners[tri[1]], corners[tri[2]]])
+                        .collect(),
+                });
+            }
+        }
+        parts
     }
 }
 

@@ -9,7 +9,8 @@
 //! Three rules keep it cheap (`MULTIPLAYER.md`, "The one rule"):
 //!
 //! * A position is whole centimetres and a 16-bit turn ([`Spot`]): about ten
-//!   bytes.
+//!   bytes. Riding the town's car, it is a place on the car, which moves with
+//!   it ([`Spot::aboard`]), so that a rider is never seen beside it.
 //! * Only what has changed is sent. replicon works off Bevy's change
 //!   detection, the same idea as `set_if_neq` everywhere in the game, and a
 //!   device sends its own position only while it changes.
@@ -49,7 +50,9 @@ pub const PROTOCOL_ID: u64 = u64::from_be_bytes(*b"DGRMTOWN");
 /// the types [`protocol`] registers and their order, and nothing of what is
 /// in them (`ProtocolHasher` in bevy_replicon 0.44), so it notices a type
 /// added or renamed, and nothing else.
-pub const PROTOCOL_VERSION: u32 = 1;
+///
+/// 2 since 2026-10-23: [`Spot::aboard`], for riding the town's car.
+pub const PROTOCOL_VERSION: u32 = 2;
 
 /// The UDP port the game server listens on. 443, where QUIC goes, because a
 /// network that lets any UDP through lets that through: school and office
@@ -160,13 +163,21 @@ pub struct Member {
 }
 
 /// Where a body stands and which way it faces: whole centimetres, and a turn
-/// in 65,536ths of a circle. About eleven bytes once postcard has packed it.
+/// in 65,536ths of a circle. About twelve bytes once postcard has packed it.
 #[derive(Component, Serialize, Deserialize, Clone, Copy, Default, Debug)]
 pub struct Spot {
     pub x: i32,
     pub y: i32,
     pub z: i32,
     pub yaw: u16,
+    /// The car the body is riding, by its number, if it is: on it, or in the
+    /// air off it and carried along with it until it comes down on anything
+    /// else. The place and the turn are then in the car's own space, which
+    /// moves with it, and not the island's: someone watching puts the body
+    /// on the car as they see it, wherever that is (the game's `car`), so
+    /// that a rider is never seen beside it, nor behind it by the time the
+    /// update takes to come.
+    pub aboard: Option<u8>,
     /// The body has come to a stop here. Someone watching draws it standing
     /// here from then on, rather than carrying it on the way it was going
     /// while they wait for the next update, which is not coming.
@@ -188,9 +199,16 @@ impl Spot {
             y: centimetres(translation.y),
             z: centimetres(translation.z),
             yaw: ((yaw / TAU).rem_euclid(1.0) * 65_536.0).round() as u32 as u16,
+            aboard: None,
             still: false,
             tick: 0,
         }
+    }
+
+    /// The same, as a place on the car numbered `car`, in its own space, or,
+    /// with none, on the island.
+    pub fn aboard(self, car: Option<u8>) -> Self {
+        Self { aboard: car, ..self }
     }
 
     pub fn translation(&self) -> Vec3 {
@@ -206,15 +224,30 @@ impl Spot {
         Quat::from_rotation_y(self.yaw())
     }
 
-    /// The same place, the same way and as still, whenever it was sent.
+    /// The same place, the same way and as still, on the same car or none,
+    /// whenever it was sent.
     pub fn same(&self, other: &Self) -> bool {
-        (self.x, self.y, self.z, self.yaw, self.still)
-            == (other.x, other.y, other.z, other.yaw, other.still)
+        (self.x, self.y, self.z, self.yaw, self.aboard, self.still)
+            == (other.x, other.y, other.z, other.yaw, other.aboard, other.still)
     }
 }
 
 fn centimetres(metres: f32) -> i32 {
     (metres * 100.0).round() as i32
+}
+
+/// The car that drives round the town (the game's `car`), as far as the
+/// server checks a rider's moves against it: it cannot tell where the car is,
+/// having no islands, but it knows how fast the car can take anyone.
+pub mod cars {
+    /// The fastest the car goes, in metres a second, along the straight and
+    /// gentle stretches of the town's roads: as fast as a body runs, so that
+    /// someone running beside it keeps up and no more, and can jump on.
+    pub const TOP_SPEED: f32 = 7.0;
+    /// How far from the car's own middle a body riding it can be, in metres:
+    /// on it, which is 6 m long, or in the air off it, carried along with it
+    /// until it comes down.
+    pub const REACH: f32 = 15.0;
 }
 
 /// A [`Spot`] as it arrives, stamped with the tick of the update it came in.
@@ -496,6 +529,20 @@ mod tests {
     fn a_spot_is_about_ten_bytes() {
         let spot = Spot::of(Vec3::new(-234.56, 1.2, 345.67), Quat::from_rotation_y(2.0));
         let bytes = postcard::to_allocvec(&spot).unwrap();
+        assert!(bytes.len() <= 13, "{} bytes", bytes.len());
+        // On the car, a place on it, which is never far from its middle.
+        let on = Spot::of(Vec3::new(-1.2, 1.0, 2.5), Quat::from_rotation_y(2.0)).aboard(Some(0));
+        let bytes = postcard::to_allocvec(&on).unwrap();
         assert!(bytes.len() <= 12, "{} bytes", bytes.len());
+    }
+
+    #[test]
+    fn a_spot_on_the_car_is_not_the_same_place_off_it() {
+        let off = Spot::of(Vec3::new(1.0, 1.0, 2.0), Quat::IDENTITY);
+        let on = off.aboard(Some(0));
+        assert!(off.same(&off) && on.same(&on));
+        assert!(!off.same(&on));
+        let back: Spot = postcard::from_bytes(&postcard::to_allocvec(&on).unwrap()).unwrap();
+        assert!(back.same(&on), "{back:?}");
     }
 }

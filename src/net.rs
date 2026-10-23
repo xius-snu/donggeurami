@@ -18,6 +18,12 @@
 //!   like any other (`lobby::dress`) and drawn where the server says they
 //!   are, two updates behind, smoothed between them ([`smooth`]): updates
 //!   come 15 times a second, and the screen is drawn 120 times.
+//! * **Riding the town's car** (`car`), where you are goes as a place on the
+//!   car, in its own space ([`Spot::aboard`]), and someone riding it is drawn
+//!   on the car as it is here and now: where they were on it two updates
+//!   ago, with the car where it is ([`drawn`]). The car goes by the clock on
+//!   every device, so it is in the same place on all of them, and a rider is
+//!   never seen beside it, nor left behind it by the time an update takes.
 //! * **Going home and back** asks the server ([`Ask::Travel`]), which seats you
 //!   and says where you arrive.
 //!
@@ -46,8 +52,9 @@ use bevy_replicon_renet::{RenetChannelsExt, RenetClient, RepliconRenetPlugins};
 use roundtown_net::{Ask, Member, Moved, PROTOCOL_ID, Spot, TICK_HZ, Tell, Venue};
 
 use crate::builder::OfflineGame;
+use crate::car::{self, Place};
 use crate::lobby::{self, Balance, Seat, Whereabouts};
-use crate::{OrbitCamera, Player, PlayerJump};
+use crate::{OrbitCamera, Player, PlayerJump, Riding};
 
 /// Where the server is: the Vultr VM in Seoul, over IPv6 first and then IPv4
 /// (`MULTIPLAYER.md`, phase 1). A phone on a network with only IPv6 — Apple
@@ -370,7 +377,8 @@ fn link(
     client: Res<State<ClientState>>,
     mut transport: Option<ResMut<NetcodeClientTransport>>,
     channels: Res<RepliconChannels>,
-    me: Query<(&Transform, &Venue), With<Player>>,
+    me: Query<(&Transform, &Venue, &Riding), With<Player>>,
+    cars: car::Cars,
     remote: Query<Entity, With<Remote>>,
     offline_game: Res<OfflineGame>,
     mut online: ResMut<Online>,
@@ -433,12 +441,12 @@ fn link(
         }
         LinkState::Trying { nth, since } => {
             if connected {
-                let Ok((at, &venue)) = me.single() else {
+                let Ok((at, &venue, riding)) = me.single() else {
                     return;
                 };
                 asks.write(Ask::Hello {
                     venue,
-                    spot: Spot::of(at.translation, at.rotation),
+                    spot: spot_of(at, riding, &cars),
                 });
                 link.state = LinkState::Linked;
                 link.rest = REST_MIN;
@@ -593,6 +601,7 @@ fn hear(
     mut me: Query<(Entity, &mut Seat, &mut Balance), With<Player>>,
     mut bodies: Whereabouts,
     mut orbit: ResMut<OrbitCamera>,
+    cars: car::Cars,
 ) {
     for tell in tells.read() {
         let Ok((you, mut seat, mut balance)) = me.single_mut() else {
@@ -617,8 +626,7 @@ fn hear(
                     Some(spot) => {
                         let here = bodies.get(you).map(|(_, &on, ..)| on).ok();
                         if here != Some(*venue) {
-                            let at = Transform::from_translation(spot.translation())
-                                .with_rotation(spot.rotation());
+                            let (at, _) = placed(spot, &cars);
                             lobby::put(&mut bodies, &mut orbit, you, *venue, at);
                         }
                     }
@@ -627,10 +635,14 @@ fn hear(
             }
             Tell::PutBack { arrival, spot } => {
                 online.arrival = *arrival;
-                if let Ok((mut transform, _, mut jump, ..)) = bodies.get_mut(you) {
-                    transform.translation = spot.translation();
-                    transform.rotation = spot.rotation();
+                if let Ok((mut transform, _, mut jump, _, _, _, riding)) = bodies.get_mut(you) {
+                    let (at, on) = placed(spot, &cars);
+                    transform.translation = at.translation;
+                    transform.rotation = at.rotation;
                     *jump = PlayerJump::default();
+                    if let Some(mut riding) = riding {
+                        riding.set_if_neq(Riding(on));
+                    }
                 }
             }
             Tell::Balance(coins) => {
@@ -654,25 +666,50 @@ struct Sent {
     again: u8,
 }
 
+/// Where you are, as the server is told it: on the island, or riding the car,
+/// a place on the car, in its own space.
+fn spot_of(at: &Transform, riding: &Riding, cars: &car::Cars) -> Spot {
+    match riding.0.and_then(|car| cars.of(car)) {
+        Some((number, place)) => {
+            let on = place.local(at);
+            Spot::of(on.translation, on.rotation).aboard(Some(number))
+        }
+        None => Spot::of(at.translation, at.rotation),
+    }
+}
+
+/// Where `spot` puts a body, as it stands now, and the car it is riding, if
+/// it is on one: on the car as it is now. On a car this device has not got
+/// yet, it is put on the island, at the place it has on the car.
+fn placed(spot: &Spot, cars: &car::Cars) -> (Transform, Option<Entity>) {
+    let pose = Transform::from_translation(spot.translation()).with_rotation(spot.rotation());
+    match spot.aboard.and_then(|number| cars.numbered(number)) {
+        Some((car, place)) => (place.world(&pose), Some(car)),
+        None => (pose, None),
+    }
+}
+
 /// Sends where you are 15 times a second while you move: and once you stop, a
 /// couple more times, marked still, in case the first was lost. Nothing while
 /// you stand still, and nothing while you are anywhere the server has not
-/// put you.
+/// put you. Standing still on the car is standing still: where you are on it
+/// does not change as it drives you round.
 fn tell_where_i_am(
     time: Res<Time>,
     online: Res<Online>,
-    me: Query<(&Transform, &Venue), With<Player>>,
+    cars: car::Cars,
+    me: Query<(&Transform, &Venue, &Riding), With<Player>>,
     mut sent: Local<Sent>,
     mut moves: MessageWriter<Moved>,
 ) {
-    let Ok((at, &venue)) = me.single() else {
+    let Ok((at, &venue, riding)) = me.single() else {
         return;
     };
     if !online.is() || online.venue != Some(venue) {
         *sent = Sent::default();
         return;
     }
-    let mut spot = Spot::of(at.translation, at.rotation);
+    let mut spot = spot_of(at, riding, &cars);
     spot.still = sent.was.is_some_and(|was| was.same(&spot));
     sent.was = Some(Spot { still: spot.still, ..spot });
     sent.since += time.delta_secs();
@@ -705,18 +742,22 @@ fn dress_newcomers(
     time: Res<Time<Real>>,
     mut clock: ResMut<Clock>,
     newcomers: Query<(Entity, &Member, &Spot), (With<Remote>, Without<Track>)>,
+    cars: car::Cars,
     assets: Res<AssetServer>,
     mut commands: Commands,
 ) {
     for (newcomer, member, spot) in &newcomers {
         let sent = f64::from(spot.tick) / TICK_HZ;
         clock.heard(sent, time.elapsed_secs_f64());
-        let at = Transform::from_translation(spot.translation()).with_rotation(spot.rotation());
+        let (at, on) = placed(spot, &cars);
         let mut entity = commands.entity(newcomer);
         lobby::dress(&mut entity, &assets, member, at);
-        entity.insert(Track {
-            updates: VecDeque::from([(sent, *spot)]),
-        });
+        entity.insert((
+            Riding(on),
+            Track {
+                updates: VecDeque::from([(sent, *spot)]),
+            },
+        ));
     }
 }
 
@@ -760,7 +801,8 @@ struct Track {
 /// Lays each update about someone out in the time the server sent it. One
 /// that takes them somewhere else entirely — another island, or further than
 /// a walk — starts their track again, so that they go there at once rather
-/// than slide.
+/// than slide. Getting on the car or off it is no leap, though the place goes
+/// from the island's space to the car's: they are seen to (`pose_at`).
 fn hear_spots(
     time: Res<Time<Real>>,
     mut clock: ResMut<Clock>,
@@ -771,7 +813,7 @@ fn hear_spots(
         let sent = f64::from(spot.tick) / TICK_HZ;
         clock.heard(sent, now);
         let leap = track.updates.back().is_some_and(|(_, last)| {
-            last.translation().distance(spot.translation()) > LEAP
+            last.aboard == spot.aboard && last.translation().distance(spot.translation()) > LEAP
         });
         if venue.is_changed() || leap {
             track.updates.clear();
@@ -789,55 +831,148 @@ fn hear_spots(
 }
 
 /// Draws everyone else where they were [`BEHIND`] ago in the server's time,
-/// between the two updates either side of that moment. Late updates: carried
-/// on the way they were going for a moment, then held. Only what has changed
-/// is written, so that someone standing still is not taken for someone who
-/// moved.
+/// between the two updates either side of that moment, and anyone riding the
+/// car, on the car as it is now ([`drawn`]). Late updates: carried on the way
+/// they were going for a moment, then held; on the car, held where they were
+/// on it. Only what has changed is written, so that someone standing still is
+/// not taken for someone who moved.
 fn smooth(
     time: Res<Time<Real>>,
     mut clock: ResMut<Clock>,
-    mut bodies: Query<(&mut Transform, &Track), With<Remote>>,
+    cars: car::Cars,
+    mut bodies: Query<(&mut Transform, &Track, &mut Riding), With<Remote>>,
 ) {
     let Some(server) = clock.now(time.elapsed_secs_f64()) else {
         return;
     };
-    let then = server - BEHIND;
-    for (mut transform, track) in &mut bodies {
-        if let Some(pose) = pose_at(&track.updates, then) {
-            transform.set_if_neq(pose);
-        }
+    for (mut transform, track, mut riding) in &mut bodies {
+        let Some((pose, aboard)) = drawn(&track.updates, server, |car, ago| cars.before(car, ago)) else {
+            continue;
+        };
+        transform.set_if_neq(pose);
+        // Riding, for walking on the car rather than being carried along by it
+        // (`lobby::walk_from_motion`), once they are more on it than off.
+        let on = aboard
+            .filter(|&(_, share)| share >= 0.5)
+            .and_then(|(car, _)| cars.numbered(car))
+            .map(|(car, _)| car);
+        riding.set_if_neq(Riding(on));
     }
 }
 
-/// Where the track `updates` has its body at the server's time `then`.
-fn pose_at(updates: &VecDeque<(f64, Spot)>, then: f64) -> Option<Transform> {
+/// Where someone is drawn at the server's time `server`, by their track
+/// `updates`: where they were [`BEHIND`] that, and if they were on the car
+/// then, carried on with it since, as far as it has gone, so that they are
+/// drawn on it as it is now. `car_before(car, ago)` says where the car
+/// numbered `car` was `ago` seconds before now. With it, the car they are
+/// riding, and how far they are on it: all the way, or partly, getting on or
+/// off it between two updates.
+fn drawn(
+    updates: &VecDeque<(f64, Spot)>,
+    server: f64,
+    car_before: impl Fn(u8, f64) -> Option<Place>,
+) -> Option<(Transform, Option<(u8, f32)>)> {
+    let then = server - BEHIND;
+    let car_at = |car: u8, sent: f64| car_before(car, server - sent);
+    let (pose, aboard) = pose_at(updates, then, &car_at)?;
+    let Some((car, share)) = aboard else {
+        return Some((pose, None));
+    };
+    let (Some(now), Some(back)) = (car_before(car, 0.0), car_at(car, then)) else {
+        return Some((pose, aboard));
+    };
+    let carried = now.world(&back.local(&pose));
+    Some((
+        Transform::from_translation(pose.translation.lerp(carried.translation, share))
+            .with_rotation(pose.rotation.slerp(carried.rotation, share)),
+        aboard,
+    ))
+}
+
+/// Where the track `updates` has its body at the server's time `then`, in the
+/// island's space, and the car it is riding then, if any, and how far
+/// ([`on_the_car`]). A place on the car is where the car was when it was
+/// sent, by `car_at(car, sent)`.
+fn pose_at(
+    updates: &VecDeque<(f64, Spot)>,
+    then: f64,
+    car_at: impl Fn(u8, f64) -> Option<Place>,
+) -> Option<(Transform, Option<(u8, f32)>)> {
     let pose = |spot: &Spot| {
         Transform::from_translation(spot.translation()).with_rotation(spot.rotation())
     };
+    let world = |&(sent, spot): &(f64, Spot)| match spot.aboard.and_then(|car| car_at(car, sent)) {
+        Some(place) => place.world(&pose(&spot)),
+        None => pose(&spot),
+    };
     let (first, last) = (updates.front()?, updates.back()?);
+    let after = updates
+        .iter()
+        .position(|(sent, _)| *sent > then)
+        .unwrap_or(updates.len() - 1);
+    let aboard = on_the_car(updates, after, then);
     if then <= first.0 {
-        return Some(pose(&first.1));
+        return Some((world(first), aboard));
     }
     if then >= last.0 {
-        // Late: on the way it was going, for a moment, unless it had stopped.
+        // Late, on the car: where it was on it, wherever the car has got to.
+        if let Some(car) = last.1.aboard {
+            let held = car_at(car, then).map_or_else(|| world(last), |place| place.world(&pose(&last.1)));
+            return Some((held, aboard));
+        }
+        // Late, off it: on the way it was going, for a moment, unless it had
+        // stopped.
         let before = updates.len().checked_sub(2).and_then(|n| updates.get(n));
-        return Some(match before {
-            Some(before) if !last.1.still && last.0 > before.0 => {
-                let over = (then - last.0).min(CARRY_ON) as f32;
-                let velocity =
-                    (last.1.translation() - before.1.translation()) / (last.0 - before.0) as f32;
-                pose(&last.1).with_translation(last.1.translation() + velocity * over)
-            }
-            _ => pose(&last.1),
-        });
+        return Some((
+            match before {
+                Some(before) if !last.1.still && last.0 > before.0 && before.1.aboard.is_none() => {
+                    let over = (then - last.0).min(CARRY_ON) as f32;
+                    let velocity =
+                        (last.1.translation() - before.1.translation()) / (last.0 - before.0) as f32;
+                    pose(&last.1).with_translation(last.1.translation() + velocity * over)
+                }
+                _ => world(last),
+            },
+            aboard,
+        ));
     }
-    let after = updates.iter().position(|(sent, _)| *sent > then)?;
     let (a, b) = (&updates[after - 1], &updates[after]);
     let share = ((then - a.0) / (b.0 - a.0)) as f32;
-    Some(
-        Transform::from_translation(a.1.translation().lerp(b.1.translation(), share))
-            .with_rotation(a.1.rotation().slerp(b.1.rotation(), share)),
-    )
+    let (from, to) = (world(a), world(b));
+    Some((
+        Transform::from_translation(from.translation.lerp(to.translation, share))
+            .with_rotation(from.rotation.slerp(to.rotation, share)),
+        aboard,
+    ))
+}
+
+/// How long it takes to draw someone getting on the car as on it, in seconds,
+/// and getting off it as off it. Drawn on it, a rider is drawn on the car as
+/// it is now, [`BEHIND`] further on than where everyone else is drawn, and
+/// getting on, they have that to make up: over this long, they slide along
+/// the car into place, rather than leap there.
+const GETTING_ON: f64 = 0.25;
+
+/// The car the body in `updates` is riding at the server's time `then`, and
+/// how far it is on it, from 0 to 1: all the way, once it has been on it for
+/// [`GETTING_ON`], and still partly, for as long after it got off. The
+/// update after `then` is the `after`th, or the last, if `then` is later.
+fn on_the_car(updates: &VecDeque<(f64, Spot)>, after: usize, then: f64) -> Option<(u8, f32)> {
+    let now = updates[after].1.aboard;
+    // The last update before the run of them on the same car, or off it, as
+    // the one after `then`: when it got on, or off.
+    let changed = (0..after).rev().find(|&index| updates[index].1.aboard != now);
+    let since = |index: usize| ((then - updates[index].0) / GETTING_ON).clamp(0.0, 1.0) as f32;
+    match (now, changed) {
+        (Some(car), Some(index)) => Some((car, since(index))),
+        (Some(car), None) => Some((car, 1.0)),
+        (None, Some(index)) => {
+            let car = updates[index].1.aboard?;
+            let left = 1.0 - since(index);
+            (left > 0.0).then_some((car, left))
+        }
+        (None, None) => None,
+    }
 }
 
 #[cfg(test)]
@@ -857,27 +992,128 @@ mod tests {
         updates.iter().copied().collect()
     }
 
+    /// Where a body off the car is, at `then`.
+    fn x_at(updates: &VecDeque<(f64, Spot)>, then: f64) -> f32 {
+        pose_at(updates, then, |_, _| None).unwrap().0.translation.x
+    }
+
     #[test]
     fn between_two_updates_it_is_between_them() {
         let updates = track(&[(1.0, spot(0.0, false)), (1.1, spot(1.0, false))]);
-        let x = pose_at(&updates, 1.05).unwrap().translation.x;
+        let x = x_at(&updates, 1.05);
         assert!((x - 0.5).abs() < 1e-4, "{x}");
     }
 
     #[test]
     fn late_it_carries_on_for_a_moment_and_then_holds() {
         let updates = track(&[(1.0, spot(0.0, false)), (1.1, spot(1.0, false))]);
-        let x = pose_at(&updates, 1.15).unwrap().translation.x;
+        let x = x_at(&updates, 1.15);
         assert!((x - 1.5).abs() < 1e-3, "{x}");
-        let x = pose_at(&updates, 5.0).unwrap().translation.x;
+        let x = x_at(&updates, 5.0);
         assert!((x - 2.0).abs() < 1e-3, "{x}");
     }
 
     #[test]
     fn stopped_it_stays_stopped() {
         let updates = track(&[(1.0, spot(0.0, false)), (1.1, spot(1.0, true))]);
-        let x = pose_at(&updates, 2.0).unwrap().translation.x;
+        let x = x_at(&updates, 2.0);
         assert!((x - 1.0).abs() < 1e-4, "{x}");
+    }
+
+    /// The car going along x at 7 m/s, turning gently, and where it was
+    /// `ago` seconds before `now`, by its clock.
+    fn driving(now: f64) -> impl Fn(u8, f64) -> Option<Place> {
+        move |_, ago| {
+            let t = (now - ago) as f32;
+            Some(Place {
+                at: Vec3::new(7.0 * t, 0.1, 0.0),
+                turn: Quat::from_rotation_y(0.05 * t),
+            })
+        }
+    }
+
+    fn on_the_car(x: f32, still: bool) -> Spot {
+        Spot {
+            still,
+            ..Spot::of(Vec3::new(x, 1.0, 0.5), Quat::from_rotation_y(0.3)).aboard(Some(0))
+        }
+    }
+
+    #[test]
+    fn a_rider_is_drawn_on_the_car_as_it_is_now() {
+        // Standing still on the car: one update when they stopped, and none
+        // since, as the car drives on.
+        let updates = track(&[(10.0, on_the_car(1.0, false)), (10.0667, on_the_car(1.2, true))]);
+        for now in [10.2, 10.5, 13.0] {
+            let car = driving(now);
+            let (pose, aboard) = drawn(&updates, now, &car).unwrap();
+            assert_eq!(aboard, Some((0, 1.0)));
+            // Where they stood on the car, with the car where it is now, not
+            // where it was two updates ago, a metre back.
+            let should = car(0, 0.0).unwrap().outward(Vec3::new(1.2, 1.0, 0.5));
+            assert!(pose.translation.distance(should) < 1e-3, "at {now}: {} for {should}", pose.translation);
+        }
+        // Walking along it: between where they were on it, on the car now.
+        let walking = track(&[(10.0, on_the_car(0.0, false)), (10.1, on_the_car(1.0, false))]);
+        let now = 10.05 + BEHIND;
+        let car = driving(now);
+        let (pose, _) = drawn(&walking, now, &car).unwrap();
+        let should = car(0, 0.0).unwrap().outward(Vec3::new(0.5, 1.0, 0.5));
+        assert!(pose.translation.distance(should) < 0.01, "{} for {should}", pose.translation);
+    }
+
+    #[test]
+    fn getting_on_and_off_the_car_is_never_a_leap() {
+        // Running beside the car, jumping across onto it, riding it, and
+        // jumping off it sideways, carried along with it until coming down
+        // on the road: a frame at a time, the rider is never drawn going
+        // further than the car and a jump could take them, and once they
+        // have been on it a moment, they are drawn on it as it is.
+        let car = |t: f64| Vec3::new(7.0 * t as f32, 0.1, 0.0);
+        let at = |step: u32| 10.0 + f64::from(step) / TICK_HZ;
+        let mut updates = VecDeque::new();
+        for step in 0..60u32 {
+            let t = at(step);
+            let spot = match step {
+                0..10 => Spot::of(car(t) + Vec3::new(-1.0, -0.3, 2.5), Quat::IDENTITY),
+                10..15 => {
+                    let k = (step - 10) as f32 / 5.0;
+                    Spot::of(car(t) + Vec3::new(-1.0, -0.3 + 1.3 * k, 2.5 * (1.0 - k)), Quat::IDENTITY)
+                }
+                15..40 => Spot::of(Vec3::new(-1.0, 1.0, 0.0), Quat::IDENTITY).aboard(Some(0)),
+                40..45 => {
+                    let k = (step - 40) as f32;
+                    Spot::of(Vec3::new(-1.0, 1.0 - 0.26 * k, 0.4 * k), Quat::IDENTITY).aboard(Some(0))
+                }
+                _ => Spot::of(car(at(45)) + Vec3::new(-1.0, -0.3, 2.0), Quat::IDENTITY),
+            };
+            updates.push_back((t, spot));
+        }
+        let mut was: Option<Vec3> = None;
+        for frame in 0..(58 * 8) {
+            let now = at(0) + BEHIND + f64::from(frame) / 120.0;
+            let (pose, _) = drawn(&updates, now, driving_straight(now)).unwrap();
+            if let Some(was) = was {
+                let went = was.distance(pose.translation);
+                assert!(went < 0.2, "{went} m in a frame at {now}");
+            }
+            was = Some(pose.translation);
+            // Riding it, on it as it is now.
+            if now > at(15) + GETTING_ON + BEHIND && now < at(40) {
+                let on = car(now) + Vec3::new(-1.0, 1.0, 0.0);
+                assert!(pose.translation.distance(on) < 1e-3, "{} for {on}", pose.translation);
+            }
+        }
+    }
+
+    /// The car going straight along x at 7 m/s.
+    fn driving_straight(now: f64) -> impl Fn(u8, f64) -> Option<Place> {
+        move |_, ago| {
+            Some(Place {
+                at: Vec3::new(7.0 * (now - ago) as f32, 0.1, 0.0),
+                turn: Quat::IDENTITY,
+            })
+        }
     }
 
     #[test]

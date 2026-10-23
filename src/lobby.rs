@@ -28,11 +28,12 @@ use bevy_replicon::prelude::Remote;
 use roundtown_net::TOWN_BODIES;
 
 use crate::ai;
+use crate::car::Driven;
 use crate::island::{self, Venue};
 use crate::net::Online;
 use crate::{
     Collider, ColliderShape, Intent, MOVE_SPEED, OrbitCamera, PLAYER_HEIGHT, PLAYER_RADIUS, Player,
-    PlayerJump, WalkCycle, bind_walk_bones,
+    PlayerJump, Riding, WalkCycle, bind_walk_bones,
 };
 
 /// One player in a room, as the server describes them: an id, a name, a look,
@@ -119,8 +120,11 @@ pub(crate) struct Townsfolk(u64);
 /// from how fast it is trying to go.
 #[derive(Component)]
 pub(crate) struct WalkFromMotion {
-    /// Where it stood last frame.
+    /// Where it stood last frame: on the island, or, riding the car, on the
+    /// car, in its own space.
     last: Vec3,
+    /// The car it was riding then.
+    on: Option<Entity>,
 }
 
 pub(crate) fn plugin(app: &mut App) {
@@ -286,6 +290,7 @@ pub(crate) fn spawn_player(
         Seat(seat),
         Balance::default(),
         PlayerJump::default(),
+        Riding::default(),
         Collider {
             shape: ColliderShape::Cylinder {
                 radius: PLAYER_RADIUS,
@@ -299,6 +304,7 @@ pub(crate) fn spawn_player(
     } else {
         avatar.insert(WalkFromMotion {
             last: spawn.translation,
+            on: None,
         });
     }
     if member.ai {
@@ -318,8 +324,10 @@ pub(crate) fn dress(entity: &mut EntityCommands, assets: &AssetServer, member: &
         .insert((
             body(assets, member, at),
             Seat(0),
+            Riding::default(),
             WalkFromMotion {
                 last: at.translation,
+                on: None,
             },
         ))
         .observe(bind_walk_bones);
@@ -337,13 +345,14 @@ pub(crate) type Whereabouts<'w, 's> = Query<
         Option<&'static mut WalkFromMotion>,
         Option<&'static mut ai::Steering>,
         Has<Player>,
+        Option<&'static mut Riding>,
     ),
 >;
 
 /// Puts `body` on `venue`, where `seat` arrives there, facing in: whatever
-/// jump it was in dropped, whatever walk the computer had it on forgotten, and
-/// the leap not taken for a stride. If it is yours, the camera swings round
-/// behind you.
+/// jump it was in dropped, whatever car it was riding left behind, whatever
+/// walk the computer had it on forgotten, and the leap not taken for a
+/// stride. If it is yours, the camera swings round behind you.
 pub(crate) fn send(
     bodies: &mut Whereabouts,
     orbit: &mut OrbitCamera,
@@ -362,14 +371,18 @@ pub(crate) fn put(
     venue: Venue,
     at: Transform,
 ) {
-    let Ok((mut transform, mut on, mut jump, seen, steering, mine)) = bodies.get_mut(body) else {
+    let Ok((mut transform, mut on, mut jump, seen, steering, mine, riding)) = bodies.get_mut(body) else {
         return;
     };
     transform.set_if_neq(at);
     on.set_if_neq(venue);
     *jump = PlayerJump::default();
+    if let Some(mut riding) = riding {
+        riding.set_if_neq(Riding(None));
+    }
     if let Some(mut seen) = seen {
         seen.last = at.translation;
+        seen.on = None;
     }
     if let Some(mut steering) = steering {
         steering.stop();
@@ -390,15 +403,27 @@ fn model(look: &str) -> &'static str {
 }
 
 /// Reads each body's walk off how far it went since last frame. Only ground
-/// covered counts: rising and falling in a jump is not walking.
+/// covered counts: rising and falling in a jump is not walking, and nor is
+/// being carried along by the car, so that a rider stands still on it.
 fn walk_from_motion(
     time: Res<Time>,
-    mut bodies: Query<(&Transform, &mut WalkFromMotion, &mut WalkCycle)>,
+    cars: Query<&Driven>,
+    mut bodies: Query<(&Transform, Option<&Riding>, &mut WalkFromMotion, &mut WalkCycle)>,
 ) {
     let dt = time.delta_secs();
-    for (transform, mut seen, mut walk) in &mut bodies {
-        let moved = transform.translation.xz().distance(seen.last.xz());
-        seen.last = transform.translation;
+    for (transform, riding, mut seen, mut walk) in &mut bodies {
+        let on = riding.and_then(|riding| riding.0);
+        let here = match on.and_then(|car| cars.get(car).ok()) {
+            Some(car) => car.now.inward(transform.translation),
+            None => transform.translation,
+        };
+        let moved = if seen.on == on {
+            here.xz().distance(seen.last.xz())
+        } else {
+            0.0
+        };
+        seen.last = here;
+        seen.on = on;
         walk.speed = if dt > 0.0 {
             (moved / dt / MOVE_SPEED).min(1.0)
         } else {

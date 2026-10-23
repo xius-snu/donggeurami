@@ -160,7 +160,8 @@ see the "Build gotchas" section of `RENDERING.md`, or the commands in
 `mobile/android/app/build.gradle`'s closing comment. The APK carries only
 what the game loads: whatever `mobile/android/app/assets-left-out.txt` names
 stays out (Blender files, reference pictures, retired models), and
-`cargo test` fails if that would leave out a piece the shop sells.
+`cargo test` fails if that would leave out a piece the shop sells, or the
+town's car.
 
 The app icon, on both phones, is Hajun's picture `mobile/appiconroundtown.png`
 (since 2026-10-08). `mobile/make_icons.ps1` makes the iOS icon and Android's
@@ -260,7 +261,10 @@ where things come from, not what they are.
   made (no faster than a run, no higher than a jump) and passes it on.
   Everyone else is drawn two updates behind, smoothed between them
   (`net::smooth`). **Players walk through each other** (Hajun's choice): a
-  remote body has no collider; AIs and walls still bump.
+  remote body has no collider; AIs and walls still bump. Riding the town's
+  car, where you are goes as a place on the car, in its own space
+  (`Spot::aboard`, since `PROTOCOL_VERSION` 2), and everyone else draws you
+  on the car as they see it (below, "The town's car").
 - **Getting in.** The device makes up a secret the first time it runs
   (`device.id`, beside `town.json`), sends it over HTTPS to the login on the
   VM (`src/login.rs`, TCP 443, the server's own certificate pinned by its
@@ -295,7 +299,12 @@ where things come from, not what they are.
   desktop build at another server, `RT_SERVER=off` keeps it offline, and in a
   debug build `RT_UNSECURE=1` skips the login, for a server run without
   `RT_KEY`. `RT_TIME_OF_DAY=night` (or `day`, `sunset`, `sunrise`, or
-  seconds into the twenty minutes) stops the day at one time. The VM allows
+  seconds into the twenty minutes) stops the day at one time, and
+  `RT_CAR_AT=<seconds>` the town's car at one point of its way round. A
+  server on this PC for two copies to meet on: `cargo build -p
+  roundtown_server`, then `target/debug/roundtown-server.exe` with
+  `RT_PORT=5443` and no `RT_KEY`, and the copies with
+  `RT_SERVER=127.0.0.1:5443 RT_UNSECURE=1`. The VM allows
   the tap on the time that skips House Builder's waits
   (`RT_ALLOW_SKIP=1`): take that out of `/etc/roundtown/env` before real
   players come.
@@ -487,6 +496,107 @@ for 4 on 2026-10-10).
   two parts are, while it is up (`spout`). See-through things are drawn
   furthest first by the middle of their bounds, which is why foam floats 6 mm
   over its pool: so that it comes after it.
+
+## The town's car
+
+A car drives round the town's roads by itself, and anyone can jump on and
+ride it (Hajun, 2026-10-23: "the car that automatically goes around in the
+circlemap1 ... it goes on every part of the road ... both lane 1 and lane
+2"; "dont hardcode the moving logic", as the model is to get seats and
+windows). It is Hajun's `assets/mybuilds/car.glb` (`car::MODEL`), not sold
+in the shop (`src/car.rs`, `src/roads.rs`). Nothing about it is in the code
+but its speeds: its shape is its model's, and its way round is the town's
+roads.
+
+- **The car is the shape of its model**, every triangle of it, read once it
+  has spawned (`car::Hull`) and moved about with it as an island of its own:
+  bodies stand on it and bump into it as they do the island (`Deck`,
+  `Ground` in `src/lib.rs`). Its seats, sunk 0.75 m into it, are a floor with walls round
+  it; the windscreen, glass and frame, is solid. Seats, windows or a roof
+  modelled in later are what they are modelled as, the roof over your head
+  in a jump and over your eyes zoomed in. **Each object in Blender is one
+  solid, all its materials together**: the glTF loader makes a mesh of each
+  material, and the body's red alone, without the dark grey of the seats,
+  is a box with no top over them, which `Island::blocked` took for the
+  inside of something and shoved everyone out of (found the day it was
+  made). Keep each solid a closed shell, as anywhere.
+- **Its front is along its longer side**, toward Blender's -X, the hood as
+  Hajun modelled it, or toward -Y, Blender's front, should it be turned to
+  face the way every other model does (`car::front`). Its wheels' bottoms
+  stand on the road, its footprint's middle on the middle of its lane.
+- **Its wheels turn**: every part of an object whose name begins `wheel` is
+  broken into its loose pieces, those about one middle taken as one wheel,
+  and each turned about its own middle as far as the car has gone over its
+  radius (`split_wheels`, `turn_wheels`). The four are one object in
+  Hajun's model (`wheels`); as four objects they would turn the same. The
+  wheels as modelled are hidden, and copies of them, one to each, turn.
+- **Its way round is read off the town** (`roads`): a road is where the top
+  of the town is `road`, its middle the dashes painted down it in
+  `roadwhite` (`roads::ROAD`, `MARKING`). Each dash in line with the next
+  makes a road's middle, round or open; an open middle goes on past its
+  last dash, up to 12 m, to the middle of the road it runs into, and joins
+  it there; each road is as wide as the road is either side of its middle at
+  its dashes; and roads are cut into stretches where they join. Round Town
+  is 12 stretches between 8 joins, every one three ways (the inner ring and
+  the outer, cut by the four straight roads). Repaint or move the roads in
+  Blender and the car drives the new ones; a road with no dashes down it is
+  not one to the car.
+- **It keeps to the right**, as Korea drives: two lanes to a stretch, one
+  each way, each halfway out from the middle to its edge (on Round Town's 10
+  m roads, 2.5 m out). It drives **every lane of every stretch**, in one
+  loop through the town, turning from lane to lane at the joins and never
+  back the way it came but at a dead end (`roads::plan`). With only
+  T-junctions no loop drives each lane exactly once: every way of taking the
+  turns leaves an even number of loops (checked over all 256 for Round
+  Town). So one stretch is driven twice, each way, the shortest that makes
+  it one loop: 26 lanes, 1,259 m, 198 s round (the log says so as the town
+  loads). The loop is the same on every device, whatever order the model
+  comes in, and varied: out a straight road, round the outer ring, back in
+  another, round the inner, and so on.
+- **Its speed is worked out from how sharply it turns**: at most
+  `roundtown_net::cars::TOP_SPEED`, 7 m/s, as fast as a run, so that you can
+  keep up beside it and no more; no harder round a bend than 2.5 m/s²
+  sideways; speeding up at 1.5 m/s² and slowing at 2.5. All my numbers. The
+  loop is then made to take a whole number of seconds.
+- **It goes by the clock** (`place_at`, the time since 1970 into the
+  loop), as the fountain's jet does, so every device has it in the same
+  place, and nothing about it goes over the network. Its loop being a whole
+  number of seconds is what keeps devices from drifting apart over the
+  years since 1970 on arithmetic that differs in its last digit. It never
+  stops: for nobody, as a device could not tell the others it had.
+  `RT_CAR_AT=<seconds>` stops it at one point of its loop, for trying
+  things out.
+- **Riding it**: standing on it, or in the air off it, a body is carried
+  along with it, turning as it turns (`Riding`, `move_bodies`), until it
+  comes down on anything else. So a jump on it comes down where it went up,
+  and walking off its side, you come down on the road with nothing carrying
+  you on. The car's top and the rim of its seats are 1.3 m over the road,
+  which a jump (1.64 m) clears from beside it at a run. It shoves out of
+  its way whoever it drives into, AIs too. AIs cannot jump, so never ride.
+  **The camera does not turn with it**: nothing turns it but you (above);
+  the car turns under you, as the island does.
+- **What hides you of the car fades**, the car whole, as a town object
+  does; the car you are riding only once it hides you from the waist up,
+  not for its seats round your legs (`see_through`).
+- **Online, a rider is a place on the car** (`Spot::aboard`, the car's
+  number): where you are goes to the server in the car's own space, and
+  standing still on it is standing still, sending nothing. Everyone else
+  draws a rider where they were on the car two updates ago, on the car as
+  it is now (`net::drawn`), so that a rider is never left behind the car by
+  the time an update takes, and never beside it however far apart two
+  devices' clocks are: tried with one 0.8 s out, its car 5.6 m on, and the
+  rider stayed in it, within 2 cm of where they were. Getting on and off is
+  eased over 0.25 s (`net::GETTING_ON`). The server checks moves on the car
+  as anywhere, in the car's space, and getting off, no further from where
+  you got on than the car could have taken you (`Pace`, `MOST_RIDE`): it
+  cannot tell where the car is. Checked with two copies on this PC and a
+  server on it (2026-10-23): one put in the car, the other watching, for a
+  loop and a half. **This is `PROTOCOL_VERSION` 2**: the apps on phones
+  before it are told to update once the server is deployed with it.
+- **Not yet tried**: on a phone, or by hand; jumping on was tried in tests
+  only (`body_tests` in `src/lib.rs`), and riding in scripted runs. The cost is not
+  measured: only bodies within the car's reach of it test its 4,000
+  triangles, 3,600 of them its wheels.
 
 ## The camera stands where you zoomed it
 

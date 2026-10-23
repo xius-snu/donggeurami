@@ -76,7 +76,10 @@ mean something else, or an old app connects and breaks instead. Phones keep
 the app they have until they update, so think twice before changing what is
 sent once real players have it. The prizes (deployed 2026-10-09) changed
 nothing sent, so the apps already out kept playing online with the new
-server.
+server. The town's car (2026-10-23) did: a `Spot` says which car its body
+is riding, `PROTOCOL_VERSION` 2. Once the server is deployed with it, the
+apps built before it are told to update, and stay offline until they have:
+deploy it when the new APK and TestFlight build are out, or as good as.
 
 A fresh VM is set up with `server/setup.sh`: packages, the `roundtown` user,
 the firewall, SSH by key only, the certificate, the settings, the database,

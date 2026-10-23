@@ -25,6 +25,7 @@ mod account;
 mod ai;
 mod build;
 mod builder;
+mod car;
 mod editor;
 mod fountain;
 mod hud;
@@ -37,6 +38,7 @@ mod map;
 mod net;
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 mod pace;
+mod roads;
 mod see_through;
 mod shop;
 mod sky;
@@ -203,6 +205,11 @@ struct PlayerJump {
     coyote: f32,
     buffer: f32,
 }
+
+/// The car a body is riding (`car`), if any: standing on it, or in the air
+/// off it, and carried along with it until it comes down on anything else.
+#[derive(Component, Default, Clone, Copy, PartialEq, Debug)]
+pub(crate) struct Riding(pub(crate) Option<Entity>);
 
 #[derive(Component, Default)]
 struct WalkCycle {
@@ -435,6 +442,9 @@ pub fn main() {
     island::plugin(&mut app);
     // The town's fountain, running, and its jet.
     fountain::plugin(&mut app);
+    // The car that drives round the town's roads, and carries whoever rides
+    // it.
+    car::plugin(&mut app);
     // Everything standing on the town comes from the town save, so the map
     // has to be there before the editor can be pointed at any of it.
     map::plugin(&mut app);
@@ -1012,8 +1022,9 @@ fn wading(pos: Vec3) -> bool {
     pos.y < WATER_Y + 0.25
 }
 
-/// What the feet come to rest on at `pos`: the highest ground on the island
-/// within a step of them, or, with none, the sea bed the player wades on.
+/// What the feet come to rest on at `pos`: the highest ground on the island,
+/// or on the car, within a step of them, or, with none, the sea bed the
+/// player wades on; and which it is.
 ///
 /// The ground under the middle of the body, unless the ground under its
 /// legs, round that, is higher by more than a slope makes it ([`EDGE_RISE`]):
@@ -1022,23 +1033,152 @@ fn wading(pos: Vec3) -> bool {
 /// with its legs on an edge and its middle just past it went on down past it,
 /// half into it, and once the edge was over its knees, was shoved out
 /// sideways and dropped (Hajun: it "glitch steps").
-fn support(island: &Island, pos: Vec3, elapsed: f32) -> f32 {
+fn support(ground: &Ground, pos: Vec3, elapsed: f32) -> (f32, Underfoot) {
     let sea = water_rest_y(elapsed);
     let reach = pos.y + LAND_STEP_UP;
-    let under = |at: Vec2| island.floor(at, reach).map_or(sea, |ground| ground.max(sea));
+    let under = |at: Vec2| match ground.floor(at, reach) {
+        Some((height, on)) if height > sea => (height, on),
+        _ => (sea, Underfoot::Island),
+    };
     let middle = under(pos.xz());
     // Standing on it, as nearly everyone nearly always is, that is all there
     // is to it: only a body off it, in the air or out over an edge, looks
     // under its legs. Beside the fountain's tower that is eight more looks
     // through its thousands of triangles.
-    if pos.y <= middle {
+    if pos.y <= middle.0 {
         return middle;
     }
     let legs = UNDER_THE_LEGS
         .iter()
         .map(|&round| under(pos.xz() + round))
-        .fold(middle, f32::max);
-    if legs > middle + EDGE_RISE { legs } else { middle }
+        .fold(middle, |highest, next| if next.0 > highest.0 { next } else { highest });
+    if legs.0 > middle.0 + EDGE_RISE { legs } else { middle }
+}
+
+/// Something that moves on an island and is stood on and bumped into as the
+/// island is: the car (`car`). Its shape, in its own space, where it stands
+/// this frame and where it stood the frame before.
+#[derive(Clone, Copy)]
+pub(crate) struct Deck<'a> {
+    car: Entity,
+    shape: &'a Island,
+    now: car::Place,
+    then: car::Place,
+    /// How far from its own middle any of it reaches, across the ground.
+    reach: f32,
+}
+
+impl Deck<'_> {
+    /// Whether any of it is within `margin` of `at`, across the ground: most
+    /// of the town never asks it anything.
+    fn near(&self, at: Vec2, margin: f32) -> bool {
+        at.distance_squared(self.now.at.xz()) <= (self.reach + margin).powi(2)
+    }
+
+    /// Where `at`, across the ground, is in its own space. It only ever turns
+    /// about the upright, so a line straight up is one in its space too.
+    fn local(&self, at: Vec2) -> Vec2 {
+        self.now.inward(Vec3::new(at.x, self.now.at.y, at.y)).xz()
+    }
+
+    /// The highest of it at `at` no higher than `reach`.
+    fn floor(&self, at: Vec2, reach: f32) -> Option<f32> {
+        let low = self.now.at.y;
+        if !self.near(at, 0.0) {
+            return None;
+        }
+        self.shape.floor(self.local(at), reach - low).map(|height| height + low)
+    }
+
+    /// The lowest underside of it over `at` higher than `above`.
+    fn ceiling(&self, at: Vec2, above: f32) -> Option<f32> {
+        let low = self.now.at.y;
+        if !self.near(at, 0.0) {
+            return None;
+        }
+        self.shape.ceiling(self.local(at), above - low).map(|height| height + low)
+    }
+
+    /// Moves `transform` as it moved since the frame before: along with it,
+    /// and turned as it turned.
+    fn carry(&self, transform: &mut Transform) {
+        let turned = (self.now.turn * self.then.turn.inverse()).normalize();
+        transform.translation = self.now.at + turned * (transform.translation - self.then.at);
+        transform.rotation = (turned * transform.rotation).normalize();
+    }
+}
+
+/// What a body moves over: its island, and whatever moves on it.
+#[derive(Clone, Copy)]
+pub(crate) struct Ground<'a> {
+    island: &'a Island,
+    decks: &'a [Deck<'a>],
+}
+
+/// What a body stands on: its island, or one of the decks on it, by where it
+/// comes in [`Ground::decks`].
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Underfoot {
+    Island,
+    Deck(usize),
+}
+
+impl<'a> Ground<'a> {
+    /// The island alone, with nothing moving on it.
+    #[cfg(test)]
+    fn bare(island: &'a Island) -> Self {
+        Self { island, decks: &[] }
+    }
+
+    /// The highest ground at `at` no higher than `reach`, and what it is.
+    fn floor(&self, at: Vec2, reach: f32) -> Option<(f32, Underfoot)> {
+        let mut highest = self.island.floor(at, reach).map(|height| (height, Underfoot::Island));
+        for (index, deck) in self.decks.iter().enumerate() {
+            if let Some(height) = deck.floor(at, reach)
+                && highest.is_none_or(|(high, _)| height > high)
+            {
+                highest = Some((height, Underfoot::Deck(index)));
+            }
+        }
+        highest
+    }
+
+    /// The lowest underside over `at` higher than `above`.
+    fn ceiling(&self, at: Vec2, above: f32) -> Option<f32> {
+        self.decks
+            .iter()
+            .filter_map(|deck| deck.ceiling(at, above))
+            .chain(self.island.ceiling(at, above))
+            .reduce(f32::min)
+    }
+
+    /// How far a ball of `radius` gets from `from` toward `to` before it
+    /// touches anything, or `None` if it gets all the way.
+    fn sweep(&self, from: Vec3, to: Vec3, radius: f32) -> Option<f32> {
+        self.decks
+            .iter()
+            .filter(|deck| deck.near(from.xz(), radius) || deck.near(to.xz(), radius))
+            .filter_map(|deck| deck.shape.sweep(deck.now.inward(from), deck.now.inward(to), radius))
+            .chain(self.island.sweep(from, to, radius))
+            .reduce(f32::min)
+    }
+}
+
+/// The cars, as bodies meet them: something to stand on that moves.
+type Decks<'w, 's> = Query<'w, 's, (Entity, &'static Venue, &'static car::Hull, &'static car::Driven)>;
+
+/// The decks among `cars` that are on `venue`.
+fn decks_on<'a>(cars: &'a Decks, venue: Venue) -> Vec<Deck<'a>> {
+    cars.iter()
+        .filter(|(_, on, ..)| **on == venue)
+        .map(|(car, _, hull, driven)| Deck {
+            car,
+            shape: &hull.shape,
+            now: driven.now,
+            then: driven.then,
+            reach: hull.reach,
+        })
+        .collect()
 }
 
 /// The dry ground a body at `pos` would stand on — the highest within a step
@@ -1063,12 +1203,12 @@ fn strands(island: &Island, from: Vec3, to: Vec3) -> bool {
 /// head, at `head`: over every square of the lattice its walls are tested on
 /// (`Island::walls`), so that no ceiling it stops short of can still reach
 /// into it at the side.
-fn headroom(island: &Island, at: Vec2, head: f32) -> Option<f32> {
+fn headroom(ground: &Ground, at: Vec2, head: f32) -> Option<f32> {
     let reach = PLAYER_RADIUS + island::LATTICE * 0.5;
     [-reach, 0.0, reach]
         .into_iter()
         .flat_map(|x| [-reach, 0.0, reach].map(|z| at + Vec2::new(x, z)))
-        .filter_map(|spot| island.ceiling(spot, head - HEAD_CLEARANCE))
+        .filter_map(|spot| ground.ceiling(spot, head - HEAD_CLEARANCE))
         .reduce(f32::min)
 }
 
@@ -1144,7 +1284,7 @@ fn resolve_cylinders(pos: &mut Vec3, radius: f32, height: f32, other: Vec3, othe
     pos.z += dz * scale;
 }
 
-fn resolve_player_solids(pos: &mut Vec3, solids: &[(Vec3, Collider)], island: &Island) {
+fn resolve_player_solids(pos: &mut Vec3, solids: &[(Vec3, Collider)], ground: &Ground) {
     for &(center, collider) in solids {
         match collider.shape {
             ColliderShape::Aabb { half_extents } => {
@@ -1170,18 +1310,41 @@ fn resolve_player_solids(pos: &mut Vec3, solids: &[(Vec3, Collider)], island: &I
     // been shoved off it. The hips are rounded off, half way between the two,
     // so that a body coming down just past an edge is eased off it rather
     // than shoved all at once as the edge reaches its waist.
-    let feet = pos.y;
-    let shape = [
-        (LEG_RADIUS, feet + LAND_STEP_UP, feet + HIP_HEIGHT),
-        ((LEG_RADIUS + PLAYER_RADIUS) * 0.5, feet + HIP_HEIGHT, feet + WAIST_HEIGHT),
-        (PLAYER_RADIUS, feet + WAIST_HEIGHT, feet + PLAYER_HEIGHT),
-    ];
-    for (min, max, radius) in island.walls_round(pos.xz(), &shape) {
-        let (min, max) = (Vec3::new(min.x, 0.0, min.y), Vec3::new(max.x, 0.0, max.y));
-        resolve_circle_aabb(pos, radius, min, max);
+    let shape = |feet: f32| {
+        [
+            (LEG_RADIUS, feet + LAND_STEP_UP, feet + HIP_HEIGHT),
+            ((LEG_RADIUS + PLAYER_RADIUS) * 0.5, feet + HIP_HEIGHT, feet + WAIST_HEIGHT),
+            (PLAYER_RADIUS, feet + WAIST_HEIGHT, feet + PLAYER_HEIGHT),
+        ]
+    };
+    let body = shape(pos.y);
+    resolve_walls(pos, ground.island, &body);
+    // And the car, the same, in its own space, where its sides are square to
+    // the lattice they are tested on. Moving into a body, it shoves the body
+    // out of its way.
+    for deck in ground.decks {
+        if !deck.near(pos.xz(), PLAYER_RADIUS + island::LATTICE) {
+            continue;
+        }
+        let mut local = deck.now.inward(*pos);
+        let was = local;
+        let body = shape(local.y);
+        resolve_walls(&mut local, deck.shape, &body);
+        if local != was {
+            *pos = deck.now.outward(local);
+        }
     }
     pos.x = pos.x.clamp(-OCEAN_LIMIT, OCEAN_LIMIT);
     pos.z = pos.z.clamp(-OCEAN_LIMIT, OCEAN_LIMIT);
+}
+
+/// Keeps a body at `pos`, of `shape` (`Island::walls_round`), out of
+/// whatever on `island` stands higher than a step over its feet.
+fn resolve_walls(pos: &mut Vec3, island: &Island, shape: &[(f32, f32, f32)]) {
+    for (min, max, radius) in island.walls_round(pos.xz(), shape) {
+        let (min, max) = (Vec3::new(min.x, 0.0, min.y), Vec3::new(max.x, 0.0, max.y));
+        resolve_circle_aabb(pos, radius, min, max);
+    }
 }
 
 fn walk_offset(kind: WalkBoneKind, swing: f32, weight: f32) -> Quat {
@@ -1353,6 +1516,7 @@ type Bodies<'w, 's> = Query<
         &'static Venue,
         &'static Intent,
         &'static mut PlayerJump,
+        &'static mut Riding,
         Has<StaysAshore>,
     ),
 >;
@@ -1361,10 +1525,16 @@ type Bodies<'w, 's> = Query<
 /// and the AIs' alike — as its [`Intent`] asks, and keeps each one out of its
 /// island, the trees on it and every other player there. Bodies on different
 /// islands pass through each other: they are never in the same place.
+///
+/// A body riding the car is first carried along with it, as it moved since
+/// the frame before, and then moves on it as it would on the ground: it rides
+/// it for as long as it stands on it, or is in the air off it, and gets off
+/// once it comes down on anything else (`car`).
 pub(crate) fn move_bodies(
     time: Res<Time>,
     islands: Res<Islands>,
     fixed: Query<(&Transform, &Collider, &Venue), Without<Intent>>,
+    cars: Decks,
     mut bodies: Bodies,
 ) {
     let dt = time.delta_secs();
@@ -1384,6 +1554,7 @@ pub(crate) fn move_bodies(
         let Some(island) = islands.get(venue) else {
             continue;
         };
+        let decks = decks_on(&cars, venue);
         // Everyone else here as they stand now, which for those already moved
         // this frame is where they have just got to, so no two end up inside
         // each other.
@@ -1398,28 +1569,45 @@ pub(crate) fn move_bodies(
                 .filter(|(other, _, _, at, ..)| *other != mover && **at == venue)
                 .map(|(_, other, collider, ..)| (other.translation, *collider)),
         );
-        let Ok((_, mut body, _, _, intent, mut jump, stays_ashore)) = bodies.get_mut(mover) else {
+        let Ok((_, mut body, _, _, intent, mut jump, mut riding, stays_ashore)) = bodies.get_mut(mover)
+        else {
             continue;
         };
         // Worked out on a copy and only written back if it has changed, so
         // that someone standing still is not taken for someone who moved,
         // which would have their whole skeleton placed again every frame.
         let mut transform = *body;
+        let mut on = riding.0;
+        if let Some(car) = on {
+            match decks.iter().find(|deck| deck.car == car) {
+                Some(deck) => deck.carry(&mut transform),
+                None => on = None,
+            }
+        }
         let motion = Motion {
-            island,
+            ground: Ground {
+                island,
+                decks: &decks,
+            },
             solids: &solids,
             stays_ashore,
             dt,
             elapsed,
         };
-        motion.step(&mut transform, &mut jump, intent);
+        match motion.step(&mut transform, &mut jump, intent) {
+            Some(Underfoot::Deck(deck)) => on = Some(decks[deck].car),
+            Some(Underfoot::Island) => on = None,
+            None => {}
+        }
+        riding.set_if_neq(Riding(on));
         body.set_if_neq(transform);
     }
 }
 
 /// What one body's own motion over a frame depends on, besides the body.
 struct Motion<'a> {
-    island: &'a Island,
+    /// The island, and the car on it.
+    ground: Ground<'a>,
     /// Everyone and everything else on the island to bump into.
     solids: &'a [(Vec3, Collider)],
     stays_ashore: bool,
@@ -1429,16 +1617,18 @@ struct Motion<'a> {
 }
 
 impl Motion<'_> {
-    /// Walks, jumps and drops `transform`, as `intent` asks, for one frame.
-    fn step(&self, transform: &mut Transform, jump: &mut PlayerJump, intent: &Intent) {
+    /// Walks, jumps and drops `transform`, as `intent` asks, for one frame:
+    /// and what it ends the frame standing on, if anything, or `None` in the
+    /// air.
+    fn step(&self, transform: &mut Transform, jump: &mut PlayerJump, intent: &Intent) -> Option<Underfoot> {
         let Motion {
-            island,
+            ground,
             solids,
             stays_ashore,
             dt,
             elapsed,
         } = *self;
-        let support_y = support(island, transform.translation, elapsed);
+        let (support_y, _) = support(&ground, transform.translation, elapsed);
         let grounded = transform.translation.y <= support_y + WATER_JUMP_SLOP;
         let slowed = wading(transform.translation);
 
@@ -1456,8 +1646,8 @@ impl Motion<'_> {
             for _ in 0..steps as u32 {
                 let from = transform.translation;
                 apply_planar_move(transform, intent.walk, distance / steps, dt / steps);
-                resolve_player_solids(&mut transform.translation, solids, island);
-                if stays_ashore && strands(island, from, transform.translation) {
+                resolve_player_solids(&mut transform.translation, solids, &ground);
+                if stays_ashore && strands(ground.island, from, transform.translation) {
                     transform.translation = from;
                     break;
                 }
@@ -1491,7 +1681,7 @@ impl Motion<'_> {
         // of a doorway — rather than going into it, where it would read as a
         // wall at the height of the head and shove the body out sideways.
         if jump.velocity_y > 0.0
-            && let Some(ceiling) = headroom(island, transform.translation.xz(), before + PLAYER_HEIGHT)
+            && let Some(ceiling) = headroom(&ground, transform.translation.xz(), before + PLAYER_HEIGHT)
             && transform.translation.y + PLAYER_HEIGHT > ceiling - HEAD_CLEARANCE
         {
             transform.translation.y = (ceiling - HEAD_CLEARANCE - PLAYER_HEIGHT).max(before);
@@ -1502,17 +1692,20 @@ impl Motion<'_> {
         // long frame cannot drop the feet clean through the ground they started
         // on.
         let highest = transform.translation.with_y(before.max(transform.translation.y));
-        let support_y = support(island, highest, elapsed);
+        let (support_y, under) = support(&ground, highest, elapsed);
         // Walking down the bridge, keep the feet on it rather than stepping off
         // into the air every frame and dropping back onto it a moment later.
         let downhill = grounded && transform.translation.y - support_y <= LAND_STEP_UP;
+        let mut footing = None;
         if jump.velocity_y <= 0.0 && (transform.translation.y <= support_y || downhill) {
             transform.translation.y = support_y;
             jump.velocity_y = 0.0;
+            footing = Some(under);
         }
         // Only once the feet have settled, so that the ground they are about to
         // land on does not first read as a wall at the height of their shins.
-        resolve_player_solids(&mut transform.translation, solids, island);
+        resolve_player_solids(&mut transform.translation, solids, &ground);
+        footing
     }
 }
 
@@ -1550,9 +1743,13 @@ pub(crate) fn animate_walk(
 /// looking down at you, as far as straight down, or looking up past you from
 /// low behind you. Zoomed all the way in it is your eyes, turned the same
 /// way, and you are not drawn.
+///
+/// Riding the car, it goes along with you, and turns only as you turn it:
+/// the car turns under you, as the world does.
 pub(crate) fn follow_camera(
     orbit: Res<OrbitCamera>,
     islands: Res<Islands>,
+    cars: Decks,
     mut players: Query<(&Transform, &Venue, &mut Visibility), With<Player>>,
     mut cameras: Query<&mut Transform, (With<ThirdPersonCamera>, Without<Player>)>,
 ) {
@@ -1562,7 +1759,12 @@ pub(crate) fn follow_camera(
     let Ok(mut eye) = cameras.single_mut() else {
         return;
     };
-    let view = camera_view(&orbit, player, islands.get(venue));
+    let decks = decks_on(&cars, venue);
+    let ground = islands.get(venue).map(|island| Ground {
+        island,
+        decks: &decks,
+    });
+    let view = camera_view(&orbit, player, ground);
     // Both only written when they change, so that a camera at rest is not
     // taken for one that moved.
     body.set_if_neq(if inside_you(view.translation, player) {
@@ -1584,11 +1786,11 @@ fn inside_you(at: Vec3, player: &Transform) -> bool {
 }
 
 /// Where the camera stands and which way it looks, turned and zoomed as
-/// `orbit` is round `player` on `island`: as far out behind you as you zoomed
+/// `orbit` is round `player` on `ground`: as far out behind you as you zoomed
 /// it, or in your eyes.
-fn camera_view(orbit: &OrbitCamera, player: &Transform, island: Option<&Island>) -> Transform {
+fn camera_view(orbit: &OrbitCamera, player: &Transform, ground: Option<Ground>) -> Transform {
     if orbit.distance <= 0.0 {
-        return eye_view(orbit, player, island);
+        return eye_view(orbit, player, ground);
     }
     let look_up = if orbit.pitch < 0.0 {
         (orbit.pitch / PITCH_MIN).clamp(0.0, 1.0)
@@ -1601,19 +1803,20 @@ fn camera_view(orbit: &OrbitCamera, player: &Transform, island: Option<&Island>)
 /// Your own eyes, inside your head, looking the way `orbit` is turned: the
 /// same yaw and pitch swing the camera round you to look the same way when it
 /// is behind you, so a swipe turns the view alike in both. Under a ceiling
-/// lower than them they stop short of it, the way a jump stops your head.
-fn eye_view(orbit: &OrbitCamera, player: &Transform, island: Option<&Island>) -> Transform {
+/// lower than them they stop short of it, the way a jump stops your head: a
+/// room's, or the car's roof.
+fn eye_view(orbit: &OrbitCamera, player: &Transform, ground: Option<Ground>) -> Transform {
     let chest = player.translation + Vec3::Y * LOOK_HEIGHT;
-    Transform::from_translation(rise(chest, EYE_HEIGHT - LOOK_HEIGHT, island))
+    Transform::from_translation(rise(chest, EYE_HEIGHT - LOOK_HEIGHT, ground))
         .with_rotation(Quat::from_rotation_y(orbit.yaw) * Quat::from_rotation_x(-orbit.pitch))
 }
 
 /// As far as `up` straight up from `at` as the camera gets before it meets a
 /// ceiling, and no further.
-fn rise(at: Vec3, up: f32, island: Option<&Island>) -> Vec3 {
+fn rise(at: Vec3, up: f32, ground: Option<Ground>) -> Vec3 {
     let top = at + Vec3::Y * up;
-    let clear = island
-        .and_then(|island| island.sweep(at, top, CAMERA_RADIUS))
+    let clear = ground
+        .and_then(|ground| ground.sweep(at, top, CAMERA_RADIUS))
         .unwrap_or(up);
     at + Vec3::Y * clear
 }
@@ -1719,7 +1922,7 @@ mod camera_tests {
                 let turn = step as f32 / 96.0;
                 let tilt = (1.2 * (turn * 9.0).sin()).clamp(PITCH_MIN, PITCH_MAX);
                 let you = orbit(turn * std::f32::consts::TAU * 2.0, tilt, 15.0);
-                let view = camera_view(&you, &player, Some(&island));
+                let view = camera_view(&you, &player, Some(Ground::bare(&island)));
                 assert_eq!(view, camera_view(&you, &player, None), "at {x} {z}");
                 if you.pitch >= 0.0 {
                     let middle = player.translation + Vec3::Y * LOOK_HEIGHT;
@@ -1787,7 +1990,7 @@ mod camera_tests {
         let player = Transform::default();
         let you = orbit(0.0, 0.38, 0.0);
         let eyes =
-            |boxes: &[(Vec3, Vec3)]| eye_view(&you, &player, Some(&island(boxes))).translation;
+            |boxes: &[(Vec3, Vec3)]| eye_view(&you, &player, Some(Ground::bare(&island(boxes)))).translation;
         assert!((eyes(&[GROUND]).y - EYE_HEIGHT).abs() < 1e-6);
         // Under a ceiling lower than your eyes, as high as they go under it.
         let low = (Vec3::new(-20.0, 1.7, -20.0), Vec3::new(20.0, 2.0, 20.0));
@@ -1873,10 +2076,10 @@ mod ground_tests {
         };
         // Half a metre up out of the basin: in the way, and not underfoot.
         assert!(walled(0.05));
-        assert!(support(&fountain, rim.extend(0.05).xzy(), 0.0) < 0.55);
+        assert!(support(&Ground::bare(&fountain), rim.extend(0.05).xzy(), 0.0).0 < 0.55);
         // A quarter of a metre up from the ledge outside: a step.
         assert!(!walled(0.3));
-        assert_eq!(support(&fountain, rim.extend(0.3).xzy(), 0.0), 0.55);
+        assert_eq!(support(&Ground::bare(&fountain), rim.extend(0.3).xzy(), 0.0).0, 0.55);
     }
 
     #[test]
@@ -1916,7 +2119,7 @@ mod body_tests {
         (0..frames)
             .map(|frame| {
                 let motion = Motion {
-                    island,
+                    ground: Ground::bare(island),
                     solids: &[],
                     stays_ashore: false,
                     dt: DT,
@@ -1977,7 +2180,7 @@ mod body_tests {
             [corner(-5.0, -5.0), corner(-5.0, 5.0), corner(5.0, 5.0)],
             [corner(-5.0, -5.0), corner(5.0, 5.0), corner(5.0, -5.0)],
         ]);
-        let feet = support(&ramp, Vec3::new(1.0, rise, 0.0), 0.0);
+        let (feet, _) = support(&Ground::bare(&ramp), Vec3::new(1.0, rise, 0.0), 0.0);
         assert!((feet - rise).abs() < 1e-4, "{feet} on the slope at {rise}");
     }
 
@@ -1992,6 +2195,166 @@ mod body_tests {
             (v(-0.736, 0.83, -3.0), v(0.736, 0.94, 3.0)),
             (v(-0.491, 1.15, -3.0), v(0.491, 1.45, 3.0)),
         ])
+    }
+
+    /// A body on `ground`, with `decks` moving on it as `place_at` says each
+    /// frame, for `frames` frames, from `at`, walking `walk` and jumping on
+    /// frame `jump_on`, carried along by whatever deck it rides as
+    /// `move_bodies` carries it: where it is after each, and what it stands
+    /// on.
+    fn ride(
+        ground: &Island,
+        shape: &Island,
+        place_at: impl Fn(usize) -> car::Place,
+        at: Vec3,
+        walk: Vec3,
+        jump_on: Option<usize>,
+        frames: usize,
+    ) -> Vec<(Vec3, Option<Underfoot>)> {
+        let mut transform = Transform::from_translation(at);
+        let mut jump = PlayerJump::default();
+        let mut riding = false;
+        (0..frames)
+            .map(|frame| {
+                let deck = Deck {
+                    car: Entity::PLACEHOLDER,
+                    shape,
+                    now: place_at(frame + 1),
+                    then: place_at(frame),
+                    reach: 4.0,
+                };
+                if riding {
+                    deck.carry(&mut transform);
+                }
+                let decks = [deck];
+                let motion = Motion {
+                    ground: Ground { island: ground, decks: &decks },
+                    solids: &[],
+                    stays_ashore: false,
+                    dt: DT,
+                    elapsed: frame as f32 * DT,
+                };
+                let intent = Intent {
+                    walk,
+                    jump: jump_on == Some(frame),
+                };
+                let footing = motion.step(&mut transform, &mut jump, &intent);
+                match footing {
+                    Some(Underfoot::Deck(_)) => riding = true,
+                    Some(Underfoot::Island) => riding = false,
+                    None => {}
+                }
+                (transform.translation, footing)
+            })
+            .collect()
+    }
+
+    /// The road, as the town's are, 0.2 m under the paving.
+    const ROAD: (Vec3, Vec3) = (Vec3::new(-80.0, -2.0, -80.0), Vec3::new(80.0, -0.2, 80.0));
+
+    #[test]
+    fn a_body_dropped_into_the_car_s_seats_stays_in_them() {
+        // Hajun's car, as its model is now, standing on the road: dropped in
+        // over its seats, a body comes to rest on them, in it, and is not
+        // shoved out through its sides. Each object of the model is one
+        // shape, all its materials together: its body alone, without the
+        // seats sunk into it, would be a box with no top over them.
+        let (pieces, low, high) = car::tests::hajuns_car();
+        let slices: Vec<&[[Vec3; 3]]> = pieces.iter().map(Vec::as_slice).collect();
+        let shape = Island::of_parts_for_tests(&slices);
+        let road = island(&[ROAD]);
+        let standing = car::Place {
+            at: Vec3::new(0.0, -0.2 - low.y, 0.0),
+            turn: Quat::IDENTITY,
+        };
+        for x in [-1.5, -0.75] {
+            let path = ride(&road, &shape, |_| standing, Vec3::new(x, 2.0, 0.0), Vec3::ZERO, None, 120);
+            let (end, footing) = *path.last().unwrap();
+            assert_eq!(footing, Some(Underfoot::Deck(0)), "dropped at {x}, ended at {end}");
+            assert!(end.y > -0.1 && end.y < standing.at.y + high.y, "{end}");
+            assert!(end.x > low.x && end.x < high.x && end.z > low.z && end.z < high.z, "{end} out of it");
+        }
+    }
+
+    #[test]
+    fn standing_on_the_car_it_carries_you_round_with_it() {
+        // A flat car 6 m long, its top 1.3 m up, driving along x at 7 m/s and
+        // turning a little: whoever stands on it stays where they stand on
+        // it, and turns with it.
+        let road = island(&[ROAD]);
+        let shape = island(&[(Vec3::new(-3.0, 0.0, -1.5), Vec3::new(3.0, 1.3, 1.5))]);
+        let place_at = |frame: usize| {
+            let t = frame as f32 * DT;
+            car::Place {
+                at: Vec3::new(7.0 * t, -0.2, 0.0),
+                turn: Quat::from_rotation_y(0.4 * t),
+            }
+        };
+        let on = Vec3::new(1.0, 1.3, 0.5);
+        let path = ride(&road, &shape, place_at, place_at(0).outward(on) + Vec3::Y * 0.01, Vec3::ZERO, None, 240);
+        // Coming down on it, it went on a frame's way without you; from then
+        // on, wherever you stand on it is where you stay.
+        let landed = place_at(1).inward(path[0].0);
+        assert!(landed.distance(on) < 0.1, "came down at {landed} on it");
+        for (frame, &(at, footing)) in path.iter().enumerate() {
+            assert_eq!(footing, Some(Underfoot::Deck(0)), "frame {frame}");
+            let on_it = place_at(frame + 1).inward(at);
+            assert!(on_it.distance(landed) < 1e-3, "frame {frame}: at {on_it} on it, not {landed}");
+        }
+        // Jumping on it, you come down on it where you went up.
+        let path = ride(&road, &shape, place_at, place_at(0).outward(on), Vec3::ZERO, Some(10), 120);
+        let went_up = place_at(1).inward(path[0].0);
+        assert!(path[40].1.is_none(), "not in the air");
+        let (end, footing) = *path.last().unwrap();
+        assert_eq!(footing, Some(Underfoot::Deck(0)));
+        let came_down = place_at(120).inward(end);
+        assert!(came_down.distance(went_up) < 1e-3, "went up at {went_up} on it, came down at {came_down}");
+        // And walking off the side of it, the way across the way it goes,
+        // you come down on the road beside it, and are carried along it no
+        // further as it drives on.
+        let path = ride(&road, &shape, place_at, place_at(0).outward(on), Vec3::Z, None, 240);
+        let (end, footing) = path[119];
+        assert_eq!(footing, Some(Underfoot::Island), "ended at {end}");
+        assert!((end.y + 0.2).abs() < 1e-3);
+        let (later, _) = path[239];
+        assert!((later.x - end.x).abs() < 1e-3, "carried on from {end} to {later}");
+    }
+
+    #[test]
+    fn running_beside_the_car_you_can_jump_on() {
+        // The car going along x at 5 m/s, its top 1.3 m over the road; you
+        // running beside it, keeping up and closing in, and jumping for it.
+        let road = island(&[ROAD]);
+        let shape = island(&[(Vec3::new(-3.0, 0.0, -1.5), Vec3::new(3.0, 1.3, 1.5))]);
+        let place_at = |frame: usize| car::Place {
+            at: Vec3::new(5.0 * frame as f32 * DT, -0.2, 0.0),
+            turn: Quat::IDENTITY,
+        };
+        let run = Vec3::new(5.0, 0.0, -3.5).normalize();
+        let path = ride(&road, &shape, place_at, Vec3::new(0.0, -0.2, 2.3), run, Some(4), 120);
+        let landed = path.iter().position(|&(_, footing)| footing == Some(Underfoot::Deck(0)));
+        let Some(landed) = landed else {
+            panic!("never came down on it: {:?}", path.last());
+        };
+        assert!((path[landed].0.y - 1.1).abs() < 1e-3, "came down at {}", path[landed].0);
+    }
+
+    #[test]
+    fn the_car_driving_into_you_shoves_you_out_of_its_way() {
+        // Standing on the road in its way, as it comes at you.
+        let road = island(&[ROAD]);
+        let shape = island(&[(Vec3::new(-3.0, 0.0, -1.5), Vec3::new(3.0, 1.3, 1.5))]);
+        let place_at = |frame: usize| car::Place {
+            at: Vec3::new(-10.0 + 7.0 * frame as f32 * DT, -0.2, 0.0),
+            turn: Quat::IDENTITY,
+        };
+        let path = ride(&road, &shape, place_at, Vec3::new(0.0, -0.2, 1.0), Vec3::ZERO, None, 240);
+        for (frame, &(at, _)) in path.iter().enumerate() {
+            let on_it = place_at(frame + 1).inward(at);
+            let inside = on_it.x.abs() < 3.0 && on_it.z.abs() < 1.5;
+            assert!(!inside || on_it.z.abs() > 1.5 - LEG_RADIUS, "frame {frame}: inside the car at {on_it}");
+            assert!((at.y + 0.2).abs() < 1e-3, "frame {frame}: lifted to {}", at.y);
+        }
     }
 
     #[test]
