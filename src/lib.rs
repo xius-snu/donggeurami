@@ -1342,6 +1342,60 @@ fn resolve_player_solids(pos: &mut Vec3, solids: &[(Vec3, Collider)], ground: &G
     pos.z = pos.z.clamp(-OCEAN_LIMIT, OCEAN_LIMIT);
 }
 
+/// How high over its feet the middle of a body walking on a car is, which
+/// is swept through the car's walls as wide as the body (`keep_off_deck_walls`):
+/// its body from the waist to the head.
+const SWEPT_AT: f32 = (WAIST_HEIGHT + PLAYER_HEIGHT) * 0.5;
+/// How far short of a wall a body swept into it stops, in metres.
+const SWEPT_SHORT: f32 = 0.001;
+
+/// Keeps a body walking from `from` to `pos` from going through the walls of
+/// any car on the island, however thin. The lattice walls are tested on
+/// (`resolve_walls`) has a square every 0.25 m, and the bus's walls are a
+/// centimetre thick: a body walked out of the bus through its side, and in
+/// the same way (Hajun, 2026-10-24). So the middle of the body, as wide as
+/// it is, is swept from where it was to where it is going against every
+/// triangle of each car near it, in the car's own space, and what it meets
+/// it slides along (`slide_past`). Only the body's own walking is swept: a
+/// car driving into someone standing still is no more than it was.
+fn keep_off_deck_walls(from: Vec3, pos: &mut Vec3, ground: &Ground) {
+    for deck in ground.decks {
+        if !deck.near(pos.xz(), PLAYER_RADIUS + island::LATTICE) {
+            continue;
+        }
+        let (start, end) = (deck.now.inward(from), deck.now.inward(*pos));
+        let reached = slide_past(deck.shape, start, end);
+        if reached != end {
+            *pos = deck.now.outward(reached);
+        }
+    }
+}
+
+/// How far a body walking from `start` to `end`, at its feet, gets without
+/// the middle of it, as wide as it is, going into anything of `shape`:
+/// straight there, or failing that along each of the shape's two ways across
+/// the ground in turn, so that it slides along a wall square to one of them,
+/// as the bus's sides, front and back are, rather than stopping dead at it.
+fn slide_past(shape: &Island, start: Vec3, end: Vec3) -> Vec3 {
+    let middle = Vec3::Y * SWEPT_AT;
+    let reach = |from: Vec3, to: Vec3| -> Vec3 {
+        let length = from.distance(to);
+        if length < 1e-6 {
+            return to;
+        }
+        match shape.sweep(from + middle, to + middle, PLAYER_RADIUS) {
+            None => to,
+            Some(met) => from.lerp(to, (met - SWEPT_SHORT).max(0.0) / length),
+        }
+    };
+    let straight = reach(start, end);
+    if straight == end {
+        return end;
+    }
+    let across = reach(start, Vec3::new(end.x, end.y, start.z));
+    reach(across, Vec3::new(across.x, end.y, end.z))
+}
+
 /// Keeps a body at `pos`, of `shape` (`Island::walls_round`), out of
 /// whatever on `island` stands higher than a step over its feet.
 fn resolve_walls(pos: &mut Vec3, island: &Island, shape: &[(f32, f32, f32)]) {
@@ -1650,6 +1704,7 @@ impl Motion<'_> {
             for _ in 0..steps as u32 {
                 let from = transform.translation;
                 apply_planar_move(transform, intent.walk, distance / steps, dt / steps);
+                keep_off_deck_walls(from, &mut transform.translation, &ground);
                 resolve_player_solids(&mut transform.translation, solids, &ground);
                 if stays_ashore && strands(ground.island, from, transform.translation) {
                     transform.translation = from;
@@ -2378,6 +2433,67 @@ mod body_tests {
             assert!(!inside || on_it.z.abs() > 1.5 - LEG_RADIUS, "frame {frame}: inside the car at {on_it}");
             assert!((at.y + 0.2).abs() < 1e-3, "frame {frame}: lifted to {}", at.y);
         }
+    }
+
+    #[test]
+    fn the_bus_s_thin_walls_keep_you_in_and_out_but_its_doorways_let_you_through() {
+        // Hajun, 2026-10-24: walking out of the bus, you went out through its
+        // side, and in through it the same way: its walls are a centimetre
+        // thick, and bodies are kept out of walls on a quarter-metre lattice.
+        let (pieces, low, high) = car::tests::hajuns_car("mybuilds/bus.glb");
+        let slices: Vec<&[[Vec3; 3]]> = pieces.iter().map(Vec::as_slice).collect();
+        let shape = Island::of_parts_for_tests(&slices);
+        let road = island(&[ROAD]);
+        let standing = car::Place {
+            at: Vec3::new(0.0, -0.2 - low.y, 0.0),
+            turn: Quat::IDENTITY,
+        };
+        let floor = shape.floor(Vec2::ZERO, low.y + 1.0).expect("a floor in the bus");
+        // Along its right side, where the middle of a body sweeps straight out
+        // of it and where it does not: the middles of the longest run of each,
+        // a doorway and a wall.
+        let gets_out = |z: f32| {
+            let middle = Vec3::new(0.0, floor + SWEPT_AT, z);
+            shape.sweep(middle, middle + Vec3::X * (high.x + 1.0), PLAYER_RADIUS).is_none()
+        };
+        let along: Vec<f32> = (0..=((high.z - low.z) / 0.1) as usize)
+            .map(|k| low.z + k as f32 * 0.1)
+            .collect();
+        let middle_of_longest = |open: bool| {
+            let mut runs: Vec<(usize, usize)> = Vec::new();
+            for (k, &z) in along.iter().enumerate() {
+                if gets_out(z) != open {
+                    continue;
+                }
+                match runs.last_mut() {
+                    Some((_, end)) if *end + 1 == k => *end = k,
+                    _ => runs.push((k, k)),
+                }
+            }
+            let (start, end) = runs.into_iter().max_by_key(|&(start, end)| end - start).expect("a run");
+            (along[start] + along[end]) * 0.5
+        };
+        let (doorway, wall) = (middle_of_longest(true), middle_of_longest(false));
+        let inside = |z: f32| standing.outward(Vec3::new(0.0, floor + 0.01, z));
+        let outside = |z: f32| Vec3::new(high.x + 1.5, -0.2, z);
+        let walk = |at: Vec3, way: Vec3, frames: usize| *ride(&road, &shape, |_| standing, at, way, None, frames).last().unwrap();
+        // Walking at its side from inside, you stay in it, on its floor; and
+        // at it from outside, out of it.
+        let (end, footing) = walk(inside(wall), Vec3::X, 120);
+        assert_eq!(footing, Some(Underfoot::Deck(0)), "walked out through the wall to {end}");
+        assert!(end.x < high.x, "walked out through the wall to {end}");
+        let (end, _) = walk(outside(wall), Vec3::NEG_X, 120);
+        assert!(end.x > high.x, "walked in through the wall to {end}");
+        // Slanting into it, you slide along it.
+        let (end, _) = walk(inside(wall), Vec3::new(1.0, 0.0, 1.0).normalize(), 30);
+        assert!(end.x < high.x && end.z > wall + 0.5, "stuck at the wall at {end}");
+        // Its doorway lets you out, onto the road, and in, onto its floor.
+        let (end, footing) = walk(inside(doorway), Vec3::X, 120);
+        assert_eq!(footing, Some(Underfoot::Island), "not out at {end}");
+        assert!(end.x > high.x + 0.5, "not out at {end}");
+        let (end, footing) = walk(outside(doorway), Vec3::NEG_X, 60);
+        assert_eq!(footing, Some(Underfoot::Deck(0)), "not in at {end}");
+        assert!(end.x < high.x - 0.5, "not in at {end}");
     }
 
     #[test]

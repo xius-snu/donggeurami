@@ -574,14 +574,25 @@ is their model's, and their way round is the town's roads.
   the first car's red alone, without the dark grey of its seats, was a box
   with no top over them, which `Island::blocked` took for the inside of
   something and shoved everyone out of. Keep each solid a closed shell, as
-  anywhere. **The bus's walls are 1 cm thick, and bodies pass through
-  them**: what stops a body is anything 0.25 m thick or more ("The islands
-  are Blender models"). So you step in at a doorway, or through a wall,
-  onto its floor, a step up from the road; and standing in its way, it
-  scoops you up onto its floor rather than shoving you aside, as the cars
-  did with their sides over a step high. An AI it drives into is scooped up
-  the same, and rides until it walks off. Thicker walls in the model would
-  keep everyone to its doorways.
+  anywhere. **The bus's walls are 1 cm thick, and still keep you in and
+  out** (`keep_off_deck_walls`, since 2026-10-24): the lattice that keeps
+  bodies out of walls only stops what is 0.25 m thick or more ("The islands
+  are Blender models"), and you walked out of the bus through its side, and
+  in the same way (Hajun: "i think its cuz the bus's walls are rly thin").
+  So a body walking on or near a car has its middle, as wide as it is, at
+  waist to head height, swept against every triangle of the car in the
+  car's own space, and slides along what it meets, the bus's sides, front
+  and back being square to its two ways across the ground. Its doorways,
+  about 1.2 m wide on both sides, near the front and in the middle, are the
+  way in and out, a step up from the road onto its floor; thickening the
+  walls to the lattice's 0.25 m would have left them too narrow for a body
+  0.9 m across. Only a body's own walking is swept: standing in the bus's
+  way, it scoops you up onto its floor rather than shoving you aside, as
+  the cars did with their sides over a step high, and an AI it drives into
+  is scooped up the same, and rides until it walks to a doorway. Checked
+  on the model in a test that fails without the sweep
+  (`the_bus_s_thin_walls_keep_you_in_and_out_but_its_doorways_let_you_through`);
+  not yet tried by hand.
 - **Its front is along its longer side**, toward Blender's -Y, Blender's
   front, as the bus and the Roadster face and every other model does, or
   toward -X, as the first car's hood is (`car::front`). Its wheels' bottoms
