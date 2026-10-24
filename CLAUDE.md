@@ -717,18 +717,25 @@ is their model's, and their way round is the town's roads.
   on. Its floor is a step up from the road, and its roof, at 3.2 m, out of
   a jump's reach. **The camera does not turn with it**: nothing turns it
   but you (above); the bus turns under you, as the island does.
-- **A bus in the way fades, but only to half of itself** (Hajun,
-  2026-10-24: "the bus should become transparent just not that much as the
-  other ones so slightly higher opacity but still transparent";
-  `see_through::BUS_SEEN`, 0.5, against a quarter for everything else). It
+- **A bus in the way fades, but only to three quarters of itself**
+  (Hajun, 2026-10-24: "the bus should become transparent just not that much
+  as the other ones so slightly higher opacity but still transparent", and
+  then of half, "increase the bus opacity slightly more";
+  `see_through::BUS_SEEN`, 0.75, against a quarter for everything else). It
   fades whole, wheels and glass with it, whichever part of it hides any of
   you, as a town object does: so you are seen through it from a camera
-  behind it, or riding in it with the camera outside. Half is two of the
-  four MSAA samples a pixel has, as a quarter is one. From 2026-10-23, at
-  Hajun's asking, the car never faded at all ("make it so that the car never
-  become transparent even if camera blocks the player through the car"),
-  and the bus took that over until this. Seen in the desktop build the same
-  day, stopped by day with you behind it.
+  behind it, or riding in it with the camera outside. **Only a quarter, a
+  half and three quarters come out smooth**: with alpha to coverage a pixel
+  shows it in one, two or three of its four MSAA samples, and anything
+  between a GPU makes up, if at all, by using more samples in some pixels
+  than in those beside them. Seen the same day in the desktop build, the bus
+  stopped by day with you behind it: at a half and at three quarters
+  smooth, at 0.65 a checkerboard, neighbouring pixels 16 levels of red
+  apart on average (up to 31). Not yet seen on a phone, whose GPU may not
+  make up the steps between at all. From 2026-10-23, at Hajun's asking, the
+  car never faded at all ("make it so that the car never become
+  transparent even if camera blocks the player through the car"), and the
+  bus took that over until the first of these.
 - **Online, a rider is a place on their bus** (`Spot::aboard`, the bus's
   number): where you are goes to the server in the bus's own space, and
   standing still on it is standing still, sending nothing. Everyone else
@@ -781,7 +788,7 @@ through its wall.
   where you turned and zoomed it.
 - **Whatever hides any of you from it fades to a quarter of itself**
   (`SEEN`, 0.25, as much as Roblox's Invisicam leaves; one of the town's
-  buses to half, `BUS_SEEN`, above) over 0.15 s, and
+  buses to three quarters, `BUS_SEEN`, above) over 0.15 s, and
   back once it hides none of you (`FADE_SECS`): "even little bit of the
   player is covered, that wall becomes invisible" (Hajun, 2026-10-13).
   Every frame the straight lines from the camera to 73 points on you

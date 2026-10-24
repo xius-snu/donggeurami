@@ -13,9 +13,9 @@
 //! in, through your own eyes, there is nothing between.
 //!
 //! A piece of furniture, a door, a window, a town object or one of the
-//! town's buses fades whole, the bus to half of itself rather than a quarter
-//! ([`BUS_SEEN`]). A house, and the island itself, fade a part at a time,
-//! each part as it was modelled in Blender: a
+//! town's buses fades whole, the bus to three quarters of itself rather than
+//! a quarter ([`BUS_SEEN`]). A house, and the island itself, fade a part at a
+//! time, each part as it was modelled in Blender: a
 //! wall, the roof, a floor, a tree's leaves. Whatever is in a part fades with
 //! it, so that no door stands solid in a wall you see through
 //! ([`inside_of`]): the doors, windows and sign of a house in the
@@ -61,14 +61,19 @@ use crate::{Player, ThirdPersonCamera};
 /// with alpha to coverage takes away ([`see_through`]).
 const SEEN: f32 = 0.25;
 /// How much of one of the town's buses is drawn while it is in the way of
-/// you: half of it, more than of anything else ([`SEEN`]), so that the bus
-/// is still plainly there with you seen through it (Hajun, 2026-10-24: "the
-/// bus should become transparent just not that much as the other ones so
-/// slightly higher opacity but still transparent"). Drawn with alpha to
-/// coverage and the camera's 4x MSAA, half is two of the four samples of a
-/// pixel, as a quarter is one: the next even step up. From 2026-10-23, at
-/// Hajun's asking, the car it took over from never faded at all.
-const BUS_SEEN: f32 = 0.5;
+/// you: three quarters of it, more than of anything else ([`SEEN`]), so that
+/// the bus is still plainly there with you seen through it (Hajun,
+/// 2026-10-24: "the bus should become transparent just not that much as the
+/// other ones so slightly higher opacity but still transparent"; then, of
+/// half, "increase the bus opacity slightly more"). Drawn with alpha to
+/// coverage and the camera's 4x MSAA, a pixel shows it in one, two or three
+/// of its four samples: anything between, a GPU makes up by showing it in
+/// more samples in some pixels than in the ones beside them, if it does that
+/// at all. This PC's does: at 0.65 the bus came out a checkerboard,
+/// neighbouring pixels 16 levels of red apart on average, where at a half
+/// and at three quarters they were smooth (measured the same day). So the
+/// next step up from half is three quarters.
+const BUS_SEEN: f32 = 0.75;
 /// How long something takes to fade, and to come back, in seconds.
 const FADE_SECS: f32 = 0.15;
 /// What of you the camera has to see: rings round you at these heights over
