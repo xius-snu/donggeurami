@@ -552,12 +552,25 @@ shop. Nothing about the buses is in the code but their speeds: their shape
 is their model's, and their way round is the town's roads.
 
 - **The bus** is 12.5 m long, 3.7 m wide (wider than a real bus, 2.55 m)
-  and 3.2 m to its roof, 4 m with what stands on it: a red coach with a
+  and 3.3 m to its roof, 4.1 m with what stands on it: a red coach with a
   windscreen and headlights at the front, windows down both sides, and two
   doorways on its right, the kerb side, each with a step, into a hollow
-  inside whose floor is 0.33 m over the road. Its body is one object,
-  `Cube`, a box made a shell by a Solidify modifier 1 cm thick, and its
-  four wheels another, `wheels`, one wheel and a Mirror and an Array.
+  inside whose floor is 0.45 to 0.49 m over the road, just under a step
+  (0.495), so that you walk in. Its body is one object, `Cube`, a box made
+  a shell by a Solidify modifier, its sides about 5 cm thick, and its four
+  wheels another, `wheels`, one wheel and a Mirror and an Array. **Since
+  Hajun's save of 2026-10-25 every modifier is applied in `bus.blend`**,
+  so an export with the defaults has all of it. That night Hajun raised the
+  body 0.1 m (its floor was 0.33 m over the road, its sides 1.5 cm thick),
+  and three exports came without the Solidify, the first with one wheel
+  too: with no Solidify the bus is one surface facing out, its floor facing
+  down, nothing stands in it and the bus tests fail. **Its roof is
+  two faces 1.6 cm apart**, the top facing up and the ceiling under it
+  facing down, and it needs both: later that night the ceiling was deleted,
+  and the inside of the bus counted as solid, shoving anyone in it out
+  through a doorway; then the top was flipped to face down, and what landed
+  on the roof fell through it. Hajun's save of 01:44 is their 01:11 one
+  again, which passes every test. Run `cargo test --lib` after exporting it.
 - **Fixed in `bus.blend` on 2026-10-24** (my doing, at the swap): Hajun
   modelled it facing Blender's +X, so the game would have driven it
   backwards. It was turned a quarter round about the origin to face -Y,
@@ -565,8 +578,9 @@ is their model's, and their way round is the town's roads.
   object, `Cylinder`, was named `wheels`, which the game turns; and it was
   exported with Apply Modifiers, as Hajun's export of that day had one
   wheel (3,556 triangles with all four). Nothing else in the file changed,
-  and its `.blend1` is Hajun's save from before. Export it with Apply
-  Modifiers ticked after changing it, or the game gets one wheel again.
+  and its `.blend1` is Hajun's save from before. Should a modifier come back
+  on it, export it with Apply Modifiers ticked, or the game gets one wheel
+  again.
 - **A bus is the shape of its model**, every triangle of it, read once it
   has spawned (`car::Hull`) and moved about with it as an island of its own:
   bodies stand on it and bump into it as they do the island (`Deck`,
@@ -575,8 +589,8 @@ is their model's, and their way round is the town's roads.
   the first car's red alone, without the dark grey of its seats, was a box
   with no top over them, which `Island::blocked` took for the inside of
   something and shoved everyone out of. Keep each solid a closed shell, as
-  anywhere. **The bus's walls are 1 cm thick, and still keep you in and
-  out** (`keep_off_deck_walls`, since 2026-10-24): the lattice that keeps
+  anywhere. **The bus's walls are a few centimetres thick, and still keep
+  you in and out** (`keep_off_deck_walls`, since 2026-10-24): the lattice that keeps
   bodies out of walls only stops what is 0.25 m thick or more ("The islands
   are Blender models"), and you walked out of the bus through its side, and
   in the same way (Hajun: "i think its cuz the bus's walls are rly thin").
@@ -715,7 +729,7 @@ is their model's, and their way round is the town's roads.
   along with it, turning as it turns (`Riding`, `move_bodies`), until it
   comes down on anything else. So a jump on it comes down where it went up,
   and walking off it, you come down on the road with nothing carrying you
-  on. Its floor is a step up from the road, and its roof, at 3.2 m, out of
+  on. Its floor is a step up from the road, and its roof, at 3.3 m, out of
   a jump's reach. **The camera does not turn with it**: nothing turns it
   but you (above); the bus turns under you, as the island does.
 - **A bus in the way does not fade** (since 2026-10-25, Hajun: "not on the
@@ -762,7 +776,7 @@ is their model's, and their way round is the town's roads.
   Seen in the desktop build on 2026-10-24, from beside the road by day and
   from above in two copies at once, in the same place in both. The cost is
   not measured: only bodies within a bus's reach of it test its triangles,
-  its 3,556.
+  its 3,604 (3,556 until 2026-10-25).
 
 ## The camera stands where you zoomed it
 
