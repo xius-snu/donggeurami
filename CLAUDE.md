@@ -706,12 +706,18 @@ is their model's, and their way round is the town's roads.
   on. Its floor is a step up from the road, and its roof, at 3.2 m, out of
   a jump's reach. **The camera does not turn with it**: nothing turns it
   but you (above); the bus turns under you, as the island does.
-- **The buses never fade** (Hajun, 2026-10-23, of the car: "make it so that
-  the car never become transparent even if camera blocks the player through
-  the car"): whatever of you one hides stays hidden
-  (`see_through::of_the_car`). In the bus, with the camera outside it, you
-  are seen only through its windows; zoomed all the way in, you see out of
-  them.
+- **A bus in the way fades, but only to half of itself** (Hajun,
+  2026-10-24: "the bus should become transparent just not that much as the
+  other ones so slightly higher opacity but still transparent";
+  `see_through::BUS_SEEN`, 0.5, against a quarter for everything else). It
+  fades whole, wheels and glass with it, whichever part of it hides any of
+  you, as a town object does: so you are seen through it from a camera
+  behind it, or riding in it with the camera outside. Half is two of the
+  four MSAA samples a pixel has, as a quarter is one. From 2026-10-23, at
+  Hajun's asking, the car never faded at all ("make it so that the car never
+  become transparent even if camera blocks the player through the car"),
+  and the bus took that over until this. Seen in the desktop build the same
+  day, stopped by day with you behind it.
 - **Online, a rider is a place on their bus** (`Spot::aboard`, the bus's
   number): where you are goes to the server in the bus's own space, and
   standing still on it is standing still, sending nothing. Everyone else
@@ -763,7 +769,8 @@ through its wall.
   the camera by as much, wherever you are. **Keep both**: nothing moves it off
   where you turned and zoomed it.
 - **Whatever hides any of you from it fades to a quarter of itself**
-  (`SEEN`, 0.25, as much as Roblox's Invisicam leaves) over 0.15 s, and
+  (`SEEN`, 0.25, as much as Roblox's Invisicam leaves; one of the town's
+  buses to half, `BUS_SEEN`, above) over 0.15 s, and
   back once it hides none of you (`FADE_SECS`): "even little bit of the
   player is covered, that wall becomes invisible" (Hajun, 2026-10-13).
   Every frame the straight lines from the camera to 73 points on you
@@ -798,8 +805,8 @@ through its wall.
   Hajun found that "a bit too much". Glass and water stay blended, and so
   does anything with a texture, which alpha to coverage would show all or
   nothing (`RENDERING.md`): the Soft Couch.
-- **What fades:** a piece of furniture, a door, a window or a town object
-  fades whole; a house and the island a part at a time, each as modelled in
+- **What fades:** a piece of furniture, a door, a window, a town object or
+  a bus fades whole; a house and the island a part at a time, each as modelled in
   Blender: a wall, the roof, a floor, a tree's trunk or its leaves. Whatever
   is in a part fades with it, so that no door stands solid in a wall you see
   through (`see_through::inside_of`): of a house or the island, the rest of it that
@@ -807,8 +814,8 @@ through its wall.
   sign of a house in the town, which are objects of their own, or the water
   in the fountain's basin; and the doors, windows and hangings in a wall in
   House Builder (`build::OnWall`). Glass and water fade from as see-through
-  as they are. Bodies never fade (skinned meshes are left out), nor the
-  town's buses, nor ghosts or the sky, nor glass or water for being in the way (but for the glass of
+  as they are. Bodies never fade (skinned meshes are left out), nor
+  ghosts or the sky, nor glass or water for being in the way (but for the glass of
   a door or a window in a wall in House Builder: below), nor a piece being
   put down, nor whatever the edit menu is open on. **Nor the ground**
   (`see_through::ground`): the island's own parts no higher than a step

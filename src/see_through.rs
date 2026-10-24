@@ -12,8 +12,10 @@
 //! your body, your chest or your head was (2026-10-09). Zoomed all the way
 //! in, through your own eyes, there is nothing between.
 //!
-//! A piece of furniture, a door, a window or a town object fades whole. A
-//! house, and the island itself, fade a part at a time, each part as it was modelled in Blender: a
+//! A piece of furniture, a door, a window, a town object or one of the
+//! town's buses fades whole, the bus to half of itself rather than a quarter
+//! ([`BUS_SEEN`]). A house, and the island itself, fade a part at a time,
+//! each part as it was modelled in Blender: a
 //! wall, the roof, a floor, a tree's leaves. Whatever is in a part fades with
 //! it, so that no door stands solid in a wall you see through
 //! ([`inside_of`]): the doors, windows and sign of a house in the
@@ -24,10 +26,9 @@
 //! in the way of you takes the house's ceiling with it ([`over_your_head`]),
 //! and the ceiling in the way of a camera looking down into the room at a
 //! slant takes the walls on the camera's side ([`on_the_camera_side`]).
-//! Bodies never fade, nor the town's buses ([`of_the_car`]), nor water and any
-//! other glass for being in the way, as they are see-through already, nor a
-//! piece being put down, nor whatever the edit menu is open on, nor the
-//! ground ([`ground`]).
+//! Bodies never fade, nor water and any other glass for being in the way, as
+//! they are see-through already, nor a piece being put down, nor whatever
+//! the edit menu is open on, nor the ground ([`ground`]).
 //!
 //! Something a tap can reach (`editor::Editable`) is out of its reach for as
 //! long as any of it is see-through ([`InTheWay`]): a tap goes through it, so
@@ -59,6 +60,15 @@ use crate::{Player, ThirdPersonCamera};
 /// quarter was the edges of a part showing through it, which drawing it
 /// with alpha to coverage takes away ([`see_through`]).
 const SEEN: f32 = 0.25;
+/// How much of one of the town's buses is drawn while it is in the way of
+/// you: half of it, more than of anything else ([`SEEN`]), so that the bus
+/// is still plainly there with you seen through it (Hajun, 2026-10-24: "the
+/// bus should become transparent just not that much as the other ones so
+/// slightly higher opacity but still transparent"). Drawn with alpha to
+/// coverage and the camera's 4x MSAA, half is two of the four samples of a
+/// pixel, as a quarter is one: the next even step up. From 2026-10-23, at
+/// Hajun's asking, the car it took over from never faded at all.
+const BUS_SEEN: f32 = 0.5;
 /// How long something takes to fade, and to come back, in seconds.
 const FADE_SECS: f32 = 0.15;
 /// What of you the camera has to see: rings round you at these heights over
@@ -119,16 +129,19 @@ struct SeeThrough {
     look: Handle<StandardMaterial>,
     /// How solid its own material is: 1, or less for glass and water.
     alpha: f32,
-    /// How much of that it is drawn with, from 1, as it is, down to [`SEEN`].
+    /// How much of that it is drawn with, from 1, as it is, down to `seen`.
     shown: f32,
+    /// How much of it is drawn in the way of you: [`SEEN`], or [`BUS_SEEN`].
+    seen: f32,
     /// What it is part of that a tap could reach, if anything.
     owner: Option<Entity>,
 }
 
 /// The parts that hide you from the camera this frame, and those that fade
-/// along with them, each with what it is part of that a tap could reach.
+/// along with them, each with what it is part of that a tap could reach, and
+/// how much of it is drawn while it is in the way.
 #[derive(Resource, Default)]
-struct Hiding(HashMap<Entity, Option<Entity>>);
+struct Hiding(HashMap<Entity, (Option<Entity>, f32)>);
 
 pub(crate) fn plugin(app: &mut App) {
     app.init_resource::<Hiding>().add_systems(
@@ -221,11 +234,7 @@ fn find_what_hides_you(
             continue;
         }
         let (low, high) = world_box(bounds, place);
-        if low.cmpgt(reach_high).any()
-            || high.cmplt(reach_low).any()
-            || ground(part, high.y, &lineage)
-            || of_the_car(part, &lineage)
-        {
+        if low.cmpgt(reach_high).any() || high.cmplt(reach_low).any() || ground(part, high.y, &lineage) {
             continue;
         }
         // Only what is drawn solid, or is see-through already for being in
@@ -315,6 +324,7 @@ fn find_what_hides_you(
         let Some((fellows, owner)) = fades_with(part, &lineage, &children, &parts, target) else {
             continue;
         };
+        let seen = if of_the_car(part, &lineage) { BUS_SEEN } else { SEEN };
         // What goes with it: what is inside it, which is read once, as what
         // is in a part of a house or of the island stays in it; and if it is
         // a wall, whatever is in the wall now.
@@ -331,13 +341,13 @@ fn find_what_hides_you(
                     .map(|(piece, _)| piece),
             )
             .collect();
-        hiding.0.extend(fellows.into_iter().map(|fellow| (fellow, owner)));
+        hiding.0.extend(fellows.into_iter().map(|fellow| (fellow, (owner, seen))));
         for other in along {
             if hiding.0.contains_key(&other) {
                 continue;
             }
             if let Some((fellows, owner)) = fades_with(other, &lineage, &children, &parts, target) {
-                hiding.0.extend(fellows.into_iter().map(|fellow| (fellow, owner)));
+                hiding.0.extend(fellows.into_iter().map(|fellow| (fellow, (owner, seen))));
             }
         }
     }
@@ -363,8 +373,8 @@ fn inside_of(
     let model = model_of(first, lineage);
     let whole = lineage
         .get(model)
-        .is_ok_and(|(_, _, piece, town_object, ..)| {
-            town_object || piece.is_some_and(|piece| piece.def.mount != Mount::House)
+        .is_ok_and(|(_, _, piece, town_object, _, _, car)| {
+            town_object || car || piece.is_some_and(|piece| piece.def.mount != Mount::House)
         });
     if whole {
         return inside;
@@ -404,16 +414,16 @@ fn in_a_wall(part: Entity, lineage: &Lineage, on_walls: &Query<(Entity, &OnWall)
         .map(|(_, on)| on.wall)
 }
 
-/// What `part` is part of: the piece or town object it is in, or else the
-/// island it is on.
+/// What `part` is part of: the piece, town object or bus it is in, or else
+/// the island it is on.
 fn model_of(part: Entity, lineage: &Lineage) -> Entity {
     let mut at = part;
     loop {
-        let Ok((parent, _, piece, town_object, ..)) = lineage.get(at) else {
+        let Ok((parent, _, piece, town_object, _, _, car)) = lineage.get(at) else {
             return at;
         };
         match parent {
-            _ if piece.is_some() || town_object => return at,
+            _ if piece.is_some() || town_object || car => return at,
             Some(parent) => at = parent.parent(),
             None => return at,
         }
@@ -435,7 +445,7 @@ fn fade_what_hides_you(
     let mut out_of_reach: HashSet<Entity> = HashSet::new();
     // Just come in the way: from now on drawn with a see-through copy of its
     // own material, as solid as it was, to fade from there.
-    for (&part, &owner) in &hiding.0 {
+    for (&part, &(owner, seen)) in &hiding.0 {
         out_of_reach.extend(owner);
         if fading.contains(part) {
             continue;
@@ -456,18 +466,26 @@ fn fade_what_hides_you(
                 look: look.clone(),
                 alpha,
                 shown: 1.0,
+                seen,
                 owner,
             },
             MeshMaterial3d(look),
         ));
     }
-    // Each a step nearer as much of it as should be drawn: none of it while
-    // it is in the way, all of it once it is not, and then its own material
-    // back.
-    let step = time.delta_secs() / FADE_SECS * (1.0 - SEEN);
+    // Each a step nearer as much of it as should be drawn: as little as is
+    // drawn of it while it is in the way, all of it once it is not, and then
+    // its own material back. However little of it that is, it takes
+    // [`FADE_SECS`] to fade, and as long to come back.
     for (part, mut see) in &mut fading {
         out_of_reach.extend(see.owner);
-        let goal = if hiding.0.contains_key(&part) { SEEN } else { 1.0 };
+        let goal = match hiding.0.get(&part) {
+            Some(&(_, seen)) => {
+                see.seen = seen;
+                seen
+            }
+            None => 1.0,
+        };
+        let step = time.delta_secs() / FADE_SECS * (1.0 - see.seen);
         let shown = if see.shown < goal {
             (see.shown + step).min(goal)
         } else {
@@ -605,10 +623,8 @@ fn on_the_camera_side(look: Vec3, way_in: Vec3) -> bool {
     slant && across.dot(into) > ON_THE_CAMERA_SIDE
 }
 
-/// Whether `part` is part of one of the town's cars, two buses (`car`),
-/// which never fade: in one, or behind it from the camera, whatever of you it
-/// hides stays hidden, and the bus is always there to be seen whole (Hajun,
-/// 2026-10-23, of the car it took over from).
+/// Whether `part` is part of one of the town's cars, two buses (`car`), which
+/// fade less than anything else in the way of you ([`BUS_SEEN`]).
 fn of_the_car(part: Entity, lineage: &Lineage) -> bool {
     let mut at = Some(part);
     while let Some(entity) = at {
@@ -636,10 +652,10 @@ fn ground(part: Entity, top: f32, lineage: &Lineage) -> bool {
     }
     let mut at = Some(part);
     while let Some(entity) = at {
-        let Ok((parent, _, piece, town_object, ..)) = lineage.get(entity) else {
+        let Ok((parent, _, piece, town_object, _, _, car)) = lineage.get(entity) else {
             break;
         };
-        if piece.is_some() || town_object {
+        if piece.is_some() || town_object || car {
             return false;
         }
         at = parent.map(ChildOf::parent);
@@ -686,11 +702,11 @@ fn line_meets_box(from: Vec3, to: Vec3, low: Vec3, high: Vec3) -> bool {
 /// as it is, as part of a piece being put down or of whatever the edit menu
 /// is open on (`menu`).
 ///
-/// A piece of furniture, a door, a window or a town object fades whole. A
-/// house, and the island, fade a part at a time: the meshes the glTF loader
-/// made of one object in Blender, one for each of its materials, and of the
-/// objects parented to it, like a door's handles; or a wall the game made
-/// again (`build`).
+/// A piece of furniture, a door, a window, a town object or a bus fades
+/// whole. A house, and the island, fade a part at a time: the meshes the
+/// glTF loader made of one object in Blender, one for each of its materials,
+/// and of the objects parented to it, like a door's handles; or a wall the
+/// game made again (`build`).
 fn fades_with(
     part: Entity,
     lineage: &Lineage,
@@ -704,7 +720,7 @@ fn fades_with(
     let (mut whole, mut owner) = (None, None);
     let mut at = Some(part);
     while let Some(entity) = at {
-        let Ok((parent, _, piece, town_object, editable, ghost, _)) = lineage.get(entity) else {
+        let Ok((parent, _, piece, town_object, editable, ghost, car)) = lineage.get(entity) else {
             break;
         };
         if ghost || (editable && menu == Some(entity)) {
@@ -715,7 +731,7 @@ fn fades_with(
         }
         // A piece is the furthest up a part goes: a door is in its house, but
         // fades on its own.
-        if piece.is_some() || town_object {
+        if piece.is_some() || town_object || car {
             if piece.is_none_or(|piece| piece.def.mount != Mount::House) {
                 whole = Some(entity);
             }
@@ -961,7 +977,7 @@ mod tests {
     }
 
     #[test]
-    fn the_car_and_everything_of_it_never_fades() {
+    fn a_bus_fades_whole_and_less_than_anything_else() {
         use bevy::ecs::system::SystemState;
         let mut world = World::new();
         let car = world.spawn(Car { number: 0 }).id();
@@ -971,12 +987,17 @@ mod tests {
         let part = world.spawn(ChildOf(island)).id();
         let mut state: SystemState<Lineage> = SystemState::new(&mut world);
         let lineage = state.get(&world).expect("the lineage of everything");
+        // Every part of it is part of the bus, which fades as one.
         for of_it in [car, object, mesh] {
             assert!(of_the_car(of_it, &lineage));
+            assert_eq!(model_of(of_it, &lineage), car);
+            assert!(!ground(of_it, 0.0, &lineage));
         }
         for not in [island, part] {
             assert!(!of_the_car(not, &lineage));
         }
+        // See-through, but less than anything else in the way.
+        assert!(SEEN < BUS_SEEN && BUS_SEEN < 1.0);
     }
 
     #[test]
