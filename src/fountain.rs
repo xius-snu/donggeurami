@@ -18,14 +18,14 @@
 //! moves, while it is up. It is all in the sorted transparent phase, a few
 //! thousand triangles in eight draws, and only drawn in the town.
 //!
-//! The jet goes up by the clock, not by the game's time, so that every
-//! device's goes up at the same moment and everyone in the town sees the same
-//! jet throw the same player. A throw is the device's own: it moves its own
-//! player, as a jump does, and the server takes it as it takes a jump, since
-//! it rises little faster than one (the server's `MOST_RISE` and `BURST`).
+//! The jet goes up by the town's clock (`clock`), not by the game's time, and
+//! online the town's clock is the server's, so that every device's goes up at
+//! the same moment and everyone in the town sees the same jet throw the same
+//! player. A throw is the device's own: it moves its own player, as a jump
+//! does, and the server takes it as it takes a jump, since it rises little
+//! faster than one (the server's `MOST_RISE` and `BURST`).
 
 use std::f32::consts::{PI, TAU};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use bevy::asset::{RenderAssetUsages, uuid_handle};
 use bevy::color::ColorToComponents;
@@ -39,6 +39,7 @@ use bevy::render::render_resource::{
 use bevy::shader::{Shader, ShaderRef};
 use bevy::world_serialization::WorldInstanceReady;
 
+use crate::clock::TownClock;
 use crate::island::{Venue, WATER_MATERIAL};
 use crate::sky::{self, Daylight};
 use crate::{GRAVITY, Intent, PlayerJump};
@@ -388,13 +389,10 @@ fn lathe(path: &Path, sides: u32, streak: f32) -> Mesh {
 
 // ---------------------------------------------------------------- the jet
 
-/// The seconds since the jet last started to go up, by the clock: the same on
-/// every device whose clock is right.
-fn jet_phase() -> f32 {
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0.0, |since| since.as_secs_f64());
-    (now % JET_EVERY) as f32
+/// The seconds since the jet last started to go up, at `now` seconds since
+/// 1970 by the town's clock: the same on every device in the town.
+fn jet_phase(now: f64) -> f32 {
+    now.rem_euclid(JET_EVERY) as f32
 }
 
 /// How high the jet stands `phase` seconds after it started to go up, as a
@@ -440,13 +438,14 @@ struct Crown;
 /// most of the time, it is hidden and nothing about it is written.
 fn spout(
     fountain: Option<Res<Fountain>>,
+    town: Res<TownClock>,
     mut jets: Query<(&mut Transform, &mut Visibility), (With<Jet>, Without<Crown>)>,
     mut crowns: Query<(&mut Transform, &mut Visibility), (With<Crown>, Without<Jet>)>,
 ) {
     let Some(fountain) = fountain else {
         return;
     };
-    let rise = jet_rise(jet_phase());
+    let rise = jet_rise(jet_phase(town.now()));
     let shown = if rise.is_some() {
         Visibility::Inherited
     } else {
@@ -476,12 +475,13 @@ fn spout(
 /// else is moved by theirs.
 fn throw(
     fountain: Option<Res<Fountain>>,
+    town: Res<TownClock>,
     mut bodies: Query<(&Transform, &Venue, &mut PlayerJump), With<Intent>>,
 ) {
     let Some(fountain) = fountain else {
         return;
     };
-    if !throwing(jet_phase()) {
+    if !throwing(jet_phase(town.now())) {
         return;
     }
     for (body, venue, mut jump) in &mut bodies {

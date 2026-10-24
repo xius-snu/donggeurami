@@ -20,9 +20,10 @@ tested on the actual phone, and what not to try again. The short version:
 - **A day and a night pass every twenty minutes** (`src/sky.rs`, since
   2026-10-16, Hajun: "re-add daynight cycle"; from 2026-09-23 the sun stood
   still at mid-morning): ten minutes of day, a minute and a half of sunset,
-  seven of night and a minute and a half of sunrise. It goes by the clock,
-  not the game's time, as the fountain's jet does, so every device online
-  shows the same sky. Noon is exactly the light Hajun chose on 2026-10-13
+  seven of night and a minute and a half of sunrise. It goes by the town's
+  clock (`src/clock.rs`, below, "Playing online"), not the game's time, as
+  the fountain's jet and the town's buses do, so every device online shows
+  the same sky. Noon is exactly the light Hajun chose on 2026-10-13
   (a test keeps it so); the sun climbs to it quickly and stays near it most
   of the day, then goes down orange into a pink and a deep blue sky, with a
   moon and stars through the night. The sun and the moon are one directional
@@ -161,7 +162,7 @@ see the "Build gotchas" section of `RENDERING.md`, or the commands in
 what the game loads: whatever `mobile/android/app/assets-left-out.txt` names
 stays out (Blender files, reference pictures, retired models), and
 `cargo test` fails if that would leave out a piece the shop sells, or
-either of the town's cars.
+either of the town's buses.
 
 The app icon, on both phones, is Hajun's picture `mobile/appiconroundtown.png`
 (since 2026-10-08). `mobile/make_icons.ps1` makes the iOS icon and Android's
@@ -262,9 +263,34 @@ where things come from, not what they are.
   Everyone else is drawn two updates behind, smoothed between them
   (`net::smooth`). **Players walk through each other** (Hajun's choice): a
   remote body has no collider; AIs and walls still bump. Riding one of the
-  town's cars, where you are goes as a place on the car, in its own space
+  town's buses, where you are goes as a place on the bus, in its own space
   (`Spot::aboard`, since `PROTOCOL_VERSION` 2), and everyone else draws you
-  on the car as they see it (below, "The town's cars").
+  on the bus as they see it (below, "The town's buses").
+- **One clock for the whole town** (`src/clock.rs`, since 2026-10-24,
+  `PROTOCOL_VERSION` 3). Everything that goes by the clock goes by the
+  town's clock: the buses round the roads, the fountain's jet and the day.
+  Offline it is the device's own time of day; online it is the server's.
+  Until then each device went by its own, and phones keep theirs to the
+  network's only roughly: on Hajun's two phones the cars were in different
+  places, and a rider, drawn on the car as each phone had it, jumped onto it
+  on the other phone and back off it (Hajun: "i want the car location to be
+  synced too as well as the fountain ... in a very network cost efficient
+  way"). As a device comes online it asks the server the time eight times,
+  0.1 s apart, and then once a minute (`net::ask_the_time`, `WhatTime`); the
+  server answers at once (`server/src/clock.rs`, `TheTime`, sent
+  independent of replication, which would hold it to the next tick); and
+  the answer that came back quickest sets the clock, put forward by half
+  the time it took (`TownClock::heard`). Between answers it counts on the
+  device's steady clock (`Instant`), which nothing puts forward or back; the
+  app going to the background goes back to the time of day, put out by as
+  much as the server's was ahead of it, until it is heard again. That is
+  one number, and 8 bytes there and 16 back an answer. The first answer
+  logs how far the device's own clock was out. Checked with two
+  copies on this PC and a server on it, one copy's clock put 5 s out
+  (`RT_CLOCK_OFF=5`): it logged "-5.000 s on from this device's time of day,
+  to within 8 ms", and both copies' town clocks were within 3.2 ms of the
+  machine's, their buses within a centimetre of each other. Not yet tried on
+  phones.
 - **Getting in.** The device makes up a secret the first time it runs
   (`device.id`, beside `town.json`), sends it over HTTPS to the login on the
   VM (`src/login.rs`, TCP 443, the server's own certificate pinned by its
@@ -300,7 +326,10 @@ where things come from, not what they are.
   debug build `RT_UNSECURE=1` skips the login, for a server run without
   `RT_KEY`. `RT_TIME_OF_DAY=night` (or `day`, `sunset`, `sunrise`, or
   seconds into the twenty minutes) stops the day at one time, and
-  `RT_CAR_AT=<seconds>` the town's cars at one point of their loop. A
+  `RT_CAR_AT=<seconds>` the town's buses at one point of their loop.
+  `RT_CLOCK_OFF=<seconds>` puts a copy's own clock that far out, for
+  trying the town's clock out on one machine, whose clock both copies
+  share. A
   server on this PC for two copies to meet on: `cargo build -p
   roundtown_server`, then `target/debug/roundtown-server.exe` with
   `RT_PORT=5443` and no `RT_KEY`, and the copies with
@@ -472,9 +501,12 @@ for 4 on 2026-10-10).
   the top bowl's rim, and stand there. Only while the jet goes up and stays
   up, less time than a throw takes to come down, so nobody is thrown twice
   by one jet. AIs never get up there.
-- **The jet goes by the clock** (`jet_phase`, the time since 1970 modulo 4 s),
-  not by the game's time, so every device's goes up together and everyone
-  online sees the same jet throw the same player. A throw is the thrower's
+- **The jet goes by the town's clock** (`jet_phase`, the seconds since 1970
+  modulo 4 s, the server's online: "Playing online"), not by the game's
+  time, so every device's goes up together and everyone online sees the
+  same jet throw the same player. Until 2026-10-24 it went by each device's
+  own clock, and two phones whose clocks were out went up at different
+  moments. A throw is the thrower's
   own device's, like a jump, and the server takes it as one: it rises over
   twice as fast as a jump, inside the server's slack for one, which allows
   a throw up to about 13 m (`MOST_RISE` and `BURST` in
@@ -497,49 +529,79 @@ for 4 on 2026-10-10).
   furthest first by the middle of their bounds, which is why foam floats 6 mm
   over its pool: so that it comes after it.
 
-## The town's cars
+## The town's buses
 
-Two cars drive round the town's roads by themselves, one behind the other
-round the same loop, and anyone can jump on either and ride it (Hajun,
-2026-10-23: "the car that automatically goes around in the circlemap1 ...
-it goes on every part of the road ... both lane 1 and lane 2"; "dont
-hardcode the moving logic", as the model is to get seats and windows; and
-later that day "put both car and car2 on the road at different points on
-the same path"). They are Hajun's first car, `assets/mybuilds/car.glb`, a
-red slab with its seats sunk into it, and their Roadster, `car2.glb`, which
-drove alone for part of that day. **`car::CARS` is the cars, and each goes
-by its place in it**, 0 and 1. Both go in the app (the APK test keeps
-either from being left out), and every device online has to have the same
-cars in the same order, as a rider is sent as a place on one, by its
-number. Neither is sold in the shop (`src/car.rs`, `src/roads.rs`). Nothing
-about the cars is in the code but their speeds: each one's shape is its
-model's, and their way round is the town's roads.
+Two buses drive round the town's roads by themselves, one behind the other
+round the same loop, and anyone can get on either and ride it. The cars
+came first (Hajun, 2026-10-23: "the car that automatically goes around in
+the circlemap1 ... it goes on every part of the road ... both lane 1 and
+lane 2"; "dont hardcode the moving logic", as the model is to get seats
+and windows; and later that day "put both car and car2 on the road at
+different points on the same path"); on 2026-10-24 Hajun had them swapped
+for buses ("remove the car and car2 from the circlemap and put 2 bus
+instead"). Both are their bus, `assets/mybuilds/bus.glb`. **`car::CARS` is
+the cars, and each goes by its place in it**, 0 and 1: two of the bus. The
+code still calls them cars (`src/car.rs`, `src/roads.rs`, `Spot::aboard`,
+`RT_CAR_AT`). The first car, `car.glb`, a red slab with its seats sunk into
+it, and the Roadster, `car2.glb`, are still in `assets/mybuilds/` and left
+out of the APK (`assets-left-out.txt`); the APK test keeps whatever is in
+`CARS` in. Every device online has to have the same cars in the same order,
+as a rider is sent as a place on one, by its number. Neither is sold in the
+shop. Nothing about the buses is in the code but their speeds: their shape
+is their model's, and their way round is the town's roads.
 
-- **A car is the shape of its model**, every triangle of it, read once it
+- **The bus** is 12.5 m long, 3.7 m wide (wider than a real bus, 2.55 m)
+  and 3.2 m to its roof, 4 m with what stands on it: a red coach with a
+  windscreen and headlights at the front, windows down both sides, and two
+  doorways on its right, the kerb side, each with a step, into a hollow
+  inside whose floor is 0.33 m over the road. Its body is one object,
+  `Cube`, a box made a shell by a Solidify modifier 1 cm thick, and its
+  four wheels another, `wheels`, one wheel and a Mirror and an Array.
+- **Fixed in `bus.blend` on 2026-10-24** (my doing, at the swap): Hajun
+  modelled it facing Blender's +X, so the game would have driven it
+  backwards. It was turned a quarter round about the origin to face -Y,
+  the front every model faces, its reference pictures with it; its wheel
+  object, `Cylinder`, was named `wheels`, which the game turns; and it was
+  exported with Apply Modifiers, as Hajun's export of that day had one
+  wheel (3,556 triangles with all four). Nothing else in the file changed,
+  and its `.blend1` is Hajun's save from before. Export it with Apply
+  Modifiers ticked after changing it, or the game gets one wheel again.
+- **A bus is the shape of its model**, every triangle of it, read once it
   has spawned (`car::Hull`) and moved about with it as an island of its own:
   bodies stand on it and bump into it as they do the island (`Deck`,
-  `Ground` in `src/lib.rs`). Its seats are a floor with walls round them,
-  the Roadster's cushions 0.6 m over the road; its windscreen, glass and
-  frame, is solid. Seats, windows or a roof
-  modelled in later are what they are modelled as, the roof over your head
-  in a jump and over your eyes zoomed in. **Each object in Blender is one
-  solid, all its materials together**: the glTF loader makes a mesh of each
-  material, and the first car's red alone, without the dark grey of its
-  seats, is a box with no top over them, which `Island::blocked` took for the
-  inside of something and shoved everyone out of (found the day it was
-  made). Keep each solid a closed shell, as anywhere.
+  `Ground` in `src/lib.rs`). **Each object in Blender is one solid, all its
+  materials together**: the glTF loader makes a mesh of each material, and
+  the first car's red alone, without the dark grey of its seats, was a box
+  with no top over them, which `Island::blocked` took for the inside of
+  something and shoved everyone out of. Keep each solid a closed shell, as
+  anywhere. **The bus's walls are 1 cm thick, and bodies pass through
+  them**: what stops a body is anything 0.25 m thick or more ("The islands
+  are Blender models"). So you step in at a doorway, or through a wall,
+  onto its floor, a step up from the road; and standing in its way, it
+  scoops you up onto its floor rather than shoving you aside, as the cars
+  did with their sides over a step high. An AI it drives into is scooped up
+  the same, and rides until it walks off. Thicker walls in the model would
+  keep everyone to its doorways.
 - **Its front is along its longer side**, toward Blender's -Y, Blender's
-  front, as the Roadster faces and every other model does (its front
-  wheels are named so), or toward -X, as the first car's hood is
-  (`car::front`). Its wheels' bottoms
-  stand on the road, its footprint's middle on the middle of its lane.
+  front, as the bus and the Roadster face and every other model does, or
+  toward -X, as the first car's hood is (`car::front`). Its wheels' bottoms
+  stand on the road.
 - **Its wheels turn**: every part of an object with `wheel` in its name,
   but a steering wheel (`car::is_wheel`), is broken into its loose pieces,
   those about one middle taken as one wheel, and each turned about its own
-  middle as far as the car has gone over its radius (`split_wheels`,
-  `turn_wheels`). The Roadster's are four objects, `Roadster wheel front
-  left` and so on, the first car's one, `wheels`: they turn alike. The
-  wheels as modelled are hidden, and copies of them, one to each, turn.
+  middle as far as the bus has gone over its radius (`split_wheels`,
+  `turn_wheels`). The wheels as modelled are hidden, and copies of them,
+  one to each, turn.
+- **Its front and back wheels both keep to the middle of its lane**, as a
+  train's keep to its rails, and its body faces from the one to the other
+  (`roads::Footprint`, `Route::on_wheels`, `car::place_at`): its back
+  wheels follow its front ones inside a bend, and only what of it is ahead
+  of its front wheels and behind its back ones swings out. The bus's front
+  wheels are 3.8 m ahead of its middle and its back ones 2.8 m behind
+  (`axles`, read off where its wheels are). Until 2026-10-24 a car's middle
+  went down the lane and it turned about that, which for the bus swung its
+  back as far out as its front, 6 m from where it turned, and no turn into
+  Round Town's 10 m roads kept it on them.
 - **The way round is read off the town** (`roads`): a road is where the top
   of the town is `road`, its middle the dashes painted down it in
   `roadwhite` (`roads::ROAD`, `MARKING`). Each dash in line with the next
@@ -549,8 +611,8 @@ model's, and their way round is the town's roads.
   its dashes; and roads are cut into stretches where they join. Round Town
   is 12 stretches between 8 joins, every one three ways (the inner ring and
   the outer, cut by the four straight roads). Repaint or move the roads in
-  Blender and the cars drive the new ones; a road with no dashes down it is
-  not one to them.
+  Blender and the buses drive the new ones; a road with no dashes down it
+  is not one to them.
 - **A road's dashes are evened out before its middle is drawn through
   them** (`roads::even_out`). Round the rings every other one of Hajun's
   dashes is a few centimetres in from the rest, 3.6 cm round the inner road
@@ -561,12 +623,11 @@ model's, and their way round is the town's roads.
   middle of the two either side of it, and back out by a little more
   (Taubin's smoothing), which takes out what goes from side to side from
   dash to dash and leaves a circle the circle it was, to a centimetre.
-  Round a ring the car now turns one way at a steady rate, the same to 3%
-  through the joins it drives straight through, and its lanes are round to
-  3 mm (a test keeps it turning one way). The same day, a turn set off from
-  a lane round a ring the way the side of the lane's line it was on went,
-  0.7° out from the bend, and the car's nose flicked out at every join: a
-  turn now leaves and joins a lane along the bend there (`heading_at`).
+  Round a ring a car turns one way at a steady rate, and its lanes are
+  round to 3 mm (a test keeps it turning one way). A turn leaves and joins
+  a lane along the bend there (`heading_at`): from the side of the lane's
+  line it was on, 0.7° out from the bend, the car's nose flicked out at
+  every join.
 - **They keep to the right**, as Korea drives: two lanes to a stretch, one
   each way, each halfway out from the middle to its edge (on Round Town's 10
   m roads, 2.5 m out). The loop drives **every lane of every stretch**,
@@ -574,90 +635,105 @@ model's, and their way round is the town's roads.
   at a dead end (`roads::plan`). With only T-junctions no loop drives each
   lane exactly once: every way of taking the turns leaves an even number of
   loops (checked over all 256 for Round Town). So one stretch is driven
-  twice, each way, the shortest that makes it one loop: 26 lanes, 1,261 m,
-  200 s round (the log says so as the town loads, with how far behind the
-  first each car goes). The loop is the same on every device, whatever order
-  the model comes in, and varied: out a straight road, round the outer ring,
-  back in another, round the inner, and so on.
-- **Turning, all of a car keeps on the road** (`roads::turning`; Hajun,
-  2026-10-23: "when its turning a corner into the inner circle, it kind of
-  almost steps onto the rock"). A lane stops short of a join by the half of
-  the widest road there and 3 m, and from there a right turn, which keeping
-  to the right is the tight one, cut the corner: the side of the car nearer
-  it went over the kerb, into the inner road and out of it, and at the outer
-  one. Now every turn is tried as the car would go round it, the box round
-  the larger car with 0.25 m more all round (`KERB`), felt for the road
-  under it every 0.25 m round its edge at every point along the turn
-  (`Paint::on_road`). One that puts any of it off the road is tried again
-  from nearer the join, half a metre at a time at either end, the furthest
-  out that keeps all of it on taken. In Round Town the right turns into and
-  out of the inner road join it up to 2 m sooner, and two at the outer road
-  half a metre or a metre; the rest are as they were. A test keeps each car
-  wholly on the road all the way round, and there is at least 0.2 m to
-  spare (`round_town_s_cars_keep_all_of_themselves_on_the_road_and_never_meet`).
-  Working out the loop, turns and all, takes about 12 ms on the laptop.
-  This is why the route waits for both cars' models as well as the town's
-  (`plan_the_way`), and a car is on the town, drawn and met, only once the
-  route has put it on the road (`drive`).
+  twice, each way, the shortest that makes it one loop: for the bus 26
+  lanes, 1,291 m, 210 s round (the log says so as the town loads, with how
+  far behind the first each bus goes and how long working it out took).
+  The loop is the same on every device, whatever order the model comes in,
+  and varied: out a straight road, round the outer ring, back in another,
+  round the inner, and so on.
+- **Turning, all of a bus keeps on the road where it can, and its wheels
+  where it cannot** (`roads::turning`). For the cars, Hajun, 2026-10-23:
+  "when its turning a corner into the inner circle, it kind of almost steps
+  onto the rock". A lane stops short of a join by the half of the widest
+  road there and 3 m, and from there a right turn, the tight one keeping to
+  the right, cut the corner. So every turn is tried as the bus would go
+  round it, its wheels on the line, felt for the road every 0.25 m round
+  its edge at every point along the turn (`Paint::on_road`), and tried
+  again from nearer the join, half a metre at a time at either end. A bus
+  is longer than the roads are wide, and turning into the far lane of a
+  road its front swings out over the far kerb: so it may also **turn
+  wide**, from the middle of the road it leaves, or into the middle of the
+  one it joins, moving across to its lane over 8 m (`CROSS_OVER`), as a bus
+  does. Of all of those, the first that keeps all of it 0.25 m inside the
+  road's edge (`KERB`); failing that, the first that keeps its wheels so;
+  failing that, the first that keeps its wheels on the road at all; and
+  failing even that, the one that takes the least of its wheels off it.
+  **Never a turn tighter than 0.7 of how far apart its wheels are**, 4.6 m
+  round (`TIGHTEST`), if there is another: following tighter ones, its back
+  wheels where its front ones were, the bus slid sideways round the bend,
+  its middle going at 82° to the way it faced; at 0.7, 17° at the most,
+  near what a bus does turning hard. Tried at 0.3, 0.5, 0.7 and 1 of its
+  wheels apart: at 0.5 and 1 some turns took its wheels off the road. In
+  Round Town its wheels stay on the road all the way round, and its body
+  goes over the kerb at the junctions by up to about a metre and round the
+  inner road's outer lane by 0.4 m, over nothing taller than the kerb (no
+  lamp, wall or tree: a test keeps it so,
+  `round_town_s_cars_keep_their_wheels_on_the_road_and_never_meet`; the
+  inner road's lamps stand a metre out from its kerb). Working out the
+  loop takes about 75 ms in a test on the laptop (1.6 s before it was made
+  quicker; the cars' took 12 ms). The route waits for both buses' models
+  as well as the town's (`plan_the_way`) and is worked out for the longest,
+  and a bus is on the town, drawn and met, only once the route has put it
+  on the road (`drive`).
 - **Their speed is worked out from how sharply the loop turns**: at most
   `roundtown_net::cars::TOP_SPEED`, 7 m/s, as fast as a run, so that you can
-  keep up beside a car and no more; no harder round a bend than 2.5 m/s²
+  keep up beside a bus and no more; no harder round a bend than 2.5 m/s²
   sideways; speeding up at 1.5 m/s² and slowing at 2.5. All my numbers. The
   loop is then made to take a whole number of seconds.
-- **They go by the clock** (`place_at`, the time since 1970 into the loop,
-  less how far behind the first a car goes, `Route::behind`), as the
-  fountain's jet does, so every device has each in the same place, and
-  nothing about them goes over the network. The loop being a whole number
-  of seconds is what keeps devices from drifting apart over the years since
-  1970 on arithmetic that differs in its last digit. They never stop: for
-  nobody, as a device could not tell the others it had. **The second goes
-  half the loop behind the first**, 100 s, or as near half, a second at a
-  time, as keeps the two a metre apart all the way round wherever the loop
-  crosses itself (`Route::spread`): at half they never meet, checked every
-  0.1 s round it in the test above. They pass each other in the two lanes of
-  a road. `RT_CAR_AT=<seconds>` stops both at one point of the loop, the
-  first that far into it and the second 100 s behind, for trying things out.
-- **Riding one**: standing on a car, or in the air off it, a body is carried
+- **They go by the town's clock** (`place_at`, the seconds since 1970 into
+  the loop, less how far behind the first a bus goes, `Route::behind`), as
+  the fountain's jet does, and online the town's clock is the server's
+  ("Playing online"), so every device has each in the same place, and
+  nothing about them goes over the network but the time. Until 2026-10-24
+  they went by each device's own clock, and on Hajun's two phones the cars
+  were in different places. The loop being a whole number of seconds is
+  what keeps devices from drifting apart over the years since 1970 on
+  arithmetic that differs in its last digit. They never stop: for nobody,
+  as a device could not tell the others it had. **The second goes half the
+  loop behind the first**, 105 s, or as near half, a second at a time, as
+  keeps the two a metre apart all the way round, where the loop crosses
+  itself and passing each other (`Route::spread`), or failing that, out of
+  each other: turning wide into the middle of a road, a bus passes the
+  other in the lane beside within a metre, and in Round Town no spacing
+  keeps them a metre apart, so 105 s, at which they never touch (checked
+  every 0.1 s round the loop in the test above). `RT_CAR_AT=<seconds>`
+  stops both at one point of the loop, the first that far into it and the
+  second 105 s behind, for trying things out.
+- **Riding one**: standing on a bus, or in the air off it, a body is carried
   along with it, turning as it turns (`Riding`, `move_bodies`), until it
   comes down on anything else. So a jump on it comes down where it went up,
-  and walking off its side, you come down on the road with nothing carrying
-  you on. The Roadster's doors are 1.0 to 1.2 m over the road (the first
-  car's sides 1.3), which a jump (1.64 m) clears from beside it at a run. It shoves out of
-  its way whoever it drives into, AIs too. AIs cannot jump, so never ride.
-  **The camera does not turn with it**: nothing turns it but you (above);
-  the car turns under you, as the island does.
-- **The cars never fade** (Hajun, 2026-10-23: "make it so that the car
-  never become transparent even if camera blocks the player through the
-  car"): whatever of you one hides, from a camera behind it or down in its
-  seats, stays hidden (`see_through::of_the_car`). The same day the car was
-  first made to fade whole when it hid you, as a town object does.
-- **Online, a rider is a place on their car** (`Spot::aboard`, the car's
-  number): where you are goes to the server in the car's own space, and
+  and walking off it, you come down on the road with nothing carrying you
+  on. Its floor is a step up from the road, and its roof, at 3.2 m, out of
+  a jump's reach. **The camera does not turn with it**: nothing turns it
+  but you (above); the bus turns under you, as the island does.
+- **The buses never fade** (Hajun, 2026-10-23, of the car: "make it so that
+  the car never become transparent even if camera blocks the player through
+  the car"): whatever of you one hides stays hidden
+  (`see_through::of_the_car`). In the bus, with the camera outside it, you
+  are seen only through its windows; zoomed all the way in, you see out of
+  them.
+- **Online, a rider is a place on their bus** (`Spot::aboard`, the bus's
+  number): where you are goes to the server in the bus's own space, and
   standing still on it is standing still, sending nothing. Everyone else
-  draws a rider where they were on the car two updates ago, on the car as
-  it is now (`net::drawn`), so that a rider is never left behind the car by
-  the time an update takes, and never beside it however far apart two
-  devices' clocks are: tried with one 0.8 s out, its car 5.6 m on, and the
-  rider stayed in it, within 2 cm of where they were. Getting on and off is
-  eased over 0.25 s (`net::GETTING_ON`). The server checks moves on a car
-  as anywhere, in the car's space, takes a jump from one car onto the other
-  as getting on, and getting off, no further from where you got on than a
-  car could have taken you (`Pace`, `MOST_RIDE`): it cannot tell where the
-  cars are. Checked with two copies on this PC and a server on it
-  (2026-10-23, one car): one put in the car, the other watching, for a loop
-  and a half. **This is `PROTOCOL_VERSION` 2**, on the VM since
-  2026-10-23: the apps on phones from before it are told to update. The
-  second car and the evened, tighter-turning loop changed nothing that is
-  sent, so they are still 2; but an app with one car, or the loop as it was,
-  puts a rider somewhere else than this one does: the same build on every
-  phone that plays.
-- **Not yet tried**: on a phone, or by hand; jumping on was tried in tests
-  only (`body_tests` in `src/lib.rs`), and riding in scripted runs, in both
-  cars. Dropped anywhere over either, a body comes to rest on it
-  (`a_body_dropped_onto_the_car_anywhere_stays_on_it`). Both on the road
-  together were seen in the desktop build, each where its time puts it. The
-  cost is not measured: only bodies within a car's reach of it test its
-  triangles, the Roadster's 1,800 (the first car's 4,200).
+  draws a rider where they were on the bus two updates ago, on the bus as
+  it is now (`net::drawn`), so that a rider is never left behind it by the
+  time an update takes. Getting on and off is eased over 0.25 s
+  (`net::GETTING_ON`). The server checks moves on a bus as anywhere, in its
+  space, takes a jump from one bus onto the other as getting on, and
+  getting off, no further from where you got on than a bus could have
+  taken you (`Pace`, `MOST_RIDE`, `cars::REACH` 15 m): it cannot tell where
+  they are. Riding was checked with two copies on this PC and a server on it
+  (2026-10-23, one car). **This is `PROTOCOL_VERSION` 3** since 2026-10-24
+  (2 from 2026-10-23: riding; 3: the town's clock, and a place on car 0
+  being a place on a bus): an app from before it is told to update.
+- **Not yet tried**: on a phone, or by hand, or riding the bus. Dropped
+  anywhere over it, a body comes to rest on its roof
+  (`a_body_dropped_onto_the_car_anywhere_stays_on_it`), and its wheels keep
+  to its way round (`the_cars_stand_on_the_road_facing_the_way_they_go`).
+  Seen in the desktop build on 2026-10-24, from beside the road by day and
+  from above in two copies at once, in the same place in both. The cost is
+  not measured: only bodies within a bus's reach of it test its triangles,
+  its 3,556.
 
 ## The camera stands where you zoomed it
 
@@ -732,7 +808,7 @@ through its wall.
   in the fountain's basin; and the doors, windows and hangings in a wall in
   House Builder (`build::OnWall`). Glass and water fade from as see-through
   as they are. Bodies never fade (skinned meshes are left out), nor the
-  town's car, nor ghosts or the sky, nor glass or water for being in the way (but for the glass of
+  town's buses, nor ghosts or the sky, nor glass or water for being in the way (but for the glass of
   a door or a window in a wall in House Builder: below), nor a piece being
   put down, nor whatever the edit menu is open on. **Nor the ground**
   (`see_through::ground`): the island's own parts no higher than a step

@@ -23,6 +23,11 @@ coin.glb
 # not sold in the shop.
 housesizereference.glb
 
+# Hajun's first car and their Roadster, in mybuilds/, which drove the town's
+# roads from 2026-10-23 until two buses took over on 2026-10-24 (car::CARS).
+car.glb
+car2.glb
+
 # Everything blender/make_build_items.py made, in assets/build/: out of the
 # shop since 2026-10-03, which sells only Hajun's own pieces, in mybuilds/.
 <dir>build

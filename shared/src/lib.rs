@@ -9,8 +9,9 @@
 //! Three rules keep it cheap (`MULTIPLAYER.md`, "The one rule"):
 //!
 //! * A position is whole centimetres and a 16-bit turn ([`Spot`]): about ten
-//!   bytes. Riding the town's car, it is a place on the car, which moves with
-//!   it ([`Spot::aboard`]), so that a rider is never seen beside it.
+//!   bytes. Riding one of the town's cars, it is a place on the car, which
+//!   moves with it ([`Spot::aboard`]), so that a rider is never seen beside
+//!   it.
 //! * Only what has changed is sent. replicon works off Bevy's change
 //!   detection, the same idea as `set_if_neq` everywhere in the game, and a
 //!   device sends its own position only while it changes.
@@ -26,6 +27,10 @@
 //!   one is replaced by the next; and everything you ask for, [`Ask`], in
 //!   order.
 //! * **Server to one device**: what concerns you alone, [`Tell`], in order.
+//! * **Both ways, a few times as a device comes online and once a minute
+//!   after**: what time it is, [`WhatTime`] and its answer [`TheTime`], for the
+//!   town's clock, which the cars round the town, the fountain's jet and the
+//!   day go by on every device. Nothing else about any of them is sent.
 
 use std::f32::consts::TAU;
 
@@ -52,7 +57,11 @@ pub const PROTOCOL_ID: u64 = u64::from_be_bytes(*b"DGRMTOWN");
 /// added or renamed, and nothing else.
 ///
 /// 2 since 2026-10-23: [`Spot::aboard`], for riding the town's car.
-pub const PROTOCOL_VERSION: u32 = 2;
+///
+/// 3 since 2026-10-24: [`WhatTime`] and [`TheTime`], for the town's clock;
+/// and the town's cars are two buses, so a place on car 0 is a place on a
+/// bus, which an app with the cars put somewhere else entirely.
+pub const PROTOCOL_VERSION: u32 = 3;
 
 /// The UDP port the game server listens on. 443, where QUIC goes, because a
 /// network that lets any UDP through lets that through: school and office
@@ -91,7 +100,10 @@ pub fn protocol(app: &mut App) {
         .replicate::<Built>()
         .add_client_message::<Moved>(Channel::Unreliable)
         .add_client_message::<Ask>(Channel::Ordered)
-        .add_server_message::<Tell>(Channel::Ordered);
+        .add_server_message::<Tell>(Channel::Ordered)
+        .add_client_message::<WhatTime>(Channel::Unreliable)
+        .add_server_message::<TheTime>(Channel::Unreliable)
+        .make_message_independent::<TheTime>();
     app.world_mut()
         .resource_mut::<ProtocolHasher>()
         .add_custom(PROTOCOL_VERSION);
@@ -236,17 +248,19 @@ fn centimetres(metres: f32) -> i32 {
     (metres * 100.0).round() as i32
 }
 
-/// The car that drives round the town (the game's `car`), as far as the
-/// server checks a rider's moves against it: it cannot tell where the car is,
-/// having no islands, but it knows how fast the car can take anyone.
+/// The cars that drive round the town, two buses since 2026-10-24 (the
+/// game's `car`), as far as the server checks a rider's moves against them:
+/// it cannot tell where they are, having no islands, but it knows how fast a
+/// car can take anyone.
 pub mod cars {
-    /// The fastest the car goes, in metres a second, along the straight and
+    /// The fastest a car goes, in metres a second, along the straight and
     /// gentle stretches of the town's roads: as fast as a body runs, so that
-    /// someone running beside it keeps up and no more, and can jump on.
+    /// someone running beside it keeps up and no more, and can get on.
     pub const TOP_SPEED: f32 = 7.0;
-    /// How far from the car's own middle a body riding it can be, in metres:
-    /// on it, which is 6 m long, or in the air off it, carried along with it
-    /// until it comes down.
+    /// How far from a car's own middle a body riding it can be, in metres:
+    /// on it, which is 12.5 m long, its corners 6.5 m out, or in the air off
+    /// it, carried along with it until it comes down, which a run takes
+    /// another 5 m or so.
     pub const REACH: f32 = 15.0;
 }
 
@@ -446,6 +460,28 @@ pub enum Refusal {
     Coins,
     /// You are in the middle of something else.
     Busy,
+}
+
+/// What time it is, asked of the server to set the town's clock by (the
+/// game's `clock`): when it was asked, by the device's own steady clock,
+/// which comes back with the answer, so that the device can tell how long the
+/// answer took. Unreliable: one that is lost is never answered, and the next
+/// is asked in its place.
+#[derive(Message, Serialize, Deserialize, Clone, Copy, Debug)]
+pub struct WhatTime {
+    pub asked: f64,
+}
+
+/// The server's answer to [`WhatTime`], written the moment it is asked: the
+/// time by its clock as it answers, in seconds since 1970, and when it was
+/// asked, as the device said. Independent of replication, as nothing in it
+/// waits on anything replicated: it goes out at once, rather than with the
+/// next tick, which would hold it up to a fifteenth of a second, and put
+/// the town's clock out by half that.
+#[derive(Message, Serialize, Deserialize, Clone, Copy, Debug)]
+pub struct TheTime {
+    pub asked: f64,
+    pub now: f64,
 }
 
 #[cfg(test)]

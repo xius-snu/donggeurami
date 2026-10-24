@@ -28,6 +28,7 @@
 
 mod accounts;
 mod builder;
+mod clock;
 mod login;
 mod players;
 mod rooms;
@@ -125,6 +126,7 @@ fn main() {
     rooms::plugin(&mut app);
     players::plugin(&mut app);
     builder::plugin(&mut app);
+    clock::plugin(&mut app);
     stats::plugin(&mut app);
     app.add_systems(Startup, listen);
     match (config.key, config.db) {

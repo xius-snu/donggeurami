@@ -24,7 +24,7 @@
 //! in the way of you takes the house's ceiling with it ([`over_your_head`]),
 //! and the ceiling in the way of a camera looking down into the room at a
 //! slant takes the walls on the camera's side ([`on_the_camera_side`]).
-//! Bodies never fade, nor the town's car ([`of_the_car`]), nor water and any
+//! Bodies never fade, nor the town's buses ([`of_the_car`]), nor water and any
 //! other glass for being in the way, as they are see-through already, nor a
 //! piece being put down, nor whatever the edit menu is open on, nor the
 //! ground ([`ground`]).
@@ -605,10 +605,10 @@ fn on_the_camera_side(look: Vec3, way_in: Vec3) -> bool {
     slant && across.dot(into) > ON_THE_CAMERA_SIDE
 }
 
-/// Whether `part` is part of the town's car (`car`), which never fades:
-/// standing in its seats, or behind it from the camera, whatever of you it
-/// hides stays hidden, and the car is always there to be seen whole (Hajun,
-/// 2026-10-23).
+/// Whether `part` is part of one of the town's cars, two buses (`car`),
+/// which never fade: in one, or behind it from the camera, whatever of you it
+/// hides stays hidden, and the bus is always there to be seen whole (Hajun,
+/// 2026-10-23, of the car it took over from).
 fn of_the_car(part: Entity, lineage: &Lineage) -> bool {
     let mut at = Some(part);
     while let Some(entity) = at {

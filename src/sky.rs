@@ -12,10 +12,11 @@
 //! that, and goes down warm and orange into a pink and then a deep blue sky.
 //! Through the night a moon crosses it, and stars come out.
 //!
-//! The day goes by the clock, not by the game's time, as the fountain's jet
-//! does: every device is at the same time of day, so that everyone online in
-//! the town sees the same sky. `RT_TIME_OF_DAY` stops it at one time, for
-//! trying things out ([`Clock`]).
+//! The day goes by the town's clock (`clock`), not by the game's time, as the
+//! fountain's jet does, and online the town's clock is the server's: every
+//! device is at the same time of day, so that everyone online in the town
+//! sees the same sky. `RT_TIME_OF_DAY` stops it at one time, for trying
+//! things out ([`Clock`]).
 //!
 //! The sun and the moon are one light ([`KeyLight`]), the sun's by day and
 //! the moon's by night: one is always under the horizon, and its light out,
@@ -29,12 +30,12 @@
 //! no material is touched.
 
 use std::f32::consts::PI;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use bevy::light::{CascadeShadowConfigBuilder, NotShadowCaster, NotShadowReceiver};
 use bevy::prelude::*;
 
 use crate::WATER_Y;
+use crate::clock::TownClock;
 
 /// How long each part of the day is, in seconds. The day starts with the sun
 /// already up, past sunrise.
@@ -208,7 +209,7 @@ impl Daylight {
     }
 }
 
-/// Where the day is kept: by the clock, or stopped at one time.
+/// Where the day is kept: by the town's clock, or stopped at one time.
 #[derive(Resource, Clone, Copy, PartialEq, Debug, Default)]
 pub(crate) struct Clock {
     /// The time of day it stays at, if `RT_TIME_OF_DAY` says one: seconds
@@ -224,19 +225,15 @@ impl Clock {
         }
     }
 
-    /// How far into the day and night it is now, in seconds.
-    fn now(&self) -> f32 {
-        self.pinned.unwrap_or_else(|| {
-            let since = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map_or(0.0, |since| since.as_secs_f64());
-            time_of_day(since)
-        })
+    /// How far into the day and night it is now, in seconds, `town` being the
+    /// town's clock.
+    fn now(&self, town: &TownClock) -> f32 {
+        self.pinned.unwrap_or_else(|| time_of_day(town.now()))
     }
 }
 
 /// How far into the day and night it is at `since` seconds since 1970: the
-/// same on every device whose clock is right.
+/// same on every device in the town, whose clock is the server's.
 fn time_of_day(since: f64) -> f32 {
     (since.rem_euclid(f64::from(CYCLE_SECS))) as f32
 }
@@ -319,9 +316,11 @@ impl FromWorld for Water {
     }
 }
 
+/// The town's clock (`clock`) has to be there first: the sky starts at the
+/// time of day it says.
 pub(crate) fn plugin(app: &mut App) {
     let clock = Clock::from_env();
-    let state = sky_at(clock.now());
+    let state = sky_at(clock.now(app.world().resource::<TownClock>()));
     app.insert_resource(ClearColor(srgb(state.sky)))
         .insert_resource(clock)
         .insert_resource(Daylight::at(state.time))
@@ -361,12 +360,13 @@ fn bob_sea(time: Res<Time>, mut seas: Query<&mut Transform, With<Sea>>) {
 
 fn setup_sky(
     clock: Res<Clock>,
+    town: Res<TownClock>,
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut ambient: ResMut<GlobalAmbientLight>,
 ) {
-    let state = sky_at(clock.now());
+    let state = sky_at(clock.now(&town));
     ambient.color = srgb(state.ambient_color);
     ambient.brightness = state.ambient;
 
@@ -484,6 +484,7 @@ fn setup_sky(
 #[allow(clippy::too_many_arguments)]
 fn pass_the_day(
     clock: Res<Clock>,
+    town: Res<TownClock>,
     sky: Option<ResMut<Sky>>,
     mut daylight: ResMut<Daylight>,
     mut clear: ResMut<ClearColor>,
@@ -500,7 +501,7 @@ fn pass_the_day(
     let Some(mut sky) = sky else {
         return;
     };
-    let time = (clock.now() / STEP).floor() * STEP;
+    let time = (clock.now(&town) / STEP).floor() * STEP;
     if time == sky.last.time {
         return;
     }

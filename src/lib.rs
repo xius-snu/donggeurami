@@ -26,6 +26,7 @@ mod ai;
 mod build;
 mod builder;
 mod car;
+mod clock;
 mod editor;
 mod fountain;
 mod hud;
@@ -436,14 +437,17 @@ pub fn main() {
     .init_resource::<TouchControls>()
     .init_resource::<OrbitCamera>()
     .add_systems(Startup, (setup_world, cluster_lights_on_the_cpu));
+    // The town's clock, the server's online, which the day, the fountain's
+    // jet and the cars go by.
+    clock::plugin(&mut app);
     sky::plugin(&mut app);
     // The street lamps, lit through the night.
     lamps::plugin(&mut app);
     island::plugin(&mut app);
     // The town's fountain, running, and its jet.
     fountain::plugin(&mut app);
-    // The car that drives round the town's roads, and carries whoever rides
-    // it.
+    // The cars, two buses, that drive round the town's roads, and carry
+    // whoever rides them.
     car::plugin(&mut app);
     // Everything standing on the town comes from the town save, so the map
     // has to be there before the editor can be pointed at any of it.
@@ -2221,7 +2225,9 @@ mod body_tests {
                     shape,
                     now: place_at(frame + 1),
                     then: place_at(frame),
-                    reach: 4.0,
+                    // Further than any of Hajun's cars reaches from its
+                    // middle: the bus, 12.5 m long, 6.5 m to its corners.
+                    reach: 8.0,
                 };
                 if riding {
                     deck.carry(&mut transform);

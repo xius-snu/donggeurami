@@ -18,12 +18,13 @@
 //! lanes, one each way, each halfway out from the middle to the edge on its
 //! side ([`lanes`]). They drive every lane of every stretch, both ways down
 //! every road, in one loop through the town ([`plan`]), turning from lane to
-//! lane where roads join, all of each car on the road ([`turning`]), and
-//! never back the way they came, but where a road ends. A loop that drives
-//! each lane exactly once is not always to be had: with only T-junctions, as
-//! Round Town has, it never is, as every way of taking the turns leaves the
-//! lanes in an even number of loops. Then one stretch is driven twice, each
-//! way, the shortest that makes it one loop.
+//! lane where roads join, all of each car on the road where all of it can
+//! be, and its wheels where it cannot, as a bus's front and back swing out
+//! over the kerb ([`turning`]), and never back the way they came, but where a
+//! road ends. A loop that drives each lane exactly once is not always to be
+//! had: with only T-junctions, as Round Town has, it never is, as every way
+//! of taking the turns leaves the lanes in an even number of loops. Then one
+//! stretch is driven twice, each way, the shortest that makes it one loop.
 //!
 //! How fast a car goes along the loop is worked out from how sharply it
 //! turns ([`Route::drive`]), and how long the loop takes is a whole number of
@@ -95,11 +96,26 @@ const NEAREST: f32 = 1.0;
 /// How far inside the road's edge the car keeps all of itself, turning, in
 /// metres.
 const KERB: f32 = 0.25;
+/// How far along a lane a car turning wide takes to move across between it
+/// and the middle of the road, in metres ([`turning`]), and the most of a
+/// lane that moving across and turning take, at either end of it.
+const CROSS_OVER: f32 = 8.0;
+const MOST_WIDE: f32 = 0.5;
+/// The tightest a car turns, as the radius it turns round over how far apart
+/// its front and back wheels are: 4.6 m for the bus ([`turning`]). Following
+/// a turn tighter than that with its back wheels where its front ones were,
+/// it slid sideways round the bend, its middle going at 82° to the way it
+/// faced; with this, at 17° at the most, near what a bus does turning hard,
+/// and its wheels still on the road all the way round. Tried at 0.3, 0.5, 0.7
+/// and 1 of its wheels apart on 2026-10-24: at 0.5 and 1 some turns took its
+/// wheels off the road.
+const TIGHTEST: f32 = 0.7;
 /// How far apart the points round the car are that are felt for the road
 /// under them, in metres.
 const FEEL: f32 = 0.25;
 /// How near the cars come to each other at the least, in metres, where the
-/// loop crosses itself, and how often, in seconds, how near they come is
+/// loop crosses itself and passing each other, where that can be had
+/// ([`Route::spread`]), and how often, in seconds, how near they come is
 /// looked at round it.
 const APART: f32 = 1.0;
 const LOOK_EVERY: f64 = 0.2;
@@ -738,6 +754,9 @@ struct Lane {
     /// from there that would take the car off the road is turned from nearer
     /// the join ([`turning`]).
     room: (f32, f32),
+    /// How far to the right of the road's middle it is: how far across a car
+    /// in it moves to turn wide from the middle of the road.
+    inside: f32,
 }
 
 impl Lane {
@@ -792,6 +811,7 @@ fn lanes(network: &Network) -> Vec<Lane> {
                 ahead,
                 top: road.top,
                 room: (start, end),
+                inside: if ahead { road.right } else { road.left } * 0.5,
             });
         }
     }
@@ -943,6 +963,160 @@ fn turn(from: Vec2, from_way: Vec2, to: Vec2, to_way: Vec2) -> Vec<Vec2> {
         .collect()
 }
 
+/// The room a car takes on the road, which its way round is worked out for.
+///
+/// Its front and its back wheels both keep to the line, as a train's keep to
+/// its rails, `base` apart, and its body faces from the one to the other: as
+/// a car's back wheels follow its front ones inside a bend, and only what of
+/// it is ahead of its front wheels and behind its back ones swings out over
+/// the bend. Turned about its middle instead, the bus, 12.5 m long, swung its
+/// back as far out as its front, 6 m out from where it turned, and no turn
+/// into Round Town's 10 m roads kept it on them.
+///
+/// The box round all of it, `half` long and wide each way, has its middle
+/// `ahead` of the middle of its wheels; the box round its wheels, `wheels`
+/// long and wide each way, has the middle of its wheels for its middle.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub(crate) struct Footprint {
+    pub(crate) base: f32,
+    pub(crate) half: Vec2,
+    pub(crate) ahead: f32,
+    pub(crate) wheels: Vec2,
+}
+
+impl Footprint {
+    /// A car `half` long and wide each way that turns about its middle, its
+    /// wheels all of it.
+    #[cfg(test)]
+    pub(crate) fn turning_about_its_middle(half: Vec2) -> Self {
+        Self {
+            base: 0.0,
+            half,
+            ahead: 0.0,
+            wheels: half,
+        }
+    }
+}
+
+/// Where a car whose front and back wheels are `base` apart stands at each of
+/// `points`, on the line through them, round on itself if `closed`, and
+/// going straight on past its ends if not: its front wheels half that ahead
+/// of the point along the line, and its back ones on the line behind them,
+/// as far from them as they are apart. As the middle of its wheels, halfway
+/// between them, and the way it faces, from its back wheels to its front
+/// ones. With its wheels together, at the point, facing the way from the
+/// point before it to the one after.
+fn on_wheels(points: &[Vec2], closed: bool, base: f32) -> Vec<(Vec2, Vec2)> {
+    let count = points.len();
+    let mut way = Vec2::ZERO;
+    let ways: Vec<Vec2> = (0..count)
+        .map(|at| {
+            let (before, after) = (points[at.saturating_sub(1)], points[(at + 1).min(count - 1)]);
+            way = (after - before).try_normalize().unwrap_or(way);
+            way
+        })
+        .collect();
+    if base <= 0.0 || count < 2 {
+        return points.iter().copied().zip(ways).collect();
+    }
+    let so_far = along(points, closed);
+    let whole = *so_far.last().unwrap();
+    let (first, last) = (ways[0], ways[count - 1]);
+    let point = |s: f32| {
+        if closed {
+            point_at(points, &so_far, s.rem_euclid(whole))
+        } else if s < 0.0 {
+            points[0] + first * s
+        } else if s > whole {
+            points[count - 1] + last * (s - whole)
+        } else {
+            point_at(points, &so_far, s)
+        }
+    };
+    // Where the back wheels are, the front ones at `front`, `ahead` along
+    // the line: as far back along the line as the two are apart is never
+    // further from the front ones as the crow flies, and round a bend
+    // nearer, so from there back, point by point, to the first point that
+    // far from them, and between it and the one before, the place that is.
+    let back_wheels = |ahead: f32, front: Vec2| -> Vec2 {
+        let from = ahead - base;
+        let mut nearer = point(from);
+        if nearer.distance(front) >= base - 1e-4 {
+            return nearer;
+        }
+        if closed || from > 0.0 {
+            let on = if closed { from.rem_euclid(whole) } else { from };
+            let mut index = so_far.partition_point(|&d| d <= on).saturating_sub(1).min(count - 1);
+            for _ in 0..count {
+                let further = points[index];
+                if further.distance(front) >= base {
+                    return between(further, nearer, front, base);
+                }
+                nearer = further;
+                index = match (index, closed) {
+                    (0, true) => count - 1,
+                    (0, false) => break,
+                    _ => index - 1,
+                };
+            }
+        }
+        // Back past the first point, going straight on: the far one of the
+        // two places on that line that far from the front wheels.
+        let gap = points[0] - front;
+        let along = gap.dot(first);
+        let back = along + (along * along - gap.length_squared() + base * base).max(0.0).sqrt();
+        points[0] - first * back
+    };
+    (0..count)
+        .map(|at| {
+            let ahead = so_far[at] + base * 0.5;
+            let front = point(ahead);
+            let back = back_wheels(ahead, front);
+            ((front + back) * 0.5, (front - back).try_normalize().unwrap_or(ways[at]))
+        })
+        .collect()
+}
+
+/// The place between `further`, at least `base` from `front`, and `nearer`,
+/// less than that, that is as far as that from it: going from the one to the
+/// other, where it first comes nearer than that.
+fn between(further: Vec2, nearer: Vec2, front: Vec2, base: f32) -> Vec2 {
+    let (way, gap) = (nearer - further, further - front);
+    let (a, b, c) = (way.length_squared(), 2.0 * gap.dot(way), gap.length_squared() - base * base);
+    if a < 1e-12 {
+        return further;
+    }
+    let share = ((-b - (b * b - 4.0 * a * c).max(0.0).sqrt()) / (2.0 * a)).clamp(0.0, 1.0);
+    further + way * share
+}
+
+/// How far along a line, whose point `s` along it is `point(s)`, a car's back
+/// wheels are, its front ones at `front`, `ahead` along it, and the two
+/// `base` apart as the crow flies: the nearest point behind the front wheels
+/// that is that far from them. As far back along the line as they are apart
+/// is never further from them, and round a bend nearer: from there it steps
+/// back until it is as far, and then finds it between the two steps.
+fn behind(point: impl Fn(f64) -> Vec2, ahead: f64, front: Vec2, base: f32) -> f64 {
+    let step = f64::from(base) * 0.1;
+    let (mut near, mut far) = (ahead - f64::from(base), ahead - f64::from(base));
+    for _ in 0..40 {
+        if point(far).distance(front) >= base {
+            break;
+        }
+        near = far;
+        far -= step;
+    }
+    for _ in 0..16 {
+        let between = (near + far) * 0.5;
+        if point(between).distance(front) >= base {
+            far = between;
+        } else {
+            near = between;
+        }
+    }
+    (near + far) * 0.5
+}
+
 /// A turn from one lane into the next: how far short of the end of the one
 /// it leaves it, how far along the other it joins it, and its points between.
 #[derive(Clone, Debug)]
@@ -953,62 +1127,168 @@ struct Turn {
 }
 
 /// The turn from the end of `this` lane into the start of `next`, at the
-/// join between, for a car `car` long and wide, as half its length and half
-/// its width, its middle on the line. From the room left at the end of the
-/// one and the start of the other ([`Lane::room`]), unless that would take
-/// any of the car off the road. Then from nearer the join, either or both, a
-/// step of [`NEARER`] at a time: the first turn tried that keeps all of the
-/// car [`KERB`] inside the road's edge, the furthest from the join first.
-/// From the room left, turning right, as the car keeps to the right, the
-/// side of it nearer the corner went over the kerb; following the lanes
-/// further in, it turns more sharply, nearer the join, and clear of it.
-fn turning(this: &Lane, next: &Lane, paint: &Paint, car: Vec2) -> Turn {
+/// join between, for a car that takes the room `car` takes on the road, its
+/// wheels on the line. From the room left at the end of the one and the start
+/// of the other ([`Lane::room`]), unless that would take any of the car off
+/// the road. Then from nearer the join, either or both, a step of [`NEARER`]
+/// at a time: the first turn tried that keeps all of the car [`KERB`] inside
+/// the road's edge, the furthest from the join first. From the room left,
+/// turning right, as the car keeps to the right, the side of it nearer the
+/// corner went over the kerb; following the lanes further in, it turns more
+/// sharply, nearer the join, and clear of it.
+///
+/// A car longer than the roads are wide, like the bus, 12.5 m long on Round
+/// Town's 10 m roads, has less room to turn: into the far lane of a road, its
+/// front swings out over the far kerb. Then it turns wide, from the middle of
+/// the road it leaves or into the middle of the one it joins, moving across
+/// to its lane over [`CROSS_OVER`]. If no turn keeps all of it on the road,
+/// the first that keeps its wheels inside the edge, or failing that on the
+/// road, the rest of it swinging out over the kerb, as a bus's does; and if
+/// none does even that, the one that takes the fewest of the points round its
+/// wheels over it. Never one tighter than it can follow ([`TIGHTEST`]), if
+/// there is another.
+fn turning(this: &Lane, next: &Lane, paint: &Paint, car: &Footprint) -> Turn {
     let (this_far, next_far) = (along(&this.points, false), along(&next.points, false));
-    let this_whole = *this_far.last().unwrap();
+    let (this_whole, next_whole) = (*this_far.last().unwrap(), *next_far.last().unwrap());
     let top = this.top.max(next.top);
     let on_road = |at: Vec2| paint.on_road(at, top);
-    let outline = outline(car + KERB);
     let steps = |room: f32| ((room - NEAREST) / NEARER).floor().max(0.0) as usize;
-    let mut tries: Vec<(usize, usize)> = (0..=steps(this.room.1))
-        .flat_map(|leave| (0..=steps(next.room.0)).map(move |join| (leave, join)))
-        .collect();
-    tries.sort_by_key(|&(leave, join)| (leave + join, leave.abs_diff(join), leave));
-    let shaped = |&(leave, join): &(usize, usize)| {
+    // Each turn tried: how many steps nearer the join than the room left it
+    // leaves the one lane and joins the other, and whether it turns wide,
+    // from the middle of the road or onto it. Every turn from lane to lane
+    // first, so that a car that can turn that way does.
+    let mut tries: Vec<(usize, usize, bool, bool)> = Vec::new();
+    for (wide_from, wide_to) in [(false, false), (false, true), (true, false), (true, true)] {
+        let mut these: Vec<(usize, usize, bool, bool)> = (0..=steps(this.room.1))
+            .flat_map(|leave| (0..=steps(next.room.0)).map(move |join| (leave, join, wide_from, wide_to)))
+            .collect();
+        these.sort_by_key(|&(leave, join, ..)| (leave + join, leave.abs_diff(join), leave));
+        tries.extend(these);
+    }
+    let shaped = |&(leave, join, wide_from, wide_to): &(usize, usize, bool, bool)| {
         let (leave, join) = (this.room.1 - leave as f32 * NEARER, next.room.0 - join as f32 * NEARER);
+        // Turning wide, it moves across from its lane to the middle of the
+        // road, over [`CROSS_OVER`], before it turns, or from the middle to
+        // its lane after: a bus turning into the far lane of a road swings
+        // its front out over the far kerb, turning from lane to lane, and
+        // turning into the middle of the road it has half as far again to
+        // swing it in. Both ends of it no further into a lane than
+        // [`MOST_WIDE`] of the way along it.
+        let off_lane = leave + if wide_from { CROSS_OVER } else { 0.0 };
+        let on_lane = join + if wide_to { CROSS_OVER } else { 0.0 };
+        if wide_from && off_lane > this_whole * MOST_WIDE || wide_to && on_lane > next_whole * MOST_WIDE {
+            return None;
+        }
         let (from, from_way) = heading_at(&this.points, &this_far, this_whole - leave);
         let (to, to_way) = heading_at(&next.points, &next_far, join);
-        let points = turn(from, from_way, to, to_way);
+        let from = if wide_from { from - from_way.perp() * this.inside } else { from };
+        let to = if wide_to { to - to_way.perp() * next.inside } else { to };
+        let mut points = Vec::new();
+        if wide_from {
+            let (lane, lane_way) = heading_at(&this.points, &this_far, this_whole - off_lane);
+            points.extend(turn(lane, lane_way, from, from_way));
+            points.push(from);
+        }
+        points.extend(turn(from, from_way, to, to_way));
+        if wide_to {
+            let (lane, lane_way) = heading_at(&next.points, &next_far, on_lane);
+            points.push(to);
+            points.extend(turn(to, to_way, lane, lane_way));
+        }
         // All the car goes over that it did not, turning from the room left:
         // the lanes further in, and the turn.
-        let mut path = stretch(&this.points, false, this_whole - this.room.1, this_whole - leave);
+        let mut path = Vec::new();
+        if off_lane <= this.room.1 {
+            path = stretch(&this.points, false, this_whole - this.room.1, this_whole - off_lane);
+        }
         path.extend_from_slice(&points);
-        path.extend(stretch(&next.points, false, join, next.room.0));
-        (Turn { leave, join, points }, path)
+        if on_lane <= next.room.0 {
+            path.extend(stretch(&next.points, false, on_lane, next.room.0));
+        }
+        // And whether it bends more tightly than the car can follow.
+        let tight = tightest(&path) < car.base * TIGHTEST;
+        Some((
+            Turn {
+                leave: off_lane,
+                join: on_lane,
+                points,
+            },
+            path,
+            tight,
+        ))
     };
-    if let Some((turn, _)) = tries
-        .iter()
-        .map(shaped)
-        .find(|(_, path)| off_the_road(path, &outline, on_road, 1) == 0)
-    {
-        return turn;
+    // A turn tighter than [`TIGHTEST`] a car cannot follow with its back
+    // wheels on the line where its front ones were: it slides sideways round
+    // the bend. Only if there is no other.
+    let mut shapes: Vec<(Turn, Vec<Vec2>, bool)> = tries.iter().filter_map(shaped).collect();
+    if shapes.iter().any(|&(.., tight)| !tight) {
+        shapes.retain(|&(.., tight)| !tight);
     }
-    // None clear of the edge: the one that goes over it least.
-    let (turn, path) = tries
-        .iter()
-        .map(shaped)
-        .min_by_key(|(_, path)| off_the_road(path, &outline, on_road, usize::MAX))
-        .unwrap();
+    // Where the car stands at each point of all it goes over, its wheels on it.
+    let shapes: Vec<(Turn, Vec<(Vec2, Vec2)>)> = shapes
+        .into_iter()
+        .map(|(turn, path, _)| (turn, on_wheels(&path, false, car.base)))
+        .collect();
+    // All of it inside the edge, or failing that its wheels, and failing that
+    // its wheels on the road, if not quite as far in.
+    let all = (outline(car.half + KERB), car.ahead);
+    let wheels = (outline(car.wheels + KERB), 0.0);
+    let only_wheels = (car.wheels, 0.0) != (car.half, car.ahead);
+    let just = (outline(car.wheels), 0.0);
+    for (outline, ahead) in std::iter::once(&all).chain(only_wheels.then_some(&wheels)).chain([&just]) {
+        if let Some((turn, _)) = shapes
+            .iter()
+            .find(|(_, stands)| off_the_road(stands, outline, *ahead, on_road, 1) == 0)
+        {
+            return turn.clone();
+        }
+    }
+    // None keeps even its wheels clear of the edge: the one that takes them
+    // over it least, counting each no further than the least so far. All
+    // round them, not only their corners: turning tightly, the side of a long
+    // car between them cuts the corner it turns round.
+    let (mut least, mut best) = (usize::MAX, 0);
+    for (index, (_, stands)) in shapes.iter().enumerate() {
+        let off = off_the_road(stands, &wheels.0, 0.0, on_road, least);
+        if off < least {
+            (least, best) = (off, index);
+        }
+    }
+    let (turn, stands) = &shapes[best];
     warn!(
-        "the car's turn at {} goes off the road, by {} of the points round it",
-        path[path.len() / 2],
-        off_the_road(&path, &outline, on_road, usize::MAX)
+        "the car's turn at {} takes its wheels off the road, by {least} of the points round them",
+        stands[stands.len() / 2].0,
     );
-    turn
+    turn.clone()
+}
+
+/// How tightly the line through `points` bends at its tightest, as the radius
+/// of the circle through a point and the points either side of it, those
+/// less than a tenth of a metre from the one before left out.
+fn tightest(points: &[Vec2]) -> f32 {
+    let mut apart: Vec<Vec2> = Vec::with_capacity(points.len());
+    for &point in points {
+        if apart.last().is_none_or(|last| last.distance(point) >= 0.1) {
+            apart.push(point);
+        }
+    }
+    apart
+        .windows(3)
+        .map(|three| {
+            let (a, b, c) = (three[0], three[1], three[2]);
+            let twice_the_area = (b - a).perp_dot(c - a).abs();
+            if twice_the_area < 1e-6 {
+                f32::INFINITY
+            } else {
+                a.distance(b) * b.distance(c) * c.distance(a) / (2.0 * twice_the_area)
+            }
+        })
+        .fold(f32::INFINITY, f32::min)
 }
 
 /// Points all the way round a box `half` long and wide each way, along it and
-/// across, no more than [`FEEL`] apart: its corners, and between them along
-/// its sides.
+/// across, no more than [`FEEL`] apart: its four corners first, which are what
+/// goes off the road first, turning, and then the rest along its sides.
 fn outline(half: Vec2) -> Vec<Vec2> {
     let corners = [
         Vec2::new(half.x, half.y),
@@ -1016,32 +1296,42 @@ fn outline(half: Vec2) -> Vec<Vec2> {
         Vec2::new(-half.x, -half.y),
         Vec2::new(half.x, -half.y),
     ];
-    let mut points = Vec::new();
+    let mut points = corners.to_vec();
     for side in 0..4 {
         let (a, b) = (corners[side], corners[(side + 1) % 4]);
         let steps = (a.distance(b) / FEEL).ceil().max(1.0) as usize;
-        points.extend((0..steps).map(|step| a.lerp(b, step as f32 / steps as f32)));
+        points.extend((1..steps).map(|step| a.lerp(b, step as f32 / steps as f32)));
     }
     points
 }
 
-/// How many of the points `outline` round the car, along it and across it,
-/// are off the road, as its middle goes along `path`, facing the way it goes:
-/// counted as far as `enough`, and no further.
-fn off_the_road(path: &[Vec2], outline: &[Vec2], on_road: impl Fn(Vec2) -> bool, enough: usize) -> usize {
+/// How many of the points `outline` round a box, along it and across it, are
+/// off the road, wherever the car is in `stands`, as the middle of its wheels
+/// and the way it faces, the box's middle `ahead` of the middle of its
+/// wheels: counted as far as `enough`, and no further. Its corners are looked
+/// at all the way along first, so that a turn that takes one off the road is
+/// found out in a few looks rather than a hundred at each point.
+fn off_the_road(
+    stands: &[(Vec2, Vec2)],
+    outline: &[Vec2],
+    ahead: f32,
+    on_road: impl Fn(Vec2) -> bool,
+    enough: usize,
+) -> usize {
+    let corners = outline.len().min(4);
     let mut off = 0;
-    let mut way = Vec2::ZERO;
-    for (at, &point) in path.iter().enumerate() {
-        let (before, after) = (path[at.saturating_sub(1)], path[(at + 1).min(path.len() - 1)]);
-        way = (after - before).try_normalize().unwrap_or(way);
-        if way == Vec2::ZERO {
-            continue;
-        }
-        for corner in outline {
-            if !on_road(point + way * corner.x + way.perp() * corner.y) {
-                off += 1;
-                if off >= enough {
-                    return off;
+    for points in [&outline[..corners], &outline[corners..]] {
+        for &(wheels, way) in stands {
+            if way == Vec2::ZERO {
+                continue;
+            }
+            let middle = wheels + way * ahead;
+            for corner in points {
+                if !on_road(middle + way * corner.x + way.perp() * corner.y) {
+                    off += 1;
+                    if off >= enough {
+                        return off;
+                    }
                 }
             }
         }
@@ -1081,9 +1371,8 @@ pub(crate) struct Route {
 
 impl Route {
     /// The way round the roads in `paint`, if they make one, for `cars` cars
-    /// as long and wide as `car` at the most, as half the length of the
-    /// longest and half the width of the widest.
-    pub(crate) fn read(paint: &Paint, car: Vec2, cars: usize) -> Option<Self> {
+    /// that each take the room `car` takes on the road.
+    pub(crate) fn read(paint: &Paint, car: &Footprint, cars: usize) -> Option<Self> {
         let network = network(paint);
         let lanes = lanes(&network);
         let order = plan(&lanes, network.joins.len())?;
@@ -1093,8 +1382,8 @@ impl Route {
     }
 
     /// The loop through `lanes` in `order`, turning from each into the next,
-    /// on the roads in `paint`, for a car `car` long and wide, as half each.
-    fn through(lanes: &[Lane], order: &[usize], paint: &Paint, car: Vec2) -> Self {
+    /// on the roads in `paint`, for a car that takes the room `car` takes.
+    fn through(lanes: &[Lane], order: &[usize], paint: &Paint, car: &Footprint) -> Self {
         let count = order.len();
         let turns: Vec<Turn> = (0..count)
             .map(|index| turning(&lanes[order[index]], &lanes[order[(index + 1) % count]], paint, car))
@@ -1141,38 +1430,49 @@ impl Route {
     }
 
     /// How far behind the first car each of `cars` cars goes round, in whole
-    /// seconds, for cars `car` long and wide, as half each: an even share of
-    /// the loop behind the one before, or, where that would have two of them
-    /// meet where the loop crosses itself, the nearest to it, a second at a
-    /// time, that keeps every two [`APART`] all the way round.
-    fn spread(&self, cars: usize, car: Vec2) -> Vec<f64> {
+    /// seconds, for cars that take the room `car` takes: an even share of the
+    /// loop behind the one before, or, where that would have two of them meet
+    /// where the loop crosses itself, or passing each other, the nearest to
+    /// it, a second at a time, that keeps every two [`APART`] all the way
+    /// round; or failing that, that keeps them out of each other. The two
+    /// buses, turning wide into the middle of the road (`turning`), pass the
+    /// other in the lane beside within a metre.
+    fn spread(&self, cars: usize, car: &Footprint) -> Vec<f64> {
         let lap = self.lap();
+        // Where a car is every [`LOOK_EVERY`] round the loop, worked out once:
+        // a car `behind` seconds behind the first is where the first was then.
+        let looks = (lap / LOOK_EVERY).round() as usize;
+        let stands: Vec<(Vec2, Vec2)> = (0..looks)
+            .map(|look| {
+                let (wheels, way, _) = self.on_wheels(look as f64 * LOOK_EVERY, car.base);
+                (wheels.xz() + way * car.ahead, way)
+            })
+            .collect();
+        // Whether two cars, one `a` seconds behind the first and the other
+        // `b`, ever come within `apart` of each other.
+        let meet = |a: f64, b: f64, apart: f32| {
+            let shift = (((b - a) / LOOK_EVERY).round() as i64).rem_euclid(looks as i64) as usize;
+            (0..looks).any(|look| {
+                let ((one, one_way), (other, other_way)) = (stands[look], stands[(look + shift) % looks]);
+                boxes_meet(one, one_way, other, other_way, car.half + apart * 0.5)
+            })
+        };
         let mut behind: Vec<f64> = Vec::with_capacity(cars);
         for number in 0..cars {
             let even = (lap * number as f64 / cars as f64).round();
             let most = (lap / cars as f64 * 0.5).floor() as i64;
-            let clear = std::iter::once(0)
-                .chain((1..=most).flat_map(|off| [off, -off]))
-                .map(|off| even + off as f64)
-                .find(|&mine| behind.iter().all(|&other| !self.meet(mine, other, car)));
-            behind.push(clear.unwrap_or_else(|| {
+            let tries = || {
+                std::iter::once(0)
+                    .chain((1..=most).flat_map(|off| [off, -off]))
+                    .map(|off| even + off as f64)
+            };
+            let clear = |apart: f32| tries().find(|&mine| behind.iter().all(|&other| !meet(mine, other, apart)));
+            behind.push(clear(APART).or_else(|| clear(0.0)).unwrap_or_else(|| {
                 warn!("car {number} meets another wherever on the loop it goes");
                 even
             }));
         }
         behind
-    }
-
-    /// Whether two cars `car` long and wide, as half each, one `a` seconds
-    /// behind the first and the other `b`, ever come within [`APART`] of each
-    /// other going round.
-    fn meet(&self, a: f64, b: f64, car: Vec2) -> bool {
-        let looks = (self.lap() / LOOK_EVERY).ceil() as usize;
-        (0..looks).any(|look| {
-            let seconds = look as f64 * LOOK_EVERY;
-            let ((one, one_way, _), (other, other_way, _)) = (self.at(seconds - a), self.at(seconds - b));
-            boxes_meet(one.xz(), one_way, other.xz(), other_way, car + APART * 0.5)
-        })
     }
 
     /// How far behind the first car the car numbered `car` goes round, in
@@ -1277,6 +1577,35 @@ impl Route {
         let distance = self.distances[before] + (self.distances[after] - self.distances[before]) * share;
         let distance = laps * self.length() + distance;
         (self.points[before].lerp(self.points[after % count], share as f32), way, distance)
+    }
+
+    /// Where a car whose front and back wheels are `base` apart is `seconds`
+    /// into its loop ([`Footprint`]): its front wheels half that ahead of
+    /// where [`Self::at`] has the car, and its back ones on the loop behind
+    /// them, as far from them as they are apart. As the middle of its wheels,
+    /// halfway between them, on the road; the way it faces, from its back
+    /// wheels to its front ones; and how far it has come.
+    pub(crate) fn on_wheels(&self, seconds: f64, base: f32) -> (Vec3, Vec2, f64) {
+        let (at, way, distance) = self.at(seconds);
+        if base <= 0.0 {
+            return (at, way, distance);
+        }
+        let ahead = distance.rem_euclid(self.length()) + f64::from(base) * 0.5;
+        let front = self.point_round(ahead);
+        let back = self.point_round(behind(|s| self.point_round(s).xz(), ahead, front.xz(), base));
+        ((front + back) * 0.5, (front - back).xz().normalize_or(way), distance)
+    }
+
+    /// The point `distance` metres round the loop from its first point, gone
+    /// round again as often as it takes.
+    fn point_round(&self, distance: f64) -> Vec3 {
+        let distance = distance.rem_euclid(self.length());
+        let count = self.points.len();
+        let after = self.distances.partition_point(|&far| far <= distance).clamp(1, count);
+        let before = after - 1;
+        let span = self.distances[after] - self.distances[before];
+        let share = if span > 0.0 { ((distance - self.distances[before]) / span).clamp(0.0, 1.0) } else { 0.0 };
+        self.points[before].lerp(self.points[after % count], share as f32)
     }
 
     /// The fastest the car goes anywhere round the loop, in metres a second.
@@ -1497,7 +1826,7 @@ pub(crate) mod tests {
     fn the_car_drives_every_lane_of_every_road_both_ways() {
         let (land, road, markings) = read_town();
         let paint = Paint { land: &land, road: &road, markings: &markings };
-        let route = Route::read(&paint, CAR, 2).expect("a way round");
+        let route = Route::read(&paint, &Footprint::turning_about_its_middle(CAR), 2).expect("a way round");
         for stretch in 0..12 {
             for ahead in [true, false] {
                 assert!(route.driven.contains(&(stretch, ahead)), "stretch {stretch}, {ahead}");
@@ -1557,7 +1886,7 @@ pub(crate) mod tests {
             assert!((stretch.left - 5.0).abs() < 0.2, "left {}", stretch.left);
             assert!((stretch.right - 5.0).abs() < 0.2, "right {}", stretch.right);
         }
-        let route = Route::read(&paint, CAR, 2).expect("a way round the town");
+        let route = Route::read(&paint, &Footprint::turning_about_its_middle(CAR), 2).expect("a way round the town");
         for stretch in 0..12 {
             for ahead in [true, false] {
                 assert!(route.driven.contains(&(stretch, ahead)), "stretch {stretch}, {ahead}");
@@ -1611,6 +1940,7 @@ pub(crate) mod tests {
                     ahead,
                     top: 0.0,
                     room: (0.0, 0.0),
+                    inside: 0.0,
                 })
             })
             .collect();
@@ -1677,7 +2007,8 @@ pub(crate) mod tests {
         // front swung out and in all the way round (Hajun, 2026-10-23: "it
         // shouldnt rotate outward ever").
         let (land, road, markings) = round_town();
-        let route = Route::read(&Paint { land: &land, road: &road, markings: &markings }, CAR, 2).unwrap();
+        let paint = Paint { land: &land, road: &road, markings: &markings };
+        let route = Route::read(&paint, &Footprint::turning_about_its_middle(CAR), 2).unwrap();
         let points: Vec<Vec2> = route.points.iter().map(|point| point.xz()).collect();
         let round = turns(&points);
         let lane_at = |at: Vec2| [15.5, 20.5, 54.5, 59.5].into_iter().position(|lane| (at.length() - lane).abs() < 0.1);
@@ -1703,29 +2034,43 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn round_town_s_cars_keep_all_of_themselves_on_the_road_and_never_meet() {
+    fn round_town_s_cars_keep_their_wheels_on_the_road_and_never_meet() {
         // Turning, the side of the car nearer the corner went over the kerb,
         // into the inner road and out of it (Hajun, 2026-10-23: "it kind of
-        // almost steps onto the rock").
+        // almost steps onto the rock"). A bus, 12.5 m long on 10 m roads,
+        // cannot keep all of itself on them turning from one into another, but
+        // it keeps its wheels on them, and what of it swings out over the kerb
+        // swings over nothing taller than the kerb.
         let (land, road, markings) = round_town();
         let paint = Paint { land: &land, road: &road, markings: &markings };
-        let sizes = crate::car::tests::sizes();
-        let car = sizes.iter().fold(Vec2::ZERO, |most, &size| most.max(size));
-        let route = Route::read(&paint, car, sizes.len()).unwrap();
+        let cars = crate::car::tests::footprints();
+        let car = cars.iter().copied().max_by(|a, b| a.half.x.total_cmp(&b.half.x)).unwrap();
+        let route = Route::read(&paint, &car, cars.len()).unwrap();
         let points: Vec<Vec2> = route.points.iter().map(|point| point.xz()).collect();
-        for &size in &sizes {
-            let off = off_the_road(&points, &outline(size), |at| paint.on_road(at, -0.19), usize::MAX);
-            assert_eq!(off, 0, "a car {size} each way goes off the road");
+        let on_road = |at: Vec2| paint.on_road(at, -0.19);
+        for car in &cars {
+            let stands = on_wheels(&points, true, car.base);
+            let off = off_the_road(&stands, &outline(car.wheels), 0.0, on_road, usize::MAX);
+            assert_eq!(off, 0, "the wheels of {car:?} go off the road");
+            for &(wheels, way) in &stands {
+                let middle = wheels + way * car.ahead;
+                for corner in outline(car.half) {
+                    let at = middle + way * corner.x + way.perp() * corner.y;
+                    assert!(on_road(at) || !land.blocked(at, 0.1, 4.0), "{car:?} swings into something at {at}");
+                }
+            }
         }
         // And the two, half the loop or so apart, never meet where it crosses
-        // itself.
+        // itself, nor passing each other.
         let behind = route.behind(1);
         assert!((behind - route.lap() * 0.5).abs() < route.lap() * 0.25, "{behind} s behind");
         let looks = (route.lap() / 0.1) as usize;
         for look in 0..looks {
             let seconds = look as f64 * 0.1;
-            let ((one, one_way, _), (other, other_way, _)) = (route.at(seconds), route.at(seconds - behind));
-            assert!(!boxes_meet(one.xz(), one_way, other.xz(), other_way, car), "they meet at {one}");
+            let (one, one_way, _) = route.on_wheels(seconds, car.base);
+            let (other, other_way, _) = route.on_wheels(seconds - behind, car.base);
+            let (one, other) = (one.xz() + one_way * car.ahead, other.xz() + other_way * car.ahead);
+            assert!(!boxes_meet(one, one_way, other, other_way, car.half), "they meet at {one}");
         }
     }
 }

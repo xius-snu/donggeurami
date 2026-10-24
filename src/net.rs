@@ -18,12 +18,17 @@
 //!   like any other (`lobby::dress`) and drawn where the server says they
 //!   are, two updates behind, smoothed between them ([`smooth`]): updates
 //!   come 15 times a second, and the screen is drawn 120 times.
-//! * **Riding the town's car** (`car`), where you are goes as a place on the
-//!   car, in its own space ([`Spot::aboard`]), and someone riding it is drawn
-//!   on the car as it is here and now: where they were on it two updates
-//!   ago, with the car where it is ([`drawn`]). The car goes by the clock on
-//!   every device, so it is in the same place on all of them, and a rider is
-//!   never seen beside it, nor left behind it by the time an update takes.
+//! * **Riding one of the town's cars** (`car`), two buses, where you are goes
+//!   as a place on the car, in its own space ([`Spot::aboard`]), and someone
+//!   riding it is drawn on the car as it is here and now: where they were on
+//!   it two updates ago, with the car where it is ([`drawn`]). The cars go by
+//!   the town's clock on every device, so they are in the same place on all
+//!   of them, and a rider is never seen beside one, nor left behind it by the
+//!   time an update takes.
+//! * **The town's clock** (`clock`) is the server's: it is asked what time it
+//!   is a few times as the device comes online and once a minute after
+//!   ([`ask_the_time`]), and the quickest answer sets the clock
+//!   ([`hear_the_time`]). The cars, the fountain's jet and the day go by it.
 //! * **Going home and back** asks the server ([`Ask::Travel`]), which seats you
 //!   and says where you arrive.
 //!
@@ -49,10 +54,11 @@ use bevy_replicon_renet::netcode::{
 };
 use bevy_replicon_renet::renet::ConnectionConfig;
 use bevy_replicon_renet::{RenetChannelsExt, RenetClient, RepliconRenetPlugins};
-use roundtown_net::{Ask, Member, Moved, PROTOCOL_ID, Spot, TICK_HZ, Tell, Venue};
+use roundtown_net::{Ask, Member, Moved, PROTOCOL_ID, Spot, TICK_HZ, Tell, TheTime, Venue, WhatTime};
 
 use crate::builder::OfflineGame;
 use crate::car::{self, Place};
+use crate::clock::TownClock;
 use crate::lobby::{self, Balance, Seat, Whereabouts};
 use crate::{OrbitCamera, Player, PlayerJump, Riding};
 
@@ -97,6 +103,19 @@ const LEAP: f32 = 3.0;
 /// second, so that a route that has got slower is noticed within seconds.
 const CLOCK_DRIFT: f64 = 0.01;
 
+/// How many times the server is asked what time it is as the device comes
+/// online, and how far apart, in seconds: the quickest answer sets the town's
+/// clock (`clock`). An answer waits for the next look at what has come in, on
+/// the server and here, and the wait puts the clock out by half of it; of
+/// eight, the quickest has waited least. On this PC, with the server on it,
+/// the clock was set to within 8 ms.
+const FIRST_ASKS: u32 = 8;
+const FIRST_APART: f64 = 0.1;
+/// How often it is asked after that, in seconds, to keep the town's clock to
+/// the server's as this device's own runs fast or slow: by a few
+/// milliseconds a minute at the most.
+const ASK_EVERY: f64 = 60.0;
+
 /// The file who this device is lives in, beside the town save.
 const DEVICE_FILE: &str = "device.id";
 
@@ -110,7 +129,7 @@ pub(crate) fn plugin(app: &mut App) {
         .add_observer(outdated)
         .add_systems(
             PreUpdate,
-            (dress_newcomers, hear_spots, hear)
+            (hear_the_time, dress_newcomers, hear_spots, hear)
                 .chain()
                 .after(ClientSystems::Receive),
         )
@@ -121,7 +140,8 @@ pub(crate) fn plugin(app: &mut App) {
                 smooth.before(crate::move_bodies),
                 tell_where_i_am.after(crate::move_bodies),
             ),
-        );
+        )
+        .add_systems(PostUpdate, ask_the_time.before(ClientSystems::Send));
 }
 
 /// Whether this device is playing online: let in by the server, which has said
@@ -341,16 +361,18 @@ fn close(commands: &mut Commands, transport: Option<&mut NetcodeClientTransport>
 }
 
 /// The app going to the background closes the connection; coming back makes
-/// it again, at once.
+/// it again, at once. Asleep, the town's clock keeps to the time of day.
 fn lifecycle(
     mut lifecycle: MessageReader<AppLifecycle>,
     mut link: ResMut<Link>,
     mut transport: Option<ResMut<NetcodeClientTransport>>,
+    mut town: ResMut<TownClock>,
     mut commands: Commands,
 ) {
     for event in lifecycle.read() {
         match event {
             AppLifecycle::WillSuspend | AppLifecycle::Suspended => {
+                town.sleep();
                 if !matches!(link.state, LinkState::Off | LinkState::Outdated | LinkState::Asleep) {
                     close(&mut commands, transport.as_deref_mut());
                     link.state = LinkState::Asleep;
@@ -730,6 +752,43 @@ fn tell_where_i_am(
         arrival: online.arrival,
         spot,
     });
+}
+
+// ------------------------------------------------------- the town's clock
+
+/// Asks the server what time it is ([`WhatTime`]), for the town's clock:
+/// [`FIRST_ASKS`] times as the device comes online, [`FIRST_APART`] apart,
+/// and every [`ASK_EVERY`] seconds after that. Last thing before what is
+/// written goes out, so that the time it is asked at is as near as can be to
+/// the time it goes.
+fn ask_the_time(
+    online: Res<Online>,
+    town: Res<TownClock>,
+    mut asked: Local<Option<(u32, f64)>>,
+    mut asks: MessageWriter<WhatTime>,
+) {
+    if !online.is() {
+        *asked = None;
+        return;
+    }
+    let now = town.steady();
+    let (count, last) = asked.get_or_insert((0, f64::NEG_INFINITY));
+    let apart = if *count < FIRST_ASKS { FIRST_APART } else { ASK_EVERY };
+    if now - *last < apart {
+        return;
+    }
+    asks.write(WhatTime { asked: now });
+    *count = count.saturating_add(1);
+    *last = now;
+}
+
+/// Sets the town's clock by the server's answers ([`TheTime`]), as soon as
+/// they have come in.
+fn hear_the_time(mut answers: MessageReader<TheTime>, mut town: ResMut<TownClock>) {
+    for answer in answers.read() {
+        let heard = town.steady();
+        town.heard(answer.asked, answer.now, heard);
+    }
 }
 
 // --------------------------------------------------------- everyone else

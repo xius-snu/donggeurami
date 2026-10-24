@@ -13,10 +13,11 @@
 //! faster than a body runs, no higher than a jump, not off the edge of the
 //! world. One that fails is dropped and the device is put back where it was.
 //! Walking through walls is not checked: the server has no islands. Nor where
-//! the town's car is, which every device works out from the clock: a body
-//! riding it moves in the car's own space ([`Spot::aboard`]), checked there
-//! as anywhere else, and getting off it, it can be no further from where it
-//! got on than the car could have taken it.
+//! the town's cars are, two buses, which every device works out from the
+//! town's clock, set by this server's (`clock`): a body riding one moves in
+//! the car's own space ([`Spot::aboard`]), checked there as anywhere else,
+//! and getting off it, it can be no further from where it got on than the
+//! car could have taken it.
 //!
 //! Who a device is, [`Who`], comes with its connection. In netcode's secure
 //! mode it is the account its token from the login names, loaded from the
