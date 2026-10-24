@@ -15,8 +15,9 @@
 //!
 //! It only reaches what is on the island you are standing on: the town's
 //! objects are there to be tapped while you are in the town, not from home.
-//! Nor does it reach what stands between the camera and you, which is drawn
-//! see-through (`see_through`): a tap goes through that to what is behind it.
+//! Nor, standing in a house in House Builder, does it reach what stands
+//! between the camera and you, which is drawn see-through there
+//! (`see_through`): a tap goes through that to what is behind it.
 //!
 //! Hit testing is done here rather than with `bevy_picking` so that a tap tests
 //! the same shapes the rest of the game already knows about: the island and the

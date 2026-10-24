@@ -420,7 +420,8 @@ scripted runs (the game saving its own screenshots at a pinned
   with every lamp in sight. It has Bevy's default grid now.
 - **Things that looked like bugs and were not:**
   a lamp's pole right by the camera, between it and you, fades
-  (`see_through`) and fills a strip of the screen with a faint column; the
+  (`see_through`; in the town until 2026-10-25, when fading was kept to
+  houses in House Builder) and fills a strip of the screen with a faint column; the
   low sun at sunset makes a glare on the grass straight under it, which is
   the grass's own gloss (roughness 0.5); and on the paving by the inner
   road, under a lamp low over it, two of the paving's faces meet in a faint

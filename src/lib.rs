@@ -470,8 +470,8 @@ pub fn main() {
     builder::plugin(&mut app);
     shop::plugin(&mut app);
     build::plugin(&mut app);
-    // Whatever stands between the camera and you, see-through, and out of a
-    // tap's reach.
+    // Standing in a house in House Builder, whatever stands between the
+    // camera and you, see-through, and out of a tap's reach.
     see_through::plugin(&mut app);
 
     #[cfg(any(target_os = "android", target_os = "ios"))]
@@ -1797,8 +1797,9 @@ pub(crate) fn animate_walk(
 
 
 /// Puts the camera where you turned and zoomed it, whatever is in the way:
-/// nothing ever brings it in nearer you. Whatever stands between it and you
-/// is drawn see-through instead (`see_through`). Behind you it circles you,
+/// nothing ever brings it in nearer you. Standing in a house in House
+/// Builder, whatever stands between it and you is drawn see-through instead
+/// (`see_through`); anywhere else it hides you. Behind you it circles you,
 /// looking down at you, as far as straight down, or looking up past you from
 /// low behind you. Zoomed all the way in it is your eyes, turned the same
 /// way, and you are not drawn.

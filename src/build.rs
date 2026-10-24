@@ -32,12 +32,13 @@
 //!
 //! What is down is part of the plot from then on: stood on and bumped into
 //! like the island itself (`island::Islands::build_on`). Doors, windows and
-//! what hangs on the walls are not: the hole in the wall is what counts. Like
-//! everything else, what stands between the camera and you is see-through,
-//! and a tap goes through it (`see_through`): from outside a house, zoomed
-//! out, you can tap what is inside it with you. When the time to build runs
-//! out, whatever is still a ghost is put down where it is, and nothing can be
-//! changed any more.
+//! what hangs on the walls are not: the hole in the wall is what counts.
+//! Standing in a house, and nowhere else in the game, what stands between
+//! the camera and you is see-through, and a tap goes through it
+//! (`see_through`): zoomed out, the camera outside the house, you can tap
+//! what is in there with you. When the time to build runs out, whatever is
+//! still a ghost is put down where it is, and nothing can be changed any
+//! more.
 //!
 //! The models, and the pictures the shop shows of them, are in `assets/build/`,
 //! made by `blender/make_build_items.py`, which also says what the game
@@ -454,8 +455,10 @@ struct Solid(Handle<StandardMaterial>);
 #[derive(Component)]
 struct Rooms(Vec<(Vec3, Vec3)>);
 
-/// The house you are standing in, while you are ([`Rooms::hold`]): any of its
-/// walls in the way of the camera takes its ceiling with it (`see_through`).
+/// The house you are standing in, while you are ([`Rooms::hold`]): only in
+/// a house that is down is anything in the way of the camera drawn
+/// see-through, and any of its walls in the way takes its ceiling with it
+/// (`see_through`).
 #[derive(Component)]
 pub(crate) struct YouAreIn;
 

@@ -41,8 +41,9 @@
 //! ([`Island::sweep`]), so that under a ceiling lower than them they stop
 //! short of it. For that every face counts, walls and all, from either side.
 //! Otherwise the camera asks nothing of the island: it stands where you
-//! turned and zoomed it, and whatever is in the way of you is drawn
-//! see-through (`see_through`).
+//! turned and zoomed it, and whatever is in the way of you hides you, but
+//! in a house in House Builder, where it is drawn see-through
+//! (`see_through`).
 //!
 //! [`WATER_Y`]: crate::WATER_Y
 

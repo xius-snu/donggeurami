@@ -1,20 +1,29 @@
-//! Whatever stands between the camera and you is drawn see-through, and a tap
-//! goes through it to what is behind.
+//! Standing in a house in House Builder, whatever stands between the camera
+//! and you is drawn see-through, and a tap goes through it to what is behind.
+//! Nowhere else is anything (Hajun, 2026-10-25: "only happen when the player
+//! is inside the home in the home build battle game, not anywhere else"): in
+//! the town, on one of its buses, at home, in the lobby, or on a plot outside
+//! its house, whatever stands between the camera and you stays as it is, and
+//! hides you. From 2026-10-09 until then it was so everywhere. The house you
+//! stand in is the one marked [`YouAreIn`], once it is down.
 //!
 //! The camera stands where you turned and zoomed it, walls or no walls
 //! (`follow_camera`): in a house, zoomed out, it is outside the house looking
-//! in. Every frame the straight lines from it to points all over you, from
-//! your legs to the top of your head and out to your sides ([`RINGS`]), are
-//! tried against everything drawn on your island, and whatever any of them
-//! goes through fades to a quarter of itself, as Roblox's Invisicam fades it,
-//! and back once none does. So whatever hides any of you, however little, is
-//! out of the way (Hajun, 2026-10-13); until then only what hid the middle of
-//! your body, your chest or your head was (2026-10-09). Zoomed all the way
-//! in, through your own eyes, there is nothing between.
+//! in. Every frame you are in one, the straight lines from it to points all
+//! over you, from your legs to the top of your head and out to your sides
+//! ([`RINGS`]), are tried against everything drawn on your island, and
+//! whatever any of them goes through fades to a quarter of itself, as
+//! Roblox's Invisicam fades it, and back once none does. So whatever hides
+//! any of you, however little, is out of the way (Hajun, 2026-10-13); until
+//! then only what hid the middle of your body, your chest or your head was
+//! (2026-10-09). Zoomed all the way in, through your own eyes, there is
+//! nothing between.
 //!
 //! A piece of furniture, a door, a window, a town object or one of the
 //! town's buses fades whole, the bus to three quarters of itself rather than
-//! a quarter ([`BUS_SEEN`]). A house, and the island itself, fade a part at a
+//! a quarter ([`BUS_SEEN`]); what is said here of the town, its objects and
+//! its buses is how they faded until 2026-10-25, kept should fading come
+//! back to them. A house, and the island itself, fade a part at a
 //! time, each part as it was modelled in Blender: a
 //! wall, the roof, a floor, a tree's leaves. Whatever is in a part fades with
 //! it, so that no door stands solid in a wall you see through
@@ -72,7 +81,9 @@ const SEEN: f32 = 0.25;
 /// at all. This PC's does: at 0.65 the bus came out a checkerboard,
 /// neighbouring pixels 16 levels of red apart on average, where at a half
 /// and at three quarters they were smooth (measured the same day). So the
-/// next step up from half is three quarters.
+/// next step up from half is three quarters. Since 2026-10-25 nothing in
+/// the town fades, a bus with it ("not on the bus"): this is how much of one
+/// would be drawn, should that come back.
 const BUS_SEEN: f32 = 0.75;
 /// How long something takes to fade, and to come back, in seconds.
 const FADE_SECS: f32 = 0.15;
@@ -190,8 +201,9 @@ type Lineage<'w, 's> = Query<
     ),
 >;
 
-/// Finds what stands between the camera and you: whatever the lines from the
-/// camera to you go through, and what fades along with it.
+/// Finds what stands between the camera and you, while you stand in a house
+/// in House Builder: whatever the lines from the camera to you go through,
+/// and what fades along with it. Anywhere else, nothing.
 #[allow(clippy::too_many_arguments)]
 fn find_what_hides_you(
     me: Query<(&Transform, &Visibility), With<Player>>,
@@ -201,7 +213,7 @@ fn find_what_hides_you(
     children: Query<&Children>,
     on_walls: Query<(Entity, &OnWall)>,
     walls: Query<(Entity, &ChildOf, &Wall)>,
-    house_you_are_in: Query<(Entity, &GlobalTransform), With<YouAreIn>>,
+    house_you_are_in: Query<(Entity, &GlobalTransform), (With<YouAreIn>, Without<Ghost>)>,
     menu: Res<EditMenu>,
     meshes: Res<Assets<Mesh>>,
     materials: Res<Assets<StandardMaterial>>,
@@ -218,6 +230,12 @@ fn find_what_hides_you(
         }
     }
     hiding.0.clear();
+    // Only in a house that is down, not one still a ghost: anywhere else,
+    // whatever is between the camera and you hides you, and what was faded
+    // comes back.
+    let Ok((house, house_place)) = house_you_are_in.single() else {
+        return;
+    };
     // Through your eyes, or so near them that you are not drawn, there is
     // nothing between the camera and you.
     let (Ok((you, drawn)), Ok(eye)) = (me.single(), cameras.single()) else {
@@ -279,47 +297,44 @@ fn find_what_hides_you(
             found.push(stands_for);
         }
     }
-    if let Ok((house, house_place)) = house_you_are_in.single() {
-        let ceiling_of_it = |part: Entity| {
-            !walls.contains(part)
-                && model_of(part, &lineage) == house
-                && parts.get(part).is_ok_and(|(.., bounds, place, _, _)| {
-                    over_your_head(world_box(bounds, place).0.y, you)
-                })
-        };
-        // Standing in a house, its ceiling in the way of a camera looking
-        // down into the room at a slant takes the walls on the camera's side
-        // with it, so that the room is open the way the camera looks in;
-        // looking from straight overhead, the ceiling goes alone (Hajun,
-        // 2026-10-16).
-        if found.iter().any(|&part| ceiling_of_it(part)) {
-            let look = eye.forward().as_vec3();
-            let near: Vec<Entity> = walls
-                .iter()
-                .filter(|(_, of, wall)| {
-                    of.parent() == house
-                        && on_the_camera_side(
-                            look,
-                            house_place.affine().transform_vector3(wall.way_in()),
-                        )
-                })
-                .map(|(wall, ..)| wall)
-                .collect();
-            found.extend(near);
-        }
-        // Standing in a house, any of its walls in the way of you takes its
-        // ceiling with it, so that the room you are in is open to the camera
-        // from above as well (Hajun, 2026-10-16).
-        if found
+    let ceiling_of_it = |part: Entity| {
+        !walls.contains(part)
+            && model_of(part, &lineage) == house
+            && parts.get(part).is_ok_and(|(.., bounds, place, _, _)| {
+                over_your_head(world_box(bounds, place).0.y, you)
+            })
+    };
+    // The house's ceiling in the way of a camera looking down into the room
+    // at a slant takes the walls on the camera's side with it, so that the
+    // room is open the way the camera looks in; looking from straight
+    // overhead, the ceiling goes alone (Hajun, 2026-10-16).
+    if found.iter().any(|&part| ceiling_of_it(part)) {
+        let look = eye.forward().as_vec3();
+        let near: Vec<Entity> = walls
             .iter()
-            .any(|&part| walls.get(part).is_ok_and(|(_, of, _)| of.parent() == house))
-        {
-            let ceiling: Vec<Entity> = children
-                .iter_descendants(house)
-                .filter(|&part| ceiling_of_it(part))
-                .collect();
-            found.extend(ceiling);
-        }
+            .filter(|(_, of, wall)| {
+                of.parent() == house
+                    && on_the_camera_side(
+                        look,
+                        house_place.affine().transform_vector3(wall.way_in()),
+                    )
+            })
+            .map(|(wall, ..)| wall)
+            .collect();
+        found.extend(near);
+    }
+    // Any of its walls in the way of you takes its ceiling with it, so that
+    // the room you are in is open to the camera from above as well (Hajun,
+    // 2026-10-16).
+    if found
+        .iter()
+        .any(|&part| walls.get(part).is_ok_and(|(_, of, _)| of.parent() == house))
+    {
+        let ceiling: Vec<Entity> = children
+            .iter_descendants(house)
+            .filter(|&part| ceiling_of_it(part))
+            .collect();
+        found.extend(ceiling);
     }
     let target = menu.target();
     for part in found {
@@ -787,6 +802,51 @@ mod tests {
         points_on(you)
             .into_iter()
             .any(|to| line_meets_box(eye, to, low, high) && shape.crosses(eye, to))
+    }
+
+    #[test]
+    fn nothing_is_in_the_way_but_in_a_house_of_house_builder() {
+        use bevy::ecs::message::Messages;
+        use bevy::ecs::system::RunSystemOnce;
+        let mut world = World::new();
+        world.init_resource::<Hiding>();
+        world.init_resource::<EditMenu>();
+        world.init_resource::<Assets<Mesh>>();
+        world.init_resource::<Assets<StandardMaterial>>();
+        world.init_resource::<Messages<AssetEvent<Mesh>>>();
+        // You at the origin, and the camera behind you with a wall between.
+        let (low, high) = FRONT;
+        let mesh = Mesh::from(Cuboid::from_corners(low, high)).translated_by((low + high) * 0.5);
+        let mesh = world.resource_mut::<Assets<Mesh>>().add(mesh);
+        let material = world
+            .resource_mut::<Assets<StandardMaterial>>()
+            .add(StandardMaterial::default());
+        world.spawn((Player, Transform::IDENTITY, Visibility::Visible));
+        world.spawn((ThirdPersonCamera, Transform::from_xyz(0.0, 2.0, 10.0)));
+        let wall = world
+            .spawn((
+                Mesh3d(mesh),
+                MeshMaterial3d(material),
+                Aabb::from_min_max(low, high),
+                GlobalTransform::IDENTITY,
+                InheritedVisibility::VISIBLE,
+            ))
+            .id();
+        let in_the_way = |world: &mut World| {
+            world.run_system_once(find_what_hides_you).expect("it runs");
+            world.resource::<Hiding>().0.contains_key(&wall)
+        };
+        // In the town, on a bus, at home, in the lobby or on a plot outside
+        // its house, it hides you and stays as it is.
+        assert!(!in_the_way(&mut world));
+        // And standing in a house still being put down.
+        let house = world.spawn((YouAreIn, Ghost, GlobalTransform::IDENTITY)).id();
+        assert!(!in_the_way(&mut world));
+        // In a house that is down, it fades; and out of it again, it does not.
+        world.entity_mut(house).remove::<Ghost>();
+        assert!(in_the_way(&mut world));
+        world.entity_mut(house).remove::<YouAreIn>();
+        assert!(!in_the_way(&mut world));
     }
 
     #[test]

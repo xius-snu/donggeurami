@@ -63,9 +63,10 @@ tested on the actual phone, and what not to try again. The short version:
   streaks the GPU moves by the frame's time. It is the one custom shader;
   Bevy compiles it on each platform like its own, built into the binary
   rather than loaded from `assets/`.
-- **What stands between the camera and you is drawn see-through**
-  (`src/see_through.rs`, since 2026-10-09): a copy of its own material at a
-  quarter, drawn with alpha to coverage since 2026-10-13 (blended until
+- **Standing in a house in House Builder, what stands between the camera
+  and you is drawn see-through** (`src/see_through.rs`, since 2026-10-09;
+  everywhere until 2026-10-25, only there since): a copy of its own
+  material at a quarter, drawn with alpha to coverage since 2026-10-13 (blended until
   then), so in the opaque phase, writing depth, under the camera's 4x MSAA.
   Not yet seen on a phone, neither way; the Adreno has never drawn alpha to
   coverage for this game. If it looks wrong there, `see_through::see_through`
@@ -399,9 +400,9 @@ re-export, and the collision follows.
   `spahgettitext` (`Text.002` until 2026-10-10), as high as theirs. Being
   part of the model, they are land like the rest: bodies bump into the
   trunk and the lamps' poles, and a trunk, leaves or a lamp between the
-  camera and you fade (`see_through`), as a town object such as the
-  catalogue's tree does. The trunk is closed but for a disc left inside it,
-  which nothing can reach.
+  camera and you hides you, as a town object such as the catalogue's tree
+  does (until 2026-10-25 they faded: `see_through`). The trunk is closed
+  but for a disc left inside it, which nothing can reach.
 - **Each street lamp is an object of its own**, `streetlamp.001` to `.023`:
   3 round the fountain 12 m out, 8 along the inner road and 12 along the
   outer, each Hajun's lamp, 7.4 m tall with two bulbs on a 2.5 m arm.
@@ -717,14 +718,18 @@ is their model's, and their way round is the town's roads.
   on. Its floor is a step up from the road, and its roof, at 3.2 m, out of
   a jump's reach. **The camera does not turn with it**: nothing turns it
   but you (above); the bus turns under you, as the island does.
-- **A bus in the way fades, but only to three quarters of itself**
-  (Hajun, 2026-10-24: "the bus should become transparent just not that much
-  as the other ones so slightly higher opacity but still transparent", and
+- **A bus in the way does not fade** (since 2026-10-25, Hajun: "not on the
+  bus"): nothing outside a house in House Builder does ("The camera stands
+  where you zoomed it"), so riding one with the camera outside, or behind
+  one from the camera, you are hidden. From 2026-10-24 it faded to three
+  quarters of itself (Hajun, 2026-10-24: "the bus should become
+  transparent just not that much as the other ones so slightly higher
+  opacity but still transparent", and
   then of half, "increase the bus opacity slightly more";
-  `see_through::BUS_SEEN`, 0.75, against a quarter for everything else). It
-  fades whole, wheels and glass with it, whichever part of it hides any of
-  you, as a town object does: so you are seen through it from a camera
-  behind it, or riding in it with the camera outside. **Only a quarter, a
+  `see_through::BUS_SEEN`, 0.75, against a quarter for everything else,
+  still in the code, unused, should the town's fading come back). It
+  faded whole, wheels and glass with it, whichever part of it hid any of
+  you, as a town object did. **Only a quarter, a
   half and three quarters come out smooth**: with alpha to coverage a pixel
   shows it in one, two or three of its four MSAA samples, and anything
   between a GPU makes up, if at all, by using more samples in some pixels
@@ -765,14 +770,30 @@ There is one view (Hajun, 2026-10-09): the camera orbits you as you turn and
 zoom it (`OrbitCamera`, `follow_camera` in `src/lib.rs`), 2.5 to 18 m out
 behind you, and zoomed all the way in it is your own eyes. Nothing in the
 world moves it: walls, ceilings and trees never bring it in nearer you.
-Whatever stands between it and you is drawn see-through instead, and a tap
-goes through it (`src/see_through.rs`). That is Hajun's call (2026-10-09):
-"at all times u should be able to zoom out to the current max zoom out even
-when ur inside a room or covered by some wall and the camera should not
-automatically go near the player". In a house in House Builder, zoomed out,
-the camera is outside it looking in, and you tap what is in there with you
-through its wall.
+That is Hajun's call (2026-10-09): "at all times u should be able to zoom
+out to the current max zoom out even when ur inside a room or covered by
+some wall and the camera should not automatically go near the player".
+Standing in a house in House Builder, whatever stands between it and you is
+drawn see-through instead, and a tap goes through it (`src/see_through.rs`):
+zoomed out, the camera is outside the house looking in, and you tap what is
+in there with you through its wall. Anywhere else, what stands between hides
+you.
 
+- **Only in a house in House Builder is anything see-through** (Hajun,
+  2026-10-25: "i want that effect to only happen when the player is inside
+  the home in the home build battle game, not anywhere else not in
+  circlemap1, not on the bus, not in home"). In the town, on or behind one
+  of its buses, at home, in House Builder's lobby and on a plot outside its
+  house, a wall, a tree, a lamp or a bus between the camera and you stays
+  as it is and hides you, and nothing is out of a tap's reach for being in
+  the way. In a house is over one of its floors and under its top
+  (`build::YouAreIn`, set in `build::untappable_from_inside`), in a house
+  that is down, not a ghost: yours while you build, anyone's on a visit or
+  at the results. Stepping out of it, what was faded comes back over 0.15
+  s. From 2026-10-09 until then it was so everywhere, and what the rest of
+  this section says of the town and its buses is how it was there. A test
+  keeps it so (`nothing_is_in_the_way_but_in_a_house_of_house_builder`);
+  not yet tried by hand or on a phone.
 - **It always points exactly the way you turned it, and stands as far out as
   you zoomed it**: 2.5 to 18 m (`CAMERA_DISTANCE_MIN`, `_MAX`; 15 m at most
   until Hajun asked for "a slight bit more", 2026-10-09). It tips down as far
@@ -786,9 +807,9 @@ through its wall.
   and Hajun found it glitchy (2026-09-27): every bit of a swipe has to turn
   the camera by as much, wherever you are. **Keep both**: nothing moves it off
   where you turned and zoomed it.
-- **Whatever hides any of you from it fades to a quarter of itself**
+- **In a house, whatever hides any of you from it fades to a quarter of itself**
   (`SEEN`, 0.25, as much as Roblox's Invisicam leaves; one of the town's
-  buses to three quarters, `BUS_SEEN`, above) over 0.15 s, and
+  buses, until 2026-10-25, to three quarters, `BUS_SEEN`, above) over 0.15 s, and
   back once it hides none of you (`FADE_SECS`): "even little bit of the
   player is covered, that wall becomes invisible" (Hajun, 2026-10-13).
   Every frame the straight lines from the camera to 73 points on you
@@ -808,7 +829,8 @@ through its wall.
   now is. It costs, in an optimized build on the laptop (release-android),
   11 to 15 µs a frame in the open, 28 to 37 next to a house of the town and
   40 to 48 while one is faded (measured 2026-10-13; 5 to 13 in a debug build
-  with the three points).
+  with the three points). Since 2026-10-25, out of a house of House Builder
+  it tries no lines at all.
 - **A faded part is one even pane, however its parts overlap.** It is drawn
   with a copy of its own material that shows only its near side, with
   alpha to coverage (`see_through::see_through`): a quarter of it covers
@@ -919,7 +941,8 @@ through its wall.
   all the way in it is your eyes, that the zoom goes into them and back out
   as it should, that it looks straight down with ahead still ahead, which
   of a house's walls, its roof and a bed are in the way from inside the house
-  and from outside it, that a wall hiding only your side is in the way and
+  and from outside it, that nothing is in the way but in a house of House
+  Builder that is down, that a wall hiding only your side is in the way and
   one you stand against is not from your side of it, and that every point
   tried on you is inside you, over the step you are on, and turns with you.
 - **A jump stops the head just under a ceiling** (`headroom`, in
@@ -1109,9 +1132,10 @@ it, or `Escape` shuts it.
   later and it is picked back up, a ghost until the tick; all but the house
   you are standing in (since 2026-09-30), which from inside nearly every tap
   landed on: a tap goes through it (`build::untappable_from_inside`, which
-  reads inside off its `Floor...` objects); and all but what stands between
-  the camera and you, which is see-through and which a tap goes through as
-  well (since 2026-10-09; "The camera stands where you zoomed it"). Only one
+  reads inside off its `Floor...` objects); and, standing in a house, all
+  but what stands between the camera and you, which is see-through there
+  and which a tap goes through as well (since 2026-10-09, in a house only
+  since 2026-10-25; "The camera stands where you zoomed it"). Only one
   thing is a ghost at a time: the hammer is put away until it is down. On
   desktop the
   cursor is let go for as long as it is (`hud::WantsPointer`).
@@ -1234,9 +1258,10 @@ it, or `Escape` shuts it.
   doors, windows and hangings do not, the hole is what counts; ghosts never
   do. A window's hole, though, is filled with a box the size of it
   (`build::pane`), its glass as far as bodies go: drawn open, shut to them,
-  so that a window is never a way in. A door's hole is open to bodies. What
-  stands between the camera and you is see-through, and a tap goes through
-  it (above, "The camera stands where you zoomed it").
+  so that a window is never a way in. A door's hole is open to bodies.
+  Standing in a house, what stands between the camera and you is
+  see-through, and a tap goes through it; outside it, on the plot, nothing
+  is (above, "The camera stands where you zoomed it").
 - **When the time runs out**, any ghost is put down where it is and nothing
   can be changed any more. Nothing is saved: every piece carries
   `builder::InGame` and goes with the game.
