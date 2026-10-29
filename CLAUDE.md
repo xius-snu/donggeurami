@@ -50,8 +50,10 @@ tested on the actual phone, and what not to try again. The short version:
   bulb in a model, a part whose material is `lightbulb`, glows from dusk to
   dawn, and each lamp, its bulbs taken together, throws a point light from
   between them (2,000,000 lm, out to 16 m: right under it the ground is lit
-  about two thirds as brightly as by the noon sky). The town's 23 and the
-  shop's Street Lamp. By day there are no lights at all; at night at most
+  about two thirds as brightly as by the noon sky). The shop's Street Lamp,
+  and any in a map: Hajun's new town (2026-10-30) has none, so its nights
+  are the moon's alone; the old town's 23 went with it. By day there are no
+  lights at all; at night at most
   24 at once, the nearest the camera on your island. No shadows. On the
   laptop the night costs about a third more GPU than the day (8% to 11%)
   and no more CPU (measured 2026-10-16); not yet seen or measured on a
@@ -196,8 +198,10 @@ Blender and re-exported rather than scaled at spawn time (`map::ObjectDef`).
 
 ## The app opens in Round Town
 
-There is no menu. The app opens straight into the town (`circlemap1.glb`)
-with all eight players already standing round the fountain, and the town's
+There is no menu. The app opens straight into the town (`roundtownmap.glb`
+since 2026-10-30, `circlemap1.glb` before) with all eight players already
+standing on the path round its pond, facing the fountain in the middle of
+it, and the town's
 name, "Donggeurami Town", fades in and out over the first few seconds. You can
 walk, jump and look round from the first frame; on desktop the cursor is taken
 for looking round at startup. The one game there is, House Builder, is played
@@ -341,7 +345,9 @@ where things come from, not what they are.
 
 ## The islands are Blender models
 
-`assets/circlemap1.glb` is the town, `assets/testhomemap.glb` your home, and
+`assets/roundtownmap.glb` is the town (Hajun's, 2026-10-30: "i made a new map
+in replace of circlemap"; `circlemap1.glb`, the old town, stays in the repo
+and out of the APK), `assets/testhomemap.glb` your home, and
 `assets/lobbymap.glb` House Builder's lobby. Each is a Blender model (`.blend`
 beside it), not code; `island::Venue` names the files. Since 2026-09-27 your
 home is the plain `homemap.glb` with a 3 m high room (a doorway facing where
@@ -361,9 +367,12 @@ re-export, and the collision follows.
   altogether.
 - **A shape is read once per model** (`island::Islands`), so the eight plots
   share one.
-- **Everyone arrives on a ring 6 m out from the middle**, seat by seat, facing
-  in (`island::arrival`): round the town's fountain, and on the grass of the
-  home, the lobby and the plots.
+- **Everyone arrives on a ring round the middle**, seat by seat, facing in
+  (`island::arrival`, through `roundtown_net::arrival`, which the server
+  goes by too): in the town 31.5 m out (`TOWN_ARRIVAL_RADIUS`), on the path
+  round its pond, and 6 m out on the grass of the home, the lobby and the
+  plots. 6 m out in the new town is in the pond, 0.4 m deep, inside a rim a
+  jump gets out over and the computer's players never would.
 - **Someone modelled into a map is not land.** Skinned meshes are left out of
   the shape: they are drawn where their skeleton puts them, not where their
   transform does, so read as land they stood somewhere else entirely. (The
@@ -372,8 +381,9 @@ re-export, and the collision follows.
   `builder::settle_house_builder` does.
 - **The sea is everywhere the model has nothing underfoot,** at `WATER_Y` — z = -0.5
   in Blender. The land's flat top is z = 0 (`LAND_TOP`); the lowest ground on
-  either island, the town's roads and the home's sand, is z = -0.2, so keep
-  anything walkable above about -0.25 or it counts as wading. Each island has
+  any island, the home's sand, is z = -0.2 (the new town's roads are at 0, its
+  paving 0.25 over them), so keep anything walkable above about -0.25 or it
+  counts as wading. Each island has
   its own sheet of it drawn (`sky::sea`), hidden and shown along with the island.
 - **Water inside a map is a Blender object with a material called `water`**
   (`island::WATER_MATERIAL`), like `Water_fountain_water` in the town's fountain
@@ -388,48 +398,33 @@ re-export, and the collision follows.
   tower's own 32 corners so its edge lies on the bowl's wall. They were added
   to `circlemap1.blend` by script and exported with the exporter's defaults,
   which reproduce Hajun's export of the town byte for byte (checked first);
-  nothing else in the file changed.
-- **`circlemap1.glb` had a stray `Icosphere` in it** (found 2026-09-30): 2 m
-  across, with no material, at the middle of the fountain, read as land, so
-  that it bulged out round the foot of the tower. It is not in Hajun's exports
-  of the town since 2026-10-03 (no part without a material is).
-- **The town has one tree, a second house and 23 street lamps** (Hajun's
-  export of 2026-10-16; three trees round the fountain from 2026-10-10, and
-  eleven from 2026-10-04): the tree, `tree2`, beside the fountain, and the
-  house across the road from the House Builder's, with a sign of its own,
-  `spahgettitext` (`Text.002` until 2026-10-10), as high as theirs. Being
-  part of the model, they are land like the rest: bodies bump into the
-  trunk and the lamps' poles, and a trunk, leaves or a lamp between the
-  camera and you hides you, as a town object such as the catalogue's tree
-  does (until 2026-10-25 they faded: `see_through`). The trunk is closed
-  but for a disc left inside it, which nothing can reach.
-- **Each street lamp is an object of its own**, `streetlamp.001` to `.023`:
-  3 round the fountain 12 m out, 8 along the inner road and 12 along the
-  outer, each Hajun's lamp, 7.4 m tall with two bulbs on a 2.5 m arm.
-  Hajun's export came with them joined into three objects, one to a ring,
-  and a lamp faded for being in the way would have faded its whole ring and
-  everything of the town inside the ring's box with it
-  (`see_through::inside_of`). On 2026-10-16 they were split in
-  `circlemap1.blend` by script, one object to a lamp with its origin at the
-  foot of its pole, every triangle where it was (checked against Hajun's
-  export, to 6 µm). The same day a second, empty House Builder armature and
-  two empties named after the road paths, which had come along with the lamp
-  from `streetlamp.blend`, were taken out of the town. Keep a new lamp an
-  object of its own (Shift+D, not joined to another).
-- **Keep the signs' font simple:** a text object is exported as a mesh of
-  every letter, front, back and sides, and in Calibri Bold the two signs
-  were 47,000 of the town's 62,000 triangles, about 1,500 a letter. In
-  Blender's built-in font, as Hajun set them on 2026-10-04, they are 5,600
-  of 22,000 (of 19,000 on 2026-10-10, and of 56,000 since 2026-10-16, when
-  the lamps came, 39,000 of them: 1,680 to a lamp).
-- **The exporter leaves modifiers off by default**, in the town as in the
-  pieces. `outerdottedlines`, the dashes round the outer road, came as one
-  dash and a Geometry Nodes Array, with no material, in Hajun's export of
-  2026-10-10, and the game got the one dash. At Hajun's asking the Array was
-  applied in `circlemap1.blend` the same day and the dashes given
-  `roadwhite`, as the town's other dotted lines have: 1,152 triangles, 1 cm
-  high on the road. Apply a modifier, or tick Apply Modifiers when
-  exporting.
+  nothing else in the file changed. In the new town the fountain stands in
+  the middle of a pond 60 m across (`water`, 0.5 m up over a floor at 0.1,
+  inside a rim 0.7 m high), and its bowls' water came over from the old
+  town as `water.001`, as Blender names a copy: a material called as
+  another is, with a dot and a number after, is that one
+  (`island::is_material`), for water, road, paint and bulbs alike.
+- **Fixed in `roundtownmap.blend` on 2026-10-30** (my doing, before it was
+  played): `Road`, the road under all the town's paving, and
+  `peoplepathoutsideoffountain`, the path round the pond, were inside out,
+  their tops facing down, which the game falls through; their faces were
+  turned round (no triangle moved, checked over 3,000 points). The road's
+  paint (`Circle.001`-`.004`, `Plane`-`Plane.004`) had no material, which
+  glTF draws white and wholly metallic, near black, and the buses' way round
+  is read off: it was given `roadwhite`, the old town's (0.86 grey). The
+  water tower's legs and the booth under it, on the island east of the town
+  (`Cylinder.001`, `Cube.001`), had none either: they were given
+  `default_grey`, Blender's own look (0.8 grey, rough 0.5), as they showed in
+  Blender. A default export of Hajun's file reproduced their glb byte for
+  byte first; the export after differs in those materials and those faces'
+  winding alone. Saved without a `.blend1` of mine, so that theirs is theirs.
+- **What the old town taught, for any town**: a part with no material loads
+  near black; keep a lamp an object of its own (the old town's 23 came joined
+  three to an object, and were split by script); keep a sign's font simple
+  (Calibri Bold was 1,500 triangles a letter, Blender's own a few hundred);
+  and the exporter leaves modifiers off by default (the old town's outer
+  road dashes came as one dash and a Geometry Nodes Array): apply them, or
+  tick Apply Modifiers when exporting.
 - **Normals must point out of the land** (Mesh > Normals > Recalculate Outside).
   Up and down are read from the winding, so a top turned inside out is fallen
   through, even though the double-sided material hides it on screen.
@@ -514,7 +509,8 @@ for 4 on 2026-10-10).
   `server/src/players.rs`, which a test there keeps in step).
 - **Everything is read off the model** once the town has spawned
   (`Fountain::read`): the tower, by its name `Water_fountain_tower`, for its
-  axis and its top; every piece of `water` on its axis for the pools; and for
+  axis and its top; every piece of `water` on its axis for the pools (in the
+  new town the bowls' `water.001` and, lowest, the whole pond); and for
   each bowl, the widest the tower is within 12 cm of its water for the brim
   the water spills over. Move or reshape the fountain in Blender, and the
   water follows; take its water out, and nothing runs.
@@ -618,89 +614,123 @@ is their model's, and their way round is the town's roads.
   middle as far as the bus has gone over its radius (`split_wheels`,
   `turn_wheels`). The wheels as modelled are hidden, and copies of them,
   one to each, turn.
-- **Its front and back wheels both keep to the middle of its lane**, as a
-  train's keep to its rails, and its body faces from the one to the other
-  (`roads::Footprint`, `Route::on_wheels`, `car::place_at`): its back
-  wheels follow its front ones inside a bend, and only what of it is ahead
-  of its front wheels and behind its back ones swings out. The bus's front
+- **Its front wheels keep to the middle of its lane, and its back wheels
+  follow them as a car's do** (`roads::trailing`, since 2026-10-30): each
+  step the front ones take, the back ones are pulled after them along the
+  way the bus faces, and never sideways, so that round a bend they keep
+  inside it, and the bus turns about them as a bus does. Its body faces from
+  its back wheels to its front ones (`roads::Footprint`, `Route::on_wheels`,
+  `car::place_at`); the loop holds where its back wheels are as its front
+  ones pass each point, worked out going round it twice. The bus's front
   wheels are 3.8 m ahead of its middle and its back ones 2.8 m behind
-  (`axles`, read off where its wheels are). Until 2026-10-24 a car's middle
-  went down the lane and it turned about that, which for the bus swung its
-  back as far out as its front, 6 m from where it turned, and no turn into
-  Round Town's 10 m roads kept it on them.
+  (`axles`, read off where its wheels are). From 2026-10-24 to 2026-10-30
+  both keep to the line, as a train's to its rails, and round a tight bend
+  the bus slid sideways, up to 17°; Hajun, 2026-10-30, asked for "wide turns
+  in tight corner so the turning animation is not weird this time". Before
+  that a car turned about its middle.
 - **The way round is read off the town** (`roads`): a road is where the top
   of the town is `road`, its middle the dashes painted down it in
-  `roadwhite` (`roads::ROAD`, `MARKING`). Each dash in line with the next
-  makes a road's middle, round or open; an open middle goes on past its
-  last dash, up to 12 m, to the middle of the road it runs into, and joins
-  it there; each road is as wide as the road is either side of its middle at
-  its dashes; and roads are cut into stretches where they join. Round Town
-  is 12 stretches between 8 joins, every one three ways (the inner ring and
-  the outer, cut by the four straight roads). Repaint or move the roads in
-  Blender and the buses drive the new ones; a road with no dashes down it
-  is not one to them.
+  `roadwhite` (`roads::ROAD`, `MARKING`). A dash is a line, no wider than a
+  metre: the stripes of the new town's crossings, 1.6 m wide and lying along
+  the road like dashes, two of them on the very middle of the ring round the
+  pond, are not (`WIDEST_DASH`). Each dash in line with the next, up to 9
+  dash lengths on (`GAP`: the ring's dashes stop 12 m either side of each
+  crossing), makes a road's middle, round or open, and a gap in it is filled
+  round the circle its dashes are on (`roads::bridge`): across a crossing
+  the line through the dashes alone sagged 0.4 m. An open middle runs on
+  past its last dash for as long as there is road (`ACROSS`, 40 m), across
+  any road it meets to the furthest it reaches: the new town's straight
+  roads run across the outer half of the ring round the pond, through the
+  gap in the strip of grass between its halves, to the inner half. Ends
+  that run off the road beside each other round an island meet round it, a
+  **roundabout** (`roads::roundabout`: the island's edge felt for all the way
+  round and a circle drawn through it, and the road round it as far out as
+  it goes in a quarter of the ways round): the new town's four, round
+  islands 9.1 m across from their middles, the road round them 6 m wide.
+  Joins nearer each other than 20 m are one place (`ONE_PLACE`): the ring's
+  two halves meet the straight roads 15 m apart, and turns there go from the
+  one half to the other. Each road is as wide as the road is either side of
+  its middle at its dashes, and roads are cut into stretches where they
+  join. Round Town is 16 stretches between 8 joins: the ring's two halves, 4
+  stretches each, the 4 straight roads and the road round the edge of the
+  town, 4 stretches between its roundabouts. Repaint or move the roads in
+  Blender and the buses drive the new ones; a road with no dashes down it is
+  not one to them.
 - **A road's dashes are evened out before its middle is drawn through
-  them** (`roads::even_out`). Round the rings every other one of Hajun's
-  dashes is a few centimetres in from the rest, 3.6 cm round the inner road
-  and 11 round the outer, and a line through every dash wove in and out by
-  as much: the car on it turned out and in, back and forth, all the way
-  round (Hajun, 2026-10-23: "it shouldnt rotate outward ever just
-  constantly rotate inward bit by bit"). Each dash is moved halfway to the
-  middle of the two either side of it, and back out by a little more
-  (Taubin's smoothing), which takes out what goes from side to side from
-  dash to dash and leaves a circle the circle it was, to a centimetre.
-  Round a ring a car turns one way at a steady rate, and its lanes are
-  round to 3 mm (a test keeps it turning one way). A turn leaves and joins
-  a lane along the bend there (`heading_at`): from the side of the lane's
-  line it was on, 0.7° out from the bend, the car's nose flicked out at
-  every join.
+  them** (`roads::even_out`). Round the old town's rings every other one of
+  Hajun's dashes was a few centimetres in from the rest, and a line through
+  every dash wove in and out by as much: the car on it turned out and in,
+  back and forth, all the way round (Hajun, 2026-10-23: "it shouldnt rotate
+  outward ever just constantly rotate inward bit by bit"). Each dash is
+  moved halfway to the middle of the two either side of it, and back out by
+  a little more (Taubin's smoothing), which takes out what goes from side to
+  side from dash to dash and leaves a circle the circle it was. Round a ring
+  a bus turns one way (a test keeps it so, over a metre and a half at a
+  time: the lanes are drawn through points a metre apart and wave by a
+  millimetre). A turn leaves and joins a lane along the bend there
+  (`heading_at`).
 - **They keep to the right**, as Korea drives: two lanes to a stretch, one
-  each way, each halfway out from the middle to its edge (on Round Town's 10
-  m roads, 2.5 m out). The loop drives **every lane of every stretch**,
-  turning from lane to lane at the joins and never back the way it came but
-  at a dead end (`roads::plan`). With only T-junctions no loop drives each
-  lane exactly once: every way of taking the turns leaves an even number of
-  loops (checked over all 256 for Round Town). So one stretch is driven
-  twice, each way, the shortest that makes it one loop: for the bus 26
-  lanes, 1,291 m, 210 s round (the log says so as the town loads, with how
-  far behind the first each bus goes and how long working it out took).
-  The loop is the same on every device, whatever order the model comes in,
-  and varied: out a straight road, round the outer ring, back in another,
-  round the inner, and so on.
-- **Turning, all of a bus keeps on the road where it can, and its wheels
-  where it cannot** (`roads::turning`). For the cars, Hajun, 2026-10-23:
-  "when its turning a corner into the inner circle, it kind of almost steps
-  onto the rock". A lane stops short of a join by the half of the widest
-  road there and 3 m, and from there a right turn, the tight one keeping to
-  the right, cut the corner. So every turn is tried as the bus would go
-  round it, its wheels on the line, felt for the road every 0.25 m round
-  its edge at every point along the turn (`Paint::on_road`), and tried
-  again from nearer the join, half a metre at a time at either end. A bus
-  is longer than the roads are wide, and turning into the far lane of a
-  road its front swings out over the far kerb: so it may also **turn
-  wide**, from the middle of the road it leaves, or into the middle of the
-  one it joins, moving across to its lane over 8 m (`CROSS_OVER`), as a bus
-  does. Of all of those, the first that keeps all of it 0.25 m inside the
-  road's edge (`KERB`); failing that, the first that keeps its wheels so;
-  failing that, the first that keeps its wheels on the road at all; and
-  failing even that, the one that takes the least of its wheels off it.
-  **Never a turn tighter than 0.7 of how far apart its wheels are**, 4.6 m
-  round (`TIGHTEST`), if there is another: following tighter ones, its back
-  wheels where its front ones were, the bus slid sideways round the bend,
-  its middle going at 82° to the way it faced; at 0.7, 17° at the most,
-  near what a bus does turning hard. Tried at 0.3, 0.5, 0.7 and 1 of its
-  wheels apart: at 0.5 and 1 some turns took its wheels off the road. In
-  Round Town its wheels stay on the road all the way round, and its body
-  goes over the kerb at the junctions by up to about a metre and round the
-  inner road's outer lane by 0.4 m, over nothing taller than the kerb (no
-  lamp, wall or tree: a test keeps it so,
-  `round_town_s_cars_keep_their_wheels_on_the_road_and_never_meet`; the
-  inner road's lamps stand a metre out from its kerb). Working out the
-  loop takes about 75 ms in a test on the laptop (1.6 s before it was made
-  quicker; the cars' took 12 ms). The route waits for both buses' models
-  as well as the town's (`plan_the_way`) and is worked out for the longest,
-  and a bus is on the town, drawn and met, only once the route has put it
-  on the road (`drive`).
+  each way, each halfway out from the middle to its edge (on the new town's
+  12 m roads, 3 m out). Every turn at every join is worked out first
+  (`Route::read`), and the loop drives **every lane the bus can get onto and
+  off gently, from and to lanes it can**: of the lanes it can go round from
+  any to any other turning gently, the most road (`round_together`), each
+  once if that makes one loop (`roads::plan`), never back the way it came
+  but at a dead end. In the new town that is every lane but the inner half
+  of the ring's, clockwise: the bus would get onto it and off it only
+  turning right through a gap in the strip of grass, which at the town's
+  sharp corners and 12 m roads it does only swinging round on its back
+  wheels. 28 lanes, 4,834 m, 725 s round, each once (the log says so as the
+  town loads, with how far behind the first each bus goes and how long
+  working it out took). It is worked out away from the frames
+  (`car::Planning`, `AsyncComputeTaskPool`): about 0.8 s on the laptop in a
+  debug build, which on a phone would have held up a frame for a second or
+  more; the buses come onto the road once it is done.
+- **Turning gently, swinging wide at a tight corner, all of a bus on the
+  road where it can be, and its wheels where it cannot** (`roads::turning`).
+  For the cars, Hajun, 2026-10-23: "when its turning a corner into the inner
+  circle, it kind of almost steps onto the rock". Every turn is tried as the
+  bus would go round it, its front wheels on the line and its back ones
+  following, felt for the road every 0.25 m round its edge at every point
+  along it, from the lane before, which brings its back wheels to where
+  they would be, to the lane after (`LEAD_IN`, `LEAD_OUT`). At an ordinary
+  join, round corners: arcs of 8.5 to 19.6 m between the lanes' lines
+  (`fillets`, `ROUNDS`, only where they meet the lanes themselves), or from
+  the middle of the road it leaves, or into the middle of the one it joins,
+  moving across to its lane over 8 m (`CROSS_OVER`), as a bus turns wide;
+  and curves from the room left at each lane's end, nearer the join, and up
+  to 15 m further back (`corner_shapes`, `FURTHER`). At a roundabout, round
+  its island keeping it on the left, as a roundabout is driven where cars
+  keep to the right: off the lane round an arc to the right onto the road
+  round the island, round it, and off round another arc to the right, each
+  arc running on from the last along it (`round_shapes`, `merge`, `arc`),
+  round at a few ways out from the island (`ROUND_AT`), on and off round
+  arcs of a few sizes (`MERGES`). Of all of them, the first tried that keeps
+  all of the bus 0.25 m inside the road's edge (`KERB`); failing that, the
+  first that keeps its wheels so, or failing that on the road, its body
+  swinging out over nothing higher than its underside (`UNDERSIDE`, 0.4 m:
+  over a kerb or paving, not the strip of grass down the middle of the ring,
+  a wall or a lamp); and failing even that, the one that takes the least of
+  its wheels off it. **Where the first bends tighter than 10.4 m
+  (`RELAXED`), the gentlest that does as well: at a tight corner the bus
+  swings wide.** **Never a turn tighter than 8.5 m round (`TIGHTEST`, 1.3
+  times how far apart its wheels are)**, if there is another that keeps its
+  wheels on the road: its back wheels would swing round rather than roll.
+  Round a roundabout only its wheels count, and they may run up onto the
+  edge of the island by a metre (`APRON`), as a bus's do round a small
+  roundabout. In Round Town its wheels stay on the road all the way round
+  but at the roundabouts, where its back wheels cut the corners of the
+  paving between the road round the island and the road round the edge of
+  the town by a metre at the most (1.05 m), and its body swings out over
+  the edge of the town on the far side of each island by about as much,
+  over the sea; never into anything taller than the paving (a test keeps
+  it so, `round_town_s_buses_swing_into_nothing_and_never_meet`). The
+  roundabouts are small for a 12.5 m bus: 6 m of road round an island 18 m
+  across. Round the ring round the pond and through its gaps it stays on
+  the road. The route waits for both buses' models as well as the town's
+  (`plan_the_way`) and is worked out for the longest, and a bus is on the
+  town, drawn and met, only once the route has put it on the road
+  (`drive`).
 - **Their speed is worked out from how sharply the loop turns**: at most
   `roundtown_net::cars::TOP_SPEED`, 7 m/s, as fast as a run, so that you can
   keep up beside a bus and no more; no harder round a bend than 2.5 m/s²
@@ -716,15 +746,15 @@ is their model's, and their way round is the town's roads.
   what keeps devices from drifting apart over the years since 1970 on
   arithmetic that differs in its last digit. They never stop: for nobody,
   as a device could not tell the others it had. **The second goes half the
-  loop behind the first**, 105 s, or as near half, a second at a time, as
-  keeps the two a metre apart all the way round, where the loop crosses
-  itself and passing each other (`Route::spread`), or failing that, out of
-  each other: turning wide into the middle of a road, a bus passes the
-  other in the lane beside within a metre, and in Round Town no spacing
-  keeps them a metre apart, so 105 s, at which they never touch (checked
-  every 0.1 s round the loop in the test above). `RT_CAR_AT=<seconds>`
-  stops both at one point of the loop, the first that far into it and the
-  second 105 s behind, for trying things out.
+  loop behind the first**, or as near half, a second at a time, as keeps
+  the two a metre apart all the way round, where the loop crosses itself
+  and passing each other (`Route::spread`), or failing that, out of each
+  other: in the new town 363 s behind (half is 362.5), at which they never
+  touch (checked every 0.1 s round the loop in the test above).
+  `RT_CAR_AT=<seconds>` stops both at one point of the loop, the first that
+  far into it and the second 363 s behind, for trying things out. Where the
+  loop starts goes by the order the town's paint is read in, which every
+  device reads alike, but a test reading the file itself starts elsewhere.
 - **Riding one**: standing on a bus, or in the air off it, a body is carried
   along with it, turning as it turns (`Riding`, `move_bodies`), until it
   comes down on anything else. So a jump on it comes down where it went up,
@@ -766,10 +796,15 @@ is their model's, and their way round is the town's roads.
   getting off, no further from where you got on than a bus could have
   taken you (`Pace`, `MOST_RIDE`, `cars::REACH` 15 m): it cannot tell where
   they are. Riding was checked with two copies on this PC and a server on it
-  (2026-10-23, one car). **This is `PROTOCOL_VERSION` 3** since 2026-10-24
-  (2 from 2026-10-23: riding; 3: the town's clock, and a place on car 0
-  being a place on a bus): an app from before it is told to update.
-- **Not yet tried**: on a phone, or by hand, or riding the bus. Dropped
+  (2026-10-23, one car). **This is `PROTOCOL_VERSION` 4** since 2026-10-30
+  (2 from 2026-10-23: riding; 3 from 2026-10-24: the town's clock, and a
+  place on car 0 being a place on a bus; 4: the new town, where a place is
+  somewhere else entirely, and its arrivals round the pond): an app from
+  before it is told to update.
+- **Not yet tried**: on a phone, or by hand, or riding the bus, nor the new
+  town's way round by Hajun. Seen in the desktop build on 2026-10-30 from
+  above: round the east roundabout's island and through a gap in the ring's
+  strip of grass, smoothly, its back wheels inside its front ones. Dropped
   anywhere over it, a body comes to rest on its roof
   (`a_body_dropped_onto_the_car_anywhere_stays_on_it`), and its wheels keep
   to its way round (`the_cars_stand_on_the_road_facing_the_way_they_go`).
@@ -777,6 +812,50 @@ is their model's, and their way round is the town's roads.
   from above in two copies at once, in the same place in both. The cost is
   not measured: only bodies within a bus's reach of it test its triangles,
   its 3,604 (3,556 until 2026-10-25).
+
+## The town's houses have doors that open, and windows
+
+Every house in the new town is Hajun's Square House, House Builder's own
+(`mybuilds/square_house.glb`), put down whole in Blender: 64 as it is and 32
+with a pink roof (`plain_*_2`), a few to an object (`House`, `House.001` to
+`.004`), and none with a way in. In the game, not the model (Hajun,
+2026-10-30: "put doors that open and a few windows in each house in the game
+(not in the blend) using the various door models"), each has a door that
+swings open and five windows (`src/build/town.rs`).
+
+- **Nothing about where they are is in the code.** Once the town has spawned
+  and the Square House has, each house is found by its floor, a box the size
+  of the Square House's `Floor_1` (`floors`), and turned the way its roof's
+  ridge runs. The Square House's `Wall...` boxes, read off its own model,
+  stand on it. The town's own walls there are taken out of what is drawn and
+  what is stood on (`walled`: every triangle of the town inside one of a
+  house's wall boxes, but a gable's underside on top of it and the floor
+  under it), and each is made again as House Builder makes a wall, the boxes
+  left round the holes in it (`build::Wall`, `wall_mesh`), in the material
+  most of its own walls were. A house that is not a Square House is left
+  as it is.
+- **The door is in the wall nearest a road** (felt for out from the middle
+  of each wall, 60 m at the most), one of Hajun's five (Classic, Classic
+  Window, Classic Double, Glass, Glass Double), with a square window either
+  side of it; the wall opposite has a wide window, and the other two a
+  square one each or a wide one each. Which door, and which windows on the
+  sides, goes by a mix of where the house stands, the same on every device
+  (`mix`). Each is fitted to its wall as
+  House Builder fits one (`Wall::fit`): a door on the floor, a window 22% up
+  its storey. The houses beside the straight roads face them; the eight
+  nearest the ring round the pond face it.
+- **The doors swing open for anyone who comes up to them**, as House
+  Builder's do (`build::swing_doors`, the leaves found as House Builder
+  finds them, `build::doorway`), and a window's hole is shut to bodies by its
+  pane (`build::pane`), as House Builder's are: walk in through a door, never
+  a window. Inside, the walls hide you from the camera outside as any wall
+  in the town does: nothing fades outside a house in House Builder.
+- **Drawn as one mesh to each material**, the walls and the windows' frames
+  of every house, as the town's own walls were, and each house's glass as
+  one; only the doors, which swing, are drawn one by one: 96 of them.
+  Raising them all takes about 70 ms on the laptop, once, as the town loads.
+- Seen in the desktop build on 2026-10-30, from the road and inside a house:
+  the doors, the windows, the House Builder at theirs. Not yet on a phone.
 
 ## The camera stands where you zoomed it
 
@@ -1048,18 +1127,19 @@ of its own (below, "Playing online").
 
 The one game, in `src/builder.rs`. On screen it is called "Build Your Own
 House" (`builder::NAME`); in the code it is House Builder, after the NPC who
-offers it. The House Builder stands at the door of
-their house in the town — the node called `House Builder NPC` in
-`circlemap1.glb`, found by that name once the town has spawned, so moving them
-in Blender moves where the game is offered. Nothing about them is placed in
-code: the game only gives them a collider and hangs their arms at their sides
-like everyone else's (the model has them out). Over their door, in raised
-white letters, is "BUILD TO IMPRESS" ("Build Your Own House" until
-2026-10-04), the object `buildtext` in `circlemap1.blend` (added as
-`HouseBuilderSign`, then `Text.001` until 2026-10-10): part of the model, and
-so of the town's shape, but
-from 7.5 to 10.8 m up (since Hajun's export of 2026-10-04; about 6 m the day
-before, and 5.5 m before that), over any jump.
+offers it. The House Builder stands at the door of a house in the town.
+Since 2026-10-30 (Hajun: "for now just put the build house batte minigame
+battle in front of one house"), the house nearest where the first seat
+arrives, 2.5 m out from its door, facing out (`build::town`): in the new town
+the first house up the straight road behind where you arrive, on its right
+going out, whose door faces the ring round the pond. They are the body
+everyone has, in the black top the old town had them in
+(`builder::stand_house_builder`), given a collider and their arms hung at
+their sides like everyone else's. Until then they were part of the old
+town's model, the node called `House Builder NPC` in `circlemap1.glb`, with
+"BUILD TO IMPRESS" in raised white letters over their door (`buildtext`); a
+node of that name in a town's model still stands where it is put
+(`builder::find_house_builder`).
 
 - **Walk within 4.5 m and a speech bubble comes up over their head.** Tap it,
   or on desktop press Space (which then does not jump), and a dialog asks

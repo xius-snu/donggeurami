@@ -66,6 +66,8 @@ use crate::lobby::Seat;
 use crate::shop::Chosen;
 use crate::{EYE_HEIGHT, PLAYER_RADIUS, Player, ThirdPersonCamera, WATER_Y};
 
+mod town;
+
 /// Everything the shop sells, in the order it shows them: only what Hajun
 /// has modelled, in `assets/mybuilds/` (their call, 2026-10-03). The
 /// script's pieces in `assets/build/` are no longer sold, nor packed into the
@@ -857,6 +859,8 @@ impl Wall {
 struct Reshape(bool);
 
 pub(crate) fn plugin(app: &mut App) {
+    // The town's houses, with doors and windows put in them as here.
+    town::plugin(app);
     app.init_resource::<Reshape>()
         .init_resource::<NextPieceId>()
         .init_resource::<Untold>()
@@ -1068,58 +1072,11 @@ fn piece_ready(
     if is_house {
         commands.entity(root).insert(Rooms(floors));
     }
-    // A door's leaves that swing: the parts called what its piece says, each
-    // turned as it hangs shut, and opening about its hinge whichever way
-    // takes it out of the house, -Z here.
-    if let Some(swing) = piece.def.swing {
-        let mut leaves = Vec::new();
-        let mut reach: f32 = 0.0;
-        for &name in swing.leaves {
-            let Some(part) = children
-                .iter_descendants(root)
-                .find(|&part| names.get(part).is_ok_and(|called| called.as_str() == name))
-            else {
-                continue;
-            };
-            // Its hinge, and the box its own meshes fill, here.
-            let hinge = placement
-                .compute_global_transform(part)
-                .map(|place| into_root.transform_point3(place.translation()));
-            let own = children
-                .get(part)
-                .iter()
-                .flat_map(|own| own.iter())
-                .filter_map(|mesh| filled.get(&mesh))
-                .fold(None, |sum, &(low, high)| grow(sum, low, high));
-            // It turns in the space it hangs in, its parent's.
-            let hung_in = parents
-                .get(part)
-                .ok()
-                .and_then(|parent| placement.compute_global_transform(parent.parent()).ok())
-                .map(|parent| parent.affine().inverse() * root_place.affine());
-            let (Ok(hinge), Some((low, high)), Some(hung_in), Ok(hung)) =
-                (hinge, own, hung_in, turns.get(part))
-            else {
-                continue;
-            };
-            let middle = (low + high) * 0.5;
-            let far = hung_in.transform_vector3((middle - hinge).with_y(0.0));
-            let out = hung_in.transform_vector3(Vec3::NEG_Z);
-            leaves.push(Leaf {
-                part,
-                shut: hung.rotation,
-                open: outward(far, out) * swing.open_deg.to_radians(),
-            });
-            reach = reach.max(middle.x.abs());
-        }
-        if !leaves.is_empty() {
-            commands.entity(root).insert(Doorway {
-                leaves,
-                reach,
-                through: 0.0,
-                wanted: false,
-            });
-        }
+    // A door's leaves that swing.
+    if let Some(swing) = piece.def.swing
+        && let Some(doorway) = doorway(root, swing, &filled, &children, &parents, &names, &turns, &placement)
+    {
+        commands.entity(root).insert(doorway);
     }
 
     if let Some((low, high)) = bounds {
@@ -1141,6 +1098,74 @@ fn piece_ready(
     if !ghost {
         reshape.0 = true;
     }
+}
+
+/// A door's leaves that swing, once its model has spawned under `root`: the
+/// parts called what `swing` says, each turned as it hangs shut, and opening
+/// about its hinge whichever way takes it out of the house, -Z here. `filled`
+/// is the box each of the door's meshes fills, in its own space. `None` if
+/// it has none of them.
+#[allow(clippy::too_many_arguments)]
+fn doorway(
+    root: Entity,
+    swing: Swing,
+    filled: &HashMap<Entity, (Vec3, Vec3)>,
+    children: &Query<&Children>,
+    parents: &Query<&ChildOf>,
+    names: &Query<&Name>,
+    turns: &Query<&Transform>,
+    placement: &TransformHelper,
+) -> Option<Doorway> {
+    let root_place = placement.compute_global_transform(root).ok()?;
+    let into_root = root_place.affine().inverse();
+    let mut leaves = Vec::new();
+    let mut reach: f32 = 0.0;
+    for &name in swing.leaves {
+        let Some(part) = children
+            .iter_descendants(root)
+            .find(|&part| names.get(part).is_ok_and(|called| called.as_str() == name))
+        else {
+            continue;
+        };
+        // Its hinge, and the box its own meshes fill, here.
+        let hinge = placement
+            .compute_global_transform(part)
+            .map(|place| into_root.transform_point3(place.translation()));
+        let own = children
+            .get(part)
+            .iter()
+            .flat_map(|own| own.iter())
+            .filter_map(|mesh| filled.get(&mesh))
+            .fold(None, |sum: Option<(Vec3, Vec3)>, &(low, high)| {
+                Some(sum.map_or((low, high), |(a, b)| (a.min(low), b.max(high))))
+            });
+        // It turns in the space it hangs in, its parent's.
+        let hung_in = parents
+            .get(part)
+            .ok()
+            .and_then(|parent| placement.compute_global_transform(parent.parent()).ok())
+            .map(|parent| parent.affine().inverse() * root_place.affine());
+        let (Ok(hinge), Some((low, high)), Some(hung_in), Ok(hung)) =
+            (hinge, own, hung_in, turns.get(part))
+        else {
+            continue;
+        };
+        let middle = (low + high) * 0.5;
+        let far = hung_in.transform_vector3((middle - hinge).with_y(0.0));
+        let out = hung_in.transform_vector3(Vec3::NEG_Z);
+        leaves.push(Leaf {
+            part,
+            shut: hung.rotation,
+            open: outward(far, out) * swing.open_deg.to_radians(),
+        });
+        reach = reach.max(middle.x.abs());
+    }
+    (!leaves.is_empty()).then_some(Doorway {
+        leaves,
+        reach,
+        through: 0.0,
+        wanted: false,
+    })
 }
 
 /// The box round every corner of `mesh`, placed by `place`.

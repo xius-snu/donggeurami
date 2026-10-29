@@ -61,7 +61,12 @@ pub const PROTOCOL_ID: u64 = u64::from_be_bytes(*b"DGRMTOWN");
 /// 3 since 2026-10-24: [`WhatTime`] and [`TheTime`], for the town's clock;
 /// and the town's cars are two buses, so a place on car 0 is a place on a
 /// bus, which an app with the cars put somewhere else entirely.
-pub const PROTOCOL_VERSION: u32 = 3;
+///
+/// 4 since 2026-10-30: the town is Hajun's new map, `roundtownmap.glb`, 420 m
+/// across where the old one was 140, so a place in the town is somewhere
+/// else entirely in an app with the old one; and everyone arrives in it on
+/// the path round its pond ([`TOWN_ARRIVAL_RADIUS`]).
+pub const PROTOCOL_VERSION: u32 = 4;
 
 /// The UDP port the game server listens on. 443, where QUIC goes, because a
 /// network that lets any UDP through lets that through: school and office
@@ -117,7 +122,8 @@ pub fn protocol(app: &mut App) {
 /// apart is this, carried by everything that moves or collides.
 #[derive(Component, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Venue {
-    /// `circlemap1.glb`: Round Town, round a fountain, where everyone is.
+    /// `roundtownmap.glb`: Round Town, round a pond with a fountain in it,
+    /// where everyone is.
     Town,
     /// Your home, where nobody else goes for now.
     Home,
@@ -131,23 +137,32 @@ pub enum Venue {
 
 /// How far from the middle everyone stands on arriving on an island, in
 /// metres: well inside the grass of the home and the lobby, which reaches 20 m
-/// out, and clear of the town's fountain, which is 2.5 m across the rim.
+/// out. The town has its own ([`TOWN_ARRIVAL_RADIUS`]).
 pub const ARRIVAL_RADIUS: f32 = 6.0;
 
-/// Where the player in `seat` stands on arriving on any island, and which way
-/// they face: on a ring round the middle — round the fountain, in the town —
+/// How far from the middle everyone stands on arriving in the town, in
+/// metres: on the middle of the path, 30 to 33 m out, round the pond that
+/// fills the middle of `roundtownmap.glb` (2026-10-30). 6 m out, as on the
+/// other islands, is in the pond, 0.4 m deep, inside a rim 0.6 m over its
+/// floor that only a jump gets out over, and the computer's players never
+/// jump.
+pub const TOWN_ARRIVAL_RADIUS: f32 = 31.5;
+
+/// Where the player in `seat` stands on arriving on `venue`, and which way
+/// they face: on a ring round the middle — round the pond, in the town —
 /// facing in. The first eight seats are each an eighth of the turn on from
 /// the one before, the next eight between them, and past sixteen there is a
 /// ring further out. The server works out arrivals with this too, so that
 /// everyone sees you arrive where you do.
-pub fn arrival(seat: usize) -> (Vec3, Quat) {
+pub fn arrival(venue: Venue, seat: usize) -> (Vec3, Quat) {
     let eighth = TAU / 8.0;
     let ring = seat / 16;
     let within = seat % 16;
     let angle = (within % 8) as f32 * eighth
         + if within >= 8 { eighth * 0.5 } else { 0.0 }
         + ring as f32 * eighth * 0.25;
-    let radius = ARRIVAL_RADIUS + ring as f32 * 2.0;
+    let first = if venue == Venue::Town { TOWN_ARRIVAL_RADIUS } else { ARRIVAL_RADIUS };
+    let radius = first + ring as f32 * 2.0;
     let turn = Quat::from_rotation_y(angle);
     // Facing in: a turn of `angle` about the upright points -Z at the middle
     // from where it puts +Z.
@@ -507,19 +522,20 @@ mod tests {
 
     #[test]
     fn the_first_eight_arrive_where_they_did_offline() {
-        for seat in 0..8 {
-            let (at, turn) = arrival(seat);
-            let was = Quat::from_rotation_y(seat as f32 * TAU / 8.0)
-                * Vec3::new(0.0, 0.0, ARRIVAL_RADIUS);
-            assert!(at.distance(was) < 1e-4, "seat {seat}: {at} for {was}");
-            let facing = turn * Vec3::NEG_Z;
-            assert!(facing.distance(-was.normalize()) < 1e-4, "seat {seat} faces {facing}");
+        for (venue, radius) in [(Venue::Town, TOWN_ARRIVAL_RADIUS), (Venue::Lobby, ARRIVAL_RADIUS)] {
+            for seat in 0..8 {
+                let (at, turn) = arrival(venue, seat);
+                let was = Quat::from_rotation_y(seat as f32 * TAU / 8.0) * Vec3::new(0.0, 0.0, radius);
+                assert!(at.distance(was) < 1e-4, "seat {seat}: {at} for {was}");
+                let facing = turn * Vec3::NEG_Z;
+                assert!(facing.distance(-was.normalize()) < 1e-4, "seat {seat} faces {facing}");
+            }
         }
     }
 
     #[test]
     fn a_full_town_arrives_apart() {
-        let spots: Vec<Vec3> = (0..TOWN_SEATS * 2).map(|seat| arrival(seat).0).collect();
+        let spots: Vec<Vec3> = (0..TOWN_SEATS * 2).map(|seat| arrival(Venue::Town, seat).0).collect();
         for (i, a) in spots.iter().enumerate() {
             for b in &spots[i + 1..] {
                 assert!(a.distance(*b) > 2.0, "{a} and {b}");

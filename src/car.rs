@@ -10,7 +10,8 @@
 //! Blender's front, as the bus and every other model faces, or -X, as the
 //! first car was modelled.
 //!
-//! Where they go is the town's roads, every lane of every one of them, read
+//! Where they go is the town's roads, every lane of them they can drive
+//! gently, their back wheels following their front ones, read
 //! off the town's model (`roads`), one after the other round the same loop.
 //! Where each is goes by the town's clock (`clock`), as the fountain's jet
 //! does: the loop takes a whole number of seconds, and a car is that far into
@@ -36,6 +37,8 @@ use bevy::math::Affine3A;
 use bevy::mesh::skinning::SkinnedMesh;
 use bevy::mesh::{Indices, VertexAttributeValues};
 use bevy::prelude::*;
+use bevy::tasks::futures::check_ready;
+use bevy::tasks::{AsyncComputeTaskPool, Task};
 use bevy::world_serialization::WorldInstanceReady;
 
 use crate::clock::TownClock;
@@ -216,7 +219,7 @@ pub(crate) fn plugin(app: &mut App) {
         .add_observer(read_roads)
         .add_systems(Startup, spawn_cars)
         .add_systems(PreUpdate, drive)
-        .add_systems(Update, (plan_the_way, turn_wheels).chain());
+        .add_systems(Update, (plan_the_way, planned, turn_wheels).chain());
 }
 
 /// Reads the town's roads out of its model once it has spawned: their
@@ -243,9 +246,9 @@ fn read_roads(
         let (Some(mesh), Ok(place)) = (meshes.get(&mesh.0), placement.compute_global_transform(entity)) else {
             continue;
         };
-        if material.0 == roads::ROAD {
+        if island::is_material(&material.0, roads::ROAD) {
             island::add_mesh(&mut road, mesh, &place);
-        } else if material.0 == roads::MARKING {
+        } else if island::is_material(&material.0, roads::MARKING) {
             let mut corners = Vec::new();
             island::add_mesh(&mut corners, mesh, &place);
             markings.push(corners);
@@ -259,9 +262,15 @@ fn read_roads(
     commands.insert_resource(TownRoads { road, markings });
 }
 
+/// The cars' way round the town, being worked out away from the frames,
+/// which it would hold up for a second on a phone: every turn at every join
+/// is tried, a few hundred ways each (`roads::Route::read`).
+#[derive(Resource)]
+struct Planning(Task<Option<Route>>);
+
 /// Works out the cars' way round the town once its roads, its shape and the
-/// shape of every car have been read: turning, none of any of them is to go
-/// off the road.
+/// shape of every car have been read, in the background: turning, none of
+/// any of them is to go off the road.
 fn plan_the_way(
     roads: Option<Res<TownRoads>>,
     islands: Res<Islands>,
@@ -271,7 +280,7 @@ fn plan_the_way(
     let Some(roads) = roads else {
         return;
     };
-    let Some(land) = islands.ground(Venue::Town) else {
+    let Some(land) = islands.corners(Venue::Town) else {
         return;
     };
     if hulls.iter().count() < CARS.len() {
@@ -282,28 +291,48 @@ fn plan_the_way(
         return;
     };
     commands.remove_resource::<TownRoads>();
-    let road = Island::new(&roads.road);
-    let paint = Paint {
-        land,
-        road: &road,
-        markings: &roads.markings,
-    };
-    let started = std::time::Instant::now();
-    match Route::read(&paint, &car, CARS.len()) {
-        Some(route) => {
-            let behind: Vec<f64> = (0..CARS.len() as u8).map(|number| route.behind(number)).collect();
-            info!(
-                "the cars' way round the town: {} lanes, {:.0} m, in {} s, each car {:?} s behind the first \
-                 (worked out in {} ms for {car:?})",
-                route.lanes(),
-                route.length(),
-                route.lap(),
-                behind,
-                started.elapsed().as_millis()
-            );
-            commands.insert_resource(route);
+    let (road, markings) = (roads.road.clone(), roads.markings.clone());
+    let land = land.to_vec();
+    let task = AsyncComputeTaskPool::get().spawn(async move {
+        let started = std::time::Instant::now();
+        let (land, road) = (Island::new(&land), Island::new(&road));
+        let paint = Paint {
+            land: &land,
+            road: &road,
+            markings: &markings,
+        };
+        let route = Route::read(&paint, &car, CARS.len());
+        match &route {
+            Some(route) => {
+                let behind: Vec<f64> = (0..CARS.len() as u8).map(|number| route.behind(number)).collect();
+                info!(
+                    "the cars' way round the town: {} lanes, {:.0} m, in {} s, each car {:?} s behind the first \
+                     (worked out in {} ms for {car:?})",
+                    route.lanes(),
+                    route.length(),
+                    route.lap(),
+                    behind,
+                    started.elapsed().as_millis()
+                );
+            }
+            None => warn!("no way round the town's roads, so no car drives them"),
         }
-        None => warn!("no way round the town's roads, so no car drives them"),
+        route
+    });
+    commands.insert_resource(Planning(task));
+}
+
+/// Puts the cars' way round the town to use once it has been worked out.
+fn planned(planning: Option<ResMut<Planning>>, mut commands: Commands) {
+    let Some(mut planning) = planning else {
+        return;
+    };
+    let Some(route) = check_ready(&mut planning.0) else {
+        return;
+    };
+    commands.remove_resource::<Planning>();
+    if let Some(route) = route {
+        commands.insert_resource(route);
     }
 }
 
@@ -911,32 +940,35 @@ pub(crate) mod tests {
                 })
                 .fold(f32::INFINITY, f32::min)
         };
+        let back_wheels = |place: &Place, hull: &Hull| {
+            let at = hull.middle + hull.front * (hull.wheels_ahead - hull.base * 0.5);
+            place.outward(Vec3::new(at.x, 0.0, at.y))
+        };
         for (number, hull) in (0..).zip(&hulls) {
             for step in 0..40 {
                 let seconds = 1.76e9 + step as f64 * 4.9;
                 let (place, _) = place_at(&route, hull, number, seconds);
-                // Its front wheels and its back ones on the loop, as a train's
-                // on its rails.
-                for wheels in [hull.wheels_ahead + hull.base * 0.5, hull.wheels_ahead - hull.base * 0.5] {
-                    let at = hull.middle + hull.front * wheels;
-                    let on = place.outward(Vec3::new(at.x, 0.0, at.y)).xz();
-                    assert!(off_the_line(on) < 0.05, "car {number}'s wheels {} m off its way", off_the_line(on));
-                }
-                // Its wheels on the road, -0.2 m.
-                assert!((place.outward(Vec3::Y * hull.lowest).y + 0.2).abs() < 0.02, "{place:?}");
+                // Its front wheels on the loop, and its back ones following
+                // them, on the road.
+                let at = hull.middle + hull.front * (hull.wheels_ahead + hull.base * 0.5);
+                let on = place.outward(Vec3::new(at.x, 0.0, at.y)).xz();
+                assert!(off_the_line(on) < 0.05, "car {number}'s front wheels {} m off its way", off_the_line(on));
+                let back = back_wheels(&place, hull).xz();
+                assert!(road.floor(back, 1.0).is_some(), "car {number}'s back wheels off the road at {back}");
+                // Its wheels on the road, at 0 in the new town.
+                assert!(place.outward(Vec3::Y * hull.lowest).y.abs() < 0.03, "{place:?}");
             }
-            // All the way round, its front the way it goes, near enough: its
-            // middle goes a little to the side of the way it faces turning, as
-            // a bus's does, its back wheels following its front ones round
-            // the bend, but never more than 30° (`roads::TIGHTEST`). And never
-            // faster than its top speed.
+            // All the way round, its back wheels going the way it faces, as a
+            // car's do, never sideways: its middle goes a little to the side
+            // of the way it faces turning, as a bus's does. And never faster
+            // than its top speed.
             let mut seconds = 0.0;
             while seconds < route.lap() {
                 let (place, _) = place_at(&route, hull, number, seconds);
                 let (soon, _) = place_at(&route, hull, number, seconds + 0.05);
                 let ahead = place.turn * Vec3::new(hull.front.x, 0.0, hull.front.y);
-                let went = (soon.at - place.at).normalize_or_zero();
-                assert!(went == Vec3::ZERO || ahead.dot(went) > 0.866, "car {number} facing {ahead}, going {went}");
+                let went = (back_wheels(&soon, hull) - back_wheels(&place, hull)).normalize_or_zero();
+                assert!(went == Vec3::ZERO || ahead.dot(went) > 0.99, "car {number} facing {ahead}, its back going {went}");
                 let speed = soon.at.distance(place.at) / 0.05;
                 assert!(speed < roundtown_net::cars::TOP_SPEED * 1.05, "{speed} m/s");
                 seconds += 0.05;

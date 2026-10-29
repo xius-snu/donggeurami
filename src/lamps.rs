@@ -83,7 +83,7 @@ fn find_bulbs(
         let Ok((mesh, material)) = parts.get(part) else {
             continue;
         };
-        if material.0 != BULB_MATERIAL {
+        if !crate::island::is_material(&material.0, BULB_MATERIAL) {
             continue;
         }
         let (Some(mesh), Ok(place)) = (meshes.get(&mesh.0), placement.compute_global_transform(part))

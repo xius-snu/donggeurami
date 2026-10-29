@@ -1,7 +1,8 @@
 //! The islands, and what the players stand on and bump into there.
 //!
 //! Each is a Blender model with the sea drawn round it: Round Town,
-//! `assets/circlemap1.glb`, round a fountain, where everyone is; your home,
+//! `assets/roundtownmap.glb` since 2026-10-30 (`circlemap1.glb` before), round
+//! a pond with a fountain in it, where everyone is; your home,
 //! `assets/testhomemap.glb`, where only you go, for now with a room and a tall
 //! wall in it to try the camera against; and House Builder's lobby,
 //! `assets/lobbymap.glb`, where a game's players wait for it to fill. Those
@@ -23,7 +24,8 @@
 //! bridge or put up a fence: nothing in the code knows where the land is.
 //! Wherever the model has nothing underfoot is sea, at [`WATER_Y`]. Water
 //! modelled into it, like the town's fountain, has the material
-//! [`WATER_MATERIAL`]: it is drawn like the sea and stood in, not on. Someone
+//! [`WATER_MATERIAL`] ([`is_material`]): it is drawn like the sea and stood
+//! in, not on. Someone
 //! modelled standing on it, like the House Builder at their door, is a body,
 //! not land: see [`read_island`].
 //!
@@ -81,6 +83,19 @@ const STEEPEST_FLOOR: f32 = 0.643;
 /// left out of what players stand on and bump into.
 pub(crate) const WATER_MATERIAL: &str = "water";
 
+/// Whether a material called `name` is the one called `wanted`, or a copy of
+/// it, as Blender names one brought in from another file that has its own:
+/// `water.001` is water. In Hajun's new town (2026-10-30) the pond is `water`
+/// and the fountain's bowls, brought over from the old town, `water.001`.
+pub(crate) fn is_material(name: &str, wanted: &str) -> bool {
+    name.strip_prefix(wanted).is_some_and(|rest| {
+        rest.is_empty()
+            || rest
+                .strip_prefix('.')
+                .is_some_and(|copy| !copy.is_empty() && copy.bytes().all(|digit| digit.is_ascii_digit()))
+    })
+}
+
 /// Which island something is on: the town, your home, House Builder's lobby,
 /// or one builder's plot in a game of it, by their seat. It is the same type
 /// the server sends, so that where it says someone is, is where they are drawn.
@@ -96,20 +111,20 @@ const LOADED: [Venue; 3] = [Venue::Town, Venue::Home, Venue::Lobby];
 /// yours has.
 fn model(venue: Venue) -> &'static str {
     match venue {
-        Venue::Town => "circlemap1.glb",
+        Venue::Town => "roundtownmap.glb",
         Venue::Home => "testhomemap.glb",
         Venue::Plot(_) => "homemap.glb",
         Venue::Lobby => "lobbymap.glb",
     }
 }
 
-/// Where the player in `seat` stands on arriving on any island: on a ring
-/// round the middle — round the fountain, in the town — facing in. The first
-/// eight seats are each an eighth of the turn on from the one before, and a
-/// town channel online, which holds sixteen, sits the rest between them
+/// Where the player in `seat` stands on arriving on `venue`: on a ring round
+/// the middle — round the pond, in the town — facing in. The first eight
+/// seats are each an eighth of the turn on from the one before, and a town
+/// channel online, which holds sixteen, sits the rest between them
 /// (`roundtown_net::arrival`, which the server works arrivals out with too).
-pub(crate) fn arrival(seat: usize) -> Transform {
-    let (spot, turn) = roundtown_net::arrival(seat);
+pub(crate) fn arrival(venue: Venue, seat: usize) -> Transform {
+    let (spot, turn) = roundtown_net::arrival(venue, seat);
     Transform::from_translation(spot.with_y(LAND_TOP)).with_rotation(turn)
 }
 
@@ -137,6 +152,14 @@ impl Islands {
     /// `venue` as its model has it, leaving out whatever is built on it.
     pub(crate) fn ground(&self, venue: Venue) -> Option<&Island> {
         self.of_model(model(venue))
+    }
+
+    /// Every triangle of `venue` as its model has it, once it has been read.
+    pub(crate) fn corners(&self, venue: Venue) -> Option<&[[Vec3; 3]]> {
+        self.grounds
+            .iter()
+            .find(|(read, _)| *read == model(venue))
+            .map(|(_, corners)| corners.as_slice())
     }
 
     fn of_model(&self, model: &str) -> Option<&Island> {
@@ -176,7 +199,18 @@ impl Islands {
     pub(crate) fn built_on(&self) -> Vec<Venue> {
         self.built.iter().map(|(on, _)| *on).collect()
     }
+
+    /// `venue` as its model has it now, every triangle of it `corners`: the
+    /// town, once its houses have had holes cut in their walls for their
+    /// doors and windows (`build::town`).
+    pub(crate) fn reshape(&mut self, venue: Venue, corners: Vec<[Vec3; 3]>) {
+        self.set(model(venue), corners);
+    }
 }
+
+/// An island's own model, as against everything else on it.
+#[derive(Component)]
+pub(crate) struct Land;
 
 pub(crate) fn plugin(app: &mut App) {
     app.init_resource::<Islands>()
@@ -202,6 +236,7 @@ pub(crate) fn spawn_island(
     let land = commands
         .spawn((
             venue,
+            Land,
             WorldAssetRoot(assets.load(GltfAssetLabel::Scene(0).from_asset(model(venue)))),
             Visibility::Hidden,
         ))
@@ -267,7 +302,7 @@ fn read_island(
         let Ok((part, material, skinned)) = parts.get(entity) else {
             continue;
         };
-        if material.is_some_and(|name| name.0 == WATER_MATERIAL) {
+        if material.is_some_and(|name| is_material(&name.0, WATER_MATERIAL)) {
             commands
                 .entity(entity)
                 .insert((MeshMaterial3d(water.material.clone()), NotShadowCaster));

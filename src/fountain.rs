@@ -40,7 +40,7 @@ use bevy::shader::{Shader, ShaderRef};
 use bevy::world_serialization::WorldInstanceReady;
 
 use crate::clock::TownClock;
-use crate::island::{Venue, WATER_MATERIAL};
+use crate::island::{self, Venue, WATER_MATERIAL};
 use crate::sky::{self, Daylight};
 use crate::{GRAVITY, Intent, PlayerJump};
 
@@ -545,7 +545,7 @@ fn find_fountain(
         .filter(|&entity| {
             parts
                 .get(entity)
-                .is_ok_and(|(_, material)| material.is_some_and(|name| name.0 == WATER_MATERIAL))
+                .is_ok_and(|(_, material)| material.is_some_and(|name| island::is_material(&name.0, WATER_MATERIAL)))
         })
         .map(points)
         .collect();

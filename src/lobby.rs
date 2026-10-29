@@ -67,7 +67,7 @@ const AI_NAMES: &[&str] = &[
 const TOWN_SPOTS: usize = 16;
 
 /// Your look.
-fn my_look() -> &'static str {
+pub(crate) fn my_look() -> &'static str {
     LOOKS[0].0
 }
 
@@ -189,7 +189,8 @@ fn ai_member(seat: usize, id: u64, seats: &[Member], elsewhere: &[Member]) -> Me
     }
 }
 
-/// Everyone in the room, standing round the fountain in the middle of the town.
+/// Everyone in the room, standing on the path round the pond in the middle of
+/// the town.
 fn spawn_players(
     mut commands: Commands,
     assets: Res<AssetServer>,
@@ -200,7 +201,7 @@ fn spawn_players(
         let mine = member.id == lobby.me;
         let body = spawn_player(&mut commands, &assets, member, seat, Venue::Town, mine);
         if mine {
-            *orbit = OrbitCamera::behind(&island::arrival(seat));
+            *orbit = OrbitCamera::behind(&island::arrival(Venue::Town, seat));
         } else {
             commands.entity(body).insert(Townsfolk(member.id));
         }
@@ -283,7 +284,7 @@ pub(crate) fn spawn_player(
     venue: Venue,
     mine: bool,
 ) -> Entity {
-    let spawn = island::arrival(seat);
+    let spawn = island::arrival(venue, seat);
     let mut avatar = commands.spawn((
         body(assets, member, spawn),
         venue,
@@ -360,7 +361,7 @@ pub(crate) fn send(
     venue: Venue,
     seat: usize,
 ) {
-    put(bodies, orbit, body, venue, island::arrival(seat));
+    put(bodies, orbit, body, venue, island::arrival(venue, seat));
 }
 
 /// Puts `body` on `venue`, standing `at`, as [`send`] does.
@@ -395,7 +396,7 @@ pub(crate) fn put(
 /// The model for a look. One this build has never heard of — a newer client's,
 /// say — is drawn as the first look rather than left out: whoever wears it is
 /// still in the room.
-fn model(look: &str) -> &'static str {
+pub(crate) fn model(look: &str) -> &'static str {
     LOOKS
         .iter()
         .find(|(name, _)| *name == look)

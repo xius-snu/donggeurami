@@ -730,7 +730,7 @@ fn seat_bot(commands: &mut Commands, game: &mut Game, now: f64) {
         look: BOT_LOOKS[seat.saturating_sub(1) % BOT_LOOKS.len()].into(),
         ai: true,
     };
-    let (at, turn) = arrival(seat);
+    let (at, turn) = arrival(Venue::Lobby, seat);
     let body = commands
         .spawn((
             Replicated,

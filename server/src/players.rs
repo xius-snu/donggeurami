@@ -343,7 +343,7 @@ fn place(
     now: f64,
 ) {
     *spot = at.unwrap_or_else(|| {
-        let (at, turn) = arrival(usize::from(seat));
+        let (at, turn) = arrival(to, usize::from(seat));
         Spot::of(at, turn)
     });
     venue.set_if_neq(to);
@@ -520,7 +520,7 @@ fn admit(
         };
         let spot = keeps.then_some(hello.spot);
         let placed = spot.unwrap_or_else(|| {
-            let (at, turn) = arrival(usize::from(seat));
+            let (at, turn) = arrival(venue, usize::from(seat));
             Spot::of(at, turn)
         });
         commands.entity(body).insert((

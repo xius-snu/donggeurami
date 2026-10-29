@@ -1479,7 +1479,7 @@ mod tests {
         // screen, and a tap on the time skips the wait, so the bin must not
         // be over it.
         let window = window();
-        let you = crate::island::arrival(0);
+        let you = crate::island::arrival(crate::island::Venue::Plot(0), 0);
         let cottage_ahead = you.translation
             + Vec3::NEG_Z * (crate::PLAYER_RADIUS + crate::build::HOUSE_IN_FRONT + 3.35);
         let orbit = OrbitCamera::default();

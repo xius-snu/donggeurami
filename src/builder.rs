@@ -39,6 +39,7 @@
 //! going, and [`play`] with the game itself.
 
 use bevy::asset::RenderAssetUsages;
+use bevy::gltf::GltfMaterialName;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use bevy::world_serialization::WorldInstanceReady;
@@ -76,6 +77,12 @@ const RECONNECT_WAIT: f32 = 15.0;
 const NAME: &str = "Build Your Own House";
 /// What the House Builder is called in the town's model.
 const NPC: &str = "House Builder NPC";
+/// What the House Builder wears over the body everyone has: a black top,
+/// as the old town's model had them (`circlemap1.glb`'s `body`, 2026-10-03).
+const NPC_TOP: Color = Color::BLACK;
+/// The material of the top a body's model wears, which [`NPC_TOP`] is in
+/// place of.
+const TOP: &str = "body";
 /// How near the House Builder you have to be to talk to them, in metres.
 const TALK_RANGE: f32 = 4.5;
 /// How high over the House Builder's feet the bubble points from, in metres:
@@ -520,6 +527,66 @@ fn find_house_builder(
         ));
         crate::bind_limbs(npc, &children, &named, &mut commands);
     }
+}
+
+/// Stands the House Builder at `at` in the town, facing the way it does.
+/// Until 2026-10-30 they were in the town's own model, at the door of their
+/// house; Hajun's new town, `roundtownmap.glb`, has nobody in it, so they
+/// are put at the door of one of its houses (`build::town`): the body
+/// everyone has, in the black top they wore.
+pub(crate) fn stand_house_builder(commands: &mut Commands, assets: &AssetServer, at: Transform) {
+    commands
+        .spawn((
+            Name::new(NPC),
+            WorldAssetRoot(assets.load(GltfAssetLabel::Scene(0).from_asset(lobby::model(lobby::my_look())))),
+            at,
+            Venue::Town,
+            Visibility::Hidden,
+        ))
+        .observe(dress_house_builder);
+}
+
+/// The House Builder put at the door of a house, once their model has
+/// spawned: their top black, and standing as everyone stands still.
+#[allow(clippy::too_many_arguments)]
+fn dress_house_builder(
+    ready: On<WorldInstanceReady>,
+    children: Query<&Children>,
+    named: Query<(&Name, &Transform)>,
+    tops: Query<(Entity, &GltfMaterialName, &MeshMaterial3d<StandardMaterial>)>,
+    placement: TransformHelper,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut commands: Commands,
+) {
+    let npc = ready.entity;
+    let Ok(place) = placement.compute_global_transform(npc) else {
+        return;
+    };
+    let mut black = None;
+    for part in children.iter_descendants(npc) {
+        let Ok((part, name, worn)) = tops.get(part) else {
+            continue;
+        };
+        if name.0 != TOP {
+            continue;
+        }
+        let black = black
+            .get_or_insert_with(|| {
+                let mut look = materials.get(&worn.0).cloned().unwrap_or_default();
+                look.base_color = NPC_TOP;
+                materials.add(look)
+            })
+            .clone();
+        commands.entity(part).insert(MeshMaterial3d(black));
+    }
+    commands.entity(npc).insert((
+        HouseBuilder {
+            at: place.translation(),
+            feet: None,
+        },
+        WalkCycle::default(),
+    ));
+    crate::bind_limbs(npc, &children, &named, &mut commands);
 }
 
 /// Stands the House Builder on the town's ground once there is a shape to read

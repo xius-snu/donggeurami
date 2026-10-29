@@ -101,7 +101,9 @@ const JUMP_COYOTE: f32 = 0.14;
 const HEAD_CLEARANCE: f32 = 0.02;
 const JUMP_BUFFER: f32 = 0.12;
 const LOOK_HEIGHT: f32 = PLAYER_HEIGHT * 0.75;
-/// The height of the grass in `circlemap1.glb`, where the town stands.
+/// The height everyone arrives at, and the height of the path round the
+/// pond in `roundtownmap.glb`, where they arrive in the town: they settle on
+/// whatever is under them from there.
 const LAND_TOP: f32 = 0.0;
 /// The sea, everywhere the island is not: z = -0.5 in Blender, which leaves the
 /// lowest ground on either island — the town's roads, the home's sand, both at

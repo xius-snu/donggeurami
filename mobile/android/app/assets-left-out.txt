@@ -15,9 +15,11 @@
 # modelled from it.
 cloudsofaimage.png
 
-# Models nothing loads any more: the first map, and the coin.
+# Models nothing loads any more: the first map, the coin, and the old town,
+# Round Town until Hajun's new one, roundtownmap.glb, on 2026-10-30.
 map.glb
 coin.glb
+circlemap1.glb
 
 # Hajun's model of a house's size, to model pieces against, in mybuilds/:
 # not sold in the shop.
