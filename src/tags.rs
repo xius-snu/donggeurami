@@ -3,7 +3,7 @@
 //!
 //! Each tag is a line of text laid out once, at the top left of the screen,
 //! and moved over its body's head without being laid out again, the way the
-//! House Builder's bubble is (`builder::place_bubble`). It is put away while
+//! bubble over whoever you can talk to is (`talk`). It is put away while
 //! its body is on another island, behind the camera, off the screen, further
 //! off than [`READ_RANGE`] or under House Builder's results ([`HidesNames`]).
 //! Offline the town is as it always was, and nobody has one.
@@ -24,7 +24,7 @@ use crate::{Player, ThirdPersonCamera, WalkCycle};
 /// How far off a name can still be read, in metres.
 const READ_RANGE: f32 = 25.0;
 /// How big a name is, as a share of the short side of the screen.
-const TAG_TEXT: f32 = 3.2;
+pub(crate) const TAG_TEXT: f32 = 3.2;
 /// How high over a body's feet its name sits, in metres: a little over its
 /// head, as the House Builder's bubble is.
 const OVER_HEAD: f32 = 2.0;
@@ -48,7 +48,7 @@ pub(crate) struct HidesNames;
 
 /// A body with its name over it.
 #[derive(Component)]
-struct Tagged;
+pub(crate) struct Tagged;
 
 pub(crate) fn plugin(app: &mut App) {
     app.add_systems(

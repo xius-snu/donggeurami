@@ -1,10 +1,10 @@
-//! Round Town and your home, two islands played from behind you, or through
-//! your own eyes, with WASD or touch.
+//! Round Town, played from behind you, or through your own eyes, with WASD or
+//! touch.
 //!
 //! The app opens in the town, with you and seven others already standing in
-//! it (`lobby`). A button top right takes you home and back again (`hud`). The
-//! House Builder, at the door of their house in the town, asks whether you
-//! want to play their game (`builder`).
+//! it (`lobby`). Walk up to any of them and you can talk to them (`talk`).
+//! The House Builder, at the door of their house in the town, asks whether
+//! you want to play their game (`builder`).
 //!
 //! `#[bevy_main]` generates the `android_main` entry point. Desktop and iOS
 //! both reach [`main`] through `src/main.rs`; on iOS that binary *is* the app
@@ -44,6 +44,7 @@ mod shop;
 mod sky;
 mod sound;
 mod tags;
+mod talk;
 use island::{Island, Islands, Venue};
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 use bevy::input::mouse::{MouseMotion, MouseScrollUnit, MouseWheel};
@@ -171,6 +172,53 @@ const CAMERA_RADIUS: f32 = 0.2;
 /// How far past what you bump into with the camera still counts as inside
 /// you, in metres: your arms and the top of your head reach that far.
 const CAMERA_INSIDE: f32 = 0.15;
+/// How far down the camera looks at you as the app opens, in radians, and
+/// once a double tap has swung it round behind you.
+const CAMERA_PITCH: f32 = 0.38;
+/// How long the camera has to have been left alone before walking with the
+/// stick brings it round behind where you walk, in seconds (Hajun,
+/// 2026-10-31: "~1.5 s").
+const RECENTER_AFTER: f32 = 1.5;
+/// How long it takes to get going once it does, in seconds: it eases in,
+/// from when the stick was pushed or the camera let go of, whichever came
+/// later, rather than all at once.
+const RECENTER_EASE_IN: f32 = 0.6;
+/// How quickly it comes round, walking at full speed: this share of the
+/// angle left, a second...
+const RECENTER_RATE: f32 = 1.0;
+/// ...and no faster than this, in radians a second (46°). The stick held to
+/// one side walks you round a circle about 17 m across as it comes round, wide
+/// enough to steer out of by pushing the stick up.
+const RECENTER_MOST: f32 = 0.8;
+/// Walking toward the camera it does not come round at all: as readily as
+/// ever walking up to 100° off straight away from it, and not at all from
+/// 150°, as running at it.
+const RECENTER_SIDEWAYS: f32 = 1.745;
+const RECENTER_BACKWARDS: f32 = 2.618;
+/// How quickly a double tap swings the camera round behind you: this share
+/// of the way left, a second, which is there in about a fifth of a second.
+const SNAP_RATE: f32 = 16.0;
+/// Two taps on nothing are a double tap if the second goes down no later
+/// than this after the first came up, in seconds, and no further from it than
+/// this share of the screen's short side.
+const DOUBLE_TAP_SECS: f32 = 0.3;
+#[cfg_attr(not(any(target_os = "android", target_os = "ios")), allow(dead_code))]
+const DOUBLE_TAP_NEAR: f32 = 0.08;
+/// The longest a press can be held and still be a tap, in seconds.
+#[cfg_attr(not(any(target_os = "android", target_os = "ios")), allow(dead_code))]
+const TAP_SECS: f32 = 0.3;
+/// While you talk to someone (`talk`), the furthest from them the camera
+/// looks at their face from, in metres: from further off it comes this near,
+/// between you and them; from nearer it is your eyes.
+const CLOSE_UP: f32 = 1.3;
+/// How far under the face of someone you talk to the camera looks, in
+/// metres: their face sits a little over the middle of the screen, clear of
+/// what they say along the bottom of it.
+const UNDER_THE_FACE: f32 = 0.25;
+/// How long the camera takes to come in to a face, and to go back out, in
+/// seconds.
+const CLOSE_UP_IN: f32 = 0.45;
+const CLOSE_UP_OUT: f32 = 0.35;
 const WALK_STRIDE_FREQ: f32 = 7.6;
 const WALK_THIGH: f32 = 0.42;
 const WALK_SHIN: f32 = 0.28;
@@ -265,6 +313,12 @@ struct JoystickKnob;
 #[derive(Component)]
 struct JumpButtonVisual;
 
+/// The stick or the jump button, which are put away while you talk to
+/// someone.
+#[cfg(any(target_os = "android", target_os = "ios"))]
+#[derive(Component)]
+struct TouchHud;
+
 #[derive(Resource, Default)]
 struct TouchControls {
     stick_id: Option<u64>,
@@ -281,11 +335,142 @@ struct TouchControls {
     /// turns out to be a tap or a look is decided when it lifts.
     #[cfg(any(target_os = "android", target_os = "ios"))]
     edit_id: Option<u64>,
+    /// When and where the touch looking round went down, for as long as it
+    /// could still be a tap: until it has gone further than a tap does, or a
+    /// second finger has come down to pinch.
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    look_tap: Option<(f32, Vec2)>,
+    /// The taps on nothing, to tell a double tap by.
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    taps: DoubleTap,
+}
+
+/// Two taps on nothing, the second soon after the first and near it: a
+/// double tap, which swings the camera round behind you.
+#[derive(Default)]
+#[cfg_attr(not(any(target_os = "android", target_os = "ios")), allow(dead_code))]
+struct DoubleTap {
+    /// The last tap, while it could still be the first of two: when it came
+    /// up, and where.
+    last: Option<(f32, Vec2)>,
+}
+
+#[cfg_attr(not(any(target_os = "android", target_os = "ios")), allow(dead_code))]
+impl DoubleTap {
+    /// A tap at `at` that went down at `down` and came up at `up`, in
+    /// seconds: whether it is the second of two, no more than `near` from
+    /// the first. A third tap is the first of the next two.
+    fn tap(&mut self, down: f32, up: f32, at: Vec2, near: f32) -> bool {
+        let second = self
+            .last
+            .is_some_and(|(then, there)| down - then <= DOUBLE_TAP_SECS && at.distance(there) <= near);
+        self.last = if second { None } else { Some((up, at)) };
+        second
+    }
+}
+
+/// What turns the camera besides your fingers, on a phone (Hajun,
+/// 2026-10-31): walking with the stick, it comes round behind where you walk
+/// once you have left it alone a while, and a double tap on nothing swings it
+/// straight round behind you ([`assist_camera`]).
+#[derive(Resource, Default)]
+struct CameraAssist {
+    /// Seconds since your fingers last turned or zoomed it.
+    untouched: f32,
+    /// Seconds the stick has been pushed for, without letting go.
+    pushed: f32,
+    /// A double tap is swinging it round behind you.
+    snapping: bool,
+    /// Where you were the frame before, and the car you were riding then:
+    /// on the car, in its own space, so that what the car carries you is not
+    /// taken for walking.
+    last: Option<(Vec3, Option<Entity>)>,
+}
+
+impl CameraAssist {
+    /// Your fingers are on the camera: it waits for them to have been off it
+    /// for [`RECENTER_AFTER`] before coming round behind you again, and
+    /// whatever swing a double tap began is over.
+    #[cfg_attr(not(any(target_os = "android", target_os = "ios")), allow(dead_code))]
+    fn touched(&mut self) {
+        self.untouched = 0.0;
+        self.snapping = false;
+    }
+
+    /// How far `body` walked since the frame before, across the ground, or
+    /// across the car it rides as the car is now: never how far the car
+    /// carried it.
+    fn walked(&mut self, body: &Transform, riding: &Riding, cars: &Query<&car::Driven>) -> Vec3 {
+        let car = riding.0.and_then(|car| Some((car, cars.get(car).ok()?)));
+        let here = car.map_or(body.translation, |(_, driven)| driven.now.inward(body.translation));
+        let on = car.map(|(car, _)| car);
+        let walked = match self.last {
+            Some((last, was_on)) if was_on == on => {
+                let step = here - last;
+                car.map_or(step, |(_, driven)| driven.now.turn * step)
+            }
+            _ => Vec3::ZERO,
+        };
+        self.last = Some((here, on));
+        walked
+    }
+
+    /// How far round toward behind where you walk the camera is ready to
+    /// come, from 0 to 1: not at all until it has been left alone for
+    /// [`RECENTER_AFTER`], then eased in over [`RECENTER_EASE_IN`], counted
+    /// from then or from when the stick was pushed, whichever came later.
+    fn ready(&self) -> f32 {
+        let since = (self.untouched - RECENTER_AFTER).min(self.pushed);
+        let ready = (since / RECENTER_EASE_IN).clamp(0.0, 1.0);
+        ready * ready * (3.0 - 2.0 * ready)
+    }
+}
+
+/// While you talk to someone (`talk`), the camera comes in from where you
+/// turned and zoomed it to your eyes, turned to their face, and after, goes
+/// back out to where it was (Hajun, 2026-10-31).
+#[derive(Resource, Default)]
+pub(crate) struct CloseUp {
+    /// The face it is to come in to, for as long as you talk to them.
+    pub(crate) on: Option<Vec3>,
+    /// The face it came in to last, which it goes back out from.
+    face: Vec3,
+    /// How far in it has come, from 0, where you turned and zoomed it, to 1.
+    blend: f32,
+}
+
+impl CloseUp {
+    /// Whether it is on a face, or on its way to one or back from one.
+    pub(crate) fn busy(&self) -> bool {
+        self.on.is_some() || self.blend > 0.0
+    }
+
+    /// Back where you turned and zoomed it at once, rather than on its way:
+    /// for going to another island, where it would sweep across the world
+    /// from a face left behind.
+    pub(crate) fn cut(&mut self) {
+        self.on = None;
+        self.blend = 0.0;
+    }
+
+    /// Moves it on by `dt` seconds, in to the face it is on, or back out, and
+    /// says how far in it is now.
+    fn step(&mut self, dt: f32) -> f32 {
+        self.blend = match self.on {
+            Some(face) => {
+                self.face = face;
+                (self.blend + dt / CLOSE_UP_IN).min(1.0)
+            }
+            None => (self.blend - dt / CLOSE_UP_OUT).max(0.0),
+        };
+        self.blend
+    }
 }
 
 /// How you have turned and zoomed the camera: the one view there is, behind
 /// you, or zoomed all the way in, through your own eyes (Hajun, 2026-10-09,
-/// in place of a button that swapped between the two).
+/// in place of a button that swapped between the two). On a phone the stick
+/// and a double tap turn it too ([`assist_camera`]).
 #[derive(Resource)]
 struct OrbitCamera {
     yaw: f32,
@@ -304,7 +489,7 @@ impl Default for OrbitCamera {
     fn default() -> Self {
         Self {
             yaw: 0.0,
-            pitch: 0.38,
+            pitch: CAMERA_PITCH,
             distance: CAMERA_DISTANCE,
             past: 1.0,
         }
@@ -368,6 +553,90 @@ pub(crate) fn camera_ahead(camera: &Transform) -> Vec3 {
     } else {
         camera.up().with_y(0.0).normalize_or(Vec3::NEG_Z)
     }
+}
+
+/// `angle`, in radians, as the same turn no more than half a turn either way.
+fn wrap_angle(angle: f32) -> f32 {
+    (angle + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI
+}
+
+/// How fast a camera at `yaw` comes round behind someone walking at
+/// `velocity` across the ground, in radians a second, `ready` of the way
+/// eased in ([`CameraAssist::ready`]): by [`RECENTER_RATE`] of the angle left
+/// a second at full speed, more slowly at less, never faster than
+/// [`RECENTER_MOST`], and not at all walking toward it.
+fn recenter_turn(yaw: f32, velocity: Vec2, ready: f32) -> f32 {
+    let speed = velocity.length();
+    if speed < 1e-3 || ready <= 0.0 {
+        return 0.0;
+    }
+    // The yaw that puts the camera behind where you walk, as
+    // `OrbitCamera::behind` puts it behind where you face.
+    let off = wrap_angle((-velocity.x).atan2(-velocity.y) - yaw);
+    let away = ((RECENTER_BACKWARDS - off.abs()) / (RECENTER_BACKWARDS - RECENTER_SIDEWAYS)).clamp(0.0, 1.0);
+    let strength = ready * away * (speed / MOVE_SPEED).min(1.0);
+    (off * RECENTER_RATE * strength).clamp(-RECENTER_MOST, RECENTER_MOST)
+}
+
+/// Turns the camera for you, on a phone (Hajun, 2026-10-31). Walking with
+/// the stick, once your fingers have been off the camera for
+/// [`RECENTER_AFTER`], it eases round behind where you walk ([`recenter_turn`]),
+/// so that one thumb on the stick sees where it is going. Walked into a wall
+/// you go nowhere, and it stays where it is; in your eyes it never turns:
+/// there you look where you turned your eyes, whichever way you walk. And a
+/// double tap on nothing swings it straight round behind you, tipped as it is
+/// when the app opens, or looking straight ahead from your eyes. A finger on
+/// the camera stops either at once (`read_touch_controls`).
+///
+/// The stick is a phone's alone: on desktop the keys walk you, the mouse
+/// turns the camera, and this never turns it.
+fn assist_camera(
+    time: Res<Time>,
+    controls: Res<TouchControls>,
+    dialog: Res<hud::DialogUp>,
+    cars: Query<&car::Driven>,
+    me: Query<(&Transform, &Riding), With<Player>>,
+    mut assist: ResMut<CameraAssist>,
+    mut orbit: ResMut<OrbitCamera>,
+) {
+    let dt = time.delta_secs();
+    let Ok((body, riding)) = me.single() else {
+        return;
+    };
+    let walked = assist.walked(body, riding, &cars);
+    assist.untouched += dt;
+    let pushed = !dialog.0 && controls.stick_value.length() >= STICK_DEADZONE;
+    assist.pushed = if pushed { assist.pushed + dt } else { 0.0 };
+
+    if assist.snapping {
+        assist.snapping = !snap_behind(&mut orbit, body, dt);
+        return;
+    }
+    if !pushed || orbit.distance <= 0.0 || dt <= 0.0 {
+        return;
+    }
+    let turn = recenter_turn(orbit.yaw, walked.xz() / dt, assist.ready()) * dt;
+    if turn != 0.0 {
+        orbit.yaw += turn;
+    }
+}
+
+/// Swings `orbit` on round behind `body` for `dt` seconds, as a double tap
+/// asks: tipped as it is when the app opens, or in your eyes, looking
+/// straight ahead. Whether it is there.
+fn snap_behind(orbit: &mut OrbitCamera, body: &Transform, dt: f32) -> bool {
+    let yaw = OrbitCamera::behind(body).yaw;
+    let pitch = if orbit.distance <= 0.0 { 0.0 } else { CAMERA_PITCH };
+    let (yaw_left, pitch_left) = (wrap_angle(yaw - orbit.yaw), pitch - orbit.pitch);
+    if yaw_left.abs() < 1e-3 && pitch_left.abs() < 1e-3 {
+        orbit.yaw = yaw;
+        orbit.pitch = pitch;
+        return true;
+    }
+    let share = 1.0 - (-SNAP_RATE * dt).exp();
+    orbit.yaw += yaw_left * share;
+    orbit.pitch += pitch_left * share;
+    false
 }
 
 #[cfg(any(target_os = "android", target_os = "ios"))]
@@ -436,6 +705,8 @@ pub fn main() {
     )
     .init_resource::<TouchControls>()
     .init_resource::<OrbitCamera>()
+    .init_resource::<CameraAssist>()
+    .init_resource::<CloseUp>()
     .add_systems(Startup, (setup_world, cluster_lights_on_the_cpu));
     // The town's clock, the server's online, which the day, the fountain's
     // jet and the cars go by.
@@ -463,8 +734,10 @@ pub fn main() {
     tags::plugin(&mut app);
     // Your account online, and the way to delete it.
     account::plugin(&mut app);
-    // Your balance, the button that takes you home and back, and the welcome.
+    // Your balance, and the welcome.
     hud::plugin(&mut app);
+    // Talking to the town's AIs and the House Builder.
+    talk::plugin(&mut app);
     // The House Builder in the town, and the game they ask you to play: the
     // shop to build with, and what is built.
     builder::plugin(&mut app);
@@ -485,6 +758,7 @@ pub fn main() {
             read_touch_controls.before(editor::EditSystems),
             update_joystick_knob,
             update_jump_visual,
+            hide_touch_hud,
         ),
     );
 
@@ -510,7 +784,7 @@ pub fn main() {
 
     app.add_systems(
         Update,
-        (read_player_input, move_bodies, animate_walk, follow_camera).chain(),
+        (read_player_input, move_bodies, animate_walk, assist_camera, follow_camera).chain(),
     );
     // Last, so that every schedule the plugins above made is there to change.
     one_thread_per_world(&mut app);
@@ -651,23 +925,28 @@ fn cluster_lights_on_the_cpu(settings: Option<ResMut<GlobalClusterSettings>>) {
     }
 }
 
-/// The stick and the jump button.
+/// The stick and the jump button: a see-through grey disc each, with no rim,
+/// and on them the stick's knob and the jump button's arrow in a see-through
+/// white, a little greyed (Hajun, 2026-10-31; until then the stick was white
+/// with a white rim, the jump button yellow with an arrow drawn in strokes).
+/// Neither takes a press for itself: `read_touch_controls` knows where they
+/// are.
 #[cfg(any(target_os = "android", target_os = "ios"))]
-fn setup_hud(mut commands: Commands) {
+fn setup_hud(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
     commands
         .spawn((
+            TouchHud,
             Node {
                 position_type: PositionType::Absolute,
                 left: Val::Vw(STICK_LEFT_VW),
                 bottom: Val::Vh(STICK_BOTTOM_VH),
                 width: Val::VMin(STICK_SIZE_VMIN),
                 height: Val::VMin(STICK_SIZE_VMIN),
-                border: UiRect::all(Val::Px(2.0)),
                 border_radius: BorderRadius::all(Val::Percent(50.0)),
                 ..default()
             },
-            BackgroundColor(Color::srgba(1.0, 1.0, 1.0, 0.18)),
-            BorderColor::all(Color::srgba(1.0, 1.0, 1.0, 0.35)),
+            BackgroundColor(hud::TOUCH_DISC),
+            Pickable::IGNORE,
         ))
         .with_child((
             JoystickKnob,
@@ -680,50 +959,36 @@ fn setup_hud(mut commands: Commands) {
                 border_radius: BorderRadius::all(Val::Percent(50.0)),
                 ..default()
             },
-            BackgroundColor(Color::srgba(1.0, 1.0, 1.0, 0.42)),
+            BackgroundColor(hud::TOUCH_MARK),
+            Pickable::IGNORE,
         ));
 
-    commands
-        .spawn((
-            JumpButtonVisual,
-            Node {
-                position_type: PositionType::Absolute,
-                right: Val::Vw(JUMP_RIGHT_VW),
-                bottom: Val::Vh(JUMP_BOTTOM_VH),
-                width: Val::VMin(JUMP_SIZE_VMIN),
-                height: Val::VMin(JUMP_SIZE_VMIN),
-                border: UiRect::all(Val::Px(2.0)),
-                border_radius: BorderRadius::all(Val::Percent(50.0)),
-                overflow: Overflow::clip(),
-                justify_content: JustifyContent::Center,
-                align_items: AlignItems::Center,
-                ..default()
-            },
-            BackgroundColor(Color::srgba(1.0, 0.82, 0.2, 0.32)),
-            BorderColor::all(Color::srgba(1.0, 0.85, 0.3, 0.5)),
-        ))
-        .with_children(|parent| {
-            parent.spawn(jump_icon_bar(16.0, 32.0, 38.0, 11.0, -40.0));
-            parent.spawn(jump_icon_bar(46.0, 32.0, 38.0, 11.0, 40.0));
-            parent.spawn(jump_icon_bar(44.5, 40.0, 11.0, 28.0, 0.0));
-        });
-}
-
-#[cfg(any(target_os = "android", target_os = "ios"))]
-fn jump_icon_bar(left: f32, top: f32, width: f32, height: f32, rotation_deg: f32) -> impl Bundle {
-    (
+    commands.spawn((
+        TouchHud,
+        JumpButtonVisual,
         Node {
             position_type: PositionType::Absolute,
-            left: Val::Percent(left),
-            top: Val::Percent(top),
-            width: Val::Percent(width),
-            height: Val::Percent(height),
+            right: Val::Vw(JUMP_RIGHT_VW),
+            bottom: Val::Vh(JUMP_BOTTOM_VH),
+            width: Val::VMin(JUMP_SIZE_VMIN),
+            height: Val::VMin(JUMP_SIZE_VMIN),
             border_radius: BorderRadius::all(Val::Percent(50.0)),
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
             ..default()
         },
-        BackgroundColor(Color::srgba(1.0, 1.0, 1.0, 0.9)),
-        UiTransform::from_rotation(Rot2::degrees(rotation_deg)),
-    )
+        BackgroundColor(hud::TOUCH_DISC),
+        Pickable::IGNORE,
+        children![(
+            ImageNode::new(images.add(hud::jump_arrow())).with_color(hud::TOUCH_MARK),
+            Node {
+                width: Val::Percent(hud::JUMP_ARROW),
+                height: Val::Percent(hud::JUMP_ARROW),
+                ..default()
+            },
+            Pickable::IGNORE,
+        )],
+    ));
 }
 
 #[cfg(any(target_os = "android", target_os = "ios"))]
@@ -732,11 +997,14 @@ fn in_circle(point: Vec2, center: Vec2, radius: f32) -> bool {
 }
 
 #[cfg(any(target_os = "android", target_os = "ios"))]
+#[allow(clippy::too_many_arguments)]
 fn read_touch_controls(
+    time: Res<Time>,
     touches: Res<Touches>,
     windows: Query<&Window>,
     mut controls: ResMut<TouchControls>,
     mut orbit: ResMut<OrbitCamera>,
+    mut assist: ResMut<CameraAssist>,
     menu: Res<editor::EditMenu>,
     presses: hud::Presses,
     mut pointer: ResMut<editor::EditPointer>,
@@ -747,6 +1015,7 @@ fn read_touch_controls(
         return;
     };
     let layout = hud_layout(window);
+    let now = time.elapsed_secs();
 
     let released = |id: u64| {
         touches.just_released(id) || touches.just_canceled(id) || touches.get_pressed(id).is_none()
@@ -762,6 +1031,15 @@ fn read_touch_controls(
         && released(id)
     {
         controls.look_id = None;
+        // A tap on nothing, and the second of two: the camera swings round
+        // behind you.
+        let near = window.width().min(window.height()) * DOUBLE_TAP_NEAR;
+        if let Some((down, at)) = controls.look_tap.take()
+            && now - down <= TAP_SECS
+            && controls.taps.tap(down, now, at, near)
+        {
+            assist.snapping = true;
+        }
         if let Some(pinch_id) = controls.pinch_id
             && let Some(touch) = touches.get_pressed(pinch_id)
         {
@@ -827,6 +1105,7 @@ fn read_touch_controls(
         } else if controls.look_id.is_none() {
             controls.look_id = Some(id);
             controls.look_last = pos;
+            controls.look_tap = Some((now, pos));
             // The same drag doubles as the editor's pointer: a short one is a
             // tap on whatever is under it, a long one is a look.
             if controls.edit_id.is_none() {
@@ -837,6 +1116,7 @@ fn read_touch_controls(
         } else if controls.pinch_id.is_none() {
             controls.pinch_id = Some(id);
             controls.pinch_last_dist = 0.0;
+            controls.look_tap = None;
         }
     }
 
@@ -880,6 +1160,16 @@ fn read_touch_controls(
             controls.look_last = pos;
             orbit.turn(delta);
         }
+    }
+    // Gone further than a tap does, it is a look.
+    if let Some((_, at)) = controls.look_tap
+        && look_pos.is_some_and(|pos| pos.distance(at) > editor::TAP_SLOP)
+    {
+        controls.look_tap = None;
+    }
+    // A finger on the camera holds off its coming round behind you.
+    if controls.look_id.is_some() || controls.pinch_id.is_some() {
+        assist.touched();
     }
 }
 
@@ -1018,10 +1308,24 @@ fn update_jump_visual(
     };
     let held = controls.jump_id.is_some();
     color.set_if_neq(BackgroundColor(if held {
-        Color::srgba(1.0, 0.82, 0.2, 0.55)
+        hud::TOUCH_DISC_HELD
     } else {
-        Color::srgba(1.0, 0.82, 0.2, 0.32)
+        hud::TOUCH_DISC
     }));
+}
+
+/// Puts the stick and the jump button away while the camera is on someone
+/// you talk to (`talk`): what they say is along the bottom of the screen.
+#[cfg(any(target_os = "android", target_os = "ios"))]
+fn hide_touch_hud(close_up: Res<CloseUp>, mut huds: Query<&mut Visibility, With<TouchHud>>) {
+    let shown = if close_up.on.is_some() {
+        Visibility::Hidden
+    } else {
+        Visibility::Inherited
+    };
+    for mut visibility in &mut huds {
+        visibility.set_if_neq(shown);
+    }
 }
 
 fn wading(pos: Vec3) -> bool {
@@ -1808,8 +2112,13 @@ pub(crate) fn animate_walk(
 ///
 /// Riding the car, it goes along with you, and turns only as you turn it:
 /// the car turns under you, as the world does.
+///
+/// While you talk to someone it comes in to their face from your eyes
+/// ([`close_up_view`]), and after, goes back out to where it was.
 pub(crate) fn follow_camera(
+    time: Res<Time>,
     orbit: Res<OrbitCamera>,
+    mut close_up: ResMut<CloseUp>,
     islands: Res<Islands>,
     cars: Decks,
     mut players: Query<(&Transform, &Venue, &mut Visibility), With<Player>>,
@@ -1826,7 +2135,14 @@ pub(crate) fn follow_camera(
         island,
         decks: &decks,
     });
-    let view = camera_view(&orbit, player, ground);
+    let mut view = camera_view(&orbit, player, ground);
+    let blend = close_up.step(time.delta_secs());
+    if blend > 0.0 {
+        let near = close_up_view(player, close_up.face, ground);
+        let eased = blend * blend * (3.0 - 2.0 * blend);
+        view = Transform::from_translation(view.translation.lerp(near.translation, eased))
+            .with_rotation(view.rotation.slerp(near.rotation, eased));
+    }
     // Both only written when they change, so that a camera at rest is not
     // taken for one that moved.
     body.set_if_neq(if inside_you(view.translation, player) {
@@ -1871,6 +2187,23 @@ fn eye_view(orbit: &OrbitCamera, player: &Transform, ground: Option<Ground>) -> 
     let chest = player.translation + Vec3::Y * LOOK_HEIGHT;
     Transform::from_translation(rise(chest, EYE_HEIGHT - LOOK_HEIGHT, ground))
         .with_rotation(Quat::from_rotation_y(orbit.yaw) * Quat::from_rotation_x(-orbit.pitch))
+}
+
+/// Looking at `face` from as near as [`CLOSE_UP`] to it, while you talk to
+/// whoever it is: from your eyes, or from further off than that, as far
+/// toward them as that, at the height of your eyes. A little under their face,
+/// which puts it over the middle of the screen, clear of what they say.
+fn close_up_view(player: &Transform, face: Vec3, ground: Option<Ground>) -> Transform {
+    let eyes = rise(player.translation + Vec3::Y * LOOK_HEIGHT, EYE_HEIGHT - LOOK_HEIGHT, ground);
+    let across = (face - eyes).with_y(0.0);
+    let far = across.length();
+    // Never, as bodies keep apart; but looking straight down from right over
+    // them would say no way round to turn.
+    if far < 0.1 {
+        return Transform::from_translation(eyes).with_rotation(player.rotation);
+    }
+    let at = eyes + across * ((far - CLOSE_UP).max(0.0) / far);
+    Transform::from_translation(at).looking_at(face - Vec3::Y * UNDER_THE_FACE, Vec3::Y)
 }
 
 /// As far as `up` straight up from `at` as the camera gets before it meets a
@@ -2105,6 +2438,139 @@ mod camera_tests {
         };
         assert_eq!(turned(0.0), turned(CAMERA_DISTANCE));
         assert_eq!(turned(CAMERA_DISTANCE_MIN), turned(CAMERA_DISTANCE_MAX));
+    }
+
+    #[test]
+    fn walking_with_the_stick_brings_it_round_behind_where_you_walk() {
+        // Behind you looking down -z, walking off to the right, +x, at full
+        // speed: it comes round, never faster than it may, and stops behind
+        // where you walk, the way it stands behind where you face.
+        let right = Vec2::new(MOVE_SPEED, 0.0);
+        let behind = OrbitCamera::behind(&Transform::default().looking_to(Vec3::X, Vec3::Y)).yaw;
+        let dt = 1.0 / 120.0;
+        let mut yaw = 0.0;
+        for _ in 0..1200 {
+            let turn = recenter_turn(yaw, right, 1.0);
+            assert!(turn.abs() <= RECENTER_MOST + 1e-6, "{turn}");
+            assert!(wrap_angle(behind - yaw).abs() >= wrap_angle(behind - yaw - turn * dt).abs());
+            yaw += turn * dt;
+        }
+        assert!(wrap_angle(behind - yaw).abs() < 0.01, "{yaw} for {behind}");
+        // Walking straight away from it, it stays; walking at it, or nearly,
+        // it never comes round.
+        assert_eq!(recenter_turn(0.0, Vec2::new(0.0, -MOVE_SPEED), 1.0), 0.0);
+        assert_eq!(recenter_turn(0.0, Vec2::new(0.0, MOVE_SPEED), 1.0), 0.0);
+        assert_eq!(recenter_turn(0.0, Vec2::new(1.0, MOVE_SPEED), 1.0), 0.0);
+        // Slower walking at a small angle, more slowly; and not before it
+        // is ready.
+        let off = Vec2::new(1.0, -3.0);
+        assert!(recenter_turn(0.0, off * 0.5, 1.0).abs() < recenter_turn(0.0, off * 2.0, 1.0).abs());
+        assert_eq!(recenter_turn(0.0, right, 0.0), 0.0);
+    }
+
+    #[test]
+    fn it_comes_round_only_once_left_alone_and_eases_in() {
+        let ready = |untouched: f32, pushed: f32| {
+            CameraAssist {
+                untouched,
+                pushed,
+                ..default()
+            }
+            .ready()
+        };
+        // Touched too lately, or the stick only just pushed: not yet.
+        assert_eq!(ready(RECENTER_AFTER - 0.1, 5.0), 0.0);
+        assert_eq!(ready(5.0, 0.0), 0.0);
+        // Then by degrees, from whichever came later.
+        let easing = ready(RECENTER_AFTER + RECENTER_EASE_IN * 0.5, 5.0);
+        assert!(easing > 0.0 && easing < 1.0, "{easing}");
+        assert!((easing - ready(5.0, RECENTER_EASE_IN * 0.5)).abs() < 1e-5);
+        assert_eq!(ready(5.0, 5.0), 1.0);
+    }
+
+    #[test]
+    fn two_quick_taps_near_each_other_are_a_double_tap() {
+        let mut taps = DoubleTap::default();
+        let near = 50.0;
+        assert!(!taps.tap(1.0, 1.1, Vec2::new(100.0, 100.0), near));
+        assert!(taps.tap(1.3, 1.35, Vec2::new(120.0, 110.0), near));
+        // A third is the first of the next two.
+        assert!(!taps.tap(1.5, 1.55, Vec2::new(120.0, 110.0), near));
+        // Too long after, or too far off, and it is the first again.
+        assert!(!taps.tap(2.0, 2.05, Vec2::new(120.0, 110.0), near));
+        assert!(!taps.tap(2.2, 2.25, Vec2::new(300.0, 110.0), near));
+        assert!(taps.tap(2.4, 2.45, Vec2::new(310.0, 100.0), near));
+    }
+
+    #[test]
+    fn a_double_tap_swings_it_round_behind_you_in_a_moment() {
+        // Facing +x, the camera off to the side and looking down steeply.
+        let body = Transform::default().looking_to(Vec3::X, Vec3::Y);
+        let mut you = orbit(2.5, 1.3, 9.0);
+        let dt = 1.0 / 120.0;
+        let mut took = 0.0;
+        while !snap_behind(&mut you, &body, dt) {
+            took += dt;
+            assert!(took < 1.0, "never got there");
+        }
+        assert!(took < 0.6, "{took} s");
+        assert!(wrap_angle(you.yaw - OrbitCamera::behind(&body).yaw).abs() < 1e-6);
+        assert_eq!(you.pitch, CAMERA_PITCH);
+        assert_eq!(you.distance, 9.0);
+        // In your eyes it looks straight ahead.
+        let mut eyes = orbit(-1.0, -0.5, 0.0);
+        while !snap_behind(&mut eyes, &body, dt) {}
+        let view = camera_view(&eyes, &body, None);
+        assert!(view.forward().distance(Vec3::X) < 1e-4, "{}", view.forward());
+    }
+
+    #[test]
+    fn talking_it_looks_at_their_face_from_near_you() {
+        let you = Transform::default();
+        let eyes = Vec3::Y * EYE_HEIGHT;
+        // Someone just in front of you: from your eyes.
+        let face = Vec3::new(0.3, 1.52, -1.0);
+        let view = close_up_view(&you, face, None);
+        assert!(view.translation.distance(eyes) < 1e-4, "{}", view.translation);
+        // Someone further off: from as near them as it comes, at the height
+        // of your eyes, between you and them.
+        let face = Vec3::new(3.0, 1.52, -4.0);
+        let view = close_up_view(&you, face, None);
+        assert!(((face - view.translation).xz().length() - CLOSE_UP).abs() < 1e-3);
+        assert!((view.translation.y - EYE_HEIGHT).abs() < 1e-4);
+        assert!(view.translation.xz().dot(face.xz()) > 0.0);
+        // Looking at them, their face a little over the middle of the
+        // screen.
+        let toward = (face - view.translation).normalize();
+        assert!(view.forward().dot(toward) > 0.97);
+        assert!(view.up().dot(toward) > 0.02);
+    }
+
+    #[test]
+    fn the_close_up_comes_in_goes_back_out_and_cuts() {
+        let mut close_up = CloseUp::default();
+        assert!(!close_up.busy());
+        close_up.on = Some(Vec3::ONE);
+        let dt = 1.0 / 120.0;
+        let mut took = 0.0;
+        while close_up.step(dt) < 1.0 {
+            took += dt;
+        }
+        assert!((took - CLOSE_UP_IN).abs() < 0.02, "{took}");
+        close_up.on = None;
+        assert!(close_up.busy());
+        let mut took = 0.0;
+        while close_up.step(dt) > 0.0 {
+            took += dt;
+            // Going back out from the face it was on.
+            assert_eq!(close_up.face, Vec3::ONE);
+        }
+        assert!((took - CLOSE_UP_OUT).abs() < 0.02, "{took}");
+        assert!(!close_up.busy());
+        close_up.on = Some(Vec3::ONE);
+        close_up.step(dt);
+        close_up.cut();
+        assert!(!close_up.busy());
     }
 }
 

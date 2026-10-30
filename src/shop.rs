@@ -21,11 +21,11 @@ use crate::build::{Ghost, Mount, PIECES, Piece, PieceDef, Shadow, Stock, Tab};
 use crate::builder::{self, Building, DIALOG_LAYER, DIM, InGame, QUIET};
 use crate::hud::{self, DOOR, DialogUp, GOLD, TakesPress};
 
-/// Where the hammer sits: below and in from where the button that goes home
-/// sits in the town, which is put away while you build.
+/// Where the hammer sits: top right, below and in from where a button that
+/// went home and back sat in the town until 2026-10-31.
 const HAMMER_TOP: f32 = hud::EDGE + HAMMER + 3.0;
 const HAMMER_RIGHT: f32 = hud::EDGE + 6.0;
-/// How big the hammer is: a little bigger than the button that goes home.
+/// How big the hammer is, as a share of the short side of the screen.
 const HAMMER: f32 = 13.5;
 /// The window's share of the screen, and how far down from the top of it the
 /// window starts, as a share of its short side: under the time and the theme,

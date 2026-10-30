@@ -1,24 +1,26 @@
-//! What is drawn over the world: your balance top left, the button top right
-//! that takes you home and back again, and headlines across the middle — the
-//! town's name, as a welcome, whenever you arrive in the town, and whatever
-//! else is [`announce`]d, like House Builder's theme.
+//! What is drawn over the world: your balance top left, and headlines across
+//! the middle — the town's name, as a welcome, whenever you arrive in the
+//! town, and whatever else is [`announce`]d, like House Builder's theme. And
+//! how a phone's stick and jump button look (`setup_hud`).
 //!
-//! The button is a `bevy_ui` node pressed through `bevy_picking`'s click,
-//! which a mouse and a finger both send, so there is no platform code in it.
-//! It, and every button House Builder puts up, carries [`TakesPress`]; the code
-//! that reads fingers and the mouse for everything else asks [`Presses`]
-//! first, so that a press on one is not also taken for a look round or a tap
-//! on the town.
+//! Every button over the world is a `bevy_ui` node pressed through
+//! `bevy_picking`'s click, which a mouse and a finger both send, so there is
+//! no platform code in them. Each carries [`TakesPress`]; the code that reads
+//! fingers and the mouse for everything else asks [`Presses`] first, so that
+//! a press on one is not also taken for a look round or a tap on the town.
+//!
+//! Until 2026-10-31 a button top right took you home and back again; Hajun
+//! had it taken out. Your home (`testhomemap.glb`) is still loaded, with
+//! nothing that takes you there.
 
+use bevy::asset::RenderAssetUsages;
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
+use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 
-use roundtown_net::Ask;
-
+use crate::Player;
 use crate::island::{Islands, Venue};
-use crate::lobby::{self, Balance, STARTING_BALANCE, Seat, Whereabouts};
-use crate::net::Online;
-use crate::{OrbitCamera, Player};
+use crate::lobby::{Balance, STARTING_BALANCE};
 
 pub(crate) const COIN_ICON: &str = "coin.png";
 
@@ -26,12 +28,14 @@ pub(crate) const COIN_ICON: &str = "coin.png";
 /// monitor show the same thing.
 const BALANCE_TEXT: f32 = 6.0;
 const BALANCE_ICON: f32 = 6.0;
-pub(crate) const BUTTON: f32 = 12.0;
 pub(crate) const HEADLINE: f32 = 8.0;
 pub(crate) const CAPTION: f32 = 4.5;
-/// How far in from the top and the sides of the screen the balance and the
-/// button sit: further than a phone's rounded corner reaches.
+/// How far in from the top and the sides of the screen the balance sits:
+/// further than a phone's rounded corner reaches.
 pub(crate) const EDGE: f32 = 4.0;
+/// How much of the jump button its arrow takes up, as a share of it.
+#[cfg_attr(not(any(target_os = "android", target_os = "ios")), allow(dead_code))]
+pub(crate) const JUMP_ARROW: f32 = 56.0;
 /// Room left under a headline, as a share of the screen's height, which lifts
 /// it clear of your own character in the middle.
 const ABOVE_YOU: f32 = 36.0;
@@ -47,22 +51,23 @@ const SHADOW: Color = Color::srgba(0.02, 0.12, 0.22, 0.4);
 /// The dark glass behind whatever has to stay legible over anything.
 pub(crate) const PANEL: Color = Color::srgba(0.04, 0.10, 0.18, 0.42);
 pub(crate) const GOLD: Color = Color::srgb(1.0, 0.84, 0.3);
-/// The pictures on the button, and the door of the house.
+/// The pictures on buttons, and the dark blue of words on gold.
 pub(crate) const ICON: Color = Color::srgba(1.0, 1.0, 1.0, 0.94);
 pub(crate) const DOOR: Color = Color::srgb(0.16, 0.30, 0.42);
+/// A phone's stick and jump button: a see-through grey, with no rim, a little
+/// more solid while the jump button is held; and the stick's knob and the
+/// jump button's arrow, a see-through white a little greyed (Hajun,
+/// 2026-10-31).
+#[cfg_attr(not(any(target_os = "android", target_os = "ios")), allow(dead_code))]
+pub(crate) const TOUCH_DISC: Color = Color::srgba(0.4, 0.4, 0.4, 0.32);
+#[cfg_attr(not(any(target_os = "android", target_os = "ios")), allow(dead_code))]
+pub(crate) const TOUCH_DISC_HELD: Color = Color::srgba(0.4, 0.4, 0.4, 0.5);
+#[cfg_attr(not(any(target_os = "android", target_os = "ios")), allow(dead_code))]
+pub(crate) const TOUCH_MARK: Color = Color::srgba(0.92, 0.92, 0.92, 0.38);
 
 /// Your balance, top left.
 #[derive(Component)]
 struct BalanceText;
-
-/// The button top right.
-#[derive(Component)]
-struct TravelButton;
-
-/// One of the pictures on the button: the island it takes you to. Only the one
-/// for the island you are not on is shown.
-#[derive(Component)]
-struct Destination(Venue);
 
 /// Words across the middle of the screen, up for a moment, and how long they
 /// have been up.
@@ -81,10 +86,11 @@ struct Welcome;
 #[derive(Resource, Default)]
 struct WelcomeDue(bool);
 
-/// Something on the screen that takes a press for itself: the button top
-/// right, and every button House Builder puts up, the dark behind its dialogs
-/// included. Whatever reads a finger or the mouse for the world asks
-/// [`Presses::claimed`] before it takes a press.
+/// Something on the screen that takes a press for itself: every button over
+/// the world, the dark behind a dialog, the bubble over whoever you can talk
+/// to, and the whole screen while you talk (`talk`). Whatever reads a finger
+/// or the mouse for the world asks [`Presses::claimed`] before it takes a
+/// press.
 #[derive(Component, Default)]
 pub(crate) struct TakesPress;
 
@@ -136,11 +142,7 @@ pub(crate) fn plugin(app: &mut App) {
         .add_systems(Startup, show_top_bar)
         .add_systems(
             Update,
-            (
-                count_balance,
-                light_button,
-                (arrive, welcome, fade_headlines).chain(),
-            ),
+            (count_balance, (arrive, welcome, fade_headlines).chain()),
         );
 }
 
@@ -164,8 +166,7 @@ pub(crate) fn words(text: impl Into<String>, size_vmin: f32, colour: Color) -> i
     )
 }
 
-/// Your balance top left and the button top right, for as long as the app is
-/// open.
+/// Your balance top left, for as long as the app is open.
 pub(crate) fn show_top_bar(mut commands: Commands, assets: Res<AssetServer>) {
     commands
         .spawn((
@@ -193,7 +194,6 @@ pub(crate) fn show_top_bar(mut commands: Commands, assets: Res<AssetServer>) {
                 Pickable::IGNORE,
             ))
             .with_child(balance(&assets));
-            bar.spawn(travel_button()).observe(travel);
         });
 }
 
@@ -264,39 +264,9 @@ pub(crate) fn money(amount: u32) -> String {
     grouped
 }
 
-// ----------------------------------------------------------------- button
+// ---------------------------------------------------------------- buttons
 
-/// A round button with a house on it, for going home, and a town hall, for
-/// going back to the town. [`arrive`] decides which one shows, and whether the
-/// button does at all.
-fn travel_button() -> impl Bundle {
-    (
-        TravelButton,
-        TakesPress,
-        Button,
-        Node {
-            width: Val::VMin(BUTTON),
-            height: Val::VMin(BUTTON),
-            // At the top of the bar however tall the balance beside it is.
-            align_self: AlignSelf::FlexStart,
-            border: UiRect::all(Val::Px(2.0)),
-            border_radius: BorderRadius::all(Val::Percent(50.0)),
-            ..default()
-        },
-        BackgroundColor(button_fill(Interaction::None)),
-        BorderColor::all(Color::srgba(1.0, 1.0, 1.0, 0.5)),
-        children![
-            (Destination(Venue::Home), picture(), house()),
-            (
-                Destination(Venue::Town),
-                picture(),
-                town_hall(),
-                Visibility::Hidden
-            ),
-        ],
-    )
-}
-
+/// A round button's fill, the dark glass, darker under the pointer and held.
 pub(crate) fn button_fill(interaction: Interaction) -> Color {
     let alpha = match interaction {
         Interaction::None => PANEL.alpha(),
@@ -306,67 +276,11 @@ pub(crate) fn button_fill(interaction: Interaction) -> Color {
     PANEL.with_alpha(alpha)
 }
 
-fn light_button(
-    mut buttons: Query<
-        (&Interaction, &mut BackgroundColor),
-        (With<TravelButton>, Changed<Interaction>),
-    >,
-) {
-    for (interaction, mut fill) in &mut buttons {
-        fill.0 = button_fill(*interaction);
-    }
-}
-
-/// Takes you home from the town, and back to the town from home: to where your
-/// seat arrives on that island, facing in, with whatever jump you were in the
-/// middle of dropped and the camera swung round behind you. Online it is the
-/// server that seats you, and says where you arrive (`net`).
-fn travel(
-    click: On<Pointer<Click>>,
-    me: Query<(Entity, &Seat), With<Player>>,
-    mut bodies: Whereabouts,
-    mut orbit: ResMut<OrbitCamera>,
-    online: Res<Online>,
-    mut asks: MessageWriter<Ask>,
-) {
-    if click.button != PointerButton::Primary {
-        return;
-    }
-    let Ok((body, seat)) = me.single() else {
-        return;
-    };
-    let Some(there) = bodies
-        .get(body)
-        .ok()
-        .and_then(|(_, &here, ..)| destination(here))
-    else {
-        return;
-    };
-    if online.is() {
-        asks.write(Ask::Travel(there));
-        return;
-    }
-    lobby::send(&mut bodies, &mut orbit, body, there, seat.0);
-}
-
-/// Where the button takes you from `here`, if anywhere. It goes between the
-/// town and your home, and is put away while you are playing House Builder,
-/// which has its own way back.
-fn destination(here: Venue) -> Option<Venue> {
-    match here {
-        Venue::Town => Some(Venue::Home),
-        Venue::Home => Some(Venue::Town),
-        Venue::Lobby | Venue::Plot(_) => None,
-    }
-}
-
-/// Whenever you land on an island — in the town when the app opens, then
-/// wherever the button takes you — puts the way back on the button, and in
-/// the town, has you welcomed.
+/// Whenever you land on an island — in the town when the app opens, and back
+/// in it after a game of House Builder — and it is the town, has you
+/// welcomed.
 fn arrive(
     me: Query<&Venue, (With<Player>, Changed<Venue>)>,
-    mut buttons: Query<&mut Visibility, (With<TravelButton>, Without<Destination>)>,
-    mut pictures: Query<(&Destination, &mut Visibility), Without<TravelButton>>,
     welcomes: Query<Entity, With<Welcome>>,
     mut due: ResMut<WelcomeDue>,
     mut commands: Commands,
@@ -374,21 +288,6 @@ fn arrive(
     let Ok(&here) = me.single() else {
         return;
     };
-    let way = destination(here);
-    for mut visibility in &mut buttons {
-        visibility.set_if_neq(if way.is_some() {
-            Visibility::Inherited
-        } else {
-            Visibility::Hidden
-        });
-    }
-    for (picture, mut visibility) in &mut pictures {
-        visibility.set_if_neq(if Some(picture.0) == way {
-            Visibility::Inherited
-        } else {
-            Visibility::Hidden
-        });
-    }
     // One still up from the last time is out of date, whichever way you went.
     for welcome in &welcomes {
         commands.entity(welcome).despawn();
@@ -475,8 +374,8 @@ fn fade_headlines(
 
 // --------------------------------------------------------------- pictures
 
-/// A picture filling the button, drawn from flat shapes the way the jump arrow
-/// and the edit buttons are, all in percentages of the button's own box.
+/// A picture filling a button, drawn from flat shapes the way the edit
+/// buttons are, all in percentages of the button's own box.
 pub(crate) fn picture() -> impl Bundle {
     (
         Node {
@@ -537,43 +436,115 @@ pub(crate) fn person() -> impl Bundle {
     ]
 }
 
-/// A house with a pitched roof, a chimney and a door. The roof is a square
-/// turned on its corner, its lower half hidden in the walls.
-fn house() -> impl Bundle {
-    children![
-        shape(62.0, 25.0, 6.5, 15.0),
-        (
-            frame(32.3, 28.3, 35.4, 35.4),
-            BackgroundColor(ICON),
-            UiTransform::from_rotation(Rot2::degrees(45.0)),
-            Pickable::IGNORE,
-        ),
-        shape(25.0, 46.0, 50.0, 31.0),
-        (
-            Node {
-                border_radius: BorderRadius::top(Val::Percent(50.0)),
-                ..frame(44.0, 60.0, 12.0, 17.0)
-            },
-            BackgroundColor(DOOR),
-            Pickable::IGNORE,
-        ),
-    ]
+/// The jump button's arrow, pointing up: a broad head on a short shaft, one
+/// filled shape with its corners rounded off, white on clear for the button
+/// to tint (Hajun, 2026-10-31: "a semi transparent whiter filled round
+/// arrow"). Drawn rather than built from nodes, as the arrow in strokes before
+/// it was, because nodes that overlap would show where they do through the
+/// see-through white; and edged by how far each pixel is from it, so that it
+/// is smooth at whatever size a screen shows it.
+#[cfg_attr(not(any(target_os = "android", target_os = "ios")), allow(dead_code))]
+pub(crate) fn jump_arrow() -> Image {
+    const SIZE: u32 = 128;
+    /// How much its corners are rounded off, as a share of half the image.
+    const ROUND: f32 = 0.1;
+    // In shares of half the image, from its middle, y up: the head's tip and
+    // the ends of its base, and the shaft's half width and its two ends, each
+    // drawn in by `ROUND`, which rounding puts back out.
+    let tip = Vec2::new(0.0, 0.92 - ROUND);
+    let base = Vec2::new(0.88 - ROUND, 0.06 + ROUND * 0.5);
+    let (half_width, top, bottom) = (0.34 - ROUND, 0.2, -0.92 + ROUND);
+    let pixel = 2.0 / SIZE as f32;
+    let mut data = Vec::with_capacity((SIZE * SIZE * 4) as usize);
+    for row in 0..SIZE {
+        for column in 0..SIZE {
+            let at = Vec2::new(
+                (column as f32 + 0.5) * pixel - 1.0,
+                1.0 - (row as f32 + 0.5) * pixel,
+            );
+            let head = triangle_distance(at, tip, Vec2::new(-base.x, base.y), base);
+            let middle = Vec2::new(0.0, (top + bottom) * 0.5);
+            let reach = Vec2::new(half_width, (top - bottom) * 0.5);
+            let shaft = box_distance(at - middle, reach);
+            let outside = head.min(shaft) - ROUND;
+            let cover = (0.5 - outside / pixel).clamp(0.0, 1.0);
+            data.extend_from_slice(&[255, 255, 255, (cover * 255.0).round() as u8]);
+        }
+    }
+    Image::new(
+        Extent3d {
+            width: SIZE,
+            height: SIZE,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        data,
+        TextureFormat::Rgba8UnormSrgb,
+        RenderAssetUsages::default(),
+    )
 }
 
-/// A town hall: a flag on a dome, over a row of columns on a stepped base. The
-/// dome is a circle, its lower half hidden in the drum it stands on.
-fn town_hall() -> impl Bundle {
-    children![
-        shape(49.25, 21.0, 1.5, 10.0),
-        shape(50.75, 21.0, 6.75, 5.0),
-        disc(41.0, 29.0, 18.0),
-        shape(41.0, 38.0, 18.0, 8.0),
-        shape(24.0, 46.0, 52.0, 5.5),
-        shape(27.0, 51.5, 6.5, 18.5),
-        shape(40.17, 51.5, 6.5, 18.5),
-        shape(53.33, 51.5, 6.5, 18.5),
-        shape(66.5, 51.5, 6.5, 18.5),
-        shape(24.0, 70.0, 52.0, 4.5),
-        shape(20.0, 74.5, 60.0, 4.5),
-    ]
+/// How far `at` is from the edge of the triangle `a`, `b`, `c`: less than
+/// nothing inside it. Inigo Quilez's `sdTriangle`.
+pub(crate) fn triangle_distance(at: Vec2, a: Vec2, b: Vec2, c: Vec2) -> f32 {
+    let (e0, e1, e2) = (b - a, c - b, a - c);
+    let (v0, v1, v2) = (at - a, at - b, at - c);
+    let along = |v: Vec2, e: Vec2| v - e * (v.dot(e) / e.dot(e)).clamp(0.0, 1.0);
+    let (p0, p1, p2) = (along(v0, e0), along(v1, e1), along(v2, e2));
+    let s = (e0.x * e2.y - e0.y * e2.x).signum();
+    let d = Vec2::new(p0.dot(p0), s * (v0.x * e0.y - v0.y * e0.x))
+        .min(Vec2::new(p1.dot(p1), s * (v1.x * e1.y - v1.y * e1.x)))
+        .min(Vec2::new(p2.dot(p2), s * (v2.x * e2.y - v2.y * e2.x)));
+    -d.x.sqrt() * d.y.signum()
+}
+
+/// How far `at` is from the edge of a box round the origin reaching `reach`
+/// out each way: less than nothing inside it.
+#[cfg_attr(not(any(target_os = "android", target_os = "ios")), allow(dead_code))]
+fn box_distance(at: Vec2, reach: Vec2) -> f32 {
+    let d = at.abs() - reach;
+    d.max(Vec2::ZERO).length() + d.x.max(d.y).min(0.0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_jump_arrow_points_up_with_a_broad_head_on_a_narrow_shaft() {
+        let image = jump_arrow();
+        let size = image.width();
+        let data = image.data.as_ref().unwrap();
+        // How solid it is at `x`, `y`, in shares of half the image from its
+        // middle, y up.
+        let alpha = |x: f32, y: f32| {
+            let column = (((x + 1.0) * 0.5 * size as f32) as u32).min(size - 1);
+            let row = (((1.0 - y) * 0.5 * size as f32) as u32).min(size - 1);
+            data[((row * size + column) * 4 + 3) as usize]
+        };
+        // Solid up its middle, from the foot of the shaft to the tip.
+        for y in [-0.85, -0.4, 0.0, 0.4, 0.8] {
+            assert_eq!(alpha(0.0, y), 255, "at {y}");
+        }
+        // The head is wide, and the shaft beside it is not there.
+        assert_eq!(alpha(-0.7, 0.1), 255);
+        assert_eq!(alpha(0.7, 0.1), 255);
+        assert_eq!(alpha(-0.6, -0.5), 0);
+        assert_eq!(alpha(0.6, -0.5), 0);
+        // Nothing in the corners, nor over the tip.
+        for (x, y) in [(-0.97, 0.97), (0.97, 0.97), (-0.97, -0.97), (0.97, -0.97), (0.0, 0.99)] {
+            assert_eq!(alpha(x, y), 0, "at {x} {y}");
+        }
+        // White throughout, for the button to tint.
+        assert!(data.chunks(4).all(|pixel| pixel[..3] == [255, 255, 255]));
+    }
+
+    #[test]
+    fn a_triangle_is_inside_out_neither_way_round() {
+        let (a, b, c) = (Vec2::new(0.0, 1.0), Vec2::new(-1.0, -1.0), Vec2::new(1.0, -1.0));
+        for (a, b, c) in [(a, b, c), (a, c, b)] {
+            assert!(triangle_distance(Vec2::ZERO, a, b, c) < 0.0);
+            assert!((triangle_distance(Vec2::new(0.0, -2.0), a, b, c) - 1.0).abs() < 1e-5);
+        }
+    }
 }

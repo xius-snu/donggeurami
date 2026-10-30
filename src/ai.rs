@@ -7,7 +7,7 @@
 //! people. Only what does the asking differs: where you have a stick, an AI has
 //! [`Steering`] — walk this far that way, then stop — and a mind that asks for
 //! a walk somewhere at random every [`THINK_EVERY`] seconds, always on the
-//! island it is on.
+//! island it is on, but while you are talking to it (`talk`).
 //!
 //! Offline, this device runs every AI. With a server, the server will, and
 //! each client will see them the way it sees any other player.
@@ -18,6 +18,7 @@ use bevy::prelude::*;
 
 use crate::island::{Island, Islands, Venue};
 use crate::lobby::SEATS;
+use crate::talk::Listening;
 use crate::{Intent, LAND_STEP_UP, MOVE_SPEED, StaysAshore, dry_ground};
 
 /// How often an AI picks somewhere new to walk, in seconds.
@@ -99,10 +100,12 @@ pub(crate) fn plugin(app: &mut App) {
     app.add_systems(Update, (wander, steer).chain().before(crate::move_bodies));
 }
 
+/// Sends each AI somewhere new every [`THINK_EVERY`] seconds: all but one you
+/// are talking to, which stands where it is until you are done (`talk`).
 fn wander(
     time: Res<Time>,
     islands: Res<Islands>,
-    mut ais: Query<(&Transform, &Venue, &mut Wander, &mut Steering)>,
+    mut ais: Query<(&Transform, &Venue, &mut Wander, &mut Steering), Without<Listening>>,
 ) {
     let dt = time.delta_secs();
     for (transform, &venue, mut wander, mut steering) in &mut ais {

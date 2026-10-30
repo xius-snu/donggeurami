@@ -31,6 +31,7 @@ use crate::ai;
 use crate::car::Driven;
 use crate::island::{self, Venue};
 use crate::net::Online;
+use crate::talk::Speaker;
 use crate::{
     Collider, ColliderShape, Intent, MOVE_SPEED, OrbitCamera, PLAYER_HEIGHT, PLAYER_RADIUS, Player,
     PlayerJump, Riding, WalkCycle, bind_walk_bones,
@@ -111,8 +112,8 @@ impl Default for Balance {
 #[derive(Component)]
 pub(crate) struct Seat(pub usize);
 
-/// One of the town's own AIs, which this device runs to keep the town busy:
-/// the member it plays, by id.
+/// One of the town's own AIs, which this device runs to keep the town busy,
+/// and which you can talk to (`talk`): the member it plays, by id.
 #[derive(Component)]
 pub(crate) struct Townsfolk(u64);
 
@@ -203,7 +204,7 @@ fn spawn_players(
         if mine {
             *orbit = OrbitCamera::behind(&island::arrival(Venue::Town, seat));
         } else {
-            commands.entity(body).insert(Townsfolk(member.id));
+            commands.entity(body).insert((Townsfolk(member.id), Speaker::Townsfolk));
         }
     }
 }
@@ -256,7 +257,7 @@ fn fill_the_town(
             let member = ai_member(seat, id, &lobby.seats, &[]);
             lobby.seats.push(member.clone());
             let body = spawn_player(&mut commands, &assets, &member, seat, Venue::Town, false);
-            commands.entity(body).insert(Townsfolk(id));
+            commands.entity(body).insert((Townsfolk(id), Speaker::Townsfolk));
         }
     }
 }

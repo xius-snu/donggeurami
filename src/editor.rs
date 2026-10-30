@@ -43,14 +43,14 @@ use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
 use crate::hud;
 
 /// How far a press may travel and still count as a tap rather than a look drag.
-const TAP_SLOP: f32 = 16.0;
+pub(crate) const TAP_SLOP: f32 = 16.0;
 /// Where the four buttons sit around the thing, and how big they are, as
 /// shares of the short side of the screen — the same units the touch HUD uses.
 const MENU_RADIUS_VMIN: f32 = 15.0;
 const MENU_BUTTON_VMIN: f32 = 13.0;
 /// The buttons go no higher on a thing that is big on the screen than this
 /// much of the top of it, where the balance, House Builder's time and theme,
-/// and the button top right are: a tap on the time skips the wait.
+/// and the hammer top right are: a tap on the time skips the wait.
 const MENU_BELOW_VMIN: f32 = 21.0;
 /// Every tap on a turn button is this much, in degrees.
 const ROTATE_STEP_DEG: f32 = 45.0;

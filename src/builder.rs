@@ -1,13 +1,13 @@
 //! House Builder: the game the House Builder asks you to play, from the door
 //! of their house in the town, called [`NAME`] on the screen.
 //!
-//! Walk up to them and a speech bubble comes up over their head. Tap it — on
-//! desktop, press Space — and a dialog asks whether to play, for [`ENTRY`]
-//! coins. Say yes, and you pay and are taken to the lobby (`lobbymap.glb`) to
-//! wait for the game to fill, with the count of players at the top of the
-//! screen. There is no server yet, so nobody else ever comes: over
-//! [`QUEUE_FILL`] seconds the computer takes every seat still empty, one at a
-//! time, each of its players paying its way in like anybody else.
+//! Talk to them as to anyone in the town (`talk`), and they ask whether you
+//! want to play, for [`ENTRY`] coins ([`pitch`]): Play, and you pay and are
+//! taken to the lobby (`lobbymap.glb`) to wait for the game to fill, with the
+//! count of players at the top of the screen; or Later. Offline nobody else
+//! ever comes: over [`QUEUE_FILL`] seconds the computer takes every seat
+//! still empty, one at a time, each of its players paying its way in like
+//! anybody else.
 //!
 //! With all eight there, each builder goes to a plot of their own — a copy of
 //! `homemap.glb` each, [`Venue::Plot`] — is given a theme, and has
@@ -59,9 +59,9 @@ use crate::lobby::{self, Balance, Lobby, Member, SEATS, STARTING_BALANCE, Seat, 
 use crate::net::Online;
 use crate::sky::Water;
 use crate::tags::HidesNames;
+use crate::talk::Speaker;
 use crate::{
-    Collider, ColliderShape, LAND_TOP, OrbitCamera, PLAYER_HEIGHT, PLAYER_RADIUS, Player,
-    ThirdPersonCamera, WalkCycle,
+    Collider, ColliderShape, LAND_TOP, OrbitCamera, PLAYER_HEIGHT, PLAYER_RADIUS, Player, WalkCycle,
 };
 
 /// How long the theme stays across the screen when building begins.
@@ -83,11 +83,6 @@ const NPC_TOP: Color = Color::BLACK;
 /// The material of the top a body's model wears, which [`NPC_TOP`] is in
 /// place of.
 const TOP: &str = "body";
-/// How near the House Builder you have to be to talk to them, in metres.
-const TALK_RANGE: f32 = 4.5;
-/// How high over the House Builder's feet the bubble points from, in metres:
-/// a little over their head.
-const BUBBLE_LIFT: f32 = 2.05;
 
 /// What a house can be asked to be. The built-in font is plain ASCII, so these
 /// are too.
@@ -145,26 +140,11 @@ impl Theme {
     }
 }
 
-/// What the House Builder says, and how to answer: a phone taps the bubble,
-/// and a keyboard has Space.
-const SAY: &str = "Want to build a house?";
-const HINT: &str = if cfg!(any(target_os = "android", target_os = "ios")) {
-    "Tap here to play"
-} else {
-    "Press Space to play"
-};
-/// The game in three lines, broken where they read best: the dialog is wide
-/// enough for the longest.
-const RULES: &str = "Build and decorate your own\nhouse according to a theme.\nThe best house wins!";
+/// The game, as the House Builder tells it.
+const RULES: &str = "Build and decorate your own house according to a theme. The best house wins!";
 
 /// Sizes, as shares of the short side of the screen, like everything else
 /// over the world.
-const SAY_TEXT: f32 = 4.0;
-const HINT_TEXT: f32 = 3.0;
-const TAIL: f32 = 3.2;
-/// How far down the screen the bubble's top has to stay: below the balance
-/// and the button along the top.
-const BUBBLE_TOP: f32 = 18.0;
 const BOARD_TEXT: f32 = 7.0;
 const CAPTION: f32 = 4.2;
 /// Who lives there is written smaller than other themes, being longer: across
@@ -184,9 +164,6 @@ pub(crate) const BODY: f32 = 4.2;
 pub(crate) const SMALL: f32 = 3.6;
 pub(crate) const BUTTON_WIDTH: f32 = 36.0;
 pub(crate) const BUTTON_HEIGHT: f32 = 11.0;
-pub(crate) const BUTTON_TEXT: f32 = 4.8;
-const PRICE_ICON: f32 = 5.5;
-const PRICE_TEXT: f32 = 5.0;
 /// Dialogs are over everything else on the screen.
 pub(crate) const DIALOG_LAYER: i32 = 10;
 /// The results, down the right of the screen: wide enough for a name of
@@ -221,8 +198,6 @@ const AGAIN_PRICE_TEXT: f32 = 2.6;
 /// seconds.
 const SLIDE_SECS: f32 = 0.35;
 
-const BUBBLE: Color = Color::srgba(1.0, 1.0, 1.0, 0.96);
-const HINT_COLOUR: Color = Color::srgb(0.36, 0.50, 0.62);
 /// The dark over the world behind a dialog, and the dialog itself.
 pub(crate) const DIM: Color = Color::srgba(0.0, 0.0, 0.0, 0.45);
 const DIALOG: Color = Color::srgba(0.0, 0.0, 0.0, 0.85);
@@ -250,14 +225,10 @@ const NO_PRIZE: Color = Color::srgba(1.0, 1.0, 1.0, 0.45);
 
 /// Something asked of House Builder, by a tap, a click or a key.
 #[derive(Message, Clone, Copy, PartialEq, Eq, Debug)]
-enum Ask {
-    /// Talk to the House Builder, who asks whether you want to play.
-    Talk,
-    /// Pay, and join a game: from that question, or after one game for
-    /// another.
+pub(crate) enum Ask {
+    /// Pay, and join a game: Play, said to the House Builder (`talk`), or
+    /// after one game for another.
     Join,
-    /// No thank you: put the question away.
-    Cancel,
     /// End the wait early, for trying the game out.
     Skip,
     /// Give the house being visited this many stars.
@@ -278,31 +249,6 @@ struct HouseBuilder {
     at: Vec3,
     feet: Option<Vec3>,
 }
-
-/// Where the bubble over the House Builder points from, while you are near
-/// enough to talk to them.
-#[derive(Resource, Default)]
-struct Talk {
-    over: Option<Vec3>,
-}
-
-/// The speech bubble over the House Builder's head.
-#[derive(Component)]
-struct Bubble;
-
-/// Whether House Builder's dialog is up. The results at the end of a game are
-/// not a dialog ([`spawn_results`]): they go with the game.
-#[derive(Resource, Default, Clone, Copy, PartialEq, Eq, Debug)]
-enum Showing {
-    #[default]
-    Nothing,
-    /// Whether to play.
-    Offer,
-}
-
-/// The root of the dialog.
-#[derive(Component)]
-struct Dialog;
 
 /// The results down the right of the screen at the end of a game, sliding in
 /// from the edge for as long as this says they have been.
@@ -454,20 +400,17 @@ pub(crate) struct GameSystems;
 
 pub(crate) fn plugin(app: &mut App) {
     app.add_message::<Ask>()
-        .init_resource::<Talk>()
-        .init_resource::<Showing>()
         .init_resource::<Building>()
         .init_resource::<OnlinePlot>()
         .init_resource::<OfflineGame>()
         .add_observer(find_house_builder)
         .add_observer(ask)
-        .add_systems(Startup, (draw_star, spawn_bubble))
+        .add_systems(Startup, draw_star)
         .add_systems(
             Update,
             (
                 settle_house_builder,
                 (
-                    talk,
                     keys,
                     answer,
                     join_online,
@@ -480,7 +423,6 @@ pub(crate) fn plugin(app: &mut App) {
                     .in_set(GameSystems)
                     .before(crate::read_player_input)
                     .before(island::show_where_i_am),
-                place_bubble.after(crate::follow_camera),
                 (
                     show_board,
                     show_rating,
@@ -523,6 +465,7 @@ fn find_house_builder(
                 at: place.translation(),
                 feet: None,
             },
+            Speaker::HouseBuilder,
             WalkCycle::default(),
         ));
         crate::bind_limbs(npc, &children, &named, &mut commands);
@@ -584,6 +527,7 @@ fn dress_house_builder(
             at: place.translation(),
             feet: None,
         },
+        Speaker::HouseBuilder,
         WalkCycle::default(),
     ));
     crate::bind_limbs(npc, &children, &named, &mut commands);
@@ -622,35 +566,14 @@ fn settle_house_builder(
     }
 }
 
-/// Whether you are near enough to the House Builder to talk to them — in the
-/// town, with no dialog up — and on desktop, Space to do it. Space is taken
-/// before your jump can read it, so that it is not a jump as well.
-fn talk(
-    me: Query<(&Transform, &Venue), With<Player>>,
-    builders: Query<&HouseBuilder>,
-    showing: Res<Showing>,
-    up: Res<DialogUp>,
-    mut keyboard: ResMut<ButtonInput<KeyCode>>,
-    mut talk: ResMut<Talk>,
-    mut asks: MessageWriter<Ask>,
-) {
-    let over = me
-        .single()
-        .ok()
-        .filter(|&(_, &venue)| venue == Venue::Town && *showing == Showing::Nothing && !up.0)
-        .and_then(|(you, _)| {
-            builders
-                .iter()
-                .filter_map(|builder| builder.feet)
-                .find(|feet| feet.xz().distance(you.translation.xz()) <= TALK_RANGE)
-        })
-        .map(|feet| feet + Vec3::Y * BUBBLE_LIFT);
-    if talk.over != over {
-        talk.over = over;
+/// What the House Builder says when you talk to them (`talk`): what the game
+/// is, and, when you cannot pay for it, that you cannot.
+pub(crate) fn pitch(affordable: bool) -> String {
+    let mut pitch = format!("Want to play {NAME}? {RULES}");
+    if !affordable {
+        pitch.push_str(&format!(" You need {ENTRY} coins to play."));
     }
-    if over.is_some() && keyboard.clear_just_pressed(KeyCode::Space) {
-        asks.write(Ask::Talk);
-    }
+    pitch
 }
 
 // ---------------------------------------------------------------- answers
@@ -667,61 +590,49 @@ fn ask(click: On<Pointer<Click>>, buttons: Query<&AsksFor>, mut asks: MessageWri
     }
 }
 
-/// Keys, for desktop: Enter to say yes to a dialog and Escape to say no, 1 to
-/// 5 for the stars to give the house being visited, and Enter to play again
-/// from the results. Escape does not leave them: they are not a dialog, and
-/// there it frees the cursor for clicking their buttons, as it does anywhere
-/// else.
+/// Keys, for desktop: 1 to 5 for the stars to give the house being visited,
+/// and Enter to play again from the results. Escape does not leave them: they
+/// are not a dialog, and there it frees the cursor for clicking their
+/// buttons, as it does anywhere else. Talking to the House Builder has its
+/// keys in `talk`.
 fn keys(
     keyboard: Res<ButtonInput<KeyCode>>,
-    showing: Res<Showing>,
     up: Res<DialogUp>,
     game: Option<Res<Game>>,
     mut asks: MessageWriter<Ask>,
 ) {
-    let yes = keyboard.any_just_pressed([KeyCode::Enter, KeyCode::NumpadEnter]);
-    let no = keyboard.just_pressed(KeyCode::Escape);
-    match *showing {
-        Showing::Offer if yes => {
-            asks.write(Ask::Join);
-        }
-        Showing::Offer if no => {
-            asks.write(Ask::Cancel);
-        }
-        Showing::Nothing if yes && !up.0 && game.as_ref().is_some_and(|game| game.over()) => {
-            asks.write(Ask::Join);
-        }
-        Showing::Nothing if game.is_some_and(|game| game.rating()) => {
-            const STAR_KEYS: [[KeyCode; 2]; MOST_STARS as usize] = [
-                [KeyCode::Digit1, KeyCode::Numpad1],
-                [KeyCode::Digit2, KeyCode::Numpad2],
-                [KeyCode::Digit3, KeyCode::Numpad3],
-                [KeyCode::Digit4, KeyCode::Numpad4],
-                [KeyCode::Digit5, KeyCode::Numpad5],
-            ];
-            for (stars, keys) in (1..).zip(STAR_KEYS) {
-                if keyboard.any_just_pressed(keys) {
-                    asks.write(Ask::Rate(stars));
-                }
+    let Some(game) = game else {
+        return;
+    };
+    if game.over() && !up.0 && keyboard.any_just_pressed([KeyCode::Enter, KeyCode::NumpadEnter]) {
+        asks.write(Ask::Join);
+    }
+    if game.rating() {
+        const STAR_KEYS: [[KeyCode; 2]; MOST_STARS as usize] = [
+            [KeyCode::Digit1, KeyCode::Numpad1],
+            [KeyCode::Digit2, KeyCode::Numpad2],
+            [KeyCode::Digit3, KeyCode::Numpad3],
+            [KeyCode::Digit4, KeyCode::Numpad4],
+            [KeyCode::Digit5, KeyCode::Numpad5],
+        ];
+        for (stars, keys) in (1..).zip(STAR_KEYS) {
+            if keyboard.any_just_pressed(keys) {
+                asks.write(Ask::Rate(stars));
             }
         }
-        _ => {}
     }
 }
 
-/// Puts the dialog up and takes it down, and takes you into a game and out of
-/// it again: from the offer, or from the results of the last for another.
-/// Online it is the server that takes the fee and seats you
-/// ([`join_online`]), and sends you back to the town after.
+/// Takes you into a game and out of it again: from the House Builder's
+/// Play (`talk`), or from the results of the last for another. Online it is
+/// the server that takes the fee and seats you ([`join_online`]), and sends
+/// you back to the town after.
 #[allow(clippy::too_many_arguments)]
 fn answer(
     mut asks: MessageReader<Ask>,
     game: Option<Res<Game>>,
     online: Res<Online>,
     mut requests: MessageWriter<roundtown_net::Ask>,
-    mut showing: ResMut<Showing>,
-    mut up: ResMut<DialogUp>,
-    dialogs: Query<Entity, With<Dialog>>,
     in_game: Query<Entity, With<InGame>>,
     mut me: Query<(Entity, &Seat, &mut Balance), With<Player>>,
     mut bodies: Whereabouts,
@@ -736,26 +647,16 @@ fn answer(
         return;
     };
     // A game's results are up, to play again from or leave: until either is
-    // done.
+    // done. Or there is no game, until one is joined.
     let mut over = game.as_ref().is_some_and(|game| game.over());
+    let mut free = game.is_none();
     for &ask in asks.read() {
         match ask {
-            Ask::Talk if *showing == Showing::Nothing && game.is_none() => {
-                offer(&mut commands, &assets, balance.0 >= ENTRY);
-                show(&mut showing, &mut up, Showing::Offer);
-            }
-            Ask::Cancel if *showing == Showing::Offer => {
-                take_down(&dialogs, &mut commands);
-                show(&mut showing, &mut up, Showing::Nothing);
-            }
-            Ask::Join if (*showing == Showing::Offer || over) && balance.0 >= ENTRY => {
-                if *showing == Showing::Offer {
-                    take_down(&dialogs, &mut commands);
-                    show(&mut showing, &mut up, Showing::Nothing);
-                }
+            Ask::Join if (free || over) && balance.0 >= ENTRY => {
                 // The last game, if this is the next.
                 clear_away(&in_game, &mut commands);
                 over = false;
+                free = false;
                 if online.is() {
                     commands.remove_resource::<Game>();
                     requests.write(roundtown_net::Ask::Play);
@@ -978,18 +879,6 @@ fn back_to_town(
     clear_away(in_game, commands);
     commands.remove_resource::<Game>();
     lobby::send(bodies, orbit, you, Venue::Town, seat);
-}
-
-/// Says whether the dialog is up.
-fn show(showing: &mut ResMut<Showing>, up: &mut ResMut<DialogUp>, what: Showing) {
-    showing.set_if_neq(what);
-    up.set_if_neq(DialogUp(what != Showing::Nothing));
-}
-
-fn take_down(dialogs: &Query<Entity, With<Dialog>>, commands: &mut Commands) {
-    for dialog in dialogs {
-        commands.entity(dialog).despawn();
-    }
 }
 
 /// Everything a game put in the world or on the screen. Quietly, as the theme
@@ -1243,92 +1132,6 @@ fn tally(game: &mut Game, plot: usize) {
         };
         game.stars[plot] += u32::from(stars);
     }
-}
-
-// ------------------------------------------------------------- the bubble
-
-/// The speech bubble, put away until you are near the House Builder. It is
-/// laid out top left and moved over their head without being laid out again.
-fn spawn_bubble(mut commands: Commands) {
-    commands.spawn((
-        Bubble,
-        AsksFor(Ask::Talk),
-        TakesPress,
-        Button,
-        Node {
-            position_type: PositionType::Absolute,
-            left: Val::ZERO,
-            top: Val::ZERO,
-            flex_direction: FlexDirection::Column,
-            align_items: AlignItems::Center,
-            row_gap: Val::VMin(0.4),
-            padding: UiRect::axes(Val::VMin(3.2), Val::VMin(1.8)),
-            border_radius: BorderRadius::all(Val::VMin(3.0)),
-            ..default()
-        },
-        BackgroundColor(BUBBLE),
-        UiTransform::default(),
-        Visibility::Hidden,
-        children![
-            // The point under the bubble, at the House Builder: a square on
-            // its corner, the top half of it lost in the bubble.
-            (
-                Node {
-                    position_type: PositionType::Absolute,
-                    left: Val::Percent(50.0),
-                    bottom: Val::VMin(-TAIL * 0.5),
-                    width: Val::VMin(TAIL),
-                    height: Val::VMin(TAIL),
-                    ..default()
-                },
-                BackgroundColor(BUBBLE),
-                UiTransform {
-                    translation: Val2::percent(-50.0, 0.0),
-                    rotation: Rot2::degrees(45.0),
-                    ..default()
-                },
-                Pickable::IGNORE,
-            ),
-            label(SAY, SAY_TEXT, DOOR),
-            label(HINT, HINT_TEXT, HINT_COLOUR),
-        ],
-    ));
-}
-
-/// Keeps the bubble over the House Builder's head wherever the camera goes,
-/// for as long as you can talk to them.
-fn place_bubble(
-    talk: Res<Talk>,
-    windows: Query<&Window>,
-    cameras: Query<(&Camera, &Transform), With<ThirdPersonCamera>>,
-    mut bubbles: Query<(&mut Visibility, &mut UiTransform, &ComputedNode), With<Bubble>>,
-) {
-    let Ok((mut shown, mut place, node)) = bubbles.single_mut() else {
-        return;
-    };
-    let on_screen = talk.over.and_then(|over| {
-        let (camera, eye) = cameras.single().ok()?;
-        // The camera has no parent, so its transform is its global one, and
-        // `follow_camera` has just set it for this frame.
-        camera
-            .world_to_viewport(&GlobalTransform::from(*eye), over)
-            .ok()
-    });
-    let (Some(point), Ok(window)) = (on_screen, windows.single()) else {
-        shown.set_if_neq(Visibility::Hidden);
-        return;
-    };
-    // With its point there: centred over it, and standing on it. But never
-    // off the screen, nor up among the balance and the button, so that it can
-    // always be tapped: with the camera pulled in close, the House Builder's
-    // head can be above the top of the screen.
-    let size = node.size() * node.inverse_scale_factor();
-    let vmin = window.width().min(window.height()) / 100.0;
-    let lowest = Vec2::new(hud::EDGE, BUBBLE_TOP) * vmin;
-    let highest = (window.size() - size - hud::EDGE * vmin).max(lowest);
-    let corner = Vec2::new(point.x - size.x * 0.5, point.y - size.y).clamp(lowest, highest);
-    place.set_if_neq(UiTransform::from_translation(Val2::px(corner.x, corner.y)));
-    shown.set_if_neq(Visibility::Inherited);
 }
 
 // ------------------------------------------------------ the board, the stars
@@ -1924,33 +1727,6 @@ fn vmin(windows: &Query<&Window>) -> f32 {
 
 // ---------------------------------------------------------------- dialogs
 
-/// Whether to play: what the game is, what it costs, and Cancel or Play.
-fn offer(commands: &mut Commands, assets: &AssetServer, affordable: bool) {
-    // A tap on the dark round it is a no.
-    dialog(commands, Ask::Cancel).with_children(|panel| {
-        panel.spawn(hud::words(NAME, TITLE, GOLD));
-        panel.spawn(label(RULES, BODY, Color::WHITE));
-        panel.spawn(price(assets, "to play"));
-        if !affordable {
-            panel.spawn(label(
-                format!("You need {ENTRY} coins to play."),
-                SMALL,
-                WARN,
-            ));
-        }
-        panel.spawn(choices()).with_children(|choices| {
-            choices.spawn(button("Cancel", Ask::Cancel, true));
-            choices.spawn(button("Play", Ask::Join, affordable));
-        });
-    });
-}
-
-/// House Builder's dialog: the screen dimmed behind a panel, over everything
-/// else ([`dimmed`]). A tap on the dark asks `on_dark`.
-fn dialog<'a>(commands: &'a mut Commands, on_dark: Ask) -> EntityCommands<'a> {
-    dimmed(commands, (Dialog, AsksFor(on_dark)))
-}
-
 /// The screen dimmed behind a panel, over everything else, and taking every
 /// press there is while it is up: every dialog in the game looks like this.
 /// The dark carries `dark`, which says whose dialog it is. Returns the panel,
@@ -1987,31 +1763,6 @@ pub(crate) fn dimmed<'a>(commands: &'a mut Commands, dark: impl Bundle) -> Entit
     ))
 }
 
-/// The coin, the entry fee, and what it is for.
-fn price(assets: &AssetServer, what: &str) -> impl Bundle {
-    (
-        Node {
-            align_items: AlignItems::Center,
-            column_gap: Val::VMin(1.2),
-            ..default()
-        },
-        Pickable::IGNORE,
-        children![
-            (
-                ImageNode::new(assets.load(hud::COIN_ICON)),
-                Node {
-                    width: Val::VMin(PRICE_ICON),
-                    height: Val::VMin(PRICE_ICON),
-                    ..default()
-                },
-                Pickable::IGNORE,
-            ),
-            hud::words(hud::money(ENTRY), PRICE_TEXT, GOLD),
-            label(what, BODY, Color::WHITE),
-        ],
-    )
-}
-
 /// The row the buttons at the foot of a dialog stand in.
 pub(crate) fn choices() -> impl Bundle {
     (
@@ -2024,54 +1775,8 @@ pub(crate) fn choices() -> impl Bundle {
     )
 }
 
-/// One of a dialog's two buttons: the quiet one that backs out, or, when
-/// `able`, the gold one that goes ahead — which is greyed out, and does
-/// nothing, while it cannot.
-fn button(text: &str, asks: Ask, able: bool) -> impl Bundle {
-    let ahead = !matches!(asks, Ask::Cancel | Ask::Leave);
-    let (fill, ink) = match (ahead, able) {
-        (false, _) => (
-            Fill {
-                idle: QUIET,
-                lit: QUIET_LIT,
-            },
-            Color::WHITE,
-        ),
-        (true, true) => (
-            Fill {
-                idle: GOLD,
-                lit: GOLD_LIT,
-            },
-            DOOR,
-        ),
-        (true, false) => (
-            Fill {
-                idle: OFF,
-                lit: OFF,
-            },
-            OFF_TEXT,
-        ),
-    };
-    (
-        AsksFor(asks),
-        TakesPress,
-        Button,
-        Node {
-            width: Val::VMin(BUTTON_WIDTH),
-            height: Val::VMin(BUTTON_HEIGHT),
-            justify_content: JustifyContent::Center,
-            align_items: AlignItems::Center,
-            border_radius: BorderRadius::all(Val::VMin(BUTTON_HEIGHT * 0.5)),
-            ..default()
-        },
-        BackgroundColor(fill.idle),
-        fill,
-        children![label(text, BUTTON_TEXT, ink)],
-    )
-}
-
-/// Plain words, for a button, the bubble or a dialog, which have a colour of
-/// their own behind them and need no shadow to read.
+/// Plain words, for a button or a dialog, which have a colour of their own
+/// behind them and need no shadow to read.
 pub(crate) fn label(text: impl Into<String>, size_vmin: f32, colour: Color) -> impl Bundle {
     (
         Text::new(text),

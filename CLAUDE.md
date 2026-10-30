@@ -225,14 +225,24 @@ walk, jump and look round from the first frame; on desktop the cursor is taken
 for looking round at startup. The one game there is, House Builder, is played
 from the town (below).
 
-- **The button top right goes home and back** (`src/hud.rs`). In the town it
-  shows a house and takes you to your home (`testhomemap.glb`); at home it
-  shows a town hall and takes you back. Either way you land where your seat arrives
-  (`island::arrival`), facing in, with the camera behind you. Only you go home:
-  the AIs stay in the town. The town's name shows again every time you arrive
-  back in the town. The button is put away for as long as you are in a game of
-  House Builder, which has its own way back.
-- **On desktop, press `Escape` to free the cursor before clicking the button**,
+- **There is no button top right** (since 2026-10-31, Hajun: "remove the top
+  right home button"). Until then one took you home (`testhomemap.glb`) and
+  back. Nothing takes you home now, though it is still loaded at startup
+  (`island::LOADED`) and the server still answers `Ask::Travel`. The town's
+  name shows again every time you arrive back in the town, from a game of
+  House Builder.
+- **The stick and the jump button are a see-through grey, with no rim**
+  (Hajun, 2026-10-31): the stick's knob and the jump button's arrow a
+  see-through white a little greyed, the two alike (`hud::TOUCH_DISC`,
+  `TOUCH_MARK`; held, the jump button is a little more solid). The arrow is
+  one filled shape with its corners rounded off, drawn in code
+  (`hud::jump_arrow`) as the rating star is: nodes overlapping would show
+  where they do through the see-through white. Until then the stick was white
+  with a white rim, and the jump button yellow, its arrow three strokes. Both
+  are put away while you talk to someone (below). Seen in the desktop build
+  through a copy of `setup_hud`, which compiles for phones alone; not yet on
+  a phone.
+- **On desktop, press `Escape` to free the cursor before clicking a button**,
   the same as for editing. On a phone you just tap it.
 - **A press on a button is the button's alone.** Every button over the world
   is a `bevy_ui` node pressed through `bevy_picking`'s click, which a mouse
@@ -1044,8 +1054,38 @@ you.
   across every doorway to keep it in a house (`build::screen`). All of that
   is gone. Before that, a version slid it along walls and climbed it up them,
   and Hajun found it glitchy (2026-09-27): every bit of a swipe has to turn
-  the camera by as much, wherever you are. **Keep both**: nothing moves it off
-  where you turned and zoomed it.
+  the camera by as much, wherever you are. **Keep both**: nothing in the
+  world moves it off where you turned and zoomed it. What turns it for you is
+  only what Hajun asked for on 2026-10-31: the stick's recentering and a
+  double tap (next), and talking to someone ("You can talk to anyone in the
+  town"); none of them while a finger is on the camera.
+- **On a phone, walking with the stick brings it round behind you, and a
+  double tap swings it there** (`assist_camera`; Hajun, 2026-10-31: "Soft
+  auto-recenter: when the stick is pushed and the player hasn't touched the
+  camera for ~1.5 s, the camera eases back behind the movement direction.
+  Double-tap on empty screen = snap camera behind the character"). Once no
+  finger has been on the camera, turning or zooming it, for 1.5 s
+  (`RECENTER_AFTER`), walking with the stick eases it round behind the way
+  you walk: eased in over 0.6 s, then at the angle left a second at full
+  speed (`RECENTER_RATE`), more slowly walking slowly, never faster than 46° a
+  second (`RECENTER_MOST`). The way you walk is how you moved, not how the
+  stick points: walking into a wall, going nowhere, it stays; and what a bus
+  carries you is not walking. Walking toward the camera it does not turn: as
+  readily as ever up to 100° off straight away from it, and not at all from
+  150°. With the stick held to one side you walk round a circle about 17 m
+  across as it comes round, which pushing the stick up steers out of. In
+  your eyes it never turns. Two taps on nothing (not the stick, the jump
+  button, a button or anything the editor takes), the second down within 0.3
+  s of the first coming up and within 8% of the short side of it
+  (`DoubleTap`), swing it round behind the way you face, tipped as the app
+  opens it (`CAMERA_PITCH`), or looking straight ahead from your eyes, most of
+  the way in a fifth of a second (`snap_behind`). A finger on the camera
+  stops either at once. On desktop neither: the keys walk you, and the mouse
+  is the camera's. All the numbers but the 1.5 s are mine. Seen in the
+  desktop build with the stick written in by a script, walking one way across
+  the town with the camera off to the side: it stood still for 1.5 s, then
+  came round behind in about 3 s. The double tap is unit-tested only; neither
+  has been tried on a phone.
 - **In a house, whatever hides any of you from it fades to a quarter of itself**
   (`SEEN`, 0.25, as much as Roblox's Invisicam leaves; one of the town's
   buses, until 2026-10-25, to three quarters, `BUS_SEEN`, above) over 0.15 s, and
@@ -1182,8 +1222,12 @@ you.
   of a house's walls, its roof and a bed are in the way from inside the house
   and from outside it, that nothing is in the way but in a house of House
   Builder that is down, that a wall hiding only your side is in the way and
-  one you stand against is not from your side of it, and that every point
-  tried on you is inside you, over the step you are on, and turns with you.
+  one you stand against is not from your side of it, that every point
+  tried on you is inside you, over the step you are on, and turns with you,
+  that walking with the stick brings it round behind where you walk only once
+  it has been left alone, and never walking at it, that a double tap swings
+  it behind you, and that talking to someone it looks at their face from near
+  you and goes back out after.
 - **A jump stops the head just under a ceiling** (`headroom`, in
   `move_bodies`). Before 2026-09-28 the head went into it at the top of the
   jump, the body's collision read the ceiling as a wall there, and anyone
@@ -1269,6 +1313,53 @@ of its own (below, "Playing online").
 - There are four looks and eight seats: you are always blue, and the AIs take
   turns at red, yellow and purple.
 
+## You can talk to anyone in the town
+
+Since 2026-10-31 (Hajun: "add a proximity prompt chat bubble ... add it for
+every ai character in the map for now"), in `src/talk.rs`: the town's AIs
+(`talk::Speaker::Townsfolk`, this device's own online) and the House Builder
+(`Speaker::HouseBuilder`). People online are not spoken to.
+
+- **One bubble at a time, over the nearest in front of you** (`talk::choose`;
+  Hajun: "at most one prompt active at a time (nearest in front of you). No
+  choosing between prompts, so no precision needed"): a small white circle
+  with a black outline, its tail down and to the left, three black dots in it
+  (`bubble_image`, drawn in code as the rating star is), its point over the
+  head of the nearest of them within 4.5 m, within 70° of the way you face,
+  and in sight of your eyes, no wall between. Once it is over someone it stays
+  out to 5 m and 80° round, unless someone else is half a metre nearer, so
+  that it does not flicker between two. Being the only one, it takes a tap 3
+  vmin wide of it. Only in the town, and never while anything else is up or
+  the camera is on its way back from a face. Online it sits over a name.
+- **Tap it, or on desktop press E, and you talk to them** (Hajun: "zoom in
+  first person view to show that ai character's front face (ai character
+  pause until dismiss)"). They stop where they stand, the two of you turn to
+  face each other, and the camera comes in over 0.45 s to your eyes, turned to
+  their face (`CloseUp`, `close_up_view` in `src/lib.rs`), from no further than
+  1.3 m from them: further off, it comes forward between you, at the height of
+  your eyes. On a phone the stick and the jump button are put away. What they
+  say is along the bottom of the screen, black on white inside a black
+  outline, with their name on a black tab over it; what you can say back is
+  over it on the right, white pills outlined in black, as the bubble is
+  ("response/action dialog on right side of screen above chat dialog"). A tap
+  anywhere, or on a reply, and you are done (a press is the conversation's
+  wherever it lands): the camera goes back out over 0.35 s to exactly where you
+  had it, they carry on, and the House Builder turns back to face out. On
+  desktop the cursor is let go meanwhile, Enter says the first reply, and
+  Escape or E says goodbye.
+- **An AI says one of `SMALL_TALK`**, at random, never the same twice running,
+  and you answer in a word, which is goodbye. The lines are mine, about the
+  town (its fountain, buses, lamps, sunset, music), in plain ASCII for the
+  built-in font.
+- **The House Builder asks whether you want to play** (`builder::pitch`):
+  Play, with its 100 coins beside it, or Later. Play goes to House Builder as
+  the old dialog's Play did (`builder::Ask::Join`), and the camera cuts back
+  to you rather than easing out from a face left in the town.
+- Seen in the desktop build on 2026-10-31, scripted, with real touches through
+  picking: the bubble over an AI and over the House Builder, both
+  conversations, a tap on the world ending one, Later, and Play paying 100 and
+  going to the lobby. Not yet on a phone, nor online.
+
 ## House Builder
 
 The one game, in `src/builder.rs`. On screen it is called "Build Your Own
@@ -1287,11 +1378,15 @@ town's model, the node called `House Builder NPC` in `circlemap1.glb`, with
 node of that name in a town's model still stands where it is put
 (`builder::find_house_builder`).
 
-- **Walk within 4.5 m and a speech bubble comes up over their head.** Tap it,
-  or on desktop press Space (which then does not jump), and a dialog asks
-  whether to play for 100 coins. Play pays, and takes you to the lobby
-  (`lobbymap.glb`); Cancel, or a tap on the dark round the dialog, does not.
-  Without 100 coins, Play is greyed out.
+- **Talk to them as to anyone in the town** (above, "You can talk to anyone
+  in the town"), and they ask whether you want to play their game for 100
+  coins (`builder::pitch`): Play pays, and takes you to the lobby
+  (`lobbymap.glb`); Later, or a tap anywhere else, does not. Without 100
+  coins, Play is greyed out and does nothing, and they say you need them.
+  Since 2026-10-31 (Hajun: "for the build minigame thing, use this same
+  style ... play and later"); until then a speech bubble over their head,
+  "Want to build a house?", opened a dialog with Cancel and Play, and on
+  desktop Space talked to them.
 - **The lobby counts players top centre** ("1/8 Players"). There is no server
   and no matchmaking: the computer takes the empty seats one at a time, one
   every 5/7 s, so the room is full 5 s after you arrive (`QUEUE_FILL`), with
@@ -1352,8 +1447,8 @@ node of that name in a town's model still stands where it is put
 
 ## Building your house
 
-While the time to build runs, a hammer button sits top right, below where the
-home button is in the town (`src/shop.rs`). It opens the shop: a window under
+While the time to build runs, a hammer button sits top right, below where a
+button that went home sat in the town until 2026-10-31 (`src/shop.rs`). It opens the shop: a window under
 the time, 65% of the screen wide, with a tab each for Foundation, Doors &
 Windows, Furniture and Decorations, and a grid three across and two down that
 scrolls (a finger drags it, a mouse wheel turns it). A tab that sells nothing
