@@ -3549,5 +3549,16 @@ mod tests {
                 }
             }
         }
+        // Nor the music.
+        for sound in [crate::sound::MUSIC] {
+            for name in sound.split('/') {
+                if let Some(pattern) = patterns.iter().find(|pattern| matches(pattern, name)) {
+                    panic!(
+                        "{sound} is played in the town, but `{pattern}` in \
+                         mobile/android/app/assets-left-out.txt leaves it out of the APK"
+                    );
+                }
+            }
+        }
     }
 }

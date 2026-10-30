@@ -10,7 +10,6 @@
 //! both reach [`main`] through `src/main.rs`; on iOS that binary *is* the app
 //! executable, which `mobile/ios/build_rust.sh` drops into the .app bundle.
 
-use bevy::audio::AudioPlugin;
 use bevy::gilrs::GilrsPlugin;
 use bevy::gltf::GltfPlugin;
 use bevy::gltf::convert_coordinates::GltfConvertCoordinates;
@@ -43,6 +42,7 @@ mod roads;
 mod see_through;
 mod shop;
 mod sky;
+mod sound;
 mod tags;
 use island::{Island, Islands, Venue};
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
@@ -422,11 +422,9 @@ pub fn main() {
                 },
                 ..default()
             })
-            // The town makes no sound and reads no gamepad. Left in, the one
-            // keeps an audio stream open playing silence for as long as the
-            // app is, and the other wakes a thread every 8 ms on Windows to
-            // look for controllers. Put them back when there is a use for them.
-            .disable::<AudioPlugin>()
+            // The town reads no gamepad. Left in, this wakes a thread every
+            // 8 ms on Windows to look for controllers. Put it back when there
+            // is a use for it.
             .disable::<GilrsPlugin>()
             .set(LogPlugin {
                 // An iPhone keeps its log where only a Mac can read it, so it
@@ -475,6 +473,8 @@ pub fn main() {
     // Standing in a house in House Builder, whatever stands between the
     // camera and you, see-through, and out of a tap's reach.
     see_through::plugin(&mut app);
+    // The music.
+    sound::plugin(&mut app);
 
     #[cfg(any(target_os = "android", target_os = "ios"))]
     app.add_systems(Startup, setup_hud).add_systems(

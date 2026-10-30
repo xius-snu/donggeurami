@@ -30,6 +30,10 @@ housesizereference.glb
 car.glb
 car2.glb
 
+# The buses' engine, heard for an evening (2026-10-30) until Hajun had it
+# taken out ("remove engine sound just keep music").
+bus_engine_loop.wav
+
 # Everything blender/make_build_items.py made, in assets/build/: out of the
 # shop since 2026-10-03, which sells only Hajun's own pieces, in mybuilds/.
 <dir>build

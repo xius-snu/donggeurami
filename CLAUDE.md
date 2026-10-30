@@ -157,10 +157,11 @@ second, 168% of a CPU core and 45 W on the GPU, and the machine ran hot
   executor arranges. On one thread it ran on the render thread and panicked
   on the first frame ("can only access UIView on the main thread"), and iOS
   1.0.1 to 1.0.3 opened on a black screen and stayed there.
-- **The audio and gamepad plugins are off** (`src/lib.rs`). Nothing uses them,
-  and left in, one kept an audio stream open playing silence and the other
-  polled for controllers every 8 ms. Turn them back on when there is a sound
-  to play or a controller to read.
+- **The gamepad plugin is off** (`src/lib.rs`). Nothing uses it, and left
+  in, it polled for controllers every 8 ms. Turn it back on when there is a
+  controller to read. Audio was off as well, keeping a stream open playing
+  silence, until there was something to hear (2026-10-30: "The town has
+  music", below).
 - **Anything that runs every frame writes only what has changed**
   (`set_if_neq`, or compare first). Writing a `Transform` with the value it
   already had still marks it changed, and for a player that means placing
@@ -572,6 +573,29 @@ for 4 on 2026-10-10).
   two parts are, while it is up (`spout`). See-through things are drawn
   furthest first by the middle of their bounds, which is why foam floats 6 mm
   over its pool: so that it comes after it.
+
+## The town has music
+
+Since 2026-10-30 (Hajun: "add the background music loop Pelican Breeze in
+the sounds folder"), in `src/sound.rs`, from `assets/sounds/`. Bevy's `mp3`
+feature decodes it (`Cargo.toml`); it decodes only Ogg Vorbis by default.
+
+- **The music plays everywhere, and again from the start whenever it
+  ends.** It is played once and started over (`play_again`), not looped:
+  Bevy loops a sound by keeping every sample of it as it plays, 56 MB for
+  this one's 158 s.
+- **It is paused while the app is in the background** (`AppLifecycle`), as
+  a phone would play it on otherwise.
+- At -30 dBFS on average (`MUSIC_VOLUME`, 0.25): at first -24, my guess,
+  and Hajun found it too loud. `cargo test` decodes it, as the game does,
+  and fails if the APK would leave it out.
+- **The buses had an engine for an evening**, the same day (Hajun: "add
+  bus_engine_loop sound effect on the bus"), heard from the camera (a
+  `SpatialListener` on it), from the side of you each bus was on, louder
+  the nearer, and paused anywhere but the town, where every island stands
+  at the origin. Hajun found it too quiet, then had it taken out: "remove
+  engine sound just keep music". `assets/sounds/bus_engine_loop.wav` stays,
+  left out of the APK; Bevy's `wav` feature is still on, decoding nothing.
 
 ## The town's buses
 

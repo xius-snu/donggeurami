@@ -31,8 +31,10 @@ path = "src/main.rs"
 
 [dependencies]
 # `android-game-activity` is required by Bevy's Android GameActivity path.
-# It is a no-op on Windows/iOS.
-bevy = { version = "0.19.1", features = ["android-game-activity"] }
+# It is a no-op on Windows/iOS. `mp3` decodes the music (`sound`): Bevy
+# decodes only Ogg Vorbis by default. `wav` decoded the buses' engine, taken
+# out the evening it came in (2026-10-30); it plays nothing now.
+bevy = { version = "0.19.1", features = ["android-game-activity", "mp3", "wav"] }
 
 # The town save. JSON rather than RON so the one document a player's map lives
 # in can go straight into a server column later without a second encoder. Both
