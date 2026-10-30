@@ -64,10 +64,10 @@ tested on the actual phone, and what not to try again. The short version:
   lamp to light a larger area, "maybe 2~3x": the lit ground round each lamp
   is about three times what it was, and the ring round the pond is lit all
   the way round). The shop's Street Lamp,
-  and any in a map: Hajun's new town has 12 since its second version
-  (2026-10-30), round the ring round its pond, 72 m out, all one object
-  (`streetlam`), which is no matter, a lamp being its bulbs wherever they
-  are (`lamps_of`); the old town's 23 went with it. By day there are no
+  and any in a map: Hajun's new town has 20 since its third version
+  (2026-10-30), each an object of its own (12 in one object, `streetlam`,
+  in its second version, which is no matter, a lamp being its bulbs
+  wherever they are, `lamps_of`); the old town's 23 went with it. By day there are no
   lights at all; at night at most
   24 at once, the nearest the camera on your island. No shadows. On the
   laptop the night cost about a third more GPU than the day (8% to 11%)
@@ -452,6 +452,24 @@ re-export, and the collision follows.
   backup's export with Apply Modifiers and Visible Objects ticked, node for
   node, but for that material: 49,584 triangles (33,696 before), 20,160 of
   them the lamps. The fixes above came over in the backup.
+- **The town's third version, that evening**, made the same way from the
+  backup (Hajun saved at 18:14), and the same check passes: 20 street lamps,
+  each an object of its own (`streetlam`, `.001` to `.019`): a pair either
+  side of each of the four gaps in the ring's strip of grass and of each of
+  its corners, 72 m out, and four 43 m out, inside the ring, in line with
+  the straight roads; 4 trees
+  (14); the strip of grass down the middle of the ring (`Circle`) 0.25 m
+  high rather than 0.5, under a bus's underside, and the planters 0.5 rather
+  than 0.75; and the road under the town (`Road`) and round the roundabouts'
+  islands (`Circle.007`) made slabs 2 m deep by a Solidify, the sides of the
+  town's edge going down into the sea. 58,736 triangles, 33,600 of them the
+  lamps. Their top and bottom are cut into triangles each its own way, which
+  found a flaw in how a vertical line was tried against a triangle: its
+  slack was a share of the triangle, and half a millimetre outside the
+  road's edge a line met its bottom and missed its top, and was taken for
+  inside it (a bus test failed there). The slack is a distance since
+  (`island::EDGE`, 0.1 mm). Edge lines `Plane.005` still have no material
+  in the backup.
 - **What the old town taught, for any town**: a part with no material loads
   near black; keep a lamp an object of its own (the old town's 23 came joined
   three to an object, and were split by script, while whatever hid you faded:
@@ -786,8 +804,9 @@ is their model's, and their way round is the town's roads.
   all of the bus 0.25 m inside the road's edge (`KERB`); failing that, the
   first that keeps its wheels so, or failing that on the road, its body
   swinging out over nothing higher than its underside (`UNDERSIDE`, 0.4 m:
-  over a kerb or paving, not the strip of grass down the middle of the ring,
-  a wall or a lamp); and failing even that, the one that takes the least of
+  over a kerb or paving, and since the town's third version the strip of
+  grass down the middle of the ring, 0.25 m high, but not a wall or a
+  lamp); and failing even that, the one that takes the least of
   its wheels off it. **Where the first bends tighter than 10.4 m
   (`RELAXED`), the gentlest that does as well: at a tight corner the bus
   swings wide.** **Never a turn tighter than 8.5 m round (`TIGHTEST`, 1.3

@@ -64,9 +64,15 @@ const BUCKET: f32 = 2.0;
 /// How finely a body is tested against the island, in metres. Anything
 /// thinner can slip between two samples; the fences, at 0.5 m, cannot.
 pub(crate) const LATTICE: f32 = 0.25;
-/// Slack in the point-in-triangle test, as a share of the triangle, so that a
-/// line down the seam between two triangles meets both rather than neither.
-const EDGE: f32 = 1e-5;
+/// Slack in the point-in-triangle test, in metres out from each edge, so that
+/// a line down the seam between two triangles meets both rather than neither.
+/// The same distance for every triangle, so that two sharing an edge agree on
+/// which side of it a line is. Until 2026-10-30 it was a share of the
+/// triangle (1e-5), and the road under the town, made a slab by a Solidify,
+/// its top and bottom cut into triangles each its own way: a line half a
+/// millimetre outside its edge met a broad triangle of its bottom and missed
+/// a sliver of its top, and was taken for being inside the road.
+const EDGE: f32 = 1e-4;
 /// Two crossings this close together and facing the same way are one surface,
 /// met twice on the seam between two of its triangles.
 const SEAM: f32 = 1e-3;
@@ -921,6 +927,8 @@ struct Tri {
     /// One over twice the signed area of its shadow on the ground, which comes
     /// out negative exactly when the triangle faces up.
     inv: f32,
+    /// [`EDGE`] as a share of it, across `ac`, `ab` and the third edge.
+    slack: Vec3,
     /// Faces up, and gently enough to stand on.
     floor: bool,
     /// Which part of the island it belongs to (`Island::heights`).
@@ -937,11 +945,14 @@ impl Tri {
         if normal.y.abs() <= normal.length() * 1e-3 {
             return None;
         }
+        let area = ab.xz().perp_dot(ac.xz());
+        let share = |edge: Vec3| EDGE * edge.xz().length() / area.abs();
         Some(Self {
             a,
             ab,
             ac,
-            inv: 1.0 / ab.xz().perp_dot(ac.xz()),
+            inv: 1.0 / area,
+            slack: Vec3::new(share(ac), share(ab), share(ac - ab)),
             floor: normal.y >= normal.length() * STEEPEST_FLOOR,
             part,
         })
@@ -957,7 +968,7 @@ impl Tri {
         let p = at - self.a.xz();
         let u = p.perp_dot(self.ac.xz()) * self.inv;
         let v = self.ab.xz().perp_dot(p) * self.inv;
-        (u >= -EDGE && v >= -EDGE && u + v <= 1.0 + EDGE)
+        (u >= -self.slack.x && v >= -self.slack.y && u + v <= 1.0 + self.slack.z)
             .then(|| self.a.y + u * self.ab.y + v * self.ac.y)
     }
 
