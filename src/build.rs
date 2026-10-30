@@ -68,6 +68,8 @@ use crate::{EYE_HEIGHT, PLAYER_RADIUS, Player, ThirdPersonCamera, WATER_Y};
 
 mod town;
 
+pub(crate) use town::TownHouse;
+
 /// Everything the shop sells, in the order it shows them: only what Hajun
 /// has modelled, in `assets/mybuilds/` (their call, 2026-10-03). The
 /// script's pieces in `assets/build/` are no longer sold, nor packed into the
@@ -2183,9 +2185,9 @@ fn opens(at: Vec3, middle: Vec3, inward: Vec3, high: f32, hold: f32) -> bool {
 // ---------------------------------------------------------------- the walls
 
 /// Cuts the holes the doors and windows in each wall need, whenever they
-/// change.
+/// change: a house's built in House Builder, not one of the town's, cut once.
 fn carve_walls(
-    mut walls: Query<(Entity, &mut Wall)>,
+    mut walls: Query<(Entity, &mut Wall), Without<town::TownWall>>,
     openings: Query<(&OnWall, &Span, &Piece)>,
     mut meshes: ResMut<Assets<Mesh>>,
 ) {
@@ -2364,6 +2366,13 @@ fn reshape_plot(
         };
         let (_, pieces) = &mut plots[at];
         pieces.push(Vec::new());
+        // Each wall of a house, made again round its holes, a list of its
+        // own: closed, it is solid whatever of the house meets it. The
+        // Square House's front gable is inside out, its underside facing up
+        // at the very height of the top of the wall under it, and the two,
+        // counted together, were taken for one surface and left that wall
+        // open to walk through (found 2026-10-30, in the town's houses).
+        let mut own: Vec<Vec<[Vec3; 3]>> = Vec::new();
         let Some(corners) = pieces.last_mut() else {
             continue;
         };
@@ -2390,12 +2399,19 @@ fn reshape_plot(
                 && let Some(mesh) = meshes.get(&part.0)
                 && let Ok(place) = placement.compute_global_transform(entity)
             {
-                island::add_mesh(corners, mesh, &place);
+                if walls.contains(entity) {
+                    let mut wall = Vec::new();
+                    island::add_mesh(&mut wall, mesh, &place);
+                    own.push(wall);
+                } else {
+                    island::add_mesh(corners, mesh, &place);
+                }
             }
             if let Ok(below) = children.get(entity) {
                 next.extend(below);
             }
         }
+        pieces.extend(own);
     }
     for venue in islands.built_on() {
         if !plots.iter().any(|(on, _)| *on == venue) {

@@ -200,11 +200,23 @@ impl Islands {
         self.built.iter().map(|(on, _)| *on).collect()
     }
 
-    /// `venue` as its model has it now, every triangle of it `corners`: the
-    /// town, once its houses have had holes cut in their walls for their
-    /// doors and windows (`build::town`).
-    pub(crate) fn reshape(&mut self, venue: Venue, corners: Vec<[Vec3; 3]>) {
-        self.set(model(venue), corners);
+    /// `venue` as its model has it now: the town, once its houses' walls have
+    /// been made again round holes for their doors and windows (`build::town`),
+    /// its own triangles, `corners`, counted whole, and each of `solids`, a
+    /// wall or a window's pane, counted on its own ([`Island::blocked`]), so
+    /// that each, closed, is solid whatever of the town meets it.
+    pub(crate) fn reshape(&mut self, venue: Venue, corners: Vec<[Vec3; 3]>, solids: &[Vec<[Vec3; 3]>]) {
+        let model = model(venue);
+        let parts: Vec<&[[Vec3; 3]]> = std::iter::once(corners.as_slice())
+            .chain(solids.iter().map(Vec::as_slice))
+            .collect();
+        let island = Island::of_parts(&parts);
+        let mut all = corners;
+        all.extend(solids.iter().flatten().copied());
+        self.shapes.retain(|(read, _)| *read != model);
+        self.shapes.push((model, island));
+        self.grounds.retain(|(read, _)| *read != model);
+        self.grounds.push((model, all));
     }
 }
 

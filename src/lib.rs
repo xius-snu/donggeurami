@@ -2113,6 +2113,35 @@ mod ground_tests {
     use super::camera_tests::island;
     use super::*;
 
+    #[test]
+    fn a_wall_counted_on_its_own_is_solid_under_a_gable_inside_out() {
+        // A wall of one of the town's houses, made again round its holes,
+        // standing on the house's floor on the ground, and the Square
+        // House's front gable on top of it, inside out: its underside facing
+        // up, at the very height of the top of the wall. Counted with the
+        // rest, the two were taken for one surface, and the wall was open to
+        // walk through (2026-10-30); counted on its own, it is solid.
+        let v = Vec3::new;
+        let boxes = super::camera_tests::boxes;
+        let wall = boxes(&[(v(0.0, 0.35, 0.0), v(4.0, 5.35, 0.5))]);
+        let floor = boxes(&[(v(-1.0, 0.25, -1.0), v(5.0, 0.35, 1.5))]);
+        let ground = vec![
+            [v(-9.0, 0.25, -9.0), v(-9.0, 0.25, 9.0), v(9.0, 0.25, 9.0)],
+            [v(-9.0, 0.25, -9.0), v(9.0, 0.25, 9.0), v(9.0, 0.25, -9.0)],
+        ];
+        let gable: Vec<[Vec3; 3]> = boxes(&[(v(0.0, 5.35, 0.0), v(4.0, 7.0, 0.5))])
+            .into_iter()
+            .map(|[a, b, c]| [a, c, b])
+            .collect();
+        let rest: Vec<[Vec3; 3]> = floor.iter().chain(&ground).chain(&gable).copied().collect();
+        let at = Vec2::new(2.0, 0.25);
+        let together: Vec<[Vec3; 3]> = rest.iter().chain(&wall).copied().collect();
+        assert!(!island::Island::new(&together).blocked(at, 0.6, 1.6), "counted together, the wall is open");
+        assert!(island::Island::of_parts(&[&rest, &wall]).blocked(at, 0.6, 1.6));
+        // And the room beside it stays open.
+        assert!(!island::Island::of_parts(&[&rest, &wall]).blocked(Vec2::new(2.0, 1.2), 0.6, 1.6));
+    }
+
     /// The town's fountain, across one side of it, as `circlemap1.glb` has
     /// it: the floor of its basin 0.05 m up, under the water; the rim 0.55;
     /// the ledge outside it 0.3; and the grass.

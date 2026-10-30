@@ -961,7 +961,7 @@ pub(crate) mod tests {
             // All the way round, its back wheels going the way it faces, as a
             // car's do, never sideways: its middle goes a little to the side
             // of the way it faces turning, as a bus's does. And never faster
-            // than its top speed.
+            // than its top speed, but along an open road, twice that.
             let mut seconds = 0.0;
             while seconds < route.lap() {
                 let (place, _) = place_at(&route, hull, number, seconds);
@@ -970,7 +970,7 @@ pub(crate) mod tests {
                 let went = (back_wheels(&soon, hull) - back_wheels(&place, hull)).normalize_or_zero();
                 assert!(went == Vec3::ZERO || ahead.dot(went) > 0.99, "car {number} facing {ahead}, its back going {went}");
                 let speed = soon.at.distance(place.at) / 0.05;
-                assert!(speed < roundtown_net::cars::TOP_SPEED * 1.05, "{speed} m/s");
+                assert!(speed < roundtown_net::cars::TOP_SPEED * crate::roads::OPEN_ROAD * 1.05, "{speed} m/s");
                 seconds += 0.05;
             }
         }

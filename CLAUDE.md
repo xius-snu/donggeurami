@@ -31,6 +31,15 @@ tested on the actual phone, and what not to try again. The short version:
   has changed is written, a quarter of a second at a time. `RT_TIME_OF_DAY`
   (seconds into the cycle, or `day`, `sunset`, `night`, `sunrise`) stops it
   at one time, for trying things out. Shadows are still off (`SUN_SHADOWS`).
+  **The sky is drawn round the camera** (since 2026-10-30): the sun, the
+  moon, the stars and the clouds hang from one `SkyDome`, kept where the
+  camera is and three times as big as they are built (`SKY_SCALE`): the sun
+  510 m out, the clouds 276 to 414. Drawn as built round the middle of the
+  town, they were in the new town, 420 m across: the sun went down among its
+  houses, its glow lighting up the road under it (Hajun: "the sun appeared
+  through the road"), and the lowest clouds hung over its roofs. The sea is
+  4,000 m across (`SEA_SIZE`; 1,200 until then, whose corners bent the
+  horizon seen from the edge of the new town).
 - **Don't fake transparency with opaque geometry.** An earlier attempt added an
   opaque haze dome and giant "sun wash" spheres; that is what made the sky look
   grey and washed out. `RENDERING.md` has the details and the anti-patterns.
@@ -49,25 +58,33 @@ tested on the actual phone, and what not to try again. The short version:
 - **Street lamps light the night** (`src/lamps.rs`, since 2026-10-16): every
   bulb in a model, a part whose material is `lightbulb`, glows from dusk to
   dawn, and each lamp, its bulbs taken together, throws a point light from
-  between them (2,000,000 lm, out to 16 m: right under it the ground is lit
-  about two thirds as brightly as by the noon sky). The shop's Street Lamp,
-  and any in a map: Hajun's new town (2026-10-30) has none, so its nights
-  are the moon's alone; the old town's 23 went with it. By day there are no
+  between them (5,000,000 lm, out to 40 m: right under it the ground is lit
+  a little more brightly than by the noon sky, and 16 m out as brightly as
+  by the moon; 2,000,000 and 16 m until 2026-10-30, when Hajun asked for each
+  lamp to light a larger area, "maybe 2~3x": the lit ground round each lamp
+  is about three times what it was, and the ring round the pond is lit all
+  the way round). The shop's Street Lamp,
+  and any in a map: Hajun's new town has 12 since its second version
+  (2026-10-30), round the ring round its pond, 72 m out, all one object
+  (`streetlam`), which is no matter, a lamp being its bulbs wherever they
+  are (`lamps_of`); the old town's 23 went with it. By day there are no
   lights at all; at night at most
   24 at once, the nearest the camera on your island. No shadows. On the
-  laptop the night costs about a third more GPU than the day (8% to 11%)
-  and no more CPU (measured 2026-10-16); not yet seen or measured on a
-  phone, where Bevy's CPU clustering has point lights in it for the first
-  time. The night's own light, the moon's, is a twentieth of the noon
+  laptop the night cost about a third more GPU than the day (8% to 11%)
+  and no more CPU with the lamps reaching 16 m (measured 2026-10-16); at
+  40 m each spot is lit by two or three, which costs more, not yet
+  measured; not yet seen or measured on a phone, where Bevy's CPU
+  clustering has point lights in it for the first time. The night's own light, the moon's, is a twentieth of the noon
   sky's on the ground, enough to find your way on an island with no lamps.
 - **The town's fountain has a material and a shader of its own**
   (`src/fountain.rs`, `src/fountain.wgsl`): see-through running water whose
   streaks the GPU moves by the frame's time. It is the one custom shader;
   Bevy compiles it on each platform like its own, built into the binary
   rather than loaded from `assets/`.
-- **Standing in a house in House Builder, what stands between the camera
-  and you is drawn see-through** (`src/see_through.rs`, since 2026-10-09;
-  everywhere until 2026-10-25, only there since): a copy of its own
+- **Standing in a house in House Builder, or in one of the town's houses,
+  what of it stands between the camera and you is drawn see-through**
+  (`src/see_through.rs`, since 2026-10-09; everywhere until 2026-10-25, only
+  in House Builder's houses until 2026-10-30): a copy of its own
   material at a quarter, drawn with alpha to coverage since 2026-10-13 (blended until
   then), so in the opaque phase, writing depth, under the camera's 4x MSAA.
   Not yet seen on a phone, neither way; the Adreno has never drawn alpha to
@@ -418,9 +435,28 @@ re-export, and the collision follows.
   Blender. A default export of Hajun's file reproduced their glb byte for
   byte first; the export after differs in those materials and those faces'
   winding alone. Saved without a `.blend1` of mine, so that theirs is theirs.
+- **The town's second version, later on 2026-10-30**, is Hajun's
+  `roundtownmapbackup.blend` (untracked), the file in which they keep their
+  modifiers (Hajun: "i dont want to apply the modifers in that file"):
+  roundabouts with 8 m of road round their islands rather than 6, white
+  lines down the edges of the roads, 12 street lamps, 10 fewer trees (14),
+  and its houses grey with blue or pink roofs. At their asking it was copied
+  over `roundtownmap.blend` and every modifier applied there, each object
+  checked triangle for triangle against what its modifiers made; the
+  boolean cutters (`Road Cutters`) deleted, as Hajun deleted them from the
+  first version, or a default export has them as walls; the edge lines down
+  the straight roads (`Plane.005`), which had no material, given `roadwhite`
+  in `roundtownmap.blend` only (the backup was open in Blender); and a
+  linked node group nothing used dropped. A default export of it is the
+  backup's export with Apply Modifiers and Visible Objects ticked, node for
+  node, but for that material: 49,584 triangles (33,696 before), 20,160 of
+  them the lamps. The fixes above came over in the backup.
 - **What the old town taught, for any town**: a part with no material loads
   near black; keep a lamp an object of its own (the old town's 23 came joined
-  three to an object, and were split by script); keep a sign's font simple
+  three to an object, and were split by script, while whatever hid you faded:
+  a lamp in the way faded its whole object; since nothing in the town fades
+  (2026-10-25), the new town's 12 are one object as Hajun made them); keep a
+  sign's font simple
   (Calibri Bold was 1,500 triangles a letter, Blender's own a few hundred);
   and the exporter leaves modifiers off by default (the old town's outer
   road dashes came as one dash and a Geometry Nodes Array): apply them, or
@@ -473,7 +509,18 @@ re-export, and the collision follows.
   the upper floor over it, and a bed upstairs filled the room under it: in
   Hajun's two floor house the upper floor was sticky to drag pieces over,
   with spots nothing could go and players stuck. The islands themselves are
-  still counted whole.
+  still counted whole, but for the walls the game makes again round holes,
+  each counted on its own, on a plot and in the town, and the town's window
+  panes (since 2026-10-30). Counted with the rest of its house, the wall
+  under the Square House's front gable was open to walk through: the gable
+  is inside out, its underside facing up at the very height of the top of
+  the wall, and two surfaces facing the same way at one height are taken
+  for one, met on the seam between two of its triangles. Every town house
+  had one wall a body walked out through (Hajun: "make sure player cannot
+  go through the transparent house walls"); a test keeps it so
+  (`a_wall_counted_on_its_own_is_solid_under_a_gable_inside_out`), and
+  walking eight ways out of a town house in the desktop build, only the
+  doorway lets you out.
 - Anything baked into a map is scenery: the tap menu cannot move it. Only
   objects from the town save below, and House Builder's pieces while you
   build, can be edited.
@@ -646,7 +693,13 @@ is their model's, and their way round is the town's roads.
   **roundabout** (`roads::roundabout`: the island's edge felt for all the way
   round and a circle drawn through it, and the road round it as far out as
   it goes in a quarter of the ways round): the new town's four, round
-  islands 9.1 m across from their middles, the road round them 6 m wide.
+  islands 9.1 m across from their middles, the road round them 8 m wide (6
+  m in the town's first version). Each road that runs into one goes on to
+  the middle of its island round the bend it is on (`roads::on_to`): the
+  road round the edge of the town stops its dashes 23 m short of each
+  roundabout's middle since the roundabouts grew, and a straight line on
+  from its last dash turned 3.4° off its 194 m bend there, which the bus
+  coming onto the roundabout took as a kink, 5.75 m round.
   Joins nearer each other than 20 m are one place (`ONE_PLACE`): the ring's
   two halves meet the straight roads 15 m apart, and turns there go from the
   one half to the other. Each road is as wide as the road is either side of
@@ -680,7 +733,7 @@ is their model's, and their way round is the town's roads.
   of the ring's, clockwise: the bus would get onto it and off it only
   turning right through a gap in the strip of grass, which at the town's
   sharp corners and 12 m roads it does only swinging round on its back
-  wheels. 28 lanes, 4,834 m, 725 s round, each once (the log says so as the
+  wheels. 28 lanes, 4,851 m, 633 s round, each once (the log says so as the
   town loads, with how far behind the first each bus goes and how long
   working it out took). It is worked out away from the frames
   (`car::Planning`, `AsyncComputeTaskPool`): about 0.8 s on the laptop in a
@@ -718,24 +771,44 @@ is their model's, and their way round is the town's roads.
   wheels on the road: its back wheels would swing round rather than roll.
   Round a roundabout only its wheels count, and they may run up onto the
   edge of the island by a metre (`APRON`), as a bus's do round a small
-  roundabout. In Round Town its wheels stay on the road all the way round
-  but at the roundabouts, where its back wheels cut the corners of the
-  paving between the road round the island and the road round the edge of
-  the town by a metre at the most (1.05 m), and its body swings out over
-  the edge of the town on the far side of each island by about as much,
-  over the sea; never into anything taller than the paving (a test keeps
-  it so, `round_town_s_buses_swing_into_nothing_and_never_meet`). The
-  roundabouts are small for a 12.5 m bus: 6 m of road round an island 18 m
-  across. Round the ring round the pond and through its gaps it stays on
-  the road. The route waits for both buses' models as well as the town's
+  roundabout. In Round Town all of it stays on the road round the
+  roundabouts' islands, since Hajun made them bigger (8 m of road round an
+  island 18 m across; with 6, its wheels ran up onto the island and its
+  body swung out over the sea on the far side of each, by about a metre).
+  Its wheels leave the road only coming onto a roundabout and off it: its
+  back wheels cut the square corners where the roads meet the road round
+  the island, by a metre at the most (0.85 m; 1.05 m with 6), and its body
+  swings out over them, at the two on the edge of the town over the sea;
+  never into anything taller than the paving (a test keeps it so,
+  `round_town_s_buses_swing_into_nothing_and_never_meet`). A 12.5 m bus
+  turning right off a 12 m road round a square corner cuts it: rounding
+  those corners off in the town, as a real roundabout's are, is what would
+  keep its wheels on. Round the ring round the pond and through its gaps it
+  stays on the road. The route waits for both buses' models as well as the town's
   (`plan_the_way`) and is worked out for the longest, and a bus is on the
   town, drawn and met, only once the route has put it on the road
   (`drive`).
 - **Their speed is worked out from how sharply the loop turns**: at most
   `roundtown_net::cars::TOP_SPEED`, 7 m/s, as fast as a run, so that you can
   keep up beside a bus and no more; no harder round a bend than 2.5 m/s²
-  sideways; speeding up at 1.5 m/s² and slowing at 2.5. All my numbers. The
-  loop is then made to take a whole number of seconds.
+  sideways; speeding up at 1.5 m/s² and slowing at 2.5. All my numbers.
+  **On an open road, from one roundabout to the next, twice that**, 14 m/s
+  (`roads::OPEN_ROAD`, `Lane::speed`; Hajun, 2026-10-30: "make the bus go
+  faster when going around the outer circle (like 2x)"): in Round Town the
+  road round its edge, and nowhere else. The server lets a rider off as far
+  from where they got on as 18.2 m/s takes them (`MOST_RIDE`), so it needed
+  no change. **And it stops short of every other crossing it comes to**, its
+  front 1.5 m short, waits 3 s and goes on (`STOP_SHORT`, `PAUSE`,
+  `Route::waits`; Hajun, the same day: "when in the inner circle, make it
+  pause before some of the crosswalks and then go"): a crossing is read off
+  the paint as stripes, pieces as wide all along as no line is, side by side
+  (`crossings_painted`), and Round Town's are one at each corner of the ring
+  round its pond, across both its halves, so the bus meets one on each of
+  the 12 lanes of the ring it drives, and stops at 6. Seen in the desktop
+  build the same day: 14.4 m/s on the road round the edge and no more than
+  7.2 anywhere else, and standing 3 s, 10° to 14° short of a crossing's
+  corner, on three lanes of the ring. The loop, its waits and all, is then
+  made to take a whole number of seconds.
 - **They go by the town's clock** (`place_at`, the seconds since 1970 into
   the loop, less how far behind the first a bus goes, `Route::behind`), as
   the fountain's jet does, and online the town's clock is the server's
@@ -744,15 +817,16 @@ is their model's, and their way round is the town's roads.
   they went by each device's own clock, and on Hajun's two phones the cars
   were in different places. The loop being a whole number of seconds is
   what keeps devices from drifting apart over the years since 1970 on
-  arithmetic that differs in its last digit. They never stop: for nobody,
-  as a device could not tell the others it had. **The second goes half the
+  arithmetic that differs in its last digit. They never stop for anybody,
+  as a device could not tell the others it had: only short of crossings,
+  where they would on every device alike. **The second goes half the
   loop behind the first**, or as near half, a second at a time, as keeps
   the two a metre apart all the way round, where the loop crosses itself
   and passing each other (`Route::spread`), or failing that, out of each
-  other: in the new town 363 s behind (half is 362.5), at which they never
+  other: in the new town 317 s behind (half is 316.5), at which they never
   touch (checked every 0.1 s round the loop in the test above).
   `RT_CAR_AT=<seconds>` stops both at one point of the loop, the first that
-  far into it and the second 363 s behind, for trying things out. Where the
+  far into it and the second 317 s behind, for trying things out. Where the
   loop starts goes by the order the town's paint is read in, which every
   device reads alike, but a test reading the file itself starts elsewhere.
 - **Riding one**: standing on a bus, or in the air off it, a body is carried
@@ -804,7 +878,11 @@ is their model's, and their way round is the town's roads.
 - **Not yet tried**: on a phone, or by hand, or riding the bus, nor the new
   town's way round by Hajun. Seen in the desktop build on 2026-10-30 from
   above: round the east roundabout's island and through a gap in the ring's
-  strip of grass, smoothly, its back wheels inside its front ones. Dropped
+  strip of grass, smoothly, its back wheels inside its front ones; and on
+  the town's second version, from above the north roundabout, a bus coming
+  along the road round the edge of the town and taking the first way off
+  it, toward the pond, on its right, its tail swinging over the corner
+  there. Dropped
   anywhere over it, a body comes to rest on its roof
   (`a_body_dropped_onto_the_car_anywhere_stays_on_it`), and its wheels keep
   to its way round (`the_cars_stand_on_the_road_facing_the_way_they_go`).
@@ -848,14 +926,37 @@ swings open and five windows (`src/build/town.rs`).
   Builder's do (`build::swing_doors`, the leaves found as House Builder
   finds them, `build::doorway`), and a window's hole is shut to bodies by its
   pane (`build::pane`), as House Builder's are: walk in through a door, never
-  a window. Inside, the walls hide you from the camera outside as any wall
-  in the town does: nothing fades outside a house in House Builder.
-- **Drawn as one mesh to each material**, the walls and the windows' frames
-  of every house, as the town's own walls were, and each house's glass as
-  one; only the doors, which swing, are drawn one by one: 96 of them.
-  Raising them all takes about 70 ms on the laptop, once, as the town loads.
+  a window. Each wall and pane is solid on its own ("A solid has to be a
+  closed shape").
+- **Standing in one, what of it is between the camera and you goes
+  see-through, as in a house in House Builder** (Hajun, 2026-10-30: "when
+  the player goes inside one of the houses in roundtownmap it does the
+  similar transparent thing as in the build minigame"): a wall in the way,
+  with its window frames, glass and door, and the roof and gables with it;
+  the roof in the way of a camera looking down at a slant, with the walls on
+  the camera's side; from straight above, the roof alone. Only that house:
+  the town round it, its other houses, trees and lamps, stays as it is. A
+  bus never fades.
+- **Each house is its own, as a house in House Builder is**
+  (`build::TownHouse`, since 2026-10-30): a root with the town's `Venue`,
+  `Rooms` (its floor) and `Bounds`, which `untappable_from_inside` marks
+  `YouAreIn` as for a plot's house; its four walls (`Wall`, `TownWall`,
+  which `carve_walls` leaves as cut); each wall's window frames under one
+  `OnWall`; its door, `OnWall` on its wall; its glass, as one, but wall by
+  wall while you are in it (`open_the_house`), to fade with its wall; and
+  its roof and gables, the Square House's meshes in the town's own colours
+  there, which are taken out of what of the town is drawn, though still
+  stood on. The floor stays the town's. A wall, a wall's frames or a
+  house's glass the same in many houses is one mesh, drawn together: 148
+  meshes for 96 houses; raising them takes about 100 ms on the laptop,
+  once. Until then the walls and frames of all the houses were one mesh to
+  each material and the roofs the town's own, so one wall faded would have
+  faded every house's. About a thousand entities more than then, not
+  measured on a phone.
 - Seen in the desktop build on 2026-10-30, from the road and inside a house:
-  the doors, the windows, the House Builder at theirs. Not yet on a phone.
+  the doors, the windows, the House Builder at theirs; and standing in the
+  House Builder's house, from the side, at a slant and from straight above,
+  the walls and the roof going see-through as above. Not yet on a phone.
 
 ## The camera stands where you zoomed it
 
@@ -872,14 +973,16 @@ zoomed out, the camera is outside the house looking in, and you tap what is
 in there with you through its wall. Anywhere else, what stands between hides
 you.
 
-- **Only in a house in House Builder is anything see-through** (Hajun,
-  2026-10-25: "i want that effect to only happen when the player is inside
-  the home in the home build battle game, not anywhere else not in
-  circlemap1, not on the bus, not in home"). In the town, on or behind one
-  of its buses, at home, in House Builder's lobby and on a plot outside its
-  house, a wall, a tree, a lamp or a bus between the camera and you stays
-  as it is and hides you, and nothing is out of a tap's reach for being in
-  the way. In a house is over one of its floors and under its top
+- **Only in a house in House Builder, or in one of the town's houses, is
+  anything see-through** (Hajun, 2026-10-25: "i want that effect to only
+  happen when the player is inside the home in the home build battle game,
+  not anywhere else not in circlemap1, not on the bus, not in home"; and
+  2026-10-30, of the town's houses: "it does the similar transparent thing
+  as in the build minigame"), and in a town house, only that house. In the
+  town out of its houses, on or behind one of its buses, at home, in House
+  Builder's lobby and on a plot outside its house, a wall, a tree, a lamp
+  or a bus between the camera and you stays as it is and hides you, and
+  nothing is out of a tap's reach for being in the way. In a house is over one of its floors and under its top
   (`build::YouAreIn`, set in `build::untappable_from_inside`), in a house
   that is down, not a ghost: yours while you build, anyone's on a visit or
   at the results. Stepping out of it, what was faded comes back over 0.15

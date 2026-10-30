@@ -33,9 +33,10 @@ use std::f32::consts::PI;
 
 use bevy::light::{CascadeShadowConfigBuilder, NotShadowCaster, NotShadowReceiver};
 use bevy::prelude::*;
+use bevy::transform::TransformSystems;
 
-use crate::WATER_Y;
 use crate::clock::TownClock;
+use crate::{ThirdPersonCamera, WATER_Y};
 
 /// How long each part of the day is, in seconds. The day starts with the sun
 /// already up, past sunrise.
@@ -112,7 +113,22 @@ const NIGHT_FILL_ILLUMINANCE: f32 = 130.0;
 const NIGHT_AMBIENT: f32 = 55.0;
 const NIGHT_AMBIENT_COLOR: [f32; 3] = [0.32, 0.42, 0.78];
 
+/// How far out the sun and the moon are, as the sky is built, and below, how
+/// big they are and how far out the stars are; the clouds' are in
+/// [`spawn_clouds`]. It is drawn round the camera [`SKY_SCALE`] times as big
+/// and as far out ([`SkyDome`]).
 const SKY_DISTANCE: f32 = 170.0;
+/// How many times as big and as far out as it is built the sky is drawn,
+/// round the camera wherever it is: the sun and the moon 510 m out, the stars
+/// 555 m, and the clouds 276 to 414 m, the middles of the lowest 44 m over
+/// the camera, so that the sky is out beyond the town, whose roofs are 10 m
+/// up and its water tower 40. Until 2026-10-30 it
+/// was drawn as it is built, round the middle of the town, which in Hajun's
+/// new town, 420 m across, put it in the town: the sun went down among the
+/// houses, its glow lighting up the road under it (Hajun: "the sun appeared
+/// through the road"), and the lowest clouds hung over the roofs. From the
+/// middle of the town it looks as it did.
+const SKY_SCALE: f32 = 3.0;
 const LIGHT_DISTANCE: f32 = 48.0;
 const SUN_DISC_RADIUS: f32 = 7.5;
 const MOON_DISC_RADIUS: f32 = 5.2;
@@ -160,9 +176,11 @@ const STAR_GAIN: f32 = 3.0;
 /// of it as the sky lights the ground with, against noon.
 const UNLIT_AT_NIGHT: f32 = 0.3;
 
-/// Wide enough that its edge is never in sight from anywhere a player can get
-/// to, with the camera pulled all the way back.
-const SEA_SIZE: f32 = 1200.0;
+/// Wide enough that its edge is on the horizon from anywhere a player can get
+/// to, with the camera pulled all the way back: 1,800 m out at the least from
+/// the edge of Hajun's new town, 420 m across. At 1,200 m, until 2026-10-30,
+/// its edge was 390 m out from there, and its corners bent the horizon.
+const SEA_SIZE: f32 = 4000.0;
 /// A clear sea blue, blended over whatever is below it, which is mostly the
 /// sky. It was (0.08, 0.30, 0.46) at 0.58 until 2026-10-13, the colour the
 /// sea had before it was taken out and checked on the phone; so much of the
@@ -269,6 +287,12 @@ struct KeyLight;
 #[derive(Component)]
 struct FillLight;
 
+/// What the sun, the moon, the stars and the clouds hang from: kept where the
+/// camera is ([`keep_round_the_camera`]), so that the sky is the same from
+/// anywhere, and [`SKY_SCALE`] times as big as it is built.
+#[derive(Component)]
+struct SkyDome;
+
 #[derive(Component)]
 struct SunDisc;
 
@@ -329,7 +353,26 @@ pub(crate) fn plugin(app: &mut App) {
         .add_systems(
             Update,
             (pass_the_day.in_set(DaySystems), drift_clouds, bob_sea),
-        );
+        )
+        .add_systems(PostUpdate, keep_round_the_camera.before(TransformSystems::Propagate));
+}
+
+/// Keeps the sky where the camera is, once whatever moves the camera has
+/// moved it this frame. Set only when the camera has moved.
+fn keep_round_the_camera(
+    cameras: Query<&Transform, (With<ThirdPersonCamera>, Without<SkyDome>)>,
+    mut domes: Query<&mut Transform, With<SkyDome>>,
+) {
+    let Ok(camera) = cameras.single() else {
+        return;
+    };
+    for mut dome in &mut domes {
+        let round = Transform {
+            translation: camera.translation,
+            ..*dome
+        };
+        dome.set_if_neq(round);
+    }
 }
 
 /// Where the time of day moves on ([`Daylight`]): whatever follows it runs
@@ -410,6 +453,9 @@ fn setup_sky(
         light_transform(state.fill_dir),
     ));
 
+    let dome = commands
+        .spawn((SkyDome, Transform::from_scale(Vec3::splat(SKY_SCALE)), Visibility::default()))
+        .id();
     let sun = materials.add(sun_core_material(state.sun_disc));
     let sun_glow = [
         materials.add(glow_material(state.sun_disc, 0.12, 0.9)),
@@ -418,6 +464,7 @@ fn setup_sky(
     commands
         .spawn((
             SunDisc,
+            ChildOf(dome),
             Mesh3d(meshes.add(ico(SUN_DISC_RADIUS, 1))),
             MeshMaterial3d(sun.clone()),
             Transform::from_translation(state.sun_dir * SKY_DISTANCE),
@@ -439,6 +486,7 @@ fn setup_sky(
     commands
         .spawn((
             MoonDisc,
+            ChildOf(dome),
             Mesh3d(meshes.add(Sphere::new(MOON_DISC_RADIUS).mesh().uv(36, 20))),
             MeshMaterial3d(materials.add(moon_core_material())),
             Transform::from_translation(state.moon_dir * SKY_DISTANCE),
@@ -458,6 +506,7 @@ fn setup_sky(
     let stars = materials.add(star_material(state.stars));
     commands.spawn((
         Stars,
+        ChildOf(dome),
         Mesh3d(meshes.add(star_field())),
         MeshMaterial3d(stars.clone()),
         Transform::default(),
@@ -468,7 +517,7 @@ fn setup_sky(
 
     let puff_mesh = meshes.add(ico(8.0, 1));
     let cloud = materials.add(cloud_material(state.cloud, state.cloud_alpha));
-    spawn_clouds(&mut commands, puff_mesh, cloud.clone());
+    spawn_clouds(&mut commands, dome, puff_mesh, cloud.clone());
 
     commands.insert_resource(Sky {
         sun,
@@ -861,6 +910,7 @@ fn ico(radius: f32, subdivisions: u32) -> Mesh {
 
 fn spawn_clouds(
     commands: &mut Commands,
+    dome: Entity,
     puff_mesh: Handle<Mesh>,
     material: Handle<StandardMaterial>,
 ) {
@@ -884,6 +934,7 @@ fn spawn_clouds(
                     distance,
                     speed,
                 },
+                ChildOf(dome),
                 Transform::from_translation(dir_from_elev_azim(elevation, azimuth) * distance),
                 NotShadowCaster,
                 NotShadowReceiver,

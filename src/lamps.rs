@@ -1,15 +1,16 @@
 //! Street lamps, lit from dusk to dawn (Hajun, 2026-10-16). Every bulb in a
 //! model, a part whose material is [`BULB_MATERIAL`], glows through the
 //! night, and every lamp, its bulbs taken together ([`ONE_LAMP`]), throws
-//! light from between them: the town's 23, round the fountain and along
-//! both roads, and the shop's Street Lamp, wherever a builder puts one down.
-//! Nothing knows where a lamp is but its model: a bulb added in Blender is
-//! a lamp, and moving one moves its light.
+//! light from between them: the town's 12, round the ring round its pond,
+//! and the shop's Street Lamp, wherever a builder puts one down. Nothing
+//! knows where a lamp is but its model: a bulb added in Blender is a lamp,
+//! and moving one moves its light.
 //!
 //! The light is a point light under each lamp's arm ([`LAMP_LUMENS`],
-//! [`LAMP_RANGE`]), bright enough that under it the night is nearly as light
-//! as the day, and gone a stone's throw away, where the night's moonlight
-//! (`sky`) is all there is. The lamps come on as the sun goes down and go
+//! [`LAMP_RANGE`]), bright enough that under it the night is as light as
+//! the day, and as the night's moonlight (`sky`) 16 m away, fading out to
+//! nothing 40 m away, where the moonlight is all there is. The lamps come on
+//! as the sun goes down and go
 //! off as it comes up (`sky::Daylight::lamps`). By day there is no light at
 //! all, so the day costs what it did before there were lamps; at night at
 //! most [`MOST_LIT`] lamps throw light at once, the nearest the camera on
@@ -36,14 +37,19 @@ pub(crate) const BULB_MATERIAL: &str = "lightbulb";
 /// apart.
 const ONE_LAMP: f32 = 1.5;
 /// How much light a lamp gives, in lumens: under it, 6 m down, the ground is
-/// lit about two thirds as brightly as by the noon sky; 8 m out, an eighth.
-const LAMP_LUMENS: f32 = 2_000_000.0;
-/// How far a lamp's light reaches, in metres, fading out before it: far
-/// enough to light the ground between the lamps of the inner road, 19 m
-/// apart, and no further, so that each spot is lit by a few lamps at most.
-/// At 20 m the town at night looked the same, and on the laptop's GPU the
-/// night cost half as much again as the day; at 16, a third (2026-10-16).
-const LAMP_RANGE: f32 = 16.0;
+/// lit a little more brightly than by the noon sky; 16 m out, as brightly as
+/// by the night's own light, the moon's. Two and a half times what it was
+/// until 2026-10-30, when Hajun asked for each lamp to light a larger area,
+/// "maybe 2~3x": at 2,000,000 the ground was lit as brightly as by the moon
+/// out to 9 m, a third of the ground it is now.
+const LAMP_LUMENS: f32 = 5_000_000.0;
+/// How far a lamp's light reaches, in metres, fading out before it: two and
+/// a half times the 16 m it was until 2026-10-30, with the light, so that it
+/// carries across the gaps between the new town's lamps, 38 m apart round
+/// the ring round its pond, and every spot along it is lit by two or three.
+/// At 16 m, on the laptop's GPU the night cost a third more than the day, and
+/// at 20, half as much again (2026-10-16): further costs more.
+const LAMP_RANGE: f32 = 40.0;
 /// A warm white, a little yellower than daylight.
 const LAMP_COLOR: Color = Color::srgb(1.0, 0.87, 0.68);
 /// How brightly a bulb glows when lit, in Bevy's units for emitted light: the

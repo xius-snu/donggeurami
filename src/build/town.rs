@@ -19,11 +19,19 @@
 //! House Builder's do (`swing_doors`), and a window's hole is shut to bodies
 //! by its pane (`pane`), as House Builder's are.
 //!
-//! The walls and windows of every house are drawn as one mesh to each
-//! material, as the town's own walls were, and a house's glass as one; only
-//! the doors, which swing, are drawn one by one. The House Builder stands at
-//! the door of the house nearest where the first seat arrives (Hajun: "for
-//! now just put the build house battle minigame in front of one house").
+//! Each house is its own, as a house in House Builder is ([`TownHouse`]):
+//! its walls, a wall at a time, the frames of each wall's windows, its glass,
+//! its door, and its roof and gables, the Square House's, in the town's own
+//! colours there, taken out of what of the town is drawn. Standing in one,
+//! whatever of it is between the camera and you is drawn see-through, as in
+//! a house in House Builder (`see_through`; Hajun, 2026-10-30). Until then
+//! the walls and windows of every house were drawn as one mesh to each
+//! material, and roofs as the town's: one wall faded would have faded every
+//! house's. A wall, a wall's frames or a house's glass the same in many
+//! houses is one mesh, which the GPU draws in one go for all of them. The
+//! House Builder stands at the door of the house nearest where the first
+//! seat arrives (Hajun: "for now just put the build house battle minigame in
+//! front of one house").
 
 use std::collections::HashMap;
 
@@ -36,8 +44,8 @@ use bevy::prelude::*;
 use bevy::world_serialization::WorldInstanceReady;
 
 use super::{
-    APART, Height, Mount, OnWall, PIECES, PieceDef, Span, WINDOW_SILL, Wall, doorway, extent, pane,
-    wall_mesh,
+    APART, Bounds, Height, Mount, OnWall, PIECES, PieceDef, Rooms, Span, WINDOW_SILL, Wall, YouAreIn, doorway,
+    extent, pane, wall_mesh,
 };
 use crate::island::{self, Island, Islands, Land, Venue, WATER_MATERIAL};
 
@@ -79,14 +87,56 @@ struct Model(&'static PieceDef);
 #[derive(Component)]
 struct TownDoor(&'static PieceDef);
 
-/// The Square House, in its own space: its floor, its walls, and which way
-/// across the ground its roof's ridge runs.
+/// The Square House, in its own space: its floor, its walls, which way
+/// across the ground its roof's ridge runs, the box round all of it, and its
+/// roof and gables, each mesh with its material, where it is and the box it
+/// fills.
 #[derive(Clone, Debug)]
 struct Shape {
     floor: (Vec3, Vec3),
     walls: Vec<(Vec3, Vec3)>,
     ridge: Vec2,
+    bounds: (Vec3, Vec3),
+    ceiling: Vec<Ceiling>,
 }
+
+/// A mesh of the Square House over its rooms, its roof or a gable, in its own
+/// space, and the box it fills there.
+#[derive(Clone, Debug)]
+struct Ceiling {
+    mesh: Handle<Mesh>,
+    material: Option<Handle<StandardMaterial>>,
+    place: Affine3A,
+    fills: (Vec3, Vec3),
+}
+
+/// One of the town's houses, its parts its children, as a house in House
+/// Builder is: four walls (`Wall`), its roof and gables, the frames of its
+/// windows a wall at a time and its door (`OnWall`), and its glass. Standing
+/// in one, whatever of it stands between the camera and you is drawn
+/// see-through (`see_through`; Hajun, 2026-10-30: "when the player goes
+/// inside one of the houses in roundtownmap it does the similar transparent
+/// thing as in the build minigame"). Its floor is the town's.
+#[derive(Component)]
+pub(crate) struct TownHouse;
+
+/// A wall of one of the town's houses, cut once round its door and windows,
+/// as House Builder's are cut whenever theirs change (`carve_walls`).
+#[derive(Component)]
+pub(super) struct TownWall;
+
+/// A town house's glass: drawn as one, `whole`, and while you are in the
+/// house, a wall at a time instead, to fade with its wall: each wall's frames,
+/// which it goes with, and its glass ([`open_the_house`]).
+#[derive(Component)]
+struct Panes {
+    whole: Vec<Entity>,
+    by_wall: Vec<(Entity, Handle<Mesh>, Handle<StandardMaterial>)>,
+}
+
+/// The glass of a wall of the town house you are in.
+#[derive(Component)]
+struct WallPane;
 
 /// A door or a window, in its own space: what of a wall its frame takes up,
 /// and each mesh it is drawn with, with its material and where it is.
@@ -116,7 +166,7 @@ pub(super) fn plugin(app: &mut App) {
     app.init_resource::<Raising>()
         .add_observer(town_ready)
         .add_systems(Startup, send_for_models)
-        .add_systems(Update, raise_houses);
+        .add_systems(Update, (raise_houses, open_the_house));
 }
 
 /// The kind `kind` in the shop.
@@ -174,6 +224,7 @@ fn model_ready(
         Some(sum.map_or((low, high), |(a, b): (Vec3, Vec3)| (a.min(low), b.max(high))))
     };
     let (mut floor, mut frame, mut walls, mut corners, mut drawn) = (None, None, Vec::new(), Vec::new(), Vec::new());
+    let (mut bounds, mut ceiling) = (None, Vec::new());
     for part in children.iter_descendants(root) {
         let (Ok((mesh, material)), Ok(place)) = (parts.get(part), placement.compute_global_transform(part)) else {
             continue;
@@ -194,6 +245,15 @@ fn model_ready(
         if called(part, "Frame") {
             frame = grow(frame, filled);
         }
+        bounds = grow(bounds, filled);
+        if called(part, "Roof") || called(part, "Gable") {
+            ceiling.push(Ceiling {
+                mesh: mesh.0.clone(),
+                material: material.map(|material| material.0.clone()),
+                place: in_root,
+                fills: filled,
+            });
+        }
         if let Some(VertexAttributeValues::Float32x3(points)) = asset.attribute(Mesh::ATTRIBUTE_POSITION) {
             corners.extend(points.iter().map(|&point| in_root.transform_point3(Vec3::from(point))));
         }
@@ -201,7 +261,7 @@ fn model_ready(
     }
     commands.entity(root).despawn();
     if def.kind == HOUSE {
-        let (Some(floor), false) = (floor, walls.is_empty()) else {
+        let (Some(floor), Some(bounds), false) = (floor, bounds, walls.is_empty()) else {
             warn!("{}: no floor or no walls, so the town's houses get no doors", def.model());
             return;
         };
@@ -209,6 +269,8 @@ fn model_ready(
             floor,
             walls,
             ridge: ridge(&corners).unwrap_or(Vec2::Y),
+            bounds,
+            ceiling,
         });
     } else if let Some((low, high)) = frame {
         raising.openings.insert(
@@ -566,18 +628,34 @@ fn raise_houses(
     let floors_in = [shape.floor];
     let walls: Vec<Wall> = shape.walls.iter().map(|&(low, high)| Wall::new(low, high, &floors_in, &shape.walls)).collect();
 
-    // Which of the town's triangles are a house's walls, and so go, and the
-    // material of the most of each house's walls, which its own are made in.
+    // Which of the town's triangles are a house's: its walls, which go, made
+    // again round the holes for its door and windows; its roof and gables,
+    // drawn from now on as the house's own, the Square House's, and so taken
+    // out of what of the town is drawn, though still stood on; and what each
+    // of those is made of there, which the house's own are made in. Its floor
+    // stays the town's.
     let mut grid: HashMap<(i32, i32), Vec<usize>> = HashMap::new();
     let cell = |at: Vec2| ((at.x / 16.0).floor() as i32, (at.y / 16.0).floor() as i32);
     for (index, house) in houses.iter().enumerate() {
         grid.entry(cell(house.middle)).or_default().push(index);
     }
-    let reach = (shape.floor.1 - shape.floor.0).xz().length() * 0.5 + 1.0;
+    let reach = (shape.bounds.1 - shape.bounds.0).xz().length() * 0.5 + 1.0;
     let into: Vec<Affine3A> = houses.iter().map(|house| house.place.inverse()).collect();
     let mut gone: Vec<Vec<bool>> = read.iter().map(|tris| vec![false; tris.len()]).collect();
-    let mut made_of: Vec<HashMap<AssetId<StandardMaterial>, (f32, Handle<StandardMaterial>)>> =
-        vec![HashMap::new(); houses.len()];
+    let mut hidden = gone.clone();
+    // The pieces of its ceiling, the smallest first: a gable's triangle, in
+    // the box round the roof as well, is the gable's.
+    let volume = |(low, high): (Vec3, Vec3)| (high - low).max(Vec3::ZERO).element_product();
+    let mut smallest: Vec<usize> = (0..shape.ceiling.len()).collect();
+    smallest.sort_by(|&a, &b| volume(shape.ceiling[a].fills).total_cmp(&volume(shape.ceiling[b].fills)));
+    let fits = |local: &[Vec3; 3], (low, high): (Vec3, Vec3)| {
+        local
+            .iter()
+            .all(|corner| corner.cmpge(low - SNUG).all() && corner.cmple(high + SNUG).all())
+    };
+    // Each house's, by how much of it: its walls', then each piece of its
+    // ceiling's.
+    let mut made_of: Vec<Vec<MadeOf>> = vec![vec![HashMap::new(); 1 + shape.ceiling.len()]; houses.len()];
     for (part_index, tris) in read.iter().enumerate() {
         let Some(material) = &town[part_index].material else {
             continue;
@@ -593,31 +671,33 @@ fn raise_houses(
                 .filter(|&house| houses[house].middle.distance(middle) <= reach);
             for house in near {
                 let local = tri.map(|c| into[house].transform_point3(c));
-                if shape.walls.iter().any(|&wall| walled(&local, wall)) {
+                let of = if shape.walls.iter().any(|&wall| walled(&local, wall)) {
                     gone[part_index][tri_index] = true;
-                    let area = (tri[1] - tri[0]).cross(tri[2] - tri[0]).length() * 0.5;
-                    made_of[house].entry(material.id()).or_insert((0.0, material.clone())).0 += area;
-                    break;
-                }
+                    0
+                } else if let Some(&piece) = smallest.iter().find(|&&piece| fits(&local, shape.ceiling[piece].fills)) {
+                    hidden[part_index][tri_index] = true;
+                    1 + piece
+                } else {
+                    continue;
+                };
+                let area = (tri[1] - tri[0]).cross(tri[2] - tri[0]).length() * 0.5;
+                made_of[house][of].entry(material.id()).or_insert((0.0, material.clone())).0 += area;
+                break;
             }
         }
     }
 
-    // Each house's doors and windows, and its walls with holes for them.
-    let mut walls_by: HashMap<AssetId<StandardMaterial>, (Handle<StandardMaterial>, Gathered)> = HashMap::new();
-    let mut frames_by: HashMap<AssetId<StandardMaterial>, (Handle<StandardMaterial>, Gathered)> = HashMap::new();
-    let mut glass: Vec<(Handle<StandardMaterial>, Gathered)> = Vec::new();
-    let mut solid: Vec<[Vec3; 3]> = Vec::new();
-    let mut doors: Vec<(&'static PieceDef, Transform)> = Vec::new();
+    // Each house, with its parts: its roof and gables, its walls with holes
+    // for its door and windows, a wall at a time, the frames of each wall's
+    // windows, its glass and its door. Meshes the same in many houses are
+    // made once and shared, so that they are drawn together.
+    let mut shared: HashMap<String, Handle<Mesh>> = HashMap::new();
+    let mut solids: Vec<Vec<[Vec3; 3]>> = Vec::new();
     let arrives = island::arrival(Venue::Town, 0).translation.xz();
     let mut builder_at: Option<(f32, Transform)> = None;
+    let mut doors = 0;
     for (index, house) in houses.iter().enumerate() {
-        let mut panes: HashMap<AssetId<StandardMaterial>, (Handle<StandardMaterial>, Gathered)> = HashMap::new();
-        let Some((_, material)) = made_of[index]
-            .values()
-            .max_by(|a, b| a.0.total_cmp(&b.0))
-            .cloned()
-        else {
+        let Some(material) = most(&made_of[index][0]) else {
             continue;
         };
         // The wall nearest a road, out from the middle of its outer face.
@@ -638,7 +718,36 @@ fn raise_houses(
         let picks = mix(house.middle);
         let door = def(DOORS[picks as usize % DOORS.len()]);
         let aside = if (picks >> 8).is_multiple_of(2) { SQUARE } else { WIDE };
-        let mut holes: Vec<Vec<[f32; 4]>> = vec![Vec::new(); walls.len()];
+        let root = commands
+            .spawn((
+                Name::new("Town house"),
+                TownHouse,
+                Venue::Town,
+                Transform::from_matrix(Mat4::from(house.place)),
+                Visibility::Hidden,
+                Rooms(vec![shape.floor]),
+                Bounds {
+                    low: shape.bounds.0,
+                    high: shape.bounds.1,
+                },
+            ))
+            .id();
+        // Its roof and gables, the Square House's, in the town's own colours
+        // there.
+        for (piece, ceiling) in shape.ceiling.iter().enumerate() {
+            let Some(own) = most(&made_of[index][1 + piece]).or_else(|| ceiling.material.clone()) else {
+                continue;
+            };
+            commands.spawn((
+                Mesh3d(ceiling.mesh.clone()),
+                MeshMaterial3d(own),
+                Transform::from_matrix(Mat4::from(ceiling.place)),
+                ChildOf(root),
+            ));
+        }
+        let mut glass: HashMap<AssetId<StandardMaterial>, (Handle<StandardMaterial>, Gathered)> = HashMap::new();
+        let mut by_wall = Vec::new();
+        let mut layout = Vec::new();
         for (w, wall) in walls.iter().enumerate() {
             let (start, end) = wall.span();
             let middle = (start + end) * 0.5;
@@ -651,6 +760,11 @@ fn raise_houses(
                 asks.push((def(if opposite { WIDE } else { aside }), middle));
             }
             let mut others: Vec<(OnWall, Span, bool)> = Vec::new();
+            let mut holes: Vec<[f32; 4]> = Vec::new();
+            let mut frames: HashMap<AssetId<StandardMaterial>, (Handle<StandardMaterial>, Gathered)> = HashMap::new();
+            let mut panes: HashMap<AssetId<StandardMaterial>, (Handle<StandardMaterial>, Gathered)> = HashMap::new();
+            let mut here: Vec<String> = Vec::new();
+            let mut door_here: Option<(&'static PieceDef, Transform, OnWall)> = None;
             for (piece, along) in asks {
                 let opening = &openings[piece.kind];
                 let height = if piece.mount == Mount::Door {
@@ -663,102 +777,217 @@ fn raise_houses(
                 };
                 let on = OnWall { wall: Entity::PLACEHOLDER, along, up, face: 1.0 };
                 others.push((on, opening.span, true));
-                holes[w].push([along - opening.span.half, up - opening.span.below, along + opening.span.half, up + opening.span.above]);
-                let place = house.place * wall.place(true, on).compute_affine();
+                holes.push([along - opening.span.half, up - opening.span.below, along + opening.span.half, up + opening.span.above]);
+                here.push(format!("{} {along:?} {up:?}", piece.kind));
+                let local = wall.place(true, on).compute_affine();
+                let place = house.place * local;
                 if piece.mount == Mount::Door {
                     let world = Transform::from_matrix(Mat4::from(place));
-                    doors.push((piece, world));
                     let stands = place.transform_point3(Vec3::NEG_Z * (wall.thin().1 + AT_THE_DOOR));
                     let away = house.middle.distance(arrives);
                     if builder_at.is_none_or(|(nearest, _)| away < nearest - 1e-3) {
                         builder_at = Some((away, world.with_translation(stands)));
                     }
+                    door_here = Some((piece, Transform::from_matrix(Mat4::from(local)), on));
                     continue;
                 }
-                // A window: drawn with the rest, and its pane shut to bodies.
-                for (mesh, material, in_window) in &opening.parts {
-                    let (Some(asset), Some(material)) = (meshes.get(mesh), material) else {
+                // A window: its frame and glass, in the house's own space, and
+                // its pane shut to bodies.
+                for (mesh, part_material, in_window) in &opening.parts {
+                    let (Some(asset), Some(part_material)) = (meshes.get(mesh), part_material) else {
                         continue;
                     };
-                    let at = place * *in_window;
-                    let blended = materials.get(material).is_some_and(|look| look.alpha_mode == AlphaMode::Blend);
-                    // Glass a house at a time, so that each house's is drawn
-                    // nearer or further than the rest as that house is.
-                    let gathering = if blended { &mut panes } else { &mut frames_by };
-                    gathering.entry(material.id()).or_insert_with(|| (material.clone(), Gathered::default())).1.add(asset, &at);
+                    let at = local * *in_window;
+                    let blended = materials.get(part_material).is_some_and(|look| look.alpha_mode == AlphaMode::Blend);
+                    if blended {
+                        for gathering in [&mut panes, &mut glass] {
+                            gathering
+                                .entry(part_material.id())
+                                .or_insert_with(|| (part_material.clone(), Gathered::default()))
+                                .1
+                                .add(asset, &at);
+                        }
+                    } else {
+                        frames
+                            .entry(part_material.id())
+                            .or_insert_with(|| (part_material.clone(), Gathered::default()))
+                            .1
+                            .add(asset, &at);
+                    }
                 }
-                let wall_now = &walls[w];
-                let pane = pane(opening.span, wall_now);
-                solid.extend(triangles(&pane, &place).into_iter().map(|(t, _)| t));
+                let pane = pane(opening.span, wall);
+                solids.push(triangles(&pane, &place).into_iter().map(|(t, _)| t).collect());
             }
-        }
-        glass.extend(panes.into_values());
-        for (w, wall) in walls.iter().enumerate() {
+            // The wall, cut round them.
+            holes.sort_by(|a, b| a[0].total_cmp(&b[0]));
             let mut cut = Wall {
                 low: wall.low,
                 high: wall.high,
                 inside: wall.inside,
                 mesh: Handle::default(),
-                holes: holes[w].clone(),
+                holes,
                 storeys: wall.storeys.clone(),
                 joins: wall.joins.clone(),
             };
-            cut.holes.sort_by(|a, b| a[0].total_cmp(&b[0]));
-            let mesh = wall_mesh(&cut);
-            solid.extend(triangles(&mesh, &house.place).into_iter().map(|(t, _)| t));
-            walls_by.entry(material.id()).or_insert_with(|| (material.clone(), Gathered::default())).1.add(&mesh, &house.place);
+            let made = wall_mesh(&cut);
+            solids.push(triangles(&made, &house.place).into_iter().map(|(t, _)| t).collect());
+            cut.mesh = shared_mesh(&mut shared, &mut meshes, format!("wall {w} {:?}", cut.holes), || made);
+            let wall_entity = commands
+                .spawn((
+                    Mesh3d(cut.mesh.clone()),
+                    cut,
+                    TownWall,
+                    MeshMaterial3d(material.clone()),
+                    Transform::IDENTITY,
+                    ChildOf(root),
+                ))
+                .id();
+            // The frames of its windows, which are in the way as the wall is,
+            // and go see-through with it (`see_through`), and their glass.
+            let here = here.join(", ");
+            if !frames.is_empty() || !panes.is_empty() {
+                let windows = commands
+                    .spawn((
+                        Name::new("Windows"),
+                        OnWall { wall: wall_entity, along: 0.0, up: 0.0, face: 1.0 },
+                        Transform::IDENTITY,
+                        Visibility::default(),
+                        ChildOf(root),
+                    ))
+                    .id();
+                for (part_material, gathered) in frames.into_values() {
+                    let key = format!("frames {w} {:?} {here}", part_material.id());
+                    let mesh = shared_mesh(&mut shared, &mut meshes, key, || gathered.mesh());
+                    commands.spawn((Mesh3d(mesh), MeshMaterial3d(part_material), Transform::IDENTITY, ChildOf(windows)));
+                }
+                for (part_material, gathered) in panes.into_values() {
+                    let key = format!("glass {w} {:?} {here}", part_material.id());
+                    by_wall.push((windows, shared_mesh(&mut shared, &mut meshes, key, || gathered.mesh()), part_material));
+                }
+            }
+            if let Some((piece, at, on)) = door_here {
+                commands
+                    .spawn((
+                        Name::new(piece.name),
+                        TownDoor(piece),
+                        WorldAssetRoot(assets.load(GltfAssetLabel::Scene(0).from_asset(piece.model()))),
+                        at,
+                        OnWall { wall: wall_entity, ..on },
+                        ChildOf(root),
+                    ))
+                    .observe(door_ready);
+                doors += 1;
+            }
+            layout.push(format!("{w}: {here}"));
         }
-    }
-
-    // The town's own walls taken out of it, drawn and stood on.
-    let mut corners: Vec<[Vec3; 3]> = Vec::new();
-    for (part_index, part) in town.iter().enumerate() {
-        let kept: Vec<[u32; 3]> = read[part_index]
-            .iter()
-            .zip(&gone[part_index])
-            .filter(|(_, gone)| !**gone)
-            .map(|((tri, at), _)| {
-                corners.push(*tri);
-                *at
+        // Its glass, as one, but wall by wall while you are in it.
+        let layout = layout.join("; ");
+        let whole = glass
+            .into_values()
+            .map(|(part_material, gathered)| {
+                let key = format!("glass {:?} {layout}", part_material.id());
+                let mesh = shared_mesh(&mut shared, &mut meshes, key, || gathered.mesh());
+                commands
+                    .spawn((Mesh3d(mesh), MeshMaterial3d(part_material), Transform::IDENTITY, ChildOf(root)))
+                    .id()
             })
             .collect();
-        if kept.len() < read[part_index].len()
+        commands.entity(root).insert(Panes { whole, by_wall });
+    }
+
+    // The town's own walls taken out of what of it is drawn and stood on, and
+    // its houses' roofs and gables out of what of it is drawn.
+    let mut corners: Vec<[Vec3; 3]> = Vec::new();
+    for (part_index, part) in town.iter().enumerate() {
+        let mut drawn: Vec<[u32; 3]> = Vec::new();
+        for ((&(tri, at), &went), &covered) in read[part_index].iter().zip(&gone[part_index]).zip(&hidden[part_index]) {
+            if went {
+                continue;
+            }
+            corners.push(tri);
+            if !covered {
+                drawn.push(at);
+            }
+        }
+        if drawn.len() < read[part_index].len()
             && let Some(mut mesh) = meshes.get_mut(&part.mesh)
         {
-            mesh.insert_indices(Indices::U32(kept.into_iter().flatten().collect()));
+            mesh.insert_indices(Indices::U32(drawn.into_iter().flatten().collect()));
         }
     }
-    corners.extend(solid);
     let taken = gone.iter().flatten().filter(|gone| **gone).count();
-    islands.reshape(Venue::Town, corners);
-
-    let root = commands
-        .spawn((Name::new("Town houses"), Venue::Town, Transform::IDENTITY, Visibility::Hidden))
-        .id();
-    for (material, gathered) in walls_by.into_values().chain(frames_by.into_values()).chain(glass) {
-        commands.spawn((Mesh3d(meshes.add(gathered.mesh())), MeshMaterial3d(material), ChildOf(root)));
-    }
-    for (piece, at) in &doors {
-        commands
-            .spawn((
-                Name::new(piece.name),
-                TownDoor(piece),
-                WorldAssetRoot(assets.load(GltfAssetLabel::Scene(0).from_asset(piece.model()))),
-                *at,
-                ChildOf(root),
-            ))
-            .observe(door_ready);
-    }
+    let roofed = hidden.iter().flatten().filter(|hidden| **hidden).count();
+    islands.reshape(Venue::Town, corners, &solids);
     if let Some((_, at)) = builder_at {
         crate::builder::stand_house_builder(&mut commands, &assets, at);
     }
     info!(
-        "the town's houses: {} of them, {} doors, their own walls' {taken} triangles made again round the holes \
-         (in {} ms)",
+        "the town's houses: {} of them, {doors} doors, their own walls' {taken} triangles made again round the \
+         holes and their roofs' and gables' {roofed} drawn as each house's own, from {} meshes (in {} ms)",
         houses.len(),
-        doors.len(),
+        shared.len(),
         started.elapsed().as_millis()
     );
+}
+
+/// What a house's walls, or a piece of its ceiling, are made of in the town:
+/// each material, by how much of them it covers, in square metres.
+type MadeOf = HashMap<AssetId<StandardMaterial>, (f32, Handle<StandardMaterial>)>;
+
+/// The material that covers the most of `made`.
+fn most(made: &MadeOf) -> Option<Handle<StandardMaterial>> {
+    made.values().max_by(|a, b| a.0.total_cmp(&b.0)).map(|(_, material)| material.clone())
+}
+
+/// The mesh made by `make`, or the one made already for the same `key`: the
+/// same mesh in many houses is one, drawn together.
+fn shared_mesh(
+    shared: &mut HashMap<String, Handle<Mesh>>,
+    meshes: &mut Assets<Mesh>,
+    key: String,
+    make: impl FnOnce() -> Mesh,
+) -> Handle<Mesh> {
+    shared.entry(key).or_insert_with(|| meshes.add(make())).clone()
+}
+
+/// While you are in one of the town's houses, its glass a wall at a time, so
+/// that each wall's goes see-through with the wall (`see_through`), and as
+/// one again once you are not.
+fn open_the_house(
+    opened: Query<&Panes, (With<TownHouse>, Added<YouAreIn>)>,
+    mut left: RemovedComponents<YouAreIn>,
+    houses: Query<&Panes, With<TownHouse>>,
+    children: Query<&Children>,
+    wall_panes: Query<(), With<WallPane>>,
+    mut commands: Commands,
+) {
+    for panes in &opened {
+        for &whole in &panes.whole {
+            commands.entity(whole).insert(Visibility::Hidden);
+        }
+        for (windows, mesh, material) in &panes.by_wall {
+            commands.spawn((
+                WallPane,
+                Mesh3d(mesh.clone()),
+                MeshMaterial3d(material.clone()),
+                Transform::IDENTITY,
+                ChildOf(*windows),
+            ));
+        }
+    }
+    for house in left.read() {
+        let Ok(panes) = houses.get(house) else {
+            continue;
+        };
+        for &whole in &panes.whole {
+            commands.entity(whole).insert(Visibility::Inherited);
+        }
+        for (windows, ..) in &panes.by_wall {
+            for pane in children.iter_descendants(*windows).filter(|&pane| wall_panes.contains(pane)) {
+                commands.entity(pane).despawn();
+            }
+        }
+    }
 }
 
 /// A town door once its model has spawned: what of its wall its frame takes

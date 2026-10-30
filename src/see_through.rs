@@ -1,11 +1,16 @@
 //! Standing in a house in House Builder, whatever stands between the camera
-//! and you is drawn see-through, and a tap goes through it to what is behind.
+//! and you is drawn see-through, and a tap goes through it to what is behind;
+//! and standing in one of the town's houses (`build::TownHouse`, since
+//! 2026-10-30, Hajun: "when the player goes inside one of the houses in
+//! roundtownmap it does the similar transparent thing as in the build
+//! minigame"), whatever of that house does, and nothing else of the town.
 //! Nowhere else is anything (Hajun, 2026-10-25: "only happen when the player
 //! is inside the home in the home build battle game, not anywhere else"): in
-//! the town, on one of its buses, at home, in the lobby, or on a plot outside
-//! its house, whatever stands between the camera and you stays as it is, and
-//! hides you. From 2026-10-09 until then it was so everywhere. The house you
-//! stand in is the one marked [`YouAreIn`], once it is down.
+//! the town out of its houses, on one of its buses, at home, in the lobby, or
+//! on a plot outside its house, whatever stands between the camera and you
+//! stays as it is, and hides you. From 2026-10-09 until then it was so
+//! everywhere. The house you stand in is the one marked [`YouAreIn`], once
+//! it is down.
 //!
 //! The camera stands where you turned and zoomed it, walls or no walls
 //! (`follow_camera`): in a house, zoomed out, it is outside the house looking
@@ -56,7 +61,7 @@ use bevy::mesh::skinning::SkinnedMesh;
 use bevy::prelude::*;
 use bevy::render::render_resource::Face;
 
-use crate::build::{Ghost, Mount, OnWall, Piece, Wall, YouAreIn};
+use crate::build::{Ghost, Mount, OnWall, Piece, TownHouse, Wall, YouAreIn};
 use crate::car::Car;
 use crate::editor::{EditMenu, EditSystems, Editable};
 use crate::island::{self, Faces};
@@ -213,7 +218,7 @@ fn find_what_hides_you(
     children: Query<&Children>,
     on_walls: Query<(Entity, &OnWall)>,
     walls: Query<(Entity, &ChildOf, &Wall)>,
-    house_you_are_in: Query<(Entity, &GlobalTransform), (With<YouAreIn>, Without<Ghost>)>,
+    house_you_are_in: Query<(Entity, &GlobalTransform, Has<TownHouse>), (With<YouAreIn>, Without<Ghost>)>,
     menu: Res<EditMenu>,
     meshes: Res<Assets<Mesh>>,
     materials: Res<Assets<StandardMaterial>>,
@@ -233,7 +238,7 @@ fn find_what_hides_you(
     // Only in a house that is down, not one still a ghost: anywhere else,
     // whatever is between the camera and you hides you, and what was faded
     // comes back.
-    let Ok((house, house_place)) = house_you_are_in.single() else {
+    let Ok((house, house_place, in_town)) = house_you_are_in.single() else {
         return;
     };
     // Through your eyes, or so near them that you are not drawn, there is
@@ -258,6 +263,11 @@ fn find_what_hides_you(
         }
         let (low, high) = world_box(bounds, place);
         if low.cmpgt(reach_high).any() || high.cmplt(reach_low).any() || ground(part, high.y, &lineage) {
+            continue;
+        }
+        // In one of the town's houses, only the house: the rest of the town,
+        // its other houses among it, stays as it is.
+        if in_town && model_of(part, &lineage) != house {
             continue;
         }
         // Only what is drawn solid, or is see-through already for being in
@@ -341,7 +351,7 @@ fn find_what_hides_you(
         if hiding.0.contains_key(&part) {
             continue;
         }
-        let Some((fellows, owner)) = fades_with(part, &lineage, &children, &parts, target) else {
+        let Some((fellows, owner)) = fades_with(part, &lineage, &children, &parts, &on_walls, target) else {
             continue;
         };
         let seen = if of_the_car(part, &lineage) { BUS_SEEN } else { SEEN };
@@ -366,7 +376,7 @@ fn find_what_hides_you(
             if hiding.0.contains_key(&other) {
                 continue;
             }
-            if let Some((fellows, owner)) = fades_with(other, &lineage, &children, &parts, target) {
+            if let Some((fellows, owner)) = fades_with(other, &lineage, &children, &parts, &on_walls, target) {
                 hiding.0.extend(fellows.into_iter().map(|fellow| (fellow, (owner, seen))));
             }
         }
@@ -425,13 +435,18 @@ fn inside_of(
 }
 
 /// The wall that `part` is a part of a door, a window or a hanging in, if it
-/// is: of a house built in House Builder (`build::OnWall`), its glass as well
-/// as its frame. In the way, it is the wall that is.
+/// is (`build::OnWall`, on it or what it is in): of a house built in House
+/// Builder, its glass as well as its frame, or one of the town's houses. In
+/// the way, it is the wall that is.
 fn in_a_wall(part: Entity, lineage: &Lineage, on_walls: &Query<(Entity, &OnWall)>) -> Option<Entity> {
-    on_walls
-        .get(model_of(part, lineage))
-        .ok()
-        .map(|(_, on)| on.wall)
+    let mut at = Some(part);
+    while let Some(entity) = at {
+        if let Ok((_, on)) = on_walls.get(entity) {
+            return Some(on.wall);
+        }
+        at = lineage.get(entity).ok().and_then(|(parent, ..)| parent).map(ChildOf::parent);
+    }
+    None
 }
 
 /// What `part` is part of: the piece, town object or bus it is in, or else
@@ -723,15 +738,17 @@ fn line_meets_box(from: Vec3, to: Vec3, low: Vec3, high: Vec3) -> bool {
 /// is open on (`menu`).
 ///
 /// A piece of furniture, a door, a window, a town object or a bus fades
-/// whole. A house, and the island, fade a part at a time: the meshes the
-/// glTF loader made of one object in Blender, one for each of its materials,
-/// and of the objects parented to it, like a door's handles; or a wall the
-/// game made again (`build`).
+/// whole, and so do the door and each wall's window frames of one of the
+/// town's houses (`build::OnWall`). A house, and the island, fade a part at a
+/// time: the meshes the glTF loader made of one object in Blender, one for
+/// each of its materials, and of the objects parented to it, like a door's
+/// handles; or a wall the game made again (`build`).
 fn fades_with(
     part: Entity,
     lineage: &Lineage,
     children: &Query<&Children>,
     parts: &Parts,
+    on_walls: &Query<(Entity, &OnWall)>,
     menu: Option<Entity>,
 ) -> Option<(Vec<Entity>, Option<Entity>)> {
     let (parent, from_blender, ..) = lineage.get(part).ok()?;
@@ -751,7 +768,7 @@ fn fades_with(
         }
         // A piece is the furthest up a part goes: a door is in its house, but
         // fades on its own.
-        if piece.is_some() || town_object || car {
+        if piece.is_some() || town_object || car || on_walls.contains(entity) {
             if piece.is_none_or(|piece| piece.def.mount != Mount::House) {
                 whole = Some(entity);
             }
