@@ -214,9 +214,93 @@ Authored in Blender and exported by `blender/export_glb.py` into `assets/`. A
 metre in Blender is a metre in the world: anything the wrong size gets resized in
 Blender and re-exported rather than scaled at spawn time (`map::ObjectDef`).
 
+## The first time, you sign up
+
+Since 2026-10-31 (Hajun), the first time the app is run, or whenever the name
+and the character are not set, three pages come before the town
+(`src/signup.rs`): the town's name over a Start button, with "Already have an
+account? Log In" under it; "Choose Username", "Shown to other players.
+2-16 characters." on one line (a hyphen: the font has no en dash), a box
+to type a name into and Save; and "Choose Character", "You may change this
+later.", a boy and a girl on two cards with their pictures and nothing
+else (`assets/signup/boy.png`, `girl.png`, rendered from `limbperson.blend`
+and `limbpersongirl.blend` by `blender/render_person.py`) and Save (Hajun,
+2026-11-01; until then three lines of explanation, "Save Username", "Save
+Character" and "Boy" and "Girl" under the pictures). Solid colours, no
+outlines, no words but those (Hajun:
+"as minimalistic as possible"): black pages, the box and the cards dark
+grey, the chosen card lighter, and white buttons with black words (since
+the evening of 2026-10-31, Hajun: "black for the initial pages ... white
+instead of yellow for the buttons"; dark blue, blue and gold until then).
+
+- **It is kept on the device, `profile.json` beside `town.json`**, so the
+  pages never come again; and online it is the account's: sent as soon as
+  the server has let you in, if the account has you otherwise, and whenever
+  it changes (`Ask::Profile`, the last of the asks, so that older apps are
+  not told to update), kept in Postgres in `players.name` and `players.look`,
+  which were there already, and sent to everyone in your room as a new
+  member record. No other database: the pages are two columns on the
+  accounts table. A native sign-in later (Apple, Google) is one more way to
+  find that row, by the token's subject, and is where "Log In" goes; for now
+  Log In says "Log in is not available yet".
+- **A name is 2 to 16 characters of plain ASCII** (`roundtown_net::profile`,
+  checked on both sides, the server ignoring any other): the game's font has
+  no Hangul. It need not be unique. Typing: on desktop the keys and Enter;
+  on a phone the soft keyboard, asked for by the window's `ime_enabled`,
+  which winit shows on both phones. An iPhone's sends each letter as a key
+  press and Return as a newline; Android's sends no keys at all, and
+  writes into the activity's own text (`GameTextInput`), which the name is
+  read off every frame (`signup::android_text`, through
+  `bevy::android::ANDROID_APP`). Neither has been tried on a phone yet; the
+  Android build type-checks. A phone's keyboard, with the phone on its
+  side, covers most of the screen, so the name's page, and the settings'
+  Edit name, slide up out from under it (`signup::Keyboard`,
+  `signup::LiftsForKeyboard`, `lift_for_keyboard`; Hajun, 2026-10-31: "the
+  keyboard hides the edit name box so u cant see the text anymore. make it
+  go up in reaction to keyboard. as well as when u first set ur name"):
+  laid out as with no keyboard and slid up by their own transform, by as
+  much as puts their bottom 2% of the short side over the keyboard, and
+  never so far that the box the name goes in is nearer the top than that
+  (the heading may go off the top). On Android the keyboard's height is
+  what the window's insets say: `MainActivity.onApplyWindowInsets` hands
+  the IME inset's bottom to the game through a native method the game
+  exports (`imeInset`, `Java_town_donggeurami_MainActivity_imeInset` in
+  `signup`), kept in an atomic the game reads every frame, in the screen's
+  pixels: times `RENDER_SCALE`, over the window's scale factor. **Not
+  through `GameActivity`'s native side**: the first build of this called
+  `GameActivity_getWindowInsets` on `AndroidApp::activity_as_ptr()`, which
+  is a JNI reference to the Java activity and not the native `GameActivity`
+  struct, and the app crashed on launch (Hajun, 2026-10-31: "app is
+  crashing on launch"). An iPhone's winit says nothing of its keyboard, so
+  there it is taken to cover 0.55 of the screen's height while a box is up
+  (`IOS_KEYBOARD`, my guess). Seen in the desktop build with a keyboard of
+  0.55 written in by a script, both pages; not yet with a real keyboard on
+  a phone.
+- **The character is a look** (`lobby::LOOKS`, `roundtown_net::PEOPLE_LOOKS`):
+  `boy` is `limbperson.glb` and `girl` is `limbpersongirl.glb` (Hajun's, the
+  same rig and bones, a pink top). Every account from before wears `blue`,
+  which is drawn as the boy, as is any look an app has not heard of. Saving
+  swaps your body's model on the spot (`lobby::dressed_as`; the scene
+  spawner takes the old one down) and your name in the town's room, so a
+  game of House Builder offline is played under it; online, `net::redress`
+  swaps anyone else's as their record changes, and their name over their
+  head follows (`tags::rename`). The AIs still take turns at red, yellow and
+  purple.
+- **While the pages are up the world waits as under a dialog**
+  (`hud::DialogUp`): you stand still, every press is the page's, the cursor
+  is free on desktop, and the town's name waits to fade in until the pages
+  have gone. Deleting your account (`settings`) forgets the profile and
+  brings the pages back.
+- Seen in the desktop build on 2026-10-31, scripted with posted clicks and
+  keys: all three pages, Log In's notice, Save greyed until there is a name
+  or a choice, the girl chosen and walking in the town under the typed name,
+  the name and look on a local server, and a relaunch going straight to the
+  town.
+
 ## The app opens in Round Town
 
-There is no menu. The app opens straight into the town (`roundtownmap.glb`
+There is no menu. Once you have signed up (above), the app opens straight
+into the town (`roundtownmap.glb`
 since 2026-10-30, `circlemap1.glb` before) with all eight players already
 standing on the path round its pond, facing the fountain in the middle of
 it, and the town's
@@ -225,23 +309,94 @@ walk, jump and look round from the first frame; on desktop the cursor is taken
 for looking round at startup. The one game there is, House Builder, is played
 from the town (below).
 
-- **There is no button top right** (since 2026-10-31, Hajun: "remove the top
-  right home button"). Until then one took you home (`testhomemap.glb`) and
-  back. Nothing takes you home now, though it is still loaded at startup
-  (`island::LOADED`) and the server still answers `Ask::Travel`. The town's
-  name shows again every time you arrive back in the town, from a game of
-  House Builder.
-- **The stick and the jump button are a see-through grey, with no rim**
-  (Hajun, 2026-10-31): the stick's knob and the jump button's arrow a
-  see-through white a little greyed, the two alike (`hud::TOUCH_DISC`,
-  `TOUCH_MARK`; held, the jump button is a little more solid). The arrow is
-  one filled shape with its corners rounded off, drawn in code
-  (`hud::jump_arrow`) as the rating star is: nodes overlapping would show
-  where they do through the see-through white. Until then the stick was white
-  with a white rim, and the jump button yellow, its arrow three strokes. Both
-  are put away while you talk to someone (below). Seen in the desktop build
-  through a copy of `setup_hud`, which compiles for phones alone; not yet on
-  a phone.
+- **The buttons round the screen are laid out as Hajun sketched them**
+  (`assets/UIbuttonlayout.jpg`, 2026-10-31, kept out of the APK;
+  `hud::show_top_bar`): top left your name on a plate (the buttons' grey, a
+  little more solid, corners rounded a little), beside it a person button
+  and the settings' gear ("Settings", below), and under it your balance,
+  the coin and the number on nothing; down the right edge a gift, a
+  speech bubble (social chat) and a gamepad (a leaderboard, a city at
+  first, until Hajun said which it was, stood between the gift and a group
+  of people until 2026-11-01, when Hajun had the leaderboard taken out
+  and the group made a bubble); and round a phone's jump button a face
+  (emotes, one day), a speech bubble (chat) and a fist. The person and the
+  gear are 8% of the short side (`hud::SMALL_BUTTON`), the three down the
+  right edge 10.5 (`SIDE_BUTTON`; 9.5 for an hour on 2026-11-01, then "very
+  slightly" bigger) and 1.5 further in from the top and the right than the
+  name is (`SIDE_INSET`, "very slightly increase margin"), the three round
+  the jump button 14
+  (`ACTION_BUTTON`), the stick 25 (`STICK_SIZE_VMIN`; 22 until Hajun
+  asked for "slightly" bigger, 2026-11-01), 7% of the width in from the
+  left (`STICK_LEFT_VW`; 8 until "very very slightly more left", the same
+  day), and the jump button itself 22,
+  6% of the width and 9% of the height in from the corner
+  (`JUMP_SIZE_VMIN`, `JUMP_RIGHT_VW`, `JUMP_BOTTOM_VH` in `src/lib.rs`;
+  since the evening of 2026-10-31, Hajun: "keep the size of the user icon
+  and the settings icon but increase the size of every button the right
+  hand side both top and bottom, especially jump button, and move the
+  bottom right buttons slightly closer to the bottom right corner"; 8, 8,
+  12 and 18 at 8% and 11% until then, then 5% and 7% for a night, until
+  Hajun asked for "very slightly more margin", and 8% of the height for an
+  hour, until "move them up very very slightly"). The three are placed from the
+  jump button's corner so as to sit about 2.5% clear of it, the face up
+  and to the left, the bubble over it and the fist beside it, as Hajun's
+  sketch has them. **Only the gear, the stick, the jump button and the
+  fist do anything** (Hajun: "u dont need to make any button functional
+  yet other than jump, joystick, settings"; the fist since 2026-11-01,
+  below, "The fist throws a punch"); the rest take a press and drop it. The three round the jump button are placed from where
+  the jump button is on a phone, on every platform, so that the desktop
+  build shows the layout too, with no jump button among them. Until then a
+  button top right took you home (`testhomemap.glb`) and back (Hajun:
+  "remove the top right home button"); nothing takes you home now, though
+  it is still loaded at startup (`island::LOADED`) and the server still
+  answers `Ask::Travel`. The town's name shows again every time you arrive
+  back in the town, from a game of House Builder.
+- **Every button is in one style, the stick's and the jump button's**
+  (Hajun, 2026-10-31): a see-through grey disc with no rim, and on it a
+  see-through white picture (`hud::round_button`, `TOUCH_DISC`,
+  `TOUCH_MARK`: white at 0.52; "a little greyed", 0.92 at 0.38, until Hajun
+  asked for "slightly more whiter"; held, the jump button is a little more
+  solid). The jump button's arrow, the pencil and the fist are drawn in
+  code (`hud::jump_arrow`, `pencil`, `fist`), each one filled shape edged
+  by how far every pixel is from it, as the rating star is: nodes
+  overlapping would show where they do through the see-through white. The
+  fist is a closed hand from the front, four fingers over the palm with
+  the thumb across them (Hajun, 2026-11-01: "more a hand fist rather than
+  boxing glove"; Material has no closed hand); the gear was drawn in code
+  too until that day, when Hajun's screenshot of it was Material's
+  `settings`. The other pictures are 96 px PNGs in `assets/icons/`, white
+  on clear (`hud::ICONS`): Google's Material icons (Apache 2.0, its
+  licence beside them and out of the APK), turned white by hand (Hajun:
+  "search online for that icon + png/transparent, download and modify
+  it"): person, settings, videogame_asset, mood and textsms; and Font
+  Awesome Free's gift (solid) and comment-dots (regular), the gift and the
+  social chat's bubble top right (CC BY 4.0, `LICENSE-font-awesome.txt`
+  beside them, out of the APK), the icons in Hajun's FlutterFlow
+  screenshots of 2026-11-01, rendered white from their SVGs with an 8 px
+  margin by a throwaway `resvg` tool (the gift and the bubble were drawn
+  in code for an hour first). card_giftcard, leaderboard, groups and
+  sports_mma are still in the folder, unused. Until 2026-10-31 the stick
+  was white with a white rim, and the jump button yellow, its arrow three
+  strokes. The stick and the jump button are put away while you talk to
+  someone (below), and since 2026-11-01 the three round the jump button
+  with them (`hud::hide_round_the_jump`; Hajun: "the punch, quickchat, and
+  emote button is not hidden. hide those too"). Seen in the desktop build; the stick and the jump button
+  compile for phones alone, and none of it has been seen on a phone yet.
+- **The fist throws a punch** (`Punching`, `start_punch`, `punch_offset` in
+  `src/lib.rs`, since 2026-11-01; Hajun: "a very basic animation for the
+  fist attack that activates each time u press the punch button. dont make
+  the animation too long so that user can press the attack button like 4~8
+  time per second"): each press of the fist, as it goes down
+  (`hud::press_punch`), or F on desktop, swings the right arm straight out
+  level in front of you and back, 0.07 s out and 0.11 s back (`PUNCH_OUT`,
+  `PUNCH_BACK`, `PUNCH_REACH` 1.5 rad; the two arms in turn for an hour,
+  until Hajun asked for "only use right hand"); a press mid-punch starts
+  the next at once, from the side. The arm punches in place of its walk;
+  the rest of the body walks on. Nothing of it goes over the network, so
+  nobody online sees it; it hits nothing. Seen from the side in the
+  desktop build, the arm level in front (it first swung backward: forward
+  is the same turn in both arms' bone spaces, the walk only negates the
+  right's to swing it against the left); not yet on a phone.
 - **On desktop, press `Escape` to free the cursor before clicking a button**,
   the same as for editing. On a phone you just tap it.
 - **A press on a button is the button's alone.** Every button over the world
@@ -261,6 +416,36 @@ from the town (below).
 - The text is Bevy's built-in font, which is plain ASCII: no Hangul, and no ★,
   `…` or `·` either. The rating star is drawn in code (`builder::star_image`).
 
+## Settings
+
+A gear beside your name, top left (`src/settings.rs`, since 2026-10-31;
+Hajun: "a setting icon ... make it show a semi transparent greyish
+rectangular popup which will have all sorts of different useful
+settings"; top right for an hour, until their sketch of the screen put it
+by the name), Material's `settings` icon (`assets/icons/settings.png`,
+since 2026-11-01, Hajun's screenshot; drawn in code as the jump button's
+arrow is until then), in the buttons' own style (`hud::round_button`),
+after the person button
+in `hud::BarLeft`. It opens a window of
+grey glass over the dimmed screen, a dialog like the shop (`DialogUp`: you
+stand still, every press is its, Escape or the cross on its corner or the
+dark round it shuts it), with three tabs along its top: **Graphics** and
+**Controls**, with nothing in them yet, and **Accounts**: the name you go
+by, with a pencil beside it (`hud::pencil`) that opens a smaller dialog,
+"Edit name", with the name in the sign-up's typing box (`signup::NameBox`,
+`signup::name_box`) and Cancel and Save (Hajun: "a pencil/edit icon that if
+u press, you can edit your name in a smaller new popup. and save so thats
+ur new name"), which on a phone slides up out from under the keyboard as
+the sign-up's name page does (`signup::LiftsForKeyboard`, above, "The first
+time, you sign up"): Save makes it your name everywhere the sign-up did
+(`signup::wear`: the town's room, over your head, and the server, through
+the profile changing), and goes back to the tab; "Sign in with Google" and
+"Sign in with Apple" blocked out until there is a sign-in to be had; and
+**Delete account**, which asks once more, then has the login forget the
+account; this device forgets its secret and its profile, and the sign-up's
+pages come back. Offline, Delete says "Not online: try again". Seen in the
+desktop build on 2026-10-31, scripted; not yet on a phone.
+
 ## Playing online
 
 Since 2026-10-08 the game plays online, against a server in Seoul (a $10
@@ -272,8 +457,9 @@ where things come from, not what they are.
   it always has; `src/net.rs` connects in the background, IPv6 first, then
   IPv4. Once the server has let you in, whoever else is in your channel of
   the town (16 to a channel) walks into it, and one of this device's AIs
-  leaves for each, keeping the town at eight bodies
-  (`lobby::fill_the_town`; Hajun's choice, 2026-10-08). Each device runs its
+  leaves for each, keeping the town at 32 bodies
+  (`lobby::fill_the_town`; Hajun's choice, 2026-10-08; eight until
+  2026-11-01). Each device runs its
   own AIs, so two players see them in different places. With no server to be
   had it is the offline game exactly, and `net` keeps trying, less and less
   often. Never mid-game offline: a game of House Builder started offline is
@@ -329,8 +515,9 @@ where things come from, not what they are.
   VM (`src/login.rs`, TCP 443, the server's own certificate pinned by its
   SHA-256, `login::PINNED`: no domain), and gets a signed connect token. A new
   device is a new guest account in Postgres with a generated name ("Mochi
-  482"), 1,000 coins, and the blue look, which every real player wears for
-  now. **The VM's addresses and certificate are compiled into the app**
+  482"), 1,000 coins, and the blue look; the name and the character chosen
+  on signing up replace those as soon as it is let in ("The first time, you
+  sign up"). **The VM's addresses and certificate are compiled into the app**
   (`net::SERVERS`, `login::PINNED`): a new VM means a new app.
 - **House Builder online is the server's** (`server/src/builder.rs`): the
   queue (10 s for people, then the computer one seat at a time; Hajun's
@@ -347,11 +534,27 @@ where things come from, not what they are.
   for the visits. The computer's players stand where they arrive: the server
   has no islands to walk them on. A dropped connection mid-game waits 15 s to
   come back (`builder::RECONNECT_WAIT`) before the game is given up.
-- **Names over heads** (`src/tags.rs`), online only, AIs included. **Town
+- **Names over heads** (`src/tags.rs`): everyone else's online, AIs
+  included, and never your own (since the evening of 2026-10-31, Hajun:
+  "remove the in world player name for the player's own character"; until
+  then yours was always over you, online or not: it is on its plate top
+  left). Each is a line of UI text laid out once (3.6% of the short side
+  of the screen; 6% for an hour, which Hajun found "too big, especially
+  your own name": "reduce by more than 50%", so 2.8, then, with their own
+  gone, "slightly bigger", 3.2, and on 2026-11-01 "slightly increase"
+  again), and scaled down by
+  how far its head is from the camera, as words standing in the world would
+  be: full size 8 m off and nearer, half at 16, a tenth at 80 (Hajun,
+  2026-10-31: "like a in the world text rather than a on screen text so
+  further away the text look small naturally and closer look larger"; until
+  then one size, 3.2%, at every distance). Read
+  out to 75 m (25 until then; Hajun: "like 3x"), which is further than the
+  scaling leaves one readable. **Town
   editing is off** while online (`map::hands_off_online`): nobody else would
-  see it. **Your account** is the round button beside the balance, online
-  only (`src/account.rs`): its name, and Delete account, which Apple asks for
-  even for accounts nobody signed up for.
+  see it. **Your account** is under Settings (below, "Settings"), where
+  Delete account is, which Apple asks for even for accounts nobody signed
+  up for. Until 2026-10-31 it was a round button beside the balance, online
+  only (`src/account.rs`, now `src/settings.rs`).
 - **Testing on desktop.** Two copies side by side need their own `APPDATA`
   (their own `device.id`, so their own accounts) and `RT_FREE_CURSOR=1`, so
   that neither takes the mouse. `RT_SERVER=<address>[,<address>]` points a
@@ -627,16 +830,18 @@ feature decodes it (`Cargo.toml`); it decodes only Ogg Vorbis by default.
 
 ## The town's buses
 
-Two buses drive round the town's roads by themselves, one behind the other
-round the same loop, and anyone can get on either and ride it. The cars
+Four buses drive round the town's roads by themselves, one behind the other
+round the same loop, a quarter of it apart (two, half apart, until
+2026-11-01: Hajun, "4 buses in the map rather than 2"), and anyone can get
+on any of them and ride it. The cars
 came first (Hajun, 2026-10-23: "the car that automatically goes around in
 the circlemap1 ... it goes on every part of the road ... both lane 1 and
 lane 2"; "dont hardcode the moving logic", as the model is to get seats
 and windows; and later that day "put both car and car2 on the road at
 different points on the same path"); on 2026-10-24 Hajun had them swapped
 for buses ("remove the car and car2 from the circlemap and put 2 bus
-instead"). Both are their bus, `assets/mybuilds/bus.glb`. **`car::CARS` is
-the cars, and each goes by its place in it**, 0 and 1: two of the bus. The
+instead"). All are their bus, `assets/mybuilds/bus.glb`. **`car::CARS` is
+the cars, and each goes by its place in it**, 0 to 3: four of the bus. The
 code still calls them cars (`src/car.rs`, `src/roads.rs`, `Spot::aboard`,
 `RT_CAR_AT`). The first car, `car.glb`, a red slab with its seats sunk into
 it, and the Roadster, `car2.glb`, are still in `assets/mybuilds/` and left
@@ -872,12 +1077,14 @@ is their model's, and their way round is the town's roads.
   what keeps devices from drifting apart over the years since 1970 on
   arithmetic that differs in its last digit. They never stop for anybody,
   as a device could not tell the others it had: only short of crossings,
-  where they would on every device alike. **The second goes half the
-  loop behind the first**, or as near half, a second at a time, as keeps
-  the two a metre apart all the way round, where the loop crosses itself
-  and passing each other (`Route::spread`), or failing that, out of each
-  other: in the new town 317 s behind (half is 316.5), at which they never
-  touch (checked every 0.1 s round the loop in the test above).
+  where they would on every device alike. **Each goes its share of the
+  loop behind the one before**, a quarter with four buses, or as near it,
+  a second at a time, as keeps every two a metre apart all the way round,
+  where the loop crosses itself and passing each other (`Route::spread`),
+  or failing that, out of each other: with two buses in the new town, 317
+  s behind (half is 316.5), at which they never touched (checked every
+  0.1 s round the loop in the test above, which checks every pair of
+  however many there are).
   `RT_CAR_AT=<seconds>` stops both at one point of the loop, the first that
   far into it and the second 317 s behind, for trying things out. Where the
   loop starts goes by the order the town's paint is read in, which every
@@ -1014,7 +1221,7 @@ swings open and five windows (`src/build/town.rs`).
 ## The camera stands where you zoomed it
 
 There is one view (Hajun, 2026-10-09): the camera orbits you as you turn and
-zoom it (`OrbitCamera`, `follow_camera` in `src/lib.rs`), 2.5 to 18 m out
+zoom it (`OrbitCamera`, `follow_camera` in `src/lib.rs`), 1.5 to 18 m out
 behind you, and zoomed all the way in it is your own eyes. Nothing in the
 world moves it: walls, ceilings and trees never bring it in nearer you.
 That is Hajun's call (2026-10-09): "at all times u should be able to zoom
@@ -1044,7 +1251,10 @@ you.
   keeps it so (`nothing_is_in_the_way_but_in_a_house_of_house_builder`);
   not yet tried by hand or on a phone.
 - **It always points exactly the way you turned it, and stands as far out as
-  you zoomed it**: 2.5 to 18 m (`CAMERA_DISTANCE_MIN`, `_MAX`; 15 m at most
+  you zoomed it**: 1.5 to 18 m (`CAMERA_DISTANCE_MIN`, `_MAX`; 2.5 at the
+  nearest until 2026-11-01, when Hajun found "the max zoom in is not zoomed
+  in enough"; looking up past you it comes no nearer than 0.8 m,
+  `CAMERA_LOOK_UP_NEAREST`, which keeps it out of your body; 15 m at most
   until Hajun asked for "a slight bit more", 2026-10-09). It tips down as far
   as straight down (`PITCH_MAX`, a right angle; about 69° until Hajun asked,
   the same day), for a view of the tops of things, a roof fading to show the
@@ -1058,7 +1268,12 @@ you.
   world moves it off where you turned and zoomed it. What turns it for you is
   only what Hajun asked for on 2026-10-31: the stick's recentering and a
   double tap (next), and talking to someone ("You can talk to anyone in the
-  town"); none of them while a finger is on the camera.
+  town"); none of them while a finger is on the camera. A finger dragged
+  across a phone's screen turns it a quarter more than the mouse does for
+  the same distance (`TOUCH_LOOK_GAIN`, 1.25, since 2026-11-01; Hajun:
+  "increase the camera panning ... sensitivity slightly so each drag
+  rotates the camera bit more"; the same as the mouse, `LOOK_SENSITIVITY`,
+  until then).
 - **On a phone, walking with the stick brings it round behind you, and a
   double tap swings it there** (`assist_camera`; Hajun, 2026-10-31: "Soft
   auto-recenter: when the stick is pushed and the player hasn't touched the
@@ -1077,15 +1292,27 @@ you.
   your eyes it never turns. Two taps on nothing (not the stick, the jump
   button, a button or anything the editor takes), the second down within 0.3
   s of the first coming up and within 8% of the short side of it
-  (`DoubleTap`), swing it round behind the way you face, tipped as the app
-  opens it (`CAMERA_PITCH`), or looking straight ahead from your eyes, most of
-  the way in a fifth of a second (`snap_behind`). A finger on the camera
-  stops either at once. On desktop neither: the keys walk you, and the mouse
+  (`DoubleTap`), swing it round behind the way you face **as you stand at
+  the tap** (`CameraAssist::snap_behind` keeps that yaw, `snap_to` goes to
+  it), tipped as the app opens it (`CAMERA_PITCH`), or looking straight
+  ahead from your eyes, most of the way in a fifth of a second. Until the
+  evening of 2026-10-31 it went behind the way you faced each frame, and
+  walking with the stick right after a double tap, you face where the
+  camera's ahead and the stick point, so the camera coming round behind
+  you turned you with it, and chased you round for ever (Hajun: "the
+  camera starts spinning ... it supposed to just move the camera behind
+  the user at that exact moment only, not after"); a test keeps the mark
+  fixed. The double tap also counts the 1.5 s wait, and its easing in, as
+  served: walking with the stick brings the camera round behind where you
+  walk as soon as the swing is over (Hajun, 2026-11-01: "make that become
+  0s instantly so it starts autofollowing right away"; the taps, being
+  fingers on the camera, had started the wait over). A finger on the
+  camera stops either at once. On desktop neither: the keys walk you, and the mouse
   is the camera's. All the numbers but the 1.5 s are mine. Seen in the
   desktop build with the stick written in by a script, walking one way across
   the town with the camera off to the side: it stood still for 1.5 s, then
-  came round behind in about 3 s. The double tap is unit-tested only; neither
-  has been tried on a phone.
+  came round behind in about 3 s. The double tap is unit-tested only; the
+  recentering has not been tried on a phone, and the spin's fix not yet.
 - **In a house, whatever hides any of you from it fades to a quarter of itself**
   (`SEEN`, 0.25, as much as Roblox's Invisicam leaves; one of the town's
   buses, until 2026-10-25, to three quarters, `BUS_SEEN`, above) over 0.15 s, and
@@ -1197,8 +1424,8 @@ you.
 - **Zoomed all the way in, it is your eyes, and that is as far in as it
   zooms** (Hajun, 2026-10-09: "the max zoom point is the point at which it
   becomes first person view ... as soon as you zoom out u are back to third
-  person view"). Zoomed in past 2.5 m it goes into them, and zoomed out of
-  them it is straight back behind you at 2.5 m; either way it takes a tenth
+  person view"). Zoomed in past 1.5 m it goes into them, and zoomed out of
+  them it is straight back behind you at 1.5 m; either way it takes a tenth
   more zoom than the camera can follow (`SWAP_ZOOM`), a notch of the wheel,
   so that fingers that waver as a pinch ends do not swap it back and forth.
   There is no view button any more (from 2026-09-29 it swapped first and
@@ -1269,11 +1496,16 @@ tap-to-edit menu that writes to it.
 - **Adding an object to the world means adding a `CATALOGUE` entry and a record
   to `default_town`,** not a `commands.spawn` in `setup_world`. The default
   town is empty for now; the catalogue's one kind, the tree, no longer gives
-  off light. A save written before 2026-09-26 may still hold the two trees the
-  default town used to start with.
+  off light. A save written before 2026-09-26 could still hold the two trees
+  the default town used to start with, and on 2026-11-01 one of them stood
+  in Hajun's new town on their phone (Hajun: "remove that tree in the map i
+  dont know why it spawned cuz its not part of the map"): `SAVE_VERSION`
+  is 2 since, and a save of an older version is started over from
+  `default_town` and written over (`map::read_save`), on every device.
 - **A save is one JSON document per player**, so it can become one row in a
   server table later without reshaping. It records a *kind*, never an asset
-  path. Bump `SAVE_VERSION` if that shape changes.
+  path. Bump `SAVE_VERSION` if that shape changes, or to throw every
+  device's save away, as above.
 - It lives outside the repo, so a rebuild never wipes a town:
   `%APPDATA%\donggeurami_town\town.json` on Windows, the app's internal
   storage on Android, `Library/Application Support` in the sandbox on iOS
@@ -1286,14 +1518,22 @@ tap-to-edit menu that writes to it.
   grabbed for looking around it sits hidden in the middle of the screen, where
   only the player's own back is ever under it. On a phone you just tap.
 
-## The town holds eight players; offline, seven of them are AI
+## The town holds 32 players; offline, 31 of them are AI
 
-`src/lobby.rs` holds the room: eight seats, each a flat `Member` record — an
+`src/lobby.rs` holds the room: seats, each a flat `Member` record — an
 id, a name, a look and an `ai` flag — the very record the server sends
-(`roundtown_net::Member`). Offline you are seat 0 and the other seven are AIs,
-walked by `src/ai.rs`. Online, the server sends whoever else is in your
-channel of the town, and this device keeps the town at eight bodies with AIs
-of its own (below, "Playing online").
+(`roundtown_net::Member`). Offline you are seat 0 and every other seat is an
+AI, walked by `src/ai.rs`: eight seats as the app opens (`lobby::SEATS`,
+which is also a game of House Builder's) and then as many as fill the town
+to `roundtown_net::TOWN_BODIES`, 32 since 2026-11-01 (Hajun: "a total of 32
+ppl in the map including ai, so each new player join replaces a ai"; 8
+until then), on arrival spots round the pond (`lobby::TOWN_SPOTS`, 32: the
+sixteen on the path and sixteen more on a ring 2 m further out,
+`roundtown_net::arrival`), under 48 names (`AI_NAMES`; 20 until then, and
+past them every AI was "Bot"). Online, the server sends whoever else is in
+your channel of the town, and this device keeps the town at 32 bodies with
+AIs of its own (below, "Playing online"). The cost of 32 bodies is not
+measured on a phone.
 
 - **Players come from a roster**, the way objects come from the town save:
   the town's (`lobby::Lobby`), or a game of House Builder's (`builder::Game`).
@@ -1310,8 +1550,9 @@ of its own (below, "Playing online").
 - **Only your own legs follow your stick.** Everyone else's walk is read off
   how their body moved (`walk_from_motion`), so walking never has to go over
   the network: a position is enough.
-- There are four looks and eight seats: you are always blue, and the AIs take
-  turns at red, yellow and purple.
+- There are five looks and eight seats: you are the boy or the girl you chose
+  on signing up (the boy until then), and the AIs take turns at red, yellow
+  and purple.
 
 ## You can talk to anyone in the town
 
@@ -1324,7 +1565,11 @@ every ai character in the map for now"), in `src/talk.rs`: the town's AIs
   Hajun: "at most one prompt active at a time (nearest in front of you). No
   choosing between prompts, so no precision needed"): a small white circle
   with a black outline, its tail down and to the left, three black dots in it
-  (`bubble_image`, drawn in code as the rating star is), its point over the
+  (`bubble_image`, drawn in code as the rating star is; 10% of the short
+  side of the screen wide, 8 until Hajun asked for bigger that evening, and
+  what is said and the replies a tenth bigger than first drawn the same
+  evening: "very slightly increase the size of both the text box and the
+  font size and the button"), its point over the
   head of the nearest of them within 4.5 m, within 70° of the way you face,
   and in sight of your eyes, no wall between. Once it is over someone it stays
   out to 5 m and 80° round, unless someone else is half a metre nearer, so

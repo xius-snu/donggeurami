@@ -60,6 +60,7 @@ use crate::builder::OfflineGame;
 use crate::car::{self, Place};
 use crate::clock::TownClock;
 use crate::lobby::{self, Balance, Seat, Whereabouts};
+use crate::signup::Profile;
 use crate::{OrbitCamera, Player, PlayerJump, Riding};
 
 /// Where the server is: the Vultr VM in Seoul, over IPv6 first and then IPv4
@@ -129,14 +130,14 @@ pub(crate) fn plugin(app: &mut App) {
         .add_observer(outdated)
         .add_systems(
             PreUpdate,
-            (hear_the_time, dress_newcomers, hear_spots, hear)
+            (hear_the_time, dress_newcomers, redress, hear_spots, hear)
                 .chain()
                 .after(ClientSystems::Receive),
         )
         .add_systems(
             Update,
             (
-                (lifecycle, link).chain(),
+                (lifecycle, link, send_profile).chain(),
                 smooth.before(crate::move_bodies),
                 tell_where_i_am.after(crate::move_bodies),
             ),
@@ -617,9 +618,12 @@ fn outdated(_: On<ProtocolMismatch>, mut link: ResMut<Link>, mut commands: Comma
 
 /// What the server tells this device alone: who you are, and where it has put
 /// you.
+#[allow(clippy::too_many_arguments)]
 fn hear(
     mut tells: MessageReader<Tell>,
     mut online: ResMut<Online>,
+    profile: Res<Profile>,
+    mut asks: MessageWriter<Ask>,
     mut me: Query<(Entity, &mut Seat, &mut Balance), With<Player>>,
     mut bodies: Whereabouts,
     mut orbit: ResMut<OrbitCamera>,
@@ -631,7 +635,12 @@ fn hear(
         };
         match tell {
             Tell::Welcome { me } => {
-                info!("online as {}", me.name);
+                info!("online as {}, a {}", me.name, me.look);
+                // The account has you otherwise than you signed up: as a
+                // new account does, with a name of the server's making.
+                if let Some(ask) = profile.ask_for(me) {
+                    asks.write(ask);
+                }
                 online.me = Some(me.clone());
             }
             Tell::Arrive {
@@ -817,6 +826,39 @@ fn dress_newcomers(
                 updates: VecDeque::from([(sent, *spot)]),
             },
         ));
+    }
+}
+
+/// Someone in your room who has become someone else: signed up under a name
+/// and in a look of their own (`Ask::Profile`), which the server sends as a
+/// new member record. Their body takes the name, and the model if it is
+/// another.
+fn redress(
+    changed: Query<(Entity, &Member, &Name, &WorldAssetRoot), (With<Remote>, With<Track>, Changed<Member>)>,
+    assets: Res<AssetServer>,
+    mut commands: Commands,
+) {
+    for (body, member, name, root) in &changed {
+        if name.as_str() != member.name {
+            commands.entity(body).insert(Name::new(member.name.clone()));
+        }
+        let dressed = lobby::dressed_as(&assets, &member.look);
+        if *root != dressed {
+            commands.entity(body).insert(dressed);
+        }
+    }
+}
+
+/// Tells the server who you are, as you signed up (`signup`), whenever that
+/// changes while you are online: the first time, on the pages the app opens
+/// on. On being let in, [`hear`] does the same if the account has you
+/// otherwise.
+fn send_profile(profile: Res<Profile>, online: Res<Online>, mut asks: MessageWriter<Ask>) {
+    if !profile.is_changed() || profile.is_added() {
+        return;
+    }
+    if let Some(ask) = online.me().and_then(|me| profile.ask_for(me)) {
+        asks.write(ask);
     }
 }
 

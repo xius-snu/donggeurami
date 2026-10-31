@@ -481,7 +481,7 @@ pub(crate) fn stand_house_builder(commands: &mut Commands, assets: &AssetServer,
     commands
         .spawn((
             Name::new(NPC),
-            WorldAssetRoot(assets.load(GltfAssetLabel::Scene(0).from_asset(lobby::model(lobby::my_look())))),
+            lobby::dressed_as(assets, lobby::default_look()),
             at,
             Venue::Town,
             Visibility::Hidden,
@@ -632,6 +632,7 @@ fn answer(
     mut asks: MessageReader<Ask>,
     game: Option<Res<Game>>,
     online: Res<Online>,
+    lobby: Res<Lobby>,
     mut requests: MessageWriter<roundtown_net::Ask>,
     in_game: Query<Entity, With<InGame>>,
     mut me: Query<(Entity, &Seat, &mut Balance), With<Player>>,
@@ -663,7 +664,7 @@ fn answer(
                     continue;
                 }
                 balance.0 -= ENTRY;
-                let game = start(&mut commands, &assets, &water, &star, you, YOU, false);
+                let game = start(&mut commands, &assets, &water, &star, you, YOU, vec![lobby.mine()]);
                 commands.insert_resource(game);
                 lobby::send(&mut bodies, &mut orbit, you, Venue::Lobby, YOU);
             }
@@ -727,7 +728,7 @@ fn join_online(
                     continue;
                 }
                 clear_away(&in_game, &mut commands);
-                let game = start(&mut commands, &assets, &water, &star, you, seat, true);
+                let game = start(&mut commands, &assets, &water, &star, you, seat, Vec::new());
                 commands.insert_resource(game);
             }
             Tell::Refused(refusal) => {
@@ -893,7 +894,8 @@ fn clear_away(in_game: &Query<Entity, With<InGame>>, commands: &mut Commands) {
 
 /// A new game, with you in `seat` — offline the first, with the other seven
 /// still to come — a plot for each builder, and the board and the stars on the
-/// screen. Online, who else is in it comes from the server.
+/// screen. `seats` is who is in it so far: offline you, as the town's room
+/// has you; online nobody, as who is in it comes from the server.
 #[allow(clippy::too_many_arguments)]
 fn start(
     commands: &mut Commands,
@@ -902,8 +904,9 @@ fn start(
     star: &StarImage,
     you: Entity,
     seat: usize,
-    online: bool,
+    seats: Vec<Member>,
 ) -> Game {
+    let online = seats.is_empty();
     for plot in 0..SEATS {
         for part in island::spawn_island(commands, assets, water, Venue::Plot(plot as u8)) {
             commands.entity(part).insert(InGame);
@@ -912,7 +915,7 @@ fn start(
     spawn_board(commands);
     spawn_rating(commands, star);
     Game {
-        seats: if online { Vec::new() } else { vec![lobby::me()] },
+        seats,
         bodies: vec![you],
         me: seat,
         online,

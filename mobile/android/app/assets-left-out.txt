@@ -37,3 +37,9 @@ bus_engine_loop.wav
 # Everything blender/make_build_items.py made, in assets/build/: out of the
 # shop since 2026-10-03, which sells only Hajun's own pieces, in mybuilds/.
 <dir>build
+
+# Hajun's sketch of where the buttons go on the screen (2026-10-31), and the
+# licence of the icons in assets/icons/, which the game reads nothing from.
+UIbuttonlayout.jpg
+LICENSE-material-icons.txt
+LICENSE-font-awesome.txt

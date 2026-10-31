@@ -53,8 +53,8 @@ const FACE: f32 = 1.52;
 const OVER_HEAD: f32 = 1.95;
 /// How wide the bubble is drawn, and how far round it a tap still lands on it,
 /// as shares of the short side of the screen: being the only one, it can
-/// take a tap well wide of it.
-const BUBBLE: f32 = 8.0;
+/// take a tap well wide of it. 8 until Hajun asked for bigger (2026-10-31).
+const BUBBLE: f32 = 10.0;
 const BUBBLE_MARGIN: f32 = 3.0;
 /// How long the bubble takes to pop up over someone, in seconds.
 const POP_SECS: f32 = 0.18;
@@ -62,14 +62,17 @@ const POP_SECS: f32 = 0.18;
 /// of the turn left, a second.
 const TURN_TO: f32 = 10.0;
 /// What is said along the bottom of the screen: as wide as this at the most,
-/// as shares of the short side of the screen, and the size of its words.
-const SAY_WIDTH: f32 = 112.0;
-const SAY_TEXT: f32 = 4.2;
-const NAME_TEXT: f32 = 3.4;
-const REPLY_TEXT: f32 = 4.0;
-const REPLY_HEIGHT: f32 = 9.5;
-const REPLY_WIDTH: f32 = 30.0;
-const COIN: f32 = 4.0;
+/// as shares of the short side of the screen, and the size of its words; and
+/// the replies over it. A tenth bigger since the evening of 2026-10-31
+/// (Hajun: "very slightly increase the size of both the text box and the
+/// font size and the button"; 112, 4.2, 3.4, 4.0, 9.5, 30 and 4 until then).
+const SAY_WIDTH: f32 = 122.0;
+const SAY_TEXT: f32 = 4.6;
+const NAME_TEXT: f32 = 3.7;
+const REPLY_TEXT: f32 = 4.4;
+const REPLY_HEIGHT: f32 = 10.5;
+const REPLY_WIDTH: f32 = 33.0;
+const COIN: f32 = 4.4;
 /// How thick the outline of the bubble, what is said and the replies is, as
 /// a share of the short side of the screen.
 const OUTLINE: f32 = 0.45;

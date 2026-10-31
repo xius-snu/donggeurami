@@ -23,10 +23,16 @@ use crate::island::Venue;
 use crate::net::Online;
 use crate::{Collider, ColliderShape, TREE_TRUNK_HEIGHT, TREE_TRUNK_RADIUS};
 
-/// Bumped when the shape of the save changes. A build that opens a save from a
-/// newer version leaves it strictly alone: the town loads from [`default_town`]
-/// and writing is switched off, so an old client can never flatten a new save.
-const SAVE_VERSION: u32 = 1;
+/// Bumped when the shape of the save changes, or when what the saves hold is
+/// to be thrown away. A build that opens a save from a newer version leaves
+/// it strictly alone: the town loads from [`default_town`] and writing is
+/// switched off, so an old client can never flatten a new save. One from an
+/// older version is started over from [`default_town`] and written over.
+/// 2 since 2026-11-01: a tree from a save of version 1, placed by the editor
+/// or the two trees the default town started with until 2026-09-26, stood
+/// in Hajun's new town on their phone (Hajun: "remove that tree in the map
+/// i dont know why it spawned cuz its not part of the map").
+const SAVE_VERSION: u32 = 2;
 
 const SAVE_FILE: &str = "town.json";
 
@@ -296,6 +302,14 @@ fn read_save(path: &Path) -> Stored {
     };
     match serde_json::from_str::<TownSave>(&text) {
         Ok(save) if save.version > SAVE_VERSION => Stored::TooNew,
+        Ok(save) if save.version < SAVE_VERSION => {
+            info!(
+                "{} is a town save of version {}: starting over from the default town",
+                path.display(),
+                save.version
+            );
+            Stored::Town(default_town())
+        }
         Ok(save) => Stored::Town(save),
         Err(error) => {
             warn!(

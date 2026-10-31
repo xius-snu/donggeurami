@@ -46,14 +46,20 @@ use crate::island::{self, Island, Islands, Venue};
 use crate::roads::{self, Paint, Route};
 
 /// The town's cars, Hajun's models under `assets/`, each going by the number
-/// it has here: two of their bus, 12.5 m long, on the one way round, the
-/// second half of it behind the first (Hajun, 2026-10-24: "remove the car and
-/// car2 from the circlemap and put 2 bus instead"). Their first car and their
+/// it has here: four of their bus, 12.5 m long, on the one way round, each
+/// a quarter of it behind the one before (Hajun, 2026-10-24: "remove the car
+/// and car2 from the circlemap and put 2 bus instead"; 2026-11-01: "4 buses
+/// in the map rather than 2"). Their first car and their
 /// Roadster, `car.glb` and `car2.glb`, which drove the roads from 2026-10-23,
 /// are still in `assets/mybuilds/`, left out of the APK. Every device online
 /// has to have the same cars in the same order, as a rider is sent as a place
 /// on one, by its number.
-pub(crate) const CARS: [&str; 2] = ["mybuilds/bus.glb", "mybuilds/bus.glb"];
+pub(crate) const CARS: [&str; 4] = [
+    "mybuilds/bus.glb",
+    "mybuilds/bus.glb",
+    "mybuilds/bus.glb",
+    "mybuilds/bus.glb",
+];
 
 /// What the car's wheels are called in its model: every part with it in its
 /// name, but a steering wheel. Each wheel turns about its own middle as the

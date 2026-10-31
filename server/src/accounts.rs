@@ -135,6 +135,19 @@ impl Bank {
             });
         }
     }
+
+    /// Keeps the name and the look the account `id`'s owner chose
+    /// (`Ask::Profile`), both checked already. Nothing comes back: the
+    /// account carries them from its next load.
+    pub(crate) fn profile(&self, id: u64, name: &str, look: &str) {
+        if let Self::Database { jobs, .. } = self {
+            let _ = jobs.send(Job::Profile {
+                id,
+                name: name.to_string(),
+                look: look.to_string(),
+            });
+        }
+    }
 }
 
 /// One player's account.
@@ -192,6 +205,11 @@ pub(crate) enum Job {
         why: &'static str,
         game: Option<u32>,
     },
+    Profile {
+        id: u64,
+        name: String,
+        look: String,
+    },
 }
 
 pub(crate) enum Done {
@@ -238,6 +256,7 @@ fn work(url: &str, jobs: &Receiver<Job>, done: &Sender<Done>) {
     let mut db: Option<Client> = None;
     for job in jobs {
         let mut answer = None;
+        let mut finished = false;
         for _ in 0..TRIES {
             if db.is_none() {
                 match connect(url) {
@@ -253,8 +272,9 @@ fn work(url: &str, jobs: &Receiver<Job>, done: &Sender<Done>) {
                 continue;
             };
             match run(client, &job) {
-                Ok(done) => {
-                    answer = Some(done);
+                Ok(result) => {
+                    answer = result;
+                    finished = true;
                     break;
                 }
                 Err(error) => {
@@ -267,33 +287,54 @@ fn work(url: &str, jobs: &Receiver<Job>, done: &Sender<Done>) {
                 }
             }
         }
-        // Given up: nothing loaded, nothing taken and nothing given.
-        let answer = answer.unwrap_or(match job {
-            Job::Load(id) => Done::Loaded(Loaded { id, record: None }),
-            Job::Charge { id, .. } => Done::Charged(Charged { id, left: None }),
-            Job::Credit { id, .. } => Done::Credited(Credited { id, left: None }),
-        });
-        if done.send(answer).is_err() {
+        // Given up: nothing loaded, nothing taken, nothing given and nothing
+        // kept.
+        if !finished {
+            answer = match job {
+                Job::Load(id) => Some(Done::Loaded(Loaded { id, record: None })),
+                Job::Charge { id, .. } => Some(Done::Charged(Charged { id, left: None })),
+                Job::Credit { id, .. } => Some(Done::Credited(Credited { id, left: None })),
+                Job::Profile { id, name, .. } => {
+                    error!("could not keep {id}'s name, {name}");
+                    None
+                }
+            };
+        }
+        if let Some(answer) = answer
+            && done.send(answer).is_err()
+        {
             return;
         }
     }
 }
 
-fn run(db: &mut Client, job: &Job) -> Result<Done, postgres::Error> {
+/// Does `job`: what it answers, if it answers at all.
+fn run(db: &mut Client, job: &Job) -> Result<Option<Done>, postgres::Error> {
     match *job {
         Job::Load(id) => {
             let row = db.query_opt(
                 "UPDATE players SET seen = now() WHERE id = $1 RETURNING name, look, coins",
                 &[&(id as i64)],
             )?;
-            Ok(Done::Loaded(Loaded {
+            Ok(Some(Done::Loaded(Loaded {
                 id,
                 record: row.map(|row| Record {
                     name: row.get(0),
                     look: row.get(1),
                     coins: row.get::<_, i64>(2).clamp(0, i64::from(u32::MAX)) as u32,
                 }),
-            }))
+            })))
+        }
+        Job::Profile {
+            id,
+            ref name,
+            ref look,
+        } => {
+            db.execute(
+                "UPDATE players SET name = $2, look = $3 WHERE id = $1",
+                &[&(id as i64), name, look],
+            )?;
+            Ok(None)
         }
         Job::Charge {
             id,
@@ -309,7 +350,7 @@ fn run(db: &mut Client, job: &Job) -> Result<Done, postgres::Error> {
                 &[&(id as i64), &i64::from(amount)],
             )?;
             let Some(left) = left else {
-                return Ok(Done::Charged(Charged { id, left: None }));
+                return Ok(Some(Done::Charged(Charged { id, left: None })));
             };
             transaction.execute(
                 "INSERT INTO coin_changes (player, amount, reason, game) VALUES ($1, $2, $3, $4)",
@@ -321,10 +362,10 @@ fn run(db: &mut Client, job: &Job) -> Result<Done, postgres::Error> {
                 ],
             )?;
             transaction.commit()?;
-            Ok(Done::Charged(Charged {
+            Ok(Some(Done::Charged(Charged {
                 id,
                 left: Some(left.get::<_, i64>(0).clamp(0, i64::from(u32::MAX)) as u32),
-            }))
+            })))
         }
         Job::Credit {
             id,
@@ -340,17 +381,17 @@ fn run(db: &mut Client, job: &Job) -> Result<Done, postgres::Error> {
                 &[&(id as i64), &i64::from(amount)],
             )?;
             let Some(now) = now else {
-                return Ok(Done::Credited(Credited { id, left: None }));
+                return Ok(Some(Done::Credited(Credited { id, left: None })));
             };
             transaction.execute(
                 "INSERT INTO coin_changes (player, amount, reason, game) VALUES ($1, $2, $3, $4)",
                 &[&(id as i64), &i64::from(amount), &why, &game.map(i64::from)],
             )?;
             transaction.commit()?;
-            Ok(Done::Credited(Credited {
+            Ok(Some(Done::Credited(Credited {
                 id,
                 left: Some(now.get::<_, i64>(0).clamp(0, i64::from(u32::MAX)) as u32),
-            }))
+            })))
         }
     }
 }

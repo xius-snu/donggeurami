@@ -7,6 +7,7 @@ import android.view.Display;
 import android.view.MotionEvent;
 import android.view.Surface;
 import android.view.SurfaceHolder;
+import android.view.View;
 import android.view.Window;
 import android.view.WindowManager;
 
@@ -89,6 +90,21 @@ public class MainActivity extends GameActivity {
         if (hasFocus) {
             applyImmersive();
         }
+    }
+
+    /**
+     * How far up from the bottom of the screen the soft keyboard reaches, in
+     * the screen's pixels, every time the window's insets change: handed to
+     * the game ({@code signup::read_keyboard}), which slides the name's box
+     * up out from under it. Nothing else about the insets changes: the game
+     * is drawn edge to edge regardless.
+     */
+    private static native void imeInset(int bottom);
+
+    @Override
+    public WindowInsetsCompat onApplyWindowInsets(View view, WindowInsetsCompat insets) {
+        imeInset(insets.getInsets(WindowInsetsCompat.Type.ime()).bottom);
+        return super.onApplyWindowInsets(view, insets);
     }
 
     @Override

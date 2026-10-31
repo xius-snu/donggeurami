@@ -480,7 +480,7 @@ fn hear(
                     commands.entity(piece).despawn();
                 }
             }
-            Ask::Hello { .. } | Ask::Travel(_) => {}
+            Ask::Hello { .. } | Ask::Travel(_) | Ask::Profile { .. } => {}
         }
     }
 }

@@ -3119,17 +3119,28 @@ pub(crate) mod tests {
                 }
             }
         }
-        // And the two, half the loop or so apart, never meet where it crosses
-        // itself, nor passing each other.
-        let behind = route.behind(1);
-        assert!((behind - route.lap() * 0.5).abs() < route.lap() * 0.25, "{behind} s behind");
+        // And the buses, spread evenly round the loop or near it, never meet
+        // where it crosses itself, nor passing each other: no two of them.
+        let share = route.lap() / cars.len() as f64;
+        for number in 1..cars.len() as u8 {
+            let behind = route.behind(number);
+            assert!((behind - share * f64::from(number)).abs() < share * 0.5, "bus {number} {behind} s behind");
+        }
         let looks = (route.lap() / 0.1) as usize;
-        for look in 0..looks {
-            let seconds = look as f64 * 0.1;
-            let (one, one_way, _) = route.on_wheels(seconds, car.base);
-            let (other, other_way, _) = route.on_wheels(seconds - behind, car.base);
-            let (one, other) = (one.xz() + one_way * car.ahead, other.xz() + other_way * car.ahead);
-            assert!(!boxes_meet(one, one_way, other, other_way, car.half), "they meet at {one}");
+        for one_number in 0..cars.len() as u8 {
+            for other_number in one_number + 1..cars.len() as u8 {
+                let (one_behind, other_behind) = (route.behind(one_number), route.behind(other_number));
+                for look in 0..looks {
+                    let seconds = look as f64 * 0.1;
+                    let (one, one_way, _) = route.on_wheels(seconds - one_behind, car.base);
+                    let (other, other_way, _) = route.on_wheels(seconds - other_behind, car.base);
+                    let (one, other) = (one.xz() + one_way * car.ahead, other.xz() + other_way * car.ahead);
+                    assert!(
+                        !boxes_meet(one, one_way, other, other_way, car.half),
+                        "buses {one_number} and {other_number} meet at {one}"
+                    );
+                }
+            }
         }
     }
 

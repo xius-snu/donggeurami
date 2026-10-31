@@ -32,7 +32,7 @@ use bevy::prelude::*;
 use bevy_replicon::prelude::*;
 use bevy_replicon::shared::backend::connected_client::NetworkId;
 use bevy_replicon_renet::netcode::NetcodeServerTransport;
-use roundtown_net::{Ask, Member, Moved, Refusal, Spot, Tell, Venue, arrival, cars};
+use roundtown_net::{Ask, Member, Moved, Refusal, Spot, Tell, Venue, arrival, cars, profile};
 use sha2::{Digest, Sha256};
 
 use crate::accounts::{Bank, Loaded, Record};
@@ -254,11 +254,13 @@ pub(crate) fn tell(tells: &mut MessageWriter<ToClients<Tell>>, client: Entity, t
 }
 
 /// What devices ask, apart from their moves and House Builder.
+#[allow(clippy::too_many_arguments)]
 fn hear(
     mut asks: MessageReader<FromClient<Ask>>,
     clients: Query<Option<&Plays>, With<ConnectedClient>>,
     mut bodies: Query<(&mut Body, &mut Spot, &mut Venue, &Member)>,
     mut towns: ResMut<Towns>,
+    bank: Res<Bank>,
     time: Res<Time>,
     mut tells: MessageWriter<ToClients<Tell>>,
     mut commands: Commands,
@@ -306,6 +308,27 @@ fn hear(
                     seat,
                     time.elapsed_secs_f64(),
                 );
+            }
+            // Who they are, as they chose: kept with the account, and told
+            // to everyone in the room by their member record being
+            // replaced, and to them again as a welcome.
+            (Ask::Profile { name, look }, Some(&Plays(body))) => {
+                let (Some(name), true) = (profile::name(name), profile::look(look)) else {
+                    warn!("{client:?} sent a name or a look that is no good: {name:?}, {look:?}");
+                    continue;
+                };
+                let Ok((_, _, _, member)) = bodies.get(body) else {
+                    continue;
+                };
+                let member = Member {
+                    name,
+                    look: look.clone(),
+                    ..member.clone()
+                };
+                info!("{} is now {}, a {}", member.id, member.name, member.look);
+                bank.profile(member.id, &member.name, &member.look);
+                commands.entity(body).insert(member.clone());
+                tell(&mut tells, client, Tell::Welcome { me: member });
             }
             _ => {}
         }

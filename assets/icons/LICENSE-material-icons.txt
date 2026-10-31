@@ -1,0 +1,7 @@
+The pictures in this folder are Google's Material Design icons
+(https://github.com/google/material-design-icons: person, card_giftcard,
+leaderboard, groups, videogame_asset, mood, textsms and sports_mma, the
+48dp 2x PNGs), turned white on clear for the game's buttons to tint.
+
+They are licensed under the Apache License, Version 2.0:
+http://www.apache.org/licenses/LICENSE-2.0

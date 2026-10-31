@@ -20,7 +20,7 @@ use bevy::render::view::NoIndirectDrawing;
 use bevy::window::WindowResolution;
 use bevy::world_serialization::WorldInstanceReady;
 
-mod account;
+
 mod ai;
 mod build;
 mod builder;
@@ -40,7 +40,9 @@ mod net;
 mod pace;
 mod roads;
 mod see_through;
+mod settings;
 mod shop;
+mod signup;
 mod sky;
 mod sound;
 mod tags;
@@ -125,8 +127,15 @@ const LAND_STEP_UP: f32 = 0.495;
 const OCEAN_LIMIT: f32 = 580.0;
 const CAMERA_DISTANCE: f32 = 10.0;
 /// The nearest the camera stands behind you, in metres. Zoomed in nearer, it
-/// goes into your eyes ([`SWAP_ZOOM`]).
-const CAMERA_DISTANCE_MIN: f32 = 2.5;
+/// goes into your eyes ([`SWAP_ZOOM`]). 2.5 until 2026-11-01, when Hajun
+/// found "the max zoom in is not zoomed in enough" and asked for the camera
+/// to come closer before it goes into your eyes.
+const CAMERA_DISTANCE_MIN: f32 = 1.5;
+/// The nearest it stands looking up past you, in metres: looking up it comes
+/// in to a share of how far out it stands ([`CAMERA_LOOK_UP_DISTANCE`] of
+/// [`CAMERA_DISTANCE`]), which from [`CAMERA_DISTANCE_MIN`] would put it
+/// inside you.
+const CAMERA_LOOK_UP_NEAREST: f32 = 0.8;
 /// The furthest it stands, in metres: 15 until Hajun asked for a little more
 /// (2026-10-09).
 const CAMERA_DISTANCE_MAX: f32 = 18.0;
@@ -138,13 +147,29 @@ const SWAP_ZOOM: f32 = 1.1;
 const ZOOM_WHEEL: f32 = 0.12;
 const CAMERA_FAR: f32 = 4000.0;
 const STICK_DEADZONE: f32 = 0.18;
-const STICK_SIZE_VMIN: f32 = 22.0;
-const STICK_LEFT_VW: f32 = 8.0;
+/// The stick: 22 until 2026-11-01, when Hajun asked for "slightly" bigger.
+/// It grows up and to the right from where its corner sits.
+const STICK_SIZE_VMIN: f32 = 25.0;
+/// 8 until Hajun asked for "very very slightly more left" (2026-11-01).
+const STICK_LEFT_VW: f32 = 7.0;
 const STICK_BOTTOM_VH: f32 = 11.0;
-const JUMP_SIZE_VMIN: f32 = 18.0;
-const JUMP_RIGHT_VW: f32 = 8.0;
-const JUMP_BOTTOM_VH: f32 = 11.0;
+/// The jump button: nearly as big as the stick, and nearer the corner than
+/// the stick is (Hajun, 2026-10-31: bigger, "especially jump button", and
+/// "slightly closer to the bottom right corner"; 18, 8 and 11 until then;
+/// then 5 and 7 for a night, until "very slightly more margin from the
+/// bottom right corner", 2026-11-01, and then "move them up very very
+/// slightly"). The three buttons round it are placed from it
+/// (`hud::show_top_bar`).
+const JUMP_SIZE_VMIN: f32 = 22.0;
+const JUMP_RIGHT_VW: f32 = 6.0;
+const JUMP_BOTTOM_VH: f32 = 9.0;
 const LOOK_SENSITIVITY: f32 = 0.0045;
+/// How much more a finger dragged across a phone's screen turns the camera
+/// than the mouse does for the same distance (Hajun, 2026-11-01: "increase
+/// the camera panning ... sensitivity slightly so each drag rotates the
+/// camera bit more"; the same as the mouse until then).
+#[cfg(any(target_os = "android", target_os = "ios"))]
+const TOUCH_LOOK_GAIN: f32 = 1.25;
 const PITCH_MIN: f32 = -1.22;
 /// As far down as the camera tips: straight down, for a view of the tops of
 /// things (Hajun, 2026-10-09). It stopped at 1.2, about 69°, until then.
@@ -269,6 +294,49 @@ struct WalkCycle {
     speed: f32,
 }
 
+/// How long a punch takes, in seconds: the arm out, and back. Short enough
+/// to punch 4 to 8 times a second (Hajun, 2026-11-01: "dont make the
+/// animation too long so that user can press the attack button like 4~8
+/// time per second").
+const PUNCH_OUT: f32 = 0.07;
+const PUNCH_BACK: f32 = 0.11;
+const PUNCH_SECS: f32 = PUNCH_OUT + PUNCH_BACK;
+/// How far the arm swings forward from hanging, in radians: up to level.
+const PUNCH_REACH: f32 = 1.5;
+
+/// The fist button, or F on desktop, pressed: a punch is asked for.
+#[derive(Message, Default)]
+pub(crate) struct PunchPressed;
+
+/// A body throwing a punch (Hajun, 2026-11-01: "a very basic animation for
+/// the fist attack that activates each time u press the punch button"):
+/// the right arm swings straight out in front and back ([`punch_offset`];
+/// the two arms in turn for an hour, until Hajun asked for "only use right
+/// hand"). A press mid-punch starts the next at once, from the side. It is
+/// this device's alone: nothing of it goes over the network.
+#[derive(Component, Default)]
+struct Punching {
+    /// Seconds into it.
+    age: f32,
+}
+
+impl Punching {
+    /// Starts a punch, whatever the last was doing.
+    fn next() -> Punching {
+        Punching { age: 0.0 }
+    }
+
+    /// How far out the arm is `age` seconds in, from 0 at the side to 1 at
+    /// full reach: out fast, and back a little slower.
+    fn reach(age: f32) -> f32 {
+        if age < PUNCH_OUT {
+            (age / PUNCH_OUT).clamp(0.0, 1.0)
+        } else {
+            (1.0 - (age - PUNCH_OUT) / PUNCH_BACK).clamp(0.0, 1.0)
+        }
+    }
+}
+
 #[derive(Component, Clone, Copy)]
 struct WalkBone {
     kind: WalkBoneKind,
@@ -379,8 +447,14 @@ struct CameraAssist {
     untouched: f32,
     /// Seconds the stick has been pushed for, without letting go.
     pushed: f32,
-    /// A double tap is swinging it round behind you.
-    snapping: bool,
+    /// A double tap is swinging it round to this yaw: behind you as you
+    /// stood at the tap, and not as you turn after it. Read off you every
+    /// frame, it chased you round and round: walking with the stick you face
+    /// where the camera's ahead and the stick point, so the camera coming
+    /// round behind you turned you with it (Hajun, 2026-10-31: "if you
+    /// double tap the screen, and then u try to move right after, the
+    /// camera starts spinning").
+    snap: Option<f32>,
     /// Where you were the frame before, and the car you were riding then:
     /// on the car, in its own space, so that what the car carries you is not
     /// taken for walking.
@@ -394,7 +468,20 @@ impl CameraAssist {
     #[cfg_attr(not(any(target_os = "android", target_os = "ios")), allow(dead_code))]
     fn touched(&mut self) {
         self.untouched = 0.0;
-        self.snapping = false;
+        self.snap = None;
+    }
+
+    /// A double tap: the camera is to swing round behind `body` as it stands
+    /// now, and there it stops, however `body` turns meanwhile; and the
+    /// wait before walking brings it round again ([`RECENTER_AFTER`], and
+    /// its easing in) is taken as served, so that it comes round behind
+    /// where you walk as soon as the swing is over (Hajun, 2026-11-01:
+    /// "make that become 0s instantly so it starts autofollowing right
+    /// away"; the taps, fingers on the camera, had started the wait over).
+    #[cfg_attr(not(any(target_os = "android", target_os = "ios")), allow(dead_code))]
+    fn snap_behind(&mut self, body: &Transform) {
+        self.snap = Some(OrbitCamera::behind(body).yaw);
+        self.untouched = RECENTER_AFTER + RECENTER_EASE_IN;
     }
 
     /// How far `body` walked since the frame before, across the ground, or
@@ -584,9 +671,10 @@ fn recenter_turn(yaw: f32, velocity: Vec2, ready: f32) -> f32 {
 /// so that one thumb on the stick sees where it is going. Walked into a wall
 /// you go nowhere, and it stays where it is; in your eyes it never turns:
 /// there you look where you turned your eyes, whichever way you walk. And a
-/// double tap on nothing swings it straight round behind you, tipped as it is
-/// when the app opens, or looking straight ahead from your eyes. A finger on
-/// the camera stops either at once (`read_touch_controls`).
+/// double tap on nothing swings it straight round behind you as you stood at
+/// the tap ([`CameraAssist::snap_behind`]), tipped as it is when the app
+/// opens, or looking straight ahead from your eyes. A finger on the camera
+/// stops either at once (`read_touch_controls`).
 ///
 /// The stick is a phone's alone: on desktop the keys walk you, the mouse
 /// turns the camera, and this never turns it.
@@ -608,8 +696,10 @@ fn assist_camera(
     let pushed = !dialog.0 && controls.stick_value.length() >= STICK_DEADZONE;
     assist.pushed = if pushed { assist.pushed + dt } else { 0.0 };
 
-    if assist.snapping {
-        assist.snapping = !snap_behind(&mut orbit, body, dt);
+    if let Some(yaw) = assist.snap {
+        if snap_to(&mut orbit, yaw, dt) {
+            assist.snap = None;
+        }
         return;
     }
     if !pushed || orbit.distance <= 0.0 || dt <= 0.0 {
@@ -621,11 +711,10 @@ fn assist_camera(
     }
 }
 
-/// Swings `orbit` on round behind `body` for `dt` seconds, as a double tap
-/// asks: tipped as it is when the app opens, or in your eyes, looking
-/// straight ahead. Whether it is there.
-fn snap_behind(orbit: &mut OrbitCamera, body: &Transform, dt: f32) -> bool {
-    let yaw = OrbitCamera::behind(body).yaw;
+/// Swings `orbit` on round to `yaw` for `dt` seconds, as a double tap asks:
+/// tipped as it is when the app opens, or in your eyes, looking straight
+/// ahead. Whether it is there.
+fn snap_to(orbit: &mut OrbitCamera, yaw: f32, dt: f32) -> bool {
     let pitch = if orbit.distance <= 0.0 { 0.0 } else { CAMERA_PITCH };
     let (yaw_left, pitch_left) = (wrap_angle(yaw - orbit.yaw), pitch - orbit.pitch);
     if yaw_left.abs() < 1e-3 && pitch_left.abs() < 1e-3 {
@@ -707,6 +796,7 @@ pub fn main() {
     .init_resource::<OrbitCamera>()
     .init_resource::<CameraAssist>()
     .init_resource::<CloseUp>()
+    .add_message::<PunchPressed>()
     .add_systems(Startup, (setup_world, cluster_lights_on_the_cpu));
     // The town's clock, the server's online, which the day, the fountain's
     // jet and the cars go by.
@@ -724,6 +814,10 @@ pub fn main() {
     // has to be there before the editor can be pointed at any of it.
     map::plugin(&mut app);
     editor::plugin(&mut app);
+    // Who you are: the name and the character chosen the first time the app
+    // was run, on pages that come before the town then. Before the lobby,
+    // which seats you by them.
+    signup::plugin(&mut app);
     // Everyone in the town, you included, with the computer in every seat no
     // person has taken.
     lobby::plugin(&mut app);
@@ -732,8 +826,8 @@ pub fn main() {
     // your room of it.
     net::plugin(&mut app);
     tags::plugin(&mut app);
-    // Your account online, and the way to delete it.
-    account::plugin(&mut app);
+    // The settings, behind the gear top right, with your account among them.
+    settings::plugin(&mut app);
     // Your balance, and the welcome.
     hud::plugin(&mut app);
     // Talking to the town's AIs and the House Builder.
@@ -784,7 +878,7 @@ pub fn main() {
 
     app.add_systems(
         Update,
-        (read_player_input, move_bodies, animate_walk, assist_camera, follow_camera).chain(),
+        (read_player_input, start_punch, move_bodies, animate_walk, assist_camera, follow_camera).chain(),
     );
     // Last, so that every schedule the plugins above made is there to change.
     one_thread_per_world(&mut app);
@@ -831,7 +925,7 @@ fn one_thread_per_world(app: &mut App) {
 /// the screen (its `RENDER_SCALE`, which this must match), and hands touches
 /// over scaled down to suit.
 #[cfg(target_os = "android")]
-const RENDER_SCALE: f32 = 0.75;
+pub(crate) const RENDER_SCALE: f32 = 0.75;
 
 /// Keeps every button and line of text the size it is on the full screen,
 /// though the game is drawn smaller (`RENDER_SCALE`): there are that many
@@ -1005,6 +1099,7 @@ fn read_touch_controls(
     mut controls: ResMut<TouchControls>,
     mut orbit: ResMut<OrbitCamera>,
     mut assist: ResMut<CameraAssist>,
+    me: Query<&Transform, With<Player>>,
     menu: Res<editor::EditMenu>,
     presses: hud::Presses,
     mut pointer: ResMut<editor::EditPointer>,
@@ -1032,13 +1127,14 @@ fn read_touch_controls(
     {
         controls.look_id = None;
         // A tap on nothing, and the second of two: the camera swings round
-        // behind you.
+        // behind you, as you stand at this moment.
         let near = window.width().min(window.height()) * DOUBLE_TAP_NEAR;
         if let Some((down, at)) = controls.look_tap.take()
             && now - down <= TAP_SECS
             && controls.taps.tap(down, now, at, near)
+            && let Ok(body) = me.single()
         {
-            assist.snapping = true;
+            assist.snap_behind(body);
         }
         if let Some(pinch_id) = controls.pinch_id
             && let Some(touch) = touches.get_pressed(pinch_id)
@@ -1158,7 +1254,7 @@ fn read_touch_controls(
         if let Some(pos) = look_pos {
             let delta = pos - controls.look_last;
             controls.look_last = pos;
-            orbit.turn(delta);
+            orbit.turn(delta * TOUCH_LOOK_GAIN);
         }
     }
     // Gone further than a tap does, it is a look.
@@ -1735,6 +1831,21 @@ fn walk_offset(kind: WalkBoneKind, swing: f32, weight: f32) -> Quat {
     }
 }
 
+/// Where a punching arm is, `reach` of the way out, 0 to 1, in place of its
+/// walk: hung as the walk hangs it, and swung straight out in front of you
+/// about the shoulder, the whole way at full reach. Forward is the same
+/// turn for both arms (the walk turns the right one the other way only to
+/// swing it against the left): seen from the side in the desktop build,
+/// both reach level in front, 2026-11-01.
+fn punch_offset(kind: WalkBoneKind, reach: f32) -> Option<Quat> {
+    let hang = match kind {
+        WalkBoneKind::ArmL => -WALK_ARM_HANG,
+        WalkBoneKind::ArmR => WALK_ARM_HANG,
+        _ => return None,
+    };
+    Some(Quat::from_axis_angle(Vec3::Z, hang) * Quat::from_axis_angle(Vec3::X, PUNCH_REACH * reach))
+}
+
 fn walk_bone_kind(name: &str) -> Option<WalkBoneKind> {
     Some(match name {
         // Limb meshes are skinned to the .001 / .004 chains, not Bone.002.
@@ -2074,13 +2185,34 @@ impl Motion<'_> {
     }
 }
 
+/// Starts a punch each time the fist button is pressed, or F on desktop,
+/// unless a dialog is up: the next arm, from the start, whatever the last
+/// was doing.
+fn start_punch(
+    mut pressed: MessageReader<PunchPressed>,
+    keyboard: Res<ButtonInput<KeyCode>>,
+    dialog: Res<hud::DialogUp>,
+    me: Query<Entity, With<Player>>,
+    mut commands: Commands,
+) {
+    let asked = pressed.read().count() > 0 || keyboard.just_pressed(KeyCode::KeyF);
+    if !asked || dialog.0 {
+        return;
+    }
+    let Ok(you) = me.single() else {
+        return;
+    };
+    commands.entity(you).insert(Punching::next());
+}
+
 pub(crate) fn animate_walk(
     time: Res<Time>,
-    mut walks: Query<&mut WalkCycle>,
+    mut walks: Query<(Entity, &mut WalkCycle, Option<&mut Punching>)>,
     mut bones: Query<(&WalkBone, &mut Transform)>,
+    mut commands: Commands,
 ) {
     let dt = time.delta_secs();
-    for mut walk in &mut walks {
+    for (body, mut walk, punch) in &mut walks {
         let target = if walk.speed > 0.04 { 1.0 } else { 0.0 };
         walk.weight = walk.weight.lerp(target, (dt * WALK_BLEND).min(1.0));
         if walk.weight < 0.01 {
@@ -2088,12 +2220,23 @@ pub(crate) fn animate_walk(
         } else {
             walk.phase += dt * WALK_STRIDE_FREQ * walk.speed.max(0.35);
         }
+        if let Some(mut punch) = punch {
+            punch.age += dt;
+            if punch.age >= PUNCH_SECS {
+                commands.entity(body).remove::<Punching>();
+            }
+        }
     }
     for (bone, mut transform) in &mut bones {
-        let Ok(walk) = walks.get(bone.owner) else {
+        let Ok((_, walk, punch)) = walks.get(bone.owner) else {
             continue;
         };
-        let rotation = bone.rest_rotation * walk_offset(bone.kind, walk.phase.sin(), walk.weight);
+        // The right arm punches; every other limb walks.
+        let punching = punch
+            .filter(|punch| punch.age < PUNCH_SECS && matches!(bone.kind, WalkBoneKind::ArmR))
+            .and_then(|punch| punch_offset(bone.kind, Punching::reach(punch.age)));
+        let offset = punching.unwrap_or_else(|| walk_offset(bone.kind, walk.phase.sin(), walk.weight));
+        let rotation = bone.rest_rotation * offset;
         // Standing still, a limb keeps the pose it had, and is left alone.
         if transform.rotation != rotation {
             transform.rotation = rotation;
@@ -2235,7 +2378,9 @@ fn behind_you(orbit: &OrbitCamera, player: &Transform, look_up: f32, distance: f
 
     let back = yaw * Vec3::Z;
     let cam_height = LOOK_HEIGHT + (CAMERA_LOOK_UP_HEIGHT - LOOK_HEIGHT) * look_up;
-    let look_up_distance = distance * (CAMERA_LOOK_UP_DISTANCE / CAMERA_DISTANCE);
+    let look_up_distance = (distance * (CAMERA_LOOK_UP_DISTANCE / CAMERA_DISTANCE))
+        .max(CAMERA_LOOK_UP_NEAREST)
+        .min(distance);
     let distance = distance + (look_up_distance - distance) * look_up;
     let focus_height = LOOK_HEIGHT + (LOOK_UP_FOCUS_HEIGHT - LOOK_HEIGHT) * look_up;
     camera.translation = player.translation + back * distance + Vec3::Y * cam_height;
@@ -2489,6 +2634,27 @@ mod camera_tests {
     }
 
     #[test]
+    fn a_punch_goes_out_and_back_in_well_under_a_quarter_second() {
+        // Fast enough to throw 4 to 8 a second.
+        assert!(PUNCH_SECS <= 0.25, "{PUNCH_SECS}");
+        assert_eq!(Punching::reach(0.0), 0.0);
+        assert_eq!(Punching::reach(PUNCH_OUT), 1.0);
+        assert_eq!(Punching::reach(PUNCH_SECS), 0.0);
+        assert!(Punching::reach(PUNCH_OUT * 0.5) > 0.0 && Punching::reach(PUNCH_OUT * 0.5) < 1.0);
+        assert!(Punching::reach(PUNCH_OUT + PUNCH_BACK * 0.5) > 0.0);
+        assert_eq!(Punching::next().age, 0.0);
+        // At full reach both arms are swung forward by the same turn, hung as
+        // the walk hangs them; at none they are as they hang, standing still.
+        let left = punch_offset(WalkBoneKind::ArmL, 0.0).unwrap();
+        let right = punch_offset(WalkBoneKind::ArmR, 0.0).unwrap();
+        assert!(left.angle_between(walk_offset(WalkBoneKind::ArmL, 0.0, 0.0)) < 1e-6);
+        assert!(right.angle_between(walk_offset(WalkBoneKind::ArmR, 0.0, 0.0)) < 1e-6);
+        let out = punch_offset(WalkBoneKind::ArmL, 1.0).unwrap();
+        assert!((left.inverse() * out).to_axis_angle().1 - PUNCH_REACH < 1e-5);
+        assert_eq!(punch_offset(WalkBoneKind::ThighL, 1.0), None);
+    }
+
+    #[test]
     fn two_quick_taps_near_each_other_are_a_double_tap() {
         let mut taps = DoubleTap::default();
         let near = 50.0;
@@ -2506,10 +2672,20 @@ mod camera_tests {
     fn a_double_tap_swings_it_round_behind_you_in_a_moment() {
         // Facing +x, the camera off to the side and looking down steeply.
         let body = Transform::default().looking_to(Vec3::X, Vec3::Y);
+        // Tapped just after a finger left the camera, the stick held.
+        let mut assist = CameraAssist {
+            untouched: 0.0,
+            pushed: 5.0,
+            ..default()
+        };
+        assist.snap_behind(&body);
+        let yaw = assist.snap.expect("swinging");
+        // And walking brings it round again at once, with no wait.
+        assert_eq!(assist.ready(), 1.0);
         let mut you = orbit(2.5, 1.3, 9.0);
         let dt = 1.0 / 120.0;
         let mut took = 0.0;
-        while !snap_behind(&mut you, &body, dt) {
+        while !snap_to(&mut you, yaw, dt) {
             took += dt;
             assert!(took < 1.0, "never got there");
         }
@@ -2519,9 +2695,53 @@ mod camera_tests {
         assert_eq!(you.distance, 9.0);
         // In your eyes it looks straight ahead.
         let mut eyes = orbit(-1.0, -0.5, 0.0);
-        while !snap_behind(&mut eyes, &body, dt) {}
+        while !snap_to(&mut eyes, yaw, dt) {}
         let view = camera_view(&eyes, &body, None);
         assert!(view.forward().distance(Vec3::X) < 1e-4, "{}", view.forward());
+        // A finger on the camera stops it.
+        assist.touched();
+        assert_eq!(assist.snap, None);
+    }
+
+    #[test]
+    fn a_double_tap_goes_behind_where_you_stood_at_the_tap_though_you_turn_after() {
+        // Walking with the stick held to the side, you face a quarter turn
+        // off the camera's ahead, wherever the camera turns to. Swung round
+        // behind you as you face each frame, it would chase you round for
+        // ever; swung behind you as you stood at the tap, it gets there.
+        let dt = 1.0 / 120.0;
+        let mut you = orbit(0.0, CAMERA_PITCH, 9.0);
+        let facing = |you: &OrbitCamera| {
+            let ahead = camera_ahead(&camera_view(you, &Transform::default(), None));
+            Transform::default().looking_to(Quat::from_rotation_y(-std::f32::consts::FRAC_PI_2) * ahead, Vec3::Y)
+        };
+        // Chased: behind you as you face each frame, which is a quarter turn
+        // off wherever it has got to.
+        let mut chased = orbit(0.0, CAMERA_PITCH, 9.0);
+        let mut took = 0.0;
+        loop {
+            let mark = OrbitCamera::behind(&facing(&chased)).yaw;
+            if took >= 2.0 || snap_to(&mut chased, mark, dt) {
+                break;
+            }
+            took += dt;
+        }
+        assert!(took >= 2.0, "got there in {took} s chasing you round");
+        // Behind you as you stood at the tap, and you turn as it comes round.
+        let mut assist = CameraAssist::default();
+        assist.snap_behind(&facing(&you));
+        let fixed = assist.snap.unwrap();
+        took = 0.0;
+        while let Some(yaw) = assist.snap {
+            assert_eq!(yaw, fixed, "the mark moved");
+            if snap_to(&mut you, yaw, dt) {
+                assist.snap = None;
+            }
+            took += dt;
+            assert!(took < 1.0, "never got there");
+        }
+        assert!(wrap_angle(you.yaw - fixed).abs() < 1e-6);
+        assert!(wrap_angle(OrbitCamera::behind(&facing(&you)).yaw - you.yaw).abs() > 1.0, "still facing off it");
     }
 
     #[test]

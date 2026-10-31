@@ -66,6 +66,9 @@ pub const PROTOCOL_ID: u64 = u64::from_be_bytes(*b"DGRMTOWN");
 /// across where the old one was 140, so a place in the town is somewhere
 /// else entirely in an app with the old one; and everyone arrives in it on
 /// the path round its pond ([`TOWN_ARRIVAL_RADIUS`]).
+///
+/// Not bumped for [`Ask::Profile`] (2026-10-31), added last: an app from
+/// before never sends it, and draws a look it has not heard of as its first.
 pub const PROTOCOL_VERSION: u32 = 4;
 
 /// The UDP port the game server listens on. 443, where QUIC goes, because a
@@ -86,12 +89,48 @@ pub const GAME_SEATS: usize = 8;
 
 /// The fewest bodies the town shows: below this, each device fills it out
 /// with AIs of its own (Hajun's choice, 2026-10-08), one leaving for each
-/// real player who arrives.
-pub const TOWN_BODIES: usize = 8;
+/// real player who arrives. 8 until 2026-11-01, when Hajun asked for "a
+/// total of 32 ppl in the map including ai, so each new player join
+/// replaces a ai". Not part of the protocol: the server never counts them.
+pub const TOWN_BODIES: usize = 32;
 
-/// The look every real player wears for now: what you wear offline. Bots
-/// wear the others. Outfits are for later (`MULTIPLAYER.md`, phase 4).
+/// The look a new account wears until its owner has chosen one of
+/// [`PEOPLE_LOOKS`] (the game's `signup`, [`Ask::Profile`]), which the game
+/// draws as the first of them. Every account from before there was a choice
+/// (2026-10-31) wears it. Bots wear others.
 pub const PLAYER_LOOK: &str = "blue";
+
+/// The looks a person chooses between on signing up: a boy, the game's
+/// `limbperson.glb`, and a girl, `limbpersongirl.glb`.
+pub const PEOPLE_LOOKS: [&str; 2] = ["boy", "girl"];
+
+/// What a person says about themselves on signing up, as both sides check
+/// it: a name to go by, and which of [`PEOPLE_LOOKS`] they wear.
+pub mod profile {
+    /// How long a name may be, in characters.
+    pub const SHORTEST: usize = 2;
+    pub const LONGEST: usize = 16;
+
+    /// `text` as a name, if it is one: [`SHORTEST`] to [`LONGEST`]
+    /// characters once the spaces round it are trimmed, all of them
+    /// [`allowed`].
+    pub fn name(text: &str) -> Option<String> {
+        let name = text.trim();
+        let fits = (SHORTEST..=LONGEST).contains(&name.len());
+        (fits && name.chars().all(allowed)).then(|| name.to_string())
+    }
+
+    /// Whether `c` may be in a name: plain ASCII that the game's font can
+    /// draw, letters, digits and what is on a keyboard, and a space.
+    pub fn allowed(c: char) -> bool {
+        c.is_ascii_graphic() || c == ' '
+    }
+
+    /// Whether `look` is one a person may choose.
+    pub fn look(look: &str) -> bool {
+        super::PEOPLE_LOOKS.contains(&look)
+    }
+}
 
 /// Registers everything both sides send, in one order for both. Call it after
 /// `RepliconPlugins` and before the renet client or server is made: its
@@ -443,6 +482,13 @@ pub enum Ask {
     Put { id: u32, kind: String, at: At },
     /// This piece of mine is no longer down: picked back up, or thrown away.
     Take { id: u32 },
+    /// Who I am, as chosen on signing up (the game's `signup`): the name to
+    /// go by, and which of [`PEOPLE_LOOKS`] I wear. The server keeps both
+    /// with the account and tells everyone in the room. Sent on coming online
+    /// if the account has them otherwise, and whenever they change. One that
+    /// is no name ([`profile::name`]) or no look is ignored. Last, since
+    /// 2026-10-31: an app from before never sends it.
+    Profile { name: String, look: String },
 }
 
 /// What the server tells you alone. In order, and never lost.
@@ -575,6 +621,22 @@ mod tests {
             order.sort_unstable();
             assert_eq!(order, [0, 1, 2, 3, 4, 5, 6, 7], "lot {lot}");
         }
+    }
+
+    #[test]
+    fn a_name_is_two_to_sixteen_plain_characters() {
+        assert_eq!(profile::name("  Hajun  ").as_deref(), Some("Hajun"));
+        assert_eq!(profile::name("Mochi 482").as_deref(), Some("Mochi 482"));
+        assert_eq!(profile::name("ab").as_deref(), Some("ab"));
+        assert_eq!(profile::name("sixteen chars ok").as_deref(), Some("sixteen chars ok"));
+        assert_eq!(profile::name("a"), None);
+        assert_eq!(profile::name(" a "), None);
+        assert_eq!(profile::name("seventeen chars!!"), None);
+        // Nothing the game's font cannot draw.
+        assert_eq!(profile::name("하준"), None);
+        assert_eq!(profile::name("tab\there"), None);
+        assert!(profile::look("boy") && profile::look("girl"));
+        assert!(!profile::look("blue") && !profile::look("red") && !profile::look(""));
     }
 
     #[test]
