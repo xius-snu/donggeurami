@@ -25,7 +25,7 @@
 
 use bevy::prelude::*;
 use bevy_replicon::prelude::Remote;
-use roundtown_net::{PEOPLE_LOOKS, TOWN_BODIES};
+use roundtown_net::{BOY_LOOKS, BOY_NAMES, GIRL_LOOKS, GIRL_NAMES, PEOPLE_LOOKS, TOWN_BODIES};
 
 use crate::ai;
 use crate::car::Driven;
@@ -46,33 +46,71 @@ pub(crate) use roundtown_net::Member;
 /// How many players the town holds offline, and a game of House Builder.
 pub(crate) const SEATS: usize = 8;
 
+/// The model the boy is drawn with, and the computer's players, and any
+/// look this build has not heard of: Hajun's
+/// `playercharacter.glb` (2026-11-01: "try using playercharacter in asset
+/// folder instead of both boy/girl model for the main player and all the
+/// AI's"), a Rigify metarig, scaled to 0.616 in the file, under a
+/// skin-coloured body with shoes, a blue top and dark trousers, skinned,
+/// and a mouth and two eyes hung rigid on the head bone (`spine.006`):
+/// about 4,150 triangles in seven materials, hair among them, 1.64 m to the top of its round
+/// head, 0.53 m across, resting with its arms a little out (an A-pose),
+/// which the walk hangs at its sides. That is its fourth version of the
+/// day (23:17, with hair; 22:53 dressed): the first, a bare 1.70 m figure
+/// of 1,468 triangles, and the second, the same smooth-shaded. Until then
+/// the boy was `limbperson.glb`, the girl `limbpersongirl.glb` (the same
+/// in a pink top), and the computer's players `AIpersonred.glb`,
+/// `AIpersonryellow.glb` and `AIpersonrpurple.glb`, all still in `assets/`
+/// and out of the APK.
+pub(crate) const MODEL: &str = "playercharacter.glb";
+
+/// The model the girl is drawn with: Hajun's `playercharactergirl.glb`
+/// (the night of 2026-11-01: "now there is playercharacter girl as well.
+/// use those as the player choice in the beginning of the game character
+/// selection"), the boy's rig, body and rest with hair to the waist and a
+/// skirt, 3,440 triangles in eight materials. The sign-up's pictures are
+/// rendered from both (`blender/render_person.py`).
+pub(crate) const GIRL_MODEL: &str = "playercharactergirl.glb";
+
 /// The looks a player comes in, and the model for each: first the two a
 /// person chooses between on signing up (`signup`, [`PEOPLE_LOOKS`], in
 /// their order), the boy first, which is what a look this build does not
 /// know is drawn as, among them `blue`, the look of every account from
-/// before there was a choice; then the three the computer's players take
-/// turns at.
+/// before there was a choice; then Hajun's recolourings of the two, which
+/// a person may choose as well and the computer's players wear along with
+/// them ([`BOY_LOOKS`], [`GIRL_LOOKS`], `roundtown_net::ai_look`: a boy or
+/// a girl by the toss of a coin, then any of that side; 2026-11-02, "random
+/// girl/guy 50/50" and "use variations of the colors"), each a `.glb`
+/// exported from the boy's or the girl's `.blend` with its clothes and hair
+/// recoloured; and the three the
+/// computer's players took turns at until that day, kept for the server's
+/// bots of before and older apps, drawn as the boy. The boy is [`MODEL`]
+/// and the girl [`GIRL_MODEL`] (since the night of 2026-11-01; for the
+/// day's first hours every look was [`MODEL`]).
 const LOOKS: &[(&str, &str)] = &[
-    ("boy", "limbperson.glb"),
-    ("girl", "limbpersongirl.glb"),
-    ("red", "AIpersonred.glb"),
-    ("yellow", "AIpersonryellow.glb"),
-    ("purple", "AIpersonrpurple.glb"),
+    ("boy", MODEL),
+    ("girl", GIRL_MODEL),
+    ("boy_blackbrown", "playercharacterblackbrown.glb"),
+    ("boy_whitejeans", "playercharacterwhitejeans.glb"),
+    ("girl_whiteblue", "playercharactergirlwhiteblue.glb"),
+    ("girl_yellowpink", "playercharactergirlyellowpink.glb"),
+    ("red", MODEL),
+    ("yellow", MODEL),
+    ("purple", MODEL),
 ];
 
-/// What the computer's players are called. More than a town's worth
-/// ([`TOWN_BODIES`], 32 since 2026-11-01; 20 names for a town of 8 until
-/// then) and a game's, so that the names in a room are not always the
-/// same, and the players who fill a game of House Builder are not the ones
-/// you left in the town. Players online go by the same names with a number
-/// after (the server's).
-const AI_NAMES: &[&str] = &[
-    "Mochi", "Dubu", "Hodu", "Bori", "Gamja", "Mandu", "Kimbap", "Yuja", "Maru", "Nabi", "Kong",
-    "Podo", "Sagwa", "Gyul", "Hobak", "Bam", "Dalgi", "Haru", "Byeol", "Nuri", "Dori", "Sol",
-    "Bada", "Gureum", "Saem", "Dongi", "Tori", "Jjang", "Bomi", "Nana", "Pado", "Mint", "Coco",
-    "Choco", "Latte", "Bbori", "Kkami", "Ddol", "Yeppi", "Ssal", "Ggul", "Bokki", "Sseul", "Tangi",
-    "Jelly", "Pudding", "Cookie", "Waffle",
-];
+/// The model of every look, each once: what a body may be drawn with, for
+/// the APK's test that each goes into the APK, and the walk's that each
+/// has the limbs it swings.
+pub(crate) fn models() -> Vec<&'static str> {
+    let mut models: Vec<&str> = Vec::new();
+    for (_, model) in LOOKS {
+        if !models.contains(model) {
+            models.push(model);
+        }
+    }
+    models
+}
 
 /// The most seats the town's arrival rings have spots for that its AIs come
 /// in at: the eight of offline, the eight between them, and sixteen more on
@@ -207,10 +245,19 @@ pub(crate) fn seat_ai(seats: &mut Vec<Member>, elsewhere: &[Member]) {
     seats.push(member);
 }
 
-/// The computer, in `seat`, as `id`, under a name nobody in `seats` or
-/// `elsewhere` has.
+/// The computer, in `seat`, as `id`: a boy or a girl by the toss of a coin,
+/// in any of that side's colours, under one of that side's names that
+/// nobody in `seats` or `elsewhere` has (`roundtown_net::ai_look`,
+/// `ai_names`; Hajun, 2026-11-02: "make the ai's also be random girl/guy
+/// 50/50", "use variations of the colors", "use the more manly ai names
+/// for the boy ais and girly cute ai names for the girl ais"; by seat,
+/// red, yellow or purple in turn, under any of 48 names, until then). The
+/// names a town holds ([`TOWN_BODIES`], 32) are more than a side has, so
+/// some of a full town are "Bot".
 fn ai_member(seat: usize, id: u64, seats: &[Member], elsewhere: &[Member]) -> Member {
-    let names: Vec<&str> = AI_NAMES
+    let _ = seat;
+    let boy = fastrand::bool();
+    let names: Vec<&str> = roundtown_net::ai_names(boy)
         .iter()
         .copied()
         .filter(|name| {
@@ -220,12 +267,10 @@ fn ai_member(seat: usize, id: u64, seats: &[Member], elsewhere: &[Member]) -> Me
                 .all(|member| member.name != *name)
         })
         .collect();
-    let ai_looks = &LOOKS[PEOPLE_LOOKS.len()..];
     Member {
         id,
         name: fastrand::choice(names).unwrap_or("Bot").into(),
-        // Seat 0 is always a person's, so the first AI is the first look.
-        look: ai_looks[seat.saturating_sub(1) % ai_looks.len()].0.into(),
+        look: roundtown_net::ai_look(boy, fastrand::usize(..)).into(),
         ai: true,
     }
 }
@@ -493,10 +538,39 @@ mod tests {
         // heard of, are drawn as the boy.
         assert_eq!(model(roundtown_net::PLAYER_LOOK), model("boy"));
         assert_eq!(model("hat"), model("boy"));
+        assert_eq!(model("boy"), MODEL);
+        assert_eq!(model("girl"), GIRL_MODEL);
         assert_ne!(model("girl"), model("boy"));
-        // The computer's players never wear either.
-        let seats: Vec<Member> = (0..SEATS).map(|seat| ai_member(seat, seat as u64 + 1, &[], &[])).collect();
-        assert!(seats.iter().all(|member| !PEOPLE_LOOKS.contains(&member.look.as_str())));
+        assert_eq!(models().len(), 6);
+        assert_eq!(&models()[..2], &[MODEL, GIRL_MODEL]);
+        // The computer's players are boys or girls at random, in any of
+        // the colours of their side, each of which has a model, under a name
+        // of their side: over a few towns' worth, about half boys, and every
+        // colour seen.
+        for look in BOY_LOOKS.iter().chain(&GIRL_LOOKS) {
+            assert!(LOOKS.iter().any(|(name, _)| name == look), "{look} has no model");
+        }
+        let seats: Vec<Member> = (0..300).map(|seat| ai_member(seat, seat as u64 + 1, &[], &[])).collect();
+        let boys = seats.iter().filter(|member| BOY_LOOKS.contains(&member.look.as_str())).count();
+        let girls = seats.iter().filter(|member| GIRL_LOOKS.contains(&member.look.as_str())).count();
+        assert_eq!(boys + girls, 300);
+        assert!((100..=200).contains(&boys), "{boys} of 300 are boys");
+        for look in BOY_LOOKS.iter().chain(&GIRL_LOOKS) {
+            assert!(seats.iter().any(|member| member.look == *look), "nobody wears {look}");
+        }
+        for member in &seats {
+            let names: &[&str] = if BOY_LOOKS.contains(&member.look.as_str()) { &BOY_NAMES } else { &GIRL_NAMES };
+            assert!(names.contains(&member.name.as_str()), "{} is a {}", member.name, member.look);
+        }
+        // A side's names run out before a town is full, and the rest are Bot.
+        let full = {
+            let mut seats: Vec<Member> = Vec::new();
+            for seat in 0..60 {
+                seats.push(ai_member(seat, seat as u64 + 1, &seats, &[]));
+            }
+            seats
+        };
+        assert!(full.iter().any(|member| member.name == "Bot"));
     }
 
     #[test]

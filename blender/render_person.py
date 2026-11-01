@@ -4,19 +4,33 @@ a plain sky, on a clear background. Adds a camera and a light in memory and
 never saves the .blend.
 
 blender --background --factory-startup person.blend --python render_person.py -- out.png
+
+Or from an exported .glb, when the colouring has no .blend of its own (Hajun's
+recolourings of 2026-11-02 are exports alone): an empty scene, the model
+imported into it, and the same camera, sun and sky.
+
+blender --background --factory-startup --python render_person.py -- out.png person.glb
 """
 import bpy, sys, math
 from mathutils import Vector
 
-out = sys.argv[sys.argv.index('--') + 1]
+args = sys.argv[sys.argv.index('--') + 1:]
+out = args[0]
+if len(args) > 1:
+    bpy.ops.wm.read_homefile(use_empty=True)
+    bpy.ops.import_scene.gltf(filepath=args[1])
 scene = bpy.context.scene
 
-# Where the person is: the box round every mesh, in world space.
+# Where the person is: the box round every mesh of theirs, in world space.
+# The glTF importer brings a mesh of its own along, a shape for the bones
+# ("Icosphere", 2 m across at the origin, which renders as nothing), so where
+# any mesh hangs off a parent, only those that do count.
+meshes = [ob for ob in scene.objects if ob.type == 'MESH']
+if any(ob.parent for ob in meshes):
+    meshes = [ob for ob in meshes if ob.parent]
 lo = Vector((1e9, 1e9, 1e9))
 hi = Vector((-1e9, -1e9, -1e9))
-for ob in scene.objects:
-    if ob.type != 'MESH':
-        continue
+for ob in meshes:
     for corner in ob.bound_box:
         p = ob.matrix_world @ Vector(corner)
         lo = Vector(map(min, lo, p))

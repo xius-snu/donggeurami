@@ -43,8 +43,9 @@ pub(crate) const TAG_TEXT: f32 = 3.6;
 const FULL_AT: f32 = 8.0;
 /// How high over a body's feet its name sits, in metres: just over its head,
 /// which is 1.71 m up. 2.0, where the House Builder's bubble is, until
-/// Hajun asked for "slightly lower, closer to the head" (2026-10-31).
-const OVER_HEAD: f32 = 1.85;
+/// Hajun asked for "slightly lower, closer to the head" (2026-10-31). The
+/// chat bubble's point stands over this same point, over the name (`talk`).
+pub(crate) const OVER_HEAD: f32 = 1.85;
 /// How far down the screen a name has to be to be shown in a game of House
 /// Builder, as a share of its short side: below the time and what it is
 /// for, as the House Builder's bubble is. Over a house, the names of those

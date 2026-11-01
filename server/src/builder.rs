@@ -39,14 +39,6 @@ use crate::accounts::{Bank, Charged, Credited};
 use crate::players::{Body, Everyone, Plays, Who, move_to, tell};
 use crate::rooms::{InRoom, Room, Towns};
 
-/// What the computer's players wear: anything but what people do.
-const BOT_LOOKS: &[&str] = &["red", "yellow", "purple"];
-/// What the computer's players are called: the names people get, without
-/// the number after.
-const BOT_NAMES: &[&str] = &[
-    "Mochi", "Dubu", "Hodu", "Bori", "Gamja", "Mandu", "Kimbap", "Yuja", "Maru", "Nabi", "Kong",
-    "Podo", "Sagwa", "Gyul", "Hobak", "Bam", "Dalgi", "Haru", "Byeol", "Nuri",
-];
 /// How long after building ends a piece put down still counts, in seconds: a
 /// device puts down whatever it still had out once it hears the time is up.
 const GRACE: f32 = 3.0;
@@ -714,11 +706,18 @@ fn pay_out(
     }
 }
 
-/// The computer, in the next seat of `game`, standing in the lobby under a
-/// name nobody there has.
+/// The computer, in the next seat of `game`, standing in the lobby: a boy
+/// or a girl by the toss of a coin, in any of that side's colours, under
+/// one of that side's names that nobody there has (`roundtown_net::ai_look`,
+/// `ai_names`, as the game's own AIs are; since 2026-11-02, Hajun: "make
+/// the ai's also be random girl/guy 50/50", "use variations of the colors",
+/// "use the more manly ai names for the boy ais and girly cute ai names for
+/// the girl ais"; red, yellow or purple by seat, under any of 20 names,
+/// until then, which apps draw as the boy still).
 fn seat_bot(commands: &mut Commands, game: &mut Game, now: f64) {
     let seat = game.seats.len();
-    let names: Vec<&str> = BOT_NAMES
+    let boy = fastrand::bool();
+    let names: Vec<&str> = roundtown_net::ai_names(boy)
         .iter()
         .copied()
         .filter(|name| game.members.iter().all(|member| !member.name.starts_with(name)))
@@ -727,7 +726,7 @@ fn seat_bot(commands: &mut Commands, game: &mut Game, now: f64) {
         // Clear of people's ids, which count up from 1.
         id: u64::MAX - u64::from(game.id) * GAME_SEATS as u64 - seat as u64,
         name: fastrand::choice(names).unwrap_or("Bot").into(),
-        look: BOT_LOOKS[seat.saturating_sub(1) % BOT_LOOKS.len()].into(),
+        look: roundtown_net::ai_look(boy, fastrand::usize(..)).into(),
         ai: true,
     };
     let (at, turn) = arrival(Venue::Lobby, seat);

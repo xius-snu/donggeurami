@@ -1018,6 +1018,48 @@ pub(crate) mod glb {
         objects.into_iter().map(|(_, triangles)| triangles).collect()
     }
 
+    /// Every node of `path`, under `assets/`, by name, with how it lies at
+    /// rest in the model's own space as the game has it: the turns of every
+    /// node down to it, after the half turn round the loader gives the
+    /// model (`GltfConvertCoordinates`, as `read` places meshes). A bone's
+    /// own axis is its y.
+    pub(crate) fn frames(path: &str) -> Vec<(String, Quat)> {
+        let file = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets").join(path);
+        let data = std::fs::read(&file).unwrap_or_else(|error| panic!("{}: {error}", file.display()));
+        let word = |at: usize| u32::from_le_bytes(data[at..at + 4].try_into().unwrap()) as usize;
+        assert_eq!(word(0), 0x4654_6C67, "{path} is not a glb");
+        let json: Value = serde_json::from_slice(&data[20..20 + word(12)]).unwrap();
+        let nodes = json["nodes"].as_array().cloned().unwrap_or_default();
+        let number = |value: &Value| value.as_u64().unwrap() as usize;
+        let turn = |node: &Value| {
+            node["rotation"].as_array().map_or(Quat::IDENTITY, |q| {
+                Quat::from_xyzw(
+                    q[0].as_f64().unwrap() as f32,
+                    q[1].as_f64().unwrap() as f32,
+                    q[2].as_f64().unwrap() as f32,
+                    q[3].as_f64().unwrap() as f32,
+                )
+            })
+        };
+        let half_round = Quat::from_xyzw(0.0, 1.0, 0.0, 0.0);
+        let mut frames = Vec::new();
+        let mut waiting: Vec<(usize, Quat)> = json["scenes"][0]["nodes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|root| (number(root), half_round))
+            .collect();
+        while let Some((index, above)) = waiting.pop() {
+            let node = &nodes[index];
+            let frame = above * turn(node);
+            frames.push((node["name"].as_str().unwrap_or_default().to_owned(), frame));
+            for child in node["children"].as_array().cloned().unwrap_or_default() {
+                waiting.push((number(&child), frame));
+            }
+        }
+        frames
+    }
+
     /// Every mesh of `path`, under `assets/`, placed where the game places
     /// it: the glTF loader turns every model half round about the upright
     /// (`GltfConvertCoordinates`), so that x and z come out the other way.

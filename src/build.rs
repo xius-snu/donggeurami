@@ -3549,6 +3549,17 @@ mod tests {
                 }
             }
         }
+        // Nor the model every body is drawn with.
+        for model in crate::lobby::models() {
+            for name in model.split('/') {
+                if let Some(pattern) = patterns.iter().find(|pattern| matches(pattern, name)) {
+                    panic!(
+                        "{model} is what every player is drawn with, but `{pattern}` in \
+                         mobile/android/app/assets-left-out.txt leaves it out of the APK"
+                    );
+                }
+            }
+        }
         // Nor the music.
         for sound in [crate::sound::MUSIC] {
             for name in sound.split('/') {

@@ -25,6 +25,15 @@ circlemap1.glb
 # not sold in the shop.
 housesizereference.glb
 
+# The players' models until 2026-11-01, when Hajun's playercharacter.glb
+# became every body's (lobby::MODEL): the boy, the girl, and the computer's
+# three.
+limbperson.glb
+limbpersongirl.glb
+AIpersonred.glb
+AIpersonryellow.glb
+AIpersonrpurple.glb
+
 # Hajun's first car and their Roadster, in mybuilds/, which drove the town's
 # roads from 2026-10-23 until two buses took over on 2026-10-24 (car::CARS).
 car.glb

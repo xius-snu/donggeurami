@@ -214,6 +214,70 @@ Authored in Blender and exported by `blender/export_glb.py` into `assets/`. A
 metre in Blender is a metre in the world: anything the wrong size gets resized in
 Blender and re-exported rather than scaled at spawn time (`map::ObjectDef`).
 
+- **Every body is Hajun's `playercharacter.glb`** (`lobby::MODEL`, since
+  2026-11-01: "try using playercharacter in asset folder instead of both
+  boy/girl model for the main player and all the AI's"): every boy, the
+  AIs, the House Builder and everyone online, whatever look they wear, but
+  the girls, who are their `playercharactergirl.glb` since that night
+  (`lobby::GIRL_MODEL`: "now there is playercharacter girl as well. use
+  those as the player choice in the beginning of the game character
+  selection"; the same rig, body and rest, with hair to the waist and a
+  skirt, 3,440 triangles), and the AIs, who wear the two and Hajun's two
+  recolourings of each (`roundtown_net::BOY_LOOKS`, `GIRL_LOOKS`, since
+  2026-11-02; above, "The first time, you sign up") (`lobby::LOOKS` maps
+  each look to its model and any other to the boy's; `lobby::models()` is
+  every model, each once, which the APK's test keeps in and the walk's test
+  reads the limbs of). A Rigify human metarig, scaled to 0.616 in the file (the
+  game draws it as the file has it), under a skinned skin-coloured body with
+  shoes, a blue top and dark trousers, and a mouth and two eyes hung rigid
+  on the head bone: about 4,150 triangles in seven materials, hair among them,
+  1.64 m to the top
+  of a round head 0.53 m across, its eyes 1.38 m up, facing Blender's -Y
+  as every model does, resting in an A-pose with its upper arms 60 degrees
+  under level. That is Hajun's fourth export of the day (23:17, with hair;
+  22:53 dressed and bare-headed); the first
+  was a bare 1.70 m figure of 1,468 triangles, flat-shaded, with the arms
+  28 degrees under level, the second the same smooth-shaded. The boy,
+  `limbperson.glb`, the girl, `limbpersongirl.glb`,
+  and the AIs' `AIpersonred.glb`, `AIpersonryellow.glb` and
+  `AIpersonrpurple.glb` stay in `assets/` and out of the APK
+  (`assets-left-out.txt`; a test keeps whatever `LOOKS` names in it).
+- **The walk and the punch turn limbs about the body's own axes, whatever
+  way the rig's bones lie** (`WalkBone::turned`, `bind_limbs` in
+  `src/lib.rs`, since 2026-11-01). Each limb is bound by its bone's name
+  (`walk_bone_kind`: `thigh.L`, `shin.L`, `upper_arm.L` and their `.R`;
+  `Bone.005.L.001` and the like until then) with how it lies at rest in the
+  body's space, the turns of every node from the body down to it, the
+  loader's half turn among them; a swing is a turn about the body's
+  side-to-side axis and the arms hang about its front-to-back axis, each
+  turned down from however the model rests it to 75 degrees under level
+  (`ARM_HANG_BELOW`, `stance_from_rest`, worked out as the arm is bound; a
+  fixed 0.8 rad for the first export's arms, 1.02 for the old models'
+  straight out, until that evening), and each thigh turned in the same
+  way to stand 3.5 degrees out from straight down (`LEG_SPLAY`; Hajun,
+  that night: "the legs are too wide apart while standing/walking": the
+  model's rest 7 degrees out, its ankles 0.27 m apart, 0.19 stood so; the
+  shin goes in with its thigh), put on the bone through its frame.
+  Until then each turn was about an axis
+  of the old rig's own bone space, and a new rig meant working them out
+  again. Another rig needs only its bone names in `walk_bone_kind`; a test
+  reads the model and checks every limb is found once and swings the right
+  way (`every_limb_of_the_player_s_model_is_bound_and_swings_the_right_way`).
+  Seen in the desktop build, scripted, from the front and the side: standing
+  with the arms at the sides, walking with the legs striding, the back shin
+  kicking up and the arms swinging against the legs, and the punch level in
+  front. The sign-up's pictures (`assets/signup/boy.png`, `girl.png`) are
+  rendered from the two models (`blender/render_person.py`, the same
+  night). The colliders (`LEG_RADIUS`, `PLAYER_RADIUS`, "A
+  body is the shape of the model") still bump as wide as the old model,
+  0.42 m at the legs and 0.9 at the body, where this one is 0.35 and 0.45;
+  what follows the model is the see-through's points on you
+  (`see_through::RINGS`, `CROWN`), your eyes (`EYE_HEIGHT`, 1.38, "Your
+  eyes are inside your head") and where the camera looks at a face while
+  you talk (`talk::FACE`, 1.38). Names and the chat bubble still stand
+  1.85 m up (`tags::OVER_HEAD`), 0.21 m over this head where they were
+  0.14 over the old. Not yet on a phone.
+
 ## The first time, you sign up
 
 Since 2026-10-31 (Hajun), the first time the app is run, or whenever the name
@@ -223,8 +287,15 @@ account? Log In" under it; "Choose Username", "Shown to other players.
 2-16 characters." on one line (a hyphen: the font has no en dash), a box
 to type a name into and Save; and "Choose Character", "You may change this
 later.", a boy and a girl on two cards with their pictures and nothing
-else (`assets/signup/boy.png`, `girl.png`, rendered from `limbperson.blend`
-and `limbpersongirl.blend` by `blender/render_person.py`) and Save (Hajun,
+else, since 2026-11-02 with a white arrowhead either side of each card
+that turns it through that side's colours (`signup::ColourArrow`,
+`Action::Turn`, `turn_cards`; Hajun: "put some arrow thingy next to each
+guy and girl character selection in the start so u can choose which color
+guy or which color girl"; pressing an arrow chooses that side as well; the
+pictures, `assets/signup/<look>.png`, one to each look, are rendered from
+the models by `blender/render_person.py`, which takes a `.glb` since the
+colourings have no `.blend`; until then `boy.png` and `girl.png` from
+`limbperson.blend` and `limbpersongirl.blend`), and Save (Hajun,
 2026-11-01; until then three lines of explanation, "Save Username", "Save
 Character" and "Boy" and "Girl" under the pictures). Solid colours, no
 outlines, no words but those (Hajun:
@@ -243,6 +314,11 @@ instead of yellow for the buttons"; dark blue, blue and gold until then).
   accounts table. A native sign-in later (Apple, Google) is one more way to
   find that row, by the token's subject, and is where "Log In" goes; for now
   Log In says "Log in is not available yet".
+- **The look saved is any of either side's** (`roundtown_net::BOY_LOOKS`,
+  `GIRL_LOOKS`, `profile::look`; since 2026-11-02, `boy` or `girl` alone
+  until then): the server checks the same list, so **it has to be deployed
+  with the app**, or a profile in a new colour is thrown out whole, name and
+  all, and the account keeps its generated name online.
 - **A name is 2 to 16 characters of plain ASCII** (`roundtown_net::profile`,
   checked on both sides, the server ignoring any other): the game's font has
   no Hangul. It need not be unique. Typing: on desktop the keys and Enter;
@@ -277,15 +353,32 @@ instead of yellow for the buttons"; dark blue, blue and gold until then).
   0.55 written in by a script, both pages; not yet with a real keyboard on
   a phone.
 - **The character is a look** (`lobby::LOOKS`, `roundtown_net::PEOPLE_LOOKS`):
-  `boy` is `limbperson.glb` and `girl` is `limbpersongirl.glb` (Hajun's, the
-  same rig and bones, a pink top). Every account from before wears `blue`,
+  `boy` is Hajun's `playercharacter.glb` and `girl` their
+  `playercharactergirl.glb` (`lobby::MODEL`, `GIRL_MODEL`; below, "Every
+  body is Hajun's `playercharacter.glb`"; since the night of 2026-11-01:
+  for the day's first hours both were the boy's, and until that day
+  `limbperson.glb` and `limbpersongirl.glb`, the same rig and bones, a
+  pink top). The cards' pictures, `assets/signup/boy.png` and `girl.png`,
+  are rendered from the two by `blender/render_person.py` (run again the
+  same night). Every account from before wears `blue`,
   which is drawn as the boy, as is any look an app has not heard of. Saving
   swaps your body's model on the spot (`lobby::dressed_as`; the scene
   spawner takes the old one down) and your name in the town's room, so a
   game of House Builder offline is played under it; online, `net::redress`
   swaps anyone else's as their record changes, and their name over their
-  head follows (`tags::rename`). The AIs still take turns at red, yellow and
-  purple.
+  head follows (`tags::rename`). The AIs are a boy or a girl by the toss of
+  a coin, and then in any of that side's colours (`roundtown_net::ai_look`,
+  `BOY_LOOKS`, `GIRL_LOOKS`: the boy and the girl people choose and Hajun's two
+  recolourings of each, `playercharacterblackbrown.glb`,
+  `playercharacterwhitejeans.glb`, `playercharactergirlwhiteblue.glb` and
+  `playercharactergirlyellowpink.glb`, looks `boy_blackbrown` and the like
+  in `lobby::LOOKS`; on this device in `lobby::ai_member` and for the
+  server's bots in `server/src/builder.rs`, since 2026-11-02; Hajun: "make
+  the ai's also be random girl/guy 50/50", "use variations of the colors. i
+  made various colors for both guy and girl for the ais"); until then they
+  took turns at red, yellow and purple, which stay known, drawn as the boy,
+  for the server's bots until it is deployed again and for older apps, as
+  any look an app has not heard of is.
 - **While the pages are up the world waits as under a dialog**
   (`hud::DialogUp`): you stand still, every press is the page's, the cursor
   is free on desktop, and the town's name waits to fade in until the pages
@@ -389,7 +482,9 @@ from the town (below).
   time per second"): each press of the fist, as it goes down
   (`hud::press_punch`), or F on desktop, swings the right arm straight out
   level in front of you and back, 0.07 s out and 0.11 s back (`PUNCH_OUT`,
-  `PUNCH_BACK`, `PUNCH_REACH` 1.5 rad; the two arms in turn for an hour,
+  `PUNCH_BACK`, `PUNCH_REACH` 1.7 rad, level in front of
+  `playercharacter.glb`, whose arms hang a little back of the shoulder; 1.5
+  until 2026-11-01; the two arms in turn for an hour,
   until Hajun asked for "only use right hand"); a press mid-punch starts
   the next at once, from the side. The arm punches in place of its walk;
   the rest of the body walks on. Nothing of it goes over the network, so
@@ -710,7 +805,10 @@ re-export, and the collision follows.
   tops, like the bookshelf's rows). An AI cannot jump, so it never steps
   down anything it could not step back up (`strands`, and the walks it
   picks in `ai::dry_all_the_way`): it keeps out of the fountain's basin.
-- **A body is the shape of the model** (since 2026-10-08): its legs, 0.42 m
+- **A body is the shape of the model** (since 2026-10-08; of the old model,
+  `limbperson.glb`: `playercharacter.glb`, since 2026-11-01, is narrower,
+  0.35 m across the legs and 0.45 the shoulders, and bumps as wide as
+  before): its legs, 0.42 m
   across (`LEG_RADIUS`), up to its hips at 0.65 m, then rounded out to its
   body and arms, 0.9 m across (`PLAYER_RADIUS`), from 0.8 m up to its head
   (`resolve_player_solids`, through `Island::walls_round`, which looks down
@@ -1094,8 +1192,13 @@ is their model's, and their way round is the town's roads.
   comes down on anything else. So a jump on it comes down where it went up,
   and walking off it, you come down on the road with nothing carrying you
   on. Its floor is a step up from the road, and its roof, at 3.3 m, out of
-  a jump's reach. **The camera does not turn with it**: nothing turns it
-  but you (above); the bus turns under you, as the island does.
+  a jump's reach. **The camera comes round after it** (since 2026-11-01;
+  until then nothing turned it but you, and the bus turned under you as the
+  island does): riding one, once your fingers, or the mouse, have been off
+  the camera for 1.5 s, it eases round behind the way the bus faces,
+  standing still too, so that you look the way the bus goes without turning
+  the camera yourself as it goes round ("The camera stands where you zoomed
+  it").
 - **A bus in the way does not fade** (since 2026-10-25, Hajun: "not on the
   bus"): nothing outside a house in House Builder does ("The camera stands
   where you zoomed it"), so riding one with the camera outside, or behind
@@ -1268,14 +1371,16 @@ you.
   world moves it off where you turned and zoomed it. What turns it for you is
   only what Hajun asked for on 2026-10-31: the stick's recentering and a
   double tap (next), and talking to someone ("You can talk to anyone in the
-  town"); none of them while a finger is on the camera. A finger dragged
+  town"), and since 2026-11-01 riding a bus (next); none of them while a
+  finger is on the camera. A finger dragged
   across a phone's screen turns it a quarter more than the mouse does for
   the same distance (`TOUCH_LOOK_GAIN`, 1.25, since 2026-11-01; Hajun:
   "increase the camera panning ... sensitivity slightly so each drag
   rotates the camera bit more"; the same as the mouse, `LOOK_SENSITIVITY`,
   until then).
-- **On a phone, walking with the stick brings it round behind you, and a
-  double tap swings it there** (`assist_camera`; Hajun, 2026-10-31: "Soft
+- **On a phone, walking with the stick brings it round behind you, a
+  double tap swings it there, and riding a bus brings it round behind the
+  way the bus faces** (`assist_camera`; Hajun, 2026-10-31: "Soft
   auto-recenter: when the stick is pushed and the player hasn't touched the
   camera for ~1.5 s, the camera eases back behind the movement direction.
   Double-tap on empty screen = snap camera behind the character"). Once no
@@ -1306,13 +1411,35 @@ you.
   served: walking with the stick brings the camera round behind where you
   walk as soon as the swing is over (Hajun, 2026-11-01: "make that become
   0s instantly so it starts autofollowing right away"; the taps, being
-  fingers on the camera, had started the wait over). A finger on the
-  camera stops either at once. On desktop neither: the keys walk you, and the mouse
-  is the camera's. All the numbers but the 1.5 s are mine. Seen in the
+  fingers on the camera, had started the wait over). **Riding a bus, it
+  comes round behind the way the bus faces** (`ride_turn`, since
+  2026-11-01; Hajun: "when the player standing still but on the bus, the
+  camera auto follow doesnt activate ... make it so riding bus is an
+  exception where user doesnt need to move ... camera will auto follow in
+  direction of bus too while theyre on the bus so user doesnt need to
+  constantly move the camera while riding on a bus to look a particular
+  direction according to where the bus is facing"): standing still on it,
+  or walking about it, and in your eyes as well, once the camera has been
+  left alone 1.5 s, eased in over 0.6 s from then or from getting on,
+  whichever came later, at the stick's rate and no faster, and from a
+  camera turned to look out of the front of the bus as readily as from one
+  beside it (walking at the camera never brings it round; the bus turned,
+  you did not walk). The bus turns under you and the camera comes round
+  after it: round a bend it is left behind the bus by about as many
+  degrees as the bus turns in a second, and catches up once the bend is
+  over. Until then nothing turned it on a bus, and looking the way the
+  bus went round the ring meant turning the camera all the way round with
+  it. A finger on the
+  camera stops any of them at once. On desktop neither the stick's nor the
+  double tap: the keys walk you, and the mouse is the camera's; riding a
+  bus brings it round on desktop too, once the mouse has been still 1.5 s
+  (moving it counts as a finger on the camera, `read_mouse_look`). All the
+  numbers but the 1.5 s are mine. Seen in the
   desktop build with the stick written in by a script, walking one way across
   the town with the camera off to the side: it stood still for 1.5 s, then
-  came round behind in about 3 s. The double tap is unit-tested only; the
-  recentering has not been tried on a phone, and the spin's fix not yet.
+  came round behind in about 3 s. The double tap and the bus are
+  unit-tested only; the recentering has not been tried on a phone, and the
+  spin's fix not yet.
 - **In a house, whatever hides any of you from it fades to a quarter of itself**
   (`SEEN`, 0.25, as much as Roblox's Invisicam leaves; one of the town's
   buses, until 2026-10-25, to three quarters, `BUS_SEEN`, above) over 0.15 s, and
@@ -1320,7 +1447,8 @@ you.
   player is covered, that wall becomes invisible" (Hajun, 2026-10-13).
   Every frame the straight lines from the camera to 73 points on you
   (`RINGS`: eight rings from 0.2 m up to your head, each as wide and deep
-  as the model is there, a little inside it, its middle and eight points
+  as the model is there, a little inside it, fitted to `playercharacter.glb`
+  since 2026-11-01, its middle and eight points
   round it, and the top of your head) are tried against everything drawn on
   your island: the box round all the lines first, then the box round each
   part, then its triangles, read once per mesh into boxes inside boxes
@@ -1432,8 +1560,10 @@ you.
   third person while you built and rated), and no zooming the view in your
   eyes (it narrowed to 23°). It takes in 66° top to bottom (`CAMERA_FOV`),
   near and far: first person's width; behind you it was 45° until then.
-- **Your eyes are inside your head, as high as the model's eyes, 1.57 m**
-  (`EYE_HEIGHT`, under the top of the head at 1.71 m; Hajun, 2026-10-09).
+- **Your eyes are inside your head, as high as the model's eyes, 1.38 m**
+  (`EYE_HEIGHT`; 1.57 until the evening of 2026-11-01, under the old
+  model's head top at 1.71 m, `playercharacter.glb`'s eyes being 1.38 m up
+  in a head 0.53 m across to 1.64; Hajun, 2026-10-09).
   They were 2.2 m up from 2026-10-03, over your head, for the view of a
   taller person, and 1.44 m before that. Under a ceiling lower than that,
   the eyes stop just under it (`rise`). Your body is not drawn while the
@@ -1452,7 +1582,9 @@ you.
   one you stand against is not from your side of it, that every point
   tried on you is inside you, over the step you are on, and turns with you,
   that walking with the stick brings it round behind where you walk only once
-  it has been left alone, and never walking at it, that a double tap swings
+  it has been left alone, and never walking at it, that riding a bus brings
+  it round behind the way the bus faces, standing still, from in front of
+  the bus too, and keeps up with the bus turning, that a double tap swings
   it behind you, and that talking to someone it looks at their face from near
   you and goes back out after.
 - **A jump stops the head just under a ceiling** (`headroom`, in
@@ -1529,8 +1661,12 @@ to `roundtown_net::TOWN_BODIES`, 32 since 2026-11-01 (Hajun: "a total of 32
 ppl in the map including ai, so each new player join replaces a ai"; 8
 until then), on arrival spots round the pond (`lobby::TOWN_SPOTS`, 32: the
 sixteen on the path and sixteen more on a ring 2 m further out,
-`roundtown_net::arrival`), under 48 names (`AI_NAMES`; 20 until then, and
-past them every AI was "Bot"). Online, the server sends whoever else is in
+`roundtown_net::arrival`), under 48 names, 24 for the boys and 24 for the
+girls since 2026-11-02 (`roundtown_net::BOY_NAMES`, `GIRL_NAMES`, which the
+server's bots go by too; Hajun: "use the more manly ai names for the boy
+ais and girly cute ai names for the girl ais from the names you already
+made"; `lobby::AI_NAMES`, one list, until then, and 20 until 2026-11-01;
+past a side's names an AI is "Bot"). Online, the server sends whoever else is in
 your channel of the town, and this device keeps the town at 32 bodies with
 AIs of its own (below, "Playing online"). The cost of 32 bodies is not
 measured on a phone.
@@ -1551,8 +1687,11 @@ measured on a phone.
   how their body moved (`walk_from_motion`), so walking never has to go over
   the network: a position is enough.
 - There are five looks and eight seats: you are the boy or the girl you chose
-  on signing up (the boy until then), and the AIs take turns at red, yellow
-  and purple.
+  on signing up (the boy until then), and the AIs a boy or a girl at random
+  in one of three colourings each (since 2026-11-02, "The first time, you
+  sign up"; red, yellow and purple in turn until then); the boy and the
+  three old looks drawn as `lobby::MODEL` and the girl as
+  `lobby::GIRL_MODEL` since the night of 2026-11-01 ("Models").
 
 ## You can talk to anyone in the town
 
@@ -1571,11 +1710,19 @@ every ai character in the map for now"), in `src/talk.rs`: the town's AIs
   evening: "very slightly increase the size of both the text box and the
   font size and the button"), its point over the
   head of the nearest of them within 4.5 m, within 70° of the way you face,
+  1.85 m over their feet, where their name's foot is (`tags::OVER_HEAD`;
+  1.95 until 2026-11-01, Hajun: "move its z slightly lower so its slightly
+  more closer to the nametag"),
   and in sight of your eyes, no wall between. Once it is over someone it stays
   out to 5 m and 80° round, unless someone else is half a metre nearer, so
   that it does not flicker between two. Being the only one, it takes a tap 3
   vmin wide of it. Only in the town, and never while anything else is up or
-  the camera is on its way back from a face. Online it sits over a name.
+  the camera is on its way back from a face. Online it sits over a name:
+  its point a name and a half's height (`tags::TAG_TEXT`) over the name's
+  foot, the same way over the name however near the camera is, since the
+  two stand on one point of the world; with its point 0.1 m higher the gap
+  grew as the camera came in, about 1% of the screen's height at 8 m and
+  3% at 3.5 m.
 - **Tap it, or on desktop press E, and you talk to them** (Hajun: "zoom in
   first person view to show that ai character's front face (ai character
   pause until dismiss)"). They stop where they stand, the two of you turn to
@@ -1616,7 +1763,9 @@ arrives, 2.5 m out from its door, facing out (`build::town`): in the new town
 the first house up the straight road behind where you arrive, on its right
 going out, whose door faces the ring round the pond. They are the body
 everyone has, in the black top the old town had them in
-(`builder::stand_house_builder`), given a collider and their arms hung at
+(`builder::stand_house_builder`: the model's `body` material painted black,
+which `playercharacter.glb` has not, so since 2026-11-01 they look like
+everyone else), given a collider and their arms hung at
 their sides like everyone else's. Until then they were part of the old
 town's model, the node called `House Builder NPC` in `circlemap1.glb`, with
 "BUILD TO IMPRESS" in raised white letters over their door (`buildtext`); a

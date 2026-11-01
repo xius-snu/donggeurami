@@ -189,7 +189,10 @@ const CAMERA_FOV: f32 = 1.15;
 /// to 1.6 m up, under the top of the head at 1.71 m (Hajun, 2026-10-09). It
 /// was 2.2 m from 2026-10-03, over your head, for the view of a taller
 /// person, and 1.44 m before that.
-pub(crate) const EYE_HEIGHT: f32 = 1.57;
+/// 1.38 since the evening of 2026-11-01: the eyes of `playercharacter.glb`
+/// as it is, 1.64 m tall with a round head 0.53 m across; 1.57, the old
+/// model's, until then.
+pub(crate) const EYE_HEIGHT: f32 = 1.38;
 /// How far your eyes keep from a ceiling lower than them, in metres: further
 /// than the corners of the camera's near plane reach from it, 0.18 m at the
 /// widest, looking up on a 20:9 phone, so that it is never cut open on screen.
@@ -202,14 +205,15 @@ const CAMERA_INSIDE: f32 = 0.15;
 const CAMERA_PITCH: f32 = 0.38;
 /// How long the camera has to have been left alone before walking with the
 /// stick brings it round behind where you walk, in seconds (Hajun,
-/// 2026-10-31: "~1.5 s").
+/// 2026-10-31: "~1.5 s"), or riding a bus brings it round behind the way
+/// the bus faces (Hajun, 2026-11-01).
 const RECENTER_AFTER: f32 = 1.5;
 /// How long it takes to get going once it does, in seconds: it eases in,
-/// from when the stick was pushed or the camera let go of, whichever came
-/// later, rather than all at once.
+/// from when the stick was pushed, or the bus got on, or the camera let go
+/// of, whichever came later, rather than all at once.
 const RECENTER_EASE_IN: f32 = 0.6;
-/// How quickly it comes round, walking at full speed: this share of the
-/// angle left, a second...
+/// How quickly it comes round, walking at full speed, or riding: this share
+/// of the angle left, a second...
 const RECENTER_RATE: f32 = 1.0;
 /// ...and no faster than this, in radians a second (46°). The stick held to
 /// one side walks you round a circle about 17 m across as it comes round, wide
@@ -244,11 +248,31 @@ const UNDER_THE_FACE: f32 = 0.25;
 /// seconds.
 const CLOSE_UP_IN: f32 = 0.45;
 const CLOSE_UP_OUT: f32 = 0.35;
+/// How fast the limbs swing as a body walks, in radians a second of stride
+/// at full speed.
 const WALK_STRIDE_FREQ: f32 = 7.6;
+/// How far each limb swings, in radians: the thighs forward and back, the
+/// shins bending back behind them, and the arms against the legs.
 const WALK_THIGH: f32 = 0.42;
 const WALK_SHIN: f32 = 0.28;
 const WALK_ARM: f32 = 0.55;
-const WALK_ARM_HANG: f32 = 1.02;
+/// How far under level the arms hang at the sides, in radians: 75 degrees,
+/// 15 out from straight down, clear of the hips. Each arm is turned down
+/// from the model's rest by whatever that takes ([`WalkBone::hang`], worked
+/// out as it is bound, [`hang_from_rest`]): `playercharacter.glb` as it is
+/// rests with its upper arms 60 degrees under level, its first version of
+/// 2026-11-01 did 28, and the old models' stood straight out (turned 1.02
+/// rad down from there, `WALK_ARM_HANG`, until that day).
+const ARM_HANG_BELOW: f32 = 1.31;
+/// How far out from straight down the legs stand, in radians: 3.5 degrees.
+/// Each thigh is turned in from the model's rest by whatever that takes
+/// ([`WalkBone::stance`], [`stance_from_rest`]), and never out:
+/// `playercharacter.glb` rests with its legs 7 degrees out, its ankles 0.27
+/// m apart, which Hajun found "too wide apart while standing/walking"
+/// (2026-11-01); stood so, they are 0.19 m apart, the shoes a few
+/// centimetres from each other.
+const LEG_SPLAY: f32 = 0.06;
+/// How quickly a walk comes and goes as a body starts and stops.
 const WALK_BLEND: f32 = 9.0;
 
 /// The one player of the eight that this device steers: its stick and keys
@@ -301,8 +325,10 @@ struct WalkCycle {
 const PUNCH_OUT: f32 = 0.07;
 const PUNCH_BACK: f32 = 0.11;
 const PUNCH_SECS: f32 = PUNCH_OUT + PUNCH_BACK;
-/// How far the arm swings forward from hanging, in radians: up to level.
-const PUNCH_REACH: f32 = 1.5;
+/// How far the arm swings forward from hanging, in radians: up to level in
+/// front (1.5 rad until 2026-11-01, when `playercharacter.glb` came, whose
+/// arms hang 12 degrees back of the shoulder).
+const PUNCH_REACH: f32 = 1.7;
 
 /// The fist button, or F on desktop, pressed: a punch is asked for.
 #[derive(Message, Default)]
@@ -341,8 +367,29 @@ impl Punching {
 struct WalkBone {
     kind: WalkBoneKind,
     rest_rotation: Quat,
+    /// How the bone lies at rest in its body's space: the turns of every
+    /// node from the body down to it, its own last, so that it can be
+    /// turned about the body's own axes whatever way its rig's go
+    /// ([`WalkBone::turned`]).
+    frame: Quat,
+    /// How far the limb is turned about the body's front to back axis from
+    /// the model's rest to stand as it should ([`stance_from_rest`]): an arm
+    /// down, to hang at the side ([`ARM_HANG_BELOW`]), a thigh in, to stand
+    /// under the body ([`LEG_SPLAY`]), the left one way and the right the
+    /// other. 0 for a shin, which goes in with its thigh.
+    stance: f32,
     /// The player this bone belongs to, whose [`WalkCycle`] swings it.
     owner: Entity,
+}
+
+impl WalkBone {
+    /// The rotation to write to the bone for `turn`, a turn in its body's
+    /// space about the bone's own head, on top of how it rests: its body
+    /// sees it turned by `turn` from its rest, whatever way the rig has its
+    /// axes. A bone under another that is turned too goes round with it.
+    fn turned(&self, turn: Quat) -> Quat {
+        self.rest_rotation * self.frame.inverse() * turn * self.frame
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -447,6 +494,8 @@ struct CameraAssist {
     untouched: f32,
     /// Seconds the stick has been pushed for, without letting go.
     pushed: f32,
+    /// Seconds you have been riding a bus for, without getting off.
+    aboard: f32,
     /// A double tap is swinging it round to this yaw: behind you as you
     /// stood at the tap, and not as you turn after it. Read off you every
     /// frame, it chased you round and round: walking with the stick you face
@@ -462,10 +511,9 @@ struct CameraAssist {
 }
 
 impl CameraAssist {
-    /// Your fingers are on the camera: it waits for them to have been off it
-    /// for [`RECENTER_AFTER`] before coming round behind you again, and
-    /// whatever swing a double tap began is over.
-    #[cfg_attr(not(any(target_os = "android", target_os = "ios")), allow(dead_code))]
+    /// Your fingers are on the camera, or the mouse moves it: it waits for
+    /// them to have been off it for [`RECENTER_AFTER`] before coming round
+    /// behind you again, and whatever swing a double tap began is over.
     fn touched(&mut self) {
         self.untouched = 0.0;
         self.snap = None;
@@ -485,10 +533,10 @@ impl CameraAssist {
     }
 
     /// How far `body` walked since the frame before, across the ground, or
-    /// across the car it rides as the car is now: never how far the car
-    /// carried it.
-    fn walked(&mut self, body: &Transform, riding: &Riding, cars: &Query<&car::Driven>) -> Vec3 {
-        let car = riding.0.and_then(|car| Some((car, cars.get(car).ok()?)));
+    /// across the car it rides, `driven`, as the car is now: never how far
+    /// the car carried it.
+    fn walked(&mut self, body: &Transform, riding: &Riding, driven: Option<&car::Driven>) -> Vec3 {
+        let car = riding.0.and_then(|car| Some((car, driven?)));
         let here = car.map_or(body.translation, |(_, driven)| driven.now.inward(body.translation));
         let on = car.map(|(car, _)| car);
         let walked = match self.last {
@@ -502,12 +550,13 @@ impl CameraAssist {
         walked
     }
 
-    /// How far round toward behind where you walk the camera is ready to
-    /// come, from 0 to 1: not at all until it has been left alone for
-    /// [`RECENTER_AFTER`], then eased in over [`RECENTER_EASE_IN`], counted
-    /// from then or from when the stick was pushed, whichever came later.
+    /// How far round toward behind where you walk, or behind the way the
+    /// bus you ride faces, the camera is ready to come, from 0 to 1: not at
+    /// all until it has been left alone for [`RECENTER_AFTER`], then eased in
+    /// over [`RECENTER_EASE_IN`], counted from then or from when the stick
+    /// was pushed or the bus got on, whichever came later.
     fn ready(&self) -> f32 {
-        let since = (self.untouched - RECENTER_AFTER).min(self.pushed);
+        let since = (self.untouched - RECENTER_AFTER).min(self.pushed.max(self.aboard));
         let ready = (since / RECENTER_EASE_IN).clamp(0.0, 1.0);
         ready * ready * (3.0 - 2.0 * ready)
     }
@@ -654,35 +703,70 @@ fn wrap_angle(angle: f32) -> f32 {
 /// [`RECENTER_MOST`], and not at all walking toward it.
 fn recenter_turn(yaw: f32, velocity: Vec2, ready: f32) -> f32 {
     let speed = velocity.length();
-    if speed < 1e-3 || ready <= 0.0 {
+    if speed < 1e-3 {
         return 0.0;
     }
-    // The yaw that puts the camera behind where you walk, as
-    // `OrbitCamera::behind` puts it behind where you face.
-    let off = wrap_angle((-velocity.x).atan2(-velocity.y) - yaw);
+    let off = wrap_angle(yaw_behind(velocity) - yaw);
     let away = ((RECENTER_BACKWARDS - off.abs()) / (RECENTER_BACKWARDS - RECENTER_SIDEWAYS)).clamp(0.0, 1.0);
-    let strength = ready * away * (speed / MOVE_SPEED).min(1.0);
+    turn_round(off, ready * away * (speed / MOVE_SPEED).min(1.0))
+}
+
+/// How fast a camera at `yaw` comes round behind the way the bus you ride
+/// faces, `facing`, across the ground, in radians a second, `ready` of the
+/// way eased in (Hajun, 2026-11-01: on a bus the camera is to come round
+/// without your walking, "in direction of bus", so that you need not keep
+/// turning it to look the way the bus goes). As walking brings it round
+/// ([`recenter_turn`]), but standing still, and from in front of the bus as
+/// readily as from beside it: you did not walk at the camera, the bus turned.
+fn ride_turn(yaw: f32, facing: Vec2, ready: f32) -> f32 {
+    if facing.length_squared() < 1e-6 {
+        return 0.0;
+    }
+    turn_round(wrap_angle(yaw_behind(facing) - yaw), ready)
+}
+
+/// The yaw that puts the camera behind someone going `way` across the
+/// ground, as [`OrbitCamera::behind`] puts it behind where you face.
+fn yaw_behind(way: Vec2) -> f32 {
+    (-way.x).atan2(-way.y)
+}
+
+/// How fast the camera comes round by `off` radians, at `strength` of full,
+/// in radians a second: [`RECENTER_RATE`] of it a second, never faster than
+/// [`RECENTER_MOST`].
+fn turn_round(off: f32, strength: f32) -> f32 {
+    if strength <= 0.0 {
+        return 0.0;
+    }
     (off * RECENTER_RATE * strength).clamp(-RECENTER_MOST, RECENTER_MOST)
 }
 
-/// Turns the camera for you, on a phone (Hajun, 2026-10-31). Walking with
-/// the stick, once your fingers have been off the camera for
-/// [`RECENTER_AFTER`], it eases round behind where you walk ([`recenter_turn`]),
-/// so that one thumb on the stick sees where it is going. Walked into a wall
-/// you go nowhere, and it stays where it is; in your eyes it never turns:
-/// there you look where you turned your eyes, whichever way you walk. And a
-/// double tap on nothing swings it straight round behind you as you stood at
-/// the tap ([`CameraAssist::snap_behind`]), tipped as it is when the app
-/// opens, or looking straight ahead from your eyes. A finger on the camera
-/// stops either at once (`read_touch_controls`).
+/// Turns the camera for you (Hajun, 2026-10-31). Walking with the stick,
+/// once your fingers have been off the camera for [`RECENTER_AFTER`], it
+/// eases round behind where you walk ([`recenter_turn`]), so that one thumb
+/// on the stick sees where it is going. Walked into a wall you go nowhere,
+/// and it stays where it is; in your eyes it never turns: there you look
+/// where you turned your eyes, whichever way you walk. Riding a bus, left
+/// alone as long, it eases round behind the way the bus faces instead
+/// ([`ride_turn`]), standing still too, and in your eyes as well (Hajun,
+/// 2026-11-01: "riding bus is an exception where user doesnt need to move
+/// ... camera will auto follow in direction of bus"); the bus turns under
+/// you, and the camera comes round after it, so that you look the way it
+/// goes without turning the camera yourself as it goes round. And a double
+/// tap on nothing swings it straight round behind you as you stood at the
+/// tap ([`CameraAssist::snap_behind`]), tipped as it is when the app opens,
+/// or looking straight ahead from your eyes. A finger on the camera stops
+/// any of them at once (`read_touch_controls`).
 ///
-/// The stick is a phone's alone: on desktop the keys walk you, the mouse
-/// turns the camera, and this never turns it.
+/// The stick and the double tap are a phone's alone: on desktop the keys
+/// walk you and the mouse turns the camera, and neither brings it round.
+/// Riding a bus brings it round on desktop too, once the mouse has been
+/// still as long (`read_mouse_look`).
 fn assist_camera(
     time: Res<Time>,
     controls: Res<TouchControls>,
     dialog: Res<hud::DialogUp>,
-    cars: Query<&car::Driven>,
+    cars: Query<(&car::Driven, &car::Hull)>,
     me: Query<(&Transform, &Riding), With<Player>>,
     mut assist: ResMut<CameraAssist>,
     mut orbit: ResMut<OrbitCamera>,
@@ -691,10 +775,13 @@ fn assist_camera(
     let Ok((body, riding)) = me.single() else {
         return;
     };
-    let walked = assist.walked(body, riding, &cars);
+    let bus = riding.0.and_then(|car| cars.get(car).ok());
+    let walked = assist.walked(body, riding, bus.map(|(driven, _)| driven));
     assist.untouched += dt;
     let pushed = !dialog.0 && controls.stick_value.length() >= STICK_DEADZONE;
     assist.pushed = if pushed { assist.pushed + dt } else { 0.0 };
+    let riding = !dialog.0 && bus.is_some();
+    assist.aboard = if riding { assist.aboard + dt } else { 0.0 };
 
     if let Some(yaw) = assist.snap {
         if snap_to(&mut orbit, yaw, dt) {
@@ -702,10 +789,14 @@ fn assist_camera(
         }
         return;
     }
-    if !pushed || orbit.distance <= 0.0 || dt <= 0.0 {
+    if dt <= 0.0 {
         return;
     }
-    let turn = recenter_turn(orbit.yaw, walked.xz() / dt, assist.ready()) * dt;
+    let turn = match bus {
+        Some((driven, hull)) if riding => ride_turn(orbit.yaw, hull.facing(&driven.now), assist.ready()),
+        _ if pushed && orbit.distance > 0.0 => recenter_turn(orbit.yaw, walked.xz() / dt, assist.ready()),
+        _ => 0.0,
+    } * dt;
     if turn != 0.0 {
         orbit.yaw += turn;
     }
@@ -1336,11 +1427,16 @@ fn cursor_for_dialogs(
     }
 }
 
+/// The mouse turns the camera, while the cursor is taken for it. Moving it
+/// is a hand on the camera, as a finger is on a phone: riding a bus, the
+/// camera comes round behind the way the bus faces only once the mouse has
+/// been still a while ([`assist_camera`]).
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 fn read_mouse_look(
     cursors: Query<&CursorOptions, With<PrimaryWindow>>,
     mut motion: MessageReader<MouseMotion>,
     mut orbit: ResMut<OrbitCamera>,
+    mut assist: ResMut<CameraAssist>,
 ) {
     let looking = cursors
         .single()
@@ -1351,7 +1447,10 @@ fn read_mouse_look(
         return;
     }
     for event in motion.read() {
-        orbit.turn(event.delta);
+        if event.delta != Vec2::ZERO {
+            orbit.turn(event.delta);
+            assist.touched();
+        }
     }
 }
 
@@ -1807,54 +1906,83 @@ fn resolve_walls(pos: &mut Vec3, island: &Island, shape: &[(f32, f32, f32)]) {
     }
 }
 
-fn walk_offset(kind: WalkBoneKind, swing: f32, weight: f32) -> Quat {
+/// A limb's turn `swing` of the way through a stride, `weight` of a walk,
+/// in its body's space: forward is a turn about the body's side to side
+/// axis, x, on top of how the limb stands, turned `stance` from the model's
+/// rest about the body's front to back axis, z ([`stood`],
+/// [`WalkBone::stance`]). The left arm swings against the left leg, as arms
+/// do, and a knee bends back, the foot coming up behind as the leg goes
+/// back.
+fn walk_offset(kind: WalkBoneKind, swing: f32, weight: f32, stance: f32) -> Quat {
+    let forward = |angle: f32| Quat::from_axis_angle(Vec3::X, angle) * stood(stance);
     match kind {
-        WalkBoneKind::ThighL | WalkBoneKind::ThighR => {
-            Quat::from_axis_angle(Vec3::Y, swing * WALK_THIGH * weight)
-        }
-        WalkBoneKind::ShinL => {
-            Quat::from_axis_angle(Vec3::Y, (-swing).max(0.0) * WALK_SHIN * weight)
-        }
-        WalkBoneKind::ShinR => {
-            Quat::from_axis_angle(Vec3::Y, swing.max(0.0) * WALK_SHIN * weight)
-        }
-        WalkBoneKind::ArmL => {
-            let hang = Quat::from_axis_angle(Vec3::Z, -WALK_ARM_HANG);
-            let stride = Quat::from_axis_angle(Vec3::X, swing * WALK_ARM * weight);
-            hang * stride
-        }
-        WalkBoneKind::ArmR => {
-            let hang = Quat::from_axis_angle(Vec3::Z, WALK_ARM_HANG);
-            let stride = Quat::from_axis_angle(Vec3::X, -swing * WALK_ARM * weight);
-            hang * stride
-        }
+        WalkBoneKind::ThighL => forward(swing * WALK_THIGH * weight),
+        WalkBoneKind::ThighR => forward(-swing * WALK_THIGH * weight),
+        WalkBoneKind::ShinL => forward(swing.min(0.0) * WALK_SHIN * weight),
+        WalkBoneKind::ShinR => forward(-swing.max(0.0) * WALK_SHIN * weight),
+        WalkBoneKind::ArmL => forward(-swing * WALK_ARM * weight),
+        WalkBoneKind::ArmR => forward(swing * WALK_ARM * weight),
+    }
+}
+
+/// A limb stood as it should from the model's rest, in its body's space:
+/// turned `stance` about the body's front to back axis
+/// ([`stance_from_rest`]).
+fn stood(stance: f32) -> Quat {
+    Quat::from_axis_angle(Vec3::Z, stance)
+}
+
+/// How far a limb is turned about the body's front to back axis from how it
+/// lies at rest (`frame`, the bone along its own y) to stand as it should:
+/// an arm down, to hang [`ARM_HANG_BELOW`] under level, a thigh in, to stand
+/// [`LEG_SPLAY`] out from straight down; the left, on the body's -x side,
+/// turned one way and the right the other, and never up or out, however
+/// the model rests them. 0 for a shin, which goes with its thigh.
+fn stance_from_rest(kind: WalkBoneKind, frame: Quat) -> f32 {
+    let (side, arm) = match kind {
+        WalkBoneKind::ArmL => (1.0, true),
+        WalkBoneKind::ArmR => (-1.0, true),
+        WalkBoneKind::ThighL => (1.0, false),
+        WalkBoneKind::ThighR => (-1.0, false),
+        WalkBoneKind::ShinL | WalkBoneKind::ShinR => return 0.0,
+    };
+    let along = frame * Vec3::Y;
+    if arm {
+        // How far under level the arm is, seen from the front.
+        let below = (-along.y).atan2(along.x.abs());
+        side * (ARM_HANG_BELOW - below).max(0.0)
+    } else {
+        // How far out from straight down the leg is, seen from the front.
+        let out = (-side * along.x).atan2(-along.y);
+        side * (out - LEG_SPLAY).max(0.0)
     }
 }
 
 /// Where a punching arm is, `reach` of the way out, 0 to 1, in place of its
-/// walk: hung as the walk hangs it, and swung straight out in front of you
-/// about the shoulder, the whole way at full reach. Forward is the same
-/// turn for both arms (the walk turns the right one the other way only to
-/// swing it against the left): seen from the side in the desktop build,
-/// both reach level in front, 2026-11-01.
-fn punch_offset(kind: WalkBoneKind, reach: f32) -> Option<Quat> {
-    let hang = match kind {
-        WalkBoneKind::ArmL => -WALK_ARM_HANG,
-        WalkBoneKind::ArmR => WALK_ARM_HANG,
-        _ => return None,
-    };
-    Some(Quat::from_axis_angle(Vec3::Z, hang) * Quat::from_axis_angle(Vec3::X, PUNCH_REACH * reach))
+/// walk: hung as the walk hangs it, by `stance`, and swung straight out in
+/// front of you about the shoulder, the whole way at full reach. Forward is
+/// one turn for both arms in the body's space (the walk swings the right
+/// one the other way only to swing it against the left).
+fn punch_offset(kind: WalkBoneKind, stance: f32, reach: f32) -> Option<Quat> {
+    if !matches!(kind, WalkBoneKind::ArmL | WalkBoneKind::ArmR) {
+        return None;
+    }
+    Some(Quat::from_axis_angle(Vec3::X, PUNCH_REACH * reach) * stood(stance))
 }
 
+/// The limb a node of a body's model is, by its name: the bones of
+/// `playercharacter.glb`, a Rigify metarig's (Hajun's, 2026-11-01; until
+/// then `limbperson.glb`'s own, `Bone.005.L.001` and the like). The limbs'
+/// meshes hang off these: the thighs and shins, and the upper arms, which
+/// take the forearms and hands round with them.
 fn walk_bone_kind(name: &str) -> Option<WalkBoneKind> {
     Some(match name {
-        // Limb meshes are skinned to the .001 / .004 chains, not Bone.002.
-        "Bone.005.L.001" => WalkBoneKind::ThighL,
-        "Bone.005.R.001" => WalkBoneKind::ThighR,
-        "Bone.006.L" => WalkBoneKind::ShinL,
-        "Bone.006.R" => WalkBoneKind::ShinR,
-        "Bone.004.L" => WalkBoneKind::ArmL,
-        "Bone.004.R" => WalkBoneKind::ArmR,
+        "thigh.L" => WalkBoneKind::ThighL,
+        "thigh.R" => WalkBoneKind::ThighR,
+        "shin.L" => WalkBoneKind::ShinL,
+        "shin.R" => WalkBoneKind::ShinR,
+        "upper_arm.L" => WalkBoneKind::ArmL,
+        "upper_arm.R" => WalkBoneKind::ArmR,
         _ => return None,
     })
 }
@@ -1862,38 +1990,51 @@ fn walk_bone_kind(name: &str) -> Option<WalkBoneKind> {
 fn bind_walk_bones(
     ready: On<WorldInstanceReady>,
     children: Query<&Children>,
-    named: Query<(&Name, &Transform)>,
+    parts: Query<(Option<&Name>, &Transform)>,
     mut commands: Commands,
 ) {
-    let bound = bind_limbs(ready.entity, &children, &named, &mut commands);
+    let bound = bind_limbs(ready.entity, &children, &parts, &mut commands);
     if bound < 6 {
         warn!("walk bones: bound {bound}/6 on player {:?}", ready.entity);
     }
 }
 
 /// Hands the limbs under `owner` to its [`WalkCycle`], which swings them as it
-/// walks and, standing, hangs its arms at its sides. Returns how many were
-/// found.
+/// walks and, standing, hangs its arms at its sides. Each is bound with how
+/// it lies at rest in the body's space, the turns of every node from the
+/// body down to it (the model's half turn round among them,
+/// `GltfConvertCoordinates`), so that it can be swung about the body's axes
+/// whatever way its rig's go. Returns how many were found.
 pub(crate) fn bind_limbs(
     owner: Entity,
     children: &Query<&Children>,
-    named: &Query<(&Name, &Transform)>,
+    parts: &Query<(Option<&Name>, &Transform)>,
     commands: &mut Commands,
 ) -> usize {
     let mut bound = 0;
-    for entity in children.iter_descendants(owner) {
-        let Ok((name, transform)) = named.get(entity) else {
+    let mut below: Vec<(Entity, Quat)> = vec![(owner, Quat::IDENTITY)];
+    while let Some((above, frame)) = below.pop() {
+        let Ok(nodes) = children.get(above) else {
             continue;
         };
-        let Some(kind) = walk_bone_kind(name.as_str()) else {
-            continue;
-        };
-        commands.entity(entity).insert(WalkBone {
-            kind,
-            rest_rotation: transform.rotation,
-            owner,
-        });
-        bound += 1;
+        for entity in nodes.iter() {
+            let Ok((name, transform)) = parts.get(entity) else {
+                continue;
+            };
+            let frame = frame * transform.rotation;
+            below.push((entity, frame));
+            let Some(kind) = name.and_then(|name| walk_bone_kind(name.as_str())) else {
+                continue;
+            };
+            commands.entity(entity).insert(WalkBone {
+                kind,
+                rest_rotation: transform.rotation,
+                frame,
+                stance: stance_from_rest(kind, frame),
+                owner,
+            });
+            bound += 1;
+        }
     }
     bound
 }
@@ -2234,9 +2375,10 @@ pub(crate) fn animate_walk(
         // The right arm punches; every other limb walks.
         let punching = punch
             .filter(|punch| punch.age < PUNCH_SECS && matches!(bone.kind, WalkBoneKind::ArmR))
-            .and_then(|punch| punch_offset(bone.kind, Punching::reach(punch.age)));
-        let offset = punching.unwrap_or_else(|| walk_offset(bone.kind, walk.phase.sin(), walk.weight));
-        let rotation = bone.rest_rotation * offset;
+            .and_then(|punch| punch_offset(bone.kind, bone.stance, Punching::reach(punch.age)));
+        let offset =
+            punching.unwrap_or_else(|| walk_offset(bone.kind, walk.phase.sin(), walk.weight, bone.stance));
+        let rotation = bone.turned(offset);
         // Standing still, a limb keeps the pose it had, and is left alone.
         if transform.rotation != rotation {
             transform.rotation = rotation;
@@ -2497,7 +2639,8 @@ mod camera_tests {
             let eyes = view.translation - player.translation;
             assert_eq!(eyes.xz(), Vec2::ZERO);
             assert!((eyes.y - EYE_HEIGHT).abs() < 1e-5, "{eyes}");
-            assert!(eyes.y > 1.5 && eyes.y < 1.71, "{eyes}");
+            // In the head: playercharacter.glb's is from 1.11 m to 1.64.
+            assert!(eyes.y > 1.11 && eyes.y < 1.64, "{eyes}");
             assert!(inside_you(view.translation, &player));
         }
     }
@@ -2533,9 +2676,10 @@ mod camera_tests {
             |boxes: &[(Vec3, Vec3)]| eye_view(&you, &player, Some(Ground::bare(&island(boxes)))).translation;
         assert!((eyes(&[GROUND]).y - EYE_HEIGHT).abs() < 1e-6);
         // Under a ceiling lower than your eyes, as high as they go under it.
-        let low = (Vec3::new(-20.0, 1.7, -20.0), Vec3::new(20.0, 2.0, 20.0));
+        let top = EYE_HEIGHT - 0.05 + CAMERA_RADIUS;
+        let low = (Vec3::new(-20.0, top, -20.0), Vec3::new(20.0, top + 0.3, 20.0));
         let under = eyes(&[GROUND, low]);
-        assert!((under.y - (1.7 - CAMERA_RADIUS)).abs() < 1e-3, "{under}");
+        assert!((under.y - (EYE_HEIGHT - 0.05)).abs() < 1e-3, "{under}");
     }
 
     #[test]
@@ -2631,6 +2775,60 @@ mod camera_tests {
         assert!(easing > 0.0 && easing < 1.0, "{easing}");
         assert!((easing - ready(5.0, RECENTER_EASE_IN * 0.5)).abs() < 1e-5);
         assert_eq!(ready(5.0, 5.0), 1.0);
+        // Riding a bus counts as the stick does, standing still.
+        let aboard = |untouched: f32, aboard: f32| {
+            CameraAssist {
+                untouched,
+                aboard,
+                ..default()
+            }
+            .ready()
+        };
+        assert_eq!(aboard(5.0, 0.0), 0.0);
+        assert_eq!(aboard(RECENTER_AFTER - 0.1, 5.0), 0.0);
+        assert!((aboard(5.0, RECENTER_EASE_IN * 0.5) - easing).abs() < 1e-5);
+        assert_eq!(aboard(5.0, 5.0), 1.0);
+    }
+
+    #[test]
+    fn riding_a_bus_it_comes_round_behind_the_way_the_bus_faces() {
+        // Behind you looking down -z, on a bus facing +x: it comes round
+        // behind the way the bus faces, never faster than walking brings it
+        // round, and stops there, the way it stands behind where you face.
+        let facing = Vec2::X;
+        let behind = OrbitCamera::behind(&Transform::default().looking_to(Vec3::X, Vec3::Y)).yaw;
+        let dt = 1.0 / 120.0;
+        let mut yaw = 0.0;
+        for _ in 0..1200 {
+            let turn = ride_turn(yaw, facing, 1.0);
+            assert!(turn.abs() <= RECENTER_MOST + 1e-6, "{turn}");
+            assert!(wrap_angle(behind - yaw).abs() >= wrap_angle(behind - yaw - turn * dt).abs());
+            yaw += turn * dt;
+        }
+        assert!(wrap_angle(behind - yaw).abs() < 0.01, "{yaw} for {behind}");
+        // Already behind it, it stays; turned to look out of the front of
+        // the bus, or nearly, it still comes round, as walking at the
+        // camera would not; and not before it is ready.
+        assert_eq!(ride_turn(0.0, Vec2::NEG_Y, 1.0), 0.0);
+        assert!(ride_turn(0.0, Vec2::new(0.1, 1.0), 1.0).abs() > 0.5);
+        assert_eq!(recenter_turn(0.0, Vec2::new(0.1, 1.0) * MOVE_SPEED, 1.0), 0.0);
+        assert_eq!(ride_turn(0.0, facing, 0.0), 0.0);
+        // Its turning follows the bus round: facing a little further round
+        // each frame, the camera is never left more than a bend's worth
+        // behind it, and catches up once the bend is over.
+        let mut yaw = behind;
+        let mut heading = 0.0_f32;
+        for _ in 0..600 {
+            heading += 0.4 * dt;
+            let facing = Vec2::new(heading.cos(), heading.sin());
+            yaw += ride_turn(yaw, facing, 1.0) * dt;
+            assert!(wrap_angle(yaw_behind(facing) - yaw).abs() < 0.5, "{yaw} behind {heading}");
+        }
+        let facing = Vec2::new(heading.cos(), heading.sin());
+        for _ in 0..600 {
+            yaw += ride_turn(yaw, facing, 1.0) * dt;
+        }
+        assert!(wrap_angle(yaw_behind(facing) - yaw).abs() < 0.02);
     }
 
     #[test]
@@ -2645,13 +2843,116 @@ mod camera_tests {
         assert_eq!(Punching::next().age, 0.0);
         // At full reach both arms are swung forward by the same turn, hung as
         // the walk hangs them; at none they are as they hang, standing still.
-        let left = punch_offset(WalkBoneKind::ArmL, 0.0).unwrap();
-        let right = punch_offset(WalkBoneKind::ArmR, 0.0).unwrap();
-        assert!(left.angle_between(walk_offset(WalkBoneKind::ArmL, 0.0, 0.0)) < 1e-6);
-        assert!(right.angle_between(walk_offset(WalkBoneKind::ArmR, 0.0, 0.0)) < 1e-6);
-        let out = punch_offset(WalkBoneKind::ArmL, 1.0).unwrap();
+        let hang = 0.3;
+        let left = punch_offset(WalkBoneKind::ArmL, hang, 0.0).unwrap();
+        let right = punch_offset(WalkBoneKind::ArmR, -hang, 0.0).unwrap();
+        assert!(left.angle_between(walk_offset(WalkBoneKind::ArmL, 0.0, 0.0, hang)) < 1e-6);
+        assert!(right.angle_between(walk_offset(WalkBoneKind::ArmR, 0.0, 0.0, -hang)) < 1e-6);
+        let out = punch_offset(WalkBoneKind::ArmL, hang, 1.0).unwrap();
         assert!((left.inverse() * out).to_axis_angle().1 - PUNCH_REACH < 1e-5);
-        assert_eq!(punch_offset(WalkBoneKind::ThighL, 1.0), None);
+        assert_eq!(punch_offset(WalkBoneKind::ThighL, 0.0, 1.0), None);
+    }
+
+    #[test]
+    fn a_limb_is_turned_about_its_body_s_axes_whatever_way_its_bone_lies() {
+        // A bone lying some way, under nodes turned some other way: turned
+        // forward about the body's x, its body sees it turned just so.
+        let above = Quat::from_rotation_y(2.0) * Quat::from_rotation_x(0.4);
+        let rest = Quat::from_rotation_z(-1.1) * Quat::from_rotation_y(0.7);
+        let bone = WalkBone {
+            kind: WalkBoneKind::ThighL,
+            rest_rotation: rest,
+            frame: above * rest,
+            stance: 0.0,
+            owner: Entity::PLACEHOLDER,
+        };
+        let turn = Quat::from_rotation_x(0.5);
+        let (seen, meant) = (above * bone.turned(turn), turn * above * rest);
+        for axis in [Vec3::X, Vec3::Y, Vec3::Z] {
+            assert!((seen * axis).abs_diff_eq(meant * axis, 1e-5), "{:?} {:?}", seen * axis, meant * axis);
+        }
+        // Not turned at all, it rests.
+        let rested = bone.turned(Quat::IDENTITY);
+        for axis in [Vec3::X, Vec3::Y, Vec3::Z] {
+            assert!((rested * axis).abs_diff_eq(rest * axis, 1e-5), "{:?} {:?}", rested * axis, rest * axis);
+        }
+    }
+
+    #[test]
+    fn every_limb_of_the_player_s_model_is_bound_and_swings_the_right_way() {
+        for model in crate::lobby::models() {
+            limbs_of(model);
+        }
+    }
+
+    /// The limbs of `model`, each found once, stand and swing the right way.
+    fn limbs_of(model: &str) {
+        // The model's bones, as they lie at rest in the body's space; a bone
+        // points along its own y.
+        let frames = crate::island::glb::frames(model);
+        let frame = |kind: WalkBoneKind| -> Quat {
+            let found: Vec<Quat> = frames
+                .iter()
+                .filter(|(name, _)| walk_bone_kind(name).is_some_and(|found| found as u8 == kind as u8))
+                .map(|(_, frame)| *frame)
+                .collect();
+            assert_eq!(found.len(), 1, "{} of the kind in {model}", found.len());
+            found[0]
+        };
+        let points = |frame: Quat, turn: Quat| (turn * frame) * Vec3::Y;
+        let rest = Quat::IDENTITY;
+        for (thigh, shin, swing, side) in [
+            (WalkBoneKind::ThighL, WalkBoneKind::ShinL, 1.0, -1.0),
+            (WalkBoneKind::ThighR, WalkBoneKind::ShinR, -1.0, 1.0),
+        ] {
+            // A thigh and a shin hang down; the thigh rests out on its own
+            // side (the left on the body's -x) and is stood LEG_SPLAY out,
+            // the shin going with it; the thigh swung forward points forward
+            // of where it rested (the body faces -z); the shin bends back as
+            // its leg goes back, and not as it comes forward.
+            let (thigh_frame, shin_frame) = (frame(thigh), frame(shin));
+            let rested = points(thigh_frame, rest);
+            assert!(rested.y < -0.9 && rested.x * side > 0.05, "{rested:?}");
+            assert!(points(shin_frame, rest).y < -0.9, "{:?}", points(shin_frame, rest));
+            let stance = stance_from_rest(thigh, thigh_frame);
+            assert!(stance * -side > 0.0, "{stance}");
+            let stood = points(thigh_frame, walk_offset(thigh, 0.0, 0.0, stance));
+            let out = (stood.x * side).atan2(-stood.y);
+            assert!((out - LEG_SPLAY).abs() < 1e-3, "{stood:?}");
+            assert_eq!(stance_from_rest(shin, shin_frame), 0.0);
+            let forward = points(thigh_frame, walk_offset(thigh, swing, 1.0, stance));
+            assert!(forward.z < stood.z - 0.3, "{forward:?}");
+            let bent = points(shin_frame, walk_offset(shin, -swing, 1.0, 0.0));
+            assert!(bent.z > points(shin_frame, rest).z + 0.2, "{bent:?}");
+            assert!(points(shin_frame, walk_offset(shin, swing, 1.0, 0.0)).abs_diff_eq(points(shin_frame, rest), 1e-5));
+        }
+        for (arm, side) in [(WalkBoneKind::ArmL, -1.0), (WalkBoneKind::ArmR, 1.0)] {
+            // Standing, an arm hangs ARM_HANG_BELOW under level, out a little
+            // on its own side (the left is on the body's -x), however the
+            // model rests it; walking, both swing forward and back; punching,
+            // the right reaches level in front.
+            let arm_frame = frame(arm);
+            let stance = stance_from_rest(arm, arm_frame);
+            assert!(stance * -side > 0.0, "{stance}");
+            let hung = points(arm_frame, walk_offset(arm, 0.0, 0.0, stance));
+            let below = (-hung.y).atan2(hung.x.abs());
+            assert!((below - ARM_HANG_BELOW).abs() < 1e-3 && hung.x * side > 0.1, "{hung:?}");
+            let swung = points(arm_frame, walk_offset(arm, 1.0, 1.0, stance));
+            assert!((swung.z - hung.z).abs() > 0.3, "{swung:?}");
+        }
+        let right = frame(WalkBoneKind::ArmR);
+        let stance = stance_from_rest(WalkBoneKind::ArmR, right);
+        let punch = points(right, punch_offset(WalkBoneKind::ArmR, stance, 1.0).unwrap());
+        assert!(punch.z < -0.9 && punch.y.abs() < 0.2, "{punch:?}");
+        // An arm that rests lower than it hangs, and a leg that rests
+        // straighter than it stands, are left as they rest: never turned up,
+        // in or out.
+        let low = Quat::from_rotation_z(3.04);
+        assert!((low * Vec3::Y).y < -0.99 && (low * Vec3::Y).x < 0.0);
+        assert_eq!(stance_from_rest(WalkBoneKind::ArmL, low), 0.0);
+        let straight = Quat::from_rotation_z(3.1) * Quat::from_rotation_x(0.05);
+        assert_eq!(stance_from_rest(WalkBoneKind::ThighL, straight), 0.0);
+        assert_eq!(stance_from_rest(WalkBoneKind::ThighR, Quat::from_rotation_z(-3.1)), 0.0);
     }
 
     #[test]

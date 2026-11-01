@@ -127,6 +127,13 @@ impl Hull {
             wheels: self.wheels,
         }
     }
+
+    /// Which way it faces across the ground, in the world, standing at
+    /// `place`: for the camera to come round behind while you ride it
+    /// (`assist_camera`).
+    pub(crate) fn facing(&self, place: &Place) -> Vec2 {
+        (place.turn * Vec3::new(self.front.x, 0.0, self.front.y)).xz()
+    }
 }
 
 /// Where something stands and which way it is turned about the upright.
@@ -973,6 +980,7 @@ pub(crate) mod tests {
                 let (place, _) = place_at(&route, hull, number, seconds);
                 let (soon, _) = place_at(&route, hull, number, seconds + 0.05);
                 let ahead = place.turn * Vec3::new(hull.front.x, 0.0, hull.front.y);
+                assert!(hull.facing(&place).distance(ahead.xz()) < 1e-6);
                 let went = (back_wheels(&soon, hull) - back_wheels(&place, hull)).normalize_or_zero();
                 assert!(went == Vec3::ZERO || ahead.dot(went) > 0.99, "car {number} facing {ahead}, its back going {went}");
                 let speed = soon.at.distance(place.at) / 0.05;

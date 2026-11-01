@@ -100,9 +100,54 @@ pub const TOWN_BODIES: usize = 32;
 /// (2026-10-31) wears it. Bots wear others.
 pub const PLAYER_LOOK: &str = "blue";
 
-/// The looks a person chooses between on signing up: a boy, the game's
-/// `limbperson.glb`, and a girl, `limbpersongirl.glb`.
+/// The two sides a person chooses between on signing up, a boy and a girl:
+/// the first look of [`BOY_LOOKS`] and of [`GIRL_LOOKS`], which were the
+/// only two until 2026-11-02 (the game's `limbperson.glb` and
+/// `limbpersongirl.glb` until 2026-11-01, then its `lobby::MODEL` and
+/// `GIRL_MODEL`).
 pub const PEOPLE_LOOKS: [&str; 2] = ["boy", "girl"];
+
+/// Every look there is, by side: the boy and the girl, and Hajun's
+/// recolourings of each (2026-11-02: "use variations of the colors. i made
+/// various colors for both guy and girl for the ais"; and the same night,
+/// for people too: "put some arrow thingy next to each guy and girl
+/// character selection in the start so u can choose which color guy or
+/// which color girl"). A person picks any of them on signing up
+/// ([`profile::look`]); a bot is a boy or a girl by the toss of a coin and
+/// then one of that side at random ([`ai_look`]), on the device for its own
+/// AIs and on the server for House Builder's. The game maps each to its
+/// model (`lobby::LOOKS`); an app that has not heard of one draws the boy.
+pub const BOY_LOOKS: [&str; 3] = ["boy", "boy_blackbrown", "boy_whitejeans"];
+pub const GIRL_LOOKS: [&str; 3] = ["girl", "girl_whiteblue", "girl_yellowpink"];
+
+/// What the computer's players are called, the boys and the girls (Hajun,
+/// 2026-11-02: "use the more manly ai names for the boy ais and girly cute
+/// ai names for the girl ais from the names you already made"): the 48
+/// names the game's AIs went by, split two ways. Players online go by the
+/// same names with a number after (the server's).
+pub const BOY_NAMES: [&str; 24] = [
+    "Hodu", "Gamja", "Mandu", "Kimbap", "Maru", "Kong", "Hobak", "Bam", "Dori", "Bada", "Gureum",
+    "Dongi", "Tori", "Jjang", "Pado", "Choco", "Kkami", "Ddol", "Ssal", "Bokki", "Tangi", "Sol",
+    "Nuri", "Saem",
+];
+pub const GIRL_NAMES: [&str; 24] = [
+    "Mochi", "Dubu", "Bori", "Yuja", "Nabi", "Podo", "Sagwa", "Gyul", "Dalgi", "Haru", "Byeol",
+    "Bomi", "Nana", "Mint", "Coco", "Latte", "Bbori", "Yeppi", "Ggul", "Sseul", "Jelly", "Pudding",
+    "Cookie", "Waffle",
+];
+
+/// One of the computer's looks: a boy if `boy`, else a girl, and of that
+/// side the `pick`th, round and round. Both are the caller's to draw at
+/// random, so that this crate needs no dice of its own.
+pub fn ai_look(boy: bool, pick: usize) -> &'static str {
+    let side: &[&str] = if boy { &BOY_LOOKS } else { &GIRL_LOOKS };
+    side[pick % side.len()]
+}
+
+/// The names the computer's players of one side go by.
+pub fn ai_names(boy: bool) -> &'static [&'static str] {
+    if boy { &BOY_NAMES } else { &GIRL_NAMES }
+}
 
 /// What a person says about themselves on signing up, as both sides check
 /// it: a name to go by, and which of [`PEOPLE_LOOKS`] they wear.
@@ -126,9 +171,10 @@ pub mod profile {
         c.is_ascii_graphic() || c == ' '
     }
 
-    /// Whether `look` is one a person may choose.
+    /// Whether `look` is one a person may choose: any of either side's
+    /// (since 2026-11-02; the first of each until then).
     pub fn look(look: &str) -> bool {
-        super::PEOPLE_LOOKS.contains(&look)
+        super::BOY_LOOKS.contains(&look) || super::GIRL_LOOKS.contains(&look)
     }
 }
 

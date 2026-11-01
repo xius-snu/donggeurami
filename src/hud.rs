@@ -773,6 +773,44 @@ pub(crate) fn jump_arrow() -> Image {
     )
 }
 
+/// An arrowhead pointing left, for turning through a card's colours on the
+/// sign-up's character page (`signup`; flipped across for the right): a
+/// rounded triangle, white on clear, drawn as the jump button's arrow is.
+pub(crate) fn side_arrow() -> Image {
+    const SIZE: u32 = 128;
+    /// How much its corners are rounded off, as a share of half the image.
+    const ROUND: f32 = 0.12;
+    // In shares of half the image, from its middle, y up: the tip and the
+    // two ends of the base, each drawn in by `ROUND`, which rounding puts
+    // back out.
+    let tip = Vec2::new(-0.85 + ROUND, 0.0);
+    let (top, bottom) = (Vec2::new(0.6 - ROUND, 0.9 - ROUND), Vec2::new(0.6 - ROUND, -0.9 + ROUND));
+    let pixel = 2.0 / SIZE as f32;
+    let mut data = Vec::with_capacity((SIZE * SIZE * 4) as usize);
+    for row in 0..SIZE {
+        for column in 0..SIZE {
+            let at = Vec2::new(
+                (column as f32 + 0.5) * pixel - 1.0,
+                1.0 - (row as f32 + 0.5) * pixel,
+            );
+            let outside = triangle_distance(at, tip, bottom, top) - ROUND;
+            let cover = (0.5 - outside / pixel).clamp(0.0, 1.0);
+            data.extend_from_slice(&[255, 255, 255, (cover * 255.0).round() as u8]);
+        }
+    }
+    Image::new(
+        Extent3d {
+            width: SIZE,
+            height: SIZE,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        data,
+        TextureFormat::Rgba8UnormSrgb,
+        RenderAssetUsages::default(),
+    )
+}
+
 /// A pencil, for the settings' Edit name (`settings`): a rounded shaft with
 /// a point at its lower left, leaning to the upper right, white on clear
 /// for the button to tint, drawn as the gear is.

@@ -30,12 +30,12 @@ use bevy::prelude::*;
 #[cfg(not(target_os = "android"))]
 use bevy::window::Ime;
 use bevy::window::PrimaryWindow;
-use roundtown_net::{Ask, Member, PEOPLE_LOOKS, profile};
+use roundtown_net::{Ask, BOY_LOOKS, GIRL_LOOKS, Member, PEOPLE_LOOKS, profile};
 use serde::{Deserialize, Serialize};
 
 use crate::Player;
 use crate::builder::{self, Fill, QUIET, SOFT};
-use crate::hud::{DOOR, DialogUp, GOLD, TakesPress};
+use crate::hud::{self, DOOR, DialogUp, GOLD, TakesPress};
 use crate::lobby::{self, Lobby};
 
 /// The file who you are lives in, beside the town save.
@@ -92,6 +92,14 @@ const FIELD_WIDTH: f32 = 74.0;
 const CARD_WIDTH: f32 = 34.0;
 const PICTURE_WIDTH: f32 = 26.0;
 const ROUNDED: f32 = 1.8;
+/// The arrows either side of a card that turn its colours (Hajun,
+/// 2026-11-02): the arrowhead, the room round it a finger lands in, and the
+/// gap between it and the card. A row of both cards and their arrows is 108
+/// shares of the short side wide.
+const ARROW_WIDTH: f32 = 4.0;
+const ARROW_TOUCH: f32 = 8.0;
+const ARROW_GAP: f32 = 1.0;
+const ARROW_INK: Color = Color::srgba(1.0, 1.0, 1.0, 0.85);
 
 /// How far down the screen things stand, as shares of its height: the town's
 /// name and Start under it, in the lower middle; and a page's heading, high
@@ -224,8 +232,15 @@ pub(crate) struct Signup {
     page: Option<Page>,
     /// The name, once its page has been saved.
     name: String,
-    /// The character chosen, by its place in [`PEOPLE_LOOKS`].
+    /// The side chosen, by its place in [`PEOPLE_LOOKS`]: the boy or the
+    /// girl.
     look: Option<usize>,
+    /// Which colour each side's card shows, by its place in that side's
+    /// looks ([`side_looks`]), turned by the arrows beside it.
+    colours: [usize; 2],
+    /// The arrowhead the arrows are drawn with ([`hud::side_arrow`]), made
+    /// once as the app starts ([`make_arrow`]).
+    arrow: Handle<Image>,
     /// A button pressed, to be acted on this frame.
     pressed: Option<Action>,
     /// How long "Log in is not available yet" has been up, while it is.
@@ -312,9 +327,27 @@ enum Action {
     Start,
     LogIn,
     SaveName,
-    /// This character.
+    /// This side's card.
     Pick(usize),
+    /// This side's colours turned one on, or one back.
+    Turn(usize, i32),
     SaveLook,
+}
+
+/// The looks of one side of the character page, the boys' or the girls'
+/// (`roundtown_net::BOY_LOOKS`, `GIRL_LOOKS`): the first of each is the one
+/// people chose between before the colours came (2026-11-02).
+fn side_looks(side: usize) -> &'static [&'static str] {
+    if side == 0 {
+        &BOY_LOOKS
+    } else {
+        &GIRL_LOOKS
+    }
+}
+
+/// The colour `by` on from `colour` of `count`, round and round.
+fn turned(colour: usize, by: i32, count: usize) -> usize {
+    (colour as i32 + by).rem_euclid(count as i32) as usize
 }
 
 /// The root of the page that is up.
@@ -333,9 +366,24 @@ struct NameText;
 #[derive(Component)]
 struct Notice;
 
-/// One character's card, by its place in [`PEOPLE_LOOKS`].
+/// One side's card, by its place in [`PEOPLE_LOOKS`].
 #[derive(Component)]
 struct Card(usize);
+
+/// The picture on a side's card, of the colour it shows ([`turn_cards`]).
+#[derive(Component)]
+struct CardPicture {
+    side: usize,
+    colour: usize,
+}
+
+/// An arrow beside a side's card, turning its colours one on (`by` 1) or
+/// one back (-1).
+#[derive(Component)]
+pub(crate) struct ColourArrow {
+    pub side: usize,
+    pub by: i32,
+}
 
 /// The button that saves what a page asks for, or the settings' Edit name:
 /// grey until there is something to save ([`light`]).
@@ -349,7 +397,7 @@ pub(crate) fn plugin(app: &mut App) {
         .init_resource::<Keyboard>()
         .add_observer(press)
         .add_observer(tap_box)
-        .add_systems(Startup, open_if_unset)
+        .add_systems(Startup, (make_arrow, open_if_unset).chain())
         .add_systems(
             Update,
             (
@@ -361,6 +409,7 @@ pub(crate) fn plugin(app: &mut App) {
                 show_name,
                 light_save,
                 light_cards,
+                turn_cards,
                 fade_notice,
                 keyboard,
                 #[cfg(any(target_os = "android", target_os = "ios"))]
@@ -396,7 +445,10 @@ pub(crate) fn open(
     if signup.up() {
         return;
     }
-    *signup = Signup::default();
+    *signup = Signup {
+        arrow: signup.arrow.clone(),
+        ..Signup::default()
+    };
     show(commands, assets, signup, &mut NameBox::default(), Page::Start);
     if !up.0 {
         up.0 = true;
@@ -419,8 +471,13 @@ fn show(
             name_box.open(&signup.name);
             name_page(commands, &signup.name);
         }
-        Page::Character => character_page(commands, assets, signup.look),
+        Page::Character => character_page(commands, assets, signup),
     }
+}
+
+/// Draws the arrowhead the character page's arrows share, once.
+fn make_arrow(mut images: ResMut<Assets<Image>>, mut signup: ResMut<Signup>) {
+    signup.arrow = images.add(hud::side_arrow());
 }
 
 /// The page itself: the whole screen, a solid colour, taking every press
@@ -570,7 +627,12 @@ fn shown(name: &str, caret: bool) -> String {
 /// A boy or a girl, each on a card with their picture and nothing else
 /// (Hajun, 2026-11-01: "dont put 'Boy' or 'Girl' just the character img";
 /// named under their pictures until then), and Save.
-fn character_page(commands: &mut Commands, assets: &AssetServer, chosen: Option<usize>) {
+/// "Choose Character": a card to each side, the boy's and the girl's, with
+/// the picture of the colour it is turned to, and an arrow either side of it
+/// to turn through that side's colours (Hajun, 2026-11-02: "put some arrow
+/// thingy next to each guy and girl character selection in the start so u
+/// can choose which color guy or which color girl"); and Save.
+fn character_page(commands: &mut Commands, assets: &AssetServer, signup: &Signup) {
     commands.spawn(page()).with_children(|page| {
         page.spawn(column(HEADING_DOWN)).with_children(|column| {
             column.spawn(builder::label("Choose Character", HEADING, Color::WHITE));
@@ -579,43 +641,92 @@ fn character_page(commands: &mut Commands, assets: &AssetServer, chosen: Option<
                 .spawn((
                     Node {
                         column_gap: Val::VMin(4.0),
+                        align_items: AlignItems::Center,
                         ..default()
                     },
                     Pickable::IGNORE,
                 ))
                 .with_children(|cards| {
-                    for (n, look) in PEOPLE_LOOKS.iter().enumerate() {
-                        let fill = card_fill(chosen == Some(n));
-                        cards.spawn((
-                            Card(n),
-                            Action::Pick(n),
-                            TakesPress,
-                            Button,
-                            Node {
-                                width: Val::VMin(CARD_WIDTH),
-                                justify_content: JustifyContent::Center,
-                                align_items: AlignItems::Center,
-                                padding: UiRect::all(Val::VMin(2.5)),
-                                border_radius: BorderRadius::all(Val::VMin(ROUNDED)),
-                                ..default()
-                            },
-                            BackgroundColor(fill.idle),
-                            fill,
-                            children![(
-                                ImageNode::new(assets.load(format!("signup/{look}.png"))),
+                    for side in 0..PEOPLE_LOOKS.len() {
+                        let fill = card_fill(signup.look == Some(side));
+                        let colour = signup.colours[side];
+                        let look = side_looks(side)[colour];
+                        cards
+                            .spawn((
                                 Node {
-                                    width: Val::VMin(PICTURE_WIDTH),
-                                    height: Val::VMin(PICTURE_WIDTH * 1.5),
+                                    column_gap: Val::VMin(ARROW_GAP),
+                                    align_items: AlignItems::Center,
                                     ..default()
                                 },
                                 Pickable::IGNORE,
-                            )],
-                        ));
+                            ))
+                            .with_children(|row| {
+                                row.spawn(arrow(signup, side, -1));
+                                row.spawn((
+                                    Card(side),
+                                    Action::Pick(side),
+                                    TakesPress,
+                                    Button,
+                                    Node {
+                                        width: Val::VMin(CARD_WIDTH),
+                                        justify_content: JustifyContent::Center,
+                                        align_items: AlignItems::Center,
+                                        padding: UiRect::all(Val::VMin(2.5)),
+                                        border_radius: BorderRadius::all(Val::VMin(ROUNDED)),
+                                        ..default()
+                                    },
+                                    BackgroundColor(fill.idle),
+                                    fill,
+                                    children![(
+                                        CardPicture { side, colour },
+                                        ImageNode::new(assets.load(format!("signup/{look}.png"))),
+                                        Node {
+                                            width: Val::VMin(PICTURE_WIDTH),
+                                            height: Val::VMin(PICTURE_WIDTH * 1.5),
+                                            ..default()
+                                        },
+                                        Pickable::IGNORE,
+                                    )],
+                                ));
+                                row.spawn(arrow(signup, side, 1));
+                            });
                     }
                 });
             column.spawn((Save, button("Save", Action::SaveLook)));
         });
     });
+}
+
+/// An arrow beside a side's card, turning its colours `by` one on or one
+/// back: a white arrowhead on nothing, pointing left, or flipped across to
+/// point right, with room round it for a finger.
+fn arrow(signup: &Signup, side: usize, by: i32) -> impl Bundle {
+    (
+        ColourArrow { side, by },
+        Action::Turn(side, by),
+        TakesPress,
+        Button,
+        Node {
+            width: Val::VMin(ARROW_TOUCH),
+            height: Val::VMin(ARROW_TOUCH * 1.6),
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            ..default()
+        },
+        children![(
+            ImageNode {
+                flip_x: by > 0,
+                color: ARROW_INK,
+                ..ImageNode::new(signup.arrow.clone())
+            },
+            Node {
+                width: Val::VMin(ARROW_WIDTH),
+                height: Val::VMin(ARROW_WIDTH * 1.4),
+                ..default()
+            },
+            Pickable::IGNORE,
+        )],
+    )
 }
 
 /// A card's colour: the chosen one lighter, the rest lit only under the
@@ -803,16 +914,20 @@ fn act(
                 show(&mut commands, &assets, &mut signup, &mut name_box, Page::Character);
             }
         }
-        (Page::Character, Action::Pick(n)) => {
-            signup.look = Some(n);
+        (Page::Character, Action::Pick(side)) => {
+            signup.look = Some(side);
+        }
+        (Page::Character, Action::Turn(side, by)) => {
+            signup.colours[side] = turned(signup.colours[side], by, side_looks(side).len());
+            signup.look = Some(side);
         }
         (Page::Character, Action::SaveLook) => {
-            let (Some(name), Some(look)) = (profile::name(&signup.name), signup.look) else {
+            let (Some(name), Some(side)) = (profile::name(&signup.name), signup.look) else {
                 return;
             };
             *profile = Profile {
                 name,
-                look: PEOPLE_LOOKS[look].into(),
+                look: side_looks(side)[signup.colours[side]].into(),
             };
             profile.save();
             info!("signed up as {}, a {}", profile.name, profile.look);
@@ -912,6 +1027,26 @@ fn light_cards(
         if fill.idle != wanted.idle {
             *fill = wanted;
             colour.0 = wanted.idle;
+        }
+    }
+}
+
+/// Keeps each card's picture that of the colour its arrows have turned it
+/// to.
+fn turn_cards(
+    signup: Res<Signup>,
+    assets: Res<AssetServer>,
+    mut pictures: Query<(&mut CardPicture, &mut ImageNode)>,
+) {
+    if signup.page != Some(Page::Character) {
+        return;
+    }
+    for (mut picture, mut image) in &mut pictures {
+        let wanted = signup.colours[picture.side];
+        if picture.colour != wanted {
+            picture.colour = wanted;
+            let look = side_looks(picture.side)[wanted];
+            image.image = assets.load(format!("signup/{look}.png"));
         }
     }
 }
@@ -1125,6 +1260,18 @@ mod tests {
     }
 
     #[test]
+    fn the_arrows_turn_a_side_s_colours_round_and_round() {
+        assert_eq!(turned(0, 1, 3), 1);
+        assert_eq!(turned(2, 1, 3), 0);
+        assert_eq!(turned(0, -1, 3), 2);
+        assert_eq!(turned(1, -1, 3), 0);
+        // Each side's first colour is the look people chose between before
+        // the colours came.
+        assert_eq!(side_looks(0)[0], PEOPLE_LOOKS[0]);
+        assert_eq!(side_looks(1)[0], PEOPLE_LOOKS[1]);
+    }
+
+    #[test]
     fn a_profile_is_set_once_both_are_good() {
         let mut profile = Profile::default();
         assert!(!profile.set());
@@ -1135,6 +1282,9 @@ mod tests {
         // Only as it would be kept: trimmed, and a look there is.
         assert!(!Profile { name: " Hajun".into(), look: "girl".into() }.set());
         assert!(!Profile { name: "Hajun".into(), look: "blue".into() }.set());
+        // Any colour of either side is a look.
+        assert!(Profile { name: "Hajun".into(), look: "girl_whiteblue".into() }.set());
+        assert!(Profile { name: "Hajun".into(), look: "boy_blackbrown".into() }.set());
         // The server is asked to take it on only where it has you otherwise.
         let me = |name: &str, look: &str| Member {
             id: 7,
@@ -1158,7 +1308,7 @@ mod tests {
             .filter(|line| !line.is_empty() && !line.starts_with('#'))
             .map(|line| line.trim_start_matches("<dir>").trim_start_matches("<file>"))
             .collect();
-        for look in PEOPLE_LOOKS {
+        for look in BOY_LOOKS.iter().chain(&GIRL_LOOKS) {
             let picture = format!("signup/{look}.png");
             assert!(root.join("assets").join(&picture).is_file(), "assets/{picture}");
             for name in picture.split('/') {

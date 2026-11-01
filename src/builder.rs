@@ -79,6 +79,9 @@ const NAME: &str = "Build Your Own House";
 const NPC: &str = "House Builder NPC";
 /// What the House Builder wears over the body everyone has: a black top,
 /// as the old town's model had them (`circlemap1.glb`'s `body`, 2026-10-03).
+/// `playercharacter.glb` (since 2026-11-01, `lobby::MODEL`) has no such
+/// material, one `skin` over the whole body, so they are drawn as everyone
+/// is until a model has a top to blacken.
 const NPC_TOP: Color = Color::BLACK;
 /// The material of the top a body's model wears, which [`NPC_TOP`] is in
 /// place of.
@@ -444,16 +447,16 @@ pub(crate) fn plugin(app: &mut App) {
 fn find_house_builder(
     ready: On<WorldInstanceReady>,
     children: Query<&Children>,
-    named: Query<(&Name, &Transform)>,
+    parts: Query<(Option<&Name>, &Transform)>,
     placement: TransformHelper,
     mut commands: Commands,
 ) {
     let npcs: Vec<Entity> = children
         .iter_descendants(ready.entity)
         .filter(|&entity| {
-            named
+            parts
                 .get(entity)
-                .is_ok_and(|(name, _)| name.as_str() == NPC)
+                .is_ok_and(|(name, _)| name.is_some_and(|name| name.as_str() == NPC))
         })
         .collect();
     for npc in npcs {
@@ -468,7 +471,7 @@ fn find_house_builder(
             Speaker::HouseBuilder,
             WalkCycle::default(),
         ));
-        crate::bind_limbs(npc, &children, &named, &mut commands);
+        crate::bind_limbs(npc, &children, &parts, &mut commands);
     }
 }
 
@@ -495,7 +498,7 @@ pub(crate) fn stand_house_builder(commands: &mut Commands, assets: &AssetServer,
 fn dress_house_builder(
     ready: On<WorldInstanceReady>,
     children: Query<&Children>,
-    named: Query<(&Name, &Transform)>,
+    parts: Query<(Option<&Name>, &Transform)>,
     tops: Query<(Entity, &GltfMaterialName, &MeshMaterial3d<StandardMaterial>)>,
     placement: TransformHelper,
     mut materials: ResMut<Assets<StandardMaterial>>,
@@ -530,7 +533,7 @@ fn dress_house_builder(
         Speaker::HouseBuilder,
         WalkCycle::default(),
     ));
-    crate::bind_limbs(npc, &children, &named, &mut commands);
+    crate::bind_limbs(npc, &children, &parts, &mut commands);
 }
 
 /// Stands the House Builder on the town's ground once there is a shape to read

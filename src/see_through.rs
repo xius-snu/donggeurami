@@ -99,29 +99,35 @@ const FADE_SECS: f32 = 0.15;
 /// counted, at 1.15, 1.4 and 1.65 m, and a wall that hid your side or your
 /// legs stayed as it was.
 ///
-/// Each is a little inside the model (`limbperson.glb`), so that a wall you
-/// stand against is not in the way of a camera on your side of it: legs 0.42
-/// m across and 0.16 deep, then a body 0.78 across and 0.28 deep from 0.65 m
-/// up, and a head 0.41 across from 1.3 m to 1.71. The legs' rings are no
+/// Each is a little inside the model (`playercharacter.glb`, `lobby::MODEL`,
+/// as Hajun had it on the evening of 2026-11-01; `limbperson.glb` until that
+/// day, 0.42 m across at the legs, 0.78 at the body and 0.41 at the head),
+/// so that a wall you stand against is not in the way of a camera on your
+/// side of it: legs 0.3 m across at the shoes and 0.28 at the knees, stood
+/// in under the body (`LEG_SPLAY`: as modelled they splay to 0.35 and 0.3),
+/// 0.1 deep, in dark trousers to 0.66 m, then a body 0.26 across and 0.12 deep
+/// in a blue top to 1.09, 0.35 across the shoulders, with the arms hanging
+/// at its sides, and a round head 0.53 across from 1.11 m to 1.64, its
+/// middle at 1.38, the eyes and mouth on its front. The legs' rings are no
 /// wider than the legs reach (`LEG_RADIUS`), and the lowest is higher than
 /// any edge the legs stand over without stepping up onto it (`EDGE_RISE`),
 /// so that the step you are on is never in the way; the shoes, under it, are
 /// not tried. Something thinner than the gaps between the points, about a
-/// quarter of a metre, like a bar across a window, can cross you unseen.
+/// fifth of a metre, like a bar across a window, can cross you unseen.
 const RINGS: [(f32, f32, f32); 8] = [
-    (0.2, 0.17, 0.06),
-    (0.42, 0.17, 0.06),
-    (0.62, 0.17, 0.06),
-    (0.85, 0.36, 0.11),
-    (1.05, 0.36, 0.11),
-    (1.25, 0.36, 0.11),
-    (1.42, 0.15, 0.15),
-    (1.6, 0.15, 0.15),
+    (0.2, 0.09, 0.04),
+    (0.42, 0.08, 0.04),
+    (0.62, 0.1, 0.06),
+    (0.85, 0.1, 0.05),
+    (1.05, 0.12, 0.035),
+    (1.25, 0.18, 0.18),
+    (1.38, 0.2, 0.2),
+    (1.55, 0.15, 0.15),
 ];
 /// How many points round each ring of [`RINGS`], besides its middle.
 const ROUND: usize = 8;
 /// The top of your head, as high as the camera has to see of you.
-const CROWN: f32 = 1.68;
+const CROWN: f32 = 1.62;
 /// How far out of the box round a part of a house or of the island something
 /// else of it can reach and still be in it, and go with it, in metres.
 const IN_IT: f32 = 0.05;
@@ -897,10 +903,11 @@ mod tests {
     #[test]
     fn a_wall_that_hides_only_your_side_is_in_the_way() {
         // Between the camera and you, ending a little to the right of the
-        // straight line from it to your middle: it hides your right arm and
-        // shoulder, and nothing else of you.
+        // straight line from it to your middle: it hides the side of your
+        // head, and nothing else of you (the lines to the widest of you,
+        // 0.2 m out, pass it 0.14 m out; to your shoulder, 0.12, 0.084).
         let eye = Vec3::new(0.0, 2.0, 10.0);
-        let wall = (Vec3::new(0.15, 0.0, 3.0), Vec3::new(5.0, 3.0, 3.3));
+        let wall = (Vec3::new(0.1, 0.0, 3.0), Vec3::new(5.0, 3.0, 3.3));
         let shape = Faces::of(&crate::camera_tests::boxes(&[wall]));
         for up in [0.2, 1.05, 1.4, 1.68] {
             assert!(!shape.crosses(eye, Vec3::Y * up), "your middle, {up} m up");
@@ -910,7 +917,7 @@ mod tests {
         let turned = Transform::from_rotation(Quat::from_rotation_y(std::f32::consts::PI));
         assert!(hides_you(eye, &turned, wall));
         // A little further out, it hides none of you.
-        let clear = (Vec3::new(0.4, 0.0, 3.0), Vec3::new(5.0, 3.0, 3.3));
+        let clear = (Vec3::new(0.16, 0.0, 3.0), Vec3::new(5.0, 3.0, 3.3));
         assert!(!hides(eye, clear));
     }
 
@@ -1023,8 +1030,8 @@ mod tests {
                 .map(|point| (point - you.translation).dot(you.right().as_vec3()))
                 .fold(0.0f32, f32::max)
         };
-        assert!((across(&facing) - 0.36).abs() < 1e-5);
-        assert!((across(&turned) - 0.36).abs() < 1e-5);
+        assert!((across(&facing) - 0.2).abs() < 1e-5);
+        assert!((across(&turned) - 0.2).abs() < 1e-5);
     }
 
     #[test]

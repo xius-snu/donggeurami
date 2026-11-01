@@ -47,10 +47,15 @@ const NEARER_BY: f32 = 0.5;
 const HIGHER: f32 = 1.5;
 /// How high over someone's feet their face is, in metres: the model's eyes
 /// are 1.54 to 1.6 m up, the top of its head 1.71.
-const FACE: f32 = 1.52;
+/// 1.38 since the evening of 2026-11-01, the middle of `playercharacter.glb`'s
+/// round head, where its eyes are; 1.52, the old model's, until then.
+const FACE: f32 = 1.38;
 /// How high over someone's feet the bubble's point is, in metres: a little
-/// over their head.
-const OVER_HEAD: f32 = 1.95;
+/// over their head, where their name's foot is (`tags::OVER_HEAD`), so that
+/// over a name it stands a fixed way over the name however near the camera
+/// is. 1.95 until Hajun asked for it "slightly lower so its slightly more
+/// closer to the nametag" (2026-11-01).
+const OVER_HEAD: f32 = tags::OVER_HEAD;
 /// How wide the bubble is drawn, and how far round it a tap still lands on it,
 /// as shares of the short side of the screen: being the only one, it can
 /// take a tap well wide of it. 8 until Hajun asked for bigger (2026-10-31).
