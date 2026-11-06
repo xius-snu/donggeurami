@@ -16,10 +16,12 @@
 cloudsofaimage.png
 
 # Models nothing loads any more: the first map, the coin, and the old town,
-# Round Town until Hajun's new one, roundtownmap.glb, on 2026-10-30.
+# Round Town until Hajun's new one, roundtownmap.glb, on 2026-10-30, and
+# that one too, since their pvptownmap.glb on 2026-11-07.
 map.glb
 coin.glb
 circlemap1.glb
+roundtownmap.glb
 
 # Hajun's model of a house's size, to model pieces against, in mybuilds/:
 # not sold in the shop.
@@ -52,3 +54,7 @@ bus_engine_loop.wav
 UIbuttonlayout.jpg
 LICENSE-material-icons.txt
 LICENSE-font-awesome.txt
+
+# The numbers of the screen (assets/ui.ron), compiled into the game by
+# src/style.rs: a phone never reads the file itself.
+ui.ron

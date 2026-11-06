@@ -25,6 +25,7 @@ use crate::hud;
 use crate::island::Venue;
 use crate::lobby::Townsfolk;
 use crate::net::Online;
+use crate::ui::{UiChanged, ui};
 use crate::{Player, ThirdPersonCamera, WalkCycle};
 
 /// How far off a name can still be read, in metres: 25 until 2026-10-31,
@@ -71,10 +72,23 @@ pub(crate) struct Tagged;
 pub(crate) fn plugin(app: &mut App) {
     app.add_systems(
         Update,
-        (tag, rename, untag, place_tags)
+        (tag, rename, untag, recolour, place_tags)
             .chain()
             .after(crate::follow_camera),
     );
+}
+
+/// Gives every name the file's colour again as the file changes on desktop
+/// (`ui::reread`).
+fn recolour(changed: Res<UiChanged>, mut tags: Query<(&mut TextColor, &mut TextShadow), With<Nametag>>) {
+    if !changed.is_changed() || changed.is_added() {
+        return;
+    }
+    let colours = ui().colours;
+    for (mut colour, mut shadow) in &mut tags {
+        colour.0 = colours.text;
+        shadow.color = colours.text_shadow.with_alpha(colours.text_shadow.alpha() * colours.text.alpha());
+    }
 }
 
 /// A name that has changed, as someone's does when they sign up (yours in
@@ -114,7 +128,7 @@ fn tag(
         commands.entity(body).insert(Tagged);
         commands.spawn((
             Nametag(body),
-            hud::words(name.as_str(), TAG_TEXT, Color::WHITE),
+            hud::words(name.as_str(), TAG_TEXT, ui().colours.text),
             Node {
                 position_type: PositionType::Absolute,
                 left: Val::ZERO,

@@ -34,7 +34,7 @@
 
 use std::f32::consts::TAU;
 
-use bevy::math::{Quat, Vec3};
+use bevy::math::{Quat, Vec2, Vec3};
 use bevy::prelude::*;
 use bevy_replicon::prelude::*;
 use bevy_replicon::shared::replication::registry::ctx::WriteCtx;
@@ -69,7 +69,13 @@ pub const PROTOCOL_ID: u64 = u64::from_be_bytes(*b"DGRMTOWN");
 ///
 /// Not bumped for [`Ask::Profile`] (2026-10-31), added last: an app from
 /// before never sends it, and draws a look it has not heard of as its first.
-pub const PROTOCOL_VERSION: u32 = 4;
+///
+/// 5 since 2026-11-07: the town is Hajun's `pvptownmap.glb`, four islands
+/// at the ends of bridges round a town with no sea round it, and everyone
+/// arrives on one of the islands ([`TOWN_ISLANDS`]); [`Ask::Respawn`], for
+/// whoever falls off into the void; and [`Ask::Punch`] and [`Tell::Knocked`],
+/// a punch landing on someone online.
+pub const PROTOCOL_VERSION: u32 = 5;
 
 /// The UDP port the game server listens on. 443, where QUIC goes, because a
 /// network that lets any UDP through lets that through: school and office
@@ -225,29 +231,76 @@ pub enum Venue {
 /// out. The town has its own ([`TOWN_ARRIVAL_RADIUS`]).
 pub const ARRIVAL_RADIUS: f32 = 6.0;
 
-/// How far from the middle everyone stands on arriving in the town, in
-/// metres: on the middle of the path, 30 to 33 m out, round the pond that
-/// fills the middle of `roundtownmap.glb` (2026-10-30). 6 m out, as on the
-/// other islands, is in the pond, 0.4 m deep, inside a rim 0.6 m over its
-/// floor that only a jump gets out over, and the computer's players never
-/// jump.
+/// How far from the middle everyone stood on arriving in the town, in
+/// metres, from 2026-10-30 to 2026-11-07: on the middle of the path, 30 to
+/// 33 m out, round the pond that fills the middle of `roundtownmap.glb`.
+/// Since then everyone arrives on one of the four islands round the town
+/// ([`TOWN_ISLANDS`]), and this is where the town's own name shows and the
+/// House Builder stood.
 pub const TOWN_ARRIVAL_RADIUS: f32 = 31.5;
 
+/// The middles of the four islands at the ends of the town's bridges, in
+/// metres from the middle of the town, where everyone arrives in Hajun's
+/// `pvptownmap.glb` (2026-11-07: "make the player start in the center of
+/// one of the 4 bridge connected island"): 200 m out along each axis, each
+/// 32 m across, with a bridge 14 m wide from it to the town, 75 m out. In
+/// the game's x and z: north (Blender's +Y) first, then clockwise seen from
+/// above.
+pub const TOWN_ISLANDS: [Vec2; 4] = [
+    Vec2::new(0.0, -200.0),
+    Vec2::new(200.0, 0.0),
+    Vec2::new(0.0, 200.0),
+    Vec2::new(-200.0, 0.0),
+];
+
+/// How far from its island's middle everyone on it but the first stands on
+/// arriving, in metres: round the one in the middle, a few metres apart.
+pub const ISLAND_RING: f32 = 4.0;
+
+/// Which of the [`TOWN_ISLANDS`] the player in `seat` arrives on, and is
+/// put back on when they fall off (the game's `lobby`): seat by seat round
+/// the four, so that the first four seats of a town channel, four people,
+/// are on four different islands (Hajun: "when there is 2 players+ you
+/// will not spawn in the same bridge connected island").
+pub fn town_island(seat: usize) -> usize {
+    seat % TOWN_ISLANDS.len()
+}
+
 /// Where the player in `seat` stands on arriving on `venue`, and which way
-/// they face: on a ring round the middle — round the pond, in the town —
-/// facing in. The first eight seats are each an eighth of the turn on from
-/// the one before, the next eight between them, and past sixteen there is a
-/// ring further out. The server works out arrivals with this too, so that
-/// everyone sees you arrive where you do.
+/// they face. In the town, on their island ([`town_island`]): the first on
+/// each island in its middle, and the rest round that [`ISLAND_RING`] out,
+/// every one facing the town, down the bridge. Anywhere else, on a ring
+/// round the middle, facing in: the first eight seats each an eighth of the
+/// turn on from the one before, the next eight between them, and past
+/// sixteen a ring further out. The server works out arrivals with this too,
+/// so that everyone sees you arrive where you do.
 pub fn arrival(venue: Venue, seat: usize) -> (Vec3, Quat) {
+    if venue == Venue::Town {
+        let island = TOWN_ISLANDS[town_island(seat)];
+        let round = seat / TOWN_ISLANDS.len();
+        // Seven round the one in the middle, and past them round again, a
+        // little further out and turned on by half a place.
+        let places = 7;
+        let out = (round + places - 1) / places;
+        let at = if round == 0 {
+            island
+        } else {
+            let place = (round - 1) % places;
+            let angle = (place as f32 + 0.5 * (out - 1) as f32) * TAU / places as f32;
+            island + Vec2::new(angle.cos(), angle.sin()) * (ISLAND_RING + 2.0 * (out - 1) as f32)
+        };
+        let toward = -island.normalize();
+        // A turn of `yaw` about the upright points -Z at (-sin yaw, -cos yaw).
+        let yaw = (-toward.x).atan2(-toward.y);
+        return (Vec3::new(at.x, 0.0, at.y), Quat::from_rotation_y(yaw));
+    }
     let eighth = TAU / 8.0;
     let ring = seat / 16;
     let within = seat % 16;
     let angle = (within % 8) as f32 * eighth
         + if within >= 8 { eighth * 0.5 } else { 0.0 }
         + ring as f32 * eighth * 0.25;
-    let first = if venue == Venue::Town { TOWN_ARRIVAL_RADIUS } else { ARRIVAL_RADIUS };
-    let radius = first + ring as f32 * 2.0;
+    let radius = ARRIVAL_RADIUS + ring as f32 * 2.0;
     let turn = Quat::from_rotation_y(angle);
     // Facing in: a turn of `angle` about the upright points -Z at the middle
     // from where it puts +Z.
@@ -362,6 +415,15 @@ pub mod cars {
     /// it, carried along with it until it comes down, which a run takes
     /// another 5 m or so.
     pub const REACH: f32 = 15.0;
+    /// The fastest the car anyone can drive themselves goes, in metres a
+    /// second (the game's `drive`, since 2026-11-05): boosted, or reversing.
+    /// Nothing says over the network that a body is in a car, so the server
+    /// lets every body go this fast across the ground
+    /// (`server/src/players.rs`). The car's own speeds are in the game's
+    /// `assets/ui.ron`, and a test there keeps them no faster than this:
+    /// 40 since 2026-11-06 (Hajun: "change the max speed to 40m/s"), 20
+    /// until then.
+    pub const DRIVEN_TOP_SPEED: f32 = 40.0;
 }
 
 /// A [`Spot`] as it arrives, stamped with the tick of the update it came in.
@@ -535,6 +597,16 @@ pub enum Ask {
     /// is no name ([`profile::name`]) or no look is ignored. Last, since
     /// 2026-10-31: an app from before never sends it.
     Profile { name: String, look: String },
+    /// I have fallen off the town into the void (since 2026-11-07, when the
+    /// sea round it went): put me back where my seat arrives, as a fresh
+    /// arrival ([`Tell::Arrive`]), so that the leap back is not taken for
+    /// a move I could not have made.
+    Respawn,
+    /// My punch landed on the player whose [`Member::id`] this is: they are
+    /// to be knocked back from me ([`Tell::Knocked`]). `running`, I was on
+    /// the move as I hit them, which knocks them further, as a sprinting
+    /// hit does in Minecraft.
+    Punch { who: u64, running: bool },
 }
 
 /// What the server tells you alone. In order, and never lost.
@@ -557,6 +629,11 @@ pub enum Tell {
     Balance(u32),
     /// You are in a game of House Builder, in this seat: your plot.
     Joined { seat: u8 },
+    /// The player whose [`Member::id`] is `by` punched you, standing at
+    /// `from` (in the island's space, or on a bus, in the bus's): your own
+    /// device knocks your body back from there, and sends where it goes as
+    /// it does any move. `running`, they hit you on the move.
+    Knocked { by: u64, from: Spot, running: bool },
     /// What you asked for cannot be done.
     Refused(Refusal),
 }
@@ -614,23 +691,45 @@ mod tests {
 
     #[test]
     fn the_first_eight_arrive_where_they_did_offline() {
-        for (venue, radius) in [(Venue::Town, TOWN_ARRIVAL_RADIUS), (Venue::Lobby, ARRIVAL_RADIUS)] {
-            for seat in 0..8 {
-                let (at, turn) = arrival(venue, seat);
-                let was = Quat::from_rotation_y(seat as f32 * TAU / 8.0) * Vec3::new(0.0, 0.0, radius);
-                assert!(at.distance(was) < 1e-4, "seat {seat}: {at} for {was}");
-                let facing = turn * Vec3::NEG_Z;
-                assert!(facing.distance(-was.normalize()) < 1e-4, "seat {seat} faces {facing}");
-            }
+        let venue = Venue::Lobby;
+        for seat in 0..8 {
+            let (at, turn) = arrival(venue, seat);
+            let was = Quat::from_rotation_y(seat as f32 * TAU / 8.0) * Vec3::new(0.0, 0.0, ARRIVAL_RADIUS);
+            assert!(at.distance(was) < 1e-4, "seat {seat}: {at} for {was}");
+            let facing = turn * Vec3::NEG_Z;
+            assert!(facing.distance(-was.normalize()) < 1e-4, "seat {seat} faces {facing}");
+        }
+    }
+
+    #[test]
+    fn the_first_four_in_the_town_arrive_on_four_islands_facing_it() {
+        for seat in 0..4 {
+            let (at, turn) = arrival(Venue::Town, seat);
+            let island = TOWN_ISLANDS[seat];
+            assert!(at.xz().distance(island) < 1e-4, "seat {seat}: {at} for {island}");
+            assert_eq!(at.y, 0.0);
+            let facing = (turn * Vec3::NEG_Z).xz();
+            assert!(facing.distance(-island.normalize()) < 1e-4, "seat {seat} faces {facing}");
+            assert_eq!(town_island(seat), seat);
+        }
+        // The rest stand on the islands too, near the middle, and each on
+        // the island its seat says.
+        for seat in 4..TOWN_SEATS * 2 {
+            let (at, _) = arrival(Venue::Town, seat);
+            let island = TOWN_ISLANDS[town_island(seat)];
+            let out = at.xz().distance(island);
+            assert!(out > 3.0 && out < 8.0, "seat {seat}: {out} m from its island's middle");
         }
     }
 
     #[test]
     fn a_full_town_arrives_apart() {
-        let spots: Vec<Vec3> = (0..TOWN_SEATS * 2).map(|seat| arrival(Venue::Town, seat).0).collect();
-        for (i, a) in spots.iter().enumerate() {
-            for b in &spots[i + 1..] {
-                assert!(a.distance(*b) > 2.0, "{a} and {b}");
+        for venue in [Venue::Town, Venue::Lobby] {
+            let spots: Vec<Vec3> = (0..TOWN_SEATS * 2).map(|seat| arrival(venue, seat).0).collect();
+            for (i, a) in spots.iter().enumerate() {
+                for b in &spots[i + 1..] {
+                    assert!(a.distance(*b) > 2.0, "{venue:?}: {a} and {b}");
+                }
             }
         }
     }

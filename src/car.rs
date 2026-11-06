@@ -67,7 +67,7 @@ pub(crate) const CARS: [&str; 4] = [
 const WHEEL: &str = "wheel";
 
 /// Whether a part called `name` is one of the car's wheels.
-fn is_wheel(name: &str) -> bool {
+pub(crate) fn is_wheel(name: &str) -> bool {
     let name = name.to_lowercase();
     name.contains(WHEEL) && !name.contains("steering")
 }
@@ -395,7 +395,7 @@ fn read_car(
     let into_car = root.affine().inverse();
     // Each object's triangles, by the object.
     let mut pieces: Vec<(Option<Entity>, Vec<[Vec3; 3]>)> = Vec::new();
-    let mut wheels: Vec<(Entity, Handle<Mesh>, Option<Handle<StandardMaterial>>, Affine3A)> = Vec::new();
+    let mut wheels: Vec<WheelPart> = Vec::new();
     // The box round all its wheels.
     let mut wheel_box: Option<(Vec3, Vec3)> = None;
     for part in children.iter_descendants(car) {
@@ -459,29 +459,50 @@ fn read_car(
     };
     let across = hull.front.perp();
     let axle = Vec3::new(across.x, 0.0, across.y);
-    for wheel in turning {
-        let Wheel { middle, radius, meshes: parts } = wheel;
+    // A bus's front wheels do not steer: it is placed on the road whole.
+    hang_wheels(&mut commands, car, turning, &wheels, axle, |_| false);
+    commands.entity(car).insert(hull);
+}
+
+/// A mesh of one of a car's wheel parts, as found in its model: the part,
+/// its mesh and material, and where it stands in the car's own space.
+pub(crate) type WheelPart = (Entity, Handle<Mesh>, Option<Handle<StandardMaterial>>, Affine3A);
+
+/// Hangs each of `wheels` on `car` as a copy of its own meshes, made about
+/// its middle, to turn about `axle`, a line across the car ([`Turns`]), the
+/// ones `in_front` steering too, as the front wheels of the car you drive do
+/// (`drive`); and hides the wheels as modelled, `parts`, which are drawn no
+/// more: their turning copies are.
+pub(crate) fn hang_wheels(
+    commands: &mut Commands,
+    car: Entity,
+    wheels: Vec<Wheel>,
+    parts: &[WheelPart],
+    axle: Vec3,
+    in_front: impl Fn(&Wheel) -> bool,
+) {
+    for wheel in wheels {
+        let front = in_front(&wheel);
+        let Wheel { middle, radius, meshes } = wheel;
         let pivot = commands
             .spawn((
                 Name::new("Car wheel"),
-                Turns { axle, radius },
+                Turns { axle, radius, front },
                 Transform::from_translation(middle),
                 Visibility::Inherited,
                 ChildOf(car),
             ))
             .id();
-        for (mesh, material) in parts {
+        for (mesh, material) in meshes {
             let mut part = commands.spawn((Mesh3d(mesh), Transform::default(), ChildOf(pivot)));
             if let Some(material) = material {
                 part.insert(MeshMaterial3d(material));
             }
         }
     }
-    // The wheels as modelled are drawn no more: their turning copies are.
-    for (part, ..) in &wheels {
+    for (part, ..) in parts {
         commands.entity(*part).insert(Visibility::Hidden);
     }
-    commands.entity(car).insert(hull);
 }
 
 /// Which way the front of a car whose model fits between `low` and `high`, in
@@ -490,14 +511,14 @@ fn read_car(
 /// bus's windscreen, whichever it is longer along. Blender's -X is +x here
 /// and its -Y is -z: the glTF loader turns models half round
 /// (`GltfConvertCoordinates`).
-fn front(low: Vec3, high: Vec3) -> Vec2 {
+pub(crate) fn front(low: Vec3, high: Vec3) -> Vec2 {
     let size = high - low;
     if size.x >= size.z { Vec2::X } else { Vec2::NEG_Y }
 }
 
 /// Half the length and half the width of a car whose model fits between
 /// `low` and `high`, in its own space: along its front ([`front`]) and across.
-fn half(low: Vec3, high: Vec3) -> Vec2 {
+pub(crate) fn half(low: Vec3, high: Vec3) -> Vec2 {
     let size = (high - low) * 0.5;
     if front(low, high) == Vec2::X { Vec2::new(size.x, size.z) } else { Vec2::new(size.z, size.x) }
 }
@@ -522,7 +543,7 @@ fn wheel_room(low: Vec3, high: Vec3, wheels: Option<(Vec3, Vec3)>) -> Vec2 {
 /// its wheels' middles is (`ahead`), along its front: the front ones the
 /// furthest ahead, the back ones the furthest behind. With no wheels, its
 /// wheels are all in its middle.
-fn axles(ahead: impl IntoIterator<Item = f32>) -> (f32, f32) {
+pub(crate) fn axles(ahead: impl IntoIterator<Item = f32>) -> (f32, f32) {
     let (back, front) = ahead
         .into_iter()
         .fold((f32::INFINITY, f32::NEG_INFINITY), |(back, front), at| (back.min(at), front.max(at)));
@@ -542,7 +563,7 @@ pub(crate) fn place_at(route: &Route, hull: &Hull, number: u8, seconds: f64) -> 
 }
 
 /// The turn about the upright that has -z face `way`, across the ground.
-fn heading(way: Vec2) -> f32 {
+pub(crate) fn heading(way: Vec2) -> f32 {
     (-way.x).atan2(-way.y)
 }
 
@@ -580,18 +601,20 @@ fn drive(
 /// One of the car's wheels: where its middle is in the car's own space, how
 /// big round it is, and its meshes, one to each material, made about its
 /// middle.
-struct Wheel {
-    middle: Vec3,
-    radius: f32,
+pub(crate) struct Wheel {
+    pub(crate) middle: Vec3,
+    pub(crate) radius: f32,
     meshes: Vec<(Handle<Mesh>, Option<Handle<StandardMaterial>>)>,
 }
 
 /// A wheel's turning, about its axle, a line across the car through its
-/// middle, as fast as the car goes over its radius.
+/// middle, as fast as the car goes over its radius; and, one of the front
+/// wheels of the car you drive, about the upright as it steers (`drive`).
 #[derive(Component)]
-struct Turns {
-    axle: Vec3,
-    radius: f32,
+pub(crate) struct Turns {
+    pub(crate) axle: Vec3,
+    pub(crate) radius: f32,
+    pub(crate) front: bool,
 }
 
 /// The car's wheels, among the meshes of its parts called [`WHEEL`]: each
@@ -599,10 +622,7 @@ struct Turns {
 /// its triangles make, and the pieces of all of them that are round about the
 /// same middle taken together as one wheel. Each gets a copy of each mesh
 /// with only its own triangles in it, made about its middle.
-fn split_wheels(
-    parts: &[(Entity, Handle<Mesh>, Option<Handle<StandardMaterial>>, Affine3A)],
-    meshes: &mut Assets<Mesh>,
-) -> Vec<Wheel> {
+pub(crate) fn split_wheels(parts: &[WheelPart], meshes: &mut Assets<Mesh>) -> Vec<Wheel> {
     // Each piece: which part, its triangles by their corners' numbers, and
     // the box round it in the car's space.
     let mut pieces: Vec<(usize, Vec<u32>, Vec3, Vec3)> = Vec::new();
@@ -856,7 +876,7 @@ pub(crate) mod tests {
     /// The wheels of the car `model`, in its own space, as the game takes
     /// them apart ([`split_wheels`]): each one's box, the pieces of its wheel
     /// objects round one middle.
-    fn wheels_of(model: &str) -> Vec<(Vec3, Vec3)> {
+    pub(crate) fn wheels_of(model: &str) -> Vec<(Vec3, Vec3)> {
         let mut boxes: Vec<(Vec3, Vec3)> = Vec::new();
         for part in crate::island::glb::read(model).iter().filter(|part| is_wheel(&part.node)) {
             let points: Vec<Vec3> = part.triangles.iter().flatten().copied().collect();

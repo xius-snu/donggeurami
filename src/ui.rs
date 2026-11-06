@@ -1,0 +1,845 @@
+//! The colours and the words of everything drawn over the world, in
+//! `assets/ui.ron`, for Hajun to change by hand (2026-11-04: "i think ai
+//! cannot rly implement my instructions exactly and precisely how i want
+//! it. how can i make it so i can tweak it myself"; and, of a first file
+//! that held every size and margin too, "too overfilled with constants ...
+//! i just want to be able to change the colors (including transparency) of
+//! UI objects like buttons and windows and text. easily ... AND Text. so i
+//! want to change some of the text easily like the 'A guest account, kept
+//! on this device.' in settings"). Sizes and layout stay in the code. And,
+//! since 2026-11-06, every number of how the car you drive goes ([`Car`];
+//! Hajun: "put all the constants related to the car in the ron file. like
+//! related to movement. so the turning, the boost/reverse, acc/speed,
+//! multipliers, etc. i want to modify the numbers by myself while playing
+//! on pc"), which `drive` reads every frame, so that a save while driving
+//! changes the car at once; and since 2026-11-07 every number of the punch
+//! and its knockback ([`Melee`]), Minecraft 1.8.9's, the same way.
+//!
+//! Everything that draws the screen reads [`ui`] where it spawns: a global,
+//! not a resource, so that the plain functions every screen is built from
+//! (`hud::words`, `builder::label`, `builder::dimmed` and the rest) can read
+//! it without every caller threading it through. The file is compiled in
+//! ([`BUILT_IN`]), so a phone shows whatever it said when its app was
+//! built, with nothing to copy or package. On desktop it is read again
+//! whenever it changes on disk ([`reread`]), within a quarter of a second
+//! of a save, and [`UiChanged`] changes that frame, on which whatever stays
+//! on the screen is drawn again from it (`hud::restyle`, `signup::redraw`,
+//! `settings::redraw`, `tags::recolour`); a dialog, the shop or House
+//! Builder's board take it when they next come up. A file that will not
+//! read is logged, and the last good one kept.
+//!
+//! Every field is read, and a field the file has that [`Ui`] has not is an
+//! error (`deny_unknown_fields`), so that a misspelt name is not silently
+//! ignored; `cargo test` reads the file as built in.
+
+use std::sync::{Arc, LazyLock, RwLock};
+
+use bevy::prelude::*;
+use serde::{Deserialize, Deserializer};
+
+/// The file, as it was when this was built.
+const BUILT_IN: &str = include_str!("../assets/ui.ron");
+
+/// Where the file is on this PC, for reading again as it changes: only on
+/// desktop, and only where the game runs beside its own tree.
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+const PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/ui.ron");
+
+/// How often the file is looked at for a change, in seconds.
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+const LOOK_EVERY: f32 = 0.25;
+
+/// The file as it stands.
+static CURRENT: LazyLock<RwLock<Arc<Ui>>> = LazyLock::new(|| RwLock::new(Arc::new(Ui::built_in())));
+
+/// The colours and the words as the file has them now. Read wherever
+/// something is spawned on the screen; a handle, so that it costs nothing
+/// to read and nothing to hold.
+pub(crate) fn ui() -> Arc<Ui> {
+    CURRENT
+        .read()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone()
+}
+
+/// `template` with each `{name}` of `fills` filled in: "You came {place}".
+pub(crate) fn fill(template: &str, fills: &[(&str, &str)]) -> String {
+    let mut text = template.to_string();
+    for (name, value) in fills {
+        text = text.replace(&format!("{{{name}}}"), value);
+    }
+    text
+}
+
+/// Changed in the frame the file has been read again (`DetectChanges`), for
+/// whatever stays on the screen to be drawn again from it.
+#[derive(Resource, Default)]
+pub(crate) struct UiChanged;
+
+/// A colour as the file writes it, as a web page would: `"#rrggbb"`, or
+/// `"#rrggbbaa"` with its alpha (`00` invisible, `ff` solid; `"#rgb"` and
+/// `"#rgba"` too); or `"rgb(255, 214, 77)"`, `"rgba(255, 214, 77, 0.5)"`,
+/// `"hsl(43, 100%, 65%)"` or `"hsla(43, 100%, 65%, 0.5)"`, whichever of them
+/// VS Code's colour picker writes back (`editor.defaultColorDecorators`).
+fn colour<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Color, D::Error> {
+    let text = String::deserialize(deserializer)?;
+    parse_colour(&text).map_err(serde::de::Error::custom)
+}
+
+/// What colour `text` names, or what is wrong with it.
+fn parse_colour(text: &str) -> Result<Color, String> {
+    let text = text.trim();
+    let wrong =
+        || format!("{text:?} is not a colour: #rrggbb, #rrggbbaa, rgb(), rgba(), hsl() or hsla()");
+    if text.starts_with('#') {
+        return Srgba::hex(text).map(Color::from).map_err(|_| wrong());
+    }
+    let (name, inside) = text
+        .split_once('(')
+        .and_then(|(name, rest)| {
+            rest.strip_suffix(')')
+                .map(|inside| (name.trim().to_ascii_lowercase(), inside))
+        })
+        .ok_or_else(wrong)?;
+    // `rgb(255, 214, 77)`, `rgba(255 214 77 / 50%)`: commas, spaces or a
+    // slash between the numbers, each of which may be a percentage of
+    // `full`, the most that number can be.
+    let parts: Vec<&str> = inside
+        .split(|c: char| c == ',' || c == '/' || c.is_whitespace())
+        .filter(|part| !part.is_empty())
+        .collect();
+    let number = |part: &str, full: f32| -> Result<f32, String> {
+        let value = match part.strip_suffix('%') {
+            Some(percent) => percent
+                .trim()
+                .parse::<f32>()
+                .map(|percent| percent / 100.0 * full),
+            None => part.parse::<f32>(),
+        };
+        value.map_err(|_| format!("{part:?} in {text:?} is not a number"))
+    };
+    let alpha = parts.get(3).map_or(Ok(1.0), |part| number(part, 1.0))?;
+    match (name.as_str(), parts.len()) {
+        ("rgb" | "rgba", 3 | 4) => Ok(Color::srgba(
+            number(parts[0], 255.0)? / 255.0,
+            number(parts[1], 255.0)? / 255.0,
+            number(parts[2], 255.0)? / 255.0,
+            alpha,
+        )),
+        ("hsl" | "hsla", 3 | 4) => {
+            let hsla = Hsla::new(
+                number(parts[0], 360.0)?,
+                number(parts[1], 1.0)?,
+                number(parts[2], 1.0)?,
+                alpha,
+            );
+            Ok(Color::Srgba(Srgba::from(hsla)))
+        }
+        _ => Err(wrong()),
+    }
+}
+
+/// Everything the file says.
+#[derive(Deserialize, PartialEq, Debug)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Ui {
+    pub colours: Colours,
+    pub words: Words,
+    pub car: Car,
+    pub melee: Melee,
+}
+
+/// How the car you drive goes (`drive`): every number of it, in metres,
+/// seconds and degrees, for tuning while playing. The file says what each
+/// is; [`Car::check`] keeps out a number the car would break on.
+#[derive(Deserialize, Clone, Copy, PartialEq, Debug)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Car {
+    /// Speeds, in metres a second: with the stick pushed all the way, with
+    /// the jump button held, and with the fist held.
+    pub cruise: f32,
+    pub boost: f32,
+    pub reverse: f32,
+    /// In metres a second a second: gaining speed cruising, gaining it
+    /// boosting or reversing, and losing it.
+    pub accel: f32,
+    pub boost_accel: f32,
+    pub brake: f32,
+    /// The tightest circle, as the radius its back wheels go round, in
+    /// metres, up to `easy_speed` metres a second; wider in proportion
+    /// faster.
+    pub tightest: f32,
+    pub easy_speed: f32,
+    /// How fast the front wheels turn, in degrees a second, and how far off
+    /// the stick, in degrees, they are turned all the way.
+    pub steer_rate: f32,
+    pub full_lock_at: f32,
+    /// The least speed, in metres a second, its steering turns it at with
+    /// the stick pushed: stopped against a wall, it comes round.
+    pub creep: f32,
+    /// The camera over the car, in metres: where it starts, and the nearest
+    /// and the furthest it zooms.
+    pub overhead: f32,
+    pub overhead_nearest: f32,
+    pub overhead_furthest: f32,
+    /// How its nose and its tail are felt for walls: each a circle of this
+    /// radius, in metres, its middle this far back from the car's very end,
+    /// between these heights over your feet; and how much of the move it
+    /// asked for the car has to make, as a share, before it counts as
+    /// stopped by what it met.
+    pub end_radius: f32,
+    pub end_back: f32,
+    pub felt_low: f32,
+    pub felt_high: f32,
+    pub stopped_short: f32,
+    /// The gun (the gift button held, in the car): how fast a bullet goes,
+    /// in metres a second; how long between bullets while the button is
+    /// held, in seconds; how far a bullet goes from where it was fired, in
+    /// metres, before it is gone; and its radius, in metres.
+    pub bullet_speed: f32,
+    pub bullet_every: f32,
+    pub bullet_range: f32,
+    pub bullet_radius: f32,
+}
+
+impl Car {
+    /// What is wrong with these numbers, if anything: one that is not a
+    /// number, or less than nothing (a rate under 0 would panic a clamp),
+    /// one the car divides by at 0, or a range inside out.
+    fn check(&self) -> Result<(), String> {
+        let all = [
+            ("cruise", self.cruise),
+            ("boost", self.boost),
+            ("reverse", self.reverse),
+            ("accel", self.accel),
+            ("boost_accel", self.boost_accel),
+            ("brake", self.brake),
+            ("tightest", self.tightest),
+            ("easy_speed", self.easy_speed),
+            ("steer_rate", self.steer_rate),
+            ("full_lock_at", self.full_lock_at),
+            ("creep", self.creep),
+            ("overhead", self.overhead),
+            ("overhead_nearest", self.overhead_nearest),
+            ("overhead_furthest", self.overhead_furthest),
+            ("end_radius", self.end_radius),
+            ("end_back", self.end_back),
+            ("felt_low", self.felt_low),
+            ("felt_high", self.felt_high),
+            ("stopped_short", self.stopped_short),
+            ("bullet_speed", self.bullet_speed),
+            ("bullet_every", self.bullet_every),
+            ("bullet_range", self.bullet_range),
+            ("bullet_radius", self.bullet_radius),
+        ];
+        for (name, value) in all {
+            if !value.is_finite() || value < 0.0 {
+                return Err(format!("car.{name} is {value}: it has to be a number, 0 or more"));
+            }
+        }
+        for (name, value) in [
+            ("tightest", self.tightest),
+            ("easy_speed", self.easy_speed),
+            ("full_lock_at", self.full_lock_at),
+            ("overhead_nearest", self.overhead_nearest),
+            ("bullet_every", self.bullet_every),
+            ("bullet_radius", self.bullet_radius),
+        ] {
+            if value <= 0.0 {
+                return Err(format!("car.{name} is {value}: it has to be more than 0"));
+            }
+        }
+        if !(self.overhead_nearest <= self.overhead && self.overhead <= self.overhead_furthest) {
+            return Err(format!(
+                "car.overhead is {}: it has to be between overhead_nearest ({}) and overhead_furthest ({})",
+                self.overhead, self.overhead_nearest, self.overhead_furthest
+            ));
+        }
+        if self.felt_low >= self.felt_high {
+            return Err(format!(
+                "car.felt_low ({}) has to be under car.felt_high ({})",
+                self.felt_low, self.felt_high
+            ));
+        }
+        if self.stopped_short > 1.0 {
+            return Err(format!("car.stopped_short is {}: it is a share, 0 to 1", self.stopped_short));
+        }
+        Ok(())
+    }
+}
+
+/// How a punch lands and knocks back whoever it hits (`start_punch`,
+/// `Shove::knock`): Minecraft 1.8.9's sword, as Hajun asked (2026-11-07:
+/// "pressing melee (the punch) actually deals 'knockback' (minecraft 1.8.9
+/// bedwars style melee knockback) ... make the melee time/cooldown numbers
+/// similar to minecraft 1.8.9 sword melee"), in metres, seconds and
+/// degrees, Minecraft's blocks a tick made metres a second (times 20). The
+/// file says what each is; [`Melee::check`] keeps out a number the punch
+/// would break on.
+#[derive(Deserialize, Clone, Copy, PartialEq, Debug)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Melee {
+    /// The swing: the arm out, and back, in seconds.
+    pub swing_out: f32,
+    pub swing_back: f32,
+    /// How far a punch reaches, in metres, from your middle to their
+    /// nearest side; and how far either side of straight ahead they may be,
+    /// in degrees, the whole cone.
+    pub reach: f32,
+    pub cone: f32,
+    /// How long after a punch lands on a body no other moves it, in
+    /// seconds.
+    pub hurt_time: f32,
+    /// How fast a body is knocked, in metres a second: away from the
+    /// puncher, and that much more if the puncher was on the move; and up.
+    pub knock_back: f32,
+    pub sprint_bonus: f32,
+    pub knock_up: f32,
+    /// What is left of the knock each twentieth of a second, from 0 to 1,
+    /// in the air and on the ground.
+    pub air_drag: f32,
+    pub ground_drag: f32,
+}
+
+impl Melee {
+    /// How long a punch takes, out and back, in seconds.
+    pub(crate) fn swing(&self) -> f32 {
+        self.swing_out + self.swing_back
+    }
+
+    /// What is wrong with these numbers, if anything: one that is not a
+    /// number or less than nothing, a swing of no time (which the arm's
+    /// reach divides by), a cone wider than all round, or a drag that
+    /// would make a knock grow.
+    fn check(&self) -> Result<(), String> {
+        let all = [
+            ("swing_out", self.swing_out),
+            ("swing_back", self.swing_back),
+            ("reach", self.reach),
+            ("cone", self.cone),
+            ("hurt_time", self.hurt_time),
+            ("knock_back", self.knock_back),
+            ("sprint_bonus", self.sprint_bonus),
+            ("knock_up", self.knock_up),
+            ("air_drag", self.air_drag),
+            ("ground_drag", self.ground_drag),
+        ];
+        for (name, value) in all {
+            if !value.is_finite() || value < 0.0 {
+                return Err(format!("melee.{name} is {value}: it has to be a number, 0 or more"));
+            }
+        }
+        for (name, value) in [("swing_out", self.swing_out), ("swing_back", self.swing_back)] {
+            if value <= 0.0 {
+                return Err(format!("melee.{name} is {value}: it has to be more than 0"));
+            }
+        }
+        if self.cone > 360.0 {
+            return Err(format!("melee.cone is {}: it is in degrees, all round at most", self.cone));
+        }
+        for (name, value) in [("air_drag", self.air_drag), ("ground_drag", self.ground_drag)] {
+            if value > 1.0 {
+                return Err(format!("melee.{name} is {value}: it is a share, 0 to 1"));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// The colours: what every screen shares, then each screen's own.
+#[derive(Deserialize, Clone, Copy, PartialEq, Debug)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Colours {
+    #[serde(deserialize_with = "colour")]
+    pub text: Color,
+    #[serde(deserialize_with = "colour")]
+    pub text_soft: Color,
+    #[serde(deserialize_with = "colour")]
+    pub text_shadow: Color,
+    #[serde(deserialize_with = "colour")]
+    pub gold: Color,
+    #[serde(deserialize_with = "colour")]
+    pub gold_lit: Color,
+    #[serde(deserialize_with = "colour")]
+    pub on_gold: Color,
+    #[serde(deserialize_with = "colour")]
+    pub warn: Color,
+    #[serde(deserialize_with = "colour")]
+    pub warn_lit: Color,
+    #[serde(deserialize_with = "colour")]
+    pub dim: Color,
+    #[serde(deserialize_with = "colour")]
+    pub dialog: Color,
+    #[serde(deserialize_with = "colour")]
+    pub panel: Color,
+    #[serde(deserialize_with = "colour")]
+    pub panel_lit: Color,
+    #[serde(deserialize_with = "colour")]
+    pub quiet: Color,
+    #[serde(deserialize_with = "colour")]
+    pub quiet_lit: Color,
+    #[serde(deserialize_with = "colour")]
+    pub off: Color,
+    #[serde(deserialize_with = "colour")]
+    pub off_text: Color,
+    #[serde(deserialize_with = "colour")]
+    pub close: Color,
+    #[serde(deserialize_with = "colour")]
+    pub close_rim: Color,
+    pub hud: HudColours,
+    pub signup: SignupColours,
+    pub settings: SettingsColours,
+    pub house_builder: HouseBuilderColours,
+    pub shop: ShopColours,
+    pub talk: TalkColours,
+    pub edit_menu: EditMenuColours,
+}
+
+#[derive(Deserialize, Clone, Copy, PartialEq, Debug)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct HudColours {
+    #[serde(deserialize_with = "colour")]
+    pub button: Color,
+    #[serde(deserialize_with = "colour")]
+    pub button_held: Color,
+    #[serde(deserialize_with = "colour")]
+    pub button_mark: Color,
+    #[serde(deserialize_with = "colour")]
+    pub name_plate: Color,
+    #[serde(deserialize_with = "colour")]
+    pub icon: Color,
+}
+
+#[derive(Deserialize, Clone, Copy, PartialEq, Debug)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct SignupColours {
+    #[serde(deserialize_with = "colour")]
+    pub page: Color,
+    #[serde(deserialize_with = "colour")]
+    pub field: Color,
+    #[serde(deserialize_with = "colour")]
+    pub field_lit: Color,
+    #[serde(deserialize_with = "colour")]
+    pub chosen: Color,
+    #[serde(deserialize_with = "colour")]
+    pub paper: Color,
+    #[serde(deserialize_with = "colour")]
+    pub paper_lit: Color,
+    #[serde(deserialize_with = "colour")]
+    pub ink: Color,
+    #[serde(deserialize_with = "colour")]
+    pub arrow: Color,
+}
+
+#[derive(Deserialize, Clone, Copy, PartialEq, Debug)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct SettingsColours {
+    #[serde(deserialize_with = "colour")]
+    pub window: Color,
+    #[serde(deserialize_with = "colour")]
+    pub blocked: Color,
+    #[serde(deserialize_with = "colour")]
+    pub blocked_text: Color,
+}
+
+#[derive(Deserialize, Clone, Copy, PartialEq, Debug)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct HouseBuilderColours {
+    #[serde(deserialize_with = "colour")]
+    pub star_off: Color,
+    #[serde(deserialize_with = "colour")]
+    pub results: Color,
+    #[serde(deserialize_with = "colour")]
+    pub row: Color,
+    #[serde(deserialize_with = "colour")]
+    pub your_row: Color,
+    #[serde(deserialize_with = "colour")]
+    pub silver: Color,
+    #[serde(deserialize_with = "colour")]
+    pub bronze: Color,
+    #[serde(deserialize_with = "colour")]
+    pub no_prize: Color,
+}
+
+#[derive(Deserialize, Clone, Copy, PartialEq, Debug)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ShopColours {
+    #[serde(deserialize_with = "colour")]
+    pub window: Color,
+    #[serde(deserialize_with = "colour")]
+    pub hammer_rim: Color,
+    #[serde(deserialize_with = "colour")]
+    pub handle: Color,
+    #[serde(deserialize_with = "colour")]
+    pub card: Color,
+    #[serde(deserialize_with = "colour")]
+    pub card_lit: Color,
+    #[serde(deserialize_with = "colour")]
+    pub card_off: Color,
+    #[serde(deserialize_with = "colour")]
+    pub picture_off: Color,
+    #[serde(deserialize_with = "colour")]
+    pub name_off: Color,
+    #[serde(deserialize_with = "colour")]
+    pub note: Color,
+}
+
+#[derive(Deserialize, Clone, Copy, PartialEq, Debug)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct TalkColours {
+    #[serde(deserialize_with = "colour")]
+    pub ink: Color,
+    #[serde(deserialize_with = "colour")]
+    pub paper: Color,
+    #[serde(deserialize_with = "colour")]
+    pub paper_lit: Color,
+    #[serde(deserialize_with = "colour")]
+    pub greyed: Color,
+}
+
+#[derive(Deserialize, Clone, Copy, PartialEq, Debug)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct EditMenuColours {
+    #[serde(deserialize_with = "colour")]
+    pub icon: Color,
+    #[serde(deserialize_with = "colour")]
+    pub trash: Color,
+    #[serde(deserialize_with = "colour")]
+    pub trash_held: Color,
+    #[serde(deserialize_with = "colour")]
+    pub trash_rim: Color,
+    #[serde(deserialize_with = "colour")]
+    pub confirm: Color,
+    #[serde(deserialize_with = "colour")]
+    pub confirm_held: Color,
+    #[serde(deserialize_with = "colour")]
+    pub confirm_rim: Color,
+    #[serde(deserialize_with = "colour")]
+    pub turn: Color,
+    #[serde(deserialize_with = "colour")]
+    pub turn_held: Color,
+    #[serde(deserialize_with = "colour")]
+    pub turn_rim: Color,
+}
+
+/// The words, screen by screen. One with `{something}` in it is filled in
+/// with [`fill`].
+#[derive(Deserialize, PartialEq, Debug)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Words {
+    pub welcome: String,
+    pub signup: SignupWords,
+    pub settings: SettingsWords,
+    pub house_builder: HouseBuilderWords,
+    pub shop: ShopWords,
+    pub talk: TalkWords,
+    pub online: OnlineWords,
+}
+
+#[derive(Deserialize, PartialEq, Debug)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct SignupWords {
+    pub title: String,
+    pub start: String,
+    pub have_account: String,
+    pub log_in: String,
+    pub not_available: String,
+    pub choose_name: String,
+    pub name_hint: String,
+    pub save: String,
+    pub choose_character: String,
+    pub change_later: String,
+}
+
+#[derive(Deserialize, PartialEq, Debug)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct SettingsWords {
+    pub graphics: String,
+    pub controls: String,
+    pub accounts: String,
+    pub not_signed_up: String,
+    pub guest: String,
+    pub not_online: String,
+    pub sign_in_google: String,
+    pub sign_in_apple: String,
+    pub delete_account: String,
+    pub edit_name: String,
+    pub cancel: String,
+    pub save: String,
+    pub delete_sure: String,
+    pub delete_warning: String,
+    pub delete: String,
+    pub deleting: String,
+    pub not_online_try: String,
+    pub could_not_delete: String,
+}
+
+#[derive(Deserialize, PartialEq, Debug)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct HouseBuilderWords {
+    pub name: String,
+    pub rules: String,
+    pub pitch: String,
+    pub cannot_pay: String,
+    pub play: String,
+    pub later: String,
+    pub players: String,
+    pub waiting: String,
+    pub match_found: String,
+    pub build_a_house: String,
+    pub theme_is: String,
+    pub who_lives_there: String,
+    pub theme: String,
+    pub your_house: String,
+    pub a_house: String,
+    pub whose_house: String,
+    pub rate: String,
+    pub being_rated: String,
+    pub you_won: String,
+    pub you_came: String,
+    pub you: String,
+    pub back_in: String,
+    pub exit: String,
+    pub play_again: String,
+    pub price: String,
+    pub need_coins: String,
+    pub reconnecting: String,
+    pub lost_connection: String,
+}
+
+#[derive(Deserialize, PartialEq, Debug)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ShopWords {
+    pub one_house: String,
+    pub house_first_openings: String,
+    pub house_first_hangings: String,
+}
+
+#[derive(Deserialize, PartialEq, Debug)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct TalkWords {
+    pub house_builder: String,
+    pub someone: String,
+    /// What the town's AIs say, and what you say back.
+    pub small_talk: Vec<(String, String)>,
+}
+
+#[derive(Deserialize, PartialEq, Debug)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct OnlineWords {
+    pub new_version: String,
+    pub update_to_play: String,
+}
+
+impl Ui {
+    /// The file as compiled in. `cargo test` reads it, so a build whose tests
+    /// pass cannot fail here.
+    pub(crate) fn built_in() -> Self {
+        read(BUILT_IN)
+            .unwrap_or_else(|error| panic!("assets/ui.ron, as built in, will not read: {error}"))
+    }
+}
+
+/// What `text` says, or what is wrong with it, with the line and column.
+fn read(text: &str) -> Result<Ui, String> {
+    let ui: Ui = ron::from_str(text).map_err(|error| error.to_string())?;
+    if ui.words.talk.small_talk.is_empty() {
+        return Err("talk.small_talk has nothing in it".into());
+    }
+    ui.car.check()?;
+    ui.melee.check()?;
+    Ok(ui)
+}
+
+pub(crate) fn plugin(app: &mut App) {
+    app.init_resource::<UiChanged>();
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    app.init_resource::<Watch>().add_systems(PreUpdate, reread);
+}
+
+/// The file on disk, as last looked at.
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+#[derive(Resource, Default)]
+struct Watch {
+    /// When it was last written, as of the last look: nothing until the
+    /// first look, so that the file on disk is read as the app opens, in
+    /// case it has changed since the build.
+    written: Option<std::time::SystemTime>,
+    /// What was wrong with it at the last look, if anything, so that the
+    /// same thing is not logged four times a second.
+    wrong: Option<String>,
+    /// Seconds since it was last looked at.
+    since: f32,
+}
+
+/// Reads the file again whenever it has been written since the last look,
+/// and if what it says differs, makes that what [`ui`] gives and changes
+/// [`UiChanged`]. A file that will not read is logged once, and looked at
+/// again every look until it does, as an editor may have been caught halfway
+/// through writing it.
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+fn reread(time: Res<Time<Real>>, mut watch: ResMut<Watch>, mut changed: ResMut<UiChanged>) {
+    watch.since += time.delta_secs();
+    if watch.since < LOOK_EVERY && watch.written.is_some() {
+        return;
+    }
+    watch.since = 0.0;
+    let Ok(written) = std::fs::metadata(PATH).and_then(|file| file.modified()) else {
+        return;
+    };
+    if watch.written == Some(written) && watch.wrong.is_none() {
+        return;
+    }
+    watch.written = Some(written);
+    let said = std::fs::read_to_string(PATH)
+        .map_err(|error| error.to_string())
+        .and_then(|text| read(&text));
+    match said {
+        Ok(new) => {
+            if watch.wrong.take().is_some() {
+                info!("assets/ui.ron reads again");
+            }
+            if *ui() != new {
+                *CURRENT
+                    .write()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner()) = Arc::new(new);
+                changed.set_changed();
+                info!("assets/ui.ron has changed: the screen is drawn from it again, and the car goes by it");
+            }
+        }
+        Err(error) => {
+            if watch.wrong.as_ref() != Some(&error) {
+                warn!("assets/ui.ron will not read ({error}): the last good one is kept");
+                watch.wrong = Some(error);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_file_built_in_reads() {
+        let ui = Ui::built_in();
+        assert_eq!(ui.words.signup.title, "Donggeurami Town");
+        assert!(ui.words.talk.small_talk.len() > 10);
+        // Every word is plain ASCII, which is all the built-in font draws.
+        for (says, back) in &ui.words.talk.small_talk {
+            assert!(says.is_ascii() && back.is_ascii(), "{says}");
+        }
+        assert!(ui.words.settings.guest.is_ascii());
+        // A colour's alpha is read: the dark behind a dialog is see-through.
+        assert!(ui.colours.dim.alpha() < 1.0);
+        assert_eq!(ui.colours.text.alpha(), 1.0);
+        // The car's numbers are read, and hang together.
+        assert!(ui.car.boost > ui.car.cruise && ui.car.cruise > ui.car.creep);
+        assert!(ui.car.overhead_nearest < ui.car.overhead && ui.car.overhead < ui.car.overhead_furthest);
+    }
+
+    #[test]
+    fn a_car_number_the_car_would_break_on_will_not_read() {
+        let with = |field: &str, value: &str| -> String {
+            let line = BUILT_IN
+                .lines()
+                .find(|line| line.trim_start().starts_with(&format!("{field}:")))
+                .unwrap_or_else(|| panic!("no car.{field} in the file"));
+            let number = line.trim_start().strip_prefix(&format!("{field}:")).unwrap().trim().trim_end_matches(',');
+            BUILT_IN.replacen(line, &line.replace(number, value), 1)
+        };
+        // Divided by.
+        assert!(read(&with("easy_speed", "0.0")).unwrap_err().contains("easy_speed"));
+        assert!(read(&with("full_lock_at", "0")).unwrap_err().contains("full_lock_at"));
+        // A rate under 0 would panic a clamp; a gun firing every 0 s would
+        // spawn without end.
+        assert!(read(&with("brake", "-1.0")).unwrap_err().contains("brake"));
+        assert!(read(&with("bullet_every", "0")).unwrap_err().contains("bullet_every"));
+        assert!(read(&with("steer_rate", "NaN")).is_err());
+        // Ranges inside out.
+        assert!(read(&with("overhead", "100.0")).unwrap_err().contains("overhead"));
+        assert!(read(&with("felt_high", "0.1")).unwrap_err().contains("felt_high"));
+        assert!(read(&with("stopped_short", "2.0")).unwrap_err().contains("stopped_short"));
+        // Any sensible number reads, written with a point or without.
+        assert_eq!(read(&with("cruise", "15")).unwrap().car.cruise, 15.0);
+        assert_eq!(read(&with("boost", "25.5")).unwrap().car.boost, 25.5);
+        assert_eq!(read(&with("end_back", "0")).unwrap().car.end_back, 0.0);
+    }
+
+    #[test]
+    fn a_file_that_will_not_read_says_what_is_wrong() {
+        assert!(read("(colours: (").is_err());
+        let misspelt = BUILT_IN.replacen("gold:", "glod:", 1);
+        let error = read(&misspelt).unwrap_err();
+        assert!(error.contains("glod") || error.contains("gold"), "{error}");
+        let missing = BUILT_IN.replacen("        text: \"#ffffff\",\n", "", 1);
+        assert!(read(&missing).unwrap_err().contains("text"));
+        let not_a_colour = BUILT_IN.replacen("\"#ffffff\"", "\"white\"", 1);
+        assert!(read(&not_a_colour).unwrap_err().contains("white"));
+    }
+
+    #[test]
+    fn a_colour_reads_in_any_web_form() {
+        let close = |a: Color, b: Color| {
+            let (a, b) = (a.to_srgba(), b.to_srgba());
+            [
+                a.red - b.red,
+                a.green - b.green,
+                a.blue - b.blue,
+                a.alpha - b.alpha,
+            ]
+            .iter()
+            .all(|off| off.abs() < 0.01)
+        };
+        let gold = Color::srgba(1.0, 0.84, 0.3, 1.0);
+        for text in [
+            "#ffd64c",
+            "#FFD64CFF",
+            " #ffd64c ",
+            "rgb(255, 214, 76)",
+            "rgba(255, 214, 76, 1)",
+            "rgb(255 214 76 / 100%)",
+            "hsl(46, 100%, 65%)",
+            "hsla(46, 100%, 65%, 1.0)",
+        ] {
+            let colour = parse_colour(text).unwrap();
+            assert!(close(colour, gold), "{text}: {colour:?}");
+        }
+        // Alpha, as hex, as a number and as a percentage.
+        assert!(close(
+            parse_colour("#fff8").unwrap(),
+            Color::srgba(1.0, 1.0, 1.0, 0.533)
+        ));
+        assert!(close(
+            parse_colour("#00000073").unwrap(),
+            Color::srgba(0.0, 0.0, 0.0, 0.45)
+        ));
+        assert!(close(
+            parse_colour("rgba(0, 0, 0, 45%)").unwrap(),
+            Color::srgba(0.0, 0.0, 0.0, 0.45)
+        ));
+        for bad in [
+            "#ffd64",
+            "gold",
+            "rgb(255, 214)",
+            "rgba(1, 2, 3, 4, 5)",
+            "(1.0, 0.84, 0.3, 1.0)",
+            "",
+        ] {
+            assert!(parse_colour(bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn a_word_is_filled_in() {
+        assert_eq!(
+            fill("You came {place}", &[("place", "3rd")]),
+            "You came 3rd"
+        );
+        assert_eq!(
+            fill("{count}/{seats} Players", &[("count", "3"), ("seats", "8")]),
+            "3/8 Players"
+        );
+        assert_eq!(fill("Play", &[("place", "3rd")]), "Play");
+    }
+}

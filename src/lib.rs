@@ -26,6 +26,7 @@ mod build;
 mod builder;
 mod car;
 mod clock;
+mod drive;
 mod editor;
 mod fountain;
 mod hud;
@@ -47,6 +48,7 @@ mod sky;
 mod sound;
 mod tags;
 mod talk;
+mod ui;
 use island::{Island, Islands, Venue};
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 use bevy::input::mouse::{MouseMotion, MouseScrollUnit, MouseWheel};
@@ -125,6 +127,11 @@ const WATER_MOVE_SCALE: f32 = 0.72;
 /// taller than this has to be jumped onto or walked round.
 const LAND_STEP_UP: f32 = 0.495;
 const OCEAN_LIMIT: f32 = 580.0;
+/// How far down into the void a body falls before it is dead, in metres,
+/// and put back where it arrived (`lobby::respawn_the_fallen`): a second's
+/// fall, well under the town's underside, 3 m down. Only over the void,
+/// where there is no sea to come down in (`island::bottomless`).
+pub(crate) const VOID_Y: f32 = -15.0;
 const CAMERA_DISTANCE: f32 = 10.0;
 /// The nearest the camera stands behind you, in metres. Zoomed in nearer, it
 /// goes into your eyes ([`SWAP_ZOOM`]). 2.5 until 2026-11-01, when Hajun
@@ -146,6 +153,11 @@ const CAMERA_DISTANCE_MAX: f32 = 18.0;
 const SWAP_ZOOM: f32 = 1.1;
 const ZOOM_WHEEL: f32 = 0.12;
 const CAMERA_FAR: f32 = 4000.0;
+// How far over you the camera stands as you get into the car (`drive`),
+// looking straight down, and the nearest and the furthest it zooms there,
+// are the file's, `assets/ui.ron`'s `car.overhead`, `overhead_nearest` and
+// `overhead_furthest` (24, 7 and 60 as first written: the car is 6.5 m long,
+// and the roads 12 m wide).
 const STICK_DEADZONE: f32 = 0.18;
 /// The stick: 22 until 2026-11-01, when Hajun asked for "slightly" bigger.
 /// It grows up and to the right from where its corner sits.
@@ -291,6 +303,13 @@ struct Intent {
     walk: Vec3,
     /// A jump, asked for this frame.
     jump: bool,
+    /// How fast to go along `walk`, in metres a second, in place of a walk's
+    /// own speed: the car's, driving it (`drive`), which the water does not
+    /// slow and which keeps to where it could drive back out of.
+    pace: Option<f32>,
+    /// Which way to face, if not the way it walks: the way the car faces,
+    /// reversing too.
+    face: Option<Vec3>,
 }
 
 /// A body that will not walk off dry land into the sea, nor down anything it
@@ -318,16 +337,12 @@ struct WalkCycle {
     speed: f32,
 }
 
-/// How long a punch takes, in seconds: the arm out, and back. Short enough
-/// to punch 4 to 8 times a second (Hajun, 2026-11-01: "dont make the
-/// animation too long so that user can press the attack button like 4~8
-/// time per second").
-const PUNCH_OUT: f32 = 0.07;
-const PUNCH_BACK: f32 = 0.11;
-const PUNCH_SECS: f32 = PUNCH_OUT + PUNCH_BACK;
 /// How far the arm swings forward from hanging, in radians: up to level in
 /// front (1.5 rad until 2026-11-01, when `playercharacter.glb` came, whose
-/// arms hang 12 degrees back of the shoulder).
+/// arms hang 12 degrees back of the shoulder). How long the punch takes,
+/// out and back, is the file's `melee.swing_out` and `swing_back`
+/// (`ui::Melee`; since 2026-11-07, Minecraft 1.8.9's six ticks; 0.07 and
+/// 0.11 s until then, for 4 to 8 a second, Hajun, 2026-11-01).
 const PUNCH_REACH: f32 = 1.7;
 
 /// The fist button, or F on desktop, pressed: a punch is asked for.
@@ -338,8 +353,10 @@ pub(crate) struct PunchPressed;
 /// the fist attack that activates each time u press the punch button"):
 /// the right arm swings straight out in front and back ([`punch_offset`];
 /// the two arms in turn for an hour, until Hajun asked for "only use right
-/// hand"). A press mid-punch starts the next at once, from the side. It is
-/// this device's alone: nothing of it goes over the network.
+/// hand"). A press mid-punch starts the next at once, from the side. The
+/// swing is this device's alone; what it lands on is knocked back
+/// ([`start_punch`], [`Shove`]), and that goes over the network as any move
+/// does.
 #[derive(Component, Default)]
 struct Punching {
     /// Seconds into it.
@@ -353,14 +370,61 @@ impl Punching {
     }
 
     /// How far out the arm is `age` seconds in, from 0 at the side to 1 at
-    /// full reach: out fast, and back a little slower.
-    fn reach(age: f32) -> f32 {
-        if age < PUNCH_OUT {
-            (age / PUNCH_OUT).clamp(0.0, 1.0)
+    /// full reach: out, and back a little slower, in the file's times.
+    fn reach(melee: &ui::Melee, age: f32) -> f32 {
+        if age < melee.swing_out {
+            (age / melee.swing_out).clamp(0.0, 1.0)
         } else {
-            (1.0 - (age - PUNCH_OUT) / PUNCH_BACK).clamp(0.0, 1.0)
+            (1.0 - (age - melee.swing_out) / melee.swing_back).clamp(0.0, 1.0)
         }
     }
+}
+
+/// What a body is carried along by after a punch lands on it
+/// ([`Shove::knock`]; since 2026-11-07, Hajun: "pressing melee (the punch)
+/// actually deals 'knockback' (minecraft 1.8.9 bedwars style melee
+/// knockback)"): across the ground, in metres a second, dying away as it
+/// goes ([`Motion::step`]), and how long it is still reeling from the last
+/// punch, in which no other moves it. Every body this device moves has one,
+/// yours and the AIs'; everyone else online is knocked by their own device
+/// (`net`), which this device tells through the server ([`Hit`]).
+#[derive(Component, Default)]
+pub(crate) struct Shove {
+    across: Vec2,
+    hurt: f32,
+}
+
+impl Shove {
+    /// Knocks the body, standing at `at`, back from a punch thrown from
+    /// `from`, as Minecraft 1.8.9 does: what it was carried by is halved
+    /// and the file's `knock_back` away from the puncher added, and
+    /// `sprint_bonus` more if the puncher was `running`; and it is thrown
+    /// up at `knock_up`, whatever rise it had halved first, and the whole
+    /// no more than that. Not within `hurt_time` of the last punch that
+    /// landed, while it is still reeling (Minecraft's ten ticks of hurt
+    /// resistance): whether this one took.
+    pub(crate) fn knock(&mut self, jump: &mut PlayerJump, from: Vec2, at: Vec2, running: bool) -> bool {
+        if self.hurt > 0.0 {
+            return false;
+        }
+        let melee = ui::ui().melee;
+        let away = (at - from).normalize_or(Vec2::NEG_Y);
+        let push = melee.knock_back + if running { melee.sprint_bonus } else { 0.0 };
+        self.across = self.across * 0.5 + away * push;
+        jump.velocity_y = (jump.velocity_y * 0.5 + melee.knock_up).min(melee.knock_up);
+        self.hurt = melee.hurt_time;
+        true
+    }
+}
+
+/// A punch of yours that landed on someone this device does not move,
+/// someone online ([`start_punch`]): told to the server, which tells their
+/// device to knock them (`net::relay_hits`). `running`, you were on the
+/// move as you hit them.
+#[derive(Message)]
+pub(crate) struct Hit {
+    pub(crate) victim: Entity,
+    pub(crate) running: bool,
 }
 
 #[derive(Component, Clone, Copy)]
@@ -420,20 +484,25 @@ pub(crate) enum ColliderShape {
 #[derive(Component)]
 struct ThirdPersonCamera;
 
-#[cfg(any(target_os = "android", target_os = "ios"))]
 #[derive(Component)]
 struct JoystickKnob;
 
-#[cfg(any(target_os = "android", target_os = "ios"))]
 #[derive(Component)]
 struct JumpButtonVisual;
 
 /// The stick or the jump button, which are put away while you talk to
 /// someone.
-#[cfg(any(target_os = "android", target_os = "ios"))]
 #[derive(Component)]
 struct TouchHud;
 
+/// The mouse, as a finger on the stick or the jump button on desktop
+/// ([`read_mouse_controls`]): an id no touch has.
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+const MOUSE_ID: u64 = u64::MAX;
+
+/// The stick and the jump button, as fingers hold them on a phone, and the
+/// mouse does on desktop (since 2026-11-06); what `read_player_input` and
+/// `drive::steer` walk and drive you by, on every platform.
 #[derive(Resource, Default)]
 struct TouchControls {
     stick_id: Option<u64>,
@@ -619,6 +688,24 @@ struct OrbitCamera {
     /// your eyes. At [`SWAP_ZOOM`] either way it goes into your eyes, or back
     /// out of them.
     past: f32,
+    /// Fixed straight down over you, as it is while you drive the car
+    /// (`drive`; Hajun, 2026-11-05: "the camera gets fixed as top down (can
+    /// still zoom in/out, but no auto follow rotate/direction/ no panning.
+    /// its fixed just follow the car's plane position no rotation.)"):
+    /// neither your fingers nor anything else turns it, and it zooms
+    /// between the file's `car.overhead_nearest` and `overhead_furthest`,
+    /// never into your eyes.
+    overhead: bool,
+}
+
+/// How the camera was turned and zoomed, to go back to
+/// ([`OrbitCamera::back_to`]).
+#[derive(Clone, Copy, Debug)]
+struct View {
+    yaw: f32,
+    pitch: f32,
+    distance: f32,
+    past: f32,
 }
 
 impl Default for OrbitCamera {
@@ -628,11 +715,29 @@ impl Default for OrbitCamera {
             pitch: CAMERA_PITCH,
             distance: CAMERA_DISTANCE,
             past: 1.0,
+            overhead: false,
         }
     }
 }
 
 impl OrbitCamera {
+    /// Fixed straight down over you, as the app opens (since 2026-11-07,
+    /// Hajun: "make the camera top down for even the player mode"; until
+    /// then behind you, [`OrbitCamera::behind`], and over you only in the
+    /// car): the file's `car.overhead` up, with the top of the screen north
+    /// (Blender's +Y, the game's -Z), the same wherever you are and
+    /// whichever way you face, so that the map is always the same way up.
+    /// Nothing turns it; it zooms.
+    fn top_down() -> Self {
+        Self {
+            yaw: 0.0,
+            pitch: PITCH_MAX,
+            distance: ui::ui().car.overhead,
+            past: 1.0,
+            overhead: true,
+        }
+    }
+
     /// Behind `body`, looking the way it faces, at the starting tilt and
     /// distance.
     fn behind(body: &Transform) -> Self {
@@ -643,12 +748,46 @@ impl OrbitCamera {
         }
     }
 
+    /// Fixes it straight down over you, the file's `car.overhead` up, turned
+    /// as it is: the top of the screen stays the way it was looking along
+    /// the ground. How it was, to go back to.
+    fn overhead(&mut self) -> View {
+        let was = View {
+            yaw: self.yaw,
+            pitch: self.pitch,
+            distance: self.distance,
+            past: self.past,
+        };
+        self.pitch = PITCH_MAX;
+        self.distance = ui::ui().car.overhead;
+        self.past = 1.0;
+        self.overhead = true;
+        was
+    }
+
+    /// Back to `view`, as it was turned and zoomed before it was fixed over
+    /// you.
+    fn back_to(&mut self, view: View) {
+        self.yaw = view.yaw;
+        self.pitch = view.pitch;
+        self.distance = view.distance;
+        self.past = view.past;
+        self.overhead = false;
+    }
+
     /// Zooms in, for a `ratio` under 1, or out: the camera stands that much
     /// nearer you or further off. Zoomed in on past as near as it stands, it
     /// goes into your eyes, and that is as far in as it zooms; zoomed out
     /// from there, it is straight back behind you, as near as it stands
-    /// (Hajun, 2026-10-09).
+    /// (Hajun, 2026-10-09). Over you, it stays over you, between the file's
+    /// `car.overhead_nearest` and `overhead_furthest`.
     fn zoom_by_ratio(&mut self, ratio: f32) {
+        if self.overhead {
+            let car = ui::ui().car;
+            self.distance = (self.distance * ratio).clamp(car.overhead_nearest, car.overhead_furthest);
+            self.past = 1.0;
+            return;
+        }
         if self.distance <= 0.0 {
             self.past = (self.past * ratio).max(1.0);
             if self.past >= SWAP_ZOOM {
@@ -673,7 +812,11 @@ impl OrbitCamera {
     }
 
     /// Turns the camera by a swipe or a move of the mouse of `delta` pixels.
+    /// Fixed over you, it does not turn.
     fn turn(&mut self, delta: Vec2) {
+        if self.overhead {
+            return;
+        }
         self.yaw -= delta.x * LOOK_SENSITIVITY;
         self.pitch = (self.pitch + delta.y * LOOK_SENSITIVITY).clamp(PITCH_MIN, PITCH_MAX);
     }
@@ -783,6 +926,11 @@ fn assist_camera(
     let riding = !dialog.0 && bus.is_some();
     assist.aboard = if riding { assist.aboard + dt } else { 0.0 };
 
+    // Fixed over you in the car, nothing brings it round.
+    if orbit.overhead {
+        assist.snap = None;
+        return;
+    }
     if let Some(yaw) = assist.snap {
         if snap_to(&mut orbit, yaw, dt) {
             assist.snap = None;
@@ -819,7 +967,6 @@ fn snap_to(orbit: &mut OrbitCamera, yaw: f32, dt: f32) -> bool {
     false
 }
 
-#[cfg(any(target_os = "android", target_os = "ios"))]
 struct HudLayout {
     stick_center: Vec2,
     stick_radius: f32,
@@ -827,7 +974,6 @@ struct HudLayout {
     jump_radius: f32,
 }
 
-#[cfg(any(target_os = "android", target_os = "ios"))]
 fn hud_layout(window: &Window) -> HudLayout {
     let width = window.width();
     let height = window.height();
@@ -884,11 +1030,15 @@ pub fn main() {
             }),
     )
     .init_resource::<TouchControls>()
-    .init_resource::<OrbitCamera>()
+    .insert_resource(OrbitCamera::top_down())
     .init_resource::<CameraAssist>()
     .init_resource::<CloseUp>()
     .add_message::<PunchPressed>()
+    .add_message::<Hit>()
     .add_systems(Startup, (setup_world, cluster_lights_on_the_cpu));
+    // The screen's colours and words, from `assets/ui.ron`, read again as
+    // it changes on desktop.
+    ui::plugin(&mut app);
     // The town's clock, the server's online, which the day, the fountain's
     // jet and the cars go by.
     clock::plugin(&mut app);
@@ -901,6 +1051,8 @@ pub fn main() {
     // The cars, two buses, that drive round the town's roads, and carry
     // whoever rides them.
     car::plugin(&mut app);
+    // The car you drive yourself, at the press of the face button.
+    drive::plugin(&mut app);
     // Everything standing on the town comes from the town save, so the map
     // has to be there before the editor can be pointed at any of it.
     map::plugin(&mut app);
@@ -934,17 +1086,17 @@ pub fn main() {
     // The music.
     sound::plugin(&mut app);
 
+    // The stick and the jump button, on every platform: fingers hold them
+    // on a phone, the mouse on desktop (below).
+    app.add_systems(Startup, setup_hud)
+        .add_systems(Update, (update_joystick_knob, update_jump_visual, hide_touch_hud));
+
     #[cfg(any(target_os = "android", target_os = "ios"))]
-    app.add_systems(Startup, setup_hud).add_systems(
+    app.add_systems(
         Update,
-        (
-            // This is also where a touch is handed to the editor, so it has to
-            // land before the editor reads the pointer.
-            read_touch_controls.before(editor::EditSystems),
-            update_joystick_knob,
-            update_jump_visual,
-            hide_touch_hud,
-        ),
+        // This is also where a touch is handed to the editor, so it has to
+        // land before the editor reads the pointer.
+        read_touch_controls.before(editor::EditSystems),
     );
 
     #[cfg(target_os = "android")]
@@ -961,6 +1113,10 @@ pub fn main() {
                 cursor_for_dialogs.after(builder::GameSystems),
                 read_mouse_look,
                 read_mouse_zoom,
+                // The mouse on the stick and the jump button, before the
+                // editor reads it for the town, so that a press on them is
+                // not a tap there.
+                read_mouse_controls.before(editor::read_desktop_pointer),
             ),
         );
         // No more frames than a fast screen needs.
@@ -969,7 +1125,20 @@ pub fn main() {
 
     app.add_systems(
         Update,
-        (read_player_input, start_punch, move_bodies, animate_walk, assist_camera, follow_camera).chain(),
+        (
+            read_player_input,
+            // Driving the car, the stick is the car's, and the car's move is
+            // the body's.
+            drive::steer,
+            start_punch,
+            move_bodies,
+            drive::settle,
+            drive::place,
+            animate_walk,
+            assist_camera,
+            follow_camera,
+        )
+            .chain(),
     );
     // Last, so that every schedule the plugins above made is there to change.
     one_thread_per_world(&mut app);
@@ -1115,9 +1284,11 @@ fn cluster_lights_on_the_cpu(settings: Option<ResMut<GlobalClusterSettings>>) {
 /// white, a little greyed (Hajun, 2026-10-31; until then the stick was white
 /// with a white rim, the jump button yellow with an arrow drawn in strokes).
 /// Neither takes a press for itself: `read_touch_controls` knows where they
-/// are.
-#[cfg(any(target_os = "android", target_os = "ios"))]
+/// are, and on desktop `read_mouse_controls`, which drives them with the
+/// mouse (since 2026-11-06, Hajun: "put on screen joystick and jump button
+/// on windows version too"; until then they were a phone's alone).
 fn setup_hud(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
+    let colours = ui::ui().colours.hud;
     commands
         .spawn((
             TouchHud,
@@ -1130,7 +1301,7 @@ fn setup_hud(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
                 border_radius: BorderRadius::all(Val::Percent(50.0)),
                 ..default()
             },
-            BackgroundColor(hud::TOUCH_DISC),
+            BackgroundColor(colours.button),
             Pickable::IGNORE,
         ))
         .with_child((
@@ -1144,7 +1315,7 @@ fn setup_hud(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
                 border_radius: BorderRadius::all(Val::Percent(50.0)),
                 ..default()
             },
-            BackgroundColor(hud::TOUCH_MARK),
+            BackgroundColor(colours.button_mark),
             Pickable::IGNORE,
         ));
 
@@ -1162,10 +1333,10 @@ fn setup_hud(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
             align_items: AlignItems::Center,
             ..default()
         },
-        BackgroundColor(hud::TOUCH_DISC),
+        BackgroundColor(colours.button),
         Pickable::IGNORE,
         children![(
-            ImageNode::new(images.add(hud::jump_arrow())).with_color(hud::TOUCH_MARK),
+            ImageNode::new(images.add(hud::jump_arrow())).with_color(colours.button_mark),
             Node {
                 width: Val::Percent(hud::JUMP_ARROW),
                 height: Val::Percent(hud::JUMP_ARROW),
@@ -1176,7 +1347,6 @@ fn setup_hud(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
     ));
 }
 
-#[cfg(any(target_os = "android", target_os = "ios"))]
 fn in_circle(point: Vec2, center: Vec2, radius: f32) -> bool {
     point.distance_squared(center) <= radius * radius
 }
@@ -1364,8 +1534,13 @@ fn read_touch_controls(
 /// leaves it alone, for running copies of the game side by side to try
 /// playing online: each would otherwise take the mouse from the other.
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
-fn lock_cursor(mut cursors: Query<&mut CursorOptions, With<PrimaryWindow>>) {
-    if std::env::var_os("RT_FREE_CURSOR").is_some() {
+/// Takes the cursor for looking round, as the app opens, unless
+/// `RT_FREE_CURSOR` is set: only when the camera is one that turns. Fixed
+/// over you (since 2026-11-07, [`OrbitCamera::top_down`]) there is nothing
+/// to look round with, and the cursor stays free for the stick, the
+/// buttons and the town.
+fn lock_cursor(orbit: Res<OrbitCamera>, mut cursors: Query<&mut CursorOptions, With<PrimaryWindow>>) {
+    if std::env::var_os("RT_FREE_CURSOR").is_some() || orbit.overhead {
         return;
     }
     let Ok(mut cursor) = cursors.single_mut() else {
@@ -1379,6 +1554,7 @@ fn lock_cursor(mut cursors: Query<&mut CursorOptions, With<PrimaryWindow>>) {
 fn grab_cursor(
     keyboard: Res<ButtonInput<KeyCode>>,
     dialog: Res<hud::DialogUp>,
+    orbit: Res<OrbitCamera>,
     mut cursors: Query<&mut CursorOptions, With<PrimaryWindow>>,
 ) {
     // With a dialog up, Escape is its no (`builder`), and the cursor is the
@@ -1390,12 +1566,14 @@ fn grab_cursor(
         return;
     };
     let locked = cursor.grab_mode == CursorGrabMode::Locked;
-    cursor.grab_mode = if locked {
+    // Fixed over you, the mouse has no camera to turn: Escape only ever
+    // lets the cursor go.
+    cursor.grab_mode = if locked || orbit.overhead {
         CursorGrabMode::None
     } else {
         CursorGrabMode::Locked
     };
-    cursor.visible = locked;
+    cursor.visible = locked || orbit.overhead;
 }
 
 /// Lets the cursor go while a dialog is up, so that its buttons can be
@@ -1474,7 +1652,69 @@ fn read_mouse_zoom(
     }
 }
 
-#[cfg(any(target_os = "android", target_os = "ios"))]
+/// The mouse on the stick and the jump button, with the cursor free
+/// (Escape), as a finger is on a phone (since 2026-11-06, Hajun: "put on
+/// screen joystick and jump button on windows version too"): pressed on the
+/// stick's disc, the mouse holds the stick, pushing it toward wherever the
+/// cursor goes until the button comes up, and pressed on the jump button it
+/// jumps, or boosts the car for as long as it is held. A press on either
+/// is theirs, not a tap on the town (`editor::read_desktop_pointer` asks
+/// [`TouchControls::has_the_mouse`]), and one on a button over the world
+/// is the button's. With the cursor taken for looking round there is no
+/// cursor to press with: the keys walk you, as ever.
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+fn read_mouse_controls(
+    mouse: Res<ButtonInput<MouseButton>>,
+    windows: Query<&Window>,
+    cursors: Query<&CursorOptions, With<PrimaryWindow>>,
+    presses: hud::Presses,
+    mut controls: ResMut<TouchControls>,
+) {
+    controls.jump_just_pressed = false;
+    let free = cursors
+        .single()
+        .is_ok_and(|cursor| cursor.grab_mode == CursorGrabMode::None);
+    let Ok(window) = windows.single() else {
+        return;
+    };
+    let position = window.cursor_position().filter(|_| free);
+    if !mouse.pressed(MouseButton::Left) || position.is_none() {
+        if controls.stick_id == Some(MOUSE_ID) {
+            controls.stick_id = None;
+            controls.stick_value = Vec2::ZERO;
+        }
+        if controls.jump_id == Some(MOUSE_ID) {
+            controls.jump_id = None;
+        }
+    }
+    let Some(pos) = position else {
+        return;
+    };
+    let layout = hud_layout(window);
+    if mouse.just_pressed(MouseButton::Left) && !presses.claimed(window, pos) {
+        if controls.stick_id.is_none() && in_circle(pos, layout.stick_center, layout.stick_radius * 1.15) {
+            controls.stick_id = Some(MOUSE_ID);
+        } else if controls.jump_id.is_none() && in_circle(pos, layout.jump_center, layout.jump_radius * 1.2) {
+            controls.jump_id = Some(MOUSE_ID);
+            controls.jump_just_pressed = true;
+        }
+    }
+    if controls.stick_id == Some(MOUSE_ID) {
+        let delta = pos - layout.stick_center;
+        let raw = Vec2::new(delta.x, -delta.y) / layout.stick_radius;
+        controls.stick_value = raw.clamp_length_max(1.0);
+    }
+}
+
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+impl TouchControls {
+    /// Whether the mouse is on the stick or the jump button, so that its
+    /// press is not also a tap on the town.
+    pub(crate) fn has_the_mouse(&self) -> bool {
+        self.stick_id == Some(MOUSE_ID) || self.jump_id == Some(MOUSE_ID)
+    }
+}
+
 fn update_joystick_knob(
     controls: Res<TouchControls>,
     mut knobs: Query<&mut Node, With<JoystickKnob>>,
@@ -1493,7 +1733,6 @@ fn update_joystick_knob(
     }
 }
 
-#[cfg(any(target_os = "android", target_os = "ios"))]
 fn update_jump_visual(
     controls: Res<TouchControls>,
     mut buttons: Query<&mut BackgroundColor, With<JumpButtonVisual>>,
@@ -1502,16 +1741,16 @@ fn update_jump_visual(
         return;
     };
     let held = controls.jump_id.is_some();
+    let colours = ui::ui().colours.hud;
     color.set_if_neq(BackgroundColor(if held {
-        hud::TOUCH_DISC_HELD
+        colours.button_held
     } else {
-        hud::TOUCH_DISC
+        colours.button
     }));
 }
 
 /// Puts the stick and the jump button away while the camera is on someone
 /// you talk to (`talk`): what they say is along the bottom of the screen.
-#[cfg(any(target_os = "android", target_os = "ios"))]
 fn hide_touch_hud(close_up: Res<CloseUp>, mut huds: Query<&mut Visibility, With<TouchHud>>) {
     let shown = if close_up.on.is_some() {
         Visibility::Hidden
@@ -1539,7 +1778,13 @@ fn wading(pos: Vec3) -> bool {
 /// half into it, and once the edge was over its knees, was shoved out
 /// sideways and dropped (Hajun: it "glitch steps").
 fn support(ground: &Ground, pos: Vec3, elapsed: f32) -> (f32, Underfoot) {
-    let sea = water_rest_y(elapsed);
+    // Over the void there is no sea bed: a body off the land falls for
+    // good, until it is dead and put back (`lobby::respawn_the_fallen`).
+    let sea = if ground.bottomless {
+        f32::NEG_INFINITY
+    } else {
+        water_rest_y(elapsed)
+    };
     let reach = pos.y + LAND_STEP_UP;
     let under = |at: Vec2| match ground.floor(at, reach) {
         Some((height, on)) if height > sea => (height, on),
@@ -1618,6 +1863,9 @@ impl Deck<'_> {
 pub(crate) struct Ground<'a> {
     island: &'a Island,
     decks: &'a [Deck<'a>],
+    /// Nothing under the island but the void (`island::bottomless`): off
+    /// it a body falls, rather than coming down in the sea.
+    bottomless: bool,
 }
 
 /// What a body stands on: its island, or one of the decks on it, by where it
@@ -1632,7 +1880,11 @@ impl<'a> Ground<'a> {
     /// The island alone, with nothing moving on it.
     #[cfg(test)]
     fn bare(island: &'a Island) -> Self {
-        Self { island, decks: &[] }
+        Self {
+            island,
+            decks: &[],
+            bottomless: false,
+        }
     }
 
     /// The highest ground at `at` no higher than `reach`, and what it is.
@@ -2039,17 +2291,22 @@ pub(crate) fn bind_limbs(
     bound
 }
 
-fn apply_planar_move(transform: &mut Transform, world_dir: Vec3, distance: f32, dt: f32) {
+/// Moves `transform` `distance` along `world_dir`, across the ground, turning
+/// it to face that way over `dt`; or to face `face`, if there is one, at
+/// once: the body in the car faces the way the car does, reversing too, and
+/// the car turns as smoothly as it steers.
+fn apply_planar_move(transform: &mut Transform, world_dir: Vec3, distance: f32, dt: f32, face: Option<Vec3>) {
     let mut dir = world_dir;
     dir.y = 0.0;
     let Some(dir) = dir.try_normalize() else {
         return;
     };
+    let facing = face.and_then(|face| face.with_y(0.0).try_normalize()).unwrap_or(dir);
     let target = Transform::from_translation(transform.translation)
-        .looking_at(transform.translation + dir, Vec3::Y)
+        .looking_at(transform.translation + facing, Vec3::Y)
         .rotation;
     let angle = transform.rotation.angle_between(target);
-    if angle <= f32::EPSILON {
+    if face.is_some() || angle <= f32::EPSILON {
         transform.rotation = target;
     } else {
         let step = (TURN_SPEED * dt / angle).min(1.0);
@@ -2133,6 +2390,7 @@ type Bodies<'w, 's> = Query<
         &'static Intent,
         &'static mut PlayerJump,
         &'static mut Riding,
+        &'static mut Shove,
         Has<StaysAshore>,
     ),
 >;
@@ -2155,6 +2413,7 @@ pub(crate) fn move_bodies(
 ) {
     let dt = time.delta_secs();
     let elapsed = time.elapsed_secs();
+    let melee = ui::ui().melee;
     let fixed: Vec<(Vec3, Collider, Venue)> = fixed
         .iter()
         .map(|(solid, collider, venue)| (solid.translation, *collider, *venue))
@@ -2185,7 +2444,7 @@ pub(crate) fn move_bodies(
                 .filter(|(other, _, _, at, ..)| *other != mover && **at == venue)
                 .map(|(_, other, collider, ..)| (other.translation, *collider)),
         );
-        let Ok((_, mut body, _, _, intent, mut jump, mut riding, stays_ashore)) = bodies.get_mut(mover)
+        let Ok((_, mut body, _, _, intent, mut jump, mut riding, mut shove, stays_ashore)) = bodies.get_mut(mover)
         else {
             continue;
         };
@@ -2204,13 +2463,15 @@ pub(crate) fn move_bodies(
             ground: Ground {
                 island,
                 decks: &decks,
+                bottomless: island::bottomless(venue),
             },
             solids: &solids,
             stays_ashore,
             dt,
             elapsed,
+            melee,
         };
-        match motion.step(&mut transform, &mut jump, intent) {
+        match motion.step(&mut transform, &mut jump, &mut shove, intent) {
             Some(Underfoot::Deck(deck)) => on = Some(decks[deck].car),
             Some(Underfoot::Island) => on = None,
             None => {}
@@ -2230,19 +2491,29 @@ struct Motion<'a> {
     dt: f32,
     /// The game's time, which the sea bobs by.
     elapsed: f32,
+    /// How a knock dies away (`air_drag`, `ground_drag`).
+    melee: ui::Melee,
 }
 
 impl Motion<'_> {
-    /// Walks, jumps and drops `transform`, as `intent` asks, for one frame:
-    /// and what it ends the frame standing on, if anything, or `None` in the
+    /// Walks, jumps and drops `transform`, as `intent` asks, and carries it
+    /// along by whatever `shove` a punch left it with, for one frame: and
+    /// what it ends the frame standing on, if anything, or `None` in the
     /// air.
-    fn step(&self, transform: &mut Transform, jump: &mut PlayerJump, intent: &Intent) -> Option<Underfoot> {
+    fn step(
+        &self,
+        transform: &mut Transform,
+        jump: &mut PlayerJump,
+        shove: &mut Shove,
+        intent: &Intent,
+    ) -> Option<Underfoot> {
         let Motion {
             ground,
             solids,
             stays_ashore,
             dt,
             elapsed,
+            melee,
         } = *self;
         let (support_y, _) = support(&ground, transform.translation, elapsed);
         let grounded = transform.translation.y <= support_y + WATER_JUMP_SLOP;
@@ -2250,26 +2521,51 @@ impl Motion<'_> {
 
         let speed_scale = intent.walk.length().min(1.0);
         if speed_scale > 0.0 {
-            let speed = if slowed {
-                MOVE_SPEED * WATER_MOVE_SCALE
-            } else {
-                MOVE_SPEED
+            let speed = match intent.pace {
+                Some(pace) => pace,
+                None if slowed => MOVE_SPEED * WATER_MOVE_SCALE,
+                None => MOVE_SPEED,
             };
+            // A body driven keeps to where it could drive back out of, as an
+            // AI keeps to where it could walk back: neither can jump.
+            let ashore = stays_ashore || intent.pace.is_some();
             // In steps no longer than the lattice the island is tested on, so
             // that one slow frame cannot carry the player clean through a fence.
             let distance = speed * speed_scale * dt;
             let steps = (distance / island::LATTICE).ceil().max(1.0);
             for _ in 0..steps as u32 {
                 let from = transform.translation;
-                apply_planar_move(transform, intent.walk, distance / steps, dt / steps);
+                apply_planar_move(transform, intent.walk, distance / steps, dt / steps, intent.face);
                 keep_off_deck_walls(from, &mut transform.translation, &ground);
                 resolve_player_solids(&mut transform.translation, solids, &ground);
-                if stays_ashore && strands(ground.island, from, transform.translation) {
+                if ashore && strands(ground.island, from, transform.translation) {
                     transform.translation = from;
                     break;
                 }
             }
         }
+
+        // Knocked by a punch, the body is carried along through the same
+        // walls and bodies as a walk, without turning to face the way it
+        // goes, and off any edge: nothing keeps an AI on its island from a
+        // punch, which is what knocks one into the void. What carries it
+        // dies away as Minecraft's does, by the tick, faster on the ground.
+        if shove.across != Vec2::ZERO {
+            let along = Vec3::new(shove.across.x, 0.0, shove.across.y) * dt;
+            let steps = (along.length() / island::LATTICE).ceil().max(1.0);
+            for _ in 0..steps as u32 {
+                let from = transform.translation;
+                transform.translation += along / steps;
+                keep_off_deck_walls(from, &mut transform.translation, &ground);
+                resolve_player_solids(&mut transform.translation, solids, &ground);
+            }
+            let drag = if grounded { melee.ground_drag } else { melee.air_drag };
+            shove.across *= drag.powf(dt * 20.0);
+            if shove.across.length_squared() < 0.01 {
+                shove.across = Vec2::ZERO;
+            }
+        }
+        shove.hurt = (shove.hurt - dt).max(0.0);
 
         if intent.jump {
             jump.buffer = JUMP_BUFFER;
@@ -2328,22 +2624,93 @@ impl Motion<'_> {
 
 /// Starts a punch each time the fist button is pressed, or F on desktop,
 /// unless a dialog is up: the next arm, from the start, whatever the last
-/// was doing.
+/// was doing. In the car the fist is the reverse (`drive`), and there is no
+/// punch.
+///
+/// And lands it (since 2026-11-07, Hajun: "deals 'knockback' ... if done
+/// while both facing the other player/ai and pressed when within range"):
+/// on the nearest body in front of you, within the file's `melee.reach` of
+/// your middle to their side and `melee.cone` of the way you face, and no
+/// higher or lower than a body's height (Minecraft 1.8.9's three blocks
+/// from the eyes to the hitbox, with the crosshair on it), at the moment
+/// of the press, as Minecraft lands a click. An AI, or anyone this device
+/// moves, is knocked back on the spot ([`Shove::knock`]); someone online
+/// is told through the server ([`Hit`], `net::relay_hits`), and their own
+/// device knocks them. Hit on the move, they go further, as from a
+/// sprinting hit.
+#[allow(clippy::too_many_arguments)]
 fn start_punch(
     mut pressed: MessageReader<PunchPressed>,
     keyboard: Res<ButtonInput<KeyCode>>,
     dialog: Res<hud::DialogUp>,
-    me: Query<Entity, With<Player>>,
+    driving: Res<drive::Driving>,
+    me: Query<(Entity, &Transform, &Venue, &Intent), With<Player>>,
+    others: Query<(Entity, &Transform, &Venue), (With<WalkCycle>, Without<Player>)>,
+    mut shoves: Query<(&mut Shove, &mut PlayerJump), Without<Player>>,
+    mut hits: MessageWriter<Hit>,
     mut commands: Commands,
 ) {
     let asked = pressed.read().count() > 0 || keyboard.just_pressed(KeyCode::KeyF);
-    if !asked || dialog.0 {
+    if !asked || dialog.0 || driving.on() {
         return;
     }
-    let Ok(you) = me.single() else {
+    let Ok((you, body, &venue, intent)) = me.single() else {
         return;
     };
     commands.entity(you).insert(Punching::next());
+    let melee = ui::ui().melee;
+    let at = body.translation.xz();
+    let facing = body.forward().xz().normalize_or(Vec2::NEG_Y);
+    debug!("punch thrown from {at}, facing {facing}");
+    let Some((victim, there)) = punch_lands(
+        &melee,
+        at,
+        body.translation.y,
+        facing,
+        others
+            .iter()
+            .filter(|(_, _, on)| **on == venue)
+            .map(|(other, transform, _)| (other, transform.translation)),
+    ) else {
+        return;
+    };
+    let running = intent.walk.length() >= 0.5;
+    match shoves.get_mut(victim) {
+        Ok((mut shove, mut jump)) => {
+            let took = shove.knock(&mut jump, at, there, running);
+            debug!("punch landed on {victim}, {:.2} m off{}", at.distance(there), if took { "" } else { ", still reeling" });
+        }
+        Err(_) => {
+            debug!("punch landed on {victim} online, {:.2} m off", at.distance(there));
+            hits.write(Hit { victim, running });
+        }
+    }
+}
+
+/// Whom a punch thrown from `at`, `feet` up, facing `facing`, lands on,
+/// of the `bodies` there, each by where its feet are: the nearest within
+/// `melee.reach` of the puncher's middle to its side and within
+/// `melee.cone` of the way they face, no further up or down than a body's
+/// height; and where it stands.
+fn punch_lands(
+    melee: &ui::Melee,
+    at: Vec2,
+    feet: f32,
+    facing: Vec2,
+    bodies: impl Iterator<Item = (Entity, Vec3)>,
+) -> Option<(Entity, Vec2)> {
+    let half_cone = melee.cone.to_radians() * 0.5;
+    bodies
+        .filter_map(|(body, there)| {
+            let off = there.xz() - at;
+            let far = off.length();
+            if far < 1e-3 || far - PLAYER_RADIUS > melee.reach || (there.y - feet).abs() > PLAYER_HEIGHT {
+                return None;
+            }
+            (facing.angle_to(off / far).abs() <= half_cone).then_some((far, body, there.xz()))
+        })
+        .min_by(|a, b| a.0.total_cmp(&b.0))
+        .map(|(_, body, there)| (body, there))
 }
 
 pub(crate) fn animate_walk(
@@ -2353,6 +2720,8 @@ pub(crate) fn animate_walk(
     mut commands: Commands,
 ) {
     let dt = time.delta_secs();
+    let melee = ui::ui().melee;
+    let swing = melee.swing();
     for (body, mut walk, punch) in &mut walks {
         let target = if walk.speed > 0.04 { 1.0 } else { 0.0 };
         walk.weight = walk.weight.lerp(target, (dt * WALK_BLEND).min(1.0));
@@ -2363,7 +2732,7 @@ pub(crate) fn animate_walk(
         }
         if let Some(mut punch) = punch {
             punch.age += dt;
-            if punch.age >= PUNCH_SECS {
+            if punch.age >= swing {
                 commands.entity(body).remove::<Punching>();
             }
         }
@@ -2374,8 +2743,8 @@ pub(crate) fn animate_walk(
         };
         // The right arm punches; every other limb walks.
         let punching = punch
-            .filter(|punch| punch.age < PUNCH_SECS && matches!(bone.kind, WalkBoneKind::ArmR))
-            .and_then(|punch| punch_offset(bone.kind, bone.stance, Punching::reach(punch.age)));
+            .filter(|punch| punch.age < swing && matches!(bone.kind, WalkBoneKind::ArmR))
+            .and_then(|punch| punch_offset(bone.kind, bone.stance, Punching::reach(&melee, punch.age)));
         let offset =
             punching.unwrap_or_else(|| walk_offset(bone.kind, walk.phase.sin(), walk.weight, bone.stance));
         let rotation = bone.turned(offset);
@@ -2406,6 +2775,7 @@ pub(crate) fn follow_camera(
     mut close_up: ResMut<CloseUp>,
     islands: Res<Islands>,
     cars: Decks,
+    driving: Res<drive::Driving>,
     mut players: Query<(&Transform, &Venue, &mut Visibility), With<Player>>,
     mut cameras: Query<&mut Transform, (With<ThirdPersonCamera>, Without<Player>)>,
 ) {
@@ -2419,6 +2789,7 @@ pub(crate) fn follow_camera(
     let ground = islands.get(venue).map(|island| Ground {
         island,
         decks: &decks,
+        bottomless: island::bottomless(venue),
     });
     let mut view = camera_view(&orbit, player, ground);
     let blend = close_up.step(time.delta_secs());
@@ -2429,8 +2800,8 @@ pub(crate) fn follow_camera(
             .with_rotation(view.rotation.slerp(near.rotation, eased));
     }
     // Both only written when they change, so that a camera at rest is not
-    // taken for one that moved.
-    body.set_if_neq(if inside_you(view.translation, player) {
+    // taken for one that moved. In the car, you are the car (`drive`).
+    body.set_if_neq(if driving.on() || inside_you(view.translation, player) {
         Visibility::Hidden
     } else {
         Visibility::Inherited
@@ -2832,14 +3203,18 @@ mod camera_tests {
     }
 
     #[test]
-    fn a_punch_goes_out_and_back_in_well_under_a_quarter_second() {
-        // Fast enough to throw 4 to 8 a second.
-        assert!(PUNCH_SECS <= 0.25, "{PUNCH_SECS}");
-        assert_eq!(Punching::reach(0.0), 0.0);
-        assert_eq!(Punching::reach(PUNCH_OUT), 1.0);
-        assert_eq!(Punching::reach(PUNCH_SECS), 0.0);
-        assert!(Punching::reach(PUNCH_OUT * 0.5) > 0.0 && Punching::reach(PUNCH_OUT * 0.5) < 1.0);
-        assert!(Punching::reach(PUNCH_OUT + PUNCH_BACK * 0.5) > 0.0);
+    fn a_punch_goes_out_and_back_in_about_minecraft_s_six_ticks() {
+        let melee = ui::ui().melee;
+        let swing = melee.swing();
+        // Minecraft 1.8.9's swing is six ticks, 0.3 s; and still fast
+        // enough to throw several a second.
+        assert!((swing - 0.3).abs() <= 0.1, "{swing}");
+        assert_eq!(Punching::reach(&melee, 0.0), 0.0);
+        assert_eq!(Punching::reach(&melee, melee.swing_out), 1.0);
+        assert_eq!(Punching::reach(&melee, swing), 0.0);
+        let half = melee.swing_out * 0.5;
+        assert!(Punching::reach(&melee, half) > 0.0 && Punching::reach(&melee, half) < 1.0);
+        assert!(Punching::reach(&melee, melee.swing_out + melee.swing_back * 0.5) > 0.0);
         assert_eq!(Punching::next().age, 0.0);
         // At full reach both arms are swung forward by the same turn, hung as
         // the walk hangs them; at none they are as they hang, standing still.
@@ -3101,6 +3476,122 @@ mod ground_tests {
     use super::*;
 
     #[test]
+    fn over_the_void_a_body_falls_for_ever_and_over_the_sea_it_wades() {
+        let nothing = island::Island::new(&[]);
+        let step = |bottomless: bool| {
+            let motion = Motion {
+                ground: Ground {
+                    island: &nothing,
+                    decks: &[],
+                    bottomless,
+                },
+                solids: &[],
+                stays_ashore: false,
+                dt: 1.0 / 60.0,
+                elapsed: 0.0,
+                melee: ui::ui().melee,
+            };
+            let mut transform = Transform::from_xyz(0.0, 0.25, 0.0);
+            let mut jump = PlayerJump::default();
+            let mut shove = Shove::default();
+            let mut footing = None;
+            for _ in 0..120 {
+                footing = motion.step(&mut transform, &mut jump, &mut shove, &Intent::default());
+            }
+            (transform.translation.y, footing)
+        };
+        // Two seconds off the edge of the town: dead, and never stood on
+        // anything.
+        let (y, footing) = step(true);
+        assert!(y < VOID_Y, "{y}");
+        assert_eq!(footing, None);
+        // Off any other island: wading on the sea bed.
+        let (y, footing) = step(false);
+        assert!(y > WATER_Y - 1.5 && y < WATER_Y, "{y}");
+        assert_eq!(footing, Some(Underfoot::Island));
+    }
+
+    #[test]
+    fn a_punch_knocks_a_body_back_and_up_and_not_again_while_it_reels() {
+        let melee = ui::ui().melee;
+        let mut shove = Shove::default();
+        let mut jump = PlayerJump::default();
+        let (from, at) = (Vec2::ZERO, Vec2::new(2.0, 0.0));
+        assert!(shove.knock(&mut jump, from, at, false));
+        assert!((shove.across - Vec2::new(melee.knock_back, 0.0)).length() < 1e-4, "{}", shove.across);
+        assert_eq!(jump.velocity_y, melee.knock_up);
+        // Reeling, the next punch does nothing; after, it halves what is
+        // left and adds its own, more for a punch on the move, and the
+        // rise is never more than one knock's.
+        assert!(!shove.knock(&mut jump, from, at, true));
+        shove.hurt = 0.0;
+        assert!(shove.knock(&mut jump, from, at, true));
+        let expected = melee.knock_back * 0.5 + melee.knock_back + melee.sprint_bonus;
+        assert!((shove.across.x - expected).abs() < 1e-3, "{}", shove.across);
+        assert!(jump.velocity_y <= melee.knock_up);
+
+        // Carried along, it dies away: in the air slowly, Minecraft's 0.91
+        // a tick, and on the ground within a few frames.
+        let flat = island::Island::new(&[
+            [Vec3::new(-50.0, 0.0, -50.0), Vec3::new(-50.0, 0.0, 50.0), Vec3::new(50.0, 0.0, 50.0)],
+            [Vec3::new(-50.0, 0.0, -50.0), Vec3::new(50.0, 0.0, 50.0), Vec3::new(50.0, 0.0, -50.0)],
+        ]);
+        let motion = Motion {
+            ground: Ground::bare(&flat),
+            solids: &[],
+            stays_ashore: false,
+            dt: 1.0 / 60.0,
+            elapsed: 0.0,
+            melee,
+        };
+        let mut transform = Transform::from_xyz(0.0, 0.0, 0.0);
+        let mut jump = PlayerJump::default();
+        let mut shove = Shove {
+            across: Vec2::new(melee.knock_back, 0.0),
+            hurt: 0.0,
+        };
+        jump.velocity_y = melee.knock_up;
+        let mut rose = false;
+        for _ in 0..180 {
+            motion.step(&mut transform, &mut jump, &mut shove, &Intent::default());
+            rose |= transform.translation.y > 0.5;
+        }
+        assert!(rose, "never left the ground");
+        assert_eq!(shove.across, Vec2::ZERO, "still carried after three seconds");
+        let went = transform.translation.x;
+        assert!(went > 1.5 && went < 6.0, "{went} m from one punch standing still");
+    }
+
+    #[test]
+    fn a_punch_lands_on_the_nearest_body_in_front_and_in_reach() {
+        let melee = ui::ui().melee;
+        let a = Entity::from_bits(1);
+        let b = Entity::from_bits(2);
+        let c = Entity::from_bits(3);
+        let d = Entity::from_bits(4);
+        let facing = Vec2::NEG_Y;
+        let bodies = || {
+            [
+                // Ahead, in reach; ahead, nearer; behind; and ahead but up on
+                // a roof.
+                (a, Vec3::new(0.0, 0.0, -3.0)),
+                (b, Vec3::new(0.3, 0.0, -1.5)),
+                (c, Vec3::new(0.0, 0.0, 2.0)),
+                (d, Vec3::new(0.0, 4.0, -1.0)),
+            ]
+            .into_iter()
+        };
+        let hit = punch_lands(&melee, Vec2::ZERO, 0.0, facing, bodies());
+        assert_eq!(hit.map(|(body, _)| body), Some(b));
+        // Out of reach: nobody.
+        let far = punch_lands(&melee, Vec2::ZERO, 0.0, facing, [(a, Vec3::new(0.0, 0.0, -(melee.reach + 1.0)))].into_iter());
+        assert_eq!(far, None);
+        // Facing away from them all: nobody.
+        let away = punch_lands(&melee, Vec2::ZERO, 0.0, Vec2::X, bodies());
+        assert_eq!(away, None);
+    }
+
+    #[test]
     fn a_wall_counted_on_its_own_is_solid_under_a_gable_inside_out() {
         // A wall of one of the town's houses, made again round its holes,
         // standing on the house's floor on the ground, and the Square
@@ -3202,12 +3693,14 @@ mod body_tests {
                     stays_ashore: false,
                     dt: DT,
                     elapsed: frame as f32 * DT,
+                    melee: ui::ui().melee,
                 };
                 let intent = Intent {
                     walk,
                     jump: jump_on == Some(frame),
+                    ..default()
                 };
-                motion.step(&mut transform, &mut jump, &intent);
+                motion.step(&mut transform, &mut jump, &mut Shove::default(), &intent);
                 transform.translation
             })
             .collect()
@@ -3308,17 +3801,23 @@ mod body_tests {
                 }
                 let decks = [deck];
                 let motion = Motion {
-                    ground: Ground { island: ground, decks: &decks },
+                    ground: Ground {
+                        island: ground,
+                        decks: &decks,
+                        bottomless: false,
+                    },
                     solids: &[],
                     stays_ashore: false,
                     dt: DT,
                     elapsed: frame as f32 * DT,
+                    melee: ui::ui().melee,
                 };
                 let intent = Intent {
                     walk,
                     jump: jump_on == Some(frame),
+                    ..default()
                 };
-                let footing = motion.step(&mut transform, &mut jump, &intent);
+                let footing = motion.step(&mut transform, &mut jump, &mut Shove::default(), &intent);
                 match footing {
                     Some(Underfoot::Deck(_)) => riding = true,
                     Some(Underfoot::Island) => riding = false,

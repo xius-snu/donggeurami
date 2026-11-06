@@ -18,8 +18,9 @@ use bevy::prelude::*;
 use bevy::ui_widgets::ScrollArea;
 
 use crate::build::{Ghost, Mount, PIECES, Piece, PieceDef, Shadow, Stock, Tab};
-use crate::builder::{self, Building, DIALOG_LAYER, DIM, InGame, QUIET};
-use crate::hud::{self, DOOR, DialogUp, GOLD, TakesPress};
+use crate::builder::{self, Building, DIALOG_LAYER, InGame};
+use crate::hud::{self, DialogUp, TakesPress};
+use crate::ui::ui;
 
 /// Where the hammer sits: top right, below and in from where a button that
 /// went home and back sat in the town until 2026-10-31.
@@ -44,14 +45,8 @@ const CLOSE: f32 = 9.0;
 /// rather than a drag to scroll the grid.
 const TAP_SLOP: f32 = 16.0;
 
-const WINDOW: Color = Color::srgba(0.04, 0.10, 0.18, 0.86);
-const CARD: Color = Color::srgba(1.0, 1.0, 1.0, 0.1);
-const CARD_LIT: Color = Color::srgba(1.0, 1.0, 1.0, 0.22);
-const CARD_OFF: Color = Color::srgba(1.0, 1.0, 1.0, 0.04);
-const PICTURE_OFF: Color = Color::srgba(1.0, 1.0, 1.0, 0.3);
-const NAME_OFF: Color = Color::srgba(1.0, 1.0, 1.0, 0.35);
-const NOTE: Color = Color::srgb(1.0, 0.82, 0.6);
-const HANDLE: Color = Color::srgb(0.96, 0.78, 0.52);
+// The colours and the notes are `assets/ui.ron`'s (`ui`): the window, the
+// cards, lit and greyed out, the note over the grid, and the hammer.
 
 /// A piece chosen in the shop, to be put down.
 #[derive(Message, Clone, Copy)]
@@ -115,7 +110,7 @@ fn spawn_hammer(mut commands: Commands) {
                 ..default()
             },
             BackgroundColor(hud::button_fill(Interaction::None)),
-            BorderColor::all(Color::srgba(1.0, 1.0, 1.0, 0.5)),
+            BorderColor::all(ui().colours.shop.hammer_rim),
             Visibility::Hidden,
             children![(
                 hud::picture(),
@@ -129,13 +124,14 @@ fn spawn_hammer(mut commands: Commands) {
 
 /// A hammer, upright: a handle, and a head across the top of it.
 fn hammer() -> impl Bundle {
+    let colours = ui().colours;
     children![
         (
             Node {
                 border_radius: BorderRadius::all(Val::Percent(50.0)),
                 ..hud::frame(45.5, 34.0, 9.0, 50.0)
             },
-            BackgroundColor(HANDLE),
+            BackgroundColor(colours.shop.handle),
             Pickable::IGNORE,
         ),
         (
@@ -143,7 +139,7 @@ fn hammer() -> impl Bundle {
                 border_radius: BorderRadius::all(Val::Percent(22.0)),
                 ..hud::frame(23.0, 17.0, 54.0, 19.0)
             },
-            BackgroundColor(hud::ICON),
+            BackgroundColor(colours.hud.icon),
             Pickable::IGNORE,
         ),
     ]
@@ -210,7 +206,7 @@ fn spawn_window(commands: &mut Commands, stock: &Stock, tab: Tab, house: bool) -
                 align_items: AlignItems::FlexStart,
                 ..default()
             },
-            BackgroundColor(DIM),
+            BackgroundColor(ui().colours.dim),
             GlobalZIndex(DIALOG_LAYER),
         ))
         .id();
@@ -227,7 +223,7 @@ fn spawn_window(commands: &mut Commands, stock: &Stock, tab: Tab, house: bool) -
                 border_radius: BorderRadius::all(Val::VMin(3.5)),
                 ..default()
             },
-            BackgroundColor(WINDOW),
+            BackgroundColor(ui().colours.shop.window),
         ))
         .id();
 
@@ -255,7 +251,7 @@ fn spawn_window(commands: &mut Commands, stock: &Stock, tab: Tab, house: bool) -
     };
     let offered: Vec<&'static PieceDef> = PIECES.iter().filter(|def| def.tab == tab).collect();
     if let Some(why) = note(tab, house, offered.iter().any(|def| !able(def))) {
-        commands.spawn((ChildOf(panel), hud::words(why, NOTE_TEXT, NOTE)));
+        commands.spawn((ChildOf(panel), hud::words(why, NOTE_TEXT, ui().colours.shop.note)));
     }
 
     commands
@@ -284,22 +280,25 @@ fn spawn_window(commands: &mut Commands, stock: &Stock, tab: Tab, house: bool) -
 }
 
 /// Why some of what `tab` shows cannot be chosen, if any of it cannot.
-fn note(tab: Tab, house: bool, any_off: bool) -> Option<&'static str> {
+fn note(tab: Tab, house: bool, any_off: bool) -> Option<String> {
     if !any_off {
         return None;
     }
+    let ui = ui();
+    let words = &ui.words.shop;
     Some(match tab {
-        Tab::Foundation if house => "One house to a plot: bin yours to choose another.",
-        Tab::Openings => "Put a house down first: these go in its walls.",
-        _ => "Put a house down first to hang things on its walls.",
+        Tab::Foundation if house => words.one_house.clone(),
+        Tab::Openings => words.house_first_openings.clone(),
+        _ => words.house_first_hangings.clone(),
     })
 }
 
 fn tab_button(tab: Tab, chosen: bool) -> impl Bundle {
+    let colours = ui().colours;
     let (fill, ink) = if chosen {
-        (GOLD, DOOR)
+        (colours.gold, colours.on_gold)
     } else {
-        (QUIET, Color::WHITE)
+        (colours.quiet, colours.text)
     };
     (
         ShopButton::Tab(tab),
@@ -322,10 +321,11 @@ fn tab_button(tab: Tab, chosen: bool) -> impl Bundle {
 /// One piece in the grid: its picture and its name, on a card that takes up a
 /// third of the grid's width and half its height.
 fn cell(stock: &Stock, def: &'static PieceDef, able: bool) -> impl Bundle {
+    let colours = ui().colours;
     let (card, picture, name) = if able {
-        (CARD, Color::WHITE, Color::WHITE)
+        (colours.shop.card, colours.text, colours.text)
     } else {
-        (CARD_OFF, PICTURE_OFF, NAME_OFF)
+        (colours.shop.card_off, colours.shop.picture_off, colours.shop.name_off)
     };
     (
         Node {
@@ -383,8 +383,8 @@ fn close_button() -> impl Bundle {
             border_radius: BorderRadius::all(Val::Percent(50.0)),
             ..default()
         },
-        BackgroundColor(Color::srgba(0.72, 0.2, 0.2, 0.92)),
-        BorderColor::all(Color::srgba(1.0, 1.0, 1.0, 0.7)),
+        BackgroundColor(ui().colours.close),
+        BorderColor::all(ui().colours.close_rim),
         children![
             (
                 hud::shape(22.0, 44.0, 56.0, 12.0),
@@ -484,10 +484,11 @@ fn light_cards(
 ) {
     for (interaction, button, mut fill) in &mut cards {
         let lit = *interaction != Interaction::None;
+        let colours = ui().colours.shop;
         let colour = match *button {
-            ShopButton::Piece(_, true) if lit => CARD_LIT,
-            ShopButton::Piece(_, true) => CARD,
-            ShopButton::Piece(_, false) => CARD_OFF,
+            ShopButton::Piece(_, true) if lit => colours.card_lit,
+            ShopButton::Piece(_, true) => colours.card,
+            ShopButton::Piece(_, false) => colours.card_off,
             ShopButton::Tab(_) | ShopButton::Close => continue,
         };
         fill.set_if_neq(BackgroundColor(colour));

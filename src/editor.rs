@@ -74,7 +74,8 @@ pub(crate) const RING_SCALE: f32 = 0.82;
 const RING_THICKNESS: f32 = 0.12;
 const RING_LIFT: f32 = 0.03;
 
-const ICON: Color = Color::srgba(1.0, 1.0, 1.0, 0.92);
+// The menu's colours are `assets/ui.ron`'s (`ui`): the pictures on its
+// buttons, and each button's fill, held and not, and its rim.
 
 /// The editor proper, after whatever filled [`EditPointer`] on this platform.
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -135,9 +136,8 @@ impl EditPointer {
         self.travel = 0.0;
     }
 
-    /// A press the editor is not tracking — the joystick, or the jump button.
-    /// Only touch has presses it does not follow; a mouse has the one.
-    #[cfg(any(target_os = "android", target_os = "ios"))]
+    /// A press the editor is not tracking — the joystick, or the jump button,
+    /// under a finger or, since 2026-11-06, the mouse.
     pub(crate) fn note_press(&mut self) {
         self.pressed_anywhere = true;
     }
@@ -273,19 +273,23 @@ impl EditButton {
     }
 
     fn fill(self, held: bool) -> Color {
-        let alpha = if held { 0.62 } else { 0.36 };
-        match self {
-            Self::Trash => Color::srgba(1.0, 0.36, 0.33, alpha),
-            Self::Confirm => Color::srgba(0.36, 0.84, 0.46, alpha),
-            Self::RotateRight | Self::RotateLeft => Color::srgba(0.36, 0.66, 1.0, alpha),
+        let colours = crate::ui::ui().colours.edit_menu;
+        match (self, held) {
+            (Self::Trash, false) => colours.trash,
+            (Self::Trash, true) => colours.trash_held,
+            (Self::Confirm, false) => colours.confirm,
+            (Self::Confirm, true) => colours.confirm_held,
+            (Self::RotateRight | Self::RotateLeft, false) => colours.turn,
+            (Self::RotateRight | Self::RotateLeft, true) => colours.turn_held,
         }
     }
 
     fn edge(self) -> Color {
+        let colours = crate::ui::ui().colours.edit_menu;
         match self {
-            Self::Trash => Color::srgba(1.0, 0.5, 0.47, 0.62),
-            Self::Confirm => Color::srgba(0.6, 1.0, 0.68, 0.62),
-            Self::RotateRight | Self::RotateLeft => Color::srgba(0.55, 0.78, 1.0, 0.62),
+            Self::Trash => colours.trash_rim,
+            Self::Confirm => colours.confirm_rim,
+            Self::RotateRight | Self::RotateLeft => colours.turn_rim,
         }
     }
 }
@@ -568,11 +572,12 @@ pub(crate) fn plugin(app: &mut App) {
 /// where nothing but the player's own back is ever under it, so there is
 /// nothing to aim at and nothing to click.
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
-fn read_desktop_pointer(
+pub(crate) fn read_desktop_pointer(
     mouse: Res<ButtonInput<MouseButton>>,
     windows: Query<&Window>,
     cursors: Query<&CursorOptions, With<PrimaryWindow>>,
     presses: hud::Presses,
+    controls: Res<crate::TouchControls>,
     mut pointer: ResMut<EditPointer>,
 ) {
     pointer.clear_edges();
@@ -594,9 +599,16 @@ fn read_desktop_pointer(
     pointer.lost = false;
     pointer.track(position);
     // A click on a button over the world — the one top right, House
-    // Builder's — is the button's, not a tap on the town.
-    if mouse.just_pressed(MouseButton::Left) && !presses.claimed(window, position) {
-        pointer.press();
+    // Builder's — is the button's, not a tap on the town; and one on the
+    // stick or the jump button is theirs (`read_mouse_controls`, which
+    // reads the mouse first), though it still dismisses a menu, as a
+    // finger on them does on a phone.
+    if mouse.just_pressed(MouseButton::Left) {
+        if controls.has_the_mouse() {
+            pointer.note_press();
+        } else if !presses.claimed(window, position) {
+            pointer.press();
+        }
     }
     // So only a press that was taken here comes back up here.
     if mouse.just_released(MouseButton::Left) && pointer.held {
@@ -1146,7 +1158,7 @@ fn icon_part(
             border_radius: BorderRadius::all(Val::Percent(radius)),
             ..default()
         },
-        BackgroundColor(ICON),
+        BackgroundColor(crate::ui::ui().colours.edit_menu.icon),
         UiTransform::from_rotation(Rot2::degrees(rotation)),
     )
 }
@@ -1154,7 +1166,7 @@ fn icon_part(
 /// The circular arrow in the middle of a turn button, `flipped` for the one
 /// that turns the other way.
 fn turn_arrow(image: &Handle<Image>, flipped: bool) -> impl Bundle {
-    let mut arrow = ImageNode::new(image.clone()).with_color(ICON);
+    let mut arrow = ImageNode::new(image.clone()).with_color(crate::ui::ui().colours.edit_menu.icon);
     arrow.flip_x = flipped;
     (
         Node {

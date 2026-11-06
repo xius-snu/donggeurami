@@ -2602,6 +2602,7 @@ dependencies = [
  "bevy_replicon_renet",
  "fastrand",
  "ring",
+ "ron",
  "roundtown_net",
  "rustls",
  "serde",

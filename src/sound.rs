@@ -1,4 +1,6 @@
-//! What the town sounds like (Hajun, 2026-10-30): music all the time.
+//! What the town sounds like (Hajun, 2026-10-30): music all the time. Off
+//! for now ([`PLAYING`]; Hajun, 2026-11-02: "just disable the music from
+//! playing temporarily"), everything else kept as it is.
 //!
 //! The music, "Pelican Breeze - An Evening at the Bar", plays from the start
 //! and round again whenever it ends, wherever you are. It goes quiet while
@@ -17,6 +19,10 @@ use bevy::window::AppLifecycle;
 /// The music, under `assets/`.
 pub(crate) const MUSIC: &str = "sounds/Pelican Breeze - An Evening at the Bar.mp3";
 
+/// Whether the music plays at all: off for now (Hajun, 2026-11-02: "just
+/// disable the music from playing temporarily"). Flip it to have it back.
+const PLAYING: bool = false;
+
 /// How loud the music plays, of how loud it was made: -30 dBFS on average
 /// (its own is -17.9). It was 0.5 until Hajun found it too loud (2026-10-30).
 const MUSIC_VOLUME: f32 = 0.25;
@@ -34,6 +40,9 @@ pub(crate) fn plugin(app: &mut App) {
 /// as it goes, 56 MB for this one, so the music is started over instead
 /// (`play_again`), from the file.
 fn play_music(assets: Res<AssetServer>, mut commands: Commands) {
+    if !PLAYING {
+        return;
+    }
     commands.spawn((
         Name::new("Music"),
         Music,

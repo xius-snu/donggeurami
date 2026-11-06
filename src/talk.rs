@@ -2,15 +2,17 @@
 //! door of their house (Hajun, 2026-10-31).
 //!
 //! Walk up to any of them and a small round chat bubble, three dots in it,
-//! comes up over their head: over one at a time, the nearest in front of you
-//! ([`choose`]), so that there is never one to pick from another and no aiming
-//! at it. Tap it, or on desktop press E, and the camera comes in to their face
-//! from your eyes (`CloseUp`) as they stop and turn to you: what they say is
-//! along the bottom of the screen, and what you can say back is over it, on
-//! the right. A tap anywhere, or on what you say back, and you are done: the
-//! camera goes back out to where it was, and they carry on.
+//! comes up over their head: over one at a time, the nearest to you
+//! whichever way you face ([`choose`]), so that there is never one to pick
+//! from another and no aiming at it. Tap it, or on desktop press E, and the
+//! camera comes in to their face from your eyes (`CloseUp`) as they stop and
+//! turn to you: what they say is along the bottom of the screen, and what you
+//! can say back is over it, on the right. A tap anywhere, or on what you say
+//! back, and you are done: the camera goes back out to where it was, and they
+//! carry on.
 //!
-//! An AI says something at random ([`SMALL_TALK`]), and you answer in a word.
+//! An AI says something at random (`small_talk` in `assets/ui.ron`, as the
+//! colours and the rest of the words are, `ui`), and you answer in a word.
 //! The House Builder asks whether you want to play their game
 //! (`builder::pitch`): Play is House Builder's to deal with, and Later is
 //! goodbye.
@@ -27,18 +29,18 @@ use crate::hud::{self, DialogUp, TakesPress};
 use crate::island::{Island, Islands, Venue};
 use crate::lobby::Balance;
 use crate::tags::{self, HidesNames, Tagged};
+use crate::ui::ui;
 use crate::{CloseUp, EYE_HEIGHT, Player, ThirdPersonCamera};
 
 /// How near someone has to be for the bubble to come up over them, in
-/// metres, and how far round from straight ahead of you, as the cosine of
-/// the angle: 70°.
+/// metres, whichever way you face (Hajun, 2026-11-02: "it should be
+/// irrelevant where the player is facing, just their xy location"; until
+/// then they had to be within 70° of straight ahead of you as well).
 const REACH: f32 = 4.5;
-const IN_FRONT: f32 = 0.34;
-/// How far off, and how far round, someone the bubble is over can go before
-/// it leaves them: a little further than it takes to come up, so that it does
-/// not come and go at the edge. 80° round.
+/// How far off someone the bubble is over can go before it leaves them: a
+/// little further than it takes to come up, so that it does not come and go
+/// at the edge (and 80° round, while facing counted).
 const KEEP_REACH: f32 = 5.0;
-const KEEP_IN_FRONT: f32 = 0.17;
 /// How much nearer someone else has to be to take the bubble from whoever
 /// has it, in metres.
 const NEARER_BY: f32 = 0.5;
@@ -86,44 +88,11 @@ const OUTLINE: f32 = 0.45;
 const RISE_FROM: f32 = 40.0;
 const RISE_SECS: f32 = 0.3;
 
-/// Black outlines and words on white: the bubble's look, which what is said
-/// and the replies share. A reply lit up while pressed, and one that cannot
-/// be chosen.
-const INK: Color = Color::srgb(0.05, 0.05, 0.06);
-const PAPER: Color = Color::srgba(1.0, 1.0, 1.0, 0.97);
-const PAPER_LIT: Color = Color::srgba(0.86, 0.86, 0.87, 0.97);
-const GREYED: Color = Color::srgb(0.62, 0.62, 0.64);
-
-/// What the House Builder is called, as they talk to you.
-const HOUSE_BUILDER: &str = "House Builder";
-
-/// What the town's AIs say, and what you say back: one of these, at random.
-/// The built-in font is plain ASCII, so these are too.
-const SMALL_TALK: &[(&str, &str)] = &[
-    ("Hi there! Isn't Donggeurami Town lovely today?", "It really is!"),
-    (
-        "Did you know the fountain throws you up in the air if you stand in its top bowl?",
-        "I'll try it!",
-    ),
-    ("The buses go all the way round town. Hop on one sometime!", "Sounds fun!"),
-    (
-        "I heard the House Builder is looking for builders. Have you played?",
-        "Maybe later!",
-    ),
-    ("I love walking round the pond. It's so peaceful here.", "Me too!"),
-    ("When the street lamps come on at night, the whole town glows.", "I'll stay up for it!"),
-    ("Have you seen the sunset? The sky goes all pink and orange.", "Not yet!"),
-    ("I'm just out for a stroll. Lovely weather for it!", "Enjoy your walk!"),
-    ("Someday I want a house with a roof terrace.", "Good luck!"),
-    ("Can you hear the music? I could listen to it all day.", "It's catchy!"),
-    ("I tried to jump onto a bus roof once. Way too high!", "Nice try!"),
-    ("Every house in town has a door that opens. I checked them all!", "That's dedication!"),
-    ("Careful by the pond. It's shallow, but my shoes still got wet!", "I'll be careful!"),
-    ("Hello! Have we met before? You look familiar.", "Nice to meet you!"),
-    ("I'm saving up my coins for something special.", "Good idea!"),
-    ("The stars come out at night. Have you ever looked up?", "I'll look tonight!"),
-    ("Sometimes I just stand here and watch the buses go by.", "Sounds relaxing!"),
-];
+// Black outlines and words on white, the bubble's look, which what is said
+// and the replies share, a reply lit up while pressed and one that cannot
+// be chosen; what the House Builder is called as they talk to you; and what
+// the town's AIs say, and what you say back, one of them at random: all
+// `assets/ui.ron`'s (`ui`).
 
 /// Someone you can talk to, and what about.
 #[derive(Component, Clone, Copy, PartialEq, Eq, Debug)]
@@ -253,8 +222,9 @@ fn spawn_bubble(mut images: ResMut<Assets<Image>>, mut commands: Commands) {
     ));
 }
 
-/// Who the bubble is over: the nearest of those you can talk to in front of
-/// you, in the town, while nothing else is up and the camera is your own.
+/// Who the bubble is over: the nearest of those you can talk to, whichever
+/// way you face, in the town, while nothing else is up and the camera is
+/// your own.
 #[allow(clippy::too_many_arguments)]
 fn choose(
     time: Res<Time>,
@@ -264,19 +234,23 @@ fn choose(
     up: Res<DialogUp>,
     close_up: Res<CloseUp>,
     conversation: Res<Conversation>,
+    driving: Res<crate::drive::Driving>,
     mut prompt: ResMut<Prompt>,
 ) {
+    // Nobody is spoken to from the car (`drive`).
     let over = me
         .single()
         .ok()
-        .filter(|&(_, &here)| here == Venue::Town && !up.0 && !close_up.busy() && conversation.with.is_none())
+        .filter(|&(_, &here)| {
+            here == Venue::Town && !up.0 && !close_up.busy() && conversation.with.is_none() && !driving.on()
+        })
         .and_then(|(you, &here)| {
             let island = islands.get(here)?;
             let them = speakers
                 .iter()
                 .filter(|&(_, _, &on, shown)| on == here && shown.get())
                 .map(|(who, at, ..)| (who, at.translation()));
-            nearest_in_front(you, them, prompt.over, |from, to| in_sight(island, from, to))
+            nearest_to(you, them, prompt.over, |from, to| in_sight(island, from, to))
         });
     if prompt.over != over {
         prompt.over = over;
@@ -287,32 +261,24 @@ fn choose(
 }
 
 /// Of `them`, by where their feet are, the one the bubble goes over for
-/// someone standing at `you`: the nearest within [`REACH`], in front of them,
-/// and in sight (`clear`, from eyes to face); unless whoever has it `now` still
-/// has it by the looser [`KEEP_REACH`], and nobody is [`NEARER_BY`] nearer.
-fn nearest_in_front(
+/// someone standing at `you`: the nearest within [`REACH`] along the ground,
+/// whichever way you face, and in sight (`clear`, from eyes to face); unless
+/// whoever has it `now` still has it by the looser [`KEEP_REACH`], and nobody
+/// is [`NEARER_BY`] nearer.
+fn nearest_to(
     you: &Transform,
     them: impl Iterator<Item = (Entity, Vec3)>,
     now: Option<Entity>,
     clear: impl Fn(Vec3, Vec3) -> bool,
 ) -> Option<Entity> {
-    let ahead = you.forward().xz().normalize_or_zero();
     let eyes = you.translation + Vec3::Y * EYE_HEIGHT;
     let mut nearest: Option<(f32, Entity)> = None;
     let mut kept = None;
     for (who, feet) in them {
         let holds = now == Some(who);
-        let (reach, wide) = if holds {
-            (KEEP_REACH, KEEP_IN_FRONT)
-        } else {
-            (REACH, IN_FRONT)
-        };
-        let across = feet.xz() - you.translation.xz();
-        let far = across.length();
+        let reach = if holds { KEEP_REACH } else { REACH };
+        let far = (feet.xz() - you.translation.xz()).length();
         if far > reach || (feet.y - you.translation.y).abs() > HIGHER {
-            continue;
-        }
-        if far > 1e-3 && across.dot(ahead) / far < wide {
             continue;
         }
         if !clear(eyes, feet + Vec3::Y * FACE) {
@@ -462,20 +428,25 @@ fn begin(
             .entity(who)
             .try_remove::<TurningBack>()
             .try_insert(Listening { rest });
+        let ui = ui();
+        let words = &ui.words;
         let (name, line, replies) = match speaker {
             Speaker::Townsfolk => {
-                let line = small_talk(conversation.said);
+                let line = small_talk(conversation.said, words.talk.small_talk.len());
                 conversation.said = Some(line);
-                let (says, back) = SMALL_TALK[line];
-                let name = name.map_or("Someone", Name::as_str);
-                (name.to_owned(), says.to_owned(), vec![(Reply::Bye, back, true)])
+                let (says, back) = &words.talk.small_talk[line];
+                let name = name.map_or(words.talk.someone.as_str(), Name::as_str);
+                (name.to_owned(), says.clone(), vec![(Reply::Bye, back.as_str(), true)])
             }
             Speaker::HouseBuilder => {
                 let affordable = me.single().is_ok_and(|balance| balance.0 >= ENTRY);
                 (
-                    HOUSE_BUILDER.to_owned(),
+                    words.talk.house_builder.clone(),
                     builder::pitch(affordable),
-                    vec![(Reply::Play, "Play", affordable), (Reply::Bye, "Later", true)],
+                    vec![
+                        (Reply::Play, words.house_builder.play.as_str(), affordable),
+                        (Reply::Bye, words.house_builder.later.as_str(), true),
+                    ],
                 )
             }
         };
@@ -486,12 +457,12 @@ fn begin(
     }
 }
 
-/// Which of [`SMALL_TALK`] to say: any but `last`.
-fn small_talk(last: Option<usize>) -> usize {
-    let Some(last) = last else {
-        return fastrand::usize(..SMALL_TALK.len());
+/// Which of the `count` lines of small talk to say: any but `last`.
+fn small_talk(last: Option<usize>, count: usize) -> usize {
+    let Some(last) = last.filter(|&last| last < count && count > 1) else {
+        return fastrand::usize(..count);
     };
-    let line = fastrand::usize(..SMALL_TALK.len() - 1);
+    let line = fastrand::usize(..count - 1);
     if line >= last { line + 1 } else { line }
 }
 
@@ -661,6 +632,7 @@ fn spawn_talk(
     line: &str,
     replies: &[(Reply, &str, bool)],
 ) {
+    let colours = ui().colours;
     let screen = commands
         .spawn((
             TalkUi,
@@ -724,8 +696,8 @@ fn spawn_talk(
             border_radius: BorderRadius::all(Val::VMin(4.0)),
             ..default()
         },
-        BackgroundColor(PAPER),
-        BorderColor::all(INK),
+        BackgroundColor(colours.talk.paper),
+        BorderColor::all(colours.talk.ink),
         children![
             // Who is talking, on a tab over the top edge.
             (
@@ -737,9 +709,9 @@ fn spawn_talk(
                     border_radius: BorderRadius::all(Val::VMin(NAME_TEXT)),
                     ..default()
                 },
-                BackgroundColor(INK),
+                BackgroundColor(colours.talk.ink),
                 Pickable::IGNORE,
-                children![builder::label(name, NAME_TEXT, Color::WHITE)],
+                children![builder::label(name, NAME_TEXT, colours.text)],
             ),
             (
                 Text::new(line),
@@ -747,7 +719,7 @@ fn spawn_talk(
                     font_size: FontSize::VMin(SAY_TEXT),
                     ..default()
                 },
-                TextColor(INK),
+                TextColor(colours.talk.ink),
                 TextLayout::justify(Justify::Left),
                 Pickable::IGNORE,
             ),
@@ -759,7 +731,12 @@ fn spawn_talk(
 /// lit up while pressed. Play has its price beside it, and is greyed out
 /// while you cannot pay it.
 fn reply_button(assets: &AssetServer, reply: Reply, words: &str, able: bool) -> impl Bundle {
-    let (ink, lit) = if able { (INK, PAPER_LIT) } else { (GREYED, PAPER) };
+    let colours = ui().colours;
+    let (ink, lit) = if able {
+        (colours.talk.ink, colours.talk.paper_lit)
+    } else {
+        (colours.talk.greyed, colours.talk.paper)
+    };
     let price = (reply == Reply::Play).then(|| {
         (
             Node {
@@ -772,9 +749,9 @@ fn reply_button(assets: &AssetServer, reply: Reply, words: &str, able: bool) -> 
             children![
                 (
                     ImageNode::new(assets.load(hud::COIN_ICON)).with_color(if able {
-                        Color::WHITE
+                        colours.text
                     } else {
-                        Color::WHITE.with_alpha(0.5)
+                        colours.text.with_alpha(colours.text.alpha() * 0.5)
                     }),
                     Node {
                         width: Val::VMin(COIN),
@@ -802,9 +779,12 @@ fn reply_button(assets: &AssetServer, reply: Reply, words: &str, able: bool) -> 
             border_radius: BorderRadius::all(Val::VMin(REPLY_HEIGHT * 0.5)),
             ..default()
         },
-        BackgroundColor(PAPER),
+        BackgroundColor(colours.talk.paper),
         BorderColor::all(ink),
-        Fill { idle: PAPER, lit },
+        Fill {
+            idle: colours.talk.paper,
+            lit,
+        },
         Children::spawn((
             Spawn(builder::label(words, REPLY_TEXT, ink)),
             SpawnIter(price.into_iter()),
@@ -867,6 +847,9 @@ const DOT: f32 = 0.13;
 fn bubble_image() -> Image {
     /// How many pixels across the circle's radius is.
     const RADIUS: f32 = 64.0;
+    // The outline's and the dots' shade of grey, the ink's red: it is drawn
+    // grey on white, and the file's ink gives it its darkness.
+    let ink = ui().colours.talk.ink.to_srgba().red;
     let width = ((BUBBLE_RIGHT - BUBBLE_LEFT) * RADIUS).round() as u32;
     let height = ((BUBBLE_TOP - BUBBLE_BOTTOM) * RADIUS).round() as u32;
     let pixel = 1.0 / RADIUS;
@@ -884,7 +867,7 @@ fn bubble_image() -> Image {
                 .fold(f32::INFINITY, f32::min);
             let cover = |distance: f32| (0.5 - distance / pixel).clamp(0.0, 1.0);
             let white = cover(edge + BUBBLE_OUTLINE) * (1.0 - cover(dot));
-            let shade = INK.to_srgba().red + (1.0 - INK.to_srgba().red) * white;
+            let shade = ink + (1.0 - ink) * white;
             let value = (shade * 255.0).round() as u8;
             data.extend_from_slice(&[value, value, value, (cover(edge) * 255.0).round() as u8]);
         }
@@ -926,25 +909,27 @@ mod tests {
     }
 
     #[test]
-    fn the_bubble_goes_over_the_nearest_in_front_of_you() {
+    fn the_bubble_goes_over_the_nearest_to_you_whichever_way_you_face() {
         let mut world = World::new();
         let [near, far, behind, aside, off] = [(); 5].map(|_| world.spawn_empty().id());
         let them = [
             (far, at(0.5, -4.0)),
             (near, at(-0.8, -2.5)),
-            // Nearer, but behind you, to your side, and out of reach.
+            // Behind you and to your side, nearer than either; and out of reach.
             (behind, at(0.0, 1.0)),
             (aside, at(2.0, -0.2)),
             (off, at(0.0, -6.0)),
         ];
         let open = |_: Vec3, _: Vec3| true;
-        assert_eq!(nearest_in_front(&you(), them.into_iter(), None, open), Some(near));
-        // Turned round, the one behind you is the one in front.
-        let turned = you().looking_to(Vec3::Z, Vec3::Y);
-        assert_eq!(nearest_in_front(&turned, them.into_iter(), None, open), Some(behind));
-        // Nobody in front: no bubble.
-        let away = you().looking_to(Vec3::NEG_X, Vec3::Y);
-        assert_eq!(nearest_in_front(&away, [(aside, at(2.0, 0.0))].into_iter(), None, open), None);
+        // The one behind you is the nearest, and has it whichever way you face.
+        for face in [Vec3::NEG_Z, Vec3::Z, Vec3::NEG_X] {
+            let you = you().looking_to(face, Vec3::Y);
+            assert_eq!(nearest_to(&you, them.into_iter(), None, open), Some(behind));
+        }
+        // Without them, the one to your side; and nobody within reach, no bubble.
+        let rest = [them[0], them[1], them[3], them[4]];
+        assert_eq!(nearest_to(&you(), rest.into_iter(), None, open), Some(aside));
+        assert_eq!(nearest_to(&you(), [them[4]].into_iter(), None, open), None);
     }
 
     #[test]
@@ -954,7 +939,7 @@ mod tests {
         let them = [(near, at(0.0, -2.0)), (far, at(0.0, -4.0))];
         // Only the further one is in sight.
         let sight = |_: Vec3, to: Vec3| to.z < -3.0;
-        assert_eq!(nearest_in_front(&you(), them.into_iter(), None, sight), Some(far));
+        assert_eq!(nearest_to(&you(), them.into_iter(), None, sight), Some(far));
     }
 
     #[test]
@@ -964,44 +949,44 @@ mod tests {
         let open = |_: Vec3, _: Vec3| true;
         // A little nearer is not enough to take it.
         let them = [(held, at(0.0, -3.0)), (other, at(0.3, -2.7))];
-        assert_eq!(nearest_in_front(&you(), them.into_iter(), Some(held), open), Some(held));
+        assert_eq!(nearest_to(&you(), them.into_iter(), Some(held), open), Some(held));
         // Well nearer is.
         let them = [(held, at(0.0, -3.0)), (other, at(0.3, -2.0))];
-        assert_eq!(nearest_in_front(&you(), them.into_iter(), Some(held), open), Some(other));
-        // Once it has them, they keep it a little past where it came up:
-        // further off, and further round.
+        assert_eq!(nearest_to(&you(), them.into_iter(), Some(held), open), Some(other));
+        // Once it has them, they keep it a little past where it came up.
         let them = [(held, at(0.0, -4.8))];
-        assert_eq!(nearest_in_front(&you(), them.into_iter(), Some(held), open), Some(held));
-        assert_eq!(nearest_in_front(&you(), them.into_iter(), None, open), None);
-        let round = 75f32.to_radians();
-        let them = [(held, Vec3::new(round.sin(), 0.0, -round.cos()) * 3.0)];
-        assert_eq!(nearest_in_front(&you(), them.into_iter(), Some(held), open), Some(held));
-        assert_eq!(nearest_in_front(&you(), them.into_iter(), None, open), None);
+        assert_eq!(nearest_to(&you(), them.into_iter(), Some(held), open), Some(held));
+        assert_eq!(nearest_to(&you(), them.into_iter(), None, open), None);
     }
 
     #[test]
     fn nobody_says_the_same_thing_twice_running() {
+        let count = ui().words.talk.small_talk.len();
         for _ in 0..500 {
-            let last = fastrand::usize(..SMALL_TALK.len());
-            let next = small_talk(Some(last));
+            let last = fastrand::usize(..count);
+            let next = small_talk(Some(last), count);
             assert_ne!(next, last);
-            assert!(next < SMALL_TALK.len());
+            assert!(next < count);
         }
         // Everything is said, sooner or later.
-        let mut said = vec![false; SMALL_TALK.len()];
+        let mut said = vec![false; count];
         for _ in 0..2000 {
-            said[small_talk(None)] = true;
+            said[small_talk(None, count)] = true;
         }
         assert!(said.iter().all(|&said| said));
+        // A file with one line, or fewer lines than before, does not break.
+        assert_eq!(small_talk(Some(0), 1), 0);
+        assert!(small_talk(Some(40), 3) < 3);
     }
 
     #[test]
     fn everything_said_is_plain_ascii() {
         // The built-in font has nothing else.
-        for (says, back) in SMALL_TALK {
+        for (says, back) in &ui().words.talk.small_talk {
             assert!(says.is_ascii() && back.is_ascii(), "{says} / {back}");
         }
         assert!(builder::pitch(false).is_ascii());
+        assert!(builder::pitch(false).contains("100 coins"));
     }
 
     #[test]

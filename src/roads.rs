@@ -1011,6 +1011,9 @@ fn network(paint: &Paint) -> Network {
         }
     }
     let mut stretches = Vec::new();
+    // The joins made for rings nothing meets (below), which are no place
+    // where roads meet, and are never one place with another join.
+    let mut lone: Vec<usize> = Vec::new();
     for (line, middle) in middles.iter().enumerate() {
         let whole = *along(&middle.points, middle.closed).last().unwrap();
         let mut marks: Vec<(f32, usize)> = cuts[line].iter().map(|&(s, join)| (s.min(whole), join)).collect();
@@ -1020,6 +1023,20 @@ fn network(paint: &Paint) -> Network {
         marks.dedup_by(|next, kept| next.1 == kept.1);
         if middle.closed && marks.len() > 1 && marks[0].1 == marks[marks.len() - 1].1 {
             marks.pop();
+        }
+        // A ring no other road meets (Hajun's `pvptownmap.glb`, 2026-11-07:
+        // the two halves of the ring round the pond, with nothing coming
+        // into either) is one stretch all the way round, from a join at its
+        // first point back to it, so that it is driven round and round: the
+        // one turn at the join is from the ring's lane into itself, along
+        // it. Its join is its own: the two halves' first points, 15 m apart
+        // on one axis, were one place by [`ONE_PLACE`], and the bus crossed
+        // from the one half to the other there, a figure of eight.
+        if middle.closed && marks.is_empty() {
+            let join = joins.len();
+            joins.push(middle.points[0]);
+            lone.push(join);
+            marks.push((0.0, join));
         }
         if !middle.closed {
             // An end that joins nothing is the end of the road.
@@ -1068,7 +1085,8 @@ fn network(paint: &Paint) -> Network {
     }
     for a in 0..joins.len() {
         for b in 0..a {
-            if joins[a].distance(joins[b]) < ONE_PLACE && rings[a].is_none() && rings[b].is_none() {
+            let alone = lone.contains(&a) || lone.contains(&b);
+            if joins[a].distance(joins[b]) < ONE_PLACE && rings[a].is_none() && rings[b].is_none() && !alone {
                 let (ra, rb) = (root(&mut place, a), root(&mut place, b));
                 place[ra.max(rb)] = ra.min(rb);
             }
@@ -3165,4 +3183,78 @@ pub(crate) mod tests {
         assert!(back.distance(front - Vec2::X * base) < 1e-3);
     }
 
+}
+
+#[cfg(test)]
+mod pvp_town_tests {
+    use super::*;
+
+    /// Hajun's `pvptownmap.glb` (2026-11-07) as the game reads it: its land,
+    /// its roads alone, and its paint.
+    fn pvp_town() -> (Island, Island, Vec<Vec<[Vec3; 3]>>) {
+        let parts = crate::island::glb::read("pvptownmap.glb");
+        let made_of = |material: &str| -> Vec<Vec<[Vec3; 3]>> {
+            parts
+                .iter()
+                .filter(|part| part.material.as_deref().is_some_and(|name| crate::island::is_material(name, material)))
+                .map(|part| part.triangles.clone())
+                .collect()
+        };
+        let land: Vec<[Vec3; 3]> = parts
+            .iter()
+            .filter(|part| {
+                !part.skinned
+                    && !part
+                        .material
+                        .as_deref()
+                        .is_some_and(|name| crate::island::is_material(name, crate::island::WATER_MATERIAL))
+            })
+            .flat_map(|part| part.triangles.iter().copied())
+            .collect();
+        let road: Vec<[Vec3; 3]> = made_of(ROAD).into_iter().flatten().collect();
+        (Island::new_for_tests(&land), Island::new_for_tests(&road), made_of(MARKING))
+    }
+
+    #[test]
+    fn in_the_pvp_town_the_buses_go_round_the_ring_round_the_pond_and_nowhere_else() {
+        // The town's only roads are the two halves of the ring round its
+        // pond, 44 to 56 m out and 59 to 71, each a ring of its own with
+        // nothing coming into it (Hajun: "the bus now just goes around the
+        // inner circle"): the buses drive the outer half, the longer, round
+        // and round, anticlockwise seen from above, on its outside lane,
+        // keeping right; and never cross to the inner half, which they did
+        // as a figure of eight while the two halves' first points were one
+        // place.
+        let (land, road, markings) = pvp_town();
+        let paint = Paint { land: &land, road: &road, markings: &markings };
+        let network = network(&paint);
+        assert_eq!(network.joins.len(), 2, "{:?}", network.joins);
+        assert_eq!(network.stretches.len(), 2);
+        for stretch in &network.stretches {
+            assert_eq!(stretch.from, stretch.to);
+        }
+        let cars = crate::car::tests::footprints();
+        let bus = cars.iter().copied().max_by(|a, b| a.half.x.total_cmp(&b.half.x)).unwrap();
+        let route = Route::read(&paint, &bus, 4).expect("a way round");
+        assert_eq!(route.lanes(), 1);
+        let out: Vec<f32> = route.points.iter().map(|point| point.xz().length()).collect();
+        let (nearest, furthest) = (out.iter().copied().fold(f32::MAX, f32::min), out.iter().copied().fold(0.0, f32::max));
+        assert!(nearest > 66.0 && furthest < 70.0, "{nearest} to {furthest} m out");
+        assert!((route.length() - std::f64::consts::TAU * 67.9).abs() < 10.0, "{} m", route.length());
+        // Keeping right on the outside lane is going round with the
+        // outside on the right: anticlockwise seen from above with north
+        // up (the game's x east, z south), each point's way turning left
+        // of the last.
+        let turned: f32 = route
+            .ways
+            .windows(2)
+            .map(|pair| pair[0].perp_dot(pair[1]))
+            .sum();
+        assert!(turned < 0.0, "clockwise: on the inside lane, or not keeping right");
+        // Stopping short of every other crossing: two of the four.
+        assert_eq!(route.waits.iter().filter(|wait| **wait > 0.0).count(), 2);
+        // Four buses, a quarter of the loop apart.
+        assert_eq!(route.behind.len(), 4);
+        assert!((route.behind[2] - route.lap() * 0.5).abs() <= 1.0, "{:?} of {}", route.behind, route.lap());
+    }
 }

@@ -1,0 +1,335 @@
+// The colours and the words of everything drawn over the world, and every
+// number of how the car you drive goes (at the end, under `car`), for
+// changing by hand (src/ui.rs reads it). Sizes and layout stay in the code.
+//
+// A colour is written as on the web: "#rrggbb", or "#rrggbbaa" with its
+// alpha (00 invisible, ff solid). In VS Code, with editor.defaultColorDecorators
+// set to always, each one has a swatch, and hovering it opens a colour
+// picker that rewrites it; rgb(), rgba(), hsl() and hsla() read too.
+// On Windows, with the game running from `cargo run`, save
+// this file and the screen takes the new colours and words within a quarter
+// of a second: the bar across the top, the sign-up's pages, the settings
+// window and the names over heads at once, a dialog or the shop when it is
+// next opened, and the car at once, driving or not. A file that will not
+// read is logged and the last good one kept. A phone shows whatever this
+// file said when its app was built.
+(
+    colours: (
+        // Words, wherever they are: plain, small print, and the shadow under
+        // words that stand over the world.
+        text: "#ffffff",
+        text_soft: "#ffffffc7",
+        text_shadow: "#051f3866",
+        // Gold: titles, prizes, lit stars, a chosen tab, and the gold buttons
+        // (Play again, the settings' Save), lit under the pointer; and the
+        // dark blue of words on gold.
+        gold: "#edb62a",
+        gold_lit: "#ffe88c",
+        on_gold: "#fafafa",
+        // A warning: Delete account, "not available yet", "Need 100 coins";
+        // and Delete lit under the pointer.
+        warn: "#ad311e",
+        warn_lit: "#d03a1c",
+        // Dialogs: the dark over the world behind one, the dialog itself, and
+        // the dark glass behind words that stand over the world (House
+        // Builder's time, the hammer), lit under the pointer.
+        dim: "#00000073",
+        dialog: "#000000d9",
+        panel: "#0a1a2e6b",
+        panel_lit: "#0a1a2e99",
+        // A quiet button (Cancel, Later, Exit, a tab not chosen), lit under
+        // the pointer; a button that cannot be pressed, and its words; and
+        // the cross on a window's corner, with its rim.
+        quiet: "#ffffff24",
+        quiet_lit: "#ffffff42",
+        off: "#ffffff12",
+        off_text: "#ffffff59",
+        close: "#ad311e",
+        close_rim: "#ffffffb2",
+        // The bar across the top and the round buttons, which a phone's stick
+        // and jump button share: a button's disc, the jump button while it is
+        // held, the picture on each (and the stick's knob), your name's
+        // plate, and the pictures drawn in code on other buttons.
+        hud: (
+            button: "#66666652",
+            button_held: "#66666680",
+            button_mark: "#ffffff85",
+            name_plate: "#66666673",
+            icon: "#fffffff0",
+        ),
+        // The sign-up's pages: the page; the box the name goes in and the
+        // characters' cards, lit under the pointer; the chosen card; a button
+        // and its words, lit under the pointer; and the arrows beside the
+        // cards.
+        signup: (
+            page: "#000000",
+            field: "#262629",
+            field_lit: "#363638",
+            chosen: "#5c5c61",
+            paper: "#ffffff",
+            paper_lit: "#d6d6d9",
+            ink: "#0d0d0f",
+            arrow: "#ffffffd9",
+        ),
+        // The settings: the window's glass, and a sign-in not to be had yet,
+        // blocked out, with its words.
+        settings: (
+            window: "#5c5e66d1",
+            blocked: "#ffffff14",
+            blocked_text: "#ffffff66",
+        ),
+        // House Builder: a star not given; the results behind their rows, a
+        // row, your row, the second and third medals (the first is gold), and
+        // a prize of nothing.
+        house_builder: (
+            star_off: "#ffffff66",
+            results: "#000000b2",
+            row: "#ffffff12",
+            your_row: "#ffd64c42",
+            silver: "#ccd6e6",
+            bronze: "#db8f54",
+            no_prize: "#ffffff73",
+        ),
+        // The shop: its window, the hammer's rim and handle, a card, lit
+        // under the pointer, a card that cannot be chosen with its picture
+        // and name, and the note that says why.
+        shop: (
+            window: "#0a1a2edb",
+            hammer_rim: "#ffffff80",
+            handle: "#f5c785",
+            card: "#ffffff1a",
+            card_lit: "#ffffff38",
+            card_off: "#ffffff0a",
+            picture_off: "#ffffff4c",
+            name_off: "#ffffff59",
+            note: "#ffd199",
+        ),
+        // Talking: the outline and the words, the paper behind them, a reply
+        // lit while pressed, and a reply that cannot be chosen.
+        talk: (
+            ink: "#0d0d0f",
+            paper: "#fffffff7",
+            paper_lit: "#dbdbdef7",
+            greyed: "#9e9ea3",
+        ),
+        // The edit menu's buttons: the pictures on them, and each button's
+        // fill, its fill while held, and its rim.
+        edit_menu: (
+            icon: "#ffffffeb",
+            trash: "#ff5c545c",
+            trash_held: "#ff5c549e",
+            trash_rim: "#ff80789e",
+            confirm: "#5cd6755c",
+            confirm_held: "#5cd6759e",
+            confirm_rim: "#99ffad9e",
+            turn: "#5ca8ff5c",
+            turn_held: "#5ca8ff9e",
+            turn_rim: "#8cc7ff9e",
+        ),
+    ),
+    // The font is plain ASCII: no Hangul, and a hyphen for a dash. Where a
+    // word has {something} in it, the game fills that in.
+    words: (
+        // Across the middle of the screen as you arrive in the town.
+        welcome: "Donggeurami Town",
+        signup: (
+            title: "Donggeurami Town",
+            start: "Start",
+            have_account: "Already have an account?",
+            log_in: "Log In",
+            not_available: "Log in is not available yet",
+            choose_name: "Choose Username",
+            name_hint: "Shown to other players. 2-16 characters.",
+            save: "Save",
+            choose_character: "Choose Character",
+            change_later: "You may change this later.",
+        ),
+        settings: (
+            graphics: "Graphics",
+            controls: "Controls",
+            accounts: "Accounts",
+            not_signed_up: "Not signed up",
+            guest: "(Signed in as guest)",
+            not_online: "Not online.",
+            sign_in_google: "Sign in with Google",
+            sign_in_apple: "Sign in with Apple",
+            delete_account: "Delete account",
+            edit_name: "Edit name",
+            cancel: "Cancel",
+            save: "Save",
+            delete_sure: "Delete your account",
+            delete_warning: "Your account stats go for good.\nThis cannot be undone.",
+            delete: "Delete",
+            deleting: "Deleting your account...",
+            not_online_try: "Not online: try again",
+            could_not_delete: "Could not delete it: try again",
+        ),
+        house_builder: (
+            name: "Build Your Own House",
+            rules: "Build and decorate your own house according to a theme. The best house wins!",
+            pitch: "Want to play {name}? {rules}",
+            cannot_pay: "You need {coins} coins to play.",
+            play: "Play",
+            later: "Later",
+            players: "{count}/{seats} Players",
+            waiting: "Waiting for players...",
+            match_found: "Match found!",
+            build_a_house: "Build a house!",
+            theme_is: "Build a house! The theme is",
+            who_lives_there: "Who Lives There: {who}",
+            theme: "Theme: {what}",
+            your_house: "Your house",
+            a_house: "A house",
+            whose_house: "{name}'s house",
+            rate: "Rate this house",
+            being_rated: "Everyone is rating your house",
+            you_won: "You won!",
+            you_came: "You came {place}",
+            you: "You",
+            back_in: "Back to the town in {time}",
+            exit: "Exit",
+            play_again: "Play again",
+            price: "{coins} coins",
+            need_coins: "Need {coins} coins",
+            reconnecting: "Reconnecting...",
+            lost_connection: "Lost the connection",
+        ),
+        shop: (
+            one_house: "One house to a plot: bin yours to choose another.",
+            house_first_openings: "Put a house down first: these go in its walls.",
+            house_first_hangings: "Put a house down first to hang things on its walls.",
+        ),
+        talk: (
+            house_builder: "House Builder",
+            someone: "Someone",
+            // What the town's AIs say, and what you say back: one of these at
+            // random, never the same twice running.
+            small_talk: [
+                ("Hi there! Isn't Donggeurami Town lovely today?", "It really is!"),
+                ("Did you know the fountain throws you up in the air if you stand in its top bowl?", "I'll try it!"),
+                ("The buses go all the way round town. Hop on one sometime!", "Sounds fun!"),
+                ("I heard the House Builder is looking for builders. Have you played?", "Maybe later!"),
+                ("I love walking round the pond. It's so peaceful here.", "Me too!"),
+                ("When the street lamps come on at night, the whole town glows.", "I'll stay up for it!"),
+                ("Have you seen the sunset? The sky goes all pink and orange.", "Not yet!"),
+                ("I'm just out for a stroll. Lovely weather for it!", "Enjoy your walk!"),
+                ("Someday I want a house with a roof terrace.", "Good luck!"),
+                ("Can you hear the music? I could listen to it all day.", "It's catchy!"),
+                ("I tried to jump onto a bus roof once. Way too high!", "Nice try!"),
+                ("Every house in town has a door that opens. I checked them all!", "That's dedication!"),
+                ("Careful by the pond. It's shallow, but my shoes still got wet!", "I'll be careful!"),
+                ("Hello! Have we met before? You look familiar.", "Nice to meet you!"),
+                ("I'm saving up my coins for something special.", "Good idea!"),
+                ("The stars come out at night. Have you ever looked up?", "I'll look tonight!"),
+                ("Sometimes I just stand here and watch the buses go by.", "Sounds relaxing!"),
+            ],
+        ),
+        online: (
+            new_version: "A new version is out",
+            update_to_play: "Update the app to play online",
+        ),
+    ),
+    // The car you drive (the face button, or C on desktop): every number of
+    // how it goes, in metres, seconds and degrees, with or without a point
+    // (12 and 12.0 both read). Save while driving and the car takes the new
+    // numbers at once. A number that would break the car (a rate under 0, a
+    // speed divided by at 0, a range inside out) is refused: the game logs
+    // why and keeps the last good file.
+    car: (
+        // Speeds, in metres a second. A run and a bus are 7, a bus on the
+        // road round the edge of the town 14. Cruising is with the stick
+        // pushed all the way (less, pushed less); boost is with the jump
+        // button held (Space); reverse is with the fist held (F). Online the
+        // server lets a body go no faster than 40 (DRIVEN_TOP_SPEED in
+        // shared/src/lib.rs, with some slack): boosting or reversing faster
+        // than that, it puts you back every second or so.
+        cruise: 15.0,
+        boost: 30.0,
+        reverse: 30.0,
+        // How fast it gains speed, in metres a second a second: cruising;
+        // boosting or reversing; and how fast it loses it, with the stick
+        // let go, or the reverse pressed while going forward.
+        accel: 30.0,
+        boost_accel: 60.0,
+        brake: 60.0,
+        // Turning: the tightest circle it goes round, as the radius its back
+        // wheels follow, in metres, at easy_speed (metres a second) and
+        // slower; faster, the circle grows in proportion to the speed (at
+        // twice easy_speed, twice as wide), so that a corner taken boosting
+        // is taken wide. The roads are 12 m wide: at 4.5, a U-turn takes 12
+        // m from the outside of the car to the outside.
+        tightest: 3.5,
+        easy_speed: 8.0,
+        // How fast the front wheels turn, in degrees a second; and how far
+        // off the way the stick points, in degrees, they are turned all the
+        // way (nearer the stick, in proportion: smaller is twitchier).
+        steer_rate: 286.0,
+        full_lock_at: 14.3,
+        // Stopped against a wall with the stick pushed, it steers as if going
+        // this fast, in metres a second, so that it comes round rather than
+        // standing with its wheels turned.
+        creep: 3.0,
+        // The gun: hold the gift button (G on desktop) in the car and bullets
+        // come out of its nose, each going this fast, in metres a second, one
+        // every this many seconds while the button is held (the first as it
+        // goes down), gone once this far, in metres, from where it was fired,
+        // and each a ball of this radius, in metres. They hit nothing yet.
+        bullet_speed: 60.0,
+        bullet_every: 0.12,
+        bullet_range: 40.0,
+        bullet_radius: 0.12,
+        // The camera over you, in metres, fixed straight down over you in
+        // and out of the car (since 2026-11-07, out of it too): where it
+        // starts as the app opens, and the nearest and the furthest it
+        // zooms.
+        overhead: 24.0,
+        overhead_nearest: 7.0,
+        overhead_furthest: 60.0,
+        // How its nose and tail feel for walls (seldom worth touching): each
+        // is felt as a circle of this radius, in metres, its middle this far
+        // back from the car's very end, between these heights over your
+        // feet (over a kerb, a step and a planter, 0.5 m; under its roof);
+        // and how much of the move it asked for the car has to make, as a
+        // share from 0 to 1, before it counts as stopped by what it met and
+        // loses its speed.
+        end_radius: 1.2,
+        end_back: 0.6,
+        felt_low: 0.55,
+        felt_high: 1.3,
+        stopped_short: 0.3,
+    ),
+    // The punch (the fist button, F on desktop), as Minecraft 1.8.9's sword:
+    // the numbers are Minecraft's, its blocks a tick made metres a second
+    // (times 20) and its ticks made seconds (a twentieth each).
+    melee: (
+        // The swing: the arm out, and back, in seconds. Minecraft's is 6
+        // ticks, 0.3 s. There is no cooldown on the punch itself, as there
+        // was none in 1.8.9: every press swings, and lands if it can.
+        swing_out: 0.12,
+        swing_back: 0.18,
+        // A punch lands on the nearest body in front of you within reach,
+        // in metres, from your middle to their nearest side (Minecraft's 3
+        // blocks, eyes to hitbox), and within this many degrees of the way
+        // you face, the whole cone (Minecraft wants the crosshair on them;
+        // a stick is less precise than a mouse).
+        reach: 3.0,
+        cone: 60.0,
+        // Once a punch has landed on a body, no other moves it for this
+        // long, in seconds: Minecraft's 10 ticks of hurt resistance, so at
+        // most two knocks a second however fast the presses come.
+        hurt_time: 0.5,
+        // How hard: knocked away from the puncher at knock_back metres a
+        // second (Minecraft's 0.4 blocks a tick), and sprint_bonus more if
+        // the puncher was on the move (its sprint hit, 0.5 more), whatever
+        // they were already carried by halved first; and up at knock_up
+        // (0.4 blocks a tick; a jump here is 8.5).
+        knock_back: 8.0,
+        sprint_bonus: 10.0,
+        knock_up: 8.0,
+        // How fast the knock dies away: what is left of it each twentieth
+        // of a second, as Minecraft counts, in the air and on the ground
+        // (its 0.91 air drag, and 0.6 ground friction times 0.91).
+        air_drag: 0.91,
+        ground_drag: 0.546,
+    ),
+)

@@ -54,14 +54,16 @@ use bevy_replicon_renet::netcode::{
 };
 use bevy_replicon_renet::renet::ConnectionConfig;
 use bevy_replicon_renet::{RenetChannelsExt, RenetClient, RepliconRenetPlugins};
-use roundtown_net::{Ask, Member, Moved, PROTOCOL_ID, Spot, TICK_HZ, Tell, TheTime, Venue, WhatTime};
+use roundtown_net::{
+    Ask, Member, Moved, PROTOCOL_ID, Spot, TICK_HZ, Tell, TheTime, Venue, WhatTime, town_island,
+};
 
 use crate::builder::OfflineGame;
 use crate::car::{self, Place};
 use crate::clock::TownClock;
 use crate::lobby::{self, Balance, Seat, Whereabouts};
 use crate::signup::Profile;
-use crate::{OrbitCamera, Player, PlayerJump, Riding};
+use crate::{Hit, OrbitCamera, Player, PlayerJump, Riding};
 
 /// Where the server is: the Vultr VM in Seoul, over IPv6 first and then IPv4
 /// (`MULTIPLAYER.md`, phase 1). A phone on a network with only IPv6 — Apple
@@ -140,6 +142,7 @@ pub(crate) fn plugin(app: &mut App) {
                 (lifecycle, link, send_profile).chain(),
                 smooth.before(crate::move_bodies),
                 tell_where_i_am.after(crate::move_bodies),
+                relay_hits,
             ),
         )
         .add_systems(PostUpdate, ask_the_time.before(ClientSystems::Send));
@@ -162,6 +165,25 @@ impl Online {
     pub(crate) fn is(&self) -> bool {
         self.me.is_some()
     }
+}
+
+/// Asks the server to put you back where your seat arrives on `venue`
+/// ([`Ask::Respawn`]): fallen off the town into the void
+/// (`lobby::respawn_the_fallen`), or seated on another of its islands than
+/// the one you stood on ([`hear`]). Until it has ([`Tell::Arrive`]), no
+/// move is sent: the leap back would not pass as one a body could make,
+/// and be undone. Whether there was anyone to ask: offline, or anywhere
+/// the server has not put you, there is not.
+pub(crate) fn ask_to_respawn(online: &mut Online, asks: &mut MessageWriter<Ask>, venue: Venue) -> bool {
+    if !online.is() || online.venue != Some(venue) {
+        return false;
+    }
+    online.venue = None;
+    asks.write(Ask::Respawn);
+    true
+}
+
+impl Online {
 
     /// Who you are online, while you are.
     #[allow(dead_code)]
@@ -605,10 +627,11 @@ fn outdated(_: On<ProtocolMismatch>, mut link: ResMut<Link>, mut commands: Comma
     }
     link.state = LinkState::Outdated;
     warn!("the server is newer than this app: offline until it is updated");
+    let ui = crate::ui::ui();
     crate::hud::announce(
         &mut commands,
-        Some("Update the app to play online"),
-        "A new version is out",
+        Some(&ui.words.online.update_to_play),
+        &ui.words.online.new_version,
         crate::hud::CAPTION,
         5.0,
     );
@@ -651,22 +674,41 @@ fn hear(
             } => {
                 online.arrival = *arrival;
                 online.venue = Some(*venue);
+                let had = seat.0;
                 seat.0 = usize::from(*arrives);
                 match spot {
-                    // Let in where you already were: nothing moves.
+                    // Let in where you already were: nothing moves, unless
+                    // the seat you have been given is on another of the
+                    // town's islands than the seat you arrived in offline
+                    // (`town_island`: no two people start on one island),
+                    // when you go to it as if you had fallen, and the
+                    // server is asked to put you there.
                     Some(spot) => {
-                        let here = bodies.get(you).map(|(_, &on, ..)| on).ok();
+                        let here = bodies.get(you).map(|(_, _, &on, ..)| on).ok();
                         if here != Some(*venue) {
                             let (at, _) = placed(spot, &cars);
                             lobby::put(&mut bodies, &mut orbit, you, *venue, at);
+                        } else if *venue == Venue::Town && town_island(had) != town_island(seat.0) {
+                            lobby::send(&mut bodies, &mut orbit, you, *venue, seat.0);
+                            ask_to_respawn(&mut online, &mut asks, *venue);
                         }
                     }
                     None => lobby::send(&mut bodies, &mut orbit, you, *venue, seat.0),
                 }
             }
+            // Someone's punch landed on you: knocked back from where they
+            // stand, as the server has it, on your own device, whose moves
+            // then show everyone where it took you.
+            Tell::Knocked { from, running, .. } => {
+                if let Ok((_, transform, _, mut jump, _, _, _, _, Some(mut shove))) = bodies.get_mut(you) {
+                    let (at, _) = placed(from, &cars);
+                    let here = transform.translation.xz();
+                    shove.knock(&mut jump, at.translation.xz(), here, *running);
+                }
+            }
             Tell::PutBack { arrival, spot } => {
                 online.arrival = *arrival;
-                if let Ok((mut transform, _, mut jump, _, _, _, riding)) = bodies.get_mut(you) {
+                if let Ok((_, mut transform, _, mut jump, _, _, _, riding, _)) = bodies.get_mut(you) {
                     let (at, on) = placed(spot, &cars);
                     transform.translation = at.translation;
                     transform.rotation = at.rotation;
@@ -680,6 +722,29 @@ fn hear(
                 balance.set_if_neq(Balance(*coins));
             }
             Tell::Joined { .. } | Tell::Refused(_) => {}
+        }
+    }
+}
+
+/// Tells the server of a punch of yours that landed on someone online
+/// ([`Hit`], from `start_punch`), by who they are, so that their own device
+/// knocks them back ([`Tell::Knocked`]). A punch on anyone this device
+/// moves, an AI, never comes here: it is knocked on the spot.
+fn relay_hits(
+    mut hits: MessageReader<Hit>,
+    members: Query<&Member, With<Remote>>,
+    online: Res<Online>,
+    mut asks: MessageWriter<Ask>,
+) {
+    for hit in hits.read() {
+        if !online.is() {
+            continue;
+        }
+        if let Ok(member) = members.get(hit.victim) {
+            asks.write(Ask::Punch {
+                who: member.id,
+                running: hit.running,
+            });
         }
     }
 }

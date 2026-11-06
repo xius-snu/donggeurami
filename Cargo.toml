@@ -41,6 +41,9 @@ bevy = { version = "0.19.1", features = ["android-game-activity", "mp3", "wav"] 
 # crates already come in under Bevy, so this costs no extra build time.
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+# The screen's numbers, `assets/ui.ron` (`style`): RON, which takes comments
+# and bare names. Bevy builds this version already.
+ron = "0.12"
 
 # The AI players' dice. Already built for Bevy's task executor on every
 # target, so this costs no extra build time either.

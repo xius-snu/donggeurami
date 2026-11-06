@@ -5,10 +5,12 @@
 //! of people and a gamepad; round a phone's jump button a face, a speech
 //! bubble and a fist; and headlines across the middle — the town's name, as
 //! a welcome, whenever you arrive in the town, and whatever else is
-//! [`announce`]d, like House Builder's theme. And how a phone's stick and
-//! jump button look (`setup_hud`). Of the buttons only the gear, the stick
-//! and the jump button do anything yet (Hajun: "i dont need you to make
-//! them functional yet. just make them in the screen").
+//! [`announce`]d, like House Builder's theme. And how the stick and the
+//! jump button look (`setup_hud`; a phone's, and since 2026-11-06 the
+//! desktop's too, driven by the mouse). Of the buttons only the gear, the stick,
+//! the jump button, the fist, the face and, in the car, the gift do anything
+//! yet (Hajun: "i dont need you to make them functional yet. just make them
+//! in the screen").
 //!
 //! Every button is in one style, the stick's and the jump button's: a
 //! see-through grey disc with a whitish picture on it and no rim
@@ -31,13 +33,16 @@
 
 use bevy::asset::RenderAssetUsages;
 use bevy::ecs::system::SystemParam;
+use bevy::picking::pointer::PointerId;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 
 use crate::Player;
+use crate::drive::{CarPressed, Driving};
 use crate::island::{Islands, Venue};
 use crate::lobby::{Balance, STARTING_BALANCE};
 use crate::signup::Signup;
+use crate::ui::{UiChanged, ui};
 
 pub(crate) const COIN_ICON: &str = "coin.png";
 
@@ -66,7 +71,6 @@ pub(crate) const CAPTION: f32 = 4.5;
 /// further than a phone's rounded corner reaches.
 pub(crate) const EDGE: f32 = 4.0;
 /// How much of the jump button its arrow takes up, as a share of it.
-#[cfg_attr(not(any(target_os = "android", target_os = "ios")), allow(dead_code))]
 pub(crate) const JUMP_ARROW: f32 = 56.0;
 /// Room left under a headline, as a share of the screen's height, which lifts
 /// it clear of your own character in the middle.
@@ -78,25 +82,15 @@ const HEADLINE_IN: f32 = 0.4;
 const HEADLINE_OUT: f32 = 0.8;
 const WELCOME_SECS: f32 = 3.5;
 
-/// The soft shadow under every word, so that it reads over sky and grass alike.
-const SHADOW: Color = Color::srgba(0.02, 0.12, 0.22, 0.4);
-/// The dark glass behind whatever has to stay legible over anything.
-pub(crate) const PANEL: Color = Color::srgba(0.04, 0.10, 0.18, 0.42);
-pub(crate) const GOLD: Color = Color::srgb(1.0, 0.84, 0.3);
-/// The pictures on buttons, and the dark blue of words on gold.
-pub(crate) const ICON: Color = Color::srgba(1.0, 1.0, 1.0, 0.94);
-pub(crate) const DOOR: Color = Color::srgb(0.16, 0.30, 0.42);
-/// Every button, and a phone's stick: a see-through grey, with no rim, a
-/// little more solid while the jump button is held; and the picture on each,
-/// the stick's knob and the jump button's arrow among them, a see-through
-/// white (Hajun, 2026-10-31; "a little greyed", 0.92 at 0.38, until later
-/// that day, when Hajun asked for "slightly more whiter"). Your name's plate
-/// is the same grey, a little more solid.
-pub(crate) const TOUCH_DISC: Color = Color::srgba(0.4, 0.4, 0.4, 0.32);
-#[cfg_attr(not(any(target_os = "android", target_os = "ios")), allow(dead_code))]
-pub(crate) const TOUCH_DISC_HELD: Color = Color::srgba(0.4, 0.4, 0.4, 0.5);
-pub(crate) const TOUCH_MARK: Color = Color::srgba(1.0, 1.0, 1.0, 0.52);
-const PLATE: Color = Color::srgba(0.4, 0.4, 0.4, 0.45);
+// Every colour is `assets/ui.ron`'s (`ui`): the soft shadow under every
+// word, so that it reads over sky and grass alike; the dark glass behind
+// whatever has to stay legible over anything; gold, and the dark blue of
+// words on it; every button, and a phone's stick, a see-through grey with
+// no rim, a little more solid while the jump button is held, and the
+// picture on each, the stick's knob and the jump button's arrow among
+// them, a see-through white (Hajun, 2026-10-31; "a little greyed", 0.92 at
+// 0.38, until later that day, when Hajun asked for "slightly more
+// whiter"); and your name's plate, the same grey, a little more solid.
 
 /// The pictures on the buttons that are not drawn in code, in
 /// `assets/icons/`, white on clear: Google's Material icons (its
@@ -191,7 +185,8 @@ pub(crate) fn plugin(app: &mut App) {
     app.init_resource::<WelcomeDue>()
         .init_resource::<DialogUp>()
         .init_resource::<WantsPointer>()
-        .add_observer(press_punch)
+        .init_resource::<Held>()
+        .add_observer(press_buttons)
         .add_systems(Startup, show_top_bar)
         .add_systems(
             Update,
@@ -199,31 +194,150 @@ pub(crate) fn plugin(app: &mut App) {
                 show_name,
                 count_balance,
                 hide_round_the_jump,
+                release_held,
+                restyle,
+                repicture.after(restyle),
                 (arrive, welcome, fade_headlines).chain(),
             ),
         );
 }
 
+/// The bar across the top: your name, the buttons and your balance.
+#[derive(Component)]
+struct TopBar;
+
 /// The box round a phone's jump button, with the three buttons about it.
 #[derive(Component)]
 struct RoundTheJump;
 
-/// The fist among them, which throws a punch (`start_punch` in `src/lib.rs`).
+/// The fist among them, which throws a punch (`start_punch` in `src/lib.rs`)
+/// and, in the car, held, is the reverse (`drive`): its pictures, the fist,
+/// and in the car the jump button's arrow turned down.
 #[derive(Component)]
-struct PunchButton;
+struct PunchButton {
+    fist: Handle<Image>,
+    reverse: Handle<Image>,
+}
 
-/// A press on the fist, as it goes down rather than as it comes up, so that
-/// quick presses land as quickly as they are made: a punch is asked for.
-fn press_punch(
+/// The face among them, which puts you in the car and out of it (`drive`;
+/// Hajun, 2026-11-05: "make the emote button to be a toggle on/off switch
+/// for car").
+#[derive(Component)]
+struct CarButton;
+
+/// The gift, down the right edge, which in the car, held, is the gun
+/// (`drive::shoot`; Hajun, 2026-11-06: "make the gift icon, while riding a
+/// car, so that it shoots small fast spherical bullets out of the front of
+/// the car while pressed"); out of the car it takes a press and drops it.
+#[derive(Component)]
+struct GunButton;
+
+/// The buttons held down just now, each by the pointer holding it, a finger
+/// or the mouse. A press on a button is picking's, which says when it goes
+/// down but not, once the finger has slid off the button, when it comes up:
+/// so each is held for as long as its pointer is down ([`release_held`]).
+#[derive(Resource, Default)]
+pub(crate) struct Held {
+    fist: Option<PointerId>,
+    gun: Option<PointerId>,
+}
+
+impl Held {
+    /// Whether the fist is held down: in the car, the reverse.
+    pub(crate) fn fist(&self) -> bool {
+        self.fist.is_some()
+    }
+
+    /// Whether the gift is held down: in the car, the gun firing.
+    pub(crate) fn gun(&self) -> bool {
+        self.gun.is_some()
+    }
+}
+
+/// A press on the fist, the face or the gift, as it goes down rather than
+/// as it comes up, so that quick presses land as quickly as they are made:
+/// a punch is asked for, and the fist is held from then; or the car; or the
+/// gift is held from then.
+fn press_buttons(
     press: On<Pointer<Press>>,
     fists: Query<(), With<PunchButton>>,
+    faces: Query<(), With<CarButton>>,
+    guns: Query<(), With<GunButton>>,
+    mut held: ResMut<Held>,
     mut punches: MessageWriter<crate::PunchPressed>,
+    mut cars: MessageWriter<CarPressed>,
 ) {
     if press.button != PointerButton::Primary || press.original_event_target() != press.entity {
         return;
     }
     if fists.contains(press.entity) {
         punches.write(crate::PunchPressed);
+        held.fist = Some(press.pointer_id);
+    }
+    if faces.contains(press.entity) {
+        cars.write(CarPressed);
+    }
+    if guns.contains(press.entity) {
+        held.gun = Some(press.pointer_id);
+    }
+}
+
+/// Lets go of each held button once the pointer holding it is up.
+fn release_held(touches: Res<Touches>, mouse: Res<ButtonInput<MouseButton>>, mut held: ResMut<Held>) {
+    if let Some(pointer) = held.fist
+        && !pointer_down(pointer, &touches, &mouse)
+    {
+        held.fist = None;
+    }
+    if let Some(pointer) = held.gun
+        && !pointer_down(pointer, &touches, &mouse)
+    {
+        held.gun = None;
+    }
+}
+
+/// Whether `pointer`, a finger or the mouse, is down.
+fn pointer_down(pointer: PointerId, touches: &Touches, mouse: &ButtonInput<MouseButton>) -> bool {
+    match pointer {
+        PointerId::Touch(id) => touches.get_pressed(id).is_some(),
+        PointerId::Mouse => mouse.pressed(MouseButton::Left),
+        PointerId::Custom(_) => false,
+    }
+}
+
+/// Shows the car's controls on the buttons as you get in and out of it
+/// (`drive`): the face lit, as the jump button is held, while you are in
+/// it, and on the fist the jump button's arrow turned down, for the
+/// reverse; and on buttons put up afresh ([`restyle`]).
+fn repicture(
+    driving: Res<Driving>,
+    faces: Query<Entity, With<CarButton>>,
+    fists: Query<(&PunchButton, &Children)>,
+    added: Query<(), Added<PunchButton>>,
+    mut fills: Query<&mut BackgroundColor>,
+    mut pictures: Query<&mut ImageNode>,
+) {
+    if !driving.is_changed() && added.is_empty() {
+        return;
+    }
+    let on = driving.on();
+    let colours = ui().colours.hud;
+    for face in &faces {
+        if let Ok(mut fill) = fills.get_mut(face) {
+            fill.set_if_neq(BackgroundColor(if on { colours.button_held } else { colours.button }));
+        }
+    }
+    for (button, children) in &fists {
+        for child in children.iter() {
+            let Ok(mut picture) = pictures.get_mut(child) else {
+                continue;
+            };
+            let (image, flipped) = if on { (&button.reverse, true) } else { (&button.fist, false) };
+            if picture.image != *image || picture.flip_y != flipped {
+                picture.image = image.clone();
+                picture.flip_y = flipped;
+            }
+        }
     }
 }
 
@@ -249,6 +363,7 @@ fn hide_round_the_jump(
 /// side of the screen, with a soft shadow so that it reads over sky and grass
 /// alike. The shadow is as see-through as the words.
 pub(crate) fn words(text: impl Into<String>, size_vmin: f32, colour: Color) -> impl Bundle {
+    let shadow = ui().colours.text_shadow;
     (
         Text::new(text),
         TextFont {
@@ -258,7 +373,7 @@ pub(crate) fn words(text: impl Into<String>, size_vmin: f32, colour: Color) -> i
         TextColor(colour),
         TextShadow {
             offset: Vec2::new(0.0, 3.0),
-            color: SHADOW.with_alpha(SHADOW.alpha() * colour.alpha()),
+            color: shadow.with_alpha(shadow.alpha() * colour.alpha()),
         },
         TextLayout::justify(Justify::Center),
         Pickable::IGNORE,
@@ -267,7 +382,7 @@ pub(crate) fn words(text: impl Into<String>, size_vmin: f32, colour: Color) -> i
 
 /// Everything round the edges of the screen, for as long as the app is open:
 /// top left your name, the buttons beside it and your balance; down the
-/// right edge four buttons; and round a phone's jump button three more,
+/// right edge three buttons; and round a phone's jump button three more,
 /// placed about where it is on every platform, so that the layout can be
 /// seen on desktop too.
 pub(crate) fn show_top_bar(
@@ -275,9 +390,35 @@ pub(crate) fn show_top_bar(
     assets: Res<AssetServer>,
     mut images: ResMut<Assets<Image>>,
 ) {
+    spawn_bar(&mut commands, &assets, &mut images);
+}
+
+/// Draws the bar and the buttons round the jump button again in the file's
+/// colours as it changes on desktop (`ui::reread`): taken down and put up
+/// afresh, which [`show_name`] and [`count_balance`] then fill in, and
+/// `settings` puts its gear back on.
+fn restyle(
+    changed: Res<UiChanged>,
+    bars: Query<Entity, Or<(With<TopBar>, With<RoundTheJump>)>>,
+    assets: Res<AssetServer>,
+    mut images: ResMut<Assets<Image>>,
+    mut commands: Commands,
+) {
+    if !changed.is_changed() || changed.is_added() {
+        return;
+    }
+    for bar in &bars {
+        commands.entity(bar).despawn();
+    }
+    spawn_bar(&mut commands, &assets, &mut images);
+}
+
+/// The bar across the top, and the box round the jump button.
+fn spawn_bar(commands: &mut Commands, assets: &AssetServer, images: &mut Assets<Image>) {
     let icon = |name: &str| assets.load(format!("icons/{name}.png"));
     commands
         .spawn((
+            TopBar,
             Node {
                 position_type: PositionType::Absolute,
                 top: Val::VMin(EDGE),
@@ -316,7 +457,7 @@ pub(crate) fn show_top_bar(
                     row.spawn(name_plate());
                     row.spawn(round_button(icon("person"), SMALL_BUTTON, Node::default()));
                 });
-                left.spawn(balance(&assets));
+                left.spawn(balance(assets));
             });
             bar.spawn((
                 Node {
@@ -334,7 +475,13 @@ pub(crate) fn show_top_bar(
                 // Hajun had it taken out (2026-11-01), and the group became
                 // a speech bubble the same day.
                 for name in ["gift", "social", "gamepad"] {
-                    right.spawn(round_button(icon(name), SIDE_BUTTON, Node::default()));
+                    let button = round_button(icon(name), SIDE_BUTTON, Node::default());
+                    if name == "gift" {
+                        // In the car, held, the gun (`drive::shoot`).
+                        right.spawn((GunButton, button));
+                    } else {
+                        right.spawn(button);
+                    }
                 }
             });
         });
@@ -357,6 +504,7 @@ pub(crate) fn show_top_bar(
         ))
         .with_children(|round| {
             let fist = images.add(fist());
+            let arrow = images.add(jump_arrow());
             for (name, right, bottom) in [("mood", 18.5, 18.5), ("chat", 1.0, 24.3), ("punch", 24.3, 1.2)] {
                 let picture = if name == "punch" { fist.clone() } else { icon(name) };
                 let mut button = round.spawn(round_button(
@@ -369,10 +517,20 @@ pub(crate) fn show_top_bar(
                         ..default()
                     },
                 ));
-                // The fist is the one of the three that does something: a
-                // punch, each time it is pressed.
-                if name == "punch" {
-                    button.insert(PunchButton);
+                // The fist throws a punch each time it is pressed, and the
+                // face puts you in the car and out of it; in the car the
+                // fist is the reverse (`drive`).
+                match name {
+                    "punch" => {
+                        button.insert(PunchButton {
+                            fist: fist.clone(),
+                            reverse: arrow.clone(),
+                        });
+                    }
+                    "mood" => {
+                        button.insert(CarButton);
+                    }
+                    _ => {}
                 }
             }
         });
@@ -388,6 +546,7 @@ pub(crate) struct BarLeft;
 /// for itself; what the press does, if anything, is whoever spawns it to
 /// say.
 pub(crate) fn round_button(icon: Handle<Image>, size_vmin: f32, place: Node) -> impl Bundle {
+    let colours = ui().colours.hud;
     (
         TakesPress,
         Button,
@@ -399,9 +558,9 @@ pub(crate) fn round_button(icon: Handle<Image>, size_vmin: f32, place: Node) -> 
             border_radius: BorderRadius::all(Val::Percent(50.0)),
             ..place
         },
-        BackgroundColor(TOUCH_DISC),
+        BackgroundColor(colours.button),
         children![(
-            ImageNode::new(icon).with_color(TOUCH_MARK),
+            ImageNode::new(icon).with_color(colours.button_mark),
             Node {
                 width: Val::Percent(PICTURE),
                 height: Val::Percent(PICTURE),
@@ -415,13 +574,14 @@ pub(crate) fn round_button(icon: Handle<Image>, size_vmin: f32, place: Node) -> 
 /// Your name on a plate: the buttons' grey, a little more solid, with its
 /// corners rounded a little.
 fn name_plate() -> impl Bundle {
+    let colours = ui().colours;
     (
         Node {
             padding: UiRect::axes(Val::VMin(2.4), Val::VMin(1.0)),
             border_radius: BorderRadius::all(Val::VMin(1.6)),
             ..default()
         },
-        BackgroundColor(PLATE),
+        BackgroundColor(colours.hud.name_plate),
         Pickable::IGNORE,
         children![(
             NamePlate,
@@ -430,23 +590,21 @@ fn name_plate() -> impl Bundle {
                 font_size: FontSize::VMin(NAME_TEXT),
                 ..default()
             },
-            TextColor(Color::WHITE),
+            TextColor(colours.text),
             Pickable::IGNORE,
         )],
     )
 }
 
 /// Shows your name on its plate, as you are called now: as the app opens,
-/// and again when you sign up or change it (`signup`).
-fn show_name(
-    me: Query<&Name, (With<Player>, Changed<Name>)>,
-    mut plates: Query<&mut Text, With<NamePlate>>,
-) {
+/// again when you sign up or change it (`signup`), and on a plate put up
+/// afresh ([`restyle`]).
+fn show_name(me: Query<Ref<Name>, With<Player>>, mut plates: Query<&mut Text, With<NamePlate>>) {
     let Ok(name) = me.single() else {
         return;
     };
     for mut text in &mut plates {
-        if text.0 != name.as_str() {
+        if (name.is_changed() || text.is_added()) && text.0 != name.as_str() {
             text.0 = name.to_string();
         }
     }
@@ -475,23 +633,24 @@ fn balance(assets: &AssetServer) -> impl Bundle {
                 },
                 Pickable::IGNORE,
             ),
-            (BalanceText, words(money(STARTING_BALANCE), BALANCE_TEXT, Color::WHITE)),
+            (BalanceText, words(money(STARTING_BALANCE), BALANCE_TEXT, ui().colours.text)),
         ],
     )
 }
 
-/// Shows your balance whenever it changes.
-fn count_balance(
-    me: Query<&Balance, (With<Player>, Changed<Balance>)>,
-    mut texts: Query<&mut Text, With<BalanceText>>,
-) {
+/// Shows your balance whenever it changes, and on a number put up afresh
+/// ([`restyle`]).
+fn count_balance(me: Query<Ref<Balance>, With<Player>>, mut texts: Query<&mut Text, With<BalanceText>>) {
     let Ok(balance) = me.single() else {
         return;
     };
-    let label = money(balance.0);
     for mut text in &mut texts {
+        if !(balance.is_changed() || text.is_added()) {
+            continue;
+        }
+        let label = money(balance.0);
         if text.0 != label {
-            text.0.clone_from(&label);
+            text.0 = label;
         }
     }
 }
@@ -513,12 +672,13 @@ pub(crate) fn money(amount: u32) -> String {
 
 /// A round button's fill, the dark glass, darker under the pointer and held.
 pub(crate) fn button_fill(interaction: Interaction) -> Color {
+    let panel = ui().colours.panel;
     let alpha = match interaction {
-        Interaction::None => PANEL.alpha(),
+        Interaction::None => panel.alpha(),
         Interaction::Hovered => 0.56,
         Interaction::Pressed => 0.7,
     };
-    PANEL.with_alpha(alpha)
+    panel.with_alpha(alpha)
 }
 
 /// Whenever you land on an island — in the town when the app opens, and back
@@ -556,7 +716,7 @@ fn welcome(
         return;
     }
     due.0 = false;
-    announce(&mut commands, None, "Donggeurami Town", HEADLINE, WELCOME_SECS).insert(Welcome);
+    announce(&mut commands, None, &ui().words.welcome, HEADLINE, WELCOME_SECS).insert(Welcome);
 }
 
 /// Puts `title` across the middle of the screen for `secs` seconds, in gold,
@@ -587,11 +747,12 @@ pub(crate) fn announce<'a>(
     ));
     // Put up clear, for `fade_headlines` to bring up: whenever in the frame
     // this is spawned, it is never drawn once at full strength first.
+    let colours = ui().colours;
     headline.with_children(|lines| {
         if let Some(caption) = caption {
-            lines.spawn(words(caption, CAPTION, Color::WHITE.with_alpha(0.0)));
+            lines.spawn(words(caption, CAPTION, colours.text.with_alpha(0.0)));
         }
-        lines.spawn(words(title, size, GOLD.with_alpha(0.0)));
+        lines.spawn(words(title, size, colours.gold.with_alpha(0.0)));
     });
     headline
 }
@@ -603,6 +764,7 @@ fn fade_headlines(
     mut lines: Query<(&mut TextColor, &mut TextShadow)>,
     mut commands: Commands,
 ) {
+    let tint = ui().colours.text_shadow;
     for (entity, mut headline, children) in &mut headlines {
         headline.age += time.delta_secs();
         if headline.age >= headline.secs {
@@ -618,7 +780,7 @@ fn fade_headlines(
             let faded = colour.0.with_alpha(solid);
             if colour.0 != faded {
                 colour.0 = faded;
-                shadow.color = SHADOW.with_alpha(SHADOW.alpha() * solid);
+                shadow.color = tint.with_alpha(tint.alpha() * solid);
             }
         }
     }
@@ -656,7 +818,7 @@ pub(crate) fn frame(left: f32, top: f32, width: f32, height: f32) -> Node {
 pub(crate) fn shape(left: f32, top: f32, width: f32, height: f32) -> impl Bundle {
     (
         frame(left, top, width, height),
-        BackgroundColor(ICON),
+        BackgroundColor(ui().colours.hud.icon),
         Pickable::IGNORE,
     )
 }
@@ -731,8 +893,8 @@ pub(crate) fn fist() -> Image {
 /// arrow"). Drawn rather than built from nodes, as the arrow in strokes before
 /// it was, because nodes that overlap would show where they do through the
 /// see-through white; and edged by how far each pixel is from it, so that it
-/// is smooth at whatever size a screen shows it.
-#[cfg_attr(not(any(target_os = "android", target_os = "ios")), allow(dead_code))]
+/// is smooth at whatever size a screen shows it. Turned down, it is the
+/// fist's picture in the car, for the reverse.
 pub(crate) fn jump_arrow() -> Image {
     const SIZE: u32 = 128;
     /// How much its corners are rounded off, as a share of half the image.

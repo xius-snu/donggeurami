@@ -25,7 +25,7 @@
 
 use bevy::prelude::*;
 use bevy_replicon::prelude::Remote;
-use roundtown_net::{BOY_LOOKS, BOY_NAMES, GIRL_LOOKS, GIRL_NAMES, PEOPLE_LOOKS, TOWN_BODIES};
+use roundtown_net::{Ask, BOY_LOOKS, BOY_NAMES, GIRL_LOOKS, GIRL_NAMES, PEOPLE_LOOKS, TOWN_BODIES};
 
 use crate::ai;
 use crate::car::Driven;
@@ -35,7 +35,7 @@ use crate::signup::Profile;
 use crate::talk::Speaker;
 use crate::{
     Collider, ColliderShape, Intent, MOVE_SPEED, OrbitCamera, PLAYER_HEIGHT, PLAYER_RADIUS, Player,
-    PlayerJump, Riding, WalkCycle, bind_walk_bones,
+    PlayerJump, Riding, Shove, VOID_Y, WalkCycle, bind_walk_bones,
 };
 
 /// One player in a room, as the server describes them: an id, a name, a look,
@@ -112,11 +112,11 @@ pub(crate) fn models() -> Vec<&'static str> {
     models
 }
 
-/// The most seats the town's arrival rings have spots for that its AIs come
-/// in at: the eight of offline, the eight between them, and sixteen more on
-/// a ring 2 m further out (`roundtown_net::arrival`), for a town of
-/// [`TOWN_BODIES`] (16 until 2026-11-01, when the town went from 8 bodies
-/// to 32).
+/// The most seats the town's arrivals have spots for that its AIs come in
+/// at: eight to each of the four islands, one in the middle and seven round
+/// it (`roundtown_net::arrival`; until 2026-11-07 rings round the pond),
+/// for a town of [`TOWN_BODIES`] (16 until 2026-11-01, when the town went
+/// from 8 bodies to 32).
 const TOWN_SPOTS: usize = 32;
 
 /// The look a body wears when none has been chosen: the boy's. The House
@@ -216,6 +216,7 @@ pub(crate) fn plugin(app: &mut App) {
                     .after(crate::move_bodies)
                     .before(crate::animate_walk),
                 fill_the_town,
+                respawn_the_fallen.after(crate::move_bodies),
             ),
         );
 }
@@ -287,7 +288,10 @@ fn spawn_players(
         let mine = member.id == lobby.me;
         let body = spawn_player(&mut commands, &assets, member, seat, Venue::Town, mine);
         if mine {
-            *orbit = OrbitCamera::behind(&island::arrival(Venue::Town, seat));
+            // Fixed over you, the camera is as it is wherever you arrive.
+            if !orbit.overhead {
+                *orbit = OrbitCamera::behind(&island::arrival(Venue::Town, seat));
+            }
         } else {
             commands.entity(body).insert((Townsfolk(member.id), Speaker::Townsfolk));
         }
@@ -385,6 +389,7 @@ pub(crate) fn spawn_player(
         Balance::default(),
         PlayerJump::default(),
         Riding::default(),
+        Shove::default(),
         Collider {
             shape: ColliderShape::Cylinder {
                 radius: PLAYER_RADIUS,
@@ -433,6 +438,7 @@ pub(crate) type Whereabouts<'w, 's> = Query<
     'w,
     's,
     (
+        Entity,
         &'static mut Transform,
         &'static mut Venue,
         &'static mut PlayerJump,
@@ -440,6 +446,7 @@ pub(crate) type Whereabouts<'w, 's> = Query<
         Option<&'static mut ai::Steering>,
         Has<Player>,
         Option<&'static mut Riding>,
+        Option<&'static mut Shove>,
     ),
 >;
 
@@ -465,12 +472,16 @@ pub(crate) fn put(
     venue: Venue,
     at: Transform,
 ) {
-    let Ok((mut transform, mut on, mut jump, seen, steering, mine, riding)) = bodies.get_mut(body) else {
+    let Ok((_, mut transform, mut on, mut jump, seen, steering, mine, riding, shove)) = bodies.get_mut(body)
+    else {
         return;
     };
     transform.set_if_neq(at);
     on.set_if_neq(venue);
     *jump = PlayerJump::default();
+    if let Some(mut shove) = shove {
+        *shove = Shove::default();
+    }
     if let Some(mut riding) = riding {
         riding.set_if_neq(Riding(None));
     }
@@ -481,8 +492,41 @@ pub(crate) fn put(
     if let Some(mut steering) = steering {
         steering.stop();
     }
-    if mine {
+    if mine && !orbit.overhead {
         orbit.yaw = OrbitCamera::behind(&at).yaw;
+    }
+}
+
+/// Puts back whoever has fallen off the town into the void (since
+/// 2026-11-07, when the sea round it went; Hajun: "it will be a void that
+/// if you step over, u fall and then u 'die' and respawn back at your
+/// spawn which is one of the bridge connected island"): you, or one of
+/// this device's AIs, knocked off ([`Shove`](crate::Shove)), once they are
+/// [`VOID_Y`] down, where their seat arrives ([`send`]), on their own
+/// island. Online, the server is asked to put you there too
+/// (`net::ask_to_respawn`), and no move goes until it has, so that the
+/// leap back is not taken for a move you could not have made and undone.
+fn respawn_the_fallen(
+    mut bodies: Whereabouts,
+    seats: Query<&Seat>,
+    mut orbit: ResMut<OrbitCamera>,
+    mut online: ResMut<Online>,
+    mut asks: MessageWriter<Ask>,
+) {
+    let fallen: Vec<(Entity, Venue, bool)> = bodies
+        .iter()
+        .filter(|(_, transform, ..)| transform.translation.y < VOID_Y)
+        .map(|(body, _, &venue, _, _, _, mine, _, _)| (body, venue, mine))
+        .collect();
+    for (body, venue, mine) in fallen {
+        let Ok(&Seat(seat)) = seats.get(body) else {
+            continue;
+        };
+        send(&mut bodies, &mut orbit, body, venue, seat);
+        info!("{body} fell into the void: back on island {}", roundtown_net::town_island(seat));
+        if mine {
+            crate::net::ask_to_respawn(&mut online, &mut asks, venue);
+        }
     }
 }
 

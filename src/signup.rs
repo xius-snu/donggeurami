@@ -34,48 +34,48 @@ use roundtown_net::{Ask, BOY_LOOKS, GIRL_LOOKS, Member, PEOPLE_LOOKS, profile};
 use serde::{Deserialize, Serialize};
 
 use crate::Player;
-use crate::builder::{self, Fill, QUIET, SOFT};
-use crate::hud::{self, DOOR, DialogUp, GOLD, TakesPress};
+use crate::builder::{self, Fill};
+use crate::hud::{self, DialogUp, TakesPress};
 use crate::lobby::{self, Lobby};
+use crate::ui::{UiChanged, ui};
 
 /// The file who you are lives in, beside the town save.
 const FILE: &str = "profile.json";
 /// Bumped if the file's shape changes.
 const VERSION: u32 = 1;
 
-/// The pages' colours: the page, black, and what stands on it in greys: the
-/// box the name is typed into and the two characters' cards, one of them
-/// chosen, lighter; and the one button each page has, white with black
-/// words, or grey while it cannot be pressed (Hajun, 2026-10-31: "black for
-/// the initial pages ... and white instead of yellow for the buttons"; a
-/// dark blue page with blue boxes and gold buttons for the afternoon).
-const PAGE: Color = Color::BLACK;
-const FIELD: Color = Color::srgb(0.15, 0.15, 0.16);
-const FIELD_LIT: Color = Color::srgb(0.21, 0.21, 0.22);
-const CHOSEN: Color = Color::srgb(0.36, 0.36, 0.38);
-const PAPER: Color = Color::WHITE;
-const PAPER_LIT: Color = Color::srgb(0.84, 0.84, 0.85);
-const INK: Color = Color::srgb(0.05, 0.05, 0.06);
-pub(crate) const GOLD_LIT: Color = Color::srgb(1.0, 0.9, 0.52);
-const WARN: Color = Color::srgb(1.0, 0.62, 0.55);
+// The pages' colours and words are `assets/ui.ron`'s (`ui`): the page,
+// black, and what stands on it in greys, the box the name is typed into and
+// the two characters' cards, one of them chosen, lighter; and the one
+// button each page has, white with black words, or grey while it cannot be
+// pressed (Hajun, 2026-10-31: "black for the initial pages ... and white
+// instead of yellow for the buttons"; a dark blue page with blue boxes and
+// gold buttons for the afternoon).
 
 /// A white button with black words: the pages' own.
-const WHITE_BUTTON: (Fill, Color) = (
-    Fill {
-        idle: PAPER,
-        lit: PAPER_LIT,
-    },
-    INK,
-);
+fn white_button() -> (Fill, Color) {
+    let colours = ui().colours.signup;
+    (
+        Fill {
+            idle: colours.paper,
+            lit: colours.paper_lit,
+        },
+        colours.ink,
+    )
+}
+
 /// A gold button with the dark blue of words on gold: the settings' Save, in
 /// the look of the town's dialogs.
-pub(crate) const GOLD_BUTTON: (Fill, Color) = (
-    Fill {
-        idle: GOLD,
-        lit: GOLD_LIT,
-    },
-    DOOR,
-);
+pub(crate) fn gold_button() -> (Fill, Color) {
+    let colours = ui().colours;
+    (
+        Fill {
+            idle: colours.gold,
+            lit: colours.gold_lit,
+        },
+        colours.on_gold,
+    )
+}
 
 /// Sizes, as shares of the short side of the screen: the town's name, a
 /// page's heading, its words, its button and the name as typed.
@@ -99,7 +99,6 @@ const ROUNDED: f32 = 1.8;
 const ARROW_WIDTH: f32 = 4.0;
 const ARROW_TOUCH: f32 = 8.0;
 const ARROW_GAP: f32 = 1.0;
-const ARROW_INK: Color = Color::srgba(1.0, 1.0, 1.0, 0.85);
 
 /// How far down the screen things stand, as shares of its height: the town's
 /// name and Start under it, in the lower middle; and a page's heading, high
@@ -405,6 +404,7 @@ pub(crate) fn plugin(app: &mut App) {
                 android_text,
                 #[cfg(not(target_os = "android"))]
                 type_name,
+                redraw,
                 act,
                 show_name,
                 light_save,
@@ -421,7 +421,9 @@ pub(crate) fn plugin(app: &mut App) {
 }
 
 /// The first time the app is run, or the name and the character are not
-/// set: the pages come before the town.
+/// set: the pages come before the town. And on desktop with `RT_SIGNUP` set,
+/// every time, for working on the pages: saving on them sets the profile as
+/// it would.
 fn open_if_unset(
     profile: Res<Profile>,
     mut signup: ResMut<Signup>,
@@ -429,7 +431,9 @@ fn open_if_unset(
     assets: Res<AssetServer>,
     mut commands: Commands,
 ) {
-    if !profile.set() {
+    let asked_for = cfg!(not(any(target_os = "android", target_os = "ios")))
+        && std::env::var_os("RT_SIGNUP").is_some_and(|value| !value.is_empty());
+    if !profile.set() || asked_for {
         open(&mut commands, &assets, &mut signup, &mut up);
     }
 }
@@ -465,14 +469,50 @@ fn show(
     page: Page,
 ) {
     signup.page = Some(page);
+    if page == Page::Name {
+        name_box.open(&signup.name);
+    }
+    draw(commands, assets, signup, &name_box.text, page);
+}
+
+/// Spawns `page` as things stand: with `name` in its box, if it has one.
+fn draw(commands: &mut Commands, assets: &AssetServer, signup: &Signup, name: &str, page: Page) {
     match page {
         Page::Start => start_page(commands),
-        Page::Name => {
-            name_box.open(&signup.name);
-            name_page(commands, &signup.name);
-        }
+        Page::Name => name_page(commands, name),
         Page::Character => character_page(commands, assets, signup),
     }
+}
+
+/// Draws the page that is up again in the file's colours and words as it
+/// changes on desktop (`ui::reread`), as it stands: the name as typed so
+/// far stays in its box. Not in a frame a press or Enter is waiting to be
+/// acted on ([`act`]), which would take down the page it is about to put up.
+fn redraw(
+    changed: Res<UiChanged>,
+    keyboard: Res<ButtonInput<KeyCode>>,
+    signup: Res<Signup>,
+    name_box: Res<NameBox>,
+    pages: Query<Entity, With<PageRoot>>,
+    assets: Res<AssetServer>,
+    mut commands: Commands,
+) {
+    if !changed.is_changed() || changed.is_added() {
+        return;
+    }
+    let Some(page) = signup.page else {
+        return;
+    };
+    if signup.pressed.is_some()
+        || name_box.entered
+        || keyboard.any_just_pressed([KeyCode::Enter, KeyCode::NumpadEnter])
+    {
+        return;
+    }
+    for page in &pages {
+        commands.entity(page).despawn();
+    }
+    draw(&mut commands, &assets, &signup, &name_box.text, page);
 }
 
 /// Draws the arrowhead the character page's arrows share, once.
@@ -492,7 +532,7 @@ fn page() -> impl Bundle {
             height: Val::Percent(100.0),
             ..default()
         },
-        BackgroundColor(PAGE),
+        BackgroundColor(ui().colours.signup.page),
         GlobalZIndex(LAYER),
     )
 }
@@ -518,7 +558,7 @@ fn column(down: f32) -> impl Bundle {
 /// A page's one button, white with black words, as it can be pressed;
 /// [`light_save`] greys it while it cannot.
 fn button(text: &str, action: Action) -> impl Bundle {
-    let (fill, ink) = WHITE_BUTTON;
+    let (fill, ink) = white_button();
     (
         action,
         TakesPress,
@@ -540,11 +580,13 @@ fn button(text: &str, action: Action) -> impl Bundle {
 /// The town's name, Start, and under it Log In for an account from another
 /// device.
 fn start_page(commands: &mut Commands) {
+    let ui = ui();
+    let (colours, words) = (ui.colours, &ui.words.signup);
     commands.spawn(page()).with_children(|page| {
         page.spawn(column(TITLE_DOWN))
-            .with_child(builder::label("Donggeurami Town", TITLE, Color::WHITE));
+            .with_child(builder::label(words.title.as_str(), TITLE, colours.text));
         page.spawn(column(START_DOWN)).with_children(|column| {
-            column.spawn(button("Start", Action::Start));
+            column.spawn(button(&words.start, Action::Start));
             column
                 .spawn((
                     Node {
@@ -555,19 +597,19 @@ fn start_page(commands: &mut Commands) {
                     Pickable::IGNORE,
                 ))
                 .with_children(|line| {
-                    line.spawn(builder::label("Already have an account?", SMALL, SOFT));
+                    line.spawn(builder::label(words.have_account.as_str(), SMALL, colours.text_soft));
                     line.spawn((
                         Action::LogIn,
                         TakesPress,
                         Button,
                         Node::default(),
-                        children![builder::label("Log In", SMALL, PAPER)],
+                        children![builder::label(words.log_in.as_str(), SMALL, colours.signup.paper)],
                     ));
                 });
             column.spawn((
                 Notice,
                 Visibility::Hidden,
-                builder::label("Log in is not available yet", SMALL, WARN),
+                builder::label(words.not_available.as_str(), SMALL, colours.warn),
             ));
         });
     });
@@ -576,15 +618,17 @@ fn start_page(commands: &mut Commands) {
 /// A name to go by, typed into a box. The whole column moves up out from
 /// under a phone's keyboard ([`LiftsForKeyboard`]).
 fn name_page(commands: &mut Commands, name: &str) {
+    let ui = ui();
+    let (colours, words) = (ui.colours, &ui.words.signup);
     commands.spawn(page()).with_children(|page| {
         page.spawn((column(HEADING_DOWN), LiftsForKeyboard::default())).with_children(|column| {
-            column.spawn(builder::label("Choose Username", HEADING, Color::WHITE));
+            column.spawn(builder::label(words.choose_name.as_str(), HEADING, colours.text));
             // One line (Hajun, 2026-11-01; three lines of explanation until
             // then), so not held to the box's width. A hyphen, not an en
             // dash, which the built-in font has no glyph for.
-            column.spawn(builder::label("Shown to other players. 2-16 characters.", SMALL, SOFT));
+            column.spawn(builder::label(words.name_hint.as_str(), SMALL, colours.text_soft));
             column.spawn(name_box(name, FIELD_WIDTH));
-            column.spawn((Save, button("Save", Action::SaveName)));
+            column.spawn((Save, button(&words.save, Action::SaveName)));
         });
     });
 }
@@ -592,6 +636,7 @@ fn name_page(commands: &mut Commands, name: &str) {
 /// The box a name is typed into, `width` wide, with `name` in it to go on
 /// from, which [`NameBox`] takes the keys for once it is [`open`](NameBox::open).
 pub(crate) fn name_box(name: &str, width: f32) -> impl Bundle {
+    let colours = ui().colours;
     (
         NameBoxTap,
         TakesPress,
@@ -604,7 +649,7 @@ pub(crate) fn name_box(name: &str, width: f32) -> impl Bundle {
             border_radius: BorderRadius::all(Val::VMin(ROUNDED)),
             ..default()
         },
-        BackgroundColor(FIELD),
+        BackgroundColor(colours.signup.field),
         children![(
             NameText,
             Text::new(shown(name, true)),
@@ -612,7 +657,7 @@ pub(crate) fn name_box(name: &str, width: f32) -> impl Bundle {
                 font_size: FontSize::VMin(NAME_TEXT),
                 ..default()
             },
-            TextColor(Color::WHITE),
+            TextColor(colours.text),
             TextLayout::justify(Justify::Left),
             Pickable::IGNORE,
         )],
@@ -633,10 +678,12 @@ fn shown(name: &str, caret: bool) -> String {
 /// thingy next to each guy and girl character selection in the start so u
 /// can choose which color guy or which color girl"); and Save.
 fn character_page(commands: &mut Commands, assets: &AssetServer, signup: &Signup) {
+    let ui = ui();
+    let (colours, words) = (ui.colours, &ui.words.signup);
     commands.spawn(page()).with_children(|page| {
         page.spawn(column(HEADING_DOWN)).with_children(|column| {
-            column.spawn(builder::label("Choose Character", HEADING, Color::WHITE));
-            column.spawn(builder::label("You may change this later.", SMALL, SOFT));
+            column.spawn(builder::label(words.choose_character.as_str(), HEADING, colours.text));
+            column.spawn(builder::label(words.change_later.as_str(), SMALL, colours.text_soft));
             column
                 .spawn((
                     Node {
@@ -692,7 +739,7 @@ fn character_page(commands: &mut Commands, assets: &AssetServer, signup: &Signup
                             });
                     }
                 });
-            column.spawn((Save, button("Save", Action::SaveLook)));
+            column.spawn((Save, button(&words.save, Action::SaveLook)));
         });
     });
 }
@@ -701,6 +748,7 @@ fn character_page(commands: &mut Commands, assets: &AssetServer, signup: &Signup
 /// back: a white arrowhead on nothing, pointing left, or flipped across to
 /// point right, with room round it for a finger.
 fn arrow(signup: &Signup, side: usize, by: i32) -> impl Bundle {
+    let arrow_ink = ui().colours.signup.arrow;
     (
         ColourArrow { side, by },
         Action::Turn(side, by),
@@ -716,7 +764,7 @@ fn arrow(signup: &Signup, side: usize, by: i32) -> impl Bundle {
         children![(
             ImageNode {
                 flip_x: by > 0,
-                color: ARROW_INK,
+                color: arrow_ink,
                 ..ImageNode::new(signup.arrow.clone())
             },
             Node {
@@ -732,15 +780,16 @@ fn arrow(signup: &Signup, side: usize, by: i32) -> impl Bundle {
 /// A card's colour: the chosen one lighter, the rest lit only under the
 /// pointer.
 fn card_fill(chosen: bool) -> Fill {
+    let colours = ui().colours.signup;
     if chosen {
         Fill {
-            idle: CHOSEN,
-            lit: CHOSEN,
+            idle: colours.chosen,
+            lit: colours.chosen,
         }
     } else {
         Fill {
-            idle: FIELD,
-            lit: FIELD_LIT,
+            idle: colours.field,
+            lit: colours.field_lit,
         }
     }
 }
@@ -966,12 +1015,13 @@ pub(crate) fn save_look(able: bool, look: (Fill, Color)) -> (Fill, Color) {
     if able {
         look
     } else {
+        let colours = ui().colours;
         (
             Fill {
-                idle: QUIET,
-                lit: QUIET,
+                idle: colours.quiet,
+                lit: colours.quiet,
             },
-            SOFT,
+            colours.text_soft,
         )
     }
 }
@@ -1011,7 +1061,7 @@ fn light_save(
         Some(Page::Character) => signup.look.is_some(),
         _ => return,
     };
-    light(able, WHITE_BUTTON, &mut saves, &mut labels);
+    light(able, white_button(), &mut saves, &mut labels);
 }
 
 /// Lights the card of the character chosen.

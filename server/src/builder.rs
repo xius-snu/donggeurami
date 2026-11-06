@@ -472,7 +472,7 @@ fn hear(
                     commands.entity(piece).despawn();
                 }
             }
-            Ask::Hello { .. } | Ask::Travel(_) | Ask::Profile { .. } => {}
+            Ask::Hello { .. } | Ask::Travel(_) | Ask::Profile { .. } | Ask::Respawn | Ask::Punch { .. } => {}
         }
     }
 }

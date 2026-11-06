@@ -39,9 +39,12 @@ use crate::accounts::{Bank, Loaded, Record};
 use crate::builder::Games;
 use crate::rooms::{ClientRoom, InRoom, NotFor, Room, Towns};
 
-/// How fast a body can go across the ground, in metres a second: the game's
-/// `MOVE_SPEED`, with some slack for the odd update arriving early.
-const MOST_SPEED: f32 = 7.0 * 1.3;
+/// How fast a body can go across the ground, in metres a second: the car
+/// anyone can drive, boosted (`cars::DRIVEN_TOP_SPEED`, since 2026-11-05,
+/// 40 since 2026-11-06; the game's `MOVE_SPEED`, 7, until then), with some
+/// slack for the odd update arriving early. Nothing says a body is in the
+/// car, so every body is allowed as much.
+const MOST_SPEED: f32 = cars::DRIVEN_TOP_SPEED * 1.3;
 /// How fast a body can rise, in metres a second: a jump, `JUMP_SPEED`, with
 /// slack. Falling is not limited.
 const MOST_RISE: f32 = 8.5 * 1.3;
@@ -56,6 +59,11 @@ const EDGE_OF_THE_WORLD: f32 = 581.0;
 /// second: its top speed, with the same slack as a run's, and a run on top,
 /// along it.
 const MOST_RIDE: f32 = cars::TOP_SPEED * 1.3 + MOST_SPEED;
+/// How far apart two bodies can be, in metres, for a punch of the one to
+/// land on the other ([`Ask::Punch`]): the game's reach, 3 m from the
+/// puncher's middle to the other's side, and as much again for where each
+/// has got to since its device last said.
+const PUNCH_REACH: f32 = 6.5;
 
 /// The names a player is given, with a number after: plain ASCII, as the
 /// game's font is. The game's own AIs go by the same names without one.
@@ -329,6 +337,63 @@ fn hear(
                 bank.profile(member.id, &member.name, &member.look);
                 commands.entity(body).insert(member.clone());
                 tell(&mut tells, client, Tell::Welcome { me: member });
+            }
+            // Fallen off the town into the void: back where its seat
+            // arrives, as a fresh arrival, so that the leap back is not a
+            // move to be checked and undone.
+            (Ask::Respawn, Some(&Plays(body))) => {
+                let Ok((body_of, spot, venue, _)) = bodies.get_mut(body) else {
+                    continue;
+                };
+                let (room, seat) = (body_of.room, body_of.seat);
+                if !matches!(room, Room::Town(_)) {
+                    tell(&mut tells, client, Tell::Refused(Refusal::Busy));
+                    continue;
+                }
+                move_to(
+                    &mut commands,
+                    &mut tells,
+                    body,
+                    (body_of, spot, venue),
+                    room,
+                    Venue::Town,
+                    seat,
+                    time.elapsed_secs_f64(),
+                );
+            }
+            // A punch landed on someone in the room: their device is told
+            // to knock them back from the puncher, if the two are near
+            // enough for it where each last said it was. On a bus, each is
+            // a place on the bus, and off it on the island: in different
+            // spaces there is no telling, and the punch is taken as it is.
+            (Ask::Punch { who, running }, Some(&Plays(body))) => {
+                let Ok((hitter, from, on, member)) = bodies.get(body) else {
+                    continue;
+                };
+                let (room, from, on, by) = (hitter.room, *from, *on, member.id);
+                let victim = bodies.iter().find_map(|(other, spot, venue, member)| {
+                    (member.id == *who && other.room == room && *venue == on)
+                        .then_some((other.client, *spot))
+                });
+                let Some((Some(their_device), spot)) = victim else {
+                    continue;
+                };
+                let near = match (from.aboard, spot.aboard) {
+                    (a, b) if a == b => from.translation().xz().distance(spot.translation().xz()) <= PUNCH_REACH,
+                    _ => true,
+                };
+                if !near {
+                    continue;
+                }
+                tell(
+                    &mut tells,
+                    their_device,
+                    Tell::Knocked {
+                        by,
+                        from,
+                        running: *running,
+                    },
+                );
             }
             _ => {}
         }
@@ -706,11 +771,19 @@ mod tests {
     fn a_leap_is_not() {
         let mut pace = Pace::new(0.0);
         assert!(!pace.take(&spot(0.0, 0.0, 0.0), &spot(30.0, 0.0, 0.0), 1.0 / 15.0));
-        // Twice the speed for a few seconds runs out what is in hand.
+        // The car boosted for ten seconds is a move a body can make.
+        let mut pace = Pace::new(0.0);
+        let mut at = spot(0.0, 0.0, 0.0);
+        for step in 1..=150 {
+            let next = spot(step as f32 * cars::DRIVEN_TOP_SPEED / 15.0, 0.0, 0.0);
+            assert!(pace.take(&at, &next, f64::from(step) / 15.0), "step {step}");
+            at = next;
+        }
+        // Twice that for a few seconds runs out what is in hand.
         let mut pace = Pace::new(0.0);
         let mut at = spot(0.0, 0.0, 0.0);
         let caught = (1..=60).any(|step| {
-            let next = spot(step as f32 * 14.0 / 15.0, 0.0, 0.0);
+            let next = spot(step as f32 * 2.0 * cars::DRIVEN_TOP_SPEED / 15.0, 0.0, 0.0);
             let taken = pace.take(&at, &next, f64::from(step) / 15.0);
             at = next;
             !taken

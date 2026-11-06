@@ -33,19 +33,20 @@ use std::sync::mpsc::{Receiver, TryRecvError};
 
 use bevy::prelude::*;
 
-use crate::builder::{
-    self, BODY, BUTTON_HEIGHT, BUTTON_WIDTH, DIALOG_LAYER, DIM, Fill, QUIET, QUIET_LIT, SMALL,
-    SOFT, TITLE, WARN,
-};
-use crate::hud::{self, BarLeft, DOOR, DialogUp, GOLD, ICON, TakesPress};
+use crate::builder::{self, BODY, BUTTON_HEIGHT, BUTTON_WIDTH, DIALOG_LAYER, Fill, SMALL, TITLE};
+use crate::hud::{self, BarLeft, DialogUp, TakesPress};
 use crate::lobby::Lobby;
 use crate::net::{Link, Online};
 use crate::signup::{self, NameBox, Profile, Save, Signup};
+use crate::ui::{UiChanged, ui};
 use crate::Player;
 
 /// Sizes, as shares of the short side of the screen: the window and what is
 /// in it; the pencil beside your name; and the box the name is typed into,
-/// in the dialog.
+/// in the dialog. The colours and the words are `assets/ui.ron`'s (`ui`):
+/// the window a grey glass, greyer than the dialogs' dark blue, and
+/// see-through enough for the town to show behind it; a sign-in not to be
+/// had yet blocked out, its words faint.
 const WIDTH: f32 = 84.0;
 const HEIGHT: f32 = 72.0;
 const PADDING: f32 = 2.6;
@@ -53,14 +54,6 @@ const TAB_TEXT: f32 = 3.4;
 const CLOSE: f32 = 9.0;
 const PENCIL: f32 = 6.0;
 const NAME_FIELD: f32 = 70.0;
-/// The window: a grey glass, greyer than the dialogs' dark blue, and
-/// see-through enough for the town to show behind it.
-const WINDOW: Color = Color::srgba(0.36, 0.37, 0.40, 0.82);
-/// Delete, lit up under the pointer.
-const WARN_LIT: Color = Color::srgb(1.0, 0.74, 0.69);
-/// A sign-in that is not to be had yet: blocked out, and its words faint.
-const BLOCKED: Color = Color::srgba(1.0, 1.0, 1.0, 0.08);
-const BLOCKED_INK: Color = Color::srgba(1.0, 1.0, 1.0, 0.4);
 /// The Accounts tab's buttons: wider than House Builder's, for "Sign in with
 /// Google" to fit on one line, with words a little smaller than its.
 const CHOICE_WIDTH: f32 = 54.0;
@@ -70,8 +63,7 @@ pub(crate) fn plugin(app: &mut App) {
     app.init_resource::<Settings>()
         .init_resource::<Deleting>()
         .add_observer(choose)
-        .add_systems(Startup, spawn_button.after(hud::show_top_bar))
-        .add_systems(Update, (keys, edit_name, light_save, deleted).chain());
+        .add_systems(Update, (spawn_button, redraw, keys, edit_name, light_save, deleted).chain());
 }
 
 /// The window, while it is up, and the tab it shows.
@@ -107,11 +99,14 @@ enum Tab {
 impl Tab {
     const ALL: [Tab; 3] = [Tab::Graphics, Tab::Controls, Tab::Accounts];
 
-    fn title(self) -> &'static str {
+    /// What the tab is called, as the file has it.
+    fn title(self) -> String {
+        let ui = ui();
+        let words = &ui.words.settings;
         match self {
-            Tab::Graphics => "Graphics",
-            Tab::Controls => "Controls",
-            Tab::Accounts => "Accounts",
+            Tab::Graphics => words.graphics.clone(),
+            Tab::Controls => words.controls.clone(),
+            Tab::Accounts => words.accounts.clone(),
         }
     }
 }
@@ -141,26 +136,47 @@ enum Choice {
 #[derive(Resource, Default)]
 struct Deleting(Option<Mutex<Receiver<Result<(), String>>>>);
 
+/// The gear, on the bar top left as it comes up: as the app opens, and again
+/// whenever the bar is put up afresh in the file's colours (`hud::restyle`).
 fn spawn_button(
-    bars: Query<Entity, With<BarLeft>>,
+    bars: Query<Entity, Added<BarLeft>>,
     assets: Res<AssetServer>,
     mut images: ResMut<Assets<Image>>,
     mut settings: ResMut<Settings>,
     mut commands: Commands,
 ) {
-    let Ok(bar) = bars.single() else {
+    for bar in &bars {
+        if settings.pencil == Handle::default() {
+            settings.pencil = images.add(hud::pencil());
+        }
+        // After your name and the person beside it, in the buttons' own
+        // style, with Material's gear on it (`hud::ICONS`; one drawn in code
+        // until 2026-11-01, when Hajun asked for the one in their
+        // screenshot).
+        commands.spawn((
+            ChildOf(bar),
+            SettingsButton,
+            Choice::Open,
+            hud::round_button(assets.load("icons/settings.png"), hud::SMALL_BUTTON, Node::default()),
+        ));
+    }
+}
+
+/// Draws the window again in the file's colours and words as it changes on
+/// desktop (`ui::reread`), on the tab it is on; not while one of the
+/// smaller dialogs is up in its place.
+fn redraw(
+    changed: Res<UiChanged>,
+    online: Res<Online>,
+    profile: Res<Profile>,
+    mut settings: ResMut<Settings>,
+    dialogs: Query<Entity, With<SettingsDialog>>,
+    mut commands: Commands,
+) {
+    if !changed.is_changed() || changed.is_added() || settings.window.is_none() {
         return;
-    };
-    settings.pencil = images.add(hud::pencil());
-    // After your name and the person beside it, in the buttons' own style,
-    // with Material's gear on it (`hud::ICONS`; one drawn in code until
-    // 2026-11-01, when Hajun asked for the one in their screenshot).
-    commands.spawn((
-        ChildOf(bar),
-        SettingsButton,
-        Choice::Open,
-        hud::round_button(assets.load("icons/settings.png"), hud::SMALL_BUTTON, Node::default()),
-    ));
+    }
+    show(&mut commands, &mut settings, &dialogs, &online, &profile);
 }
 
 /// Opens the window, and goes on from there as its buttons are pressed.
@@ -207,13 +223,15 @@ fn choose(
         }
         Choice::Confirm => {
             close(&mut commands, &mut settings, &mut up, &dialogs);
+            let ui = ui();
+            let words = &ui.words.settings;
             match link.delete_account() {
                 Some(answer) => {
                     deleting.0 = Some(Mutex::new(answer));
-                    hud::announce(&mut commands, None, "Deleting your account...", hud::CAPTION, 2.0);
+                    hud::announce(&mut commands, None, &words.deleting, hud::CAPTION, 2.0);
                 }
                 None => {
-                    hud::announce(&mut commands, None, "Not online: try again", hud::CAPTION, 3.0);
+                    hud::announce(&mut commands, None, &words.not_online_try, hud::CAPTION, 3.0);
                 }
             }
         }
@@ -281,6 +299,7 @@ fn window(
     profile: &Profile,
     pencil: Handle<Image>,
 ) -> Entity {
+    let colours = ui().colours;
     let dark = commands
         .spawn((
             SettingsDialog,
@@ -294,7 +313,7 @@ fn window(
                 align_items: AlignItems::Center,
                 ..default()
             },
-            BackgroundColor(DIM),
+            BackgroundColor(colours.dim),
             GlobalZIndex(DIALOG_LAYER),
         ))
         .id();
@@ -310,7 +329,7 @@ fn window(
                 border_radius: BorderRadius::all(Val::VMin(3.0)),
                 ..default()
             },
-            BackgroundColor(WINDOW),
+            BackgroundColor(colours.settings.window),
         ))
         .id();
     commands.spawn((ChildOf(panel), close_button()));
@@ -359,12 +378,14 @@ fn accounts(
     profile: &Profile,
     pencil: Handle<Image>,
 ) {
+    let ui = ui();
+    let (colours, words) = (ui.colours, &ui.words.settings);
     // The name you chose, which the server takes on a moment after it is
     // changed; the server's only before you have chosen one.
     let name = if profile.set() {
         profile.name.clone()
     } else {
-        online.me().map_or("Not signed up".into(), |me| me.name.clone())
+        online.me().map_or(words.not_signed_up.clone(), |me| me.name.clone())
     };
     commands
         .spawn((
@@ -377,7 +398,7 @@ fn accounts(
             Pickable::IGNORE,
         ))
         .with_children(|row| {
-            row.spawn(builder::label(name, BODY, Color::WHITE));
+            row.spawn(builder::label(name, BODY, colours.text));
             row.spawn((
                 Choice::Rename,
                 TakesPress,
@@ -390,15 +411,15 @@ fn accounts(
                     border_radius: BorderRadius::all(Val::Percent(50.0)),
                     ..default()
                 },
-                BackgroundColor(QUIET),
+                BackgroundColor(colours.quiet),
                 Fill {
-                    idle: QUIET,
-                    lit: QUIET_LIT,
+                    idle: colours.quiet,
+                    lit: colours.quiet_lit,
                 },
                 children![(
                     ImageNode {
                         image: pencil,
-                        color: ICON,
+                        color: colours.hud.icon,
                         ..default()
                     },
                     Node {
@@ -413,32 +434,29 @@ fn accounts(
     commands.spawn((
         ChildOf(body),
         builder::label(
-            if online.is() {
-                "A guest account, kept on this device."
-            } else {
-                "Not online."
-            },
+            if online.is() { words.guest.as_str() } else { words.not_online.as_str() },
             SMALL,
-            SOFT,
+            colours.text_soft,
         ),
     ));
-    commands.spawn((ChildOf(body), blocked("Sign in with Google")));
-    commands.spawn((ChildOf(body), blocked("Sign in with Apple")));
+    commands.spawn((ChildOf(body), blocked(&words.sign_in_google)));
+    commands.spawn((ChildOf(body), blocked(&words.sign_in_apple)));
     commands.spawn((
         ChildOf(body),
-        button("Delete account", Choice::Delete, warning(), CHOICE_WIDTH),
+        button(&words.delete_account, Choice::Delete, warning(), CHOICE_WIDTH),
     ));
 }
 
 /// One of the window's tabs: the one shown in gold, the rest quiet.
 fn tab_button(tab: Tab, chosen: bool) -> impl Bundle {
     let (fill, ink) = if chosen {
+        let colours = ui().colours;
         (
             Fill {
-                idle: GOLD,
-                lit: GOLD,
+                idle: colours.gold,
+                lit: colours.gold,
             },
-            DOOR,
+            colours.on_gold,
         )
     } else {
         quiet()
@@ -464,6 +482,7 @@ fn tab_button(tab: Tab, chosen: bool) -> impl Bundle {
 
 /// The cross on the window's corner, as the shop's.
 fn close_button() -> impl Bundle {
+    let colours = ui().colours;
     (
         Choice::Close,
         TakesPress,
@@ -478,8 +497,8 @@ fn close_button() -> impl Bundle {
             border_radius: BorderRadius::all(Val::Percent(50.0)),
             ..default()
         },
-        BackgroundColor(Color::srgba(0.72, 0.2, 0.2, 0.92)),
-        BorderColor::all(Color::srgba(1.0, 1.0, 1.0, 0.7)),
+        BackgroundColor(colours.close),
+        BorderColor::all(colours.close_rim),
         children![
             (
                 hud::shape(22.0, 44.0, 56.0, 12.0),
@@ -496,6 +515,7 @@ fn close_button() -> impl Bundle {
 /// A sign-in that is not to be had yet: a button blocked out, which does
 /// nothing.
 fn blocked(text: &str) -> impl Bundle {
+    let colours = ui().colours.settings;
     (
         Node {
             width: Val::VMin(CHOICE_WIDTH),
@@ -505,9 +525,9 @@ fn blocked(text: &str) -> impl Bundle {
             border_radius: BorderRadius::all(Val::VMin(BUTTON_HEIGHT * 0.5)),
             ..default()
         },
-        BackgroundColor(BLOCKED),
+        BackgroundColor(colours.blocked),
         Pickable::IGNORE,
-        children![builder::label(text, CHOICE_TEXT, BLOCKED_INK)],
+        children![builder::label(text, CHOICE_TEXT, colours.blocked_text)],
     )
 }
 
@@ -515,19 +535,21 @@ fn blocked(text: &str) -> impl Bundle {
 /// into, Cancel, and Save. On a phone it slides up out from under the
 /// keyboard (`signup::LiftsForKeyboard`).
 fn renaming(commands: &mut Commands, name: &str) {
+    let ui = ui();
+    let (colours, words) = (ui.colours, &ui.words.settings);
     builder::dimmed(commands, (SettingsDialog, Choice::CancelRename))
         .insert(signup::LiftsForKeyboard::default())
         .with_children(|panel| {
-            panel.spawn(hud::words("Edit name", TITLE, GOLD));
+            panel.spawn(hud::words(words.edit_name.as_str(), TITLE, colours.gold));
             panel.spawn(signup::name_box(name, NAME_FIELD));
             panel.spawn(builder::choices()).with_children(|choices| {
-                choices.spawn(button("Cancel", Choice::CancelRename, quiet(), BUTTON_WIDTH));
+                choices.spawn(button(&words.cancel, Choice::CancelRename, quiet(), BUTTON_WIDTH));
                 choices.spawn((
                     Save,
                     button(
-                        "Save",
+                        &words.save,
                         Choice::SaveName,
-                        signup::save_look(true, signup::GOLD_BUTTON),
+                        signup::save_look(true, signup::gold_button()),
                         BUTTON_WIDTH,
                     ),
                 ));
@@ -537,16 +559,14 @@ fn renaming(commands: &mut Commands, name: &str) {
 
 /// Asked once more, before an account goes for good.
 fn sure(commands: &mut Commands) {
+    let ui = ui();
+    let (colours, words) = (ui.colours, &ui.words.settings);
     builder::dimmed(commands, (SettingsDialog, Choice::Close)).with_children(|panel| {
-        panel.spawn(hud::words("Delete your account?", TITLE, GOLD));
-        panel.spawn(builder::label(
-            "Your name and coins go for good.\nThis cannot be undone.",
-            BODY,
-            Color::WHITE,
-        ));
+        panel.spawn(hud::words(words.delete_sure.as_str(), TITLE, colours.gold));
+        panel.spawn(builder::label(words.delete_warning.as_str(), BODY, colours.text));
         panel.spawn(builder::choices()).with_children(|choices| {
-            choices.spawn(button("Cancel", Choice::Close, quiet(), BUTTON_WIDTH));
-            choices.spawn(button("Delete", Choice::Confirm, warning(), BUTTON_WIDTH));
+            choices.spawn(button(&words.cancel, Choice::Close, quiet(), BUTTON_WIDTH));
+            choices.spawn(button(&words.delete, Choice::Confirm, warning(), BUTTON_WIDTH));
         });
     });
 }
@@ -554,22 +574,24 @@ fn sure(commands: &mut Commands) {
 /// The look of a quiet button, one that backs out; and of one that deletes,
 /// in the colour of a warning.
 fn quiet() -> (Fill, Color) {
+    let colours = ui().colours;
     (
         Fill {
-            idle: QUIET,
-            lit: QUIET_LIT,
+            idle: colours.quiet,
+            lit: colours.quiet_lit,
         },
-        Color::WHITE,
+        colours.text,
     )
 }
 
 fn warning() -> (Fill, Color) {
+    let colours = ui().colours;
     (
         Fill {
-            idle: WARN,
-            lit: WARN_LIT,
+            idle: colours.warn,
+            lit: colours.warn_lit,
         },
-        DOOR,
+        colours.on_gold,
     )
 }
 
@@ -654,7 +676,7 @@ fn light_save(
     mut labels: Query<&mut TextColor>,
 ) {
     if settings.renaming {
-        signup::light(name_box.name().is_some(), signup::GOLD_BUTTON, &mut saves, &mut labels);
+        signup::light(name_box.name().is_some(), signup::gold_button(), &mut saves, &mut labels);
     }
 }
 
@@ -713,7 +735,7 @@ fn deleted(
             hud::announce(
                 &mut commands,
                 None,
-                "Could not delete it: try again",
+                &ui().words.settings.could_not_delete,
                 hud::CAPTION,
                 3.0,
             );

@@ -168,6 +168,99 @@ second, 168% of a CPU core and 45 W on the GPU, and the machine ran hot
   their whole skeleton again; writing a UI `Node` has the whole screen laid
   out again.
 
+## The screen's colours and words are in `assets/ui.ron`
+
+Since 2026-11-04 (Hajun: "i think ai cannot rly implement my instructions
+exactly and precisely how i want it. how can i make it so i can tweak it
+myself and have more of my control?"; and, of a first file that held every
+size and margin as well, "too overfilled with constants ... i just want to
+be able to change the colors (including transparency) of UI objects like
+buttons and windows and text. easily ... AND Text. so i want to change some
+of the text easily like the 'A guest account, kept on this device.' in
+settings"), every colour and every word of what is drawn over the world
+lives in `assets/ui.ron`, for Hajun to edit by hand: the bar across the
+top and its buttons, a phone's stick and jump button, the sign-up's pages,
+the settings window and its dialogs, House Builder's board, stars, dialogs
+and results, the shop, talking, the edit menu's buttons, the names over
+heads, the headlines and the notices. Sizes, margins and layout stay in
+the code. `src/ui.rs` reads it: `ui()` gives the file as it stands, a
+global rather than a resource, so that the plain functions every screen is
+built from (`hud::words`, `builder::label`, `builder::dimmed`) read it
+without every caller threading it through; and `ui::fill` fills a word's
+`{something}` in ("You came {place}").
+
+- **The file is compiled in** (`include_str!`), so a phone shows whatever
+  it said when its app was built, with nothing to copy or package
+  (`ui.ron` is left out of the APK as a file, being built in). `cargo test`
+  reads it; a field misspelt or missing is an error (`deny_unknown_fields`),
+  not silently ignored, and so is a file with no small talk in it.
+- **On Windows it is read again whenever it changes on disk**
+  (`ui::reread`, every quarter second by its modified time; nothing on a
+  phone), and `ui::UiChanged` changes that frame, on which whatever stays
+  on the screen is drawn again from it: the bar is taken down and put up
+  afresh (`hud::restyle`; `settings` puts its gear back on the new bar, and
+  the name and balance are filled in again), the sign-up page that is up
+  is drawn again as it stands, the name typed so far kept
+  (`signup::redraw`), the settings window on its tab (`settings::redraw`;
+  not while Edit name or the delete question is up in its place), and the
+  names over heads take the new colour (`tags::recolour`). A dialog, the
+  shop, House Builder's board and results take it when they next come up.
+  So with the game running from `cargo run`, save the file and look: no
+  rebuild, where one took 77 s on this PC (measured 2026-11-04). A file
+  that will not read is logged once, with the line and column, and the
+  last good one kept, as an editor may be caught halfway through writing
+  it. `RT_SIGNUP=1` opens the sign-up's pages at launch whatever the
+  profile, for working on them; saving on them sets the profile as it
+  would.
+- **A colour is written as on the web**, `"#rrggbb"` or `"#rrggbbaa"` with
+  its alpha (`00` invisible, `ff` solid), so that VS Code's colour picker
+  edits it (Hajun, 2026-11-04: "is there a notepad app or some extension on
+  vscode so i can edit the colors using some rgb selector"): with
+  `editor.defaultColorDecorators` set to `always` (`.vscode/settings.json`,
+  which git ignores, has it for this PC) every colour gets a swatch, and
+  hovering it opens the picker, whose hue, saturation and alpha sliders
+  rewrite the string in place; with auto save on, the running game follows
+  each drag. `rgb()`, `rgba()`, `hsl()` and `hsla()` read too
+  (`ui::parse_colour`), whichever format the picker is switched to.
+  `(r, g, b, a)` from 0 to 1 was the first form, for an hour. What every
+  screen shares comes first (`text`, `text_soft`, `gold`, `on_gold`,
+  `warn`, `dim`, `dialog`, `panel`, `quiet`, `off`, `close`), then each
+  screen's own. The file's comments say what each is; the history of each
+  (who asked for what, when) is in this file, under the screen it belongs
+  to. The builder's and the sign-up's lit gold were a shade apart (1, 0.91,
+  0.55 and 1, 0.9, 0.52) and are one `gold_lit` now; and the hex form
+  rounds every channel to the nearest 1/255.
+- **Adding one**: a field on the struct in `src/ui.rs` (a colour with
+  `#[serde(deserialize_with = "colour")]`), read with `ui()` where the node
+  is spawned, and the line in the file. A screen that stays up needs a
+  system that draws it again when `Res<UiChanged>` `is_changed()` (and
+  not `is_added()`); one spawned on demand reads `ui()` when it opens, and
+  comes up new next time. A bundle returned from a function must own its
+  words (`.clone()`, not `.as_str()`): in edition 2024 an `impl Bundle`
+  captures the borrow, and the `Arc` `ui()` gives would not live long
+  enough.
+- **And every number of how the car you drive goes** (since 2026-11-06,
+  Hajun: "put all the constants related to the car in the ron file. like
+  related to movement. so the turning, the boost/reverse, acc/speed,
+  multipliers, etc. i want to modify the numbers by myself while playing
+  on pc"): the `car` section at the end of the file, `ui::Car` (below,
+  "The car you drive"), in metres, seconds and degrees, with or without a
+  point (`12` and `12.0` both read). `drive::steer` and `drive::settle`
+  read it every frame (`ui()` is a handle), so a save while driving
+  changes the car at once, and `drive::retune` puts the camera at a new
+  `overhead` and keeps it between a new `overhead_nearest` and
+  `overhead_furthest`. A number the car would break on (a rate under 0,
+  which would panic a clamp; `easy_speed` or `full_lock_at` at 0, which
+  it divides by; a range inside out) is refused as a misspelt colour is
+  (`Car::check`), the last good file kept and the field named in the log.
+  The speeds may go no faster than the server lets a body go
+  (`roundtown_net::cars::DRIVEN_TOP_SPEED`, 40 since 2026-11-06, when
+  Hajun asked for a top speed of 40 and the server was deployed with it;
+  20 until then): a test fails on a file that does, saying to raise that
+  and deploy the server. Checked in the
+  running game the same day: a changed `cruise` taken within half a
+  second, `easy_speed: 0.0` refused, the file restored and read again.
+
 ## Building
 
 Desktop: `cargo run`.
@@ -177,7 +270,9 @@ on the Vultr VM (`SERVER.md`). `cargo build` at the root builds the game
 alone; the server is `cargo build -p roundtown_server`. Never `--workspace`,
 which would build the game with the server's half of replicon in it.
 
-Android needs the `release-android` profile, a manual strip step, and Gradle —
+Android needs the `release-android` profile, a manual strip step, and Gradle
+(`versionCode` in `mobile/android/app/build.gradle` is the build number: 2
+since 2026-11-07, the PvP town's APK; 1 for every APK before) —
 see the "Build gotchas" section of `RENDERING.md`, or the commands in
 `mobile/android/app/build.gradle`'s closing comment. The APK carries only
 what the game loads: whatever `mobile/android/app/assets-left-out.txt` names
@@ -390,12 +485,139 @@ instead of yellow for the buttons"; dark blue, blue and gold until then).
   the name and look on a local server, and a relaunch going straight to the
   town.
 
+## The town is a PvP arena in the sky
+
+Since 2026-11-07 (Hajun: "use pvptownmap instead of roudntownmap ... make
+the player start in the center of one of the 4 bridge connected island,
+remove the ocean and it will be a void that if you step over, u fall and
+then u 'die' and respawn back at your spawn ... pressing melee (the punch)
+actually deals 'knockback' (minecraft 1.8.9 bedwars style melee knockback)
+... make the camera top down for even the player mode"), the town is
+Hajun's `pvptownmap.glb` (`island::model`; `roundtownmap.glb` stays in the
+repo and out of the APK): Round Town's middle, the pond and its fountain,
+the ring road round it in its two halves with the strip of grass between,
+the 20 lamps and the paving out to 76 m, and no houses, trees or outer
+road; and out of it four wooden bridges, 14 m wide and 0.25 m up, one
+along each axis, each over a small round island at 125 m to a round island
+32 m across at 200 m (`roundtown_net::TOWN_ISLANDS`), 3 m thick. All of
+it stands in the sky. The rest of this file holds for it where it says
+nothing else; what follows is what changed.
+
+- **The islands and the bridges are Geometry Nodes arrays in
+  `pvptownmap.blend`**, which Hajun's export left off: their `.glb` had
+  one island and no bridges. `assets/pvptownmap.glb` is the file exported
+  again with Apply Modifiers ticked (`export_apply`; byte for byte what
+  Blender gives for it), 40,878 triangles, and that is how to export it
+  after a change. Every part has a material and every walkable top faces
+  up (checked). The pond has no floor under its water, as the old town's
+  had none: under the pond is the void.
+- **There is no sea round the town** (`island::bottomless`, which only
+  `Venue::Town` is; the home, the lobby and the plots keep theirs):
+  `spawn_island` spawns none for it, and `support` in `src/lib.rs` has
+  nothing for a body off the land to come down on (`Ground::bottomless`),
+  so it falls, at `FALL_GRAVITY`, until it is `VOID_Y` down, 15 m, a
+  second's fall, and dead: `lobby::respawn_the_fallen` puts it back where
+  its seat arrives (`send`), you and this device's AIs alike. The sky's
+  clear colour is what shows below. Online you are put back at once, no
+  move is sent, and the server is asked to put you there too
+  (`Ask::Respawn`, `net::ask_to_respawn`, `Online::venue` cleared until its
+  `Tell::Arrive` comes), as a fresh arrival: the leap back would not pass
+  its check on moves, and be undone. AIs never walk off (`strands`, as
+  ever): only a punch takes one over the edge.
+- **Everyone arrives on an island, by seat** (`roundtown_net::arrival`,
+  `town_island`: seat modulo four, the first of each in the island's
+  middle, the next seven on a ring 4 m out, all facing the town down the
+  bridge; the server works out the same), so that the first four seats of a
+  town channel, four people, are on four different islands (Hajun: "when
+  there is 2 players+ you will not spawn in the same bridge connected
+  island"), and the AIs fill the islands round them, eight to each
+  (`lobby::TOWN_SPOTS`, 32). Offline you are seat 0, the north island
+  (Blender's +Y, the game's -Z). Coming online, the server seats you, and a
+  seat on another island than the one you arrived on sends you there as if
+  you had fallen (`net::hear`, `Tell::Arrive` with a `spot`, which until
+  then never moved you), with the same `Ask::Respawn` after. **This is
+  `PROTOCOL_VERSION` 5**: the arrivals, `Ask::Respawn`, and the punch's
+  `Ask::Punch` and `Tell::Knocked` (below). The server was deployed with
+  it (2026-11-07; the binary before kept on the VM as
+  `roundtown-server.prev-2026-11-06`).
+- **The punch knocks whoever it lands on back** (`start_punch`,
+  `punch_lands`, `Shove`, `Shove::knock` in `src/lib.rs`, the numbers in
+  `assets/ui.ron`'s `melee`, `ui::Melee`, Minecraft 1.8.9's throughout, its
+  blocks a tick made metres a second): a press of the fist, or F, lands on
+  the nearest body in front of you within `reach`, 3 m from your middle to
+  their side, and `cone`, 60 degrees all told, no higher or lower than a
+  body (Hajun: "if done while both facing the other player/ai and pressed
+  when within range"; Minecraft's three blocks from the eyes to the hitbox
+  and the crosshair on it), at the press, as Minecraft lands a click, and
+  there is no cooldown on the punch itself, as 1.8.9 had none. The swing
+  is 0.12 s out and 0.18 back (`swing_out`, `swing_back`: its six ticks;
+  0.07 and 0.11 until then). Whoever it lands on is thrown up at `knock_up`
+  (8 m/s, 0.4 blocks a tick; their rise halved first and the whole no more
+  than that) and carried away from you at `knock_back` (8 m/s, 0.4) and
+  `sprint_bonus` more (10 m/s, 0.5, its sprint hit) if you were on the
+  move (`Intent::walk` half pushed), what already carried them halved
+  first; the carry dies away by `air_drag` (0.91) each twentieth of a
+  second in the air and `ground_drag` (0.546: 0.6 friction times 0.91) on
+  the ground, in `Motion::step`, through walls and bodies as a walk goes,
+  without turning them, and off any edge, `strands` or no, which is what
+  knocks an AI into the void. One punch standing still carries a body
+  about 3 m; on the move, about 7. Once a punch has landed on a body no
+  other moves it for `hurt_time`, 0.5 s (its ten ticks of hurt resistance),
+  so at most two knocks a second however fast the presses come. An AI, or
+  anyone this device moves, is knocked on the spot. Someone online is
+  told through the server (`Hit`, `net::relay_hits`, `Ask::Punch { who,
+  running }`; the server checks the two are within 6.5 m where each last
+  said, `PUNCH_REACH` in `server/src/players.rs`, and tells the other
+  device `Tell::Knocked { by, from, running }`), and their own device
+  knocks their body, whose moves then show everyone; nothing is predicted
+  on yours. A punch on an AI online is this device's own, as the AIs are.
+  `Melee::check` refuses a swing of no time, a cone wider than all round,
+  or a drag over 1, as `Car::check` does. Seen in the desktop build:
+  unit-tested (the knock, its dying away, whom a punch lands on, the fall);
+  not yet by hand or on a phone.
+- **The camera is fixed straight down over you, in and out of the car**
+  (`OrbitCamera::top_down`, the resource as the app opens; Hajun: "make the
+  camera top down for even the player mode"): the file's `car.overhead` up
+  (24 m) with the top of the screen north (the game's -Z, Blender's +Y),
+  the same wherever you are, so that the map is always the same way up;
+  it zooms between `overhead_nearest` and `overhead_furthest`, and nothing
+  turns it: not a finger, the mouse, the stick, a double tap, a bus, nor
+  getting into or out of the car (`drive::toggle` keeps no view to go back
+  to). The stick's up is the top of the screen (`camera_ahead`), and you
+  face the way you walk. Your eyes, the orbit behind you and everything in
+  "The camera stands where you zoomed it" below are still in the code
+  behind `OrbitCamera::overhead`, and come back by not starting it over
+  you. On desktop the cursor is free from the start, there being nothing
+  to look round with (`lock_cursor`, `grab_cursor`: Escape only ever lets
+  it go), for the stick, the buttons and the town; `RT_FREE_CURSOR` is
+  moot. Talking to someone still comes in to their face and back.
+- **The buses drive the outer half of the ring round the pond, round and
+  round** (Hajun: "the bus now just goes around the inner circle"): the
+  town's only roads are the ring's two halves, 44 to 56 m out and 59 to
+  71, each a ring nothing comes into, and `roads::network` makes such a
+  ring one stretch from a join at its first point back to it, with its
+  own join, never one place with another's (the two halves' first points
+  are 15 m apart on one axis, and as one place the bus crossed between
+  them, a figure of eight). Of the two the planner takes the longer, the
+  outer half, on its outside lane, 67.9 m out, keeping right, which is
+  anticlockwise seen from above with north up: 426 m, 71 s with its stops
+  short of two of the four crossings, four buses a quarter apart. A test
+  keeps it so
+  (`in_the_pvp_town_the_buses_go_round_the_ring_round_the_pond_and_nowhere_else`).
+  Seen in the log of the desktop build; not yet watched.
+- **No houses, so no House Builder in the town** (`build::town` finds
+  none and says so), and nobody to talk to but the AIs. The town's name
+  still shows as the app opens.
+
 ## The app opens in Round Town
 
 There is no menu. Once you have signed up (above), the app opens straight
-into the town (`roundtownmap.glb`
-since 2026-10-30, `circlemap1.glb` before) with all eight players already
-standing on the path round its pond, facing the fountain in the middle of
+into the town (`pvptownmap.glb` since 2026-11-07, above; `roundtownmap.glb`
+from 2026-10-30, `circlemap1.glb` before). What follows is as it was in
+Round Town: since 2026-11-07 everyone arrives on the four islands round the
+town rather than round its pond, and the camera is fixed over you (above).
+Until then, all eight players stood on the path round its pond, facing the
+fountain in the middle of
 it, and the town's
 name, "Donggeurami Town", fades in and out over the first few seconds. You can
 walk, jump and look round from the first frame; on desktop the cursor is taken
@@ -412,7 +634,9 @@ from the town (below).
   first, until Hajun said which it was, stood between the gift and a group
   of people until 2026-11-01, when Hajun had the leaderboard taken out
   and the group made a bubble); and round a phone's jump button a face
-  (emotes, one day), a speech bubble (chat) and a fist. The person and the
+  (emotes, one day), a speech bubble (chat) and a fist. Every colour of it
+  is `assets/ui.ron`'s since 2026-11-04 (above, "The screen's colours and
+  words are in `assets/ui.ron`"). The person and the
   gear are 8% of the short side (`hud::SMALL_BUTTON`), the three down the
   right edge 10.5 (`SIDE_BUTTON`; 9.5 for an hour on 2026-11-01, then "very
   slightly" bigger) and 1.5 further in from the top and the right than the
@@ -433,12 +657,17 @@ from the town (below).
   hour, until "move them up very very slightly"). The three are placed from the
   jump button's corner so as to sit about 2.5% clear of it, the face up
   and to the left, the bubble over it and the fist beside it, as Hajun's
-  sketch has them. **Only the gear, the stick, the jump button and the
-  fist do anything** (Hajun: "u dont need to make any button functional
-  yet other than jump, joystick, settings"; the fist since 2026-11-01,
-  below, "The fist throws a punch"); the rest take a press and drop it. The three round the jump button are placed from where
-  the jump button is on a phone, on every platform, so that the desktop
-  build shows the layout too, with no jump button among them. Until then a
+  sketch has them. **Only the gear, the stick, the jump button, the fist
+  and the face do anything** (Hajun: "u dont need to make any button
+  functional yet other than jump, joystick, settings"; the fist since
+  2026-11-01, below, "The fist throws a punch"; the face since 2026-11-05,
+  the car's switch, below, "The car you drive", where the fist is the
+  reverse and the jump button the boost; and the gift since 2026-11-06,
+  which held in the car is its gun, there too); the rest take a press and drop it. The three round the jump button are placed from where
+  the jump button is, on every platform (until 2026-11-06 the desktop
+  build showed the three with no stick or jump button among them; since
+  then it has both, below, "The stick and the jump button are on Windows
+  too"). Until then a
   button top right took you home (`testhomemap.glb`) and back (Hajun:
   "remove the top right home button"); nothing takes you home now, though
   it is still loaded at startup (`island::LOADED`) and the server still
@@ -473,14 +702,34 @@ from the town (below).
   strokes. The stick and the jump button are put away while you talk to
   someone (below), and since 2026-11-01 the three round the jump button
   with them (`hud::hide_round_the_jump`; Hajun: "the punch, quickchat, and
-  emote button is not hidden. hide those too"). Seen in the desktop build; the stick and the jump button
-  compile for phones alone, and none of it has been seen on a phone yet.
+  emote button is not hidden. hide those too"). Seen in the desktop build; none of it has been seen on a phone yet.
+- **The stick and the jump button are on Windows too** (since 2026-11-06,
+  Hajun: "put on screen joystick and jump button on windows version too";
+  until then they compiled for phones alone, `setup_hud` and the stick's
+  and the jump button's visuals gated to them): drawn as on a phone, where
+  a phone has them, and driven by the mouse with the cursor free, Escape
+  (`read_mouse_controls` in `src/lib.rs`, before
+  `editor::read_desktop_pointer`): pressed on the stick's disc, the mouse
+  holds the stick, pushed toward wherever the cursor goes until the button
+  comes up, as a finger is; pressed on the jump button it jumps, or boosts
+  the car while held. The mouse is one more finger to `TouchControls`
+  (`MOUSE_ID`), so `read_player_input` and `drive::steer` need no desktop
+  path, and the keys and Space work as before. A press on either is not a
+  tap on the town (`TouchControls::has_the_mouse`, which the editor's
+  desktop pointer asks), though it dismisses an open menu, as on a phone;
+  and one on a button over the world is the button's. Walking with the
+  mouse on the stick, the camera comes round behind you after 1.5 s, as it
+  does on a phone (`assist_camera`): the mouse is off the camera while the
+  cursor is free. With the cursor taken for looking round there is no
+  cursor to press with. Asked for to drive the car with a stick on the PC,
+  the keys giving only eight ways. Seen in the desktop build the same day.
 - **The fist throws a punch** (`Punching`, `start_punch`, `punch_offset` in
   `src/lib.rs`, since 2026-11-01; Hajun: "a very basic animation for the
   fist attack that activates each time u press the punch button. dont make
   the animation too long so that user can press the attack button like 4~8
   time per second"): each press of the fist, as it goes down
-  (`hud::press_punch`), or F on desktop, swings the right arm straight out
+  (`hud::press_buttons`), or F on desktop, out of the car (in it the fist
+  is the reverse, below, "The car you drive"), swings the right arm straight out
   level in front of you and back, 0.07 s out and 0.11 s back (`PUNCH_OUT`,
   `PUNCH_BACK`, `PUNCH_REACH` 1.7 rad, level in front of
   `playercharacter.glb`, whose arms hang a little back of the shoulder; 1.5
@@ -908,6 +1157,11 @@ for 4 on 2026-10-10).
 Since 2026-10-30 (Hajun: "add the background music loop Pelican Breeze in
 the sounds folder"), in `src/sound.rs`, from `assets/sounds/`. Bevy's `mp3`
 feature decodes it (`Cargo.toml`); it decodes only Ogg Vorbis by default.
+**Off for now** (since 2026-11-02, Hajun: "just disable the music from
+playing temporarily"): `sound::PLAYING` is false, so `play_music` starts
+nothing; everything else, the module, Bevy's audio plugin and `mp3`
+feature, the file in the APK and the test that decodes it, stays as it is,
+to be turned on again by flipping it.
 
 - **The music plays everywhere, and again from the start whenever it
   ends.** It is played once and started over (`play_again`), not looped:
@@ -927,6 +1181,12 @@ feature decodes it (`Cargo.toml`); it decodes only Ogg Vorbis by default.
   left out of the APK; Bevy's `wav` feature is still on, decoding nothing.
 
 ## The town's buses
+
+Since 2026-11-07 the town is the PvP town (above), whose only roads are
+the two halves of the ring round the pond: the buses go round the outer
+half, and nothing below about straight roads, roundabouts or the road
+round the edge of the town applies there, though all of it is still in
+`src/roads.rs`, and Round Town's tests still read `roundtownmap.glb`.
 
 Four buses drive round the town's roads by themselves, one behind the other
 round the same loop, a quarter of it apart (two, half apart, until
@@ -1254,6 +1514,150 @@ is their model's, and their way round is the town's roads.
   not measured: only bodies within a bus's reach of it test its triangles,
   its 3,604 (3,556 until 2026-10-25).
 
+## The car you drive
+
+Since 2026-11-05 (Hajun: "add this car1.glb model in the asset folder into
+the game as a user spawnable. so for now, just make the emote button to be
+a toggle on/off switch for car. when on, the player model disappears and u
+are suddenly now a 'car'"), in `src/drive.rs`: press the face among the
+buttons round the jump button, or C on desktop, and your body is gone and
+you are Hajun's `car1.glb` (`drive::MODEL`; a red sports car 6.5 m long,
+3.1 m wide, 3.84 m between its axles, 2,258 triangles, three textures),
+where you stood and facing the way you faced; press it again and you are
+on your feet where the car is. The face is lit while you are in it, as
+the jump button is held, and the fist shows the jump button's arrow turned
+down (`hud::repicture`).
+
+**Every number of how it goes is in `assets/ui.ron`, under `car`**
+(`ui::Car`, since 2026-11-06; above, "The screen's colours and words are
+in `assets/ui.ron`"; Hajun: "put all the constants related to the car in
+the ron file ... i want to modify the numbers by myself while playing on
+pc"). The names below are the file's fields in lower case: `cruise`,
+`boost`, `reverse`, `accel`, `boost_accel`, `brake`, `tightest`,
+`easy_speed`, `steer_rate` and `full_lock_at` (in degrees, 286 a second
+and 14.3, where the code had 5 rad/s and 0.25), `creep`, `overhead`,
+`overhead_nearest`, `overhead_furthest`, `end_radius`, `end_back`,
+`felt_low`, `felt_high` and `stopped_short`, read every frame, so a save
+while driving changes the car at once. The values below are what the
+file started with; whatever it says now is what the car does. A phone
+drives by what the file said when its app was built. The constants of
+2026-11-05 are gone from `src/drive.rs` and `src/lib.rs`.
+
+- **The camera is fixed straight down over the car** (Hajun: "the camera
+  gets fixed as top down (can still zoom in/out, but no auto follow
+  rotate/direction/ no panning. its fixed just follow the car's plane
+  position no rotation.)"): `OrbitCamera::overhead` tips it to straight
+  down, `OVERHEAD`, 24 m, up, and from then on a finger or the mouse does
+  not turn it, the stick does not bring it round, nor a double tap, nor a
+  bus (`assist_camera`); it zooms between `OVERHEAD_NEAREST`, 7 m, and
+  `OVERHEAD_FURTHEST`, 60, never into your eyes. The top of the screen
+  stays the way it was looking along the ground as you got in, and the
+  stick's up is that way (`camera_ahead`). Getting out, it goes back to
+  exactly where you had turned and zoomed it (`OrbitCamera::back_to`),
+  your eyes included.
+- **It drives as a car does** (`Drive::go`): its front wheels steer and
+  its back wheels follow them, at the radius the steering gives
+  (`TIGHTEST`, 4.5 m round at the back wheels, up to `EASY_SPEED`, 8 m/s,
+  and wider in proportion from there, 6.75 m cruising and 11.25 boosting),
+  never on the spot. The roads are 12 m wide: a U-turn takes 12 m outside
+  to outside, and the corners where the straight roads meet the ring are
+  taken at cruising speed; boosting, a corner is taken wide (Hajun: "make
+  the car turning angle so that it fits the map roads"). The stick says
+  which way to go, across the screen, and how hard; the car steers toward
+  it the shorter way round, all the way at `FULL_LOCK_AT`, 0.25 rad, off
+  it, so that pushed behind the car it turns round in a circle (Hajun:
+  "there is a pivot so when ur going forward and then u turn the joystick
+  the other way, you will 'turn' like a real car in the closer direction").
+  Let go, it brakes to a stop (`BRAKE`, 12 m/s²). Stopped against a wall
+  with the stick pushed, it steers as if creeping at `CREEP`, 3 m/s, so
+  that it comes round rather than standing with its wheels turned (the
+  first version stood).
+- **The fist held, or F, is the reverse** (`hud::Held`, held for as long
+  as the finger that pressed it is down, wherever it slides): the car
+  slows (`BRAKE`) and backs away as fast as it boosts (`REVERSE`, 40 m/s
+  since 2026-11-06 with the boost, 20 until then,
+  gaining `BOOST_ACCEL`), straight back with the stick let go or held
+  where the nose points, and with the stick to one side its nose comes
+  round toward the stick as it backs, the wheels turned the other way for
+  the same stick, as a car reversing turns them, until it faces the stick
+  and backs straight away from it. Since the evening of 2026-11-05 (Hajun:
+  "when u press the reverse button without touching joystick, it should do
+  a straight reverse backward. also the reverse button should accelerate
+  backward same speed as boost ... when reversing, the direction of the
+  joystick should be opposite ... it should just deaccellerate and then
+  wheels start towards rotating the other way. so straight back. so its
+  like real reverse"); for an hour it backed toward where the stick
+  pointed at 6 m/s, so that held where you were driving it swung round
+  instead of backing straight. **The jump button held, or Space, is the boost** (Hajun:
+  "similar to rocket league's car boosting - it just makes ur car faster,
+  but u dont need to press this to move it still goes when u just do the
+  joystick"): `BOOST`, 40 m/s since 2026-11-06 (Hajun: "change the max
+  speed to 40m/s", once the numbers were in the file; 20 until then), and
+  the reverse with it, instead of `CRUISE`, 12 (a run and a bus
+  are 7, a bus on the open road 14), gaining `BOOST_ACCEL`, 14 m/s², rather
+  than `ACCEL`, 8, so about 3 s from standing to 40; and boost alone
+  drives it straight on. At 40 the turning circle is 22.5 m
+  (`tightest` times 40 over `easy_speed`), wider than a 12 m road: a
+  corner at full boost is not to be had, which `easy_speed` or
+  `tightest` in the file would change. No jump, no
+  punch, and nobody to talk to from it (`talk::choose`). All the numbers
+  but the model's are mine.
+- **The car is your own body, moved by the car**: `drive::steer`, between
+  `read_player_input` and `move_bodies`, writes your `Intent` with the
+  car's move (`Intent::pace`, metres a second in place of a walk's, and
+  `Intent::face`, the way the car faces, reversing too), so the body bumps
+  into the island, the buses and everyone as you do, steps up what you
+  step up (a kerb, the strip of grass), and, as an AI does, never goes
+  down anything it could not drive back up, into the pond or off the edge
+  of the town (`strands`); and after `move_bodies`, `drive::settle` stops
+  it: stopped short by what the body met, it loses its speed, and its
+  nose, going forward, or its tail, reversing, each felt as a circle 1.2 m
+  across between 0.55 and 1.3 m over your feet (`END_RADIUS`, `FELT_LOW`,
+  `FELT_HIGH`: over a kerb or a planter, under its roof), is kept out of
+  anything taller as the body is kept out of walls (`resolve_walls`), the
+  whole car moving back with it and losing its speed by how squarely it
+  went in. Then `drive::place` puts the model at your feet, facing the way
+  the car does, its wheels rolled as far as it has gone and the front ones
+  turned as it steers (`car::hang_wheels`, which the buses' wheels go
+  through too, with `Turns::front`). The body is hidden (`follow_camera`),
+  and the car's model, with no `Venue`, is drawn wherever you are. Sent to
+  another island, you are out of it.
+- **The gift button held, or G, is the gun** (`drive::shoot`, `drive::fly`,
+  `hud::GunButton`, `hud::Held::gun`, since 2026-11-06; Hajun: "make the
+  gift icon, while riding a car, so that it shoots small fast spherical
+  bullets out of the front of the car while pressed at semifast intervals
+  that disappear after a certain defined distance range from initial
+  starting point"): in the car, held, it fires a bullet out of the car's
+  nose as it goes down and then one every `bullet_every` seconds (0.12 as
+  first written), each a ball of `bullet_radius` (0.12 m), a lit yellow,
+  going `bullet_speed` (60 m/s) level the way the car faces, from the
+  height the nose is felt at, and gone once `bullet_range` (40 m) from
+  where it was fired; the four are in `assets/ui.ron`'s `car` with the
+  rest, and `Car::check` refuses a `bullet_every` or `bullet_radius` of 0.
+  A bullet hits nothing: no collider, no `Venue` (drawn wherever you are),
+  nothing over the network, so nobody else sees it. Out of the car the
+  gift takes a press and drops it, as before. Seen in the desktop build
+  the same day.
+- **Nothing of it goes over the network.** Online everyone else sees your
+  body go where the car goes, legs walking; nobody sees the car. **The
+  server lets every body go as fast as the car boosts**
+  (`server/src/players.rs`, `MOST_SPEED`, `roundtown_net::cars::DRIVEN_TOP_SPEED`
+  times 1.3: 52 m/s since 2026-11-06, 26 from 2026-11-05, a run times 1.3
+  until then): nothing says a body is in a car, and a server from before
+  puts a car faster than its limit back where it was, every second or so
+  (`Tell::PutBack`). Deployed with each: the top speed of 40 on
+  2026-11-06, the earlier binary kept on the VM as
+  `roundtown-server.prev-2026-11-05`.
+- Seen in the desktop build on 2026-11-05, scripted: from standing at the
+  pond's edge with the stick behind, a U-turn in about 2 s and off across
+  the paving at 12 m/s; a right turn at speed; boosted with the stick
+  behind, a wide turn to 20 m/s; let go, a stop in 1.7 s; reversing (then
+  at 6 m/s toward the stick; the reverse as it is now is unit-tested
+  only); out again with the camera back. Stopped nose first
+  against the pond's rim, the first version could not turn away (every
+  move that left the nose in the rim was undone); the push-out and the
+  creep are the fix, unit-tested only. Not yet on a phone.
+
 ## The town's houses have doors that open, and windows
 
 Every house in the new town is Hajun's Square House, House Builder's own
@@ -1323,6 +1727,12 @@ swings open and five windows (`src/build/town.rs`).
 
 ## The camera stands where you zoomed it
 
+**Since 2026-11-07 the camera is fixed straight down over you from the
+start, in and out of the car** (`OrbitCamera::top_down`; "The town is a
+PvP arena in the sky", above): nothing in this section turns it, and your
+eyes are out of reach. All of it is still in the code behind
+`OrbitCamera::overhead`, and is how the camera was until then.
+
 There is one view (Hajun, 2026-10-09): the camera orbits you as you turn and
 zoom it (`OrbitCamera`, `follow_camera` in `src/lib.rs`), 1.5 to 18 m out
 behind you, and zoomed all the way in it is your own eyes. Nothing in the
@@ -1378,6 +1788,9 @@ you.
   "increase the camera panning ... sensitivity slightly so each drag
   rotates the camera bit more"; the same as the mouse, `LOOK_SENSITIVITY`,
   until then).
+- **In the car it is fixed straight down over you** (since 2026-11-05,
+  `OrbitCamera::overhead`; above, "The car you drive"): it zooms and
+  nothing turns it, and getting out it is back exactly where you had it.
 - **On a phone, walking with the stick brings it round behind you, a
   double tap swings it there, and riding a bus brings it round behind the
   way the bus faces** (`assist_camera`; Hajun, 2026-10-31: "Soft
@@ -1430,8 +1843,11 @@ you.
   over. Until then nothing turned it on a bus, and looking the way the
   bus went round the ring meant turning the camera all the way round with
   it. A finger on the
-  camera stops any of them at once. On desktop neither the stick's nor the
-  double tap: the keys walk you, and the mouse is the camera's; riding a
+  camera stops any of them at once. On desktop no double tap, and the
+  stick's only with the mouse on the on-screen stick, the cursor free
+  (since 2026-11-06; until then the desktop had no stick): the keys walk
+  you without bringing it round, and the mouse is the camera's while the
+  cursor is taken; riding a
   bus brings it round on desktop too, once the mouse has been still 1.5 s
   (moving it counts as a finger on the camera, `read_mouse_look`). All the
   numbers but the 1.5 s are mine. Seen in the
@@ -1652,6 +2068,11 @@ tap-to-edit menu that writes to it.
 
 ## The town holds 32 players; offline, 31 of them are AI
 
+Since 2026-11-07 the 32 arrive on the four islands round the town, eight
+to each, by seat ("The town is a PvP arena in the sky", above), and
+whoever falls off is put back where their seat arrives
+(`lobby::respawn_the_fallen`).
+
 `src/lobby.rs` holds the room: seats, each a flat `Member` record — an
 id, a name, a look and an `ai` flag — the very record the server sends
 (`roundtown_net::Member`). Offline you are seat 0 and every other seat is an
@@ -1700,7 +2121,7 @@ every ai character in the map for now"), in `src/talk.rs`: the town's AIs
 (`talk::Speaker::Townsfolk`, this device's own online) and the House Builder
 (`Speaker::HouseBuilder`). People online are not spoken to.
 
-- **One bubble at a time, over the nearest in front of you** (`talk::choose`;
+- **One bubble at a time, over the nearest to you** (`talk::choose`;
   Hajun: "at most one prompt active at a time (nearest in front of you). No
   choosing between prompts, so no precision needed"): a small white circle
   with a black outline, its tail down and to the left, three black dots in it
@@ -1709,13 +2130,17 @@ every ai character in the map for now"), in `src/talk.rs`: the town's AIs
   what is said and the replies a tenth bigger than first drawn the same
   evening: "very slightly increase the size of both the text box and the
   font size and the button"), its point over the
-  head of the nearest of them within 4.5 m, within 70° of the way you face,
+  head of the nearest of them within 4.5 m along the ground, whichever way
+  you face (since 2026-11-02, Hajun: "it should be irrelevant where the
+  player is facing, just their xy location"; within 70° of the way you
+  face as well until then),
   1.85 m over their feet, where their name's foot is (`tags::OVER_HEAD`;
   1.95 until 2026-11-01, Hajun: "move its z slightly lower so its slightly
   more closer to the nametag"),
   and in sight of your eyes, no wall between. Once it is over someone it stays
-  out to 5 m and 80° round, unless someone else is half a metre nearer, so
-  that it does not flicker between two. Being the only one, it takes a tap 3
+  out to 5 m (and 80° round, while facing counted), unless someone else is
+  half a metre nearer, so that it does not flicker between two. Being the
+  only one, it takes a tap 3
   vmin wide of it. Only in the town, and never while anything else is up or
   the camera is on its way back from a face. Online it sits over a name:
   its point a name and a half's height (`tags::TAG_TEXT`) over the name's

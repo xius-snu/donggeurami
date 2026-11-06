@@ -3549,6 +3549,16 @@ mod tests {
                 }
             }
         }
+        // Nor the car you drive.
+        for name in crate::drive::MODEL.split('/') {
+            if let Some(pattern) = patterns.iter().find(|pattern| matches(pattern, name)) {
+                panic!(
+                    "{} is the car you drive, but `{pattern}` in \
+                     mobile/android/app/assets-left-out.txt leaves it out of the APK",
+                    crate::drive::MODEL
+                );
+            }
+        }
         // Nor the model every body is drawn with.
         for model in crate::lobby::models() {
             for name in model.split('/') {

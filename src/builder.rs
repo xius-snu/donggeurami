@@ -53,13 +53,14 @@ use roundtown_net::rules::{
 };
 use roundtown_net::{Round, Seats, Tell, standings};
 
-use crate::hud::{self, DOOR, DialogUp, GOLD, PANEL, TakesPress};
+use crate::hud::{self, DialogUp, TakesPress};
 use crate::island::{self, Islands, Venue};
 use crate::lobby::{self, Balance, Lobby, Member, SEATS, STARTING_BALANCE, Seat, Whereabouts};
 use crate::net::Online;
 use crate::sky::Water;
 use crate::tags::HidesNames;
 use crate::talk::Speaker;
+use crate::ui::{fill, ui};
 use crate::{
     Collider, ColliderShape, LAND_TOP, OrbitCamera, PLAYER_HEIGHT, PLAYER_RADIUS, Player, WalkCycle,
 };
@@ -73,9 +74,9 @@ const YOU: usize = 0;
 /// has gone, in seconds, before it is given up and you are back in the town.
 const RECONNECT_WAIT: f32 = 15.0;
 
-/// What the game is called on the screen.
-const NAME: &str = "Build Your Own House";
-/// What the House Builder is called in the town's model.
+/// What the House Builder is called in the town's model. What the game is
+/// called on the screen, and every other word of it, is `assets/ui.ron`'s
+/// (`ui`), as its colours are.
 const NPC: &str = "House Builder NPC";
 /// What the House Builder wears over the body everyone has: a black top,
 /// as the old town's model had them (`circlemap1.glb`'s `body`, 2026-10-03).
@@ -120,17 +121,19 @@ impl Theme {
     /// The theme as it is written: "Who Lives There: A Family", "Cafe".
     fn name(self) -> String {
         match self {
-            Theme::WhoLivesThere(who) => format!("Who Lives There: {who}"),
+            Theme::WhoLivesThere(who) => fill(&ui().words.house_builder.who_lives_there, &[("who", who)]),
             Theme::Is(what) => what.into(),
         }
     }
 
     /// Across the screen as building begins: a line over it, the theme, and
     /// how big the theme is written. Who lives there says what it is already.
-    fn headline(self) -> (&'static str, String, f32) {
+    fn headline(self) -> (String, String, f32) {
+        let ui = ui();
+        let words = &ui.words.house_builder;
         match self {
-            Theme::WhoLivesThere(_) => ("Build a house!", self.name(), WHO_TEXT),
-            Theme::Is(_) => ("Build a house! The theme is", self.name(), hud::HEADLINE),
+            Theme::WhoLivesThere(_) => (words.build_a_house.clone(), self.name(), WHO_TEXT),
+            Theme::Is(_) => (words.theme_is.clone(), self.name(), hud::HEADLINE),
         }
     }
 
@@ -138,13 +141,10 @@ impl Theme {
     fn caption(self) -> (String, f32) {
         match self {
             Theme::WhoLivesThere(_) => (self.name(), WHO_CAPTION),
-            Theme::Is(what) => (format!("Theme: {what}"), CAPTION),
+            Theme::Is(what) => (fill(&ui().words.house_builder.theme, &[("what", what)]), CAPTION),
         }
     }
 }
-
-/// The game, as the House Builder tells it.
-const RULES: &str = "Build and decorate your own house according to a theme. The best house wins!";
 
 /// Sizes, as shares of the short side of the screen, like everything else
 /// over the world.
@@ -201,30 +201,12 @@ const AGAIN_PRICE_TEXT: f32 = 2.6;
 /// seconds.
 const SLIDE_SECS: f32 = 0.35;
 
-/// The dark over the world behind a dialog, and the dialog itself.
-pub(crate) const DIM: Color = Color::srgba(0.0, 0.0, 0.0, 0.45);
-const DIALOG: Color = Color::srgba(0.0, 0.0, 0.0, 0.85);
-const PANEL_LIT: Color = Color::srgba(0.04, 0.10, 0.18, 0.6);
-pub(crate) const QUIET: Color = Color::srgba(1.0, 1.0, 1.0, 0.14);
-pub(crate) const QUIET_LIT: Color = Color::srgba(1.0, 1.0, 1.0, 0.26);
-const GOLD_LIT: Color = Color::srgb(1.0, 0.91, 0.55);
-const OFF: Color = Color::srgba(1.0, 1.0, 1.0, 0.07);
-const OFF_TEXT: Color = Color::srgba(1.0, 1.0, 1.0, 0.35);
-pub(crate) const SOFT: Color = Color::srgba(1.0, 1.0, 1.0, 0.78);
-pub(crate) const WARN: Color = Color::srgb(1.0, 0.62, 0.55);
-/// A star given, and one not.
-const STAR_ON: Color = GOLD;
-const STAR_OFF: Color = Color::srgba(1.0, 1.0, 1.0, 0.4);
-/// Behind the results: a little more see-through than a dialog, with the
-/// world going on behind them.
-const RESULTS_FILL: Color = Color::srgba(0.0, 0.0, 0.0, 0.7);
-const ROW_FILL: Color = Color::srgba(1.0, 1.0, 1.0, 0.07);
-const YOUR_ROW: Color = Color::srgba(1.0, 0.84, 0.3, 0.26);
-/// The medals of the second and third places. The first's is gold.
-const SILVER: Color = Color::srgb(0.80, 0.84, 0.90);
-const BRONZE: Color = Color::srgb(0.86, 0.56, 0.33);
-/// A prize of nothing, and its coin.
-const NO_PRIZE: Color = Color::srgba(1.0, 1.0, 1.0, 0.45);
+// Every colour is `assets/ui.ron`'s (`ui`): the dark over the world behind
+// a dialog, and the dialog itself; the quiet, gold and greyed-out buttons;
+// a star given (gold) and one not; the results, a little more see-through
+// than a dialog, with the world going on behind them, their rows and yours;
+// the medals of the second and third places (the first's is gold); and a
+// prize of nothing, with its coin.
 
 /// Something asked of House Builder, by a tap, a click or a key.
 #[derive(Message, Clone, Copy, PartialEq, Eq, Debug)]
@@ -373,12 +355,15 @@ impl Game {
 
     /// Whose house `plot` is, as it is written on the screen.
     fn whose(&self, plot: usize) -> String {
+        let ui = ui();
+        let words = &ui.words.house_builder;
         if plot == self.me {
-            "Your house".into()
+            words.your_house.clone()
         } else {
-            self.seats
-                .get(plot)
-                .map_or_else(|| "A house".into(), |seat| format!("{}'s house", seat.name))
+            self.seats.get(plot).map_or_else(
+                || words.a_house.clone(),
+                |seat| fill(&words.whose_house, &[("name", &seat.name)]),
+            )
         }
     }
 }
@@ -572,9 +557,12 @@ fn settle_house_builder(
 /// What the House Builder says when you talk to them (`talk`): what the game
 /// is, and, when you cannot pay for it, that you cannot.
 pub(crate) fn pitch(affordable: bool) -> String {
-    let mut pitch = format!("Want to play {NAME}? {RULES}");
+    let ui = ui();
+    let words = &ui.words.house_builder;
+    let mut pitch = fill(&words.pitch, &[("name", &words.name), ("rules", &words.rules)]);
     if !affordable {
-        pitch.push_str(&format!(" You need {ENTRY} coins to play."));
+        pitch.push(' ');
+        pitch.push_str(&fill(&words.cannot_pay, &[("coins", &ENTRY.to_string())]));
     }
     pitch
 }
@@ -794,7 +782,7 @@ fn follow_round(
     let building = |stage: Stage| matches!(stage, Stage::Build { .. });
     if building(stage) && matches!(was, Stage::Queue { .. } | Stage::Full { .. }) {
         let (caption, theme, size) = game.theme.headline();
-        hud::announce(&mut commands, Some(caption), &theme, size, THEME_SECS)
+        hud::announce(&mut commands, Some(&caption), &theme, size, THEME_SECS)
             .insert((InGame, ThemeHeadline));
     }
     if building(was) && !building(stage) {
@@ -854,7 +842,7 @@ fn cut_off(
     let gone = match game.cut_off {
         Some(gone) => gone + time.delta_secs(),
         None => {
-            hud::announce(&mut commands, None, "Reconnecting...", hud::CAPTION, 3.0)
+            hud::announce(&mut commands, None, &ui().words.house_builder.reconnecting, hud::CAPTION, 3.0)
                 .insert(InGame);
             0.0
         }
@@ -867,7 +855,7 @@ fn cut_off(
         return;
     };
     back_to_town(&mut commands, &in_game, &mut bodies, &mut orbit, you, seat.0);
-    hud::announce(&mut commands, None, "Lost the connection", hud::CAPTION, 3.0);
+    hud::announce(&mut commands, None, &ui().words.house_builder.lost_connection, hud::CAPTION, 3.0);
 }
 
 /// Back to the town after a game, where `seat` arrives there, with
@@ -1025,7 +1013,7 @@ fn play(
                 lobby::send(&mut bodies, &mut orbit, body, Venue::Plot(seat as u8), seat);
             }
             let (caption, theme, size) = game.theme.headline();
-            hud::announce(&mut commands, Some(caption), &theme, size, THEME_SECS)
+            hud::announce(&mut commands, Some(&caption), &theme, size, THEME_SECS)
                 .insert((InGame, ThemeHeadline));
             game.stage = Stage::Build { left: BUILD_SECS };
         }
@@ -1162,6 +1150,7 @@ fn spawn_board(commands: &mut Commands) {
             Pickable::IGNORE,
         ))
         .with_children(|board| {
+            let colours = ui().colours;
             // Tapping the time left ends the wait, for trying the game out.
             board.spawn((
                 AsksFor(Ask::Skip),
@@ -1172,14 +1161,14 @@ fn spawn_board(commands: &mut Commands) {
                     border_radius: BorderRadius::all(Val::VMin(3.0)),
                     ..default()
                 },
-                BackgroundColor(PANEL),
+                BackgroundColor(colours.panel),
                 Fill {
-                    idle: PANEL,
-                    lit: PANEL_LIT,
+                    idle: colours.panel,
+                    lit: colours.panel_lit,
                 },
-                children![(BoardText, hud::words("", BOARD_TEXT, Color::WHITE))],
+                children![(BoardText, hud::words("", BOARD_TEXT, colours.text))],
             ));
-            board.spawn((BoardCaption, hud::words("", CAPTION, Color::WHITE)));
+            board.spawn((BoardCaption, hud::words("", CAPTION, colours.text)));
         });
 }
 
@@ -1193,14 +1182,14 @@ fn show_board(
     let Some(game) = game else {
         return;
     };
-    let players = |count: usize| format!("{count}/{SEATS} Players");
+    let ui = ui();
+    let words = &ui.words.house_builder;
+    let players = |count: usize| {
+        fill(&words.players, &[("count", &count.to_string()), ("seats", &SEATS.to_string())])
+    };
     let (big, small, size) = match game.stage {
-        Stage::Queue { .. } => (
-            players(game.seats.len()),
-            "Waiting for players...".into(),
-            CAPTION,
-        ),
-        Stage::Full { .. } => (players(game.seats.len()), "Match found!".into(), CAPTION),
+        Stage::Queue { .. } => (players(game.seats.len()), words.waiting.clone(), CAPTION),
+        Stage::Full { .. } => (players(game.seats.len()), words.match_found.clone(), CAPTION),
         Stage::Build { left } => {
             let (theme, size) = game.theme.caption();
             (clock(left), theme, size)
@@ -1269,7 +1258,8 @@ fn spawn_rating(commands: &mut Commands, star: &StarImage) {
             Pickable::IGNORE,
         ))
         .with_children(|rating| {
-            rating.spawn((RatingCaption, hud::words("", CAPTION, Color::WHITE)));
+            let colours = ui().colours;
+            rating.spawn((RatingCaption, hud::words("", CAPTION, colours.text)));
             rating
                 .spawn((
                     StarRow,
@@ -1291,7 +1281,7 @@ fn spawn_rating(commands: &mut Commands, star: &StarImage) {
                                 height: Val::VMin(STAR),
                                 ..default()
                             },
-                            ImageNode::new(star.0.clone()).with_color(STAR_OFF),
+                            ImageNode::new(star.0.clone()).with_color(colours.house_builder.star_off),
                         ));
                     }
                 });
@@ -1332,19 +1322,24 @@ fn show_rating(
             Visibility::Inherited
         });
     }
+    let ui = ui();
     let caption = if yours {
-        "Everyone is rating your house"
+        &ui.words.house_builder.being_rated
     } else {
-        "Rate this house"
+        &ui.words.house_builder.rate
     };
     for mut text in &mut captions {
-        if text.0 != caption {
-            caption.clone_into(&mut text.0);
+        if &text.0 != caption {
+            text.0.clone_from(caption);
         }
     }
     let given = game.mine.unwrap_or(0);
     for (star, mut image) in &mut stars {
-        let colour = if star.0 <= given { STAR_ON } else { STAR_OFF };
+        let colour = if star.0 <= given {
+            ui.colours.gold
+        } else {
+            ui.colours.house_builder.star_off
+        };
         if image.color != colour {
             image.color = colour;
         }
@@ -1384,10 +1379,12 @@ fn spawn_results(
     affordable: bool,
     vmin: f32,
 ) {
+    let ui = ui();
+    let (colours, words) = (ui.colours, &ui.words.house_builder);
     let place = order.iter().position(|&plot| plot == game.me).unwrap_or(0);
     let title = match place {
-        0 => "You won!".to_owned(),
-        _ => format!("You came {}", ordinal(place + 1)),
+        0 => words.you_won.clone(),
+        _ => fill(&words.you_came, &[("place", &ordinal(place + 1))]),
     };
     let left = match game.stage {
         Stage::Over { left, .. } => left,
@@ -1411,11 +1408,11 @@ fn spawn_results(
                 border_radius: BorderRadius::all(Val::VMin(3.5)),
                 ..default()
             },
-            BackgroundColor(RESULTS_FILL),
+            BackgroundColor(colours.house_builder.results),
             UiTransform::from_translation(Val2::new(Val::VMin(SLIDE_FROM), Val::ZERO)),
         ))
         .with_children(|panel| {
-            panel.spawn(hud::words(title, RESULTS_TITLE, GOLD));
+            panel.spawn(hud::words(title, RESULTS_TITLE, colours.gold));
             panel
                 .spawn((
                     Node {
@@ -1429,7 +1426,7 @@ fn spawn_results(
                     for (place, &plot) in order.iter().enumerate() {
                         let yours = plot == game.me;
                         let name = match game.seats.get(plot) {
-                            _ if yours => "You",
+                            _ if yours => words.you.as_str(),
                             Some(seat) => seat.name.as_str(),
                             None => "",
                         };
@@ -1437,7 +1434,7 @@ fn spawn_results(
                         standing(rows, place, name, stars, yours, star, &coin, vmin);
                     }
                 });
-            panel.spawn((Countdown, label(back_in(left), COUNTDOWN_TEXT, SOFT)));
+            panel.spawn((Countdown, label(back_in(left), COUNTDOWN_TEXT, colours.text_soft)));
             panel
                 .spawn((
                     Node {
@@ -1468,10 +1465,11 @@ fn standing(
     coin: &Handle<Image>,
     vmin: f32,
 ) {
+    let colours = ui().colours;
     let medal = match place {
-        0 => Some(GOLD),
-        1 => Some(SILVER),
-        2 => Some(BRONZE),
+        0 => Some(colours.gold),
+        1 => Some(colours.house_builder.silver),
+        2 => Some(colours.house_builder.bronze),
         _ => None,
     };
     let prize = PRIZES[place];
@@ -1484,7 +1482,11 @@ fn standing(
             border_radius: BorderRadius::all(Val::VMin(ROW * 0.5)),
             ..default()
         },
-        BackgroundColor(if yours { YOUR_ROW } else { ROW_FILL }),
+        BackgroundColor(if yours {
+            colours.house_builder.your_row
+        } else {
+            colours.house_builder.row
+        }),
         Pickable::IGNORE,
     ))
     .with_children(|row| {
@@ -1507,14 +1509,14 @@ fn standing(
                 // Drawn again a hair to the side, which thickens every
                 // stroke: the built-in font has no bold of its own.
                 disc.spawn((
-                    cell(number, MEDAL_TEXT, DOOR),
+                    cell(number, MEDAL_TEXT, colours.on_gold),
                     TextShadow {
                         offset: Vec2::new(BOLDEN * vmin, 0.0),
-                        color: DOOR,
+                        color: colours.on_gold,
                     },
                 ));
             } else {
-                disc.spawn(cell(number, ROW_TEXT, SOFT));
+                disc.spawn(cell(number, ROW_TEXT, colours.text_soft));
             }
         });
         // A name too long for its room is cut off at the edge of it.
@@ -1527,15 +1529,15 @@ fn standing(
             },
             Pickable::IGNORE,
         ))
-        .with_child(cell(name, ROW_TEXT, Color::WHITE));
+        .with_child(cell(name, ROW_TEXT, colours.text));
         row.spawn(column(STARS_COLUMN)).with_children(|column| {
-            column.spawn(cell(stars.to_string(), ROW_TEXT, Color::WHITE));
-            column.spawn(icon(star.0.clone(), STAR_ON));
+            column.spawn(cell(stars.to_string(), ROW_TEXT, colours.text));
+            column.spawn(icon(star.0.clone(), colours.gold));
         });
         let (ink, tint) = if prize > 0 {
-            (GOLD, Color::WHITE)
+            (colours.gold, colours.text)
         } else {
-            (NO_PRIZE, NO_PRIZE)
+            (colours.house_builder.no_prize, colours.house_builder.no_prize)
         };
         row.spawn(column(PRIZE_COLUMN)).with_children(|column| {
             column.spawn(cell(format!("+{}", hud::money(prize)), ROW_TEXT, ink));
@@ -1591,12 +1593,14 @@ fn cell(text: impl Into<String>, size_vmin: f32, colour: Color) -> impl Bundle {
 
 /// `Back to the town in 0:12`.
 fn back_in(left: f32) -> String {
-    format!("Back to the town in {}", clock(left))
+    fill(&ui().words.house_builder.back_in, &[("time", &clock(left))])
 }
 
 /// Exit, on the results: back to the town now, rather than once they are
 /// over.
 fn exit_button() -> impl Bundle {
+    let ui = ui();
+    let colours = ui.colours;
     (
         AsksFor(Ask::Leave),
         TakesPress,
@@ -1609,12 +1613,12 @@ fn exit_button() -> impl Bundle {
             border_radius: BorderRadius::all(Val::VMin(RESULTS_BUTTON * 0.5)),
             ..default()
         },
-        BackgroundColor(QUIET),
+        BackgroundColor(colours.quiet),
         Fill {
-            idle: QUIET,
-            lit: QUIET_LIT,
+            idle: colours.quiet,
+            lit: colours.quiet_lit,
         },
-        children![label("Exit", RESULTS_BUTTON_TEXT, Color::WHITE)],
+        children![label(ui.words.house_builder.exit.clone(), RESULTS_BUTTON_TEXT, colours.text)],
     )
 }
 
@@ -1640,7 +1644,7 @@ fn again_button(able: bool) -> impl Bundle {
         BackgroundColor(fill.idle),
         fill,
         children![
-            label("Play again", RESULTS_BUTTON_TEXT, ink),
+            label(ui().words.house_builder.play_again.clone(), RESULTS_BUTTON_TEXT, ink),
             (AgainPrice, label(price, AGAIN_PRICE_TEXT, price_ink)),
         ],
     )
@@ -1650,16 +1654,23 @@ fn again_button(able: bool) -> impl Bundle {
 /// in its colour — when you can pay for it, gold, and when you cannot, greyed
 /// out, saying what it needs in the colour of a warning.
 fn again_look(able: bool) -> (Fill, Color, Color, String) {
-    let price = hud::money(ENTRY);
+    let ui = ui();
+    let (colours, words) = (ui.colours, &ui.words.house_builder);
+    let coins = hud::money(ENTRY);
     if able {
-        let fill = Fill {
-            idle: GOLD,
-            lit: GOLD_LIT,
+        let button = Fill {
+            idle: colours.gold,
+            lit: colours.gold_lit,
         };
-        (fill, DOOR, DOOR, format!("{price} coins"))
+        let price = fill(&words.price, &[("coins", &coins)]);
+        (button, colours.on_gold, colours.on_gold, price)
     } else {
-        let fill = Fill { idle: OFF, lit: OFF };
-        (fill, OFF_TEXT, WARN, format!("Need {price} coins"))
+        let button = Fill {
+            idle: colours.off,
+            lit: colours.off,
+        };
+        let price = fill(&words.need_coins, &[("coins", &coins)]);
+        (button, colours.off_text, colours.warn, price)
     }
 }
 
@@ -1750,7 +1761,7 @@ pub(crate) fn dimmed<'a>(commands: &'a mut Commands, dark: impl Bundle) -> Entit
                 align_items: AlignItems::Center,
                 ..default()
             },
-            BackgroundColor(DIM),
+            BackgroundColor(ui().colours.dim),
             GlobalZIndex(DIALOG_LAYER),
         ))
         .id();
@@ -1765,7 +1776,7 @@ pub(crate) fn dimmed<'a>(commands: &'a mut Commands, dark: impl Bundle) -> Entit
             border_radius: BorderRadius::all(Val::VMin(4.0)),
             ..default()
         },
-        BackgroundColor(DIALOG),
+        BackgroundColor(ui().colours.dialog),
     ))
 }
 

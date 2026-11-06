@@ -1,8 +1,10 @@
 //! The islands, and what the players stand on and bump into there.
 //!
-//! Each is a Blender model with the sea drawn round it: Round Town,
-//! `assets/roundtownmap.glb` since 2026-10-30 (`circlemap1.glb` before), round
-//! a pond with a fountain in it, where everyone is; your home,
+//! Each is a Blender model with the sea drawn round it, but the town, which
+//! stands over the void ([`bottomless`]): Hajun's `assets/pvptownmap.glb`
+//! since 2026-11-07 (`roundtownmap.glb` from 2026-10-30, `circlemap1.glb`
+//! before), round a pond with a fountain in it, with four islands at the
+//! ends of its bridges, where everyone is; your home,
 //! `assets/testhomemap.glb`, where only you go, for now with a room and a tall
 //! wall in it to try the camera against; and House Builder's lobby,
 //! `assets/lobbymap.glb`, where a game's players wait for it to fill. Those
@@ -117,16 +119,29 @@ const LOADED: [Venue; 3] = [Venue::Town, Venue::Home, Venue::Lobby];
 /// yours has.
 fn model(venue: Venue) -> &'static str {
     match venue {
-        Venue::Town => "roundtownmap.glb",
+        Venue::Town => "pvptownmap.glb",
         Venue::Home => "testhomemap.glb",
         Venue::Plot(_) => "homemap.glb",
         Venue::Lobby => "lobbymap.glb",
     }
 }
 
-/// Where the player in `seat` stands on arriving on `venue`: on a ring round
-/// the middle — round the pond, in the town — facing in. The first eight
-/// seats are each an eighth of the turn on from the one before, and a town
+/// Whether there is nothing under `venue` but the void: no sea for a body
+/// off its land to wade in, so that it falls for good, and is put back
+/// where it arrived once it is `VOID_Y` down (`lobby::respawn_the_fallen`).
+/// The town, since 2026-11-07 (Hajun: "remove the ocean and it will be a
+/// void that if you step over, u fall and then u 'die' and respawn back at
+/// your spawn"): Hajun's `pvptownmap.glb`, a town with four islands at the
+/// ends of its bridges, in the sky. Every other island still has the sea
+/// round it.
+pub(crate) fn bottomless(venue: Venue) -> bool {
+    venue == Venue::Town
+}
+
+/// Where the player in `seat` stands on arriving on `venue`: in the town,
+/// on the island their seat says, facing the town down its bridge;
+/// elsewhere on a ring round the middle, facing in. The first eight seats
+/// are each an eighth of the turn on from the one before, and a town
 /// channel online, which holds sixteen, sits the rest between them
 /// (`roundtown_net::arrival`, which the server works arrivals out with too).
 pub(crate) fn arrival(venue: Venue, seat: usize) -> Transform {
@@ -242,15 +257,15 @@ fn spawn_islands(mut commands: Commands, assets: Res<AssetServer>, water: Res<sk
     }
 }
 
-/// An island on `venue`: its model, and the sea round it, both hidden until
-/// `show_where_i_am` has seen who is there. Returns the two, for whoever is to
-/// take them away again.
+/// An island on `venue`: its model, and the sea round it, unless it stands
+/// over the void ([`bottomless`]), both hidden until `show_where_i_am` has
+/// seen who is there. Returns them, for whoever is to take them away again.
 pub(crate) fn spawn_island(
     commands: &mut Commands,
     assets: &AssetServer,
     water: &sky::Water,
     venue: Venue,
-) -> [Entity; 2] {
+) -> Vec<Entity> {
     let land = commands
         .spawn((
             venue,
@@ -260,13 +275,16 @@ pub(crate) fn spawn_island(
         ))
         .observe(read_island)
         .id();
+    if bottomless(venue) {
+        return vec![land];
+    }
     // Each island has its own sea, which goes with it. Its own entity rather
     // than a child of the model, so that reading the island back out of the
     // model does not take the sea for a floor.
     let sea = commands
         .spawn((venue, sky::sea(water), Visibility::Hidden))
         .id();
-    [land, sea]
+    vec![land, sea]
 }
 
 /// Draws the island you are on, and everything and everyone on it, and hides
