@@ -91,6 +91,15 @@ const STEEPEST_FLOOR: f32 = 0.643;
 /// left out of what players stand on and bump into.
 pub(crate) const WATER_MATERIAL: &str = "water";
 
+/// The material of a marker in a map for where people arrive: drawn not at
+/// all, and stood on nowhere. Hajun's `pvptownmap.glb` has one, a purple
+/// pillar on a stone slab on the island everyone offline arrives on
+/// (2026-11-07: "make the user spawn in the bottom one with the
+/// furnishes"); where it stands is written into
+/// `roundtown_net::TOWN_ISLANDS` by hand, the server having no map to read
+/// it from.
+pub(crate) const SPAWN_MATERIAL: &str = "spawn";
+
 /// Whether a material called `name` is the one called `wanted`, or a copy of
 /// it, as Blender names one brought in from another file that has its own:
 /// `water.001` is water. In Hajun's new town (2026-10-30) the pond is `water`
@@ -342,6 +351,10 @@ fn read_island(
             commands
                 .entity(entity)
                 .insert((MeshMaterial3d(water.material.clone()), NotShadowCaster));
+            continue;
+        }
+        if material.is_some_and(|name| is_material(&name.0, SPAWN_MATERIAL)) {
+            commands.entity(entity).insert(Visibility::Hidden);
             continue;
         }
         if known || skinned {

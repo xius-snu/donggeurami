@@ -282,10 +282,13 @@ pub(crate) struct Melee {
     /// The swing: the arm out, and back, in seconds.
     pub swing_out: f32,
     pub swing_back: f32,
-    /// How far a punch reaches, in metres, from your middle to their
-    /// nearest side; and how far either side of straight ahead they may be,
-    /// in degrees, the whole cone.
+    /// The range a punch lands in, the band drawn round you (`range`):
+    /// how far it reaches and how near it begins, in metres in front of
+    /// your middle, how wide it is where it begins, in metres, and how far
+    /// it opens out from there, in degrees, the whole cone.
     pub reach: f32,
+    pub near: f32,
+    pub width: f32,
     pub cone: f32,
     /// How long after a punch lands on a body no other moves it, in
     /// seconds.
@@ -309,13 +312,16 @@ impl Melee {
 
     /// What is wrong with these numbers, if anything: one that is not a
     /// number or less than nothing, a swing of no time (which the arm's
-    /// reach divides by), a cone wider than all round, or a drag that
-    /// would make a knock grow.
+    /// reach divides by), a cone of nothing or wider than all round, or
+    /// not under 180 with a width (whose sides would never meet), a near
+    /// edge past the reach, or a drag that would make a knock grow.
     fn check(&self) -> Result<(), String> {
         let all = [
             ("swing_out", self.swing_out),
             ("swing_back", self.swing_back),
             ("reach", self.reach),
+            ("near", self.near),
+            ("width", self.width),
             ("cone", self.cone),
             ("hurt_time", self.hurt_time),
             ("knock_back", self.knock_back),
@@ -329,13 +335,22 @@ impl Melee {
                 return Err(format!("melee.{name} is {value}: it has to be a number, 0 or more"));
             }
         }
-        for (name, value) in [("swing_out", self.swing_out), ("swing_back", self.swing_back)] {
+        for (name, value) in [("swing_out", self.swing_out), ("swing_back", self.swing_back), ("cone", self.cone)] {
             if value <= 0.0 {
                 return Err(format!("melee.{name} is {value}: it has to be more than 0"));
             }
         }
         if self.cone > 360.0 {
             return Err(format!("melee.cone is {}: it is in degrees, all round at most", self.cone));
+        }
+        if self.width > 0.0 && self.cone >= 180.0 {
+            return Err(format!(
+                "melee.cone is {}: with a width the sides have to open out from a point, under 180",
+                self.cone
+            ));
+        }
+        if self.near >= self.reach {
+            return Err(format!("melee.near ({}) has to be under melee.reach ({})", self.near, self.reach));
         }
         for (name, value) in [("air_drag", self.air_drag), ("ground_drag", self.ground_drag)] {
             if value > 1.0 {
@@ -393,6 +408,7 @@ pub(crate) struct Colours {
     pub shop: ShopColours,
     pub talk: TalkColours,
     pub edit_menu: EditMenuColours,
+    pub melee: MeleeColours,
 }
 
 #[derive(Deserialize, Clone, Copy, PartialEq, Debug)]
@@ -520,6 +536,18 @@ pub(crate) struct EditMenuColours {
     pub turn_held: Color,
     #[serde(deserialize_with = "colour")]
     pub turn_rim: Color,
+}
+
+/// The punch's hit range, the sector drawn round you on the ground
+/// (`range`): its outline, and the fill inside it, each as see-through as
+/// its alpha says.
+#[derive(Deserialize, Clone, Copy, PartialEq, Debug)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct MeleeColours {
+    #[serde(deserialize_with = "colour")]
+    pub outline: Color,
+    #[serde(deserialize_with = "colour")]
+    pub fill: Color,
 }
 
 /// The words, screen by screen. One with `{something}` in it is filled in

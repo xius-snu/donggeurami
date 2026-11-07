@@ -58,3 +58,7 @@ LICENSE-font-awesome.txt
 # The numbers of the screen (assets/ui.ron), compiled into the game by
 # src/style.rs: a phone never reads the file itself.
 ui.ron
+
+# The plank texture on the PvP town bridges (2026-11-07), which the exporter
+# embeds in pvptownmap.glb: Blender reads this file, the game never does.
+woodplanktexture.jpg

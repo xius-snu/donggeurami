@@ -126,6 +126,14 @@
             turn_held: "#5ca8ff9e",
             turn_rim: "#8cc7ff9e",
         ),
+        // The punch's hit range, the band drawn on the ground in front of
+        // you, turned the way you face (its shape is melee's near, reach,
+        // width and cone, at the end of the file): its outline, and the
+        // fill inside it, white, each as see-through as its alpha says.
+        melee: (
+            outline: "#ffffff99",
+            fill: "#ffffff2b",
+        ),
     ),
     // The font is plain ASCII: no Hangul, and a hyphen for a dash. Where a
     // word has {something} in it, the game fills that in.
@@ -307,13 +315,19 @@
         // was none in 1.8.9: every press swings, and lands if it can.
         swing_out: 0.12,
         swing_back: 0.18,
-        // A punch lands on the nearest body in front of you within reach,
-        // in metres, from your middle to their nearest side (Minecraft's 3
-        // blocks, eyes to hitbox), and within this many degrees of the way
-        // you face, the whole cone (Minecraft wants the crosshair on them;
-        // a stick is less precise than a mouse).
-        reach: 3.0,
-        cone: 60.0,
+        // A punch lands on the nearest body with any of itself in the range
+        // drawn on the ground in front of you (in colours.melee's colours):
+        // a band from near out to reach, in metres from your middle (0.45
+        // is your own body's edge), width across where it begins, in
+        // metres, and opening out by cone degrees from there, the sides of
+        // a sector whose point lies behind you (with a width of 0, a point
+        // near in front of you); no higher or lower than a body. Minecraft's
+        // reach is 3 blocks, eyes to hitbox, with the crosshair on them; a
+        // stick is less precise than a mouse.
+        reach: 2.0,
+        near: 0.45,
+        width: 1.5,
+        cone: 45.0,
         // Once a punch has landed on a body, no other moves it for this
         // long, in seconds: Minecraft's 10 ticks of hurt resistance, so at
         // most two knocks a second however fast the presses come.

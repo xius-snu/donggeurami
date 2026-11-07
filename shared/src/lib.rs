@@ -74,8 +74,13 @@ pub const PROTOCOL_ID: u64 = u64::from_be_bytes(*b"DGRMTOWN");
 /// at the ends of bridges round a town with no sea round it, and everyone
 /// arrives on one of the islands ([`TOWN_ISLANDS`]); [`Ask::Respawn`], for
 /// whoever falls off into the void; and [`Ask::Punch`] and [`Tell::Knocked`],
-/// a punch landing on someone online.
-pub const PROTOCOL_VERSION: u32 = 5;
+/// a punch landing on someone online. 6, that evening: the islands pulled
+/// in to 130 m ([`TOWN_ISLANDS`]); an app with them at 200 m would arrive
+/// over the void, fall, and have every move put back. 7, late that
+/// evening: the first island the furnished one at +Z, its arrival at its
+/// `spawn` marker. 8, at the day's end: every island's arrival at its own
+/// marker, all four furnished.
+pub const PROTOCOL_VERSION: u32 = 8;
 
 /// The UDP port the game server listens on. 443, where QUIC goes, because a
 /// network that lets any UDP through lets that through: school and office
@@ -239,18 +244,31 @@ pub const ARRIVAL_RADIUS: f32 = 6.0;
 /// House Builder stood.
 pub const TOWN_ARRIVAL_RADIUS: f32 = 31.5;
 
-/// The middles of the four islands at the ends of the town's bridges, in
-/// metres from the middle of the town, where everyone arrives in Hajun's
-/// `pvptownmap.glb` (2026-11-07: "make the player start in the center of
-/// one of the 4 bridge connected island"): 200 m out along each axis, each
-/// 32 m across, with a bridge 14 m wide from it to the town, 75 m out. In
-/// the game's x and z: north (Blender's +Y) first, then clockwise seen from
-/// above.
+/// The arrival points of the four islands at the ends of the town's
+/// bridges, in metres from the middle of the town, where everyone arrives
+/// in Hajun's `pvptownmap.glb` (2026-11-07: "make the player start in the
+/// center of one of the 4 bridge connected island"): the islands 130 m out
+/// along each axis since that evening, each 20.8 m across (the islands'
+/// object scaled to 0.65 across the ground in their map, its array of four
+/// with it; 200 m out and 32 m across that morning), over the far half of
+/// a smaller island 24 m across at 125 m, with a bridge 3.5 m wide from
+/// each to the town, 75 m out. Each island's point is not its middle, where
+/// a desk lies, but where its `spawn` marker stands, 5 to 6 m toward the
+/// town, on a stone slab (the game hides the marker,
+/// `island::SPAWN_MATERIAL`): first the island at the game's +Z (the
+/// bottom of the screen; Blender's +Y), the one Hajun furnished first
+/// (late that evening: "make the user spawn in the bottom one with the
+/// furnishes"), then the others clockwise from it seen from above, each
+/// furnished alike at the day's end, its marker where they put it. Read
+/// off the map's own geometry (a scratch test on `island::glb::read`: a
+/// `.glb` dump's x and z are the game's negated), and to be read again
+/// whenever the map changes: the server, which has no map, goes by this
+/// too.
 pub const TOWN_ISLANDS: [Vec2; 4] = [
-    Vec2::new(0.0, -200.0),
-    Vec2::new(200.0, 0.0),
-    Vec2::new(0.0, 200.0),
-    Vec2::new(-200.0, 0.0),
+    Vec2::new(0.0, 124.9),
+    Vec2::new(-123.8, 0.0),
+    Vec2::new(-0.2, -124.0),
+    Vec2::new(123.8, -0.1),
 ];
 
 /// How far from its island's middle everyone on it but the first stands on

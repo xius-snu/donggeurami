@@ -39,6 +39,7 @@ mod map;
 mod net;
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 mod pace;
+mod range;
 mod roads;
 mod see_through;
 mod settings;
@@ -1053,6 +1054,8 @@ pub fn main() {
     car::plugin(&mut app);
     // The car you drive yourself, at the press of the face button.
     drive::plugin(&mut app);
+    // The punch's range, drawn round you.
+    range::plugin(&mut app);
     // Everything standing on the town comes from the town save, so the map
     // has to be there before the editor can be pointed at any of it.
     map::plugin(&mut app);
@@ -2376,6 +2379,14 @@ fn read_player_input(
     };
     intent.walk = wish.normalize_or_zero() * speed_scale;
     intent.jump = keyboard.just_pressed(KeyCode::Space) || controls.jump_just_pressed;
+    // A walk's own speed, facing the way it goes: the car writes its own
+    // over these every frame you drive (`drive::steer`, after this), and
+    // nothing else does. Until 2026-11-07 they were left as the car last
+    // wrote them, so out of it you walked at its last speed facing its last
+    // way, or, out of a car standing still, not at all (Hajun: "if you
+    // leave the car u glitch").
+    intent.pace = None;
+    intent.face = None;
 }
 
 /// Every body that moves under its own power, and what moving it needs.
@@ -2629,8 +2640,9 @@ impl Motion<'_> {
 ///
 /// And lands it (since 2026-11-07, Hajun: "deals 'knockback' ... if done
 /// while both facing the other player/ai and pressed when within range"):
-/// on the nearest body in front of you, within the file's `melee.reach` of
-/// your middle to their side and `melee.cone` of the way you face, and no
+/// on the nearest body with any of itself in the range the file's `melee`
+/// draws round you (`range::Sector`: from `near` to `reach` in front of
+/// you, `width` across where it begins, opening out by `cone`), and no
 /// higher or lower than a body's height (Minecraft 1.8.9's three blocks
 /// from the eyes to the hitbox, with the crosshair on it), at the moment
 /// of the press, as Minecraft lands a click. An AI, or anyone this device
@@ -2688,10 +2700,10 @@ fn start_punch(
 }
 
 /// Whom a punch thrown from `at`, `feet` up, facing `facing`, lands on,
-/// of the `bodies` there, each by where its feet are: the nearest within
-/// `melee.reach` of the puncher's middle to its side and within
-/// `melee.cone` of the way they face, no further up or down than a body's
-/// height; and where it stands.
+/// of the `bodies` there, each by where its feet are: the nearest with any
+/// of itself in the range the file's `melee` draws round the puncher
+/// (`range::Sector::holds`, a body being `PLAYER_RADIUS` across), no
+/// further up or down than a body's height; and where it stands.
 fn punch_lands(
     melee: &ui::Melee,
     at: Vec2,
@@ -2699,15 +2711,14 @@ fn punch_lands(
     facing: Vec2,
     bodies: impl Iterator<Item = (Entity, Vec3)>,
 ) -> Option<(Entity, Vec2)> {
-    let half_cone = melee.cone.to_radians() * 0.5;
+    let sector = range::Sector::of(melee);
     bodies
         .filter_map(|(body, there)| {
             let off = there.xz() - at;
-            let far = off.length();
-            if far < 1e-3 || far - PLAYER_RADIUS > melee.reach || (there.y - feet).abs() > PLAYER_HEIGHT {
+            if (there.y - feet).abs() > PLAYER_HEIGHT || !sector.holds(facing, off, PLAYER_RADIUS) {
                 return None;
             }
-            (facing.angle_to(off / far).abs() <= half_cone).then_some((far, body, there.xz()))
+            Some((off.length(), body, there.xz()))
         })
         .min_by(|a, b| a.0.total_cmp(&b.0))
         .map(|(_, body, there)| (body, there))
@@ -3563,6 +3574,34 @@ mod ground_tests {
     }
 
     #[test]
+    fn out_of_the_car_your_legs_are_your_own_again() {
+        use bevy::ecs::system::RunSystemOnce;
+        // The car left the body pacing at 40 m/s facing east; a frame of
+        // input with nothing pressed takes both back.
+        let mut world = World::new();
+        world.insert_resource(ButtonInput::<KeyCode>::default());
+        world.insert_resource(TouchControls::default());
+        world.insert_resource(hud::DialogUp::default());
+        let you = world
+            .spawn((
+                Player,
+                Transform::default(),
+                Intent {
+                    walk: Vec3::ZERO,
+                    jump: false,
+                    pace: Some(40.0),
+                    face: Some(Vec3::X),
+                },
+                WalkCycle::default(),
+            ))
+            .id();
+        world.run_system_once(read_player_input).expect("the input is read");
+        let intent = world.get::<Intent>(you).unwrap();
+        assert_eq!(intent.pace, None, "still paced as the car was");
+        assert_eq!(intent.face, None, "still facing the car's way");
+    }
+
+    #[test]
     fn a_punch_lands_on_the_nearest_body_in_front_and_in_reach() {
         let melee = ui::ui().melee;
         let a = Entity::from_bits(1);
@@ -3570,14 +3609,15 @@ mod ground_tests {
         let c = Entity::from_bits(3);
         let d = Entity::from_bits(4);
         let facing = Vec2::NEG_Y;
+        let nearer = (melee.near + melee.reach) * 0.5;
         let bodies = || {
             [
-                // Ahead, in reach; ahead, nearer; behind; and ahead but up on
-                // a roof.
-                (a, Vec3::new(0.0, 0.0, -3.0)),
-                (b, Vec3::new(0.3, 0.0, -1.5)),
-                (c, Vec3::new(0.0, 0.0, 2.0)),
-                (d, Vec3::new(0.0, 4.0, -1.0)),
+                // Ahead, at the range's reach; ahead, nearer; behind; and
+                // ahead but up on a roof.
+                (a, Vec3::new(0.0, 0.0, -melee.reach)),
+                (b, Vec3::new(0.1, 0.0, -nearer)),
+                (c, Vec3::new(0.0, 0.0, melee.reach + 2.0)),
+                (d, Vec3::new(0.0, 4.0, -nearer)),
             ]
             .into_iter()
         };
@@ -3586,8 +3626,8 @@ mod ground_tests {
         // Out of reach: nobody.
         let far = punch_lands(&melee, Vec2::ZERO, 0.0, facing, [(a, Vec3::new(0.0, 0.0, -(melee.reach + 1.0)))].into_iter());
         assert_eq!(far, None);
-        // Facing away from them all: nobody.
-        let away = punch_lands(&melee, Vec2::ZERO, 0.0, Vec2::X, bodies());
+        // Facing straight away from them all: nobody.
+        let away = punch_lands(&melee, Vec2::ZERO, 0.0, Vec2::Y, bodies());
         assert_eq!(away, None);
     }
 

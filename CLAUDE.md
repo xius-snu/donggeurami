@@ -182,8 +182,9 @@ lives in `assets/ui.ron`, for Hajun to edit by hand: the bar across the
 top and its buttons, a phone's stick and jump button, the sign-up's pages,
 the settings window and its dialogs, House Builder's board, stars, dialogs
 and results, the shop, talking, the edit menu's buttons, the names over
-heads, the headlines and the notices. Sizes, margins and layout stay in
-the code. `src/ui.rs` reads it: `ui()` gives the file as it stands, a
+heads, the headlines and the notices, and, since 2026-11-07, the punch's
+hit range drawn round you (`colours.melee`; "The town is a PvP arena in
+the sky", below). Sizes, margins and layout stay in the code. `src/ui.rs` reads it: `ui()` gives the file as it stands, a
 global rather than a resource, so that the plain functions every screen is
 built from (`hud::words`, `builder::label`, `builder::dimmed`) read it
 without every caller threading it through; and `ui::fill` fills a word's
@@ -271,8 +272,16 @@ alone; the server is `cargo build -p roundtown_server`. Never `--workspace`,
 which would build the game with the server's half of replicon in it.
 
 Android needs the `release-android` profile, a manual strip step, and Gradle
-(`versionCode` in `mobile/android/app/build.gradle` is the build number: 2
-since 2026-11-07, the PvP town's APK; 1 for every APK before) —
+(`versionCode` in `mobile/android/app/build.gradle` is the build number: 7
+at the end of 2026-11-07, the map's fourth version of the day, every
+island furnished and every arrival at its own marker (protocol 8); 6 half
+an hour before: you arrive on the furnished island at its spawn marker
+(protocol 7), the punch's reach 2 m and its range fainter, and out of the
+car you walk again; 5 an hour before, the map's third version of
+the day, one island furnished; 4 a quarter of an hour before that, the
+punch's range band, the islands at 130 m and the planked bridges; 3 an
+hour before that, with the range as a ring sector; 2 that morning, the PvP
+town's; 1 for every APK before) —
 see the "Build gotchas" section of `RENDERING.md`, or the commands in
 `mobile/android/app/build.gradle`'s closing comment. The APK carries only
 what the game loads: whatever `mobile/android/app/assets-left-out.txt` names
@@ -497,20 +506,70 @@ Hajun's `pvptownmap.glb` (`island::model`; `roundtownmap.glb` stays in the
 repo and out of the APK): Round Town's middle, the pond and its fountain,
 the ring road round it in its two halves with the strip of grass between,
 the 20 lamps and the paving out to 76 m, and no houses, trees or outer
-road; and out of it four wooden bridges, 14 m wide and 0.25 m up, one
-along each axis, each over a small round island at 125 m to a round island
-32 m across at 200 m (`roundtown_net::TOWN_ISLANDS`), 3 m thick. All of
+road; and out of it four wooden bridges, one along each axis, each to a
+round island at 130 m (`roundtown_net::TOWN_ISLANDS`; since the evening of
+2026-11-07, when Hajun scaled the islands' object to 0.65 across the
+ground, its array of four with it, and shortened the bridges to meet them:
+200 m, 32 m across, over a smaller island at 125 m, with 14 m bridges, that
+morning), 20.8 m across and 3 m thick, its top 0.25 m up, the smaller
+island's far half under it; the bridges planked, 3.5 m wide, their deck
+0.5 m up with a lip either side to 0.75. All of
 it stands in the sky. The rest of this file holds for it where it says
 nothing else; what follows is what changed.
 
 - **The islands and the bridges are Geometry Nodes arrays in
-  `pvptownmap.blend`**, which Hajun's export left off: their `.glb` had
-  one island and no bridges. `assets/pvptownmap.glb` is the file exported
-  again with Apply Modifiers ticked (`export_apply`; byte for byte what
-  Blender gives for it), 40,878 triangles, and that is how to export it
-  after a change. Every part has a material and every walkable top faces
-  up (checked). The pond has no floor under its water, as the old town's
-  had none: under the pond is the void.
+  `pvptownmap.blend`**, which Hajun's exports leave off (that morning,
+  and again at 16:44 that evening): their `.glb` has one island, one
+  small island and one bridge (124, 124 and 44 triangles, where applied
+  they are 496, 496 and 176). `assets/pvptownmap.glb` is the file
+  exported again with Apply Modifiers ticked (`export_apply`, and from
+  `assets/` itself: exported from a copy elsewhere, the bridges' wood
+  texture, `assets/woodplanktexture.jpg` by a path relative to the
+  `.blend`, is silently dropped), 41,006 triangles since that evening
+  (40,878 that morning), and that is how to export it after a change.
+  That evening's change: the islands pulled in to 130 m (above), the
+  bridges planked, the `wood` material a texture embedded in the `.glb`
+  (the game's second texture, after the Soft Couch's) on a bridge of 44
+  triangles, its deck 0.5 m up and a lip either side to 0.75 (a
+  see-through blue box of 12 until then), and the islands' tops `path2`,
+  the paving's brown, in place of `stone`. **The texture is a JPEG, which
+  Bevy decodes only with its `jpeg` feature**, on in `Cargo.toml` since:
+  without it the whole town fails to load ("invalid image mime type:
+  image/jpeg" in the log) and everyone waits in the air over nothing.
+  Every part has a material and every walkable top faces up (checked both
+  times). **The map's third version of the day (17:31), exported by Hajun
+  with the modifiers applied** (their `.glb` is byte for byte the applied
+  export: so it is the file as they made it, 41,642 triangles, 46
+  objects), furnishes one island, the one at the game's +Z
+  (`TOWN_ISLANDS[0]` since late that evening, `[2]` for an hour;
+  Blender's +Y, the top of Hajun's screen in Blender and the bottom of
+  the game's, the camera's top being -Z): two stone slabs (`Cube`, 2 m
+  square, 0.25 m high at the far edge; `Cube.001`, 0.5 m high, a jump,
+  toward the bridge), on the second a purple pillar 3.4 m tall in a
+  material called `spawn` (`Cube.002`, 5 m from the island's middle
+  toward the town), and a cafe desk 11.3 m long and 0.9 m high
+  (`Cube.003`) lying across the island's middle. **A `spawn` part marks
+  where that island's first arrival stands** (`island::SPAWN_MATERIAL`,
+  since Hajun's "make the user spawn in the bottom one with the
+  furnishes"): the game neither draws it nor stands anyone on it, and
+  `TOWN_ISLANDS[0]` is set by hand to its spot, on the slab (the server
+  has no map to read it from); the ring of seven round it, 4 m out,
+  clears the slab, the desk and the bridge. For an hour seat 0 arrived
+  on the bare island opposite. **The fourth version (18:27) furnishes
+  all four islands alike**, each with its slabs, desk and `spawn` pillar
+  turned a quarter on from the last, so every island's arrival is its
+  own marker (`TOWN_ISLANDS`, all four by hand, 123.8 to 124.9 m out),
+  and stands a street lamp at the far edge of each (24 lamps now):
+  50,270 triangles, 62 objects. Hajun's export of it again had one small
+  island and one bridge, so `assets/pvptownmap.glb` is the applied
+  export. **A glTF position is not a game
+  position**: the game turns every model half round about the upright
+  ("Models"), so a point read off the `.glb`'s JSON is at (-x, y, -z) in
+  the game, and a dump that forgets it puts a thing on the opposite
+  island (as mine did for an hour that evening); the game's own reader,
+  `island::glb::read`, has it right. The
+  pond has no floor under its water, as the old town's had none: under
+  the pond is the void.
 - **There is no sea round the town** (`island::bottomless`, which only
   `Venue::Town` is; the home, the lobby and the plots keep theirs):
   `spawn_island` spawns none for it, and `support` in `src/lib.rs` has
@@ -525,21 +584,33 @@ nothing else; what follows is what changed.
   its check on moves, and be undone. AIs never walk off (`strands`, as
   ever): only a punch takes one over the edge.
 - **Everyone arrives on an island, by seat** (`roundtown_net::arrival`,
-  `town_island`: seat modulo four, the first of each in the island's
-  middle, the next seven on a ring 4 m out, all facing the town down the
+  `town_island`: seat modulo four, the first of each at the island's
+  `spawn` marker's spot, 5 to 6 m from its middle toward the town (its
+  middle until the markers came), the next seven on a ring 4 m out, all
+  facing the town down the
   bridge; the server works out the same), so that the first four seats of a
   town channel, four people, are on four different islands (Hajun: "when
   there is 2 players+ you will not spawn in the same bridge connected
   island"), and the AIs fill the islands round them, eight to each
-  (`lobby::TOWN_SPOTS`, 32). Offline you are seat 0, the north island
-  (Blender's +Y, the game's -Z). Coming online, the server seats you, and a
+  (`lobby::TOWN_SPOTS`, 32). Offline you are seat 0: since late on
+  2026-11-07 the island at the game's +Z, the bottom of the screen (the
+  top of Hajun's in Blender, its +Y), the one they furnished first, arriving on
+  the stone slab its `spawn` marker stands on, 5 m from its middle toward
+  the town (Hajun: "make the user spawn in the bottom one with the
+  furnishes"; the bare island at -Z until then). Coming online, the
+  server seats you, and a
   seat on another island than the one you arrived on sends you there as if
   you had fallen (`net::hear`, `Tell::Arrive` with a `spot`, which until
   then never moved you), with the same `Ask::Respawn` after. **This is
   `PROTOCOL_VERSION` 5**: the arrivals, `Ask::Respawn`, and the punch's
-  `Ask::Punch` and `Tell::Knocked` (below). The server was deployed with
-  it (2026-11-07; the binary before kept on the VM as
-  `roundtown-server.prev-2026-11-06`).
+  `Ask::Punch` and `Tell::Knocked` (below); **and 6** since that evening,
+  the islands at 130 m, which an app with them at 200 m would arrive
+  beside, in the void, and have every move put back; **and 7** late that
+  evening, the first island the furnished one at +Z, its arrival at its
+  `spawn` marker; **and 8** at the day's end, every island's arrival at
+  its own marker. The server was deployed with each (2026-11-07; the
+  binaries before kept on the VM as `roundtown-server.prev-2026-11-06`,
+  `.prev-2026-11-07`, `.prev-2026-11-07b` and `.prev-2026-11-07c`).
 - **The punch knocks whoever it lands on back** (`start_punch`,
   `punch_lands`, `Shove`, `Shove::knock` in `src/lib.rs`, the numbers in
   `assets/ui.ron`'s `melee`, `ui::Melee`, Minecraft 1.8.9's throughout, its
@@ -575,6 +646,49 @@ nothing else; what follows is what changed.
   or a drag over 1, as `Car::check` does. Seen in the desktop build:
   unit-tested (the knock, its dying away, whom a punch lands on, the fall);
   not yet by hand or on a phone.
+- **The punch's range is drawn round you, as Brawl Stars draws an
+  attack's** (`src/range.rs`, since 2026-11-07; Hajun: "right now there
+  is no hit range indicator for the melee. i want to make it similar to
+  brawlstars - a default of 1/8 circular sector hit indicator with white
+  outline and less white area that is both semi transparent, projected
+  only for the client's view - which revolves around the player depending
+  on player facing direction"): a flat band lying on the ground in front
+  of you, turned the way you face, from `melee.near` out to `melee.reach`
+  (0.45 m, your own body's radius, so that it begins at your edge; and
+  2 m: Hajun, late that evening, "make the range 2m instead of 1m"; 1 m
+  for an hour, after "decrease the reach to 1m"; 3 m, Minecraft's,
+  through the day), `melee.width` across where it begins (1.5 m, my
+  number, for "make it much more wider near the player") and opening out
+  by `melee.cone` from there (45 degrees, an eighth of a circle; 60 until
+  that day): the sector of a circle whose sides meet behind you, where an
+  arc that wide at that angle has its middle (`range::Sector::of`, 1.5 m
+  behind your middle as the file stands); with a `width` of 0, one coming
+  to a point `near` in front of you. It is the very range `punch_lands`
+  lands a punch in: a body is hit when any of it is within the band, its
+  middle within the cone from where the sides meet and no further than
+  its own radius past the far arc or short of the near one
+  (`Sector::holds`). For its first hour it was a wedge from a point at
+  your middle (Hajun: "its not a pointy corner near the player so the hit
+  region need to be in front of the player not connected to it. the round
+  edge near the player need to be wider"), then a ring sector about your
+  middle from `near`, 0.8 m for a minute ("the gap between player and the
+  hit indicator is too much now") and then 0.45. A white outline 0.1 m
+  wide runs just inside its edge (`range::WIDTH`) over a fainter white
+  fill, both see-through, in `colours.melee` of `assets/ui.ron`
+  (`outline`, `fill`; my alphas, 0.6 and 0.17 since Hajun asked for
+  "slightly more transparent" late that evening, 0.7 and 0.22 before),
+  taken again as the file changes, the shape too. Yours alone, offline and online: nothing of it
+  goes over the network, nobody else's is drawn, nor an AI's; put away in
+  the car. It lies as high over your feet as a step (`range::HEIGHT`,
+  `LAND_STEP_UP`), so that under the camera over you the paving beside a
+  road or the strip of grass never hides it; the pond's rim does. Unlit,
+  drawn two and a half times its colours (`range::GAIN`, as the
+  fountain's water is), blended, so `see_through` never takes it for
+  something in the way, and so needing the camera's `NoIndirectDrawing`
+  on the Adreno, as the sea does. Seen in the desktop build, scripted,
+  from over you at 24 and 10 m, facing three ways, and unit-tested (the
+  band is the punch's own, arcs, sides and width, the outline inside it,
+  every triangle facing up); not yet by hand or on a phone.
 - **The camera is fixed straight down over you, in and out of the car**
   (`OrbitCamera::top_down`, the resource as the app opens; Hajun: "make the
   camera top down for even the player mode"): the file's `car.overhead` up
@@ -1621,7 +1735,15 @@ drives by what the file said when its app was built. The constants of
   turned as it steers (`car::hang_wheels`, which the buses' wheels go
   through too, with `Turns::front`). The body is hidden (`follow_camera`),
   and the car's model, with no `Venue`, is drawn wherever you are. Sent to
-  another island, you are out of it.
+  another island, you are out of it. **Out of it, your legs are your own
+  again**: `read_player_input` clears the pace and the facing every frame,
+  and only `steer`, after it, writes them (since the evening of
+  2026-11-07; Hajun: "if you leave the car u glitch": until then they
+  stayed as the car last wrote them, so out of a moving car you walked at
+  its speed facing its way, and out of one standing still you could not
+  walk at all, its pace being 0). A test keeps it so
+  (`out_of_the_car_your_legs_are_your_own_again`), and a scripted run
+  drove, got out and walked at a walk's pace.
 - **The gift button held, or G, is the gun** (`drive::shoot`, `drive::fly`,
   `hud::GunButton`, `hud::Held::gun`, since 2026-11-06; Hajun: "make the
   gift icon, while riding a car, so that it shoots small fast spherical
