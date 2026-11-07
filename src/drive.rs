@@ -151,6 +151,16 @@ pub(crate) struct CarPressed;
 pub(crate) struct Driving(Option<Drive>);
 
 impl Driving {
+    /// Forgets how the camera was before the car fixed it over you, and
+    /// says how it was: for a game of Bridge Wars, which fixes it over you
+    /// itself and gives it back after (`arena`), so that getting out of the
+    /// car there, as going there gets you out, does not put it back first.
+    pub(crate) fn take_view(&mut self) -> Option<View> {
+        self.0.as_mut().and_then(|drive| drive.view.take())
+    }
+}
+
+impl Driving {
     pub(crate) fn on(&self) -> bool {
         self.0.is_some()
     }
@@ -429,7 +439,7 @@ fn retune(changed: Res<UiChanged>, driving: Res<Driving>, mut orbit: ResMut<Orbi
     }
     let car = tuning();
     let was = last.replace(car.overhead);
-    // Over you in and out of the car since 2026-11-07, so always.
+    // Over you in the car, and in a game of Bridge Wars out of it (`arena`).
     if !(orbit.overhead || driving.on()) || changed.is_added() {
         return;
     }
@@ -563,9 +573,10 @@ fn toggle(
         }
         None => {
             let way = body.forward().xz().normalize_or(Vec2::NEG_Y);
-            // Fixed over you already, out of the car too (since 2026-11-07,
-            // Hajun: "make the camera top down for even the player mode"),
-            // there is nothing to go back to.
+            // Fixed over you already, in a game of Bridge Wars (`arena`;
+            // and out of the car everywhere for 2026-11-07, Hajun: "make
+            // the camera top down for even the player mode"), there is
+            // nothing to go back to.
             let view = if orbit.overhead { None } else { Some(orbit.overhead()) };
             driving.0 = Some(Drive {
                 view,
@@ -635,15 +646,15 @@ pub(crate) fn steer(
     *intent = match moved.try_normalize() {
         Some(dir) => Intent {
             walk: Vec3::new(dir.x, 0.0, dir.y),
-            jump: false,
             pace: Some(moved.length() / dt),
             face,
+            ..default()
         },
         None => Intent {
             walk: Vec3::ZERO,
-            jump: false,
             pace: Some(0.0),
             face,
+            ..default()
         },
     };
 }

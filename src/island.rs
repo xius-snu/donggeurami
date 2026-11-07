@@ -1,16 +1,17 @@
 //! The islands, and what the players stand on and bump into there.
 //!
-//! Each is a Blender model with the sea drawn round it, but the town, which
-//! stands over the void ([`bottomless`]): Hajun's `assets/pvptownmap.glb`
-//! since 2026-11-07 (`roundtownmap.glb` from 2026-10-30, `circlemap1.glb`
-//! before), round a pond with a fountain in it, with four islands at the
-//! ends of its bridges, where everyone is; your home,
-//! `assets/testhomemap.glb`, where only you go, for now with a room and a tall
-//! wall in it to try the camera against; and House Builder's lobby,
-//! `assets/lobbymap.glb`, where a game's players wait for it to fill. Those
-//! three are loaded once, when the app opens. A game of House Builder also
-//! has a plot for each of its builders, a copy of the plain home,
-//! `assets/homemap.glb`, each, which come and go with the game
+//! Each is a Blender model with the sea drawn round it: the town, Hajun's
+//! `assets/roundtownmap.glb` (since 2026-10-30, `circlemap1.glb` before;
+//! their `pvptownmap.glb` for 2026-11-07), round a pond with a fountain in
+//! it, where everyone is; your home, `assets/testhomemap.glb`, where only
+//! you go, for now with a room and a tall wall in it to try the camera
+//! against; House Builder's lobby, `assets/lobbymap.glb`, where a game's
+//! players wait for it to fill; and Bridge Wars' map, `pvptownmap.glb`
+//! (`arena`), the town's middle in the sky with four islands at the ends of
+//! its bridges, which stands over the void rather than the sea
+//! ([`bottomless`]). Those four are loaded once, when the app opens. A game
+//! of House Builder also has a plot for each of its builders, a copy of the
+//! plain home, `assets/homemap.glb`, each, which come and go with the game
 //! ([`spawn_island`]).
 //!
 //! Every island stands at the origin, in the same place. What keeps them
@@ -58,7 +59,7 @@ use bevy::mesh::{PrimitiveTopology, VertexAttributeValues};
 use bevy::prelude::*;
 use bevy::world_serialization::WorldInstanceReady;
 
-use crate::{LAND_TOP, Player, sky};
+use crate::{Dead, LAND_TOP, Player, sky};
 
 /// Triangles are filed under the squares of a grid this many metres across,
 /// so that a query only tests the ones overhead.
@@ -91,15 +92,6 @@ const STEEPEST_FLOOR: f32 = 0.643;
 /// left out of what players stand on and bump into.
 pub(crate) const WATER_MATERIAL: &str = "water";
 
-/// The material of a marker in a map for where people arrive: drawn not at
-/// all, and stood on nowhere. Hajun's `pvptownmap.glb` has one, a purple
-/// pillar on a stone slab on the island everyone offline arrives on
-/// (2026-11-07: "make the user spawn in the bottom one with the
-/// furnishes"); where it stands is written into
-/// `roundtown_net::TOWN_ISLANDS` by hand, the server having no map to read
-/// it from.
-pub(crate) const SPAWN_MATERIAL: &str = "spawn";
-
 /// Whether a material called `name` is the one called `wanted`, or a copy of
 /// it, as Blender names one brought in from another file that has its own:
 /// `water.001` is water. In Hajun's new town (2026-10-30) the pond is `water`
@@ -120,39 +112,41 @@ pub(crate) use roundtown_net::Venue;
 
 /// The islands there from the moment the app opens. A game's plots come and
 /// go with it.
-const LOADED: [Venue; 3] = [Venue::Town, Venue::Home, Venue::Lobby];
+pub(crate) const LOADED: [Venue; 4] = [Venue::Town, Venue::Home, Venue::Lobby, Venue::Arena];
 
 /// The model of `venue`, under `assets/`: the town, `testhomemap.glb` for your
 /// home — the plain home with a room and a tall wall in it, to try the camera
-/// against — and for every plot a copy of the plain home, without the room
-/// yours has.
-fn model(venue: Venue) -> &'static str {
+/// against — for every plot a copy of the plain home, without the room
+/// yours has, and Bridge Wars' map (`arena`).
+pub(crate) fn model(venue: Venue) -> &'static str {
     match venue {
-        Venue::Town => "pvptownmap.glb",
+        Venue::Town => "roundtownmap.glb",
         Venue::Home => "testhomemap.glb",
         Venue::Plot(_) => "homemap.glb",
         Venue::Lobby => "lobbymap.glb",
+        Venue::Arena => "pvptownmap.glb",
     }
 }
 
 /// Whether there is nothing under `venue` but the void: no sea for a body
 /// off its land to wade in, so that it falls for good, and is put back
 /// where it arrived once it is `VOID_Y` down (`lobby::respawn_the_fallen`).
-/// The town, since 2026-11-07 (Hajun: "remove the ocean and it will be a
+/// Bridge Wars' map (Hajun, 2026-11-07: "remove the ocean and it will be a
 /// void that if you step over, u fall and then u 'die' and respawn back at
 /// your spawn"): Hajun's `pvptownmap.glb`, a town with four islands at the
-/// ends of its bridges, in the sky. Every other island still has the sea
-/// round it.
+/// ends of its bridges, in the sky. Every other island has the sea round
+/// it.
 pub(crate) fn bottomless(venue: Venue) -> bool {
-    venue == Venue::Town
+    venue == Venue::Arena
 }
 
-/// Where the player in `seat` stands on arriving on `venue`: in the town,
-/// on the island their seat says, facing the town down its bridge;
-/// elsewhere on a ring round the middle, facing in. The first eight seats
-/// are each an eighth of the turn on from the one before, and a town
-/// channel online, which holds sixteen, sits the rest between them
-/// (`roundtown_net::arrival`, which the server works arrivals out with too).
+/// Where the player in `seat` stands on arriving on `venue`: on Bridge
+/// Wars' map, on the island their seat says, facing the middle down its
+/// bridge; elsewhere on a ring round the middle, facing in, in the town on
+/// the path round its pond. The first eight seats are each an eighth of
+/// the turn on from the one before, and a town channel online, which holds
+/// sixteen, sits the rest between them (`roundtown_net::arrival`, which the
+/// server works arrivals out with too).
 pub(crate) fn arrival(venue: Venue, seat: usize) -> Transform {
     let (spot, turn) = roundtown_net::arrival(venue, seat);
     Transform::from_translation(spot.with_y(LAND_TOP)).with_rotation(turn)
@@ -260,7 +254,7 @@ pub(crate) fn plugin(app: &mut App) {
         .add_systems(Update, show_where_i_am);
 }
 
-fn spawn_islands(mut commands: Commands, assets: Res<AssetServer>, water: Res<sky::Water>) {
+pub(crate) fn spawn_islands(mut commands: Commands, assets: Res<AssetServer>, water: Res<sky::Water>) {
     for venue in LOADED {
         spawn_island(&mut commands, &assets, &water, venue);
     }
@@ -297,15 +291,16 @@ pub(crate) fn spawn_island(
 }
 
 /// Draws the island you are on, and everything and everyone on it, and hides
-/// the others. You yourself are always where you are, and drawn unless the
-/// camera is inside you (`follow_camera`).
+/// the others, and the dead (`arena`). You yourself are always where you
+/// are, and drawn unless the camera is inside you, or you are dead
+/// (`follow_camera`).
 pub(crate) fn show_where_i_am(
     me: Query<&Venue, With<Player>>,
-    mut things: Query<(&Venue, &mut Visibility), Without<Player>>,
+    mut things: Query<(&Venue, &mut Visibility, Has<Dead>), Without<Player>>,
 ) {
     let here = me.single().ok().copied();
-    for (venue, mut visibility) in &mut things {
-        visibility.set_if_neq(if Some(*venue) == here {
+    for (venue, mut visibility, dead) in &mut things {
+        visibility.set_if_neq(if Some(*venue) == here && !dead {
             Visibility::Inherited
         } else {
             Visibility::Hidden
@@ -351,10 +346,6 @@ fn read_island(
             commands
                 .entity(entity)
                 .insert((MeshMaterial3d(water.material.clone()), NotShadowCaster));
-            continue;
-        }
-        if material.is_some_and(|name| is_material(&name.0, SPAWN_MATERIAL)) {
-            commands.entity(entity).insert(Visibility::Hidden);
             continue;
         }
         if known || skinned {
@@ -1007,6 +998,43 @@ impl Tri {
     fn shadow(&self) -> (Vec2, Vec2) {
         let (a, b, c) = (self.a.xz(), (self.a + self.ab).xz(), (self.a + self.ac).xz());
         (a.min(b).min(c), a.max(b).max(c))
+    }
+}
+
+#[cfg(test)]
+mod model_tests {
+    use super::*;
+
+    /// Every island loaded as the app opens, and a plot's, goes into the APK
+    /// (`mobile/android/app/assets-left-out.txt` names what stays out). The
+    /// town went back to `roundtownmap.glb` on the night of 2026-11-07, which the list
+    /// had left out since 2026-11-07.
+    #[test]
+    fn every_island_s_model_is_in_the_apk() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let list = std::fs::read_to_string(root.join("mobile/android/app/assets-left-out.txt"))
+            .expect("the APK's list of what it leaves out");
+        let patterns: Vec<&str> = list
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty() && !line.starts_with('#'))
+            .map(|line| line.trim_start_matches("<dir>").trim_start_matches("<file>"))
+            .collect();
+        for venue in LOADED.iter().copied().chain([Venue::Plot(0)]) {
+            let name = model(venue);
+            assert!(root.join("assets").join(name).is_file(), "{name} is not in assets/");
+            let left_out = patterns.iter().find(|pattern| {
+                let pattern: &str = pattern;
+                if let Some(end) = pattern.strip_prefix('*') {
+                    name.ends_with(end)
+                } else if let Some(start) = pattern.strip_suffix('*') {
+                    name.starts_with(start)
+                } else {
+                    pattern == name
+                }
+            });
+            assert!(left_out.is_none(), "{name} is left out of the APK by `{}`", left_out.unwrap());
+        }
     }
 }
 

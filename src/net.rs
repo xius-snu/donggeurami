@@ -54,9 +54,7 @@ use bevy_replicon_renet::netcode::{
 };
 use bevy_replicon_renet::renet::ConnectionConfig;
 use bevy_replicon_renet::{RenetChannelsExt, RenetClient, RepliconRenetPlugins};
-use roundtown_net::{
-    Ask, Member, Moved, PROTOCOL_ID, Spot, TICK_HZ, Tell, TheTime, Venue, WhatTime, town_island,
-};
+use roundtown_net::{Ask, Member, Moved, PROTOCOL_ID, Spot, TICK_HZ, Tell, TheTime, Venue, WhatTime};
 
 use crate::builder::OfflineGame;
 use crate::car::{self, Place};
@@ -167,24 +165,7 @@ impl Online {
     }
 }
 
-/// Asks the server to put you back where your seat arrives on `venue`
-/// ([`Ask::Respawn`]): fallen off the town into the void
-/// (`lobby::respawn_the_fallen`), or seated on another of its islands than
-/// the one you stood on ([`hear`]). Until it has ([`Tell::Arrive`]), no
-/// move is sent: the leap back would not pass as one a body could make,
-/// and be undone. Whether there was anyone to ask: offline, or anywhere
-/// the server has not put you, there is not.
-pub(crate) fn ask_to_respawn(online: &mut Online, asks: &mut MessageWriter<Ask>, venue: Venue) -> bool {
-    if !online.is() || online.venue != Some(venue) {
-        return false;
-    }
-    online.venue = None;
-    asks.write(Ask::Respawn);
-    true
-}
-
 impl Online {
-
     /// Who you are online, while you are.
     #[allow(dead_code)]
     pub(crate) fn me(&self) -> Option<&Member> {
@@ -674,23 +655,20 @@ fn hear(
             } => {
                 online.arrival = *arrival;
                 online.venue = Some(*venue);
-                let had = seat.0;
+                // Bridge Wars' map is this device's own game (`arena`): the
+                // server has put you in a room of your own there, and where
+                // you stand in it is the game's to say, never the server's.
+                if *venue == Venue::Arena {
+                    continue;
+                }
                 seat.0 = usize::from(*arrives);
                 match spot {
-                    // Let in where you already were: nothing moves, unless
-                    // the seat you have been given is on another of the
-                    // town's islands than the seat you arrived in offline
-                    // (`town_island`: no two people start on one island),
-                    // when you go to it as if you had fallen, and the
-                    // server is asked to put you there.
+                    // Let in where you already were: nothing moves.
                     Some(spot) => {
                         let here = bodies.get(you).map(|(_, _, &on, ..)| on).ok();
                         if here != Some(*venue) {
                             let (at, _) = placed(spot, &cars);
                             lobby::put(&mut bodies, &mut orbit, you, *venue, at);
-                        } else if *venue == Venue::Town && town_island(had) != town_island(seat.0) {
-                            lobby::send(&mut bodies, &mut orbit, you, *venue, seat.0);
-                            ask_to_respawn(&mut online, &mut asks, *venue);
                         }
                     }
                     None => lobby::send(&mut bodies, &mut orbit, you, *venue, seat.0),
@@ -788,8 +766,10 @@ fn placed(spot: &Spot, cars: &car::Cars) -> (Transform, Option<Entity>) {
 /// Sends where you are 15 times a second while you move: and once you stop, a
 /// couple more times, marked still, in case the first was lost. Nothing while
 /// you stand still, and nothing while you are anywhere the server has not
-/// put you. Standing still on the car is standing still: where you are on it
-/// does not change as it drives you round.
+/// put you, nor in a game of Bridge Wars, which is this device's own, in a
+/// room of your own online where nobody is to see you (`arena`). Standing
+/// still on the car is standing still: where you are on it does not change
+/// as it drives you round.
 fn tell_where_i_am(
     time: Res<Time>,
     online: Res<Online>,
@@ -801,7 +781,7 @@ fn tell_where_i_am(
     let Ok((at, &venue, riding)) = me.single() else {
         return;
     };
-    if !online.is() || online.venue != Some(venue) {
+    if !online.is() || online.venue != Some(venue) || venue == Venue::Arena {
         *sent = Sent::default();
         return;
     }

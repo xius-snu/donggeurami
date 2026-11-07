@@ -134,6 +134,18 @@
             outline: "#ffffff99",
             fill: "#ffffff2b",
         ),
+        // Bridge Wars (the PvP map): your health bar under your name, its
+        // fill, what shows behind it as it empties, and its rim; and the
+        // rim of an empty slot among the buttons bottom right, where a bow
+        // or dynamite goes once bought.
+        arena: (
+            hp: "#d8352a",
+            hp_back: "#00000059",
+            hp_rim: "#000000b3",
+            slot_rim: "#ffffff80",
+            // The number that floats up off a body as a punch lands on it.
+            damage: "#ff6a5a",
+        ),
     ),
     // The font is plain ASCII: no Hangul, and a hyphen for a dash. Where a
     // word has {something} in it, the game fills that in.
@@ -236,6 +248,29 @@
             new_version: "A new version is out",
             update_to_play: "Update the app to play online",
         ),
+        // The game selector, behind the gamepad button down the right edge:
+        // its title, the three games (the third not to be had yet), and
+        // what each costs.
+        games: (
+            title: "Games",
+            bridge_wars: "Bridge Wars",
+            home_builders: "Home Builders",
+            coming_soon: "???",
+            coming_soon_note: "Coming soon",
+            free: "Free",
+        ),
+        // Bridge Wars: the board top centre, in the waiting room over the
+        // map and in the game, and the headlines across the screen.
+        arena: (
+            name: "Bridge Wars",
+            players: "{count}/{seats} Players",
+            waiting: "Waiting for players...",
+            match_found: "Match found!",
+            fight: "Fight!",
+            // Across the screen while you are dead, counting down in
+            // halves: "4", "3.5", ... "0.5".
+            died: "You died. Respawning in {seconds}...",
+        ),
     ),
     // The car you drive (the face button, or C on desktop): every number of
     // how it goes, in metres, seconds and degrees, with or without a point
@@ -333,11 +368,12 @@
         // most two knocks a second however fast the presses come.
         hurt_time: 0.5,
         // How hard: knocked away from the puncher at knock_back metres a
-        // second (Minecraft's 0.4 blocks a tick), and sprint_bonus more if
-        // the puncher was on the move (its sprint hit, 0.5 more), whatever
-        // they were already carried by halved first; and up at knock_up
-        // (0.4 blocks a tick; a jump here is 8.5).
-        knock_back: 8.0,
+        // second (a little over Minecraft's 0.4 blocks a tick, 8, since the
+        // night of 2026-11-07: "increase knockback slightly"), and
+        // sprint_bonus more if the puncher was on the move (its sprint hit,
+        // 0.5 more), whatever they were already carried by halved first;
+        // and up at knock_up (0.4 blocks a tick; a jump here is 8.5).
+        knock_back: 10.0,
         sprint_bonus: 10.0,
         knock_up: 8.0,
         // How fast the knock dies away: what is left of it each twentieth
@@ -345,5 +381,28 @@
         // (its 0.91 air drag, and 0.6 ground friction times 0.91).
         air_drag: 0.91,
         ground_drag: 0.546,
+    ),
+    // Bridge Wars, as it is fought (the night of 2026-11-07): everyone runs
+    // there at run_speed metres a second (a walk is 7), everyone has
+    // health to start and loses damage of it to every punch that lands
+    // (one punch in hurt_time, above), gets regen_per_sec of it back a
+    // second once nobody has hit them for regen_after seconds, and at none
+    // is dead for respawn_secs before standing again in the middle of
+    // their island; a bot goes for whoever is within hunt_radius metres of
+    // it and punches no oftener than every bot_punch_every seconds, and
+    // runs away from whoever is nearest while it has less than flee_below
+    // of its health (a share, 0 to 1). Falling off the map is death too,
+    // fall_to_die metres below it.
+    arena: (
+        run_speed: 10.0,
+        health: 100.0,
+        damage: 12.0,
+        respawn_secs: 4.0,
+        regen_after: 5.0,
+        regen_per_sec: 4.0,
+        hunt_radius: 24.0,
+        bot_punch_every: 0.8,
+        flee_below: 0.2,
+        fall_to_die: 30.0,
     ),
 )

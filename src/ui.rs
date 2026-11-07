@@ -12,8 +12,11 @@
 //! related to movement. so the turning, the boost/reverse, acc/speed,
 //! multipliers, etc. i want to modify the numbers by myself while playing
 //! on pc"), which `drive` reads every frame, so that a save while driving
-//! changes the car at once; and since 2026-11-07 every number of the punch
-//! and its knockback ([`Melee`]), Minecraft 1.8.9's, the same way.
+//! changes the car at once; since 2026-11-07 every number of the punch
+//! and its knockback ([`Melee`]), Minecraft 1.8.9's, the same way; and
+//! since the small hours of 2026-11-08 how Bridge Wars is fought
+//! ([`Arena`]: the run, the health, the damage, the respawn, the bots'
+//! sight and the fall).
 //!
 //! Everything that draws the screen reads [`ui`] where it spawns: a global,
 //! not a resource, so that the plain functions every screen is built from
@@ -147,6 +150,67 @@ pub(crate) struct Ui {
     pub words: Words,
     pub car: Car,
     pub melee: Melee,
+    pub arena: Arena,
+}
+
+/// How Bridge Wars is fought (`arena`, since the night of 2026-11-07): how
+/// fast everyone runs there, in metres a second; the health everyone
+/// starts with and what a punch takes off it; how long the dead stay dead,
+/// in seconds; how long after the last hit health starts to come back,
+/// in seconds, and how much a second; how far a bot sees whoever it goes
+/// for, in metres, the least time between its punches, in seconds, and
+/// under what share of its health it runs away instead; and how far
+/// below the map a body has fallen before it is dead, in metres. The file
+/// says what each is; [`Arena::check`] keeps out a number the game would
+/// break on.
+#[derive(Deserialize, Clone, Copy, PartialEq, Debug)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Arena {
+    pub run_speed: f32,
+    pub health: f32,
+    pub damage: f32,
+    pub respawn_secs: f32,
+    pub regen_after: f32,
+    pub regen_per_sec: f32,
+    pub hunt_radius: f32,
+    pub bot_punch_every: f32,
+    pub flee_below: f32,
+    pub fall_to_die: f32,
+}
+
+impl Arena {
+    /// What is wrong with these numbers, if anything: one that is not a
+    /// number or less than nothing, a speed, a health or a wait between
+    /// punches of nothing, which the game divides by or would spin on, or
+    /// a share over 1.
+    fn check(&self) -> Result<(), String> {
+        let all = [
+            ("run_speed", self.run_speed),
+            ("health", self.health),
+            ("damage", self.damage),
+            ("respawn_secs", self.respawn_secs),
+            ("regen_after", self.regen_after),
+            ("regen_per_sec", self.regen_per_sec),
+            ("hunt_radius", self.hunt_radius),
+            ("bot_punch_every", self.bot_punch_every),
+            ("flee_below", self.flee_below),
+            ("fall_to_die", self.fall_to_die),
+        ];
+        for (name, value) in all {
+            if !value.is_finite() || value < 0.0 {
+                return Err(format!("arena.{name} is {value}: it has to be a number, 0 or more"));
+            }
+        }
+        for (name, value) in [("run_speed", self.run_speed), ("health", self.health), ("bot_punch_every", self.bot_punch_every)] {
+            if value <= 0.0 {
+                return Err(format!("arena.{name} is {value}: it has to be more than 0"));
+            }
+        }
+        if self.flee_below > 1.0 {
+            return Err(format!("arena.flee_below is {}: it is a share, 0 to 1", self.flee_below));
+        }
+        Ok(())
+    }
 }
 
 /// How the car you drive goes (`drive`): every number of it, in metres,
@@ -409,6 +473,7 @@ pub(crate) struct Colours {
     pub talk: TalkColours,
     pub edit_menu: EditMenuColours,
     pub melee: MeleeColours,
+    pub arena: ArenaColours,
 }
 
 #[derive(Deserialize, Clone, Copy, PartialEq, Debug)]
@@ -550,6 +615,24 @@ pub(crate) struct MeleeColours {
     pub fill: Color,
 }
 
+/// Bridge Wars' own (`arena`, and `hud`'s layout there): your health bar,
+/// its fill, what shows behind it and its rim; and the rim of an empty
+/// slot among the buttons bottom right.
+#[derive(Deserialize, Clone, Copy, PartialEq, Debug)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ArenaColours {
+    #[serde(deserialize_with = "colour")]
+    pub hp: Color,
+    #[serde(deserialize_with = "colour")]
+    pub hp_back: Color,
+    #[serde(deserialize_with = "colour")]
+    pub hp_rim: Color,
+    #[serde(deserialize_with = "colour")]
+    pub slot_rim: Color,
+    #[serde(deserialize_with = "colour")]
+    pub damage: Color,
+}
+
 /// The words, screen by screen. One with `{something}` in it is filled in
 /// with [`fill`].
 #[derive(Deserialize, PartialEq, Debug)]
@@ -562,6 +645,33 @@ pub(crate) struct Words {
     pub shop: ShopWords,
     pub talk: TalkWords,
     pub online: OnlineWords,
+    pub games: GamesWords,
+    pub arena: ArenaWords,
+}
+
+/// The game selector (`games`): its title, the three games, and what each
+/// costs.
+#[derive(Deserialize, PartialEq, Debug)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct GamesWords {
+    pub title: String,
+    pub bridge_wars: String,
+    pub home_builders: String,
+    pub coming_soon: String,
+    pub coming_soon_note: String,
+    pub free: String,
+}
+
+/// Bridge Wars' board and headlines (`arena`).
+#[derive(Deserialize, PartialEq, Debug)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ArenaWords {
+    pub name: String,
+    pub players: String,
+    pub waiting: String,
+    pub match_found: String,
+    pub fight: String,
+    pub died: String,
 }
 
 #[derive(Deserialize, PartialEq, Debug)]
@@ -676,6 +786,7 @@ fn read(text: &str) -> Result<Ui, String> {
     }
     ui.car.check()?;
     ui.melee.check()?;
+    ui.arena.check()?;
     Ok(ui)
 }
 
@@ -764,6 +875,11 @@ mod tests {
         // The car's numbers are read, and hang together.
         assert!(ui.car.boost > ui.car.cruise && ui.car.cruise > ui.car.creep);
         assert!(ui.car.overhead_nearest < ui.car.overhead && ui.car.overhead < ui.car.overhead_furthest);
+        // Bridge Wars' too: a run faster than a walk, and a punch that takes
+        // several to kill.
+        assert!(ui.arena.run_speed > crate::MOVE_SPEED);
+        assert!(ui.arena.damage > 0.0 && ui.arena.damage < ui.arena.health);
+        assert!(read(&BUILT_IN.replacen("run_speed: 10.0", "run_speed: 0", 1)).unwrap_err().contains("run_speed"));
     }
 
     #[test]

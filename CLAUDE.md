@@ -272,7 +272,13 @@ alone; the server is `cargo build -p roundtown_server`. Never `--workspace`,
 which would build the game with the server's half of replicon in it.
 
 Android needs the `release-android` profile, a manual strip step, and Gradle
-(`versionCode` in `mobile/android/app/build.gradle` is the build number: 7
+(`versionCode` in `mobile/android/app/build.gradle` is the build number: 9
+in the small hours of 2026-11-08, Bridge Wars' fight, its bots that go for
+you, running, arrivals in the islands' middles and the jump beside the
+sword; 8
+late on the night of 2026-11-07, the town `roundtownmap.glb` again with the
+game selector, Bridge Wars on the PvP map with Hajun's waiting room, and
+its own buttons (protocol 9); 7
 at the end of 2026-11-07, the map's fourth version of the day, every
 island furnished and every arrival at its own marker (protocol 8); 6 half
 an hour before: you arrive on the furnished island at its spawn marker
@@ -494,28 +500,247 @@ instead of yellow for the buttons"; dark blue, blue and gold until then).
   the name and look on a local server, and a relaunch going straight to the
   town.
 
-## The town is a PvP arena in the sky
+## Games: the gamepad opens a selector, and Bridge Wars is the PvP map
 
-Since 2026-11-07 (Hajun: "use pvptownmap instead of roudntownmap ... make
-the player start in the center of one of the 4 bridge connected island,
-remove the ocean and it will be a void that if you step over, u fall and
-then u 'die' and respawn back at your spawn ... pressing melee (the punch)
-actually deals 'knockback' (minecraft 1.8.9 bedwars style melee knockback)
-... make the camera top down for even the player mode"), the town is
-Hajun's `pvptownmap.glb` (`island::model`; `roundtownmap.glb` stays in the
-repo and out of the APK): Round Town's middle, the pond and its fountain,
-the ring road round it in its two halves with the strip of grass between,
-the 20 lamps and the paving out to 76 m, and no houses, trees or outer
-road; and out of it four wooden bridges, one along each axis, each to a
-round island at 130 m (`roundtown_net::TOWN_ISLANDS`; since the evening of
-2026-11-07, when Hajun scaled the islands' object to 0.65 across the
-ground, its array of four with it, and shortened the bridges to meet them:
-200 m, 32 m across, over a smaller island at 125 m, with 14 m bridges, that
-morning), 20.8 m across and 3 m thick, its top 0.25 m up, the smaller
-island's far half under it; the bridges planked, 3.5 m wide, their deck
-0.5 m up with a lip either side to 0.75. All of
-it stands in the sky. The rest of this file holds for it where it says
-nothing else; what follows is what changed.
+Since the night of 2026-11-07 (Hajun: "i want the default map to open when
+u open the app to be roundtownmap.glb, and when u press the game icon ui
+button, it will open a popup game selector menu with 3 games (the first one
+is called 'Bridge Wars' the second is called 'Home Builders' and third is a
+??? coming soon. you select one and you get a quick black loading screen
+and then when the new map is loaded, the player is teleported to either
+the pvp map's (waitingroom box above the map until 4 ppl is queued, which
+at that point it will count down from 5 and then teleport each player to
+each of the 4 island), or the build battle island for queueing - same as
+before ... if there is no player joining for 10sec, fill it with bots ...
+just make it so the pvpmap game (small) timer of 10 minute (tap to skip)
+and after it, the players go back to the main roundtownmap. pvpmap doesnt
+need buses and doesnt need npcs. also when in the roundtownmap or the
+build battle, it will be freecam, but in the pvpmap game it will switch to
+top down cam and the button ui should change to pvpmapbuttonui.jpg
+layout"), the town is `roundtownmap.glb` again, with the sea round it and
+everyone on the path round its pond, the camera behind you as it was, and
+the PvP map, `pvptownmap.glb`, is a game of its own, Bridge Wars, on an
+island of its own, `Venue::Arena` (`roundtown_net::Venue`, `island::model`,
+loaded as the app opens with the rest; `PROTOCOL_VERSION` 9, the server
+deployed with it, the binary before kept on the VM as
+`roundtown-server.prev-2026-11-07d`). For the day of 2026-11-07 the PvP map
+was the town itself; everything below about the map, its islands, the
+void, the punch's knockback and its range held for the town then, and
+holds for the arena now.
+
+- **The gamepad down the right edge opens the game selector**
+  (`src/games.rs`, `hud::GamesButton`): a dialog like the settings'
+  window, "Games" over three cards, Bridge Wars ("Free"), Home Builders
+  (its 100 coins, or "Need 100 coins" and blocked out without them) and
+  "???" ("Coming soon", blocked out), the cross on its corner, the dark
+  round it or Escape to shut it; only in the town, with nothing else up.
+  Choosing a game, a black screen comes down over everything
+  (`games::Loading`, you standing still under it as under a dialog):
+  half a second later the game is gone into under it, Bridge Wars'
+  waiting room (`arena::Ask::Enter`) or House Builder's lobby
+  (`builder::Ask::Join`, paying its fee as the House Builder's Play did),
+  and once the island you are on has loaded and a moment more has passed
+  it lifts over 0.3 s; should nothing come of the choice (the server
+  turning it down), it lifts after 3 s. The words are `assets/ui.ron`'s
+  (`words.games`). House Builder's own flow from the lobby on is as it
+  was ("House Builder", below); the House Builder NPC stands at a house
+  only in a town that has one, and `roundtownmap.glb` has none.
+- **Bridge Wars** (`src/arena.rs`): you are stood in the waiting room,
+  Hajun's glass box floating over the middle of the map, the object
+  called `waiting room` in `pvptownmap.glb` (their export of 23:21 that
+  night: 30 m square, its floor a metre thick with its top at 100.5 m, its
+  walls 1.5 m thick, thicker than the lattice, and 5 m high, more than a
+  jump, open to the sky, in `glass` at a tenth), found by name once the
+  map has spawned (`arena::find_waiting_room`, `WaitingRoom`: the box
+  round its meshes; its floor is read off the map's shape under its
+  middle, so it is stood on as any of the map is) and on a ring 3 m round
+  its middle, facing in; with no such object in a map, everyone waits on
+  their island. The board top centre (small, as asked) counts "1/4
+  Players", "Waiting for players..."; nobody else can join yet, the game
+  being this device's own, so after `BOT_WAIT`, 10 s with nobody joining
+  (`roundtown_net::bridge_wars`, with `COUNTDOWN` 5 and `PLAY_SECS` 600,
+  so that a server playing it one day plays by the same), the computer
+  takes the seats left, all at once (`ARENA_SEATS`, 4; the town's AI
+  names and looks, `lobby::seat_ai`, `spawn_player_at`), the board counts
+  down 5 to 1 over "Match found!", and everyone is sent to the island
+  their seat says (`roundtown_net::arrival`, as the town's arrivals were
+  that day), "Fight!" across the screen; then the board shows 10:00
+  counting down over "Bridge Wars", a tap on it skips (any stage: the
+  bots at once, the countdown over, the game over), and at 0:00 everyone
+  is back in the town where their seat arrives, the bots gone
+  (`arena::InArena` on everything the game puts up), the camera as it
+  was. Nothing is scored; `arena::Health` stays full and
+  `arena::Resources` at nothing. A game of House Builder is entered the
+  same way and runs as before. Seen in the desktop build, scripted (taps
+  through `WindowEvent::TouchInput` at the buttons' laid-out places,
+  `arena::Ask::Skip` written to hurry it): the dialog, the black screen,
+  the waiting room from above, four bodies at the countdown, the island
+  with "Fight!", and the town again with the camera and the buttons
+  restored; and Home Builders to its lobby with the fee taken. Not yet by
+  hand or on a phone.
+- **The fight** (later that night, Hajun: "make the ai, if there is
+  another ai/player within its visible radius, it will go towards them
+  and try to fight/punch them ... make punching deal damage, and show
+  healthbar for enemies. make default hp = 100 ... make damage numbers
+  appear on each hit. default damage = 12. so when health <0 u die too
+  ... 'You died. Respawning in 4...' -> 'You died. Respawning in 3.5...'
+  until it goes to 0 and then you respawn and the camera goes to where u
+  respawned ... for falling make it so u need to drop a bit more z to
+  actually die. increase knockback slightly ... make it running rather
+  than walking"); every number is `assets/ui.ron`'s `arena` (`ui::Arena`,
+  read as the car's are, hot-reloaded): `run_speed` 10 m/s (a walk is 7),
+  `health` 100, `damage` 12, `respawn_secs` 4, `regen_after` 5 and
+  `regen_per_sec` 4, `hunt_radius` 24, `bot_punch_every` 0.8 (0.5 for an
+  hour, until Hajun found the bots "so strong": "decrease ai hit
+  frequency slightly"), `flee_below` 0.2 and `fall_to_die` 30 (`void_y`
+  in `src/lib.rs`, the land less that; 15 m until then). Everyone runs in the arena
+  (`Intent::sprint`, the run over a walk; the legs swing that much faster
+  and up to half as far again, `animate_walk`; set by `read_player_input`
+  for you and `ai::steer` for a bot, by the island they are on). Every
+  body there has `arena::Health`, you included (given on entering, taken
+  away on leaving); a punch that lands and takes (`Landed`, written by
+  `start_punch` and by a bot's punch) takes `damage` off the victim while
+  the game is on, never in the waiting room (`arena::deal_damage`), a
+  number floating up off them for 0.9 s (`DamageNumber`, in
+  `colours.arena.damage`), and everyone but you has a bar over their head
+  (`BarOf`, placed as names are, `tags`), yours being the bar top left;
+  both drawn in steps of half a percent, so that health coming back a
+  little every frame does not lay the screen out again every frame.
+  **Health comes back** once nobody has hit a body for `regen_after`
+  seconds, `regen_per_sec` a second up to full (`arena::regen`, `Health::
+  mend`; the while since the last hit counted without marking the health
+  changed; later that night, Hajun: "make players health regen slowly
+  after they have not been attacked for some period"); bots' too. At none,
+  or fallen `fall_to_die` below the map (`arena::reap`), a body is `Dead`
+  (`src/lib.rs`): hidden where it died (`show_where_i_am` for everyone
+  else, `follow_camera` for you; for an hour a dead bot stood where it
+  died in plain sight, Hajun: "the ai body doesnt disappear"), neither
+  moving nor moved nor in anyone's way nor hit (`move_bodies`,
+  `start_punch`, `ai`), the punch's range band put away with you
+  (`range::follow`; it stayed over the void for an hour, Hajun: "the hit
+  indicator is not gone"), for `respawn_secs`, you with "You died.
+  Respawning in 4..." across the screen counting down in halves
+  (`words.arena.died`, `arena::show_death`), and then put back where its
+  seat arrives with its health full (`arena::respawn`; the camera, fixed
+  over you, is there with you). **A bot goes for whoever is nearest
+  within `hunt_radius`** (`arena::hunt`, after `ai::steer`, over its
+  wandering, only while the game is on): at a run up to them, pressing in
+  at `PRESS_IN` of a push once within the punch's reach, and a punch
+  whenever they are in the punch's own range (`range::Sector`) and its
+  `bot_punch_every` is up, which knocks and lands as yours does; a hit on
+  the move is a sprint hit, as ever. **With less than `flee_below` of its
+  health it runs away instead** (Hajun: "make the ai run away when its
+  low health (below 20%)"; `arena::flight`): straight away from them, or,
+  with no dry land that way for `FLIGHT` 3 m, the nearest way round that
+  has it, to either side and then across (`ai::dry_all_the_way`), and
+  stands with none; so beside the island's middle it runs to the edge and
+  then along it, and seen on the map it ran to the bridge's end, where it
+  stood a while. Once its health is back over the line it fights again.
+  It sees the dead not at all, and is kept from walking off its island
+  as ever (`StaysAshore`), so a target across the void it stands at the
+  edge for; bots on four islands 130 m apart never see each other until
+  someone crosses a bridge. The knockback is `melee.knock_back` 10 (8,
+  Minecraft's, until then). Seen in the desktop build, scripted
+  (`arena::Ask::Enter` and `Skip` written, a bot put beside you with
+  `lobby::put`, its health and yours written to): the bot coming, "12"
+  off each hit on either, its bar over its head, you knocked off the
+  island into the void, the words counting down over the dark with the
+  band gone, and you standing again at the island's middle with the bar
+  full; a bot's hit on you right after; a bot at 15% running off to the
+  edge and round; a dead bot gone, bar and all, and back on its island
+  4 s later; health climbing 4 a second from 5 s after the last hit. Not
+  yet by hand or on a phone.
+- **Online, a game of Bridge Wars is a room of your own**, as home is:
+  entering it asks the server `Ask::Travel(Venue::Arena)`, which seats
+  you alone there (`server/src/players.rs`, `room_for`, as `Venue::Home`),
+  so that you vanish from the town's channel rather than stand frozen in
+  it, and leaving asks `Travel(Venue::Town)`. Nothing of where you stand
+  in the arena goes to the server (`net::tell_where_i_am`), and its
+  `Tell::Arrive` for the arena never moves you (`net::hear`): the game is
+  the device's, bots and all. The server's `Ask::Respawn` is not asked
+  there (`lobby::respawn_the_fallen`).
+- **The camera is fixed straight down over you only in the arena**
+  (`OrbitCamera::top_down`, which keeps how it was to go back to,
+  `arena::Game::view`; the car's `overhead` keeps its own, and going into
+  the arena gets you out of the car, `drive::toggle` on the change of
+  island, the camera going back to how it was before the car rather than
+  to the car's, `Driving::take_view`): the file's `car.overhead` up with
+  the top of the screen north, zooming between `overhead_nearest` and
+  `overhead_furthest`, nothing turning it. Everywhere else it is behind
+  you as it was before 2026-11-07, "The camera stands where you zoomed
+  it" below, and on desktop the cursor is taken for looking round as the
+  app opens (`lock_cursor`, unless `RT_FREE_CURSOR`), and let go for as
+  long as the camera is fixed over you, in the car or the arena
+  (`cursor_for_dialogs`), where the stick and the buttons want the mouse.
+- **In the arena the buttons are Hajun's `pvpmapbuttonui.jpg`**
+  (`hud::Layout::Arena`, `hud::spawn_arena_bar`, put up as you arrive on
+  the arena and the town's again as you leave, `hud::relayout`): top left
+  your name on its plate and under it your health bar, 30 by 3.6 shares of
+  the short side with a rim, filled red (`colours.arena` in
+  `assets/ui.ron`: `hp`, `hp_back`, `hp_rim`); top right a bag (the
+  inventory, which does nothing yet) and under it the four resources,
+  wood, gold, diamond and emerald, each a picture with its count beside
+  it, 0; bottom right, in the jump button's very place (the jump button
+  is put away there, `hide_touch_hud`), the sword, which punches as the
+  fist does (`hud::PunchButton`, so in the car it is the reverse), and
+  round it on an arc 20.5 shares out from its middle three buttons the
+  size of the town's action buttons, alike and evenly spaced (later that
+  night, Hajun: "make the 3 circles surrounding the sword icon in that
+  map the same size ... and even the distances out"; for an hour two were
+  that size and one over the sword small): beside it the jump button
+  (`hud::ARENA_JUMP`, which `hud_layout` in `src/lib.rs` reads presses
+  on in the arena, lit while held as the one in its own place is; Hajun:
+  "i want the bottom left one to be the jump icon and a jump button"),
+  and up and to the left of it and over it two empty slots
+  (`hud::ARENA_SLOTS`, `hud::empty_slot`: the buttons' disc with a faint
+  rim, `colours.arena.slot_rim`, which takes a press and does nothing),
+  where a bow and dynamite go once bought; and over those a smaller
+  button of three dots (`hud::ARENA_DOTS`), which does nothing yet; the
+  stick stays, and nothing else of the town's bar is there (no balance,
+  person, gear, gift, social, face or chat). The pictures are drawn in code
+  (`hud::sword`, `bag`, `log`, `ingot`, `gem`, `emerald`, `dots`, through
+  `hud::drawn` and a polygon distance, `polygon_distance`; tests sample
+  each). Space still jumps on desktop. The punch's range band is drawn
+  only in the arena now (`range::follow`).
+- **Falling off the map** is the arena's alone (`island::bottomless`):
+  the town has its sea back. The bots are kept on by `strands` as the
+  town's AIs are; a punch knocks them off all the same, and they are dead
+  `fall_to_die` down, as you are ("The fight", above).
+
+### The PvP map itself
+
+The map (Hajun, 2026-11-07: "use pvptownmap instead of roudntownmap ...
+make the player start in the center of one of the 4 bridge connected
+island, remove the ocean and it will be a void that if you step over, u
+fall and then u 'die' and respawn back at your spawn ... pressing melee
+(the punch) actually deals 'knockback' (minecraft 1.8.9 bedwars style
+melee knockback) ... make the camera top down for even the player mode")
+is Hajun's `pvptownmap.glb`: Round Town's middle, the pond and its
+fountain (the fountain's water is drawn but does not run there, the
+fountain being read off the town's model alone), the ring road round it
+in its two halves with the strip of grass between, the lamps and the
+paving out to 76 m, and no houses, trees or outer road; and out of it
+four wooden bridges, one along each axis, each to a round island at 130 m
+(`roundtown_net::ARENA_ISLANDS`; since the evening of 2026-11-07, when
+Hajun scaled the islands' object to 0.65 across the ground, its array of
+four with it, and shortened the bridges to meet them: 200 m, 32 m across,
+over a smaller island at 125 m, with 14 m bridges, that morning), 20.8 m
+across and 3 m thick, its top 0.25 m up, the smaller island's far half
+under it; the bridges planked, 3.5 m wide, their deck 0.5 m up with a lip
+either side to 0.75; and, since 23:21 that night, the waiting room over
+the middle (above). All of it stands in the sky. No buses drive it (the
+buses are the town's, `car`) and no AI of the town walks it, only the
+game's bots. **Everyone arrives in the very middle of their island**
+(`roundtown_net::ARENA_ISLANDS`, 130 m out on each axis; later that
+night, Hajun: "make the spawnpoint in the center of the island so that u
+dont need to hide the purple rotated cube"): the `spawn` pillar and its
+slab are drawn and solid as anything else now (the game hid the pillar
+and arrived at it for the evening before, `island::SPAWN_MATERIAL`,
+gone). The desk across each island's middle begins 0.1 m past the
+middle, so a body arriving is shoved to its edge, toward the bridge; and
+the pillar's slab, 0.5 m high, is a wall to walking (as the fountain's
+rim is, "A body steps up anything under 0.5 m"), to be jumped onto or
+gone round: a scripted run north from the middle stopped at it.
 
 - **The islands and the bridges are Geometry Nodes arrays in
   `pvptownmap.blend`**, which Hajun's exports leave off (that morning,
@@ -558,7 +783,7 @@ nothing else; what follows is what changed.
   on the bare island opposite. **The fourth version (18:27) furnishes
   all four islands alike**, each with its slabs, desk and `spawn` pillar
   turned a quarter on from the last, so every island's arrival is its
-  own marker (`TOWN_ISLANDS`, all four by hand, 123.8 to 124.9 m out),
+  own marker (`roundtown_net::ARENA_ISLANDS`, `TOWN_ISLANDS` that day, all four by hand, 123.8 to 124.9 m out),
   and stands a street lamp at the far edge of each (24 lamps now):
   50,270 triangles, 62 objects. Hajun's export of it again had one small
   island and one bridge, so `assets/pvptownmap.glb` is the applied
@@ -584,7 +809,7 @@ nothing else; what follows is what changed.
   its check on moves, and be undone. AIs never walk off (`strands`, as
   ever): only a punch takes one over the edge.
 - **Everyone arrives on an island, by seat** (`roundtown_net::arrival`,
-  `town_island`: seat modulo four, the first of each at the island's
+  `arena_island`, `town_island` that day: seat modulo four, the first of each at the island's
   `spawn` marker's spot, 5 to 6 m from its middle toward the town (its
   middle until the markers came), the next seven on a ring 4 m out, all
   facing the town down the
@@ -726,17 +951,14 @@ nothing else; what follows is what changed.
 ## The app opens in Round Town
 
 There is no menu. Once you have signed up (above), the app opens straight
-into the town (`pvptownmap.glb` since 2026-11-07, above; `roundtownmap.glb`
-from 2026-10-30, `circlemap1.glb` before). What follows is as it was in
-Round Town: since 2026-11-07 everyone arrives on the four islands round the
-town rather than round its pond, and the camera is fixed over you (above).
-Until then, all eight players stood on the path round its pond, facing the
-fountain in the middle of
-it, and the town's
-name, "Donggeurami Town", fades in and out over the first few seconds. You can
-walk, jump and look round from the first frame; on desktop the cursor is taken
-for looking round at startup. The one game there is, House Builder, is played
-from the town (below).
+into the town (`roundtownmap.glb`, from 2026-10-30, `circlemap1.glb`
+before; for the day of 2026-11-07 the PvP map, `pvptownmap.glb`, which is
+Bridge Wars' since that night, above). Everyone stands on the path round
+its pond, facing the fountain in the middle of it, and the town's name,
+"Donggeurami Town", fades in and out over the first few seconds. You can
+walk, jump and look round from the first frame; on desktop the cursor is
+taken for looking round at startup. The games, House Builder and Bridge
+Wars, are chosen from the gamepad button (above, "Games").
 
 - **The buttons round the screen are laid out as Hajun sketched them**
   (`assets/UIbuttonlayout.jpg`, 2026-10-31, kept out of the APK;
@@ -771,13 +993,14 @@ from the town (below).
   hour, until "move them up very very slightly"). The three are placed from the
   jump button's corner so as to sit about 2.5% clear of it, the face up
   and to the left, the bubble over it and the fist beside it, as Hajun's
-  sketch has them. **Only the gear, the stick, the jump button, the fist
-  and the face do anything** (Hajun: "u dont need to make any button
+  sketch has them. **Only the gear, the stick, the jump button, the fist,
+  the face and the gamepad do anything** (Hajun: "u dont need to make any button
   functional yet other than jump, joystick, settings"; the fist since
   2026-11-01, below, "The fist throws a punch"; the face since 2026-11-05,
   the car's switch, below, "The car you drive", where the fist is the
-  reverse and the jump button the boost; and the gift since 2026-11-06,
-  which held in the car is its gun, there too); the rest take a press and drop it. The three round the jump button are placed from where
+  reverse and the jump button the boost; the gift since 2026-11-06,
+  which held in the car is its gun, there too; and the gamepad since the
+  night of 2026-11-07, the game selector, above, "Games"); the rest take a press and drop it. The three round the jump button are placed from where
   the jump button is, on every platform (until 2026-11-06 the desktop
   build showed the three with no stick or jump button among them; since
   then it has both, below, "The stick and the jump button are on Windows
@@ -1296,11 +1519,16 @@ to be turned on again by flipping it.
 
 ## The town's buses
 
-Since 2026-11-07 the town is the PvP town (above), whose only roads are
-the two halves of the ring round the pond: the buses go round the outer
-half, and nothing below about straight roads, roundabouts or the road
-round the edge of the town applies there, though all of it is still in
-`src/roads.rs`, and Round Town's tests still read `roundtownmap.glb`.
+(For the day of 2026-11-07 the town was the PvP map, whose only roads are
+the two halves of the ring round the pond: the buses went round the outer
+half, which `roads::network` makes one stretch of a ring nothing comes
+into, from a join at its first point back to it, with its own join, never
+one place with another's; the two halves' first points are 15 m apart on
+one axis, and as one place the bus crossed between them, a figure of
+eight. A test keeps it so on that map,
+`in_the_pvp_town_the_buses_go_round_the_ring_round_the_pond_and_nowhere_else`,
+though no bus drives it now: the buses are the town's, `car`, and Bridge
+Wars' map has none.)
 
 Four buses drive round the town's roads by themselves, one behind the other
 round the same loop, a quarter of it apart (two, half apart, until
@@ -1849,11 +2077,11 @@ swings open and five windows (`src/build/town.rs`).
 
 ## The camera stands where you zoomed it
 
-**Since 2026-11-07 the camera is fixed straight down over you from the
-start, in and out of the car** (`OrbitCamera::top_down`; "The town is a
-PvP arena in the sky", above): nothing in this section turns it, and your
-eyes are out of reach. All of it is still in the code behind
-`OrbitCamera::overhead`, and is how the camera was until then.
+(For the day of 2026-11-07 the camera was fixed straight down over you
+from the start, in and out of the car, the town being the PvP map; since
+that night it is so only in a game of Bridge Wars, `OrbitCamera::top_down`,
+"Games", above, and in the car, and everywhere else it is as this section
+says.)
 
 There is one view (Hajun, 2026-10-09): the camera orbits you as you turn and
 zoom it (`OrbitCamera`, `follow_camera` in `src/lib.rs`), 1.5 to 18 m out
@@ -2190,10 +2418,10 @@ tap-to-edit menu that writes to it.
 
 ## The town holds 32 players; offline, 31 of them are AI
 
-Since 2026-11-07 the 32 arrive on the four islands round the town, eight
-to each, by seat ("The town is a PvP arena in the sky", above), and
-whoever falls off is put back where their seat arrives
-(`lobby::respawn_the_fallen`).
+(For the day of 2026-11-07 the 32 arrived on the four islands of the PvP
+map, eight to each, by seat; since that night that is Bridge Wars'
+arrival, four to a game, and whoever falls off there is put back where
+their seat arrives, `lobby::respawn_the_fallen`, "Games", above.)
 
 `src/lobby.rs` holds the room: seats, each a flat `Member` record — an
 id, a name, a look and an `ai` flag — the very record the server sends
@@ -2301,9 +2529,15 @@ every ai character in the map for now"), in `src/talk.rs`: the town's AIs
 
 ## House Builder
 
-The one game, in `src/builder.rs`. On screen it is called "Build Your Own
-House" (`builder::NAME`); in the code it is House Builder, after the NPC who
-offers it. The House Builder stands at the door of a house in the town.
+One of the two games, in `src/builder.rs` (the other, Bridge Wars, is in
+`src/arena.rs`: "Games", above). On screen it is called "Build Your Own
+House" (`builder::NAME`), and "Home Builders" on its card in the game
+selector, which since the night of 2026-11-07 is the way in
+(`builder::Ask::Join`, as the House Builder's Play was); in the code it is
+House Builder, after the NPC who offers it. The House Builder stands at
+the door of a house in the town, when the town has one: `roundtownmap.glb`
+as it is (its fourth version, 2026-10-31) has none, so there is no NPC in
+it, and what follows about them holds for a town that has.
 Since 2026-10-30 (Hajun: "for now just put the build house batte minigame
 battle in front of one house"), the house nearest where the first seat
 arrives, 2.5 m out from its door, facing out (`build::town`): in the new town

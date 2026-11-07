@@ -292,10 +292,13 @@ fn hear(
                     continue;
                 };
                 let (room, seat) = match (to, body_of.room) {
-                    (Venue::Home, Room::Town(_)) => {
+                    // Home, or Bridge Wars' map, where a game of it is the
+                    // device's own for now: a room of your own either way.
+                    (Venue::Home | Venue::Arena, Room::Town(_)) => {
                         towns.stand(body);
                         (Room::Home(member.id), 0)
                     }
+                    (Venue::Home | Venue::Arena, Room::Home(_)) => (Room::Home(member.id), 0),
                     (Venue::Town, Room::Home(_)) => {
                         let (channel, seat) = towns.sit(body, body_of.town);
                         body_of.town = Some(channel);
@@ -460,8 +463,10 @@ fn place(
 }
 
 /// The room a device that says it is on `venue` is let into, and its seat
-/// there: the town or home, where it already is. Anywhere else, the middle of
-/// a game it was playing offline, it is brought to the town.
+/// there: the town or home, where it already is, or Bridge Wars' map, a
+/// game of which is the device's own, a room of its own as home is.
+/// Anywhere else, the middle of a game of House Builder it was playing
+/// offline, it is brought to the town.
 fn room_for(
     venue: Venue,
     id: u64,
@@ -470,7 +475,7 @@ fn room_for(
     towns: &mut Towns,
 ) -> (Room, Venue, u8, bool) {
     match venue {
-        Venue::Home => (Room::Home(id), Venue::Home, 0, true),
+        Venue::Home | Venue::Arena => (Room::Home(id), venue, 0, true),
         Venue::Town | Venue::Lobby | Venue::Plot(_) => {
             let (channel, seat) = towns.sit(body, rather);
             (Room::Town(channel), Venue::Town, seat, venue == Venue::Town)

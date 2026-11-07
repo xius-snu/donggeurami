@@ -19,7 +19,7 @@ use bevy::prelude::*;
 use crate::island::{Island, Islands, Venue};
 use crate::lobby::SEATS;
 use crate::talk::Listening;
-use crate::{Intent, LAND_STEP_UP, MOVE_SPEED, StaysAshore, dry_ground};
+use crate::{Dead, Intent, LAND_STEP_UP, MOVE_SPEED, StaysAshore, dry_ground};
 
 /// How often an AI picks somewhere new to walk, in seconds.
 const THINK_EVERY: f32 = 3.0;
@@ -101,11 +101,12 @@ pub(crate) fn plugin(app: &mut App) {
 }
 
 /// Sends each AI somewhere new every [`THINK_EVERY`] seconds: all but one you
-/// are talking to, which stands where it is until you are done (`talk`).
+/// are talking to, which stands where it is until you are done (`talk`),
+/// and the dead (`arena`).
 fn wander(
     time: Res<Time>,
     islands: Res<Islands>,
-    mut ais: Query<(&Transform, &Venue, &mut Wander, &mut Steering), Without<Listening>>,
+    mut ais: Query<(&Transform, &Venue, &mut Wander, &mut Steering), (Without<Listening>, Without<Dead>)>,
 ) {
     let dt = time.delta_secs();
     for (transform, &venue, mut wander, mut steering) in &mut ais {
@@ -140,7 +141,7 @@ fn pick_walk(island: &Island, from: Vec3) -> Option<(Vec3, f32)> {
 /// Whether there is dry land under every step of `distance` metres from `from`
 /// along `heading`, following the ground up and down the way a body walking it
 /// would, and never down anything it could not step back up.
-fn dry_all_the_way(island: &Island, from: Vec3, heading: Vec3, distance: f32) -> bool {
+pub(crate) fn dry_all_the_way(island: &Island, from: Vec3, heading: Vec3, distance: f32) -> bool {
     let steps = (distance / PROBE).ceil() as u32;
     let mut y = from.y;
     for step in 1..=steps {
@@ -158,11 +159,16 @@ fn dry_all_the_way(island: &Island, from: Vec3, heading: Vec3, distance: f32) ->
 
 /// Turns each body's walk under way into this frame's [`Intent`]: at full
 /// speed until the last stretch, which is taken slower so the body stops where
-/// it was sent rather than a stride past it.
-fn steer(time: Res<Time>, mut bodies: Query<(&Transform, &mut Steering, &mut Intent)>) {
+/// it was sent rather than a stride past it. In a game of Bridge Wars the
+/// walk is a run (`arena`), and whom a bot goes for there is written over
+/// this after (`arena::hunt`).
+pub(crate) fn steer(time: Res<Time>, mut bodies: Query<(&Transform, &Venue, &mut Steering, &mut Intent)>) {
     let dt = time.delta_secs();
-    for (transform, mut steering, mut intent) in &mut bodies {
+    for (transform, &venue, mut steering, mut intent) in &mut bodies {
         *intent = Intent::default();
+        if venue == Venue::Arena {
+            intent.sprint = crate::ui::ui().arena.run_speed / MOVE_SPEED;
+        }
         let Some(leg) = &mut steering.leg else {
             continue;
         };
@@ -175,7 +181,7 @@ fn steer(time: Res<Time>, mut bodies: Query<(&Transform, &mut Steering, &mut Int
             steering.leg = None;
             continue;
         }
-        intent.walk = leg.heading * (left / (MOVE_SPEED * dt)).min(1.0);
+        intent.walk = leg.heading * (left / (MOVE_SPEED * intent.sprint * dt)).min(1.0);
     }
 }
 

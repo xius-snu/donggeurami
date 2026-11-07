@@ -8,9 +8,9 @@
 //! [`announce`]d, like House Builder's theme. And how the stick and the
 //! jump button look (`setup_hud`; a phone's, and since 2026-11-06 the
 //! desktop's too, driven by the mouse). Of the buttons only the gear, the stick,
-//! the jump button, the fist, the face and, in the car, the gift do anything
-//! yet (Hajun: "i dont need you to make them functional yet. just make them
-//! in the screen").
+//! the jump button, the fist, the face, the gamepad (the game selector,
+//! `games`) and, in the car, the gift do anything yet (Hajun: "i dont need
+//! you to make them functional yet. just make them in the screen").
 //!
 //! Every button is in one style, the stick's and the jump button's: a
 //! see-through grey disc with a whitish picture on it and no rim
@@ -30,6 +30,17 @@
 //! Until 2026-10-31 a button top right took you home and back again; Hajun
 //! had it taken out. Your home (`testhomemap.glb`) is still loaded, with
 //! nothing that takes you there.
+//!
+//! In a game of Bridge Wars (`arena`, since the night of 2026-11-07) the buttons are
+//! laid out as Hajun sketched them for it instead
+//! (`assets/pvpmapbuttonui.jpg`; [`Layout::Arena`]): top left your name
+//! and your health bar; top right a bag, with the four resources under it,
+//! wood, gold, diamond and emerald, each with its count; and bottom right
+//! the sword in the jump button's place, which punches, three empty slots
+//! about it, where a bow and dynamite go once bought, and a button of
+//! three dots over them, which does nothing yet. The stick stays. The
+//! pictures are drawn in code ([`sword`], [`bag`], [`log`], [`ingot`],
+//! [`gem`], [`emerald`], [`dots`]).
 
 use bevy::asset::RenderAssetUsages;
 use bevy::ecs::system::SystemParam;
@@ -38,6 +49,7 @@ use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 
 use crate::Player;
+use crate::arena::{Health, Resource, Resources};
 use crate::drive::{CarPressed, Driving};
 use crate::island::{Islands, Venue};
 use crate::lobby::{Balance, STARTING_BALANCE};
@@ -63,6 +75,28 @@ pub(crate) const SMALL_BUTTON: f32 = 8.0;
 const SIDE_BUTTON: f32 = 10.5;
 const SIDE_INSET: f32 = 1.5;
 const ACTION_BUTTON: f32 = 14.0;
+/// Bridge Wars' layout ([`Layout::Arena`]): the health bar under your name,
+/// its rim; a resource's picture and its count, in a row wide enough for
+/// the pictures to line up down the right edge; and the small buttons
+/// among those bottom right, an empty slot over the sword and the dots.
+const HP_WIDTH: f32 = 30.0;
+const HP_HEIGHT: f32 = 3.6;
+const HP_RIM: f32 = 0.35;
+const RESOURCE_ICON: f32 = 4.6;
+const RESOURCE_TEXT: f32 = 4.0;
+const RESOURCE_ROW: f32 = 14.0;
+/// The three buttons round the sword, all alike, on an arc round the
+/// sword's middle (the night of 2026-11-07, Hajun: "make the 3 circles
+/// surrounding the sword icon in that map the same size ... and even the
+/// distances out"), each as its right and bottom offsets in the box round
+/// the jump button, in shares of the short side: the jump button beside
+/// the sword ("i want the bottom left one to be the jump icon and a jump
+/// button"), which `hud_layout` in `src/lib.rs` reads presses on, and two
+/// empty slots, up and to the left of it and over it; and the dots, smaller,
+/// over those.
+pub(crate) const ARENA_JUMP: (f32, f32, f32) = (24.5, 4.0, ACTION_BUTTON);
+const ARENA_SLOTS: [(f32, f32); 2] = [(18.5, 18.5), (4.0, 24.5)];
+const ARENA_DOTS: (f32, f32, f32) = (0.0, 42.0, 8.0);
 /// How much of a round button its picture takes up, as a share of it.
 const PICTURE: f32 = 58.0;
 pub(crate) const HEADLINE: f32 = 8.0;
@@ -114,6 +148,31 @@ struct BalanceText;
 /// Your name, top left, on its plate.
 #[derive(Component)]
 struct NamePlate;
+
+/// Which buttons are round the screen: the town's, everywhere but in a game
+/// of Bridge Wars, where they are the game's own (`arena`; Hajun,
+/// the night of 2026-11-07: "in the pvpmap game ... the button ui should change to
+/// pvpmapbuttonui.jpg layout"). It follows the island you are on
+/// ([`relayout`]).
+#[derive(Resource, Default, Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Layout {
+    #[default]
+    Town,
+    Arena,
+}
+
+/// The gamepad, down the right edge, which opens the game selector
+/// (`games`).
+#[derive(Component)]
+pub(crate) struct GamesButton;
+
+/// The fill of your health bar in Bridge Wars, as wide as your health.
+#[derive(Component)]
+struct HealthFill;
+
+/// The count beside one of the resources' pictures in Bridge Wars.
+#[derive(Component)]
+struct ResourceCount(Resource);
 
 /// Words across the middle of the screen, up for a moment, and how long they
 /// have been up.
@@ -186,16 +245,20 @@ pub(crate) fn plugin(app: &mut App) {
         .init_resource::<DialogUp>()
         .init_resource::<WantsPointer>()
         .init_resource::<Held>()
+        .init_resource::<Layout>()
         .add_observer(press_buttons)
         .add_systems(Startup, show_top_bar)
         .add_systems(
             Update,
             (
-                show_name,
-                count_balance,
+                relayout,
+                restyle.after(relayout),
+                show_name.after(restyle),
+                count_balance.after(restyle),
+                show_health.after(restyle),
+                show_resources.after(restyle),
                 hide_round_the_jump,
                 release_held,
-                restyle,
                 repicture.after(restyle),
                 (arrive, welcome, fade_headlines).chain(),
             ),
@@ -210,12 +273,13 @@ struct TopBar;
 #[derive(Component)]
 struct RoundTheJump;
 
-/// The fist among them, which throws a punch (`start_punch` in `src/lib.rs`)
-/// and, in the car, held, is the reverse (`drive`): its pictures, the fist,
-/// and in the car the jump button's arrow turned down.
+/// The fist among them, or in Bridge Wars the sword in the jump button's
+/// place, which throws a punch (`start_punch` in `src/lib.rs`) and, in the
+/// car, held, is the reverse (`drive`): its pictures, its own, and in the
+/// car the jump button's arrow turned down.
 #[derive(Component)]
 struct PunchButton {
-    fist: Handle<Image>,
+    picture: Handle<Image>,
     reverse: Handle<Image>,
 }
 
@@ -332,7 +396,7 @@ fn repicture(
             let Ok(mut picture) = pictures.get_mut(child) else {
                 continue;
             };
-            let (image, flipped) = if on { (&button.reverse, true) } else { (&button.fist, false) };
+            let (image, flipped) = if on { (&button.reverse, true) } else { (&button.picture, false) };
             if picture.image != *image || picture.flip_y != flipped {
                 picture.image = image.clone();
                 picture.flip_y = flipped;
@@ -389,8 +453,34 @@ pub(crate) fn show_top_bar(
     mut commands: Commands,
     assets: Res<AssetServer>,
     mut images: ResMut<Assets<Image>>,
+    layout: Res<Layout>,
 ) {
-    spawn_bar(&mut commands, &assets, &mut images);
+    spawn_bar(&mut commands, &assets, &mut images, *layout);
+}
+
+/// Puts up the buttons of wherever you are ([`Layout`]) as you arrive
+/// there: Bridge Wars' own in a game of it, and the town's everywhere else;
+/// taken down and put up afresh, as [`restyle`] does.
+fn relayout(
+    me: Query<&Venue, (With<Player>, Changed<Venue>)>,
+    mut layout: ResMut<Layout>,
+    bars: Query<Entity, Or<(With<TopBar>, With<RoundTheJump>)>>,
+    assets: Res<AssetServer>,
+    mut images: ResMut<Assets<Image>>,
+    mut commands: Commands,
+) {
+    let Ok(&here) = me.single() else {
+        return;
+    };
+    let wanted = if here == Venue::Arena { Layout::Arena } else { Layout::Town };
+    if *layout == wanted {
+        return;
+    }
+    *layout = wanted;
+    for bar in &bars {
+        commands.entity(bar).despawn();
+    }
+    spawn_bar(&mut commands, &assets, &mut images, wanted);
 }
 
 /// Draws the bar and the buttons round the jump button again in the file's
@@ -399,6 +489,7 @@ pub(crate) fn show_top_bar(
 /// `settings` puts its gear back on.
 fn restyle(
     changed: Res<UiChanged>,
+    layout: Res<Layout>,
     bars: Query<Entity, Or<(With<TopBar>, With<RoundTheJump>)>>,
     assets: Res<AssetServer>,
     mut images: ResMut<Assets<Image>>,
@@ -410,11 +501,282 @@ fn restyle(
     for bar in &bars {
         commands.entity(bar).despawn();
     }
-    spawn_bar(&mut commands, &assets, &mut images);
+    spawn_bar(&mut commands, &assets, &mut images, *layout);
 }
 
-/// The bar across the top, and the box round the jump button.
-fn spawn_bar(commands: &mut Commands, assets: &AssetServer, images: &mut Assets<Image>) {
+/// The bar across the top, and the box round the jump button, as `layout`
+/// has them.
+fn spawn_bar(commands: &mut Commands, assets: &AssetServer, images: &mut Assets<Image>, layout: Layout) {
+    match layout {
+        Layout::Town => spawn_town_bar(commands, assets, images),
+        Layout::Arena => spawn_arena_bar(commands, images),
+    }
+}
+
+/// The box round the jump button, in the bottom right corner where the
+/// jump button is: the buttons about it are placed from its corner, in
+/// shares of the short side.
+fn round_the_jump() -> impl Bundle {
+    (
+        RoundTheJump,
+        Node {
+            position_type: PositionType::Absolute,
+            right: Val::Vw(crate::JUMP_RIGHT_VW),
+            bottom: Val::Vh(crate::JUMP_BOTTOM_VH),
+            width: Val::VMin(crate::JUMP_SIZE_VMIN),
+            height: Val::VMin(crate::JUMP_SIZE_VMIN),
+            ..default()
+        },
+        Pickable::IGNORE,
+    )
+}
+
+/// Where a button sits in the box round the jump button, in shares of the
+/// short side from its right and its bottom.
+fn beside_the_jump(right: f32, bottom: f32) -> Node {
+    Node {
+        position_type: PositionType::Absolute,
+        right: Val::VMin(right),
+        bottom: Val::VMin(bottom),
+        ..default()
+    }
+}
+
+/// Bridge Wars' buttons (Hajun's `assets/pvpmapbuttonui.jpg`, the night of 2026-11-07):
+/// top left your name and your health bar, top right the bag with the four
+/// resources and their counts under it; and bottom right the sword in the
+/// jump button's place, which punches (`start_punch`), an empty slot up and
+/// to the left of it and another beside it, for a bow and dynamite once
+/// bought, a small one over it, and the three dots over those, which does
+/// nothing yet.
+fn spawn_arena_bar(commands: &mut Commands, images: &mut Assets<Image>) {
+    let colours = ui().colours;
+    commands
+        .spawn((
+            TopBar,
+            Node {
+                position_type: PositionType::Absolute,
+                top: Val::VMin(EDGE),
+                left: Val::VMin(EDGE),
+                right: Val::VMin(EDGE),
+                justify_content: JustifyContent::SpaceBetween,
+                align_items: AlignItems::FlexStart,
+                ..default()
+            },
+            Pickable::IGNORE,
+        ))
+        .with_children(|bar| {
+            bar.spawn((
+                Node {
+                    flex_direction: FlexDirection::Column,
+                    align_items: AlignItems::FlexStart,
+                    row_gap: Val::VMin(1.4),
+                    ..default()
+                },
+                Pickable::IGNORE,
+            ))
+            .with_children(|left| {
+                left.spawn(name_plate());
+                left.spawn(health_bar());
+            });
+            bar.spawn((
+                Node {
+                    flex_direction: FlexDirection::Column,
+                    align_items: AlignItems::FlexEnd,
+                    row_gap: Val::VMin(1.2),
+                    margin: UiRect::new(Val::ZERO, Val::VMin(SIDE_INSET), Val::VMin(SIDE_INSET), Val::ZERO),
+                    ..default()
+                },
+                Pickable::IGNORE,
+            ))
+            .with_children(|right| {
+                right.spawn(round_button(images.add(bag()), SIDE_BUTTON, Node::default()));
+                for (kind, picture) in [
+                    (Resource::Wood, log()),
+                    (Resource::Gold, ingot()),
+                    (Resource::Diamond, gem()),
+                    (Resource::Emerald, emerald()),
+                ] {
+                    right.spawn(resource_row(kind, images.add(picture), colours.hud.icon));
+                }
+            });
+        });
+    commands.spawn(round_the_jump()).with_children(|round| {
+        let sword = images.add(sword());
+        let arrow = images.add(jump_arrow());
+        round.spawn((
+            PunchButton {
+                picture: sword.clone(),
+                reverse: arrow.clone(),
+            },
+            round_button(sword, crate::JUMP_SIZE_VMIN, beside_the_jump(0.0, 0.0)),
+        ));
+        // Round the sword, on an arc: the jump button beside it, which
+        // takes no press for itself, as the one in its own place does not
+        // (the touch controls read it, `hud_layout`), and two empty slots.
+        let (right, bottom, size) = ARENA_JUMP;
+        round.spawn(jump_button(arrow, size, beside_the_jump(right, bottom)));
+        for (right, bottom) in ARENA_SLOTS {
+            round.spawn(empty_slot(ACTION_BUTTON, beside_the_jump(right, bottom)));
+        }
+        let (right, bottom, size) = ARENA_DOTS;
+        round.spawn(round_button(images.add(dots()), size, beside_the_jump(right, bottom)));
+    });
+}
+
+/// A jump button, `size_vmin` across, where `place` puts it, as the one
+/// in its own place looks (`setup_hud` in `src/lib.rs`): the buttons' disc
+/// with the arrow on it, lit while it is held (`update_jump_visual`). It
+/// takes no press for itself: the touch controls know where it is.
+fn jump_button(arrow: Handle<Image>, size_vmin: f32, place: Node) -> impl Bundle {
+    let colours = ui().colours.hud;
+    (
+        crate::JumpButtonVisual,
+        Node {
+            width: Val::VMin(size_vmin),
+            height: Val::VMin(size_vmin),
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            border_radius: BorderRadius::all(Val::Percent(50.0)),
+            ..place
+        },
+        BackgroundColor(colours.button),
+        Pickable::IGNORE,
+        children![(
+            ImageNode::new(arrow).with_color(colours.button_mark),
+            Node {
+                width: Val::Percent(JUMP_ARROW),
+                height: Val::Percent(JUMP_ARROW),
+                ..default()
+            },
+            Pickable::IGNORE,
+        )],
+    )
+}
+
+/// Your health bar in Bridge Wars, under your name: a bar with a rim,
+/// filled red as far as your health goes ([`show_health`]).
+fn health_bar() -> impl Bundle {
+    let colours = ui().colours.arena;
+    (
+        Node {
+            width: Val::VMin(HP_WIDTH),
+            height: Val::VMin(HP_HEIGHT),
+            margin: UiRect::left(Val::VMin(0.6)),
+            border: UiRect::all(Val::VMin(HP_RIM)),
+            border_radius: BorderRadius::all(Val::VMin(0.8)),
+            ..default()
+        },
+        BackgroundColor(colours.hp_back),
+        BorderColor::all(colours.hp_rim),
+        Pickable::IGNORE,
+        children![(
+            HealthFill,
+            Node {
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                border_radius: BorderRadius::all(Val::VMin(0.5)),
+                ..default()
+            },
+            BackgroundColor(colours.hp),
+            Pickable::IGNORE,
+        )],
+    )
+}
+
+/// Fills your health bar as far as your health goes (`arena::Health` on
+/// your body, in a game of Bridge Wars; full with none), as it changes and
+/// on a bar put up afresh.
+fn show_health(
+    me: Query<Ref<Health>, With<Player>>,
+    added: Query<(), Added<HealthFill>>,
+    mut fills: Query<&mut Node, With<HealthFill>>,
+) {
+    let health = me.single().ok();
+    let changed = health.as_ref().is_some_and(|health| health.is_changed());
+    if !changed && added.is_empty() {
+        return;
+    }
+    // In steps of half a percent, so that health coming back a little
+    // every frame does not have the screen laid out again every frame.
+    let width = Val::Percent(health.map_or(200.0, |health| (health.share() * 200.0).round()) * 0.5);
+    for mut fill in &mut fills {
+        if fill.width != width {
+            fill.width = width;
+        }
+    }
+}
+
+/// One of the resources in Bridge Wars, down the right edge under the bag:
+/// its picture, and its count beside it ([`show_resources`]), in a row wide
+/// enough that the pictures line up under each other.
+fn resource_row(kind: Resource, picture: Handle<Image>, tint: Color) -> impl Bundle {
+    (
+        Node {
+            width: Val::VMin(RESOURCE_ROW),
+            align_items: AlignItems::Center,
+            column_gap: Val::VMin(1.4),
+            ..default()
+        },
+        Pickable::IGNORE,
+        children![
+            (
+                ImageNode::new(picture).with_color(tint),
+                Node {
+                    width: Val::VMin(RESOURCE_ICON),
+                    height: Val::VMin(RESOURCE_ICON),
+                    flex_shrink: 0.0,
+                    ..default()
+                },
+                Pickable::IGNORE,
+            ),
+            (ResourceCount(kind), words("0", RESOURCE_TEXT, ui().colours.text)),
+        ],
+    )
+}
+
+/// Writes each resource's count beside its picture, as it changes and on a
+/// row put up afresh.
+fn show_resources(
+    stock: Res<Resources>,
+    added: Query<(), Added<ResourceCount>>,
+    mut counts: Query<(&ResourceCount, &mut Text)>,
+) {
+    if !stock.is_changed() && added.is_empty() {
+        return;
+    }
+    for (count, mut text) in &mut counts {
+        let number = stock.of(count.0).to_string();
+        if text.0 != number {
+            text.0 = number;
+        }
+    }
+}
+
+/// An empty slot among Bridge Wars' buttons, `size_vmin` across, where
+/// `place` puts it: the buttons' disc with a faint rim and nothing on it,
+/// until there is something to put there. It takes a press, and does
+/// nothing with it.
+fn empty_slot(size_vmin: f32, place: Node) -> impl Bundle {
+    let colours = ui().colours;
+    (
+        TakesPress,
+        Button,
+        Node {
+            width: Val::VMin(size_vmin),
+            height: Val::VMin(size_vmin),
+            border: UiRect::all(Val::VMin(0.3)),
+            border_radius: BorderRadius::all(Val::Percent(50.0)),
+            ..place
+        },
+        BackgroundColor(colours.hud.button),
+        BorderColor::all(colours.arena.slot_rim),
+    )
+}
+
+/// The town's buttons, as Hajun sketched them (`assets/UIbuttonlayout.jpg`,
+/// 2026-10-31): the bar across the top, and the box round the jump button.
+fn spawn_town_bar(commands: &mut Commands, assets: &AssetServer, images: &mut Assets<Image>) {
     let icon = |name: &str| assets.load(format!("icons/{name}.png"));
     commands
         .spawn((
@@ -476,11 +838,18 @@ fn spawn_bar(commands: &mut Commands, assets: &AssetServer, images: &mut Assets<
                 // a speech bubble the same day.
                 for name in ["gift", "social", "gamepad"] {
                     let button = round_button(icon(name), SIDE_BUTTON, Node::default());
-                    if name == "gift" {
+                    match name {
                         // In the car, held, the gun (`drive::shoot`).
-                        right.spawn((GunButton, button));
-                    } else {
-                        right.spawn(button);
+                        "gift" => {
+                            right.spawn((GunButton, button));
+                        }
+                        // The game selector (`games`).
+                        "gamepad" => {
+                            right.spawn((GamesButton, button));
+                        }
+                        _ => {
+                            right.spawn(button);
+                        }
                     }
                 }
             });
@@ -489,51 +858,29 @@ fn spawn_bar(commands: &mut Commands, assets: &AssetServer, images: &mut Assets<
     // placed from the box's corner, in shares of the short side: the face up
     // and to the left of it, the speech bubble over it and the fist beside
     // it, each about 2.5 shares clear of it, as Hajun sketched them.
-    commands
-        .spawn((
-            RoundTheJump,
-            Node {
-                position_type: PositionType::Absolute,
-                right: Val::Vw(crate::JUMP_RIGHT_VW),
-                bottom: Val::Vh(crate::JUMP_BOTTOM_VH),
-                width: Val::VMin(crate::JUMP_SIZE_VMIN),
-                height: Val::VMin(crate::JUMP_SIZE_VMIN),
-                ..default()
-            },
-            Pickable::IGNORE,
-        ))
-        .with_children(|round| {
-            let fist = images.add(fist());
-            let arrow = images.add(jump_arrow());
-            for (name, right, bottom) in [("mood", 18.5, 18.5), ("chat", 1.0, 24.3), ("punch", 24.3, 1.2)] {
-                let picture = if name == "punch" { fist.clone() } else { icon(name) };
-                let mut button = round.spawn(round_button(
-                    picture,
-                    ACTION_BUTTON,
-                    Node {
-                        position_type: PositionType::Absolute,
-                        right: Val::VMin(right),
-                        bottom: Val::VMin(bottom),
-                        ..default()
-                    },
-                ));
-                // The fist throws a punch each time it is pressed, and the
-                // face puts you in the car and out of it; in the car the
-                // fist is the reverse (`drive`).
-                match name {
-                    "punch" => {
-                        button.insert(PunchButton {
-                            fist: fist.clone(),
-                            reverse: arrow.clone(),
-                        });
-                    }
-                    "mood" => {
-                        button.insert(CarButton);
-                    }
-                    _ => {}
+    commands.spawn(round_the_jump()).with_children(|round| {
+        let fist = images.add(fist());
+        let arrow = images.add(jump_arrow());
+        for (name, right, bottom) in [("mood", 18.5, 18.5), ("chat", 1.0, 24.3), ("punch", 24.3, 1.2)] {
+            let picture = if name == "punch" { fist.clone() } else { icon(name) };
+            let mut button = round.spawn(round_button(picture, ACTION_BUTTON, beside_the_jump(right, bottom)));
+            // The fist throws a punch each time it is pressed, and the
+            // face puts you in the car and out of it; in the car the
+            // fist is the reverse (`drive`).
+            match name {
+                "punch" => {
+                    button.insert(PunchButton {
+                        picture: fist.clone(),
+                        reverse: arrow.clone(),
+                    });
                 }
+                "mood" => {
+                    button.insert(CarButton);
+                }
+                _ => {}
             }
-        });
+        }
+    });
 }
 
 /// The row top left: your name, and whatever goes with it.
@@ -568,6 +915,35 @@ pub(crate) fn round_button(icon: Handle<Image>, size_vmin: f32, place: Node) -> 
             },
             Pickable::IGNORE,
         )],
+    )
+}
+
+/// The cross on the corner of a window or a dialog that shuts it: a red
+/// disc `size_vmin` across, hung over the top right corner of whatever it
+/// is spawned under, with two white strokes across it, carrying `marker`,
+/// which says whose it is and what a press on it does.
+pub(crate) fn close_cross(size_vmin: f32, marker: impl Bundle) -> impl Bundle {
+    let colours = ui().colours;
+    (
+        marker,
+        TakesPress,
+        Button,
+        Node {
+            position_type: PositionType::Absolute,
+            top: Val::VMin(-size_vmin * 0.35),
+            right: Val::VMin(-size_vmin * 0.35),
+            width: Val::VMin(size_vmin),
+            height: Val::VMin(size_vmin),
+            border: UiRect::all(Val::Px(2.0)),
+            border_radius: BorderRadius::all(Val::Percent(50.0)),
+            ..default()
+        },
+        BackgroundColor(colours.close),
+        BorderColor::all(colours.close_rim),
+        children![
+            (shape(22.0, 44.0, 56.0, 12.0), UiTransform::from_rotation(Rot2::degrees(45.0)),),
+            (shape(22.0, 44.0, 56.0, 12.0), UiTransform::from_rotation(Rot2::degrees(-45.0)),),
+        ],
     )
 }
 
@@ -1023,6 +1399,175 @@ pub(crate) fn pencil() -> Image {
     )
 }
 
+/// A picture drawn from a shape, white on clear for a button to tint, and
+/// edged by how far each pixel is from it, as the fist and the arrows are:
+/// `outside` says how far a point is from the shape's edge, in shares of
+/// half the image from its middle, y up, less than nothing inside it.
+fn drawn(outside: impl Fn(Vec2) -> f32) -> Image {
+    const SIZE: u32 = 128;
+    let pixel = 2.0 / SIZE as f32;
+    let mut data = Vec::with_capacity((SIZE * SIZE * 4) as usize);
+    for row in 0..SIZE {
+        for column in 0..SIZE {
+            let at = Vec2::new((column as f32 + 0.5) * pixel - 1.0, 1.0 - (row as f32 + 0.5) * pixel);
+            let cover = (0.5 - outside(at) / pixel).clamp(0.0, 1.0);
+            data.extend_from_slice(&[255, 255, 255, (cover * 255.0).round() as u8]);
+        }
+    }
+    Image::new(
+        Extent3d {
+            width: SIZE,
+            height: SIZE,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        data,
+        TextureFormat::Rgba8UnormSrgb,
+        RenderAssetUsages::default(),
+    )
+}
+
+/// A sword, for Bridge Wars' main button (Hajun's sketch,
+/// `assets/pvpmapbuttonui.jpg`): a broad blade with a point, a crossguard,
+/// a grip and a round pommel, leaning so that the point is up and to the
+/// right.
+pub(crate) fn sword() -> Image {
+    const ROUND: f32 = 0.03;
+    let (sin, cos) = std::f32::consts::FRAC_PI_4.sin_cos();
+    let blade = [
+        Vec2::new(-0.13, -0.1),
+        Vec2::new(0.13, -0.1),
+        Vec2::new(0.13, 0.6),
+        Vec2::new(0.0, 0.93),
+        Vec2::new(-0.13, 0.6),
+    ];
+    drawn(move |at| {
+        // `at` as the sword sees it, its blade up its own y.
+        let local = Vec2::new(at.x * cos - at.y * sin, at.x * sin + at.y * cos);
+        let blade = polygon_distance(local, &blade);
+        let guard = box_distance(local - Vec2::new(0.0, -0.2), Vec2::new(0.42, 0.08));
+        let grip = box_distance(local - Vec2::new(0.0, -0.52), Vec2::new(0.09, 0.26));
+        let pommel = circle_distance(local, Vec2::new(0.0, -0.8), 0.13);
+        blade.min(guard).min(grip).min(pommel) - ROUND
+    })
+}
+
+/// A bag, for Bridge Wars' inventory button: a round sack with its neck
+/// tied, flaring out over the tie.
+pub(crate) fn bag() -> Image {
+    const ROUND: f32 = 0.03;
+    let neck = [
+        Vec2::new(-0.22, 0.28),
+        Vec2::new(0.22, 0.28),
+        Vec2::new(0.34, 0.66),
+        Vec2::new(-0.34, 0.66),
+    ];
+    drawn(move |at| {
+        let body = circle_distance(at, Vec2::new(0.0, -0.26), 0.62);
+        let neck = polygon_distance(at, &neck);
+        let tie = box_distance(at - Vec2::new(0.0, 0.3), Vec2::new(0.36, 0.07));
+        body.min(neck).min(tie) - ROUND
+    })
+}
+
+/// A log, for the wood count: a rounded bar lying across, with the rings
+/// of its end grain showing at its right end.
+pub(crate) fn log() -> Image {
+    drawn(|at| {
+        let bar = box_distance(at, Vec2::new(0.58, 0.04)) - 0.3;
+        // A ring cut out of the end, which reads as its grain.
+        let end = Vec2::new(0.55, 0.0);
+        let ring = (at.distance(end) - 0.19).abs() - 0.05;
+        bar.max(-ring)
+    })
+}
+
+/// An ingot, for the gold count: a bar wider at its base than its top, seen
+/// from the front.
+pub(crate) fn ingot() -> Image {
+    const ROUND: f32 = 0.04;
+    let ingot = [
+        Vec2::new(-0.84, -0.42),
+        Vec2::new(0.84, -0.42),
+        Vec2::new(0.56, 0.4),
+        Vec2::new(-0.56, 0.4),
+    ];
+    drawn(move |at| polygon_distance(at, &ingot) - ROUND)
+}
+
+/// A gem, for the diamond count: a flat crown over a pointed pavilion, the
+/// line between them cut through, so that it reads as cut.
+pub(crate) fn gem() -> Image {
+    let gem = [
+        Vec2::new(-0.5, 0.45),
+        Vec2::new(0.5, 0.45),
+        Vec2::new(0.9, 0.02),
+        Vec2::new(0.0, -0.85),
+        Vec2::new(-0.9, 0.02),
+    ];
+    drawn(move |at| {
+        let stone = polygon_distance(at, &gem);
+        let girdle = (at.y - 0.02).abs() - 0.04;
+        stone.max(-girdle)
+    })
+}
+
+/// An emerald, for the emerald count: a hexagon with a smaller one inside
+/// it, as Hajun drew it, the band between them cut through.
+pub(crate) fn emerald() -> Image {
+    let hexagon = |reach: f32| -> [Vec2; 6] {
+        std::array::from_fn(|k| {
+            let angle = k as f32 * std::f32::consts::TAU / 6.0;
+            Vec2::new(angle.cos(), angle.sin()) * reach
+        })
+    };
+    let (outer, band, inner) = (hexagon(0.88), hexagon(0.64), hexagon(0.46));
+    drawn(move |at| {
+        let stone = polygon_distance(at, &outer);
+        let band = polygon_distance(at, &band).max(-polygon_distance(at, &inner));
+        stone.max(-band)
+    })
+}
+
+/// Three dots in a row, for the button over Bridge Wars' slots, which is to
+/// show more buttons one day.
+pub(crate) fn dots() -> Image {
+    drawn(|at| {
+        [-0.56, 0.0, 0.56]
+            .into_iter()
+            .map(|x| circle_distance(at, Vec2::new(x, 0.0), 0.17))
+            .fold(f32::INFINITY, f32::min)
+    })
+}
+
+/// How far `at` is from the edge of a circle round `middle` of `radius`:
+/// less than nothing inside it.
+fn circle_distance(at: Vec2, middle: Vec2, radius: f32) -> f32 {
+    at.distance(middle) - radius
+}
+
+/// How far `at` is from the edge of the polygon with these `corners`, in
+/// order round it either way: less than nothing inside it. Inigo Quilez's
+/// `sdPolygon`.
+pub(crate) fn polygon_distance(at: Vec2, corners: &[Vec2]) -> f32 {
+    let count = corners.len();
+    let mut nearest = (at - corners[0]).length_squared();
+    let mut sign = 1.0;
+    let mut last = count - 1;
+    for (k, &corner) in corners.iter().enumerate() {
+        let edge = corners[last] - corner;
+        let from = at - corner;
+        let along = from - edge * (from.dot(edge) / edge.dot(edge)).clamp(0.0, 1.0);
+        nearest = nearest.min(along.length_squared());
+        let crossing = [at.y >= corner.y, at.y < corners[last].y, edge.x * from.y > edge.y * from.x];
+        if crossing.iter().all(|&c| c) || crossing.iter().all(|&c| !c) {
+            sign = -sign;
+        }
+        last = k;
+    }
+    sign * nearest.sqrt()
+}
+
 /// How far `at` is from the edge of the triangle `a`, `b`, `c`: less than
 /// nothing inside it. Inigo Quilez's `sdTriangle`.
 pub(crate) fn triangle_distance(at: Vec2, a: Vec2, b: Vec2, c: Vec2) -> f32 {
@@ -1126,6 +1671,84 @@ mod tests {
         // point there is nothing, beside it up the shaft there is pencil.
         assert_eq!(alpha(-0.42, -0.62), 0);
         assert_eq!(alpha(0.1, 0.3), 255);
+    }
+
+    /// How solid `image` is at `x`, `y`, in shares of half the image from
+    /// its middle, y up.
+    fn alpha_at(image: &Image, x: f32, y: f32) -> u8 {
+        let size = image.width();
+        let data = image.data.as_ref().unwrap();
+        let column = (((x + 1.0) * 0.5 * size as f32) as u32).min(size - 1);
+        let row = (((1.0 - y) * 0.5 * size as f32) as u32).min(size - 1);
+        data[((row * size + column) * 4 + 3) as usize]
+    }
+
+    #[test]
+    fn bridge_wars_pictures_are_the_shapes_they_are_named_for() {
+        // The sword runs from its pommel at the lower left to its point at
+        // the upper right, with the guard across it; nothing off that
+        // diagonal's ends, nor in the other corners.
+        let sword = sword();
+        for t in [-0.7, -0.4, 0.0, 0.3, 0.6] {
+            assert_eq!(alpha_at(&sword, t * 0.7071, t * 0.7071), 255, "sword at {t}");
+        }
+        assert_eq!(alpha_at(&sword, -0.5 * 0.7071 + 0.2, -0.5 * 0.7071 - 0.2), 0);
+        assert_eq!(alpha_at(&sword, 0.95, 0.95), 0);
+        assert_eq!(alpha_at(&sword, -0.9, 0.9), 0);
+        // The guard reaches out either side of the blade, across it.
+        assert_eq!(alpha_at(&sword, -0.2 * 0.7071 - 0.3 * 0.7071, -0.2 * 0.7071 + 0.3 * 0.7071), 255);
+        // The bag is solid through its body and its neck, and nothing
+        // beside the neck.
+        let bag = bag();
+        assert_eq!(alpha_at(&bag, 0.0, -0.3), 255);
+        assert_eq!(alpha_at(&bag, 0.0, 0.5), 255);
+        assert_eq!(alpha_at(&bag, 0.7, 0.5), 0);
+        // The log is a bar across, with its grain cut into its right end,
+        // and nothing over it.
+        let log = log();
+        assert_eq!(alpha_at(&log, -0.6, 0.0), 255);
+        assert_eq!(alpha_at(&log, 0.55, 0.19), 0);
+        assert_eq!(alpha_at(&log, 0.55, 0.0), 255);
+        assert_eq!(alpha_at(&log, 0.0, 0.7), 0);
+        // The ingot is wider at its base than its top.
+        let ingot = ingot();
+        assert_eq!(alpha_at(&ingot, 0.75, -0.3), 255);
+        assert_eq!(alpha_at(&ingot, 0.75, 0.3), 0);
+        assert_eq!(alpha_at(&ingot, 0.0, 0.0), 255);
+        // The gem has a crown over a pointed pavilion, with a line cut
+        // between them.
+        let gem = gem();
+        assert_eq!(alpha_at(&gem, 0.0, 0.3), 255);
+        assert_eq!(alpha_at(&gem, 0.0, -0.5), 255);
+        assert_eq!(alpha_at(&gem, 0.0, 0.02), 0);
+        assert_eq!(alpha_at(&gem, 0.6, -0.6), 0);
+        // The emerald is a hexagon with a band cut round a smaller one.
+        let emerald = emerald();
+        assert_eq!(alpha_at(&emerald, 0.0, 0.0), 255);
+        assert_eq!(alpha_at(&emerald, 0.8, 0.0), 255);
+        assert_eq!(alpha_at(&emerald, 0.55, 0.0), 0);
+        assert_eq!(alpha_at(&emerald, 0.0, 0.95), 0);
+        // Three dots, and nothing between them.
+        let dots = dots();
+        for x in [-0.56, 0.0, 0.56] {
+            assert_eq!(alpha_at(&dots, x, 0.0), 255, "dot at {x}");
+        }
+        assert_eq!(alpha_at(&dots, -0.28, 0.0), 0);
+        assert_eq!(alpha_at(&dots, 0.0, 0.5), 0);
+        for image in [&sword, &bag, &log, &ingot, &gem, &emerald, &dots] {
+            assert!(image.data.as_ref().unwrap().chunks(4).all(|pixel| pixel[..3] == [255, 255, 255]));
+        }
+    }
+
+    #[test]
+    fn a_polygon_is_inside_out_neither_way_round() {
+        let square = [Vec2::new(-1.0, -1.0), Vec2::new(1.0, -1.0), Vec2::new(1.0, 1.0), Vec2::new(-1.0, 1.0)];
+        let reversed: Vec<Vec2> = square.iter().rev().copied().collect();
+        for corners in [&square[..], &reversed[..]] {
+            assert!((polygon_distance(Vec2::ZERO, corners) + 1.0).abs() < 1e-5);
+            assert!((polygon_distance(Vec2::new(2.0, 0.0), corners) - 1.0).abs() < 1e-5);
+            assert!((polygon_distance(Vec2::new(0.5, 0.5), corners) + 0.5).abs() < 1e-5);
+        }
     }
 
     #[test]

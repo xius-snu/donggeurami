@@ -72,15 +72,23 @@ pub const PROTOCOL_ID: u64 = u64::from_be_bytes(*b"DGRMTOWN");
 ///
 /// 5 since 2026-11-07: the town is Hajun's `pvptownmap.glb`, four islands
 /// at the ends of bridges round a town with no sea round it, and everyone
-/// arrives on one of the islands ([`TOWN_ISLANDS`]); [`Ask::Respawn`], for
+/// arrives on one of the islands ([`ARENA_ISLANDS`], the town's that day); [`Ask::Respawn`], for
 /// whoever falls off into the void; and [`Ask::Punch`] and [`Tell::Knocked`],
 /// a punch landing on someone online. 6, that evening: the islands pulled
-/// in to 130 m ([`TOWN_ISLANDS`]); an app with them at 200 m would arrive
+/// in to 130 m ([`ARENA_ISLANDS`]); an app with them at 200 m would arrive
 /// over the void, fall, and have every move put back. 7, late that
 /// evening: the first island the furnished one at +Z, its arrival at its
 /// `spawn` marker. 8, at the day's end: every island's arrival at its own
 /// marker, all four furnished.
-pub const PROTOCOL_VERSION: u32 = 8;
+///
+/// 9 since the night of 2026-11-07: the town is `roundtownmap.glb` again, with the sea
+/// round it and everyone arriving on the path round its pond
+/// ([`TOWN_ARRIVAL_RADIUS`]), and the PvP map is a game of its own, Bridge
+/// Wars, on [`Venue::Arena`] (Hajun: "i want the default map to open when
+/// u open the app to be roundtownmap.glb ... when u press the game icon ui
+/// button, it will open a popup game selector menu"); an app with the town
+/// on the islands would arrive in the sea.
+pub const PROTOCOL_VERSION: u32 = 9;
 
 /// The UDP port the game server listens on. 443, where QUIC goes, because a
 /// network that lets any UDP through lets that through: school and office
@@ -97,6 +105,10 @@ pub const TOWN_SEATS: usize = 16;
 
 /// How many players a game of House Builder holds, bots included.
 pub const GAME_SEATS: usize = 8;
+
+/// How many players a game of Bridge Wars holds, bots included: one to each
+/// of the four islands round the PvP map ([`ARENA_ISLANDS`]).
+pub const ARENA_SEATS: usize = 4;
 
 /// The fewest bodies the town shows: below this, each device fills it out
 /// with AIs of its own (Hajun's choice, 2026-10-08), one leaving for each
@@ -229,6 +241,13 @@ pub enum Venue {
     /// One builder's own copy of `homemap.glb` in a game of House Builder, by
     /// their seat in the game.
     Plot(u8),
+    /// `pvptownmap.glb`: Bridge Wars' map, Round Town's middle in the sky
+    /// with four islands at the ends of its bridges ([`ARENA_ISLANDS`]),
+    /// where a game of Bridge Wars is played (since the night of 2026-11-07; the town
+    /// itself on 2026-11-07). The game is the device's own for now, played
+    /// with bots: online you are in a room of your own there, as at home,
+    /// and nothing of where you stand is sent.
+    Arena,
 }
 
 /// How far from the middle everyone stands on arriving on an island, in
@@ -236,66 +255,83 @@ pub enum Venue {
 /// out. The town has its own ([`TOWN_ARRIVAL_RADIUS`]).
 pub const ARRIVAL_RADIUS: f32 = 6.0;
 
-/// How far from the middle everyone stood on arriving in the town, in
-/// metres, from 2026-10-30 to 2026-11-07: on the middle of the path, 30 to
-/// 33 m out, round the pond that fills the middle of `roundtownmap.glb`.
-/// Since then everyone arrives on one of the four islands round the town
-/// ([`TOWN_ISLANDS`]), and this is where the town's own name shows and the
-/// House Builder stood.
+/// How far from the middle everyone stands on arriving in the town, in
+/// metres: on the middle of the path, 30 to 33 m out, round the pond that
+/// fills the middle of `roundtownmap.glb`, where the town's own name shows.
+/// Since 2026-10-30, but for 2026-11-07, when the town was the PvP map and
+/// everyone arrived on its islands ([`ARENA_ISLANDS`]).
 pub const TOWN_ARRIVAL_RADIUS: f32 = 31.5;
 
-/// The arrival points of the four islands at the ends of the town's
-/// bridges, in metres from the middle of the town, where everyone arrives
-/// in Hajun's `pvptownmap.glb` (2026-11-07: "make the player start in the
-/// center of one of the 4 bridge connected island"): the islands 130 m out
-/// along each axis since that evening, each 20.8 m across (the islands'
-/// object scaled to 0.65 across the ground in their map, its array of four
-/// with it; 200 m out and 32 m across that morning), over the far half of
-/// a smaller island 24 m across at 125 m, with a bridge 3.5 m wide from
-/// each to the town, 75 m out. Each island's point is not its middle, where
-/// a desk lies, but where its `spawn` marker stands, 5 to 6 m toward the
-/// town, on a stone slab (the game hides the marker,
-/// `island::SPAWN_MATERIAL`): first the island at the game's +Z (the
-/// bottom of the screen; Blender's +Y), the one Hajun furnished first
-/// (late that evening: "make the user spawn in the bottom one with the
-/// furnishes"), then the others clockwise from it seen from above, each
-/// furnished alike at the day's end, its marker where they put it. Read
-/// off the map's own geometry (a scratch test on `island::glb::read`: a
-/// `.glb` dump's x and z are the game's negated), and to be read again
-/// whenever the map changes: the server, which has no map, goes by this
-/// too.
-pub const TOWN_ISLANDS: [Vec2; 4] = [
-    Vec2::new(0.0, 124.9),
-    Vec2::new(-123.8, 0.0),
-    Vec2::new(-0.2, -124.0),
-    Vec2::new(123.8, -0.1),
+/// The arrival points of the four islands at the ends of the PvP map's
+/// bridges ([`Venue::Arena`]), in metres from the middle of the map, where
+/// everyone arrives in a game of Bridge Wars (Hajun, 2026-11-07, of the map
+/// as the town: "make the player start in the center of one of the 4
+/// bridge connected island"): the islands 130 m out along each axis, each
+/// 20.8 m across (the islands' object scaled to 0.65 across the ground in
+/// their map, its array of four with it; 200 m out and 32 m across that
+/// morning), over the far half of a smaller island 24 m across at 125 m,
+/// with a bridge 3.5 m wide from each to the middle, 75 m out. Each
+/// island's point is its middle (since the night of 2026-11-07, Hajun:
+/// "make the spawnpoint in the center of the island so that u dont need
+/// to hide the purple rotated cube"; for the evening before, the `spawn`
+/// marker each island has, a purple pillar 5 to 6 m toward the middle,
+/// which the game hid and now draws as it is): first the island at the
+/// game's +Z (the bottom of the screen; Blender's +Y), then the others
+/// clockwise from it seen from above. The islands' object is an array of
+/// four about the map's middle, 130 m out on each axis (its mesh reaches
+/// 140.4 m, the islands being 20.8 m across). A desk 11.3 by 4 m lies
+/// across each island's middle, its near edge 0.1 m past the point, so a
+/// body arriving there is shoved to the desk's edge, toward the bridge.
+/// The server, which has no map, goes by this too.
+pub const ARENA_ISLANDS: [Vec2; 4] = [
+    Vec2::new(0.0, 130.0),
+    Vec2::new(-130.0, 0.0),
+    Vec2::new(0.0, -130.0),
+    Vec2::new(130.0, 0.0),
 ];
 
 /// How far from its island's middle everyone on it but the first stands on
 /// arriving, in metres: round the one in the middle, a few metres apart.
 pub const ISLAND_RING: f32 = 4.0;
 
-/// Which of the [`TOWN_ISLANDS`] the player in `seat` arrives on, and is
+/// Which of the [`ARENA_ISLANDS`] the player in `seat` arrives on, and is
 /// put back on when they fall off (the game's `lobby`): seat by seat round
-/// the four, so that the first four seats of a town channel, four people,
-/// are on four different islands (Hajun: "when there is 2 players+ you
-/// will not spawn in the same bridge connected island").
-pub fn town_island(seat: usize) -> usize {
-    seat % TOWN_ISLANDS.len()
+/// the four, so that the four seats of a game of Bridge Wars are on four
+/// different islands (Hajun: "when there is 2 players+ you will not spawn
+/// in the same bridge connected island").
+pub fn arena_island(seat: usize) -> usize {
+    seat % ARENA_ISLANDS.len()
+}
+
+/// Bridge Wars' rules, as the game plays them on the device (`arena`) and
+/// a server would: in one place, so that the two never differ.
+pub mod bridge_wars {
+    /// How long the waiting room waits for someone else to join before the
+    /// computer fills the seats left, in seconds, counted from the last to
+    /// join (Hajun, the night of 2026-11-07: "if there is no player joining for 10sec,
+    /// fill it with bots").
+    pub const BOT_WAIT: f32 = 10.0;
+    /// How long a full room counts down before everyone is sent to their
+    /// island, in seconds ("it will count down from 5").
+    pub const COUNTDOWN: f32 = 5.0;
+    /// How long a game lasts, in seconds, after which everyone is back in
+    /// the town ("a (small) timer of 10 minute").
+    pub const PLAY_SECS: f32 = 600.0;
 }
 
 /// Where the player in `seat` stands on arriving on `venue`, and which way
-/// they face. In the town, on their island ([`town_island`]): the first on
-/// each island in its middle, and the rest round that [`ISLAND_RING`] out,
-/// every one facing the town, down the bridge. Anywhere else, on a ring
-/// round the middle, facing in: the first eight seats each an eighth of the
+/// they face. On the PvP map, on their island ([`arena_island`]): the first
+/// on each island at its marker, and the rest round that [`ISLAND_RING`]
+/// out, every one facing the middle, down the bridge. Anywhere else, on a
+/// ring round the middle, facing in — round the pond, in the town
+/// ([`TOWN_ARRIVAL_RADIUS`]) — the first eight seats each an eighth of the
 /// turn on from the one before, the next eight between them, and past
 /// sixteen a ring further out. The server works out arrivals with this too,
 /// so that everyone sees you arrive where you do.
 pub fn arrival(venue: Venue, seat: usize) -> (Vec3, Quat) {
-    if venue == Venue::Town {
-        let island = TOWN_ISLANDS[town_island(seat)];
-        let round = seat / TOWN_ISLANDS.len();
+    if venue == Venue::Arena {
+        let island = ARENA_ISLANDS[arena_island(seat)];
+        let round = seat / ARENA_ISLANDS.len();
         // Seven round the one in the middle, and past them round again, a
         // little further out and turned on by half a place.
         let places = 7;
@@ -318,7 +354,8 @@ pub fn arrival(venue: Venue, seat: usize) -> (Vec3, Quat) {
     let angle = (within % 8) as f32 * eighth
         + if within >= 8 { eighth * 0.5 } else { 0.0 }
         + ring as f32 * eighth * 0.25;
-    let radius = ARRIVAL_RADIUS + ring as f32 * 2.0;
+    let first = if venue == Venue::Town { TOWN_ARRIVAL_RADIUS } else { ARRIVAL_RADIUS };
+    let radius = first + ring as f32 * 2.0;
     let turn = Quat::from_rotation_y(angle);
     // Facing in: a turn of `angle` about the upright points -Z at the middle
     // from where it puts +Z.
@@ -720,29 +757,42 @@ mod tests {
     }
 
     #[test]
-    fn the_first_four_in_the_town_arrive_on_four_islands_facing_it() {
-        for seat in 0..4 {
-            let (at, turn) = arrival(Venue::Town, seat);
-            let island = TOWN_ISLANDS[seat];
+    fn the_four_of_a_game_of_bridge_wars_arrive_on_four_islands_facing_the_middle() {
+        for seat in 0..ARENA_SEATS {
+            let (at, turn) = arrival(Venue::Arena, seat);
+            let island = ARENA_ISLANDS[seat];
             assert!(at.xz().distance(island) < 1e-4, "seat {seat}: {at} for {island}");
             assert_eq!(at.y, 0.0);
             let facing = (turn * Vec3::NEG_Z).xz();
             assert!(facing.distance(-island.normalize()) < 1e-4, "seat {seat} faces {facing}");
-            assert_eq!(town_island(seat), seat);
+            assert_eq!(arena_island(seat), seat);
         }
-        // The rest stand on the islands too, near the middle, and each on
-        // the island its seat says.
-        for seat in 4..TOWN_SEATS * 2 {
-            let (at, _) = arrival(Venue::Town, seat);
-            let island = TOWN_ISLANDS[town_island(seat)];
+        // Past them, on the islands too, near the middle, each on the
+        // island its seat says.
+        for seat in ARENA_SEATS..TOWN_SEATS * 2 {
+            let (at, _) = arrival(Venue::Arena, seat);
+            let island = ARENA_ISLANDS[arena_island(seat)];
             let out = at.xz().distance(island);
             assert!(out > 3.0 && out < 8.0, "seat {seat}: {out} m from its island's middle");
         }
     }
 
     #[test]
+    fn in_the_town_everyone_arrives_on_the_path_round_the_pond_facing_in() {
+        for seat in 0..TOWN_SEATS * 2 {
+            let (at, turn) = arrival(Venue::Town, seat);
+            let out = at.xz().length();
+            let ring = if seat < 16 { TOWN_ARRIVAL_RADIUS } else { TOWN_ARRIVAL_RADIUS + 2.0 };
+            assert!((out - ring).abs() < 1e-3, "seat {seat}: {out} m out");
+            assert_eq!(at.y, 0.0);
+            let facing = (turn * Vec3::NEG_Z).xz();
+            assert!(facing.distance(-at.xz().normalize()) < 1e-4, "seat {seat} faces {facing}");
+        }
+    }
+
+    #[test]
     fn a_full_town_arrives_apart() {
-        for venue in [Venue::Town, Venue::Lobby] {
+        for venue in [Venue::Town, Venue::Lobby, Venue::Arena] {
             let spots: Vec<Vec3> = (0..TOWN_SEATS * 2).map(|seat| arrival(venue, seat).0).collect();
             for (i, a) in spots.iter().enumerate() {
                 for b in &spots[i + 1..] {

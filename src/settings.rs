@@ -482,34 +482,7 @@ fn tab_button(tab: Tab, chosen: bool) -> impl Bundle {
 
 /// The cross on the window's corner, as the shop's.
 fn close_button() -> impl Bundle {
-    let colours = ui().colours;
-    (
-        Choice::Close,
-        TakesPress,
-        Button,
-        Node {
-            position_type: PositionType::Absolute,
-            top: Val::VMin(-CLOSE * 0.35),
-            right: Val::VMin(-CLOSE * 0.35),
-            width: Val::VMin(CLOSE),
-            height: Val::VMin(CLOSE),
-            border: UiRect::all(Val::Px(2.0)),
-            border_radius: BorderRadius::all(Val::Percent(50.0)),
-            ..default()
-        },
-        BackgroundColor(colours.close),
-        BorderColor::all(colours.close_rim),
-        children![
-            (
-                hud::shape(22.0, 44.0, 56.0, 12.0),
-                UiTransform::from_rotation(Rot2::degrees(45.0)),
-            ),
-            (
-                hud::shape(22.0, 44.0, 56.0, 12.0),
-                UiTransform::from_rotation(Rot2::degrees(-45.0)),
-            ),
-        ],
-    )
+    hud::close_cross(CLOSE, Choice::Close)
 }
 
 /// A sign-in that is not to be had yet: a button blocked out, which does

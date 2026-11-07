@@ -39,8 +39,9 @@ use bevy::light::{NotShadowCaster, NotShadowReceiver};
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
 
+use crate::island::Venue;
 use crate::ui::{self, UiChanged};
-use crate::{LAND_STEP_UP, Player, drive};
+use crate::{Dead, LAND_STEP_UP, Player, drive};
 
 /// How high over your feet it lies, in metres: as high as a step, so that
 /// nothing you could step up onto hides any of it.
@@ -191,16 +192,22 @@ fn spawn(
 }
 
 /// Puts it at your feet, [`HEIGHT`] up, turned the way you face along the
-/// ground, and puts it away in the car, or with no body to stand round.
+/// ground, in a game of Bridge Wars (`arena`, since the night of 2026-11-07; everywhere
+/// for 2026-11-07, when the town was its map), and puts it away anywhere
+/// else, in the car, while you are dead, or with no body to stand round.
 fn follow(
     driving: Res<drive::Driving>,
-    me: Query<&Transform, With<Player>>,
+    me: Query<(&Transform, &Venue, Has<Dead>), With<Player>>,
     mut ranges: Query<(&mut Transform, &mut Visibility), (With<HitRange>, Without<Player>)>,
 ) {
     let Ok((mut place, mut shown)) = ranges.single_mut() else {
         return;
     };
-    let body = me.single().ok().filter(|_| !driving.on());
+    let body = me
+        .single()
+        .ok()
+        .filter(|&(_, &here, dead)| here == Venue::Arena && !driving.on() && !dead)
+        .map(|(body, ..)| body);
     shown.set_if_neq(if body.is_some() { Visibility::Inherited } else { Visibility::Hidden });
     let Some(body) = body else {
         return;

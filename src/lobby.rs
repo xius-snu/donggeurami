@@ -25,7 +25,9 @@
 
 use bevy::prelude::*;
 use bevy_replicon::prelude::Remote;
-use roundtown_net::{Ask, BOY_LOOKS, BOY_NAMES, GIRL_LOOKS, GIRL_NAMES, PEOPLE_LOOKS, TOWN_BODIES};
+use roundtown_net::TOWN_BODIES;
+#[cfg(test)]
+use roundtown_net::{BOY_LOOKS, BOY_NAMES, GIRL_LOOKS, GIRL_NAMES, PEOPLE_LOOKS};
 
 use crate::ai;
 use crate::car::Driven;
@@ -35,7 +37,7 @@ use crate::signup::Profile;
 use crate::talk::Speaker;
 use crate::{
     Collider, ColliderShape, Intent, MOVE_SPEED, OrbitCamera, PLAYER_HEIGHT, PLAYER_RADIUS, Player,
-    PlayerJump, Riding, Shove, VOID_Y, WalkCycle, bind_walk_bones,
+    PlayerJump, Riding, Shove, WalkCycle, bind_walk_bones,
 };
 
 /// One player in a room, as the server describes them: an id, a name, a look,
@@ -113,10 +115,10 @@ pub(crate) fn models() -> Vec<&'static str> {
 }
 
 /// The most seats the town's arrivals have spots for that its AIs come in
-/// at: eight to each of the four islands, one in the middle and seven round
-/// it (`roundtown_net::arrival`; until 2026-11-07 rings round the pond),
-/// for a town of [`TOWN_BODIES`] (16 until 2026-11-01, when the town went
-/// from 8 bodies to 32).
+/// at: sixteen on the path round the pond and sixteen more on a ring 2 m
+/// further out (`roundtown_net::arrival`; for 2026-11-07, eight to each of
+/// the PvP map's four islands), for a town of [`TOWN_BODIES`] (16 until
+/// 2026-11-01, when the town went from 8 bodies to 32).
 const TOWN_SPOTS: usize = 32;
 
 /// The look a body wears when none has been chosen: the boy's. The House
@@ -216,7 +218,6 @@ pub(crate) fn plugin(app: &mut App) {
                     .after(crate::move_bodies)
                     .before(crate::animate_walk),
                 fill_the_town,
-                respawn_the_fallen.after(crate::move_bodies),
             ),
         );
 }
@@ -381,7 +382,21 @@ pub(crate) fn spawn_player(
     venue: Venue,
     mine: bool,
 ) -> Entity {
-    let spawn = island::arrival(venue, seat);
+    spawn_player_at(commands, assets, member, seat, venue, mine, island::arrival(venue, seat))
+}
+
+/// A body for `member`, in `seat`, standing at `spawn` on `venue`, as
+/// [`spawn_player`] makes one: for somewhere other than where its seat
+/// arrives, like Bridge Wars' waiting room (`arena`).
+pub(crate) fn spawn_player_at(
+    commands: &mut Commands,
+    assets: &AssetServer,
+    member: &Member,
+    seat: usize,
+    venue: Venue,
+    mine: bool,
+    spawn: Transform,
+) -> Entity {
     let mut avatar = commands.spawn((
         body(assets, member, spawn),
         venue,
@@ -497,39 +512,6 @@ pub(crate) fn put(
     }
 }
 
-/// Puts back whoever has fallen off the town into the void (since
-/// 2026-11-07, when the sea round it went; Hajun: "it will be a void that
-/// if you step over, u fall and then u 'die' and respawn back at your
-/// spawn which is one of the bridge connected island"): you, or one of
-/// this device's AIs, knocked off ([`Shove`](crate::Shove)), once they are
-/// [`VOID_Y`] down, where their seat arrives ([`send`]), on their own
-/// island. Online, the server is asked to put you there too
-/// (`net::ask_to_respawn`), and no move goes until it has, so that the
-/// leap back is not taken for a move you could not have made and undone.
-fn respawn_the_fallen(
-    mut bodies: Whereabouts,
-    seats: Query<&Seat>,
-    mut orbit: ResMut<OrbitCamera>,
-    mut online: ResMut<Online>,
-    mut asks: MessageWriter<Ask>,
-) {
-    let fallen: Vec<(Entity, Venue, bool)> = bodies
-        .iter()
-        .filter(|(_, transform, ..)| transform.translation.y < VOID_Y)
-        .map(|(body, _, &venue, _, _, _, mine, _, _)| (body, venue, mine))
-        .collect();
-    for (body, venue, mine) in fallen {
-        let Ok(&Seat(seat)) = seats.get(body) else {
-            continue;
-        };
-        send(&mut bodies, &mut orbit, body, venue, seat);
-        info!("{body} fell into the void: back on island {}", roundtown_net::town_island(seat));
-        if mine {
-            crate::net::ask_to_respawn(&mut online, &mut asks, venue);
-        }
-    }
-}
-
 /// The model for a look. One this build has never heard of — a newer client's,
 /// say — is drawn as the first look rather than left out: whoever wears it is
 /// still in the room.
@@ -542,7 +524,10 @@ pub(crate) fn model(look: &str) -> &'static str {
 
 /// Reads each body's walk off how far it went since last frame. Only ground
 /// covered counts: rising and falling in a jump is not walking, and nor is
-/// being carried along by the car, so that a rider stands still on it.
+/// being carried along by the car, so that a rider stands still on it. A
+/// body going faster than a walk, running in Bridge Wars (`arena`), reads
+/// as more than a walk, and its legs swing the faster for it
+/// (`animate_walk`).
 fn walk_from_motion(
     time: Res<Time>,
     cars: Query<&Driven>,
@@ -563,7 +548,7 @@ fn walk_from_motion(
         seen.last = here;
         seen.on = on;
         walk.speed = if dt > 0.0 {
-            (moved / dt / MOVE_SPEED).min(1.0)
+            (moved / dt / MOVE_SPEED).min(2.0)
         } else {
             0.0
         };

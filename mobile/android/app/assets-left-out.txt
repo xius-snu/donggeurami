@@ -16,12 +16,12 @@
 cloudsofaimage.png
 
 # Models nothing loads any more: the first map, the coin, and the old town,
-# Round Town until Hajun's new one, roundtownmap.glb, on 2026-10-30, and
-# that one too, since their pvptownmap.glb on 2026-11-07.
+# Round Town until Hajun's new one, roundtownmap.glb, on 2026-10-30 (the
+# town again since the night of 2026-11-07, after a day as their pvptownmap.glb, which
+# is Bridge Wars' map now: both go in).
 map.glb
 coin.glb
 circlemap1.glb
-roundtownmap.glb
 
 # Hajun's model of a house's size, to model pieces against, in mybuilds/:
 # not sold in the shop.
@@ -52,6 +52,7 @@ bus_engine_loop.wav
 # Hajun's sketch of where the buttons go on the screen (2026-10-31), and the
 # licence of the icons in assets/icons/, which the game reads nothing from.
 UIbuttonlayout.jpg
+pvpmapbuttonui.jpg
 LICENSE-material-icons.txt
 LICENSE-font-awesome.txt
 
