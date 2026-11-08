@@ -54,6 +54,7 @@ use crate::bridge::BridgePressed;
 use crate::drive::{CarPressed, Driving};
 use crate::island::{Islands, Venue};
 use crate::lobby::{Balance, STARTING_BALANCE};
+use crate::minimap::{Minimap, MinimapNode};
 use crate::signup::Signup;
 use crate::ui::{UiChanged, ui};
 
@@ -83,9 +84,14 @@ const ACTION_BUTTON: f32 = 14.0;
 const HP_WIDTH: f32 = 30.0;
 const HP_HEIGHT: f32 = 3.6;
 const HP_RIM: f32 = 0.35;
-const RESOURCE_ICON: f32 = 4.6;
-const RESOURCE_TEXT: f32 = 4.0;
+const RESOURCE_ICON: f32 = 4.0;
+const RESOURCE_TEXT: f32 = 3.4;
 const RESOURCE_ROW: f32 = 14.0;
+/// The minimap top right (`minimap`; since 2026-11-09, in the bag's place,
+/// Hajun: "put a minimap that only shows the current player's location as
+/// a red dot and your teammate as a green dot"), and its rim.
+const MINIMAP: f32 = 26.0;
+const MINIMAP_RIM: f32 = 0.35;
 /// The three buttons round the sword, all alike, on an arc round the
 /// sword's middle (the night of 2026-11-07, Hajun: "make the 3 circles
 /// surrounding the sword icon in that map the same size ... and even the
@@ -470,8 +476,9 @@ pub(crate) fn show_top_bar(
     assets: Res<AssetServer>,
     mut images: ResMut<Assets<Image>>,
     layout: Res<Layout>,
+    minimap: Res<Minimap>,
 ) {
-    spawn_bar(&mut commands, &assets, &mut images, *layout);
+    spawn_bar(&mut commands, &assets, &mut images, *layout, &minimap);
 }
 
 /// Puts up the buttons of wherever you are ([`Layout`]) as you arrive
@@ -483,6 +490,7 @@ fn relayout(
     bars: Query<Entity, Or<(With<TopBar>, With<RoundTheJump>)>>,
     assets: Res<AssetServer>,
     mut images: ResMut<Assets<Image>>,
+    minimap: Res<Minimap>,
     mut commands: Commands,
 ) {
     let Ok(&here) = me.single() else {
@@ -496,7 +504,7 @@ fn relayout(
     for bar in &bars {
         commands.entity(bar).despawn();
     }
-    spawn_bar(&mut commands, &assets, &mut images, wanted);
+    spawn_bar(&mut commands, &assets, &mut images, wanted, &minimap);
 }
 
 /// Draws the bar and the buttons round the jump button again in the file's
@@ -509,6 +517,7 @@ fn restyle(
     bars: Query<Entity, Or<(With<TopBar>, With<RoundTheJump>)>>,
     assets: Res<AssetServer>,
     mut images: ResMut<Assets<Image>>,
+    minimap: Res<Minimap>,
     mut commands: Commands,
 ) {
     if !changed.is_changed() || changed.is_added() {
@@ -517,15 +526,15 @@ fn restyle(
     for bar in &bars {
         commands.entity(bar).despawn();
     }
-    spawn_bar(&mut commands, &assets, &mut images, *layout);
+    spawn_bar(&mut commands, &assets, &mut images, *layout, &minimap);
 }
 
 /// The bar across the top, and the box round the jump button, as `layout`
 /// has them.
-fn spawn_bar(commands: &mut Commands, assets: &AssetServer, images: &mut Assets<Image>, layout: Layout) {
+fn spawn_bar(commands: &mut Commands, assets: &AssetServer, images: &mut Assets<Image>, layout: Layout, minimap: &Minimap) {
     match layout {
         Layout::Town => spawn_town_bar(commands, assets, images),
-        Layout::Arena => spawn_arena_bar(commands, images),
+        Layout::Arena => spawn_arena_bar(commands, images, minimap),
     }
 }
 
@@ -559,13 +568,17 @@ fn beside_the_jump(right: f32, bottom: f32) -> Node {
 }
 
 /// Bridge Wars' buttons (Hajun's `assets/pvpmapbuttonui.jpg`, the night of 2026-11-07):
-/// top left your name and your health bar, top right the bag with the four
-/// resources and their counts under it; and bottom right the sword in the
-/// jump button's place, which punches (`start_punch`), an empty slot up and
-/// to the left of it and another beside it, for a bow and dynamite once
-/// bought, a small one over it, and the three dots over those, which does
-/// nothing yet.
-fn spawn_arena_bar(commands: &mut Commands, images: &mut Assets<Image>) {
+/// top left your name, your health bar and under it the four resources
+/// with their counts (since 2026-11-09, Hajun: "move the 4 item icon +
+/// number thing on the top right side of that screen to the left side of
+/// the screen below the hp bar"; top right under a bag until then), the
+/// first of them the metres of bridge you have left; top right the minimap
+/// (`minimap`, in the bag's place); and bottom right the sword in the jump
+/// button's place, which punches (`start_punch`), an empty slot up and to
+/// the left of it, the plank over it, which turns building on and off
+/// (`bridge`), a small one over it, and the three dots over those, which
+/// does nothing yet.
+fn spawn_arena_bar(commands: &mut Commands, images: &mut Assets<Image>, minimap: &Minimap) {
     let colours = ui().colours;
     commands
         .spawn((
@@ -594,28 +607,31 @@ fn spawn_arena_bar(commands: &mut Commands, images: &mut Assets<Image>) {
             .with_children(|left| {
                 left.spawn(name_plate());
                 left.spawn(health_bar());
-            });
-            bar.spawn((
-                Node {
-                    flex_direction: FlexDirection::Column,
-                    align_items: AlignItems::FlexEnd,
-                    row_gap: Val::VMin(1.2),
-                    margin: UiRect::new(Val::ZERO, Val::VMin(SIDE_INSET), Val::VMin(SIDE_INSET), Val::ZERO),
-                    ..default()
-                },
-                Pickable::IGNORE,
-            ))
-            .with_children(|right| {
-                right.spawn(round_button(images.add(bag()), SIDE_BUTTON, Node::default()));
                 for (kind, picture) in [
                     (Resource::Wood, log()),
                     (Resource::Gold, ingot()),
                     (Resource::Diamond, gem()),
                     (Resource::Emerald, emerald()),
                 ] {
-                    right.spawn(resource_row(kind, images.add(picture), colours.hud.icon));
+                    left.spawn(resource_row(kind, images.add(picture), colours.hud.icon));
                 }
             });
+            bar.spawn((
+                MinimapNode,
+                ImageNode::new(minimap.image.clone()),
+                Node {
+                    width: Val::VMin(MINIMAP),
+                    height: Val::VMin(MINIMAP),
+                    margin: UiRect::new(Val::ZERO, Val::VMin(SIDE_INSET), Val::VMin(SIDE_INSET), Val::ZERO),
+                    border: UiRect::all(Val::VMin(MINIMAP_RIM)),
+                    border_radius: BorderRadius::all(Val::VMin(1.6)),
+                    overflow: Overflow::clip(),
+                    ..default()
+                },
+                BackgroundColor(colours.arena.map_back),
+                BorderColor::all(colours.arena.hp_rim),
+                Pickable::IGNORE,
+            ));
         });
     commands.spawn(round_the_jump()).with_children(|round| {
         let sword = images.add(sword());
@@ -729,8 +745,8 @@ fn show_health(
     }
 }
 
-/// One of the resources in Bridge Wars, down the right edge under the bag:
-/// its picture, and its count beside it ([`show_resources`]), in a row wide
+/// One of the resources in Bridge Wars, under your health bar: its
+/// picture, and its count beside it ([`show_resources`]), in a row wide
 /// enough that the pictures line up under each other.
 fn resource_row(kind: Resource, picture: Handle<Image>, tint: Color) -> impl Bundle {
     (
@@ -738,6 +754,7 @@ fn resource_row(kind: Resource, picture: Handle<Image>, tint: Color) -> impl Bun
             width: Val::VMin(RESOURCE_ROW),
             align_items: AlignItems::Center,
             column_gap: Val::VMin(1.4),
+            padding: UiRect::left(Val::VMin(1.0)),
             ..default()
         },
         Pickable::IGNORE,
@@ -758,7 +775,7 @@ fn resource_row(kind: Resource, picture: Handle<Image>, tint: Color) -> impl Bun
 }
 
 /// Writes each resource's count beside its picture, as it changes and on a
-/// row put up afresh.
+/// row put up afresh: the metres of bridge left as "100m".
 fn show_resources(
     stock: Res<Resources>,
     added: Query<(), Added<ResourceCount>>,
@@ -768,7 +785,7 @@ fn show_resources(
         return;
     }
     for (count, mut text) in &mut counts {
-        let number = stock.of(count.0).to_string();
+        let number = stock.of(count.0);
         if text.0 != number {
             text.0 = number;
         }
@@ -1475,7 +1492,9 @@ pub(crate) fn sword() -> Image {
 }
 
 /// A bag, for Bridge Wars' inventory button: a round sack with its neck
-/// tied, flaring out over the tie.
+/// tied, flaring out over the tie. The button went on 2026-11-09, for the
+/// minimap; the picture stays for when there is an inventory.
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn bag() -> Image {
     const ROUND: f32 = 0.03;
     let neck = [

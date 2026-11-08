@@ -197,16 +197,19 @@ fn spawn(
 /// else, in the car, while you are dead, or with no body to stand round.
 fn follow(
     driving: Res<drive::Driving>,
+    bridging: Res<crate::bridge::Bridging>,
     me: Query<(&Transform, &Venue, Has<Dead>), With<Player>>,
     mut ranges: Query<(&mut Transform, &mut Visibility), (With<HitRange>, Without<Player>)>,
 ) {
     let Ok((mut place, mut shown)) = ranges.single_mut() else {
         return;
     };
+    // Nor while you carry a plank, there being no punch to show the range
+    // of (`bridge`; Hajun, 2026-11-09: "remove the hit indicator").
     let body = me
         .single()
         .ok()
-        .filter(|&(_, &here, dead)| here == Venue::Arena && !driving.on() && !dead)
+        .filter(|&(_, &here, dead)| here == Venue::Arena && !driving.on() && !dead && !bridging.0)
         .map(|(body, ..)| body);
     shown.set_if_neq(if body.is_some() { Visibility::Inherited } else { Visibility::Hidden });
     let Some(body) = body else {

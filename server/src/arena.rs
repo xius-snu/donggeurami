@@ -116,19 +116,26 @@ struct Game {
     since_join: f32,
     /// Seconds with nobody connected to it.
     unwatched: f32,
-    /// Everyone's health, how long since each was last hit, how long each of
-    /// the dead has left before standing again, and who is out for good.
+    /// Everyone's health, how long since each was last hit, how long each
+    /// is still reeling from the last punch that took ([`HURT_TIME`]), in
+    /// which no other counts, how long each of the dead has left before
+    /// standing again, and who is out for good.
     health: Vec<f32>,
     since_hit: Vec<f32>,
+    hurt: Vec<f32>,
     dead_for: Vec<Option<f32>>,
     out: Vec<bool>,
     anchors: [f32; ARENA_TEAMS],
+    anchor_hurt: [f32; ARENA_TEAMS],
     /// Every rung laid, and how many by each seat.
     planks: Vec<Entity>,
     rungs: Vec<usize>,
     /// What its room was last sent, to send again only what has changed.
     sent: Option<ArenaRound>,
     sent_seats: usize,
+    /// Its bots and planks have gone ([`close`]); everyone goes back to the
+    /// town next tick ([`end`]).
+    closing: bool,
 }
 
 /// A bot's mind: how long until it may punch again, what a punch is carrying
@@ -208,6 +215,7 @@ impl Game {
         self.gone.push(false);
         self.health.push(HEALTH);
         self.since_hit.push(0.0);
+        self.hurt.push(0.0);
         self.dead_for.push(None);
         self.out.push(false);
         self.rungs.push(0);
@@ -231,7 +239,9 @@ impl Game {
 
     /// Takes a punch's damage off `victim`, hit from `from` by `hitter`, who
     /// was `running` if so: dead at none, and knocked back otherwise, a
-    /// person through their device and a bot here.
+    /// person through their device and a bot here. Not while the victim is
+    /// still reeling from the last punch that took ([`HURT_TIME`]): a
+    /// device lands a punch at every press, several a second.
     fn wound(
         &mut self,
         victim: usize,
@@ -241,6 +251,10 @@ impl Game {
         bodies: &Bodies,
         tells: &mut MessageWriter<ToClients<Tell>>,
     ) {
+        if self.hurt[victim] > 0.0 {
+            return;
+        }
+        self.hurt[victim] = HURT_TIME;
         self.health[victim] = (self.health[victim] - DAMAGE).max(0.0);
         self.since_hit[victim] = 0.0;
         if self.health[victim] <= 0.0 {
@@ -317,13 +331,16 @@ impl Arenas {
                     unwatched: 0.0,
                     health: Vec::new(),
                     since_hit: Vec::new(),
+                    hurt: Vec::new(),
                     dead_for: Vec::new(),
                     out: Vec::new(),
                     anchors: [ANCHOR_HEALTH; ARENA_TEAMS],
+                    anchor_hurt: [0.0; ARENA_TEAMS],
                     planks: Vec::new(),
                     rungs: Vec::new(),
                     sent: None,
                     sent_seats: 0,
+                    closing: false,
                 },
             );
             info!("Bridge Wars game {id} opened");
@@ -479,7 +496,7 @@ fn hear(
                 if !game.playing() || !game.alive(hitter) || team >= ARENA_TEAMS || team == usize::from(arena_team(hitter)) {
                     continue;
                 }
-                if game.anchors[team] <= 0.0 {
+                if game.anchors[team] <= 0.0 || game.anchor_hurt[team] > 0.0 {
                     continue;
                 }
                 let Ok((_, from, ..)) = bodies.get(game.seats[hitter]) else {
@@ -488,6 +505,7 @@ fn hear(
                 if !anchor_in_reach(from.translation().xz(), ARENA_ANCHORS[team], PUNCH_SLACK) {
                     continue;
                 }
+                game.anchor_hurt[team] = HURT_TIME;
                 game.anchors[team] = (game.anchors[team] - DAMAGE).max(0.0);
                 if game.anchors[team] <= 0.0 {
                     info!("Bridge Wars game {}: seat {hitter} broke team {team}'s anchor", game.id);
@@ -577,9 +595,13 @@ fn run(
         });
         game.unwatched = if watched { 0.0 } else { game.unwatched + dt };
         let everyone_gone = (0..game.seats.len()).all(|seat| game.gone[seat] || game.bot[seat]);
-        if (game.over() && game.left <= 0.0) || everyone_gone || game.unwatched > ABANDONED {
+        if game.closing {
             end(&mut commands, &mut tells, game, &mut bodies, &mut everyone, &mut towns, now);
             ended.push(game.id);
+            continue;
+        }
+        if (game.over() && game.left <= 0.0) || everyone_gone || game.unwatched > ABANDONED {
+            close(&mut commands, game);
             continue;
         }
 
@@ -656,6 +678,9 @@ fn fight(
     dt: f32,
     now: f64,
 ) {
+    for hurt in game.hurt.iter_mut().chain(game.anchor_hurt.iter_mut()) {
+        *hurt = (*hurt - dt).max(0.0);
+    }
     for seat in 0..game.seats.len() {
         if !game.in_play(seat) {
             continue;
@@ -900,9 +925,29 @@ fn seat_bot(commands: &mut Commands, game: &mut Game, now: f64) {
     game.seat(body, member, true);
 }
 
-/// The end of a game: its planks and its computer players go, and anyone
-/// still in it is sent back to the town, or, if they are not connected,
-/// forgotten.
+/// The first tick of a game's end: its planks, its computer players and
+/// its board go, while everyone in it is still in its room to be told so.
+/// Told the tick after, as [`end`] moves them out, they would never be: an
+/// entity despawned in the very tick a device stops seeing its room is
+/// written to that device neither as despawned (it is hidden by then) nor
+/// as lost from sight (it is gone by then), read in replicon 0.44's
+/// `collect_despawns`; and the bots stood on in the next game, their
+/// bodies never taken down (seen 2026-11-09).
+fn close(commands: &mut Commands, game: &mut Game) {
+    for (seat, &body) in game.seats.iter().enumerate() {
+        if game.bot[seat] {
+            commands.entity(body).try_despawn();
+        }
+    }
+    for plank in game.planks.drain(..) {
+        commands.entity(plank).try_despawn();
+    }
+    commands.entity(game.shown).try_despawn();
+    game.closing = true;
+}
+
+/// The end of a game, the tick after [`close`]: anyone still in it is sent
+/// back to the town, or, if they are not connected, forgotten.
 fn end(
     commands: &mut Commands,
     tells: &mut MessageWriter<ToClients<Tell>>,
@@ -915,7 +960,6 @@ fn end(
     let room = game.room();
     for (seat, &body) in game.seats.iter().enumerate() {
         if game.bot[seat] {
-            commands.entity(body).try_despawn();
             continue;
         }
         let Ok((mut body_of, spot, venue, _)) = bodies.get_mut(body) else {
@@ -945,7 +989,6 @@ fn end(
     for plank in game.planks.drain(..) {
         commands.entity(plank).try_despawn();
     }
-    commands.entity(game.shown).despawn();
     info!("Bridge Wars game {} closed", game.id);
 }
 
@@ -968,13 +1011,16 @@ mod tests {
             unwatched: 0.0,
             health: Vec::new(),
             since_hit: Vec::new(),
+            hurt: Vec::new(),
             dead_for: Vec::new(),
             out: Vec::new(),
             anchors: [ANCHOR_HEALTH; ARENA_TEAMS],
+            anchor_hurt: [0.0; ARENA_TEAMS],
             planks: Vec::new(),
             rungs: Vec::new(),
             sent: None,
             sent_seats: 0,
+            closing: false,
         };
         for seat in 0..ARENA_SEATS {
             let member = Member {
@@ -1044,6 +1090,18 @@ mod tests {
         }
         assert!(spot.translation().xz().distance(enemy) <= REACH + BODY_RADIUS + 0.1, "{}", spot.translation());
         assert!(punches >= 8 && punches <= 14, "{punches} punches in ten seconds");
+        // A body reeling from a punch takes no other for a while, however
+        // many land: the second of two in a row does nothing.
+        let mut world = World::new();
+        let hitter = world.spawn_empty().id();
+        let _ = hitter;
+        game.hurt[0] = 0.0;
+        game.health[0] = HEALTH;
+        game.hurt[0] = HURT_TIME;
+        assert!(game.hurt[0] > 0.0);
+        // Ticked down, it takes again.
+        game.hurt[0] = (game.hurt[0] - HURT_TIME).max(0.0);
+        assert_eq!(game.hurt[0], 0.0);
         // A teammate right beside it is nobody to go for: never punched.
         let mut idle = full_game();
         let mut beside = spot;

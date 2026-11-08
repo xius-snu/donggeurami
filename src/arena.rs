@@ -80,6 +80,7 @@
 //! [`InArena`] and goes when the game does. Your own body is the only thing
 //! that comes back.
 
+
 use bevy::camera::primitives::Aabb;
 use bevy::gltf::GltfMaterialName;
 use bevy::prelude::*;
@@ -257,22 +258,26 @@ pub(crate) enum Resource {
     Emerald,
 }
 
-/// How much of each resource you hold. Nothing gives any yet.
+/// How much of each resource you hold: the metres of bridge you have left
+/// to lay (`bridge`; the file's `arena.bridge_metres` as a game begins,
+/// shown by the log as "100m"; since 2026-11-09, Hajun: "players will buy
+/// the bridge by meter count"), and the rest, which nothing gives yet.
 #[derive(bevy::prelude::Resource, Default)]
 pub(crate) struct Resources {
-    pub wood: u32,
+    pub bridge_metres: f32,
     pub gold: u32,
     pub diamond: u32,
     pub emerald: u32,
 }
 
 impl Resources {
-    pub(crate) fn of(&self, kind: Resource) -> u32 {
+    /// What is shown beside `kind`'s picture.
+    pub(crate) fn of(&self, kind: Resource) -> String {
         match kind {
-            Resource::Wood => self.wood,
-            Resource::Gold => self.gold,
-            Resource::Diamond => self.diamond,
-            Resource::Emerald => self.emerald,
+            Resource::Wood => format!("{}m", self.bridge_metres.max(0.0).round()),
+            Resource::Gold => self.gold.to_string(),
+            Resource::Diamond => self.diamond.to_string(),
+            Resource::Emerald => self.emerald.to_string(),
         }
     }
 }
@@ -303,8 +308,11 @@ struct Game {
     view: Option<View>,
     /// Everyone's health as last seen, online, to notice a hit by.
     health: Vec<f32>,
-    /// Each team's respawn anchor: what is left of it, 0 broken.
+    /// Each team's respawn anchor: what is left of it, 0 broken; and how
+    /// long each is still reeling from the last punch that took, in which
+    /// no other counts (`melee.hurt_time`, as a body is).
     anchors: [f32; ARENA_TEAMS],
+    anchor_hurt: [f32; ARENA_TEAMS],
     /// The seats out for good: dead with their anchor broken.
     out: [bool; ARENA_SEATS],
 }
@@ -456,17 +464,12 @@ struct DamageNumber {
     age: f32,
 }
 
-/// The panel in the middle of the screen with Play again and Exit on it:
-/// when you are out, and at the end.
-#[derive(Component, Clone, Copy, PartialEq, Eq, Debug)]
-enum Panel {
-    Out,
-    End,
-}
-/// The line on the end's panel saying how long until you are back in the
-/// town.
+/// The panel in the middle of the screen with Play again and Exit on it,
+/// while you are out. (The end had one too for a day; Hajun found a
+/// "times up popup" in the way and had it taken out, 2026-11-09: the end
+/// is a headline now.)
 #[derive(Component)]
-struct PanelCountdown;
+struct Panel;
 
 /// Bridge Wars' reading of taps and the game they drive: ahead of your own
 /// walking, and of the islands being shown, so that wherever it sends you
@@ -703,7 +706,7 @@ fn hear(
 fn follow_round(
     game: Option<ResMut<Game>>,
     rounds: Query<(&ArenaRound, &Seats), With<Remote>>,
-    mut me: Query<(Entity, &Transform, &mut Health, Has<Dead>), With<Player>>,
+    mut me: Query<(Entity, &Transform, &mut Health, Option<&Dead>), With<Player>>,
     mut others: Query<
         (Entity, &Member, &Transform, Option<&mut Health>, Has<Dead>),
         (With<Remote>, With<WalkCycle>, Without<Player>),
@@ -734,6 +737,11 @@ fn follow_round(
     if matches!(stage, Stage::Playing { .. }) && !matches!(was, Stage::Playing { .. }) {
         hud::announce(&mut commands, None, &ui().words.arena.fight, hud::HEADLINE, FIGHT_SECS).insert(InArena);
     }
+    if let Stage::Over { winner, .. } = stage
+        && !matches!(was, Stage::Over { .. })
+    {
+        announce_result(&mut commands, game.my_team(), winner);
+    }
     for (team, anchor) in round.anchors.iter().enumerate() {
         game.anchors[team] = f32::from(*anchor);
     }
@@ -755,8 +763,13 @@ fn follow_round(
                 if left < before {
                     spawn_number(&mut commands, at.translation, before - left);
                 }
-                if left <= 0.0 && !dead {
-                    let dead = if game.out[game.me] {
+                // Dead, as the server says: counting down to standing
+                // again, or out for good. A fall marks you dead here first
+                // ([`reap`]); the server's word on which it is wins.
+                let out = game.out[game.me];
+                let waiting = dead.is_some_and(|dead| dead.left.is_finite());
+                if left <= 0.0 && (dead.is_none() || (out && waiting)) {
+                    let dead = if out {
                         Dead { left: f32::INFINITY }
                     } else {
                         Dead { left: rules::RESPAWN_SECS }
@@ -975,6 +988,7 @@ fn play(
             game.stage = match winner {
                 Some(winner) => {
                     info!("Bridge Wars: over, team {winner:?} wins");
+                    announce_result(&mut commands, game.my_team(), winner);
                     Stage::Over {
                         winner,
                         left: RESULTS_SECS,
@@ -1022,6 +1036,11 @@ fn open(
         .entity(you)
         .insert((Seat(me), Team(arena_team(me)), Health::of(full)))
         .remove::<Dead>();
+    // What you have to build with: the file's metres of bridge.
+    commands.insert_resource(Resources {
+        bridge_metres: ui().arena.bridge_metres,
+        ..default()
+    });
     spawn_board(commands);
     spawn_anchor_bars(commands, arena_team(me));
     hud::announce(commands, None, &ui().words.arena.name, hud::HEADLINE, NAME_SECS).insert(InArena);
@@ -1041,9 +1060,26 @@ fn open(
         view,
         health: Vec::new(),
         anchors: [if online { rules::ANCHOR_HEALTH } else { ui().arena.anchor_health }; ARENA_TEAMS],
+        anchor_hurt: [0.0; ARENA_TEAMS],
         out: [false; ARENA_SEATS],
     }
 }
+
+/// Says how the game went across the screen as it ends: for you, over who
+/// won, or that the time ran out.
+fn announce_result(commands: &mut Commands, my_team: u8, winner: Option<u8>) {
+    let words = &ui().words.arena;
+    let title = match winner {
+        Some(team) if team == my_team => words.victory.clone(),
+        Some(_) => words.defeat.clone(),
+        None => words.times_up.clone(),
+    };
+    let caption = winner.map(|team| fill(&words.team_wins, &[("team", &team_name(team))]));
+    hud::announce(commands, caption.as_deref(), &title, hud::HEADLINE, RESULT_SECS).insert(InArena);
+}
+
+/// How long the result is across the screen, in seconds.
+const RESULT_SECS: f32 = 4.0;
 
 /// The end of a game here: everything it put up goes, your health and your
 /// team with it, the anchors stand again, the camera goes back to how it
@@ -1270,7 +1306,11 @@ fn reap(
         }
         if game.online {
             if mine {
-                commands.entity(body).insert(Dead { left: f32::INFINITY });
+                // Counting down to standing again if the anchor stands,
+                // for the eye; the server has the last word.
+                let anchor = game.anchors[usize::from(arena_team(seat.0))];
+                let left = if anchor > 0.0 { rules::RESPAWN_SECS } else { f32::INFINITY };
+                commands.entity(body).insert(Dead { left });
                 requests.write(NetAsk::Respawn);
                 info!("fell into the void");
             } else if !remote {
@@ -1316,8 +1356,10 @@ fn deal_damage(
 /// Lands every punch you throw ([`Swung`]) on an enemy team's anchor in its
 /// range, as it would land on a body that wide, while the game is on: the
 /// damage off the anchor offline, or asked of the server online, and a
-/// number off the pillar either way.
+/// number off the pillar either way. No oftener than a body takes a punch
+/// (`melee.hurt_time`): a press lands one every frame otherwise.
 fn hit_anchors(
+    time: Res<Time>,
     mut swings: MessageReader<Swung>,
     game: Option<ResMut<Game>>,
     mut requests: MessageWriter<NetAsk>,
@@ -1331,6 +1373,10 @@ fn hit_anchors(
         swings.clear();
         return;
     }
+    let dt = time.delta_secs();
+    for hurt in &mut game.anchor_hurt {
+        *hurt = (*hurt - dt).max(0.0);
+    }
     let file = ui();
     let sector = Sector::of(&file.melee);
     let damage = file.arena.damage;
@@ -1340,13 +1386,14 @@ fn hit_anchors(
             continue;
         }
         for team in 0..ARENA_TEAMS {
-            if team as u8 == my_team || game.anchors[team] <= 0.0 {
+            if team as u8 == my_team || game.anchors[team] <= 0.0 || game.anchor_hurt[team] > 0.0 {
                 continue;
             }
             let anchor = ARENA_ANCHORS[team];
             if !sector.holds(swing.facing, anchor - swing.at, ANCHOR_RADIUS) {
                 continue;
             }
+            game.anchor_hurt[team] = file.melee.hurt_time;
             spawn_number(&mut commands, Vec3::new(anchor.x, 1.2, anchor.y), damage);
             if game.online {
                 requests.write(NetAsk::HitAnchor { team: team as u8 });
@@ -1571,76 +1618,33 @@ fn died_in(left: f32) -> String {
     fill(&ui().words.arena.died, &[("seconds", &seconds)])
 }
 
-/// Keeps the panel in the middle of the screen as the game stands: the
-/// end's, with how it went and how long until the town, while the result
-/// is up; yours alone, saying you are out, while you are dead for good
-/// before that; and none otherwise. Both have Play again and Exit.
-fn show_panel(
-    game: Option<Res<Game>>,
-    panels: Query<(Entity, &Panel)>,
-    mut countdowns: Query<&mut Text, With<PanelCountdown>>,
-    mut commands: Commands,
-) {
-    let wanted = game.as_deref().and_then(|game| match game.stage {
-        Stage::Over { .. } => Some(Panel::End),
-        _ if game.out.get(game.me).copied().unwrap_or(false) => Some(Panel::Out),
-        _ => None,
-    });
+/// Keeps the panel in the middle of the screen while you are out for good,
+/// with Play again and Exit on it, and none otherwise.
+fn show_panel(game: Option<Res<Game>>, panels: Query<Entity, With<Panel>>, mut commands: Commands) {
+    let wanted = game.as_deref().is_some_and(|game| game.out.get(game.me).copied().unwrap_or(false));
     let up = panels.single().ok();
-    if up.map(|(_, kind)| *kind) != wanted {
-        if let Some((panel, _)) = up {
-            commands.entity(panel).despawn();
-        }
-        if let (Some(kind), Some(game)) = (wanted, game.as_deref()) {
-            spawn_panel(&mut commands, kind, game);
-        }
-        return;
-    }
-    if let (Some(Panel::End), Some(game)) = (wanted, game.as_deref())
-        && let Stage::Over { left, .. } = game.stage
-    {
-        let line = fill(&ui().words.arena.back_in, &[("time", &clock(left))]);
-        for mut text in &mut countdowns {
-            if text.0 != line {
-                text.0.clone_from(&line);
-            }
-        }
+    match (wanted, up) {
+        (true, None) => spawn_panel(&mut commands),
+        (false, Some(panel)) => commands.entity(panel).despawn(),
+        _ => {}
     }
 }
 
-/// The panel of `kind` for `game`: its title, its line, and Play again and
-/// Exit. Not a dialog: the world goes on round it, and only a press on it
-/// is its own.
-fn spawn_panel(commands: &mut Commands, kind: Panel, game: &Game) {
+/// The panel saying you are out: its title, its line, and Play again and
+/// Exit, in the middle of the screen. Not a dialog: the world goes on
+/// round it, and only a press on it is its own.
+fn spawn_panel(commands: &mut Commands) {
     let ui = ui();
     let (colours, words) = (ui.colours, &ui.words.arena);
-    let (title, line) = match (kind, game.stage) {
-        (Panel::Out, _) => (words.out.clone(), words.anchor_gone.clone()),
-        (Panel::End, Stage::Over { winner, left }) => {
-            let title = match winner {
-                Some(team) if team == game.my_team() => words.victory.clone(),
-                Some(_) => words.defeat.clone(),
-                None => words.times_up.clone(),
-            };
-            let line = match winner {
-                Some(team) => fill(&words.team_wins, &[("team", &team_name(team))]),
-                None => fill(&words.back_in, &[("time", &clock(left))]),
-            };
-            (title, line)
-        }
-        (Panel::End, _) => (words.times_up.clone(), String::new()),
-    };
     commands
         .spawn((
             InArena,
-            kind,
+            Panel,
             TakesPress,
             Node {
                 position_type: PositionType::Absolute,
-                left: Val::ZERO,
-                right: Val::ZERO,
+                left: Val::Percent(50.0),
                 top: Val::Vh(26.0),
-                margin: UiRect::horizontal(Val::Auto),
                 width: Val::VMin(PANEL_WIDTH),
                 flex_direction: FlexDirection::Column,
                 align_items: AlignItems::Center,
@@ -1649,22 +1653,14 @@ fn spawn_panel(commands: &mut Commands, kind: Panel, game: &Game) {
                 border_radius: BorderRadius::all(Val::VMin(3.5)),
                 ..default()
             },
+            // Half its own width back, so that it is centred.
+            UiTransform::from_translation(Val2::new(Val::Percent(-50.0), Val::ZERO)),
             BackgroundColor(colours.house_builder.results),
             GlobalZIndex(builder::DIALOG_LAYER - 1),
         ))
         .with_children(|panel| {
-            panel.spawn(hud::words(title, PANEL_TITLE, colours.gold));
-            panel.spawn(builder::label(line, PANEL_TEXT, colours.text));
-            if kind == Panel::End {
-                let left = match game.stage {
-                    Stage::Over { left, .. } => left,
-                    _ => RESULTS_SECS,
-                };
-                panel.spawn((
-                    PanelCountdown,
-                    builder::label(fill(&words.back_in, &[("time", &clock(left))]), PANEL_TEXT * 0.85, colours.text_soft),
-                ));
-            }
+            panel.spawn(hud::words(words.out.clone(), PANEL_TITLE, colours.gold));
+            panel.spawn(builder::label(words.anchor_gone.clone(), PANEL_TEXT, colours.text));
             panel
                 .spawn((
                     Node {
@@ -2278,7 +2274,8 @@ mod tests {
             stage: Stage::Playing { left: 100.0 },
             view: None,
             health: Vec::new(),
-            anchors: [240.0; ARENA_TEAMS],
+            anchors: [120.0; ARENA_TEAMS],
+            anchor_hurt: [0.0; ARENA_TEAMS],
             out: [false; ARENA_SEATS],
         };
         assert_eq!(game.my_team(), 0);

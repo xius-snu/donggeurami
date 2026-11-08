@@ -272,7 +272,12 @@ alone; the server is `cargo build -p roundtown_server`. Never `--workspace`,
 which would build the game with the server's half of replicon in it.
 
 Android needs the `release-android` profile, a manual strip step, and Gradle
-(`versionCode` in `mobile/android/app/build.gradle` is the build number: 11
+(`versionCode` in `mobile/android/app/build.gradle` is the build number: 12
+on 2026-11-09, the bridges a mitred ribbon, the minimap, the metres of
+bridge, the resources under the health bar, half a second past hurting on
+the server, the anchors at 120 (protocol 10 still; the server deployed the
+same day with its two-tick game end, the binary before kept on the VM as
+`roundtown-server.prev-2026-11-09`); 11
 on the night of 2026-11-08, Bridge Wars online with eight seats in teams,
 respawn anchors and bridges built by walking (protocol 10); 10 that
 afternoon, the fight's minor things (dead bots hidden, fleeing, regen); 9
@@ -559,12 +564,32 @@ holds for the arena now.
     as before, and the server takes 12 off whoever it landed on, if they are
     not on your team and within 6.5 m of where you each last said you stood,
     knocks a person through `Tell::Knocked` and a bot itself; a fall into
-    the void is `Ask::Respawn`, which the server answers with a death. The
+    the void is `Ask::Respawn`, which the server answers with a death. **A
+    body punched is past hurting for half a second on the server too**
+    (`HURT_TIME`, `Game::wound`, and an anchor the same, `anchor_hurt`;
+    since 2026-11-09, Hajun: the bots "seem to get knocked back too much
+    by me maybe cuz i can hit them multiple times before they process it
+    networkly": for a night the server took every punch that landed, as
+    many as the presses came, where the device had kept to two knocks a
+    second since 2026-11-07, "The punch knocks whoever it lands on back"). The
     rules both sides play by are `roundtown_net::bridge_wars` (health 100,
-    damage 12, anchor 240, respawn 4 s, regen 4 a second after 5 s, run 10,
-    sight 24, a bot's punch every 0.8 s, flee under 20%, fall 30 m);
-    `assets/ui.ron`'s `arena` has the same numbers for offline, with
-    `anchor_health` added, and rules offline alone. **The server's bots**
+    damage 12, anchor 120, hurt 0.5 s, respawn 4 s, regen 4 a second after
+    5 s, run 10, sight 24, a bot's punch every 0.8 s, flee under 20%, fall
+    30 m, the end's 6 s); `assets/ui.ron`'s `arena` has the same numbers
+    for offline, with `anchor_health` and `bridge_metres` added, and rules
+    offline alone. **A game ends over two ticks** (`close`, then `end`, in
+    `server/src/arena.rs` and `server/src/builder.rs` alike, since
+    2026-11-09): its bots, planks or pieces and board are despawned first,
+    while everyone in it is still in its room to be told so, and everyone
+    is moved back to the town the tick after. Done in one tick, as for a
+    night, the devices were never told: replicon 0.44 writes a despawn
+    only to a device the entity is not hidden from by then, and a loss of
+    sight only for an entity still there (`collect_despawns`), and the
+    seven bots of the game before stood on the islands through the next
+    game, bodies and health bars, with a teammate's green dot on the
+    minimap; House Builder's bots had stood on its plots the same way
+    since 2026-10-08, out of sight in the town. Checked with a scripted
+    second game: no body left. **The server's bots**
     (`server/src/arena.rs`, `Mind`, `think`) have no map: each keeps to the
     disc of its island (`ARENA_ISLAND_RADIUS` 10.4 m), runs at whoever of
     another team comes within 24 m on or beside it, punches in reach,
@@ -588,7 +613,8 @@ holds for the arena now.
     (`roundtown_net::ARENA_ANCHORS`, read by hand off the `spawn` material's
     pillars, which a test checks, `ANCHOR_RADIUS` 0.85): a bar over it
     (`arena::AnchorBar`, your team's in `colours.arena.anchor_mine`, the
-    rest in `anchor_enemy`), 240 of health, twenty punches. A punch of
+    rest in `anchor_enemy`), 120 of health, ten punches (240 and twenty for
+    a night, until Hajun asked for "1/2 of now", 2026-11-09). A punch of
     yours lands on an enemy anchor in its range as on a body that wide
     (`arena::hit_anchors`, off a new `Swung` message `start_punch` writes
     for every punch), never your own; broken, the pillar is hidden and
@@ -600,11 +626,17 @@ holds for the arena now.
     the body stays hidden and a panel comes up in the middle of the screen
     (`arena::Panel::Out`: "You're out!", "Your respawn anchor is gone.",
     Play again and Exit). The last team with anyone in play wins, or nobody
-    when the time runs out: the end's panel (`Panel::End`: "Victory!",
-    "Defeat" or "Time's up!", who won, "Back to the town in", the same two
-    buttons) is up for 15 s and everyone is back in the town. Play again
-    is another game (offline a new one at once; online `Ask::Arena` again),
-    Exit the town (`Ask::Leave` online). The words are `words.arena`'s.
+    when the time runs out: a headline across the middle of the screen
+    ("Victory!", "Defeat" or "Time's up!", with who won under it,
+    `arena::announce_result`, `RESULT_SECS` 4 s), and 6 s after the end
+    (`bridge_wars::RESULTS_SECS`) everyone is back in the town. For a night
+    the end was a panel (`Panel::End`, up 15 s, "Back to the town in" and
+    the two buttons), which Hajun took for a stray popup (2026-11-09: "idk
+    why there is a times up popup that appears near the end of the bridge
+    game and it appears on the left side of the screen. remove that"). Play
+    again is another game (offline a new one at once; online `Ask::Arena`
+    again), Exit the town (`Ask::Leave` online), both on the Out panel
+    alone. The words are `words.arena`'s.
   - **Everyone else's name is over their health bar** (`arena::TagOf`,
     `spawn_tag`; `tags` shows no names in the arena): small (2.4 shares of
     the short side) and faint, a teammate's in `colours.arena.ally` over a
@@ -615,41 +647,105 @@ holds for the arena now.
     toggles building (`bridge::Bridging`, the button lit while on). On, you
     carry a plank (`Carrying` in `src/lib.rs`: both arms held out a little
     under level, `CARRY_REACH` 1.45 rad, with a board 1.1 by 0.5 m lying
-    across them, `HeldPlank`, a child of your body), and every frame before
-    you move (`bridge::lay`, between `start_punch` and `move_bodies`) the
-    ground `AHEAD` of your step is looked at: over the void, a plank is laid
-    under it, as Hajun's own notes had it. A bridge is a chain of rungs (a
-    point and a heading each), a plank between every two: 2.726 m wide and
-    0.25 m thick, Hajun's `bridge` object's measure from their export that
-    evening, its top at 0.24 m (the islands' 0.25 less a seam, so that the
-    overlap at the root hides under the island and the join is the edge
-    itself), each rung a plank's width on from the last (`SPACING`, Hajun's
-    `s >= 2w`, so a fork fits against one plank's side), turned no more than
-    30 degrees from the rung before (`MAX_TURN`), so that the bridge curves
-    as you walk round. Leaving the ground, the first rung lies on its very
+    across them, `HeldPlank`, a child of your body), walk at half your pace
+    (`bridge::CARRY_SLOW`, in `read_player_input`), throw no punch
+    (`start_punch`) and show no hit range (`range::follow`; the three
+    since 2026-11-09, Hajun: "when bride mode is toggled, decrease player
+    speed to 1/2 and also remove the hit indicator and also dont allow
+    punching"), and every frame before you move (`bridge::lay`, between
+    `start_punch` and `move_bodies`) the ground `AHEAD` of your step is
+    looked at: over the void, a plank is laid under it, as Hajun's own
+    notes had it. A bridge is a chain of rungs (a point and a heading
+    each), a plank between every two: 2.726 m wide and 0.25 m thick,
+    Hajun's `bridge` object's measure from their export of 2026-11-08, its
+    top at 0.24 m (the islands' 0.25 less a seam, so that the overlap at
+    the root hides under the island and the join is the edge itself; and
+    up to 7 mm under that by chain, `top_of`, the same on every device, so
+    that two chains crossing never flicker through each other), each rung
+    half a plank's width on from the last (`SPACING`, 1.363 m: the boards
+    of a dock, which follow a curve closely; a whole width for a night,
+    Hajun's `s >= 2w`). **The bridge is a ribbon laid under where you
+    walk** (since 2026-11-09, Hajun, of the night's version: "when i am
+    like on the edge of the bridge or when i turn too much it looks weird
+    and choppy. think of a smart way to make briding feel good and look
+    good no matter what"): the chain you are building has a tip plank not
+    fixed yet, from the last fixed rung to `AHEAD` (1.05 m) past you,
+    re-aimed at you every frame and drawn again every frame it moves, so
+    that whichever way you step over the void there is a plank under you;
+    each time you are a plank's length past the last fixed rung, a rung is
+    fixed on the line toward you, so the fixed planks trace the path you
+    walked; each joint is mitred (`corners_of`: the corners across the
+    bisector of the two planks meeting there, `1 / cos(turn / 2)` wider,
+    so the planks share their edges and neither gap nor overlap), turned
+    no more than 35 degrees a rung (`MAX_TURN`: a plank with a mitre at
+    both ends folds, its inner edge gone, once `2 * HALF_WIDTH * tan(turn /
+    2)` passes `SPACING`; 35 degrees leaves a tenth; the bridge turns
+    round in about 2.3 m, and walking a tighter circle you walk off the
+    tip's side), and a mitre that would reach past a short plank's end is
+    drawn in instead. Leaving the ground, the first rung lies on its very
     edge headed straight out from it (the edge found by bisection, the way
-    out by sampling the ground round it), its corners pulled onto the edge
-    (`corners_of`); walking off a plank's side, anyone's, a fork begins
-    flush against that side; walking the far end of your own unfinished
-    chain grows it; and where the next plank would reach land the chain
-    ends on the land's edge headed into it, with a rung between first at a
-    turn over 80 degrees. The planks are ground: their shape is laid over
+    out by sampling the ground round it); walking off a plank's side,
+    anyone's, a fork begins flush against that side (a chain of nothing
+    but its root is forgotten as you step back, so brushing an edge builds
+    nothing); walking the far end of your own unfinished chain grows it;
+    and where you step onto land, or onto another bridge, past where the
+    chain began, it ends on that edge, headed at where you stepped onto
+    it, with a rung there if the edge is half a plank's length or more
+    from the last (`MIN_LAND`: nearer, the chain ends on its last rung, as
+    a plank shorter than its own mitre would fold). A corner over the void
+    at the root or at the end is pushed out onto the shore (`onto_edge`,
+    `shore_ahead`, within `ONTO_EDGE` 2.7 m), so that the bridge meets the
+    edge exactly however it curves; one over land stays, hidden under the
+    land, which is higher: for a night the corners were pulled onto the
+    edge both ways, and pulled in past a short last plank's start they
+    folded it (a test caught a top face turned down). Turning building
+    off, or dying, fixes the tip where it is if it is a plank's worth.
+    **Every plank costs its length in metres of bridge** (Hajun: "players
+    will buy the bridge by meter count ... for now make each person start
+    with 100m of briding so show '100m' as the number next to the log"):
+    `arena.bridge_metres` in `assets/ui.ron` to start, 100,
+    `arena::Resources::bridge_metres`, shown by the log top left and taken
+    as each rung is fixed; with less than a plank's length left no chain
+    begins and no rung is fixed, and the tip, never shorter than `AHEAD`,
+    runs out under you. The planks are ground: their shape is laid over
     the island's (`Island::lay_over`, `Islands::lay_over`, `overlay`: a
     second shape every question of the island is asked of too, so that
-    50,000 triangles are never read again for a plank), and you, the bots
-    (offline) and everyone stand on them and fall off their sides. Online
-    every rung goes to the server as it is laid (`Ask::Rung`), and comes
-    back to everyone as a `Plank` (`bridge::hear_planks`, out of order
-    allowed), yours left out. Each chain is one mesh coloured by vertex
-    (`colours.arena.plank` on top, `plank_side` under and at the sides),
-    the ends open but for an unfinished tip's cap. Nothing is taken up
-    again; the bridges go with the game. Hajun's `bridge` object was taken
-    out of `pvptownmap.blend` (saved without a `.blend1` of mine) and the
-    map exported again with Apply Modifiers (62 objects, 50,130 triangles,
-    no image: the plank texture went with the bridges). Seen in the desktop
-    build, scripted: a bridge off the island's edge, curving with the walk,
-    the feet on it at 0.24 the whole way, and one 180 m to the west island
-    landing on its edge; not yet by hand or on a phone.
+    50,000 triangles are never read again for a plank; laid again once
+    the tip has moved 0.2 m or turned 0.05 rad, `OVERLAY_MOVE`,
+    `OVERLAY_TURN`, as the minimap is drawn again, `Bridges::version`),
+    and you, the bots (offline) and everyone stand on them and fall off
+    their sides. Online every rung goes to the server as it is fixed
+    (`Ask::Rung`), and comes back to everyone as a `Plank`
+    (`bridge::hear_planks`, out of order allowed), yours left out; the tip
+    is yours alone. Each chain is one mesh coloured by vertex
+    (`colours.arena.plank` on top, every other plank a shade lighter,
+    `plank_side` under and at the sides), the ends open but for an
+    unfinished tip's cap. Nothing is taken up again; the bridges go with
+    the game. Hajun's `bridge` object was taken out of `pvptownmap.blend`
+    (saved without a `.blend1` of mine) and the map exported again with
+    Apply Modifiers (62 objects, 50,130 triangles, no image: the plank
+    texture went with the bridges). Seen in the desktop build, scripted
+    (2026-11-09): a bridge off the island's edge wobbling and turning
+    sharply with the walk, smooth all the way, the feet on it at 0.236 the
+    whole way, and one toward the west island running out with the metres
+    at 100 m and dropping you; unit-tested that a chain turning the most it
+    may every rung never folds; not yet by hand or on a phone.
+  - **A minimap top right** (`src/minimap.rs`, since 2026-11-09, Hajun:
+    "put a minimap that only shows the current player's location as a red
+    dot and your teammate as a green dot, and the full map in top down view
+    including the live bridges but not show the other players"): a picture
+    256 pixels square of the map from above, 300 m across with north up,
+    the land in `colours.arena.map_land` over `map_back`, drawn once from
+    the map's own triangles that face up and lie under 2 m (`draw_land`:
+    the islands, the town's middle, the desks; not the lamps' heads or the
+    waiting room), the bridges drawn over it again in the planks' colour
+    whenever they change (`draw_bridges`, `Bridges::version`), and over the
+    picture a dot for you (`map_me`, red) and one for each teammate
+    (`map_mate`, green), placed as you move and hidden when dead
+    (`place_dots`). Nobody else is on it. `hud::spawn_arena_bar` puts it
+    up (`hud::MinimapNode`, 26 shares of the short side, `hud::MINIMAP`);
+    the picture is made as the app opens (`minimap::plugin`), clear, so
+    that the bar can hold it before the map is read.
 
 - **The gamepad down the right edge opens the game selector**
   (`src/games.rs`, `hud::GamesButton`): a dialog like the settings'
@@ -800,10 +896,15 @@ holds for the arena now.
   the arena and the town's again as you leave, `hud::relayout`): top left
   your name on its plate and under it your health bar, 30 by 3.6 shares of
   the short side with a rim, filled red (`colours.arena` in
-  `assets/ui.ron`: `hp`, `hp_back`, `hp_rim`); top right a bag (the
-  inventory, which does nothing yet) and under it the four resources,
-  wood, gold, diamond and emerald, each a picture with its count beside
-  it, 0; bottom right, in the jump button's very place (the jump button
+  `assets/ui.ron`: `hp`, `hp_back`, `hp_rim`), and under that the four
+  resources, wood, gold, diamond and emerald, each a picture with its
+  count beside it (`hud::RESOURCE_ICON`, `RESOURCE_TEXT`), the wood's
+  count your metres of bridge, "100m", the rest 0 (since 2026-11-09,
+  Hajun: "move the 4 item icon + number thing on the top right side of
+  that screen to the left side of the screen below the hp bar ... remove
+  the inventory icon"; for a night they were top right under a bag, the
+  inventory, which did nothing); top right the minimap in the bag's place
+  ("A minimap top right", above); bottom right, in the jump button's very place (the jump button
   is put away there, `hide_touch_hud`), the sword, which punches as the
   fist does (`hud::PunchButton`, so in the car it is the reverse), and
   round it on an arc 20.5 shares out from its middle three buttons the
@@ -821,9 +922,9 @@ holds for the arena now.
   button of three dots (`hud::ARENA_DOTS`), which does nothing yet; the
   stick stays, and nothing else of the town's bar is there (no balance,
   person, gear, gift, social, face or chat). The pictures are drawn in code
-  (`hud::sword`, `bag`, `log`, `ingot`, `gem`, `emerald`, `dots`, through
-  `hud::drawn` and a polygon distance, `polygon_distance`; tests sample
-  each). Space still jumps on desktop. The punch's range band is drawn
+  (`hud::sword`, `log`, `ingot`, `gem`, `emerald`, `dots`, and the `bag`
+  nothing shows now, through `hud::drawn` and a polygon distance,
+  `polygon_distance`; tests sample each). Space still jumps on desktop. The punch's range band is drawn
   only in the arena now (`range::follow`).
 - **Falling off the map** is the arena's alone (`island::bottomless`):
   the town has its sea back. The bots are kept on by `strands` as the

@@ -176,9 +176,13 @@ pub(crate) struct Arena {
     pub bot_punch_every: f32,
     pub flee_below: f32,
     pub fall_to_die: f32,
-    /// What a team's respawn anchor starts with: twenty punches' worth
-    /// (since 2026-11-08).
+    /// What a team's respawn anchor starts with: ten punches' worth
+    /// (since 2026-11-09; twenty on 2026-11-08).
     pub anchor_health: f32,
+    /// How many metres of bridge everyone starts a game with (`bridge`,
+    /// since 2026-11-09; Hajun: "players will buy the bridge by meter
+    /// count ... for now make each person start with 100m").
+    pub bridge_metres: f32,
 }
 
 impl Arena {
@@ -199,6 +203,7 @@ impl Arena {
             ("flee_below", self.flee_below),
             ("fall_to_die", self.fall_to_die),
             ("anchor_health", self.anchor_health),
+            ("bridge_metres", self.bridge_metres),
         ];
         for (name, value) in all {
             if !value.is_finite() || value < 0.0 {
@@ -659,6 +664,14 @@ pub(crate) struct ArenaColours {
     pub plank: Color,
     #[serde(deserialize_with = "colour")]
     pub plank_side: Color,
+    #[serde(deserialize_with = "colour")]
+    pub map_land: Color,
+    #[serde(deserialize_with = "colour")]
+    pub map_back: Color,
+    #[serde(deserialize_with = "colour")]
+    pub map_me: Color,
+    #[serde(deserialize_with = "colour")]
+    pub map_mate: Color,
 }
 
 /// The words, screen by screen. One with `{something}` in it is filled in
@@ -709,7 +722,6 @@ pub(crate) struct ArenaWords {
     pub defeat: String,
     pub times_up: String,
     pub team_wins: String,
-    pub back_in: String,
     pub play_again: String,
     pub exit: String,
 }

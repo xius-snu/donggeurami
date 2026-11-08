@@ -26,6 +26,7 @@ mod arena;
 mod bridge;
 mod build;
 mod builder;
+mod minimap;
 mod car;
 mod games;
 mod clock;
@@ -1177,6 +1178,7 @@ pub fn main() {
     // the game selector both games are chosen from.
     arena::plugin(&mut app);
     bridge::plugin(&mut app);
+    minimap::plugin(&mut app);
     games::plugin(&mut app);
     // Standing in a house in House Builder, whatever stands between the
     // camera and you, see-through, and out of a tap's reach.
@@ -2435,6 +2437,7 @@ fn read_player_input(
     keyboard: Res<ButtonInput<KeyCode>>,
     controls: Res<TouchControls>,
     dialog: Res<hud::DialogUp>,
+    bridging: Res<bridge::Bridging>,
     cameras: Query<&Transform, (With<ThirdPersonCamera>, Without<Player>)>,
     mut players: Query<(&Transform, &Venue, &mut Intent, &mut WalkCycle, Has<Dead>), With<Player>>,
 ) {
@@ -2448,8 +2451,11 @@ fn read_player_input(
         walk.speed = 0.0;
         return;
     }
-    // In a game of Bridge Wars everyone runs (`arena`).
+    // In a game of Bridge Wars everyone runs (`arena`); carrying a plank,
+    // at half the pace (`bridge`; Hajun, 2026-11-09: "when bride mode is
+    // toggled, decrease player speed to 1/2").
     let sprint = if venue == Venue::Arena { ui::ui().arena.run_speed / MOVE_SPEED } else { 1.0 };
+    let sprint = if bridging.0 { sprint * bridge::CARRY_SLOW } else { sprint };
     let slowed = wading(transform.translation);
     let cam_forward = cameras.single().map_or(Vec3::NEG_Z, camera_ahead);
     let cam_right = cam_forward.cross(Vec3::Y);
@@ -2776,6 +2782,7 @@ fn start_punch(
     keyboard: Res<ButtonInput<KeyCode>>,
     dialog: Res<hud::DialogUp>,
     driving: Res<drive::Driving>,
+    bridging: Res<bridge::Bridging>,
     me: Query<(Entity, &Transform, &Venue, &Intent, Has<Dead>, Option<&Team>), With<Player>>,
     others: Query<(Entity, &Transform, &Venue, Option<&Team>), (With<WalkCycle>, Without<Player>, Without<Dead>)>,
     mut shoves: Query<(&mut Shove, &mut PlayerJump), Without<Player>>,
@@ -2784,8 +2791,10 @@ fn start_punch(
     mut swung: MessageWriter<Swung>,
     mut commands: Commands,
 ) {
+    // Carrying a plank, your hands are full: no punch (`bridge`; Hajun,
+    // 2026-11-09: "dont allow punching").
     let asked = pressed.read().count() > 0 || keyboard.just_pressed(KeyCode::KeyF);
-    if !asked || dialog.0 || driving.on() {
+    if !asked || dialog.0 || driving.on() || bridging.0 {
         return;
     }
     let Ok((you, body, &venue, intent, dead, team)) = me.single() else {
@@ -3723,6 +3732,7 @@ mod ground_tests {
         world.insert_resource(ButtonInput::<KeyCode>::default());
         world.insert_resource(TouchControls::default());
         world.insert_resource(hud::DialogUp::default());
+        world.insert_resource(bridge::Bridging::default());
         let you = world
             .spawn((
                 Player,

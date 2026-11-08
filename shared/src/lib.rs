@@ -371,14 +371,22 @@ pub mod bridge_wars {
     pub const PLAY_SECS: f32 = 600.0;
     /// How long the result is up at the end, in seconds, before everyone
     /// still there is sent back to the town.
-    pub const RESULTS_SECS: f32 = 15.0;
+    pub const RESULTS_SECS: f32 = 6.0;
     /// The health everyone starts with, what a punch takes off it, and
-    /// what a respawn anchor starts with: twenty punches' worth (Hajun,
-    /// 2026-11-08: "make its default hp enough so that u need to hit it 20
-    /// times to break it").
+    /// what a respawn anchor starts with: ten punches' worth (Hajun,
+    /// 2026-11-08: twenty, "make its default hp enough so that u need to
+    /// hit it 20 times to break it"; then, 2026-11-09, "make the respawn
+    /// anchor's hp to be 1/2 of now").
     pub const HEALTH: f32 = 100.0;
     pub const DAMAGE: f32 = 12.0;
-    pub const ANCHOR_HEALTH: f32 = 240.0;
+    pub const ANCHOR_HEALTH: f32 = 120.0;
+    /// How long after a punch lands on a body, or an anchor, no other
+    /// counts, in seconds: Minecraft's ten ticks of hurt resistance, the
+    /// game's `melee.hurt_time`. The server keeps it too (2026-11-09,
+    /// Hajun: the bots "seem to get knocked back too much by me maybe cuz
+    /// i can hit them multiple times before they process it"): every punch
+    /// a device landed went through before.
+    pub const HURT_TIME: f32 = 0.5;
     /// How long the dead stay dead before standing again, in seconds, and
     /// how long after the last hit health starts to come back, and how much
     /// a second.

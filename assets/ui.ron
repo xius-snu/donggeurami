@@ -160,6 +160,13 @@
             // their sides.
             plank: "#b98a52",
             plank_side: "#8a6238",
+            // The minimap top right: the land, what shows round it, you
+            // (a red dot) and your teammate (a green dot). The bridges on
+            // it take the planks' colour above.
+            map_land: "#d9c9a8",
+            map_back: "#102033b3",
+            map_me: "#ff3b30",
+            map_mate: "#3ddc84",
         ),
     ),
     // The font is plain ASCII: no Hangul, and a hyphen for a dash. Where a
@@ -293,13 +300,12 @@
             anchor_gone: "Your respawn anchor is gone.",
             anchor_destroyed: "{team}'s anchor destroyed!",
             your_anchor_destroyed: "Your anchor was destroyed!",
-            // The panel at the end: how it went, who won, how long until
-            // you are back in the town, and its buttons.
+            // The headline at the end: how it went for you, over who won
+            // (or that the time ran out); and the panel's buttons.
             victory: "Victory!",
             defeat: "Defeat",
             times_up: "Time's up!",
             team_wins: "{team} wins!",
-            back_in: "Back to the town in {time}",
             play_again: "Play again",
             exit: "Exit",
         ),
@@ -425,10 +431,13 @@
     // runs away from whoever is nearest while it has less than flee_below
     // of its health (a share, 0 to 1). Falling off the map is death too,
     // fall_to_die metres below it. Each team's respawn anchor, the purple
-    // pillar on its island, starts with anchor_health: twenty punches
-    // (2026-11-08); broken, its team's dead stay dead. These numbers rule
-    // offline; online the server plays by the same ones built into it
-    // (roundtown_net::bridge_wars).
+    // pillar on its island, starts with anchor_health: ten punches
+    // (2026-11-09; twenty the day before); broken, its team's dead stay
+    // dead. Everyone starts a game with bridge_metres of bridge to lay
+    // (the number by the log, top left), and lays it a plank at a time
+    // until it runs out. These numbers rule offline; online the server
+    // plays by the same ones built into it (roundtown_net::bridge_wars),
+    // but for the metres, which are the device's for now.
     arena: (
         run_speed: 10.0,
         health: 100.0,
@@ -440,6 +449,7 @@
         bot_punch_every: 0.8,
         flee_below: 0.2,
         fall_to_die: 30.0,
-        anchor_health: 240.0,
+        anchor_health: 120.0,
+        bridge_metres: 100.0,
     ),
 )

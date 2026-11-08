@@ -111,6 +111,9 @@ struct Game {
     /// What its room was last sent, to send again only what has changed.
     sent: Option<Round>,
     sent_seats: usize,
+    /// Its bots and pieces have gone ([`close`]); everyone goes back to the
+    /// town next tick ([`end`]).
+    closing: bool,
 }
 
 impl Game {
@@ -187,6 +190,7 @@ impl Games {
                     pieces: HashMap::new(),
                     sent: None,
                     sent_seats: 0,
+                    closing: false,
                 },
             );
             info!("House Builder game {id} opened");
@@ -529,9 +533,13 @@ fn run_games(
         game.unwatched = if watched { 0.0 } else { game.unwatched + dt };
         let everyone_gone = (0..game.seats.len()).all(|seat| game.gone[seat] || game.bot[seat]);
         let over = matches!(game.stage, Stage::Over { .. });
-        if (over && (everyone_gone || game.left <= 0.0)) || game.unwatched > ABANDONED {
+        if game.closing {
             end(&mut commands, &mut tells, game, &mut bodies, &mut everyone, &mut towns, now);
             ended.push(game.id);
+            continue;
+        }
+        if (over && (everyone_gone || game.left <= 0.0)) || game.unwatched > ABANDONED {
+            close(&mut commands, game);
             continue;
         }
 
@@ -753,8 +761,26 @@ fn seat_bot(commands: &mut Commands, game: &mut Game, now: f64) {
     game.bot.push(true);
 }
 
-/// The end of a game: its pieces and its computer players go, and anyone still
-/// in it is sent back to the town, or, if they are not connected, forgotten.
+/// The first tick of a game's end: its pieces, its computer players and its
+/// board go, while everyone in it is still in its room to be told so; told
+/// the tick after, as [`end`] moves them out, they would never be (the
+/// arena's `close` says why), and every game left its bots standing on its
+/// plots in every device that played it, unseen in the town.
+fn close(commands: &mut Commands, game: &mut Game) {
+    for (seat, &body) in game.seats.iter().enumerate() {
+        if game.bot[seat] {
+            commands.entity(body).try_despawn();
+        }
+    }
+    for (_, piece) in game.pieces.drain() {
+        commands.entity(piece).try_despawn();
+    }
+    commands.entity(game.shown).try_despawn();
+    game.closing = true;
+}
+
+/// The end of a game, the tick after [`close`]: anyone still in it is sent
+/// back to the town, or, if they are not connected, forgotten.
 fn end(
     commands: &mut Commands,
     tells: &mut MessageWriter<ToClients<Tell>>,
@@ -767,7 +793,6 @@ fn end(
     let room = game.room();
     for (seat, &body) in game.seats.iter().enumerate() {
         if game.bot[seat] {
-            commands.entity(body).despawn();
             continue;
         }
         let Ok((mut body_of, spot, venue, _)) = bodies.get_mut(body) else {
@@ -795,9 +820,8 @@ fn end(
         );
     }
     for (_, piece) in game.pieces.drain() {
-        commands.entity(piece).despawn();
+        commands.entity(piece).try_despawn();
     }
-    commands.entity(game.shown).despawn();
     info!("House Builder game {} closed", game.id);
 }
 
