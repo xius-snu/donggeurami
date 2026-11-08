@@ -176,6 +176,9 @@ pub(crate) struct Arena {
     pub bot_punch_every: f32,
     pub flee_below: f32,
     pub fall_to_die: f32,
+    /// What a team's respawn anchor starts with: twenty punches' worth
+    /// (since 2026-11-08).
+    pub anchor_health: f32,
 }
 
 impl Arena {
@@ -195,13 +198,19 @@ impl Arena {
             ("bot_punch_every", self.bot_punch_every),
             ("flee_below", self.flee_below),
             ("fall_to_die", self.fall_to_die),
+            ("anchor_health", self.anchor_health),
         ];
         for (name, value) in all {
             if !value.is_finite() || value < 0.0 {
                 return Err(format!("arena.{name} is {value}: it has to be a number, 0 or more"));
             }
         }
-        for (name, value) in [("run_speed", self.run_speed), ("health", self.health), ("bot_punch_every", self.bot_punch_every)] {
+        for (name, value) in [
+            ("run_speed", self.run_speed),
+            ("health", self.health),
+            ("bot_punch_every", self.bot_punch_every),
+            ("anchor_health", self.anchor_health),
+        ] {
             if value <= 0.0 {
                 return Err(format!("arena.{name} is {value}: it has to be more than 0"));
             }
@@ -616,8 +625,11 @@ pub(crate) struct MeleeColours {
 }
 
 /// Bridge Wars' own (`arena`, and `hud`'s layout there): your health bar,
-/// its fill, what shows behind it and its rim; and the rim of an empty
-/// slot among the buttons bottom right.
+/// its fill, what shows behind it and its rim; the rim of an empty slot
+/// among the buttons bottom right; a damage number; the names and the
+/// health bars over everyone else's head, a teammate's and an enemy's; the
+/// respawn anchors' bars, your team's and another's; and the planks of the
+/// bridges (`bridge`), their tops and their sides.
 #[derive(Deserialize, Clone, Copy, PartialEq, Debug)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ArenaColours {
@@ -631,6 +643,22 @@ pub(crate) struct ArenaColours {
     pub slot_rim: Color,
     #[serde(deserialize_with = "colour")]
     pub damage: Color,
+    #[serde(deserialize_with = "colour")]
+    pub ally: Color,
+    #[serde(deserialize_with = "colour")]
+    pub enemy: Color,
+    #[serde(deserialize_with = "colour")]
+    pub hp_ally: Color,
+    #[serde(deserialize_with = "colour")]
+    pub hp_enemy: Color,
+    #[serde(deserialize_with = "colour")]
+    pub anchor_mine: Color,
+    #[serde(deserialize_with = "colour")]
+    pub anchor_enemy: Color,
+    #[serde(deserialize_with = "colour")]
+    pub plank: Color,
+    #[serde(deserialize_with = "colour")]
+    pub plank_side: Color,
 }
 
 /// The words, screen by screen. One with `{something}` in it is filled in
@@ -662,7 +690,7 @@ pub(crate) struct GamesWords {
     pub free: String,
 }
 
-/// Bridge Wars' board and headlines (`arena`).
+/// Bridge Wars' board, headlines and panels (`arena`).
 #[derive(Deserialize, PartialEq, Debug)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ArenaWords {
@@ -672,6 +700,18 @@ pub(crate) struct ArenaWords {
     pub match_found: String,
     pub fight: String,
     pub died: String,
+    pub team: String,
+    pub out: String,
+    pub anchor_gone: String,
+    pub anchor_destroyed: String,
+    pub your_anchor_destroyed: String,
+    pub victory: String,
+    pub defeat: String,
+    pub times_up: String,
+    pub team_wins: String,
+    pub back_in: String,
+    pub play_again: String,
+    pub exit: String,
 }
 
 #[derive(Deserialize, PartialEq, Debug)]

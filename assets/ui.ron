@@ -145,6 +145,21 @@
             slot_rim: "#ffffff80",
             // The number that floats up off a body as a punch lands on it.
             damage: "#ff6a5a",
+            // Everyone else's name over their head, a teammate's and an
+            // enemy's, and the bar under it, each kept faint so as not to
+            // hide the fight (Hajun: "not distracting").
+            ally: "#8ef0a0c0",
+            enemy: "#ff8a80c0",
+            hp_ally: "#4fd46ab3",
+            hp_enemy: "#e0402fb3",
+            // The bar over a team's respawn anchor: your own team's, and
+            // another's.
+            anchor_mine: "#4fd46acc",
+            anchor_enemy: "#e0402fcc",
+            // The planks of the bridges built as you walk: their tops and
+            // their sides.
+            plank: "#b98a52",
+            plank_side: "#8a6238",
         ),
     ),
     // The font is plain ASCII: no Hangul, and a hyphen for a dash. Where a
@@ -270,6 +285,23 @@
             // Across the screen while you are dead, counting down in
             // halves: "4", "3.5", ... "0.5".
             died: "You died. Respawning in {seconds}...",
+            // A team, by its number, 1 to 4.
+            team: "Team {team}",
+            // The panel when you are dead with your anchor gone, and the
+            // headlines as an anchor breaks, another team's and your own.
+            out: "You're out!",
+            anchor_gone: "Your respawn anchor is gone.",
+            anchor_destroyed: "{team}'s anchor destroyed!",
+            your_anchor_destroyed: "Your anchor was destroyed!",
+            // The panel at the end: how it went, who won, how long until
+            // you are back in the town, and its buttons.
+            victory: "Victory!",
+            defeat: "Defeat",
+            times_up: "Time's up!",
+            team_wins: "{team} wins!",
+            back_in: "Back to the town in {time}",
+            play_again: "Play again",
+            exit: "Exit",
         ),
     ),
     // The car you drive (the face button, or C on desktop): every number of
@@ -392,7 +424,11 @@
     // it and punches no oftener than every bot_punch_every seconds, and
     // runs away from whoever is nearest while it has less than flee_below
     // of its health (a share, 0 to 1). Falling off the map is death too,
-    // fall_to_die metres below it.
+    // fall_to_die metres below it. Each team's respawn anchor, the purple
+    // pillar on its island, starts with anchor_health: twenty punches
+    // (2026-11-08); broken, its team's dead stay dead. These numbers rule
+    // offline; online the server plays by the same ones built into it
+    // (roundtown_net::bridge_wars).
     arena: (
         run_speed: 10.0,
         health: 100.0,
@@ -404,5 +440,6 @@
         bot_punch_every: 0.8,
         flee_below: 0.2,
         fall_to_die: 30.0,
+        anchor_health: 240.0,
     ),
 )

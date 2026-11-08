@@ -30,6 +30,9 @@ pub(crate) enum Room {
     Home(u64),
     /// A game of House Builder, counted from 0.
     Game(u32),
+    /// A game of Bridge Wars, counted from 0 (`arena`, since 2026-11-08):
+    /// its waiting room and its islands together.
+    Arena(u32),
 }
 
 /// The room something sent to devices is in: only the devices in that room

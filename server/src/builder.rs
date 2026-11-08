@@ -369,7 +369,7 @@ fn hear(
                     Room::Game(_) => games
                         .of(room, body)
                         .is_some_and(|(game, _)| matches!(game.stage, Stage::Over { .. })),
-                    Room::Home(_) => false,
+                    Room::Home(_) | Room::Arena(_) => false,
                 };
                 if !free {
                     tell(&mut tells, client, Tell::Refused(Refusal::Busy));
@@ -472,7 +472,14 @@ fn hear(
                     commands.entity(piece).despawn();
                 }
             }
-            Ask::Hello { .. } | Ask::Travel(_) | Ask::Profile { .. } | Ask::Respawn | Ask::Punch { .. } => {}
+            Ask::Hello { .. }
+            | Ask::Travel(_)
+            | Ask::Profile { .. }
+            | Ask::Respawn
+            | Ask::Punch { .. }
+            | Ask::Arena
+            | Ask::HitAnchor { .. }
+            | Ask::Rung { .. } => {}
         }
     }
 }

@@ -27,6 +27,7 @@
 //!   the game out. Never on a server real players use.
 
 mod accounts;
+mod arena;
 mod builder;
 mod clock;
 mod login;
@@ -126,6 +127,7 @@ fn main() {
     rooms::plugin(&mut app);
     players::plugin(&mut app);
     builder::plugin(&mut app);
+    arena::plugin(&mut app);
     clock::plugin(&mut app);
     stats::plugin(&mut app);
     app.add_systems(Startup, listen);

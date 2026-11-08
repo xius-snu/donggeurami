@@ -17,105 +17,149 @@
 //! export of 2026-11-07 23:21: 30 m square, its floor a metre thick with
 //! its top at 100.5 m, its walls 1.5 m thick and 5 m high, open to the
 //! sky, in `glass` at a tenth), found by name once the map has spawned
-//! ([`find_waiting_room`], [`WaitingRoom`]) and stood on as any of the
-//! map is, with the camera fixed straight down over you
-//! (`OrbitCamera::top_down`) and the game's own buttons round the screen
-//! (`hud::Layout::Arena`). The board top centre counts the players.
-//! Nobody else can join yet, the game being this device's own: once
-//! [`BOT_WAIT`] seconds have passed with nobody joining, the computer takes
-//! the seats left ([`ARENA_SEATS`], four), and the board counts down
-//! [`COUNTDOWN`] seconds, after which everyone is sent to the middle of the
-//! island their seat says (`roundtown_net::arrival`), facing the middle of
-//! the map down its bridge. Then [`PLAY_SECS`] run on the board, which a
-//! tap on it cuts short, and everyone is back in the town, the camera as
-//! it was.
+//! ([`read_map`], [`WaitingRoom`]) and stood on as any of the map is,
+//! with the camera fixed straight down over you (`OrbitCamera::top_down`)
+//! and the game's own buttons round the screen (`hud::Layout::Arena`). The
+//! board top centre counts the players.
+//!
+//! **Since 2026-11-08 the game is the server's online** (Hajun: "right now
+//! the bridge battle minigame doesnt allow queing with other players i
+//! think even tho we join the game at the same time. fix that"), as House
+//! Builder is: whoever chooses it goes into the game filling now
+//! (`Ask::Arena`, `Tell::Seated`), eight seats in four teams of two, a team
+//! to an island (`ARENA_SEATS`, `arena_team`; "make it 8 player rather
+//! than 4 player, so its 2v2v2v2"), and the device follows what the server
+//! says of it ([`follow_round`], `ArenaRound`): the stage and the time, everyone's
+//! health, each team's anchor and who is out. Everyone's punches go
+//! through the server, which keeps the health and knocks the bots about
+//! itself (`server/src/arena.rs`). Offline the game is this device's own,
+//! as it was, with the computer in every seat but yours, and the same
+//! rules played here. Both ways: nobody joined for [`BOT_WAIT`] seconds and
+//! the computer takes the seats left; the board counts [`COUNTDOWN`] down;
+//! everyone is sent to their island (`roundtown_net::arrival`), "Fight!";
+//! then [`PLAY_SECS`] run, which a tap on the board cuts short.
 //!
 //! The fight (the night of 2026-11-07, Hajun: "make the ai, if there is
 //! another ai/player within its visible radius, it will go towards them
 //! and try to fight/punch them ... make punching deal damage, and show
 //! healthbar for enemies. make default hp = 100 ... make damage numbers
 //! appear on each hit. default damage = 12. so when health <0 u die too
-//! ... 'You died. Respawning in 4...' -> 'You died. Respawning in
-//! 3.5...' until it goes to 0 and then you respawn ... for falling make
-//! it so u need to drop a bit more z to actually die ... make it running
-//! rather than walking"): everyone runs there, at the file's
-//! `arena.run_speed` (`Intent::sprint`), and everyone has [`Health`],
+//! ... make it running rather than walking"): everyone runs there, at the
+//! file's `arena.run_speed` (`Intent::sprint`), and everyone has [`Health`],
 //! `arena.health` of it; a punch that lands and takes ([`Landed`]) takes
 //! `arena.damage` off it, a number floating up off the body
-//! ([`DamageNumber`]), everyone but you with a bar over their head
-//! ([`BarOf`]) and you with yours top left (`hud`). At none, or
+//! ([`DamageNumber`]), everyone but you with their name and a bar over
+//! their head ([`TagOf`]: small and faint, so as not to hide the fight, in
+//! a teammate's colour or an enemy's; Hajun, 2026-11-08: "make the
+//! healthbar and the nametag not distracting ... some indication wether
+//! they are teammate or enemy somehow - maybe with color?"), and you with
+//! your bar top left (`hud`). A punch never lands on a teammate (`Team`;
+//! "make it so u cannot hurt your own teammate"). At none, or
 //! `arena.fall_to_die` below the map (`void_y`), a body is [`Dead`]: hidden
-//! where it died, in nobody's way, for `arena.respawn_secs`, you with "You
-//! died. Respawning in 4..." counting down in halves across the screen
-//! ([`show_death`]), and then back in the middle of its island with its
-//! health full, the camera over you there. A bot goes for whoever is
-//! within `arena.hunt_radius` of it ([`hunt`], over its wandering), at a
-//! run, and punches once in reach, no oftener than `arena.bot_punch_every`;
-//! only while the game is on, never in the waiting room. Nothing is scored.
-//!
-//! Online you are in a room of your own on the map, as at home: the server
-//! is asked to put you there (`Ask::Travel`) and back, and nothing of where
-//! you stand goes to it meanwhile (`net`).
+//! where it died, in nobody's way; **and comes back only while its team's
+//! respawn anchor stands** ("make the purple rotated cube thingy on each
+//! island the respawn anchor (similar to bed in bedwars) so you only
+//! indefinitely respawn when you die, and at that point when u died, the
+//! respawn anchor is still alive. and after u die after the respawn anchor
+//! is dead, you dont respawn, you get a play again button and a exit
+//! button"): the purple pillar in the material [`SPAWN_MATERIAL`] on each
+//! island (`roundtown_net::ARENA_ANCHORS`), with a bar over it
+//! ([`AnchorBar`]), which a punch of another team's lands on as on a body
+//! ([`hit_anchors`]), `arena.anchor_health` of it, twenty punches; broken,
+//! it is gone from the map ([`break_anchors`]), and its team's dead stay
+//! dead, with Play again and Exit on a panel ([`Panel`]). The last team
+//! with anyone in play wins, or nobody when the time runs out: the result
+//! is up for [`RESULTS_SECS`], with the same buttons, and everyone is back
+//! in the town, the camera as it was. A bot goes for whoever of another
+//! team is within `arena.hunt_radius` ([`hunt`]), runs away when nearly
+//! beaten ([`flight`]), and never crosses a bridge unless one is built for
+//! it (`bridge`): the map's own bridges went on 2026-11-08, and every
+//! bridge is built by walking.
 //!
 //! Everything the game puts in the world or on the screen carries
 //! [`InArena`] and goes when the game does. Your own body is the only thing
 //! that comes back.
 
-use std::f32::consts::TAU;
-
 use bevy::camera::primitives::Aabb;
+use bevy::gltf::GltfMaterialName;
 use bevy::prelude::*;
 use bevy::world_serialization::WorldInstanceReady;
-use roundtown_net::bridge_wars::{BOT_WAIT, COUNTDOWN, PLAY_SECS};
-use roundtown_net::{ARENA_SEATS, Ask as NetAsk, Member};
+use bevy_replicon::prelude::Remote;
+use roundtown_net::bridge_wars::{self as rules, BOT_WAIT, COUNTDOWN, PLAY_SECS, RESULTS_SECS};
+use roundtown_net::{
+    ANCHOR_RADIUS, ARENA_ANCHORS, ARENA_SEATS, ARENA_TEAMS, ArenaRound, ArenaStage, Ask as NetAsk, Member, Seats, Tell,
+    arena_team,
+};
 
 use crate::ai::{self, Steering};
-use crate::builder::Fill;
+use crate::builder::{self, Fill};
 use crate::drive::Driving;
 use crate::hud::{self, TakesPress};
-use crate::island::{self, Island, Islands, Land, Venue};
+use crate::island::{self, Island, Islands, Land, Venue, is_material};
 use crate::lobby::{self, Lobby, Seat, Whereabouts};
 use crate::net::Online;
 use crate::range::Sector;
 use crate::ui::{fill, ui};
 use crate::{
-    Dead, Intent, Landed, OrbitCamera, PLAYER_HEIGHT, PLAYER_RADIUS, Player, PlayerJump, Punching, Shove,
-    ThirdPersonCamera, View, WalkCycle, void_y,
+    Carrying, Dead, Intent, Landed, OrbitCamera, PLAYER_HEIGHT, PLAYER_RADIUS, Player, PlayerJump, Punching, Shove,
+    Swung, Team, ThirdPersonCamera, View, WalkCycle, void_y,
 };
 
 /// What the waiting room is called in the map: Hajun's glass box over the
 /// middle of it (2026-11-07). Everyone waits on its floor, which is read
 /// off the map's shape under the middle of the box.
 pub(crate) const WAITING_ROOM: &str = "waiting room";
-/// How far from the middle of the room everyone stands in it, in metres,
-/// facing the middle, each an eighth of the turn on from the last.
-const WAIT_RING: f32 = 3.0;
+/// What the respawn anchors' material is called in the map: the purple
+/// pillar on each island (Hajun, 2026-11-07).
+pub(crate) const SPAWN_MATERIAL: &str = "spawn";
 /// How long the game's name is across the screen as you arrive, and
-/// "Fight!" as the game begins, in seconds.
+/// "Fight!" as the game begins, and an anchor's breaking, in seconds.
 const NAME_SECS: f32 = 3.0;
 const FIGHT_SECS: f32 = 2.0;
+const ANCHOR_SECS: f32 = 3.0;
 /// Sizes, as shares of the short side of the screen: the board's count,
 /// countdown or time, small (Hajun: "(small) timer"), and the line under
 /// it; the words across the screen while you are dead, and how far down
-/// the screen they sit; someone else's health bar over their head, and
-/// its rim; and a damage number.
+/// the screen they sit; someone else's name and health bar over their
+/// head, small and faint; an anchor's bar; a damage number; and the panel
+/// at the end, or when you are out, with its words and its buttons.
 const BOARD_TEXT: f32 = 4.8;
 const CAPTION: f32 = 3.4;
 const DEATH_TEXT: f32 = 5.0;
 const DEATH_DOWN: f32 = 38.0;
-const BAR_WIDTH: f32 = 7.0;
-const BAR_HEIGHT: f32 = 1.1;
-const BAR_RIM: f32 = 0.2;
+const TAG_TEXT: f32 = 2.4;
+const BAR_WIDTH: f32 = 6.0;
+const BAR_HEIGHT: f32 = 0.8;
+const BAR_RIM: f32 = 0.15;
+const ANCHOR_BAR_WIDTH: f32 = 9.0;
+const ANCHOR_BAR_HEIGHT: f32 = 1.1;
 const NUMBER_TEXT: f32 = 3.8;
-/// How high over a body's feet its health bar stands, in metres, and a
+const PANEL_WIDTH: f32 = 58.0;
+const PANEL_TITLE: f32 = 5.6;
+const PANEL_TEXT: f32 = 3.4;
+const PANEL_BUTTON: f32 = 8.4;
+const PANEL_BUTTON_WIDTH: f32 = 22.0;
+const PANEL_BUTTON_TEXT: f32 = 3.4;
+/// How high over a body's feet its name and bar stand, in metres, how high
+/// over the ground an anchor's bar stands over its pillar, and how high a
 /// damage number starts from and rises to over its while, in seconds.
-const BAR_OVER: f32 = 2.2;
+const TAG_OVER: f32 = 2.2;
+const ANCHOR_BAR_OVER: f32 = 4.6;
 const NUMBER_FROM: f32 = 1.8;
 const NUMBER_RISE: f32 = 1.6;
 const NUMBER_SECS: f32 = 0.9;
 /// How near a bot presses in on whoever it is going for before it slows
 /// to a push, as a share of the punch's reach.
 const PRESS_IN: f32 = 0.3;
+/// How far ahead a bot running away looks for dry land, in metres.
+const FLIGHT: f32 = 3.0;
+/// Online, how long a game waits for a dropped connection to come back,
+/// in seconds, before it is given up.
+const RECONNECT_WAIT: f32 = 15.0;
+/// Which triangles of the map are a broken anchor's, to be taken out of
+/// what is stood on: those within this of its middle, across the ground,
+/// in metres, and over the island's top.
+const ANCHOR_REACH: f32 = 1.3;
 
 /// Everything a game has put in the world or on the screen, to go with it.
 #[derive(Component)]
@@ -129,16 +173,21 @@ pub(crate) enum Ask {
     /// On to the next thing, for trying the game out: the bots now, the
     /// countdown over now, or the game over now. A tap on the board.
     Skip,
+    /// Another game, from the panel at the end or once you are out.
+    Again,
+    /// Back to the town, from the same panel.
+    Exit,
 }
 
-/// What a tap on the board asks for.
+/// What a tap on the board or a panel's button asks for.
 #[derive(Component, Clone, Copy)]
 struct AsksFor(Ask);
 
 /// A body's health in a game of Bridge Wars: how much is left of what it
-/// started with, the file's `arena.health`, and how long since it was last
-/// hit, after which it comes back ([`regen`]). Yours is the bar under your
-/// name (`hud`), everyone else's the bar over their head ([`BarOf`]).
+/// started with, and how long since it was last hit, after which it comes
+/// back ([`regen`]). Yours is the bar under your name (`hud`), everyone
+/// else's the bar over their head ([`TagOf`]). Online it is the server's
+/// ([`follow_round`]).
 #[derive(Component, Debug)]
 pub(crate) struct Health {
     left: f32,
@@ -147,9 +196,9 @@ pub(crate) struct Health {
 }
 
 impl Health {
-    /// All of it, as a body starts and stands again.
-    fn full() -> Self {
-        let full = ui().arena.health;
+    /// All of it, as a body starts and stands again: the file's
+    /// `arena.health` offline, the server's online.
+    fn of(full: f32) -> Self {
         Self {
             left: full,
             full,
@@ -186,12 +235,13 @@ impl Health {
 /// How full a health bar is drawn, in steps of half a percent, so that
 /// health coming back a little every frame does not have the screen laid
 /// out again every frame.
-fn bar_width(health: &Health) -> Val {
-    Val::Percent((health.share() * 200.0).round() * 0.5)
+fn bar_width(share: f32) -> Val {
+    Val::Percent((share.clamp(0.0, 1.0) * 200.0).round() * 0.5)
 }
 
 /// A bot's fighting mind in Bridge Wars, over its wandering ([`hunt`]):
-/// how long until it may punch again, in seconds.
+/// how long until it may punch again, in seconds. Offline only: online the
+/// server moves its bots.
 #[derive(Component, Default)]
 struct Hunter {
     cooldown: f32,
@@ -208,7 +258,7 @@ pub(crate) enum Resource {
 }
 
 /// How much of each resource you hold. Nothing gives any yet.
-#[derive(Resource, Default)]
+#[derive(bevy::prelude::Resource, Default)]
 pub(crate) struct Resources {
     pub wood: u32,
     pub gold: u32,
@@ -228,19 +278,35 @@ impl Resources {
 }
 
 /// A game of Bridge Wars, from the waiting room to the end.
-#[derive(Resource)]
+#[derive(bevy::prelude::Resource)]
 struct Game {
-    /// Everyone in it, in seat order: you first, then the bots. A seat is
-    /// an island.
+    /// Which game this is on this device, counting up: another number is
+    /// another game (`bridge` clears its bridges on it).
+    id: u32,
+    /// Everyone in it, in seat order. A seat is an island and a team
+    /// (`arena_team`). Online the server's ([`follow_round`]).
     seats: Vec<Member>,
-    /// Their bodies, in the same order.
-    bodies: Vec<Entity>,
-    /// Your seat in the town's room, to go back to.
+    /// Their bodies, in the same order, offline; online only yours is
+    /// here, everyone else being the server's.
+    bodies: Vec<Option<Entity>>,
+    /// Your seat in the town's room, to go back to, offline.
     town_seat: usize,
+    /// Your seat in the game.
+    me: usize,
+    /// The server is running it, rather than this device.
+    online: bool,
+    /// Online, how long the connection has been gone, if it has.
+    cut_off: Option<f32>,
     stage: Stage,
     /// How the camera was turned and zoomed before it was fixed over you,
     /// to go back to; none if it was over you already.
     view: Option<View>,
+    /// Everyone's health as last seen, online, to notice a hit by.
+    health: Vec<f32>,
+    /// Each team's respawn anchor: what is left of it, 0 broken.
+    anchors: [f32; ARENA_TEAMS],
+    /// The seats out for good: dead with their anchor broken.
+    out: [bool; ARENA_SEATS],
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -251,12 +317,78 @@ enum Stage {
     Countdown { left: f32 },
     /// Everyone on their island, for this much longer.
     Playing { left: f32 },
+    /// Done: `winner` is the team left standing, or none; the result is up
+    /// for `left` more seconds.
+    Over { winner: Option<u8>, left: f32 },
 }
+
+impl Game {
+    fn playing(&self) -> bool {
+        matches!(self.stage, Stage::Playing { .. })
+    }
+
+    fn over(&self) -> bool {
+        matches!(self.stage, Stage::Over { .. })
+    }
+
+    /// Your team.
+    fn my_team(&self) -> u8 {
+        arena_team(self.me)
+    }
+
+    /// Which teams still have anyone in play: anyone not out.
+    fn teams_in_play(&self) -> Vec<u8> {
+        let mut teams: Vec<u8> = (0..self.seats.len().min(ARENA_SEATS))
+            .filter(|&seat| !self.out[seat])
+            .map(arena_team)
+            .collect();
+        teams.sort_unstable();
+        teams.dedup();
+        teams
+    }
+
+    /// `seat` has died: it comes back after the file's `arena.respawn_secs`
+    /// if its team's anchor stands now, and is out for good otherwise.
+    /// What to mark its body dead with.
+    fn die(&mut self, seat: usize) -> Dead {
+        let anchor = self.anchors[usize::from(arena_team(seat))];
+        if anchor > 0.0 {
+            Dead {
+                left: ui().arena.respawn_secs,
+            }
+        } else {
+            if seat < ARENA_SEATS {
+                self.out[seat] = true;
+            }
+            Dead { left: f32::INFINITY }
+        }
+    }
+}
+
+/// How the fight stands, for the bridges (`bridge`): whether a game is on,
+/// your seat in it, whether it is the server's, and which game it is, so
+/// that another game's bridges are not this one's.
+#[derive(bevy::prelude::Resource, Default, PartialEq)]
+pub(crate) struct Fighting {
+    pub(crate) playing: bool,
+    pub(crate) seat: Option<u8>,
+    pub(crate) online: bool,
+    pub(crate) game: u32,
+}
+
+/// A game of Bridge Wars is being played offline: nothing goes online in
+/// the middle of it (`net`).
+#[derive(bevy::prelude::Resource, Default, PartialEq)]
+pub(crate) struct OfflineArena(pub bool);
+
+/// How many games have been begun on this device.
+#[derive(bevy::prelude::Resource, Default)]
+struct Begun(u32);
 
 /// The waiting room, as the map has it: the middle of the box across the
 /// ground, and the top of it, under which its floor is found
 /// ([`WaitingRoom::floor`]).
-#[derive(Resource, Clone, Copy, Debug)]
+#[derive(bevy::prelude::Resource, Clone, Copy, Debug)]
 pub(crate) struct WaitingRoom {
     centre: Vec2,
     top: f32,
@@ -270,13 +402,22 @@ impl WaitingRoom {
     }
 
     /// Where the player in `seat` stands in the room, its floor `floor`
-    /// up: on a ring round its middle, facing in.
+    /// up: on a ring round its middle, facing in, as the server has it
+    /// (`roundtown_net::bridge_wars::waiting_spot`).
     fn spot(&self, floor: f32, seat: usize) -> Transform {
-        let angle = seat as f32 * TAU / 8.0;
-        let middle = Vec3::new(self.centre.x, floor, self.centre.y);
-        let at = middle + Vec3::new(angle.sin(), 0.0, angle.cos()) * WAIT_RING;
-        Transform::from_translation(at).looking_at(middle, Vec3::Y)
+        let (at, turn) = rules::waiting_spot(seat);
+        Transform::from_translation(Vec3::new(self.centre.x + at.x, floor, self.centre.y + at.z)).with_rotation(turn)
     }
+}
+
+/// The respawn anchors as the map has them: the meshes of each team's
+/// pillar, to hide when it breaks; the map's triangles as they were, to
+/// stand them back up at the end; and which are broken.
+#[derive(bevy::prelude::Resource, Default)]
+struct Anchors {
+    pillars: [Vec<Entity>; ARENA_TEAMS],
+    original: Option<Vec<[Vec3; 3]>>,
+    broken: [bool; ARENA_TEAMS],
 }
 
 /// The board top centre, and the words on it: the count, the countdown or
@@ -294,11 +435,18 @@ struct DeathText;
 #[derive(Component)]
 struct DeathLine;
 
-/// A health bar over someone else's head: whose, and its fill.
+/// Someone else's name and health bar over their head: whose, and the
+/// bar's fill.
 #[derive(Component)]
-struct BarOf(Entity);
+struct TagOf(Entity);
 #[derive(Component)]
-struct BarFill;
+struct TagFill;
+
+/// A team's anchor's bar, over its pillar: whose, and its fill.
+#[derive(Component)]
+struct AnchorBar(u8);
+#[derive(Component)]
+struct AnchorFill;
 
 /// A number floating up off a body a punch landed on: where the body stood,
 /// and how long ago.
@@ -307,6 +455,18 @@ struct DamageNumber {
     at: Vec3,
     age: f32,
 }
+
+/// The panel in the middle of the screen with Play again and Exit on it:
+/// when you are out, and at the end.
+#[derive(Component, Clone, Copy, PartialEq, Eq, Debug)]
+enum Panel {
+    Out,
+    End,
+}
+/// The line on the end's panel saying how long until you are back in the
+/// town.
+#[derive(Component)]
+struct PanelCountdown;
 
 /// Bridge Wars' reading of taps and the game they drive: ahead of your own
 /// walking, and of the islands being shown, so that wherever it sends you
@@ -317,11 +477,14 @@ pub(crate) struct ArenaSystems;
 pub(crate) fn plugin(app: &mut App) {
     app.add_message::<Ask>()
         .init_resource::<Resources>()
+        .init_resource::<Fighting>()
+        .init_resource::<OfflineArena>()
+        .init_resource::<Begun>()
         .add_observer(ask)
-        .add_observer(find_waiting_room)
+        .add_observer(read_map)
         .add_systems(
             Update,
-            (play, show_board)
+            (hear, follow_round, cut_off, play, publish, show_board)
                 .chain()
                 .in_set(ArenaSystems)
                 .before(crate::read_player_input)
@@ -334,28 +497,31 @@ pub(crate) fn plugin(app: &mut App) {
         .add_systems(
             Update,
             (
-                hunt.after(ai::steer).after(crate::start_punch).before(crate::move_bodies),
-                (reap, deal_damage, regen, respawn)
+                (team_up, hunt).chain().after(ai::steer).after(crate::start_punch).before(crate::move_bodies),
+                (reap, deal_damage, hit_anchors, regen, respawn, break_anchors)
                     .chain()
                     .after(crate::move_bodies)
                     .before(crate::follow_camera),
-                (show_death, place_bars, float_numbers).after(crate::follow_camera),
+                (show_death, show_panel, place_tags, place_anchor_bars, float_numbers).after(crate::follow_camera),
             ),
         );
 }
 
-// ------------------------------------------------------- the waiting room
+// ---------------------------------------------------------------- the map
 
-/// Finds the waiting room in the map once it has spawned, by its name
-/// ([`WAITING_ROOM`]): the box round every mesh of it, placed in the
-/// world, for where its middle is and how high it reaches. Its floor is
-/// read off the map's shape when it is needed, the box being open to the
-/// sky and its walls' tops the highest of it.
-fn find_waiting_room(
+/// Reads what the game needs off the map once it has spawned: the waiting
+/// room, by its name ([`WAITING_ROOM`]), as the box round every mesh of
+/// it, placed in the world, for where its middle is and how high it
+/// reaches (its floor is read off the map's shape when it is needed, the
+/// box being open to the sky and its walls' tops the highest of it); and
+/// the respawn anchors' pillars, every mesh in [`SPAWN_MATERIAL`], each
+/// the team's whose anchor it stands at.
+fn read_map(
     ready: On<WorldInstanceReady>,
     lands: Query<&Venue, With<Land>>,
     children: Query<&Children>,
     names: Query<&Name>,
+    materials: Query<&GltfMaterialName>,
     boxes: Query<&Aabb>,
     placement: TransformHelper,
     mut commands: Commands,
@@ -364,6 +530,30 @@ fn find_waiting_room(
     if lands.get(ready.entity).ok() != Some(&Venue::Arena) {
         return;
     }
+    let mut anchors = Anchors::default();
+    for entity in children.iter_descendants(ready.entity) {
+        let Ok(material) = materials.get(entity) else {
+            continue;
+        };
+        if !is_material(&material.0, SPAWN_MATERIAL) {
+            continue;
+        }
+        let Ok(place) = placement.compute_global_transform(entity) else {
+            continue;
+        };
+        let middle = boxes.get(entity).map_or(Vec3::ZERO, |aabb| Vec3::from(aabb.center));
+        let at = place.transform_point(middle).xz();
+        let team = (0..ARENA_TEAMS)
+            .min_by(|&a, &b| ARENA_ANCHORS[a].distance_squared(at).total_cmp(&ARENA_ANCHORS[b].distance_squared(at)))
+            .expect("four teams");
+        anchors.pillars[team].push(entity);
+    }
+    info!(
+        "Bridge Wars' anchors: {:?} meshes a team",
+        anchors.pillars.iter().map(Vec::len).collect::<Vec<_>>()
+    );
+    commands.insert_resource(anchors);
+
     let Some(room) = children
         .iter_descendants(ready.entity)
         .find(|&entity| names.get(entity).is_ok_and(|name| name.as_str() == WAITING_ROOM))
@@ -400,18 +590,6 @@ fn find_waiting_room(
     commands.insert_resource(room);
 }
 
-// ---------------------------------------------------------------- the game
-
-/// Whatever was tapped, if it asks for something: the board.
-fn ask(click: On<Pointer<Click>>, buttons: Query<&AsksFor>, mut asks: MessageWriter<Ask>) {
-    if click.button != PointerButton::Primary || click.original_event_target() != click.entity {
-        return;
-    }
-    if let Ok(button) = buttons.get(click.entity) {
-        asks.write(button.0);
-    }
-}
-
 /// Where the player in `seat` waits for the game: in the waiting room, on
 /// its floor, or, with no room in the map, on their island, where they
 /// arrive for the game anyway.
@@ -422,11 +600,251 @@ fn waiting_spot(room: Option<&WaitingRoom>, map: &Island, seat: usize) -> Transf
     }
 }
 
-/// Takes you into a game and moves it on: into the waiting room, the bots
-/// in once nobody else has come, the countdown, everyone to their islands,
-/// the time running, and at the end of it everyone back in the town. Asked
-/// in before the map has loaded, it waits for it, under the black screen
-/// (`games`).
+// ---------------------------------------------------------------- the game
+
+/// Whatever was tapped, if it asks for something: the board, or a panel's
+/// button.
+fn ask(click: On<Pointer<Click>>, buttons: Query<&AsksFor>, mut asks: MessageWriter<Ask>) {
+    if click.button != PointerButton::Primary || click.original_event_target() != click.entity {
+        return;
+    }
+    if let Ok(button) = buttons.get(click.entity) {
+        asks.write(button.0);
+    }
+}
+
+/// What the server tells this device alone about Bridge Wars, online: that
+/// it has seated you in a game ([`Tell::Seated`]), which begins it here;
+/// that you stand again on your island; and that you are back in the town,
+/// which ends it here.
+#[allow(clippy::too_many_arguments)]
+fn hear(
+    mut tells: MessageReader<Tell>,
+    game: Option<ResMut<Game>>,
+    lobby: Res<Lobby>,
+    me: Query<(Entity, &Seat), With<Player>>,
+    in_arena: Query<Entity, With<InArena>>,
+    mut begun: ResMut<Begun>,
+    anchors: Option<ResMut<Anchors>>,
+    mut islands: ResMut<Islands>,
+    mut visibilities: Query<&mut Visibility>,
+    mut bodies: Whereabouts,
+    (mut orbit, mut driving): (ResMut<OrbitCamera>, ResMut<Driving>),
+    mut commands: Commands,
+) {
+    let mut game = game;
+    let mut anchors = anchors;
+    for tell in tells.read() {
+        let Ok((you, seat)) = me.single() else {
+            continue;
+        };
+        match tell {
+            Tell::Seated { seat: mine } => {
+                // Another game straight after the last keeps the view the
+                // first fixed the camera from.
+                let kept = game.as_ref().and_then(|game| game.view);
+                for thing in &in_arena {
+                    commands.entity(thing).try_despawn();
+                }
+                if let Some(anchors) = anchors.as_deref_mut() {
+                    stand_anchors_up(anchors, &mut islands, &mut visibilities);
+                }
+                let mut opened = open(
+                    &mut commands,
+                    you,
+                    usize::from(*mine),
+                    seat.0,
+                    true,
+                    &mut begun,
+                    &lobby,
+                    &mut orbit,
+                    &mut driving,
+                );
+                opened.view = kept.or(opened.view);
+                info!("Bridge Wars: seated online, seat {mine}");
+                commands.insert_resource(opened);
+                game = None;
+            }
+            Tell::Arrive {
+                venue: Venue::Arena, ..
+            } => {
+                if let Some(game) = game.as_deref() {
+                    if game.online {
+                        commands.entity(you).remove::<Dead>().insert(Health::of(rules::HEALTH));
+                    }
+                }
+            }
+            Tell::Arrive {
+                venue: Venue::Town | Venue::Home,
+                ..
+            } => {
+                if let Some(game) = game.as_deref()
+                    && game.online
+                {
+                    finish(&mut commands, game, &in_arena, you, &mut bodies, &mut orbit, anchors.as_deref_mut(), &mut islands, &mut visibilities, false);
+                    info!("Bridge Wars: over, back to the town");
+                }
+                game = None;
+            }
+            Tell::Refused(refusal) => {
+                info!("the server turned that down: {refusal:?}");
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Online, the game is the server's: whatever it says the round is, this
+/// shows: the stage and the time left, who is in it, everyone's health,
+/// each anchor and who is out; and as it moves on, what goes with that
+/// here: "Fight!" as the fight begins, a number off whoever was hit, the
+/// dead hidden, your own death, and the panel at the end.
+#[allow(clippy::too_many_arguments)]
+fn follow_round(
+    game: Option<ResMut<Game>>,
+    rounds: Query<(&ArenaRound, &Seats), With<Remote>>,
+    mut me: Query<(Entity, &Transform, &mut Health, Has<Dead>), With<Player>>,
+    mut others: Query<
+        (Entity, &Member, &Transform, Option<&mut Health>, Has<Dead>),
+        (With<Remote>, With<WalkCycle>, Without<Player>),
+    >,
+    mut commands: Commands,
+) {
+    let Some(mut game) = game else {
+        return;
+    };
+    if !game.online {
+        return;
+    }
+    let Ok((round, seats)) = rounds.single() else {
+        return;
+    };
+    if game.seats != seats.0 {
+        game.seats.clone_from(&seats.0);
+    }
+    let left = f32::from(round.left);
+    let stage = match round.stage {
+        ArenaStage::Waiting => Stage::Waiting { since_join: 0.0 },
+        ArenaStage::Countdown => Stage::Countdown { left },
+        ArenaStage::Playing => Stage::Playing { left },
+        ArenaStage::Over { winner } => Stage::Over { winner, left },
+    };
+    let was = game.stage;
+    game.stage = stage;
+    if matches!(stage, Stage::Playing { .. }) && !matches!(was, Stage::Playing { .. }) {
+        hud::announce(&mut commands, None, &ui().words.arena.fight, hud::HEADLINE, FIGHT_SECS).insert(InArena);
+    }
+    for (team, anchor) in round.anchors.iter().enumerate() {
+        game.anchors[team] = f32::from(*anchor);
+    }
+    for seat in 0..ARENA_SEATS {
+        game.out[seat] = round.is_out(seat);
+    }
+    // Everyone's health: yours on your body, everyone else's on theirs,
+    // the dead hidden and a number off whoever was hit since last time.
+    let mut health: Vec<f32> = round.health.iter().map(|&left| f32::from(left)).collect();
+    health.resize(health.len().max(game.health.len()), rules::HEALTH);
+    for (seat, &left) in health.iter().enumerate() {
+        let before = game.health.get(seat).copied().unwrap_or(rules::HEALTH);
+        if seat == game.me {
+            if let Ok((you, at, mut mine, dead)) = me.single_mut() {
+                if (mine.left - left).abs() > 1e-3 {
+                    mine.left = left;
+                    mine.full = rules::HEALTH;
+                }
+                if left < before {
+                    spawn_number(&mut commands, at.translation, before - left);
+                }
+                if left <= 0.0 && !dead {
+                    let dead = if game.out[game.me] {
+                        Dead { left: f32::INFINITY }
+                    } else {
+                        Dead { left: rules::RESPAWN_SECS }
+                    };
+                    commands.entity(you).insert(dead);
+                }
+            }
+            continue;
+        }
+        let Some(member) = game.seats.get(seat) else {
+            continue;
+        };
+        let Some((body, _, at, theirs, dead)) = others.iter_mut().find(|(_, other, ..)| other.id == member.id) else {
+            continue;
+        };
+        match theirs {
+            Some(mut theirs) => {
+                if (theirs.left - left).abs() > 1e-3 {
+                    theirs.left = left;
+                    theirs.full = rules::HEALTH;
+                }
+            }
+            None => {
+                let mut theirs = Health::of(rules::HEALTH);
+                theirs.left = left;
+                commands.entity(body).insert(theirs);
+            }
+        }
+        if left < before {
+            spawn_number(&mut commands, at.translation, before - left);
+        }
+        if left <= 0.0 && !dead {
+            commands.entity(body).insert(Dead { left: f32::INFINITY });
+        } else if left > 0.0 && dead {
+            commands.entity(body).remove::<Dead>();
+        }
+    }
+    game.health = health;
+}
+
+/// Online, the connection gone in the middle of a game: it waits a moment
+/// for it to come back, and then gives the game up, back to the town as it
+/// is offline.
+#[allow(clippy::too_many_arguments)]
+fn cut_off(
+    time: Res<Time>,
+    online: Res<Online>,
+    game: Option<ResMut<Game>>,
+    me: Query<Entity, With<Player>>,
+    in_arena: Query<Entity, With<InArena>>,
+    anchors: Option<ResMut<Anchors>>,
+    mut islands: ResMut<Islands>,
+    mut visibilities: Query<&mut Visibility>,
+    mut bodies: Whereabouts,
+    mut orbit: ResMut<OrbitCamera>,
+    mut commands: Commands,
+) {
+    let Some(mut game) = game else {
+        return;
+    };
+    if !game.online || online.is() {
+        return;
+    }
+    let gone = match game.cut_off {
+        Some(gone) => gone + time.delta_secs(),
+        None => {
+            hud::announce(&mut commands, None, &ui().words.house_builder.reconnecting, hud::CAPTION, 3.0).insert(InArena);
+            0.0
+        }
+    };
+    game.cut_off = Some(gone);
+    if gone < RECONNECT_WAIT {
+        return;
+    }
+    let Ok(you) = me.single() else {
+        return;
+    };
+    let mut anchors = anchors;
+    finish(&mut commands, &game, &in_arena, you, &mut bodies, &mut orbit, anchors.as_deref_mut(), &mut islands, &mut visibilities, true);
+    hud::announce(&mut commands, None, &ui().words.house_builder.lost_connection, hud::CAPTION, 3.0);
+}
+
+/// Takes you into a game and moves it on, offline: into the waiting room,
+/// the bots in once nobody else has come, the countdown, everyone to their
+/// islands, the time running, the fight's end, and at the end of it
+/// everyone back in the town. Online, asks the server for each instead.
+/// Asked in before the map has loaded, it waits for it, under the black
+/// screen (`games`).
 #[allow(clippy::too_many_arguments)]
 fn play(
     time: Res<Time>,
@@ -434,26 +852,36 @@ fn play(
     game: Option<ResMut<Game>>,
     online: Res<Online>,
     lobby: Res<Lobby>,
-    islands: Res<Islands>,
     room: Option<Res<WaitingRoom>>,
     me: Query<(Entity, &Seat), With<Player>>,
     in_arena: Query<Entity, With<InArena>>,
+    (anchors, mut islands, mut visibilities): (Option<ResMut<Anchors>>, ResMut<Islands>, Query<&mut Visibility>),
     mut bodies: Whereabouts,
     (mut orbit, mut driving): (ResMut<OrbitCamera>, ResMut<Driving>),
-    assets: Res<AssetServer>,
-    mut requests: MessageWriter<NetAsk>,
+    (mut begun, assets, mut requests): (ResMut<Begun>, Res<AssetServer>, MessageWriter<NetAsk>),
     mut asked_in: Local<bool>,
     mut commands: Commands,
 ) {
+    let mut anchors = anchors;
     let Ok((you, seat)) = me.single() else {
         asks.clear();
         return;
     };
     let mut skip = false;
+    let (mut again, mut exit) = (false, false);
     for &ask in asks.read() {
         match ask {
-            Ask::Enter => *asked_in = true,
+            Ask::Enter => {
+                if online.is() {
+                    requests.write(NetAsk::Arena);
+                    info!("Bridge Wars: asking the server for a game");
+                } else {
+                    *asked_in = true;
+                }
+            }
             Ask::Skip => skip = true,
+            Ask::Again => again = true,
+            Ask::Exit => exit = true,
         }
     }
     let room = room.as_deref().copied();
@@ -461,13 +889,32 @@ fn play(
         if *asked_in && let Some(map) = islands.get(Venue::Arena) {
             *asked_in = false;
             let spot = waiting_spot(room.as_ref(), map, 0);
-            let game = start(&mut commands, you, seat.0, spot, &lobby, &online, &mut bodies, &mut orbit, &mut driving, &mut requests);
+            let game = open(&mut commands, you, 0, seat.0, false, &mut begun, &lobby, &mut orbit, &mut driving);
+            lobby::put(&mut bodies, &mut orbit, you, Venue::Arena, spot);
             commands.insert_resource(game);
         }
         return;
     };
     *asked_in = false;
     let game = &mut *game;
+    let free_to_leave = game.over() || game.out.get(game.me).copied().unwrap_or(false);
+    if game.online {
+        if skip {
+            requests.write(NetAsk::Skip);
+        }
+        if again && free_to_leave {
+            requests.write(NetAsk::Arena);
+        }
+        if exit && free_to_leave {
+            requests.write(NetAsk::Leave);
+        }
+        return;
+    }
+    if (again || exit) && free_to_leave {
+        finish(&mut commands, game, &in_arena, you, &mut bodies, &mut orbit, anchors.as_deref_mut(), &mut islands, &mut visibilities, true);
+        *asked_in = again;
+        return;
+    }
     let dt = time.delta_secs();
     match game.stage {
         Stage::Waiting { since_join } => {
@@ -490,8 +937,13 @@ fn play(
                         false,
                         waiting_spot(room.as_ref(), map, seat),
                     );
-                    commands.entity(body).insert((InArena, Health::full(), Hunter::default()));
-                    game.bodies.push(body);
+                    commands.entity(body).insert((
+                        InArena,
+                        Health::of(ui().arena.health),
+                        Hunter::default(),
+                        Team(arena_team(seat)),
+                    ));
+                    game.bodies.push(Some(body));
                 }
                 info!("Bridge Wars: nobody joined in {BOT_WAIT} s, so the computer takes the seats left");
             }
@@ -503,89 +955,196 @@ fn play(
         }
         Stage::Countdown { left } if left > dt && !skip => game.stage = Stage::Countdown { left: left - dt },
         Stage::Countdown { .. } => {
-            for (seat, &body) in game.bodies.iter().enumerate() {
-                lobby::send(&mut bodies, &mut orbit, body, Venue::Arena, seat);
+            for (seat, body) in game.bodies.iter().enumerate() {
+                if let Some(body) = body {
+                    lobby::send(&mut bodies, &mut orbit, *body, Venue::Arena, seat);
+                }
             }
             hud::announce(&mut commands, None, &ui().words.arena.fight, hud::HEADLINE, FIGHT_SECS).insert(InArena);
             info!("Bridge Wars: everyone to their islands, {PLAY_SECS} s to play");
             game.stage = Stage::Playing { left: PLAY_SECS };
         }
-        Stage::Playing { left } if left > dt && !skip => game.stage = Stage::Playing { left: left - dt },
+        Stage::Playing { left } => {
+            let teams = game.teams_in_play();
+            let winner = match (teams.len(), left <= dt || skip) {
+                (0, _) => Some(None),
+                (1, _) => Some(Some(teams[0])),
+                (_, true) => Some(None),
+                _ => None,
+            };
+            game.stage = match winner {
+                Some(winner) => {
+                    info!("Bridge Wars: over, team {winner:?} wins");
+                    Stage::Over {
+                        winner,
+                        left: RESULTS_SECS,
+                    }
+                }
+                None => Stage::Playing { left: left - dt },
+            };
+        }
+        Stage::Over { winner, left } if left > dt && !skip => {
+            game.stage = Stage::Over {
+                winner,
+                left: left - dt,
+            }
+        }
         // Time's up: back to the town, alive, and the camera as it was.
-        Stage::Playing { .. } => {
-            let (town_seat, view) = (game.town_seat, game.view);
-            commands.remove_resource::<Game>();
-            for thing in &in_arena {
-                commands.entity(thing).try_despawn();
-            }
-            commands.entity(you).insert(Seat(town_seat)).remove::<(Health, Dead)>();
-            lobby::send(&mut bodies, &mut orbit, you, Venue::Town, town_seat);
-            match view {
-                Some(view) => orbit.back_to(view),
-                None => *orbit = OrbitCamera::behind(&island::arrival(Venue::Town, town_seat)),
-            }
-            if online.is() {
-                requests.write(NetAsk::Travel(Venue::Town));
-            }
+        Stage::Over { .. } => {
+            finish(&mut commands, game, &in_arena, you, &mut bodies, &mut orbit, anchors.as_deref_mut(), &mut islands, &mut visibilities, true);
             info!("Bridge Wars: over, back to the town");
         }
     }
 }
 
-/// A new game, with you at `spot`, in the waiting room, your health full:
-/// the camera fixed over you, the board up, the game's name across the
-/// screen, and online the server asked to put you on the map, in a room
-/// of your own. Getting there gets you out of the car (`drive::toggle`,
-/// on the change of island), and the camera goes back to how it was
-/// before the car had it, not to the car's.
+/// A new game with you in `me`, your health full: the camera fixed over
+/// you, the board, the anchors' bars, the game's name across the screen.
+/// Offline you are put in the waiting room by whoever calls this; online
+/// the server puts you there. Getting there gets you out of the car
+/// (`drive::toggle`, on the change of island), and the camera goes back to
+/// how it was before the car had it, not to the car's.
 #[allow(clippy::too_many_arguments)]
-fn start(
+fn open(
     commands: &mut Commands,
     you: Entity,
+    me: usize,
     town_seat: usize,
-    spot: Transform,
+    online: bool,
+    begun: &mut Begun,
     lobby: &Lobby,
-    online: &Online,
-    bodies: &mut Whereabouts,
     orbit: &mut OrbitCamera,
     driving: &mut Driving,
-    requests: &mut MessageWriter<NetAsk>,
 ) -> Game {
     let before_the_car = driving.take_view();
     let view = orbit.top_down().or(before_the_car);
-    commands.entity(you).insert((Seat(0), Health::full())).remove::<Dead>();
-    lobby::put(bodies, orbit, you, Venue::Arena, spot);
+    let full = if online { rules::HEALTH } else { ui().arena.health };
+    commands
+        .entity(you)
+        .insert((Seat(me), Team(arena_team(me)), Health::of(full)))
+        .remove::<Dead>();
     spawn_board(commands);
+    spawn_anchor_bars(commands, arena_team(me));
     hud::announce(commands, None, &ui().words.arena.name, hud::HEADLINE, NAME_SECS).insert(InArena);
-    if online.is() {
-        requests.write(NetAsk::Travel(Venue::Arena));
-    }
-    info!("Bridge Wars: into the waiting room");
+    begun.0 += 1;
+    info!("Bridge Wars: into the waiting room{}", if online { " (online)" } else { "" });
+    let mut bodies = vec![None; ARENA_SEATS.max(me + 1)];
+    bodies[me] = Some(you);
     Game {
-        seats: vec![lobby.mine()],
-        bodies: vec![you],
+        id: begun.0,
+        seats: if online { Vec::new() } else { vec![lobby.mine()] },
+        bodies: if online { bodies } else { vec![Some(you)] },
         town_seat,
+        me,
+        online,
+        cut_off: None,
         stage: Stage::Waiting { since_join: 0.0 },
         view,
+        health: Vec::new(),
+        anchors: [if online { rules::ANCHOR_HEALTH } else { ui().arena.anchor_health }; ARENA_TEAMS],
+        out: [false; ARENA_SEATS],
     }
+}
+
+/// The end of a game here: everything it put up goes, your health and your
+/// team with it, the anchors stand again, the camera goes back to how it
+/// was; and `move_you`, you are sent back to the town where your seat
+/// there arrives (offline; online the server has moved you already).
+#[allow(clippy::too_many_arguments)]
+fn finish(
+    commands: &mut Commands,
+    game: &Game,
+    in_arena: &Query<Entity, With<InArena>>,
+    you: Entity,
+    bodies: &mut Whereabouts,
+    orbit: &mut OrbitCamera,
+    anchors: Option<&mut Anchors>,
+    islands: &mut Islands,
+    visibilities: &mut Query<&mut Visibility>,
+    move_you: bool,
+) {
+    commands.remove_resource::<Game>();
+    for thing in in_arena {
+        commands.entity(thing).try_despawn();
+    }
+    commands.entity(you).remove::<(Health, Dead, Team, Carrying)>();
+    if move_you {
+        commands.entity(you).insert(Seat(game.town_seat));
+        lobby::send(bodies, orbit, you, Venue::Town, game.town_seat);
+    }
+    match game.view {
+        Some(view) => orbit.back_to(view),
+        None => *orbit = OrbitCamera::behind(&island::arrival(Venue::Town, game.town_seat)),
+    }
+    if let Some(anchors) = anchors {
+        stand_anchors_up(anchors, islands, visibilities);
+    }
+}
+
+/// Says how the fight stands, for the bridges (`bridge`) and the network
+/// (`net`).
+fn publish(game: Option<Res<Game>>, mut fighting: ResMut<Fighting>, mut offline: ResMut<OfflineArena>) {
+    let now = match game.as_deref() {
+        Some(game) => Fighting {
+            playing: game.playing(),
+            seat: Some(game.me as u8),
+            online: game.online,
+            game: game.id,
+        },
+        None => Fighting {
+            game: fighting.game,
+            ..default()
+        },
+    };
+    fighting.set_if_neq(now);
+    offline.set_if_neq(OfflineArena(game.is_some_and(|game| !game.online)));
 }
 
 // --------------------------------------------------------------- the fight
 
-/// Sends each bot for whoever is nearest within its sight, while the game
-/// is on: at a run up to them, over whatever walk it was on, pressing in
-/// on them once there, and a punch whenever they are in its reach and it
-/// may throw one, which knocks them back as yours does ([`Shove::knock`])
-/// and lands ([`Landed`]) for the damage to be dealt. It sees no further
-/// than the file's `arena.hunt_radius`, and the dead not at all; walking
-/// off its island it is kept from, as ever (`StaysAshore`), so a target
-/// across the void is stood at the edge for. With less than the file's
-/// `arena.flee_below` of its health it runs away from them instead
-/// ([`flight`]), until its health has come back ([`regen`]).
+/// Whether the fight is this device's own to run, and on.
+fn offline_fight(game: &Option<ResMut<Game>>) -> bool {
+    game.as_deref().is_some_and(|game| !game.online && game.playing())
+}
+
+/// Gives everyone in the game their team: yours and the bots' as they
+/// come, and online everyone the server seats, by their seat, once it
+/// has said who is in which.
+fn team_up(
+    game: Option<Res<Game>>,
+    others: Query<(Entity, &Member, Option<&Team>), (With<Remote>, With<WalkCycle>)>,
+    mut commands: Commands,
+) {
+    let Some(game) = game else {
+        return;
+    };
+    if !game.online {
+        return;
+    }
+    for (body, member, team) in &others {
+        let Some(seat) = game.seats.iter().position(|seated| seated.id == member.id) else {
+            continue;
+        };
+        let theirs = Team(arena_team(seat));
+        if team != Some(&theirs) {
+            commands.entity(body).insert(theirs);
+        }
+    }
+}
+
+/// Sends each bot for whoever of another team is nearest within its sight,
+/// while the game is on, offline: at a run up to them, over whatever walk
+/// it was on, pressing in on them once there, and a punch whenever they
+/// are in its reach and it may throw one, which knocks them back as yours
+/// does ([`Shove::knock`]) and lands ([`Landed`]) for the damage to be
+/// dealt. It sees no further than the file's `arena.hunt_radius`, the dead
+/// not at all, and never a teammate; walking off its island it is kept
+/// from, as ever (`StaysAshore`), but onto a bridge it will go. With less
+/// than the file's `arena.flee_below` of its health it runs away from them
+/// instead ([`flight`]), until its health has come back ([`regen`]).
 #[allow(clippy::too_many_arguments)]
 fn hunt(
     time: Res<Time>,
-    game: Option<Res<Game>>,
+    game: Option<ResMut<Game>>,
     islands: Res<Islands>,
     mut bodies: Query<(
         Entity,
@@ -597,41 +1156,45 @@ fn hunt(
         Option<&mut Hunter>,
         Option<&mut Steering>,
         Option<&Health>,
+        Option<&Team>,
         Has<Dead>,
     )>,
     mut landed: MessageWriter<Landed>,
     mut commands: Commands,
 ) {
-    if !game.is_some_and(|game| matches!(game.stage, Stage::Playing { .. })) {
+    if !offline_fight(&game) {
         return;
     }
     let file = ui();
     let (tuning, melee) = (file.arena, file.melee);
     let sector = Sector::of(&melee);
     let dt = time.delta_secs();
-    let alive: Vec<(Entity, Vec3)> = bodies
+    let alive: Vec<(Entity, Vec3, Option<Team>)> = bodies
         .iter()
         .filter(|(_, _, venue, .., dead)| **venue == Venue::Arena && !dead)
-        .map(|(body, at, ..)| (body, at.translation))
+        .map(|(body, at, _, _, _, _, _, _, _, team, _)| (body, at.translation, team.copied()))
         .collect();
     let hunters: Vec<Entity> = bodies
         .iter()
-        .filter(|(_, _, venue, _, _, _, hunter, _, _, dead)| **venue == Venue::Arena && hunter.is_some() && !dead)
+        .filter(|(_, _, venue, _, _, _, hunter, _, _, _, dead)| **venue == Venue::Arena && hunter.is_some() && !dead)
         .map(|(body, ..)| body)
         .collect();
     for bot in hunters {
         // What the bot does this frame, with its own body in hand; the
         // punch is thrown once that is let go of.
         let punch = {
-            let Ok((_, body, _, mut intent, _, _, Some(mut hunter), steering, health, _)) = bodies.get_mut(bot) else {
+            let Ok((_, body, _, mut intent, _, _, Some(mut hunter), steering, health, team, _)) = bodies.get_mut(bot)
+            else {
                 continue;
             };
             hunter.cooldown = (hunter.cooldown - dt).max(0.0);
             let here = body.translation;
-            let Some((target, there)) = alive
+            let mine = team.copied();
+            let Some((target, there, _)) = alive
                 .iter()
-                .filter(|&&(other, at)| {
+                .filter(|&&(other, at, theirs)| {
                     other != bot
+                        && !(mine.is_some() && theirs == mine)
                         && at.xz().distance(here.xz()) <= tuning.hunt_radius
                         && (at.y - here.y).abs() <= PLAYER_HEIGHT * 2.0
                 })
@@ -685,53 +1248,126 @@ fn flight(map: &Island, here: Vec3, toward: Vec3) -> Vec3 {
         .unwrap_or(Vec3::ZERO)
 }
 
-/// How far ahead a bot running away looks for dry land, in metres.
-const FLIGHT: f32 = 3.0;
-
 /// Whoever has fallen far enough into the void is dead ([`void_y`]): you,
-/// or a bot knocked off its island.
-fn reap(fallen: Query<(Entity, &Transform, &Venue), (With<WalkCycle>, Without<Dead>)>, mut commands: Commands) {
+/// or a bot knocked off its island. Online your fall is told to the server,
+/// which decides whether you come back; everyone else's is theirs.
+fn reap(
+    game: Option<ResMut<Game>>,
+    fallen: Query<(Entity, &Transform, &Venue, &Seat, Has<Player>, Has<Remote>), (With<WalkCycle>, Without<Dead>)>,
+    mut requests: MessageWriter<NetAsk>,
+    mut commands: Commands,
+) {
+    let Some(mut game) = game else {
+        return;
+    };
+    if !game.playing() {
+        return;
+    }
     let void = void_y();
-    for (body, transform, &venue) in &fallen {
-        if venue == Venue::Arena && transform.translation.y < void {
-            die(&mut commands, body);
-            info!("{body} fell into the void");
+    for (body, transform, &venue, seat, mine, remote) in &fallen {
+        if venue != Venue::Arena || transform.translation.y >= void {
+            continue;
         }
+        if game.online {
+            if mine {
+                commands.entity(body).insert(Dead { left: f32::INFINITY });
+                requests.write(NetAsk::Respawn);
+                info!("fell into the void");
+            } else if !remote {
+                commands.entity(body).insert(Dead { left: f32::INFINITY });
+            }
+            continue;
+        }
+        let dead = game.die(seat.0);
+        commands.entity(body).insert(dead);
+        info!("{body} fell into the void");
     }
 }
 
 /// Deals every punch that landed ([`Landed`]) its damage, while the game is
-/// on: the file's `arena.damage` off the victim's health, a number floating
-/// up off them, and death at none.
+/// on, offline: the file's `arena.damage` off the victim's health, a number
+/// floating up off them, and death at none.
 fn deal_damage(
     mut hits: MessageReader<Landed>,
-    game: Option<Res<Game>>,
-    mut victims: Query<(&Transform, &mut Health), Without<Dead>>,
+    game: Option<ResMut<Game>>,
+    mut victims: Query<(&Transform, &mut Health, &Seat), Without<Dead>>,
     mut commands: Commands,
 ) {
-    let fighting = game.is_some_and(|game| matches!(game.stage, Stage::Playing { .. }));
+    if !offline_fight(&game) {
+        hits.clear();
+        return;
+    }
+    let mut game = game.expect("checked");
     for hit in hits.read() {
-        if !fighting {
-            continue;
-        }
-        let Ok((at, mut health)) = victims.get_mut(hit.victim) else {
+        let Ok((at, mut health, seat)) = victims.get_mut(hit.victim) else {
             continue;
         };
         let damage = ui().arena.damage;
         health.take(damage);
         spawn_number(&mut commands, at.translation, damage);
         if health.gone() {
-            die(&mut commands, hit.victim);
+            let dead = game.die(seat.0);
+            commands.entity(hit.victim).insert(dead);
             info!("{} killed {}", hit.by, hit.victim);
         }
     }
 }
 
+/// Lands every punch you throw ([`Swung`]) on an enemy team's anchor in its
+/// range, as it would land on a body that wide, while the game is on: the
+/// damage off the anchor offline, or asked of the server online, and a
+/// number off the pillar either way.
+fn hit_anchors(
+    mut swings: MessageReader<Swung>,
+    game: Option<ResMut<Game>>,
+    mut requests: MessageWriter<NetAsk>,
+    mut commands: Commands,
+) {
+    let Some(mut game) = game else {
+        swings.clear();
+        return;
+    };
+    if !game.playing() {
+        swings.clear();
+        return;
+    }
+    let file = ui();
+    let sector = Sector::of(&file.melee);
+    let damage = file.arena.damage;
+    let my_team = game.my_team();
+    for swing in swings.read() {
+        if (swing.feet - island::LAND_TOP_OF_THE_ISLANDS).abs() > PLAYER_HEIGHT {
+            continue;
+        }
+        for team in 0..ARENA_TEAMS {
+            if team as u8 == my_team || game.anchors[team] <= 0.0 {
+                continue;
+            }
+            let anchor = ARENA_ANCHORS[team];
+            if !sector.holds(swing.facing, anchor - swing.at, ANCHOR_RADIUS) {
+                continue;
+            }
+            spawn_number(&mut commands, Vec3::new(anchor.x, 1.2, anchor.y), damage);
+            if game.online {
+                requests.write(NetAsk::HitAnchor { team: team as u8 });
+            } else {
+                game.anchors[team] = (game.anchors[team] - damage).max(0.0);
+                if game.anchors[team] <= 0.0 {
+                    info!("team {team}'s anchor is broken");
+                }
+            }
+        }
+    }
+}
+
 /// Gives everyone alive their health back, a little a second, once nobody
-/// has hit them for a while: the file's `arena.regen_per_sec` after
-/// `arena.regen_after`. The while is counted without marking the health
-/// changed, so that a bar at rest is left alone.
-fn regen(time: Res<Time>, mut bodies: Query<&mut Health, Without<Dead>>) {
+/// has hit them for a while, offline: the file's `arena.regen_per_sec`
+/// after `arena.regen_after`. The while is counted without marking the
+/// health changed, so that a bar at rest is left alone.
+fn regen(time: Res<Time>, game: Option<ResMut<Game>>, mut bodies: Query<&mut Health, Without<Dead>>) {
+    if !offline_fight(&game) {
+        return;
+    }
     let tuning = ui().arena;
     let dt = time.delta_secs();
     for mut health in &mut bodies {
@@ -743,29 +1379,29 @@ fn regen(time: Res<Time>, mut bodies: Query<&mut Health, Without<Dead>>) {
     }
 }
 
-/// `body` is dead: hidden where it is, out of the way and out of play, for
-/// the file's `arena.respawn_secs`.
-fn die(commands: &mut Commands, body: Entity) {
-    commands.entity(body).insert(Dead {
-        left: ui().arena.respawn_secs,
-    });
-}
-
-/// Puts the dead back where their seat arrives, the middle of their
-/// island, with their health full, once their while is up.
+/// Puts the dead back where their seat arrives with their health full,
+/// once their while is up, offline: never those out for good, whose while
+/// never ends.
 fn respawn(
     time: Res<Time>,
+    game: Option<ResMut<Game>>,
     mut dead: Query<(Entity, &mut Dead, &Seat, &mut Health)>,
     mut bodies: Whereabouts,
     mut orbit: ResMut<OrbitCamera>,
     mut commands: Commands,
 ) {
+    if !offline_fight(&game) {
+        return;
+    }
     let dt = time.delta_secs();
     let mut back = Vec::new();
     for (body, mut dead, seat, mut health) in &mut dead {
+        if dead.left.is_infinite() {
+            continue;
+        }
         dead.left -= dt;
         if dead.left <= 0.0 {
-            *health = Health::full();
+            *health = Health::of(ui().arena.health);
             back.push((body, seat.0));
         }
     }
@@ -776,20 +1412,125 @@ fn respawn(
     }
 }
 
+/// Takes a broken anchor out of the map: its pillar hidden and taken out of
+/// what is stood on, and a headline saying whose it was.
+fn break_anchors(
+    game: Option<Res<Game>>,
+    anchors: Option<ResMut<Anchors>>,
+    mut islands: ResMut<Islands>,
+    mut visibilities: Query<&mut Visibility>,
+    mut commands: Commands,
+) {
+    let (Some(game), Some(mut anchors)) = (game, anchors) else {
+        return;
+    };
+    let mut broke = false;
+    for team in 0..ARENA_TEAMS {
+        if game.anchors[team] > 0.0 || anchors.broken[team] {
+            continue;
+        }
+        anchors.broken[team] = true;
+        broke = true;
+        for &pillar in &anchors.pillars[team] {
+            if let Ok(mut visibility) = visibilities.get_mut(pillar) {
+                visibility.set_if_neq(Visibility::Hidden);
+            }
+        }
+        let words = &ui().words.arena;
+        let line = if team as u8 == game.my_team() {
+            words.your_anchor_destroyed.clone()
+        } else {
+            fill(&words.anchor_destroyed, &[("team", &team_name(team as u8))])
+        };
+        hud::announce(&mut commands, None, &line, hud::CAPTION, ANCHOR_SECS).insert(InArena);
+    }
+    if !broke {
+        return;
+    }
+    // The map without the broken pillars, for bodies to stand on.
+    let original = match &anchors.original {
+        Some(original) => original.clone(),
+        None => {
+            let Some(corners) = islands.corners(Venue::Arena) else {
+                return;
+            };
+            let corners = corners.to_vec();
+            anchors.original = Some(corners.clone());
+            corners
+        }
+    };
+    let broken: Vec<Vec2> = (0..ARENA_TEAMS)
+        .filter(|&team| anchors.broken[team])
+        .map(|team| ARENA_ANCHORS[team])
+        .collect();
+    let remaining: Vec<[Vec3; 3]> = original
+        .into_iter()
+        .filter(|triangle| !is_pillar(triangle, &broken))
+        .collect();
+    islands.reshape(Venue::Arena, remaining, &[]);
+}
+
+/// Whether `triangle` is of one of the pillars at `anchors`: every corner of
+/// it within [`ANCHOR_REACH`] of the anchor across the ground, and some of
+/// it higher than the slab the pillar stands on reaches ([`PILLAR_OVER`]):
+/// the pillar's lowest point is 0.54 m up and its highest 3.96, the slab's
+/// top 0.75.
+fn is_pillar(triangle: &[Vec3; 3], anchors: &[Vec2]) -> bool {
+    anchors.iter().any(|anchor| {
+        triangle.iter().all(|corner| corner.xz().distance(*anchor) <= ANCHOR_REACH)
+            && triangle.iter().any(|corner| corner.y > PILLAR_OVER)
+    })
+}
+
+/// How high a triangle of a pillar reaches at the least, in metres, which
+/// nothing else within an anchor's reach does: the slab under it tops at
+/// 0.75.
+const PILLAR_OVER: f32 = 1.0;
+
+/// Stands every anchor back up, as the game ends: the pillars shown, and
+/// the map as it was to stand on.
+fn stand_anchors_up(anchors: &mut Anchors, islands: &mut Islands, visibilities: &mut Query<&mut Visibility>) {
+    if !anchors.broken.iter().any(|&broken| broken) {
+        return;
+    }
+    anchors.broken = [false; ARENA_TEAMS];
+    for pillar in anchors.pillars.iter().flatten() {
+        if let Ok(mut visibility) = visibilities.get_mut(*pillar) {
+            visibility.set_if_neq(Visibility::Inherited);
+        }
+    }
+    if let Some(original) = anchors.original.clone() {
+        islands.reshape(Venue::Arena, original, &[]);
+    }
+}
+
+/// "Team 3": `team` as it is written on the screen, counted from 1.
+fn team_name(team: u8) -> String {
+    fill(&ui().words.arena.team, &[("team", &(team + 1).to_string())])
+}
+
 // ---------------------------------------------------- what is drawn over it
 
 /// Puts "You died. Respawning in 4..." across the screen while you are
-/// dead, counting down in halves, and takes it away as you stand again.
+/// dead and coming back, counting down in halves, and takes it away as you
+/// stand again. Out for good, the panel says so instead ([`show_panel`]).
 fn show_death(
-    me: Query<&Dead, With<Player>>,
+    time: Res<Time>,
+    game: Option<Res<Game>>,
+    mut me: Query<&mut Dead, With<Player>>,
     texts: Query<Entity, With<DeathText>>,
     mut lines: Query<&mut Text, With<DeathLine>>,
     mut commands: Commands,
 ) {
-    let dead = me.single().ok();
+    let dead = me.single_mut().ok();
     let text = texts.single().ok();
-    match (dead, text) {
-        (Some(dead), Some(_)) => {
+    let waiting = dead.filter(|dead| dead.left.is_finite());
+    match (waiting, text) {
+        (Some(mut dead), Some(_)) => {
+            // Online the server stands you up; the count is for the eye.
+            if game.is_some_and(|game| game.online) {
+                dead.left = (dead.left - time.delta_secs()).max(0.0);
+            }
             let line = died_in(dead.left);
             for mut text in &mut lines {
                 if text.0 != line {
@@ -830,25 +1571,175 @@ fn died_in(left: f32) -> String {
     fill(&ui().words.arena.died, &[("seconds", &seconds)])
 }
 
-/// A health bar over the head of everyone else in the game with health:
-/// made as they come, kept over their heads as the camera moves, filled
-/// as far as their health goes, and put away while they are dead or off
-/// the screen, or you are not in the game.
-#[allow(clippy::too_many_arguments)]
-fn place_bars(
-    me: Query<&Venue, With<Player>>,
-    cameras: Query<(&Camera, &Transform), With<ThirdPersonCamera>>,
-    windows: Query<&Window>,
-    bodies: Query<(Entity, &Transform, &Health, Has<Dead>), Without<Player>>,
-    mut bars: Query<(Entity, &BarOf, &mut Visibility, &mut UiTransform, &ComputedNode, &Children)>,
-    mut fills: Query<&mut Node, With<BarFill>>,
+/// Keeps the panel in the middle of the screen as the game stands: the
+/// end's, with how it went and how long until the town, while the result
+/// is up; yours alone, saying you are out, while you are dead for good
+/// before that; and none otherwise. Both have Play again and Exit.
+fn show_panel(
+    game: Option<Res<Game>>,
+    panels: Query<(Entity, &Panel)>,
+    mut countdowns: Query<&mut Text, With<PanelCountdown>>,
     mut commands: Commands,
 ) {
-    let in_arena = me.single().ok() == Some(&Venue::Arena);
+    let wanted = game.as_deref().and_then(|game| match game.stage {
+        Stage::Over { .. } => Some(Panel::End),
+        _ if game.out.get(game.me).copied().unwrap_or(false) => Some(Panel::Out),
+        _ => None,
+    });
+    let up = panels.single().ok();
+    if up.map(|(_, kind)| *kind) != wanted {
+        if let Some((panel, _)) = up {
+            commands.entity(panel).despawn();
+        }
+        if let (Some(kind), Some(game)) = (wanted, game.as_deref()) {
+            spawn_panel(&mut commands, kind, game);
+        }
+        return;
+    }
+    if let (Some(Panel::End), Some(game)) = (wanted, game.as_deref())
+        && let Stage::Over { left, .. } = game.stage
+    {
+        let line = fill(&ui().words.arena.back_in, &[("time", &clock(left))]);
+        for mut text in &mut countdowns {
+            if text.0 != line {
+                text.0.clone_from(&line);
+            }
+        }
+    }
+}
+
+/// The panel of `kind` for `game`: its title, its line, and Play again and
+/// Exit. Not a dialog: the world goes on round it, and only a press on it
+/// is its own.
+fn spawn_panel(commands: &mut Commands, kind: Panel, game: &Game) {
+    let ui = ui();
+    let (colours, words) = (ui.colours, &ui.words.arena);
+    let (title, line) = match (kind, game.stage) {
+        (Panel::Out, _) => (words.out.clone(), words.anchor_gone.clone()),
+        (Panel::End, Stage::Over { winner, left }) => {
+            let title = match winner {
+                Some(team) if team == game.my_team() => words.victory.clone(),
+                Some(_) => words.defeat.clone(),
+                None => words.times_up.clone(),
+            };
+            let line = match winner {
+                Some(team) => fill(&words.team_wins, &[("team", &team_name(team))]),
+                None => fill(&words.back_in, &[("time", &clock(left))]),
+            };
+            (title, line)
+        }
+        (Panel::End, _) => (words.times_up.clone(), String::new()),
+    };
+    commands
+        .spawn((
+            InArena,
+            kind,
+            TakesPress,
+            Node {
+                position_type: PositionType::Absolute,
+                left: Val::ZERO,
+                right: Val::ZERO,
+                top: Val::Vh(26.0),
+                margin: UiRect::horizontal(Val::Auto),
+                width: Val::VMin(PANEL_WIDTH),
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::Center,
+                row_gap: Val::VMin(1.6),
+                padding: UiRect::all(Val::VMin(3.0)),
+                border_radius: BorderRadius::all(Val::VMin(3.5)),
+                ..default()
+            },
+            BackgroundColor(colours.house_builder.results),
+            GlobalZIndex(builder::DIALOG_LAYER - 1),
+        ))
+        .with_children(|panel| {
+            panel.spawn(hud::words(title, PANEL_TITLE, colours.gold));
+            panel.spawn(builder::label(line, PANEL_TEXT, colours.text));
+            if kind == Panel::End {
+                let left = match game.stage {
+                    Stage::Over { left, .. } => left,
+                    _ => RESULTS_SECS,
+                };
+                panel.spawn((
+                    PanelCountdown,
+                    builder::label(fill(&words.back_in, &[("time", &clock(left))]), PANEL_TEXT * 0.85, colours.text_soft),
+                ));
+            }
+            panel
+                .spawn((
+                    Node {
+                        justify_content: JustifyContent::Center,
+                        column_gap: Val::VMin(3.0),
+                        margin: UiRect::top(Val::VMin(1.0)),
+                        ..default()
+                    },
+                    Pickable::IGNORE,
+                ))
+                .with_children(|choices| {
+                    choices.spawn(panel_button(
+                        Ask::Exit,
+                        words.exit.clone(),
+                        Fill {
+                            idle: colours.quiet,
+                            lit: colours.quiet_lit,
+                        },
+                        colours.text,
+                    ));
+                    choices.spawn(panel_button(
+                        Ask::Again,
+                        words.play_again.clone(),
+                        Fill {
+                            idle: colours.gold,
+                            lit: colours.gold_lit,
+                        },
+                        colours.on_gold,
+                    ));
+                });
+        });
+}
+
+/// One of the panel's buttons.
+fn panel_button(ask: Ask, text: String, fill: Fill, ink: Color) -> impl Bundle {
+    (
+        AsksFor(ask),
+        TakesPress,
+        Button,
+        Node {
+            width: Val::VMin(PANEL_BUTTON_WIDTH),
+            height: Val::VMin(PANEL_BUTTON),
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            border_radius: BorderRadius::all(Val::VMin(PANEL_BUTTON * 0.5)),
+            ..default()
+        },
+        BackgroundColor(fill.idle),
+        fill,
+        children![builder::label(text, PANEL_BUTTON_TEXT, ink)],
+    )
+}
+
+/// A name and a health bar over the head of everyone else in the game with
+/// health and a team: made as they come, in a teammate's colours or an
+/// enemy's, kept over their heads as the camera moves, the bar filled as
+/// far as their health goes, and put away while they are dead or off the
+/// screen, or you are not in the game. Small and faint, so as not to hide
+/// the fight.
+#[allow(clippy::too_many_arguments)]
+fn place_tags(
+    me: Query<(&Venue, Option<&Team>), With<Player>>,
+    cameras: Query<(&Camera, &Transform), With<ThirdPersonCamera>>,
+    windows: Query<&Window>,
+    bodies: Query<(Entity, &Transform, &Health, &Team, &Name, Has<Dead>), Without<Player>>,
+    mut tags: Query<(Entity, &TagOf, &mut Visibility, &mut UiTransform, &ComputedNode, &Children)>,
+    mut fills: Query<&mut Node, With<TagFill>>,
+    mut commands: Commands,
+) {
+    let (here, my_team) = me.single().map(|(venue, team)| (Some(*venue), team.copied())).unwrap_or((None, None));
+    let in_arena = here == Some(Venue::Arena);
     if in_arena {
-        for (body, ..) in &bodies {
-            if !bars.iter().any(|(_, of, ..)| of.0 == body) {
-                spawn_bar(&mut commands, body);
+        for (body, _, _, team, name, _) in &bodies {
+            if !tags.iter().any(|(_, of, ..)| of.0 == body) {
+                spawn_tag(&mut commands, body, name.as_str(), Some(*team) == my_team);
             }
         }
     }
@@ -856,13 +1747,13 @@ fn place_bars(
         return;
     };
     let eye = GlobalTransform::from(*eye);
-    for (bar, of, mut shown, mut place, node, children) in &mut bars {
-        let Ok((_, body, health, dead)) = bodies.get(of.0) else {
-            commands.entity(bar).despawn();
+    for (tag, of, mut shown, mut place, node, children) in &mut tags {
+        let Ok((_, body, health, .., dead)) = bodies.get(of.0) else {
+            commands.entity(tag).despawn();
             continue;
         };
         let point = (in_arena && !dead)
-            .then(|| camera.world_to_viewport(&eye, body.translation + Vec3::Y * BAR_OVER).ok())
+            .then(|| camera.world_to_viewport(&eye, body.translation + Vec3::Y * TAG_OVER).ok())
             .flatten()
             .filter(|point| on_screen(window, *point));
         let Some(point) = point else {
@@ -876,7 +1767,7 @@ fn place_bars(
             rotation: Rot2::IDENTITY,
         });
         shown.set_if_neq(Visibility::Inherited);
-        let width = bar_width(health);
+        let width = bar_width(health.share());
         for child in children.iter() {
             if let Ok(mut fill) = fills.get_mut(child)
                 && fill.width != width
@@ -892,39 +1783,141 @@ fn on_screen(window: &Window, point: Vec2) -> bool {
     point.x >= 0.0 && point.y >= 0.0 && point.x <= window.width() && point.y <= window.height()
 }
 
-/// The bar over `body`'s head, as yours is drawn top left (`hud`), smaller.
-fn spawn_bar(commands: &mut Commands, body: Entity) {
-    let colours = ui().colours.arena;
-    commands.spawn((
-        InArena,
-        BarOf(body),
-        Node {
-            position_type: PositionType::Absolute,
-            left: Val::ZERO,
-            top: Val::ZERO,
-            width: Val::VMin(BAR_WIDTH),
-            height: Val::VMin(BAR_HEIGHT),
-            border: UiRect::all(Val::VMin(BAR_RIM)),
-            border_radius: BorderRadius::all(Val::VMin(0.4)),
-            ..default()
-        },
-        BackgroundColor(colours.hp_back),
-        BorderColor::all(colours.hp_rim),
-        UiTransform::default(),
-        Visibility::Hidden,
-        Pickable::IGNORE,
-        children![(
-            BarFill,
+/// The name and the bar over `body`'s head, in a teammate's colours if
+/// `ally`, or an enemy's.
+fn spawn_tag(commands: &mut Commands, body: Entity, name: &str, ally: bool) {
+    let colours = ui().colours;
+    let arena = colours.arena;
+    let (ink, hp) = if ally { (arena.ally, arena.hp_ally) } else { (arena.enemy, arena.hp_enemy) };
+    commands
+        .spawn((
+            InArena,
+            TagOf(body),
             Node {
-                width: Val::Percent(100.0),
-                height: Val::Percent(100.0),
-                border_radius: BorderRadius::all(Val::VMin(0.25)),
+                position_type: PositionType::Absolute,
+                left: Val::ZERO,
+                top: Val::ZERO,
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::Center,
+                row_gap: Val::VMin(0.25),
                 ..default()
             },
-            BackgroundColor(colours.hp),
+            UiTransform::default(),
+            Visibility::Hidden,
+            GlobalZIndex(-1),
             Pickable::IGNORE,
-        )],
-    ));
+        ))
+        .with_children(|tag| {
+            tag.spawn(hud::words(name, TAG_TEXT, ink));
+            tag.spawn((
+                Node {
+                    width: Val::VMin(BAR_WIDTH),
+                    height: Val::VMin(BAR_HEIGHT),
+                    border: UiRect::all(Val::VMin(BAR_RIM)),
+                    border_radius: BorderRadius::all(Val::VMin(0.4)),
+                    ..default()
+                },
+                BackgroundColor(arena.hp_back),
+                BorderColor::all(arena.hp_rim),
+                Pickable::IGNORE,
+                children![(
+                    TagFill,
+                    Node {
+                        width: Val::Percent(100.0),
+                        height: Val::Percent(100.0),
+                        border_radius: BorderRadius::all(Val::VMin(0.25)),
+                        ..default()
+                    },
+                    BackgroundColor(hp),
+                    Pickable::IGNORE,
+                )],
+            ));
+        });
+}
+
+/// A bar over each team's anchor, in your team's colour or an enemy's.
+fn spawn_anchor_bars(commands: &mut Commands, my_team: u8) {
+    let colours = ui().colours.arena;
+    for team in 0..ARENA_TEAMS as u8 {
+        let tint = if team == my_team { colours.anchor_mine } else { colours.anchor_enemy };
+        commands.spawn((
+            InArena,
+            AnchorBar(team),
+            Node {
+                position_type: PositionType::Absolute,
+                left: Val::ZERO,
+                top: Val::ZERO,
+                width: Val::VMin(ANCHOR_BAR_WIDTH),
+                height: Val::VMin(ANCHOR_BAR_HEIGHT),
+                border: UiRect::all(Val::VMin(BAR_RIM)),
+                border_radius: BorderRadius::all(Val::VMin(0.5)),
+                ..default()
+            },
+            BackgroundColor(colours.hp_back),
+            BorderColor::all(colours.hp_rim),
+            UiTransform::default(),
+            Visibility::Hidden,
+            GlobalZIndex(-1),
+            Pickable::IGNORE,
+            children![(
+                AnchorFill,
+                Node {
+                    width: Val::Percent(100.0),
+                    height: Val::Percent(100.0),
+                    border_radius: BorderRadius::all(Val::VMin(0.3)),
+                    ..default()
+                },
+                BackgroundColor(tint),
+                Pickable::IGNORE,
+            )],
+        ));
+    }
+}
+
+/// Keeps each anchor's bar over its pillar, filled as far as the anchor
+/// goes, and put away once it is broken, or off the screen, or you are not
+/// in the game.
+fn place_anchor_bars(
+    game: Option<Res<Game>>,
+    me: Query<&Venue, With<Player>>,
+    cameras: Query<(&Camera, &Transform), With<ThirdPersonCamera>>,
+    windows: Query<&Window>,
+    mut bars: Query<(&AnchorBar, &mut Visibility, &mut UiTransform, &ComputedNode, &Children)>,
+    mut fills: Query<&mut Node, With<AnchorFill>>,
+) {
+    let (Some(game), Ok((camera, eye)), Ok(window)) = (game, cameras.single(), windows.single()) else {
+        return;
+    };
+    let in_arena = me.single().ok() == Some(&Venue::Arena) && game.playing();
+    let full = if game.online { rules::ANCHOR_HEALTH } else { ui().arena.anchor_health };
+    let eye = GlobalTransform::from(*eye);
+    for (bar, mut shown, mut place, node, children) in &mut bars {
+        let team = usize::from(bar.0);
+        let anchor = ARENA_ANCHORS[team];
+        let point = (in_arena && game.anchors[team] > 0.0)
+            .then(|| camera.world_to_viewport(&eye, Vec3::new(anchor.x, ANCHOR_BAR_OVER, anchor.y)).ok())
+            .flatten()
+            .filter(|point| on_screen(window, *point));
+        let Some(point) = point else {
+            shown.set_if_neq(Visibility::Hidden);
+            continue;
+        };
+        let size = node.size() * node.inverse_scale_factor();
+        place.set_if_neq(UiTransform {
+            translation: Val2::px(point.x - size.x * 0.5, point.y - size.y),
+            scale: Vec2::ONE,
+            rotation: Rot2::IDENTITY,
+        });
+        shown.set_if_neq(Visibility::Inherited);
+        let width = bar_width(game.anchors[team] / full.max(1e-3));
+        for child in children.iter() {
+            if let Ok(mut fill) = fills.get_mut(child)
+                && fill.width != width
+            {
+                fill.width = width;
+            }
+        }
+    }
 }
 
 /// A number floating up off the body at `at`, for `damage` taken.
@@ -1058,7 +2051,7 @@ fn show_board(
     let (big, small) = match game.stage {
         Stage::Waiting { .. } => (players, words.waiting.clone()),
         Stage::Countdown { left } => (left.max(0.0).ceil().to_string(), words.match_found.clone()),
-        Stage::Playing { left } => (clock(left), words.name.clone()),
+        Stage::Playing { left } | Stage::Over { left, .. } => (clock(left), words.name.clone()),
     };
     for mut text in &mut texts {
         if text.0 != big {
@@ -1103,13 +2096,27 @@ mod tests {
         (room, Island::new(&corners))
     }
 
+    /// The whole map, every mesh of it but the bodies'.
+    fn hajuns_map() -> Island {
+        let parts = crate::island::glb::read("pvptownmap.glb");
+        let corners: Vec<[Vec3; 3]> = parts
+            .iter()
+            .filter(|part| !part.skinned)
+            .flat_map(|part| part.triangles.iter().copied())
+            .collect();
+        Island::new(&corners)
+    }
+
     #[test]
     fn the_map_s_waiting_room_has_a_floor_and_walls_too_thick_to_slip_through_and_too_high_to_jump() {
         let (room, shape) = hajuns_room();
         let floor = room.floor(&shape).expect("a floor under the middle of the room");
         // Over the map, well clear of the islands, and the walls over the
-        // floor by more than a jump reaches (1.64 m).
+        // floor by more than a jump reaches (1.64 m); and where the server
+        // puts everyone, having no map to read it off.
         assert!(floor > 20.0, "floor at {floor}");
+        assert!((floor - rules::WAITING_FLOOR).abs() < 0.01, "floor at {floor}, the server says {}", rules::WAITING_FLOOR);
+        assert!(room.centre.length() < 0.01, "the room is at {}", room.centre);
         assert!(room.top - floor > 1.7, "walls {} m over the floor", room.top - floor);
         // Thicker than the lattice bodies are kept out of walls on, all
         // the way round, and the floor open inside them.
@@ -1161,26 +2168,66 @@ mod tests {
     }
 
     #[test]
-    fn every_island_s_middle_is_dry_land_in_the_map() {
-        // Everyone arrives in the middle of their island (Hajun, the night
-        // of 2026-11-07: "make the spawnpoint in the center of the
-        // island"): there is ground under each, about the islands' top,
-        // 0.25 m up, or the desk that lies across the middle, and the void
-        // beside the islands.
-        let parts = crate::island::glb::read("pvptownmap.glb");
-        let corners: Vec<[Vec3; 3]> = parts
-            .iter()
-            .filter(|part| !part.skinned)
-            .flat_map(|part| part.triangles.iter().copied())
-            .collect();
-        let map = Island::new(&corners);
+    fn every_arrival_is_dry_land_in_the_map_with_the_void_beyond_the_islands() {
+        // Everyone arrives on their island (Hajun, the night of 2026-11-07:
+        // "make the spawnpoint in the center of the island"): there is
+        // ground under each of the eight, about the islands' top, 0.25 m
+        // up, or the desk that lies across the middle, and the void beside
+        // the islands, where the bridges were until 2026-11-08.
+        let map = hajuns_map();
         for seat in 0..ARENA_SEATS {
             let at = island::arrival(Venue::Arena, seat).translation;
             let ground = map.floor(at.xz(), 3.0).unwrap_or_else(|| panic!("seat {seat}: nothing under {at}"));
             assert!((0.0..=1.3).contains(&ground), "seat {seat}: ground at {ground}");
-            let out = at.xz().normalize() * 12.0;
-            assert!(map.floor(at.xz() + out, 3.0).is_none(), "seat {seat}: land 12 m past the island's middle");
         }
+        for team in 0..ARENA_TEAMS {
+            let island = roundtown_net::ARENA_ISLANDS[team];
+            let out = island.normalize() * 12.0;
+            assert!(map.floor(island + out, 3.0).is_none(), "team {team}: land 12 m past the island's middle");
+        }
+        // No bridge: between an island and the town there is nothing to
+        // stand on.
+        for team in 0..ARENA_TEAMS {
+            let island = roundtown_net::ARENA_ISLANDS[team];
+            let between = island * (100.0 / 130.0);
+            assert!(map.floor(between, 3.0).is_none(), "team {team}: ground between its island and the town at {between}");
+        }
+    }
+
+    #[test]
+    fn the_anchors_stand_where_the_map_s_pillars_do() {
+        // Each team's anchor (`roundtown_net::ARENA_ANCHORS`) is the
+        // middle of the purple pillar on its island, read off the map.
+        let parts = crate::island::glb::read("pvptownmap.glb");
+        let pillars: Vec<Vec2> = parts
+            .iter()
+            .filter(|part| part.material.as_deref().is_some_and(|name| is_material(name, SPAWN_MATERIAL)))
+            .map(|part| {
+                let corners: Vec<Vec3> = part.triangles.iter().flatten().copied().collect();
+                let (low, high) = corners.iter().fold((Vec3::INFINITY, Vec3::NEG_INFINITY), |(low, high), c| (low.min(*c), high.max(*c)));
+                assert!(high.y > 3.5 && low.y > 0.3, "{}: {low} to {high}", part.node);
+                ((low + high) * 0.5).xz()
+            })
+            .collect();
+        assert_eq!(pillars.len(), ARENA_TEAMS, "{pillars:?}");
+        for team in 0..ARENA_TEAMS {
+            let anchor = ARENA_ANCHORS[team];
+            let nearest = pillars.iter().map(|pillar| pillar.distance(anchor)).fold(f32::MAX, f32::min);
+            assert!(nearest < 0.1, "team {team}: anchor {anchor} is {nearest} m from the nearest pillar");
+            // On its own team's island.
+            assert!(anchor.distance(roundtown_net::ARENA_ISLANDS[team]) < roundtown_net::ARENA_ISLAND_RADIUS);
+            // And its pillar's triangles, and no others, are taken for it.
+            let map = hajuns_map();
+            let _ = map;
+        }
+        let all: Vec<[Vec3; 3]> = parts.iter().filter(|part| !part.skinned).flat_map(|part| part.triangles.iter().copied()).collect();
+        let taken = all.iter().filter(|triangle| is_pillar(triangle, &ARENA_ANCHORS)).count();
+        let pillar_triangles: usize = parts
+            .iter()
+            .filter(|part| part.material.as_deref().is_some_and(|name| is_material(name, SPAWN_MATERIAL)))
+            .map(|part| part.triangles.len())
+            .sum();
+        assert_eq!(taken, pillar_triangles, "the pillars' triangles alone are taken out when they break");
     }
 
     #[test]
@@ -1208,7 +2255,57 @@ mod tests {
         assert_eq!(health.share(), 0.0);
         // A bar is drawn in steps of half a percent.
         health.left = 33.3;
-        assert_eq!(bar_width(&health), Val::Percent(33.5));
+        assert_eq!(bar_width(health.share()), Val::Percent(33.5));
+    }
+
+    #[test]
+    fn dead_with_the_anchor_standing_comes_back_and_without_it_is_out() {
+        let mut game = Game {
+            id: 1,
+            seats: (0..ARENA_SEATS)
+                .map(|seat| Member {
+                    id: seat as u64 + 1,
+                    name: format!("Seat {seat}"),
+                    look: "boy".into(),
+                    ai: seat > 0,
+                })
+                .collect(),
+            bodies: Vec::new(),
+            town_seat: 0,
+            me: 0,
+            online: false,
+            cut_off: None,
+            stage: Stage::Playing { left: 100.0 },
+            view: None,
+            health: Vec::new(),
+            anchors: [240.0; ARENA_TEAMS],
+            out: [false; ARENA_SEATS],
+        };
+        assert_eq!(game.my_team(), 0);
+        assert_eq!(game.teams_in_play(), vec![0, 1, 2, 3]);
+        // Seat 1 dies with its anchor standing: back after a while.
+        let dead = game.die(1);
+        assert_eq!(dead.left, ui().arena.respawn_secs);
+        assert!(!game.out[1]);
+        // Team 2's anchor is broken: seat 2 dies for good, but seat 6
+        // keeps the team in play.
+        game.anchors[2] = 0.0;
+        let dead = game.die(2);
+        assert!(dead.left.is_infinite());
+        assert!(game.out[2]);
+        assert_eq!(game.teams_in_play(), vec![0, 1, 2, 3]);
+        game.die(6);
+        assert_eq!(game.teams_in_play(), vec![0, 1, 3]);
+        // Every other team's anchor broken and everyone on them dead: team
+        // 0 is left.
+        for team in [1, 3] {
+            game.anchors[team] = 0.0;
+        }
+        for seat in [1, 5, 3, 7] {
+            game.die(seat);
+        }
+        assert_eq!(game.teams_in_play(), vec![0]);
+        assert_eq!(team_name(2), "Team 3");
     }
 
     #[test]
@@ -1235,18 +2332,8 @@ mod tests {
     fn on_the_map_a_bot_beside_the_island_s_middle_runs_straight_away() {
         // On the first island, 6 m east of its middle with you in the
         // middle: east is 4 m of island, enough to run straight away.
-        let parts = crate::island::glb::read("pvptownmap.glb");
-        let corners: Vec<[Vec3; 3]> = parts
-            .iter()
-            .filter(|part| !part.skinned)
-            .flat_map(|part| part.triangles.iter().copied())
-            .collect();
-        let map = Island::new(&corners);
+        let map = hajuns_map();
         let here = Vec3::new(6.0, 0.25, 130.0);
-        for step in 1..=12 {
-            let at = here + Vec3::X * step as f32 * 0.25;
-            println!("x {}: floor {:?}", at.x, map.floor(at.xz(), at.y + crate::LAND_STEP_UP));
-        }
         assert!(ai::dry_all_the_way(&map, here, Vec3::X, FLIGHT), "not dry east of the middle");
         assert_eq!(flight(&map, here, Vec3::NEG_X), Vec3::X);
     }

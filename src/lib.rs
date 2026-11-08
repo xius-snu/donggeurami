@@ -23,6 +23,7 @@ use bevy::world_serialization::WorldInstanceReady;
 
 mod ai;
 mod arena;
+mod bridge;
 mod build;
 mod builder;
 mod car;
@@ -356,6 +357,35 @@ pub(crate) struct Landed {
     pub(crate) by: Entity,
     pub(crate) victim: Entity,
 }
+
+/// A punch of yours, thrown ([`start_punch`]), whether or not it landed on
+/// anyone: from where, how high your feet were, and which way you faced.
+/// Bridge Wars lands it on a respawn anchor in its range (`arena`).
+#[derive(Message, Clone, Copy, Debug)]
+pub(crate) struct Swung {
+    pub(crate) at: Vec2,
+    pub(crate) feet: f32,
+    pub(crate) facing: Vec2,
+}
+
+/// Which team a body is on in a game of Bridge Wars (`arena`, since
+/// 2026-11-08: two to a team, a team to an island): a punch never lands on
+/// a teammate (Hajun: "make it so u cannot hurt your own teammate"), and a
+/// bot never goes for one. A body with none is on nobody's team.
+#[derive(Component, Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) struct Team(pub(crate) u8);
+
+/// A body carrying a plank in front of it, for building a bridge (`bridge`,
+/// since 2026-11-08; Hajun: "the charater should hold a small plank flat in
+/// front of him with his hands like holding a baby style"): both arms held
+/// out in front, a little under level, with the plank lying across them
+/// ([`CARRY_REACH`]). The right arm still punches.
+#[derive(Component, Default)]
+pub(crate) struct Carrying;
+
+/// How far the arms swing forward from hanging to carry a plank, in
+/// radians: a little under level, so that the plank rests on them.
+const CARRY_REACH: f32 = 1.45;
 
 /// A body that will not walk off dry land into the sea, nor down anything it
 /// could not step back up ([`strands`]). An AI does not know it could jump
@@ -1095,6 +1125,7 @@ pub fn main() {
     .add_message::<PunchPressed>()
     .add_message::<Hit>()
     .add_message::<Landed>()
+    .add_message::<Swung>()
     .add_systems(Startup, (setup_world, cluster_lights_on_the_cpu));
     // The screen's colours and words, from `assets/ui.ron`, read again as
     // it changes on desktop.
@@ -1142,9 +1173,10 @@ pub fn main() {
     builder::plugin(&mut app);
     shop::plugin(&mut app);
     build::plugin(&mut app);
-    // Bridge Wars, on the PvP map, and the game selector both games are
-    // chosen from.
+    // Bridge Wars, on the PvP map, the bridges built in it as you walk, and
+    // the game selector both games are chosen from.
     arena::plugin(&mut app);
+    bridge::plugin(&mut app);
     games::plugin(&mut app);
     // Standing in a house in House Builder, whatever stands between the
     // camera and you, see-through, and out of a tap's reach.
@@ -1197,6 +1229,9 @@ pub fn main() {
             // the body's.
             drive::steer,
             start_punch,
+            // Building a bridge, a plank is laid under where you are about
+            // to step before you step there.
+            bridge::lay,
             move_bodies,
             drive::settle,
             drive::place,
@@ -2295,6 +2330,13 @@ fn punch_offset(kind: WalkBoneKind, stance: f32, reach: f32) -> Option<Quat> {
     Some(Quat::from_axis_angle(Vec3::X, PUNCH_REACH * reach) * stood(stance))
 }
 
+/// Where an arm carrying a plank is ([`Carrying`]): held out in front, a
+/// little under level, in place of its walk, as a punch is held at
+/// [`CARRY_REACH`] of its reach.
+fn carry_offset(kind: WalkBoneKind, stance: f32) -> Option<Quat> {
+    punch_offset(kind, stance, CARRY_REACH / PUNCH_REACH)
+}
+
 /// The limb a node of a body's model is, by its name: the bones of
 /// `playercharacter.glb`, a Rigify metarig's (Hajun's, 2026-11-01; until
 /// then `limbperson.glb`'s own, `Bone.005.L.001` and the like). The limbs'
@@ -2734,18 +2776,19 @@ fn start_punch(
     keyboard: Res<ButtonInput<KeyCode>>,
     dialog: Res<hud::DialogUp>,
     driving: Res<drive::Driving>,
-    me: Query<(Entity, &Transform, &Venue, &Intent, Has<Dead>), With<Player>>,
-    others: Query<(Entity, &Transform, &Venue), (With<WalkCycle>, Without<Player>, Without<Dead>)>,
+    me: Query<(Entity, &Transform, &Venue, &Intent, Has<Dead>, Option<&Team>), With<Player>>,
+    others: Query<(Entity, &Transform, &Venue, Option<&Team>), (With<WalkCycle>, Without<Player>, Without<Dead>)>,
     mut shoves: Query<(&mut Shove, &mut PlayerJump), Without<Player>>,
     mut hits: MessageWriter<Hit>,
     mut landed: MessageWriter<Landed>,
+    mut swung: MessageWriter<Swung>,
     mut commands: Commands,
 ) {
     let asked = pressed.read().count() > 0 || keyboard.just_pressed(KeyCode::KeyF);
     if !asked || dialog.0 || driving.on() {
         return;
     }
-    let Ok((you, body, &venue, intent, dead)) = me.single() else {
+    let Ok((you, body, &venue, intent, dead, team)) = me.single() else {
         return;
     };
     if dead {
@@ -2756,6 +2799,13 @@ fn start_punch(
     let at = body.translation.xz();
     let facing = body.forward().xz().normalize_or(Vec2::NEG_Y);
     debug!("punch thrown from {at}, facing {facing}");
+    swung.write(Swung {
+        at,
+        feet: body.translation.y,
+        facing,
+    });
+    // Never on a teammate (`Team`, in Bridge Wars): the punch passes them
+    // by, and lands on whoever is behind them.
     let Some((victim, there)) = punch_lands(
         &melee,
         at,
@@ -2763,8 +2813,8 @@ fn start_punch(
         facing,
         others
             .iter()
-            .filter(|(_, _, on)| **on == venue)
-            .map(|(other, transform, _)| (other, transform.translation)),
+            .filter(|(_, _, on, theirs)| **on == venue && !(team.is_some() && *theirs == team))
+            .map(|(other, transform, ..)| (other, transform.translation)),
     ) else {
         return;
     };
@@ -2811,14 +2861,14 @@ fn punch_lands(
 
 pub(crate) fn animate_walk(
     time: Res<Time>,
-    mut walks: Query<(Entity, &mut WalkCycle, Option<&mut Punching>)>,
+    mut walks: Query<(Entity, &mut WalkCycle, Option<&mut Punching>, Has<Carrying>)>,
     mut bones: Query<(&WalkBone, &mut Transform)>,
     mut commands: Commands,
 ) {
     let dt = time.delta_secs();
     let melee = ui::ui().melee;
     let swing = melee.swing();
-    for (body, mut walk, punch) in &mut walks {
+    for (body, mut walk, punch, _) in &mut walks {
         let target = if walk.speed > 0.04 { 1.0 } else { 0.0 };
         walk.weight = walk.weight.lerp(target, (dt * WALK_BLEND).min(1.0));
         if walk.weight < 0.01 {
@@ -2834,17 +2884,19 @@ pub(crate) fn animate_walk(
         }
     }
     for (bone, mut transform) in &mut bones {
-        let Ok((_, walk, punch)) = walks.get(bone.owner) else {
+        let Ok((_, walk, punch, carrying)) = walks.get(bone.owner) else {
             continue;
         };
-        // The right arm punches; every other limb walks. Running, faster
-        // than a walk (`Intent::sprint`), the limbs swing that much
-        // further as well as faster, up to half as far again.
+        // The right arm punches; carrying a plank, both arms hold it out
+        // in front; every other limb walks. Running, faster than a walk
+        // (`Intent::sprint`), the limbs swing that much further as well as
+        // faster, up to half as far again.
         let stride = 1.0 + (walk.speed - 1.0).clamp(0.0, 0.7);
         let punching = punch
             .filter(|punch| punch.age < swing && matches!(bone.kind, WalkBoneKind::ArmR))
             .and_then(|punch| punch_offset(bone.kind, bone.stance, Punching::reach(&melee, punch.age)));
         let offset = punching
+            .or_else(|| carrying.then(|| carry_offset(bone.kind, bone.stance)).flatten())
             .unwrap_or_else(|| walk_offset(bone.kind, walk.phase.sin() * stride, walk.weight, bone.stance));
         let rotation = bone.turned(offset);
         // Standing still, a limb keeps the pose it had, and is left alone.

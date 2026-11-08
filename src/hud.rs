@@ -50,6 +50,7 @@ use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 
 use crate::Player;
 use crate::arena::{Health, Resource, Resources};
+use crate::bridge::BridgePressed;
 use crate::drive::{CarPressed, Driving};
 use crate::island::{Islands, Venue};
 use crate::lobby::{Balance, STARTING_BALANCE};
@@ -95,7 +96,12 @@ const RESOURCE_ROW: f32 = 14.0;
 /// empty slots, up and to the left of it and over it; and the dots, smaller,
 /// over those.
 pub(crate) const ARENA_JUMP: (f32, f32, f32) = (24.5, 4.0, ACTION_BUTTON);
-const ARENA_SLOTS: [(f32, f32); 2] = [(18.5, 18.5), (4.0, 24.5)];
+/// The empty slot up and to the left of the sword, and over the sword the
+/// bridge button (since 2026-11-08, Hajun: "the bridge icon (maybe the 3rd
+/// button above the sword icon) and it is a toggle button that enables
+/// bridging mode vs normal mode"; an empty slot until then).
+const ARENA_SLOT: (f32, f32) = (18.5, 18.5);
+const ARENA_BRIDGE: (f32, f32) = (4.0, 24.5);
 const ARENA_DOTS: (f32, f32, f32) = (0.0, 42.0, 8.0);
 /// How much of a round button its picture takes up, as a share of it.
 const PICTURE: f32 = 58.0;
@@ -296,6 +302,11 @@ struct CarButton;
 #[derive(Component)]
 struct GunButton;
 
+/// The plank over the sword in Bridge Wars, which turns building a bridge
+/// as you walk on and off (`bridge`): lit while it is on.
+#[derive(Component)]
+pub(crate) struct BridgeButton;
+
 /// The buttons held down just now, each by the pointer holding it, a finger
 /// or the mouse. A press on a button is picking's, which says when it goes
 /// down but not, once the finger has slid off the button, when it comes up:
@@ -327,9 +338,11 @@ fn press_buttons(
     fists: Query<(), With<PunchButton>>,
     faces: Query<(), With<CarButton>>,
     guns: Query<(), With<GunButton>>,
+    planks: Query<(), With<BridgeButton>>,
     mut held: ResMut<Held>,
     mut punches: MessageWriter<crate::PunchPressed>,
     mut cars: MessageWriter<CarPressed>,
+    mut bridges: MessageWriter<BridgePressed>,
 ) {
     if press.button != PointerButton::Primary || press.original_event_target() != press.entity {
         return;
@@ -343,6 +356,9 @@ fn press_buttons(
     }
     if guns.contains(press.entity) {
         held.gun = Some(press.pointer_id);
+    }
+    if planks.contains(press.entity) {
+        bridges.write(BridgePressed);
     }
 }
 
@@ -613,12 +629,18 @@ fn spawn_arena_bar(commands: &mut Commands, images: &mut Assets<Image>) {
         ));
         // Round the sword, on an arc: the jump button beside it, which
         // takes no press for itself, as the one in its own place does not
-        // (the touch controls read it, `hud_layout`), and two empty slots.
+        // (the touch controls read it, `hud_layout`), an empty slot, and
+        // over the sword the plank, which turns building a bridge on and
+        // off (`bridge`).
         let (right, bottom, size) = ARENA_JUMP;
         round.spawn(jump_button(arrow, size, beside_the_jump(right, bottom)));
-        for (right, bottom) in ARENA_SLOTS {
-            round.spawn(empty_slot(ACTION_BUTTON, beside_the_jump(right, bottom)));
-        }
+        let (right, bottom) = ARENA_SLOT;
+        round.spawn(empty_slot(ACTION_BUTTON, beside_the_jump(right, bottom)));
+        let (right, bottom) = ARENA_BRIDGE;
+        round.spawn((
+            BridgeButton,
+            round_button(images.add(plank()), ACTION_BUTTON, beside_the_jump(right, bottom)),
+        ));
         let (right, bottom, size) = ARENA_DOTS;
         round.spawn(round_button(images.add(dots()), size, beside_the_jump(right, bottom)));
     });
@@ -1529,6 +1551,21 @@ pub(crate) fn emerald() -> Image {
     })
 }
 
+/// A plank, for the bridge button in Bridge Wars: a board lying across,
+/// seen from above, with the seams of two nailed-on cross pieces cut into
+/// it, so that it reads as a bit of bridge.
+pub(crate) fn plank() -> Image {
+    const ROUND: f32 = 0.06;
+    drawn(|at| {
+        let board = box_distance(at, Vec2::new(0.84 - ROUND, 0.3 - ROUND)) - ROUND;
+        let seams = [-0.36, 0.36]
+            .into_iter()
+            .map(|x| box_distance(at - Vec2::new(x, 0.0), Vec2::new(0.035, 0.4)))
+            .fold(f32::INFINITY, f32::min);
+        board.max(-seams)
+    })
+}
+
 /// Three dots in a row, for the button over Bridge Wars' slots, which is to
 /// show more buttons one day.
 pub(crate) fn dots() -> Image {
@@ -1735,7 +1772,17 @@ mod tests {
         }
         assert_eq!(alpha_at(&dots, -0.28, 0.0), 0);
         assert_eq!(alpha_at(&dots, 0.0, 0.5), 0);
-        for image in [&sword, &bag, &log, &ingot, &gem, &emerald, &dots] {
+        // The plank is a board lying across, with two seams cut into it,
+        // and nothing over or under it.
+        let plank = plank();
+        for x in [-0.7, -0.1, 0.1, 0.7] {
+            assert_eq!(alpha_at(&plank, x, 0.0), 255, "board at {x}");
+        }
+        assert_eq!(alpha_at(&plank, -0.36, 0.0), 0);
+        assert_eq!(alpha_at(&plank, 0.36, 0.2), 0);
+        assert_eq!(alpha_at(&plank, 0.0, 0.6), 0);
+        assert_eq!(alpha_at(&plank, 0.95, 0.0), 0);
+        for image in [&sword, &bag, &log, &ingot, &gem, &emerald, &dots, &plank] {
             assert!(image.data.as_ref().unwrap().chunks(4).all(|pixel| pixel[..3] == [255, 255, 255]));
         }
     }

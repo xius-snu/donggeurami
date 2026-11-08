@@ -128,6 +128,11 @@ pub(crate) fn model(venue: Venue) -> &'static str {
     }
 }
 
+/// How high the tops of Bridge Wars' islands are, in metres: Hajun's
+/// `pvptownmap.glb` stands its islands, its town and its paths 0.25 m up
+/// (`arena`, `bridge`).
+pub(crate) const LAND_TOP_OF_THE_ISLANDS: f32 = 0.25;
+
 /// Whether there is nothing under `venue` but the void: no sea for a body
 /// off its land to wade in, so that it falls for good, and is put back
 /// where it arrived once it is `VOID_Y` down (`lobby::respawn_the_fallen`).
@@ -163,6 +168,9 @@ pub(crate) struct Islands {
     grounds: Vec<(&'static str, Vec<[Vec3; 3]>)>,
     /// Islands with something built on them: their model and all of that.
     built: Vec<(Venue, Island)>,
+    /// Something laid over an island whose model has not loaded yet
+    /// ([`Islands::lay_over`]), to lay over it when it has: its parts.
+    pending_overlay: Vec<(Venue, Vec<Vec<[Vec3; 3]>>)>,
 }
 
 impl Islands {
@@ -195,7 +203,13 @@ impl Islands {
 
     fn set(&mut self, model: &'static str, corners: Vec<[Vec3; 3]>) {
         self.shapes.retain(|(read, _)| *read != model);
-        self.shapes.push((model, Island::new(&corners)));
+        let mut island = Island::new(&corners);
+        if let Some(at) = self.pending_overlay.iter().position(|(venue, _)| self::model(*venue) == model) {
+            let parts = self.pending_overlay.swap_remove(at).1;
+            let slices: Vec<&[[Vec3; 3]]> = parts.iter().map(Vec::as_slice).collect();
+            island.lay_over(Some(Island::of_parts(&slices)));
+        }
+        self.shapes.push((model, island));
         self.grounds.retain(|(read, _)| *read != model);
         self.grounds.push((model, corners));
     }
@@ -234,13 +248,51 @@ impl Islands {
         let parts: Vec<&[[Vec3; 3]]> = std::iter::once(corners.as_slice())
             .chain(solids.iter().map(Vec::as_slice))
             .collect();
-        let island = Island::of_parts(&parts);
+        let mut island = Island::of_parts(&parts);
+        // Whatever was laid over it stays laid over it.
+        if let Some(at) = self.shapes.iter().position(|(read, _)| *read == model) {
+            island.overlay = self.shapes.swap_remove(at).1.overlay;
+        }
         let mut all = corners;
         all.extend(solids.iter().flatten().copied());
-        self.shapes.retain(|(read, _)| *read != model);
         self.shapes.push((model, island));
         self.grounds.retain(|(read, _)| *read != model);
         self.grounds.push((model, all));
+    }
+
+    /// Lays the shape of `parts`, each told apart from the rest as a part
+    /// of its own ([`Island::of_parts`]), over `venue`, as its model and
+    /// anything built on it have it, in place of whatever was laid over it
+    /// before: the planks of the bridges built in a game of Bridge Wars
+    /// (`bridge`), or nothing once the game is over. Until the model has
+    /// loaded there is nothing to lay it over, and it is kept for when there
+    /// is.
+    pub(crate) fn lay_over(&mut self, venue: Venue, parts: Option<Vec<Vec<[Vec3; 3]>>>) {
+        let model = model(venue);
+        let overlay = |parts: &Option<Vec<Vec<[Vec3; 3]>>>| {
+            parts.as_ref().map(|parts| {
+                let slices: Vec<&[[Vec3; 3]]> = parts.iter().map(Vec::as_slice).collect();
+                Island::of_parts(&slices)
+            })
+        };
+        let mut laid = false;
+        for (read, island) in &mut self.shapes {
+            if *read == model {
+                island.lay_over(overlay(&parts));
+                laid = true;
+            }
+        }
+        for (on, island) in &mut self.built {
+            if *on == venue {
+                island.lay_over(overlay(&parts));
+            }
+        }
+        if !laid {
+            self.pending_overlay.retain(|(on, _)| *on != venue);
+            if let Some(parts) = parts {
+                self.pending_overlay.push((venue, parts));
+            }
+        }
     }
 }
 
@@ -416,11 +468,34 @@ pub(crate) struct Island {
     rows: usize,
     /// Every triangle again, walls included, for your eyes to rise against.
     faces: Faces,
+    /// Something laid over the island that comes and goes too often to be
+    /// read into it again each time: the planks of the bridges built in a
+    /// game of Bridge Wars (`bridge`, since 2026-11-08), a shape of their
+    /// own, which every question asked of the island is asked of as well.
+    /// Reading 50,000 triangles into a shape takes milliseconds; a few
+    /// planks take none.
+    overlay: Option<Box<Island>>,
 }
 
 impl Island {
     pub(crate) fn new(corners: &[[Vec3; 3]]) -> Self {
         Self::of_parts(&[corners])
+    }
+
+    /// Lays `overlay` over the island, in place of whatever was laid over
+    /// it, or nothing.
+    pub(crate) fn lay_over(&mut self, overlay: Option<Island>) {
+        self.overlay = overlay.map(Box::new);
+    }
+
+    /// The highest ground of the island itself at `at` no higher than
+    /// `reach`, leaving out whatever is laid over it: where the land ends
+    /// and the void begins, planks or no planks.
+    pub(crate) fn floor_base(&self, at: Vec2, reach: f32) -> Option<f32> {
+        self.crossings(at)
+            .filter(|&(y, tri)| tri.floor && y <= reach)
+            .map(|(y, _)| y)
+            .reduce(f32::max)
     }
 
     /// The island of `parts`, each one told apart from the rest in asking
@@ -471,25 +546,32 @@ impl Island {
             columns,
             rows,
             faces: Faces::of(parts.iter().copied().flatten()),
+            overlay: None,
         }
     }
 
     /// The highest ground at `at` that is no higher than `reach`, or `None`
-    /// over open water.
+    /// over open water: the island's own, or whatever is laid over it.
     pub(crate) fn floor(&self, at: Vec2, reach: f32) -> Option<f32> {
-        self.crossings(at)
-            .filter(|&(y, tri)| tri.floor && y <= reach)
-            .map(|(y, _)| y)
-            .reduce(f32::max)
+        let base = self.floor_base(at, reach);
+        match &self.overlay {
+            Some(over) => base.into_iter().chain(over.floor(at, reach)).reduce(f32::max),
+            None => base,
+        }
     }
 
     /// The lowest underside over `at` higher than `above`: a ceiling, the top
     /// of a doorway, a roof overhead. `None` under open sky.
     pub(crate) fn ceiling(&self, at: Vec2, above: f32) -> Option<f32> {
-        self.crossings(at)
+        let own = self
+            .crossings(at)
             .filter(|&(y, tri)| !tri.faces_up() && y > above)
             .map(|(y, _)| y)
-            .reduce(f32::min)
+            .reduce(f32::min);
+        match &self.overlay {
+            Some(over) => own.into_iter().chain(over.ceiling(at, above)).reduce(f32::min),
+            None => own,
+        }
     }
 
     /// The squares of a fine lattice under a circle at `centre` that something
@@ -530,7 +612,10 @@ impl Island {
         let widest = shape.iter().map(|&(radius, ..)| radius).fold(0.0, f32::max);
         let first = ((centre - widest) / LATTICE).floor().as_ivec2();
         let last = ((centre + widest) / LATTICE).floor().as_ivec2();
-        let mut walls = Vec::new();
+        let mut walls = match &self.overlay {
+            Some(over) => over.walls_round(centre, shape),
+            None => Vec::new(),
+        };
         let mut column = Vec::new();
         for row in first.y..=last.y {
             for across in first.x..=last.x {
@@ -568,6 +653,9 @@ impl Island {
     /// Whether something at `at` fills any of the heights between `low` and
     /// `high`.
     pub(crate) fn blocked(&self, at: Vec2, low: f32, high: f32) -> bool {
+        if self.overlay.as_ref().is_some_and(|over| over.blocked(at, low, high)) {
+            return true;
+        }
         let mut crossings = Vec::new();
         for (y, tri) in self.crossings(at) {
             if y > low && y < high {
@@ -641,7 +729,11 @@ impl Island {
     /// touches the island, or `None` if it gets all the way. A face it starts
     /// off touching only stops it going further in.
     pub(crate) fn sweep(&self, from: Vec3, to: Vec3, radius: f32) -> Option<f32> {
-        self.faces.sweep(from, to, radius)
+        let own = self.faces.sweep(from, to, radius);
+        match &self.overlay {
+            Some(over) => own.into_iter().chain(over.sweep(from, to, radius)).reduce(f32::min),
+            None => own,
+        }
     }
 }
 

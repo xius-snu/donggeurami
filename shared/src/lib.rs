@@ -88,7 +88,15 @@ pub const PROTOCOL_ID: u64 = u64::from_be_bytes(*b"DGRMTOWN");
 /// u open the app to be roundtownmap.glb ... when u press the game icon ui
 /// button, it will open a popup game selector menu"); an app with the town
 /// on the islands would arrive in the sea.
-pub const PROTOCOL_VERSION: u32 = 9;
+///
+/// 10 since 2026-11-08: Bridge Wars is the server's online (Hajun: "the
+/// bridge battle minigame doesnt allow queing with other players"): a game
+/// is a room of its own with eight seats in four teams of two ([`ARENA_SEATS`],
+/// [`arena_team`]), joined by [`Ask::Arena`] and followed through
+/// [`ArenaRound`]; every punch, every hit on a respawn anchor
+/// ([`Ask::HitAnchor`]) and every plank of a bridge ([`Ask::Rung`],
+/// [`Plank`]) goes through the server, which keeps everyone's health.
+pub const PROTOCOL_VERSION: u32 = 10;
 
 /// The UDP port the game server listens on. 443, where QUIC goes, because a
 /// network that lets any UDP through lets that through: school and office
@@ -106,9 +114,14 @@ pub const TOWN_SEATS: usize = 16;
 /// How many players a game of House Builder holds, bots included.
 pub const GAME_SEATS: usize = 8;
 
-/// How many players a game of Bridge Wars holds, bots included: one to each
-/// of the four islands round the PvP map ([`ARENA_ISLANDS`]).
-pub const ARENA_SEATS: usize = 4;
+/// How many players a game of Bridge Wars holds, bots included: two to each
+/// of the four islands round the PvP map ([`ARENA_ISLANDS`]), a team to an
+/// island ([`arena_team`]; since 2026-11-08, Hajun: "make it 8 player
+/// rather than 4 player, so its 2v2v2v2"; one to an island until then).
+pub const ARENA_SEATS: usize = 8;
+
+/// How many teams a game of Bridge Wars has: one to an island.
+pub const ARENA_TEAMS: usize = 4;
 
 /// The fewest bodies the town shows: below this, each device fills it out
 /// with AIs of its own (Hajun's choice, 2026-10-08), one leaving for each
@@ -211,6 +224,8 @@ pub fn protocol(app: &mut App) {
         .replicate::<Round>()
         .replicate::<Seats>()
         .replicate::<Built>()
+        .replicate::<ArenaRound>()
+        .replicate::<Plank>()
         .add_client_message::<Moved>(Channel::Unreliable)
         .add_client_message::<Ask>(Channel::Ordered)
         .add_server_message::<Tell>(Channel::Ordered)
@@ -294,18 +309,55 @@ pub const ARENA_ISLANDS: [Vec2; 4] = [
 /// arriving, in metres: round the one in the middle, a few metres apart.
 pub const ISLAND_RING: f32 = 4.0;
 
+/// How far across the ground each of the [`ARENA_ISLANDS`] reaches from its
+/// middle, in metres: Hajun's islands are discs 20.8 m across (their object
+/// scaled to 0.65). The server keeps its bots on them with this.
+pub const ARENA_ISLAND_RADIUS: f32 = 10.4;
+
+/// Where each team's respawn anchor stands, in metres from the middle of the
+/// map, by team ([`arena_team`]): the purple pillar in the material `spawn`
+/// on each island, 5 to 6 m from the island's middle toward the town, as
+/// Hajun's `pvptownmap.glb` has them (a test in the game reads them off the
+/// map). While it stands, whoever on its team dies comes back; broken, they
+/// are out for good once they die (since 2026-11-08, Hajun: "make the purple
+/// rotated cube thingy on each island the respawn anchor (similar to bed in
+/// bedwars)").
+pub const ARENA_ANCHORS: [Vec2; ARENA_TEAMS] = [
+    Vec2::new(0.0, 124.92),
+    Vec2::new(-123.84, 0.03),
+    Vec2::new(-0.16, -124.0),
+    Vec2::new(123.83, -0.13),
+];
+
+/// How far out from its middle an anchor reaches, across the ground, in
+/// metres: the pillar is a cube 1.4 m across turned on its corner, so its
+/// widest is about 0.85 m out. A punch lands on it as on a body this wide.
+pub const ANCHOR_RADIUS: f32 = 0.85;
+
 /// Which of the [`ARENA_ISLANDS`] the player in `seat` arrives on, and is
 /// put back on when they fall off (the game's `lobby`): seat by seat round
-/// the four, so that the four seats of a game of Bridge Wars are on four
-/// different islands (Hajun: "when there is 2 players+ you will not spawn
-/// in the same bridge connected island").
+/// the four, so that the first four seats of a game of Bridge Wars are on
+/// four different islands (Hajun: "when there is 2 players+ you will not
+/// spawn in the same bridge connected island"), and the next four beside
+/// them, a team to an island.
 pub fn arena_island(seat: usize) -> usize {
     seat % ARENA_ISLANDS.len()
 }
 
+/// Which team the player in `seat` is on: the island's (2v2v2v2 since
+/// 2026-11-08). Teammates cannot hurt each other, nor their own anchor.
+pub fn arena_team(seat: usize) -> u8 {
+    arena_island(seat) as u8
+}
+
 /// Bridge Wars' rules, as the game plays them on the device (`arena`) and
-/// a server would: in one place, so that the two never differ.
+/// the server does online (`server/src/arena.rs`): in one place, so that
+/// the two never differ. The device's `assets/ui.ron` has the same numbers
+/// for playing offline, where Hajun tunes them by hand; online the server's
+/// rule.
 pub mod bridge_wars {
+    use super::{ARENA_SEATS, Vec2, Vec3, Quat, TAU};
+
     /// How long the waiting room waits for someone else to join before the
     /// computer fills the seats left, in seconds, counted from the last to
     /// join (Hajun, the night of 2026-11-07: "if there is no player joining for 10sec,
@@ -317,6 +369,70 @@ pub mod bridge_wars {
     /// How long a game lasts, in seconds, after which everyone is back in
     /// the town ("a (small) timer of 10 minute").
     pub const PLAY_SECS: f32 = 600.0;
+    /// How long the result is up at the end, in seconds, before everyone
+    /// still there is sent back to the town.
+    pub const RESULTS_SECS: f32 = 15.0;
+    /// The health everyone starts with, what a punch takes off it, and
+    /// what a respawn anchor starts with: twenty punches' worth (Hajun,
+    /// 2026-11-08: "make its default hp enough so that u need to hit it 20
+    /// times to break it").
+    pub const HEALTH: f32 = 100.0;
+    pub const DAMAGE: f32 = 12.0;
+    pub const ANCHOR_HEALTH: f32 = 240.0;
+    /// How long the dead stay dead before standing again, in seconds, and
+    /// how long after the last hit health starts to come back, and how much
+    /// a second.
+    pub const RESPAWN_SECS: f32 = 4.0;
+    pub const REGEN_AFTER: f32 = 5.0;
+    pub const REGEN_PER_SEC: f32 = 4.0;
+    /// How fast everyone runs there, in metres a second; how far a bot sees
+    /// whoever it goes for, in metres; the least time between its punches,
+    /// in seconds; under what share of its health it runs away; and how far
+    /// from the puncher's middle a punch reaches.
+    pub const RUN_SPEED: f32 = 10.0;
+    pub const HUNT_RADIUS: f32 = 24.0;
+    pub const BOT_PUNCH_EVERY: f32 = 0.8;
+    pub const FLEE_BELOW: f32 = 0.2;
+    pub const REACH: f32 = 2.0;
+    /// How far below the map a body has fallen before it is dead, in
+    /// metres.
+    pub const FALL_TO_DIE: f32 = 30.0;
+    /// How hard a punch knocks, in metres a second, away from the puncher,
+    /// and that much more from a puncher on the move; and what is left of
+    /// the knock each twentieth of a second on the ground: the game's
+    /// `melee` numbers, Minecraft 1.8.9's, for the server's bots, which
+    /// it knocks about itself.
+    pub const KNOCK_BACK: f32 = 10.0;
+    pub const SPRINT_BONUS: f32 = 10.0;
+    pub const KNOCK_UP: f32 = 8.0;
+    pub const GROUND_DRAG: f32 = 0.546;
+    pub const AIR_DRAG: f32 = 0.91;
+
+    /// The waiting room, Hajun's glass box over the middle of the map
+    /// (`pvptownmap.glb`, the object `waiting room`): where its floor is,
+    /// in metres up, and how far from its middle everyone stands in it,
+    /// facing the middle. The game checks the map agrees.
+    pub const WAITING_FLOOR: f32 = 100.5;
+    pub const WAIT_RING: f32 = 3.0;
+
+    /// Where the player in `seat` waits for the game: on a ring round the
+    /// middle of the waiting room, on its floor, facing in, each an eighth
+    /// of the turn on from the last.
+    pub fn waiting_spot(seat: usize) -> (Vec3, Quat) {
+        let angle = seat as f32 * TAU / ARENA_SEATS as f32;
+        let at = Vec3::new(angle.sin() * WAIT_RING, WAITING_FLOOR, angle.cos() * WAIT_RING);
+        let toward = -at.with_y(0.0).normalize_or(Vec3::NEG_Z);
+        (at, Quat::from_rotation_y((-toward.x).atan2(-toward.z)))
+    }
+
+    /// Whether a punch thrown from `from` could reach an anchor standing at
+    /// `at`: within `reach` of the puncher's middle, counting the anchor's
+    /// own width. The server checks a hit on an anchor with this, where
+    /// the puncher last said they stood, with slack for the way since; the
+    /// device aims one with its own range.
+    pub fn anchor_in_reach(from: Vec2, at: Vec2, reach: f32) -> bool {
+        from.distance(at) <= reach + super::ANCHOR_RADIUS
+    }
 }
 
 /// Where the player in `seat` stands on arriving on `venue`, and which way
@@ -609,6 +725,68 @@ pub enum At {
     },
 }
 
+// ------------------------------------------------------------- Bridge Wars
+
+/// A game of Bridge Wars as everyone in it sees it (since 2026-11-08, when
+/// the server took the game over so that people could play it together):
+/// how far it has got, how long is left of that, everyone's health by
+/// seat, each team's respawn anchor, and who is out for good. Sent to the
+/// room whenever any of it changes: a few dozen bytes, a few times a second
+/// while anyone's health is coming back.
+#[derive(Component, Serialize, Deserialize, Clone, PartialEq, Debug)]
+pub struct ArenaRound {
+    pub stage: ArenaStage,
+    /// Whole seconds left of this stage, rounded up: what the board shows.
+    pub left: u16,
+    /// Everyone's health by seat, in whole points of [`bridge_wars::HEALTH`];
+    /// 0 is dead, until they stand again.
+    pub health: Vec<u16>,
+    /// Each team's respawn anchor, in whole points of
+    /// [`bridge_wars::ANCHOR_HEALTH`]; 0 is broken.
+    pub anchors: [u16; ARENA_TEAMS],
+    /// The seats that are out for good, a bit to a seat: dead with their
+    /// anchor broken.
+    pub out: u8,
+}
+
+impl ArenaRound {
+    /// Whether the player in `seat` is out for good.
+    pub fn is_out(&self, seat: usize) -> bool {
+        seat < 8 && self.out & (1 << seat) != 0
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Debug)]
+pub enum ArenaStage {
+    /// In the waiting room, waiting for the room to fill.
+    Waiting,
+    /// Full, counting down to go.
+    Countdown,
+    /// Everyone on their island, fighting.
+    Playing,
+    /// Done: `winner` is the team left standing, or none, the time having
+    /// run out with more than one.
+    Over { winner: Option<u8> },
+}
+
+/// One rung of a bridge someone has built in a game of Bridge Wars (the
+/// game's `bridge`): whose, which of their chains of planks, which rung of
+/// it, where it lies across the ground and which way it heads. Sent once
+/// as it is laid, so that everyone in the game sees the plank between it
+/// and the rung before; never moved.
+#[derive(Component, Serialize, Deserialize, Clone, Copy, PartialEq, Debug)]
+#[component(immutable)]
+pub struct Plank {
+    pub seat: u8,
+    pub chain: u16,
+    pub index: u16,
+    pub x: f32,
+    pub z: f32,
+    /// Which way the rung heads, across the ground, in radians from the
+    /// game's -Z, as a turn about the upright.
+    pub heading: f32,
+}
+
 // --------------------------------------------------------------- messages
 
 /// Where you are now: sent while it changes, 15 times a second, and nothing
@@ -660,8 +838,24 @@ pub enum Ask {
     /// My punch landed on the player whose [`Member::id`] this is: they are
     /// to be knocked back from me ([`Tell::Knocked`]). `running`, I was on
     /// the move as I hit them, which knocks them further, as a sprinting
-    /// hit does in Minecraft.
+    /// hit does in Minecraft. In a game of Bridge Wars the server takes the
+    /// punch's damage off them too, if they are not on my team.
     Punch { who: u64, running: bool },
+    /// Join a game of Bridge Wars: from the town, or from a game that is
+    /// over for me, for another ([`Tell::Seated`] answers).
+    Arena,
+    /// My punch landed on `team`'s respawn anchor ([`ARENA_ANCHORS`]): the
+    /// server takes the damage off it, if it is not my own.
+    HitAnchor { team: u8 },
+    /// I have laid this rung of a bridge, as [`Plank`] has it: everyone in
+    /// the game is to see the plank.
+    Rung {
+        chain: u16,
+        index: u16,
+        x: f32,
+        z: f32,
+        heading: f32,
+    },
 }
 
 /// What the server tells you alone. In order, and never lost.
@@ -684,6 +878,9 @@ pub enum Tell {
     Balance(u32),
     /// You are in a game of House Builder, in this seat: your plot.
     Joined { seat: u8 },
+    /// You are in a game of Bridge Wars, in this seat: your island is
+    /// [`arena_island`] of it, your team [`arena_team`].
+    Seated { seat: u8 },
     /// The player whose [`Member::id`] is `by` punched you, standing at
     /// `from` (in the island's space, or on a bus, in the bus's): your own
     /// device knocks your body back from there, and sends where it goes as
@@ -757,8 +954,8 @@ mod tests {
     }
 
     #[test]
-    fn the_four_of_a_game_of_bridge_wars_arrive_on_four_islands_facing_the_middle() {
-        for seat in 0..ARENA_SEATS {
+    fn the_first_four_of_a_game_of_bridge_wars_arrive_on_four_islands_facing_the_middle() {
+        for seat in 0..ARENA_TEAMS {
             let (at, turn) = arrival(Venue::Arena, seat);
             let island = ARENA_ISLANDS[seat];
             assert!(at.xz().distance(island) < 1e-4, "seat {seat}: {at} for {island}");
@@ -768,13 +965,54 @@ mod tests {
             assert_eq!(arena_island(seat), seat);
         }
         // Past them, on the islands too, near the middle, each on the
-        // island its seat says.
-        for seat in ARENA_SEATS..TOWN_SEATS * 2 {
+        // island its seat says: the second of each team beside the first.
+        for seat in ARENA_TEAMS..TOWN_SEATS * 2 {
             let (at, _) = arrival(Venue::Arena, seat);
             let island = ARENA_ISLANDS[arena_island(seat)];
             let out = at.xz().distance(island);
             assert!(out > 3.0 && out < 8.0, "seat {seat}: {out} m from its island's middle");
+            assert!(out < ARENA_ISLAND_RADIUS - 2.0, "seat {seat}: off the island");
         }
+        // Eight seats, two to a team, a team to an island.
+        assert_eq!(ARENA_SEATS, 2 * ARENA_TEAMS);
+        for seat in 0..ARENA_SEATS {
+            assert_eq!(arena_team(seat), arena_island(seat) as u8);
+            assert_eq!(arena_team(seat), arena_team((seat + ARENA_TEAMS) % ARENA_SEATS));
+            assert_ne!(arena_team(seat), arena_team((seat + 1) % ARENA_SEATS));
+        }
+        // Each team's anchor stands on its island, toward the town.
+        for team in 0..ARENA_TEAMS {
+            let (anchor, island) = (ARENA_ANCHORS[team], ARENA_ISLANDS[team]);
+            let out = anchor.distance(island);
+            assert!(out > 4.0 && out < 7.0, "team {team}: anchor {out} m from its island's middle");
+            assert!(anchor.length() < island.length(), "team {team}: anchor beyond its island");
+            assert!(bridge_wars::anchor_in_reach(anchor + Vec2::X * 2.5, anchor, bridge_wars::REACH));
+            assert!(!bridge_wars::anchor_in_reach(anchor + Vec2::X * 4.0, anchor, bridge_wars::REACH));
+        }
+    }
+
+    #[test]
+    fn everyone_waits_in_the_room_facing_its_middle_and_apart() {
+        let spots: Vec<(Vec3, Quat)> = (0..ARENA_SEATS).map(bridge_wars::waiting_spot).collect();
+        for (seat, &(at, turn)) in spots.iter().enumerate() {
+            assert_eq!(at.y, bridge_wars::WAITING_FLOOR);
+            assert!((at.xz().length() - bridge_wars::WAIT_RING).abs() < 1e-4, "seat {seat} at {at}");
+            let facing = (turn * Vec3::NEG_Z).xz();
+            assert!(facing.distance(-at.xz().normalize()) < 1e-4, "seat {seat} faces {facing}");
+        }
+        for (a, &(at, _)) in spots.iter().enumerate() {
+            for &(other, _) in &spots[a + 1..] {
+                assert!(at.distance(other) > 1.0, "{at} and {other}");
+            }
+        }
+        let round = ArenaRound {
+            stage: ArenaStage::Playing,
+            left: 10,
+            health: vec![100; ARENA_SEATS],
+            anchors: [240; ARENA_TEAMS],
+            out: 0b0000_0101,
+        };
+        assert!(round.is_out(0) && round.is_out(2) && !round.is_out(1) && !round.is_out(9));
     }
 
     #[test]

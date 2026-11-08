@@ -304,7 +304,11 @@ fn load(
     let lifted = match loading.lifting {
         Some(lifted) => lifted + dt,
         None => {
-            let landed = me.single().is_ok_and(|&here| islands.get(here).is_some());
+            // Landed: on an island that has loaded, and for Bridge Wars on
+            // its map, which online the server has to seat you on first.
+            let landed = me.single().is_ok_and(|&here| {
+                islands.get(here).is_some() && (loading.pick != Pick::BridgeWars || here == Venue::Arena)
+            });
             let settled = loading.fired && loading.age >= LOADING_IN + LOADING_HOLD && landed;
             if !settled && loading.age < LOADING_MOST {
                 return;

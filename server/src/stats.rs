@@ -34,10 +34,14 @@ fn report(clients: Query<&ConnectedClientStats>, bodies: Query<&Body>, towns: Re
         .iter()
         .filter(|body| body.client.is_some() && matches!(body.room, Room::Game(_)))
         .count();
+    let fighting = bodies
+        .iter()
+        .filter(|body| body.client.is_some() && matches!(body.room, Room::Arena(_)))
+        .count();
     let each = out / connected as f64;
     info!(
-        "{connected} connected: town channels {:?}, {homes} at home, {gaming} in House Builder; \
-         out {:.1} KB/s ({:.2} KB/s, {:.1} MB an hour, each), in {:.1} KB/s",
+        "{connected} connected: town channels {:?}, {homes} at home, {gaming} in House Builder, \
+         {fighting} in Bridge Wars; out {:.1} KB/s ({:.2} KB/s, {:.1} MB an hour, each), in {:.1} KB/s",
         towns.counts(),
         out / 1000.0,
         each / 1000.0,

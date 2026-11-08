@@ -272,7 +272,10 @@ alone; the server is `cargo build -p roundtown_server`. Never `--workspace`,
 which would build the game with the server's half of replicon in it.
 
 Android needs the `release-android` profile, a manual strip step, and Gradle
-(`versionCode` in `mobile/android/app/build.gradle` is the build number: 9
+(`versionCode` in `mobile/android/app/build.gradle` is the build number: 11
+on the night of 2026-11-08, Bridge Wars online with eight seats in teams,
+respawn anchors and bridges built by walking (protocol 10); 10 that
+afternoon, the fight's minor things (dead bots hidden, fleeing, regen); 9
 in the small hours of 2026-11-08, Bridge Wars' fight, its bots that go for
 you, running, arrivals in the islands' middles and the jump beside the
 sword; 8
@@ -528,6 +531,126 @@ was the town itself; everything below about the map, its islands, the
 void, the punch's knockback and its range held for the town then, and
 holds for the arena now.
 
+- **Since the night of 2026-11-08 Bridge Wars is the server's online, eight
+  to a game in four teams of two, with respawn anchors and bridges you
+  build** (Hajun: "the bridge battle minigame doesnt allow queing with
+  other players i think even tho we join the game at the same time. fix
+  that. also make the purple rotated cube thingy on each island the respawn
+  anchor (similar to bed in bedwars) ... make it 8 player rather than 4
+  player, so its 2v2v2v2 ... make it so u cannot hurt your own teammate ...
+  display the ai bot/other players name above the healthbar, and make the
+  healthbar and the nametag not distracting ... some indication wether they
+  are teammate or enemy ... add a 'autobridge' feature"; `PROTOCOL_VERSION`
+  10, the server deployed with it, the binary before kept on the VM as
+  `roundtown-server.prev-2026-11-08b`). What changed, and where:
+  - **Online a game is a room of the server's** (`server/src/arena.rs`,
+    `Room::Arena`, as House Builder's games are): choosing Bridge Wars asks
+    `Ask::Arena`, the server seats you in the game filling now
+    (`Tell::Seated`), puts you in the waiting room at your seat's spot
+    (`roundtown_net::bridge_wars::waiting_spot`, the room's floor at 100.5 m
+    as a shared constant, which a test checks the map agrees with), fills
+    the seats left with its own bots after 10 s, counts down, sends everyone
+    to their islands, and runs the clock; the device follows its
+    `ArenaRound` and `Seats` (`arena::follow_round`): the stage and the
+    time, everyone's health in whole points, each team's anchor and who is
+    out. Your moves go to the server in the arena now (`net::tell_where_i_am`
+    no longer leaves it out), and its arrivals move you (`net::hear`).
+    **Health is the server's online**: a punch that lands sends `Ask::Punch`
+    as before, and the server takes 12 off whoever it landed on, if they are
+    not on your team and within 6.5 m of where you each last said you stood,
+    knocks a person through `Tell::Knocked` and a bot itself; a fall into
+    the void is `Ask::Respawn`, which the server answers with a death. The
+    rules both sides play by are `roundtown_net::bridge_wars` (health 100,
+    damage 12, anchor 240, respawn 4 s, regen 4 a second after 5 s, run 10,
+    sight 24, a bot's punch every 0.8 s, flee under 20%, fall 30 m);
+    `assets/ui.ron`'s `arena` has the same numbers for offline, with
+    `anchor_health` added, and rules offline alone. **The server's bots**
+    (`server/src/arena.rs`, `Mind`, `think`) have no map: each keeps to the
+    disc of its island (`ARENA_ISLAND_RADIUS` 10.4 m), runs at whoever of
+    another team comes within 24 m on or beside it, punches in reach,
+    runs away under 20%, strolls when alone, is knocked up and across as a
+    body is (`KNOCK_BACK`, `KNOCK_UP`, the drags) and falls off the edge if
+    knocked over it; it walks through the island's desk and slab, and never
+    crosses a bridge. Offline the game is this device's own as before, with
+    seven bots. Seen on this PC with a local server (`RT_PORT=5443`,
+    `RT_ALLOW_SKIP=1`): seated, the bots in, the fight, a bridge to the west
+    island, its two bots knocking you to 16 and off the edge, your punches
+    taking 12 off them and their health coming back. Not yet with two
+    people, nor on a phone.
+  - **Eight seats, two to a team, a team to an island** (`ARENA_SEATS`,
+    `ARENA_TEAMS`, `roundtown_net::arena_team`, seat modulo four: seats 0 and
+    4 share island 0; `arrival` puts the second of each team 4 m from the
+    first). Every body in the game carries `Team` (`src/lib.rs`): a punch
+    never lands on a teammate (`start_punch` passes them by for whoever is
+    behind), a bot never goes for one (`arena::hunt`, the server's `think`),
+    and the server refuses a hit on one.
+  - **The purple pillar on each island is its team's respawn anchor**
+    (`roundtown_net::ARENA_ANCHORS`, read by hand off the `spawn` material's
+    pillars, which a test checks, `ANCHOR_RADIUS` 0.85): a bar over it
+    (`arena::AnchorBar`, your team's in `colours.arena.anchor_mine`, the
+    rest in `anchor_enemy`), 240 of health, twenty punches. A punch of
+    yours lands on an enemy anchor in its range as on a body that wide
+    (`arena::hit_anchors`, off a new `Swung` message `start_punch` writes
+    for every punch), never your own; broken, the pillar is hidden and
+    taken out of what is stood on (`arena::break_anchors`, `Anchors`,
+    `Islands::reshape` without its triangles, `is_pillar`; stood up again
+    as the game ends), with a headline. **Dying with your anchor standing,
+    you come back in 4 s as before; dying with it broken, you are out for
+    good** (`Game::die`, checked at the moment of death, as Hajun asked):
+    the body stays hidden and a panel comes up in the middle of the screen
+    (`arena::Panel::Out`: "You're out!", "Your respawn anchor is gone.",
+    Play again and Exit). The last team with anyone in play wins, or nobody
+    when the time runs out: the end's panel (`Panel::End`: "Victory!",
+    "Defeat" or "Time's up!", who won, "Back to the town in", the same two
+    buttons) is up for 15 s and everyone is back in the town. Play again
+    is another game (offline a new one at once; online `Ask::Arena` again),
+    Exit the town (`Ask::Leave` online). The words are `words.arena`'s.
+  - **Everyone else's name is over their health bar** (`arena::TagOf`,
+    `spawn_tag`; `tags` shows no names in the arena): small (2.4 shares of
+    the short side) and faint, a teammate's in `colours.arena.ally` over a
+    bar in `hp_ally` (green), an enemy's in `enemy` and `hp_enemy` (red),
+    2.2 m over the feet, not scaled by distance under the fixed camera.
+  - **The bridges are built as you walk** (`src/bridge.rs`): the plank over
+    the sword (`hud::BridgeButton`, the slot there until then; B on desktop)
+    toggles building (`bridge::Bridging`, the button lit while on). On, you
+    carry a plank (`Carrying` in `src/lib.rs`: both arms held out a little
+    under level, `CARRY_REACH` 1.45 rad, with a board 1.1 by 0.5 m lying
+    across them, `HeldPlank`, a child of your body), and every frame before
+    you move (`bridge::lay`, between `start_punch` and `move_bodies`) the
+    ground `AHEAD` of your step is looked at: over the void, a plank is laid
+    under it, as Hajun's own notes had it. A bridge is a chain of rungs (a
+    point and a heading each), a plank between every two: 2.726 m wide and
+    0.25 m thick, Hajun's `bridge` object's measure from their export that
+    evening, its top at 0.24 m (the islands' 0.25 less a seam, so that the
+    overlap at the root hides under the island and the join is the edge
+    itself), each rung a plank's width on from the last (`SPACING`, Hajun's
+    `s >= 2w`, so a fork fits against one plank's side), turned no more than
+    30 degrees from the rung before (`MAX_TURN`), so that the bridge curves
+    as you walk round. Leaving the ground, the first rung lies on its very
+    edge headed straight out from it (the edge found by bisection, the way
+    out by sampling the ground round it), its corners pulled onto the edge
+    (`corners_of`); walking off a plank's side, anyone's, a fork begins
+    flush against that side; walking the far end of your own unfinished
+    chain grows it; and where the next plank would reach land the chain
+    ends on the land's edge headed into it, with a rung between first at a
+    turn over 80 degrees. The planks are ground: their shape is laid over
+    the island's (`Island::lay_over`, `Islands::lay_over`, `overlay`: a
+    second shape every question of the island is asked of too, so that
+    50,000 triangles are never read again for a plank), and you, the bots
+    (offline) and everyone stand on them and fall off their sides. Online
+    every rung goes to the server as it is laid (`Ask::Rung`), and comes
+    back to everyone as a `Plank` (`bridge::hear_planks`, out of order
+    allowed), yours left out. Each chain is one mesh coloured by vertex
+    (`colours.arena.plank` on top, `plank_side` under and at the sides),
+    the ends open but for an unfinished tip's cap. Nothing is taken up
+    again; the bridges go with the game. Hajun's `bridge` object was taken
+    out of `pvptownmap.blend` (saved without a `.blend1` of mine) and the
+    map exported again with Apply Modifiers (62 objects, 50,130 triangles,
+    no image: the plank texture went with the bridges). Seen in the desktop
+    build, scripted: a bridge off the island's edge, curving with the walk,
+    the feet on it at 0.24 the whole way, and one 180 m to the west island
+    landing on its edge; not yet by hand or on a phone.
+
 - **The gamepad down the right edge opens the game selector**
   (`src/games.rs`, `hud::GamesButton`): a dialog like the settings'
   window, "Games" over three cards, Bridge Wars ("Free"), Home Builders
@@ -708,6 +831,10 @@ holds for the arena now.
   `fall_to_die` down, as you are ("The fight", above).
 
 ### The PvP map itself
+
+(Since the night of 2026-11-08 the map has no bridges: Hajun's `bridge`
+object was taken out of `pvptownmap.blend`, and every bridge is built by
+walking, "Games" above. What follows describes the bridges as they were.)
 
 The map (Hajun, 2026-11-07: "use pvptownmap instead of roudntownmap ...
 make the player start in the center of one of the 4 bridge connected

@@ -56,6 +56,7 @@ use bevy_replicon_renet::renet::ConnectionConfig;
 use bevy_replicon_renet::{RenetChannelsExt, RenetClient, RepliconRenetPlugins};
 use roundtown_net::{Ask, Member, Moved, PROTOCOL_ID, Spot, TICK_HZ, Tell, TheTime, Venue, WhatTime};
 
+use crate::arena::OfflineArena;
 use crate::builder::OfflineGame;
 use crate::car::{self, Place};
 use crate::clock::TownClock;
@@ -407,6 +408,7 @@ fn link(
     cars: car::Cars,
     remote: Query<Entity, With<Remote>>,
     offline_game: Res<OfflineGame>,
+    offline_arena: Res<OfflineArena>,
     mut online: ResMut<Online>,
     mut clock: ResMut<Clock>,
     mut asks: MessageWriter<Ask>,
@@ -432,10 +434,11 @@ fn link(
             }
         }
         LinkState::Resting { until } => {
-            // Not in the middle of a game of House Builder played offline:
-            // online, a game is the server's to run. In the middle of one
-            // played online, the connection is wanted back at once.
-            if now >= until && !offline_game.0 {
+            // Not in the middle of a game of House Builder or Bridge Wars
+            // played offline: online, a game is the server's to run. In the
+            // middle of one played online, the connection is wanted back at
+            // once.
+            if now >= until && !offline_game.0 && !offline_arena.0 {
                 try_address(&mut link, &mut commands, &channels, 0, now);
             }
         }
@@ -655,12 +658,10 @@ fn hear(
             } => {
                 online.arrival = *arrival;
                 online.venue = Some(*venue);
-                // Bridge Wars' map is this device's own game (`arena`): the
-                // server has put you in a room of your own there, and where
-                // you stand in it is the game's to say, never the server's.
-                if *venue == Venue::Arena {
-                    continue;
-                }
+                // In a game of Bridge Wars too (`arena`, since 2026-11-08):
+                // the server seats you in its waiting room, sends you to
+                // your island, and stands you up again where your seat
+                // arrives.
                 seat.0 = usize::from(*arrives);
                 match spot {
                     // Let in where you already were: nothing moves.
@@ -699,7 +700,7 @@ fn hear(
             Tell::Balance(coins) => {
                 balance.set_if_neq(Balance(*coins));
             }
-            Tell::Joined { .. } | Tell::Refused(_) => {}
+            Tell::Joined { .. } | Tell::Seated { .. } | Tell::Refused(_) => {}
         }
     }
 }
@@ -766,10 +767,8 @@ fn placed(spot: &Spot, cars: &car::Cars) -> (Transform, Option<Entity>) {
 /// Sends where you are 15 times a second while you move: and once you stop, a
 /// couple more times, marked still, in case the first was lost. Nothing while
 /// you stand still, and nothing while you are anywhere the server has not
-/// put you, nor in a game of Bridge Wars, which is this device's own, in a
-/// room of your own online where nobody is to see you (`arena`). Standing
-/// still on the car is standing still: where you are on it does not change
-/// as it drives you round.
+/// put you. Standing still on the car is standing still: where you are on
+/// it does not change as it drives you round.
 fn tell_where_i_am(
     time: Res<Time>,
     online: Res<Online>,
@@ -781,7 +780,7 @@ fn tell_where_i_am(
     let Ok((at, &venue, riding)) = me.single() else {
         return;
     };
-    if !online.is() || online.venue != Some(venue) || venue == Venue::Arena {
+    if !online.is() || online.venue != Some(venue) {
         *sent = Sent::default();
         return;
     }

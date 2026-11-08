@@ -202,11 +202,13 @@ fn place_tags(
         })
         .collect();
     for (tag, mut shown, mut place, node) in &mut tags {
+        // In a game of Bridge Wars everyone's name is over their health
+        // bar, in their team's colour (`arena`), and not here.
         let head = bodies
             .get(tag.0)
             .ok()
             .filter(|&(body, &venue)| {
-                venue == here && body.translation.distance(you.translation) <= READ_RANGE
+                venue == here && here != Venue::Arena && body.translation.distance(you.translation) <= READ_RANGE
             })
             .map(|(body, _)| body.translation + Vec3::Y * OVER_HEAD);
         let point = head

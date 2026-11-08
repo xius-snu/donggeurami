@@ -36,6 +36,7 @@ use roundtown_net::{Ask, Member, Moved, Refusal, Spot, Tell, Venue, arrival, car
 use sha2::{Digest, Sha256};
 
 use crate::accounts::{Bank, Loaded, Record};
+use crate::arena::Arenas;
 use crate::builder::Games;
 use crate::rooms::{ClientRoom, InRoom, NotFor, Room, Towns};
 
@@ -292,13 +293,14 @@ fn hear(
                     continue;
                 };
                 let (room, seat) = match (to, body_of.room) {
-                    // Home, or Bridge Wars' map, where a game of it is the
-                    // device's own for now: a room of your own either way.
-                    (Venue::Home | Venue::Arena, Room::Town(_)) => {
+                    // A game of Bridge Wars is its own to leave (`arena`).
+                    (_, Room::Arena(_)) => continue,
+                    // Home: a room of your own.
+                    (Venue::Home, Room::Town(_)) => {
                         towns.stand(body);
                         (Room::Home(member.id), 0)
                     }
-                    (Venue::Home | Venue::Arena, Room::Home(_)) => (Room::Home(member.id), 0),
+                    (Venue::Home, Room::Home(_)) => (Room::Home(member.id), 0),
                     (Venue::Town, Room::Home(_)) => {
                         let (channel, seat) = towns.sit(body, body_of.town);
                         body_of.town = Some(channel);
@@ -349,6 +351,11 @@ fn hear(
                     continue;
                 };
                 let (room, seat) = (body_of.room, body_of.seat);
+                // In a game of Bridge Wars a fall is a death, which the
+                // game answers (`arena`).
+                if matches!(room, Room::Arena(_)) {
+                    continue;
+                }
                 if !matches!(room, Room::Town(_)) {
                     tell(&mut tells, client, Tell::Refused(Refusal::Busy));
                     continue;
@@ -374,6 +381,11 @@ fn hear(
                     continue;
                 };
                 let (room, from, on, by) = (hitter.room, *from, *on, member.id);
+                // In a game of Bridge Wars the punch wounds as well, and
+                // the game deals it (`arena`).
+                if matches!(room, Room::Arena(_)) {
+                    continue;
+                }
                 let victim = bodies.iter().find_map(|(other, spot, venue, member)| {
                     (member.id == *who && other.room == room && *venue == on)
                         .then_some((other.client, *spot))
@@ -422,7 +434,7 @@ pub(crate) fn move_to(
 /// Puts `body` in `room`, on `venue`: where `seat` arrives there, or, with an
 /// `at`, standing there. Tells its device so.
 #[allow(clippy::too_many_arguments)]
-fn place(
+pub(crate) fn place(
     commands: &mut Commands,
     tells: &mut MessageWriter<ToClients<Tell>>,
     entity: Entity,
@@ -463,10 +475,9 @@ fn place(
 }
 
 /// The room a device that says it is on `venue` is let into, and its seat
-/// there: the town or home, where it already is, or Bridge Wars' map, a
-/// game of which is the device's own, a room of its own as home is.
-/// Anywhere else, the middle of a game of House Builder it was playing
-/// offline, it is brought to the town.
+/// there: the town or home, where it already is. Anywhere else, the middle
+/// of a game of House Builder or Bridge Wars it was playing offline, it is
+/// brought to the town: online, a game is the server's.
 fn room_for(
     venue: Venue,
     id: u64,
@@ -475,8 +486,8 @@ fn room_for(
     towns: &mut Towns,
 ) -> (Room, Venue, u8, bool) {
     match venue {
-        Venue::Home | Venue::Arena => (Room::Home(id), venue, 0, true),
-        Venue::Town | Venue::Lobby | Venue::Plot(_) => {
+        Venue::Home => (Room::Home(id), venue, 0, true),
+        Venue::Town | Venue::Lobby | Venue::Plot(_) | Venue::Arena => {
             let (channel, seat) = towns.sit(body, rather);
             (Room::Town(channel), Venue::Town, seat, venue == Venue::Town)
         }
@@ -499,6 +510,7 @@ fn admit(
     mut bodies: Query<(&mut Body, &mut Spot, &mut Venue, &Member)>,
     mut towns: ResMut<Towns>,
     mut games: ResMut<Games>,
+    mut arenas: ResMut<Arenas>,
     time: Res<Time>,
     mut tells: MessageWriter<ToClients<Tell>>,
     mut commands: Commands,
@@ -533,11 +545,19 @@ fn admit(
             let member = member.clone();
             tell(&mut tells, client, Tell::Welcome { me: member.clone() });
             tell(&mut tells, client, Tell::Balance(kept.coins));
-            let in_game = matches!(kept.room, Room::Game(_));
-            let still_playing = matches!(hello.venue, Venue::Lobby | Venue::Plot(_));
+            let in_game = matches!(kept.room, Room::Game(_) | Room::Arena(_));
+            let still_playing = match kept.room {
+                Room::Game(_) => matches!(hello.venue, Venue::Lobby | Venue::Plot(_)),
+                Room::Arena(_) => hello.venue == Venue::Arena,
+                _ => false,
+            };
             if in_game && still_playing {
                 // Back into the game it was in.
-                tell(&mut tells, client, Tell::Joined { seat: kept.seat });
+                let seated = match kept.room {
+                    Room::Arena(_) => Tell::Seated { seat: kept.seat },
+                    _ => Tell::Joined { seat: kept.seat },
+                };
+                tell(&mut tells, client, seated);
                 kept.arrival = kept.arrival.wrapping_add(1);
                 kept.pace = Pace::new(now);
                 tell(
@@ -556,6 +576,7 @@ fn admit(
             if in_game {
                 // It gave the game up while the connection was gone.
                 games.walk_out(kept.room, body);
+                arenas.walk_out(kept.room, body);
             }
             // Let in where it says it is, as it is.
             let town = kept.town;
@@ -700,13 +721,15 @@ fn moves(
 }
 
 /// A device has gone. Its body goes with it, unless it is in the middle of a
-/// game of House Builder, which keeps its seat for it.
+/// game of House Builder, which keeps its seat for it. A game of Bridge
+/// Wars goes on without it: its seat is given up (`arena`).
 fn gone(
     remove: On<Remove, ConnectedClient>,
     clients: Query<&Plays>,
     mut bodies: Query<(&mut Body, &Member)>,
     mut everyone: ResMut<Everyone>,
     mut towns: ResMut<Towns>,
+    mut arenas: ResMut<Arenas>,
     mut commands: Commands,
 ) {
     let Ok(&Plays(entity)) = clients.get(remove.entity) else {
@@ -721,7 +744,10 @@ fn gone(
     }
     body.client = None;
     match body.room {
-        Room::Town(_) | Room::Home(_) => {
+        Room::Town(_) | Room::Home(_) | Room::Arena(_) => {
+            if let Room::Arena(_) = body.room {
+                arenas.walk_out(body.room, entity);
+            }
             towns.stand(entity);
             everyone.0.remove(&body.who);
             commands.entity(entity).despawn();

@@ -60,6 +60,8 @@ LICENSE-font-awesome.txt
 # src/style.rs: a phone never reads the file itself.
 ui.ron
 
-# The plank texture on the PvP town bridges (2026-11-07), which the exporter
-# embeds in pvptownmap.glb: Blender reads this file, the game never does.
+# The plank texture of the PvP map's bridges (2026-11-07), which the exporter
+# embedded in pvptownmap.glb until the bridges went out of the map
+# (2026-11-08: every bridge is built in the game now, src/bridge.rs):
+# Blender read this file, the game never did.
 woodplanktexture.jpg
