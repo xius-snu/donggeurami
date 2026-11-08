@@ -686,8 +686,12 @@ holds for the arena now.
     edge headed straight out from it (the edge found by bisection, the way
     out by sampling the ground round it); walking off a plank's side,
     anyone's, a fork begins flush against that side (a chain of nothing
-    but its root is forgotten as you step back, so brushing an edge builds
-    nothing); walking the far end of your own unfinished chain grows it;
+    but its root is forgotten once you are `FORGET_BEHIND`, 1.55 m, back
+    behind it, further in than a chain is ever begun, so brushing an edge
+    builds nothing; at half a metre, for a day, a chain was begun and
+    forgotten every other frame as you came up to an edge, its tip
+    flickering and a root sent to the server each time); walking the far
+    end of your own unfinished chain grows it;
     and where you step onto land, or onto another bridge, past where the
     chain began, it ends on that edge, headed at where you stepped onto
     it, with a rung there if the edge is half a plank's length or more

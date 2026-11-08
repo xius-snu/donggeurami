@@ -117,6 +117,13 @@ const SHORE_STEP: f32 = 0.1;
 /// How far ahead of your middle the ground is looked at to begin a chain,
 /// in metres, over where this frame's step takes you.
 const LOOK: f32 = PLAYER_RADIUS + 0.4;
+/// How far back behind a chain's root you have to be, in metres, for a
+/// chain with nothing built yet to be forgotten: further inland than
+/// anyone begins one ([`LOOK`] and a step), or the chain is begun and
+/// forgotten every other frame as you come up to the edge, its tip
+/// flickering and a root sent to the server each time (so it was for a
+/// day: a bridge's chain was the fifth begun).
+const FORGET_BEHIND: f32 = LOOK + 0.7;
 /// How finely an edge is felt for, in metres, and how far round a point on
 /// it the ground is felt for which way is out.
 const EDGE: f32 = 0.02;
@@ -572,7 +579,7 @@ fn grow(
     // Past where it began, with a plank fixed; or still at its root, on
     // the shore or the plank it began on, or gone back behind the root.
     let gone_out = chain.rungs.len() >= 2 && here.distance(root.p) > 2.0 * SPACING;
-    let back_inland = (here - root.p).dot(root.d) < -0.5;
+    let back_inland = (here - root.p).dot(root.d) < -FORGET_BEHIND;
     let on_land = land(here);
     if on_land || on_own == Some(false) {
         if gone_out {
@@ -1262,14 +1269,17 @@ mod tests {
         stub.begin(0, root);
         assert_eq!(stub.let_go(&mut metres), None);
         assert!(stub.chains.is_empty());
-        // Coming up to the edge from inside the island, the chain just
-        // begun keeps its tip waiting over the void; back inland with only
-        // a root, it is done, and nothing kept.
-        let mut fresh = Chain::new(0, 0, vec![root]);
-        let grown = grow(&mut fresh, Vec2::new(9.7, 0.0), None, &mut metres, &land, &land);
-        assert!(!grown.done && fresh.tip.is_some_and(|tip| tip.p.x > 10.5), "{grown:?} {:?}", fresh.tip);
+        // Coming up to the edge from inside the island, from as far in as
+        // a chain is begun, the chain just begun keeps its tip waiting over
+        // the void; back inland with only a root, it is done, and nothing
+        // kept.
+        for x in [10.0 - LOOK - 0.2, 9.7] {
+            let mut fresh = Chain::new(0, 0, vec![root]);
+            let grown = grow(&mut fresh, Vec2::new(x, 0.0), None, &mut metres, &land, &land);
+            assert!(!grown.done && fresh.tip.is_some_and(|tip| tip.p.x > 10.5), "from {x}: {grown:?} {:?}", fresh.tip);
+        }
         let mut back = Chain::new(0, 0, vec![root]);
-        let grown = grow(&mut back, Vec2::new(9.0, 0.0), None, &mut metres, &land, &land);
+        let grown = grow(&mut back, Vec2::new(10.0 - FORGET_BEHIND - 0.1, 0.0), None, &mut metres, &land, &land);
         assert!(grown.done && !grown.landed && grown.added.is_empty());
     }
 
