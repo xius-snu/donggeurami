@@ -307,7 +307,7 @@ impl Arenas {
         let open = self.filling.filter(|id| {
             self.games
                 .get(id)
-                .is_some_and(|game| game.stage == ArenaStage::Waiting && game.seats.len() < ARENA_SEATS)
+                .is_some_and(|game| game.stage == ArenaStage::Waiting && !game.closing && game.seats.len() < ARENA_SEATS)
         });
         let id = open.unwrap_or_else(|| {
             let id = self.next;

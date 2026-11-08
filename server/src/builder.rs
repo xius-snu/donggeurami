@@ -161,7 +161,7 @@ impl Games {
         let open = self.filling.filter(|id| {
             self.games
                 .get(id)
-                .is_some_and(|game| game.stage == Stage::Queue && game.seats.len() < GAME_SEATS)
+                .is_some_and(|game| game.stage == Stage::Queue && !game.closing && game.seats.len() < GAME_SEATS)
         });
         let id = open.unwrap_or_else(|| {
             let id = self.next;
