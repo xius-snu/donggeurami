@@ -181,7 +181,9 @@ pub(crate) struct Arena {
     pub anchor_health: f32,
     /// How many metres of bridge everyone starts a game with (`bridge`,
     /// since 2026-11-09; Hajun: "players will buy the bridge by meter
-    /// count ... for now make each person start with 100m").
+    /// count ... for now make each person start with 100m"; 500 since
+    /// 2026-11-10: "increase the default bridge meter to 500m instead of
+    /// 100").
     pub bridge_metres: f32,
 }
 

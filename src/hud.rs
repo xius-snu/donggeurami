@@ -260,6 +260,7 @@ pub(crate) fn plugin(app: &mut App) {
         .init_resource::<Layout>()
         .add_observer(press_buttons)
         .add_systems(Startup, show_top_bar)
+        .add_systems(Update, shade)
         .add_systems(
             Update,
             (
@@ -445,9 +446,43 @@ fn hide_round_the_jump(
     }
 }
 
+/// How far under its words every text's shadow falls, as a share of the
+/// letters' size ([`shade`]): what 3 logical pixels was under the bar's
+/// words on this PC.
+const SHADOW_DROP: f32 = 0.12;
+
+/// Sets every text's shadow as far under its words as its size asks, on
+/// every screen alike (since 2026-11-10, Hajun, of the names over the
+/// health bars in Bridge Wars: "the shadow of the nametag is too far below
+/// the text": the shadow fell 3 logical pixels whatever the words' size,
+/// which under those small names, on a phone whose logical pixels are
+/// large, was about a third of the letters' height). Only a shadow that
+/// has to move is written.
+fn shade(window: Query<&Window, With<bevy::window::PrimaryWindow>>, mut texts: Query<(&TextFont, &mut TextShadow)>) {
+    let Ok(window) = window.single() else {
+        return;
+    };
+    let (width, height) = (window.width(), window.height());
+    for (font, mut shadow) in &mut texts {
+        let size = match font.font_size {
+            FontSize::Px(px) => px,
+            FontSize::Vw(share) => share * width / 100.0,
+            FontSize::Vh(share) => share * height / 100.0,
+            FontSize::VMin(share) => share * width.min(height) / 100.0,
+            FontSize::VMax(share) => share * width.max(height) / 100.0,
+            _ => continue,
+        };
+        let offset = Vec2::new(0.0, (size * SHADOW_DROP).max(0.5));
+        if shadow.offset != offset {
+            shadow.offset = offset;
+        }
+    }
+}
+
 /// Text in the house style: the default font, sized as a share of the short
 /// side of the screen, with a soft shadow so that it reads over sky and grass
-/// alike. The shadow is as see-through as the words.
+/// alike. The shadow is as see-through as the words, and falls under them
+/// by a share of their size ([`shade`]).
 pub(crate) fn words(text: impl Into<String>, size_vmin: f32, colour: Color) -> impl Bundle {
     let shadow = ui().colours.text_shadow;
     (
@@ -775,7 +810,7 @@ fn resource_row(kind: Resource, picture: Handle<Image>, tint: Color) -> impl Bun
 }
 
 /// Writes each resource's count beside its picture, as it changes and on a
-/// row put up afresh: the metres of bridge left as "100m".
+/// row put up afresh: the metres of bridge left as "500m".
 fn show_resources(
     stock: Res<Resources>,
     added: Query<(), Added<ResourceCount>>,

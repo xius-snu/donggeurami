@@ -450,6 +450,6 @@
         flee_below: 0.2,
         fall_to_die: 30.0,
         anchor_health: 120.0,
-        bridge_metres: 100.0,
+        bridge_metres: 500.0,
     ),
 )

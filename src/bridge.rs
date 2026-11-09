@@ -70,13 +70,22 @@
 //! where it is and begins a fork there ([`Bridges::abandon`]; the tip
 //! stayed frozen where you had turned back, and off your own bridge's side
 //! there was nothing under you), and off them onto land or another bridge
-//! ends it with no landing.
+//! ends it with no landing. **A turn too sharp for the tip to follow makes
+//! an L corner** (later that day, Hajun: "it happens when i do a close to
+//! 90 degree turn"): stepping off the tip through its side
+//! ([`Chain::tip_side_exit`]), the tip is fixed as the chain's last plank,
+//! cut off flush with the far edge of the fork that begins off its side
+//! ([`Bridges::corner`]), so that nothing sticks out past the fork and
+//! nothing of the fork hangs past the plank; and a fork landing within a
+//! plank or two slants no more than that length can cut cleanly
+//! ([`land_on`]), a square gusset rather than a triangle.
 //!
 //! Every plank costs its length in metres of bridge, which you buy (Hajun:
 //! "players will buy the bridge by meter count ... for now make each person
-//! start with 100m"): the file's `arena.bridge_metres` to start, the number
-//! by the log top left (`arena::Resources`), and the tip never reaches
-//! further than you have left.
+//! start with 100m"; 500 since 2026-11-10: "increase the default bridge
+//! meter to 500m instead of 100"): the file's `arena.bridge_metres` to
+//! start, the number by the log top left (`arena::Resources`), and the tip
+//! never reaches further than you have left.
 //!
 //! The planks are ground: their shape is laid over the island's
 //! (`Islands::lay_over`), so that you, the bots and everyone stand on them
@@ -188,6 +197,11 @@ const END_PUSH: f32 = 3.0;
 /// first plank of a fork is made long enough for ([`first_length`]).
 const CUT_SHARE: f32 = 0.95;
 const SLANT_ROOM: f32 = 0.1;
+/// How far past the far edge of a fork the plank it leaves at an L corner
+/// runs, in metres ([`Bridges::corner`]): a hair, so that the fork's far
+/// root corner, cut back onto the plank's side, finds the plank there
+/// rather than grazing its very corner and missing.
+const CORNER_ROOM: f32 = 0.05;
 /// How far off the first plank's line you may drift, in metres, before its
 /// rung is fixed early, shorter than [`first_length`] asks, so that the
 /// chain can turn after you: walking off a bridge nearly along its edge.
@@ -340,6 +354,26 @@ impl Chain {
         })
     }
 
+    /// Where a step from `from` to `to` leaves its tip plank, as last
+    /// built, through one of the tip's two sides, and which way is out of
+    /// that side: a turn too sharp for the tip to follow (`lay`). None
+    /// with no tip built, or for a step that stays on it or leaves it
+    /// over its end.
+    fn tip_side_exit(&self, from: Vec2, to: Vec2) -> Option<(Vec2, Vec2)> {
+        let n = self.corners.len();
+        if self.tip.is_none() || self.built_tip.is_none() || n < 2 {
+            return None;
+        }
+        let (l0, r0) = self.corners[n - 2];
+        let (l1, r1) = self.corners[n - 1];
+        let middle = (l0 + r0 + l1 + r1) * 0.25;
+        [(l0, l1), (r0, r1)].into_iter().find_map(|(a, b)| {
+            let e = crossing(from, to, a, b)?;
+            let out = perp(b - a).normalize_or(Vec2::X);
+            Some((e, if out.dot(a - middle) >= 0.0 { out } else { -out }))
+        })
+    }
+
     /// Which way is off its fixed planks at `e`, a point on their edge:
     /// square to whichever edge of theirs is nearest, outward; the sides,
     /// and the ends of the first and the last, never the joints between.
@@ -458,6 +492,48 @@ impl Bridges {
         self.chains.push(chain);
         self.active = Some(self.chains.len() - 1);
         id
+    }
+
+    /// Fixes the `c`th chain's tip as its last plank and ends the chain
+    /// there, for a fork about to begin off its side: an L corner. Its
+    /// builder stands at `here`, about to step off the tip through the side
+    /// whose way out is `out`, walking `dir`. The plank runs straight on
+    /// from the last rung the way the chain was heading before the turn
+    /// (not the way the tip had swung toward it, which left a kink and a
+    /// slanted cap), and the fork's root lies on that straight side level
+    /// with `here`. The fork's first plank heads `dir`, within
+    /// [`MAX_SLANT`] of square to the side, and its root edge, cut along
+    /// the side, reaches `HALF_WIDTH / cos(slant)` either way from its root;
+    /// the plank ends at the far one, and a hair past ([`CORNER_ROOM`]), so
+    /// that nothing sticks out past the fork and nothing of the fork hangs
+    /// past the plank. Charges `metres`; none with less than a plank's
+    /// worth, or with no tip. The fork's root, and the rung fixed with the
+    /// chain's id and its index, to send.
+    fn corner(&mut self, c: usize, here: Vec2, out: Vec2, dir: Vec2, metres: &mut f32) -> Option<(Rung, (u16, u16, Rung))> {
+        let chain = &mut self.chains[c];
+        chain.tip?;
+        let last = *chain.rungs.last()?;
+        if chain.rungs.len() >= MOST_RUNGS {
+            return None;
+        }
+        let stem = last.d;
+        let square = perp(stem);
+        let side = if square.dot(out) >= 0.0 { square } else { -square };
+        let along = (here - last.p).dot(stem).max(0.0);
+        let heading = clamp_turn(dir, side, MAX_SLANT);
+        let span = HALF_WIDTH / heading.angle_to(side).cos().max(0.1);
+        let length = (along + span + CORNER_ROOM).max(MIN_LAND).min(*metres);
+        if length < MIN_LAND {
+            return None;
+        }
+        *metres -= length;
+        let rung = Rung { p: last.p + stem * length, d: stem };
+        let index = chain.rungs.len() as u16;
+        let id = chain.id;
+        chain.rungs.push(rung);
+        self.abandon(c);
+        let root = Rung { p: last.p + stem * along + side * HALF_WIDTH, d: side };
+        Some((root, (id, index, rung)))
     }
 
     /// Ends the `c`th chain, yours, where its fixed planks got to: its tip
@@ -662,12 +738,36 @@ pub(crate) fn lay(
             let speed = MOVE_SPEED * intent.sprint * intent.walk.length().min(1.0);
             (dir, here + dir * (speed * time.delta_secs() + LOOK))
         });
+        // Where a fork begins this frame, if one does: its root, and the
+        // way off the edge it begins on.
+        let mut start: Option<(Vec2, Vec2)> = None;
         if let Some(c) = bridges.active {
             let under = bridges.plank_under(here);
             let on_own = under.map(|(other, _)| other == c);
             let was_behind = bridges.chains[c].behind;
             bridges.chains[c].behind = on_own == Some(true);
-            if was_behind && (land(here) || on_own == Some(false)) {
+            // On the tip and about to step off its side: a turn too sharp
+            // for the tip to follow. The tip is fixed as the chain's last
+            // plank, cut off flush with the far edge of the fork that
+            // begins off its side, below: an L corner (2026-11-10, after
+            // Hajun's "close to 90 degree turn" screenshots; until then a
+            // rung was fixed a plank on, past where you had turned, and
+            // the fork began off that plank's side, leaving the rest of it
+            // sticking out past the fork, and the fork's root cut hanging
+            // past the plank's end).
+            let corner = if on_own.is_none()
+                && stock.bridge_metres >= SPACING + MIN_LAND
+                && let Some((dir, probe)) = probe
+                && let Some((_, out)) = bridges.chains[c].tip_side_exit(here, probe)
+            {
+                bridges.corner(c, here, out, dir, &mut stock.bridge_metres)
+            } else {
+                None
+            };
+            if let Some((root, (id, index, rung))) = corner {
+                sent.push((id, index, rung));
+                start = Some((root.p, root.d));
+            } else if was_behind && (land(here) || on_own == Some(false)) {
                 // Back over the chain's own planks and off them onto land
                 // or another bridge: the chain ends where it got to, with
                 // no landing (2026-11-10).
@@ -701,21 +801,29 @@ pub(crate) fn lay(
             && let Some((dir, probe)) = probe
             && stock.bridge_metres >= SPACING
             && bridges.chains.len() < MOST_CHAINS
-            && ground(here)
-            && !ground(probe)
         {
             // Nothing being built, and about to step over the void: off
             // the edge of the ground, the island's or a plank's (a fork),
             // the root on the very edge where your way crosses it, headed
             // straight out of it (square to the plank's own edge, or to
-            // the land's as felt for round it); the first plank heads
+            // the land's as felt for round it); or off the side of the
+            // tip just fixed at a corner, above. The first plank heads
             // where you walk, within `MAX_SLANT` of that.
-            let e = bisect(here, probe, &ground);
-            let square = match bridges.plank_under(here) {
-                Some((c, _)) => bridges.chains[c].edge_normal(e),
-                None => outward(e, &ground),
-            };
-            let root = Rung { p: e, d: square.unwrap_or(dir) };
+            if start.is_none() && ground(here) && !ground(probe) {
+                let e = bisect(here, probe, &ground);
+                let square = match bridges.plank_under(here) {
+                    Some((c, _)) => bridges.chains[c].edge_normal(e),
+                    None => outward(e, &ground),
+                };
+                start = Some((e, square.unwrap_or(dir)));
+            }
+        } else {
+            start = None;
+        }
+        if let Some((e, square)) = start
+            && let Some((dir, _)) = probe
+        {
+            let root = Rung { p: e, d: square };
             let id = bridges.begin(seat, root, !land(here));
             sent.push((id, 0, root));
             let c = bridges.chains.len() - 1;
@@ -899,9 +1007,27 @@ fn land_on(chain: &mut Chain, here: Vec2, edge: &dyn Fn(Vec2) -> bool, metres: &
         } else {
             Vec2::from_angle(slant.signum() * MAX_END_SLANT).rotate(inward)
         };
-        let most = if chain.rungs.len() == 1 { MAX_SLANT } else { MAX_TURN };
-        let h = clamp_turn(want, last.d, most);
-        if let Some(gap) = shore_ahead(last.p, h, edge, LAND_REACH) {
+        let first = chain.rungs.len() == 1;
+        let mut most = if first { MAX_SLANT } else { MAX_TURN };
+        let mut h = clamp_turn(want, last.d, most);
+        let mut found = shore_ahead(last.p, h, edge, LAND_REACH);
+        // A fork landing within a plank or two slants no more than that
+        // length can cut cleanly along the plank it leaves (`CUT_SHARE`):
+        // slanted 45 degrees, a short one came out a triangle, its root
+        // cut hanging past its end.
+        if first && chain.forked {
+            for _ in 0..3 {
+                let Some(gap) = found else { break };
+                let room = CUT_SHARE * gap.max(MIN_LAND) - SLANT_ROOM;
+                if HALF_WIDTH * h.angle_to(last.d).abs().tan() <= room {
+                    break;
+                }
+                most = (room.max(0.0) / HALF_WIDTH).atan();
+                h = clamp_turn(want, last.d, most);
+                found = shore_ahead(last.p, h, edge, LAND_REACH);
+            }
+        }
+        if let Some(gap) = found {
             let length = gap.max(MIN_LAND);
             *metres = (*metres - length).max(0.0);
             fix(chain, Rung { p: last.p + h * length, d: h }, grown);
@@ -1021,6 +1147,20 @@ fn yaw_of(d: Vec2) -> f32 {
 /// The heading a turn of `yaw` about the upright gives.
 fn heading_of(yaw: f32) -> Vec2 {
     Vec2::new(-yaw.sin(), -yaw.cos())
+}
+
+/// Where the segment from `p` to `q` crosses the segment from `a` to `b`,
+/// if it does.
+fn crossing(p: Vec2, q: Vec2, a: Vec2, b: Vec2) -> Option<Vec2> {
+    let r = q - p;
+    let s = b - a;
+    let denominator = r.perp_dot(s);
+    if denominator.abs() < 1e-9 {
+        return None;
+    }
+    let t = (a - p).perp_dot(s) / denominator;
+    let u = (a - p).perp_dot(r) / denominator;
+    ((0.0..=1.0).contains(&t) && (0.0..=1.0).contains(&u)).then(|| p + r * t)
 }
 
 /// Whether `at` is inside the convex quad `q`, its corners in order round
@@ -1815,6 +1955,95 @@ mod tests {
         // At a joint's corner the side wins, never the joint between planks.
         assert!(close(chain.edge_normal(Vec2::new(SPACING, HALF_WIDTH)).unwrap(), Vec2::Y));
         assert!(Chain::new(0, 0, vec![rungs[0]]).edge_normal(Vec2::ZERO).is_none());
+    }
+
+    #[test]
+    fn a_sharp_turn_on_the_tip_makes_an_l_corner_with_nothing_sticking_out() {
+        let nothing = |_: Vec2| false;
+        for degrees in [0.0f32, 30.0, 60.0] {
+            // A chain east from x = -4, three planks fixed and the tip 3 m
+            // on; standing on the tip 1 m past the last rung, you step off
+            // its +y side, `degrees` off square.
+            let root = Rung { p: Vec2::new(-4.0, 0.0), d: Vec2::X };
+            let mut bridges = Bridges::default();
+            bridges.begin(0, root, false);
+            for k in 1..=3 {
+                bridges.chains[0].rungs.push(Rung { p: Vec2::new(-4.0 + k as f32 * SPACING, 0.0), d: Vec2::X });
+            }
+            let last_x = -4.0 + 3.0 * SPACING;
+            let tip = Rung { p: Vec2::new(last_x + 3.0, 0.0), d: Vec2::X };
+            bridges.chains[0].tip = Some(tip);
+            bridges.chains[0].built_tip = Some(tip);
+            bridges.chains[0].corners = corners_of(&bridges.chains[0].all(), true, &nothing, &nothing).0;
+            let dir = Vec2::from_angle(degrees.to_radians()).rotate(Vec2::Y);
+            let here = Vec2::new(last_x + 1.0, HALF_WIDTH - 0.3);
+            let probe = here + dir * LOOK;
+            let (e, out) = bridges.chains[0].tip_side_exit(here, probe).expect("off the side");
+            assert!((e.y - HALF_WIDTH).abs() < 1e-4 && out.distance(Vec2::Y) < 1e-5, "{degrees}: {e} {out}");
+            assert!(bridges.chains[0].tip_side_exit(here, here + Vec2::X * 0.5).is_none(), "a step along the tip leaves it");
+            let mut metres = 50.0;
+            let (root, (id, index, rung)) = bridges.corner(0, here, out, dir, &mut metres).expect("a corner");
+            assert_eq!((id, index), (0, 4));
+            // The fork's root is on the straight side, level with you; the
+            // plank ends flush with the far edge of the fork's root, and a
+            // hair past it; the fork slants `MAX_SLANT` at the most.
+            assert!((root.p - Vec2::new(here.x, HALF_WIDTH)).length() < 1e-4 && root.d.distance(Vec2::Y) < 1e-5, "{degrees}: the root is {root:?}");
+            let heading = clamp_turn(dir, out, MAX_SLANT);
+            let span = HALF_WIDTH / heading.angle_to(out).cos();
+            assert!((rung.p.x - (here.x + span + CORNER_ROOM)).abs() < 1e-3 && rung.p.y.abs() < 1e-4, "{degrees}: the cap is at {}", rung.p);
+            assert!((50.0 - metres - (rung.p.x - last_x)).abs() < 1e-3);
+            assert!(bridges.active.is_none() && bridges.chains[0].tip.is_none());
+            // The fork, cut against the chain, has both root corners on
+            // the chain's side and none past its end.
+            let old = corners_of(&bridges.chains[0].rungs, false, &nothing, &nothing).0;
+            let quads: Vec<[Vec2; 4]> = old.windows(2).map(|pair| [pair[0].0, pair[0].1, pair[1].1, pair[1].0]).collect();
+            let ground = |at: Vec2| quads.iter().any(|&quad| inside_quad(at, quad));
+            let fork = [root, Rung { p: root.p + heading * first_length(heading.angle_to(out)), d: heading }];
+            let (corners, _) = corners_of(&fork, false, &nothing, &ground);
+            for corner in [corners[0].0, corners[0].1] {
+                assert!((corner.y - HALF_WIDTH).abs() < 0.03, "{degrees}: {corner} is off the side");
+                assert!(corner.x <= rung.p.x + 0.03, "{degrees}: {corner} hangs past the cap at {}", rung.p.x);
+            }
+            assert_unfolded(&corners, TOP, false);
+        }
+    }
+
+    #[test]
+    fn a_short_fork_lands_with_a_slant_its_length_can_cut() {
+        // Off the parent's +y side toward a shore 0.6 m out, walking 40
+        // degrees off square: the plank that lands slants far less than
+        // that, so that both its root corners are cut onto the parent's
+        // side.
+        let parent = parent();
+        let ground = |at: Vec2| parent.iter().any(|&quad| inside_quad(at, quad));
+        let land = |at: Vec2| at.y >= HALF_WIDTH + 0.6;
+        let both = |at: Vec2| ground(at) || land(at);
+        let dir = Vec2::from_angle(40.0f32.to_radians()).rotate(Vec2::Y);
+        let here = Vec2::new(0.0, HALF_WIDTH - 0.3);
+        let e = bisect(here, here + dir * LOOK, &ground);
+        let mut chain = Chain::new(0, 0, vec![Rung { p: e, d: Vec2::Y }]);
+        chain.forked = true;
+        let mut metres = 50.0;
+        let mut at = here;
+        let mut grown = Grown::default();
+        for _ in 0..60 {
+            at += dir * 0.1;
+            let on_own = if ground(at) { Some(false) } else { None };
+            grown = grow(&mut chain, at, Some(dir), on_own, &mut metres, &land, &both);
+            if grown.done {
+                break;
+            }
+        }
+        assert!(grown.done && grown.landed, "{grown:?}");
+        assert_eq!(chain.rungs.len(), 2, "{:?}", chain.rungs);
+        let slant = chain.rungs[1].d.angle_to(Vec2::Y).abs();
+        assert!(slant < 30.0f32.to_radians() && slant > 1.0f32.to_radians(), "slants {} degrees", slant.to_degrees());
+        let (corners, complete) = corners_of(&chain.rungs, false, &land, &both);
+        assert!(complete);
+        for corner in [corners[0].0, corners[0].1] {
+            assert!((corner.y - HALF_WIDTH).abs() < 0.03, "{corner} is off the parent's side");
+        }
+        assert_unfolded(&corners, TOP, complete);
     }
 
     #[test]

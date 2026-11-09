@@ -260,8 +260,9 @@ pub(crate) enum Resource {
 
 /// How much of each resource you hold: the metres of bridge you have left
 /// to lay (`bridge`; the file's `arena.bridge_metres` as a game begins,
-/// shown by the log as "100m"; since 2026-11-09, Hajun: "players will buy
-/// the bridge by meter count"), and the rest, which nothing gives yet.
+/// shown by the log as "500m", 100 until 2026-11-10; since 2026-11-09,
+/// Hajun: "players will buy the bridge by meter count"), and the rest,
+/// which nothing gives yet.
 #[derive(bevy::prelude::Resource, Default)]
 pub(crate) struct Resources {
     pub bridge_metres: f32,

@@ -272,10 +272,12 @@ alone; the server is `cargo build -p roundtown_server`. Never `--workspace`,
 which would build the game with the server's half of replicon in it.
 
 Android needs the `release-android` profile, a manual strip step, and Gradle
-(`versionCode` in `mobile/android/app/build.gradle` is the build number: 13
-on 2026-11-10, the bridges cut flush along the edges they leave and meet,
-at any slant, and a fork off your own bridge's side (protocol 10 still, no
-server change); 12
+(`versionCode` in `mobile/android/app/build.gradle` is the build number: 14
+later on 2026-11-10, sharp turns as L corners, short forks square, 500 m
+of bridge to start and text shadows in proportion to the letters; 13
+earlier that day, the bridges cut flush along the edges they leave and
+meet, at any slant, and a fork off your own bridge's side (protocol 10
+still, no server change); 12
 on 2026-11-09, the bridges a mitred ribbon, the minimap, the metres of
 bridge, the resources under the health bar, half a second past hurting on
 the server, the anchors at 120 (protocol 10 still; the server deployed the
@@ -603,8 +605,22 @@ holds for the arena now.
     seven bots. Seen on this PC with a local server (`RT_PORT=5443`,
     `RT_ALLOW_SKIP=1`): seated, the bots in, the fight, a bridge to the west
     island, its two bots knocking you to 16 and off the edge, your punches
-    taking 12 off them and their health coming back. Not yet with two
-    people, nor on a phone.
+    taking 12 off them and their health coming back. **And with two copies
+    on this PC and a local server, scripted (2026-11-10, Hajun: "check
+    again if the enemy / enemy ai bots health bar decreases on attack and
+    they can actually die from damage not just falling, and also check if
+    other players can stand on top of your bridge / see u bridging")**: the
+    second player, seated and sent to the island at -X, bridged to the
+    town, walked across it and onto the first's bridge, and stood on it at
+    the planks' height; the first punched them from 100 to 4 by twelves,
+    the same on both devices, the server logged the kill, and they stood
+    again on their island; the punches knocked them 24 m along the bridge
+    and never off it; the server's bots at the island a bridge led to
+    killed the player arriving on it ("seat 2 killed seat 0"), by punches,
+    not a fall; and offline a bot put beside you went from 100 to 4 and
+    died of the punches while taking you to 76. Others see your planks as
+    they are fixed, not the plank in your arms (`Carrying` is this
+    device's alone) nor the tip. Not yet on a phone with two people.
   - **Eight seats, two to a team, a team to an island** (`ARENA_SEATS`,
     `ARENA_TEAMS`, `roundtown_net::arena_team`, seat modulo four: seats 0 and
     4 share island 0; `arrival` puts the second of each team 4 m from the
@@ -645,6 +661,12 @@ holds for the arena now.
     the short side) and faint, a teammate's in `colours.arena.ally` over a
     bar in `hp_ally` (green), an enemy's in `enemy` and `hp_enemy` (red),
     2.2 m over the feet, not scaled by distance under the fixed camera.
+    Its shadow, like every text's, falls under the letters by 0.12 of
+    their size since 2026-11-10 (`hud::shade`, `SHADOW_DROP`; 3 logical
+    pixels whatever the size until then, which under these small names on
+    a phone, whose logical pixels are large, was about a third of the
+    letters' height: Hajun, "the shadow of the nametag is too far below
+    the text").
   - **The bridges are built as you walk** (`src/bridge.rs`): the plank over
     the sword (`hud::BridgeButton`, the slot there until then; B on desktop)
     toggles building (`bridge::Bridging`, the button lit while on). On, you
@@ -710,7 +732,9 @@ holds for the arena now.
     **Every plank costs its length in metres of bridge** (Hajun: "players
     will buy the bridge by meter count ... for now make each person start
     with 100m of briding so show '100m' as the number next to the log"):
-    `arena.bridge_metres` in `assets/ui.ron` to start, 100,
+    `arena.bridge_metres` in `assets/ui.ron` to start, 500 (since
+    2026-11-10, Hajun: "increase the default bridge meter to 500m instead
+    of 100"; 100 until then),
     `arena::Resources::bridge_metres`, shown by the log top left and taken
     as each rung is fixed; with less than a plank's length left no chain
     begins and no rung is fixed, and the tip, never shorter than `AHEAD`,
@@ -778,19 +802,40 @@ holds for the arena now.
     root is on 0.2 m past its edge line (`GONE_OUT`; half a plank, which
     held back a landing on a bridge half a metre from a fork's root until a
     rung had been fixed on the way); and edges are felt to 5 mm (`EDGE`;
-    2 cm left a hairline of void along a cut now and then). What stays: a
-    turn back of more than 90 degrees leaves the plank already fixed past
-    the turn as a short dead end (it is sent as it is fixed), and crossing
-    a junction of bridges at a slant lays a plank across each wedge of
-    void between them. Seen in the desktop build, scripted (a throwaway
+    2 cm left a hairline of void along a cut now and then). **A turn too
+    sharp for the tip to follow makes an L corner** (later that day,
+    Hajun's third and fourth screenshots, "it happens when i do a close to
+    90 degree turn": a rung was fixed a plank on, past where you had
+    turned, you walked off that plank's side, and the fork began there,
+    leaving the rest of the plank sticking out past the fork and the
+    fork's root cut, a long diagonal for a slanted fork, hanging past the
+    plank's end; landing within a metre the same fork came out a
+    triangle): stepping off the tip through its side
+    (`Chain::tip_side_exit`), the tip is fixed as the chain's last plank
+    cut off flush with the far edge of the fork that begins off its side,
+    `HALF_WIDTH / cos(slant)` past where you stepped off and a hair more
+    (`Bridges::corner`, `CORNER_ROOM`), so that nothing sticks out and
+    nothing of the fork hangs; and a fork landing within a plank or two
+    slants no more than that length can cut cleanly along the plank it
+    leaves (`land_on`, from `CUT_SHARE`), so a short one is a square
+    gusset rather than a triangle. What stays: turning back over your own
+    fixed planks and off their side still leaves the plank past the turn
+    as a dead end (it was sent as it was fixed), and crossing a junction
+    of bridges at a slant lays a plank across each wedge of void between
+    them. Seen in the desktop build, scripted (a throwaway
     `src/scratch_bridge.rs`, removed; 17 legs, no fall): off the island at
     40 degrees, onto the town at 60, a 35-degree fork off a bridge, a
     crossing onto the town, back along a chain and off its side, turns of
-    113, 107 and 63 degrees; and unit-tested: a fork cut flush at 0 to 45
+    113, 107 and 63 degrees; then right angles over the void, a right
+    angle a metre off the town's shore and onto it, and a zigzag of right
+    angles, no fall; and unit-tested: a fork cut flush at 0 to 45
     degrees, landings at 0 to 85 degrees meeting the shore whole, drifting
     off a bridge nearly along its edge, a 63-degree turn settling within
-    10 degrees, and a landing on another bridge cut flush. Not yet by hand
-    or on a phone.
+    10 degrees, a landing on another bridge cut flush, an L corner at 0,
+    30 and 60 degrees with nothing sticking out, and a short fork landing
+    with a slant its length can cut. Hajun played the first of these on
+    the phone (APK 13) and found the right-angle turns; the rest not yet
+    by hand.
   - **A minimap top right** (`src/minimap.rs`, since 2026-11-09, Hajun:
     "put a minimap that only shows the current player's location as a red
     dot and your teammate as a green dot, and the full map in top down view
@@ -960,7 +1005,7 @@ holds for the arena now.
   `assets/ui.ron`: `hp`, `hp_back`, `hp_rim`), and under that the four
   resources, wood, gold, diamond and emerald, each a picture with its
   count beside it (`hud::RESOURCE_ICON`, `RESOURCE_TEXT`), the wood's
-  count your metres of bridge, "100m", the rest 0 (since 2026-11-09,
+  count your metres of bridge, "500m" (100 until 2026-11-10), the rest 0 (since 2026-11-09,
   Hajun: "move the 4 item icon + number thing on the top right side of
   that screen to the left side of the screen below the hp bar ... remove
   the inventory icon"; for a night they were top right under a bag, the
