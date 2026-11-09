@@ -272,7 +272,10 @@ alone; the server is `cargo build -p roundtown_server`. Never `--workspace`,
 which would build the game with the server's half of replicon in it.
 
 Android needs the `release-android` profile, a manual strip step, and Gradle
-(`versionCode` in `mobile/android/app/build.gradle` is the build number: 12
+(`versionCode` in `mobile/android/app/build.gradle` is the build number: 13
+on 2026-11-10, the bridges cut flush along the edges they leave and meet,
+at any slant, and a fork off your own bridge's side (protocol 10 still, no
+server change); 12
 on 2026-11-09, the bridges a mitred ribbon, the minimap, the metres of
 bridge, the resources under the health bar, half a second past hurting on
 the server, the anchors at 120 (protocol 10 still; the server deployed the
@@ -734,6 +737,60 @@ holds for the arena now.
     whole way, and one toward the west island running out with the metres
     at 100 m and dropping you; unit-tested that a chain turning the most it
     may every rung never folds; not yet by hand or on a phone.
+    **Since 2026-11-10 a chain's root and its end are cut along the edge
+    they meet, at whatever slant** (Hajun, with two screenshots: "unwanted
+    gaps and bridge formation when the tilt angle is a bit too large,
+    especially when branching off of an existing bridge, and also sometime
+    when approaching the island at a weird angle (not tangent) then it
+    seemed to not connect properly to the island too"): the first plank
+    heads where you walk, up to 45 degrees off straight out of the edge
+    (`MAX_SLANT`; until then it stood square to the edge and bent a plank
+    later, a stub and a bend off the side of a bridge), its root corners on
+    the edge of the ground it leaves, the island's or a plank's
+    (`corners_of`, `to_edge`: a corner over the void pushed back onto it,
+    as before; one over another bridge's plank pulled in to that plank's
+    edge, which a fork's first plank is made long enough for,
+    `first_length`, nearly three metres at 45 degrees; one over land left,
+    hidden under it); a fork's root is square to the parent plank's own
+    nearest edge (`Chain::edge_normal`; the 16 points round it were out by
+    up to 11 degrees, and diagonal in the corner between two bridges), an
+    island's to the chord of a ring round it (`outward`). Landing, a chain
+    comes in no more than 50 degrees off straight into the shore
+    (`MAX_END_SLANT`, `land_on`: turning toward the shore a rung at a time
+    first, up to three), its end corners pushed up to 3 m to meet it
+    (`END_PUSH`; 2.7 before, and past 60 degrees a corner missed a round
+    island altogether and the end hung off it) or pulled back onto another
+    bridge's plank, and the plank that lands runs at least half a plank
+    into the ground, under the land, so that its end edge always crosses
+    the shore (it ended on its last rung, with the corners pushed, which
+    missed when the last plank pointed past the shore); heading at ground
+    within a plank past the next rung, along the plank or along your way,
+    no rung is fixed (`STRETCH`): the tip stretches to the ground, so that
+    the plank that lands is a whole one, with room for its cut; the rungs
+    aim two planks ahead of you along your way (`LEAD`), so that after a
+    sharp turn they settle onto your line within a few degrees rather than
+    swinging 25 degrees past it; turning back over your own planks and off
+    their side ends the chain where it is and begins a fork there, and off
+    them onto land or another bridge ends it with no landing
+    (`Bridges::abandon`, `Chain::behind`; the tip stayed frozen where you
+    had turned back, and off your own bridge's side there was nothing under
+    you: a scripted zigzag fell into the void); you have left the ground a
+    root is on 0.2 m past its edge line (`GONE_OUT`; half a plank, which
+    held back a landing on a bridge half a metre from a fork's root until a
+    rung had been fixed on the way); and edges are felt to 5 mm (`EDGE`;
+    2 cm left a hairline of void along a cut now and then). What stays: a
+    turn back of more than 90 degrees leaves the plank already fixed past
+    the turn as a short dead end (it is sent as it is fixed), and crossing
+    a junction of bridges at a slant lays a plank across each wedge of
+    void between them. Seen in the desktop build, scripted (a throwaway
+    `src/scratch_bridge.rs`, removed; 17 legs, no fall): off the island at
+    40 degrees, onto the town at 60, a 35-degree fork off a bridge, a
+    crossing onto the town, back along a chain and off its side, turns of
+    113, 107 and 63 degrees; and unit-tested: a fork cut flush at 0 to 45
+    degrees, landings at 0 to 85 degrees meeting the shore whole, drifting
+    off a bridge nearly along its edge, a 63-degree turn settling within
+    10 degrees, and a landing on another bridge cut flush. Not yet by hand
+    or on a phone.
   - **A minimap top right** (`src/minimap.rs`, since 2026-11-09, Hajun:
     "put a minimap that only shows the current player's location as a red
     dot and your teammate as a green dot, and the full map in top down view
