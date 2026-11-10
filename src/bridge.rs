@@ -98,6 +98,22 @@
 //! were pushed on like a landing's, up to [`END_PUSH`], and an end left
 //! within that of a shore or a bridge grew a spike out to it.
 //!
+//! **A root and an end follow the edge they meet all the way across**
+//! (the same day, Hajun: "fix the sliver gap on curved forks too"). Each
+//! was one straight line between its two corners, and only the corners
+//! were cut onto the edge: a chord across an edge that bends. Off the
+//! inside of a curve of bridge that left void between the fork and the
+//! bridge, a sliver on a gentle curve and 0.4 m deep in the middle on one
+//! turning 20 degrees a plank, under whoever stepped off there; off the
+//! outside the fork lay over the bridge instead. Now the line is tried
+//! all the way across ([`cut_along`]), each place on it pushed or pulled
+//! onto the edge as the corners are, more of them wherever the edge
+//! bends, and the first plank's near edge, or the last one's far edge,
+//! follows what it finds ([`Edge`]), the plank built in strips there
+//! ([`strips`]); a straight edge is the one quad it always was. Each
+//! place is set a centimetre and a half in under the ground it meets
+//! ([`TUCK`]), so that no hairline is left along the cut.
+//!
 //! Every plank costs its length in metres of bridge, which you buy (Hajun:
 //! "players will buy the bridge by meter count ... for now make each person
 //! start with 100m"; 500 since 2026-11-10: "increase the default bridge
@@ -227,6 +243,32 @@ const CORNER_ROOM: f32 = 0.05;
 /// back along it, which is not settled while the second plank is the tip,
 /// swinging after its builder.
 const ROOT_KEPT: usize = 3;
+/// How a root or an end is cut along the edge of the ground it meets
+/// ([`cut_along`]): at so many places across the plank to begin with,
+/// evenly apart, and between any two of them again, up to so many times
+/// over, wherever the edge halfway between them is found [`BENT`] metres
+/// off the straight line from the one to the other; of all of those, the
+/// ones it takes to follow the edge within [`STRAIGHT`] are kept, none for
+/// a straight edge. Each is set [`TUCK`] in under the ground it meets, so
+/// that no hairline of void is left along the cut: under the land, whose
+/// top is higher, or a centimetre and a half under or over another
+/// bridge's plank, whose top is a millimetre or more off this one's
+/// ([`top_of`]). The tuck covers what the rest leaves: an edge is felt for
+/// to 1.6 mm ([`EDGE`], halved in finding it); a joint of the edge near
+/// one of two places, where halfway between them the edge is less than
+/// `BENT` off the line, stands at most twice that off it, and one between
+/// two places as near as they get, 4.3 cm, 7 mm at a joint of a bridge
+/// turning as hard as it may; and `STRAIGHT`.
+const STATIONS: usize = 8;
+const REFINEMENTS: usize = 3;
+const BENT: f32 = 0.003;
+const STRAIGHT: f32 = 0.004;
+const TUCK: f32 = 0.015;
+/// How far from a chain's root, or from its last rung, the ground is ever
+/// asked after in cutting it, in metres: as far as a corner is pushed or
+/// pulled, and across the plank; other chains' planks further off than
+/// that are left out of the asking ([`Bridges::recut`]).
+const NEAR: f32 = 6.0;
 /// How far off the first plank's line you may drift, in metres, before its
 /// rung is fixed early, shorter than [`first_length`] asks, so that the
 /// chain can turn after you: walking off a bridge nearly along its edge.
@@ -326,13 +368,19 @@ struct Chain {
     waiting: Vec<(u16, Rung)>,
     /// The corners of each rung, left and right, as last built, the tip's
     /// last: the plain ones, but for a root on an island's edge and an end
-    /// on one, pulled onto the edge ([`corners_of`]).
+    /// on one, pulled onto the edge ([`shape_of`]).
     corners: Vec<(Vec2, Vec2)>,
+    /// Its root's edge between its two corners, and its end's, as last
+    /// built, where they follow a bent edge of the ground they meet rather
+    /// than run straight across ([`Edge`]).
+    root_edge: Edge,
+    end_edge: Edge,
     /// Whether its last rung lands on ground, as last built.
     complete: bool,
-    /// Its root's corners as cut along the edge it left, kept from when
-    /// its third rung was fixed ([`ROOT_KEPT`]) and never cut again.
-    root_cut: Option<(Vec2, Vec2)>,
+    /// Its root as cut along the edge it left, its corners and the edge
+    /// between them, kept from when its third rung was fixed
+    /// ([`ROOT_KEPT`]) and never cut again.
+    root_cut: Option<((Vec2, Vec2), Edge)>,
     /// The triangles bodies stand on, as last built ([`planks`]).
     triangles: Vec<[Vec3; 3]>,
     /// Whether its root is on another bridge's plank rather than on land:
@@ -360,6 +408,8 @@ impl Chain {
             overlaid_tip: None,
             waiting: Vec::new(),
             corners: Vec::new(),
+            root_edge: Edge::new(),
+            end_edge: Edge::new(),
             complete: false,
             root_cut: None,
             triangles: Vec::new(),
@@ -388,6 +438,23 @@ impl Chain {
             let (l0, r0) = self.corners[k];
             let (l1, r1) = self.corners[k + 1];
             [l0, r0, r1, l1]
+        })
+    }
+
+    /// Its fixed planks' tops as built, the tip's left out, the first and
+    /// the last in strips where the root or the end follows a bent edge
+    /// ([`strips`]): the ground another chain stands on, begins on or
+    /// lands on, exactly as it is drawn.
+    fn ground_quads(&self) -> impl Iterator<Item = [Vec2; 4]> + '_ {
+        let n = self.corners.len();
+        (0..n.saturating_sub(1)).filter(|&k| self.fixed(k)).flat_map(move |k| {
+            let root: &[(f32, Vec2)] = if k == 0 { &self.root_edge } else { &[] };
+            let end: &[(f32, Vec2)] = if k + 2 == n { &self.end_edge } else { &[] };
+            let (near, far) = (self.corners[k], self.corners[k + 1]);
+            // Nearly every plank is the one quad, and takes no list.
+            let whole = (root.is_empty() && end.is_empty()).then_some([near.0, near.1, far.1, far.0]);
+            let cut = if whole.is_none() { strips(near, root, far, end) } else { Vec::new() };
+            whole.into_iter().chain(cut)
         })
     }
 
@@ -448,26 +515,25 @@ impl Chain {
         self.rungs.len() != self.built_rungs || self.tip != self.built_tip
     }
 
-    /// Works its corners out again, against the ground as it is now, the
-    /// `land` and every other bridge's planks ([`corners_of`]): called only
+    /// Works its shape out again, against the ground as it is now, the
+    /// `land` and every other bridge's planks ([`shape_of`]): called only
     /// once the chain itself has changed, so that a bridge that is built
     /// stays as it was built whatever is built beside it afterwards
     /// (2026-11-10, Hajun, of an unfinished end whose corners reached for
     /// a bridge built past it: "i think bridge that is already made should
     /// not change"). Its root is cut for good once its third rung is fixed
-    /// ([`ROOT_KEPT`]), and kept from then on as the chain grows.
+    /// ([`ROOT_KEPT`]), and kept from then on as the chain grows, not
+    /// worked out again.
     fn cut(&mut self, land: &dyn Fn(Vec2) -> bool, ground: &dyn Fn(Vec2) -> bool) {
         let rungs = self.all();
-        let (mut corners, complete) = corners_of(&rungs, self.tip.is_some(), land, ground);
-        if rungs.len() > 1 {
-            match self.root_cut {
-                Some(root) => corners[0] = root,
-                None if self.rungs.len() >= ROOT_KEPT => self.root_cut = Some(corners[0]),
-                None => {}
-            }
+        let shape = shape_of(&rungs, self.tip.is_some(), self.root_cut.as_ref(), land, ground);
+        if self.root_cut.is_none() && self.rungs.len() >= ROOT_KEPT {
+            self.root_cut = Some((shape.corners[0], shape.root.clone()));
         }
-        self.corners = corners;
-        self.complete = complete;
+        self.corners = shape.corners;
+        self.root_edge = shape.root;
+        self.end_edge = shape.end;
+        self.complete = shape.complete;
         self.built_rungs = self.rungs.len();
         self.built_tip = self.tip;
     }
@@ -521,13 +587,10 @@ impl Bridges {
         self.chains.iter_mut().find(|chain| chain.seat == seat && chain.id == id)
     }
 
-    /// The fixed plank under `at`, across the ground, if any: which chain,
-    /// and which plank of it, counted from its root. Never a tip.
-    fn plank_under(&self, at: Vec2) -> Option<(usize, usize)> {
-        self.chains
-            .iter()
-            .enumerate()
-            .find_map(|(c, chain)| chain.fixed_quads().position(|quad| inside_quad(at, quad)).map(|k| (c, k)))
+    /// Which chain has a fixed plank under `at`, across the ground, if
+    /// any has. Never a tip.
+    fn plank_under(&self, at: Vec2) -> Option<usize> {
+        self.chains.iter().position(|chain| chain.ground_quads().any(|quad| inside_quad(at, quad)))
     }
 
     /// Every fixed plank of every chain but the `except`th, as quads: the
@@ -538,7 +601,7 @@ impl Bridges {
             .iter()
             .enumerate()
             .filter(|(c, _)| *c != except)
-            .flat_map(|(_, chain)| chain.fixed_quads())
+            .flat_map(|(_, chain)| chain.ground_quads())
             .collect()
     }
 
@@ -577,7 +640,21 @@ impl Bridges {
             if !self.chains[c].stale() {
                 continue;
             }
-            let others = self.ground_but(c);
+            // Only what is near its root or its end is ever asked after
+            // (`NEAR`): the rest of a game's planks are left out of it.
+            let ends: Vec<Vec2> = {
+                let rungs = &self.chains[c].rungs;
+                rungs.first().into_iter().chain(rungs.last()).map(|rung| rung.p).collect()
+            };
+            let others: Vec<[Vec2; 4]> = self
+                .ground_but(c)
+                .into_iter()
+                .filter(|quad| {
+                    let middle = (quad[0] + quad[1] + quad[2] + quad[3]) * 0.25;
+                    let reach = quad.iter().map(|corner| corner.distance(middle)).fold(0.0, f32::max);
+                    ends.iter().any(|end| end.distance(middle) <= NEAR + reach)
+                })
+                .collect();
             let ground = |at: Vec2| land(at) || others.iter().any(|&quad| inside_quad(at, quad));
             self.chains[c].cut(land, &ground);
             cut.push(c);
@@ -844,7 +921,7 @@ pub(crate) fn lay(
         let mut start: Option<(Vec2, Vec2)> = None;
         if let Some(c) = bridges.active {
             let under = bridges.plank_under(here);
-            let on_own = under.map(|(other, _)| other == c);
+            let on_own = under.map(|other| other == c);
             let was_behind = bridges.chains[c].behind;
             bridges.chains[c].behind = on_own == Some(true);
             // On the tip and about to step off its side: a turn too sharp
@@ -913,7 +990,7 @@ pub(crate) fn lay(
             if start.is_none() && ground(here) && !ground(probe) {
                 let e = bisect(here, probe, &ground);
                 let square = match bridges.plank_under(here) {
-                    Some((c, _)) => bridges.chains[c].edge_normal(e),
+                    Some(c) => bridges.chains[c].edge_normal(e),
                     None => outward(e, &ground),
                 };
                 start = Some((e, square.unwrap_or(dir)));
@@ -1283,42 +1360,91 @@ fn inside_quad(at: Vec2, q: [Vec2; 4]) -> bool {
     true
 }
 
-/// The left and right corners of each rung of `rungs`, the ribbon's two
-/// edges: [`HALF_WIDTH`] out either side, square to the plank at the
-/// root and at the end, and mitred at every rung between, across the
-/// bisector of the two planks that meet there and as much wider as the
-/// mitre needs (`1 / cos(turn / 2)`), so that the planks share their
-/// edges and neither gap nor overlap however the chain curves; a mitre
-/// that would reach past a short plank's end is drawn in instead. The
-/// root and the end are cut along the edge of the `ground` there (the
-/// `land`, and every other bridge's planks): a corner over the void is
-/// pushed out, back along the first plank or on along the last, onto that
-/// edge, so that the bridge meets the shore exactly however it curves and
-/// at whatever slant; a corner over another bridge's plank is pulled in
-/// along its own plank onto that plank's edge, no further than leaves the
-/// plank its share ([`CUT_SHARE`]) past the mitre at its other end, so that
-/// a fork is cut flush along the bridge it leaves or lands on and no plank
-/// folds (until 2026-11-10 only the push, and only onto land: a fork's
-/// root stood square to the fork, one corner over the void, a wedge of
-/// void between it and the bridge it left); and a corner over land stays,
-/// hidden under the land, whose top is higher. And whether the chain ends
-/// on ground: its last rung on ground, or ground just ahead of it. Only
-/// such an end is cut: a chain still `building`, its tip the last of the
-/// rungs, has no end yet, however near the shore its tip reaches; and one
-/// left over the void, let go of, turned back from or ended at a corner,
-/// ends square where it was left, whatever ground is ahead of it (until
-/// 2026-11-10 its corners were pushed on like a landing's, up to
-/// [`END_PUSH`], so that an end left within that of a shore, or of a
-/// bridge, grew a spike out to it).
+/// A root's or an end's edge between its two corners, where it does not
+/// run straight from the one to the other: the points of it, in order
+/// from the left corner to the right, each with how far across the plank
+/// it lies, from 0 at the left corner to 1 at the right. Empty for a
+/// straight edge.
+type Edge = Vec<(f32, Vec2)>;
+
+/// A chain as it is built ([`shape_of`]): the left and right corners of
+/// each of its rungs, its root's edge and its end's between their
+/// corners, and whether it ends on ground.
+struct Shape {
+    corners: Vec<(Vec2, Vec2)>,
+    root: Edge,
+    end: Edge,
+    complete: bool,
+}
+
+/// The left and right corners of each rung of `rungs`, and whether the
+/// chain ends on ground ([`shape_of`], with no root kept, and its root's
+/// and its end's edges between their corners left out).
+#[cfg(test)]
 fn corners_of(
     rungs: &[Rung],
     building: bool,
     land: &dyn Fn(Vec2) -> bool,
     ground: &dyn Fn(Vec2) -> bool,
 ) -> (Vec<(Vec2, Vec2)>, bool) {
+    let shape = shape_of(rungs, building, None, land, ground);
+    (shape.corners, shape.complete)
+}
+
+/// The shape of the chain of `rungs`. The left and right corners of each
+/// rung, the ribbon's two edges: [`HALF_WIDTH`] out either side, square to
+/// the plank at the root and at the end, and mitred at every rung between,
+/// across the bisector of the two planks that meet there and as much wider
+/// as the mitre needs (`1 / cos(turn / 2)`), so that the planks share their
+/// edges and neither gap nor overlap however the chain curves; a mitre
+/// that would reach past a short plank's end is drawn in instead. The
+/// root and the end are cut along the edge of the `ground` there (the
+/// `land`, and every other bridge's planks; [`cut_along`]): a corner over
+/// the void is pushed out, back along the first plank or on along the
+/// last, onto that edge, so that the bridge meets the shore exactly
+/// however it curves and at whatever slant; a corner over another bridge's
+/// plank is pulled in along its own plank onto that plank's edge, no
+/// further than leaves the plank its share ([`CUT_SHARE`]) past the mitre
+/// at its other end, so that a fork is cut flush along the bridge it
+/// leaves or lands on and no plank folds (until 2026-11-10 only the push,
+/// and only onto land: a fork's root stood square to the fork, one corner
+/// over the void, a wedge of void between it and the bridge it left); and
+/// a corner over land stays, hidden under the land, whose top is higher.
+/// **And so is every point of the root and of the end between its
+/// corners** (2026-11-10, Hajun: "fix the sliver gap on curved forks
+/// too"): where the edge it meets is bent, the inside of a curve of
+/// bridge, a joint, a plank's corner, the root's own edge bends with it,
+/// [`Shape::root`], and the end's, [`Shape::end`]. Until then each ran
+/// straight from the one corner to the other, a chord across a bent edge:
+/// off the inside of a curve a sliver of void was left between a fork and
+/// the bridge it left, 0.4 m deep at its middle on a bridge turning 20
+/// degrees a plank, right where you stepped off; and off the outside the
+/// fork lay 0.18 m over the bridge. A `root` kept from before
+/// ([`ROOT_KEPT`]) is put back as it was, not cut again. And whether the
+/// chain ends on ground: its last rung on ground, or ground just ahead of
+/// it. Only such an end is cut: a chain still `building`, its tip the last
+/// of the rungs, has no end yet, however near the shore its tip reaches;
+/// and one left over the void, let go of, turned back from or ended at a
+/// corner, ends square where it was left, whatever ground is ahead of it
+/// (until 2026-11-10 its corners were pushed on like a landing's, up to
+/// [`END_PUSH`], so that an end left within that of a shore, or of a
+/// bridge, grew a spike out to it).
+fn shape_of(
+    rungs: &[Rung],
+    building: bool,
+    root: Option<&((Vec2, Vec2), Edge)>,
+    land: &dyn Fn(Vec2) -> bool,
+    ground: &dyn Fn(Vec2) -> bool,
+) -> Shape {
     let n = rungs.len();
+    let mut shape = Shape {
+        corners: Vec::new(),
+        root: Edge::new(),
+        end: Edge::new(),
+        complete: false,
+    };
     let Some(last) = rungs.last() else {
-        return (Vec::new(), false);
+        return shape;
     };
     // Each plank's direction and length, from its rung to the next.
     let planks: Vec<(Vec2, f32)> = rungs
@@ -1331,7 +1457,7 @@ fn corners_of(
         .collect();
     // How far along its planks each rung's mitre reaches.
     let mut reach = vec![0.0f32; n];
-    let mut corners: Vec<(Vec2, Vec2)> = (0..n)
+    shape.corners = (0..n)
         .map(|k| {
             let across = match (k.checked_sub(1).map(|j| planks[j]), planks.get(k)) {
                 (None, None) => perp(rungs[k].d) * HALF_WIDTH,
@@ -1354,42 +1480,183 @@ fn corners_of(
             (rungs[k].p - across, rungs[k].p + across)
         })
         .collect();
-    // Cuts a corner along the edge of the ground, `out` being the way off
-    // the plank's end there: over the void, pushed out along `out` onto
-    // ground within `push`; over another plank, pulled in along `-out` to
-    // where that plank ends, within `pull`; over land, left.
-    let to_edge = |corner: Vec2, out: Vec2, push: f32, pull: f32| -> Vec2 {
-        if !ground(corner) {
-            return match shore_ahead(corner, out, ground, push) {
-                Some(gap) => corner + out * gap,
-                None => corner,
-            };
-        }
-        if land(corner) {
-            return corner;
-        }
-        match edge_ahead(corner, -out, ground, pull) {
-            Some(gap) => corner - out * gap,
-            None => corner,
-        }
-    };
     if n > 1 {
-        let (out, length) = planks[0];
-        let pull = CUT_SHARE * length - reach[1];
-        let (l, r) = corners[0];
-        corners[0] = (to_edge(l, -out, ONTO_EDGE, pull), to_edge(r, -out, ONTO_EDGE, pull));
+        match root {
+            Some((corners, edge)) => {
+                shape.corners[0] = *corners;
+                shape.root = edge.clone();
+            }
+            None => {
+                let (out, length) = planks[0];
+                let pull = CUT_SHARE * length - reach[1];
+                let (l, r) = shape.corners[0];
+                (shape.corners[0], shape.root) = cut_along(l, r, -out, ONTO_EDGE, pull, land, ground);
+            }
+        }
     }
-    let complete = !building && n > 1 && {
+    shape.complete = !building && n > 1 && {
         let on = planks[n - 2].0;
         ground(last.p) || shore_ahead(last.p, on, ground, 0.15).is_some()
     };
-    if complete {
+    if shape.complete {
         let (on, length) = planks[n - 2];
-        let pull = CUT_SHARE * length - reach[n - 2];
-        let (l, r) = corners[n - 1];
-        corners[n - 1] = (to_edge(l, on, END_PUSH, pull), to_edge(r, on, END_PUSH, pull));
+        let mut pull = CUT_SHARE * length - reach[n - 2];
+        if n == 2 {
+            // One plank, cut at both its ends: its end is pulled back no
+            // further than its root was pulled in leaves it.
+            let (l, r) = shape.corners[0];
+            let drawn_in = [l, r]
+                .into_iter()
+                .chain(shape.root.iter().map(|point| point.1))
+                .map(|at| (at - rungs[0].p).dot(on))
+                .fold(0.0, f32::max);
+            pull -= drawn_in;
+        }
+        let (l, r) = shape.corners[n - 1];
+        (shape.corners[n - 1], shape.end) = cut_along(l, r, on, END_PUSH, pull, land, ground);
     }
-    (corners, complete)
+    shape
+}
+
+/// Cuts the point `at` of a plank's end along the edge of the ground,
+/// `out` being the way off the plank's end there: over the void, pushed
+/// out along `out` onto ground within `push`; over another plank, pulled
+/// in along `-out` to where that plank ends, within `pull`; over land,
+/// left. Either way it comes to lie [`TUCK`] in from the edge, over the
+/// ground.
+fn to_edge(at: Vec2, out: Vec2, push: f32, pull: f32, land: &dyn Fn(Vec2) -> bool, ground: &dyn Fn(Vec2) -> bool) -> Vec2 {
+    if !ground(at) {
+        return match shore_ahead(at, out, ground, push) {
+            Some(gap) => at + out * (gap + TUCK),
+            None => at,
+        };
+    }
+    if land(at) {
+        return at;
+    }
+    match edge_ahead(at, -out, ground, pull) {
+        Some(gap) => at - out * (gap - TUCK),
+        None => at,
+    }
+}
+
+/// Cuts a plank's end, the straight line from its left corner `l` to its
+/// right corner `r`, along the edge of the ground it meets, `out` being
+/// the way off the plank there: the two corners, each moved along `out` or
+/// back onto that edge ([`to_edge`]), and the points of the edge between
+/// them, moved the same way, that it takes to follow it ([`Edge`]). The
+/// line is tried at [`STATIONS`] places evenly across, and again halfway
+/// between any two of them, [`REFINEMENTS`] times over, wherever the edge
+/// there is found more than [`BENT`] off the straight line between them: a
+/// bend in the edge, or the corner of a plank, is found to a few
+/// centimetres across. Of those, only the ones the edge is more than
+/// [`STRAIGHT`] off a straight line without are kept ([`bends`]): none,
+/// along a straight edge, where the plank's end is the one quad it always
+/// was.
+fn cut_along(
+    l: Vec2,
+    r: Vec2,
+    out: Vec2,
+    push: f32,
+    pull: f32,
+    land: &dyn Fn(Vec2) -> bool,
+    ground: &dyn Fn(Vec2) -> bool,
+) -> ((Vec2, Vec2), Edge) {
+    // The line `across` of the way from `l` to `r`, cut: how far across,
+    // where it comes to lie, and how far along `out` it was moved.
+    let cut = |across: f32| {
+        let plain = l.lerp(r, across);
+        let at = to_edge(plain, out, push, pull, land, ground);
+        (across, at, (at - plain).dot(out))
+    };
+    // The places between `a` and `b` where the edge leaves the straight
+    // line between them, in order.
+    fn between(a: (f32, Vec2, f32), b: (f32, Vec2, f32), deeper: usize, cut: &dyn Fn(f32) -> (f32, Vec2, f32), line: &mut Vec<(f32, Vec2)>) {
+        if deeper == 0 {
+            return;
+        }
+        let middle = cut((a.0 + b.0) * 0.5);
+        if (middle.2 - (a.2 + b.2) * 0.5).abs() <= BENT {
+            return;
+        }
+        between(a, middle, deeper - 1, cut, line);
+        line.push((middle.0, middle.1));
+        between(middle, b, deeper - 1, cut, line);
+    }
+    let stations: Vec<(f32, Vec2, f32)> = (0..=STATIONS).map(|k| cut(k as f32 / STATIONS as f32)).collect();
+    let mut line: Vec<(f32, Vec2)> = Vec::new();
+    for pair in stations.windows(2) {
+        line.push((pair[0].0, pair[0].1));
+        between(pair[0], pair[1], REFINEMENTS, &cut, &mut line);
+    }
+    line.push((1.0, stations[STATIONS].1));
+    ((line[0].1, line[line.len() - 1].1), bends(&line))
+}
+
+/// The points of `line` between its first and its last that it takes to
+/// follow it within [`STRAIGHT`], in order: none, for a straight line.
+fn bends(line: &[(f32, Vec2)]) -> Edge {
+    fn keep(line: &[(f32, Vec2)], from: usize, to: usize, kept: &mut Vec<usize>) {
+        let (a, b) = (line[from].1, line[to].1);
+        let ab = b - a;
+        let furthest = (from + 1..to)
+            .map(|k| {
+                let share = ((line[k].1 - a).dot(ab) / ab.length_squared().max(1e-12)).clamp(0.0, 1.0);
+                (k, line[k].1.distance(a + ab * share))
+            })
+            .max_by(|x, y| x.1.total_cmp(&y.1));
+        if let Some((k, off)) = furthest
+            && off > STRAIGHT
+        {
+            keep(line, from, k, kept);
+            kept.push(k);
+            keep(line, k, to, kept);
+        }
+    }
+    let mut kept = Vec::new();
+    if line.len() > 2 {
+        keep(line, 0, line.len() - 1, &mut kept);
+    }
+    kept.into_iter().map(|k| line[k]).collect()
+}
+
+/// The point of `line`, an edge with its two corners at 0 and 1, `across`
+/// of the way from the one to the other.
+fn across_edge(line: &[(f32, Vec2)], across: f32) -> Vec2 {
+    let k = line.partition_point(|point| point.0 < across).clamp(1, line.len() - 1);
+    let (a, b) = (line[k - 1], line[k]);
+    let span = b.0 - a.0;
+    if span.abs() < 1e-6 { a.1 } else { a.1.lerp(b.1, ((across - a.0) / span).clamp(0.0, 1.0)) }
+}
+
+/// One plank's top, from its `near` corners to its `far` ones, left and
+/// right, as quads side by side across it, each with its corners in order
+/// round it, near left, near right, far right, far left: one, between
+/// straight edges; and where the near edge or the far one bends
+/// ([`Edge`]), a strip between each two of the places either does, so that
+/// the plank's edge follows the bends.
+fn strips(near: (Vec2, Vec2), near_edge: &[(f32, Vec2)], far: (Vec2, Vec2), far_edge: &[(f32, Vec2)]) -> Vec<[Vec2; 4]> {
+    if near_edge.is_empty() && far_edge.is_empty() {
+        return vec![[near.0, near.1, far.1, far.0]];
+    }
+    let line = |ends: (Vec2, Vec2), edge: &[(f32, Vec2)]| -> Vec<(f32, Vec2)> {
+        std::iter::once((0.0, ends.0)).chain(edge.iter().copied()).chain(std::iter::once((1.0, ends.1))).collect()
+    };
+    let (near, far) = (line(near, near_edge), line(far, far_edge));
+    let mut places: Vec<f32> = near.iter().chain(&far).map(|point| point.0).collect();
+    places.sort_by(f32::total_cmp);
+    places.dedup_by(|a, b| (*a - *b).abs() < 1e-4);
+    places
+        .windows(2)
+        .map(|pair| {
+            [
+                across_edge(&near, pair[0]),
+                across_edge(&near, pair[1]),
+                across_edge(&far, pair[1]),
+                across_edge(&far, pair[0]),
+            ]
+        })
+        .collect()
 }
 
 /// Takes in every rung the server says someone has laid ([`Plank`]), but
@@ -1518,7 +1785,15 @@ fn rebuild(
             }
             continue;
         }
-        let (mesh, triangles) = planks(&chain.corners, chain.complete, chain.top(), colours.plank, colours.plank_side);
+        let (mesh, triangles) = planks(
+            &chain.corners,
+            &chain.root_edge,
+            &chain.end_edge,
+            chain.complete,
+            chain.top(),
+            colours.plank,
+            colours.plank_side,
+        );
         chain.triangles = triangles;
         if relay {
             parts.push(chain.triangles.clone());
@@ -1552,8 +1827,18 @@ fn rebuild(
 /// up, as a mesh coloured by vertex, `top` on top (every other plank a
 /// shade lighter) and `side` everywhere else, and as the triangles bodies
 /// stand on: each plank's top, underside, left side and right side, and a
-/// cap across the tip if the chain is not `complete`.
-fn planks(corners: &[(Vec2, Vec2)], complete: bool, height: f32, top: Color, side: Color) -> (Mesh, Vec<[Vec3; 3]>) {
+/// cap across the tip if the chain is not `complete`. The first plank's
+/// near edge follows `root` and the last one's far edge `end`, where those
+/// bend, its top and its underside in strips ([`strips`]).
+fn planks(
+    corners: &[(Vec2, Vec2)],
+    root: &[(f32, Vec2)],
+    end: &[(f32, Vec2)],
+    complete: bool,
+    height: f32,
+    top: Color,
+    side: Color,
+) -> (Mesh, Vec<[Vec3; 3]>) {
     let mut positions: Vec<[f32; 3]> = Vec::new();
     let mut normals: Vec<[f32; 3]> = Vec::new();
     let mut colours: Vec<[f32; 4]> = Vec::new();
@@ -1592,8 +1877,12 @@ fn planks(corners: &[(Vec2, Vec2)], complete: bool, height: f32, top: Color, sid
         let along = ((l1 + r1) - (l0 + r0)).normalize_or(Vec2::X);
         let left_out = -perp(along);
         let top_tint = tint(top, if k % 2 == 1 { LIGHTER } else { 0.0 });
-        face(up(l0), up(r0), up(r1), up(l1), Vec3::Y, top_tint);
-        face(down(l0), down(r0), down(r1), down(l1), Vec3::NEG_Y, side_tint);
+        let near_edge = if k == 0 { root } else { &[] };
+        let far_edge = if k + 2 == corners.len() { end } else { &[] };
+        for [a, b, c, d] in strips((l0, r0), near_edge, (l1, r1), far_edge) {
+            face(up(a), up(b), up(c), up(d), Vec3::Y, top_tint);
+            face(down(a), down(b), down(c), down(d), Vec3::NEG_Y, side_tint);
+        }
         face(up(l0), up(l1), down(l1), down(l0), Vec3::new(left_out.x, 0.0, left_out.y), side_tint);
         face(up(r0), up(r1), down(r1), down(r0), Vec3::new(-left_out.x, 0.0, -left_out.y), side_tint);
         if k + 2 == corners.len() && !complete {
@@ -1751,7 +2040,7 @@ mod tests {
         }
         assert_unfolded(&built, TOP, complete);
         // An unfinished chain is capped at its tip.
-        let (open, _) = planks(&built[..3], false, TOP, Color::WHITE, Color::BLACK);
+        let (open, _) = planks(&built[..3], &[], &[], false, TOP, Color::WHITE, Color::BLACK);
         assert_eq!(open.count_vertices(), 2 * 16 + 4);
     }
 
@@ -1759,7 +2048,7 @@ mod tests {
     /// at its sides, and none is folded: each plank's two edges run on the
     /// way the plank goes.
     fn assert_unfolded(corners: &[(Vec2, Vec2)], height: f32, complete: bool) {
-        let (mesh, triangles) = planks(corners, complete, height, Color::WHITE, Color::BLACK);
+        let (mesh, triangles) = planks(corners, &[], &[], complete, height, Color::WHITE, Color::BLACK);
         let caps = if complete { 0 } else { 2 };
         assert_eq!(triangles.len(), (corners.len() - 1) * 8 + caps);
         assert_eq!(mesh.count_vertices(), (corners.len() - 1) * 16 + caps * 2);
@@ -2303,7 +2592,7 @@ mod tests {
         // The third rung: kept.
         bridges.chains[0].rungs.push(Rung { p: Vec2::new(10.0 + 2.0 * SPACING, 0.0), d: Vec2::X });
         assert_eq!(bridges.recut(&land), vec![0]);
-        assert_eq!(bridges.chains[0].root_cut, Some(on_shore));
+        assert_eq!(bridges.chains[0].root_cut.as_ref().map(|kept| kept.0), Some(on_shore));
         // Someone's plank comes to lie over one of its corners; the chain
         // grows on, worked out again every frame, and its root stays as it
         // was cut. Afresh, that corner would have been cut along the plank.
@@ -2364,6 +2653,234 @@ mod tests {
         assert_eq!(bridges.recut(&nothing), vec![0]);
         assert_eq!(bridges.chains[0].corners.len(), 2);
         assert!(bridges.recut(&nothing).is_empty());
+    }
+
+    /// A bridge east from the origin: three planks straight, `planks` more
+    /// each turned `turn` radians from the last, and three straight on.
+    fn bent(turn: f32, planks: usize) -> Vec<Rung> {
+        let mut rungs = vec![Rung { p: Vec2::ZERO, d: Vec2::X }];
+        let turns = std::iter::repeat_n(0.0, 3).chain(std::iter::repeat_n(turn, planks)).chain(std::iter::repeat_n(0.0, 3));
+        for by in turns {
+            let last = *rungs.last().unwrap();
+            let d = Vec2::from_angle(by).rotate(last.d);
+            rungs.push(Rung { p: last.p + d * SPACING, d });
+        }
+        rungs
+    }
+
+    /// Points all along an edge, from its left corner to its right through
+    /// the places it bends.
+    fn along_edge(corners: (Vec2, Vec2), edge: &Edge) -> Vec<Vec2> {
+        let line: Vec<Vec2> = std::iter::once(corners.0).chain(edge.iter().map(|point| point.1)).chain(std::iter::once(corners.1)).collect();
+        line.windows(2).flat_map(|pair| (0..=12).map(move |k| pair[0].lerp(pair[1], k as f32 / 12.0))).collect()
+    }
+
+    /// The edge lies along the edge of `ground` all the way across: every
+    /// point of it is over the ground, tucked just under it, and a hand's
+    /// width `off` it, the way the plank lies, is not. So there is no void
+    /// between the plank and the ground it meets, and the plank does not
+    /// lie over that ground either.
+    fn assert_flush(what: &str, corners: (Vec2, Vec2), edge: &Edge, off: Vec2, ground: &dyn Fn(Vec2) -> bool) {
+        for at in along_edge(corners, edge) {
+            assert!(ground(at), "{what}: {at} on the edge is over the void");
+            assert!(!ground(at + off * 0.04), "{what}: the plank lies over the ground at {at}");
+        }
+    }
+
+    /// Every strip of the chain's first and last planks runs on the way
+    /// the plank goes, none folded, and its top faces up.
+    fn assert_strips_unfolded(chain: &Chain) {
+        let n = chain.corners.len();
+        for k in [0, n - 2] {
+            let root: &[(f32, Vec2)] = if k == 0 { &chain.root_edge } else { &[] };
+            let end: &[(f32, Vec2)] = if k + 2 == n { &chain.end_edge } else { &[] };
+            let (near, far) = (chain.corners[k], chain.corners[k + 1]);
+            let on = ((far.0 + far.1) - (near.0 + near.1)).normalize();
+            for [a, b, c, d] in strips(near, root, far, end) {
+                assert!((d - a).dot(on) > 0.02 && (c - b).dot(on) > 0.02, "a strip folds: {a} {b} {c} {d}");
+                assert!((b - a).perp_dot(d - a) > 0.0 && (c - b).perp_dot(d - c) < 0.0 || (b - a).perp_dot(d - a) < 0.0, "a strip is twisted");
+            }
+        }
+        let (_, triangles) = planks(&chain.corners, &chain.root_edge, &chain.end_edge, chain.complete, TOP, Color::WHITE, Color::BLACK);
+        for [a, b, c] in &triangles {
+            let normal = (*b - *a).cross(*c - *a);
+            let middle = (*a + *b + *c) / 3.0;
+            if (middle.y - TOP).abs() < 1e-4 {
+                assert!(normal.y > 1e-6, "a top faces down at {middle}");
+            } else if (middle.y - (TOP - THICKNESS)).abs() < 1e-4 {
+                assert!(normal.y < -1e-6, "an underside faces up at {middle}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_fork_off_a_curve_of_bridge_follows_its_bent_edge_and_leaves_no_void() {
+        // Hajun, 2026-11-10: "fix the sliver gap on curved forks too". A
+        // bridge turning 20 degrees a plank, and a fork straight out of the
+        // middle of the bend: off its inside, and off its outside.
+        let nothing = |_: Vec2| false;
+        for inside in [true, false] {
+            let what = if inside { "off the inside" } else { "off the outside" };
+            let mut bridges = Bridges::default();
+            bridges.chains.push(left(0, 0, bent(20.0f32.to_radians(), 6)));
+            assert_eq!(bridges.recut(&nothing), vec![0]);
+            let parent = &bridges.chains[0];
+            assert!(parent.root_edge.is_empty() && parent.end_edge.is_empty());
+            // Its inside is the side it turns toward, its right corners.
+            let side = |k: usize| if inside { parent.corners[k].1 } else { parent.corners[k].0 };
+            let e = (side(6) + side(7)) * 0.5;
+            let d = parent.edge_normal(e).unwrap();
+            let inward = perp(parent.rungs[6].d);
+            assert!(d.dot(inward) * if inside { 1.0 } else { -1.0 } > 0.9, "{what}: the way off is {d}");
+            let ground: Vec<[Vec2; 4]> = parent.ground_quads().collect();
+            let on_parent = |at: Vec2| ground.iter().any(|&quad| inside_quad(at, quad));
+            bridges.chains.push(left(0, 1, straight(e, d, 3)));
+            assert_eq!(bridges.recut(&nothing), vec![1], "{what}");
+            let fork = &bridges.chains[1];
+            // The root's edge bends with the parent's, and lies along it
+            // all the way across.
+            assert!(!fork.root_edge.is_empty(), "{what}: the root is straight");
+            assert_flush(what, fork.corners[0], &fork.root_edge, d, &on_parent);
+            assert_strips_unfolded(fork);
+            // The straight line between its corners, as the root was until
+            // then, leaves the edge by far more than a sliver: off the
+            // inside it stands 0.4 m out over the void in the middle, with
+            // nothing under whoever steps off there, and off the outside it
+            // lies 0.18 m in over the parent.
+            let middle = (fork.corners[0].0 + fork.corners[0].1) * 0.5;
+            let out = (middle - e).dot(d);
+            let just_off = e + d * 0.08;
+            let under = |quads: &[[Vec2; 4]]| quads.iter().any(|&quad| inside_quad(just_off, quad));
+            let now: Vec<[Vec2; 4]> = fork.ground_quads().collect();
+            let chord: Vec<[Vec2; 4]> = fork.fixed_quads().collect();
+            if inside {
+                assert!(out > 0.3, "the chord is only {out} m out");
+                assert!(!on_parent(middle) && !on_parent(just_off));
+                assert!(under(&now) && !under(&chord), "nothing under a step off the edge at {just_off}");
+            } else {
+                assert!(out < -0.12, "the chord is only {out} m in");
+                assert!(on_parent(middle + d * 0.1));
+                assert!(under(&now));
+            }
+        }
+    }
+
+    #[test]
+    fn wherever_you_step_off_a_curve_of_bridge_there_is_no_void_under_the_step() {
+        // Bends from gentle to as hard as a bridge turns; stepping off near
+        // a joint and between two; off the inside and the outside; square
+        // to the edge and at a slant either way. Round where you step off,
+        // out to half a metre and 0.6 m either side, every point is over
+        // the bridge you left or the fork, and no strip of the fork folds.
+        let nothing = |_: Vec2| false;
+        for degrees in [10.0f32, 20.0, 30.0, 35.0] {
+            for share in [0.15f32, 0.5, 0.85] {
+                for slant in [-0.6f32, 0.0, 0.6] {
+                    for inside in [true, false] {
+                        let what = format!("{degrees} degrees, {share} along, slant {slant}, inside {inside}");
+                        let mut bridges = Bridges::default();
+                        bridges.chains.push(left(0, 0, bent(degrees.to_radians(), 6)));
+                        bridges.recut(&nothing);
+                        let parent = &bridges.chains[0];
+                        let side = |k: usize| if inside { parent.corners[k].1 } else { parent.corners[k].0 };
+                        let e = side(6).lerp(side(7), share);
+                        let d = parent.edge_normal(e).unwrap();
+                        let ground: Vec<[Vec2; 4]> = parent.ground_quads().collect();
+                        let on_parent = |at: Vec2| ground.iter().any(|&quad| inside_quad(at, quad));
+                        let h = Vec2::from_angle(slant).rotate(d);
+                        let first = first_length(slant);
+                        let rungs = vec![Rung { p: e, d }, Rung { p: e + h * first, d: h }, Rung { p: e + h * (first + SPACING), d: h }];
+                        bridges.chains.push(left(0, 1, rungs));
+                        assert_eq!(bridges.recut(&nothing), vec![1], "{what}");
+                        let fork = &bridges.chains[1];
+                        assert_strips_unfolded(fork);
+                        let planks: Vec<[Vec2; 4]> = fork.ground_quads().collect();
+                        for across in [-0.6f32, -0.3, 0.0, 0.3, 0.6] {
+                            for out in [0.03f32, 0.1, 0.2, 0.35, 0.5] {
+                                let at = e + perp(d) * across + d * out;
+                                assert!(
+                                    on_parent(at) || planks.iter().any(|&quad| inside_quad(at, quad)),
+                                    "{what}: nothing under {at}, {across} across and {out} out from the step at {e}"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn landing_on_a_curve_of_bridge_the_end_follows_its_bent_edge() {
+        // Over the void straight at the inside of the bend, and at its
+        // outside: the end is cut along the bent edge all the way across.
+        let nothing = |_: Vec2| false;
+        for inside in [true, false] {
+            let what = if inside { "onto the inside" } else { "onto the outside" };
+            let mut bridges = Bridges::default();
+            bridges.chains.push(left(0, 0, bent(20.0f32.to_radians(), 6)));
+            bridges.recut(&nothing);
+            let parent = &bridges.chains[0];
+            let side = |k: usize| if inside { parent.corners[k].1 } else { parent.corners[k].0 };
+            let e = (side(6) + side(7)) * 0.5;
+            let d = parent.edge_normal(e).unwrap();
+            let ground: Vec<[Vec2; 4]> = parent.ground_quads().collect();
+            let on_parent = |at: Vec2| ground.iter().any(|&quad| inside_quad(at, quad));
+            bridges.chains.push(left(1, 0, straight(e + d * (4.0 * SPACING), -d, 4)));
+            assert_eq!(bridges.recut(&nothing), vec![1], "{what}");
+            let chain = &bridges.chains[1];
+            assert!(chain.complete, "{what}: it does not land");
+            assert!(chain.root_edge.is_empty() && !chain.end_edge.is_empty(), "{what}: the end is straight");
+            assert_flush(what, chain.corners[4], &chain.end_edge, d, &on_parent);
+            assert_strips_unfolded(chain);
+        }
+    }
+
+    #[test]
+    fn a_straight_edge_is_one_quad_and_a_bent_one_strips_that_share_their_sides() {
+        // Off a straight bridge's side, square and at a slant: the root's
+        // edge is straight, nothing between its corners, the plank the one
+        // quad it always was.
+        let nothing = |_: Vec2| false;
+        for slant in [0.0f32, 0.5] {
+            let mut bridges = Bridges::default();
+            bridges.chains.push(left(0, 0, straight(Vec2::new(-6.0, 0.0), Vec2::X, 9)));
+            bridges.recut(&nothing);
+            let d = Vec2::from_angle(slant).rotate(Vec2::Y);
+            let root = Rung { p: Vec2::new(0.0, HALF_WIDTH), d: Vec2::Y };
+            let rungs = vec![root, Rung { p: root.p + d * first_length(slant), d }, Rung { p: root.p + d * (first_length(slant) + SPACING), d }];
+            bridges.chains.push(left(0, 1, rungs));
+            assert_eq!(bridges.recut(&nothing), vec![1]);
+            let fork = &bridges.chains[1];
+            assert!(fork.root_edge.is_empty(), "slant {slant}: {:?}", fork.root_edge);
+            for corner in [fork.corners[0].0, fork.corners[0].1] {
+                assert!((corner.y - HALF_WIDTH).abs() < 0.03, "slant {slant}: {corner} is off the side");
+            }
+            assert_eq!(fork.ground_quads().count(), 2);
+        }
+        // A plank whose near edge bends twice is three strips, side by
+        // side, each sharing its sides with the next, and their corners the
+        // plank's own; one whose far edge bends too, somewhere else, four.
+        let near = (Vec2::new(0.0, 0.0), Vec2::new(4.0, 0.0));
+        let far = (Vec2::new(0.0, 2.0), Vec2::new(4.0, 2.0));
+        let bent: Edge = vec![(0.25, Vec2::new(1.0, -0.3)), (0.5, Vec2::new(2.0, 0.1))];
+        assert_eq!(strips(near, &[], far, &[]), vec![[near.0, near.1, far.1, far.0]]);
+        let three = strips(near, &bent, far, &[]);
+        assert_eq!(three.len(), 3);
+        assert_eq!((three[0][0], three[2][1], three[2][2], three[0][3]), (near.0, near.1, far.1, far.0));
+        for pair in three.windows(2) {
+            assert!(pair[0][1].distance(pair[1][0]) < 1e-6 && pair[0][2].distance(pair[1][3]) < 1e-6);
+        }
+        assert!(three[0][1].distance(Vec2::new(1.0, -0.3)) < 1e-6 && three[1][2].distance(Vec2::new(2.0, 2.0)) < 1e-6);
+        let four = strips(near, &bent, far, &vec![(0.75, Vec2::new(3.0, 2.4))]);
+        assert_eq!(four.len(), 4);
+        assert!(four[2][1].distance(Vec2::new(3.0, 0.05)) < 1e-6 && four[2][2].distance(Vec2::new(3.0, 2.4)) < 1e-6);
+        // A line bent by less than a hair is straight; one with a corner
+        // keeps the corner alone.
+        let line: Vec<(f32, Vec2)> = (0..=8).map(|k| (k as f32 / 8.0, Vec2::new(k as f32, if k % 2 == 0 { 0.0 } else { 0.002 }))).collect();
+        assert!(bends(&line).is_empty());
+        let line: Vec<(f32, Vec2)> = (0..=8).map(|k| (k as f32 / 8.0, Vec2::new(k as f32, (k as f32 - 3.0).max(0.0) * 0.1))).collect();
+        assert_eq!(bends(&line), vec![(0.375, Vec2::new(3.0, 0.0))]);
     }
 
     #[test]

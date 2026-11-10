@@ -272,8 +272,11 @@ alone; the server is `cargo build -p roundtown_server`. Never `--workspace`,
 which would build the game with the server's half of replicon in it.
 
 Android needs the `release-android` profile, a manual strip step, and Gradle
-(`versionCode` in `mobile/android/app/build.gradle` is the build number: 15
-still later on 2026-11-10, a bridge that is built staying as it was built
+(`versionCode` in `mobile/android/app/build.gradle` is the build number: 16
+in the afternoon of 2026-11-10, a fork's root and a landing's end following the
+bent edge they meet, no sliver off a curve of bridge (protocol 10 still,
+no server change); 15 before it that day, a bridge that is built staying
+as it was built
 whatever is built past it, and unfinished ends square (protocol 10 still,
 no server change); 14 earlier that day, sharp turns as L corners, short
 forks square, 500 m
@@ -884,9 +887,60 @@ holds for the arena now.
     beside its root, where worked out afresh it would change; an end left
     2 m short of a shore square; a root cut afresh until its third rung
     and kept from then on; a forgotten chain's mesh handed over to be
-    taken down. What stays, seen in the same screenshot: a fork off a
-    stretch of bridge that curves has a straight root across a bent
-    edge, a sliver of void between them. Not yet on a phone.
+    taken down. Not yet on a phone.
+    **A root and an end follow the edge they meet all the way across**
+    (the same day, Hajun, of a sliver in that first screenshot that I
+    had pointed out: "fix the sliver gap on curved forks too"). Each was
+    one straight line between its two corners, and only the corners were
+    cut onto the edge: a chord across an edge that bends. Off the inside
+    of a curve of bridge that left void between the fork and the bridge
+    it left: a sliver on a gentle curve, and on one turning 20 degrees a
+    plank 0.4 m deep in the middle, right where you step off, with
+    nothing under the step; off the outside the fork lay 0.18 m over the
+    bridge instead. Now the line is tried all the way across
+    (`cut_along`): at 9 places evenly (`STATIONS`), each pushed or
+    pulled onto the edge as a corner is (`to_edge`), and halfway between
+    any two again, up to three times over (`REFINEMENTS`, so as fine as
+    4.3 cm), wherever the edge there is 3 mm off the straight line
+    between them (`BENT`); of those, the ones it takes to follow the
+    edge within 4 mm are kept (`bends`, `STRAIGHT`), none along a
+    straight edge. They are the root's edge and the end's (`Edge`,
+    `Shape::root`, `Shape::end`, `Chain::root_edge`, `end_edge`, the
+    root's kept with its corners at the third rung), and the first
+    plank's near edge, or the last one's far edge, is built along them,
+    its top and underside in strips side by side (`strips`, in `planks`
+    and in `Chain::ground_quads`, which `plank_under` and the ground
+    other chains are cut against go by, so what is stood on, what is
+    drawn and what is cut against are one shape); a plank between
+    straight edges is the one quad it always was. Every place is set
+    1.5 cm in under the ground it meets (`TUCK`; the corners too, which
+    lay on the very edge, to 2.5 mm, until then), so that no hairline is
+    left along the cut: under the land, or under or over another
+    bridge's plank, whose top is a millimetre or more off. A plank cut
+    at both its ends, a fork of one plank, has its end pulled back no
+    further than its root was pulled in leaves it. `corners_of` is
+    `shape_of` now, and what it did the tests' alone. Off the inside of
+    a bend as tight as a bridge turns (35 degrees a plank, 0.8 m round
+    inside) a root is wider than the bend: it follows the edge where it
+    can and lies over the bridge either side of that, no void. Cutting
+    asks only after other chains' planks within 6 m of the chain's root
+    or its last rung (`NEAR`), where it scanned every plank in the game
+    for each question. The cost, measured in the desktop build while a
+    chain is being begun, its root worked out afresh every frame: 22 µs
+    a frame on average and 153 µs at the most, of a frame's 8,333; not
+    measured on a phone. Seen in the desktop build, scripted (the
+    throwaway again, removed), on the code before and on this: a bridge
+    off the island round a bend, a fork off its inside, one off its
+    outside and one off its inside at a slant; before, a dark sliver
+    along each inside fork's root, and on this none, and no fall.
+    Unit-tested: forks off the inside and the outside of a 20 degree
+    bend lie along its bent edge all the way across, neither void nor
+    overlap, where the chord stood 0.4 m out or 0.18 m in; stepping off
+    bends of 10 to 35 degrees a plank, near a joint and between two,
+    inside and outside, square and slanted 0.6 rad either way, 72 ways,
+    nothing but bridge within half a metre of the step and no strip
+    folded; landing on a curve the same; a straight edge still one quad.
+    Not yet by hand or on a phone.
   - **A minimap top right** (`src/minimap.rs`, since 2026-11-09, Hajun:
     "put a minimap that only shows the current player's location as a red
     dot and your teammate as a green dot, and the full map in top down view
