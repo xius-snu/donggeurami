@@ -272,8 +272,11 @@ alone; the server is `cargo build -p roundtown_server`. Never `--workspace`,
 which would build the game with the server's half of replicon in it.
 
 Android needs the `release-android` profile, a manual strip step, and Gradle
-(`versionCode` in `mobile/android/app/build.gradle` is the build number: 14
-later on 2026-11-10, sharp turns as L corners, short forks square, 500 m
+(`versionCode` in `mobile/android/app/build.gradle` is the build number: 15
+still later on 2026-11-10, a bridge that is built staying as it was built
+whatever is built past it, and unfinished ends square (protocol 10 still,
+no server change); 14 earlier that day, sharp turns as L corners, short
+forks square, 500 m
 of bridge to start and text shadows in proportion to the letters; 13
 earlier that day, the bridges cut flush along the edges they leave and
 meet, at any slant, and a fork off your own bridge's side (protocol 10
@@ -836,6 +839,54 @@ holds for the arena now.
     with a slant its length can cut. Hajun played the first of these on
     the phone (APK 13) and found the right-angle turns; the rest not yet
     by hand.
+    **A bridge that is built stays as it was built** (still later that
+    day, Hajun, playing APK 14, with four screenshots, `errorframe1.jpg`
+    to `4`: "when there is a unfinised end, and then i build another
+    bridge that passes near that unfinished end, suddenly that unfinished
+    end's vertices try to connect to my current bridge. i think bridge
+    that is already made should not change"). A chain's corners are
+    worked out only when the chain itself changes, a rung fixed (or come
+    from the server) or its tip moved, against the ground as it stands
+    then, and never because another chain has (`Chain::stale`, by how
+    many rungs it has and its tip; `Chain::cut`; `Bridges::recut`, the
+    chains in the order they were begun); and its root is cut for good
+    once its third rung is fixed (`ROOT_KEPT`: its first plank and the
+    joint after it both settled; `Chain::root_cut`). Until then `rebuild`
+    worked every chain out again, against the land and every other
+    chain's planks as they then stood, each time anything was fixed or a
+    tip had moved 0.2 m: whatever was built near an old root or end
+    afterwards recut it. **And only an end that lands is cut along what
+    it lands on** (`corners_of`: its last rung on ground, or ground within
+    0.15 m ahead): an end left over the void, let go of, turned back from
+    or ended at an L corner, is square where it was left. Its corners had
+    been pushed on like a landing's, up to `END_PUSH`, 3 m, so an end
+    left within that of a shore or a bridge grew a spike out to it, as
+    one in Hajun's first screenshot had to the town's edge before the new
+    bridge was begun. So someone else's chain, online, shows a square end
+    at each rung as it comes, and is cut along the shore by the rung that
+    lands. The meshes follow: a chain is drawn again only when it has
+    changed (or the file's colours have), where every chain's mesh was
+    made and uploaded again each time; the shape laid over the island is
+    still made of all of them each time, from triangles each chain keeps.
+    **And a chain forgotten takes its tip's plank down with it**
+    (`Bridges::forget`, `orphans`): a chain of nothing but its root,
+    walked back from, was dropped and what its tip had drawn left where
+    it was, out over the edge with nothing to stand on (found reading
+    the code for this; not something Hajun reported). Seen in the desktop
+    build, scripted (a throwaway `src/bridge/scratch_bridge.rs`, removed):
+    two bridges left unfinished off the island, a third built a metre or
+    two past the end of each, every chain's corners logged before, during
+    and after. On the code before, the first end's corners moved up to
+    0.77 m onto the new bridge and the second's grew a 2 m spike to it,
+    as in the screenshots; on this, both chains' corners were the same
+    to the millimetre in all five logs, and no fall. Unit-tested: an old
+    bridge unchanged as others are built past its end, over its end and
+    beside its root, where worked out afresh it would change; an end left
+    2 m short of a shore square; a root cut afresh until its third rung
+    and kept from then on; a forgotten chain's mesh handed over to be
+    taken down. What stays, seen in the same screenshot: a fork off a
+    stretch of bridge that curves has a straight root across a bent
+    edge, a sliver of void between them. Not yet on a phone.
   - **A minimap top right** (`src/minimap.rs`, since 2026-11-09, Hajun:
     "put a minimap that only shows the current player's location as a red
     dot and your teammate as a green dot, and the full map in top down view

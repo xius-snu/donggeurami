@@ -80,6 +80,24 @@
 //! plank or two slants no more than that length can cut cleanly
 //! ([`land_on`]), a square gusset rather than a triangle.
 //!
+//! **A bridge that is built stays as it was built** (later still that day,
+//! Hajun, with four screenshots of an unfinished end reaching out for a
+//! bridge built past it: "suddenly that unfinished end's vertices try to
+//! connect to my current bridge. i think bridge that is already made should
+//! not change"). A chain's corners are worked out when the chain itself
+//! changes, a rung fixed or come from the server, or its tip moved, against
+//! the ground as it stands then, and never again because another chain has
+//! changed ([`Chain::stale`], [`Chain::cut`], [`Bridges::recut`]); its root
+//! is cut for good once its third rung is fixed ([`ROOT_KEPT`]). Until then
+//! every chain was worked out again, against the land and every other
+//! chain's planks as they then stood, each time anything was fixed or a tip
+//! had moved a little, so that whatever was built near an old root or end
+//! afterwards recut it. And only an end that lands is cut along what it
+//! lands on: one left over the void, let go of, turned back from or ended
+//! at a corner, is square where it was left ([`corners_of`]); its corners
+//! were pushed on like a landing's, up to [`END_PUSH`], and an end left
+//! within that of a shore or a bridge grew a spike out to it.
+//!
 //! Every plank costs its length in metres of bridge, which you buy (Hajun:
 //! "players will buy the bridge by meter count ... for now make each person
 //! start with 100m"; 500 since 2026-11-10: "increase the default bridge
@@ -202,6 +220,13 @@ const SLANT_ROOM: f32 = 0.1;
 /// root corner, cut back onto the plank's side, finds the plank there
 /// rather than grazing its very corner and missing.
 const CORNER_ROOM: f32 = 0.05;
+/// How many fixed rungs a chain has to have for the cut of its root to be
+/// kept for good ([`Chain::cut`]): three, its first plank and the joint at
+/// that plank's far end both fixed. How far a root's corner may be pulled
+/// in along the first plank goes by how far that joint's mitre reaches
+/// back along it, which is not settled while the second plank is the tip,
+/// swinging after its builder.
+const ROOT_KEPT: usize = 3;
 /// How far off the first plank's line you may drift, in metres, before its
 /// rung is fixed early, shorter than [`first_length`] asks, so that the
 /// chain can turn after you: walking off a bridge nearly along its edge.
@@ -288,8 +313,12 @@ struct Chain {
     /// its builder: yours alone, never sent, fixed once you are a plank's
     /// length on.
     tip: Option<Rung>,
-    /// The tip as last drawn, and as last laid over the island, to build
-    /// again once it has moved.
+    /// How many rungs it had fixed, and the tip it had, when its corners
+    /// were last worked out ([`Chain::cut`]): they are worked out again
+    /// once either has changed, the chain itself, and never because
+    /// another bridge has ([`Chain::stale`]). And the tip as last laid over
+    /// the island, to lay it again once it has moved enough.
+    built_rungs: usize,
     built_tip: Option<Rung>,
     overlaid_tip: Option<Rung>,
     /// Rungs that came ahead of their turn, online, to go on once those
@@ -301,6 +330,11 @@ struct Chain {
     corners: Vec<(Vec2, Vec2)>,
     /// Whether its last rung lands on ground, as last built.
     complete: bool,
+    /// Its root's corners as cut along the edge it left, kept from when
+    /// its third rung was fixed ([`ROOT_KEPT`]) and never cut again.
+    root_cut: Option<(Vec2, Vec2)>,
+    /// The triangles bodies stand on, as last built ([`planks`]).
+    triangles: Vec<[Vec3; 3]>,
     /// Whether its root is on another bridge's plank rather than on land:
     /// a fork, whose first plank is made long enough to be cut along the
     /// plank's edge ([`first_length`]). Yours alone.
@@ -321,11 +355,14 @@ impl Chain {
             id,
             rungs,
             tip: None,
+            built_rungs: usize::MAX,
             built_tip: None,
             overlaid_tip: None,
             waiting: Vec::new(),
             corners: Vec::new(),
             complete: false,
+            root_cut: None,
+            triangles: Vec::new(),
             forked: false,
             behind: false,
             mesh: Entity::PLACEHOLDER,
@@ -403,6 +440,38 @@ impl Chain {
         best.map(|(_, square)| square)
     }
 
+    /// Whether it has changed since its corners were last worked out: a
+    /// rung fixed, or come from the server, or its tip moved, dropped or
+    /// fixed. Its rungs are only ever added to, so how many there are and
+    /// the tip say all there is to say.
+    fn stale(&self) -> bool {
+        self.rungs.len() != self.built_rungs || self.tip != self.built_tip
+    }
+
+    /// Works its corners out again, against the ground as it is now, the
+    /// `land` and every other bridge's planks ([`corners_of`]): called only
+    /// once the chain itself has changed, so that a bridge that is built
+    /// stays as it was built whatever is built beside it afterwards
+    /// (2026-11-10, Hajun, of an unfinished end whose corners reached for
+    /// a bridge built past it: "i think bridge that is already made should
+    /// not change"). Its root is cut for good once its third rung is fixed
+    /// ([`ROOT_KEPT`]), and kept from then on as the chain grows.
+    fn cut(&mut self, land: &dyn Fn(Vec2) -> bool, ground: &dyn Fn(Vec2) -> bool) {
+        let rungs = self.all();
+        let (mut corners, complete) = corners_of(&rungs, self.tip.is_some(), land, ground);
+        if rungs.len() > 1 {
+            match self.root_cut {
+                Some(root) => corners[0] = root,
+                None if self.rungs.len() >= ROOT_KEPT => self.root_cut = Some(corners[0]),
+                None => {}
+            }
+        }
+        self.corners = corners;
+        self.complete = complete;
+        self.built_rungs = self.rungs.len();
+        self.built_tip = self.tip;
+    }
+
     /// How high its planks' tops lie.
     fn top(&self) -> f32 {
         top_of(self.seat, self.id)
@@ -431,6 +500,8 @@ pub(crate) struct Bridges {
     /// The game they belong to (`Fighting::game`): another game, and they
     /// are cleared.
     game: u32,
+    /// The meshes of chains forgotten, to be taken down ([`rebuild`]).
+    orphans: Vec<Entity>,
 }
 
 /// What became of the chain you were building, this frame ([`grow`]).
@@ -480,6 +551,38 @@ impl Bridges {
                 [l0, r0, r1, l1]
             })
         })
+    }
+
+    /// Forgets the `c`th chain altogether, one of nothing but its root:
+    /// what was drawn of it, its tip, is taken down with it. (Until
+    /// 2026-11-10 the chain alone went, and the plank its tip had drawn
+    /// stayed where it was, out over the edge, with nothing to stand on.)
+    fn forget(&mut self, c: usize) {
+        let chain = self.chains.remove(c);
+        if chain.mesh != Entity::PLACEHOLDER {
+            self.orphans.push(chain.mesh);
+        }
+        self.dirty = true;
+    }
+
+    /// Works out again the corners of every chain that has itself changed
+    /// since they last were ([`Chain::stale`], [`Chain::cut`]), each
+    /// against the `land` and every other chain's planks as they stand,
+    /// in the order the chains were begun, so that a fork come in the same
+    /// frame as the bridge it leaves is cut against it; and says which.
+    /// A chain that has not changed is left exactly as it was built.
+    fn recut(&mut self, land: &dyn Fn(Vec2) -> bool) -> Vec<usize> {
+        let mut cut = Vec::new();
+        for c in 0..self.chains.len() {
+            if !self.chains[c].stale() {
+                continue;
+            }
+            let others = self.ground_but(c);
+            let ground = |at: Vec2| land(at) || others.iter().any(|&quad| inside_quad(at, quad));
+            self.chains[c].cut(land, &ground);
+            cut.push(c);
+        }
+        cut
     }
 
     /// Begins a chain of `seat`'s at `root`, a fork off another bridge if
@@ -541,11 +644,10 @@ impl Bridges {
     fn abandon(&mut self, c: usize) {
         let chain = &mut self.chains[c];
         chain.tip = None;
-        chain.built_tip = None;
         chain.overlaid_tip = None;
         chain.behind = false;
         if chain.rungs.len() < 2 {
-            self.chains.remove(c);
+            self.forget(c);
         }
         self.active = None;
         self.dirty = true;
@@ -561,7 +663,7 @@ impl Bridges {
         let mut grown = Grown::default();
         fix_tip(chain, metres, &mut grown);
         if chain.rungs.len() < 2 {
-            self.chains.remove(c);
+            self.forget(c);
         }
         self.dirty = true;
         grown.added.pop().map(|(index, rung)| (id, index, rung))
@@ -571,7 +673,6 @@ impl Bridges {
 /// Fixes `chain`'s tip where it is, if it is a plank's worth ([`MIN_LAND`])
 /// and the chain has room, charging `metres`; a shorter tip is dropped.
 fn fix_tip(chain: &mut Chain, metres: &mut f32, grown: &mut Grown) {
-    chain.built_tip = None;
     chain.overlaid_tip = None;
     let Some(tip) = chain.tip.take() else {
         return;
@@ -789,7 +890,7 @@ pub(crate) fn lay(
                 if grown.done {
                     bridges.active = None;
                     if bridges.chains[c].rungs.len() < 2 {
-                        bridges.chains.remove(c);
+                        bridges.forget(c);
                     }
                     bridges.dirty = true;
                 } else if !grown.added.is_empty() {
@@ -1201,9 +1302,14 @@ fn inside_quad(at: Vec2, q: [Vec2; 4]) -> bool {
 /// root stood square to the fork, one corner over the void, a wedge of
 /// void between it and the bridge it left); and a corner over land stays,
 /// hidden under the land, whose top is higher. And whether the chain ends
-/// on ground: its last rung on ground, or ground just ahead of it. A chain
-/// still `building`, its tip the last of the rungs, has no end yet,
-/// however near the shore its tip reaches.
+/// on ground: its last rung on ground, or ground just ahead of it. Only
+/// such an end is cut: a chain still `building`, its tip the last of the
+/// rungs, has no end yet, however near the shore its tip reaches; and one
+/// left over the void, let go of, turned back from or ended at a corner,
+/// ends square where it was left, whatever ground is ahead of it (until
+/// 2026-11-10 its corners were pushed on like a landing's, up to
+/// [`END_PUSH`], so that an end left within that of a shore, or of a
+/// bridge, grew a spike out to it).
 fn corners_of(
     rungs: &[Rung],
     building: bool,
@@ -1277,7 +1383,7 @@ fn corners_of(
         let on = planks[n - 2].0;
         ground(last.p) || shore_ahead(last.p, on, ground, 0.15).is_some()
     };
-    if !building && n > 1 {
+    if complete {
         let (on, length) = planks[n - 2];
         let pull = CUT_SHARE * length - reach[n - 2];
         let (l, r) = corners[n - 1];
@@ -1327,10 +1433,14 @@ fn take(chain: &mut Chain, index: u16, rung: Rung) {
     }
 }
 
-/// Builds every chain's mesh again as it changes, as its tip moves enough,
-/// or as the file's colours change, and lays the planks' shape over the
-/// island; and clears everything out of the arena, or as another game
-/// begins.
+/// Builds a chain's mesh again as the chain itself changes, a rung fixed
+/// or its tip moved (and every chain's as the file's colours change), and
+/// lays the planks' shape over the island; and clears everything out of
+/// the arena, or as another game begins. A chain that has not changed is
+/// neither worked out nor drawn again: until 2026-11-10 every chain was,
+/// against the ground as it then stood, each time anything changed, and
+/// the end of a bridge left unfinished reached out for a bridge built past
+/// it afterwards.
 #[allow(clippy::too_many_arguments)]
 fn rebuild(
     fighting: Res<Fighting>,
@@ -1343,6 +1453,11 @@ fn rebuild(
     mut commands: Commands,
 ) {
     let here = me.single().ok().copied();
+    if !bridges.orphans.is_empty() {
+        for mesh in bridges.orphans.drain(..) {
+            commands.entity(mesh).try_despawn();
+        }
+    }
     if here != Some(Venue::Arena) || fighting.game != bridges.game {
         if !bridges.chains.is_empty() {
             for chain in bridges.chains.drain(..) {
@@ -1360,16 +1475,18 @@ fn rebuild(
         bridges.game = fighting.game;
         return;
     }
-    // Drawn again whenever a tip has moved at all; laid over the island
-    // again, and the minimap drawn again, once one has moved enough.
-    let tip_moved = bridges.chains.iter().any(|chain| chain.tip != chain.built_tip);
+    // A chain is worked out and drawn again once it has itself changed, a
+    // rung fixed or its tip moved at all, and no other chain with it; all
+    // of them are laid over the island again, and the minimap drawn again,
+    // once anything is fixed or a tip has moved enough.
+    let stale = bridges.chains.iter().any(Chain::stale);
     let overlay_due = bridges.chains.iter().any(|chain| match (chain.tip, chain.overlaid_tip) {
         (Some(tip), Some(laid)) => tip.p.distance(laid.p) > OVERLAY_MOVE || tip.d.angle_to(laid.d).abs() > OVERLAY_TURN,
         (None, None) => false,
         _ => true,
     });
     let restyled = changed.is_changed() && !changed.is_added();
-    if !bridges.dirty && !tip_moved && !restyled {
+    if !bridges.dirty && !stale && !restyled {
         return;
     }
     let Some(island) = islands.get(Venue::Arena) else {
@@ -1378,24 +1495,15 @@ fn rebuild(
     let relay = bridges.dirty || overlay_due || restyled;
     let land = |at: Vec2| island.floor_base(at, TOP + LAND_STEP_UP).is_some();
     let colours = ui().colours.arena;
+    let cut = bridges.recut(&land);
     let mut parts = Vec::new();
-    // Every chain's fixed planks as last built: the ground each other
-    // chain is cut against.
-    let quads: Vec<Vec<[Vec2; 4]>> = bridges.chains.iter().map(|chain| chain.fixed_quads().collect()).collect();
     for (c, chain) in bridges.chains.iter_mut().enumerate() {
-        let rungs = chain.all();
-        let redraw = relay || chain.tip != chain.built_tip || chain.mesh == Entity::PLACEHOLDER;
-        if redraw {
-            let ground = |at: Vec2| land(at) || quads.iter().enumerate().any(|(i, theirs)| i != c && theirs.iter().any(|&quad| inside_quad(at, quad)));
-            let (corners, complete) = corners_of(&rungs, chain.tip.is_some(), &land, &ground);
-            chain.corners = corners;
-            chain.complete = complete;
-            chain.built_tip = chain.tip;
-        }
+        let redraw = restyled || cut.contains(&c);
         if relay {
             chain.overlaid_tip = chain.tip;
         }
-        if rungs.len() < 2 {
+        if chain.corners.len() < 2 {
+            chain.triangles.clear();
             if redraw
                 && chain.mesh != Entity::PLACEHOLDER
                 && meshes.insert(&chain.handle, Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default())).is_err()
@@ -1404,12 +1512,16 @@ fn rebuild(
             }
             continue;
         }
-        if !redraw {
+        if !redraw && chain.mesh != Entity::PLACEHOLDER {
+            if relay {
+                parts.push(chain.triangles.clone());
+            }
             continue;
         }
         let (mesh, triangles) = planks(&chain.corners, chain.complete, chain.top(), colours.plank, colours.plank_side);
+        chain.triangles = triangles;
         if relay {
-            parts.push(triangles);
+            parts.push(chain.triangles.clone());
         }
         if chain.mesh == Entity::PLACEHOLDER {
             chain.handle = meshes.add(mesh);
@@ -2078,6 +2190,180 @@ mod tests {
                 assert!((corner.y - HALF_WIDTH).abs() < 0.03, "{degrees} degrees: {corner} is off the parent's edge");
             }
         }
+    }
+
+    /// A chain of `seat`'s with these rungs and nothing being laid, as one
+    /// let go of, or come from the server.
+    fn left(seat: u8, id: u16, rungs: Vec<Rung>) -> Chain {
+        Chain::new(seat, id, rungs)
+    }
+
+    /// `count` planks' worth of rungs from `from`, heading `d`.
+    fn straight(from: Vec2, d: Vec2, count: usize) -> Vec<Rung> {
+        (0..=count).map(|k| Rung { p: from + d * (k as f32 * SPACING), d }).collect()
+    }
+
+    #[test]
+    fn a_bridge_already_built_does_not_change_when_another_is_built_past_it() {
+        // Hajun's four screenshots of 2026-11-10: a bridge off the island's
+        // east shore, left unfinished five planks out over the void.
+        let island = Island::new(&disc(Vec2::ZERO, 10.0));
+        let land = is_land(&island);
+        let mut bridges = Bridges::default();
+        bridges.chains.push(left(0, 0, straight(Vec2::new(10.0, 0.0), Vec2::X, 5)));
+        assert_eq!(bridges.recut(&land), vec![0]);
+        let before = bridges.chains[0].corners.clone();
+        let end = Vec2::new(10.0 + 5.0 * SPACING, 0.0);
+        // Its end is square, a plank's width across, and capped.
+        assert!(!bridges.chains[0].complete);
+        assert!(before[5].0.distance(end - Vec2::Y * HALF_WIDTH) < 1e-5 && before[5].1.distance(end + Vec2::Y * HALF_WIDTH) < 1e-5, "{:?}", before[5]);
+        // Nothing has changed, so nothing is worked out again.
+        assert!(bridges.recut(&land).is_empty());
+        // Another bridge is built across its way, a metre past its end; a
+        // third right over its end; a fourth beside its root. Each time
+        // only the new one is worked out, and the first is as it was, to
+        // the last bit.
+        let past = Vec2::new(end.x + 1.0 + HALF_WIDTH, -8.0);
+        let over = Vec2::new(end.x + 0.8, 4.0);
+        let beside = Vec2::new(9.5 + HALF_WIDTH, HALF_WIDTH + 0.4);
+        for (c, (from, d)) in [(past, Vec2::Y), (over, Vec2::NEG_Y), (beside, Vec2::Y)].into_iter().enumerate() {
+            bridges.chains.push(left(1, c as u16, straight(from, d, 8)));
+            assert_eq!(bridges.recut(&land), vec![c + 1], "bridge {}", c + 1);
+            assert_eq!(bridges.chains[0].corners, before, "the first bridge changed as bridge {} was built", c + 1);
+            assert!(!bridges.chains[0].complete);
+        }
+        // Worked out afresh against the ground as it stands now, it would
+        // not be: its end is over the third bridge, and would be cut along
+        // it, and its root's corner beside the fourth pulled along that.
+        let others = bridges.ground_but(0);
+        let ground = |at: Vec2| land(at) || others.iter().any(|&quad| inside_quad(at, quad));
+        let (afresh, complete) = corners_of(&bridges.chains[0].rungs, false, &land, &ground);
+        assert!(complete && afresh[5] != before[5], "the end would not have changed: {:?}", afresh[5]);
+        // A rung of its own, though, and it is worked out again, and it
+        // alone; the root, cut for good by its third rung, stays.
+        let more = Rung { p: end + Vec2::X * SPACING, d: Vec2::X };
+        take(&mut bridges.chains[0], 6, more);
+        assert_eq!(bridges.recut(&land), vec![0]);
+        assert_eq!(bridges.chains[0].corners[0], before[0], "the root was cut again");
+        assert_eq!(bridges.chains[0].corners.len(), 7);
+    }
+
+    #[test]
+    fn an_end_left_short_of_a_shore_stays_square() {
+        // Toward a second island, let go of two metres short of its shore:
+        // the end is square where it was left, not pushed on to the shore.
+        let mut corners = disc(Vec2::ZERO, 10.0);
+        corners.extend(disc(Vec2::new(30.0, 3.0), 10.0));
+        let island = Island::new(&corners);
+        let land = is_land(&island);
+        let far_shore = 30.0 - (100.0f32 - 9.0).sqrt();
+        let count = ((far_shore - 2.0 - 10.0) / SPACING).floor() as usize;
+        let rungs = straight(Vec2::new(10.0, 0.0), Vec2::X, count);
+        let last = *rungs.last().unwrap();
+        assert!(far_shore - last.p.x > 0.5 && far_shore - last.p.x < END_PUSH, "{} m short", far_shore - last.p.x);
+        let (built, complete) = corners_of(&rungs, false, &land, &land);
+        assert!(!complete);
+        let end = built[built.len() - 1];
+        assert!(end.0.distance(last.p - Vec2::Y * HALF_WIDTH) < 1e-5 && end.1.distance(last.p + Vec2::Y * HALF_WIDTH) < 1e-5, "{end:?}");
+        assert_unfolded(&built, TOP, complete);
+        // Landed, a rung on the shore, it is cut along the shore as ever.
+        let mut landed = rungs.clone();
+        landed.push(Rung { p: Vec2::new(far_shore, 0.0), d: Vec2::X });
+        let (built, complete) = corners_of(&landed, false, &land, &land);
+        assert!(complete);
+        let end = built[built.len() - 1];
+        for corner in [end.0, end.1] {
+            assert!(land(corner) || (corner.distance(Vec2::new(30.0, 3.0)) - 10.0).abs() < 0.05, "{corner} is off the far shore");
+        }
+    }
+
+    #[test]
+    fn a_root_is_cut_afresh_until_its_third_rung_and_kept_from_then_on() {
+        let island = Island::new(&disc(Vec2::ZERO, 10.0));
+        let land = is_land(&island);
+        let root = Rung { p: Vec2::new(10.0, 0.0), d: Vec2::X };
+        let mut bridges = Bridges::default();
+        bridges.begin(0, root, false);
+        // A root and a tip, and then one plank fixed: cut, on the shore,
+        // and not kept yet.
+        bridges.chains[0].tip = Some(Rung { p: Vec2::new(11.0, 0.0), d: Vec2::X });
+        assert_eq!(bridges.recut(&land), vec![0]);
+        bridges.chains[0].rungs.push(Rung { p: Vec2::new(10.0 + SPACING, 0.0), d: Vec2::X });
+        bridges.chains[0].tip = Some(Rung { p: Vec2::new(12.5, 0.0), d: Vec2::X });
+        assert_eq!(bridges.recut(&land), vec![0]);
+        assert!(bridges.chains[0].root_cut.is_none());
+        let on_shore = bridges.chains[0].corners[0];
+        for corner in [on_shore.0, on_shore.1] {
+            assert!((corner.length() - 10.0).abs() < 0.03, "{corner} is off the shore");
+        }
+        // The tip moving is the chain changing; standing still is not.
+        assert!(bridges.recut(&land).is_empty());
+        bridges.chains[0].tip = Some(Rung { p: Vec2::new(12.6, 0.0), d: Vec2::X });
+        assert_eq!(bridges.recut(&land), vec![0]);
+        // The third rung: kept.
+        bridges.chains[0].rungs.push(Rung { p: Vec2::new(10.0 + 2.0 * SPACING, 0.0), d: Vec2::X });
+        assert_eq!(bridges.recut(&land), vec![0]);
+        assert_eq!(bridges.chains[0].root_cut, Some(on_shore));
+        // Someone's plank comes to lie over one of its corners; the chain
+        // grows on, worked out again every frame, and its root stays as it
+        // was cut. Afresh, that corner would have been cut along the plank.
+        let corner = on_shore.1;
+        let plank = vec![
+            Rung { p: Vec2::new(corner.x + 0.3, corner.y - 0.4), d: Vec2::Y },
+            Rung { p: Vec2::new(corner.x + 0.3, corner.y + 2.0), d: Vec2::Y },
+        ];
+        bridges.chains.push(left(1, 0, plank));
+        assert_eq!(bridges.recut(&land), vec![1]);
+        bridges.chains[0].rungs.push(Rung { p: Vec2::new(10.0 + 3.0 * SPACING, 0.0), d: Vec2::X });
+        bridges.chains[0].tip = Some(Rung { p: Vec2::new(16.0, 0.0), d: Vec2::X });
+        assert_eq!(bridges.recut(&land), vec![0]);
+        assert_eq!(bridges.chains[0].corners[0], on_shore);
+        let others = bridges.ground_but(0);
+        let ground = |at: Vec2| land(at) || others.iter().any(|&quad| inside_quad(at, quad));
+        let (afresh, _) = corners_of(&bridges.chains[0].all(), true, &land, &ground);
+        assert!(afresh[0].1.distance(on_shore.1) > 0.05, "the root would not have changed: {:?}", afresh[0]);
+    }
+
+    #[test]
+    fn a_chain_forgotten_takes_what_was_drawn_of_it_down() {
+        // A root and a tip drawn, and back inland: the chain goes, and its
+        // mesh is handed over to be taken down.
+        let root = Rung { p: Vec2::new(10.0, 0.0), d: Vec2::X };
+        let mesh = Entity::from_bits(7);
+        let mut bridges = Bridges::default();
+        bridges.begin(0, root, false);
+        bridges.chains[0].tip = Some(Rung { p: Vec2::new(11.0, 0.0), d: Vec2::X });
+        bridges.chains[0].mesh = mesh;
+        bridges.abandon(0);
+        assert!(bridges.chains.is_empty() && bridges.active.is_none());
+        assert_eq!(bridges.orphans, vec![mesh]);
+        // Let go of with a tip too short to keep, the same; one never
+        // drawn leaves nothing to take down.
+        let mut bridges = Bridges::default();
+        bridges.begin(0, root, false);
+        bridges.chains[0].tip = Some(Rung { p: Vec2::new(10.3, 0.0), d: Vec2::X });
+        bridges.chains[0].mesh = mesh;
+        let mut metres = 10.0;
+        assert_eq!(bridges.let_go(&mut metres), None);
+        assert!(bridges.chains.is_empty());
+        assert_eq!(bridges.orphans, vec![mesh]);
+        let mut bridges = Bridges::default();
+        bridges.begin(0, root, false);
+        bridges.abandon(0);
+        assert!(bridges.orphans.is_empty());
+        // A tip dropped from a chain that stays is the chain changing: it
+        // is worked out again, without the tip's plank.
+        let nothing = |_: Vec2| false;
+        let mut bridges = Bridges::default();
+        bridges.begin(0, root, false);
+        bridges.chains[0].rungs.push(Rung { p: Vec2::new(10.0 + SPACING, 0.0), d: Vec2::X });
+        bridges.chains[0].tip = Some(Rung { p: Vec2::new(13.0, 0.0), d: Vec2::X });
+        assert_eq!(bridges.recut(&nothing), vec![0]);
+        assert_eq!(bridges.chains[0].corners.len(), 3);
+        bridges.abandon(0);
+        assert_eq!(bridges.recut(&nothing), vec![0]);
+        assert_eq!(bridges.chains[0].corners.len(), 2);
+        assert!(bridges.recut(&nothing).is_empty());
     }
 
     #[test]
