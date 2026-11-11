@@ -45,7 +45,7 @@ use crate::{Dead, LAND_STEP_UP, Player, drive};
 
 /// How high over your feet it lies, in metres: as high as a step, so that
 /// nothing you could step up onto hides any of it.
-const HEIGHT: f32 = LAND_STEP_UP;
+pub(crate) const HEIGHT: f32 = LAND_STEP_UP;
 
 /// How wide the outline is, in metres, just inside the sector's edge:
 /// about three pixels on a phone with the camera at its usual 24 m over
@@ -198,18 +198,19 @@ fn spawn(
 fn follow(
     driving: Res<drive::Driving>,
     bridging: Res<crate::bridge::Bridging>,
-    me: Query<(&Transform, &Venue, Has<Dead>), With<Player>>,
+    me: Query<(&Transform, &Venue, Has<Dead>, Has<crate::Drinking>), With<Player>>,
     mut ranges: Query<(&mut Transform, &mut Visibility), (With<HitRange>, Without<Player>)>,
 ) {
     let Ok((mut place, mut shown)) = ranges.single_mut() else {
         return;
     };
     // Nor while you carry a plank, there being no punch to show the range
-    // of (`bridge`; Hajun, 2026-11-09: "remove the hit indicator").
+    // of (`bridge`; Hajun, 2026-11-09: "remove the hit indicator"); nor
+    // with a potion at your mouth, for the same reason (`utility`).
     let body = me
         .single()
         .ok()
-        .filter(|&(_, &here, dead)| here == Venue::Arena && !driving.on() && !dead && !bridging.0)
+        .filter(|&(_, &here, dead, drinking)| here == Venue::Arena && !driving.on() && !dead && !bridging.0 && !drinking)
         .map(|(body, ..)| body);
     shown.set_if_neq(if body.is_some() { Visibility::Inherited } else { Visibility::Hidden });
     let Some(body) = body else {
@@ -225,7 +226,7 @@ fn follow(
 
 /// The turn about the ground's up that faces straight ahead (-Z) along
 /// `facing`, in the ground's (x, z).
-fn turned_to(facing: Vec2) -> Quat {
+pub(crate) fn turned_to(facing: Vec2) -> Quat {
     Quat::from_rotation_y((-facing.x).atan2(-facing.y))
 }
 
@@ -263,9 +264,37 @@ fn restyle(
     }
 }
 
+/// A band lying on the ground in front of you, `width` across, from
+/// `from` to `to` ahead of your middle (-Z), in metres: its fill, and its
+/// outline, [`WIDTH`] wide just inside its edge, as the punch's range has
+/// them. What is aimed in Bridge Wars shows where it will go with one
+/// (`utility`).
+pub(crate) fn band(width: f32, from: f32, to: f32) -> (Mesh, Mesh) {
+    let half = width * 0.5;
+    let corners = vec![
+        Vec2::new(-half, -from),
+        Vec2::new(-half, -to),
+        Vec2::new(half, -to),
+        Vec2::new(half, -from),
+    ];
+    let mut indices = Vec::new();
+    triangle(&corners, &mut indices, 0, 1, 2);
+    triangle(&corners, &mut indices, 0, 2, 3);
+    let fill = flat(corners.clone(), indices);
+    let mut points = corners.clone();
+    points.extend(inset(&corners, WIDTH));
+    let mut indices = Vec::new();
+    for i in 0..4 {
+        let j = (i + 1) % 4;
+        triangle(&points, &mut indices, i, j, 4 + j);
+        triangle(&points, &mut indices, i, 4 + j, 4 + i);
+    }
+    (fill, flat(points, indices))
+}
+
 /// What a sheet of it is made of: `colour`, as see-through as its alpha
 /// says, unlit and drawn [`GAIN`] times as bright, from either side.
-fn look(colour: Color) -> StandardMaterial {
+pub(crate) fn look(colour: Color) -> StandardMaterial {
     StandardMaterial {
         base_color: bright(colour),
         unlit: true,
@@ -277,7 +306,7 @@ fn look(colour: Color) -> StandardMaterial {
 }
 
 /// `colour` [`GAIN`] times as bright, its alpha as it is.
-fn bright(colour: Color) -> Color {
+pub(crate) fn bright(colour: Color) -> Color {
     let linear = colour.to_linear();
     Color::linear_rgba(linear.red * GAIN, linear.green * GAIN, linear.blue * GAIN, linear.alpha)
 }
@@ -430,6 +459,27 @@ mod tests {
 
     fn faces_up(triangles: &[[Vec3; 3]]) -> bool {
         triangles.iter().all(|[a, b, c]| (*b - *a).cross(*c - *a).y > 0.0)
+    }
+
+    #[test]
+    fn a_band_is_that_wide_from_here_to_there_ahead_of_you_with_its_outline_inside_it() {
+        let (fill, outline) = band(0.8, 0.5, 20.0);
+        let (points, triangles) = corners(&fill);
+        assert_eq!((points.len(), triangles.len()), (4, 2));
+        assert!(faces_up(&triangles));
+        // Ahead is -Z: from half a metre in front of you to twenty.
+        let (low, high) = points.iter().fold((Vec3::INFINITY, Vec3::NEG_INFINITY), |(low, high), p| (low.min(*p), high.max(*p)));
+        assert!(low.abs_diff_eq(Vec3::new(-0.4, 0.0, -20.0), 1e-5) && high.abs_diff_eq(Vec3::new(0.4, 0.0, -0.5), 1e-5));
+        let (points, triangles) = corners(&outline);
+        assert_eq!((points.len(), triangles.len()), (8, 8));
+        assert!(faces_up(&triangles));
+        // The outline's own edge is the band's, and it reaches WIDTH in.
+        for point in &points {
+            let (across, along) = (point.x.abs(), -point.z);
+            assert!(across <= 0.4 + 1e-5 && (0.5 - 1e-5..=20.0 + 1e-5).contains(&along), "{point:?}");
+            let in_from_edge = (0.4 - across).min(along - 0.5).min(20.0 - along);
+            assert!(in_from_edge < 1e-4 || (in_from_edge - WIDTH).abs() < 1e-4, "{point:?}");
+        }
     }
 
     #[test]

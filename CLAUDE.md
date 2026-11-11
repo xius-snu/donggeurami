@@ -304,7 +304,10 @@ alone; the server is `cargo build -p roundtown_server`. Never `--workspace`,
 which would build the game with the server's half of replicon in it.
 
 Android needs the `release-android` profile, a manual strip step, and Gradle
-(`versionCode` in `mobile/android/app/build.gradle` is the build number: 19
+(`versionCode` in `mobile/android/app/build.gradle` is the build number: 20
+on 2026-11-12, Bridge Wars' two shops and everything they sell, the swords,
+the second button, and games of two to four people with no bots (protocol
+13, the server deployed with it); 19
 late on the night of 2026-11-11, what the generators make dropping onto
 its pad, the level and the count written by the sapphire and amethyst
 generators, grey panels, 25 m of bridge for 4 silver, and the camera at
@@ -590,6 +593,254 @@ was the town itself; everything below about the map, its islands, the
 void, the punch's knockback and its range held for the town then, and
 holds for the arena now.
 
+- **Since 2026-11-12 Bridge Wars has two shops, and everything in Hajun's
+  file is in the game** (Hajun: "i updated the bridgewarsgameevent.txt.
+  update the generator rates, then add all the itemshop/upgrade shop items,
+  make them functional, and test each one to see if they work functioanlly
+  properly and visually pleasingly. you may organize shoplayout in your own
+  way, but keep it easy for people to be able to understand right away
+  without too much text ... you may also need to make the sword animation
+  for the swords rather than using punch swing animation for it";
+  `PROTOCOL_VERSION` 13, the server deployed with it, the binary before
+  kept on the VM as `roundtown-server.prev-2026-11-12b`; APK 20). The file
+  was saved twice more while this was being built, last at 02:58 that
+  night, and the game is as that one has it: **read the file again before
+  changing a number**, Hajun edits it as they go. The rules are all in
+  `roundtown_net::bridge_wars`, as the generators' are: `Outfits`, what
+  everyone has and what each team has bought, beside the `Mint`, the
+  server's online and this device's own in a game played offline. What
+  there is, and where:
+  - **The rates**: an amethyst every 60 s, 40 from 4:00 and 25 from 8:00
+    (`interval`; 40, 30 and 20 until then), so at 60, 120, 180 and 240 s,
+    every 40 s to 480, and every 25 after.
+  - **What everyone has** (`roundtown_net::Kit`: the sword and the shield
+    by tier, what is on the second button and how many, until when a
+    potion lasts, and whether a trap has them blinded; `Upgrades`, a
+    team's: its generator's step, stronger swords, better shields' step,
+    the heal pool, the traps waiting). Online both are on the game's own
+    entity beside the `Purses` (`Kits`, `Upgraded`), sent to the room as
+    they change, so every device knows what everyone carries; a purchase
+    is `Ask::Buy(Ware)`, answered `Tell::Bought(Ware)`, and using what is
+    on the button `Ask::Use(Use)`.
+  - **The item shop, at the red stand** (`Shop::Items`; the prices and the
+    numbers are the file's): Bridge, 25 m for 4 silver; the Basic, the
+    Silver and the Aura Sword, 10 silver, 7 gold and 4 amethyst, which add
+    5, 10 and 20 to a punch's 12 (`SWORD_DAMAGE`); the Basic, the Advanced
+    and the Aura Shield, 24 silver, 12 gold and 6 amethyst, which keep 6%,
+    14% and 22% of every blow off (`SHIELD_SHARE`); and five things for
+    the second button, one kind at a time ("you can only buy if the 2nd ui
+    button is either empty or its filled by the same item u already
+    have"): Fireball, 40 silver, three on the button at the most ("cap at
+    3 stack"); Bridge Builder, 1 amethyst; Speed Potion, 1 amethyst;
+    Invisibility Potion, 2 amethyst; Healing Potion, 3 gold. Only a better
+    sword or shield than the one you have is sold. **Dying loses the
+    sword, what is on the second button, a potion still lasting and the
+    metres of bridge; the shield stays** ("sword is lost on death, shield
+    carries on", `Outfits::die`, `arena::lose_on_death`).
+  - **The upgrade shop, at the blue stand** (`Shop::Upgrades`, your whole
+    team's, in sapphire): the generator, 2, 4, 6 and 8, half as fast again,
+    twice, amethyst too, and three times as fast (`FORGE_SPEED`, "150%",
+    "200%", "starts spawning amethyst too", "300%": the team's own silver
+    and gold; the amethyst comes on the team's own pad); Stronger Swords,
+    4, once, 5 more on every sword of the team; Better Shields, 2, 3, 4
+    and 6, 6% more kept off each time; Heal Pool, 1, 5 health every 2.5 s
+    to whoever of the team stands on its island; Blindness Trap, 1, 2 and
+    4 for up to three waiting.
+  - **The windows** (`src/market.rs`): standing in the outline at a stand
+    opens that stand's shop, the red-roofed one's (`RoofTiles_Red`) the
+    item shop and the blue one's (the material `bluemarket`) the upgrade
+    shop, as the map has them (`market::Shops`, `shop_zones`); the server
+    sells within 5 m of where they stood when it was built (`ARENA_SHOPS`,
+    `ARENA_UPGRADE_SHOPS`, `at_a_shop`; a test keeps the two together). A
+    window is a card to each thing: its picture, drawn in code
+    (`hud::Picture`) and tinted as the thing is, a name of a word or two,
+    one short line ("+5 dmg", "-14% dmg", "+40% 45s", "Blinds 8s", each
+    number filled in from the rules), a pip for each step of an upgrade
+    that goes by steps, and its price, the picture of what it is paid in
+    and how many; or, in the price's place, "Owned", "Max" or "Slot full".
+    What cannot be had is blocked out; a tap on a card buys it at once. The
+    item shop is three rows, the bridge and the swords, the shields, and
+    the five things for the button; the upgrade shop one row of five taller
+    cards. The window is put up again as what you hold or have changes. It
+    is still not a dialog, and covers the middle of the screen, you with
+    it.
+  - **The second button** (`src/utility.rs`, `hud::utility_slot`, the empty
+    slot up and to the left of the sword until then): the picture of what
+    is on it, how many in its corner, and the seconds a potion still lasts
+    over it ("45s"). **What is aimed**, the fireball and the builder, is
+    held and dragged ("rather than a push button, its a hold & drag / letgo
+    to shoot or cancel, and shows a long narrow rectangular hit range
+    indicator similar to Brock in brawlstars"): once the finger is 4% of
+    the short side from where it went down a band lies on the ground from
+    you that way (`range::band`, in `colours.arena.aim_outline` and
+    `aim_fill`), as long as a fireball flies and a metre wide, or as wide
+    as a bridge; let go and it goes that way, and you turn to face it;
+    dragged back to where it went down the band is gone, and letting go
+    there cancels. A quick tap that never dragged, under 0.3 s, uses it
+    the way you face (mine, as Brawl Stars fires at a tap), and so does Q
+    on desktop. Up on the screen is north, the camera being fixed over you.
+    Half a second has to pass between two. **What is drunk**, all three
+    potions (the healing one too in the file's last version: "after
+    drinking time 1.6s, speed reduct, same as speed potion"), is a press,
+    or Q: 1.6 s (`DRINK_SECS`) with the time left written in front of you
+    in tenths (`utility::show_drink`), at half your pace, with no punch,
+    your right hand at your mouth and your sword put away
+    (`crate::Drinking`); a press again, any hit that takes health off you,
+    or dying stops it with nothing drunk; run out, the potion is drunk
+    (`arena::Used::Potion`). The punch's range is put away meanwhile, as
+    while you build.
+  - **The fireball** (`src/fire.rs`, `bridge_wars::Flight`): a red glowing
+    ball thrown from in front of your chest, flying level and straight at
+    22 m/s for 12 m (`FIREBALL_SPEED`, `FIREBALL_RANGE`), through whatever
+    stands on the map; where it meets anyone of another team, or at the end
+    of its range, it bursts, and everyone of another team within 3 m takes
+    20, less what their shield keeps off, and is knocked away from where
+    it burst as a punch knocks. The blast is a ball of fire that swells to
+    as far as it reaches and fades in a third of a second. Online each is
+    an entity the server sends as it is thrown (`Fireball`), which every
+    device flies on by itself, and takes away as it bursts. The range was
+    20 m for its first hours, which bursts off the screen: the camera over
+    you shows 11 m up and down.
+  - **The Bridge Builder** (`src/bridge/builder_bot.rs`; "it spawns a bot
+    character that walks in bridge mode toward that direction, creating a
+    bridge in a straight line for 100m or until it reaches a island/land
+    and then the bot pops/disappears"): a body in your own look carrying a
+    plank, sent off from where you stand at the pace anyone builds at, 5
+    m/s. It walks straight over the ground, through whatever stands there,
+    to where the ground ends; there its bridge begins, a chain like any of
+    yours (`Chain`, its root on the very edge and cut along it, heading the
+    way it walked or as near that as a first plank may slant, 45 degrees),
+    laid a plank or two ahead of its feet; ground within a plank's reach
+    ahead, land or anyone's bridge, the bridge lands on it as yours do
+    (`land_on`); out of its own 100 m (`BUILDER_METRES`, not yours) it
+    ends where it is; and at the end of its bridge the builder shrinks to
+    nothing. Off the side of a bridge it forks. Walking 170 m without the
+    ground ending it gives up, and it is sent only from the ground. It is
+    only there to be seen (`lobby::puppet`, `crate::ForShow`: in nobody's
+    way, no punch lands on it) and is this device's alone, as the plank in
+    your arms is; online the server takes the builder off your button and
+    its bridge goes up a rung at a time (`Ask::Rung`), so everyone else
+    sees the bridge grow and not the builder.
+  - **The potions**: speed, 45 s at 1.4 times your pace (measured in the
+    desktop build: 10.0 m/s before, 5.0 drinking, 14.0 after); the healing
+    one, a quarter of your health back as it is drunk, with a green "+25"
+    floating off you; and invisibility, 30 s in which nobody of another
+    team draws you, your name or your bar (`island::show_where_i_am`,
+    `arena::place_tags`), and no bot goes for you (`arena::hunt`, the
+    server's `think`), while you and your own team see you see-through
+    (`gear::ghost`). **Being hit, or hitting, ends it** ("being hit or
+    attacking reveals u", `Outfits::reveal`): a blow that takes health off
+    you, or a punch of yours that lands on a body or an anchor, which is
+    all of a punch the server hears of. While a potion lasts with none
+    left, the button keeps its picture, faint, and its time, and takes
+    nothing else; then it is empty.
+  - **Swords and shields are seen on everyone** (`src/gear.rs`, by
+    `arena::Wears`, which every body in a game carries from the game's
+    kits). The sword is Hajun's model for its tier, `basicsword.glb`,
+    `silver_sword.glb` and `aura_sword.glb` (theirs of 2026-11-12, each a
+    blade up its own +y from a grip at its origin, 0.9 to 1.1 m; a test
+    keeps them in the APK), a child of the body put in its right hand every
+    frame once the limbs are posed (the rig's `hand.R`, followed up to the
+    body), its flat side up. **It is drawn bigger than modelled**, 1.7
+    times and twice across (`gear::SWORD_SCALE`): from the camera 15 m over
+    you a metre of thin blade was a hair. **With a sword the punch is a
+    slash** (`sword_offset`, `blade_way` in `src/lib.rs`): the right arm
+    holds it at the ready, a little forward of hanging, the blade out in
+    front, and at a press it is raised to level and swept about the body's
+    upright from the right of straight ahead across to the left in the
+    time a punch goes out, and back to the ready in the time it comes
+    back; and the slash leaves a trail (`gear::Trail`), the arc the blade
+    has swept, in the sword's colour, growing behind it and gone a sixth of
+    a second after. What a punch lands on, and when, is as it was: the
+    range drawn round you, at the press. A slash, like a punch, is this
+    device's alone: someone else's sword is seen at the ready and their
+    swing not at all. The shield is a ball of force round the body ("a
+    very transparent (slightly semitransparent) spherical forcefield"),
+    1.05 m out from its middle, in its tier's colour and as see-through as
+    that colour's alpha (`colours.arena.shield_*`).
+  - **The team's upgrades, seen**: the heal pool's 5 floats off whoever it
+    heals as a green "+5" (`arena::spawn_healed`; online any jump up in
+    health of 4 or more is taken for a heal). **A trap** springs on an
+    enemy stepping onto your island: it is used up, they are blinded for 8
+    s wherever they go (`BLIND_SECS`; the file's first version had it until
+    they had been off the island 5 s), your team is told "An enemy walked
+    into your trap!" and they "A trap has blinded you!", in the line the
+    timetable's are said in. **Blinded** (`gear::blindfold`; "they can only
+    see a very small circle around their character and the rest of their
+    screen is black except their ui menu/buttons/minimap"), the screen is
+    black all but a circle 2.6 m round you (`BLIND_SIGHT`): one UI node
+    with a round hole kept over you, under the buttons, the minimap and
+    the rest of the screen's own, over the world and the names and numbers
+    written over it. A blinded bot sees no further than that.
+  - **Who is in a game online** (Hajun, the same night: "when ur the only
+    real person in the queue for the bridge wars, it can be same as now
+    where 7 bots join u. but when there is atleast one other real person in
+    that same queue lobby, no bots will join, and after the wait time of no
+    more new joins, it will start the game as a 1v1 (2 side island being
+    empty), or 1v1v1 (with one island being empty) or 1v1v1v1, (or 2v2v2v2
+    with each bot teammate for missing slots if >=5 players)"): people are
+    seated in the order 0, 2, 1, 3, 4, 6, 5, 7 (`SEAT_ORDER` in
+    `server/src/arena.rs`), so that two are on opposite islands and the
+    first four each on their own; ten seconds after the last to join, one
+    person alone, or five or more, have the seats left filled with bots as
+    before, and two to four begin as they are, the seats nobody took kept
+    empty (a `Member` with no id, out from the start), so that a zombie's
+    seat is still past the players' eight. Offline it is you and seven
+    bots, as it was.
+  - **`assets/ui.ron`** has the words (`words.market`: the two titles,
+    "Owned", "Max", "Slot full", and each thing's name and line, in which
+    a `{number}` comes out of the rules; `words.arena.blinded` and
+    `trap_sprung`) and the colours (`colours.arena.sword_*`, `shield_*`,
+    `fireball`, `potion_*`, `heal_pool`, `trap`, `pip`, `pip_off`,
+    `aim_outline`, `aim_fill`, `drink`, `blind`). No number of the rules is
+    in it.
+  - **For trying it out**: `RT_ARENA_PURSE=<count>` begins a fight with
+    that many of each thing in every person's purse, on the server for its
+    games and on a desktop build for one played offline, as
+    `RT_ARENA_FROM` begins it late.
+  - **What is mine, the file not saying**: what you hold of the four
+    things is kept through a death (only what the item shop sold is lost);
+    Stronger Swords and Better Shields do nothing for a bare hand or
+    someone with no shield; the generator's third step keeps the second's
+    pace, and its amethyst is one a minute, two on the pad at the most;
+    nine of anything but a fireball on the button; the fireball's speed,
+    range, size and blast, that it harms neither its thrower's team nor an
+    anchor, and that it flies through walls (the server has no map); the
+    quick tap; that a trap springs only on stepping onto the island, and
+    not again on the same enemy until they have stepped off and on, and
+    never on a zombie; that your own team sees you while you are unseen;
+    the builder's pace, and that only its owner sees it; and how big the
+    swords are drawn, how they are held and swung, and the trail.
+  - **Checked on 2026-11-12, scripted, in the desktop build** (a throwaway
+    `src/arena/scratch_run.rs`, removed, with touches written in for the
+    cards and the second button). Offline, each thing: both windows, every
+    card bought by a tap, the prices off the counts, a fourth fireball and
+    a second kind refused, the cards blocked out with nothing to pay; each
+    sword from above and close, at the ready, slashing and walking, and
+    each shield; a punch with the Aura Sword and Stronger Swords taking 37
+    off a bot, and a bot's 12 taking 9.4 through the Aura Shield; the
+    fireball aimed, dragged back and cancelled, thrown, flying, bursting,
+    20 off a bot, and thrown by a quick tap; a builder bridging the 44 m
+    from the island to the town and landing, a second forking off that
+    bridge and reaching a sapphire island 83 m on, and standing on its
+    planks; a drink stopped by a second press and by a hit, the paces
+    above, a bot six metres from someone unseen leaving them alone, a punch
+    ending it, the healing taking 28 to 53; the pool's 5 every 2.5 s; a bot
+    stepping into a trap, and being blinded for 8 s on an enemy's island.
+    Online, a server on this PC and two copies: two people begun as a 1v1
+    with no bots; everything bought from the server at both stands; the
+    second copy seeing the first's sword and shield, walking into its trap
+    and being blinded, not seeing it while it was unseen and seeing it
+    again as it punched (22 off), a fireball flying in and taking 20, and
+    the builder's bridge growing on its minimap. Unit-tested: the prices,
+    the tiers, the caps, the potions, the traps and the pools; the
+    builder's bridge to a far shore, its hundred metres with none, a slant
+    and a fork; the poses on the model; the band, the trail, the drag's
+    aim. The VM, deployed, let this PC's build in. **Not by hand, and not
+    on a phone: none was attached, so APK 20 is built, its assets checked
+    byte for byte, and not installed.** The Adreno has not drawn the
+    swords, the blended bubble and ghost, the trail, the bands or the
+    blindfold.
 - **Since the night of 2026-11-11 Bridge Wars has generators, a shop and a
   timetable** (Hajun: "i want to now make the generators functional in the
   pvpmap, using the 4 item models in the asset folder as the items being
@@ -624,7 +875,8 @@ holds for the arena now.
     Silver one every 2 s, half a second more or less, 48 to a pad at the
     most; gold every 7.5 s, a second more or less, 6; sapphire every 30 s,
     23 from 2:00 and 12 from 6:00, 4; amethyst every 40 s, 30 from 4:00 and
-    20 from 8:00, 2. A generator's time comes round whether or not it is
+    20 from 8:00, 2 (every 60, 40 and 25 since 2026-11-12, above). A
+    generator's time comes round whether or not it is
     full: holding its most, it makes nothing then, and its count starts
     over (mine: the file says only "max held on generator"; until late
     that night a full one's count stood still, and its next thing was a
@@ -643,11 +895,27 @@ holds for the arena now.
     having no map; a test reads them off the map, by what Hajun calls the
     objects (`the_generators_pads_are_where_the_map_has_them`).
   - **Picking up** (`MAGNET`, 1.5 m across the ground from your middle to
-    the thing's, with your feet within 3 m of the pad's top: Hajun's
-    "short magnet"; `Mint::pick_up`), and, since late that night, only
-    once the thing has dropped onto its pad and lain there a moment, 0.85
-    s after it was made (`PICK_UP_AFTER`: `DROP_SECS` 0.55 and `LIE_SECS`
-    0.3, mine; "What you see", next): online the server gives a thing to
+    the thing's: Hajun's "short magnet"; `Mint::pick_up`), **wherever the
+    thing is, dropping or lying, once it is within your reach** (since
+    2026-11-12; Hajun: "the delay is a bit too much for the delay between
+    the item dropping from generator and the user collecting - user
+    should be able to collect in the air too maybe when they jump"): no
+    further over your feet than `REACH_OVER`, 2.14 m, half a metre over
+    your head, as Minecraft picks a thing up half a block over a
+    player's, nor under them than `REACH_UNDER`, 1.5 m, so that a jump
+    across a pad still takes what lies on it and the waiting room and a
+    fall past the island do not. A thing is where its drop has it
+    (`Piece::height`, `drop_height`: the rules' now, with `HOVER`,
+    `DROP_FROM` and `DROP_SECS`, as whoever runs the generators goes by
+    them): standing on its pad it is yours 0.45 s after it is made, still
+    dropping, and jumping as it appears, 0.33 s after, 2 m up; the
+    numbers but Minecraft's half metre are mine. For the evening before
+    it could not be had until it had landed and lain 0.3 s, 0.85 s after
+    it was made (`PICK_UP_AFTER`, gone), which Hajun found too long.
+    Measured in the desktop build, scripted, standing pinned on a pad
+    (0.449 to 0.451 s) and jumping as each thing was made (0.324 to
+    0.329 s, the feet 2.05 m up); not online, where it is the server's
+    and unit-tested, nor by hand. Online the server gives a thing to
     whoever of the people in the game comes within reach of it, where
     they last said they stood, the lower seat first within a tick, and it
     is gone for everyone that tick (`server/src/arena.rs`, `mint`,
@@ -671,13 +939,14 @@ holds for the arena now.
     for a bit before the player pick it up"): it appears 5 m over where it
     will hang (`loot::DROP_FROM`: over the head of anyone standing on the
     pad, and well under the camera, so drawn nearly half as big again
-    as it lies), falls there in 0.55 s, faster as it comes
-    (`loot::height`), and
-    lies 0.3 s more before anyone can have it, so that someone standing
-    on a pad sees each thing come down, land and fly to them; until then
+    as it lies), and falls there in 0.55 s, faster as it comes
+    (`loot::height`), so that someone standing on a pad sees each thing
+    come down before it flies to them from where it is, as it comes
+    within their reach ("Picking up", above; for its first evening it
+    had to land and lie 0.3 s first); until then
     it came up from nothing to its size in a fifth of a second where it
     lay, and was theirs the frame after. Online the drop begins as the
-    server's entity for it arrives, and the server keeps the wait. Seen
+    server's entity for it arrives, and who has it is the server's. Seen
     in a burst of shots a tenth of a second apart, offline and against a
     server on this PC, standing on the pad. Only those within
     48 m of the camera are moved: a full map has 240. At night they glow
@@ -694,8 +963,15 @@ holds for the arena now.
     `item_gold`, `item_sapphire`, `item_amethyst` in `assets/ui.ron`).
     The metres of bridge are no longer there ("remove the log icon - the
     bridge meter only shows as in map text in front of the bridge like
-    now"): they are written in front of you as you build, as before, and
-    in the shop.
+    now"): they are written in front of you as you build, as before, in
+    the shop, and, since 2026-11-12, inside the bridge button, under its
+    plank, small and white, building or not (`hud::bridge_button`,
+    `BridgeCount`, written by `show_resources`; 2.8 shares of the short
+    side, in `colours.arena.bridge_count`; Hajun: "above the ui bridge
+    button add a small white text "123m"", and a few minutes later,
+    "instead of above the button, put it inside the button, below the
+    icon": the plank is moved up 13% of the button to make room). Seen in
+    the desktop build with 123 m written in.
   - **The shop** (`src/market.rs`): standing in the white outline on the
     ground in front of the red-roofed stand on an island, anyone's (the
     map's `activation` material, at a stand roofed in `RoofTiles_Red`;
@@ -718,8 +994,11 @@ holds for the arena now.
     which is not taken, so that touching the stick walks you away, and
     Escape; shut by hand it stays shut until you have stepped out of the
     outline and in again; stepping out of it, dying and the game's end
-    shut it too. The blue stands' outlines are nothing yet. The words are
-    `words.arena.shop`, `shop_bridge` and `shop_have`.
+    shut it too. The blue stands' outlines were nothing until 2026-11-12,
+    when they became the upgrade shop and this one the item shop, with a
+    card for everything it sells ("two shops", above); its words were
+    `words.arena.shop`, `shop_bridge` and `shop_have`, and are
+    `words.market` since.
   - **Everyone starts with no bridge** (`arena.bridge_metres` in
     `assets/ui.ron`, 0 where it was 500 since 2026-11-10): my call, Hajun
     not having said, as a game of Bedwars begins with no blocks. Four
@@ -831,6 +1110,21 @@ holds for the arena now.
     checked byte for byte, and **not installed: no phone was attached**;
     none of this has been seen on the phone, the camera's fit least of
     all.
+  - **On 2026-11-12, after APK 19** (Hajun: "dont rebuild apk yet"): a
+    thing is picked up as it drops, the metres of bridge are written
+    inside the bridge button, and the minimap marks the sapphire and
+    amethyst generators (each under its own heading above). The server
+    was deployed with the new reach (the binary before kept on the VM as
+    `roundtown-server.prev-2026-11-12`); `PROTOCOL_VERSION` is still 12,
+    nothing sent having changed, so APK 19 plays online and has the new
+    pick-up there, the server deciding it, and keeps the old 0.85 s wait
+    in a game played offline, and has neither the number in the button
+    nor the marks, until an APK is built again. Not committed either.
+    Hajun's `bridgewarsgameevent.txt` had by then been changed by hand
+    (amethyst every 60, 50 and 40 s where the game has 40, 30 and 20; an
+    item shop and an upgrade shop begun): nothing of that was in the game,
+    nobody having asked, until Hajun did, later that night ("two shops",
+    above).
   - **The zombies are all mine but that they come**: the file says
     "Sudden death: zombies spawn all over the map", and no more. Twelve
     (`ZOMBIES`): one on each team's island, 4 m to the blue stand's side
@@ -895,7 +1189,9 @@ holds for the arena now.
     (`roundtown_net::bridge_wars::waiting_spot`, the room's floor, 150.5 m
     up since the map of 2026-11-11 and 100.5 until then, as a shared
     constant, which a test checks the map agrees with), fills
-    the seats left with its own bots after 10 s, counts down, sends everyone
+    the seats left with its own bots after 10 s (since 2026-11-12 only for
+    one person alone or five or more, "Who is in a game online", above),
+    counts down, sends everyone
     to their islands, and runs the clock; the device follows its
     `ArenaRound` and `Seats` (`arena::follow_round`): the stage and the
     time, everyone's health in whole points, each team's anchor and who is
@@ -1348,7 +1644,19 @@ holds for the arena now.
     whenever they change (`draw_bridges`, `Bridges::version`), and over the
     picture a dot for you (`map_me`, red) and one for each teammate
     (`map_mate`, green), placed as you move and hidden when dead
-    (`place_dots`). Nobody else is on it. `hud::spawn_arena_bar` puts it
+    (`place_dots`). Nobody else is on it. **Each sapphire and each
+    amethyst generator is marked on it** (`minimap::mark_generators`,
+    since 2026-11-12; Hajun: "in the minimap, add a smaller sapphire and
+    amethyst logo onto the minimap where the generators are. so the icon
+    need to be smaller so it fits inside the smaller sapphire island in
+    the minimap"): the item's stone in its colour, 5.5% of the map across
+    (`MARK`) where the smaller islands are 8%, so each sits inside its
+    island with the island showing round it, under the dots. It is the
+    stone alone, filled, drawn 32 pixels across for the size
+    (`hud::item_mark`): the picture the counts have, 128 pixels with the
+    line round its table, came out ragged with a ring of flecks at 13
+    pixels. Seen in the desktop build: 11 pixels across on islands 18
+    across, in a 900-pixel-high window. `hud::spawn_arena_bar` puts it
     up (`hud::MinimapNode`, 26 shares of the short side, `hud::MINIMAP`);
     the picture is made as the app opens (`minimap::plugin`), clear, so
     that the bar can hold it before the map is read.
@@ -1531,7 +1839,10 @@ holds for the arena now.
   and up and to the left of it and over it two empty slots
   (`hud::ARENA_SLOTS`, `hud::empty_slot`: the buttons' disc with a faint
   rim, `colours.arena.slot_rim`, which takes a press and does nothing),
-  where a bow and dynamite go once bought; and over those a smaller
+  where a bow and dynamite go once bought (the one over the sword is the
+  bridge button since 2026-11-08, and the other the second button, for
+  what the item shop sells to use, since 2026-11-12: `hud::utility_slot`,
+  `utility`); and over those a smaller
   button of three dots (`hud::ARENA_DOTS`), which does nothing yet; the
   stick stays, and nothing else of the town's bar is there (no balance,
   person, gear, gift, social, face or chat). The pictures are drawn in code
@@ -2165,7 +2476,9 @@ where things come from, not what they are.
   `RT_CAR_AT=<seconds>` the town's buses at one point of their loop.
   `RT_ARENA_FROM=<seconds>` begins a game of Bridge Wars' fight that far
   into its timetable (the server for its games, a desktop build for one
-  played offline). `RT_CLOCK_OFF=<seconds>` puts a copy's own clock that far out, for
+  played offline), and `RT_ARENA_PURSE=<count>` with that many of each
+  thing in every person's purse, for trying the shops out.
+  `RT_CLOCK_OFF=<seconds>` puts a copy's own clock that far out, for
   trying the town's clock out on one machine, whose clock both copies
   share. A
   server on this PC for two copies to meet on: `cargo build -p

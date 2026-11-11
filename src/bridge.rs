@@ -173,6 +173,9 @@ use crate::net::Online;
 use crate::ui::{UiChanged, ui};
 use crate::{Carrying, Dead, Intent, LAND_STEP_UP, MOVE_SPEED, PLAYER_RADIUS, Player, ThirdPersonCamera};
 
+mod builder_bot;
+pub(crate) use builder_bot::send_builder;
+
 /// Half the width of a plank, in metres: Hajun's bridges in
 /// `pvptownmap.glb` were 2.726 m wide.
 pub(crate) const HALF_WIDTH: f32 = 1.363;
@@ -842,6 +845,9 @@ pub(crate) fn plugin(app: &mut App) {
             (
                 (toggle, hear_planks).before(crate::read_player_input),
                 (rebuild, carry, light_button).after(lay),
+                // A Bridge Builder's builders, whose planks are built with
+                // the rest.
+                (builder_bot::equip, builder_bot::walk).chain().after(lay).before(rebuild),
                 // The camera's place for this frame is set by then.
                 show_left.after(crate::follow_camera),
             ),
@@ -1031,22 +1037,26 @@ fn carry(
             visibility.set_if_neq(shown);
         }
         Err(_) => {
-            let colour = ui().colours.arena.plank.to_linear();
-            let mut mesh = Mesh::from(Cuboid::new(HELD.x, HELD.y, HELD.z));
-            let count = mesh.count_vertices();
-            mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, vec![[colour.red, colour.green, colour.blue, 1.0]; count]);
-            commands.entity(you).with_child((
-                HeldPlank,
-                Name::new("Held plank"),
-                Mesh3d(meshes.add(mesh)),
-                MeshMaterial3d(look.0.clone()),
-                Transform::from_translation(HELD_AT),
-                shown,
-                NotShadowCaster,
-                NotShadowReceiver,
-            ));
+            commands.entity(you).with_child((HeldPlank, Name::new("Held plank"), board(&mut meshes, &look), shown));
         }
     }
+}
+
+/// The plank someone building carries, as it hangs in front of them: the
+/// one in your arms ([`carry`]), and the one in a builder's
+/// (`builder_bot`).
+fn board(meshes: &mut Assets<Mesh>, look: &Look) -> impl Bundle {
+    let colour = ui().colours.arena.plank.to_linear();
+    let mut mesh = Mesh::from(Cuboid::new(HELD.x, HELD.y, HELD.z));
+    let count = mesh.count_vertices();
+    mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, vec![[colour.red, colour.green, colour.blue, 1.0]; count]);
+    (
+        Mesh3d(meshes.add(mesh)),
+        MeshMaterial3d(look.0.clone()),
+        Transform::from_translation(HELD_AT),
+        NotShadowCaster,
+        NotShadowReceiver,
+    )
 }
 
 /// Lays the bridge under you as you build: before you move, so that it is

@@ -12,13 +12,22 @@
 //! "the minerals spawning animation is like a growing big animation. i
 //! want it to be a drop from a certain height animation. so that even
 //! when player is standing on top of the generator, u can see the mineral
-//! for a bit before the player pick it up"): it appears [`DROP_FROM`] over
-//! where it will hang, over the head of anyone standing on the pad, and
-//! falls there in the rules' `DROP_SECS`, faster as it comes, and whoever
-//! runs the generators lets nobody have it until it has lain there a
-//! moment more (`roundtown_net::bridge_wars::PICK_UP_AFTER`). Until then
-//! it came up from nothing to its size where it lay, and someone standing
-//! on the pad had it before it was seen.
+//! for a bit before the player pick it up"): it appears the rules'
+//! `DROP_FROM` over where it will hang, over the head of anyone standing
+//! on the pad, and falls there in their `DROP_SECS`, faster as it comes
+//! (`roundtown_net::bridge_wars::drop_height`, which is the rules' because
+//! whoever runs the generators goes by where the thing is for who can
+//! reach it). Until then it came up from nothing to its size where it
+//! lay, and someone standing on the pad had it before it was seen.
+//!
+//! **It is yours as it comes within your reach, in the air** (since
+//! 2026-11-12; Hajun: "the delay is a bit too much for the delay between
+//! the item dropping from generator and the user collecting - user should
+//! be able to collect in the air too maybe when they jump"): half a metre
+//! over your head (the rules' `REACH_OVER`), 0.45 s after it is made if
+//! you stand on its pad, and sooner if you jump for it; taken there, it
+//! flies to you from where it is. For the evening before, nobody could
+//! have it until it had landed and lain 0.3 s, 0.85 s after it was made.
 //!
 //! This is only how they look. What is made, where, and who has picked up
 //! what are the rules' (`roundtown_net::bridge_wars::Mint`): the server's
@@ -43,7 +52,7 @@ use std::f32::consts::TAU;
 use bevy::prelude::*;
 use bevy::world_serialization::{WorldAsset, WorldAssetRoot, WorldInstanceReady};
 use bevy_replicon::prelude::Remote;
-use roundtown_net::bridge_wars::{DROP_SECS, MAGNET};
+use roundtown_net::bridge_wars::{DROP_FROM, DROP_SECS, HOVER, MAGNET, drop_height};
 use roundtown_net::{Item, Loot, Member, PAD_TOP};
 
 use crate::arena::InArena;
@@ -51,21 +60,13 @@ use crate::island::Venue;
 use crate::sky::Daylight;
 use crate::{Dead, Player, ThirdPersonCamera};
 
-/// How far over its pad's top a thing's own middle hangs, in metres, at
-/// the middle of its bob: the models reach 0.18 m under theirs at the
-/// most (the silver), so the lowest of them clears the pad by a hand.
-const HOVER: f32 = 0.42;
-/// How far up and down a thing bobs from there, in metres, how long one
-/// bob takes, in seconds, and how fast it turns, in radians a second, a
-/// turn in seven seconds (Hajun: "bob up and down and rotate slowly").
+/// How far up and down a thing bobs from where it hangs, the rules'
+/// `HOVER` over its pad's top, in metres, how long one bob takes, in
+/// seconds, and how fast it turns, in radians a second, a turn in seven
+/// seconds (Hajun: "bob up and down and rotate slowly").
 const BOB: f32 = 0.1;
 const BOB_SECS: f32 = 2.4;
 const SPIN: f32 = 0.9;
-/// How far over where it will hang a thing appears as it is made, to drop
-/// from there, in metres: over the head of anyone standing on the pad
-/// (1.64 m), and well under the camera, 16 m up. Mine, as the rules' time
-/// for the drop is.
-const DROP_FROM: f32 = 5.0;
 /// How long a thing takes to fly to whoever took it, in seconds; and how
 /// small it is as it arrives, as a share.
 const FLY_SECS: f32 = 0.16;
@@ -289,13 +290,11 @@ fn animate(
 }
 
 /// How far over where it hangs a thing is, `age` seconds after it was
-/// made, in metres: dropping from [`DROP_FROM`] for the rules' `DROP_SECS`,
-/// as a thing let go falls, slowly and then fast, and from the moment it
-/// lands bobbing about there, up first.
+/// made, in metres: dropping as the rules have it (`drop_height`), and
+/// from the moment it lands bobbing about there, up first.
 fn height(age: f32) -> f32 {
     if age < DROP_SECS {
-        let fallen = age / DROP_SECS;
-        return DROP_FROM * (1.0 - fallen * fallen);
+        return drop_height(age);
     }
     BOB * ((age - DROP_SECS) * TAU / BOB_SECS).sin()
 }
@@ -343,14 +342,17 @@ mod tests {
         }
         assert!(height(DROP_SECS - 1e-4) < 0.01);
         // Landed, it is where it hangs, and bobs no further than its bob
-        // from there, up first; and it is on its pad, for anyone standing
-        // there to see, before the rules let them have it.
+        // from there, up first.
         assert_eq!(height(DROP_SECS), 0.0);
         assert!(height(DROP_SECS + 0.1) > 0.0);
         for step in 0..200 {
             assert!(height(DROP_SECS + step as f32 * 0.05).abs() <= BOB + 1e-5);
         }
-        assert!(roundtown_net::bridge_wars::PICK_UP_AFTER >= DROP_SECS + 0.2);
+        // It begins well out of the reach of someone standing on the pad,
+        // so that they see it come, and is within it wherever it bobs.
+        let reach = roundtown_net::bridge_wars::REACH_OVER;
+        assert!(HOVER + DROP_FROM > reach + 2.0);
+        assert!(HOVER + BOB < reach);
     }
 
     #[test]

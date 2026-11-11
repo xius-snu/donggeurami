@@ -713,6 +713,60 @@ pub(crate) struct ArenaColours {
     pub bridge_low: Color,
     #[serde(deserialize_with = "colour")]
     pub bridge_out: Color,
+    /// The metres of bridge you have, written small inside the bridge
+    /// button, under its plank (`hud::BridgeCount`).
+    #[serde(deserialize_with = "colour")]
+    pub bridge_count: Color,
+    /// What the shops sell, as each one's picture is tinted on its card
+    /// and on the second button (`market`, `utility`), and, for the
+    /// shields, the ball of force round whoever has one (`gear`): the
+    /// three swords, the three shields, the fireball, the three potions,
+    /// the generator, the heal pool and the trap.
+    #[serde(deserialize_with = "colour")]
+    pub sword_basic: Color,
+    #[serde(deserialize_with = "colour")]
+    pub sword_silver: Color,
+    #[serde(deserialize_with = "colour")]
+    pub sword_aura: Color,
+    #[serde(deserialize_with = "colour")]
+    pub shield_basic: Color,
+    #[serde(deserialize_with = "colour")]
+    pub shield_advanced: Color,
+    #[serde(deserialize_with = "colour")]
+    pub shield_aura: Color,
+    #[serde(deserialize_with = "colour")]
+    pub fireball: Color,
+    #[serde(deserialize_with = "colour")]
+    pub potion_speed: Color,
+    #[serde(deserialize_with = "colour")]
+    pub potion_invisibility: Color,
+    #[serde(deserialize_with = "colour")]
+    pub potion_healing: Color,
+    #[serde(deserialize_with = "colour")]
+    pub heal_pool: Color,
+    #[serde(deserialize_with = "colour")]
+    pub trap: Color,
+    /// The pips on an upgrade's card that say how far it has been taken:
+    /// one taken, and one still to take.
+    #[serde(deserialize_with = "colour")]
+    pub pip: Color,
+    #[serde(deserialize_with = "colour")]
+    pub pip_off: Color,
+    /// The band on the ground that shows where a fireball or a builder
+    /// will go while you aim it (`utility`): its outline and its fill, as
+    /// the punch's range has them (`colours.melee`).
+    #[serde(deserialize_with = "colour")]
+    pub aim_outline: Color,
+    #[serde(deserialize_with = "colour")]
+    pub aim_fill: Color,
+    /// The time left of a drink, written in front of you while a potion
+    /// is at your mouth (`utility`).
+    #[serde(deserialize_with = "colour")]
+    pub drink: Color,
+    /// What covers the screen, all but a small circle round you, while a
+    /// trap has you blinded (`gear`).
+    #[serde(deserialize_with = "colour")]
+    pub blind: Color,
     #[serde(deserialize_with = "colour")]
     pub item_silver: Color,
     #[serde(deserialize_with = "colour")]
@@ -730,6 +784,17 @@ pub(crate) struct ArenaColours {
 }
 
 impl ArenaColours {
+    /// The colour a sword's picture is tinted, by its tier, 1 to 3.
+    pub(crate) fn sword(&self, tier: u8) -> Color {
+        [self.sword_basic, self.sword_silver, self.sword_aura][usize::from(tier.clamp(1, 3)) - 1]
+    }
+
+    /// The colour a shield's picture is tinted, and the ball of force
+    /// round whoever has it, by its tier, 1 to 3.
+    pub(crate) fn shield(&self, tier: u8) -> Color {
+        [self.shield_basic, self.shield_advanced, self.shield_aura][usize::from(tier.clamp(1, 3)) - 1]
+    }
+
     /// The colour `item`'s picture is tinted, beside its count and in the
     /// shop.
     pub(crate) fn item(&self, item: roundtown_net::Item) -> Color {
@@ -756,6 +821,7 @@ pub(crate) struct Words {
     pub online: OnlineWords,
     pub games: GamesWords,
     pub arena: ArenaWords,
+    pub market: MarketWords,
 }
 
 /// The game selector (`games`): its title, the three games, and what each
@@ -805,16 +871,15 @@ pub(crate) struct ArenaWords {
     pub anchors_broken: String,
     pub sudden_death: String,
     pub draw: String,
-    /// The shop: its title, what it sells (`{metres}`), and the line under
-    /// that saying how much bridge you have (`{metres}`).
-    pub shop: String,
-    pub shop_bridge: String,
-    pub shop_have: String,
     /// Over a sapphire or an amethyst generator, its level (`{item}`,
     /// `{level}` as 1, 2 or 3), and under it the count to its next thing
     /// (`{item}`, `{seconds}`).
     pub generator: String,
     pub generator_next: String,
+    /// The lines said as a trap goes off: to you, blinded by one, and to
+    /// the team whose trap it was.
+    pub blinded: String,
+    pub trap_sprung: String,
 }
 
 impl ArenaWords {
@@ -898,6 +963,48 @@ pub(crate) struct HouseBuilderWords {
     pub need_coins: String,
     pub reconnecting: String,
     pub lost_connection: String,
+}
+
+/// Bridge Wars' two shops (`market`, since 2026-11-12): their titles; what
+/// a card says in place of a price when the thing is yours already, when
+/// there is no more of it to buy, and when the second button holds
+/// something else; and each thing's name and the one line under it, in
+/// which `{...}` is a number out of the rules (`roundtown_net::bridge_wars`).
+/// A sword's and a shield's are by tier, a generator's by its step.
+#[derive(Deserialize, PartialEq, Debug)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct MarketWords {
+    pub items: String,
+    pub upgrades: String,
+    pub owned: String,
+    pub max: String,
+    pub taken: String,
+    pub bridge: String,
+    pub bridge_stat: String,
+    pub swords: [String; 3],
+    pub sword_stat: String,
+    pub shields: [String; 3],
+    pub shield_stat: String,
+    pub fireball: String,
+    pub fireball_stat: String,
+    pub builder: String,
+    pub builder_stat: String,
+    pub speed: String,
+    pub speed_stat: String,
+    pub invisibility: String,
+    pub invisibility_stat: String,
+    pub healing: String,
+    pub healing_stat: String,
+    pub forge: [String; 4],
+    pub forge_stats: [String; 4],
+    pub stronger_swords: String,
+    pub stronger_swords_stat: String,
+    pub better_shields: String,
+    pub better_shields_stat: String,
+    pub heal_pool: String,
+    pub heal_pool_stat: String,
+    pub trap: String,
+    pub trap_stat: String,
 }
 
 #[derive(Deserialize, PartialEq, Debug)]

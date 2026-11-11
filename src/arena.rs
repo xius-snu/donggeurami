@@ -113,15 +113,19 @@ use bevy::gltf::GltfMaterialName;
 use bevy::prelude::*;
 use bevy::world_serialization::WorldInstanceReady;
 use bevy_replicon::prelude::Remote;
-use roundtown_net::bridge_wars::{self as rules, BOT_WAIT, COUNTDOWN, Happening, Mint, PLAY_SECS, RESULTS_SECS};
+use roundtown_net::bridge_wars::{
+    self as rules, BOT_WAIT, COUNTDOWN, Flight, Happening, Mint, Outfits, PLAY_SECS, RESULTS_SECS,
+};
 use roundtown_net::{
-    ANCHOR_RADIUS, ARENA_ANCHORS, ARENA_SEATS, ARENA_TEAMS, ArenaRound, ArenaStage, Ask as NetAsk, Item, Member, PAD_HALF,
-    PAD_TOP, Purse, Purses, Seats, Tell, Ware, arena_team,
+    ANCHOR_RADIUS, ARENA_ANCHORS, ARENA_SEATS, ARENA_TEAMS, ArenaRound, ArenaStage, Ask as NetAsk, Item, Kit, Kits,
+    Member, PAD_HALF, PAD_TOP, Purse, Purses, Seats, Tell, Upgraded, Upgrades, Use, Utility, Ware, arena_team,
 };
 
 use crate::ai::{self, Steering};
+use crate::bridge;
 use crate::builder::{self, Fill};
 use crate::drive::Driving;
+use crate::fire;
 use crate::hud::{self, TakesPress};
 use crate::island::{self, Island, Islands, Land, Venue, is_material};
 use crate::lobby::{self, Lobby, Seat, Whereabouts};
@@ -336,6 +340,47 @@ impl Resources {
 #[derive(Component)]
 pub(crate) struct Zombie;
 
+/// What a body in a game of Bridge Wars has on it that is to be seen
+/// (since 2026-11-12, `gear`): the sword in its hand and the shield round
+/// it, by tier, 0 for none, and whether it has drunk the invisibility
+/// potion and is not to be drawn for anyone else. On every body in a game
+/// that is on ([`dress`]), from the game's kits: this device's offline, the
+/// server's online.
+#[derive(Component, Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub(crate) struct Wears {
+    pub(crate) sword: u8,
+    pub(crate) shield: u8,
+    pub(crate) unseen: bool,
+}
+
+/// What you have yourself, and what your team has bought, for the shops
+/// (`market`) and the second button (`utility`): nothing out of a game.
+#[derive(bevy::prelude::Resource, Clone, Copy, PartialEq, Debug, Default)]
+pub(crate) struct Outfit {
+    pub(crate) kit: Kit,
+    pub(crate) team: Upgrades,
+}
+
+/// How far into the fight it is, in seconds: what a potion's time left is
+/// counted from. Online it is the server's, to the second.
+#[derive(bevy::prelude::Resource, Default)]
+pub(crate) struct FightTime(pub(crate) f32);
+
+/// You want to buy this, standing at a shop (`market`): out of what you
+/// hold here, offline, or asked of the server.
+#[derive(Message, Clone, Copy)]
+pub(crate) struct Want(pub(crate) Ware);
+
+/// You have used what is on your second button (`utility`): a fireball
+/// thrown that way, as a plank heads; a builder sent off that way; or the
+/// potion drunk.
+#[derive(Message, Clone, Copy, Debug)]
+pub(crate) enum Used {
+    Fireball { heading: f32 },
+    Builder { heading: f32 },
+    Potion,
+}
+
 /// A zombie whose model has been turned green.
 #[derive(Component)]
 struct Painted;
@@ -391,6 +436,10 @@ struct Game {
     said: f32,
     /// The generators, offline: online they are the server's.
     mint: Mint,
+    /// What everyone has and what each team has bought (since
+    /// 2026-11-12): this device's own to run offline, by the shops' rules,
+    /// and online what the server says ([`follow_round`]).
+    outfits: Outfits,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -436,6 +485,8 @@ impl Game {
     /// zombie, in a seat past the players', is always back, a while later.
     /// What to mark its body dead with.
     fn die(&mut self, seat: usize) -> Dead {
+        // Their sword and what was on their second button go with them.
+        self.outfits.die(seat);
         if seat >= ARENA_SEATS {
             return Dead {
                 left: rules::ZOMBIE_RESPAWN_SECS,
@@ -598,11 +649,13 @@ struct AnchorBar(u8);
 struct AnchorFill;
 
 /// A number floating up off a body a punch landed on: where the body stood,
-/// and how long ago.
+/// and how long ago; or off one that has been healed, by a potion or its
+/// team's heal pool, in another colour.
 #[derive(Component)]
 struct DamageNumber {
     at: Vec3,
     age: f32,
+    healed: bool,
 }
 
 /// The panel in the middle of the screen with Play again and Exit on it,
@@ -620,7 +673,11 @@ pub(crate) struct ArenaSystems;
 
 pub(crate) fn plugin(app: &mut App) {
     app.add_message::<Ask>()
+        .add_message::<Want>()
+        .add_message::<Used>()
         .init_resource::<Resources>()
+        .init_resource::<Outfit>()
+        .init_resource::<FightTime>()
         .init_resource::<Fighting>()
         .init_resource::<OfflineArena>()
         .init_resource::<Begun>()
@@ -628,7 +685,7 @@ pub(crate) fn plugin(app: &mut App) {
         .add_observer(read_map)
         .add_systems(
             Update,
-            (hear, follow_round, cut_off, play, timetable, gather, publish, show_board)
+            (hear, follow_round, cut_off, play, timetable, gather, sell, use_things, publish, dress, show_board)
                 .chain()
                 .in_set(ArenaSystems)
                 .before(crate::read_player_input)
@@ -642,13 +699,14 @@ pub(crate) fn plugin(app: &mut App) {
             Update,
             (
                 (team_up, hunt).chain().after(ai::steer).after(crate::start_punch).before(crate::move_bodies),
-                (reap, deal_damage, hit_anchors, regen, respawn, break_anchors)
+                (reap, deal_damage, fireballs_offline, hit_anchors, regen, outfit_offline, respawn, break_anchors)
                     .chain()
                     .after(crate::move_bodies)
+                    .after(fire::fly)
                     .before(crate::follow_camera),
                 (show_death, show_panel, place_tags, place_anchor_bars, float_numbers, write_over_generators)
                     .after(crate::follow_camera),
-                (paint_zombies, fade_alerts),
+                (paint_zombies, fade_alerts, lose_on_death, trap_alerts),
             ),
         );
 }
@@ -856,7 +914,7 @@ fn hear(
 #[allow(clippy::too_many_arguments)]
 fn follow_round(
     game: Option<ResMut<Game>>,
-    rounds: Query<(&ArenaRound, &Seats, Option<&Purses>), With<Remote>>,
+    rounds: Query<(&ArenaRound, &Seats, Option<&Purses>, Option<&Kits>, Option<&Upgraded>), With<Remote>>,
     mut stock: ResMut<Resources>,
     mut me: Query<(Entity, &Transform, &mut Health, Option<&Dead>), With<Player>>,
     mut others: Query<
@@ -871,11 +929,22 @@ fn follow_round(
     if !game.online {
         return;
     }
-    let Ok((round, seats, purses)) = rounds.single() else {
+    let Ok((round, seats, purses, kits, upgraded)) = rounds.single() else {
         return;
     };
     if game.seats != seats.0 {
         game.seats.clone_from(&seats.0);
+    }
+    // What everyone has, and what each team has bought, is the server's.
+    if let Some(kits) = kits
+        && game.outfits.kits != kits.0
+    {
+        game.outfits.kits.clone_from(&kits.0);
+    }
+    if let Some(upgraded) = upgraded
+        && game.outfits.teams != upgraded.0
+    {
+        game.outfits.teams = upgraded.0;
     }
     // What you hold is what the server says you hold.
     if let Some(mine) = purses.and_then(|purses| purses.0.get(game.me))
@@ -925,6 +994,8 @@ fn follow_round(
                 }
                 if left < before {
                     spawn_number(&mut commands, at.translation, before - left);
+                } else if healed_by(before, left) {
+                    spawn_healed(&mut commands, at.translation, left - before);
                 }
                 // Dead, as the server says: counting down to standing
                 // again, or out for good. A fall marks you dead here first
@@ -963,6 +1034,8 @@ fn follow_round(
         }
         if left < before {
             spawn_number(&mut commands, at.translation, before - left);
+        } else if healed_by(before, left) {
+            spawn_healed(&mut commands, at.translation, left - before);
         }
         if left <= 0.0 && !dead {
             commands.entity(body).insert(Dead { left: f32::INFINITY });
@@ -971,6 +1044,14 @@ fn follow_round(
         }
     }
     game.health = health;
+}
+
+/// Whether health gone from `before` to `left` between two of the
+/// server's words on it is a heal, a potion's or a pool's, rather than
+/// what comes back by itself, a point or two at a time, or someone
+/// standing again with all of it.
+fn healed_by(before: f32, left: f32) -> bool {
+    before > 0.0 && left - before >= rules::HEAL_POOL - 1.0
 }
 
 /// Online, the connection gone in the middle of a game: it waits a moment
@@ -1211,10 +1292,11 @@ fn open(
         .insert((Seat(me), Team(arena_team(me)), Health::of(full)))
         .remove::<Dead>();
     // What you have to build with: the file's metres of bridge, and
-    // nothing in your purse.
+    // nothing in your purse (but for trying the shops out,
+    // `RT_ARENA_PURSE`).
     commands.insert_resource(Resources {
         bridge_metres: ui().arena.bridge_metres,
-        held: Purse::default(),
+        held: [purse_from(); 4],
     });
     spawn_board(commands);
     spawn_anchor_bars(commands, arena_team(me));
@@ -1240,7 +1322,19 @@ fn open(
         elapsed: 0.0,
         said: 0.0,
         mint: Mint::new(0.0, &mut || fastrand::f32()),
+        outfits: {
+            let mut outfits = Outfits::default();
+            outfits.seat(ARENA_SEATS);
+            outfits
+        },
     }
+}
+
+/// How many of each thing you begin a game played offline with: none, but
+/// for trying the shops out on desktop, where `RT_ARENA_PURSE=60` begins
+/// it with sixty of each (the server has the same, for its own games).
+fn purse_from() -> u16 {
+    std::env::var("RT_ARENA_PURSE").ok().and_then(|count| count.parse().ok()).unwrap_or(0)
 }
 
 /// How far into its timetable a game played offline begins its fight, in
@@ -1378,14 +1472,14 @@ fn gather(
     }
     let mut game = game.expect("checked");
     let elapsed = game.elapsed;
-    // Whatever is within reach that has dropped and lain its moment
-    // (`rules::PICK_UP_AFTER`): standing on the pad, you see each thing
-    // come down before it is yours.
+    // Whatever is within your reach, dropping or lying
+    // (`Mint::pick_up`): standing on the pad, you see each thing come
+    // down, and it is yours as it comes to half a metre over your head,
+    // sooner if you jump for it.
     if let Ok((you, at, dead)) = me.single()
         && !dead
-        && (at.translation.y - PAD_TOP).abs() <= rules::MAGNET_HEIGHT
     {
-        for piece in game.mint.pick_up(at.translation.xz(), elapsed) {
+        for piece in game.mint.pick_up(at.translation, elapsed) {
             let held = &mut stock.held[piece.item.index()];
             *held = held.saturating_add(1);
             if let Some((thing, _)) = things.iter().find(|(_, thing)| thing.key == loot::Key::Own(piece.id)) {
@@ -1393,8 +1487,303 @@ fn gather(
             }
         }
     }
-    for piece in game.mint.run(elapsed, &mut || fastrand::f32()) {
+    // Each team's own generator as fast as the team has raised it at the
+    // upgrade shop: yours, offline, the computer buying nothing.
+    let forge = game.outfits.teams.map(|team| team.forge);
+    for piece in game.mint.run(elapsed, &forge, &mut || fastrand::f32()) {
         loot::lay(&mut commands, &look, time.elapsed_secs(), loot::Key::Own(piece.id), piece.item, piece.at);
+    }
+}
+
+/// Sells you what you ask a shop for ([`Want`], `market`): offline out of
+/// what you hold, by the shops' rules (`Outfits::buy`), a bridge's metres
+/// with it; online asked of the server, which says so if it is yours
+/// (`Tell::Bought`, [`hear`]) and sends what everyone has.
+fn sell(
+    mut wants: MessageReader<Want>,
+    game: Option<ResMut<Game>>,
+    mut stock: ResMut<Resources>,
+    mut requests: MessageWriter<NetAsk>,
+) {
+    let Some(mut game) = game else {
+        wants.clear();
+        return;
+    };
+    for Want(ware) in wants.read().copied() {
+        if !game.playing() {
+            continue;
+        }
+        if game.online {
+            requests.write(NetAsk::Buy(ware));
+            continue;
+        }
+        let me = game.me;
+        let mut held = stock.held;
+        if game.outfits.buy(me, ware, &mut held) {
+            stock.held = held;
+            if ware == Ware::Bridge {
+                stock.bridge_metres += rules::BRIDGE_A_BUY;
+            }
+            info!("bought {ware:?}");
+        }
+    }
+}
+
+/// Does what using the thing on your second button does ([`Used`],
+/// `utility`): offline here, by the shops' rules, a fireball thrown from
+/// where you stand (`fire`), a potion's healing given as it is drunk;
+/// online asked of the server, which does the same for everyone to see.
+/// A builder is this device's either way (`bridge::send_builder`): sent
+/// off from where you stand, its bridge going to the server a rung at a
+/// time, as yours do.
+fn use_things(
+    mut used: MessageReader<Used>,
+    game: Option<ResMut<Game>>,
+    look: Res<fire::Look>,
+    assets: Res<AssetServer>,
+    mut me: Query<(&Transform, &mut Health), With<Player>>,
+    mut requests: MessageWriter<NetAsk>,
+    mut commands: Commands,
+) {
+    let Some(mut game) = game else {
+        used.clear();
+        return;
+    };
+    for used in used.read().copied() {
+        if !game.playing() {
+            continue;
+        }
+        let (seat, elapsed) = (game.me, game.elapsed);
+        if game.online {
+            requests.write(NetAsk::Use(match used {
+                Used::Fireball { heading } => Use::Fireball { heading },
+                Used::Builder { .. } => Use::Builder,
+                Used::Potion => Use::Potion,
+            }));
+            // The server takes the builder off your button; the builder
+            // itself is yours to send (`utility` asks only with one there).
+            if let Used::Builder { heading } = used
+                && let (Ok((at, _)), Some(member)) = (me.single(), game.seats.get(seat))
+            {
+                bridge::send_builder(&mut commands, &assets, member, seat as u8, at.translation, heading);
+            }
+            continue;
+        }
+        match used {
+            Used::Fireball { heading } => {
+                if game.outfits.spend(seat, Utility::Fireball)
+                    && let Ok((at, _)) = me.single()
+                {
+                    fire::throw(&mut commands, &look, Flight::thrown(at.translation, heading), seat, None);
+                }
+            }
+            Used::Builder { heading } => {
+                if game.outfits.spend(seat, Utility::Builder)
+                    && let (Ok((at, _)), Some(member)) = (me.single(), game.seats.get(seat))
+                {
+                    bridge::send_builder(&mut commands, &assets, member, seat as u8, at.translation, heading);
+                }
+            }
+            Used::Potion => {
+                if game.outfits.drink(seat, elapsed) == Some(Utility::Healing)
+                    && let Ok((at, mut health)) = me.single_mut()
+                {
+                    let back = health.full * rules::HEALING;
+                    if health.mend(back) {
+                        spawn_healed(&mut commands, at.translation, back);
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// The potions, the traps and the heal pools, offline (`Outfits::tick`),
+/// with every living player where they stand: whoever a pool heals has
+/// that much health back.
+fn outfit_offline(
+    time: Res<Time>,
+    game: Option<ResMut<Game>>,
+    mut bodies: Query<(&Transform, &Venue, &Seat, &mut Health), (With<WalkCycle>, Without<Dead>)>,
+    mut commands: Commands,
+) {
+    if !offline_fight(&game) {
+        return;
+    }
+    let mut game = game.expect("checked");
+    let standing: Vec<(usize, Vec2)> = bodies
+        .iter()
+        .filter(|(_, venue, ..)| **venue == Venue::Arena)
+        .map(|(at, _, seat, _)| (seat.0, at.translation.xz()))
+        .collect();
+    let elapsed = game.elapsed;
+    let ticked = game.outfits.tick(time.delta_secs(), elapsed, &standing);
+    for (at, _, seat, mut health) in &mut bodies {
+        if ticked.healed.contains(&seat.0) && health.mend(rules::HEAL_POOL) {
+            spawn_healed(&mut commands, at.translation, rules::HEAL_POOL);
+        }
+    }
+}
+
+/// Flies this device's own fireballs, offline, to whoever of another team
+/// than the thrower's they meet, or the end of their range, and bursts
+/// them there (`fire` draws them, and flies them on each frame): the
+/// blast's damage off everyone of another team it reaches, less what
+/// their shields keep off, a number off each, and a knock away from where
+/// it burst. Online the server does all of it, and its fireballs are only
+/// drawn here.
+fn fireballs_offline(
+    game: Option<ResMut<Game>>,
+    balls: Query<(Entity, &fire::Ball)>,
+    mut bodies: Query<
+        (Entity, &Transform, &Venue, &mut Health, &Seat, &mut Shove, &mut PlayerJump, Has<Zombie>),
+        (With<WalkCycle>, Without<Dead>),
+    >,
+    mut commands: Commands,
+) {
+    if !offline_fight(&game) {
+        return;
+    }
+    let mut game = game.expect("checked");
+    for (ball, flying) in &balls {
+        if flying.source.is_some() {
+            continue;
+        }
+        let flight = flying.flight;
+        let team = arena_team(flying.seat);
+        let met = bodies
+            .iter()
+            .any(|(_, at, venue, _, seat, ..)| *venue == Venue::Arena && arena_team(seat.0) != team && flight.meets(at.translation));
+        if !flying.spent() && !met {
+            continue;
+        }
+        let burst = flight.at();
+        for (body, at, venue, mut health, seat, mut shove, mut jump, zombie) in &mut bodies {
+            if *venue != Venue::Arena || arena_team(seat.0) == team || !rules::in_blast(burst, at.translation) {
+                continue;
+            }
+            let damage = game.outfits.through(seat.0, rules::FIREBALL_DAMAGE);
+            game.outfits.reveal(seat.0);
+            health.take(damage);
+            spawn_number(&mut commands, at.translation, damage);
+            // Knocked from where it burst, whatever they were reeling from.
+            shove.hurt = 0.0;
+            shove.knock(&mut jump, burst.xz(), at.translation.xz(), false);
+            if zombie {
+                shove.across *= rules::ZOMBIE_KNOCK;
+                jump.velocity_y *= rules::ZOMBIE_KNOCK;
+            }
+            if health.gone() {
+                let dead = game.die(seat.0);
+                commands.entity(body).insert(dead);
+            }
+        }
+        fire::burst(&mut commands, burst);
+        commands.entity(ball).despawn();
+    }
+}
+
+/// Puts on every body in a game that is on what it has that is to be seen
+/// ([`Wears`]), by its seat, and says what you have yourself ([`Outfit`])
+/// and how far into the fight it is ([`FightTime`]); out of a game, nobody
+/// wears anything.
+#[allow(clippy::type_complexity)]
+fn dress(
+    game: Option<Res<Game>>,
+    mut outfit: ResMut<Outfit>,
+    mut clock: ResMut<FightTime>,
+    me: Query<(Entity, Option<&Wears>), With<Player>>,
+    locals: Query<(Entity, &Seat, Option<&Wears>), (With<WalkCycle>, Without<Player>, Without<Remote>)>,
+    remotes: Query<(Entity, &Member, Option<&Wears>), (With<Remote>, With<WalkCycle>)>,
+    worn: Query<Entity, With<Wears>>,
+    mut commands: Commands,
+) {
+    let Some(game) = game.filter(|game| game.playing()) else {
+        for body in &worn {
+            commands.entity(body).remove::<Wears>();
+        }
+        outfit.set_if_neq(Outfit::default());
+        if clock.0 != 0.0 {
+            clock.0 = 0.0;
+        }
+        return;
+    };
+    let elapsed = game.elapsed;
+    if clock.0 != elapsed {
+        clock.0 = elapsed;
+    }
+    let wears = |seat: usize| {
+        let kit = game.outfits.kit(seat);
+        Wears {
+            sword: kit.sword,
+            shield: kit.shield,
+            unseen: kit.unseen(elapsed),
+        }
+    };
+    let mut put = |body: Entity, had: Option<&Wears>, seat: usize| {
+        let now = wears(seat);
+        if had != Some(&now) {
+            commands.entity(body).insert(now);
+        }
+    };
+    if let Ok((you, had)) = me.single() {
+        put(you, had, game.me);
+    }
+    if game.online {
+        for (body, member, had) in &remotes {
+            if let Some(seat) = game.seats.iter().position(|seated| seated.id == member.id) {
+                put(body, had, seat);
+            }
+        }
+    } else {
+        for (body, seat, had) in &locals {
+            put(body, had, seat.0);
+        }
+    }
+    outfit.set_if_neq(Outfit {
+        kit: game.outfits.kit(game.me),
+        team: game.outfits.team(game.me),
+    });
+}
+
+/// Dying loses what you bought at the item shop ("all items are lost upon
+/// death"): the server, or this device's own game, takes your sword and
+/// what was on your second button; the metres of bridge are this device's
+/// to take, here.
+fn lose_on_death(died: Query<(), (With<Player>, Added<Dead>)>, mut stock: ResMut<Resources>) {
+    if !died.is_empty() && stock.bridge_metres != 0.0 {
+        stock.bridge_metres = 0.0;
+    }
+}
+
+/// Says, in the line the timetable's are said in, that one of your team's
+/// traps has blinded someone, and that one has blinded you.
+fn trap_alerts(
+    outfit: Res<Outfit>,
+    mut was: Local<(bool, u8)>,
+    alerts: Query<Entity, With<Alert>>,
+    mut images: ResMut<Assets<Image>>,
+    mut commands: Commands,
+) {
+    let now = (outfit.kit.blind, outfit.team.traps);
+    if now == *was {
+        return;
+    }
+    let file = ui();
+    let words = &file.words.arena;
+    let said = if now.0 && !was.0 {
+        Some(&words.blinded)
+    } else if now.1 < was.1 {
+        Some(&words.trap_sprung)
+    } else {
+        None
+    };
+    *was = now;
+    if let Some(said) = said {
+        for old in &alerts {
+            commands.entity(old).try_despawn();
+        }
+        alert(&mut commands, &mut images, &Line::plain(said));
     }
 }
 
@@ -1785,6 +2174,7 @@ fn hunt(
         Option<&Team>,
         Has<Dead>,
     )>,
+    (wears, seats): (Query<&Wears>, Query<&Seat>),
     mut landed: MessageWriter<Landed>,
     mut commands: Commands,
 ) {
@@ -1795,9 +2185,11 @@ fn hunt(
     let (tuning, melee) = (file.arena, file.melee);
     let sector = Sector::of(&melee);
     let dt = time.delta_secs();
+    // Everyone a bot might go for: the living, but for whoever is unseen.
     let alive: Vec<(Entity, Vec3, Option<Team>)> = bodies
         .iter()
         .filter(|(_, _, venue, .., dead)| **venue == Venue::Arena && !dead)
+        .filter(|(body, ..)| !wears.get(*body).is_ok_and(|wears| wears.unseen))
         .map(|(body, at, _, _, _, _, _, _, _, team, _)| (body, at.translation, team.copied()))
         .collect();
     let hunters: Vec<Entity> = bodies
@@ -1816,12 +2208,17 @@ fn hunt(
             hunter.cooldown = (hunter.cooldown - dt).max(0.0);
             let here = body.translation;
             let mine = team.copied();
+            // Blinded by a trap, it sees no further than anyone blinded.
+            let blind = seats
+                .get(bot)
+                .is_ok_and(|seat| game.as_deref().is_some_and(|game| game.outfits.kit(seat.0).blind));
+            let sight = if blind { rules::BLIND_SIGHT } else { tuning.hunt_radius };
             let Some((target, there, _)) = alive
                 .iter()
                 .filter(|&&(other, at, theirs)| {
                     other != bot
                         && !(mine.is_some() && theirs == mine)
-                        && at.xz().distance(here.xz()) <= tuning.hunt_radius
+                        && at.xz().distance(here.xz()) <= sight
                         && (at.y - here.y).abs() <= PLAYER_HEIGHT * 2.0
                 })
                 .min_by(|a, b| a.1.distance_squared(here).total_cmp(&b.1.distance_squared(here)))
@@ -1927,6 +2324,7 @@ fn deal_damage(
     mut hits: MessageReader<Landed>,
     game: Option<ResMut<Game>>,
     mut victims: Query<(&Transform, &mut Health, &Seat, &mut Shove, &mut PlayerJump, Has<Zombie>), Without<Dead>>,
+    seats: Query<&Seat>,
     mut commands: Commands,
 ) {
     if !offline_fight(&game) {
@@ -1944,7 +2342,15 @@ fn deal_damage(
             shove.across *= rules::ZOMBIE_KNOCK;
             jump.velocity_y *= rules::ZOMBIE_KNOCK;
         }
-        let damage = ui().arena.damage;
+        // More with a sword in the hitter's hand, less through the
+        // victim's shield (`Outfits::punch`); a zombie, in a seat past the
+        // players', has neither.
+        let hitter = seats.get(hit.by).map_or(usize::MAX, |seat| seat.0);
+        let damage = game.outfits.punch(ui().arena.damage, hitter, seat.0);
+        // Whoever of the two was unseen is seen again ("being hit or
+        // attacking reveals u").
+        game.outfits.reveal(hitter);
+        game.outfits.reveal(seat.0);
         health.take(damage);
         spawn_number(&mut commands, at.translation, damage);
         if health.gone() {
@@ -1981,7 +2387,8 @@ fn hit_anchors(
     }
     let file = ui();
     let sector = Sector::of(&file.melee);
-    let damage = file.arena.damage;
+    // A sword breaks an anchor sooner, as it does a body.
+    let damage = rules::punch_damage(file.arena.damage, &game.outfits.kit(game.me), &game.outfits.team(game.me));
     let my_team = game.my_team();
     for swing in swings.read() {
         if (swing.feet - island::LAND_TOP_OF_THE_ISLANDS).abs() > PLAYER_HEIGHT {
@@ -2000,6 +2407,9 @@ fn hit_anchors(
             if game.online {
                 requests.write(NetAsk::HitAnchor { team: team as u8 });
             } else {
+                // Hitting an anchor is attacking: unseen no longer.
+                let me = game.me;
+                game.outfits.reveal(me);
                 game.anchors[team] = (game.anchors[team] - damage).max(0.0);
                 if game.anchors[team] <= 0.0 {
                     info!("team {team}'s anchor is broken");
@@ -2350,6 +2760,7 @@ fn place_tags(
     cameras: Query<(&Camera, &Transform), With<ThirdPersonCamera>>,
     windows: Query<&Window>,
     bodies: Query<(Entity, &Transform, &Health, &Team, &Name, Has<Dead>), Without<Player>>,
+    wears: Query<&Wears>,
     mut tags: Query<(Entity, &TagOf, &mut Visibility, &mut UiTransform, &ComputedNode, &Children)>,
     mut fills: Query<&mut Node, With<TagFill>>,
     mut commands: Commands,
@@ -2368,11 +2779,14 @@ fn place_tags(
     };
     let eye = GlobalTransform::from(*eye);
     for (tag, of, mut shown, mut place, node, children) in &mut tags {
-        let Ok((_, body, health, .., dead)) = bodies.get(of.0) else {
+        let Ok((_, body, health, team, _, dead)) = bodies.get(of.0) else {
             commands.entity(tag).despawn();
             continue;
         };
-        let point = (in_arena && !dead)
+        // Nor over anyone unseen, who is not drawn either: but one of your
+        // own team, whom you see, see-through (`gear`).
+        let unseen = wears.get(of.0).is_ok_and(|wears| wears.unseen) && Some(*team) != my_team;
+        let point = (in_arena && !dead && !unseen)
             .then(|| camera.world_to_viewport(&eye, body.translation + Vec3::Y * TAG_OVER).ok())
             .flatten()
             .filter(|point| on_screen(window, *point));
@@ -2540,11 +2954,37 @@ fn place_anchor_bars(
     }
 }
 
+/// A number floating up off the body at `at`, for health given back to
+/// it: "+5", in the heal pool's colour.
+fn spawn_healed(commands: &mut Commands, at: Vec3, health: f32) {
+    commands.spawn((
+        InArena,
+        DamageNumber {
+            at,
+            age: 0.0,
+            healed: true,
+        },
+        hud::words(format!("+{health:.0}"), NUMBER_TEXT, ui().colours.arena.heal_pool),
+        Node {
+            position_type: PositionType::Absolute,
+            left: Val::ZERO,
+            top: Val::ZERO,
+            ..default()
+        },
+        UiTransform::default(),
+        Visibility::Hidden,
+    ));
+}
+
 /// A number floating up off the body at `at`, for `damage` taken.
 fn spawn_number(commands: &mut Commands, at: Vec3, damage: f32) {
     commands.spawn((
         InArena,
-        DamageNumber { at, age: 0.0 },
+        DamageNumber {
+            at,
+            age: 0.0,
+            healed: false,
+        },
         hud::words(format!("{damage:.0}"), NUMBER_TEXT, ui().colours.arena.damage),
         Node {
             position_type: PositionType::Absolute,
@@ -2578,12 +3018,13 @@ fn float_numbers(
         return;
     };
     let eye = GlobalTransform::from(*eye);
-    let (ink, shadow) = {
+    let (hurt, healed, shadow) = {
         let colours = ui().colours;
-        (colours.arena.damage, colours.text_shadow)
+        (colours.arena.damage, colours.arena.heal_pool, colours.text_shadow)
     };
     let dt = time.delta_secs();
     for (number, mut floating, mut shown, mut place, node, mut colour, mut under) in &mut numbers {
+        let ink = if floating.healed { healed } else { hurt };
         floating.age += dt;
         let done = (floating.age / NUMBER_SECS).min(1.0);
         if done >= 1.0 {
@@ -2666,7 +3107,12 @@ fn show_board(
     let words = &ui.words.arena;
     let players = fill(
         &words.players,
-        &[("count", &game.seats.len().to_string()), ("seats", &ARENA_SEATS.to_string())],
+        // Not the seats the server keeps empty between two that are
+        // taken, which are nobody's.
+        &[
+            ("count", &game.seats.iter().filter(|member| member.id != 0).count().to_string()),
+            ("seats", &ARENA_SEATS.to_string()),
+        ],
     );
     let (big, small) = match game.stage {
         Stage::Waiting { .. } => (players, words.waiting.clone()),
@@ -2911,6 +3357,7 @@ mod tests {
             elapsed: 0.0,
             said: 0.0,
             mint: Mint::new(0.0, &mut || 0.5),
+            outfits: Outfits::default(),
         };
         assert_eq!(game.my_team(), 0);
         assert_eq!(game.teams_in_play(), vec![0, 1, 2, 3]);
@@ -3061,20 +3508,21 @@ mod tests {
         let file = ui();
         let words = &file.words.arena;
         // As the fight begins: the first sapphire is 30 s off and the
-        // first amethyst 40.
+        // first amethyst 60.
         assert_eq!(generator_line(words, Item::Amethyst, false, 2), "Amethyst Generator Lvl 2");
         assert_eq!(generator_line(words, Item::Amethyst, true, 24), "Next Amethyst in 24sec...");
         assert_eq!(seconds_to_next(Item::Sapphire, 0.0), 30);
-        assert_eq!(seconds_to_next(Item::Amethyst, 0.0), 40);
+        assert_eq!(seconds_to_next(Item::Amethyst, 0.0), 60);
         // The last second reads 1, and the moment one comes the count is
         // the whole wait to the next: never 0.
         assert_eq!(seconds_to_next(Item::Sapphire, 29.2), 1);
         assert_eq!(seconds_to_next(Item::Sapphire, 30.0), 30);
-        assert_eq!(seconds_to_next(Item::Amethyst, 16.0), 24);
+        assert_eq!(seconds_to_next(Item::Amethyst, 36.0), 24);
         // Online the time comes in whole seconds, and at every one of
         // them the count is a second less than the second before, or a
         // whole wait again; the waits are the tiers', 23 s for a sapphire
-        // from two minutes and 12 from six, 30 and 20 for an amethyst.
+        // from two minutes and 12 from six, 40 for an amethyst from four
+        // and 25 from eight.
         for item in [Item::Sapphire, Item::Amethyst] {
             let mut last = seconds_to_next(item, 0.0);
             for second in 1..(PLAY_SECS as u32) {
@@ -3085,8 +3533,9 @@ mod tests {
         }
         assert_eq!(seconds_to_next(Item::Sapphire, 120.0), 23);
         assert_eq!(seconds_to_next(Item::Sapphire, 372.0), 12);
-        assert_eq!(seconds_to_next(Item::Amethyst, 240.0), 30);
-        assert_eq!(seconds_to_next(Item::Amethyst, 480.0), 20);
+        assert_eq!(seconds_to_next(Item::Amethyst, 240.0), 40);
+        assert_eq!(seconds_to_next(Item::Amethyst, 480.0), 25);
+        assert_eq!(seconds_to_next(Item::Amethyst, 505.0), 25);
         // Only the sapphire and the amethyst generators are written over:
         // eight of the sixteen.
         let written = (0..rules::GENERATORS).filter(|index| rules::steady(rules::generator(*index).0)).count();

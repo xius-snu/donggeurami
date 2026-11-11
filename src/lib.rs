@@ -39,6 +39,7 @@ mod lamps;
 mod log_file;
 mod lobby;
 mod login;
+mod fire;
 mod loot;
 mod map;
 mod market;
@@ -56,6 +57,8 @@ mod sound;
 mod tags;
 mod talk;
 mod ui;
+mod utility;
+mod gear;
 use island::{Island, Islands, Venue};
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 use bevy::input::mouse::{MouseMotion, MouseScrollUnit, MouseWheel};
@@ -389,6 +392,58 @@ pub(crate) struct Carrying;
 /// How far the arms swing forward from hanging to carry a plank, in
 /// radians: a little under level, so that the plank rests on them.
 const CARRY_REACH: f32 = 1.45;
+
+/// A body that is only there to be seen, like the builder a Bridge Builder
+/// sends off (`bridge`, since 2026-11-12): it is in nobody's way, and no
+/// punch lands on it.
+#[derive(Component)]
+pub(crate) struct ForShow;
+
+/// A body drinking a potion, in Bridge Wars (`utility`, since 2026-11-12;
+/// Hajun's `bridgewarsgameevent.txt`: "push it once and it shows 1.6s
+/// timer running to 0 in front of ur character while ur movement is slowed
+/// 50% while drinking ... sword unequips while drinking and short hand to
+/// mouth animation while drinking,cannot attack while drinking"): for this
+/// much longer, in seconds. It walks at half its pace
+/// ([`read_player_input`]), throws no punch ([`start_punch`]), and its
+/// right hand is at its mouth ([`drink_offset`]). This device's alone, as
+/// a punch's swing is.
+#[derive(Component, Debug)]
+pub(crate) struct Drinking {
+    pub(crate) left: f32,
+}
+
+impl Drinking {
+    /// How far up to the mouth the hand is, from 0 at the side to 1 there:
+    /// up as the drink begins and down again as it ends, each in
+    /// [`DRINK_LIFT`] seconds.
+    fn lifted(&self) -> f32 {
+        let gone = roundtown_net::bridge_wars::DRINK_SECS - self.left;
+        (gone.min(self.left) / DRINK_LIFT).clamp(0.0, 1.0)
+    }
+}
+
+/// How long a drinker's hand takes to come up to its mouth, and to go back
+/// down, in seconds; and which way the right arm points with the hand
+/// there, in the body's space (its right is +x, up +y, and it faces -z):
+/// across and up to the front of the face. The model's arms are short and
+/// its head big: a straight arm reaches its mouth.
+const DRINK_LIFT: f32 = 0.2;
+const DRINK_REACH: Vec3 = Vec3::new(-0.62, 0.36, -0.7);
+
+/// How a sword is held and swung, in Bridge Wars (`gear`, since
+/// 2026-11-12; Hajun: "you may also need to make the sword animation for
+/// the swords rather than using punch swing animation for it"), in
+/// radians: the right arm a little forward of hanging, with the blade out
+/// in front, at the ready; and for a slash, raised to a little under
+/// level and swept about the body's upright from this far to the right of
+/// straight ahead to this far to the left of it (a turn to the left is the
+/// greater), in the time a punch takes to go out, and back to the ready in
+/// the time it takes to come back.
+const SWORD_READY: f32 = 0.45;
+const SLASH_RAISE: f32 = 1.55;
+pub(crate) const SLASH_FROM: f32 = -1.15;
+pub(crate) const SLASH_TO: f32 = 1.0;
 
 /// A body that will not walk off dry land into the sea, nor down anything it
 /// could not step back up ([`strands`]). An AI does not know it could jump
@@ -1205,8 +1260,11 @@ pub fn main() {
     // Bridge Wars, on the PvP map, the bridges built in it as you walk, and
     // the game selector both games are chosen from.
     arena::plugin(&mut app);
+    fire::plugin(&mut app);
     loot::plugin(&mut app);
     market::plugin(&mut app);
+    utility::plugin(&mut app);
+    gear::plugin(&mut app);
     bridge::plugin(&mut app);
     minimap::plugin(&mut app);
     games::plugin(&mut app);
@@ -2369,6 +2427,72 @@ fn carry_offset(kind: WalkBoneKind, stance: f32) -> Option<Quat> {
     punch_offset(kind, stance, CARRY_REACH / PUNCH_REACH)
 }
 
+/// Where a drinker's right arm is ([`Drinking`]), `lifted` of the way up,
+/// 0 to 1, in place of its walk: turned from where it hangs, as this
+/// model's does (`frame`, how the bone lies at rest, stood by `stance`),
+/// to point at the mouth ([`DRINK_REACH`]).
+fn drink_offset(kind: WalkBoneKind, frame: Quat, stance: f32, lifted: f32) -> Option<Quat> {
+    if !matches!(kind, WalkBoneKind::ArmR) {
+        return None;
+    }
+    let hung = stood(stance) * frame * Vec3::Y;
+    let up = Quat::from_rotation_arc(hung.normalize_or(Vec3::NEG_Y), DRINK_REACH.normalize());
+    Some(Quat::IDENTITY.slerp(up, lifted.clamp(0.0, 1.0)) * stood(stance))
+}
+
+/// How far a slash has got `age` seconds in: how far through its sweep, 0
+/// to 1, in the time a punch goes out (the file's `melee.swing_out`), and
+/// how far back to the ready it has come since, 0 to 1, in the time a
+/// punch comes back (`melee.swing_back`).
+fn slash_at(melee: &ui::Melee, age: f32) -> (f32, f32) {
+    let swept = (age / melee.swing_out).clamp(0.0, 1.0);
+    let back = ((age - melee.swing_out) / melee.swing_back).clamp(0.0, 1.0);
+    (swept, back)
+}
+
+/// How far round the body's upright a slash has turned, `swept` of the way
+/// through, 0 to 1: eased, so that it whips through the middle.
+fn slash_yaw(swept: f32) -> f32 {
+    let eased = swept * swept * (3.0 - 2.0 * swept);
+    SLASH_FROM + (SLASH_TO - SLASH_FROM) * eased
+}
+
+/// Where the right arm of a body with a sword is, in place of its walk
+/// and of a punch: at the ready, a little forward of hanging; or, in a
+/// `slash` ([`slash_at`]), raised and swept across in front of it, and
+/// then back to the ready.
+fn sword_offset(kind: WalkBoneKind, stance: f32, slash: Option<(f32, f32)>) -> Option<Quat> {
+    if !matches!(kind, WalkBoneKind::ArmR) {
+        return None;
+    }
+    let ready = Quat::from_axis_angle(Vec3::X, SWORD_READY) * stood(stance);
+    let Some((swept, back)) = slash else {
+        return Some(ready);
+    };
+    let out = Quat::from_rotation_y(slash_yaw(swept)) * Quat::from_axis_angle(Vec3::X, SLASH_RAISE) * stood(stance);
+    Some(out.slerp(ready, back))
+}
+
+/// Which way the blade of the sword in a body's right hand points, in the
+/// body's space (`gear`): at the ready, out in front, a little up and out
+/// to the right, where the camera over you sees all of it; in a `slash`,
+/// level, the way the arm reaches as it sweeps ([`sword_offset`]), and
+/// back to the ready after.
+pub(crate) fn blade_way(slash: Option<(f32, f32)>) -> Vec3 {
+    let ready = Vec3::new(0.14, 0.26, -1.0).normalize();
+    let Some((swept, back)) = slash else {
+        return ready;
+    };
+    let out = Quat::from_rotation_y(slash_yaw(swept)) * Vec3::NEG_Z;
+    out.lerp(ready, back).normalize_or(ready)
+}
+
+/// How far into its slash a body with a sword is, if it is in one
+/// ([`slash_at`]), for whoever draws the sword (`gear`).
+pub(crate) fn slashing(melee: &ui::Melee, punch: Option<&Punching>) -> Option<(f32, f32)> {
+    punch.filter(|punch| punch.age < melee.swing()).map(|punch| slash_at(melee, punch.age))
+}
+
 /// The limb a node of a body's model is, by its name: the bones of
 /// `playercharacter.glb`, a Rigify metarig's (Hajun's, 2026-11-01; until
 /// then `limbperson.glb`'s own, `Bone.005.L.001` and the like). The limbs'
@@ -2469,10 +2593,11 @@ fn read_player_input(
     dialog: Res<hud::DialogUp>,
     bridging: Res<bridge::Bridging>,
     mut ran_out: ResMut<bridge::RanOut>,
+    (outfit, clock): (Res<arena::Outfit>, Res<arena::FightTime>),
     cameras: Query<&Transform, (With<ThirdPersonCamera>, Without<Player>)>,
-    mut players: Query<(&Transform, &Venue, &mut Intent, &mut WalkCycle, Has<Dead>), With<Player>>,
+    mut players: Query<(&Transform, &Venue, &mut Intent, &mut WalkCycle, Has<Dead>, Has<Drinking>), With<Player>>,
 ) {
-    let Ok((transform, &venue, mut intent, mut walk, dead)) = players.single_mut() else {
+    let Ok((transform, &venue, mut intent, mut walk, dead, drinking)) = players.single_mut() else {
         return;
     };
     // A dialog is up: you stand and wait for it to be answered. Dead, you
@@ -2487,6 +2612,11 @@ fn read_player_input(
     // toggled, decrease player speed to 1/2").
     let sprint = if venue == Venue::Arena { ui::ui().arena.run_speed / MOVE_SPEED } else { 1.0 };
     let sprint = if bridging.0 { sprint * bridge::CARRY_SLOW } else { sprint };
+    // The speed potion, while it lasts; and drinking any potion, at half
+    // the pace (`utility`, `arena::Outfit`).
+    let rules_fast = roundtown_net::bridge_wars::FAST;
+    let sprint = if outfit.kit.fast(clock.0) { sprint * rules_fast } else { sprint };
+    let sprint = if drinking { sprint * roundtown_net::bridge_wars::DRINK_SLOW } else { sprint };
     let slowed = wading(transform.translation);
     let cam_forward = cameras.single().map_or(Vec3::NEG_Z, camera_ahead);
     let cam_right = cam_forward.cross(Vec3::Y);
@@ -2827,8 +2957,11 @@ fn start_punch(
     dialog: Res<hud::DialogUp>,
     driving: Res<drive::Driving>,
     bridging: Res<bridge::Bridging>,
-    me: Query<(Entity, &Transform, &Venue, &Intent, Has<Dead>, Option<&Team>), With<Player>>,
-    others: Query<(Entity, &Transform, &Venue, Option<&Team>), (With<WalkCycle>, Without<Player>, Without<Dead>)>,
+    me: Query<(Entity, &Transform, &Venue, &Intent, Has<Dead>, Option<&Team>, Has<Drinking>), With<Player>>,
+    others: Query<
+        (Entity, &Transform, &Venue, Option<&Team>),
+        (With<WalkCycle>, Without<Player>, Without<Dead>, Without<ForShow>),
+    >,
     mut shoves: Query<(&mut Shove, &mut PlayerJump), Without<Player>>,
     mut hits: MessageWriter<Hit>,
     mut landed: MessageWriter<Landed>,
@@ -2841,10 +2974,11 @@ fn start_punch(
     if !asked || dialog.0 || driving.on() || bridging.0 {
         return;
     }
-    let Ok((you, body, &venue, intent, dead, team)) = me.single() else {
+    let Ok((you, body, &venue, intent, dead, team, drinking)) = me.single() else {
         return;
     };
-    if dead {
+    // Nor with a potion at your mouth (`utility`).
+    if dead || drinking {
         return;
     }
     commands.entity(you).insert(Punching::next());
@@ -2914,14 +3048,21 @@ fn punch_lands(
 
 pub(crate) fn animate_walk(
     time: Res<Time>,
-    mut walks: Query<(Entity, &mut WalkCycle, Option<&mut Punching>, Has<Carrying>)>,
+    mut walks: Query<(
+        Entity,
+        &mut WalkCycle,
+        Option<&mut Punching>,
+        Has<Carrying>,
+        Option<&Drinking>,
+        Option<&arena::Wears>,
+    )>,
     mut bones: Query<(&WalkBone, &mut Transform)>,
     mut commands: Commands,
 ) {
     let dt = time.delta_secs();
     let melee = ui::ui().melee;
     let swing = melee.swing();
-    for (body, mut walk, punch, _) in &mut walks {
+    for (body, mut walk, punch, ..) in &mut walks {
         let target = if walk.speed > 0.04 { 1.0 } else { 0.0 };
         walk.weight = walk.weight.lerp(target, (dt * WALK_BLEND).min(1.0));
         if walk.weight < 0.01 {
@@ -2937,7 +3078,7 @@ pub(crate) fn animate_walk(
         }
     }
     for (bone, mut transform) in &mut bones {
-        let Ok((_, walk, punch, carrying)) = walks.get(bone.owner) else {
+        let Ok((_, walk, punch, carrying, drinking, wears)) = walks.get(bone.owner) else {
             continue;
         };
         // The right arm punches; carrying a plank, both arms hold it out
@@ -2945,10 +3086,20 @@ pub(crate) fn animate_walk(
         // (`Intent::sprint`), the limbs swing that much further as well as
         // faster, up to half as far again.
         let stride = 1.0 + (walk.speed - 1.0).clamp(0.0, 0.7);
-        let punching = punch
-            .filter(|punch| punch.age < swing && matches!(bone.kind, WalkBoneKind::ArmR))
-            .and_then(|punch| punch_offset(bone.kind, bone.stance, Punching::reach(&melee, punch.age)));
-        let offset = punching
+        // With a sword in it (`arena::Wears`), the right arm holds it at
+        // the ready and slashes with it in place of the punch; drinking,
+        // it is at the mouth, whatever else it holds (`Drinking`).
+        let armed = wears.is_some_and(|wears| wears.sword > 0) && !carrying;
+        let striking = punch.filter(|punch| punch.age < swing && matches!(bone.kind, WalkBoneKind::ArmR));
+        let offset = drinking
+            .and_then(|drinking| drink_offset(bone.kind, bone.frame, bone.stance, drinking.lifted()))
+            .or_else(|| {
+                if armed {
+                    sword_offset(bone.kind, bone.stance, striking.map(|punch| slash_at(&melee, punch.age)))
+                } else {
+                    striking.and_then(|punch| punch_offset(bone.kind, bone.stance, Punching::reach(&melee, punch.age)))
+                }
+            })
             .or_else(|| carrying.then(|| carry_offset(bone.kind, bone.stance)).flatten())
             .unwrap_or_else(|| walk_offset(bone.kind, walk.phase.sin() * stride, walk.weight, bone.stance));
         let rotation = bone.turned(offset);
@@ -3579,6 +3730,37 @@ mod camera_tests {
         let stance = stance_from_rest(WalkBoneKind::ArmR, right);
         let punch = points(right, punch_offset(WalkBoneKind::ArmR, stance, 1.0).unwrap());
         assert!(punch.z < -0.9 && punch.y.abs() < 0.2, "{punch:?}");
+        // Drinking, the right arm points across and up at the mouth, and
+        // comes up to there and goes back down; the left is left to walk.
+        let hung = points(right, walk_offset(WalkBoneKind::ArmR, 0.0, 0.0, stance));
+        let at_mouth = points(right, drink_offset(WalkBoneKind::ArmR, right, stance, 1.0).unwrap());
+        assert!(at_mouth.distance(DRINK_REACH.normalize()) < 1e-3, "{at_mouth:?}");
+        assert!(at_mouth.x < -0.3 && at_mouth.y > 0.2 && at_mouth.z < -0.5, "{at_mouth:?}");
+        assert!(points(right, drink_offset(WalkBoneKind::ArmR, right, stance, 0.0).unwrap()).distance(hung) < 1e-3);
+        assert!(drink_offset(WalkBoneKind::ArmL, right, stance, 1.0).is_none());
+        let (begun, half, done) = (Drinking { left: 1.6 }, Drinking { left: 0.8 }, Drinking { left: 0.0 });
+        assert_eq!((begun.lifted(), half.lifted(), done.lifted()), (0.0, 1.0, 0.0));
+        // With a sword the right arm is a little forward of hanging, at the
+        // ready; a slash raises it to about level and sweeps it from the
+        // right of straight ahead across to the left, and brings it back.
+        let ready = points(right, sword_offset(WalkBoneKind::ArmR, stance, None).unwrap());
+        assert!(ready.z < hung.z - 0.3 && ready.y < -0.7, "{ready:?}");
+        let melee = ui::ui().melee;
+        let pose = |age: f32| points(right, sword_offset(WalkBoneKind::ArmR, stance, Some(slash_at(&melee, age))).unwrap());
+        let (from, through, to) = (pose(0.0), pose(melee.swing_out * 0.5), pose(melee.swing_out));
+        assert!(from.x > 0.6 && to.x < -0.5 && through.z < -0.8, "{from:?} {through:?} {to:?}");
+        for swung in [from, through, to] {
+            assert!(swung.y.abs() < 0.4 && swung.z < 0.0, "{swung:?}");
+        }
+        assert!(pose(melee.swing()).distance(ready) < 1e-3);
+        assert!(sword_offset(WalkBoneKind::ArmL, stance, None).is_none());
+        // The blade points out in front at the ready, and the way the arm
+        // reaches through a slash: from the right, across, to the left.
+        assert!(blade_way(None).z < -0.9 && blade_way(None).y > 0.1);
+        let edge = |age: f32| blade_way(Some(slash_at(&melee, age)));
+        assert!(edge(0.0).x > 0.8 && edge(melee.swing_out).x < -0.7 && edge(melee.swing_out * 0.5).z < -0.9);
+        assert!(edge(0.0).dot(from) > 0.9 && edge(melee.swing_out).dot(to) > 0.9, "the blade goes with the arm");
+        assert!(edge(melee.swing()).distance(blade_way(None)) < 1e-3);
         // An arm that rests lower than it hangs, and a leg that rests
         // straighter than it stands, are left as they rest: never turned up,
         // in or out.
@@ -3833,6 +4015,8 @@ mod ground_tests {
         world.insert_resource(hud::DialogUp::default());
         world.insert_resource(bridge::Bridging::default());
         world.insert_resource(bridge::RanOut::default());
+        world.insert_resource(arena::Outfit::default());
+        world.insert_resource(arena::FightTime::default());
         let you = world
             .spawn((
                 Player,
@@ -3866,6 +4050,8 @@ mod ground_tests {
             world.insert_resource(TouchControls::default());
             world.insert_resource(hud::DialogUp::default());
             world.insert_resource(bridge::Bridging::default());
+            world.insert_resource(arena::Outfit::default());
+            world.insert_resource(arena::FightTime::default());
             let mut ran_out = bridge::RanOut::default();
             ran_out.halted = true;
             world.insert_resource(ran_out);

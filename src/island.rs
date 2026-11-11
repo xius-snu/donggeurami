@@ -347,12 +347,18 @@ pub(crate) fn spawn_island(
 /// are, and drawn unless the camera is inside you, or you are dead
 /// (`follow_camera`).
 pub(crate) fn show_where_i_am(
-    me: Query<&Venue, With<Player>>,
-    mut things: Query<(&Venue, &mut Visibility, Has<Dead>), Without<Player>>,
+    me: Query<(&Venue, Option<&crate::Team>), With<Player>>,
+    mut things: Query<
+        (&Venue, &mut Visibility, Has<Dead>, Option<&crate::arena::Wears>, Option<&crate::Team>),
+        Without<Player>,
+    >,
 ) {
-    let here = me.single().ok().copied();
-    for (venue, mut visibility, dead) in &mut things {
-        visibility.set_if_neq(if Some(*venue) == here && !dead {
+    let (here, mine) = me.single().map_or((None, None), |(venue, team)| (Some(*venue), team));
+    for (venue, mut visibility, dead, wears, team) in &mut things {
+        // Nor anyone who has drunk Bridge Wars' invisibility potion, but
+        // one of your own team, whom you see see-through (`gear`).
+        let unseen = wears.is_some_and(|wears| wears.unseen) && !(mine.is_some() && team == mine);
+        visibility.set_if_neq(if Some(*venue) == here && !dead && !unseen {
             Visibility::Inherited
         } else {
             Visibility::Hidden

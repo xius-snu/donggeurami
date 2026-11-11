@@ -46,9 +46,12 @@
 //! room is sent ([`Loot`]), and whoever of the people in the game comes
 //! within the magnet's reach of one, where they last said they stood, has
 //! it: it is gone for everyone that tick, and theirs in the room's
-//! [`Purses`]. Not before it has dropped onto its pad and lain there a
-//! moment, though ([`PICK_UP_AFTER`], since late on 2026-11-11), so that someone
-//! standing on the pad sees it come. The computer's players pick up
+//! [`Purses`]. A thing drops onto its pad from high over it as it is
+//! made, and is within reach only once it has come down to whoever is
+//! there, half a metre over their head ([`REACH_OVER`], since 2026-11-12;
+//! for an evening before, not until it had landed and lain a moment), so
+//! that someone standing on the pad sees it come, and someone who jumps
+//! for it has it sooner, in the air. The computer's players pick up
 //! nothing. [`Ask::Buy`] takes
 //! a ware's price out of the asker's purse and tells them it is theirs
 //! ([`Tell::Bought`]). And the game keeps Hajun's timetable ([`TIMETABLE`]):
@@ -58,6 +61,19 @@
 //! computer's other players are, each on the ground it keeps to
 //! ([`zombie_home`]), going for anyone, and back up a while after it is
 //! put down; and at twenty five it is a draw ([`PLAY_SECS`]).
+//!
+//! **Since 2026-11-12 the two shops' wares are the server's as well**
+//! (Hajun's `bridgewarsgameevent.txt`). What everyone has and what each
+//! team has bought is the game's [`Outfits`], the shops' rules, which
+//! both sides share, and its room is sent them as [`Kits`] and
+//! [`Upgraded`]: a punch takes more with a sword and less through a
+//! shield ([`Game::wound`]); a fireball thrown ([`Ask::Use`]) is an entity
+//! the room is sent ([`Fireball`]) that the server flies and bursts
+//! ([`fireballs`]); a potion drunk is the kit's until it wears off; a
+//! team's generator is as fast as the team has raised it; its heal pool
+//! heals it on its island, and its traps blind whoever of another team
+//! steps onto it ([`Outfits::tick`]). The computer's players buy nothing,
+//! and do not go for anyone unseen.
 
 use std::collections::HashMap;
 
@@ -66,8 +82,8 @@ use bevy_replicon::prelude::*;
 use roundtown_net::bridge_wars::*;
 use roundtown_net::{
     ARENA_ANCHORS, ARENA_ISLAND_RADIUS, ARENA_ISLANDS, ARENA_SEATS, ARENA_TEAMS, ArenaRound,
-    ArenaStage, Ask, Loot, Member, PAD_TOP, Plank, Purse, Purses, Refusal, Seats, Spot, Tell, Venue,
-    Ware, arena_island, arena_team, arrival,
+    ArenaStage, Ask, Fireball, Kit, Kits, Loot, Member, Plank, Purse, Purses, Refusal, Seats, Spot,
+    Tell, Upgraded, Upgrades, Use, Utility, Venue, Ware, arena_island, arena_team, arrival,
 };
 
 use crate::Config;
@@ -132,6 +148,11 @@ struct Game {
     minds: Vec<Mind>,
     /// Who has left it.
     gone: Vec<bool>,
+    /// The seats nobody has ever sat in: between two that are taken, as
+    /// the seats are taken out of order ([`SEAT_ORDER`]), and up to the
+    /// players' eight once the fight begins with fewer ([`Game::pad`]).
+    /// Such a seat is gone and out, with no body.
+    vacant: Vec<bool>,
     stage: ArenaStage,
     /// Seconds left of this stage.
     left: f32,
@@ -162,14 +183,35 @@ struct Game {
     loot: HashMap<u32, Entity>,
     /// What everyone holds, by seat.
     purses: Vec<Purse>,
+    /// What everyone has and what each team has bought, by the shops'
+    /// rules.
+    outfits: Outfits,
+    /// Every fireball in the air: the entity its room is sent, how far it
+    /// has flown, and who threw it, by seat.
+    fireballs: Vec<(Entity, Flight, usize)>,
     /// What its room was last sent, to send again only what has changed.
     sent: Option<ArenaRound>,
-    sent_seats: usize,
+    sent_seats: Vec<Member>,
     sent_purses: Vec<Purse>,
+    sent_kits: Vec<Kit>,
+    sent_upgrades: [Upgrades; ARENA_TEAMS],
     /// Its bots and planks have gone ([`close`]); everyone goes back to the
     /// town next tick ([`end`]).
     closing: bool,
 }
+
+/// The order a game's seats are taken in as people join (since 2026-11-12;
+/// Hajun: "when there is atleast one other real person in that same queue
+/// lobby, no bots will join, and after the wait time of no more new joins,
+/// it will start the game as a 1v1 (2 side island being empty), or 1v1v1
+/// (with one island being empty) or 1v1v1v1, (or 2v2v2v2 with each bot
+/// teammate for missing slots if >=5 players)"): the first island, the one
+/// across the map from it, the two at its sides, and then each one's
+/// second. So two people are on opposite islands, three and four have an
+/// island each, and from the fifth on they are someone's teammate. A seat
+/// is an island and a team by its number ([`arena_team`]), so the seats
+/// between, taken by nobody yet, are kept empty ([`Game::vacant`]).
+const SEAT_ORDER: [usize; ARENA_SEATS] = [0, 2, 1, 3, 4, 6, 5, 7];
 
 /// A bot's mind: how long until it may punch again, what a punch is carrying
 /// it by across the ground and how fast it is rising from one (0 on the
@@ -247,16 +289,16 @@ impl Game {
         }
     }
 
-    /// Whoever in `seat` stands at `at` picks up everything a generator
-    /// has made within the magnet's reach of them that has dropped and
-    /// lain its moment, if they are a person, standing, and at a pad's
-    /// height: it is theirs, and gone from the pads. What they took, for
-    /// the room to stop being sent it.
+    /// Whoever in `seat` has their feet at `at` picks up everything a
+    /// generator has made that is within reach of them, dropping or lying
+    /// (`Mint::pick_up`), if they are a person and standing: it is
+    /// theirs, and gone from the pads. What they took, for the room to
+    /// stop being sent it.
     fn gather(&mut self, seat: usize, at: Vec3) -> Vec<Piece> {
-        if self.bot[seat] || !self.alive(seat) || (at.y - PAD_TOP).abs() > MAGNET_HEIGHT {
+        if self.bot[seat] || !self.alive(seat) {
             return Vec::new();
         }
-        let taken = self.mint.pick_up(at.xz(), self.elapsed);
+        let taken = self.mint.pick_up(at, self.elapsed);
         for piece in &taken {
             let held = &mut self.purses[seat][piece.item.index()];
             *held = held.saturating_add(1);
@@ -265,19 +307,14 @@ impl Game {
     }
 
     /// Sells `ware` to whoever in `seat` stands at `at`, if the fight is
-    /// on, they are standing, near a shop, and hold its price, which comes
-    /// out of their purse: whether it is theirs.
+    /// on, they are standing, near the shop that sells it, it is to be had
+    /// by them, and they hold its price, which comes out of their purse
+    /// ([`Outfits::buy`]): whether it is theirs.
     fn buy(&mut self, seat: usize, ware: Ware, at: Vec2) -> bool {
-        if !self.playing() || !self.alive(seat) || !at_a_shop(at) {
+        if !self.playing() || !self.alive(seat) || !at_a_shop(at, sold_at(ware)) {
             return false;
         }
-        let (item, cost) = price(ware);
-        let held = &mut self.purses[seat][item.index()];
-        if *held < cost {
-            return false;
-        }
-        *held -= cost;
-        true
+        self.outfits.buy(seat, ware, &mut self.purses[seat])
     }
 
     /// What the room is shown of how it is going.
@@ -301,26 +338,84 @@ impl Game {
         }
     }
 
-    /// Seats `member`, whose body is `body`, in the next seat.
+    /// The next of the players' seats to be taken: the first, in the order
+    /// they are taken in ([`SEAT_ORDER`]), that nobody has sat in.
+    fn free_seat(&self) -> Option<usize> {
+        SEAT_ORDER
+            .into_iter()
+            .find(|&seat| seat >= self.seats.len() || self.vacant[seat])
+    }
+
+    /// How many people are in it: not the computer's players, nor whoever
+    /// has left.
+    fn people(&self) -> usize {
+        (0..self.seats.len())
+            .filter(|&seat| !self.bot[seat] && !self.vacant[seat] && !self.gone[seat])
+            .count()
+    }
+
+    /// Seats `member`, whose body is `body`, in the next of the players'
+    /// seats ([`Game::free_seat`]); or, with those all taken or the fight
+    /// begun, in the next seat past them, as a zombie is.
     fn seat(&mut self, body: Entity, member: Member, bot: bool) -> usize {
-        let seat = self.seats.len();
-        self.seats.push(body);
-        self.members.push(member);
-        self.bot.push(bot);
-        self.minds.push(Mind {
+        let seat = match self.free_seat() {
+            Some(seat) if self.stage == ArenaStage::Waiting => seat,
+            _ => self.seats.len().max(ARENA_SEATS),
+        };
+        self.put(seat, body, member, bot)
+    }
+
+    /// Seats `member`, whose body is `body`, in `seat`, with every seat
+    /// before it that nobody is in yet kept empty.
+    fn put(&mut self, seat: usize, body: Entity, member: Member, bot: bool) -> usize {
+        while self.seats.len() <= seat {
+            self.push_vacant();
+        }
+        self.seats[seat] = body;
+        self.members[seat] = member;
+        self.bot[seat] = bot;
+        self.minds[seat] = Mind {
             think: THINK_EVERY * seat as f32 / ARENA_SEATS as f32,
             ..default()
+        };
+        self.gone[seat] = false;
+        self.vacant[seat] = false;
+        self.health[seat] = HEALTH;
+        self.out[seat] = false;
+        self.since_join = 0.0;
+        seat
+    }
+
+    /// One more seat with nobody in it: gone and out, with no body.
+    fn push_vacant(&mut self) {
+        self.seats.push(Entity::PLACEHOLDER);
+        self.members.push(Member {
+            id: 0,
+            name: String::new(),
+            look: String::new(),
+            ai: true,
         });
-        self.gone.push(false);
-        self.health.push(HEALTH);
+        self.bot.push(false);
+        self.minds.push(Mind::default());
+        self.gone.push(true);
+        self.vacant.push(true);
+        self.health.push(0.0);
         self.since_hit.push(0.0);
         self.hurt.push(0.0);
         self.dead_for.push(None);
-        self.out.push(false);
+        self.out.push(true);
         self.rungs.push(0);
         self.purses.push(Purse::default());
-        self.since_join = 0.0;
-        seat
+        self.outfits.seat(self.seats.len());
+    }
+
+    /// Keeps every one of the players' seats that nobody has taken empty,
+    /// as the fight begins with fewer than eight: a zombie's seat is past
+    /// the players' eight, whoever is in them ([`arena_team`]).
+    fn pad(&mut self) {
+        while self.seats.len() < ARENA_SEATS {
+            self.push_vacant();
+        }
     }
 
     /// `seat` is dead: for [`RESPAWN_SECS`], and then back, if its team's
@@ -329,6 +424,8 @@ impl Game {
     fn die(&mut self, seat: usize) {
         self.health[seat] = 0.0;
         self.minds[seat] = Mind::default();
+        // Their sword and what was on their second button go with them.
+        self.outfits.die(seat);
         if self.zombie(seat).is_some() {
             self.dead_for[seat] = Some(ZOMBIE_RESPAWN_SECS);
             return;
@@ -343,10 +440,12 @@ impl Game {
     }
 
     /// Takes a punch's damage off `victim`, hit from `from` by `hitter`, who
-    /// was `running` if so: dead at none, and knocked back otherwise, a
-    /// person through their device and a bot here. Not while the victim is
-    /// still reeling from the last punch that took ([`HURT_TIME`]): a
-    /// device lands a punch at every press, several a second.
+    /// was `running` if so: more with a sword in the hitter's hand, less
+    /// through the victim's shield ([`Outfits::punch`]). Not while the
+    /// victim is still reeling from the last punch that took
+    /// ([`HURT_TIME`]): a device lands a punch at every press, several a
+    /// second. A hitter who was unseen is seen again, whether or not the
+    /// punch took ("being hit or attacking reveals u").
     fn wound(
         &mut self,
         victim: usize,
@@ -356,11 +455,32 @@ impl Game {
         bodies: &Bodies,
         tells: &mut MessageWriter<ToClients<Tell>>,
     ) {
+        self.outfits.reveal(hitter);
         if self.hurt[victim] > 0.0 {
             return;
         }
         self.hurt[victim] = HURT_TIME;
-        self.health[victim] = (self.health[victim] - DAMAGE).max(0.0);
+        let damage = self.outfits.punch(DAMAGE, hitter, victim);
+        self.harm(victim, hitter, from, running, damage, bodies, tells);
+    }
+
+    /// Takes `damage` off `victim`, struck from `from` by `hitter`: dead at
+    /// none, and knocked back from there otherwise, further if `running`,
+    /// a person through their device and a bot here. Whoever was unseen
+    /// is seen again for being hit.
+    #[allow(clippy::too_many_arguments)]
+    fn harm(
+        &mut self,
+        victim: usize,
+        hitter: usize,
+        from: Spot,
+        running: bool,
+        damage: f32,
+        bodies: &Bodies,
+        tells: &mut MessageWriter<ToClients<Tell>>,
+    ) {
+        self.outfits.reveal(victim);
+        self.health[victim] = (self.health[victim] - damage).max(0.0);
         self.since_hit[victim] = 0.0;
         if self.health[victim] <= 0.0 {
             info!("Bridge Wars game {}: seat {hitter} killed seat {victim}", self.id);
@@ -417,7 +537,7 @@ impl Arenas {
         let open = self.filling.filter(|id| {
             self.games
                 .get(id)
-                .is_some_and(|game| game.stage == ArenaStage::Waiting && !game.closing && game.seats.len() < ARENA_SEATS)
+                .is_some_and(|game| game.stage == ArenaStage::Waiting && !game.closing && game.free_seat().is_some())
         });
         let id = open.unwrap_or_else(|| {
             let id = self.next;
@@ -435,6 +555,7 @@ impl Arenas {
                     bot: Vec::new(),
                     minds: Vec::new(),
                     gone: Vec::new(),
+                    vacant: Vec::new(),
                     stage: ArenaStage::Waiting,
                     left: 0.0,
                     since_join: 0.0,
@@ -452,9 +573,13 @@ impl Arenas {
                     mint: Mint::new(0.0, &mut || fastrand::f32()),
                     loot: HashMap::new(),
                     purses: Vec::new(),
+                    outfits: Outfits::default(),
+                    fireballs: Vec::new(),
                     sent: None,
-                    sent_seats: 0,
+                    sent_seats: Vec::new(),
                     sent_purses: Vec::new(),
+                    sent_kits: Vec::new(),
+                    sent_upgrades: Default::default(),
                     closing: false,
                 },
             );
@@ -611,7 +736,7 @@ fn hear(
                 if !game.playing() || !game.alive(hitter) || team >= ARENA_TEAMS || team == usize::from(arena_team(hitter)) {
                     continue;
                 }
-                if game.anchors[team] <= 0.0 || game.anchor_hurt[team] > 0.0 {
+                if game.anchors[team] <= 0.0 {
                     continue;
                 }
                 let Ok((_, from, ..)) = bodies.get(game.seats[hitter]) else {
@@ -620,8 +745,16 @@ fn hear(
                 if !anchor_in_reach(from.translation().xz(), ARENA_ANCHORS[team], PUNCH_SLACK) {
                     continue;
                 }
+                // Hitting an anchor is attacking: whoever was unseen is
+                // seen again, whether or not the hit takes.
+                game.outfits.reveal(hitter);
+                if game.anchor_hurt[team] > 0.0 {
+                    continue;
+                }
                 game.anchor_hurt[team] = HURT_TIME;
-                game.anchors[team] = (game.anchors[team] - DAMAGE).max(0.0);
+                // A sword breaks an anchor sooner, as it does a body.
+                let damage = punch_damage(DAMAGE, &game.outfits.kit(hitter), &game.outfits.team(hitter));
+                game.anchors[team] = (game.anchors[team] - damage).max(0.0);
                 if game.anchors[team] <= 0.0 {
                     info!("Bridge Wars game {}: seat {hitter} broke team {team}'s anchor", game.id);
                 }
@@ -677,6 +810,50 @@ fn hear(
                 if game.buy(seat, *ware, at.translation().xz()) {
                     info!("Bridge Wars game {}: seat {seat} bought {ware:?}", game.id);
                     tell(&mut tells, client, Tell::Bought(*ware));
+                }
+            }
+            Ask::Use(used) if matches!(room, Room::Arena(_)) => {
+                let Some((game, seat)) = arenas.of(room, body) else {
+                    continue;
+                };
+                if !game.playing() || !game.alive(seat) {
+                    continue;
+                }
+                match used {
+                    Use::Fireball { heading } => {
+                        let Ok((_, at, ..)) = bodies.get(game.seats[seat]) else {
+                            continue;
+                        };
+                        if !heading.is_finite() || !game.outfits.spend(seat, Utility::Fireball) {
+                            continue;
+                        }
+                        let flight = Flight::thrown(at.translation(), *heading);
+                        let ball = commands
+                            .spawn((
+                                Replicated,
+                                InRoom(game.room()),
+                                Fireball {
+                                    seat: seat as u8,
+                                    x: flight.from.x,
+                                    y: flight.from.y,
+                                    z: flight.from.z,
+                                    heading: *heading,
+                                },
+                            ))
+                            .id();
+                        game.fireballs.push((ball, flight, seat));
+                        debug!("Bridge Wars game {}: seat {seat} threw a fireball", game.id);
+                    }
+                    Use::Builder => {
+                        game.outfits.spend(seat, Utility::Builder);
+                    }
+                    Use::Potion => {
+                        let drunk = game.outfits.drink(seat, game.elapsed);
+                        if drunk == Some(Utility::Healing) {
+                            game.health[seat] = (game.health[seat] + HEALTH * HEALING).min(HEALTH);
+                        }
+                        debug!("Bridge Wars game {}: seat {seat} drank {drunk:?}", game.id);
+                    }
                 }
             }
             Ask::Skip if matches!(room, Room::Arena(_)) => {
@@ -736,13 +913,24 @@ fn run(
         match game.stage {
             ArenaStage::Waiting => {
                 game.since_join += dt;
-                if game.since_join >= BOT_WAIT && game.seats.len() < ARENA_SEATS {
-                    while game.seats.len() < ARENA_SEATS {
-                        seat_bot(&mut commands, game, now);
+                let waited = game.since_join >= BOT_WAIT && game.free_seat().is_some();
+                if waited {
+                    // Alone, the computer takes every seat left, as it
+                    // always did; and with five or more, the seats left,
+                    // so that every team is two. Two, three or four
+                    // people have an island each and nobody else.
+                    let people = game.people();
+                    if people <= 1 || people > ARENA_TEAMS {
+                        while game.free_seat().is_some() {
+                            seat_bot(&mut commands, game, now);
+                        }
+                        info!("Bridge Wars game {}: nobody joined in {BOT_WAIT} s, so the computer takes the seats left", game.id);
+                    } else {
+                        info!("Bridge Wars game {}: nobody joined in {BOT_WAIT} s: {people} people, an island each", game.id);
                     }
-                    info!("Bridge Wars game {}: nobody joined in {BOT_WAIT} s, so the computer takes the seats left", game.id);
                 }
-                if game.seats.len() >= ARENA_SEATS {
+                if waited || game.free_seat().is_none() {
+                    game.pad();
                     game.stage = ArenaStage::Countdown;
                     game.left = COUNTDOWN;
                 }
@@ -759,6 +947,15 @@ fn run(
                     game.elapsed = config.arena_from.clamp(0.0, PLAY_SECS - 1.0);
                     game.left = PLAY_SECS - game.elapsed;
                     game.mint = Mint::new(game.elapsed, &mut || fastrand::f32());
+                    // Nothing in anyone's purse, but for trying the shops
+                    // out (`RT_ARENA_PURSE`).
+                    if config.arena_purse > 0 {
+                        for seat in 0..game.purses.len().min(ARENA_SEATS) {
+                            if !game.bot[seat] {
+                                game.purses[seat] = [config.arena_purse; 4];
+                            }
+                        }
+                    }
                     info!("Bridge Wars game {}: fight, {} s to play", game.id, game.left);
                     // Begun late, everything before then has happened.
                     for event in happening_between(-1.0, game.elapsed) {
@@ -775,6 +972,8 @@ fn run(
                 }
                 mint(&mut commands, &bodies, game);
                 fight(&mut commands, &mut tells, &mut bodies, game, dt, now);
+                fireballs(&mut commands, &mut tells, &bodies, game, dt);
+                outfit(&bodies, game, dt);
                 let teams = game.teams_in_play();
                 let winner = match (teams.len(), game.left <= 0.0) {
                     (0, _) => Some(None),
@@ -797,13 +996,21 @@ fn run(
             commands.entity(game.shown).insert(round.clone());
             game.sent = Some(round);
         }
-        if game.sent_seats != game.members.len() {
+        if game.sent_seats != game.members {
             commands.entity(game.shown).insert(Seats(game.members.clone()));
-            game.sent_seats = game.members.len();
+            game.sent_seats.clone_from(&game.members);
         }
         if game.sent_purses != game.purses {
             commands.entity(game.shown).insert(Purses(game.purses.clone()));
             game.sent_purses.clone_from(&game.purses);
+        }
+        if game.sent_kits != game.outfits.kits {
+            commands.entity(game.shown).insert(Kits(game.outfits.kits.clone()));
+            game.sent_kits.clone_from(&game.outfits.kits);
+        }
+        if game.sent_upgrades != game.outfits.teams {
+            commands.entity(game.shown).insert(Upgraded(game.outfits.teams));
+            game.sent_upgrades = game.outfits.teams;
         }
     }
     for id in ended {
@@ -834,7 +1041,9 @@ fn happen(commands: &mut Commands, game: &mut Game, event: Happening, now: f64) 
 /// theirs, and gone from the room.
 fn mint(commands: &mut Commands, bodies: &Bodies, game: &mut Game) {
     let room = game.room();
-    for piece in game.mint.run(game.elapsed, &mut || fastrand::f32()) {
+    // Each team's own generator as fast as the team has raised it.
+    let forge = game.outfits.teams.map(|team| team.forge);
+    for piece in game.mint.run(game.elapsed, &forge, &mut || fastrand::f32()) {
         let entity = commands
             .spawn((
                 Replicated,
@@ -867,6 +1076,61 @@ fn mint(commands: &mut Commands, bodies: &Bodies, game: &mut Game) {
                 commands.entity(entity).try_despawn();
             }
         }
+    }
+}
+
+/// Every fireball in the air, for one frame of the fight: flown on, and
+/// burst where it meets someone of another team than its thrower's, or at
+/// the end of its range. Its blast takes its damage off everyone of
+/// another team it reaches, less what their shields keep off, and knocks
+/// them from where it burst; the room is no longer sent it, which is how
+/// every device knows to draw the blast.
+fn fireballs(
+    commands: &mut Commands,
+    tells: &mut MessageWriter<ToClients<Tell>>,
+    bodies: &Bodies,
+    game: &mut Game,
+    dt: f32,
+) {
+    let mut flying = std::mem::take(&mut game.fireballs);
+    flying.retain_mut(|(ball, flight, thrower)| {
+        let spent = flight.fly(dt);
+        let team = arena_team(*thrower);
+        let others: Vec<(usize, Vec3)> = (0..game.seats.len())
+            .filter(|&seat| arena_team(seat) != team && game.alive(seat))
+            .filter_map(|seat| bodies.get(game.seats[seat]).ok().map(|(_, spot, ..)| (seat, spot.translation())))
+            .collect();
+        if !spent && !others.iter().any(|(_, feet)| flight.meets(*feet)) {
+            return true;
+        }
+        let burst = flight.at();
+        let from = Spot::of(burst - Vec3::Y * FIREBALL_HEIGHT, Quat::IDENTITY);
+        for (seat, feet) in others {
+            if in_blast(burst, feet) {
+                let damage = game.outfits.through(seat, FIREBALL_DAMAGE);
+                game.harm(seat, *thrower, from, false, damage, bodies, tells);
+            }
+        }
+        commands.entity(*ball).try_despawn();
+        false
+    });
+    game.fireballs = flying;
+}
+
+/// The potions, the traps and the heal pools, for one frame of the fight
+/// ([`Outfits::tick`]), with every living player where they last said
+/// they stood: whoever a pool heals has that much health back.
+fn outfit(bodies: &Bodies, game: &mut Game, dt: f32) {
+    let standing: Vec<(usize, Vec2)> = (0..game.seats.len().min(ARENA_SEATS))
+        .filter(|&seat| game.alive(seat))
+        .filter_map(|seat| bodies.get(game.seats[seat]).ok().map(|(_, spot, ..)| (seat, spot.translation().xz())))
+        .collect();
+    let ticked = game.outfits.tick(dt, game.elapsed, &standing);
+    for seat in ticked.healed {
+        game.health[seat] = (game.health[seat] + HEAL_POOL).min(HEALTH);
+    }
+    for (seat, island) in ticked.sprung {
+        info!("Bridge Wars game {}: seat {seat} walked into team {island}'s trap", game.id);
     }
 }
 
@@ -908,9 +1172,11 @@ fn fight(
             game.health[seat] = (game.health[seat] + REGEN_PER_SEC * dt).min(HEALTH);
         }
     }
-    // The bots, each with everyone else where they stand this frame.
+    // The bots, each with everyone else where they stand this frame: but
+    // for whoever is unseen, whom they do not go for.
     let standing: Vec<(usize, Vec2)> = (0..game.seats.len())
         .filter(|&seat| game.alive(seat) && game.minds[seat].falling.is_none())
+        .filter(|&seat| !game.outfits.kit(seat).unseen(game.elapsed))
         .filter_map(|seat| bodies.get(game.seats[seat]).ok().map(|(_, spot, ..)| (seat, spot.translation().xz())))
         .collect();
     for seat in 0..game.seats.len() {
@@ -1103,7 +1369,9 @@ fn land(
 /// under one of that side's names that nobody there has, as House Builder's
 /// are (`builder::seat_bot`).
 fn seat_bot(commands: &mut Commands, game: &mut Game, now: f64) {
-    let seat = game.seats.len();
+    let Some(seat) = game.free_seat() else {
+        return;
+    };
     let boy = fastrand::bool();
     let names: Vec<&str> = roundtown_net::ai_names(boy)
         .iter()
@@ -1187,6 +1455,9 @@ fn close(commands: &mut Commands, game: &mut Game) {
     for (_, thing) in game.loot.drain() {
         commands.entity(thing).try_despawn();
     }
+    for (ball, ..) in game.fireballs.drain(..) {
+        commands.entity(ball).try_despawn();
+    }
     commands.entity(game.shown).try_despawn();
     game.closing = true;
 }
@@ -1250,6 +1521,7 @@ mod tests {
             bot: Vec::new(),
             minds: Vec::new(),
             gone: Vec::new(),
+            vacant: Vec::new(),
             stage: ArenaStage::Playing,
             left: PLAY_SECS,
             since_join: 0.0,
@@ -1267,9 +1539,13 @@ mod tests {
             mint: Mint::new(0.0, &mut || 0.5),
             loot: HashMap::new(),
             purses: Vec::new(),
+            outfits: Outfits::default(),
+            fireballs: Vec::new(),
             sent: None,
-            sent_seats: 0,
+            sent_seats: Vec::new(),
             sent_purses: Vec::new(),
+            sent_kits: Vec::new(),
+            sent_upgrades: Default::default(),
             closing: false,
         };
         for seat in 0..ARENA_SEATS {
@@ -1279,9 +1555,65 @@ mod tests {
                 look: "boy".into(),
                 ai: seat > 0,
             };
-            game.seat(Entity::from_bits(seat as u64 + 1), member, seat > 0);
+            game.put(seat, Entity::from_bits(seat as u64 + 1), member, seat > 0);
         }
         game
+    }
+
+    #[test]
+    fn two_to_four_people_have_an_island_each_and_no_bots() {
+        let person = |n: u64| Member {
+            id: n,
+            name: format!("Person {n}"),
+            look: "boy".into(),
+            ai: false,
+        };
+        let mut game = full_game();
+        // An empty waiting room.
+        game.stage = ArenaStage::Waiting;
+        for list in [&mut game.bot, &mut game.gone, &mut game.vacant, &mut game.out] {
+            list.clear();
+        }
+        game.seats.clear();
+        game.members.clear();
+        game.minds.clear();
+        game.health.clear();
+        game.since_hit.clear();
+        game.hurt.clear();
+        game.dead_for.clear();
+        game.rungs.clear();
+        game.purses.clear();
+        // The first to join is on the first island, the second across the
+        // map from them, with the seat between kept empty; the third and
+        // the fourth take the islands at the sides.
+        assert_eq!(game.seat(Entity::from_bits(1), person(1), false), 0);
+        assert_eq!(game.seat(Entity::from_bits(2), person(2), false), 2);
+        assert_eq!((game.seats.len(), game.people()), (3, 2));
+        assert!(game.vacant[1] && !game.alive(1) && !game.in_play(1));
+        assert_eq!(arena_island(0) + 2, arena_island(2));
+        assert_eq!(game.free_seat(), Some(1));
+        assert_eq!(game.teams_in_play(), vec![0, 2]);
+        assert_eq!(game.seat(Entity::from_bits(3), person(3), false), 1);
+        assert_eq!(game.seat(Entity::from_bits(4), person(4), false), 3);
+        assert_eq!((game.seats.len(), game.people()), (4, 4));
+        // From the fifth they are someone's teammate, in the same order.
+        assert_eq!(game.seat(Entity::from_bits(5), person(5), false), 4);
+        assert_eq!(game.seat(Entity::from_bits(6), person(6), false), 6);
+        assert_eq!(arena_team(4), arena_team(0));
+        assert_eq!(arena_team(6), arena_team(2));
+        // As the fight begins the players' seats are eight, the rest
+        // empty, so that a zombie's is past them.
+        game.pad();
+        assert_eq!((game.seats.len(), game.people()), (ARENA_SEATS, 6));
+        assert!(game.vacant[5] && game.vacant[7] && game.round().is_out(5) && !game.round().is_out(4));
+        assert_eq!(game.free_seat(), Some(5));
+        game.stage = ArenaStage::Playing;
+        let zombie = game.seat(Entity::from_bits(99), person(99), true);
+        assert_eq!(zombie, ARENA_SEATS);
+        assert_eq!(game.zombie(zombie), Some(0));
+        // Someone who leaves is not counted among the people.
+        game.gone[2] = true;
+        assert_eq!(game.people(), 5);
     }
 
     #[test]
@@ -1389,26 +1721,30 @@ mod tests {
 
     #[test]
     fn what_a_generator_makes_is_whoever_comes_near_its_and_nobody_else_s() {
-        use roundtown_net::{ARENA_PADS, ARENA_SHOPS, Item};
+        use roundtown_net::{ARENA_PADS, ARENA_SHOPS, Item, PAD_TOP};
         let mut game = full_game();
         // Twenty seconds and a bit of every generator: ten silver and two
         // gold on each team's pad.
         let (dt, mut dice) = (0.05, || 0.5);
         for _ in 0..410 {
             game.elapsed += dt;
-            game.mint.run(game.elapsed, &mut dice);
+            game.mint.run(game.elapsed, &[0; ARENA_TEAMS], &mut dice);
         }
-        // A second on, with nothing more made, the last of them has
-        // dropped and lain its moment: until then it is nobody's.
+        // The tenth silver of each pad has only just been made. A fifth
+        // of a second after, still dropping, it is out of reach over the
+        // head of someone standing on the pad, who has the other eleven;
+        // someone at the top of a jump a moment later has it too, in the
+        // air, with what lies under their feet.
         let pad = ARENA_PADS[0];
-        let fresh = game.mint.pieces().iter().filter(|piece| game.elapsed - piece.born < PICK_UP_AFTER).count();
-        assert_eq!(fresh, 4, "the tenth silver of each pad has only just been made");
-        let mut early = game.mint.clone();
-        assert_eq!(early.pick_up(pad, game.elapsed).len(), 11, "the one still dropping is left");
+        let on_pad = Vec3::new(pad.x, PAD_TOP, pad.y);
+        let last = game.mint.pieces().iter().map(|piece| piece.born).fold(0.0, f32::max);
+        assert!(game.elapsed - last < DROP_SECS + 0.1, "the tenth silver was made {last} s in");
+        assert_eq!(game.mint.clone().pick_up(on_pad, last + 0.2).len(), 11, "the one still dropping is left");
+        assert_eq!(game.mint.clone().pick_up(on_pad + Vec3::Y * 1.6, last + 0.36).len(), 12);
+        // A second on, with nothing more made, all of them lie there.
         game.elapsed += 1.0;
         let lying = game.mint.pieces().len();
         assert_eq!(lying, 4 * (10 + 2));
-        let on_pad = Vec3::new(pad.x, PAD_TOP, pad.y);
         // The computer's player in seat 4, on the pad, picks up nothing;
         // nor does the person in seat 0 while dead, or high over it.
         assert!(game.gather(4, on_pad).is_empty());
@@ -1440,6 +1776,54 @@ mod tests {
         game.purses[0][0] = 4;
         game.health[0] = 0.0;
         assert!(!game.buy(0, Ware::Bridge, shop));
+    }
+
+    #[test]
+    fn the_two_shops_sell_their_own_wares_and_dying_loses_the_sword() {
+        use roundtown_net::{ARENA_SHOPS, ARENA_UPGRADE_SHOPS};
+        let mut game = full_game();
+        game.purses[0] = [60, 20, 20, 10];
+        let (items, upgrades) = (ARENA_SHOPS[0], ARENA_UPGRADE_SHOPS[0]);
+        // A sword at the item shop, not at the upgrade shop; an upgrade
+        // the other way round.
+        assert!(!game.buy(0, Ware::Sword(1), upgrades));
+        assert!(game.buy(0, Ware::Sword(1), items));
+        assert!(!game.buy(0, Ware::Forge, items));
+        assert!(game.buy(0, Ware::Forge, upgrades));
+        assert_eq!(game.purses[0], [50, 20, 18, 10]);
+        assert_eq!((game.outfits.kits[0].sword, game.outfits.teams[0].forge), (1, 1));
+        // Never the sword in hand again, nor a lesser one; a better one,
+        // a shield, and fireballs for the second button, which then takes
+        // no potion.
+        assert!(!game.buy(0, Ware::Sword(1), items));
+        assert!(game.buy(0, Ware::Sword(3), items) && game.buy(0, Ware::Shield(2), items));
+        assert!(game.buy(0, Ware::Utility(Utility::Fireball), items));
+        assert!(!game.buy(0, Ware::Utility(Utility::Speed), items));
+        assert_eq!(game.purses[0], [10, 8, 18, 6]);
+        // The team's upgrade is its other seat's too: seat 4 swings a
+        // stronger sword once it has one, and seat 0's punch takes what a
+        // sword's does, less what a shield keeps off.
+        assert!(game.buy(0, Ware::StrongerSwords, upgrades));
+        assert_eq!(game.outfits.team(4), game.outfits.team(0));
+        assert_eq!(game.outfits.punch(DAMAGE, 0, 1), DAMAGE + 20.0 + 5.0);
+        assert_eq!(game.outfits.punch(DAMAGE, 4, 1), DAMAGE);
+        assert!((game.outfits.punch(DAMAGE, 1, 0) - DAMAGE * 0.86).abs() < 1e-4);
+        // Dead, the sword and the fireball are gone, and the shield and
+        // the team's upgrades are not.
+        game.die(0);
+        assert_eq!(game.outfits.kits[0], Kit { shield: 2, ..Kit::default() });
+        assert!(game.outfits.teams[0].swords && game.outfits.teams[0].forge == 1);
+        // A potion drunk heals at once, or lasts its while.
+        game.health[0] = 40.0;
+        game.dead_for[0] = None;
+        game.purses[0] = [0, 6, 0, 1];
+        assert!(game.buy(0, Ware::Utility(Utility::Healing), items));
+        assert_eq!(game.outfits.drink(0, game.elapsed), Some(Utility::Healing));
+        assert!(game.buy(0, Ware::Utility(Utility::Healing), items), "the button is the healing's until it is ticked empty");
+        // Unseen, seat 0 is seen again the moment it is hit.
+        game.outfits.kits[0] = Kit { unseen_until: 600, ..Kit::default() };
+        assert!(game.outfits.kit(0).unseen(game.elapsed));
+        assert!(game.outfits.reveal(0) && !game.outfits.kit(0).unseen(game.elapsed));
     }
 
     #[test]

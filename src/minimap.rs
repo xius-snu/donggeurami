@@ -11,7 +11,12 @@
 //! drawn over it again whenever they change ([`draw_bridges`], in the
 //! planks' colour); and over the picture two kinds of dot, you in `map_me`
 //! and your teammate in `map_mate` ([`place_dots`]), placed as you move.
-//! Nobody else is shown. `hud` puts the picture on the screen
+//! Nobody else is shown. Under the dots, where each sapphire and each
+//! amethyst generator is, the picture of what it makes, small
+//! ([`mark_generators`], since 2026-11-12; Hajun: "in the minimap, add a
+//! smaller sapphire and amethyst logo onto the minimap where the
+//! generators are. so the icon need to be smaller so it fits inside the
+//! smaller sapphire island in the minimap"). `hud` puts the picture on the screen
 //! ([`MinimapNode`]); the top of it is north, as the top of the screen is
 //! under the camera fixed over you.
 
@@ -19,7 +24,10 @@ use bevy::asset::RenderAssetUsages;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 
+use roundtown_net::bridge_wars::{GENERATORS, generator, steady};
+
 use crate::bridge::Bridges;
+use crate::hud;
 use crate::island::{Islands, Venue};
 use crate::ui::{UiChanged, ui};
 use crate::{Dead, Player, Team, WalkCycle};
@@ -37,6 +45,14 @@ const HALF: f32 = 150.0;
 const LAND_TOP: f32 = 2.0;
 /// How big a dot is, as a share of the picture.
 const DOT: f32 = 6.0;
+/// How big the picture of what a generator makes is, over its pad on the
+/// map, as a share of the picture: the smaller islands, where the
+/// sapphire ones are, are 24 m across, 8 of the picture's 100, so that
+/// each sits inside its island with the island showing round it. Under
+/// two shares of the short side of the screen, the map being 26: a
+/// five- and a six-sided dot of the item's colour, the stone its count
+/// has top left, drawn for this size (`hud::item_mark`).
+const MARK: f32 = 5.5;
 
 /// The picture, and what it was drawn from.
 #[derive(Resource)]
@@ -58,6 +74,10 @@ struct Dot {
     of: Entity,
 }
 
+/// The picture of what a generator makes, over its pad on the map.
+#[derive(Component)]
+struct GeneratorMark;
+
 pub(crate) fn plugin(app: &mut App) {
     // The picture is there from the start, clear, for `hud` to put on the
     // screen as the app opens; it is drawn once the map has been read.
@@ -78,7 +98,10 @@ pub(crate) fn plugin(app: &mut App) {
         land: None,
         drawn: u32::MAX,
     })
-    .add_systems(Update, (draw_land, draw_bridges, place_dots).chain().after(crate::follow_camera));
+    .add_systems(
+        Update,
+        (draw_land, draw_bridges, mark_generators, place_dots).chain().after(crate::follow_camera),
+    );
 }
 
 /// Where a point `at` on the ground is in the picture, in pixels from its
@@ -184,8 +207,54 @@ fn draw_bridges(
     minimap.drawn = bridges.version;
 }
 
+/// Marks each sapphire and each amethyst generator on the map as the map
+/// is put on the screen (`hud` puts it up afresh with the bar, as the
+/// file's colours change too): the picture of what it makes, in the
+/// item's colour, small enough to sit inside the smaller islands
+/// ([`MARK`]), with its middle on the generator's pad.
+fn mark_generators(
+    nodes: Query<Entity, Added<MinimapNode>>,
+    mut images: ResMut<Assets<Image>>,
+    mut commands: Commands,
+) {
+    let colours = ui().colours.arena;
+    for node in &nodes {
+        // One picture to an item, shared by its four generators.
+        let mut pictures = Vec::new();
+        for index in 0..GENERATORS {
+            let (item, pad) = generator(index);
+            if !steady(item) {
+                continue;
+            }
+            let picture = match pictures.iter().find(|(of, _)| *of == item) {
+                Some((_, picture)) => Handle::clone(picture),
+                None => {
+                    let picture = images.add(hud::item_mark(item));
+                    pictures.push((item, picture.clone()));
+                    picture
+                }
+            };
+            let place = share(pad);
+            commands.entity(node).with_child((
+                GeneratorMark,
+                ImageNode::new(picture).with_color(colours.item(item)),
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: Val::Percent(place.x - MARK * 0.5),
+                    top: Val::Percent(place.y - MARK * 0.5),
+                    width: Val::Percent(MARK),
+                    height: Val::Percent(MARK),
+                    ..default()
+                },
+                Pickable::IGNORE,
+            ));
+        }
+    }
+}
+
 /// Puts a dot over the picture for you and for each teammate, where each
-/// stands, and takes it away with its body; the dead are not shown.
+/// stands, and takes it away with its body; the dead are not shown. A dot
+/// is over whatever else is on the map, the generators' marks among it.
 fn place_dots(
     me: Query<(Entity, &Transform, &Venue, Option<&Team>, Has<Dead>), With<Player>>,
     others: Query<(Entity, &Transform, &Team, Has<Dead>), (With<WalkCycle>, Without<Player>)>,
@@ -236,6 +305,7 @@ fn place_dots(
                         ..default()
                     },
                     BackgroundColor(if mine { colours.map_me } else { colours.map_mate }),
+                    ZIndex(1),
                     shown,
                     Pickable::IGNORE,
                 ));
@@ -274,5 +344,33 @@ mod tests {
         let mut other = vec![0u8; (SIZE * SIZE * 4) as usize];
         fill(&mut other, &[Vec2::new(10.0, 30.0), Vec2::new(30.0, 10.0), Vec2::new(10.0, 10.0)], [255, 255, 255, 255]);
         assert_eq!(other[((12 * SIZE + 12) * 4 + 3) as usize], 255);
+    }
+
+    #[test]
+    fn a_generator_s_mark_sits_inside_the_island_its_pad_is_on() {
+        use roundtown_net::{AMETHYST_PADS, Item, SAPPHIRE_ISLAND_RADIUS, SAPPHIRE_PADS};
+        // Eight marks: the four sapphire generators and the four amethyst
+        // ones, each on the map, the sapphire ones out on the diagonals
+        // and the amethyst ones round the middle.
+        let marked: Vec<(Item, Vec2)> = (0..GENERATORS).map(generator).filter(|(item, _)| steady(*item)).collect();
+        assert_eq!(marked.len(), 8);
+        for (item, pad) in &marked {
+            assert!(matches!(item, Item::Sapphire | Item::Amethyst));
+            let place = share(*pad);
+            assert!(place.min_element() > MARK && place.max_element() < 100.0 - MARK, "{item:?} at {place}");
+        }
+        assert!(SAPPHIRE_PADS.iter().chain(&AMETHYST_PADS).all(|pad| marked.iter().any(|(_, at)| at == pad)));
+        // A mark is smaller than the smaller islands are on the map, with
+        // some of the island showing all round it, and no bigger than a
+        // player's dot.
+        let island = 2.0 * SAPPHIRE_ISLAND_RADIUS / (2.0 * HALF) * 100.0;
+        assert!(MARK < island * 0.75 && MARK > island * 0.5, "a mark {MARK} on an island {island} across");
+        assert!(MARK <= DOT);
+        // The amethyst generators' marks stand clear of each other.
+        for (k, a) in AMETHYST_PADS.iter().enumerate() {
+            for b in &AMETHYST_PADS[k + 1..] {
+                assert!(share(*a).distance(share(*b)) > 2.0 * MARK);
+            }
+        }
     }
 }

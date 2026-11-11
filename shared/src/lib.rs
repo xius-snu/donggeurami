@@ -119,11 +119,22 @@ pub const PROTOCOL_ID: u64 = u64::from_be_bytes(*b"DGRMTOWN");
 /// so 4 silver gets you 25m of bridge"), which an app from before would
 /// still count as 50. With it, though no app from before would have
 /// minded: a thing a generator makes drops onto its pad and cannot be
-/// picked up until it has lain there a moment
-/// ([`bridge_wars::PICK_UP_AFTER`]), and a generator's count to its next
-/// thing runs on while it is full ([`bridge_wars::next_at`]), so that
-/// every device can write the same count over it.
-pub const PROTOCOL_VERSION: u32 = 12;
+/// picked up until it has lain there a moment, and a generator's count to
+/// its next thing runs on while it is full ([`bridge_wars::next_at`]), so
+/// that every device can write the same count over it.
+///
+/// Not bumped on 2026-11-12, when a thing came to be picked up as it
+/// drops, as soon as it is within reach ([`bridge_wars::REACH_OVER`]),
+/// rather than once it has lain a moment: who has what, and when, is the
+/// server's to say online, and an app from before shows it as the server
+/// says it.
+///
+/// 13 since 2026-11-12: Bridge Wars' two shops sell swords, shields, things
+/// to use and upgrades for a team (Hajun's `bridgewarsgameevent.txt`):
+/// [`Ware`] has them all, what everyone has is the game's [`Kits`] and
+/// what each team has bought its [`Upgraded`], a fireball in the air is a
+/// [`Fireball`], and [`Ask::Use`] uses what is on the second button.
+pub const PROTOCOL_VERSION: u32 = 13;
 
 /// The UDP port the game server listens on. 443, where QUIC goes, because a
 /// network that lets any UDP through lets that through: school and office
@@ -255,6 +266,9 @@ pub fn protocol(app: &mut App) {
         .replicate::<Plank>()
         .replicate::<Loot>()
         .replicate::<Purses>()
+        .replicate::<Kits>()
+        .replicate::<Upgraded>()
+        .replicate::<Fireball>()
         .add_client_message::<Moved>(Channel::Unreliable)
         .add_client_message::<Ask>(Channel::Ordered)
         .add_server_message::<Tell>(Channel::Ordered)
@@ -429,6 +443,17 @@ pub const ARENA_SHOPS: [Vec2; ARENA_TEAMS] = [
     Vec2::new(130.13, -5.0),
 ];
 
+/// Where each team's upgrade shop is, as [`ARENA_SHOPS`] are: the middle
+/// of the outline in front of the blue-roofed stand on its island (the
+/// map's `bluemarket`), to the left of whoever arrives there, across the
+/// island's middle from the red one.
+pub const ARENA_UPGRADE_SHOPS: [Vec2; ARENA_TEAMS] = [
+    Vec2::new(-5.0, 130.13),
+    Vec2::new(-130.13, -5.0),
+    Vec2::new(5.0, -130.13),
+    Vec2::new(130.13, 5.0),
+];
+
 /// Which of the [`ARENA_ISLANDS`] the player in `seat` arrives on, and is
 /// put back on when they fall off (the game's `lobby`): seat by seat round
 /// the four, so that the first four seats of a game of Bridge Wars are on
@@ -476,11 +501,121 @@ impl Item {
 /// How many of each [`Item`] someone holds, by [`Item::index`].
 pub type Purse = [u16; 4];
 
-/// Something Bridge Wars' shop sells.
+/// Something Bridge Wars' shops sell (Hajun's `bridgewarsgameevent.txt`;
+/// only the bridge until 2026-11-12). The item shop, at the red stand,
+/// sells what is yours alone; the upgrade shop, at the blue one, what is
+/// your whole team's ([`bridge_wars::sold_at`]). What each costs, and
+/// whether it can be bought at all, is [`bridge_wars::price`].
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Ware {
     /// [`bridge_wars::BRIDGE_A_BUY`] metres of bridge to lay.
     Bridge,
+    /// A sword, by its tier: 1 the basic one, 2 the silver, 3 the aura.
+    /// Only one better than the one in hand; lost on dying.
+    Sword(u8),
+    /// A shield, by its tier, 1 to 3: a share of every blow kept off.
+    /// Only one better than the one worn; kept for the game.
+    Shield(u8),
+    /// One more of something to use, for the second button, which holds
+    /// one kind of thing at a time.
+    Utility(Utility),
+    /// The next step of the team's own generator: faster, faster again,
+    /// amethyst too, and fastest.
+    Forge,
+    /// Ten more damage on every sword the team swings. Once.
+    StrongerSwords,
+    /// The next step of the team's shields: so much more kept off, four
+    /// times over.
+    BetterShields,
+    /// The team heals while it stands on its own island.
+    HealPool,
+    /// One more blindness trap waiting on the team's island, three at the
+    /// most.
+    Trap,
+}
+
+/// Something to use in Bridge Wars, bought at the item shop and put on the
+/// second button, however many of it ([`Kit::count`]).
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum Utility {
+    /// Aimed and thrown: it flies straight and bursts at the end of its
+    /// range, or on whoever it meets ([`bridge_wars::Flight`]).
+    Fireball,
+    /// Aimed and sent off: a builder who walks that way laying a bridge.
+    Builder,
+    /// Drunk: [`bridge_wars::FAST_SECS`] of running faster.
+    Speed,
+    /// Drunk: [`bridge_wars::UNSEEN_SECS`] of not being seen.
+    Invisibility,
+    /// Drunk: a quarter of your health back, at once.
+    Healing,
+}
+
+impl Utility {
+    pub const ALL: [Utility; 5] =
+        [Utility::Fireball, Utility::Builder, Utility::Speed, Utility::Invisibility, Utility::Healing];
+
+    /// Whether it is aimed, by holding its button and dragging, rather
+    /// than pressed.
+    pub const fn aimed(self) -> bool {
+        matches!(self, Utility::Fireball | Utility::Builder)
+    }
+
+    /// Whether it takes [`bridge_wars::DRINK_SECS`] to drink before it
+    /// does anything: every potion (the healing one too since Hajun's
+    /// file of 2026-11-12, "after drinking time 1.6s, speed reduct, same
+    /// as speed potion").
+    pub const fn drunk(self) -> bool {
+        !self.aimed()
+    }
+
+    /// Whether what it does lasts a while once it is drunk, with the time
+    /// left written over the button.
+    pub const fn lasts(self) -> bool {
+        matches!(self, Utility::Speed | Utility::Invisibility)
+    }
+}
+
+/// What someone in a game of Bridge Wars has, besides what is in their
+/// [`Purse`]: the sword in their hand and the shield round them, by tier
+/// (0 is none); what is on their second button and how many of it; until
+/// when, in whole seconds into the fight, they run fast and go unseen (0
+/// is not at all); and whether a trap has blinded them.
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub struct Kit {
+    pub sword: u8,
+    pub shield: u8,
+    pub utility: Option<Utility>,
+    pub count: u8,
+    pub fast_until: u16,
+    pub unseen_until: u16,
+    pub blind: bool,
+}
+
+impl Kit {
+    /// Whether they are running fast, `elapsed` seconds into the fight.
+    pub fn fast(&self, elapsed: f32) -> bool {
+        f32::from(self.fast_until) > elapsed
+    }
+
+    /// Whether they are unseen then.
+    pub fn unseen(&self, elapsed: f32) -> bool {
+        f32::from(self.unseen_until) > elapsed
+    }
+}
+
+/// What a team has bought at the upgrade shop: how far its generator has
+/// been raised (0 to [`bridge_wars::FORGE_MOST`]), whether its swords are
+/// stronger, how far its shields have been bettered (0 to
+/// [`bridge_wars::BETTER_SHIELDS_MOST`]), whether it has a heal pool, and
+/// how many blindness traps wait on its island.
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub struct Upgrades {
+    pub forge: u8,
+    pub swords: bool,
+    pub shields: u8,
+    pub heal_pool: bool,
+    pub traps: u8,
 }
 
 /// Bridge Wars' rules, as the game plays them on the device (`arena`) and
@@ -490,8 +625,9 @@ pub enum Ware {
 /// rule.
 pub mod bridge_wars {
     use super::{
-        AMETHYST_PADS, ARENA_ISLAND_RADIUS, ARENA_ISLANDS, ARENA_PADS, ARENA_SEATS, ARENA_SHOPS, Item, PAD_HALF,
-        Quat, SAPPHIRE_ISLAND_RADIUS, SAPPHIRE_PADS, TAU, Vec2, Vec3, Ware,
+        AMETHYST_PADS, ARENA_ISLAND_RADIUS, ARENA_ISLANDS, ARENA_PADS, ARENA_SEATS, ARENA_SHOPS, ARENA_TEAMS,
+        ARENA_UPGRADE_SHOPS, Item, Kit, PAD_HALF, PAD_TOP, Purse, Quat, SAPPHIRE_ISLAND_RADIUS, SAPPHIRE_PADS, TAU,
+        Upgrades, Utility, Vec2, Vec3, Ware, arena_team,
     };
 
     /// How long the waiting room waits for someone else to join before the
@@ -645,23 +781,42 @@ pub mod bridge_wars {
     pub const GENERATORS: usize = 16;
 
     /// What the generator numbered `index` makes, and the middle of the
-    /// pad it makes it on.
+    /// pad it makes it on. Past the map's own sixteen are the four a
+    /// team's own generator becomes once it is raised to make amethyst
+    /// too ([`FORGE_AMETHYST`]): on the team's pad, by team.
     pub fn generator(index: usize) -> (Item, Vec2) {
         match index {
             0..=3 => (Item::Silver, ARENA_PADS[index]),
             4..=7 => (Item::Gold, ARENA_PADS[index - 4]),
             8..=11 => (Item::Sapphire, SAPPHIRE_PADS[index - 8]),
-            _ => (Item::Amethyst, AMETHYST_PADS[(index - 12) % AMETHYST_PADS.len()]),
+            12..=15 => (Item::Amethyst, AMETHYST_PADS[index - 12]),
+            _ => (Item::Amethyst, ARENA_PADS[(index - GENERATORS) % ARENA_TEAMS]),
         }
     }
+
+    /// How many times as fast a team's own generator makes its silver and
+    /// its gold, by how far the team has raised it at the upgrade shop
+    /// (Hajun's file: "Better Generator ... (faster base generator 150%)
+    /// -> Advanced Generator ... (even faster base generator 200%) ->
+    /// Amethyst Generator ... (starts spawning amethyst too) -> Molten
+    /// Generator ... (fastest 300%)"; that the third step keeps the
+    /// second's pace is mine).
+    pub const FORGE_SPEED: [f32; 5] = [1.0, 1.5, 2.0, 2.0, 3.0];
+    /// From which step a team's generator makes amethyst too, how long each
+    /// takes, in seconds, and how many lie on the pad at the most: as slow
+    /// as the map's own amethyst generators begin, and as few.
+    pub const FORGE_AMETHYST: u8 = 3;
+    pub const FORGE_AMETHYST_SECS: f32 = 60.0;
+    pub const FORGE_AMETHYST_CAP: usize = 2;
 
     /// How long a generator of `item` at `tier` takes to make one, in
     /// seconds, and how much more or less than that each one may take
     /// (Hajun's file: "Silver: baserate = 1 per ~2 sec (+- 0.5 sec variable
     /// interval)", "Gold: baserate = 1 per ~7.5sec (+-1 sec variable
     /// interval)", "Sapphire: base rate = 1 per 30 s (Tier I) ... Tier2 =
-    /// 1per23s, Tier3 = 1per 12s", "Amethyst: base rate = 1 per 40 s (Tier
-    /// I) ... Tier2 = 1 per 30s, Tier3 = 1 per 20s").
+    /// 1per23s, Tier3 = 1per 12s", "Amethyst: base rate = 1 per 60 s (Tier
+    /// I) ... Tier2 = 1 per 40s, Tier3 = 1 per 25s": 40, 30 and 20 until
+    /// 2026-11-12).
     pub fn interval(item: Item, tier: u8) -> (f32, f32) {
         match (item, tier) {
             (Item::Silver, _) => (2.0, 0.5),
@@ -669,9 +824,9 @@ pub mod bridge_wars {
             (Item::Sapphire, 0 | 1) => (30.0, 0.0),
             (Item::Sapphire, 2) => (23.0, 0.0),
             (Item::Sapphire, _) => (12.0, 0.0),
-            (Item::Amethyst, 0 | 1) => (40.0, 0.0),
-            (Item::Amethyst, 2) => (30.0, 0.0),
-            (Item::Amethyst, _) => (20.0, 0.0),
+            (Item::Amethyst, 0 | 1) => (60.0, 0.0),
+            (Item::Amethyst, 2) => (40.0, 0.0),
+            (Item::Amethyst, _) => (25.0, 0.0),
         }
     }
 
@@ -702,28 +857,56 @@ pub mod bridge_wars {
     /// and a little over a metre, so that standing at a pad's edge takes
     /// what lies along it, and walking across takes it all.
     pub const MAGNET: f32 = 1.5;
-    /// How far over or under a pad's top someone's feet may be and still
-    /// pick up what lies on it, in metres: a jump over it, and not the
-    /// waiting room nor a fall past it.
-    pub const MAGNET_HEIGHT: f32 = 3.0;
-    /// How long a thing takes to drop onto its pad as it is made, in
-    /// seconds, and how long it lies there after that before anyone can
-    /// pick it up (Hajun, 2026-11-11: "i want it to be a drop from a
-    /// certain height animation. so that even when player is standing on
-    /// top of the generator, u can see the mineral for a bit before the
-    /// player pick it up"). Both numbers are mine. The device draws the
-    /// drop (`loot`); whoever runs the generators keeps the thing from
-    /// being picked up until both have passed ([`PICK_UP_AFTER`]).
+    /// How far over someone's feet a thing may be and still be picked up
+    /// by them, in metres: half a metre over the top of their head, which
+    /// is 1.64 m up, as Minecraft picks a thing up half a block over a
+    /// player's; and how far under their feet: a jump's height over what
+    /// lies on a pad, so that someone jumping across a pad takes what
+    /// lies on it, and neither the waiting room nor a fall past the island
+    /// does. A thing is where it is as it drops ([`Piece::height`]), so
+    /// one still coming down is out of reach until it is that near, and
+    /// someone who jumps for it has it sooner, in the air (Hajun,
+    /// 2026-11-12: "the delay is a bit too much for the delay between the
+    /// item dropping from generator and the user collecting - user should
+    /// be able to collect in the air too maybe when they jump"). For an
+    /// evening before that a thing could not be picked up until it had
+    /// dropped and lain 0.3 s, 0.85 s after it was made, however near it
+    /// came; standing on its pad it is yours 0.45 s after it is made now,
+    /// and at the top of a jump 0.32 s after.
+    pub const REACH_OVER: f32 = 2.14;
+    pub const REACH_UNDER: f32 = 1.5;
+    /// How far over its pad's top a thing's own middle hangs once it has
+    /// dropped, in metres (the device bobs it about there, `loot`): the
+    /// models reach 0.18 m under their middles at the most, so the lowest
+    /// of them clears the pad by a hand.
+    pub const HOVER: f32 = 0.42;
+    /// How far over where it will hang a thing appears as it is made, to
+    /// drop from there, in metres, and how long the drop takes, in
+    /// seconds (Hajun, 2026-11-11: "i want it to be a drop from a certain
+    /// height animation. so that even when player is standing on top of
+    /// the generator, u can see the mineral for a bit before the player
+    /// pick it up"): from over the head of anyone standing on the pad.
+    /// Both numbers are mine. The device draws the drop (`loot`), and
+    /// whoever runs the generators goes by it for who can reach the thing
+    /// ([`Mint::pick_up`]).
+    pub const DROP_FROM: f32 = 5.0;
     pub const DROP_SECS: f32 = 0.55;
-    pub const LIE_SECS: f32 = 0.3;
-    /// How long after it is made a thing can first be picked up, in
-    /// seconds.
-    pub const PICK_UP_AFTER: f32 = DROP_SECS + LIE_SECS;
 
-    /// One thing a generator has made, lying on its pad until someone
-    /// picks it up: a number of its own, which generator made it, what it
-    /// is, where it lies across the ground, and how far into the fight it
-    /// was made, in seconds.
+    /// How far over where it hangs a thing is, `age` seconds after it was
+    /// made, in metres: dropping from [`DROP_FROM`] for [`DROP_SECS`], as
+    /// a thing let go falls, slowly and then fast, and there from then on.
+    pub fn drop_height(age: f32) -> f32 {
+        if age >= DROP_SECS {
+            return 0.0;
+        }
+        let fallen = age.max(0.0) / DROP_SECS;
+        DROP_FROM * (1.0 - fallen * fallen)
+    }
+
+    /// One thing a generator has made, dropping onto its pad or lying on
+    /// it until someone picks it up: a number of its own, which generator
+    /// made it, what it is, where it lies across the ground, and how far
+    /// into the fight it was made, in seconds.
     #[derive(Clone, Copy, PartialEq, Debug)]
     pub struct Piece {
         pub id: u32,
@@ -731,6 +914,15 @@ pub mod bridge_wars {
         pub item: Item,
         pub at: Vec2,
         pub born: f32,
+    }
+
+    impl Piece {
+        /// How high its middle is, `elapsed` seconds into the fight, in
+        /// the map's own heights: over its pad's top where it hangs, and
+        /// as far over that as it has still to drop.
+        pub fn height(&self, elapsed: f32) -> f32 {
+            PAD_TOP + HOVER + drop_height(elapsed - self.born)
+        }
     }
 
     /// Whether a generator of `item` makes its things to the second, with
@@ -791,6 +983,9 @@ pub mod bridge_wars {
         /// full ([`cap`]): full, nothing is made, and the count starts
         /// over.
         due: [f32; GENERATORS],
+        /// When each team's own generator next makes an amethyst, once it
+        /// has been raised to ([`FORGE_AMETHYST`]): none until then.
+        forge_due: [Option<f32>; ARENA_TEAMS],
         pieces: Vec<Piece>,
         next: u32,
     }
@@ -812,6 +1007,7 @@ pub mod bridge_wars {
             }
             Self {
                 due,
+                forge_due: [None; ARENA_TEAMS],
                 pieces: Vec::new(),
                 next: 0,
             }
@@ -837,7 +1033,12 @@ pub mod bridge_wars {
         /// was taken; the count is written over the sapphire and the
         /// amethyst ones now, and one that stood still at nothing would
         /// say so for as long as nobody came).
-        pub fn run(&mut self, elapsed: f32, dice: &mut dyn FnMut() -> f32) -> Vec<Piece> {
+        ///
+        /// `forge` is how far each team has raised its own generator
+        /// ([`Upgrades::forge`]): its silver and its gold come that many
+        /// times as fast ([`FORGE_SPEED`]), from its next wait on, and
+        /// from [`FORGE_AMETHYST`] it makes amethyst on its pad too.
+        pub fn run(&mut self, elapsed: f32, forge: &[u8; ARENA_TEAMS], dice: &mut dyn FnMut() -> f32) -> Vec<Piece> {
             let mut made = Vec::new();
             for index in 0..GENERATORS {
                 let (item, pad) = generator(index);
@@ -848,25 +1049,48 @@ pub mod bridge_wars {
                 self.due[index] = if steady(item) {
                     next_at(item, self.due[index])
                 } else {
-                    // Never a wait that has already passed, should a go
+                    // A team's own, as fast as the team has made it; and
+                    // never a wait that has already passed, should a go
                     // come late.
-                    (self.due[index] + wait_for(item, tier(item, elapsed), dice)).max(elapsed)
+                    let speed = FORGE_SPEED[usize::from(forge[index % ARENA_TEAMS]).min(FORGE_SPEED.len() - 1)];
+                    (self.due[index] + wait_for(item, tier(item, elapsed), dice) / speed).max(elapsed)
                 };
                 if self.held(index) >= cap(item) {
                     continue;
                 }
-                let piece = Piece {
-                    id: self.next,
-                    generator: index as u8,
-                    item,
-                    at: self.place(pad, dice),
-                    born: elapsed,
-                };
-                self.next = self.next.wrapping_add(1);
-                self.pieces.push(piece);
-                made.push(piece);
+                made.push(self.make(index, item, pad, elapsed, dice));
+            }
+            for team in 0..ARENA_TEAMS {
+                if forge[team] < FORGE_AMETHYST {
+                    continue;
+                }
+                // Its first a whole wait on from when it was raised.
+                let due = *self.forge_due[team].get_or_insert(elapsed + FORGE_AMETHYST_SECS);
+                if elapsed < due {
+                    continue;
+                }
+                self.forge_due[team] = Some(due + FORGE_AMETHYST_SECS);
+                let index = GENERATORS + team;
+                if self.held(index) < FORGE_AMETHYST_CAP {
+                    let (item, pad) = generator(index);
+                    made.push(self.make(index, item, pad, elapsed, dice));
+                }
             }
             made
+        }
+
+        /// One more thing from the generator numbered `index`, on its pad.
+        fn make(&mut self, index: usize, item: Item, pad: Vec2, elapsed: f32, dice: &mut dyn FnMut() -> f32) -> Piece {
+            let piece = Piece {
+                id: self.next,
+                generator: index as u8,
+                item,
+                at: self.place(pad, dice),
+                born: elapsed,
+            };
+            self.next = self.next.wrapping_add(1);
+            self.pieces.push(piece);
+            piece
         }
 
         /// Somewhere on the pad round `pad` for a new thing: of a few
@@ -894,14 +1118,17 @@ pub mod bridge_wars {
             best.1
         }
 
-        /// Whoever stands at `at` across the ground, `elapsed` seconds
-        /// into the fight, picks up everything within [`MAGNET`] of them
-        /// that has dropped and lain a moment ([`PICK_UP_AFTER`]): what
-        /// they took, no longer lying there for anyone else.
-        pub fn pick_up(&mut self, at: Vec2, elapsed: f32) -> Vec<Piece> {
-            let reach = MAGNET * MAGNET;
+        /// Whoever's feet are at `at`, `elapsed` seconds into the fight,
+        /// picks up everything within reach of them: within [`MAGNET`]
+        /// across the ground, and, where the thing is now, dropping or
+        /// lying ([`Piece::height`]), no further over their feet than
+        /// [`REACH_OVER`] nor under them than [`REACH_UNDER`]. What they
+        /// took, no longer there for anyone else.
+        pub fn pick_up(&mut self, at: Vec3, elapsed: f32) -> Vec<Piece> {
+            let (across, reach) = (Vec2::new(at.x, at.z), MAGNET * MAGNET);
             let (taken, left): (Vec<Piece>, Vec<Piece>) = self.pieces.iter().copied().partition(|piece| {
-                piece.at.distance_squared(at) <= reach && elapsed - piece.born >= PICK_UP_AFTER
+                let over = piece.height(elapsed) - at.y;
+                piece.at.distance_squared(across) <= reach && (-REACH_UNDER..=REACH_OVER).contains(&over)
             });
             self.pieces = left;
             taken
@@ -917,30 +1144,478 @@ pub mod bridge_wars {
 
     // ------------------------------------------------------------ the shop
 
-    /// What `ware` costs: so many of an item (Hajun, 2026-11-11: "right
-    /// now just have 'bridge' as the option, which should cost 4 silver
-    /// for 50m of bridge"; and later that night, "make it so 4 silver gets
-    /// you 25m of bridge").
-    pub fn price(ware: Ware) -> (Item, u16) {
+    /// Which of an island's two shops: the item shop at its red stand, or
+    /// the upgrade shop at its blue one.
+    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+    pub enum Shop {
+        Items,
+        Upgrades,
+    }
+
+    /// Which shop sells `ware`.
+    pub fn sold_at(ware: Ware) -> Shop {
         match ware {
-            Ware::Bridge => (Item::Silver, 4),
+            Ware::Bridge | Ware::Sword(_) | Ware::Shield(_) | Ware::Utility(_) => Shop::Items,
+            Ware::Forge | Ware::StrongerSwords | Ware::BetterShields | Ware::HealPool | Ware::Trap => Shop::Upgrades,
         }
+    }
+
+    /// How much more a punch takes with each sword in hand, by its tier
+    /// (none, basic, silver, aura: Hajun's file, "+5 dmg", "+10 dmg", "+20
+    /// dmg"), and what share of every blow each shield keeps off ("6% dmg
+    /// reduction", 14% and 22%).
+    pub const SWORD_DAMAGE: [f32; 4] = [0.0, 5.0, 10.0, 20.0];
+    pub const SHIELD_SHARE: [f32; 4] = [0.0, 0.06, 0.14, 0.22];
+    /// What the upgrade shop's Stronger Swords adds to every sword of the
+    /// team ("permanent +5 dmg on all swords"), and each step of its
+    /// Better Shields to every shield ("permanent +6% shield dmg
+    /// reduction"), of which there are four. Both go by having a sword or
+    /// a shield: bare hands hit no harder, and nothing is kept off someone
+    /// with no shield (mine: the file says "on all swords" and "shield
+    /// dmg reduction").
+    pub const STRONGER_SWORDS: f32 = 5.0;
+    pub const BETTER_SHIELDS: f32 = 0.06;
+    pub const BETTER_SHIELDS_MOST: u8 = 4;
+    /// How far a team's generator can be raised, and how many traps can
+    /// wait on its island ("1st 2nd, 3rd queued").
+    pub const FORGE_MOST: u8 = 4;
+    pub const TRAPS_MOST: u8 = 3;
+
+    /// How many of `utility` the second button holds: three fireballs
+    /// (Hajun's file: "can buy multiple - cap at 3 stack"), and nine of
+    /// anything else (mine: one figure in the button's corner).
+    pub const fn most_held(utility: Utility) -> u8 {
+        match utility {
+            Utility::Fireball => 3,
+            _ => 9,
+        }
+    }
+
+    /// What `ware` costs someone with `kit` on a team with `team`: so many
+    /// of an item, from Hajun's file. Nothing if it is not to be had: a
+    /// sword or a shield no better than the one they have ("you cannot buy
+    /// a same/lower tier sword/shield, only greater"); something for the
+    /// second button while it holds another thing ("you can only buy if
+    /// the 2nd ui button is either empty or its filled by the same item u
+    /// already have"), or as many as it holds; or an upgrade the team has
+    /// to its last step.
+    pub fn price(ware: Ware, kit: &Kit, team: &Upgrades) -> Option<(Item, u16)> {
+        let step = |prices: &[u16], taken: u8| prices.get(usize::from(taken)).map(|cost| (Item::Sapphire, *cost));
+        match ware {
+            Ware::Bridge => Some((Item::Silver, 4)),
+            Ware::Sword(1) if kit.sword < 1 => Some((Item::Silver, 10)),
+            Ware::Sword(2) if kit.sword < 2 => Some((Item::Gold, 7)),
+            Ware::Sword(3) if kit.sword < 3 => Some((Item::Amethyst, 4)),
+            Ware::Shield(1) if kit.shield < 1 => Some((Item::Silver, 24)),
+            Ware::Shield(2) if kit.shield < 2 => Some((Item::Gold, 12)),
+            Ware::Shield(3) if kit.shield < 3 => Some((Item::Amethyst, 6)),
+            Ware::Utility(utility)
+                if kit.utility.is_none_or(|held| held == utility) && kit.count < most_held(utility) =>
+            {
+                Some(match utility {
+                    Utility::Fireball => (Item::Silver, 40),
+                    Utility::Builder => (Item::Amethyst, 1),
+                    Utility::Speed => (Item::Amethyst, 1),
+                    Utility::Invisibility => (Item::Amethyst, 2),
+                    Utility::Healing => (Item::Gold, 3),
+                })
+            }
+            Ware::Forge => step(&[2, 4, 6, 8], team.forge),
+            Ware::StrongerSwords if !team.swords => Some((Item::Sapphire, 4)),
+            Ware::BetterShields => step(&[2, 3, 4, 6], team.shields),
+            Ware::HealPool if !team.heal_pool => Some((Item::Sapphire, 1)),
+            Ware::Trap => step(&[1, 2, 4], team.traps),
+            _ => None,
+        }
+    }
+
+    /// Sells `ware` to someone with `purse` and `kit` on a team with
+    /// `team`, if it is to be had and they hold its [`price`], which comes
+    /// out of the purse: whether it is theirs. A bridge is nothing in the
+    /// kit: whoever sells it gives the metres ([`BRIDGE_A_BUY`]).
+    pub fn buy(ware: Ware, purse: &mut Purse, kit: &mut Kit, team: &mut Upgrades) -> bool {
+        let Some((item, cost)) = price(ware, kit, team) else {
+            return false;
+        };
+        let held = &mut purse[item.index()];
+        if *held < cost {
+            return false;
+        }
+        *held -= cost;
+        match ware {
+            Ware::Bridge => {}
+            Ware::Sword(tier) => kit.sword = tier,
+            Ware::Shield(tier) => kit.shield = tier,
+            Ware::Utility(utility) => {
+                kit.utility = Some(utility);
+                kit.count += 1;
+            }
+            Ware::Forge => team.forge += 1,
+            Ware::StrongerSwords => team.swords = true,
+            Ware::BetterShields => team.shields += 1,
+            Ware::HealPool => team.heal_pool = true,
+            Ware::Trap => team.traps += 1,
+        }
+        true
     }
 
     /// How many metres of bridge one [`Ware::Bridge`] is: 25 since
     /// late on 2026-11-11, 50 for the evening before.
     pub const BRIDGE_A_BUY: f32 = 25.0;
 
-    /// How far from a shop ([`ARENA_SHOPS`]) someone may be, where they
-    /// last said they stood, for the server to sell to them, in metres:
-    /// the outline in front of the stand reaches 1.5 m from its middle,
-    /// and the rest is for the way they may have gone since.
+    /// What a punch takes, from `base` (a bare hand's, [`DAMAGE`]): more
+    /// with a sword, and more again if the team's swords are stronger.
+    pub fn punch_damage(base: f32, kit: &Kit, team: &Upgrades) -> f32 {
+        if kit.sword == 0 {
+            return base;
+        }
+        base + SWORD_DAMAGE[usize::from(kit.sword.min(3))] + if team.swords { STRONGER_SWORDS } else { 0.0 }
+    }
+
+    /// What share of a blow the shield of someone with `kit` keeps off: its
+    /// own, and the team's Better Shields on top.
+    pub fn kept_off(kit: &Kit, team: &Upgrades) -> f32 {
+        if kit.shield == 0 {
+            return 0.0;
+        }
+        SHIELD_SHARE[usize::from(kit.shield.min(3))] + BETTER_SHIELDS * f32::from(team.shields.min(BETTER_SHIELDS_MOST))
+    }
+
+    /// How long a potion takes to drink, in seconds, and how much of their
+    /// pace someone keeps while they drink ("shows 1.6s timer running to 0
+    /// in front of ur character while ur movement is slowed 50% while
+    /// drinking"); how long the speed potion lasts and how much faster it
+    /// makes them ("45 second 40% speed boost"); how long the invisibility
+    /// potion lasts ("30second complete invisibility ... being hit or
+    /// attacking reveals u", [`Outfits::reveal`]); and what share of
+    /// their health the healing potion gives back once it is drunk
+    /// ("instantly heal 25% of your health").
+    pub const DRINK_SECS: f32 = 1.6;
+    pub const DRINK_SLOW: f32 = 0.5;
+    pub const FAST_SECS: f32 = 45.0;
+    pub const FAST: f32 = 1.4;
+    pub const UNSEEN_SECS: f32 = 30.0;
+    pub const HEALING: f32 = 0.25;
+    /// What a team's heal pool gives each of the team on its own island,
+    /// and how often, in seconds ("heals 5hp every 2.5sec").
+    pub const HEAL_POOL: f32 = 5.0;
+    pub const HEAL_POOL_EVERY: f32 = 2.5;
+    /// How long a trap blinds whoever springs it, in seconds ("for fixed
+    /// 8 seconds"; until Hajun's file of 2026-11-12 it was until they had
+    /// been off that island five); and how far round themselves they see
+    /// meanwhile, in metres ("a very small circle around their character":
+    /// the number is mine).
+    pub const BLIND_SECS: f32 = 8.0;
+    pub const BLIND_SIGHT: f32 = 2.6;
+    /// How far a builder lays its bridge, in metres ("creating a bridge in
+    /// a straight line for 100m or until it reaches a island/land"), and
+    /// how fast it walks, as anyone building does, half a run.
+    pub const BUILDER_METRES: f32 = 100.0;
+    pub const BUILDER_SPEED: f32 = 5.0;
+
+    /// A fireball: what its blast takes off everyone it reaches ("20
+    /// dmg"); how fast it flies and how far, in metres a second and
+    /// metres; how big the ball is; how high over the thrower's feet it
+    /// flies and how far in front of them it sets out; and how far its
+    /// blast reaches from where it bursts, across the ground and up or
+    /// down. All but the damage are mine: a range that ends about where
+    /// the screen does under the camera over you, which shows 11 m up and
+    /// down from you, so that whoever throws it sees it burst (20 m, for
+    /// its first hours, burst off the screen); a ball that can be seen
+    /// coming; a blast three bodies wide.
+    pub const FIREBALL_DAMAGE: f32 = 20.0;
+    pub const FIREBALL_SPEED: f32 = 22.0;
+    pub const FIREBALL_RANGE: f32 = 12.0;
+    pub const FIREBALL_RADIUS: f32 = 0.4;
+    pub const FIREBALL_HEIGHT: f32 = 1.0;
+    pub const FIREBALL_AHEAD: f32 = 0.9;
+    pub const BLAST_RADIUS: f32 = 3.0;
+    pub const BLAST_HEIGHT: f32 = 3.0;
+    /// How wide a body is to a fireball, in metres from its middle: the
+    /// game's bodies', at the shoulders.
+    const BODY: f32 = 0.45;
+
+    /// A fireball on its way: where it set out from, which way it flies, as
+    /// a `Plank` heads (radians from the game's -Z, about the upright), and
+    /// how far it has flown. The server flies the ones thrown online and
+    /// the device its own offline, by the same rules: straight and level,
+    /// through whatever stands on the map, the server having no map, until
+    /// it [`Flight::meets`] someone or has flown its range, where it
+    /// bursts.
+    #[derive(Clone, Copy, PartialEq, Debug)]
+    pub struct Flight {
+        pub from: Vec3,
+        pub heading: f32,
+        pub flown: f32,
+    }
+
+    impl Flight {
+        /// One thrown by someone whose feet are at `feet`, that way.
+        pub fn thrown(feet: Vec3, heading: f32) -> Self {
+            let mut flight = Self {
+                from: feet + Vec3::Y * FIREBALL_HEIGHT,
+                heading,
+                flown: 0.0,
+            };
+            flight.from += flight.way() * FIREBALL_AHEAD;
+            flight
+        }
+
+        /// Which way it flies, across the ground.
+        pub fn way(&self) -> Vec3 {
+            Vec3::new(-self.heading.sin(), 0.0, -self.heading.cos())
+        }
+
+        /// Where it is.
+        pub fn at(&self) -> Vec3 {
+            self.from + self.way() * self.flown
+        }
+
+        /// Flies it on for `dt` seconds: whether it has come to the end of
+        /// its range, where it stops.
+        pub fn fly(&mut self, dt: f32) -> bool {
+            self.flown = (self.flown + FIREBALL_SPEED * dt).min(FIREBALL_RANGE);
+            self.flown >= FIREBALL_RANGE
+        }
+
+        /// Whether it has met a body whose feet are at `feet`.
+        pub fn meets(&self, feet: Vec3) -> bool {
+            let at = self.at();
+            let across = Vec2::new(at.x - feet.x, at.z - feet.z).length();
+            across <= FIREBALL_RADIUS + BODY && at.y >= feet.y - 0.2 && at.y <= feet.y + 2.0
+        }
+    }
+
+    /// Whether a fireball bursting at `centre` reaches a body whose feet
+    /// are at `feet`.
+    pub fn in_blast(centre: Vec3, feet: Vec3) -> bool {
+        let across = Vec2::new(centre.x - feet.x, centre.z - feet.z).length();
+        across <= BLAST_RADIUS + BODY && (centre.y - (feet.y + 1.0)).abs() <= BLAST_HEIGHT
+    }
+
+    /// What has happened in a go of [`Outfits::tick`]: who a heal pool has
+    /// healed, by seat, and whose trap has blinded whom, by seat and the
+    /// team whose island it was.
+    #[derive(Clone, PartialEq, Debug, Default)]
+    pub struct Ticked {
+        pub healed: Vec<usize>,
+        pub sprung: Vec<(usize, u8)>,
+    }
+
+    /// What everyone in a game has and what every team has bought, with
+    /// the rules that change them: the server's online, and the device's
+    /// own in a game played offline, as the [`Mint`] is.
+    #[derive(Clone, PartialEq, Debug, Default)]
+    pub struct Outfits {
+        pub kits: Vec<Kit>,
+        pub teams: [Upgrades; ARENA_TEAMS],
+        /// How much longer each seat is blind, in seconds, and whose
+        /// island it last sprang a trap on and has not stepped off since.
+        blind_left: Vec<f32>,
+        trapped_on: Vec<Option<u8>>,
+        /// How long each team's heal pool has been filling.
+        pool: [f32; ARENA_TEAMS],
+    }
+
+    impl Outfits {
+        /// Room for everyone up to `seats`, with nothing.
+        pub fn seat(&mut self, seats: usize) {
+            if self.kits.len() < seats {
+                self.kits.resize(seats, Kit::default());
+                self.blind_left.resize(seats, 0.0);
+                self.trapped_on.resize(seats, None);
+            }
+        }
+
+        /// What the one in `seat` has: nothing, for a seat nobody is in.
+        pub fn kit(&self, seat: usize) -> Kit {
+            self.kits.get(seat).copied().unwrap_or_default()
+        }
+
+        /// What the team of the one in `seat` has bought: nothing, for a
+        /// zombie, which is on nobody's team.
+        pub fn team(&self, seat: usize) -> Upgrades {
+            self.teams.get(usize::from(arena_team(seat))).copied().unwrap_or_default()
+        }
+
+        /// Sells `ware` to the one in `seat`, out of `purse` ([`buy`]).
+        pub fn buy(&mut self, seat: usize, ware: Ware, purse: &mut Purse) -> bool {
+            self.seat(seat + 1);
+            let Some(team) = self.teams.get_mut(usize::from(arena_team(seat))) else {
+                return false;
+            };
+            buy(ware, purse, &mut self.kits[seat], team)
+        }
+
+        /// The one in `seat` uses one `utility` off their second button,
+        /// if that is what is on it: whether they had one. The button is
+        /// empty once none is left and nothing drunk from it still lasts
+        /// ([`Outfits::tick`]).
+        pub fn spend(&mut self, seat: usize, utility: Utility) -> bool {
+            let Some(kit) = self.kits.get_mut(seat) else {
+                return false;
+            };
+            if kit.utility != Some(utility) || kit.count == 0 {
+                return false;
+            }
+            kit.count -= 1;
+            true
+        }
+
+        /// The one in `seat` has drunk the potion on their second button,
+        /// `elapsed` seconds into the fight: which it was, if they had
+        /// one. The speed and the invisibility last from now; the healing
+        /// is the caller's to give ([`HEALING`]). Whoever asks has taken
+        /// [`DRINK_SECS`] over it already: the drinking is the drinker's
+        /// own device's.
+        pub fn drink(&mut self, seat: usize, elapsed: f32) -> Option<Utility> {
+            let potion = self.kits.get(seat)?.utility?;
+            if potion.aimed() || !self.spend(seat, potion) {
+                return None;
+            }
+            let kit = &mut self.kits[seat];
+            match potion {
+                Utility::Speed => kit.fast_until = (elapsed + FAST_SECS).ceil() as u16,
+                Utility::Invisibility => kit.unseen_until = (elapsed + UNSEEN_SECS).ceil() as u16,
+                _ => {}
+            }
+            Some(potion)
+        }
+
+        /// The one in `seat` has died: their sword, what was on their
+        /// second button and whatever they had drunk are gone ("all items
+        /// are lost upon death"), and they see again. Their shield stays
+        /// ("sword is lost on death, shield carries on"), as what their
+        /// team has bought does.
+        pub fn die(&mut self, seat: usize) {
+            let Some(kit) = self.kits.get_mut(seat) else {
+                return;
+            };
+            *kit = Kit {
+                shield: kit.shield,
+                ..Kit::default()
+            };
+            self.blind_left[seat] = 0.0;
+            self.trapped_on[seat] = None;
+        }
+
+        /// The one in `seat` has hit someone or something, or been hit:
+        /// if they were unseen, they are seen again ("being hit or
+        /// attacking reveals u"). Whether they were.
+        pub fn reveal(&mut self, seat: usize) -> bool {
+            match self.kits.get_mut(seat) {
+                Some(kit) if kit.unseen_until != 0 => {
+                    kit.unseen_until = 0;
+                    true
+                }
+                _ => false,
+            }
+        }
+
+        /// What a punch by the one in `hitter` takes off the one in
+        /// `victim`, from a bare hand's `base`: more with a sword, less
+        /// through a shield.
+        pub fn punch(&self, base: f32, hitter: usize, victim: usize) -> f32 {
+            self.through(victim, punch_damage(base, &self.kit(hitter), &self.team(hitter)))
+        }
+
+        /// What gets through to the one in `victim` of a blow of `damage`.
+        pub fn through(&self, victim: usize, damage: f32) -> f32 {
+            damage * (1.0 - kept_off(&self.kit(victim), &self.team(victim)))
+        }
+
+        /// Moves the potions, the traps and the heal pools on by `dt`
+        /// seconds, `elapsed` seconds into the fight, with every living
+        /// player where they stand, by seat (the computer's too; never a
+        /// zombie): a potion that has run out is over, and the button
+        /// empty with it once none is left; an enemy stepping onto the
+        /// island of a team with a trap waiting is blinded for
+        /// [`BLIND_SECS`], the trap spent, and springs no other there
+        /// until they have stepped off it and on again (mine: the file
+        /// says only that a trap is used up by one enemy); and every
+        /// [`HEAL_POOL_EVERY`] a team's pool heals whoever of the team
+        /// stands on its island.
+        pub fn tick(&mut self, dt: f32, elapsed: f32, standing: &[(usize, Vec2)]) -> Ticked {
+            let mut ticked = Ticked::default();
+            for kit in &mut self.kits {
+                if kit.fast_until != 0 && !kit.fast(elapsed) {
+                    kit.fast_until = 0;
+                }
+                if kit.unseen_until != 0 && !kit.unseen(elapsed) {
+                    kit.unseen_until = 0;
+                }
+                if kit.utility.is_some() && kit.count == 0 && kit.fast_until == 0 && kit.unseen_until == 0 {
+                    kit.utility = None;
+                }
+            }
+            for (kit, left) in self.kits.iter_mut().zip(&mut self.blind_left) {
+                if *left > 0.0 {
+                    *left -= dt;
+                    if *left <= 0.0 {
+                        *left = 0.0;
+                        kit.blind = false;
+                    }
+                }
+            }
+            let island_of = |at: Vec2| (0..ARENA_TEAMS).find(|&team| ARENA_ISLANDS[team].distance(at) <= ARENA_ISLAND_RADIUS);
+            for &(seat, at) in standing {
+                if seat >= ARENA_SEATS || seat >= self.kits.len() {
+                    continue;
+                }
+                let on = island_of(at);
+                if self.trapped_on[seat].is_some_and(|island| on != Some(usize::from(island))) {
+                    self.trapped_on[seat] = None;
+                }
+                if let Some(island) = on
+                    && island != usize::from(arena_team(seat))
+                    && self.trapped_on[seat].is_none()
+                    && self.teams[island].traps > 0
+                {
+                    self.teams[island].traps -= 1;
+                    self.trapped_on[seat] = Some(island as u8);
+                    self.blind_left[seat] = BLIND_SECS;
+                    self.kits[seat].blind = true;
+                    ticked.sprung.push((seat, island as u8));
+                }
+            }
+            for team in 0..ARENA_TEAMS {
+                if !self.teams[team].heal_pool {
+                    continue;
+                }
+                self.pool[team] += dt;
+                if self.pool[team] < HEAL_POOL_EVERY {
+                    continue;
+                }
+                self.pool[team] -= HEAL_POOL_EVERY;
+                ticked.healed.extend(
+                    standing
+                        .iter()
+                        .filter(|(seat, at)| {
+                            *seat < ARENA_SEATS && usize::from(arena_team(*seat)) == team && island_of(*at) == Some(team)
+                        })
+                        .map(|(seat, _)| *seat),
+                );
+            }
+            ticked
+        }
+    }
+
+    /// How far from a shop ([`ARENA_SHOPS`], [`ARENA_UPGRADE_SHOPS`])
+    /// someone may be, where they last said they stood, for the server to
+    /// sell to them, in metres: the outline in front of the stand reaches
+    /// 1.5 m from its middle, and the rest is for the way they may have
+    /// gone since.
     pub const SHOP_SLACK: f32 = 5.0;
 
     /// Whether someone standing at `at` across the ground is near enough
-    /// to a shop to buy from it, as the server checks it.
-    pub fn at_a_shop(at: Vec2) -> bool {
-        ARENA_SHOPS.iter().any(|shop| shop.distance(at) <= SHOP_SLACK)
+    /// to a `shop` to buy from it, as the server checks it. An island's
+    /// two shops are 10 m apart: at either, someone is not at the other.
+    pub fn at_a_shop(at: Vec2, shop: Shop) -> bool {
+        let shops = match shop {
+            Shop::Items => &ARENA_SHOPS,
+            Shop::Upgrades => &ARENA_UPGRADE_SHOPS,
+        };
+        shops.iter().any(|shop| shop.distance(at) < SHOP_SLACK)
     }
 
     // --------------------------------------------------------- the zombies
@@ -1385,6 +2060,44 @@ pub struct Loot {
 #[derive(Component, Serialize, Deserialize, Clone, PartialEq, Debug, Default)]
 pub struct Purses(pub Vec<Purse>);
 
+/// What everyone in a game of Bridge Wars has, by seat ([`Kit`]): beside
+/// the [`Purses`], and sent to the room whenever anyone's changes, so that
+/// every device draws the sword in everyone's hand and the shield round
+/// them, and hides whoever is unseen.
+#[derive(Component, Serialize, Deserialize, Clone, PartialEq, Debug, Default)]
+pub struct Kits(pub Vec<Kit>);
+
+/// What each team of a game of Bridge Wars has bought at the upgrade
+/// shop, by team: beside the [`Kits`].
+#[derive(Component, Serialize, Deserialize, Clone, Copy, PartialEq, Debug, Default)]
+pub struct Upgraded(pub [Upgrades; ARENA_TEAMS]);
+
+/// A fireball in the air in a game of Bridge Wars: who threw it, by seat,
+/// where it set out from, and which way it flies, as a [`Plank`] heads.
+/// Sent once as it is thrown; every device flies it on from there at
+/// [`bridge_wars::FIREBALL_SPEED`], and it is gone, for everyone, the
+/// moment the server has it burst, where each device then has it.
+#[derive(Component, Serialize, Deserialize, Clone, Copy, PartialEq, Debug)]
+#[component(immutable)]
+pub struct Fireball {
+    pub seat: u8,
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
+    pub heading: f32,
+}
+
+/// Using what is on the second button in Bridge Wars ([`Ask::Use`]).
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Debug)]
+pub enum Use {
+    /// Throw a fireball this way, as a [`Plank`] heads.
+    Fireball { heading: f32 },
+    /// A builder has been sent off: its bridge comes as [`Ask::Rung`]s.
+    Builder,
+    /// The potion on the button has been drunk.
+    Potion,
+}
+
 // --------------------------------------------------------------- messages
 
 /// Where you are now: sent while it changes, 15 times a second, and nothing
@@ -1458,6 +2171,9 @@ pub enum Ask {
     /// hold ([`bridge_wars::price`]), and [`Tell::Bought`] says it is
     /// mine; with too little, or nowhere near a shop, nothing happens.
     Buy(Ware),
+    /// I have used what is on my second button in Bridge Wars: one fewer
+    /// of it, and what it does is done (since 2026-11-12).
+    Use(Use),
 }
 
 /// What the server tells you alone. In order, and never lost.
@@ -1735,7 +2451,7 @@ mod tests {
 
     #[test]
     fn the_generators_make_what_the_file_says_as_fast_as_it_says_and_hold_no_more_than_it_says() {
-        use bridge_wars::{GENERATORS, Mint, PAD_SPREAD, PICK_UP_AFTER, cap, generator};
+        use bridge_wars::{DROP_SECS, GENERATORS, Mint, PAD_SPREAD, WAITING_FLOOR, cap, generator};
         let mut dice = steady(0.5);
         let mut mint = Mint::new(0.0, &mut dice);
         // A silver every 2 s and a gold every 7.5 s from each team's pad,
@@ -1745,7 +2461,7 @@ mod tests {
         let mut made = Vec::new();
         while elapsed < 29.0 {
             elapsed += dt;
-            made.extend(mint.run(elapsed, &mut dice));
+            made.extend(mint.run(elapsed, &[0; ARENA_TEAMS], &mut dice));
         }
         let count = |made: &[bridge_wars::Piece], item: Item| made.iter().filter(|piece| piece.item == item).count();
         assert_eq!(count(&made, Item::Silver), 14 * 4);
@@ -1766,7 +2482,7 @@ mod tests {
         // and no more: 48, 6, 4 and 2.
         while elapsed < 125.0 {
             elapsed += dt;
-            mint.run(elapsed, &mut dice);
+            mint.run(elapsed, &[0; ARENA_TEAMS], &mut dice);
         }
         for index in 0..GENERATORS {
             let (item, _) = generator(index);
@@ -1778,15 +2494,15 @@ mod tests {
         // within a wait, and not all at once.
         while elapsed < 140.0 {
             elapsed += dt;
-            assert!(mint.run(elapsed, &mut dice).is_empty(), "something made on a full pad, {elapsed} s in");
+            assert!(mint.run(elapsed, &[0; ARENA_TEAMS], &mut dice).is_empty(), "something made on a full pad, {elapsed} s in");
         }
         let pad = ARENA_PADS[0];
-        let taken = mint.pick_up(pad, elapsed);
+        let taken = mint.pick_up(on(pad), elapsed);
         assert_eq!(taken.len(), 48 + 6, "everything on a team's pad is within reach of its middle");
         let mut waited = 0.0;
         let next = loop {
             waited += dt;
-            let made = mint.run(elapsed + waited, &mut dice);
+            let made = mint.run(elapsed + waited, &[0; ARENA_TEAMS], &mut dice);
             assert!(made.len() <= 1, "{} things at once on an emptied pad", made.len());
             if let Some(piece) = made.first() {
                 break *piece;
@@ -1794,12 +2510,34 @@ mod tests {
             assert!(waited < 2.1, "nothing after {waited} s");
         };
         assert_eq!(next.item, Item::Silver);
-        // And that one is not to be had until it has dropped and lain a
-        // moment, by anyone standing right on it.
+        // And that one, dropping from high over the pad, is nobody's
+        // while it is out of reach over their head. It is theirs as it
+        // comes down to them, before it has landed, and sooner for
+        // someone at the top of a jump, who has it in the air.
         elapsed += waited;
-        assert!(mint.pick_up(pad, elapsed).is_empty());
-        assert!(mint.pick_up(pad, elapsed + PICK_UP_AFTER - 0.05).is_empty());
-        assert_eq!(mint.pick_up(pad, elapsed + PICK_UP_AFTER + 0.01), vec![next]);
+        let standing = on(pad);
+        let jumping = standing + Vec3::Y * 1.6;
+        let had = |by: Vec3, after: f32| mint.clone().pick_up(by, elapsed + after);
+        assert!(had(standing, 0.0).is_empty() && had(jumping, 0.0).is_empty());
+        assert!(had(standing, 0.25).is_empty() && had(jumping, 0.25).is_empty());
+        assert!(had(standing, 0.35).is_empty());
+        assert_eq!(had(jumping, 0.35), vec![next]);
+        assert!(had(standing, 0.42).is_empty());
+        assert_eq!(had(standing, 0.47), vec![next]);
+        assert!(0.47 < DROP_SECS, "it is still dropping then");
+        // Landed, it is to be had at once, from the pad and from a jump
+        // over it; and not from far under the island, nor from the
+        // waiting room over the map.
+        let landed = DROP_SECS + 0.01;
+        assert_eq!(had(standing, landed), vec![next]);
+        assert_eq!(had(jumping, landed), vec![next]);
+        assert!(had(standing - Vec3::Y * 8.0, landed).is_empty());
+        assert!(had(Vec3::new(pad.x, WAITING_FLOOR, pad.y), landed).is_empty());
+    }
+
+    /// Standing on the pad at `pad`: where someone's feet are there.
+    fn on(pad: Vec2) -> Vec3 {
+        Vec3::new(pad.x, PAD_TOP, pad.y)
     }
 
     #[test]
@@ -1824,12 +2562,12 @@ mod tests {
         let sapphire = times(Item::Sapphire, 400.0);
         assert_eq!(sapphire[..6], [30.0, 60.0, 90.0, 120.0, 143.0, 166.0]);
         assert_eq!(sapphire[sapphire.len() - 4..], [350.0, 372.0, 384.0, 396.0]);
-        // An amethyst every 40 s to four minutes, every 30 s to eight,
-        // and every 20 s after.
+        // An amethyst every 60 s to four minutes, every 40 s to eight,
+        // and every 25 s after.
         let amethyst = times(Item::Amethyst, 530.0);
-        assert_eq!(amethyst[..3], [40.0, 80.0, 120.0]);
-        assert_eq!(amethyst[5..8], [240.0, 270.0, 300.0]);
-        assert_eq!(amethyst[amethyst.len() - 4..], [450.0, 480.0, 500.0, 520.0]);
+        assert_eq!(amethyst[..3], [60.0, 120.0, 180.0]);
+        assert_eq!(amethyst[3..6], [240.0, 280.0, 320.0]);
+        assert_eq!(amethyst[amethyst.len() - 4..], [440.0, 480.0, 505.0, 530.0]);
         // What is written over a generator: the next is always ahead,
         // never further than a wait, and at the moment one comes it is
         // the one after.
@@ -1837,13 +2575,14 @@ mod tests {
         assert_eq!(next_at(Item::Sapphire, 119.0), 120.0);
         assert_eq!(next_at(Item::Sapphire, 120.0), 143.0);
         assert_eq!(next_at(Item::Sapphire, 360.0), 372.0);
-        assert_eq!(next_at(Item::Amethyst, 479.5), 480.0);
-        assert_eq!(next_at(Item::Amethyst, 480.0), 500.0);
+        assert_eq!(next_at(Item::Amethyst, 239.5), 240.0);
+        assert_eq!(next_at(Item::Amethyst, 240.0), 280.0);
+        assert_eq!(next_at(Item::Amethyst, 480.0), 505.0);
         for item in [Item::Sapphire, Item::Amethyst] {
             let mut at = 0.0;
             while at < PLAY_SECS {
                 let next = next_at(item, at);
-                assert!(next > at && next - at <= 40.0, "{item:?}: {next} after {at}");
+                assert!(next > at && next - at <= 60.0, "{item:?}: {next} after {at}");
                 at += 0.37;
             }
         }
@@ -1856,13 +2595,13 @@ mod tests {
         let mut left_alone = 0;
         while elapsed < 400.0 {
             elapsed += dt;
-            for piece in mint.run(elapsed, &mut dice) {
+            for piece in mint.run(elapsed, &[0; ARENA_TEAMS], &mut dice) {
                 if piece.generator == 8 {
                     made_at.push(elapsed);
                 }
                 left_alone += usize::from(piece.generator == 9);
             }
-            mint.pick_up(SAPPHIRE_PADS[0], elapsed);
+            mint.pick_up(on(SAPPHIRE_PADS[0]), elapsed);
         }
         assert_eq!(made_at.len(), sapphire.len(), "{made_at:?}");
         for (made, due) in made_at.iter().zip(&sapphire) {
@@ -1875,7 +2614,7 @@ mod tests {
         let mut first = [None; GENERATORS];
         while elapsed < 625.0 {
             elapsed += dt;
-            for piece in late.run(elapsed, &mut dice) {
+            for piece in late.run(elapsed, &[0; ARENA_TEAMS], &mut dice) {
                 first[usize::from(piece.generator)].get_or_insert(elapsed);
             }
         }
@@ -1905,9 +2644,9 @@ mod tests {
         assert_eq!(interval(Item::Sapphire, 1).0, 30.0);
         assert_eq!(interval(Item::Sapphire, 2).0, 23.0);
         assert_eq!(interval(Item::Sapphire, 3).0, 12.0);
-        assert_eq!(interval(Item::Amethyst, 1).0, 40.0);
-        assert_eq!(interval(Item::Amethyst, 2).0, 30.0);
-        assert_eq!(interval(Item::Amethyst, 3).0, 20.0);
+        assert_eq!(interval(Item::Amethyst, 1).0, 60.0);
+        assert_eq!(interval(Item::Amethyst, 2).0, 40.0);
+        assert_eq!(interval(Item::Amethyst, 3).0, 25.0);
         // In order, each once, all before the draw; and an event is this
         // frame's only in the frame its time passes.
         assert!(TIMETABLE.windows(2).all(|pair| pair[0].0 < pair[1].0));
@@ -1929,10 +2668,11 @@ mod tests {
         let mut taken = [0usize; 3];
         while elapsed < 600.0 {
             elapsed += dt;
-            mint.run(elapsed, &mut dice);
-            let got = mint.pick_up(SAPPHIRE_PADS[0], elapsed);
+            mint.run(elapsed, &[0; ARENA_TEAMS], &mut dice);
+            let got = mint.pick_up(on(SAPPHIRE_PADS[0]), elapsed);
             assert!(got.iter().all(|piece| piece.item == Item::Sapphire));
-            // Each is to be had a little under a second after it is made.
+            // Each is to be had about half a second after it is made, as
+            // it comes down.
             let stretch = if elapsed <= 121.5 {
                 0
             } else if elapsed <= 361.5 {
@@ -1953,9 +2693,9 @@ mod tests {
         let (dt, mut elapsed) = (0.05, 0.0);
         while elapsed < 20.0 {
             elapsed += dt;
-            mint.run(elapsed, &mut dice);
+            mint.run(elapsed, &[0; ARENA_TEAMS], &mut dice);
         }
-        // A second on, the last of them has dropped and lain its moment.
+        // A second on, the last of them has dropped.
         let elapsed = elapsed + 1.0;
         // Ten silver or so and two gold on each team's pad by now, no two
         // of a pad's in one spot.
@@ -1975,20 +2715,323 @@ mod tests {
         // From 3 m off the pad nothing is in reach; from its middle all
         // of it is, once: a second go, or someone else's, finds nothing.
         let all = mint.pieces().len();
-        assert!(mint.pick_up(pad + Vec2::new(MAGNET + 1.0 + 0.5, 0.0), elapsed).is_empty());
+        assert!(mint.pick_up(on(pad + Vec2::new(MAGNET + 1.0 + 0.5, 0.0)), elapsed).is_empty());
         assert_eq!(mint.pieces().len(), all);
-        let taken = mint.pick_up(pad, elapsed);
+        let taken = mint.pick_up(on(pad), elapsed);
         assert_eq!(taken.len(), lying.len());
-        assert!(mint.pick_up(pad, elapsed).is_empty());
+        assert!(mint.pick_up(on(pad), elapsed).is_empty());
         assert_eq!(mint.pieces().len(), all - taken.len());
         // Another team's pad is untouched by it.
-        assert!(!mint.pick_up(ARENA_PADS[0], elapsed).is_empty());
+        assert!(!mint.pick_up(on(ARENA_PADS[0]), elapsed).is_empty());
+    }
+
+    #[test]
+    fn the_shops_sell_what_the_file_says_for_what_it_says() {
+        use bridge_wars::{Shop, buy, price, sold_at};
+        let (bare, none) = (Kit::default(), Upgrades::default());
+        // The item shop: the bridge, three swords, three shields and five
+        // things for the second button.
+        for (ware, cost) in [
+            (Ware::Bridge, (Item::Silver, 4)),
+            (Ware::Sword(1), (Item::Silver, 10)),
+            (Ware::Sword(2), (Item::Gold, 7)),
+            (Ware::Sword(3), (Item::Amethyst, 4)),
+            (Ware::Shield(1), (Item::Silver, 24)),
+            (Ware::Shield(2), (Item::Gold, 12)),
+            (Ware::Shield(3), (Item::Amethyst, 6)),
+            (Ware::Utility(Utility::Fireball), (Item::Silver, 40)),
+            (Ware::Utility(Utility::Builder), (Item::Amethyst, 1)),
+            (Ware::Utility(Utility::Speed), (Item::Amethyst, 1)),
+            (Ware::Utility(Utility::Invisibility), (Item::Amethyst, 2)),
+            (Ware::Utility(Utility::Healing), (Item::Gold, 3)),
+        ] {
+            assert_eq!(price(ware, &bare, &none), Some(cost), "{ware:?}");
+            assert_eq!(sold_at(ware), Shop::Items);
+        }
+        assert_eq!(price(Ware::Sword(4), &bare, &none), None);
+        assert_eq!(price(Ware::Shield(0), &bare, &none), None);
+        // Only a better sword or shield than the one in hand; any tier
+        // from none.
+        let silver = Kit { sword: 2, shield: 1, ..bare };
+        assert_eq!(price(Ware::Sword(1), &silver, &none), None);
+        assert_eq!(price(Ware::Sword(2), &silver, &none), None);
+        assert!(price(Ware::Sword(3), &silver, &none).is_some());
+        assert_eq!(price(Ware::Shield(1), &silver, &none), None);
+        assert!(price(Ware::Shield(2), &silver, &none).is_some() && price(Ware::Shield(3), &silver, &none).is_some());
+        // The second button holds one kind of thing: three fireballs at
+        // the most, and nine of anything else.
+        let fire = Kit { utility: Some(Utility::Fireball), count: 2, ..bare };
+        assert!(price(Ware::Utility(Utility::Fireball), &fire, &none).is_some());
+        assert_eq!(price(Ware::Utility(Utility::Speed), &fire, &none), None);
+        let full = Kit { count: 3, ..fire };
+        assert_eq!(price(Ware::Utility(Utility::Fireball), &full, &none), None);
+        let potions = Kit { utility: Some(Utility::Healing), count: 8, ..bare };
+        assert!(price(Ware::Utility(Utility::Healing), &potions, &none).is_some());
+        assert_eq!(price(Ware::Utility(Utility::Healing), &Kit { count: 9, ..potions }, &none), None);
+        // What is aimed and what is drunk; and of what is drunk, what
+        // lasts.
+        for utility in Utility::ALL {
+            assert_ne!(utility.aimed(), utility.drunk(), "{utility:?}");
+            assert!(!utility.lasts() || utility.drunk());
+        }
+        assert!(Utility::Fireball.aimed() && Utility::Builder.aimed() && Utility::Healing.drunk());
+        assert!(Utility::Speed.lasts() && Utility::Invisibility.lasts() && !Utility::Healing.lasts());
+        // The upgrade shop: each step dearer than the last, to its last.
+        let steps = |ware: Ware, raise: &dyn Fn(&mut Upgrades)| {
+            let (mut team, mut costs) = (Upgrades::default(), Vec::new());
+            while let Some((item, cost)) = price(ware, &bare, &team) {
+                assert_eq!((item, sold_at(ware)), (Item::Sapphire, Shop::Upgrades));
+                costs.push(cost);
+                raise(&mut team);
+            }
+            costs
+        };
+        assert_eq!(steps(Ware::Forge, &|team| team.forge += 1), [2, 4, 6, 8]);
+        assert_eq!(steps(Ware::BetterShields, &|team| team.shields += 1), [2, 3, 4, 6]);
+        assert_eq!(steps(Ware::Trap, &|team| team.traps += 1), [1, 2, 4]);
+        assert_eq!(steps(Ware::StrongerSwords, &|team| team.swords = true), [4]);
+        assert_eq!(steps(Ware::HealPool, &|team| team.heal_pool = true), [1]);
+        // Buying takes the price and gives the thing; without the price,
+        // nothing changes.
+        let (mut purse, mut kit, mut team): (Purse, Kit, Upgrades) = ([9, 7, 3, 0], bare, none);
+        assert!(!buy(Ware::Sword(1), &mut purse, &mut kit, &mut team), "9 silver is not 10");
+        assert_eq!((purse, kit), ([9, 7, 3, 0], bare));
+        assert!(buy(Ware::Sword(2), &mut purse, &mut kit, &mut team));
+        assert_eq!((purse, kit.sword), ([9, 0, 3, 0], 2));
+        assert!(!buy(Ware::Sword(2), &mut purse, &mut kit, &mut team));
+        assert!(buy(Ware::Forge, &mut purse, &mut kit, &mut team) && buy(Ware::Trap, &mut purse, &mut kit, &mut team));
+        assert_eq!((purse, team.forge, team.traps), ([9, 0, 0, 0], 1, 1));
+        purse[0] = 100;
+        assert!(buy(Ware::Utility(Utility::Fireball), &mut purse, &mut kit, &mut team));
+        assert!(buy(Ware::Utility(Utility::Fireball), &mut purse, &mut kit, &mut team));
+        assert_eq!((purse[0], kit.utility, kit.count), (20, Some(Utility::Fireball), 2));
+    }
+
+    #[test]
+    fn a_sword_hits_harder_and_a_shield_keeps_some_of_it_off() {
+        use bridge_wars::{DAMAGE, Outfits, kept_off, punch_damage};
+        let (bare, none) = (Kit::default(), Upgrades::default());
+        // A bare hand's 12, and 5, 10 and 20 more by the sword.
+        assert_eq!(punch_damage(DAMAGE, &bare, &none), 12.0);
+        for (tier, more) in [(1, 5.0), (2, 10.0), (3, 20.0)] {
+            assert_eq!(punch_damage(DAMAGE, &Kit { sword: tier, ..bare }, &none), 12.0 + more);
+        }
+        // Stronger Swords is five more on a sword, and nothing on a hand.
+        let strong = Upgrades { swords: true, ..none };
+        assert_eq!(punch_damage(DAMAGE, &Kit { sword: 3, ..bare }, &strong), 37.0);
+        assert_eq!(punch_damage(DAMAGE, &bare, &strong), 12.0);
+        // 6%, 14% and 22% kept off by the shield, and 6% more for each of
+        // the team's four Better Shields; nothing with no shield.
+        for (tier, share) in [(1, 0.06), (2, 0.14), (3, 0.22)] {
+            assert!((kept_off(&Kit { shield: tier, ..bare }, &none) - share).abs() < 1e-6);
+        }
+        let better = Upgrades { shields: 4, ..none };
+        assert!((kept_off(&Kit { shield: 3, ..bare }, &better) - 0.46).abs() < 1e-6);
+        assert_eq!(kept_off(&bare, &better), 0.0);
+        // In a game: seat 0, with the aura sword on a team with stronger
+        // swords, hits seat 1, with the basic shield.
+        let mut outfits = Outfits::default();
+        outfits.seat(ARENA_SEATS);
+        outfits.kits[0].sword = 3;
+        outfits.kits[1].shield = 1;
+        outfits.teams[0].swords = true;
+        assert!((outfits.punch(DAMAGE, 0, 1) - 37.0 * 0.94).abs() < 1e-4);
+        assert_eq!(outfits.punch(DAMAGE, 1, 0), 12.0);
+        // A zombie, in a seat past the players', has nothing.
+        assert_eq!(outfits.punch(DAMAGE, ARENA_SEATS, 2), 12.0);
+        assert!((outfits.through(1, 20.0) - 18.8).abs() < 1e-4);
+        // Dying loses the sword and what was on the second button, and
+        // keeps the shield.
+        outfits.kits[1] = Kit { sword: 2, shield: 1, utility: Some(Utility::Speed), count: 2, fast_until: 90, unseen_until: 0, blind: true };
+        outfits.die(1);
+        assert_eq!(outfits.kits[1], Kit { shield: 1, ..Kit::default() });
+    }
+
+    #[test]
+    fn a_team_s_generator_is_as_fast_as_the_team_has_made_it() {
+        use bridge_wars::{FORGE_AMETHYST, GENERATORS, Mint, generator};
+        // Three minutes of every generator, team 0's raised to each step:
+        // its silver half as fast again, twice, and three times as fast as
+        // team 1's, which is left as it was; and from the third step
+        // amethyst on its own pad too.
+        let made = |forge: u8| {
+            let mut dice = steady(0.5);
+            let mut mint = Mint::new(0.0, &mut dice);
+            let (dt, mut elapsed) = (1.0 / 30.0, 0.0);
+            let mut counts = [0usize; 3];
+            while elapsed < 180.0 {
+                elapsed += dt;
+                for piece in mint.run(elapsed, &[forge, 0, 0, 0], &mut dice) {
+                    match usize::from(piece.generator) {
+                        0 => counts[0] += 1,
+                        1 => counts[1] += 1,
+                        index if index == GENERATORS => {
+                            assert_eq!((piece.item, generator(index).1), (Item::Amethyst, ARENA_PADS[0]));
+                            counts[2] += 1;
+                        }
+                        _ => {}
+                    }
+                }
+                // Everything taken as it comes, so that nothing fills.
+                mint.pick_up(on(ARENA_PADS[0]), elapsed);
+                mint.pick_up(on(ARENA_PADS[1]), elapsed);
+            }
+            counts
+        };
+        assert_eq!(made(0), [90, 90, 0]);
+        let better = made(1);
+        assert!((133..=136).contains(&better[0]) && better[1] == 90 && better[2] == 0, "{better:?}");
+        let advanced = made(2);
+        assert!((178..=180).contains(&advanced[0]) && advanced[2] == 0, "{advanced:?}");
+        // An amethyst a minute from when it was raised: at 60, 120 and 180.
+        let amethyst = made(FORGE_AMETHYST);
+        assert!((178..=180).contains(&amethyst[0]) && (2..=3).contains(&amethyst[2]), "{amethyst:?}");
+        let molten = made(4);
+        assert!((266..=270).contains(&molten[0]) && (2..=3).contains(&molten[2]), "{molten:?}");
+    }
+
+    #[test]
+    fn a_fireball_flies_straight_to_the_end_of_its_range_or_whoever_it_meets() {
+        use bridge_wars::{BLAST_RADIUS, FIREBALL_AHEAD, FIREBALL_HEIGHT, FIREBALL_RANGE, FIREBALL_SPEED, Flight, in_blast};
+        // Thrown north from the middle of an island: it sets out in front
+        // of the thrower, at their chest, and flies north, level.
+        let feet = Vec3::new(0.0, 0.25, 130.0);
+        let mut ball = Flight::thrown(feet, 0.0);
+        assert!(ball.at().distance(feet + Vec3::new(0.0, FIREBALL_HEIGHT, -FIREBALL_AHEAD)) < 1e-5);
+        assert!(ball.way().distance(Vec3::NEG_Z) < 1e-6);
+        // Heading a quarter turn to the left of north is west, as a plank
+        // heads.
+        assert!(Flight::thrown(feet, std::f32::consts::FRAC_PI_2).way().distance(Vec3::NEG_X) < 1e-6);
+        // Someone 8 m north is met on the way; someone 8 m north and 2 m
+        // to the side is not, nor someone far under it.
+        let (ahead, beside) = (feet + Vec3::new(0.0, 0.0, -8.0), feet + Vec3::new(2.0, 0.0, -8.0));
+        let (dt, mut met, mut seconds) = (1.0 / 60.0, None, 0.0);
+        while !ball.fly(dt) {
+            seconds += dt;
+            assert!(!ball.meets(beside) && !ball.meets(ahead - Vec3::Y * 6.0));
+            if met.is_none() && ball.meets(ahead) {
+                met = Some(ball.flown);
+            }
+        }
+        let met = met.expect("it passed through someone in its way");
+        assert!(met > 6.0 && met < 7.5, "met {met} m out");
+        // Left to fly, it stops at the end of its range, in the time that
+        // takes.
+        assert_eq!(ball.flown, FIREBALL_RANGE);
+        assert!((seconds - FIREBALL_RANGE / FIREBALL_SPEED).abs() < 0.05);
+        assert!(ball.at().distance(feet + Vec3::new(0.0, FIREBALL_HEIGHT, -FIREBALL_AHEAD - FIREBALL_RANGE)) < 1e-3);
+        // Its blast reaches whoever is within three metres of it across
+        // the ground, at about its height, and nobody further.
+        let burst = ball.at();
+        let under = burst - Vec3::Y * FIREBALL_HEIGHT;
+        assert!(in_blast(burst, under) && in_blast(burst, under + Vec3::X * BLAST_RADIUS));
+        assert!(!in_blast(burst, under + Vec3::X * (BLAST_RADIUS + 0.6)));
+        assert!(!in_blast(burst, under - Vec3::Y * 8.0));
+    }
+
+    #[test]
+    fn potions_wear_off_traps_blind_and_pools_heal() {
+        use bridge_wars::{BLIND_SECS, FAST_SECS, HEAL_POOL_EVERY, Outfits, UNSEEN_SECS};
+        let mut outfits = Outfits::default();
+        outfits.seat(ARENA_SEATS);
+        // A speed potion: nothing until it is drunk; drunk, 45 s of being
+        // fast, the button kept for as long, and empty after.
+        let mut purse: Purse = [0, 3, 0, 6];
+        assert!(outfits.buy(0, Ware::Utility(Utility::Speed), &mut purse));
+        assert!(!outfits.spend(0, Utility::Fireball) && !outfits.kits[0].fast(10.0));
+        assert_eq!(outfits.drink(0, 10.0), Some(Utility::Speed));
+        assert_eq!(outfits.drink(0, 10.0), None, "there was only one");
+        assert!(outfits.kits[0].fast(10.0) && outfits.kits[0].fast(10.0 + FAST_SECS - 0.5));
+        assert!(!outfits.buy(0, Ware::Utility(Utility::Healing), &mut purse), "the button still holds the speed");
+        outfits.tick(0.1, 30.0, &[]);
+        assert_eq!(outfits.kits[0].utility, Some(Utility::Speed));
+        outfits.tick(0.1, 10.0 + FAST_SECS + 0.1, &[]);
+        assert_eq!(outfits.kits[0], Kit::default());
+        // The invisibility lasts its 30 s, or until they hit or are hit;
+        // the healing is at once, and the button empty the moment the
+        // last is gone.
+        assert!(outfits.buy(0, Ware::Utility(Utility::Invisibility), &mut purse));
+        assert_eq!(outfits.drink(0, 100.0), Some(Utility::Invisibility));
+        assert!(outfits.kits[0].unseen(100.0 + UNSEEN_SECS - 0.5) && !outfits.kits[0].unseen(100.0 + UNSEEN_SECS));
+        outfits.tick(0.1, 200.0, &[]);
+        assert_eq!(outfits.kits[0], Kit::default());
+        assert!(outfits.buy(0, Ware::Utility(Utility::Invisibility), &mut purse));
+        assert_eq!(outfits.drink(0, 150.0), Some(Utility::Invisibility));
+        assert!(outfits.kits[0].unseen(151.0) && !outfits.reveal(1), "seat 1 was in plain sight");
+        assert!(outfits.reveal(0) && !outfits.kits[0].unseen(151.0) && !outfits.reveal(0));
+        outfits.tick(0.1, 151.0, &[]);
+        assert_eq!(outfits.kits[0], Kit::default(), "and the button is empty again");
+        assert!(outfits.buy(0, Ware::Utility(Utility::Healing), &mut purse));
+        assert_eq!(outfits.drink(0, 200.0), Some(Utility::Healing));
+        outfits.tick(0.1, 200.1, &[]);
+        assert_eq!(outfits.kits[0].utility, None);
+        // A fireball is not drunk.
+        outfits.kits[0] = Kit { utility: Some(Utility::Fireball), count: 1, ..Kit::default() };
+        assert_eq!(outfits.drink(0, 200.0), None);
+        assert!(outfits.spend(0, Utility::Fireball) && !outfits.spend(0, Utility::Fireball));
+
+        // Team 1 has two traps waiting and a heal pool. Seat 0, of team 0,
+        // steps onto its island: blinded, one trap spent; its own seat 1
+        // there is not, nor a zombie; and seat 2, coming after, takes the
+        // second.
+        outfits.teams[1] = Upgrades { traps: 2, heal_pool: true, ..Upgrades::default() };
+        let (theirs, mine) = (ARENA_ISLANDS[1], ARENA_ISLANDS[0]);
+        let ticked = outfits.tick(0.1, 300.0, &[(0, theirs), (1, theirs + Vec2::X), (ARENA_SEATS, theirs)]);
+        assert_eq!(ticked.sprung, vec![(0, 1)]);
+        assert!(outfits.kits[0].blind && !outfits.kits[1].blind && outfits.teams[1].traps == 1);
+        let ticked = outfits.tick(0.1, 300.1, &[(0, theirs), (2, theirs)]);
+        assert_eq!(ticked.sprung, vec![(2, 1)]);
+        assert_eq!(outfits.teams[1].traps, 0);
+        // With none left, seat 3 walks on unharmed.
+        assert!(outfits.tick(0.1, 300.2, &[(3, theirs)]).sprung.is_empty() && !outfits.kits[3].blind);
+        // Blind for eight seconds, wherever they go: seat 0 for 7.8 more
+        // off the island, and then no longer.
+        let off = theirs + Vec2::new(40.0, 0.0);
+        for _ in 0..77 {
+            outfits.tick(0.1, 301.0, &[(0, off)]);
+        }
+        assert!(outfits.kits[0].blind, "7.9 seconds in");
+        for _ in 0..2 {
+            outfits.tick(0.1, 308.0, &[(0, off)]);
+        }
+        assert!(!outfits.kits[0].blind, "{BLIND_SECS} seconds in");
+        // Dying, seat 2 sees again at once.
+        outfits.die(2);
+        assert!(!outfits.kits[2].blind);
+        // A trap springs on someone stepping onto the island, not on
+        // someone who has stood on it since the last one: seat 0 stays on
+        // team 1's island through a trap bought under their feet, and
+        // springs it only once they have stepped off and on again.
+        outfits.teams[1].traps = 1;
+        outfits.tick(0.1, 320.0, &[(0, theirs)]);
+        assert!(outfits.kits[0].blind && outfits.teams[1].traps == 0);
+        for _ in 0..90 {
+            outfits.tick(0.1, 321.0, &[(0, theirs)]);
+        }
+        assert!(!outfits.kits[0].blind);
+        outfits.teams[1].traps = 1;
+        assert!(outfits.tick(0.1, 330.0, &[(0, theirs)]).sprung.is_empty(), "still standing on it");
+        outfits.tick(0.1, 330.1, &[(0, off)]);
+        assert_eq!(outfits.tick(0.1, 330.2, &[(0, theirs)]).sprung, vec![(0, 1)]);
+        assert!(outfits.kits[0].blind && outfits.teams[1].traps == 0);
+        // The pool heals whoever of team 1 is on its island every two and
+        // a half seconds: seat 1 there, not seat 5 away from it, nor seat
+        // 0 of another team standing on it.
+        let mut outfits = Outfits::default();
+        outfits.seat(ARENA_SEATS);
+        outfits.teams[1].heal_pool = true;
+        let mut healed = Vec::new();
+        for _ in 0..((HEAL_POOL_EVERY * 2.0 / 0.05) as usize + 2) {
+            healed.extend(outfits.tick(0.05, 0.0, &[(1, theirs), (5, mine), (0, theirs)]).healed);
+        }
+        assert_eq!(healed, vec![1, 1]);
     }
 
     #[test]
     fn the_pads_the_shops_and_the_zombies_are_where_the_map_has_room_for_them() {
         use bridge_wars::{
-            BRIDGE_A_BUY, SHOP_SLACK, TOWN_RADIUS, ZOMBIE_TEAM, ZOMBIES, at_a_shop, price, zombie_home, zombie_spot,
+            BRIDGE_A_BUY, SHOP_SLACK, Shop, TOWN_RADIUS, ZOMBIE_TEAM, ZOMBIES, at_a_shop, price, zombie_home,
+            zombie_spot,
         };
         for team in 0..ARENA_TEAMS {
             let island = ARENA_ISLANDS[team];
@@ -2001,8 +3044,14 @@ mod tests {
             assert!((shop.distance(island) - 5.0).abs() < 0.1, "team {team}'s shop");
             // Bought from at the shop and a few steps off it, and not
             // from the pad, nor from the anchor.
-            assert!(at_a_shop(shop) && at_a_shop(shop + Vec2::new(SHOP_SLACK - 0.1, 0.0)));
-            assert!(!at_a_shop(pad) && !at_a_shop(ARENA_ANCHORS[team]), "team {team}");
+            assert!(at_a_shop(shop, Shop::Items) && at_a_shop(shop + Vec2::new(SHOP_SLACK - 0.1, 0.0), Shop::Items));
+            assert!(!at_a_shop(pad, Shop::Items) && !at_a_shop(ARENA_ANCHORS[team], Shop::Items), "team {team}");
+            // Its upgrade shop is across the island's middle from it, as
+            // far out, and at either nobody is at the other.
+            let upgrades = ARENA_UPGRADE_SHOPS[team];
+            assert!((upgrades.distance(island) - 5.0).abs() < 0.1 && (upgrades.distance(shop) - 10.0).abs() < 0.1);
+            assert!(at_a_shop(upgrades, Shop::Upgrades) && !at_a_shop(upgrades, Shop::Items));
+            assert!(!at_a_shop(shop, Shop::Upgrades) && !at_a_shop(pad, Shop::Upgrades));
             // Its amethyst pad is the one toward it, in the middle.
             assert!(AMETHYST_PADS[team].normalize().dot(island.normalize()) > 0.99);
             assert!(AMETHYST_PADS[team].length() < 40.0);
@@ -2011,7 +3060,7 @@ mod tests {
             assert!((pad.length() - 125.0).abs() < 0.1, "{pad}");
             assert!(ARENA_ISLANDS.iter().all(|island| island.distance(pad) > ARENA_ISLAND_RADIUS + SAPPHIRE_ISLAND_RADIUS));
         }
-        assert_eq!(price(Ware::Bridge), (Item::Silver, 4));
+        assert_eq!(price(Ware::Bridge, &Kit::default(), &Upgrades::default()), Some((Item::Silver, 4)));
         assert_eq!(BRIDGE_A_BUY, 25.0);
         // The seats past the players' are the zombies', on nobody's team
         // but their own; each comes up inside the ground it keeps to,

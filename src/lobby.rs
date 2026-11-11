@@ -430,6 +430,25 @@ pub(crate) fn spawn_player_at(
     avatar.id()
 }
 
+/// A body to be seen and nothing more, in `member`'s look, standing `at` on
+/// `venue`: it walks the way it is seen to move, is in nobody's way, and no
+/// punch lands on it (`ForShow`). The builder a Bridge Builder sends off
+/// is one (`bridge`).
+pub(crate) fn puppet(commands: &mut Commands, assets: &AssetServer, member: &Member, venue: Venue, at: Transform) -> Entity {
+    commands
+        .spawn((
+            body(assets, member, at),
+            venue,
+            crate::ForShow,
+            WalkFromMotion {
+                last: at.translation,
+                on: None,
+            },
+        ))
+        .observe(bind_walk_bones)
+        .id()
+}
+
 /// Gives `entity`, someone the server says is in your room, a body like any
 /// other, standing `at`: drawn where the server says they are (`net`), their
 /// walk read off how they move, and nobody to bump into. Players walk through

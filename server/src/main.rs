@@ -28,6 +28,9 @@
 //! * `RT_ARENA_FROM`: how many seconds into its timetable a game of Bridge
 //!   Wars begins its fight, for trying the timetable out: `595` is five
 //!   seconds before every anchor breaks. Never on a server real players use.
+//! * `RT_ARENA_PURSE`: how many of each thing the generators make everyone
+//!   in a game of Bridge Wars begins its fight holding, for trying the shops
+//!   out. Never on a server real players use.
 
 mod accounts;
 mod arena;
@@ -74,6 +77,9 @@ pub(crate) struct Config {
     /// How far into its timetable a game of Bridge Wars begins its fight,
     /// in seconds: 0 but for trying it out.
     pub arena_from: f32,
+    /// How many of each thing everyone in a game of Bridge Wars begins its
+    /// fight holding: 0 but for trying the shops out.
+    pub arena_purse: u16,
 }
 
 impl Config {
@@ -109,6 +115,7 @@ impl Config {
                 .and_then(|seconds| seconds.parse().ok())
                 .filter(|seconds: &f32| seconds.is_finite() && *seconds >= 0.0)
                 .unwrap_or(0.0),
+            arena_purse: var("RT_ARENA_PURSE").and_then(|count| count.parse().ok()).unwrap_or(0),
         }
     }
 }
@@ -208,6 +215,9 @@ fn listen(
     );
     if config.arena_from > 0.0 {
         warn!("Bridge Wars' fights begin {} s into their timetable (RT_ARENA_FROM)", config.arena_from);
+    }
+    if config.arena_purse > 0 {
+        warn!("Bridge Wars' fights begin with {} of everything in every purse (RT_ARENA_PURSE)", config.arena_purse);
     }
     Ok(())
 }

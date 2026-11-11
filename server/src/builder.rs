@@ -484,7 +484,7 @@ fn hear(
             | Ask::Arena
             | Ask::HitAnchor { .. }
             | Ask::Rung { .. }
-            | Ask::Buy(_) => {}
+            | Ask::Buy(_) | Ask::Use(_) => {}
         }
     }
 }

@@ -45,6 +45,8 @@
 //! yet. The stick stays. The pictures are drawn in code ([`sword`],
 //! [`bag`], [`item_picture`], [`plank`], [`dots`]).
 
+use std::collections::HashMap;
+
 use bevy::asset::RenderAssetUsages;
 use bevy::ecs::system::SystemParam;
 use bevy::picking::pointer::PointerId;
@@ -114,6 +116,17 @@ pub(crate) const ARENA_JUMP: (f32, f32, f32) = (24.5, 4.0, ACTION_BUTTON);
 const ARENA_SLOT: (f32, f32) = (18.5, 18.5);
 const ARENA_BRIDGE: (f32, f32) = (4.0, 24.5);
 const ARENA_DOTS: (f32, f32, f32) = (0.0, 42.0, 8.0);
+/// The metres of bridge you have, written small inside the bridge button,
+/// under the plank (since 2026-11-12, Hajun: "above the ui bridge button
+/// add a small white text "123m"", and a few minutes later, "instead of
+/// above the button, put it inside the button, below the icon"): how big,
+/// in shares of the short side, under the counts top left; how far up
+/// from the middle of the button the plank is moved to make room for it,
+/// and how far down the button the words begin, both as shares of the
+/// button. "1234m" is still well inside the disc there.
+const BRIDGE_COUNT_TEXT: f32 = 2.8;
+const BRIDGE_PLANK_UP: f32 = 13.0;
+const BRIDGE_COUNT_TOP: f32 = 52.0;
 /// How much of a round button its picture takes up, as a share of it.
 const PICTURE: f32 = 58.0;
 pub(crate) const HEADLINE: f32 = 8.0;
@@ -192,6 +205,11 @@ struct HealthFill;
 #[derive(Component)]
 struct ResourceCount(Item);
 
+/// The metres of bridge you have, inside the bridge button in Bridge
+/// Wars, under its plank.
+#[derive(Component)]
+struct BridgeCount;
+
 /// Words across the middle of the screen, up for a moment, and how long they
 /// have been up.
 #[derive(Component)]
@@ -264,6 +282,7 @@ pub(crate) fn plugin(app: &mut App) {
         .init_resource::<WantsPointer>()
         .init_resource::<Held>()
         .init_resource::<Layout>()
+        .init_resource::<Pictures>()
         .add_observer(press_buttons)
         .add_systems(Startup, show_top_bar)
         .add_systems(Update, shade)
@@ -694,15 +713,60 @@ fn spawn_arena_bar(commands: &mut Commands, images: &mut Assets<Image>, minimap:
         let (right, bottom, size) = ARENA_JUMP;
         round.spawn(jump_button(arrow, size, beside_the_jump(right, bottom)));
         let (right, bottom) = ARENA_SLOT;
-        round.spawn(empty_slot(ACTION_BUTTON, beside_the_jump(right, bottom)));
+        round.spawn(utility_slot(beside_the_jump(right, bottom)));
         let (right, bottom) = ARENA_BRIDGE;
-        round.spawn((
-            BridgeButton,
-            round_button(images.add(plank()), ACTION_BUTTON, beside_the_jump(right, bottom)),
-        ));
+        round.spawn(bridge_button(images.add(plank()), beside_the_jump(right, bottom)));
         let (right, bottom, size) = ARENA_DOTS;
         round.spawn(round_button(images.add(dots()), size, beside_the_jump(right, bottom)));
     });
+}
+
+/// Bridge Wars' bridge button, where `place` puts it: a round button as
+/// the others are ([`round_button`]), with the plank on it a little above
+/// its middle and, under the plank, inside the disc, the metres of bridge
+/// you have, small and white ([`BridgeCount`], written by
+/// [`show_resources`]: "25m", as in front of you while you build). A
+/// press anywhere on it is the button's.
+fn bridge_button(plank: Handle<Image>, place: Node) -> impl Bundle {
+    let colours = ui().colours;
+    (
+        BridgeButton,
+        TakesPress,
+        Button,
+        Node {
+            width: Val::VMin(ACTION_BUTTON),
+            height: Val::VMin(ACTION_BUTTON),
+            border_radius: BorderRadius::all(Val::Percent(50.0)),
+            ..place
+        },
+        BackgroundColor(colours.hud.button),
+        children![
+            (
+                ImageNode::new(plank).with_color(colours.hud.button_mark),
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: Val::Percent((100.0 - PICTURE) * 0.5),
+                    top: Val::Percent((100.0 - PICTURE) * 0.5 - BRIDGE_PLANK_UP),
+                    width: Val::Percent(PICTURE),
+                    height: Val::Percent(PICTURE),
+                    ..default()
+                },
+                Pickable::IGNORE,
+            ),
+            (
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: Val::ZERO,
+                    right: Val::ZERO,
+                    top: Val::Percent(BRIDGE_COUNT_TOP),
+                    justify_content: JustifyContent::Center,
+                    ..default()
+                },
+                Pickable::IGNORE,
+                children![(BridgeCount, words("", BRIDGE_COUNT_TEXT, colours.arena.bridge_count))],
+            ),
+        ],
+    )
 }
 
 /// A jump button, `size_vmin` across, where `place` puts it, as the one
@@ -817,12 +881,15 @@ fn resource_row(kind: Item, picture: Handle<Image>, tint: Color) -> impl Bundle 
     )
 }
 
-/// Writes how many of each thing you hold beside its picture, as it
-/// changes and on a row put up afresh.
+/// Writes how many of each thing you hold beside its picture, and the
+/// metres of bridge you have inside the bridge button ("25m", as they are
+/// written in front of you while you build), as they change and on a bar
+/// put up afresh.
 fn show_resources(
     stock: Res<Resources>,
-    added: Query<(), Added<ResourceCount>>,
-    mut counts: Query<(&ResourceCount, &mut Text)>,
+    added: Query<(), Or<(Added<ResourceCount>, Added<BridgeCount>)>>,
+    mut counts: Query<(&ResourceCount, &mut Text), Without<BridgeCount>>,
+    mut metres: Query<&mut Text, With<BridgeCount>>,
 ) {
     if !stock.is_changed() && added.is_empty() {
         return;
@@ -833,28 +900,90 @@ fn show_resources(
             text.0 = number;
         }
     }
+    for mut text in &mut metres {
+        let left = stock.metres();
+        if text.0 != left {
+            text.0 = left;
+        }
+    }
 }
 
-/// An empty slot among Bridge Wars' buttons, `size_vmin` across, where
-/// `place` puts it: the buttons' disc with a faint rim and nothing on it,
-/// until there is something to put there. It takes a press, and does
-/// nothing with it.
-fn empty_slot(size_vmin: f32, place: Node) -> impl Bundle {
+/// Bridge Wars' second button, where `place` puts it (since 2026-11-12;
+/// an empty slot until then): the buttons' disc with a faint rim, empty
+/// until something to use is bought at the item shop, and then with its
+/// picture on it, how many of it in its corner, and over it, while a
+/// potion lasts, how long it still does. `utility` fills it in and takes
+/// its presses: a press for a potion, a hold and a drag for what is aimed.
+fn utility_slot(place: Node) -> impl Bundle {
     let colours = ui().colours;
     (
+        UtilitySlot,
         TakesPress,
         Button,
         Node {
-            width: Val::VMin(size_vmin),
-            height: Val::VMin(size_vmin),
+            width: Val::VMin(ACTION_BUTTON),
+            height: Val::VMin(ACTION_BUTTON),
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
             border: UiRect::all(Val::VMin(0.3)),
             border_radius: BorderRadius::all(Val::Percent(50.0)),
             ..place
         },
         BackgroundColor(colours.hud.button),
         BorderColor::all(colours.arena.slot_rim),
+        children![
+            (
+                UtilityPicture,
+                ImageNode::default(),
+                Node {
+                    width: Val::Percent(PICTURE),
+                    height: Val::Percent(PICTURE),
+                    ..default()
+                },
+                Visibility::Hidden,
+                Pickable::IGNORE,
+            ),
+            (
+                Node {
+                    position_type: PositionType::Absolute,
+                    right: Val::Percent(2.0),
+                    bottom: Val::Percent(-4.0),
+                    ..default()
+                },
+                Pickable::IGNORE,
+                children![(UtilityCount, words("", UTILITY_COUNT_TEXT, colours.text))],
+            ),
+            (
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: Val::Percent(-50.0),
+                    right: Val::Percent(-50.0),
+                    bottom: Val::Percent(104.0),
+                    justify_content: JustifyContent::Center,
+                    ..default()
+                },
+                Pickable::IGNORE,
+                children![(UtilityTimer, words("", UTILITY_TIMER_TEXT, colours.text))],
+            ),
+        ],
     )
 }
+
+/// Bridge Wars' second button ([`utility_slot`]), its picture, the count
+/// in its corner and the time over it.
+#[derive(Component)]
+pub(crate) struct UtilitySlot;
+#[derive(Component)]
+pub(crate) struct UtilityPicture;
+#[derive(Component)]
+pub(crate) struct UtilityCount;
+#[derive(Component)]
+pub(crate) struct UtilityTimer;
+
+/// How big the count in the second button's corner and the time over it
+/// are, in shares of the short side.
+const UTILITY_COUNT_TEXT: f32 = 3.4;
+const UTILITY_TIMER_TEXT: f32 = 3.0;
 
 /// The town's buttons, as Hajun sketched them (`assets/UIbuttonlayout.jpg`,
 /// 2026-10-31): the bar across the top, and the box round the jump button.
@@ -1486,11 +1615,17 @@ pub(crate) fn pencil() -> Image {
 /// `outside` says how far a point is from the shape's edge, in shares of
 /// half the image from its middle, y up, less than nothing inside it.
 fn drawn(outside: impl Fn(Vec2) -> f32) -> Image {
-    const SIZE: u32 = 128;
-    let pixel = 2.0 / SIZE as f32;
-    let mut data = Vec::with_capacity((SIZE * SIZE * 4) as usize);
-    for row in 0..SIZE {
-        for column in 0..SIZE {
+    drawn_at(128, outside)
+}
+
+/// The same, `size` pixels across: 128 for a button's picture, and fewer
+/// for one shown much smaller than that, which drawn big and shrunk on
+/// the screen would come out ragged.
+fn drawn_at(size: u32, outside: impl Fn(Vec2) -> f32) -> Image {
+    let pixel = 2.0 / size as f32;
+    let mut data = Vec::with_capacity((size * size * 4) as usize);
+    for row in 0..size {
+        for column in 0..size {
             let at = Vec2::new((column as f32 + 0.5) * pixel - 1.0, 1.0 - (row as f32 + 0.5) * pixel);
             let cover = (0.5 - outside(at) / pixel).clamp(0.0, 1.0);
             data.extend_from_slice(&[255, 255, 255, (cover * 255.0).round() as u8]);
@@ -1498,8 +1633,8 @@ fn drawn(outside: impl Fn(Vec2) -> f32) -> Image {
     }
     Image::new(
         Extent3d {
-            width: SIZE,
-            height: SIZE,
+            width: size,
+            height: size,
             depth_or_array_layers: 1,
         },
         TextureDimension::D2,
@@ -1514,24 +1649,144 @@ fn drawn(outside: impl Fn(Vec2) -> f32) -> Image {
 /// a grip and a round pommel, leaning so that the point is up and to the
 /// right.
 pub(crate) fn sword() -> Image {
+    drawn(sword_distance)
+}
+
+/// How far `at` is from the sword's edge ([`sword`]).
+fn sword_distance(at: Vec2) -> f32 {
     const ROUND: f32 = 0.03;
-    let (sin, cos) = std::f32::consts::FRAC_PI_4.sin_cos();
-    let blade = [
+    const BLADE: [Vec2; 5] = [
         Vec2::new(-0.13, -0.1),
         Vec2::new(0.13, -0.1),
         Vec2::new(0.13, 0.6),
         Vec2::new(0.0, 0.93),
         Vec2::new(-0.13, 0.6),
     ];
-    drawn(move |at| {
-        // `at` as the sword sees it, its blade up its own y.
-        let local = Vec2::new(at.x * cos - at.y * sin, at.x * sin + at.y * cos);
-        let blade = polygon_distance(local, &blade);
-        let guard = box_distance(local - Vec2::new(0.0, -0.2), Vec2::new(0.42, 0.08));
-        let grip = box_distance(local - Vec2::new(0.0, -0.52), Vec2::new(0.09, 0.26));
-        let pommel = circle_distance(local, Vec2::new(0.0, -0.8), 0.13);
-        blade.min(guard).min(grip).min(pommel) - ROUND
-    })
+    let (sin, cos) = std::f32::consts::FRAC_PI_4.sin_cos();
+    // `at` as the sword sees it, its blade up its own y.
+    let local = Vec2::new(at.x * cos - at.y * sin, at.x * sin + at.y * cos);
+    let blade = polygon_distance(local, &BLADE);
+    let guard = box_distance(local - Vec2::new(0.0, -0.2), Vec2::new(0.42, 0.08));
+    let grip = box_distance(local - Vec2::new(0.0, -0.52), Vec2::new(0.09, 0.26));
+    let pommel = circle_distance(local, Vec2::new(0.0, -0.8), 0.13);
+    blade.min(guard).min(grip).min(pommel) - ROUND
+}
+
+/// The pictures of what Bridge Wars' two shops sell (since 2026-11-12),
+/// on their cards and on the second button: each drawn in code, white on
+/// clear, for whoever shows it to tint. The plank and the sword are the
+/// buttons' own; the rest are theirs: a shield, as the game has them, a
+/// ball of force with a glint on it; a fireball with its tail; a builder
+/// standing on a plank; a flask, for every potion; a generator's pad with
+/// an arrow up; a sword and a shield each with a plus, for the team's
+/// stronger swords and better shields; a cross, for the heal pool; and an
+/// eye struck through, for the blindness trap.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub(crate) enum Picture {
+    Plank,
+    Sword,
+    Shield,
+    Fireball,
+    Builder,
+    Flask,
+    Forge,
+    SwordPlus,
+    ShieldPlus,
+    Cross,
+    Eye,
+}
+
+impl Picture {
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) const ALL: [Picture; 11] = [
+        Picture::Plank,
+        Picture::Sword,
+        Picture::Shield,
+        Picture::Fireball,
+        Picture::Builder,
+        Picture::Flask,
+        Picture::Forge,
+        Picture::SwordPlus,
+        Picture::ShieldPlus,
+        Picture::Cross,
+        Picture::Eye,
+    ];
+
+    /// The picture, drawn.
+    pub(crate) fn image(self) -> Image {
+        match self {
+            Picture::Plank => plank(),
+            Picture::Sword => sword(),
+            Picture::Shield => drawn(shield_distance),
+            Picture::Fireball => drawn(|at| {
+                let ball = circle_distance(at, Vec2::new(0.24, -0.24), 0.5);
+                let tail = polygon_distance(at, &[Vec2::new(-0.9, 0.9), Vec2::new(0.16, 0.24), Vec2::new(-0.24, -0.16)]);
+                ball.min(tail) - 0.03
+            }),
+            Picture::Builder => drawn(|at| {
+                let head = circle_distance(at, Vec2::new(0.0, 0.6), 0.24);
+                let body = box_distance(at - Vec2::new(0.0, 0.02), Vec2::new(0.2, 0.3)) - 0.06;
+                let plank = box_distance(at - Vec2::new(0.0, -0.72), Vec2::new(0.82, 0.12)) - 0.04;
+                head.min(body).min(plank)
+            }),
+            Picture::Flask => drawn(|at| {
+                let body = circle_distance(at, Vec2::new(0.0, -0.3), 0.56);
+                let neck = box_distance(at - Vec2::new(0.0, 0.42), Vec2::new(0.17, 0.34));
+                let lip = box_distance(at - Vec2::new(0.0, 0.8), Vec2::new(0.3, 0.07));
+                body.min(neck).min(lip) - 0.03
+            }),
+            Picture::Forge => drawn(|at| {
+                let pad = box_distance(at, Vec2::splat(0.74)).abs() - 0.08;
+                let head = triangle_distance(at, Vec2::new(0.0, 0.5), Vec2::new(-0.36, 0.04), Vec2::new(0.36, 0.04));
+                let shaft = box_distance(at - Vec2::new(0.0, -0.22), Vec2::new(0.13, 0.28));
+                pad.min(head.min(shaft) - 0.03)
+            }),
+            Picture::SwordPlus => drawn(|at| {
+                let sword = sword_distance((at - Vec2::new(0.14, -0.14)) / 0.84) * 0.84;
+                sword.min(plus_distance(at - Vec2::new(-0.62, 0.62), 0.3, 0.09) - 0.02)
+            }),
+            Picture::ShieldPlus => drawn(|at| {
+                let ring = circle_distance(at, Vec2::ZERO, 0.8).abs() - 0.09;
+                ring.min(plus_distance(at, 0.4, 0.11) - 0.02)
+            }),
+            Picture::Cross => drawn(|at| plus_distance(at, 0.74, 0.25) - 0.05),
+            Picture::Eye => drawn(|at| {
+                // Where two circles overlap, outlined; a pupil; and a
+                // stroke through it all.
+                let lens = circle_distance(at, Vec2::new(0.0, -0.62), 1.05).max(circle_distance(at, Vec2::new(0.0, 0.62), 1.05));
+                let pupil = circle_distance(at, Vec2::ZERO, 0.2);
+                let (sin, cos) = std::f32::consts::FRAC_PI_4.sin_cos();
+                let turned = Vec2::new(at.x * cos + at.y * sin, at.y * cos - at.x * sin);
+                let stroke = box_distance(turned, Vec2::new(0.07, 0.95));
+                (lens.abs() - 0.07).min(pupil).min(stroke)
+            }),
+        }
+    }
+}
+
+/// How far `at` is from the edge of the shield's picture: a ring, and a
+/// crescent of light inside it, up and to the left.
+fn shield_distance(at: Vec2) -> f32 {
+    let ring = circle_distance(at, Vec2::ZERO, 0.8).abs() - 0.09;
+    let glint = circle_distance(at, Vec2::new(-0.2, 0.2), 0.42).max(-circle_distance(at, Vec2::new(-0.06, 0.06), 0.46));
+    ring.min(glint)
+}
+
+/// How far `at` is from the edge of a plus sign reaching `reach` each way
+/// from its middle, its strokes `thick` either side of their middles.
+fn plus_distance(at: Vec2, reach: f32, thick: f32) -> f32 {
+    box_distance(at, Vec2::new(reach, thick)).min(box_distance(at, Vec2::new(thick, reach)))
+}
+
+/// Every [`Picture`] that has been shown, each made once.
+#[derive(Resource, Default)]
+pub(crate) struct Pictures(HashMap<Picture, Handle<Image>>);
+
+impl Pictures {
+    /// The picture, made if this is the first time it is shown.
+    pub(crate) fn of(&mut self, images: &mut Assets<Image>, picture: Picture) -> Handle<Image> {
+        self.0.entry(picture).or_insert_with(|| images.add(picture.image())).clone()
+    }
 }
 
 /// A bag, for Bridge Wars' inventory button: a round sack with its neck
@@ -1565,6 +1820,36 @@ pub(crate) fn bag() -> Image {
 /// as far in as the model's is (0.70 to 0.775 of the way out). White on
 /// clear, for the row to tint in the item's colour.
 pub(crate) fn item_picture(item: Item) -> Image {
+    /// Half the width of the line cut round the table.
+    const LINE: f32 = 0.045;
+    let (girdle, table) = item_outline(item);
+    drawn(move |at| {
+        let stone = polygon_distance(at, &girdle);
+        let line = polygon_distance(at, &table).abs() - LINE;
+        stone.max(-line)
+    })
+}
+
+/// The same stone as a mark on the minimap, where each sapphire and each
+/// amethyst generator is (`minimap::mark_generators`, since 2026-11-12):
+/// its outline alone, filled, and drawn 32 pixels across. It is shown
+/// about 15 pixels across there, where the line round its table, a pixel
+/// wide at the most, came out as a ring of flecks, and the picture
+/// shrunk from 128 pixels came out ragged. A little smaller in its
+/// picture than the stone is in its own ([`MARK_FILLS`]): with so few
+/// pixels, the stone drawn to the picture's edge left its edge soft.
+pub(crate) fn item_mark(item: Item) -> Image {
+    let (girdle, _) = item_outline(item);
+    drawn_at(32, move |at| polygon_distance(at / MARK_FILLS, &girdle) * MARK_FILLS)
+}
+
+/// How much of its picture an item's mark for the minimap takes up, as a
+/// share of what the stone takes up of its own picture.
+const MARK_FILLS: f32 = 0.9;
+
+/// The corners of `item`'s stone as it is drawn: of its girdle, the
+/// outline of it, and of the table on top of it.
+fn item_outline(item: Item) -> (Vec<Vec2>, Vec<Vec2>) {
     use std::f32::consts::{FRAC_PI_2, FRAC_PI_4};
     // How many sides; which way its first corner points, in radians round
     // from the right; how far either side of a corner it is cut, in
@@ -1576,8 +1861,6 @@ pub(crate) fn item_picture(item: Item) -> Image {
         Item::Sapphire => (5, FRAC_PI_2, 13.0, 0.775, Vec2::new(0.0, -0.05), 0.95),
         Item::Amethyst => (6, 0.0, 13.0, 0.77, Vec2::ZERO, 0.92),
     };
-    /// Half the width of the line cut round the table.
-    const LINE: f32 = 0.045;
     let corner = move |angle: f32, out: f32| middle + Vec2::new(angle.cos(), angle.sin()) * out;
     let step = std::f32::consts::TAU / sides as f32;
     let cut = cut.to_radians();
@@ -1588,11 +1871,7 @@ pub(crate) fn item_picture(item: Item) -> Image {
         })
         .collect();
     let table: Vec<Vec2> = (0..sides).map(|k| corner(turn + k as f32 * step, reach * table)).collect();
-    drawn(move |at| {
-        let stone = polygon_distance(at, &girdle);
-        let line = polygon_distance(at, &table).abs() - LINE;
-        stone.max(-line)
-    })
+    (girdle, table)
 }
 
 /// A plank, for the bridge button in Bridge Wars: a board lying across,
@@ -1856,6 +2135,44 @@ mod tests {
         let (silver, amethyst) = (item_picture(Item::Silver), item_picture(Item::Amethyst));
         assert_eq!(alpha_at(&amethyst, -0.6, 0.55), 255);
         assert_eq!(alpha_at(&silver, -0.6, 0.55), 0);
+    }
+
+    #[test]
+    fn an_item_s_mark_for_the_minimap_is_its_stone_filled_and_small() {
+        use std::f32::consts::TAU;
+        // The sapphire's and the amethyst's, which the minimap shows: the
+        // stone its picture is, with nothing cut through it, drawn small.
+        for (item, sides, turn, middle, reach, table) in [
+            (Item::Sapphire, 5, TAU / 4.0, Vec2::new(0.0, -0.05), 0.95, 0.775),
+            (Item::Amethyst, 6, 0.0, Vec2::ZERO, 0.92, 0.77),
+        ] {
+            let (mark, picture) = (item_mark(item), item_picture(item));
+            assert_eq!((mark.width(), mark.height()), (32, 32));
+            assert!(mark.width() < picture.width());
+            // The same stone, a little smaller in its picture.
+            let at = |image: &Image, fills: f32, angle: f32, out: f32| {
+                let point = (middle + Vec2::new(angle.cos(), angle.sin()) * out) * fills;
+                alpha_at(image, point.x, point.y)
+            };
+            assert_eq!(at(&mark, MARK_FILLS, 0.0, 0.0), 255, "{item:?}: its middle");
+            let step = TAU / sides as f32;
+            for k in 0..sides {
+                let corner = turn + k as f32 * step;
+                // Solid where the picture has the line round its table
+                // cut, and nothing past where a corner would be.
+                assert_eq!(at(&picture, 1.0, corner, reach * table), 0);
+                assert_eq!(at(&mark, MARK_FILLS, corner, reach * table), 255, "{item:?}: a hole in its mark, corner {k}");
+                assert_eq!(at(&mark, MARK_FILLS, corner, reach + 0.12), 0, "{item:?}: past corner {k}");
+            }
+            let size = mark.width();
+            let data = mark.data.as_ref().unwrap();
+            for edge in 0..size {
+                for (column, row) in [(edge, 0), (edge, size - 1), (0, edge), (size - 1, edge)] {
+                    assert_eq!(data[((row * size + column) * 4 + 3) as usize], 0, "{item:?} runs off its mark");
+                }
+            }
+            assert!(data.chunks(4).all(|pixel| pixel[..3] == [255, 255, 255]));
+        }
     }
 
     #[test]

@@ -1,64 +1,67 @@
-//! Bridge Wars' shop, at the red-roofed market stand on each island (since
-//! 2026-11-11; Hajun: "make it so that the red shop if the user goes inside
-//! the activation, it opens a closable popup shop menu, and right now just
-//! have 'bridge' as the option, which should cost 4 silver for 50m of
-//! bridge. make it so u just tap on the bridge and it buys 1 time right
-//! away no confirmation needed. and u can close the shop panel tapping on
-//! close button in top right corner or just tapping anywhere else on
-//! screen"). 25 m for the 4 silver since late on 2026-11-11 ("make it so 4 silver
-//! gets you 25m of bridge"; `roundtown_net::bridge_wars::BRIDGE_A_BUY`).
-//!
-//! **The window is white on grey, and nothing else** (since late on 2026-11-11;
-//! Hajun: "the shop panel is too colorful. make it all shades of
-//! white/black/gray - the text, the red close button, the background, etc
-//! - no blue tint"): its glass the grey of your name's plate
-//! (`colours.shop.window`), its title white where it was gold, the cross
-//! on its corner grey where it was red (`colours.close`, every window's),
-//! and a price you cannot pay greyed with the rest of its card where it
-//! was red.
+//! Bridge Wars' two shops, at the market stands on each island (the item
+//! shop since 2026-11-11, selling only the bridge; both, with everything
+//! in Hajun's `bridgewarsgameevent.txt`, since 2026-11-12): the **item
+//! shop** at the red-roofed stand, which sells what is yours alone, the
+//! bridge, three swords, three shields and five things for the second
+//! button; and the **upgrade shop** at the blue one, which sells what is
+//! your whole team's, a faster generator, stronger swords, better shields,
+//! a heal pool and blindness traps.
 //!
 //! **Where the shops are is the map's**: Hajun drew a white outline on the
 //! ground in front of every stand, in a material called `activation`
-//! ([`ACTIVATION_MATERIAL`]), and a shop is each of those that lies at a
-//! stand whose roof is red ([`RED_ROOF_MATERIAL`]; [`shop_zones`], read
-//! once the map has spawned). Move a stand and its outline in Blender and
-//! the shop follows; the blue stands' outlines are nothing yet. The server
-//! has no map, and sells only to someone near where the shops stood when
-//! it was built (`roundtown_net::ARENA_SHOPS`): a test keeps the two
-//! together.
+//! ([`ACTIVATION_MATERIAL`]); the one at a stand roofed in
+//! [`RED_ROOF_MATERIAL`] is an item shop and the one at a stand roofed in
+//! [`BLUE_ROOF_MATERIAL`] an upgrade shop ([`shop_zones`], read once the
+//! map has spawned). Move a stand and its outline in Blender and the shop
+//! follows. The server has no map, and sells only to someone near where
+//! the shops stood when it was built (`roundtown_net::ARENA_SHOPS`,
+//! `ARENA_UPGRADE_SHOPS`): a test keeps the two together.
 //!
-//! **Standing in the outline opens the shop** ([`watch`]): a small window
-//! over the middle of the screen with what it sells on a card, what that
-//! costs, and how much bridge you have, which is written nowhere else but
-//! in front of you as you build. It is not a dialog: the fight goes on
-//! round it and you can walk, and only a press on it is its own. A tap on
-//! the card buys one, at once, if you hold its price: offline out of what
-//! you hold, here; online asked of the server, which takes the price and
-//! says so (`Tell::Bought`, `arena::hear`). The cross on its corner shuts
-//! it, and so does a press anywhere else on the screen, which goes on to
-//! do whatever else it does, the stick included ([`shut_by_hand`]), and
-//! Escape; shut that way it stays shut until you have stepped out of the
-//! outline and in again. Stepping out of it shuts it too, as does dying,
-//! and the game's end.
+//! **Standing in an outline opens its shop** ([`watch`]): a window over
+//! the middle of the screen with a card for everything it sells (Hajun:
+//! "you may organize shoplayout in your own way, but keep it easy for
+//! people to be able to understand right away without too much text").
+//! A card is a picture, a name, one short line of what it does, and its
+//! price, the picture of what it is paid in and how many; the swords, the
+//! shields and the things for the second button are a row each, so that a
+//! name is a word. What cannot be bought is blocked out, and says why in
+//! place of a price: yours already, no more of it to have, or the second
+//! button holding something else; what you cannot pay for is blocked out
+//! with its price. An upgrade that goes by steps is one card, which shows
+//! the next step, with a pip for each step taken. All of it white on
+//! grey, but for the pictures, which are tinted as the things are.
+//!
+//! It is not a dialog: the fight goes on round it and you can walk, and
+//! only a press on it is its own. A tap on a card buys it, at once
+//! ([`press`], `arena::Want`): offline out of what you hold, by the
+//! shops' rules; online asked of the server, which takes the price and
+//! sends what everyone has. The window is put up again as what you hold
+//! or have changes, which is how a card you can now pay for lights up.
+//! The cross on its corner shuts it, and so does a press anywhere else on
+//! the screen, which goes on to do whatever else it does, the stick
+//! included ([`shut_by_hand`]), and Escape; shut that way it stays shut
+//! until you have stepped out of the outline and in again. Stepping out
+//! of it shuts it too, as does dying, and the game's end.
 
 use bevy::gltf::GltfMaterialName;
 use bevy::mesh::VertexAttributeValues;
 use bevy::prelude::*;
 use bevy::world_serialization::WorldInstanceReady;
-use roundtown_net::bridge_wars::{BRIDGE_A_BUY, price};
-use roundtown_net::{Ask as NetAsk, Ware};
+use roundtown_net::bridge_wars::{self as rules, Shop, price};
+use roundtown_net::{Item, Purse, Utility, Ware};
 
-use crate::arena::{Fighting, InArena, Resources};
+use crate::arena::{Fighting, InArena, Outfit, Resources, Want};
 use crate::builder::{self, Fill};
-use crate::hud::{self, DialogUp, TakesPress};
+use crate::hud::{self, DialogUp, Picture, Pictures, TakesPress};
 use crate::island::{self, Land, Venue, is_material};
 use crate::ui::{fill, ui};
 use crate::{Dead, Player};
 
 /// What the outlines on the ground in front of the stands are made of in
-/// the map, and what a stand that is a shop is roofed with.
+/// the map, and what the stands of the two shops are roofed with.
 pub(crate) const ACTIVATION_MATERIAL: &str = "activation";
 pub(crate) const RED_ROOF_MATERIAL: &str = "RoofTiles_Red";
+pub(crate) const BLUE_ROOF_MATERIAL: &str = "bluemarket";
 /// How far apart two corners can be and still be one outline's, or one
 /// roof's, in metres: an outline is 1.5 m by 2.5, its long sides drawn
 /// with a corner at each end and none between, and the two on an island
@@ -71,49 +74,65 @@ const AT_ITS_STAND: f32 = 2.0;
 /// How far over or under the islands' top your feet may be and still be
 /// standing in an outline, in metres: not jumping over it.
 const ON_THE_GROUND: f32 = 0.6;
-/// Sizes, as shares of the short side of the screen: the window, and how
-/// far down the screen its top is, as a share of the screen's height; its
-/// title; the card's picture, the name of what it sells and its price,
-/// with the picture of what it is paid in; the line under the card; and
-/// the cross on its corner.
-const WIDTH: f32 = 54.0;
-const TOP: f32 = 24.0;
-const TITLE: f32 = 4.6;
-const PICTURE: f32 = 8.5;
-const NAME: f32 = 4.0;
-const PRICE: f32 = 3.8;
-const PRICE_ICON: f32 = 4.0;
-const HAVE: f32 = 3.0;
-const CLOSE: f32 = 7.5;
+/// Sizes, as shares of the short side of the screen: how far down the
+/// screen each shop's window begins, as a share of the screen's height,
+/// the item shop's, which is three rows, higher, both under the time and
+/// the line under it; the window's title; a card, its picture, its name,
+/// the line under it, its price with the picture of what it is paid in,
+/// and a pip; the gap between cards and the window's own margin; and the
+/// cross on its corner. An upgrade's card is taller: its name is two
+/// words, on two lines, and it has its pips besides.
+const TOP_ITEMS: f32 = 16.0;
+const TOP_UPGRADES: f32 = 24.0;
+const TITLE: f32 = 3.6;
+const CARD_WIDTH: f32 = 15.5;
+const CARD_HEIGHT: f32 = 17.2;
+const UPGRADE_CARD_HEIGHT: f32 = 21.5;
+const PICTURE: f32 = 6.0;
+const NAME: f32 = 2.3;
+const STAT: f32 = 2.0;
+const PRICE: f32 = 2.7;
+const PRICE_ICON: f32 = 2.9;
+const PIP: f32 = 1.1;
+const GAP: f32 = 1.1;
+const PAD: f32 = 1.8;
+const CLOSE: f32 = 6.5;
 
 /// Where the shops are, as the map has them: each the box round an
 /// outline, across the ground, as its lowest and highest corners.
 #[derive(Resource, Default, Debug)]
 pub(crate) struct Shops {
-    pub(crate) zones: Vec<(Vec2, Vec2)>,
+    pub(crate) items: Vec<(Vec2, Vec2)>,
+    pub(crate) upgrades: Vec<(Vec2, Vec2)>,
 }
 
-/// Whether you are standing in a shop's outline, and whether you have shut
-/// the shop by hand since you stepped into it.
+impl Shops {
+    /// Which shop someone whose feet are at `at` stands in, if either.
+    pub(crate) fn at(&self, at: Vec3) -> Option<Shop> {
+        if in_a_shop(&self.items, at) {
+            Some(Shop::Items)
+        } else if in_a_shop(&self.upgrades, at) {
+            Some(Shop::Upgrades)
+        } else {
+            None
+        }
+    }
+}
+
+/// Which shop's outline you are standing in, and whether you have shut it
+/// by hand since you stepped into it.
 #[derive(Resource, Default)]
 struct Counter {
-    inside: bool,
+    inside: Option<Shop>,
     shut: bool,
 }
 
-/// The shop's window.
+/// A shop's window, and which shop's.
 #[derive(Component)]
-struct ShopWindow;
-/// The card that sells the bridge, its name and its price on it.
+struct ShopWindow(Shop);
+/// A card, and what a tap on it buys.
 #[derive(Component)]
-struct BridgeCard;
-#[derive(Component)]
-struct CardName;
-#[derive(Component)]
-struct CardPrice;
-/// The line under the card: how much bridge you have.
-#[derive(Component)]
-struct HaveLine;
+pub(crate) struct Card(pub(crate) Ware);
 /// The cross on the window's corner.
 #[derive(Component)]
 struct CloseShop;
@@ -122,14 +141,11 @@ pub(crate) fn plugin(app: &mut App) {
     app.init_resource::<Counter>()
         .add_observer(read_map)
         .add_observer(press)
-        .add_systems(
-            Update,
-            (shut_by_hand, watch, refresh).chain().after(crate::move_bodies),
-        );
+        .add_systems(Update, (shut_by_hand, watch).chain().after(crate::move_bodies));
 }
 
 /// Reads the shops off the map once it has spawned: every corner of every
-/// outline and of every red roof, where the map puts them.
+/// outline and of every red and every blue roof, where the map puts them.
 fn read_map(
     ready: On<WorldInstanceReady>,
     lands: Query<&Venue, With<Land>>,
@@ -143,7 +159,7 @@ fn read_map(
     if lands.get(ready.entity).ok() != Some(&Venue::Arena) {
         return;
     }
-    let (mut outlines, mut roofs) = (Vec::new(), Vec::new());
+    let (mut outlines, mut red, mut blue) = (Vec::new(), Vec::new(), Vec::new());
     for part in children.iter_descendants(ready.entity) {
         let Ok((mesh, material)) = parts.get(part) else {
             continue;
@@ -151,7 +167,9 @@ fn read_map(
         let corners = if is_material(&material.0, ACTIVATION_MATERIAL) {
             &mut outlines
         } else if is_material(&material.0, RED_ROOF_MATERIAL) {
-            &mut roofs
+            &mut red
+        } else if is_material(&material.0, BLUE_ROOF_MATERIAL) {
+            &mut blue
         } else {
             continue;
         };
@@ -163,18 +181,25 @@ fn read_map(
         };
         corners.extend(points.iter().map(|&point| place.transform_point(Vec3::from(point)).xz()));
     }
-    let zones = shop_zones(&outlines, &roofs);
-    if zones.is_empty() {
-        warn!("Bridge Wars' map has no outline in {ACTIVATION_MATERIAL:?} at a stand roofed in {RED_ROOF_MATERIAL:?}: no shop");
+    let shops = Shops {
+        items: shop_zones(&outlines, &red),
+        upgrades: shop_zones(&outlines, &blue),
+    };
+    if shops.items.is_empty() || shops.upgrades.is_empty() {
+        warn!(
+            "Bridge Wars' map has {} outlines in {ACTIVATION_MATERIAL:?} at stands roofed in {RED_ROOF_MATERIAL:?} and {} at stands in {BLUE_ROOF_MATERIAL:?}",
+            shops.items.len(),
+            shops.upgrades.len()
+        );
     } else {
-        info!("Bridge Wars' shops: {} of them, the first from {} to {}", zones.len(), zones[0].0, zones[0].1);
+        info!("Bridge Wars' shops: {} item shops and {} upgrade shops", shops.items.len(), shops.upgrades.len());
     }
-    commands.insert_resource(Shops { zones });
+    commands.insert_resource(shops);
 }
 
-/// The shops, given every corner of every outline on the ground and of
-/// every red roof, across the ground: the box round each outline whose
-/// middle is at the middle of a red roof.
+/// The shops at the stands with these `roofs`, given every corner of every
+/// outline on the ground and of every such roof, across the ground: the
+/// box round each outline whose middle is at the middle of one of them.
 pub(crate) fn shop_zones(outlines: &[Vec2], roofs: &[Vec2]) -> Vec<(Vec2, Vec2)> {
     let middle = |(low, high): &(Vec2, Vec2)| (*low + *high) * 0.5;
     let roofs: Vec<Vec2> = boxes(roofs).iter().map(middle).collect();
@@ -227,72 +252,286 @@ pub(crate) fn in_a_shop(zones: &[(Vec2, Vec2)], at: Vec3) -> bool {
             .any(|(low, high)| at.xz().cmpge(*low).all() && at.xz().cmple(*high).all())
 }
 
-/// Opens the shop as you step into an outline in a game that is on, and
-/// shuts it as you step out of one, die, or the game ends; shut by hand
+/// Opens a shop as you step into its outline in a game that is on, and
+/// shuts it as you step out of it, die, or the game ends; shut by hand
 /// ([`shut_by_hand`], [`press`]), it stays shut until you have stepped
-/// out and in again.
+/// out and in again. Up, it is put up again whenever what you hold or
+/// have changes, so that every card says how it stands.
 #[allow(clippy::too_many_arguments)]
 fn watch(
     fighting: Res<Fighting>,
     shops: Option<Res<Shops>>,
     dialog: Res<DialogUp>,
     stock: Res<Resources>,
+    outfit: Res<Outfit>,
     me: Query<(&Transform, &Venue, Has<Dead>), With<Player>>,
-    windows: Query<Entity, With<ShopWindow>>,
+    windows: Query<(Entity, &ShopWindow)>,
     mut counter: ResMut<Counter>,
     mut images: ResMut<Assets<Image>>,
+    mut pictures: ResMut<Pictures>,
     mut commands: Commands,
 ) {
-    let inside = fighting.playing
-        && !dialog.0
-        && shops.is_some_and(|shops| {
-            me.single().is_ok_and(|(at, &venue, dead)| {
-                venue == Venue::Arena && !dead && in_a_shop(&shops.zones, at.translation)
-            })
-        });
+    let inside = (fighting.playing && !dialog.0)
+        .then(|| {
+            let (at, &venue, dead) = me.single().ok()?;
+            (venue == Venue::Arena && !dead).then(|| shops.as_ref()?.at(at.translation))?
+        })
+        .flatten();
     let up = windows.iter().next();
-    if !inside {
-        if let Some(window) = up {
+    let Some(shop) = inside else {
+        if let Some((window, _)) = up {
             commands.entity(window).despawn();
         }
-        if counter.inside || counter.shut {
+        if counter.inside.is_some() || counter.shut {
             *counter = Counter::default();
         }
         return;
+    };
+    if counter.inside != Some(shop) {
+        *counter = Counter {
+            inside: Some(shop),
+            shut: false,
+        };
     }
-    if !counter.inside {
-        counter.inside = true;
+    if counter.shut {
+        if let Some((window, _)) = up {
+            commands.entity(window).despawn();
+        }
+        return;
     }
-    match (counter.shut, up) {
-        (false, None) => open(&mut commands, &mut images, &stock),
-        (true, Some(window)) => commands.entity(window).despawn(),
-        _ => {}
+    let fresh = up.is_some_and(|(_, which)| which.0 == shop) && !stock.is_changed() && !outfit.is_changed();
+    if fresh {
+        return;
+    }
+    if let Some((window, _)) = up {
+        commands.entity(window).despawn();
+    }
+    open(&mut commands, &mut images, &mut pictures, shop, &outfit, &stock.held);
+}
+
+/// What each shop sells, a row of cards to a kind of thing.
+fn shelves(shop: Shop) -> Vec<Vec<Ware>> {
+    match shop {
+        Shop::Items => vec![
+            vec![Ware::Bridge, Ware::Sword(1), Ware::Sword(2), Ware::Sword(3)],
+            vec![Ware::Shield(1), Ware::Shield(2), Ware::Shield(3)],
+            Utility::ALL.into_iter().map(Ware::Utility).collect(),
+        ],
+        Shop::Upgrades => vec![vec![
+            Ware::Forge,
+            Ware::StrongerSwords,
+            Ware::BetterShields,
+            Ware::HealPool,
+            Ware::Trap,
+        ]],
     }
 }
 
-/// The window: its title, the bridge on a card with what it costs, how
-/// much bridge you have, and the cross on its corner.
-fn open(commands: &mut Commands, images: &mut Assets<Image>, stock: &Resources) {
-    let ui = ui();
-    let (colours, words) = (ui.colours, &ui.words.arena);
-    let (item, cost) = price(Ware::Bridge);
-    let able = stock.held[item.index()] >= cost;
-    let (card, ink, pay) = card_look(able);
+/// How a card stands for you: to be bought, for so many of an item, which
+/// you have or have not; yours already; with no more of it to have; or,
+/// for something that goes on the second button, kept off it by what is
+/// on it.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum State {
+    Buy { item: Item, cost: u16, able: bool },
+    Owned,
+    Max,
+    Taken,
+}
+
+/// Everything a card shows: what it sells; its picture and the colour that
+/// is tinted; its name and the line under it; how many of its steps have
+/// been taken, of how many, for an upgrade that goes by steps; how many
+/// of it are on your second button; and how it stands for you.
+#[derive(Clone, PartialEq, Debug)]
+struct Offer {
+    ware: Ware,
+    picture: Picture,
+    tint: Color,
+    name: String,
+    stat: String,
+    pips: Option<(u8, u8)>,
+    held: u8,
+    state: State,
+}
+
+/// The picture of something for the second button, and the colour it is
+/// tinted: on its card here, and on the button (`utility`).
+pub(crate) fn look_of(utility: Utility) -> (Picture, Color) {
+    let colours = ui().colours;
+    match utility {
+        Utility::Fireball => (Picture::Fireball, colours.arena.fireball),
+        Utility::Builder => (Picture::Builder, colours.hud.icon),
+        Utility::Speed => (Picture::Flask, colours.arena.potion_speed),
+        Utility::Invisibility => (Picture::Flask, colours.arena.potion_invisibility),
+        Utility::Healing => (Picture::Flask, colours.arena.potion_healing),
+    }
+}
+
+/// The card for `ware`, as it stands for someone with `outfit` holding
+/// `held`: its words out of the file, its numbers out of the rules.
+fn offer(ware: Ware, outfit: &Outfit, held: &Purse) -> Offer {
+    let file = ui();
+    let (words, colours) = (&file.words.market, file.colours);
+    let (kit, team) = (&outfit.kit, &outfit.team);
+    let whole = |number: f32| format!("{number:.0}");
+    let percent = |share: f32| format!("{:.0}", share * 100.0);
+    let tier = |tier: u8| usize::from(tier.clamp(1, 3));
+    let (picture, tint, name, stat, pips) = match ware {
+        Ware::Bridge => (
+            Picture::Plank,
+            colours.hud.icon,
+            words.bridge.clone(),
+            fill(&words.bridge_stat, &[("metres", &whole(rules::BRIDGE_A_BUY))]),
+            None,
+        ),
+        Ware::Sword(sword) => (
+            Picture::Sword,
+            colours.arena.sword(sword),
+            words.swords[tier(sword) - 1].clone(),
+            fill(&words.sword_stat, &[("damage", &whole(rules::SWORD_DAMAGE[tier(sword)]))]),
+            None,
+        ),
+        Ware::Shield(shield) => (
+            Picture::Shield,
+            // The ball of force's own colour, solid.
+            colours.arena.shield(shield).with_alpha(1.0),
+            words.shields[tier(shield) - 1].clone(),
+            fill(&words.shield_stat, &[("share", &percent(rules::SHIELD_SHARE[tier(shield)]))]),
+            None,
+        ),
+        Ware::Utility(utility) => {
+            let (picture, tint) = look_of(utility);
+            let (name, stat) = match utility {
+                Utility::Fireball => (
+                    &words.fireball,
+                    fill(&words.fireball_stat, &[("damage", &whole(rules::FIREBALL_DAMAGE))]),
+                ),
+                Utility::Builder => (
+                    &words.builder,
+                    fill(&words.builder_stat, &[("metres", &whole(rules::BUILDER_METRES))]),
+                ),
+                Utility::Speed => (
+                    &words.speed,
+                    fill(
+                        &words.speed_stat,
+                        &[("more", &percent(rules::FAST - 1.0)), ("seconds", &whole(rules::FAST_SECS))],
+                    ),
+                ),
+                Utility::Invisibility => (
+                    &words.invisibility,
+                    fill(&words.invisibility_stat, &[("seconds", &whole(rules::UNSEEN_SECS))]),
+                ),
+                Utility::Healing => (&words.healing, fill(&words.healing_stat, &[("share", &percent(rules::HEALING))])),
+            };
+            (picture, tint, name.clone(), stat, None)
+        }
+        Ware::Forge => {
+            // The next step, or, with every step taken, the last.
+            let step = usize::from(team.forge.min(rules::FORGE_MOST - 1));
+            let tint = match step {
+                2 => colours.arena.item_amethyst,
+                3 => colours.arena.fireball,
+                _ => colours.hud.icon,
+            };
+            (
+                Picture::Forge,
+                tint,
+                words.forge[step].clone(),
+                words.forge_stats[step].clone(),
+                Some((team.forge, rules::FORGE_MOST)),
+            )
+        }
+        Ware::StrongerSwords => (
+            Picture::SwordPlus,
+            colours.hud.icon,
+            words.stronger_swords.clone(),
+            fill(&words.stronger_swords_stat, &[("damage", &whole(rules::STRONGER_SWORDS))]),
+            None,
+        ),
+        Ware::BetterShields => (
+            Picture::ShieldPlus,
+            colours.hud.icon,
+            words.better_shields.clone(),
+            fill(&words.better_shields_stat, &[("share", &percent(rules::BETTER_SHIELDS))]),
+            Some((team.shields, rules::BETTER_SHIELDS_MOST)),
+        ),
+        Ware::HealPool => (
+            Picture::Cross,
+            colours.arena.heal_pool,
+            words.heal_pool.clone(),
+            fill(
+                &words.heal_pool_stat,
+                &[("health", &whole(rules::HEAL_POOL)), ("seconds", &format!("{}", rules::HEAL_POOL_EVERY))],
+            ),
+            None,
+        ),
+        Ware::Trap => (
+            Picture::Eye,
+            colours.arena.trap,
+            words.trap.clone(),
+            fill(&words.trap_stat, &[("seconds", &whole(rules::BLIND_SECS))]),
+            Some((team.traps, rules::TRAPS_MOST)),
+        ),
+    };
+    let state = match price(ware, kit, team) {
+        Some((item, cost)) => State::Buy {
+            item,
+            cost,
+            able: held[item.index()] >= cost,
+        },
+        None => match ware {
+            Ware::Sword(_) | Ware::Shield(_) | Ware::StrongerSwords | Ware::HealPool => State::Owned,
+            Ware::Utility(utility) if kit.utility.is_some_and(|on| on != utility) => State::Taken,
+            _ => State::Max,
+        },
+    };
+    let on_the_button = match ware {
+        Ware::Utility(utility) if kit.utility == Some(utility) => kit.count,
+        _ => 0,
+    };
+    Offer {
+        ware,
+        picture,
+        tint,
+        name,
+        stat,
+        pips,
+        held: on_the_button,
+        state,
+    }
+}
+
+/// A shop's window: its title, a row of cards to each of its shelves, and
+/// the cross on its corner.
+fn open(
+    commands: &mut Commands,
+    images: &mut Assets<Image>,
+    pictures: &mut Pictures,
+    shop: Shop,
+    outfit: &Outfit,
+    held: &Purse,
+) {
+    let file = ui();
+    let (colours, words) = (file.colours, &file.words.market);
+    let (title, top) = match shop {
+        Shop::Items => (&words.items, TOP_ITEMS),
+        Shop::Upgrades => (&words.upgrades, TOP_UPGRADES),
+    };
     commands
         .spawn((
             InArena,
-            ShopWindow,
+            ShopWindow(shop),
             TakesPress,
             Node {
                 position_type: PositionType::Absolute,
                 left: Val::Percent(50.0),
-                top: Val::Vh(TOP),
-                width: Val::VMin(WIDTH),
+                top: Val::Vh(top),
                 flex_direction: FlexDirection::Column,
                 align_items: AlignItems::Center,
-                row_gap: Val::VMin(1.8),
-                padding: UiRect::all(Val::VMin(3.0)),
-                border_radius: BorderRadius::all(Val::VMin(3.5)),
+                row_gap: Val::VMin(GAP),
+                padding: UiRect::all(Val::VMin(PAD)),
+                border_radius: BorderRadius::all(Val::VMin(3.0)),
                 ..default()
             },
             // Half its own width back, so that it is centred.
@@ -303,88 +542,48 @@ fn open(commands: &mut Commands, images: &mut Assets<Image>, stock: &Resources) 
             GlobalZIndex(builder::DIALOG_LAYER - 2),
         ))
         .with_children(|window| {
-            window.spawn(builder::label(words.shop.clone(), TITLE, colours.text));
-            window
-                .spawn((
-                    BridgeCard,
-                    TakesPress,
-                    Button,
-                    Node {
-                        width: Val::Percent(100.0),
-                        align_items: AlignItems::Center,
-                        column_gap: Val::VMin(3.0),
-                        padding: UiRect::axes(Val::VMin(3.0), Val::VMin(2.2)),
-                        border_radius: BorderRadius::all(Val::VMin(2.6)),
-                        ..default()
-                    },
-                    BackgroundColor(card.idle),
-                    card,
-                ))
-                .with_children(|card| {
-                    card.spawn((
-                        ImageNode::new(images.add(hud::plank())).with_color(colours.hud.icon),
+            window.spawn(builder::label(title.clone(), TITLE, colours.text));
+            for shelf in shelves(shop) {
+                window
+                    .spawn((
                         Node {
-                            width: Val::VMin(PICTURE),
-                            height: Val::VMin(PICTURE),
-                            flex_shrink: 0.0,
-                            ..default()
-                        },
-                        Pickable::IGNORE,
-                    ));
-                    card.spawn((
-                        Node {
-                            flex_direction: FlexDirection::Column,
-                            align_items: AlignItems::FlexStart,
-                            row_gap: Val::VMin(1.0),
+                            column_gap: Val::VMin(GAP),
+                            justify_content: JustifyContent::Center,
                             ..default()
                         },
                         Pickable::IGNORE,
                     ))
-                    .with_children(|lines| {
-                        let name = fill(&words.shop_bridge, &[("metres", &format!("{BRIDGE_A_BUY:.0}"))]);
-                        lines.spawn((CardName, builder::label(name, NAME, ink)));
-                        lines
-                            .spawn((
-                                Node {
-                                    align_items: AlignItems::Center,
-                                    column_gap: Val::VMin(1.2),
-                                    ..default()
-                                },
-                                Pickable::IGNORE,
-                            ))
-                            .with_children(|row| {
-                                row.spawn((
-                                    ImageNode::new(images.add(hud::item_picture(item))).with_color(colours.arena.item(item)),
-                                    Node {
-                                        width: Val::VMin(PRICE_ICON),
-                                        height: Val::VMin(PRICE_ICON),
-                                        flex_shrink: 0.0,
-                                        ..default()
-                                    },
-                                    Pickable::IGNORE,
-                                ));
-                                row.spawn((CardPrice, builder::label(cost.to_string(), PRICE, pay)));
-                            });
+                    .with_children(|row| {
+                        let height = match shop {
+                            Shop::Items => CARD_HEIGHT,
+                            Shop::Upgrades => UPGRADE_CARD_HEIGHT,
+                        };
+                        for ware in shelf {
+                            card(row, images, pictures, &offer(ware, outfit, held), height);
+                        }
                     });
-                });
-            window.spawn((HaveLine, builder::label(have(stock), HAVE, colours.text_soft)));
+            }
             window.spawn(hud::close_cross(CLOSE, CloseShop));
         });
 }
 
-/// How the card looks when you can pay for it and when you cannot: its
-/// fill, lit under the pointer only if it can be bought; the name of what
-/// it sells; and its price, both greyed with too little.
-fn card_look(able: bool) -> (Fill, Color, Color) {
-    let colours = ui().colours;
-    if able {
+/// One card, `height` tall: the picture, the name, the line under it, the
+/// pips of an upgrade that goes by steps, and the price, or why there is
+/// none. Lit under the pointer only if it can be bought; blocked out
+/// otherwise.
+fn card(row: &mut ChildSpawnerCommands, images: &mut Assets<Image>, pictures: &mut Pictures, offer: &Offer, height: f32) {
+    let file = ui();
+    let (colours, words) = (file.colours, &file.words.market);
+    let able = matches!(offer.state, State::Buy { able: true, .. });
+    let (look, ink, soft, tint) = if able {
         (
             Fill {
                 idle: colours.shop.card,
                 lit: colours.shop.card_lit,
             },
             colours.text,
-            colours.text,
+            colours.text_soft,
+            offer.tint,
         )
     } else {
         (
@@ -394,60 +593,134 @@ fn card_look(able: bool) -> (Fill, Color, Color) {
             },
             colours.shop.name_off,
             colours.shop.name_off,
+            // Yours already, it keeps its colour; out of reach, it is
+            // blocked out with the rest.
+            if offer.state == State::Owned { offer.tint } else { offer.tint.with_alpha(offer.tint.alpha() * 0.35) },
         )
-    }
-}
-
-/// "You have 25m of bridge".
-fn have(stock: &Resources) -> String {
-    fill(&ui().words.arena.shop_have, &[("metres", &format!("{:.0}", stock.bridge_metres.max(0.0).round()))])
-}
-
-/// Keeps the window as what you hold changes: the card lit or blocked out
-/// by whether you can pay, and the line under it.
-#[allow(clippy::type_complexity)]
-fn refresh(
-    stock: Res<Resources>,
-    mut cards: Query<(&mut Fill, &mut BackgroundColor), With<BridgeCard>>,
-    mut names: Query<&mut TextColor, (With<CardName>, Without<CardPrice>)>,
-    mut prices: Query<&mut TextColor, (With<CardPrice>, Without<CardName>)>,
-    mut lines: Query<&mut Text, With<HaveLine>>,
-) {
-    if !stock.is_changed() || cards.is_empty() {
-        return;
-    }
-    let (item, cost) = price(Ware::Bridge);
-    let (look, ink, pay) = card_look(stock.held[item.index()] >= cost);
-    for (mut fill, mut colour) in &mut cards {
-        if fill.idle != look.idle {
-            *fill = look;
-            colour.set_if_neq(BackgroundColor(look.idle));
+    };
+    row.spawn((
+        Card(offer.ware),
+        TakesPress,
+        Button,
+        Node {
+            width: Val::VMin(CARD_WIDTH),
+            height: Val::VMin(height),
+            flex_direction: FlexDirection::Column,
+            align_items: AlignItems::Center,
+            justify_content: JustifyContent::SpaceBetween,
+            padding: UiRect::axes(Val::VMin(0.6), Val::VMin(1.0)),
+            border_radius: BorderRadius::all(Val::VMin(2.0)),
+            ..default()
+        },
+        BackgroundColor(look.idle),
+        look,
+    ))
+    .with_children(|card| {
+        card.spawn((
+            ImageNode::new(pictures.of(images, offer.picture)).with_color(tint),
+            Node {
+                width: Val::VMin(PICTURE),
+                height: Val::VMin(PICTURE),
+                flex_shrink: 0.0,
+                ..default()
+            },
+            Pickable::IGNORE,
+        ));
+        card.spawn((
+            builder::label(offer.name.clone(), NAME, ink),
+            Node {
+                max_width: Val::Percent(100.0),
+                ..default()
+            },
+        ));
+        card.spawn(builder::label(offer.stat.clone(), STAT, soft));
+        // Its steps, a pip to each: those taken lit.
+        if let Some((taken, of)) = offer.pips {
+            {
+                card.spawn((
+                    Node {
+                        column_gap: Val::VMin(PIP * 0.6),
+                        ..default()
+                    },
+                    Pickable::IGNORE,
+                ))
+                .with_children(|pips| {
+                    for pip in 0..of {
+                        pips.spawn((
+                            Node {
+                                width: Val::VMin(PIP),
+                                height: Val::VMin(PIP),
+                                border_radius: BorderRadius::all(Val::Percent(50.0)),
+                                ..default()
+                            },
+                            BackgroundColor(if pip < taken { colours.arena.pip } else { colours.arena.pip_off }),
+                            Pickable::IGNORE,
+                        ));
+                    }
+                });
+            }
         }
-    }
-    for mut colour in &mut names {
-        colour.set_if_neq(TextColor(ink));
-    }
-    for mut colour in &mut prices {
-        colour.set_if_neq(TextColor(pay));
-    }
-    let line = have(&stock);
-    for mut text in &mut lines {
-        if text.0 != line {
-            text.0.clone_from(&line);
+        match offer.state {
+            State::Buy { item, cost, .. } => {
+                card.spawn((
+                    Node {
+                        align_items: AlignItems::Center,
+                        column_gap: Val::VMin(0.8),
+                        ..default()
+                    },
+                    Pickable::IGNORE,
+                ))
+                .with_children(|price| {
+                    let coin = colours.arena.item(item);
+                    price.spawn((
+                        ImageNode::new(images.add(hud::item_picture(item)))
+                            .with_color(if able { coin } else { coin.with_alpha(0.4) }),
+                        Node {
+                            width: Val::VMin(PRICE_ICON),
+                            height: Val::VMin(PRICE_ICON),
+                            flex_shrink: 0.0,
+                            ..default()
+                        },
+                        Pickable::IGNORE,
+                    ));
+                    price.spawn(builder::label(cost.to_string(), PRICE, ink));
+                });
+            }
+            State::Owned => {
+                card.spawn(builder::label(words.owned.clone(), STAT, soft));
+            }
+            State::Max => {
+                card.spawn(builder::label(words.max.clone(), STAT, soft));
+            }
+            State::Taken => {
+                card.spawn(builder::label(words.taken.clone(), STAT, soft));
+            }
         }
-    }
+        // How many of it are on your second button, in the card's corner.
+        if offer.held > 0 {
+            card.spawn((
+                Node {
+                    position_type: PositionType::Absolute,
+                    right: Val::VMin(1.0),
+                    top: Val::VMin(0.6),
+                    ..default()
+                },
+                Pickable::IGNORE,
+                children![builder::label(format!("x{}", offer.held), STAT, colours.text)],
+            ));
+        }
+    });
 }
 
-/// A tap on the card buys a bridge, at once, if you hold its price; a tap
-/// on the cross shuts the shop.
+/// A tap on a card asks for what it sells, at once (`arena::sell`, which
+/// knows whether you can have it); a tap on the cross shuts the shop.
 fn press(
     click: On<Pointer<Click>>,
-    cards: Query<(), With<BridgeCard>>,
+    cards: Query<&Card>,
     closes: Query<(), With<CloseShop>>,
     fighting: Res<Fighting>,
-    mut stock: ResMut<Resources>,
     mut counter: ResMut<Counter>,
-    mut requests: MessageWriter<NetAsk>,
+    mut wants: MessageWriter<Want>,
 ) {
     if click.button != PointerButton::Primary || click.original_event_target() != click.entity {
         return;
@@ -456,20 +729,10 @@ fn press(
         counter.shut = true;
         return;
     }
-    if !cards.contains(click.entity) || !fighting.playing {
-        return;
-    }
-    let (item, cost) = price(Ware::Bridge);
-    if stock.held[item.index()] < cost {
-        return;
-    }
-    if fighting.online {
-        // The server takes the price and says it is yours (`arena::hear`).
-        requests.write(NetAsk::Buy(Ware::Bridge));
-    } else {
-        stock.held[item.index()] -= cost;
-        stock.bridge_metres += BRIDGE_A_BUY;
-        info!("bought {BRIDGE_A_BUY} m of bridge");
+    if let Ok(card) = cards.get(click.entity)
+        && fighting.playing
+    {
+        wants.write(Want(card.0));
     }
 }
 
@@ -508,7 +771,7 @@ fn shut_by_hand(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use roundtown_net::{ARENA_ISLAND_RADIUS, ARENA_ISLANDS, ARENA_SHOPS, ARENA_TEAMS};
+    use roundtown_net::{ARENA_ISLAND_RADIUS, ARENA_ISLANDS, ARENA_SHOPS, ARENA_TEAMS, ARENA_UPGRADE_SHOPS};
 
     /// Every corner of the map's parts in `material`, across the ground.
     fn corners_of(parts: &[island::glb::Part], material: &str) -> Vec<Vec2> {
@@ -520,15 +783,23 @@ mod tests {
     }
 
     #[test]
-    fn the_shops_are_the_outlines_at_the_red_stands_where_the_server_has_them() {
+    fn the_shops_are_the_outlines_at_the_red_and_the_blue_stands_where_the_server_has_them() {
         let parts = island::glb::read("pvptownmap.glb");
         let outlines = corners_of(&parts, ACTIVATION_MATERIAL);
         let roofs = corners_of(&parts, RED_ROOF_MATERIAL);
-        // Two outlines to an island, one of them at a red stand.
+        let blue = corners_of(&parts, BLUE_ROOF_MATERIAL);
+        // Two outlines to an island, one at a red stand and one at a blue.
         assert_eq!(boxes(&outlines).len(), 2 * ARENA_TEAMS);
         assert_eq!(boxes(&roofs).len(), ARENA_TEAMS);
+        assert_eq!(boxes(&blue).len(), ARENA_TEAMS);
         let zones = shop_zones(&outlines, &roofs);
         assert_eq!(zones.len(), ARENA_TEAMS, "{zones:?}");
+        let upgrades = shop_zones(&outlines, &blue);
+        assert_eq!(upgrades.len(), ARENA_TEAMS, "{upgrades:?}");
+        let shops = Shops {
+            items: zones.clone(),
+            upgrades: upgrades.clone(),
+        };
         let land: Vec<[Vec3; 3]> = parts
             .iter()
             .filter(|part| !part.skinned)
@@ -557,6 +828,20 @@ mod tests {
             assert!(map.walls_round(nearer, &body).is_empty(), "team {team}: the stand fills its own outline");
             assert!(in_a_shop(&zones, Vec3::new(nearer.x, ground, nearer.y)));
             assert!(!in_a_shop(&zones, Vec3::new(nearer.x, ground + 1.5, nearer.y)), "jumping over it");
+            assert_eq!(shops.at(Vec3::new(nearer.x, ground, nearer.y)), Some(Shop::Items));
+            // And its upgrade shop the same, at the blue stand across the
+            // island's middle: an outline of its own, with room to stand.
+            let shop = ARENA_UPGRADE_SHOPS[team];
+            assert!(
+                upgrades.iter().any(|(low, high)| ((*low + *high) * 0.5).distance(shop) < 0.1),
+                "team {team}: no outline at {shop}, of {upgrades:?}"
+            );
+            let nearer = shop + (ARENA_ISLANDS[team] - shop).normalize() * 0.45;
+            let ground = map.floor(nearer, 1.0).expect("ground in the outline");
+            let body = [(crate::PLAYER_RADIUS, ground + crate::LAND_STEP_UP, ground + crate::PLAYER_HEIGHT)];
+            assert!(map.walls_round(nearer, &body).is_empty(), "team {team}: the blue stand fills its own outline");
+            assert_eq!(shops.at(Vec3::new(nearer.x, ground, nearer.y)), Some(Shop::Upgrades));
+            assert_eq!(shops.at(Vec3::new(ARENA_ISLANDS[team].x, ground, ARENA_ISLANDS[team].y)), None);
         }
         for seat in 0..roundtown_net::ARENA_SEATS {
             let at = island::arrival(Venue::Arena, seat).translation;
@@ -578,5 +863,86 @@ mod tests {
         assert_eq!(zones, vec![(Vec2::new(4.25, -1.25), Vec2::new(5.75, 1.25))]);
         assert!(shop_zones(&outlines, &[]).is_empty());
         assert!(shop_zones(&[], &roof).is_empty());
+    }
+
+    #[test]
+    fn every_card_says_how_it_stands_in_a_word_or_a_price() {
+        use roundtown_net::{Kit, Upgrades};
+        let bare = Outfit::default();
+        // Every ware of both shops is on a shelf once, the item shop's in
+        // three rows and the upgrade shop's in one, no row longer than
+        // five cards.
+        let (items, upgrades) = (shelves(Shop::Items), shelves(Shop::Upgrades));
+        assert_eq!((items.len(), upgrades.len()), (3, 1));
+        assert_eq!(items.iter().map(Vec::len).sum::<usize>(), 12);
+        assert_eq!(upgrades[0].len(), 5);
+        for (shop, rows) in [(Shop::Items, &items), (Shop::Upgrades, &upgrades)] {
+            for ware in rows.iter().flatten() {
+                assert_eq!(rules::sold_at(*ware), shop, "{ware:?}");
+                assert!(rows.iter().flatten().filter(|other| *other == ware).count() == 1);
+            }
+            assert!(rows.iter().all(|row| row.len() <= 5));
+        }
+        // With nothing, everything has a price, which you cannot pay; a
+        // name and a line that are short and plain; and nothing filled in
+        // is left with its braces.
+        for ware in items.iter().chain(&upgrades).flatten() {
+            let card = offer(*ware, &bare, &[0; 4]);
+            assert!(matches!(card.state, State::Buy { able: false, .. }), "{ware:?}: {:?}", card.state);
+            assert!(!card.name.is_empty() && card.name.is_ascii() && card.stat.is_ascii());
+            assert!(!card.name.contains('{') && !card.stat.contains('{'), "{ware:?}: {} / {}", card.name, card.stat);
+            assert!(card.stat.len() <= 16, "{ware:?}: {:?} is a long line for a card", card.stat);
+            assert!(card.name.split(' ').all(|word| word.len() <= 10), "{ware:?}: {:?} will not fit a card", card.name);
+        }
+        // The numbers are the rules': 25 m of bridge for 4 silver, a sword
+        // of +5 for 10.
+        let bridge = offer(Ware::Bridge, &bare, &[4, 0, 0, 0]);
+        assert_eq!((bridge.stat.as_str(), bridge.state), ("+25m", State::Buy { item: Item::Silver, cost: 4, able: true }));
+        assert_eq!(offer(Ware::Sword(1), &bare, &[9, 0, 0, 0]).stat, "+5 dmg");
+        assert_eq!(offer(Ware::Shield(3), &bare, &[0; 4]).stat, "-22% dmg");
+        assert_eq!(offer(Ware::Utility(Utility::Speed), &bare, &[0; 4]).stat, "+40% 45s");
+        // With the silver sword, the basic and the silver are yours and
+        // the aura is still to buy; with a fireball on the button, a
+        // potion is kept off it, and the fireball's card counts them, up
+        // to the three the button holds.
+        let armed = Outfit {
+            kit: Kit {
+                sword: 2,
+                utility: Some(Utility::Fireball),
+                count: 2,
+                ..Kit::default()
+            },
+            team: Upgrades {
+                forge: 4,
+                shields: 2,
+                traps: 3,
+                swords: true,
+                heal_pool: false,
+            },
+        };
+        let rich: Purse = [99; 4];
+        assert_eq!(offer(Ware::Sword(1), &armed, &rich).state, State::Owned);
+        assert_eq!(offer(Ware::Sword(2), &armed, &rich).state, State::Owned);
+        assert!(matches!(offer(Ware::Sword(3), &armed, &rich).state, State::Buy { able: true, .. }));
+        assert_eq!(offer(Ware::Utility(Utility::Speed), &armed, &rich).state, State::Taken);
+        let fireball = offer(Ware::Utility(Utility::Fireball), &armed, &rich);
+        assert!(matches!(fireball.state, State::Buy { able: true, .. }) && fireball.held == 2);
+        let full = Outfit {
+            kit: Kit { count: 3, ..armed.kit },
+            ..armed
+        };
+        let fireball = offer(Ware::Utility(Utility::Fireball), &full, &rich);
+        assert_eq!((fireball.state, fireball.held), (State::Max, 3));
+        // An upgrade taken to its last step has no more to sell, and
+        // shows every pip lit; one part way shows the next step's price.
+        let forge = offer(Ware::Forge, &armed, &rich);
+        assert_eq!((forge.state, forge.pips), (State::Max, Some((4, 4))));
+        assert_eq!(forge.name, ui().words.market.forge[3]);
+        let shields = offer(Ware::BetterShields, &armed, &rich);
+        assert_eq!((shields.state, shields.pips), (State::Buy { item: Item::Sapphire, cost: 4, able: true }, Some((2, 4))));
+        assert_eq!(offer(Ware::Trap, &armed, &rich).state, State::Max);
+        assert_eq!(offer(Ware::StrongerSwords, &armed, &rich).state, State::Owned);
+        assert!(matches!(offer(Ware::HealPool, &armed, &rich).state, State::Buy { cost: 1, .. }));
+        assert_eq!(offer(Ware::Forge, &bare, &rich).name, ui().words.market.forge[0]);
     }
 }

@@ -180,6 +180,45 @@
             bridge_left: "#ffffff",
             bridge_low: "#ff9a2e",
             bridge_out: "#ff3b30",
+            // The same number, written small inside the bridge button
+            // among the buttons bottom right, under its plank, whether you
+            // are building or not.
+            bridge_count: "#ffffff",
+            // What the two shops sell, as each one's picture is tinted on
+            // its card and on the second button: the basic, the silver and
+            // the aura sword; the basic, the advanced and the aura shield,
+            // which is also the colour of the ball of force round whoever
+            // has one (as see-through as its alpha says); the fireball;
+            // the speed, the invisibility and the healing potion; the heal
+            // pool; and the blindness trap.
+            sword_basic: "#b9bec7",
+            sword_silver: "#ffffff",
+            sword_aura: "#3fc4d6",
+            shield_basic: "#ffffff38",
+            shield_advanced: "#ffd76a40",
+            shield_aura: "#4fd9e84d",
+            fireball: "#ff5a2a",
+            potion_speed: "#ffd84a",
+            potion_invisibility: "#c8d2de",
+            potion_healing: "#ff5a6e",
+            heal_pool: "#5fe08a",
+            trap: "#d9d9d9",
+            // The pips on an upgrade's card: a step taken, and one still
+            // to take.
+            pip: "#ffffff",
+            pip_off: "#ffffff38",
+            // The band on the ground that shows where a fireball or a
+            // builder will go while you aim it: its outline, and the fill
+            // inside it.
+            aim_outline: "#ffffffb3",
+            aim_fill: "#ffffff33",
+            // The time left of a drink, written in front of you while a
+            // potion is at your mouth: "1.6" down to "0.0".
+            drink: "#ffffff",
+            // What covers the screen, all but a small circle round you,
+            // while an enemy's trap has you blinded. The buttons, the
+            // minimap and everything else round the edge stay over it.
+            blind: "#000000",
             // What the generators make, as each one's picture is tinted
             // beside its count top left and in the shop: silver, gold,
             // sapphire and amethyst. (The things lying on the pads are
@@ -352,16 +391,59 @@
             anchors_broken: "All respawn anchors have been destroyed.",
             sudden_death: "Sudden death! Zombies are loose on the map.",
             draw: "The game is a draw.",
-            // The shop, at the red market stand on each island: its
-            // title, the one thing it sells, and the line under it.
-            shop: "Shop",
-            shop_bridge: "Bridge +{metres}m",
-            shop_have: "You have {metres}m of bridge",
             // Over each sapphire and amethyst generator, its level
             // ({level} is 1, 2 or 3), and under it the seconds to its next
             // thing, counting down.
             generator: "{item} Generator Lvl {level}",
             generator_next: "Next {item} in {seconds}sec...",
+            // A blindness trap going off: said to whoever it has blinded,
+            // and to the team whose island it was on.
+            blinded: "A trap has blinded you!",
+            trap_sprung: "An enemy walked into your trap!",
+        ),
+        // Bridge Wars' two shops: the item shop at the red stand on each
+        // island and the upgrade shop at the blue one. Their titles; what a
+        // card says in place of a price when the thing is yours already, when
+        // there is no more of it to buy, and when the second button holds
+        // something else; and each thing's name with the one line under it.
+        // A {number} in a line comes out of the game's rules
+        // (shared/src/lib.rs, bridge_wars), so the line follows the rules.
+        market: (
+            items: "Shop",
+            upgrades: "Upgrades",
+            owned: "Owned",
+            max: "Max",
+            taken: "Slot full",
+            bridge: "Bridge",
+            bridge_stat: "+{metres}m",
+            // The swords and the shields, by tier.
+            swords: ("Basic", "Silver", "Aura"),
+            sword_stat: "+{damage} dmg",
+            shields: ("Basic", "Advanced", "Aura"),
+            shield_stat: "-{share}% dmg",
+            // What goes on the second button.
+            fireball: "Fireball",
+            fireball_stat: "{damage} dmg",
+            builder: "Builder",
+            builder_stat: "{metres}m",
+            speed: "Speed",
+            speed_stat: "+{more}% {seconds}s",
+            invisibility: "Invisible",
+            invisibility_stat: "{seconds}s",
+            healing: "Heal",
+            healing_stat: "+{share}% hp",
+            // The upgrade shop. The generator's four steps, each with its
+            // line; the rest once, or step by step.
+            forge: ("Better Generator", "Advanced Generator", "Amethyst Generator", "Molten Generator"),
+            forge_stats: ("x1.5 faster", "x2 faster", "+ Amethyst", "x3 faster"),
+            stronger_swords: "Stronger Swords",
+            stronger_swords_stat: "+{damage} dmg",
+            better_shields: "Better Shields",
+            better_shields_stat: "-{share}% dmg",
+            heal_pool: "Heal Pool",
+            heal_pool_stat: "Base +{health}hp",
+            trap: "Blindness Trap",
+            trap_stat: "Blinds {seconds}s",
         ),
     ),
     // The car you drive (the face button, or C on desktop): every number of
