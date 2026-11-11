@@ -96,7 +96,24 @@ pub const PROTOCOL_ID: u64 = u64::from_be_bytes(*b"DGRMTOWN");
 /// [`ArenaRound`]; every punch, every hit on a respawn anchor
 /// ([`Ask::HitAnchor`]) and every plank of a bridge ([`Ask::Rung`],
 /// [`Plank`]) goes through the server, which keeps everyone's health.
-pub const PROTOCOL_VERSION: u32 = 10;
+///
+/// Not bumped for the map of 2026-11-11, whose waiting room is 50 m higher
+/// ([`bridge_wars::WAITING_FLOOR`]) and whose anchors stand up to 0.9 m from
+/// where they did ([`ARENA_ANCHORS`]): an app with the map before is put
+/// 50 m over its own room, which is open to the sky, and falls into it (the
+/// server lets any fall go), and the anchors are well inside the slack a
+/// hit on one is checked with.
+///
+/// 11 since the night of 2026-11-11: Bridge Wars has generators, a shop
+/// and a timetable (Hajun: "i want to now make the generators functional
+/// in the pvpmap ... these generators/items in map need to be server
+/// synced"): everything a generator has made lies in the game's room as a
+/// [`Loot`], what everyone holds is its [`Purses`], [`Ask::Buy`] and
+/// [`Tell::Bought`] are the shop, a game lasts 25 minutes where it lasted
+/// 10 ([`bridge_wars::PLAY_SECS`]), and past its eight seats a game may
+/// seat zombies ([`bridge_wars::ZOMBIE_TEAM`]), whose seats an app from
+/// before would take for a fifth pair of players.
+pub const PROTOCOL_VERSION: u32 = 11;
 
 /// The UDP port the game server listens on. 443, where QUIC goes, because a
 /// network that lets any UDP through lets that through: school and office
@@ -226,6 +243,8 @@ pub fn protocol(app: &mut App) {
         .replicate::<Built>()
         .replicate::<ArenaRound>()
         .replicate::<Plank>()
+        .replicate::<Loot>()
+        .replicate::<Purses>()
         .add_client_message::<Moved>(Channel::Unreliable)
         .add_client_message::<Ask>(Channel::Ordered)
         .add_server_message::<Tell>(Channel::Ordered)
@@ -284,9 +303,10 @@ pub const TOWN_ARRIVAL_RADIUS: f32 = 31.5;
 /// bridge connected island"): the islands 130 m out along each axis, each
 /// 20.8 m across (the islands' object scaled to 0.65 across the ground in
 /// their map, its array of four with it; 200 m out and 32 m across that
-/// morning), over the far half of a smaller island 24 m across at 125 m,
-/// with a bridge 3.5 m wide from each to the middle, 75 m out. Each
-/// island's point is its middle (since the night of 2026-11-07, Hajun:
+/// morning), with a bridge 3.5 m wide from each to the middle, 75 m out,
+/// until 2026-11-08, since when every bridge is built by walking; the
+/// map's four smaller islands, 24 m across (`SapphireIslands`), are 125 m
+/// out between them, on the diagonals. Each island's point is its middle (since the night of 2026-11-07, Hajun:
 /// "make the spawnpoint in the center of the island so that u dont need
 /// to hide the purple rotated cube"; for the evening before, the `spawn`
 /// marker each island has, a purple pillar 5 to 6 m toward the middle,
@@ -294,10 +314,12 @@ pub const TOWN_ARRIVAL_RADIUS: f32 = 31.5;
 /// game's +Z (the bottom of the screen; Blender's +Y), then the others
 /// clockwise from it seen from above. The islands' object is an array of
 /// four about the map's middle, 130 m out on each axis (its mesh reaches
-/// 140.4 m, the islands being 20.8 m across). A desk 11.3 by 4 m lies
-/// across each island's middle, its near edge 0.1 m past the point, so a
-/// body arriving there is shoved to the desk's edge, toward the bridge.
-/// The server, which has no map, goes by this too.
+/// 140.4 m, the islands being 20.8 m across). Since Hajun's map of
+/// 2026-11-11 the middle of each island is open ground between two market
+/// stands, 4.65 m either side of it across the island (a desk lay across
+/// it until then, which shoved whoever arrived to its edge), with the
+/// anchor's slab 5 m toward the town and a low pad, `gen1` to `gen4`, 5 m
+/// the other way. The server, which has no map, goes by this too.
 pub const ARENA_ISLANDS: [Vec2; 4] = [
     Vec2::new(0.0, 130.0),
     Vec2::new(-130.0, 0.0),
@@ -316,23 +338,86 @@ pub const ARENA_ISLAND_RADIUS: f32 = 10.4;
 
 /// Where each team's respawn anchor stands, in metres from the middle of the
 /// map, by team ([`arena_team`]): the purple pillar in the material `spawn`
-/// on each island, 5 to 6 m from the island's middle toward the town, as
+/// on each island, 6 m from the island's middle toward the town, as
 /// Hajun's `pvptownmap.glb` has them (a test in the game reads them off the
 /// map). While it stands, whoever on its team dies comes back; broken, they
 /// are out for good once they die (since 2026-11-08, Hajun: "make the purple
 /// rotated cube thingy on each island the respawn anchor (similar to bed in
-/// bedwars)").
+/// bedwars)"). As the map of 2026-11-11 has them, each a quarter turn on
+/// from the last about the map's middle (the objects `spawn` to
+/// `spawn.003`); until then, placed one by one, they were (0, 124.92),
+/// (-123.84, 0.03), (-0.16, -124) and (123.83, -0.13).
 pub const ARENA_ANCHORS: [Vec2; ARENA_TEAMS] = [
-    Vec2::new(0.0, 124.92),
-    Vec2::new(-123.84, 0.03),
+    Vec2::new(0.16, 124.0),
+    Vec2::new(-124.0, 0.16),
     Vec2::new(-0.16, -124.0),
-    Vec2::new(123.83, -0.13),
+    Vec2::new(124.0, -0.16),
 ];
 
 /// How far out from its middle an anchor reaches, across the ground, in
-/// metres: the pillar is a cube 1.4 m across turned on its corner, so its
-/// widest is about 0.85 m out. A punch lands on it as on a body this wide.
+/// metres: the pillar is two pyramids base to base, 1.41 m square where
+/// they meet, 0.71 m out at its sides and 1 m at its corners (a cube 1.4 m
+/// across turned on its corner until 2026-11-11, about as wide). A punch
+/// lands on it as on a body this wide.
 pub const ANCHOR_RADIUS: f32 = 0.85;
+
+/// Where the generators' pads are, in metres from the middle of the map, as
+/// Hajun's `pvptownmap.glb` of 2026-11-11 has them (a test in the game
+/// reads them off the map): the stone pad at the back of each team's
+/// island, by team (the objects `gen1` to `gen4`), where its silver and its
+/// gold come up; the pad in the middle of each of the four smaller islands
+/// on the diagonals (`sapphiregen` to `sapphiregen4`), for sapphire; and
+/// the four in the middle of the map, 35.8 m out on the axes, by the team
+/// whose island each is toward (`amethystgen` to `.003`), for amethyst
+/// (Hajun's `bridgewarsgameevent.txt`: "Silver and Gold spawn in each
+/// player's personal island's square pad. Sapphire spawn in the 4 corner
+/// islands's square pad. Amethyst spawn in the center map's 4 square
+/// pads."). Each pad is 2 m square with its top [`PAD_TOP`] up.
+pub const ARENA_PADS: [Vec2; ARENA_TEAMS] = [
+    Vec2::new(0.16, 135.92),
+    Vec2::new(-135.92, 0.16),
+    Vec2::new(-0.16, -135.92),
+    Vec2::new(135.92, -0.16),
+];
+pub const SAPPHIRE_PADS: [Vec2; 4] = [
+    Vec2::new(88.39, 88.39),
+    Vec2::new(-88.39, 88.39),
+    Vec2::new(-88.39, -88.39),
+    Vec2::new(88.39, -88.39),
+];
+pub const AMETHYST_PADS: [Vec2; 4] = [
+    Vec2::new(0.16, 35.82),
+    Vec2::new(-35.82, 0.16),
+    Vec2::new(-0.16, -35.82),
+    Vec2::new(35.82, -0.16),
+];
+
+/// How high a pad's top is, in metres, and how far it reaches from its
+/// middle each way across the ground: a slab 2 m square, 0.25 m over the
+/// island it lies on.
+pub const PAD_TOP: f32 = 0.5;
+pub const PAD_HALF: f32 = 1.0;
+
+/// How far each of the four smaller islands reaches from its middle, in
+/// metres: 24 m across (the map's `SapphireIslands`), its pad in the
+/// middle of it.
+pub const SAPPHIRE_ISLAND_RADIUS: f32 = 12.0;
+
+/// Where each team's shop is, in metres from the middle of the map, by
+/// team: the middle of the outline on the ground in front of the
+/// red-roofed market stand on its island (the map's `activation`
+/// material), to the right of whoever arrives there, 5 m from the island's
+/// middle. Standing in the outline opens the shop on the device (the
+/// game's `market`, which reads the outlines off the map); the server,
+/// which has no map, takes a purchase only from someone near one of these
+/// ([`bridge_wars::SHOP_SLACK`]). A test in the game keeps them where the
+/// map has them.
+pub const ARENA_SHOPS: [Vec2; ARENA_TEAMS] = [
+    Vec2::new(5.0, 130.13),
+    Vec2::new(-130.13, 5.0),
+    Vec2::new(-5.0, -130.13),
+    Vec2::new(130.13, -5.0),
+];
 
 /// Which of the [`ARENA_ISLANDS`] the player in `seat` arrives on, and is
 /// put back on when they fall off (the game's `lobby`): seat by seat round
@@ -346,8 +431,46 @@ pub fn arena_island(seat: usize) -> usize {
 
 /// Which team the player in `seat` is on: the island's (2v2v2v2 since
 /// 2026-11-08). Teammates cannot hurt each other, nor their own anchor.
+/// A seat past the eight players' is a zombie's (since 2026-11-11,
+/// [`bridge_wars::ZOMBIE_TEAM`]): on nobody's side but the zombies'.
 pub fn arena_team(seat: usize) -> u8 {
+    if seat >= ARENA_SEATS {
+        return bridge_wars::ZOMBIE_TEAM;
+    }
     arena_island(seat) as u8
+}
+
+/// What Bridge Wars' generators make, and its shop is paid in (since
+/// 2026-11-11; Hajun's four item models, `silver_item.glb` and the rest):
+/// silver and gold on each team's own island, sapphire on the four smaller
+/// islands between them, amethyst in the middle of the map.
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum Item {
+    Silver,
+    Gold,
+    Sapphire,
+    Amethyst,
+}
+
+impl Item {
+    /// Every item, in the order they are counted in ([`Purse`]) and shown
+    /// down the screen.
+    pub const ALL: [Item; 4] = [Item::Silver, Item::Gold, Item::Sapphire, Item::Amethyst];
+
+    /// Its place in a [`Purse`].
+    pub const fn index(self) -> usize {
+        self as usize
+    }
+}
+
+/// How many of each [`Item`] someone holds, by [`Item::index`].
+pub type Purse = [u16; 4];
+
+/// Something Bridge Wars' shop sells.
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Ware {
+    /// [`bridge_wars::BRIDGE_A_BUY`] metres of bridge to lay.
+    Bridge,
 }
 
 /// Bridge Wars' rules, as the game plays them on the device (`arena`) and
@@ -356,7 +479,10 @@ pub fn arena_team(seat: usize) -> u8 {
 /// for playing offline, where Hajun tunes them by hand; online the server's
 /// rule.
 pub mod bridge_wars {
-    use super::{ARENA_SEATS, Vec2, Vec3, Quat, TAU};
+    use super::{
+        AMETHYST_PADS, ARENA_ISLAND_RADIUS, ARENA_ISLANDS, ARENA_PADS, ARENA_SEATS, ARENA_SHOPS, Item, PAD_HALF,
+        Quat, SAPPHIRE_ISLAND_RADIUS, SAPPHIRE_PADS, TAU, Vec2, Vec3, Ware,
+    };
 
     /// How long the waiting room waits for someone else to join before the
     /// computer fills the seats left, in seconds, counted from the last to
@@ -366,9 +492,12 @@ pub mod bridge_wars {
     /// How long a full room counts down before everyone is sent to their
     /// island, in seconds ("it will count down from 5").
     pub const COUNTDOWN: f32 = 5.0;
-    /// How long a game lasts, in seconds, after which everyone is back in
-    /// the town ("a (small) timer of 10 minute").
-    pub const PLAY_SECS: f32 = 600.0;
+    /// How long a game lasts, in seconds, after which it is a draw and
+    /// everyone is back in the town: 25 minutes since 2026-11-11 (Hajun's
+    /// `bridgewarsgameevent.txt`: "25:00  Game ends in a draw"; 10 until
+    /// then, "a (small) timer of 10 minute"). What happens on the way is
+    /// [`TIMETABLE`].
+    pub const PLAY_SECS: f32 = 1500.0;
     /// How long the result is up at the end, in seconds, before everyone
     /// still there is sent back to the town.
     pub const RESULTS_SECS: f32 = 6.0;
@@ -419,8 +548,10 @@ pub mod bridge_wars {
     /// The waiting room, Hajun's glass box over the middle of the map
     /// (`pvptownmap.glb`, the object `waiting room`): where its floor is,
     /// in metres up, and how far from its middle everyone stands in it,
-    /// facing the middle. The game checks the map agrees.
-    pub const WAITING_FLOOR: f32 = 100.5;
+    /// facing the middle. The game checks the map agrees. 150.5 since
+    /// Hajun's map of 2026-11-11, which has the room 50 m higher; 100.5
+    /// until then.
+    pub const WAITING_FLOOR: f32 = 150.5;
     pub const WAIT_RING: f32 = 3.0;
 
     /// Where the player in `seat` waits for the game: on a ring round the
@@ -440,6 +571,352 @@ pub mod bridge_wars {
     /// device aims one with its own range.
     pub fn anchor_in_reach(from: Vec2, at: Vec2, reach: f32) -> bool {
         from.distance(at) <= reach + super::ANCHOR_RADIUS
+    }
+
+    // ------------------------------------------------------- the timetable
+
+    /// Something that happens at a set time into a game (Hajun's
+    /// `bridgewarsgameevent.txt`, 2026-11-11), which every device says in a
+    /// line across the upper half of the screen as it happens.
+    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+    pub enum Happening {
+        /// Every generator of `item` makes its things faster from now on:
+        /// "Sapphire II".
+        Tier { item: Item, tier: u8 },
+        /// "Spawn Anchor destruction: all remaining spawn anchors break":
+        /// from now on whoever dies is out.
+        AnchorsBreak,
+        /// "Sudden death: zombies spawn all over the map" ([`ZOMBIES`]).
+        SuddenDeath,
+    }
+
+    /// What happens when, in seconds into the fight, in order: the file's
+    /// timetable, from "2:00 Sapphire II" to "15:00 Sudden death". Its
+    /// first line, both generators at their first tier, is how a game
+    /// begins, and its last, "25:00 Game ends in a draw", is [`PLAY_SECS`].
+    pub const TIMETABLE: [(f32, Happening); 6] = [
+        (120.0, Happening::Tier { item: Item::Sapphire, tier: 2 }),
+        (240.0, Happening::Tier { item: Item::Amethyst, tier: 2 }),
+        (360.0, Happening::Tier { item: Item::Sapphire, tier: 3 }),
+        (480.0, Happening::Tier { item: Item::Amethyst, tier: 3 }),
+        (600.0, Happening::AnchorsBreak),
+        (900.0, Happening::SuddenDeath),
+    ];
+
+    /// What happens later than `before` and no later than `now`, both in
+    /// seconds into the fight: this frame's events, given last frame's
+    /// time and this one's.
+    pub fn happening_between(before: f32, now: f32) -> impl Iterator<Item = Happening> {
+        TIMETABLE
+            .iter()
+            .filter(move |(at, _)| *at > before && *at <= now)
+            .map(|&(_, event)| event)
+    }
+
+    /// Which tier `item`'s generators are at, `elapsed` seconds into the
+    /// fight: 1 to begin, and as [`TIMETABLE`] has raised it since.
+    pub fn tier(item: Item, elapsed: f32) -> u8 {
+        TIMETABLE
+            .iter()
+            .filter(|(at, _)| *at <= elapsed)
+            .filter_map(|&(_, event)| match event {
+                Happening::Tier { item: raised, tier } if raised == item => Some(tier),
+                _ => None,
+            })
+            .max()
+            .unwrap_or(1)
+    }
+
+    // ------------------------------------------------------ the generators
+
+    /// How many generators the map has: a silver one and a gold one on
+    /// each team's pad, a sapphire one on each of the four smaller
+    /// islands, and four amethyst ones in the middle ([`generator`]).
+    pub const GENERATORS: usize = 16;
+
+    /// What the generator numbered `index` makes, and the middle of the
+    /// pad it makes it on.
+    pub fn generator(index: usize) -> (Item, Vec2) {
+        match index {
+            0..=3 => (Item::Silver, ARENA_PADS[index]),
+            4..=7 => (Item::Gold, ARENA_PADS[index - 4]),
+            8..=11 => (Item::Sapphire, SAPPHIRE_PADS[index - 8]),
+            _ => (Item::Amethyst, AMETHYST_PADS[(index - 12) % AMETHYST_PADS.len()]),
+        }
+    }
+
+    /// How long a generator of `item` at `tier` takes to make one, in
+    /// seconds, and how much more or less than that each one may take
+    /// (Hajun's file: "Silver: baserate = 1 per ~2 sec (+- 0.5 sec variable
+    /// interval)", "Gold: baserate = 1 per ~7.5sec (+-1 sec variable
+    /// interval)", "Sapphire: base rate = 1 per 30 s (Tier I) ... Tier2 =
+    /// 1per23s, Tier3 = 1per 12s", "Amethyst: base rate = 1 per 40 s (Tier
+    /// I) ... Tier2 = 1 per 30s, Tier3 = 1 per 20s").
+    pub fn interval(item: Item, tier: u8) -> (f32, f32) {
+        match (item, tier) {
+            (Item::Silver, _) => (2.0, 0.5),
+            (Item::Gold, _) => (7.5, 1.0),
+            (Item::Sapphire, 0 | 1) => (30.0, 0.0),
+            (Item::Sapphire, 2) => (23.0, 0.0),
+            (Item::Sapphire, _) => (12.0, 0.0),
+            (Item::Amethyst, 0 | 1) => (40.0, 0.0),
+            (Item::Amethyst, 2) => (30.0, 0.0),
+            (Item::Amethyst, _) => (20.0, 0.0),
+        }
+    }
+
+    /// The most a generator of `item` holds on its pad before it stops
+    /// making more until some are taken (the file's "max held on
+    /// generator": 48, 6, 4 and 2).
+    pub fn cap(item: Item) -> usize {
+        match item {
+            Item::Silver => 48,
+            Item::Gold => 6,
+            Item::Sapphire => 4,
+            Item::Amethyst => 2,
+        }
+    }
+
+    /// How far from the middle of its pad a thing may come up, in metres
+    /// each way across the ground: well inside the pad's edge, the things
+    /// being 0.7 m across.
+    pub const PAD_SPREAD: f32 = 0.7;
+    /// How many places on its pad a generator looks at for each thing it
+    /// makes: it takes the one furthest from everything lying there, so
+    /// that a pad fills evenly, and no two things come up in one spot
+    /// while there is room (Hajun: "semi random location").
+    const PLACES_TRIED: usize = 6;
+    /// How near someone has to come to a thing to pick it up, in metres
+    /// across the ground from their middle to its (Hajun: "the user can
+    /// collect it by walking in it (short magnet)"): a body's own width
+    /// and a little over a metre, so that standing at a pad's edge takes
+    /// what lies along it, and walking across takes it all.
+    pub const MAGNET: f32 = 1.5;
+    /// How far over or under a pad's top someone's feet may be and still
+    /// pick up what lies on it, in metres: a jump over it, and not the
+    /// waiting room nor a fall past it.
+    pub const MAGNET_HEIGHT: f32 = 3.0;
+
+    /// One thing a generator has made, lying on its pad until someone
+    /// picks it up: a number of its own, which generator made it, what it
+    /// is, and where it lies across the ground.
+    #[derive(Clone, Copy, PartialEq, Debug)]
+    pub struct Piece {
+        pub id: u32,
+        pub generator: u8,
+        pub item: Item,
+        pub at: Vec2,
+    }
+
+    /// Every generator of a game and everything they have made that still
+    /// lies there: the server's online, and the device's own in a game
+    /// played offline, run by the same rules either way. It rolls no dice
+    /// of its own: whoever runs it hands it some, numbers from 0 up to 1.
+    #[derive(Clone, Debug)]
+    pub struct Mint {
+        /// Seconds until each generator next makes one. It counts only
+        /// while the generator holds less than its [`cap`].
+        until: [f32; GENERATORS],
+        pieces: Vec<Piece>,
+        next: u32,
+    }
+
+    impl Mint {
+        /// Every generator at the start of a game: nothing made yet, and
+        /// the first of each a whole wait away.
+        pub fn new(dice: &mut dyn FnMut() -> f32) -> Self {
+            let mut until = [0.0; GENERATORS];
+            for (index, wait) in until.iter_mut().enumerate() {
+                *wait = wait_for(generator(index).0, 1, dice);
+            }
+            Self {
+                until,
+                pieces: Vec::new(),
+                next: 0,
+            }
+        }
+
+        /// Everything lying on the pads.
+        pub fn pieces(&self) -> &[Piece] {
+            &self.pieces
+        }
+
+        /// How many things the generator numbered `index` holds.
+        pub fn held(&self, index: usize) -> usize {
+            self.pieces.iter().filter(|piece| usize::from(piece.generator) == index).count()
+        }
+
+        /// Runs every generator for `dt` seconds, `elapsed` seconds into
+        /// the fight (which says what tier each is at): what they made.
+        /// A generator holding its [`cap`] waits, its next thing a whole
+        /// wait off from when one is taken.
+        pub fn run(&mut self, dt: f32, elapsed: f32, dice: &mut dyn FnMut() -> f32) -> Vec<Piece> {
+            let mut made = Vec::new();
+            for index in 0..GENERATORS {
+                let (item, pad) = generator(index);
+                if self.held(index) >= cap(item) {
+                    continue;
+                }
+                let level = tier(item, elapsed);
+                // A tier raised mid-wait cuts the wait to the new tier's.
+                let (every, spread) = interval(item, level);
+                self.until[index] = self.until[index].min(every + spread) - dt;
+                // One at the most a go: a frame is far shorter than a wait.
+                if self.until[index] > 0.0 {
+                    continue;
+                }
+                self.until[index] += wait_for(item, level, dice);
+                let piece = Piece {
+                    id: self.next,
+                    generator: index as u8,
+                    item,
+                    at: self.place(pad, dice),
+                };
+                self.next = self.next.wrapping_add(1);
+                self.pieces.push(piece);
+                made.push(piece);
+            }
+            made
+        }
+
+        /// Somewhere on the pad round `pad` for a new thing: of a few
+        /// places at random, the one furthest from everything already
+        /// lying on that pad.
+        fn place(&self, pad: Vec2, dice: &mut dyn FnMut() -> f32) -> Vec2 {
+            let lying: Vec<Vec2> = self
+                .pieces
+                .iter()
+                .map(|piece| piece.at)
+                .filter(|at| (*at - pad).abs().max_element() <= PAD_HALF)
+                .collect();
+            let mut best = (f32::NEG_INFINITY, pad);
+            for _ in 0..PLACES_TRIED {
+                let off = Vec2::new(dice() * 2.0 - 1.0, dice() * 2.0 - 1.0) * PAD_SPREAD;
+                let at = pad + off;
+                let room = lying
+                    .iter()
+                    .map(|other| other.distance_squared(at))
+                    .fold(f32::INFINITY, f32::min);
+                if room > best.0 {
+                    best = (room, at);
+                }
+            }
+            best.1
+        }
+
+        /// Whoever stands at `at` across the ground picks up everything
+        /// within [`MAGNET`] of them: what they took, no longer lying
+        /// there for anyone else.
+        pub fn pick_up(&mut self, at: Vec2) -> Vec<Piece> {
+            let reach = MAGNET * MAGNET;
+            let (taken, left): (Vec<Piece>, Vec<Piece>) = self
+                .pieces
+                .iter()
+                .copied()
+                .partition(|piece| piece.at.distance_squared(at) <= reach);
+            self.pieces = left;
+            taken
+        }
+    }
+
+    /// How long a generator of `item` at `tier` waits before its next
+    /// thing, in seconds: its [`interval`], more or less its spread.
+    fn wait_for(item: Item, tier: u8, dice: &mut dyn FnMut() -> f32) -> f32 {
+        let (every, spread) = interval(item, tier);
+        every + (dice() * 2.0 - 1.0) * spread
+    }
+
+    // ------------------------------------------------------------ the shop
+
+    /// What `ware` costs: so many of an item (Hajun, 2026-11-11: "right
+    /// now just have 'bridge' as the option, which should cost 4 silver
+    /// for 50m of bridge").
+    pub fn price(ware: Ware) -> (Item, u16) {
+        match ware {
+            Ware::Bridge => (Item::Silver, 4),
+        }
+    }
+
+    /// How many metres of bridge one [`Ware::Bridge`] is.
+    pub const BRIDGE_A_BUY: f32 = 50.0;
+
+    /// How far from a shop ([`ARENA_SHOPS`]) someone may be, where they
+    /// last said they stood, for the server to sell to them, in metres:
+    /// the outline in front of the stand reaches 1.5 m from its middle,
+    /// and the rest is for the way they may have gone since.
+    pub const SHOP_SLACK: f32 = 5.0;
+
+    /// Whether someone standing at `at` across the ground is near enough
+    /// to a shop to buy from it, as the server checks it.
+    pub fn at_a_shop(at: Vec2) -> bool {
+        ARENA_SHOPS.iter().any(|shop| shop.distance(at) <= SHOP_SLACK)
+    }
+
+    // --------------------------------------------------------- the zombies
+
+    /// The team of the zombies of sudden death ([`Happening::SuddenDeath`]):
+    /// nobody's, so everyone is theirs to go for and they are everyone's.
+    /// They sit in the seats past the players' eight (`arena_team`).
+    pub const ZOMBIE_TEAM: u8 = super::ARENA_TEAMS as u8;
+    /// How many zombies sudden death brings: one to each team's island,
+    /// one to each of the smaller islands between them, and four in the
+    /// middle of the map ([`zombie_home`]; the file says only "zombies
+    /// spawn all over the map": the number, and the rest about them, is
+    /// not Hajun's).
+    pub const ZOMBIES: usize = 12;
+    /// What a zombie is called over its head, and the look it wears, which
+    /// the game draws as the body everyone has, gone green.
+    pub const ZOMBIE_NAME: &str = "Zombie";
+    pub const ZOMBIE_LOOK: &str = "zombie";
+    /// How long a zombie stays down before another stands in its place, in
+    /// seconds: sudden death does not let up.
+    pub const ZOMBIE_RESPAWN_SECS: f32 = 12.0;
+    /// How fast a zombie comes at whoever it goes for, in metres a second:
+    /// slower than anyone runs ([`RUN_SPEED`]), so that it can be got away
+    /// from, though not for long on an island.
+    pub const ZOMBIE_SPEED: f32 = 6.0;
+    /// How much of a punch's knock a zombie takes, as a share: it is not
+    /// to be batted off an island as a player is. Knocked as anyone is,
+    /// the one that rose on each team's island, 4 m from its middle, was
+    /// over the edge at the first punch thrown on the run, which carries a
+    /// body 7 m: all four of a game's were gone within three seconds of
+    /// rising, and again each time they stood again (seen on a server on
+    /// this PC, 2026-11-11).
+    pub const ZOMBIE_KNOCK: f32 = 0.3;
+
+    /// The ground the zombie numbered `index` keeps to, as the middle of a
+    /// disc and how far it reaches: a team's island, one of the smaller
+    /// islands, or the middle of the map, out to the edge of its paving.
+    /// The server has no map, and keeps each to its disc as it keeps its
+    /// other players to their islands.
+    pub fn zombie_home(index: usize) -> (Vec2, f32) {
+        match index % ZOMBIES {
+            at @ 0..=3 => (ARENA_ISLANDS[at], ARENA_ISLAND_RADIUS),
+            at @ 4..=7 => (SAPPHIRE_PADS[at - 4], SAPPHIRE_ISLAND_RADIUS),
+            _ => (Vec2::ZERO, TOWN_RADIUS),
+        }
+    }
+
+    /// How far the middle of the map reaches for a zombie, in metres: the
+    /// paving ends 76 m out.
+    pub const TOWN_RADIUS: f32 = 74.0;
+
+    /// Where the zombie numbered `index` comes up, and comes up again: on
+    /// a team's island, 4 m to one side of its middle, clear of where its
+    /// players stand again; on a smaller island, 4 m from its pad toward
+    /// the middle of the map; and in the middle, on the path round the
+    /// pond, between the roads out.
+    pub fn zombie_spot(index: usize) -> Vec2 {
+        let index = index % ZOMBIES;
+        let (home, _) = zombie_home(index);
+        match index {
+            0..=3 => home + Vec2::new(home.y, -home.x).normalize() * -4.0,
+            4..=7 => home - home.normalize() * 4.0,
+            _ => {
+                let angle = (index - 8) as f32 * TAU / 4.0 + TAU / 8.0;
+                Vec2::new(angle.cos(), angle.sin()) * super::TOWN_ARRIVAL_RADIUS
+            }
+        }
     }
 }
 
@@ -795,6 +1272,28 @@ pub struct Plank {
     pub heading: f32,
 }
 
+/// One thing a generator has made in a game of Bridge Wars, lying on its
+/// pad ([`bridge_wars::Mint`], since 2026-11-11): what it is, and where it
+/// lies across the ground, on a pad's top ([`PAD_TOP`]). Sent once as it
+/// comes up, to everyone in the game, and gone for everyone the moment
+/// the server has someone pick it up (Hajun: "other player taking the
+/// item from the generators make it so you cant take it too"); never
+/// moved.
+#[derive(Component, Serialize, Deserialize, Clone, Copy, PartialEq, Debug)]
+#[component(immutable)]
+pub struct Loot {
+    pub item: Item,
+    pub x: f32,
+    pub z: f32,
+}
+
+/// What everyone in a game of Bridge Wars holds, by seat: how many of each
+/// [`Item`]. On the game's own entity beside its [`ArenaRound`], and sent
+/// to the room whenever anyone's changes: something picked up, or
+/// something bought.
+#[derive(Component, Serialize, Deserialize, Clone, PartialEq, Debug, Default)]
+pub struct Purses(pub Vec<Purse>);
+
 // --------------------------------------------------------------- messages
 
 /// Where you are now: sent while it changes, 15 times a second, and nothing
@@ -864,6 +1363,10 @@ pub enum Ask {
         z: f32,
         heading: f32,
     },
+    /// Sell me this, from Bridge Wars' shop: its price comes out of what I
+    /// hold ([`bridge_wars::price`]), and [`Tell::Bought`] says it is
+    /// mine; with too little, or nowhere near a shop, nothing happens.
+    Buy(Ware),
 }
 
 /// What the server tells you alone. In order, and never lost.
@@ -896,6 +1399,9 @@ pub enum Tell {
     Knocked { by: u64, from: Spot, running: bool },
     /// What you asked for cannot be done.
     Refused(Refusal),
+    /// The shop has sold you this ([`Ask::Buy`]): its price is out of what
+    /// you hold, as the room's [`Purses`] will show.
+    Bought(Ware),
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
@@ -1117,5 +1623,243 @@ mod tests {
         assert!(!off.same(&on));
         let back: Spot = postcard::from_bytes(&postcard::to_allocvec(&on).unwrap()).unwrap();
         assert!(back.same(&on), "{back:?}");
+    }
+
+    /// Dice that always come up the same: 0.5 is every wait at its
+    /// middle and every thing in the middle of its pad.
+    fn steady(value: f32) -> impl FnMut() -> f32 {
+        move || value
+    }
+
+    /// Dice that go round a few values, for places apart on a pad.
+    fn rolling() -> impl FnMut() -> f32 {
+        let mut state = 0x2545_F491u32;
+        move || {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            (state >> 8) as f32 / (1u32 << 24) as f32
+        }
+    }
+
+    #[test]
+    fn the_generators_make_what_the_file_says_as_fast_as_it_says_and_hold_no_more_than_it_says() {
+        use bridge_wars::{GENERATORS, Mint, PAD_SPREAD, cap, generator};
+        let mut dice = steady(0.5);
+        let mut mint = Mint::new(&mut dice);
+        // A silver every 2 s and a gold every 7.5 s from each team's pad,
+        // a sapphire every 30 s and an amethyst every 40 s: after 29 s,
+        // 14 silver and 3 gold a pad, and neither of the others yet.
+        let (dt, mut elapsed) = (1.0 / 60.0, 0.0);
+        let mut made = Vec::new();
+        while elapsed < 29.0 {
+            elapsed += dt;
+            made.extend(mint.run(dt, elapsed, &mut dice));
+        }
+        let count = |made: &[bridge_wars::Piece], item: Item| made.iter().filter(|piece| piece.item == item).count();
+        assert_eq!(count(&made, Item::Silver), 14 * 4);
+        assert_eq!(count(&made, Item::Gold), 3 * 4);
+        assert_eq!(count(&made, Item::Sapphire) + count(&made, Item::Amethyst), 0);
+        // Each lies on its own generator's pad, well inside its edge, at
+        // a number nobody else has.
+        for piece in &made {
+            let (item, pad) = generator(usize::from(piece.generator));
+            assert_eq!(item, piece.item);
+            assert!((piece.at - pad).abs().max_element() <= PAD_SPREAD + 1e-4, "{piece:?} off its pad at {pad}");
+        }
+        let mut ids: Vec<u32> = made.iter().map(|piece| piece.id).collect();
+        ids.sort_unstable();
+        ids.dedup();
+        assert_eq!(ids.len(), made.len());
+        // Left alone for two minutes, every generator holds what it may
+        // and no more: 48, 6, 4 and 2.
+        while elapsed < 125.0 {
+            elapsed += dt;
+            mint.run(dt, elapsed, &mut dice);
+        }
+        for index in 0..GENERATORS {
+            let (item, _) = generator(index);
+            assert_eq!(mint.held(index), cap(item), "generator {index}, {item:?}");
+        }
+        assert_eq!(mint.pieces().len(), 4 * (48 + 6 + 4 + 2));
+        // Emptied, a pad's next thing is a whole wait off, not at once.
+        let pad = ARENA_PADS[0];
+        let taken = mint.pick_up(pad);
+        assert_eq!(taken.len(), 48 + 6, "everything on a team's pad is within reach of its middle");
+        assert!(mint.run(dt, elapsed + dt, &mut dice).is_empty());
+        let mut waited = 0.0;
+        let next = loop {
+            waited += dt;
+            let made = mint.run(dt, elapsed + waited, &mut dice);
+            if let Some(piece) = made.first() {
+                break *piece;
+            }
+            assert!(waited < 3.0, "nothing after 3 s");
+        };
+        assert_eq!(next.item, Item::Silver);
+        assert!(waited > 1.9, "the next silver after only {waited} s");
+    }
+
+    #[test]
+    fn the_generators_speed_up_as_the_timetable_says() {
+        use bridge_wars::{TIMETABLE, Happening, Mint, PLAY_SECS, happening_between, interval, tier};
+        assert_eq!(tier(Item::Sapphire, 0.0), 1);
+        assert_eq!(tier(Item::Sapphire, 119.9), 1);
+        assert_eq!(tier(Item::Sapphire, 120.0), 2);
+        assert_eq!(tier(Item::Amethyst, 239.0), 1);
+        assert_eq!(tier(Item::Amethyst, 240.0), 2);
+        assert_eq!(tier(Item::Sapphire, 360.0), 3);
+        assert_eq!(tier(Item::Amethyst, 480.0), 3);
+        assert_eq!(tier(Item::Sapphire, PLAY_SECS), 3);
+        assert_eq!(tier(Item::Silver, PLAY_SECS), 1);
+        assert_eq!(tier(Item::Gold, PLAY_SECS), 1);
+        assert_eq!(interval(Item::Sapphire, 1).0, 30.0);
+        assert_eq!(interval(Item::Sapphire, 2).0, 23.0);
+        assert_eq!(interval(Item::Sapphire, 3).0, 12.0);
+        assert_eq!(interval(Item::Amethyst, 1).0, 40.0);
+        assert_eq!(interval(Item::Amethyst, 2).0, 30.0);
+        assert_eq!(interval(Item::Amethyst, 3).0, 20.0);
+        // In order, each once, all before the draw; and an event is this
+        // frame's only in the frame its time passes.
+        assert!(TIMETABLE.windows(2).all(|pair| pair[0].0 < pair[1].0));
+        assert!(TIMETABLE.iter().all(|(at, _)| *at > 0.0 && *at < PLAY_SECS));
+        assert_eq!(
+            happening_between(119.99, 120.01).collect::<Vec<_>>(),
+            vec![Happening::Tier { item: Item::Sapphire, tier: 2 }]
+        );
+        assert_eq!(happening_between(120.01, 120.03).count(), 0);
+        assert_eq!(happening_between(0.0, PLAY_SECS).count(), TIMETABLE.len());
+        assert_eq!(happening_between(599.0, 601.0).collect::<Vec<_>>(), vec![Happening::AnchorsBreak]);
+        assert_eq!(happening_between(899.0, 901.0).collect::<Vec<_>>(), vec![Happening::SuddenDeath]);
+        // Someone standing on a sapphire pad the whole game, taking each
+        // as it comes: 4 in the first two minutes, one every 23 s for the
+        // next four, and one every 12 s after.
+        let mut dice = steady(0.5);
+        let mut mint = Mint::new(&mut dice);
+        let (dt, mut elapsed) = (1.0 / 30.0, 0.0);
+        let mut taken = [0usize; 3];
+        while elapsed < 600.0 {
+            elapsed += dt;
+            mint.run(dt, elapsed, &mut dice);
+            let got = mint.pick_up(SAPPHIRE_PADS[0]);
+            assert!(got.iter().all(|piece| piece.item == Item::Sapphire));
+            let stretch = if elapsed <= 120.5 {
+                0
+            } else if elapsed <= 360.5 {
+                1
+            } else {
+                2
+            };
+            taken[stretch] += got.len();
+        }
+        assert_eq!(taken[0], 4, "{taken:?}");
+        assert!((10..=11).contains(&taken[1]), "{taken:?}");
+        assert!((19..=20).contains(&taken[2]), "{taken:?}");
+    }
+
+    #[test]
+    fn a_thing_is_picked_up_from_near_it_once_and_things_come_up_apart() {
+        use bridge_wars::{MAGNET, Mint, generator};
+        let mut dice = rolling();
+        let mut mint = Mint::new(&mut dice);
+        let (dt, mut elapsed) = (0.05, 0.0);
+        while elapsed < 20.0 {
+            elapsed += dt;
+            mint.run(dt, elapsed, &mut dice);
+        }
+        // Ten silver or so and two gold on each team's pad by now, no two
+        // of a pad's in one spot.
+        let pad = ARENA_PADS[2];
+        let lying: Vec<Vec2> = mint
+            .pieces()
+            .iter()
+            .filter(|piece| generator(usize::from(piece.generator)).1 == pad)
+            .map(|piece| piece.at)
+            .collect();
+        assert!(lying.len() >= 10, "{} things", lying.len());
+        for (k, a) in lying.iter().enumerate() {
+            for b in &lying[k + 1..] {
+                assert!(a.distance(*b) > 0.02, "two things at {a}");
+            }
+        }
+        // From 3 m off the pad nothing is in reach; from its middle all
+        // of it is, once: a second go, or someone else's, finds nothing.
+        let all = mint.pieces().len();
+        assert!(mint.pick_up(pad + Vec2::new(MAGNET + 1.0 + 0.5, 0.0)).is_empty());
+        assert_eq!(mint.pieces().len(), all);
+        let taken = mint.pick_up(pad);
+        assert_eq!(taken.len(), lying.len());
+        assert!(mint.pick_up(pad).is_empty());
+        assert_eq!(mint.pieces().len(), all - taken.len());
+        // Another team's pad is untouched by it.
+        assert!(!mint.pick_up(ARENA_PADS[0]).is_empty());
+    }
+
+    #[test]
+    fn the_pads_the_shops_and_the_zombies_are_where_the_map_has_room_for_them() {
+        use bridge_wars::{
+            BRIDGE_A_BUY, SHOP_SLACK, TOWN_RADIUS, ZOMBIE_TEAM, ZOMBIES, at_a_shop, price, zombie_home, zombie_spot,
+        };
+        for team in 0..ARENA_TEAMS {
+            let island = ARENA_ISLANDS[team];
+            // Each team's pad is on its island, behind its middle, the
+            // anchor being before it; and its shop beside its middle.
+            let pad = ARENA_PADS[team];
+            assert!(pad.distance(island) + PAD_HALF * 1.5 < ARENA_ISLAND_RADIUS, "team {team}'s pad");
+            assert!(pad.length() > island.length() && ARENA_ANCHORS[team].length() < island.length());
+            let shop = ARENA_SHOPS[team];
+            assert!((shop.distance(island) - 5.0).abs() < 0.1, "team {team}'s shop");
+            // Bought from at the shop and a few steps off it, and not
+            // from the pad, nor from the anchor.
+            assert!(at_a_shop(shop) && at_a_shop(shop + Vec2::new(SHOP_SLACK - 0.1, 0.0)));
+            assert!(!at_a_shop(pad) && !at_a_shop(ARENA_ANCHORS[team]), "team {team}");
+            // Its amethyst pad is the one toward it, in the middle.
+            assert!(AMETHYST_PADS[team].normalize().dot(island.normalize()) > 0.99);
+            assert!(AMETHYST_PADS[team].length() < 40.0);
+        }
+        for pad in SAPPHIRE_PADS {
+            assert!((pad.length() - 125.0).abs() < 0.1, "{pad}");
+            assert!(ARENA_ISLANDS.iter().all(|island| island.distance(pad) > ARENA_ISLAND_RADIUS + SAPPHIRE_ISLAND_RADIUS));
+        }
+        assert_eq!(price(Ware::Bridge), (Item::Silver, 4));
+        assert_eq!(BRIDGE_A_BUY, 50.0);
+        // The seats past the players' are the zombies', on nobody's team
+        // but their own; each comes up inside the ground it keeps to,
+        // with room round it, and no two in one place.
+        for seat in 0..ARENA_SEATS {
+            assert!(arena_team(seat) < ZOMBIE_TEAM);
+        }
+        assert_eq!(arena_team(ARENA_SEATS), ZOMBIE_TEAM);
+        assert_eq!(arena_team(ARENA_SEATS + ZOMBIES - 1), ZOMBIE_TEAM);
+        let spots: Vec<Vec2> = (0..ZOMBIES).map(zombie_spot).collect();
+        for (index, spot) in spots.iter().enumerate() {
+            let (home, reach) = zombie_home(index);
+            assert!(spot.distance(home) < reach - 2.0, "zombie {index} at {spot}, home {home} reaching {reach}");
+            assert!(spots.iter().filter(|other| other.distance(*spot) < 3.0).count() == 1, "zombie {index}");
+        }
+        // The four in the middle are on the path round the pond, clear
+        // of the amethyst pads.
+        for index in 8..ZOMBIES {
+            assert_eq!(zombie_home(index), (Vec2::ZERO, TOWN_RADIUS));
+            assert!(AMETHYST_PADS.iter().all(|pad| pad.distance(spots[index]) > 10.0));
+        }
+    }
+
+    #[test]
+    fn a_thing_on_a_pad_is_a_few_bytes_and_a_purse_is_four_counts() {
+        let loot = Loot {
+            item: Item::Sapphire,
+            x: -88.39,
+            z: 88.39,
+        };
+        let bytes = postcard::to_allocvec(&loot).unwrap();
+        assert!(bytes.len() <= 9, "{} bytes", bytes.len());
+        let back: Loot = postcard::from_bytes(&bytes).unwrap();
+        assert_eq!(back, loot);
+        let mut purse: Purse = [0; 4];
+        purse[Item::Silver.index()] = 7;
+        purse[Item::Amethyst.index()] = 1;
+        assert_eq!(purse, [7, 0, 0, 1]);
+        assert_eq!(Item::ALL.map(Item::index), [0, 1, 2, 3]);
     }
 }

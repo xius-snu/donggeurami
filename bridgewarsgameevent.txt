@@ -1,0 +1,19 @@
+@Game time, Event
+0:00   Sapphire and amethyst generators at Tier I
+2:00   Sapphire II
+4:00   Amethyst II
+6:00   Sapphire III (max)
+8:00   Amethyst III (max)
+10:00  Spawn Anchor destruction: all remaining spawn anchors break
+15:00  Sudden death: zombies spawn all over the map
+25:00  Game ends in a draw
+
+Generator rates:
+Silver: baserate = 1 per ~2 sec (+- 0.5 sec variable interval) | max held on generator = 48
+Gold: baserate = 1 per ~7.5sec (+-1 sec variable interval) | max held on generator = 6
+Sapphire: base rate = 1 per 30 s (Tier I) | max held on generator = 4 | Tier2 = 1per23s, Tier3 = 1per 12s
+Amethyst: base rate = 1 per 40 s (Tier I) | max held on generator = 2 | Tier2 = 1 per 30s, Tier3 = 1 per 20s
+
+Silver and Gold spawn in each player’s personal island’s square pad. 
+Sapphire spawn in the 4 corner islands’s square pad.
+Amethyst spawn in the center map’s 4 square pads.

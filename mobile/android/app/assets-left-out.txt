@@ -65,3 +65,8 @@ ui.ron
 # (2026-11-08: every bridge is built in the game now, src/bridge.rs):
 # Blender read this file, the game never did.
 woodplanktexture.jpg
+
+# The market stand Hajun put on Bridge Wars' islands (2026-11-11), as it came
+# from poly.pizza: it is in pvptownmap.glb, and the game reads nothing from
+# this folder.
+<dir>polypizza

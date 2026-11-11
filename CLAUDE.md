@@ -76,6 +76,38 @@ tested on the actual phone, and what not to try again. The short version:
   measured; not yet seen or measured on a phone, where Bevy's CPU
   clustering has point lights in it for the first time. The night's own light, the moon's, is a twentieth of the noon
   sky's on the ground, enough to find your way on an island with no lamps.
+- **Bridge Wars' respawn anchors glow and light their islands by night**
+  (`src/lamps.rs`, since 2026-11-11; Hajun, whose map of that day took the
+  lamps off the islands: "for now, just make the spawn anchor purple
+  crystal thing emit some light so that its not completely dark, while
+  still remaining purple"). What gives off light is a list by material
+  now (`lamps::SOURCES`): a street lamp's `lightbulb`, as before, and the
+  anchors' `spawn`. From dusk to dawn, as the lamps (`Daylight::lamps`),
+  each pillar glows in its own purple (`ANCHOR_GLOW`, one and a half times
+  its colour: drawn (182, 101, 209), the purple its sunlit faces are by
+  day, (200, 117, 213)) and throws a pale purple point light
+  (`ANCHOR_COLOR`, 0.78, 0.62, 1.0) of 1,000,000 lm out to 25 m
+  (`ANCHOR_LUMENS`, `ANCHOR_RANGE`: a fifth of a street lamp's) from
+  inside its tip, 3.5 m up (`ANCHOR_LIFT`): a pool of light round the
+  anchor that reaches the island's middle, 6 m away, about twice as
+  brightly as the moon, and leaves the far half to the moon. My numbers;
+  kept pale and modest so that the island keeps its colours. By day
+  nothing glows and there is no light, as with the lamps. A broken
+  anchor's pillar is hidden, and its light goes out with it; it comes
+  back as the pillar is stood up again. The map has 24 lights with them,
+  20 lamps and the four, which is `MOST_LIT`. **Two things found on the
+  way**: a light over the pillar's tip lit its faces white, so the light
+  is inside it, where no face of it is lit and the glow alone colours it;
+  and **Bevy 0.19 does not take the camera's exposure to emitted light**
+  unless the material's `emissive_exposure_weight` says so (0 by default;
+  the alpha of `emissive` is not read), so a glow is so many times the
+  colour, as it is: at 1,500 the pillar was white. The bulbs' 4,000,
+  which a comment had as "four times its colour", is far past white and
+  left as Hajun has seen it since 2026-10-16. Seen in the desktop build,
+  scripted, with `RT_TIME_OF_DAY=night` and `day`, from 10, 24 and 60 m
+  over the island, and with the anchor broken; a test keeps one light to
+  each anchor, inside it (`each_of_bridge_wars_anchors_is_one_light_inside_its_tip_and_glows_purple`).
+  Not on a phone; the APK was not rebuilt.
 - **The town's fountain has a material and a shader of its own**
   (`src/fountain.rs`, `src/fountain.wgsl`): see-through running water whose
   streaks the GPU moves by the frame's time. It is the one custom shader;
@@ -272,7 +304,13 @@ alone; the server is `cargo build -p roundtown_server`. Never `--workspace`,
 which would build the game with the server's half of replicon in it.
 
 Android needs the `release-android` profile, a manual strip step, and Gradle
-(`versionCode` in `mobile/android/app/build.gradle` is the build number: 16
+(`versionCode` in `mobile/android/app/build.gradle` is the build number: 18
+on the night of 2026-11-11, Bridge Wars' generators, its shop, its
+timetable and its zombies, on Hajun's map of that day, with the anchors
+lit by night (protocol 11, the server deployed with it); 17
+on the afternoon of 2026-11-10, the metres of bridge left written in front of you
+and running out of them stopping you where you stand (protocol 10 still,
+no server change); 16
 in the afternoon of 2026-11-10, a fork's root and a landing's end following the
 bent edge they meet, no sliver off a curve of bridge (protocol 10 still,
 no server change); 15 before it that day, a bridge that is built staying
@@ -547,6 +585,169 @@ was the town itself; everything below about the map, its islands, the
 void, the punch's knockback and its range held for the town then, and
 holds for the arena now.
 
+- **Since the night of 2026-11-11 Bridge Wars has generators, a shop and a
+  timetable** (Hajun: "i want to now make the generators functional in the
+  pvpmap, using the 4 item models in the asset folder as the items being
+  generated - they should drop in semi random location on top of the stone
+  pad on each island ... the items should bob up and down and rotate
+  slowly, and when the user can collect it by walking in it (short magnet)
+  ... make it so that the red shop if the user goes inside the activation,
+  it opens a closable popup shop menu, and right now just have 'bridge' as
+  the option, which should cost 4 silver for 50m of bridge ... read the
+  bridgewarsgameevent.txt for events and generator rates. it should show a
+  small alert in around middle of the upper half of screen that tells the
+  event ... these generators/items in map need to be server synced so
+  other players see the same number of items on map at the same times and
+  other player taking the item from the generators make it so you cant
+  take it too ... if there is any other info ur not sure try to think for
+  yourself what would be ideal, cuz this is a game similar to minecraft
+  bedwars"; `PROTOCOL_VERSION` 11, the server deployed with it, the binary
+  before kept on the VM as `roundtown-server.prev-2026-11-11b`; APK 18).
+  Hajun's file, `bridgewarsgameevent.txt` at the root of the repo, is the
+  timetable and the rates. Everything it says is in
+  `roundtown_net::bridge_wars` (`shared/src/lib.rs`), which the server
+  plays by online and the device by itself offline, and none of it in
+  `assets/ui.ron`, which has the colours and the words. What there is, and
+  where:
+  - **The generators** (`bridge_wars::Mint`, `GENERATORS`, `generator`,
+    `interval`, `cap`): sixteen, a silver one and a gold one on the pad at
+    the back of each team's island (`ARENA_PADS`, the map's `gen1` to
+    `gen4`), a sapphire one on each of the four smaller islands on the
+    diagonals (`SAPPHIRE_PADS`, `sapphiregen` to `sapphiregen4`) and four
+    amethyst ones in the middle of the map, 35.8 m out on the axes
+    (`AMETHYST_PADS`, `amethystgen` to `.003`), as the file has them.
+    Silver one every 2 s, half a second more or less, 48 to a pad at the
+    most; gold every 7.5 s, a second more or less, 6; sapphire every 30 s,
+    23 from 2:00 and 12 from 6:00, 4; amethyst every 40 s, 30 from 4:00 and
+    20 from 8:00, 2. A generator holding its most waits, and its next thing
+    is a whole wait on from when one is taken (mine: the file says only
+    "max held on generator"). Each thing comes up at the best of six
+    places tried at random within 0.7 m of the pad's middle each way, the
+    one furthest from everything lying there (`PAD_SPREAD`: my reading of
+    "semi random location"). The pads' places are constants, the server
+    having no map; a test reads them off the map, by what Hajun calls the
+    objects (`the_generators_pads_are_where_the_map_has_them`).
+  - **Picking up** (`MAGNET`, 1.5 m across the ground from your middle to
+    the thing's, with your feet within 3 m of the pad's top: Hajun's
+    "short magnet"; `Mint::pick_up`): online the server gives a thing to
+    whoever of the people in the game comes within reach of it, where
+    they last said they stood, the lower seat first within a tick, and it
+    is gone for everyone that tick (`server/src/arena.rs`, `mint`,
+    `Game::gather`); offline the game does the same for you
+    (`arena::gather`). The computer's players pick up nothing (mine: a
+    teammate that emptied the pad would be no help, and it buys nothing).
+    Online each thing is an entity the server sends to the game's room
+    (`Loot`: what it is and where it lies), and what everyone holds is one
+    component on the game's own entity (`Purses`, four counts a seat).
+  - **What you see** (`src/loot.rs`): Hajun's four models,
+    `silver_item.glb`, `gold_item.glb`, `sapphire_item.glb` and
+    `amethyst_item.glb`, cut stones of three, four, five and six sides,
+    0.7 m across, each hung 0.42 m over its pad's top, bobbing 0.1 m
+    either way every 2.4 s and turning once in seven, out of step with
+    the one beside it, come up from nothing in a fifth of a second, and
+    taken, flying to whoever took it in 0.16 s, shrinking (online, to the
+    nearest person to it, the server not saying who). Only those within
+    48 m of the camera are moved: a full map has 240. At night they glow
+    in their own colours, 0.9 times, as far as the lamps are on: a
+    sapphire is nearly black by moonlight, and the smaller islands have
+    no lamps. All my numbers.
+  - **What you hold is counted top left**, under your health bar, where
+    the log, the ingot, the gem and the emerald were: silver, gold,
+    sapphire and amethyst, each pictured as its model is seen from above,
+    a stone of three, four, five or six sides with its corners cut off as
+    the model's are and the outline of its table cut through
+    (`hud::item_picture`; Hajun: "change the icon to match the model
+    shape"), tinted its own colour (`colours.arena.item_silver`,
+    `item_gold`, `item_sapphire`, `item_amethyst` in `assets/ui.ron`).
+    The metres of bridge are no longer there ("remove the log icon - the
+    bridge meter only shows as in map text in front of the bridge like
+    now"): they are written in front of you as you build, as before, and
+    in the shop.
+  - **The shop** (`src/market.rs`): standing in the white outline on the
+    ground in front of the red-roofed stand on an island, anyone's (the
+    map's `activation` material, at a stand roofed in `RoofTiles_Red`;
+    read off the map once it has spawned, `market::shop_zones`), opens a
+    small window over the middle of the screen: "Shop", a card with a
+    plank, "Bridge +50m" and its price, a silver and "4", the line "You
+    have 0m of bridge", and a red cross on its corner. It is not a dialog:
+    you can walk, and the fight goes on round it. A tap on the card buys
+    one at once, as often as you can pay: offline here, online asked of
+    the server (`Ask::Buy`), which takes the 4 silver if you hold it, are
+    standing, and are within 5 m of a shop where you last said you stood
+    (`ARENA_SHOPS`, `SHOP_SLACK`; a test keeps those where the map's red
+    stands are), and says so (`Tell::Bought`), on which the 50 m are
+    yours. Without 4 silver the card is blocked out and its price red.
+    The cross shuts it, and so does a press anywhere else on the screen,
+    which is not taken, so that touching the stick walks you away, and
+    Escape; shut by hand it stays shut until you have stepped out of the
+    outline and in again; stepping out of it, dying and the game's end
+    shut it too. The blue stands' outlines are nothing yet. The words are
+    `words.arena.shop`, `shop_bridge` and `shop_have`.
+  - **Everyone starts with no bridge** (`arena.bridge_metres` in
+    `assets/ui.ron`, 0 where it was 500 since 2026-11-10): my call, Hajun
+    not having said, as a game of Bedwars begins with no blocks. Four
+    silver, eight seconds of a pad, is 50 m, and an island is 44 m from
+    the middle of the map. It is that one number to change back. Online
+    the metres are still the device's own; it is the silver the server
+    keeps.
+  - **The timetable** (`bridge_wars::TIMETABLE`, `PLAY_SECS`): a game
+    lasts 25 minutes where it lasted 10. At 2:00 and 6:00 the sapphire
+    generators quicken, at 4:00 and 8:00 the amethyst ones; at 10:00
+    every anchor left breaks, so that whoever dies after is out; at
+    15:00, sudden death, the zombies rise; and at 25:00 it is a draw
+    ("Time's up!" over "The game is a draw."). Each is said as it happens
+    in one line across the screen a quarter of the way down, small (3.6
+    shares of the short side), white, up five seconds (`arena::alert`;
+    `words.arena.tier_up`, `anchors_broken` and `sudden_death`, and
+    `colours.arena.alert`: "Sapphire generators have been upgraded to Lvl
+    II."), over the shop's window if that is up. The four headlines four
+    anchors breaking at once would put on top of each other are left out
+    for the one line.
+  - **The zombies are all mine but that they come**: the file says
+    "Sudden death: zombies spawn all over the map", and no more. Twelve
+    (`ZOMBIES`): one on each team's island, 4 m to the blue stand's side
+    of its middle, one on each smaller island, 4 m from its pad, and four
+    on the path round the pond (`zombie_spot`). Each is the body everyone
+    has with its skin and its hair green (`arena::paint_zombies`; the look
+    `zombie`), called "Zombie", on a team of its own (`ZOMBIE_TEAM`), so
+    that every player and every bot is its to go for, and it theirs: with
+    everyone's 100 of health and 12 a punch, a punch every 0.8 s. It
+    comes on at 6 m/s where everyone runs at 10, never runs away, takes
+    three tenths of a punch's knock (`ZOMBIE_KNOCK`: knocked as anyone
+    is, the server's bots had every island's zombie over the edge within
+    three seconds of its rising), and 12 s after it is put down another
+    stands where it rose. Online they are the server's, seated past the
+    players' eight seats (`arena_team` gives a seat from 8 up the
+    zombies' team; `Game::zombie`, `seat_zombie`), each kept to a disc as
+    the server's bots are (`zombie_home`: its island, or the middle of
+    the map out to 74 m, where it walks through the lamps, the planters
+    and the pond's rim, the server having no map); offline this device's
+    (`arena::raise_zombie`, `Zombie`), bodies like the bots', which walk
+    the map as it is. A zombie's punch knocks a player as any punch
+    thrown standing does: four of them had me off my island in a scripted
+    run. With every anchor gone by then, that is out.
+  - **For trying it out**: `RT_ARENA_FROM=<seconds>` begins a fight that
+    far into its timetable, with everything before then already done: on
+    the server for its games, and on a desktop build for a game played
+    offline. 595 is five seconds before the anchors break, 895 before the
+    zombies.
+  - **Checked on 2026-11-11, scripted, in the desktop build.** Offline:
+    7 silver and a gold picked up off the pad 13 s in, the counts top
+    left; the shop opened in the outline, two taps on its card taking 8
+    silver for 100 m, a tap elsewhere shutting it, stepping out and in
+    opening it again, "100m" in front of you building; the line at 2:00;
+    the anchors gone at 10:00 under one line; twelve zombies at 15:00,
+    one of them punched to death and back up. Online with a server on
+    this PC: every thing the server had was on the screen, to the count,
+    at every look; a purchase taken by the server; and with two copies in
+    one game, both stepping onto one pad with ten things on it at the
+    same moment, the server gave all ten to one and none to the other,
+    both screens showed the pad empty at once, and each copy's counts
+    were the server's; a punch of yours takes 12 off a server's zombie,
+    and its punches knock you. The VM, deployed, let the new build in.
+    **Not by hand, and not on a phone: none was attached, so APK 18 is
+    built and not installed.** The item models, their glow, the shop's
+    window and the alert's line have not been seen on the Adreno.
 - **Since the night of 2026-11-08 Bridge Wars is the server's online, eight
   to a game in four teams of two, with respawn anchors and bridges you
   build** (Hajun: "the bridge battle minigame doesnt allow queing with
@@ -563,8 +764,9 @@ holds for the arena now.
     `Room::Arena`, as House Builder's games are): choosing Bridge Wars asks
     `Ask::Arena`, the server seats you in the game filling now
     (`Tell::Seated`), puts you in the waiting room at your seat's spot
-    (`roundtown_net::bridge_wars::waiting_spot`, the room's floor at 100.5 m
-    as a shared constant, which a test checks the map agrees with), fills
+    (`roundtown_net::bridge_wars::waiting_spot`, the room's floor, 150.5 m
+    up since the map of 2026-11-11 and 100.5 until then, as a shared
+    constant, which a test checks the map agrees with), fills
     the seats left with its own bots after 10 s, counts down, sends everyone
     to their islands, and runs the clock; the device follows its
     `ArenaRound` and `Seats` (`arena::follow_round`): the stage and the
@@ -587,7 +789,9 @@ holds for the arena now.
     damage 12, anchor 120, hurt 0.5 s, respawn 4 s, regen 4 a second after
     5 s, run 10, sight 24, a bot's punch every 0.8 s, flee under 20%, fall
     30 m, the end's 6 s); `assets/ui.ron`'s `arena` has the same numbers
-    for offline, with `anchor_health` and `bridge_metres` added, and rules
+    for offline, with `anchor_health` and `bridge_metres` added (and, for
+    the number written in front of you as you build, `bridge_low_at` and
+    `bridge_red_at`), and rules
     offline alone. **A game ends over two ticks** (`close`, then `end`, in
     `server/src/arena.rs` and `server/src/builder.rs` alike, since
     2026-11-09): its bots, planks or pieces and board are despawned first,
@@ -606,8 +810,9 @@ holds for the arena now.
     another team comes within 24 m on or beside it, punches in reach,
     runs away under 20%, strolls when alone, is knocked up and across as a
     body is (`KNOCK_BACK`, `KNOCK_UP`, the drags) and falls off the edge if
-    knocked over it; it walks through the island's desk and slab, and never
-    crosses a bridge. Offline the game is this device's own as before, with
+    knocked over it; it walks through the island's desk and slab (its
+    market stands, since the map of 2026-11-11), and never crosses a
+    bridge. Offline the game is this device's own as before, with
     seven bots. Seen on this PC with a local server (`RT_PORT=5443`,
     `RT_ALLOW_SKIP=1`): seated, the bots in, the fight, a bridge to the west
     island, its two bots knocking you to 16 and off the edge, your punches
@@ -740,8 +945,10 @@ holds for the arena now.
     with 100m of briding so show '100m' as the number next to the log"):
     `arena.bridge_metres` in `assets/ui.ron` to start, 500 (since
     2026-11-10, Hajun: "increase the default bridge meter to 500m instead
-    of 100"; 100 until then),
-    `arena::Resources::bridge_metres`, shown by the log top left and taken
+    of 100"; 100 until then; and none since 2026-11-11, when the shop
+    began to sell it, above),
+    `arena::Resources::bridge_metres`, shown by the log top left until
+    2026-11-11 and taken
     as each rung is fixed; with less than a plank's length left no chain
     begins and no rung is fixed, and the tip, never shorter than `AHEAD`,
     runs out under you. The planks are ground: their shape is laid over
@@ -941,6 +1148,62 @@ holds for the arena now.
     nothing but bridge within half a metre of the step and no strip
     folded; landing on a curve the same; a straight edge still one quad.
     Not yet by hand or on a phone.
+  - **The metres left are written in front of you as you build, and
+    running out stops you** (since the afternoon of 2026-11-10, Hajun: "i
+    think i need another number indicator in front of where ur bridging
+    that is the same '### m' number of bridge wood left, and it should be
+    white font but orange -> red when its 10m->5m left. and when it become
+    0m, it should exit bridge mode (not able to go back to bridge mode
+    when u dont have any bridging m left) and pause (even if the user is
+    holding the joystick, so the user need to let go of the screen and do
+    the joystick again to move) so that they dont fall off when their
+    bridge ends"). **The number** (`bridge::show_left`, `LeftAhead`): the
+    one that was by the log top left until 2026-11-11, "500m" (`Resources::metres`), as a line of UI
+    text 3.6 shares of the short side (`LEFT_TEXT`) placed 2.4 m ahead of
+    you the way you face (`LEFT_AHEAD`: past the end of the plank being
+    laid, which reaches 1.05 m), after `follow_camera`, while building is
+    on. Its colours are `assets/ui.ron`'s `colours.arena.bridge_left`
+    (white), `bridge_low` (orange) and `bridge_out` (red), and where it
+    turns the file's `arena.bridge_low_at`, 10, and `bridge_red_at`, 5,
+    both Hajun's (`Arena::check` refuses them inside out): white with
+    more than 10 m, orange at 10, shading evenly to red at 5 and under
+    (`bridge::left_colour`), by the number as it is written, to the
+    nearest whole metre, so "10m" is orange from 10.4. The shading
+    between is my reading of "orange -> red"; the size and the 2.4 m are
+    mine. Yours alone, nothing of it online. **Running out**
+    (`bridge::lay`, `RanOut`): the frame the plank being laid can no
+    longer keep 1.05 m ahead of you for want of metres (`Grown::spent`,
+    set by `grow`: the tip is as long as the metres go and never shorter
+    than `AHEAD`), or what is left is under half a metre, which is
+    written "0m" (`OUT_BELOW`), what is being built is fixed where it is
+    (`let_go`), the metres are set to none, building is turned off, and
+    you are stopped: your walk is zeroed that frame, and
+    `read_player_input` gives none while `RanOut::halted`, whatever the
+    stick or the keys say, until a frame comes with neither pushed, which
+    lets you go; pushed again, you walk. So you stand on the bridge with
+    a plank's worth still ahead of you, about a metre (0.87 m at the
+    least, at 60 frames a second: the tip is aimed at you only once you
+    are a hand's width past its rung, and a frame's step goes by), and
+    the last plank takes all that was left, up to a plank and that
+    reach. Dying lets you go too. The "0m", red, stays in front of
+    you for as long as you stand stopped and a second and a half
+    (`OUT_SHOWN`), my addition, so that the stop says why. **And building
+    stays off**: `bridge::toggle` turns it on only with half a metre or
+    more, and a press with none shows the "0m" for that second and a
+    half instead. Until then the tip ran out under you and you walked
+    off the end of it; and with less than a plank's worth left (1.363 m)
+    no chain began at all, building on or not, so that off an edge you
+    fell with a plank in your arms: a chain begins now with anything not
+    written "0m", a stub of 1.05 m that stops you at the edge. Seen in
+    the desktop build, scripted through the keys (the throwaway again,
+    removed), with 13 m: white "13m" on the island, orange at 10.3 m,
+    red at 4.8, stopped on the bridge at none with 1.03 m of plank ahead
+    and the key still held, not moved in 2 s, the plank button refused,
+    and, the key let go and another pressed, walking again. Unit-tested:
+    the bridge running out with 4.5, 12 and 0.6 m, a plank under you
+    every frame and one ahead as it ends; the colours; standing until
+    the stick, or the keys, are let go. Not yet by hand or on a phone,
+    where the stick is a finger's.
   - **A minimap top right** (`src/minimap.rs`, since 2026-11-09, Hajun:
     "put a minimap that only shows the current player's location as a red
     dot and your teammate as a green dot, and the full map in top down view
@@ -948,8 +1211,10 @@ holds for the arena now.
     256 pixels square of the map from above, 300 m across with north up,
     the land in `colours.arena.map_land` over `map_back`, drawn once from
     the map's own triangles that face up and lie under 2 m (`draw_land`:
-    the islands, the town's middle, the desks; not the lamps' heads or the
-    waiting room), the bridges drawn over it again in the planks' colour
+    the islands, the town's middle, the desks, and since the map of
+    2026-11-11 the barrels; not the stands' roofs, the trees' leaves, the
+    lamps' heads or the waiting room), the bridges drawn over it again in
+    the planks' colour
     whenever they change (`draw_bridges`, `Bridges::version`), and over the
     picture a dot for you (`map_me`, red) and one for each teammate
     (`map_mate`, green), placed as you move and hidden when dead
@@ -980,8 +1245,10 @@ holds for the arena now.
   called `waiting room` in `pvptownmap.glb` (their export of 23:21 that
   night: 30 m square, its floor a metre thick with its top at 100.5 m, its
   walls 1.5 m thick, thicker than the lattice, and 5 m high, more than a
-  jump, open to the sky, in `glass` at a tenth), found by name once the
-  map has spawned (`arena::find_waiting_room`, `WaitingRoom`: the box
+  jump, open to the sky, in `glass` at a tenth; 50 m higher, its floor's
+  top at 150.5 m, since their map of 2026-11-11, "The PvP map itself",
+  below), found by name once the
+  map has spawned (`arena::read_map`, `WaitingRoom`: the box
   round its meshes; its floor is read off the map's shape under its
   middle, so it is stood on as any of the map is) and on a ring 3 m round
   its middle, facing in; with no such object in a map, everyone waits on
@@ -995,6 +1262,7 @@ holds for the arena now.
   down 5 to 1 over "Match found!", and everyone is sent to the island
   their seat says (`roundtown_net::arrival`, as the town's arrivals were
   that day), "Fight!" across the screen; then the board shows 10:00
+  (25:00 since 2026-11-11, with a timetable on the way, above)
   counting down over "Bridge Wars", a tap on it skips (any stage: the
   bots at once, the countdown over, the game over), and at 0:00 everyone
   is back in the town where their seat arrives, the bots gone
@@ -1107,10 +1375,12 @@ holds for the arena now.
   the arena and the town's again as you leave, `hud::relayout`): top left
   your name on its plate and under it your health bar, 30 by 3.6 shares of
   the short side with a rim, filled red (`colours.arena` in
-  `assets/ui.ron`: `hp`, `hp_back`, `hp_rim`), and under that the four
-  resources, wood, gold, diamond and emerald, each a picture with its
-  count beside it (`hud::RESOURCE_ICON`, `RESOURCE_TEXT`), the wood's
-  count your metres of bridge, "500m" (100 until 2026-11-10), the rest 0 (since 2026-11-09,
+  `assets/ui.ron`: `hp`, `hp_back`, `hp_rim`), and under that what you
+  hold of the four things the generators make, silver, gold, sapphire and
+  amethyst, each a picture of it, tinted its colour, with its count
+  beside it (`hud::RESOURCE_ICON`, `RESOURCE_TEXT`, `hud::item_picture`,
+  since 2026-11-11, above; until then wood, gold, diamond and emerald,
+  white, the wood's count your metres of bridge and the rest 0) (there since 2026-11-09,
   Hajun: "move the 4 item icon + number thing on the top right side of
   that screen to the left side of the screen below the hp bar ... remove
   the inventory icon"; for a night they were top right under a bag, the
@@ -1133,9 +1403,10 @@ holds for the arena now.
   button of three dots (`hud::ARENA_DOTS`), which does nothing yet; the
   stick stays, and nothing else of the town's bar is there (no balance,
   person, gear, gift, social, face or chat). The pictures are drawn in code
-  (`hud::sword`, `log`, `ingot`, `gem`, `emerald`, `dots`, and the `bag`
+  (`hud::sword`, `item_picture`, `plank`, `dots`, and the `bag`
   nothing shows now, through `hud::drawn` and a polygon distance,
-  `polygon_distance`; tests sample each). Space still jumps on desktop. The punch's range band is drawn
+  `polygon_distance`; tests sample each; the `log`, the `ingot`, the `gem`
+  and the `emerald` went on 2026-11-11). Space still jumps on desktop. The punch's range band is drawn
   only in the arena now (`range::follow`).
 - **Falling off the map** is the arena's alone (`island::bottomless`):
   the town has its sea back. The bots are kept on by `strands` as the
@@ -1147,6 +1418,82 @@ holds for the arena now.
 (Since the night of 2026-11-08 the map has no bridges: Hajun's `bridge`
 object was taken out of `pvptownmap.blend`, and every bridge is built by
 walking, "Games" above. What follows describes the bridges as they were.)
+
+**The map as it is since 2026-11-11** (Hajun: "i updated the pvp map
+slightly. adjust the spawn locations/etc accordingly. dont rebuild apk.
+just fix"; their export of 18:50, with the modifiers applied, the islands'
+arrays whole: 89 objects, 78,380 triangles, three PNG textures embedded,
+the trees'). What the game goes by, and what changed in it:
+
+- **The waiting room is 50 m higher**: its floor's top 150.5 m up, its
+  walls to 155.5, its glass white at a twentieth. From it, under the
+  camera 24 m over you, the whole middle of the map and the islands either
+  side are in sight. `roundtown_net::bridge_wars::WAITING_FLOOR` is 150.5
+  (100.5 until then); offline the floor is read off the map as ever.
+- **The anchors** are the objects `spawn` to `spawn.003`, still in the
+  material `spawn`: two pyramids base to base, 8 triangles, standing on
+  their point on the slab's top, 0.75 m up, 1.41 m square at 2.25 and
+  ending at 3.75 (a cube on its corner, 0.54 to 3.96, until then), 124 m
+  out and 0.16 m off each axis, each a quarter turn on from the last
+  about the middle. `ARENA_ANCHORS` is (0.16, 124), (-124, 0.16), (-0.16,
+  -124), (124, -0.16); the bar over each stands 4.4 m up
+  (`arena::ANCHOR_BAR_OVER`, 4.6 until then). They had stood up to 0.92 m
+  from there, placed one by one; left at the old numbers, six of the
+  eight triangles of team 0's pillar would have stayed in the way after
+  it broke, being further from where the game had it than `is_pillar`
+  reaches (the test that reads the pillars off the map failed on the
+  distance).
+- **Each island's middle is open ground**: the desk is gone, and in its
+  place two market stands (`MarketStand_2` to `.007`, the model in
+  `assets/polypizza/`, blue-roofed and red-roofed) 4.65 to 5.94 m either
+  side of the middle, a barrel behind each (`Cylinder` to `.007`), and
+  round the front of each a white outline on the ground (`Plane.003` to
+  `.006`, in a material called `activation`, 2 cm over the island: drawn,
+  and walked over as the road's paint is; the one at the red stand is
+  where the shop opens, since that night, `market`). Everyone still
+  arrives in the middle (`ARENA_ISLANDS`), and is no
+  longer shoved to a desk's edge; the second of a team, 4 m toward +X,
+  stands on islands 0 and 2 0.65 m from a stand, at the edge of its
+  outline, and on islands 1 and 3 between the middle and the anchor's
+  slab or the pad. The anchor's slab is where it was, and the low pad at
+  the far edge is `gen1` to `gen4`. **No lamp stands on an island any
+  more** (the four at their far edges went: 20 lamps, all in the middle),
+  so at night an island had the moon alone, until its anchor was made to
+  glow and light it the same evening ("Bridge Wars' respawn anchors glow
+  and light their islands by night", with the street lamps, near the top
+  of this file).
+- **The rest**: the four smaller islands, `SapphireIslands`, 24 m across
+  and 125 m out on the diagonals, each with a pad (`sapphiregen` to `4`)
+  and two palm trees; four more pads in the middle, 35.8 m out on the
+  axes (`amethystgen` to `.003`); a pine and two trees on the planters;
+  the fountain's tower and bowls gone from the pond, which stays; the
+  islands' tops `stone`. None of it is anything to the game but land and
+  scenery. Hajun's `amethyst_item.glb`, `gold_item.glb`,
+  `sapphire_item.glb` and `silver_item.glb` in `assets/` were loaded by
+  nothing, and the pads were scenery, until that night, when they became
+  what the generators make and where ("Games", above).
+- **Checked on the map itself** (a throwaway test drawing what a body
+  bumps into, removed): the stands, the barrels, the slabs and the trees'
+  trunks are solid and nothing else is; no invisible wall under a stand's
+  roof or a tree's leaves, which a part left open over a walkable place
+  would make ("A solid has to be a closed shape"). A test keeps every
+  arrival on the island's own top with nothing reaching into a body there
+  (`every_arrival_is_dry_land_in_the_map_with_the_void_beyond_the_islands`).
+  The server's bots, which have no map, walk through the stands as they
+  did the desk.
+- **`PROTOCOL_VERSION` is 10 still, and the server was deployed with the
+  new numbers** (2026-11-11, the binary before kept on the VM as
+  `roundtown-server.prev-2026-11-11`): without it the server put everyone
+  100.5 m up, under the new room, over nothing. An app with the map
+  before (APK 17, which was not rebuilt) is put 50 m over its own room
+  online, which is open to the sky, and falls into it; the server lets
+  any fall go (`Pace::take`), so nothing is put back.
+- Seen in the desktop build, scripted (`arena::Ask::Enter` and `Skip`
+  written by a throwaway module, removed), offline and online against the
+  VM: waiting at (0, 150.5, 3), the map under the glass; arriving at
+  (0, 0.25, 130) and staying there; the anchor with its bar over it, the
+  stands, the barrels and the outlines drawn, the minimap with all eight
+  islands; and back in the town. Not by hand, and not on a phone.
 
 The map (Hajun, 2026-11-07: "use pvptownmap instead of roudntownmap ...
 make the player start in the center of one of the 4 bridge connected
@@ -1175,7 +1522,8 @@ night, Hajun: "make the spawnpoint in the center of the island so that u
 dont need to hide the purple rotated cube"): the `spawn` pillar and its
 slab are drawn and solid as anything else now (the game hid the pillar
 and arrived at it for the evening before, `island::SPAWN_MATERIAL`,
-gone). The desk across each island's middle begins 0.1 m past the
+gone). The desk across each island's middle (there until the map of
+2026-11-11) begins 0.1 m past the
 middle, so a body arriving is shoved to its edge, toward the bridge; and
 the pillar's slab, 0.5 m high, is a wall to walking (as the fountain's
 rim is, "A body steps up anything under 0.5 m"), to be jumped onto or
@@ -1683,7 +2031,9 @@ where things come from, not what they are.
   `RT_KEY`. `RT_TIME_OF_DAY=night` (or `day`, `sunset`, `sunrise`, or
   seconds into the twenty minutes) stops the day at one time, and
   `RT_CAR_AT=<seconds>` the town's buses at one point of their loop.
-  `RT_CLOCK_OFF=<seconds>` puts a copy's own clock that far out, for
+  `RT_ARENA_FROM=<seconds>` begins a game of Bridge Wars' fight that far
+  into its timetable (the server for its games, a desktop build for one
+  played offline). `RT_CLOCK_OFF=<seconds>` puts a copy's own clock that far out, for
   trying the town's clock out on one machine, whose clock both copies
   share. A
   server on this PC for two copies to meet on: `cargo build -p

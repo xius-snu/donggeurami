@@ -25,6 +25,9 @@
 //!   on connecting and coins kept in memory. The login needs it.
 //! * `RT_ALLOW_SKIP`: `1` lets a device skip House Builder's waits, for trying
 //!   the game out. Never on a server real players use.
+//! * `RT_ARENA_FROM`: how many seconds into its timetable a game of Bridge
+//!   Wars begins its fight, for trying the timetable out: `595` is five
+//!   seconds before every anchor breaks. Never on a server real players use.
 
 mod accounts;
 mod arena;
@@ -68,6 +71,9 @@ pub(crate) struct Config {
     pub db: Option<String>,
     /// Devices may skip House Builder's waits.
     pub allow_skip: bool,
+    /// How far into its timetable a game of Bridge Wars begins its fight,
+    /// in seconds: 0 but for trying it out.
+    pub arena_from: f32,
 }
 
 impl Config {
@@ -99,6 +105,10 @@ impl Config {
                 .unwrap_or_default(),
             db: var("RT_DB"),
             allow_skip: var("RT_ALLOW_SKIP").is_some_and(|on| on == "1"),
+            arena_from: var("RT_ARENA_FROM")
+                .and_then(|seconds| seconds.parse().ok())
+                .filter(|seconds: &f32| seconds.is_finite() && *seconds >= 0.0)
+                .unwrap_or(0.0),
         }
     }
 }
@@ -196,6 +206,9 @@ fn listen(
             ""
         }
     );
+    if config.arena_from > 0.0 {
+        warn!("Bridge Wars' fights begin {} s into their timetable (RT_ARENA_FROM)", config.arena_from);
+    }
     Ok(())
 }
 

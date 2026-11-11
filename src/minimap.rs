@@ -27,8 +27,10 @@ const SIZE: u32 = 256;
 /// way: the islands' far edges are 140.4 m out.
 const HALF: f32 = 150.0;
 /// How high over the ground a triangle may be and still be drawn as land,
-/// in metres: the islands' tops are 0.25 m up, their desks 1.15; the
-/// lamps' heads and the waiting room, over that, are not drawn.
+/// in metres: the islands' tops are 0.25 m up, the barrels on them 1.43
+/// (their desks 1.15, until the map of 2026-11-11); the market stands'
+/// roofs, the trees' leaves, the lamps' heads and the waiting room, over
+/// that, are not drawn.
 const LAND_TOP: f32 = 2.0;
 /// How big a dot is, as a share of the picture.
 const DOT: f32 = 6.0;

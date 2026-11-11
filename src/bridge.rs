@@ -117,9 +117,32 @@
 //! Every plank costs its length in metres of bridge, which you buy (Hajun:
 //! "players will buy the bridge by meter count ... for now make each person
 //! start with 100m"; 500 since 2026-11-10: "increase the default bridge
-//! meter to 500m instead of 100"): the file's `arena.bridge_metres` to
-//! start, the number by the log top left (`arena::Resources`), and the tip
-//! never reaches further than you have left.
+//! meter to 500m instead of 100"; and since 2026-11-11 none to start, and
+//! 50 for every 4 silver at the shop, `market`): the file's
+//! `arena.bridge_metres` to start (`arena::Resources`; by the log top left
+//! until 2026-11-11, when the log went for what the generators make), and
+//! the tip never reaches further than you have left. **The same number is written
+//! in front of you while you build, and running out stops you** (later on
+//! 2026-11-10, Hajun: "i need another number indicator in front of where
+//! ur bridging that is the same '### m' number of bridge wood left, and
+//! it should be white font but orange -> red when its 10m->5m left. and
+//! when it become 0m, it should exit bridge mode (not able to go back to
+//! bridge mode when u dont have any bridging m left) and pause (even if
+//! the user is holding the joystick, so the user need to let go of the
+//! screen and do the joystick again to move) so that they dont fall off
+//! when their bridge ends"): [`show_left`] writes it [`LEFT_AHEAD`] ahead
+//! of you the way you face, white, and orange shading to red from the
+//! file's `arena.bridge_low_at` down to `bridge_red_at` ([`left_colour`]);
+//! and the frame the plank being laid can reach no further for want of
+//! metres ([`Grown::spent`]), or what is left is what is written "0m"
+//! ([`OUT_BELOW`]), [`lay`] fixes what is being built, a plank's worth of
+//! it still ahead of you, takes the metres to none, turns building off,
+//! which [`toggle`] then keeps off, and stops you where you stand until
+//! the stick has been let go ([`RanOut`], `read_player_input`). Until
+//! then the tip ran out under you and you walked off the end of it; and
+//! with less than a plank's worth left no chain began at all, building on
+//! or not, where now one begins with anything that is not written "0m",
+//! a stub that stops you at the edge.
 //!
 //! The planks are ground: their shape is laid over the island's
 //! (`Islands::lay_over`), so that you, the bots and everyone stand on them
@@ -144,11 +167,11 @@ use bevy_replicon::prelude::Remote;
 use roundtown_net::{Ask as NetAsk, Plank};
 
 use crate::arena::{Fighting, InArena, Resources};
-use crate::hud::{BridgeButton, DialogUp};
+use crate::hud::{self, BridgeButton, DialogUp};
 use crate::island::{Islands, Venue};
 use crate::net::Online;
 use crate::ui::{UiChanged, ui};
-use crate::{Carrying, Dead, Intent, LAND_STEP_UP, MOVE_SPEED, PLAYER_RADIUS, Player};
+use crate::{Carrying, Dead, Intent, LAND_STEP_UP, MOVE_SPEED, PLAYER_RADIUS, Player, ThirdPersonCamera};
 
 /// Half the width of a plank, in metres: Hajun's bridges in
 /// `pvptownmap.glb` were 2.726 m wide.
@@ -327,6 +350,19 @@ const HELD: Vec3 = Vec3::new(1.1, 0.08, 0.5);
 const HELD_AT: Vec3 = Vec3::new(0.0, 1.08, -0.56);
 /// How much lighter every other plank's top is, as a share.
 const LIGHTER: f32 = 0.08;
+/// Under how many metres of bridge you have none, in metres: what is
+/// written as "0m", the metres being written to the nearest whole one
+/// (`Resources::metres`). With less, building is off and stays off ([`lay`],
+/// [`toggle`]); with as much, a chain may begin, though it is a stub.
+const OUT_BELOW: f32 = 0.5;
+/// The metres left, written in front of you as you build ([`show_left`]):
+/// how big, as a share of the short side of the screen; how far ahead of
+/// your middle, in metres, past the end of the tip, which reaches
+/// [`AHEAD`]; and how long the "0m" stays there after you have run out,
+/// or have pressed the plank button with none left, in seconds.
+const LEFT_TEXT: f32 = 3.6;
+const LEFT_AHEAD: f32 = 2.4;
+const OUT_SHOWN: f32 = 1.5;
 
 /// Whether you are building a bridge as you walk: the plank button's
 /// toggle.
@@ -336,6 +372,21 @@ pub(crate) struct Bridging(pub bool);
 /// The plank button pressed, or B on desktop.
 #[derive(Message, Default)]
 pub(crate) struct BridgePressed;
+
+/// What running out of bridge has done to you (2026-11-10, Hajun: "when it
+/// become 0m, it should exit bridge mode (not able to go back to bridge
+/// mode when u dont have any bridging m left) and pause (even if the user
+/// is holding the joystick, so the user need to let go of the screen and
+/// do the joystick again to move) so that they dont fall off when their
+/// bridge ends").
+#[derive(Resource, Default)]
+pub(crate) struct RanOut {
+    /// You stand where the bridge ran out under you, whatever the stick
+    /// says, until the stick has been let go (`read_player_input`).
+    pub(crate) halted: bool,
+    /// How much longer the "0m" stays written in front of you, in seconds.
+    shown: f32,
+}
 
 /// One rung of a chain: where it lies across the ground, and which way the
 /// chain heads there.
@@ -579,6 +630,9 @@ struct Grown {
     landed: bool,
     /// The chain is done with, landed or left.
     done: bool,
+    /// The tip can no longer keep [`AHEAD`] of its builder for want of
+    /// metres: the bridge ends here.
+    spent: bool,
 }
 
 impl Bridges {
@@ -781,12 +835,15 @@ pub(crate) fn plugin(app: &mut App) {
     app.add_message::<BridgePressed>()
         .init_resource::<Bridges>()
         .init_resource::<Bridging>()
+        .init_resource::<RanOut>()
         .add_systems(Startup, setup)
         .add_systems(
             Update,
             (
                 (toggle, hear_planks).before(crate::read_player_input),
                 (rebuild, carry, light_button).after(lay),
+                // The camera's place for this frame is set by then.
+                show_left.after(crate::follow_camera),
             ),
         );
 }
@@ -800,25 +857,143 @@ fn setup(mut materials: ResMut<Assets<StandardMaterial>>, mut commands: Commands
 }
 
 /// Turns building on and off at the plank button, or B, in a game of Bridge
-/// Wars while it is on; off anywhere else, and as a game ends.
+/// Wars while it is on; off anywhere else, and as a game ends. With no
+/// metres of bridge left it is not turned on: the "0m" shows in front of
+/// you for a moment instead ([`show_left`]).
+#[allow(clippy::too_many_arguments)]
 fn toggle(
     mut presses: MessageReader<BridgePressed>,
     keyboard: Res<ButtonInput<KeyCode>>,
     dialog: Res<DialogUp>,
     fighting: Res<Fighting>,
+    stock: Res<Resources>,
     me: Query<&Venue, With<Player>>,
     mut bridging: ResMut<Bridging>,
+    mut ran_out: ResMut<RanOut>,
 ) {
     let pressed = presses.read().count() > 0 || keyboard.just_pressed(KeyCode::KeyB);
     let in_a_game = fighting.playing && me.single().is_ok_and(|&here| here == Venue::Arena);
     if !in_a_game {
         bridging.set_if_neq(Bridging(false));
+        if ran_out.halted || ran_out.shown > 0.0 {
+            *ran_out = RanOut::default();
+        }
         return;
     }
     if pressed && !dialog.0 {
+        if !bridging.0 && stock.bridge_metres < OUT_BELOW {
+            ran_out.shown = OUT_SHOWN;
+            info!("building a bridge: no metres left");
+            return;
+        }
         bridging.0 = !bridging.0;
         info!("building a bridge: {}", if bridging.0 { "on" } else { "off" });
     }
+}
+
+/// The colour the metres of bridge left are written in, in front of you:
+/// `plenty` with more than `low_at` of them, `low` at `low_at`, shading to
+/// `out` at `red_at` and under (Hajun: "white font but orange -> red when
+/// its 10m->5m left"). By the number as it is written, to the nearest
+/// whole metre.
+fn left_colour(metres: f32, low_at: f32, red_at: f32, plenty: Color, low: Color, out: Color) -> Color {
+    let written = metres.max(0.0).round();
+    if written > low_at {
+        plenty
+    } else if written <= red_at || low_at <= red_at {
+        out
+    } else {
+        let share = (low_at - written) / (low_at - red_at);
+        Color::from(low.to_srgba().mix(&out.to_srgba(), share))
+    }
+}
+
+/// The metres of bridge left, written in front of you as you build.
+#[derive(Component)]
+struct LeftAhead;
+
+/// Writes the metres of bridge you have left in front of you while
+/// building is on, [`LEFT_AHEAD`] ahead of you the way you face, past the
+/// end of the plank being laid, where you are looking as you build
+/// ("50m"; the number that was by the log top left until 2026-11-11, and is
+/// written nowhere else now but in the shop), in the file's
+/// `colours.arena.bridge_left`, white, and from `arena.bridge_low_at`
+/// metres down to `arena.bridge_red_at` in `bridge_low` shading to
+/// `bridge_out`, orange to red ([`left_colour`]; 2026-11-10, Hajun: "i
+/// need another number indicator in front of where ur bridging that is the
+/// same '### m' number of bridge wood left, and it should be white font
+/// but orange -> red when its 10m->5m left"). Once you have run out, the
+/// "0m" stays for as long as you stand stopped, and a moment; and it shows
+/// for a moment when the plank button is pressed with none left. Yours
+/// alone, like the plank you carry.
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+fn show_left(
+    time: Res<Time>,
+    bridging: Res<Bridging>,
+    fighting: Res<Fighting>,
+    stock: Res<Resources>,
+    mut ran_out: ResMut<RanOut>,
+    cameras: Query<(&Camera, &Transform), With<ThirdPersonCamera>>,
+    me: Query<(&Transform, &Venue, Has<Dead>), With<Player>>,
+    mut written: Query<(&mut Text, &mut TextColor, &mut Visibility, &mut UiTransform, &ComputedNode), With<LeftAhead>>,
+    mut commands: Commands,
+) {
+    if ran_out.shown > 0.0 {
+        ran_out.shown = (ran_out.shown - time.delta_secs()).max(0.0);
+    }
+    let style = ui();
+    let colours = style.colours.arena;
+    let Ok((mut text, mut colour, mut shown, mut place, node)) = written.single_mut() else {
+        if bridging.0 {
+            commands.spawn((
+                InArena,
+                LeftAhead,
+                Name::new("Metres of bridge left"),
+                hud::words(String::new(), LEFT_TEXT, colours.bridge_left),
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: Val::ZERO,
+                    top: Val::ZERO,
+                    ..default()
+                },
+                UiTransform::default(),
+                Visibility::Hidden,
+            ));
+        }
+        return;
+    };
+    let you = me.single().ok().filter(|&(_, &venue, dead)| fighting.playing && venue == Venue::Arena && !dead);
+    let wanted = bridging.0 || ran_out.halted || ran_out.shown > 0.0;
+    let point = you.filter(|_| wanted).and_then(|(body, _, _)| {
+        let (camera, eye) = cameras.single().ok()?;
+        let facing = (body.rotation * Vec3::NEG_Z).with_y(0.0).normalize_or(Vec3::NEG_Z);
+        let at = body.translation + facing * LEFT_AHEAD + Vec3::Y * TOP;
+        camera.world_to_viewport(&GlobalTransform::from(*eye), at).ok()
+    });
+    let Some(point) = point else {
+        shown.set_if_neq(Visibility::Hidden);
+        return;
+    };
+    let metres = stock.metres();
+    if text.0 != metres {
+        text.0 = metres;
+    }
+    let arena = style.arena;
+    colour.set_if_neq(TextColor(left_colour(
+        stock.bridge_metres,
+        arena.bridge_low_at,
+        arena.bridge_red_at,
+        colours.bridge_left,
+        colours.bridge_low,
+        colours.bridge_out,
+    )));
+    let size = node.size() * node.inverse_scale_factor();
+    place.set_if_neq(UiTransform {
+        translation: Val2::px(point.x - size.x * 0.5, point.y - size.y * 0.5),
+        scale: Vec2::ONE,
+        rotation: Rot2::IDENTITY,
+    });
+    shown.set_if_neq(Visibility::Inherited);
 }
 
 /// Lights the plank button while building is on.
@@ -879,16 +1054,17 @@ fn carry(
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn lay(
     time: Res<Time>,
-    bridging: Res<Bridging>,
     fighting: Res<Fighting>,
     online: Res<Online>,
     islands: Res<Islands>,
-    me: Query<(&Transform, &Venue, &Intent, Has<Dead>), With<Player>>,
+    mut bridging: ResMut<Bridging>,
+    mut ran_out: ResMut<RanOut>,
+    mut me: Query<(&Transform, &Venue, &mut Intent, Has<Dead>), With<Player>>,
     mut bridges: ResMut<Bridges>,
     mut stock: ResMut<Resources>,
     mut requests: MessageWriter<NetAsk>,
 ) {
-    let Ok((body, &venue, intent, dead)) = me.single() else {
+    let Ok((body, &venue, mut intent, dead)) = me.single_mut() else {
         return;
     };
     let Some(seat) = fighting.seat else {
@@ -896,6 +1072,12 @@ pub(crate) fn lay(
     };
     let mut sent: Vec<(u16, u16, Rung)> = Vec::new();
     let building = bridging.0 && fighting.playing && !dead && venue == Venue::Arena;
+    // Dead, you are stopped no longer: you come back free to walk.
+    if dead && ran_out.halted {
+        ran_out.halted = false;
+    }
+    // The plank being laid can reach no further for want of metres.
+    let mut spent = false;
     if !building {
         // Hands empty, or dead: whatever was being built is left as it is.
         if bridges.active.is_some()
@@ -964,6 +1146,7 @@ pub(crate) fn lay(
                 let grown = grow(&mut bridges.chains[c], here, heading, on_own, &mut stock.bridge_metres, &land, &ground_but_mine);
                 let id = bridges.chains[c].id;
                 sent.extend(grown.added.iter().map(|&(index, rung)| (id, index, rung)));
+                spent = grown.spent && !grown.done;
                 if grown.done {
                     bridges.active = None;
                     if bridges.chains[c].rungs.len() < 2 {
@@ -977,7 +1160,7 @@ pub(crate) fn lay(
         }
         if bridges.active.is_none()
             && let Some((dir, probe)) = probe
-            && stock.bridge_metres >= SPACING
+            && stock.bridge_metres >= OUT_BELOW
             && bridges.chains.len() < MOST_CHAINS
         {
             // Nothing being built, and about to step over the void: off
@@ -1011,6 +1194,28 @@ pub(crate) fn lay(
             bridges.chains[c].tip = Some(Rung { p: root.p + d * length, d });
             bridges.dirty = true;
         }
+    }
+    // Out of bridge: the plank being laid can reach no further, or what
+    // is left is what is written as "0m". Whatever is being built is
+    // fixed where it is, a plank's worth of it still ahead of you (the
+    // tip is never shorter than `AHEAD`); the metres are none; building
+    // is off, and stays off (`toggle`); and you stop where you are,
+    // whatever the stick says, until it has been let go
+    // (`read_player_input`), so that you do not walk off the end of it
+    // (2026-11-10, Hajun: "so that they dont fall off when their bridge
+    // ends"). Until then the tip ran out under you and you walked off it.
+    if building && (spent || stock.bridge_metres < OUT_BELOW) {
+        if bridges.active.is_some()
+            && let Some(fixed) = bridges.let_go(&mut stock.bridge_metres)
+        {
+            sent.push(fixed);
+        }
+        stock.bridge_metres = 0.0;
+        bridging.0 = false;
+        ran_out.halted = true;
+        ran_out.shown = OUT_SHOWN;
+        intent.walk = Vec3::ZERO;
+        info!("building a bridge: out of metres");
     }
     if online.is() && fighting.online {
         for (chain, index, rung) in sent {
@@ -1141,7 +1346,11 @@ fn grow(
     } else {
         (last.d, AHEAD)
     };
-    let length = length.min(metres.max(AHEAD));
+    // As far as the metres go, and never shorter than `AHEAD`: once it
+    // can no longer keep that far ahead of you, the bridge ends here.
+    let most = metres.max(AHEAD);
+    grown.spent = length > most + 1e-3;
+    let length = length.min(most);
     chain.tip = Some(Rung { p: last.p + d * length, d });
     grown
 }
@@ -2881,6 +3090,91 @@ mod tests {
         assert!(bends(&line).is_empty());
         let line: Vec<(f32, Vec2)> = (0..=8).map(|k| (k as f32 / 8.0, Vec2::new(k as f32, (k as f32 - 3.0).max(0.0) * 0.1))).collect();
         assert_eq!(bends(&line), vec![(0.375, Vec2::new(3.0, 0.0))]);
+    }
+
+    #[test]
+    fn out_of_metres_the_bridge_ends_with_a_plank_s_worth_still_ahead_of_you() {
+        // Off the shore east with 4.5 m of bridge, 12 m, and none to speak
+        // of: every frame there is a plank under you, and the frame the
+        // tip can reach no further for want of metres, the chain says so,
+        // with the tip's end still about `AHEAD` in front of you (a step
+        // or two less: the tip is aimed at you only once you are a hand's
+        // width past its rung). Let go of there, as `lay` does, the tip
+        // is fixed, the metres are none, and the bridge ends that far
+        // ahead of where you were stopped.
+        let island = Island::new(&disc(Vec2::ZERO, 10.0));
+        let land = is_land(&island);
+        let root = Rung { p: Vec2::new(10.0, 0.0), d: Vec2::X };
+        for start in [4.5f32, 12.0, 0.6] {
+            let mut bridges = Bridges::default();
+            bridges.begin(0, root, false);
+            let mut metres = start;
+            let mut here = Vec2::new(9.9, 0.0);
+            let mut stopped = None;
+            for frame in 0..400 {
+                here += Vec2::X * 0.04;
+                let grown = grow(&mut bridges.chains[0], here, Some(Vec2::X), None, &mut metres, &land, &land);
+                assert!(!grown.done, "{start} m, frame {frame}: {grown:?}");
+                let (corners, _) = corners_of(&bridges.chains[0].all(), true, &land, &land);
+                assert!(land(here) || under(here, &corners), "{start} m, frame {frame}: nothing under {here}");
+                if grown.spent {
+                    stopped = Some(here);
+                    break;
+                }
+                assert!(metres >= OUT_BELOW || land(here), "{start} m, frame {frame}: {metres} m left and not spent");
+            }
+            let here = stopped.unwrap_or_else(|| panic!("{start} m: the bridge never ran out"));
+            let tip = bridges.chains[0].tip.unwrap();
+            assert!((tip.p.x - here.x) > AHEAD - 0.15, "{start} m: only {} m of plank ahead", tip.p.x - here.x);
+            // What is left is less than a plank and the reach ahead of
+            // it: all of it goes into the last plank.
+            assert!(metres < SPACING + AHEAD, "{start} m: spent with {metres} m left");
+            let fixed = bridges.let_go(&mut metres);
+            assert!(fixed.is_some() && bridges.active.is_none(), "{start} m");
+            assert_eq!(metres, 0.0, "{start} m");
+            let end = bridges.chains[0].rungs.last().unwrap().p.x;
+            assert!(end - here.x > AHEAD - 0.15, "{start} m: the bridge ends {} m ahead", end - here.x);
+            // No more than was paid for, but for a last plank never
+            // shorter than `AHEAD`.
+            assert!(end - 10.0 <= start.max(AHEAD) + 1e-3, "{start} m of bridge laid {} m", end - 10.0);
+        }
+        // With plenty left the tip is never spent.
+        let mut chain = Chain::new(0, 0, vec![root]);
+        let mut metres = 100.0;
+        for step in 1..200 {
+            let grown = grow(&mut chain, Vec2::new(10.0 + step as f32 * 0.05, 0.0), Some(Vec2::X), None, &mut metres, &land, &land);
+            assert!(!grown.spent, "spent with {metres} m left");
+        }
+    }
+
+    #[test]
+    fn the_metres_left_are_written_white_then_orange_shading_to_red() {
+        let arena = ui().arena;
+        let colours = ui().colours.arena;
+        let of = |metres: f32| left_colour(metres, arena.bridge_low_at, arena.bridge_red_at, colours.bridge_left, colours.bridge_low, colours.bridge_out);
+        // Hajun's numbers: orange at 10 m, red at 5.
+        assert_eq!((arena.bridge_low_at, arena.bridge_red_at), (10.0, 5.0));
+        let (white, orange, red) = (colours.bridge_left, colours.bridge_low, colours.bridge_out);
+        assert_eq!(of(500.0), white);
+        assert_eq!(of(10.6), white, "11m is written");
+        // By the number as written: 10.4 is "10m".
+        for metres in [10.4, 10.0, 9.6] {
+            let close = of(metres).to_srgba();
+            assert!((close.red - orange.to_srgba().red).abs() < 1e-4 && (close.green - orange.to_srgba().green).abs() < 1e-4, "{metres} m is {close:?}");
+        }
+        for metres in [5.4, 5.0, 3.0, 0.4, 0.0, -1.0] {
+            assert_eq!(of(metres), red, "{metres} m");
+        }
+        // Between, between: greener than red and redder than orange, more
+        // so the fewer are left.
+        let green = |metres: f32| of(metres).to_srgba().green;
+        assert!(green(8.0) < orange.to_srgba().green && green(8.0) > green(6.0) && green(6.0) > red.to_srgba().green);
+        // The three are told apart, and the first is white.
+        assert_eq!(white.to_srgba(), Srgba::WHITE);
+        assert!(orange.to_srgba().green > red.to_srgba().green + 0.2 && orange.to_srgba().blue < 0.5);
+        // The same thresholds inside out are red from the first of them.
+        assert_eq!(left_colour(7.0, 5.0, 10.0, white, orange, red), white);
+        assert_eq!(left_colour(4.0, 5.0, 10.0, white, orange, red), red);
     }
 
     #[test]

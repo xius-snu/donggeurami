@@ -700,7 +700,7 @@ fn hear(
             Tell::Balance(coins) => {
                 balance.set_if_neq(Balance(*coins));
             }
-            Tell::Joined { .. } | Tell::Seated { .. } | Tell::Refused(_) => {}
+            Tell::Joined { .. } | Tell::Seated { .. } | Tell::Refused(_) | Tell::Bought(_) => {}
         }
     }
 }

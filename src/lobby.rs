@@ -99,6 +99,9 @@ const LOOKS: &[(&str, &str)] = &[
     ("red", MODEL),
     ("yellow", MODEL),
     ("purple", MODEL),
+    // A zombie of Bridge Wars' sudden death: the boy, whose skin `arena`
+    // turns green (`roundtown_net::bridge_wars::ZOMBIE_LOOK`).
+    ("zombie", MODEL),
 ];
 
 /// The model of every look, each once: what a body may be drawn with, for

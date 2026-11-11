@@ -483,7 +483,8 @@ fn hear(
             | Ask::Punch { .. }
             | Ask::Arena
             | Ask::HitAnchor { .. }
-            | Ask::Rung { .. } => {}
+            | Ask::Rung { .. }
+            | Ask::Buy(_) => {}
         }
     }
 }

@@ -167,6 +167,25 @@
             map_back: "#102033b3",
             map_me: "#ff3b30",
             map_mate: "#3ddc84",
+            // The metres of bridge you have left, written in front of you
+            // while you build: with plenty; from arena.bridge_low_at
+            // metres down (10, at the end of this file), shading to the
+            // third by arena.bridge_red_at (5); and from there to none.
+            bridge_left: "#ffffff",
+            bridge_low: "#ff9a2e",
+            bridge_out: "#ff3b30",
+            // What the generators make, as each one's picture is tinted
+            // beside its count top left and in the shop: silver, gold,
+            // sapphire and amethyst. (The things lying on the pads are
+            // the models' own colours.)
+            item_silver: "#e9e4ee",
+            item_gold: "#f2b63a",
+            item_sapphire: "#5b7dff",
+            item_amethyst: "#cf5fe0",
+            // The line in the upper half of the screen that says what has
+            // just happened: "Sapphire generators have been upgraded to
+            // Lvl II."
+            alert: "#ffffff",
         ),
     ),
     // The font is plain ASCII: no Hangul, and a hyphen for a dash. Where a
@@ -308,6 +327,25 @@
             team_wins: "{team} wins!",
             play_again: "Play again",
             exit: "Exit",
+            // What the generators make, as each is called in the lines
+            // below.
+            silver: "Silver",
+            gold: "Gold",
+            sapphire: "Sapphire",
+            amethyst: "Amethyst",
+            // The lines in the upper half of the screen as the game's
+            // timetable moves on: a generator's tier raised ({level} is I,
+            // II or III), every anchor broken at 10:00, and sudden death
+            // at 15:00; and the line under "Time's up!" at 25:00.
+            tier_up: "{item} generators have been upgraded to Lvl {level}.",
+            anchors_broken: "All respawn anchors have been destroyed.",
+            sudden_death: "Sudden death! Zombies are loose on the map.",
+            draw: "The game is a draw.",
+            // The shop, at the red market stand on each island: its
+            // title, the one thing it sells, and the line under it.
+            shop: "Shop",
+            shop_bridge: "Bridge +{metres}m",
+            shop_have: "You have {metres}m of bridge",
         ),
     ),
     // The car you drive (the face button, or C on desktop): every number of
@@ -434,10 +472,16 @@
     // pillar on its island, starts with anchor_health: ten punches
     // (2026-11-09; twenty the day before); broken, its team's dead stay
     // dead. Everyone starts a game with bridge_metres of bridge to lay
-    // (the number by the log, top left), and lays it a plank at a time
-    // until it runs out. These numbers rule offline; online the server
-    // plays by the same ones built into it (roundtown_net::bridge_wars),
-    // but for the metres, which are the device's for now.
+    // (none: it is bought at the shop, 50 m for 4 silver; the number is
+    // written in front of you while you build), and lays it a plank at a
+    // time until it runs out. These numbers rule offline; online the
+    // server plays by the same ones built into it
+    // (roundtown_net::bridge_wars), but for the metres you start with,
+    // which are this file's online too. How fast the generators make
+    // silver, gold, sapphire and amethyst, how many each pad holds, what
+    // the shop charges and when each thing on the game's timetable
+    // happens are not here: both sides play by
+    // shared/src/lib.rs (bridge_wars), from bridgewarsgameevent.txt.
     arena: (
         run_speed: 10.0,
         health: 100.0,
@@ -450,6 +494,13 @@
         flee_below: 0.2,
         fall_to_die: 30.0,
         anchor_health: 120.0,
-        bridge_metres: 500.0,
+        bridge_metres: 0.0,
+        // The number of metres written in front of you while you build
+        // turns orange with this many left (colours.arena.bridge_low), and
+        // by this many it is red (bridge_out). With none left, building
+        // turns itself off and you are stopped where you stand until you
+        // let go of the stick.
+        bridge_low_at: 10.0,
+        bridge_red_at: 5.0,
     ),
 )

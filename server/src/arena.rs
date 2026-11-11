@@ -35,6 +35,26 @@
 //! of them ([`ANCHOR_HEALTH`]). The last team with anyone in play wins, or
 //! nobody when the time runs out; the result is up for [`RESULTS_SECS`] and
 //! everyone still there goes back to the town.
+//!
+//! **Since 2026-11-11 the generators, what they make, what everyone holds
+//! and the shop are the server's too** (Hajun: "these generators/items in
+//! map need to be server synced so other players see the same number of
+//! items on map at the same times and other player taking the item from
+//! the generators make it so you cant take it too"). Each game has a
+//! [`Mint`], the generators' rules, which both sides share
+//! (`roundtown_net::bridge_wars`); everything it makes is an entity the
+//! room is sent ([`Loot`]), and whoever of the people in the game comes
+//! within the magnet's reach of one, where they last said they stood, has
+//! it: it is gone for everyone that tick, and theirs in the room's
+//! [`Purses`]. The computer's players pick up nothing. [`Ask::Buy`] takes
+//! a ware's price out of the asker's purse and tells them it is theirs
+//! ([`Tell::Bought`]). And the game keeps Hajun's timetable ([`TIMETABLE`]):
+//! the generators' tiers are the mint's own by the time; at ten minutes
+//! every anchor left breaks; at fifteen, sudden death, the zombies come
+//! ([`ZOMBIES`]), seated past the players' eight seats and moved as the
+//! computer's other players are, each on the ground it keeps to
+//! ([`zombie_home`]), going for anyone, and back up a while after it is
+//! put down; and at twenty five it is a draw ([`PLAY_SECS`]).
 
 use std::collections::HashMap;
 
@@ -43,8 +63,8 @@ use bevy_replicon::prelude::*;
 use roundtown_net::bridge_wars::*;
 use roundtown_net::{
     ARENA_ANCHORS, ARENA_ISLAND_RADIUS, ARENA_ISLANDS, ARENA_SEATS, ARENA_TEAMS, ArenaRound,
-    ArenaStage, Ask, Member, Plank, Refusal, Seats, Spot, Tell, Venue, arena_island, arena_team,
-    arrival,
+    ArenaStage, Ask, Loot, Member, PAD_TOP, Plank, Purse, Purses, Refusal, Seats, Spot, Tell, Venue,
+    Ware, arena_island, arena_team, arrival,
 };
 
 use crate::Config;
@@ -130,9 +150,19 @@ struct Game {
     /// Every rung laid, and how many by each seat.
     planks: Vec<Entity>,
     rungs: Vec<usize>,
+    /// How far into the fight it is, in seconds: what the timetable goes
+    /// by ([`TIMETABLE`]), and the generators' tiers.
+    elapsed: f32,
+    /// The generators, and everything they have made that lies there yet,
+    /// each by its number as the entity the room is sent ([`Loot`]).
+    mint: Mint,
+    loot: HashMap<u32, Entity>,
+    /// What everyone holds, by seat.
+    purses: Vec<Purse>,
     /// What its room was last sent, to send again only what has changed.
     sent: Option<ArenaRound>,
     sent_seats: usize,
+    sent_purses: Vec<Purse>,
     /// Its bots and planks have gone ([`close`]); everyone goes back to the
     /// town next tick ([`end`]).
     closing: bool,
@@ -183,6 +213,69 @@ impl Game {
         !self.gone[seat] && !self.out[seat]
     }
 
+    /// Which zombie `seat` is, if it is one's: the seats past the players'.
+    fn zombie(&self, seat: usize) -> Option<usize> {
+        seat.checked_sub(ARENA_SEATS)
+    }
+
+    /// The ground the computer's player in `seat` keeps to, as the middle
+    /// of a disc and how far it reaches: its island, or a zombie's home.
+    fn home(&self, seat: usize) -> (Vec2, f32) {
+        match self.zombie(seat) {
+            Some(zombie) => zombie_home(zombie),
+            None => (ARENA_ISLANDS[arena_island(seat)], ARENA_ISLAND_RADIUS),
+        }
+    }
+
+    /// Where the computer's player in `seat` stands as it comes into the
+    /// fight, and again each time it stands again, and which way it faces.
+    fn bot_spot(&self, seat: usize) -> Spot {
+        match self.zombie(seat) {
+            Some(zombie) => {
+                let at = zombie_spot(zombie);
+                let (home, _) = zombie_home(zombie);
+                let toward = (home - at).normalize_or(Vec2::NEG_Y);
+                Spot::of(Vec3::new(at.x, ISLAND_TOP, at.y), Quat::from_rotation_y((-toward.x).atan2(-toward.y)))
+            }
+            None => {
+                let (at, turn) = arrival(Venue::Arena, seat);
+                Spot::of(at.with_y(ISLAND_TOP), turn)
+            }
+        }
+    }
+
+    /// Whoever in `seat` stands at `at` picks up everything a generator
+    /// has made within the magnet's reach of them, if they are a person,
+    /// standing, and at a pad's height: it is theirs, and gone from the
+    /// pads. What they took, for the room to stop being sent it.
+    fn gather(&mut self, seat: usize, at: Vec3) -> Vec<Piece> {
+        if self.bot[seat] || !self.alive(seat) || (at.y - PAD_TOP).abs() > MAGNET_HEIGHT {
+            return Vec::new();
+        }
+        let taken = self.mint.pick_up(at.xz());
+        for piece in &taken {
+            let held = &mut self.purses[seat][piece.item.index()];
+            *held = held.saturating_add(1);
+        }
+        taken
+    }
+
+    /// Sells `ware` to whoever in `seat` stands at `at`, if the fight is
+    /// on, they are standing, near a shop, and hold its price, which comes
+    /// out of their purse: whether it is theirs.
+    fn buy(&mut self, seat: usize, ware: Ware, at: Vec2) -> bool {
+        if !self.playing() || !self.alive(seat) || !at_a_shop(at) {
+            return false;
+        }
+        let (item, cost) = price(ware);
+        let held = &mut self.purses[seat][item.index()];
+        if *held < cost {
+            return false;
+        }
+        *held -= cost;
+        true
+    }
+
     /// What the room is shown of how it is going.
     fn round(&self) -> ArenaRound {
         ArenaRound {
@@ -193,10 +286,12 @@ impl Game {
             },
             health: self.health.iter().map(|health| health.max(0.0).round() as u16).collect(),
             anchors: self.anchors.map(|anchor| anchor.max(0.0).round() as u16),
+            // The players' seats alone: a zombie is never out.
             out: self
                 .out
                 .iter()
                 .enumerate()
+                .take(ARENA_SEATS)
                 .filter(|&(_, &out)| out)
                 .fold(0u8, |bits, (seat, _)| bits | (1 << seat)),
         }
@@ -219,15 +314,21 @@ impl Game {
         self.dead_for.push(None);
         self.out.push(false);
         self.rungs.push(0);
+        self.purses.push(Purse::default());
         self.since_join = 0.0;
         seat
     }
 
     /// `seat` is dead: for [`RESPAWN_SECS`], and then back, if its team's
-    /// anchor stands now; otherwise for good.
+    /// anchor stands now; otherwise for good. A zombie is always back, a
+    /// while later ([`ZOMBIE_RESPAWN_SECS`]).
     fn die(&mut self, seat: usize) {
         self.health[seat] = 0.0;
         self.minds[seat] = Mind::default();
+        if self.zombie(seat).is_some() {
+            self.dead_for[seat] = Some(ZOMBIE_RESPAWN_SECS);
+            return;
+        }
         if self.anchors[usize::from(arena_team(seat))] > 0.0 {
             self.dead_for[seat] = Some(RESPAWN_SECS);
         } else {
@@ -262,15 +363,19 @@ impl Game {
             self.die(victim);
             return;
         }
+        debug!("Bridge Wars game {}: seat {hitter} hit seat {victim}, left with {}", self.id, self.health[victim]);
         if self.bot[victim] {
             let Ok((_, at, ..)) = bodies.get(self.seats[victim]) else {
                 return;
             };
             let away = (at.translation().xz() - from.translation().xz()).normalize_or(Vec2::NEG_Y);
-            let push = KNOCK_BACK + if running { SPRINT_BONUS } else { 0.0 };
+            // A zombie takes a share of the knock: it keeps coming.
+            let taken = if self.zombie(victim).is_some() { ZOMBIE_KNOCK } else { 1.0 };
+            let push = (KNOCK_BACK + if running { SPRINT_BONUS } else { 0.0 }) * taken;
+            let up = KNOCK_UP * taken;
             let mind = &mut self.minds[victim];
             mind.shove = mind.shove * 0.5 + away * push;
-            mind.lift = (mind.lift * 0.5 + KNOCK_UP).min(KNOCK_UP);
+            mind.lift = (mind.lift * 0.5 + up).min(up);
             return;
         }
         let Ok((body, ..)) = bodies.get(self.seats[victim]) else {
@@ -289,9 +394,10 @@ impl Game {
         }
     }
 
-    /// Which teams still have anyone in play.
+    /// Which teams still have anyone in play: the players' teams, the
+    /// zombies being nobody's.
     fn teams_in_play(&self) -> Vec<u8> {
-        let mut teams: Vec<u8> = (0..self.seats.len())
+        let mut teams: Vec<u8> = (0..self.seats.len().min(ARENA_SEATS))
             .filter(|&seat| self.in_play(seat))
             .map(arena_team)
             .collect();
@@ -338,8 +444,13 @@ impl Arenas {
                     anchor_hurt: [0.0; ARENA_TEAMS],
                     planks: Vec::new(),
                     rungs: Vec::new(),
+                    elapsed: 0.0,
+                    mint: Mint::new(&mut || fastrand::f32()),
+                    loot: HashMap::new(),
+                    purses: Vec::new(),
                     sent: None,
                     sent_seats: 0,
+                    sent_purses: Vec::new(),
                     closing: false,
                 },
             );
@@ -552,6 +663,18 @@ fn hear(
                     game.die(seat);
                 }
             }
+            Ask::Buy(ware) if matches!(room, Room::Arena(_)) => {
+                let Some((game, seat)) = arenas.of(room, body) else {
+                    continue;
+                };
+                let Ok((_, at, ..)) = bodies.get(game.seats[seat]) else {
+                    continue;
+                };
+                if game.buy(seat, *ware, at.translation().xz()) {
+                    info!("Bridge Wars game {}: seat {seat} bought {ware:?}", game.id);
+                    tell(&mut tells, client, Tell::Bought(*ware));
+                }
+            }
             Ask::Skip if matches!(room, Room::Arena(_)) => {
                 if let Some((game, _)) = arenas.of(room, body)
                     && config.allow_skip
@@ -574,6 +697,7 @@ fn hear(
 #[allow(clippy::too_many_arguments)]
 fn run(
     time: Res<Time>,
+    config: Res<Config>,
     mut arenas: ResMut<Arenas>,
     mut bodies: Bodies,
     mut everyone: ResMut<Everyone>,
@@ -626,12 +750,26 @@ fn run(
                         land(&mut commands, &mut tells, &mut bodies, game, seat, now);
                     }
                     game.stage = ArenaStage::Playing;
-                    game.left = PLAY_SECS;
-                    info!("Bridge Wars game {}: fight, {PLAY_SECS} s to play", game.id);
+                    // From the start, or, for trying the timetable out,
+                    // from as far into it as the server was told to.
+                    game.elapsed = config.arena_from.clamp(0.0, PLAY_SECS - 1.0);
+                    game.left = PLAY_SECS - game.elapsed;
+                    game.mint = Mint::new(&mut || fastrand::f32());
+                    info!("Bridge Wars game {}: fight, {} s to play", game.id, game.left);
+                    // Begun late, everything before then has happened.
+                    for event in happening_between(-1.0, game.elapsed) {
+                        happen(&mut commands, game, event, now);
+                    }
                 }
             }
             ArenaStage::Playing => {
                 game.left -= dt;
+                let before = game.elapsed;
+                game.elapsed += dt;
+                for event in happening_between(before, game.elapsed) {
+                    happen(&mut commands, game, event, now);
+                }
+                mint(&mut commands, &bodies, game, dt);
                 fight(&mut commands, &mut tells, &mut bodies, game, dt, now);
                 let teams = game.teams_in_play();
                 let winner = match (teams.len(), game.left <= 0.0) {
@@ -659,11 +797,71 @@ fn run(
             commands.entity(game.shown).insert(Seats(game.members.clone()));
             game.sent_seats = game.members.len();
         }
+        if game.sent_purses != game.purses {
+            commands.entity(game.shown).insert(Purses(game.purses.clone()));
+            game.sent_purses.clone_from(&game.purses);
+        }
     }
     for id in ended {
         arenas.games.remove(&id);
         if arenas.filling == Some(id) {
             arenas.filling = None;
+        }
+    }
+}
+
+/// Something on the timetable happens ([`TIMETABLE`]): a tier is the mint's
+/// own, by the time; every anchor left breaks; or the zombies come.
+fn happen(commands: &mut Commands, game: &mut Game, event: Happening, now: f64) {
+    info!("Bridge Wars game {}: {event:?}, {:.0} s in", game.id, game.elapsed);
+    match event {
+        Happening::Tier { .. } => {}
+        Happening::AnchorsBreak => game.anchors = [0.0; ARENA_TEAMS],
+        Happening::SuddenDeath => {
+            for zombie in 0..ZOMBIES {
+                seat_zombie(commands, game, zombie, now);
+            }
+        }
+    }
+}
+
+/// The generators, for one frame of the fight: what they make comes up on
+/// its pad for the whole room, and what anyone has come near enough to is
+/// theirs, and gone from the room.
+fn mint(commands: &mut Commands, bodies: &Bodies, game: &mut Game, dt: f32) {
+    let room = game.room();
+    for piece in game.mint.run(dt, game.elapsed, &mut || fastrand::f32()) {
+        let entity = commands
+            .spawn((
+                Replicated,
+                InRoom(room),
+                Loot {
+                    item: piece.item,
+                    x: piece.at.x,
+                    z: piece.at.y,
+                },
+            ))
+            .id();
+        game.loot.insert(piece.id, entity);
+    }
+    for seat in 0..game.seats.len() {
+        if game.bot[seat] || game.gone[seat] {
+            continue;
+        }
+        let Ok((body, spot, ..)) = bodies.get(game.seats[seat]) else {
+            continue;
+        };
+        if body.room != room || spot.aboard.is_some() {
+            continue;
+        }
+        let taken = game.gather(seat, spot.translation());
+        if !taken.is_empty() {
+            debug!("Bridge Wars game {}: seat {seat} picked up {}, and holds {:?}", game.id, taken.len(), game.purses[seat]);
+        }
+        for piece in taken {
+            if let Some(entity) = game.loot.remove(&piece.id) {
+                commands.entity(entity).try_despawn();
+            }
         }
     }
 }
@@ -721,7 +919,10 @@ fn fight(
         let was = *spot;
         let (next, punch) = think(game, seat, was, &standing, dt);
         if let Some(victim) = punch {
-            game.wound(victim, seat, was, true, bodies, tells);
+            // A bot's punch is thrown on the run; a zombie's, which comes
+            // on at a walk, knocks as one thrown standing does.
+            let running = game.zombie(seat).is_none();
+            game.wound(victim, seat, was, running, bodies, tells);
         }
         if game.minds[seat].falling.is_some_and(|_| next.translation().y < ISLAND_TOP - FALL_TO_DIE) {
             info!("Bridge Wars game {}: seat {seat} fell", game.id);
@@ -740,8 +941,11 @@ fn fight(
 /// after it, and whom it punches, if anyone. It keeps to the disc of its
 /// island, having no map: knocked off it, it falls.
 fn think(game: &mut Game, seat: usize, was: Spot, standing: &[(usize, Vec2)], dt: f32) -> (Spot, Option<usize>) {
-    let island = ARENA_ISLANDS[arena_island(seat)];
-    let edge = ARENA_ISLAND_RADIUS - BODY_RADIUS;
+    let (island, reach) = game.home(seat);
+    let edge = reach - BODY_RADIUS;
+    // A zombie comes on slower than anyone runs, and never runs away.
+    let zombie = game.zombie(seat).is_some();
+    let pace = if zombie { ZOMBIE_SPEED } else { RUN_SPEED };
     let mut at = was.translation();
     let mut facing = was.rotation() * Vec3::NEG_Z;
     let mut punch = None;
@@ -777,7 +981,7 @@ fn think(game: &mut Game, seat: usize, was: Spot, standing: &[(usize, Vec2)], dt
         if mind.shove.length_squared() < 0.01 {
             mind.shove = Vec2::ZERO;
         }
-        if at.xz().distance(island) > ARENA_ISLAND_RADIUS + 0.2 {
+        if at.xz().distance(island) > reach + 0.2 {
             mind.falling = Some(mind.lift.min(0.0));
             return (Spot::of(at, was.rotation()), None);
         }
@@ -797,7 +1001,7 @@ fn think(game: &mut Game, seat: usize, was: Spot, standing: &[(usize, Vec2)], dt
             other != seat
                 && arena_team(other) != team
                 && there.distance(here) <= HUNT_RADIUS
-                && there.distance(island) <= ARENA_ISLAND_RADIUS + 1.5
+                && there.distance(island) <= reach + 1.5
         })
         .min_by(|a, b| a.1.distance_squared(here).total_cmp(&b.1.distance_squared(here)))
         .copied();
@@ -807,7 +1011,7 @@ fn think(game: &mut Game, seat: usize, was: Spot, standing: &[(usize, Vec2)], dt
             mind.goal = None;
             let off = there - here;
             let toward = off.normalize_or_zero();
-            if game.health[seat] / HEALTH < FLEE_BELOW {
+            if !zombie && game.health[seat] / HEALTH < FLEE_BELOW {
                 // Nearly beaten, it runs for it: away, or round the edge.
                 let away = -toward;
                 let ahead = here + away * 3.0;
@@ -821,7 +1025,7 @@ fn think(game: &mut Game, seat: usize, was: Spot, standing: &[(usize, Vec2)], dt
             } else {
                 facing = Vec3::new(toward.x, 0.0, toward.y);
                 if off.length() > REACH * PRESS_IN {
-                    step = toward * RUN_SPEED * dt;
+                    step = toward * pace * dt;
                 }
                 if off.length() <= REACH + BODY_RADIUS && mind.cooldown <= 0.0 {
                     mind.cooldown = BOT_PUNCH_EVERY;
@@ -880,8 +1084,7 @@ fn land(
         return;
     }
     if game.bot[seat] {
-        let (at, turn) = arrival(Venue::Arena, seat);
-        *spot = Spot::of(at.with_y(ISLAND_TOP), turn);
+        *spot = game.bot_spot(seat);
         game.minds[seat] = Mind {
             think: THINK_EVERY * seat as f32 / ARENA_SEATS as f32,
             ..default()
@@ -904,9 +1107,7 @@ fn seat_bot(commands: &mut Commands, game: &mut Game, now: f64) {
         .filter(|name| game.members.iter().all(|member| !member.name.starts_with(name)))
         .collect();
     let member = Member {
-        // Clear of people's ids, which count up from 1, and of House
-        // Builder's bots, which count down from the top.
-        id: u64::MAX / 2 - u64::from(game.id) * ARENA_SEATS as u64 - seat as u64,
+        id: bot_id(game.id, seat),
         name: fastrand::choice(names).unwrap_or("Bot").into(),
         look: roundtown_net::ai_look(boy, fastrand::usize(..)).into(),
         ai: true,
@@ -925,6 +1126,43 @@ fn seat_bot(commands: &mut Commands, game: &mut Game, now: f64) {
     game.seat(body, member, true);
 }
 
+/// Who the computer's player in `seat` of the game numbered `game` is to
+/// everyone: clear of people's ids, which count up from 1, of House
+/// Builder's bots, which count down from the top, and of every other
+/// game's, a game having no more than [`MOST_SEATS`] seats, its zombies
+/// counted.
+fn bot_id(game: u32, seat: usize) -> u64 {
+    u64::MAX / 2 - u64::from(game) * MOST_SEATS - seat as u64
+}
+
+/// The most seats a game has: its players' and its zombies', and room.
+const MOST_SEATS: u64 = 32;
+
+/// A zombie, the one numbered `zombie`, in the next seat of `game`, past
+/// the players': standing where it comes up ([`zombie_spot`]), with
+/// everyone's health, and a mind as the computer's other players have.
+fn seat_zombie(commands: &mut Commands, game: &mut Game, zombie: usize, now: f64) {
+    let seat = game.seats.len();
+    debug_assert_eq!(seat, ARENA_SEATS + zombie, "the zombies come once the players' seats are full");
+    let member = Member {
+        id: bot_id(game.id, seat),
+        name: ZOMBIE_NAME.into(),
+        look: ZOMBIE_LOOK.into(),
+        ai: true,
+    };
+    let body = commands
+        .spawn((
+            Replicated,
+            member.clone(),
+            Venue::Arena,
+            InRoom(game.room()),
+            Body::bot(game.room(), seat as u8, now),
+        ))
+        .id();
+    game.seat(body, member, true);
+    commands.entity(body).insert(game.bot_spot(seat));
+}
+
 /// The first tick of a game's end: its planks, its computer players and
 /// its board go, while everyone in it is still in its room to be told so.
 /// Told the tick after, as [`end`] moves them out, they would never be: an
@@ -941,6 +1179,9 @@ fn close(commands: &mut Commands, game: &mut Game) {
     }
     for plank in game.planks.drain(..) {
         commands.entity(plank).try_despawn();
+    }
+    for (_, thing) in game.loot.drain() {
+        commands.entity(thing).try_despawn();
     }
     commands.entity(game.shown).try_despawn();
     game.closing = true;
@@ -1018,8 +1259,13 @@ mod tests {
             anchor_hurt: [0.0; ARENA_TEAMS],
             planks: Vec::new(),
             rungs: Vec::new(),
+            elapsed: 0.0,
+            mint: Mint::new(&mut || 0.5),
+            loot: HashMap::new(),
+            purses: Vec::new(),
             sent: None,
             sent_seats: 0,
+            sent_purses: Vec::new(),
             closing: false,
         };
         for seat in 0..ARENA_SEATS {
@@ -1135,5 +1381,145 @@ mod tests {
         assert_eq!(round.left, PLAY_SECS as u16);
         assert_eq!(round.health.len(), ARENA_SEATS);
         assert_eq!(round, game.round());
+    }
+
+    #[test]
+    fn what_a_generator_makes_is_whoever_comes_near_its_and_nobody_else_s() {
+        use roundtown_net::{ARENA_PADS, ARENA_SHOPS, Item};
+        let mut game = full_game();
+        // Twenty seconds and a bit of every generator: ten silver and two
+        // gold on each team's pad.
+        let (dt, mut dice) = (0.05, || 0.5);
+        for _ in 0..410 {
+            game.elapsed += dt;
+            game.mint.run(dt, game.elapsed, &mut dice);
+        }
+        let pad = ARENA_PADS[0];
+        let lying = game.mint.pieces().len();
+        assert_eq!(lying, 4 * (10 + 2));
+        let on_pad = Vec3::new(pad.x, PAD_TOP, pad.y);
+        // The computer's player in seat 4, on the pad, picks up nothing;
+        // nor does the person in seat 0 while dead, or high over it.
+        assert!(game.gather(4, on_pad).is_empty());
+        game.health[0] = 0.0;
+        assert!(game.gather(0, on_pad).is_empty());
+        game.health[0] = HEALTH;
+        assert!(game.gather(0, on_pad + Vec3::Y * (WAITING_FLOOR - PAD_TOP)).is_empty());
+        assert_eq!(game.mint.pieces().len(), lying);
+        // Standing on it, they have all of it, and it is gone: whoever
+        // comes after finds nothing there.
+        let taken = game.gather(0, on_pad);
+        assert_eq!(taken.len(), 12);
+        assert_eq!(game.purses[0], [10, 2, 0, 0]);
+        assert_eq!(game.mint.pieces().len(), lying - 12);
+        game.bot[4] = false;
+        assert!(game.gather(4, on_pad).is_empty());
+        assert_eq!(game.purses[4], [0; 4]);
+        // The shop sells a bridge for 4 silver to someone standing at it,
+        // as often as they can pay, and not from the pad.
+        let shop = ARENA_SHOPS[0];
+        assert!(!game.buy(0, Ware::Bridge, pad));
+        assert!(game.buy(0, Ware::Bridge, shop));
+        assert!(game.buy(0, Ware::Bridge, shop));
+        assert_eq!(game.purses[0][Item::Silver.index()], 2);
+        assert!(!game.buy(0, Ware::Bridge, shop), "with 2 silver");
+        assert_eq!(game.purses[0], [2, 2, 0, 0]);
+        // Nor to the dead, nor to someone with nothing.
+        assert!(!game.buy(4, Ware::Bridge, ARENA_SHOPS[0]));
+        game.purses[0][0] = 4;
+        game.health[0] = 0.0;
+        assert!(!game.buy(0, Ware::Bridge, shop));
+    }
+
+    #[test]
+    fn the_zombies_sit_past_the_players_keep_to_their_ground_and_always_come_back() {
+        let mut game = full_game();
+        // Seated as sudden death seats them, without the entities.
+        for zombie in 0..ZOMBIES {
+            let seat = game.seats.len();
+            let member = Member {
+                id: bot_id(game.id, seat),
+                name: ZOMBIE_NAME.into(),
+                look: ZOMBIE_LOOK.into(),
+                ai: true,
+            };
+            game.seat(Entity::from_bits(seat as u64 + 1), member, true);
+            assert_eq!(game.zombie(seat), Some(zombie));
+            assert_eq!(arena_team(seat), ZOMBIE_TEAM);
+            assert_eq!(game.home(seat), zombie_home(zombie));
+            let spot = game.bot_spot(seat).translation();
+            assert!(spot.xz().distance(zombie_spot(zombie)) < 0.01);
+            assert_eq!(spot.y, ISLAND_TOP);
+        }
+        assert_eq!(game.seats.len(), ARENA_SEATS + ZOMBIES);
+        assert_eq!(game.purses.len(), game.seats.len());
+        // Every id in the game its own, and none another game's.
+        let mut ids: Vec<u64> = (0..game.seats.len()).map(|seat| bot_id(game.id, seat)).collect();
+        ids.extend((0..game.seats.len()).map(|seat| bot_id(game.id + 1, seat)));
+        ids.sort_unstable();
+        ids.dedup();
+        assert_eq!(ids.len(), 2 * game.seats.len());
+        // They are nobody's team: the four teams are still what is in
+        // play, and with every player out, nobody is.
+        assert_eq!(game.teams_in_play(), vec![0, 1, 2, 3]);
+        // A zombie put down is back after its while, whatever the anchors.
+        game.anchors = [0.0; ARENA_TEAMS];
+        let zombie = ARENA_SEATS + 5;
+        game.die(zombie);
+        assert_eq!(game.dead_for[zombie], Some(ZOMBIE_RESPAWN_SECS));
+        assert!(!game.out[zombie] && game.in_play(zombie) && !game.alive(zombie));
+        for seat in 0..ARENA_SEATS {
+            game.die(seat);
+        }
+        assert!(game.teams_in_play().is_empty());
+        let round = game.round();
+        assert_eq!(round.out, 0xff);
+        assert_eq!(round.health.len(), ARENA_SEATS + ZOMBIES);
+        // The one on team 0's island goes for the player there, slower
+        // than anyone runs, punches in reach, and never leaves the island.
+        let mut game = full_game();
+        for _ in 0..ZOMBIES {
+            let seat = game.seats.len();
+            game.seat(Entity::from_bits(seat as u64 + 1), game.members[0].clone(), true);
+        }
+        let seat = ARENA_SEATS;
+        let (island, reach) = game.home(seat);
+        let mut spot = game.bot_spot(seat);
+        let prey = island + Vec2::new(6.0, 3.0);
+        let standing = [(seat, spot.translation().xz()), (0, prey)];
+        let first = think(&mut game, seat, spot, &standing, 1.0 / 60.0).0;
+        let step = first.translation().xz().distance(spot.translation().xz());
+        // A sixtieth of a second's worth, to the centimetre a spot is
+        // kept to: more than a crawl, and well short of a run.
+        assert!(step > 0.07 && step < RUN_SPEED / 60.0 - 0.03, "a step of {step} m");
+        let mut punches = 0;
+        for _ in 0..600 {
+            let (next, punch) = think(&mut game, seat, spot, &standing, 1.0 / 60.0);
+            punches += usize::from(punch == Some(0));
+            assert!(next.translation().xz().distance(island) <= reach - BODY_RADIUS + 1e-3);
+            spot = next;
+        }
+        assert!(punches >= 5, "{punches} punches in ten seconds");
+        // Nearly beaten, it still comes on.
+        game.health[seat] = HEALTH * FLEE_BELOW * 0.5;
+        let far = [(seat, island), (0, island + Vec2::new(5.0, 0.0))];
+        let (next, _) = think(&mut game, seat, Spot::of(Vec3::new(island.x, ISLAND_TOP, island.y), Quat::IDENTITY), &far, 0.1);
+        assert!(next.translation().x > island.x, "it ran away");
+    }
+
+    #[test]
+    fn at_ten_minutes_every_anchor_breaks_and_whoever_dies_after_is_out() {
+        let mut game = full_game();
+        let mut world = World::new();
+        let mut commands_queue = bevy::ecs::world::CommandQueue::default();
+        let mut commands = Commands::new(&mut commands_queue, &world);
+        game.anchors[2] = 0.0;
+        happen(&mut commands, &mut game, Happening::Tier { item: roundtown_net::Item::Sapphire, tier: 2 }, 0.0);
+        assert_eq!(game.anchors, [ANCHOR_HEALTH, ANCHOR_HEALTH, 0.0, ANCHOR_HEALTH]);
+        happen(&mut commands, &mut game, Happening::AnchorsBreak, 0.0);
+        assert_eq!(game.anchors, [0.0; ARENA_TEAMS]);
+        game.die(1);
+        assert!(game.out[1]);
+        commands_queue.apply(&mut world);
     }
 }

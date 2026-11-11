@@ -183,8 +183,18 @@ pub(crate) struct Arena {
     /// since 2026-11-09; Hajun: "players will buy the bridge by meter
     /// count ... for now make each person start with 100m"; 500 since
     /// 2026-11-10: "increase the default bridge meter to 500m instead of
-    /// 100").
+    /// 100"; and none since 2026-11-11, when the shop began to sell it,
+    /// 50 m for 4 silver, as a game of Bedwars begins with no blocks: my
+    /// call, Hajun not having said).
     pub bridge_metres: f32,
+    /// With how many metres of bridge left, and fewer, the number written
+    /// in front of you as you build turns from `colours.arena.bridge_left`
+    /// to `bridge_low`, and with how many, and fewer, it is `bridge_out`,
+    /// shading from the one to the other between (`bridge::show_left`,
+    /// since 2026-11-10; Hajun: "white font but orange -> red when its
+    /// 10m->5m left").
+    pub bridge_low_at: f32,
+    pub bridge_red_at: f32,
 }
 
 impl Arena {
@@ -206,6 +216,8 @@ impl Arena {
             ("fall_to_die", self.fall_to_die),
             ("anchor_health", self.anchor_health),
             ("bridge_metres", self.bridge_metres),
+            ("bridge_low_at", self.bridge_low_at),
+            ("bridge_red_at", self.bridge_red_at),
         ];
         for (name, value) in all {
             if !value.is_finite() || value < 0.0 {
@@ -224,6 +236,12 @@ impl Arena {
         }
         if self.flee_below > 1.0 {
             return Err(format!("arena.flee_below is {}: it is a share, 0 to 1", self.flee_below));
+        }
+        if self.bridge_red_at > self.bridge_low_at {
+            return Err(format!(
+                "arena.bridge_red_at is {} and arena.bridge_low_at {}: the number turns red with fewer metres left than it turns orange with",
+                self.bridge_red_at, self.bridge_low_at
+            ));
         }
         Ok(())
     }
@@ -635,8 +653,13 @@ pub(crate) struct MeleeColours {
 /// its fill, what shows behind it and its rim; the rim of an empty slot
 /// among the buttons bottom right; a damage number; the names and the
 /// health bars over everyone else's head, a teammate's and an enemy's; the
-/// respawn anchors' bars, your team's and another's; and the planks of the
-/// bridges (`bridge`), their tops and their sides.
+/// respawn anchors' bars, your team's and another's; the planks of the
+/// bridges (`bridge`), their tops and their sides; the minimap; the
+/// metres of bridge left as they are written in front of you while you
+/// build, with plenty, with few and with next to none; the four things the
+/// generators make, as their pictures are tinted beside their counts and
+/// in the shop (`hud`, `market`); and the line that says what the
+/// timetable has just done (`arena::alert`).
 #[derive(Deserialize, Clone, Copy, PartialEq, Debug)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ArenaColours {
@@ -674,6 +697,35 @@ pub(crate) struct ArenaColours {
     pub map_me: Color,
     #[serde(deserialize_with = "colour")]
     pub map_mate: Color,
+    #[serde(deserialize_with = "colour")]
+    pub bridge_left: Color,
+    #[serde(deserialize_with = "colour")]
+    pub bridge_low: Color,
+    #[serde(deserialize_with = "colour")]
+    pub bridge_out: Color,
+    #[serde(deserialize_with = "colour")]
+    pub item_silver: Color,
+    #[serde(deserialize_with = "colour")]
+    pub item_gold: Color,
+    #[serde(deserialize_with = "colour")]
+    pub item_sapphire: Color,
+    #[serde(deserialize_with = "colour")]
+    pub item_amethyst: Color,
+    #[serde(deserialize_with = "colour")]
+    pub alert: Color,
+}
+
+impl ArenaColours {
+    /// The colour `item`'s picture is tinted, beside its count and in the
+    /// shop.
+    pub(crate) fn item(&self, item: roundtown_net::Item) -> Color {
+        match item {
+            roundtown_net::Item::Silver => self.item_silver,
+            roundtown_net::Item::Gold => self.item_gold,
+            roundtown_net::Item::Sapphire => self.item_sapphire,
+            roundtown_net::Item::Amethyst => self.item_amethyst,
+        }
+    }
 }
 
 /// The words, screen by screen. One with `{something}` in it is filled in
@@ -726,6 +778,36 @@ pub(crate) struct ArenaWords {
     pub team_wins: String,
     pub play_again: String,
     pub exit: String,
+    /// What the generators make, as each is called in a line about it.
+    pub silver: String,
+    pub gold: String,
+    pub sapphire: String,
+    pub amethyst: String,
+    /// The lines that say what the timetable has just done, in the upper
+    /// half of the screen: a generator's tier raised (`{item}`, and
+    /// `{level}` as I, II or III), every anchor broken, and sudden death;
+    /// and the line under "Time's up!" when nobody has won.
+    pub tier_up: String,
+    pub anchors_broken: String,
+    pub sudden_death: String,
+    pub draw: String,
+    /// The shop: its title, what it sells (`{metres}`), and the line under
+    /// that saying how much bridge you have (`{metres}`).
+    pub shop: String,
+    pub shop_bridge: String,
+    pub shop_have: String,
+}
+
+impl ArenaWords {
+    /// What `item` is called.
+    pub(crate) fn item(&self, item: roundtown_net::Item) -> &str {
+        match item {
+            roundtown_net::Item::Silver => &self.silver,
+            roundtown_net::Item::Gold => &self.gold,
+            roundtown_net::Item::Sapphire => &self.sapphire,
+            roundtown_net::Item::Amethyst => &self.amethyst,
+        }
+    }
 }
 
 #[derive(Deserialize, PartialEq, Debug)]

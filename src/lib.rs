@@ -39,7 +39,9 @@ mod lamps;
 mod log_file;
 mod lobby;
 mod login;
+mod loot;
 mod map;
+mod market;
 mod net;
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 mod pace;
@@ -1177,6 +1179,8 @@ pub fn main() {
     // Bridge Wars, on the PvP map, the bridges built in it as you walk, and
     // the game selector both games are chosen from.
     arena::plugin(&mut app);
+    loot::plugin(&mut app);
+    market::plugin(&mut app);
     bridge::plugin(&mut app);
     minimap::plugin(&mut app);
     games::plugin(&mut app);
@@ -2438,6 +2442,7 @@ fn read_player_input(
     controls: Res<TouchControls>,
     dialog: Res<hud::DialogUp>,
     bridging: Res<bridge::Bridging>,
+    mut ran_out: ResMut<bridge::RanOut>,
     cameras: Query<&Transform, (With<ThirdPersonCamera>, Without<Player>)>,
     mut players: Query<(&Transform, &Venue, &mut Intent, &mut WalkCycle, Has<Dead>), With<Player>>,
 ) {
@@ -2484,6 +2489,19 @@ fn read_player_input(
     } else if wish.length_squared() > 0.0 {
         1.0
     } else {
+        0.0
+    };
+    // Out of bridge, you were stopped where it ran out under you
+    // (`bridge::lay`): you stand there, whatever the stick says, until it
+    // has been let go, and walk again once it is pushed again (Hajun,
+    // 2026-11-10: "the user need to let go of the screen and do the
+    // joystick again to move").
+    let speed_scale = if !ran_out.halted {
+        speed_scale
+    } else {
+        if speed_scale == 0.0 {
+            ran_out.halted = false;
+        }
         0.0
     };
     // Your own legs follow the stick rather than where you end up, so they
@@ -3733,6 +3751,7 @@ mod ground_tests {
         world.insert_resource(TouchControls::default());
         world.insert_resource(hud::DialogUp::default());
         world.insert_resource(bridge::Bridging::default());
+        world.insert_resource(bridge::RanOut::default());
         let you = world
             .spawn((
                 Player,
@@ -3752,6 +3771,52 @@ mod ground_tests {
         let intent = world.get::<Intent>(you).unwrap();
         assert_eq!(intent.pace, None, "still paced as the car was");
         assert_eq!(intent.face, None, "still facing the car's way");
+    }
+
+    #[test]
+    fn out_of_bridge_you_stand_until_the_stick_is_let_go() {
+        use bevy::ecs::system::RunSystemOnce;
+        // Stopped where the bridge ran out, with the stick still pushed:
+        // you stand. The stick let go, you still stand, and are stopped no
+        // longer; pushed again, you walk. With keys as with the stick.
+        for keys in [false, true] {
+            let mut world = World::new();
+            world.insert_resource(ButtonInput::<KeyCode>::default());
+            world.insert_resource(TouchControls::default());
+            world.insert_resource(hud::DialogUp::default());
+            world.insert_resource(bridge::Bridging::default());
+            let mut ran_out = bridge::RanOut::default();
+            ran_out.halted = true;
+            world.insert_resource(ran_out);
+            let you = world.spawn((Player, Transform::default(), Venue::Arena, Intent::default(), WalkCycle::default())).id();
+            let push = |world: &mut World, on: bool| {
+                if keys {
+                    let mut keyboard = world.resource_mut::<ButtonInput<KeyCode>>();
+                    if on {
+                        keyboard.press(KeyCode::KeyW);
+                    } else {
+                        keyboard.release(KeyCode::KeyW);
+                    }
+                } else {
+                    world.resource_mut::<TouchControls>().stick_value = if on { Vec2::new(0.0, 1.0) } else { Vec2::ZERO };
+                }
+            };
+            let walking = |world: &mut World| {
+                world.run_system_once(read_player_input).expect("the input is read");
+                (world.get::<Intent>(you).unwrap().walk.length(), world.get::<WalkCycle>(you).unwrap().speed)
+            };
+            push(&mut world, true);
+            for _ in 0..3 {
+                assert_eq!(walking(&mut world), (0.0, 0.0), "keys {keys}: walking while stopped");
+                assert!(world.resource::<bridge::RanOut>().halted, "keys {keys}: let go of with the stick pushed");
+            }
+            push(&mut world, false);
+            assert_eq!(walking(&mut world), (0.0, 0.0));
+            assert!(!world.resource::<bridge::RanOut>().halted, "keys {keys}: still stopped with the stick let go");
+            push(&mut world, true);
+            let (walk, legs) = walking(&mut world);
+            assert!(walk > 0.99 && legs > 0.0, "keys {keys}: not walking with the stick pushed again: {walk}");
+        }
     }
 
     #[test]

@@ -34,13 +34,16 @@
 //! In a game of Bridge Wars (`arena`, since the night of 2026-11-07) the buttons are
 //! laid out as Hajun sketched them for it instead
 //! (`assets/pvpmapbuttonui.jpg`; [`Layout::Arena`]): top left your name
-//! and your health bar; top right a bag, with the four resources under it,
-//! wood, gold, diamond and emerald, each with its count; and bottom right
-//! the sword in the jump button's place, which punches, three empty slots
-//! about it, where a bow and dynamite go once bought, and a button of
-//! three dots over them, which does nothing yet. The stick stays. The
-//! pictures are drawn in code ([`sword`], [`bag`], [`log`], [`ingot`],
-//! [`gem`], [`emerald`], [`dots`]).
+//! and your health bar, and under it what you hold of the four things the
+//! generators make, silver, gold, sapphire and amethyst, each a picture of
+//! it with its count beside it (since 2026-11-11; wood, gold, diamond and
+//! emerald until then, the first of them the metres of bridge left, which
+//! are written in front of you as you build and nowhere else now); top
+//! right the minimap; and bottom right the sword in the jump button's
+//! place, which punches, the jump button, an empty slot and the plank
+//! about it, and a button of three dots over them, which does nothing
+//! yet. The stick stays. The pictures are drawn in code ([`sword`],
+//! [`bag`], [`item_picture`], [`plank`], [`dots`]).
 
 use bevy::asset::RenderAssetUsages;
 use bevy::ecs::system::SystemParam;
@@ -48,8 +51,10 @@ use bevy::picking::pointer::PointerId;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 
+use roundtown_net::Item;
+
 use crate::Player;
-use crate::arena::{Health, Resource, Resources};
+use crate::arena::{Health, Resources};
 use crate::bridge::BridgePressed;
 use crate::drive::{CarPressed, Driving};
 use crate::island::{Islands, Venue};
@@ -182,9 +187,10 @@ pub(crate) struct GamesButton;
 #[derive(Component)]
 struct HealthFill;
 
-/// The count beside one of the resources' pictures in Bridge Wars.
+/// The count beside the picture of one of the things you hold in Bridge
+/// Wars.
 #[derive(Component)]
-struct ResourceCount(Resource);
+struct ResourceCount(Item);
 
 /// Words across the middle of the screen, up for a moment, and how long they
 /// have been up.
@@ -606,8 +612,15 @@ fn beside_the_jump(right: f32, bottom: f32) -> Node {
 /// top left your name, your health bar and under it the four resources
 /// with their counts (since 2026-11-09, Hajun: "move the 4 item icon +
 /// number thing on the top right side of that screen to the left side of
-/// the screen below the hp bar"; top right under a bag until then), the
-/// first of them the metres of bridge you have left; top right the minimap
+/// the screen below the hp bar"; top right under a bag until then): what
+/// you hold of what the generators make, silver, gold, sapphire and
+/// amethyst, each pictured as its model is seen from above and tinted its
+/// colour (since 2026-11-11, Hajun: "the ui icon for the inventory icons
+/// and number will be adjusted accordingly to silver, gold, sapphire,
+/// amethyst (so remove the log icon - the bridge meter only shows as in
+/// map text in front of the bridge like now) so change the icon to match
+/// the model shape"; a log with the metres of bridge left, an ingot, a gem
+/// and an emerald until then, all white); top right the minimap
 /// (`minimap`, in the bag's place); and bottom right the sword in the jump
 /// button's place, which punches (`start_punch`), an empty slot up and to
 /// the left of it, the plank over it, which turns building on and off
@@ -642,13 +655,8 @@ fn spawn_arena_bar(commands: &mut Commands, images: &mut Assets<Image>, minimap:
             .with_children(|left| {
                 left.spawn(name_plate());
                 left.spawn(health_bar());
-                for (kind, picture) in [
-                    (Resource::Wood, log()),
-                    (Resource::Gold, ingot()),
-                    (Resource::Diamond, gem()),
-                    (Resource::Emerald, emerald()),
-                ] {
-                    left.spawn(resource_row(kind, images.add(picture), colours.hud.icon));
+                for item in Item::ALL {
+                    left.spawn(resource_row(item, images.add(item_picture(item)), colours.arena.item(item)));
                 }
             });
             bar.spawn((
@@ -780,10 +788,10 @@ fn show_health(
     }
 }
 
-/// One of the resources in Bridge Wars, under your health bar: its
+/// One of the things you hold in Bridge Wars, under your health bar: its
 /// picture, and its count beside it ([`show_resources`]), in a row wide
 /// enough that the pictures line up under each other.
-fn resource_row(kind: Resource, picture: Handle<Image>, tint: Color) -> impl Bundle {
+fn resource_row(kind: Item, picture: Handle<Image>, tint: Color) -> impl Bundle {
     (
         Node {
             width: Val::VMin(RESOURCE_ROW),
@@ -809,8 +817,8 @@ fn resource_row(kind: Resource, picture: Handle<Image>, tint: Color) -> impl Bun
     )
 }
 
-/// Writes each resource's count beside its picture, as it changes and on a
-/// row put up afresh: the metres of bridge left as "500m".
+/// Writes how many of each thing you hold beside its picture, as it
+/// changes and on a row put up afresh.
 fn show_resources(
     stock: Res<Resources>,
     added: Query<(), Added<ResourceCount>>,
@@ -820,7 +828,7 @@ fn show_resources(
         return;
     }
     for (count, mut text) in &mut counts {
-        let number = stock.of(count.0);
+        let number = stock.count(count.0);
         if text.0 != number {
             text.0 = number;
         }
@@ -1546,62 +1554,44 @@ pub(crate) fn bag() -> Image {
     })
 }
 
-/// A log, for the wood count: a rounded bar lying across, with the rings
-/// of its end grain showing at its right end.
-pub(crate) fn log() -> Image {
-    drawn(|at| {
-        let bar = box_distance(at, Vec2::new(0.58, 0.04)) - 0.3;
-        // A ring cut out of the end, which reads as its grain.
-        let end = Vec2::new(0.55, 0.0);
-        let ring = (at.distance(end) - 0.19).abs() - 0.05;
-        bar.max(-ring)
-    })
-}
-
-/// An ingot, for the gold count: a bar wider at its base than its top, seen
-/// from the front.
-pub(crate) fn ingot() -> Image {
-    const ROUND: f32 = 0.04;
-    let ingot = [
-        Vec2::new(-0.84, -0.42),
-        Vec2::new(0.84, -0.42),
-        Vec2::new(0.56, 0.4),
-        Vec2::new(-0.56, 0.4),
-    ];
-    drawn(move |at| polygon_distance(at, &ingot) - ROUND)
-}
-
-/// A gem, for the diamond count: a flat crown over a pointed pavilion, the
-/// line between them cut through, so that it reads as cut.
-pub(crate) fn gem() -> Image {
-    let gem = [
-        Vec2::new(-0.5, 0.45),
-        Vec2::new(0.5, 0.45),
-        Vec2::new(0.9, 0.02),
-        Vec2::new(0.0, -0.85),
-        Vec2::new(-0.9, 0.02),
-    ];
-    drawn(move |at| {
-        let stone = polygon_distance(at, &gem);
-        let girdle = (at.y - 0.02).abs() - 0.04;
-        stone.max(-girdle)
-    })
-}
-
-/// An emerald, for the emerald count: a hexagon with a smaller one inside
-/// it, as Hajun drew it, the band between them cut through.
-pub(crate) fn emerald() -> Image {
-    let hexagon = |reach: f32| -> [Vec2; 6] {
-        std::array::from_fn(|k| {
-            let angle = k as f32 * std::f32::consts::TAU / 6.0;
-            Vec2::new(angle.cos(), angle.sin()) * reach
-        })
+/// One of the four things Bridge Wars' generators make, for its count top
+/// left and for the shop (since 2026-11-11, Hajun: "change the icon to
+/// match the model shape"): Hajun's model of it as it is seen from above,
+/// which is how the game looks at it, a cut stone with as many sides as
+/// the model has, three for silver, four for gold, five for sapphire and
+/// six for amethyst, each corner cut off as the model's is (its girdle has
+/// two corners to a side, 10 to 13 degrees either side of where one would
+/// be), and the outline of the flat on top of it, the table, cut through,
+/// as far in as the model's is (0.70 to 0.775 of the way out). White on
+/// clear, for the row to tint in the item's colour.
+pub(crate) fn item_picture(item: Item) -> Image {
+    use std::f32::consts::{FRAC_PI_2, FRAC_PI_4};
+    // How many sides; which way its first corner points, in radians round
+    // from the right; how far either side of a corner it is cut, in
+    // degrees; how far out its table reaches, as a share; and where its
+    // middle is and how far it reaches, so that each fills the picture.
+    let (sides, turn, cut, table, middle, reach): (usize, f32, f32, f32, Vec2, f32) = match item {
+        Item::Silver => (3, FRAC_PI_2, 10.0, 0.70, Vec2::new(0.0, -0.17), 1.0),
+        Item::Gold => (4, FRAC_PI_4, 12.0, 0.77, Vec2::ZERO, 1.08),
+        Item::Sapphire => (5, FRAC_PI_2, 13.0, 0.775, Vec2::new(0.0, -0.05), 0.95),
+        Item::Amethyst => (6, 0.0, 13.0, 0.77, Vec2::ZERO, 0.92),
     };
-    let (outer, band, inner) = (hexagon(0.88), hexagon(0.64), hexagon(0.46));
+    /// Half the width of the line cut round the table.
+    const LINE: f32 = 0.045;
+    let corner = move |angle: f32, out: f32| middle + Vec2::new(angle.cos(), angle.sin()) * out;
+    let step = std::f32::consts::TAU / sides as f32;
+    let cut = cut.to_radians();
+    let girdle: Vec<Vec2> = (0..sides)
+        .flat_map(|k| {
+            let at = turn + k as f32 * step;
+            [corner(at - cut, reach), corner(at + cut, reach)]
+        })
+        .collect();
+    let table: Vec<Vec2> = (0..sides).map(|k| corner(turn + k as f32 * step, reach * table)).collect();
     drawn(move |at| {
-        let stone = polygon_distance(at, &outer);
-        let band = polygon_distance(at, &band).max(-polygon_distance(at, &inner));
-        stone.max(-band)
+        let stone = polygon_distance(at, &girdle);
+        let line = polygon_distance(at, &table).abs() - LINE;
+        stone.max(-line)
     })
 }
 
@@ -1794,31 +1784,6 @@ mod tests {
         assert_eq!(alpha_at(&bag, 0.0, -0.3), 255);
         assert_eq!(alpha_at(&bag, 0.0, 0.5), 255);
         assert_eq!(alpha_at(&bag, 0.7, 0.5), 0);
-        // The log is a bar across, with its grain cut into its right end,
-        // and nothing over it.
-        let log = log();
-        assert_eq!(alpha_at(&log, -0.6, 0.0), 255);
-        assert_eq!(alpha_at(&log, 0.55, 0.19), 0);
-        assert_eq!(alpha_at(&log, 0.55, 0.0), 255);
-        assert_eq!(alpha_at(&log, 0.0, 0.7), 0);
-        // The ingot is wider at its base than its top.
-        let ingot = ingot();
-        assert_eq!(alpha_at(&ingot, 0.75, -0.3), 255);
-        assert_eq!(alpha_at(&ingot, 0.75, 0.3), 0);
-        assert_eq!(alpha_at(&ingot, 0.0, 0.0), 255);
-        // The gem has a crown over a pointed pavilion, with a line cut
-        // between them.
-        let gem = gem();
-        assert_eq!(alpha_at(&gem, 0.0, 0.3), 255);
-        assert_eq!(alpha_at(&gem, 0.0, -0.5), 255);
-        assert_eq!(alpha_at(&gem, 0.0, 0.02), 0);
-        assert_eq!(alpha_at(&gem, 0.6, -0.6), 0);
-        // The emerald is a hexagon with a band cut round a smaller one.
-        let emerald = emerald();
-        assert_eq!(alpha_at(&emerald, 0.0, 0.0), 255);
-        assert_eq!(alpha_at(&emerald, 0.8, 0.0), 255);
-        assert_eq!(alpha_at(&emerald, 0.55, 0.0), 0);
-        assert_eq!(alpha_at(&emerald, 0.0, 0.95), 0);
         // Three dots, and nothing between them.
         let dots = dots();
         for x in [-0.56, 0.0, 0.56] {
@@ -1836,9 +1801,61 @@ mod tests {
         assert_eq!(alpha_at(&plank, 0.36, 0.2), 0);
         assert_eq!(alpha_at(&plank, 0.0, 0.6), 0);
         assert_eq!(alpha_at(&plank, 0.95, 0.0), 0);
-        for image in [&sword, &bag, &log, &ingot, &gem, &emerald, &dots, &plank] {
+        for image in [&sword, &bag, &dots, &plank] {
             assert!(image.data.as_ref().unwrap().chunks(4).all(|pixel| pixel[..3] == [255, 255, 255]));
         }
+    }
+
+    #[test]
+    fn each_item_s_picture_is_its_model_seen_from_above() {
+        use std::f32::consts::TAU;
+        // Each a stone of its own number of sides: solid in its middle,
+        // the outline of its table cut through it, solid again between
+        // the table and its edge, and nothing past its edge; with as many
+        // corners round it as it has sides, each cut off.
+        for (item, sides, turn, cut, middle, reach, table) in [
+            (Item::Silver, 3, TAU / 4.0, 10.0f32, Vec2::new(0.0, -0.17), 1.0, 0.70),
+            (Item::Gold, 4, TAU / 8.0, 12.0, Vec2::ZERO, 1.08, 0.77),
+            (Item::Sapphire, 5, TAU / 4.0, 13.0, Vec2::new(0.0, -0.05), 0.95, 0.775),
+            (Item::Amethyst, 6, 0.0, 13.0, Vec2::ZERO, 0.92, 0.77),
+        ] {
+            let image = item_picture(item);
+            let at = |angle: f32, out: f32| {
+                let point = middle + Vec2::new(angle.cos(), angle.sin()) * out;
+                alpha_at(&image, point.x, point.y)
+            };
+            assert_eq!(alpha_at(&image, middle.x, middle.y), 255, "{item:?}: its middle");
+            let step = TAU / sides as f32;
+            for k in 0..sides {
+                let corner = turn + k as f32 * step;
+                // Toward a corner: the table, its outline cut, the crown,
+                // and nothing where the corner would be, it being cut off.
+                assert_eq!(at(corner, reach * table * 0.5), 255, "{item:?}: its table, corner {k}");
+                assert_eq!(at(corner, reach * table), 0, "{item:?}: its table's outline, corner {k}");
+                assert_eq!(at(corner, reach * (table + 1.0) * 0.5 - 0.01), 255, "{item:?}: its crown, corner {k}");
+                assert_eq!(at(corner, reach + 0.03), 0, "{item:?}: past corner {k}");
+                // Toward the middle of a side: solid nearly as far as the
+                // side, which is nearer than a corner, and nothing past it.
+                let side = corner + step * 0.5;
+                let edge = reach * (step * 0.5 - cut.to_radians()).cos();
+                assert_eq!(at(side, edge * 0.86), 255, "{item:?}: inside side {k}");
+                assert_eq!(at(side, edge + 0.04), 0, "{item:?}: past side {k}");
+            }
+            // All of it inside the picture, and white for the row to tint.
+            let size = image.width();
+            let data = image.data.as_ref().unwrap();
+            for edge in 0..size {
+                for (column, row) in [(edge, 0), (edge, size - 1), (0, edge), (size - 1, edge)] {
+                    assert_eq!(data[((row * size + column) * 4 + 3) as usize], 0, "{item:?} runs off the picture");
+                }
+            }
+            assert!(data.chunks(4).all(|pixel| pixel[..3] == [255, 255, 255]));
+        }
+        // And no two alike: a triangle has nothing where a hexagon has
+        // its upper left corner.
+        let (silver, amethyst) = (item_picture(Item::Silver), item_picture(Item::Amethyst));
+        assert_eq!(alpha_at(&amethyst, -0.6, 0.55), 255);
+        assert_eq!(alpha_at(&silver, -0.6, 0.55), 0);
     }
 
     #[test]

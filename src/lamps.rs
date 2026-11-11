@@ -19,6 +19,20 @@
 //!
 //! The lights are sorted into the camera's clusters on the CPU, on every
 //! platform (`cluster_lights_on_the_cpu` in `lib.rs`).
+//!
+//! **Bridge Wars' respawn anchors are lit the same way** (since 2026-11-11,
+//! Hajun, whose map of that day took the lamps off the islands: "make the
+//! spawn anchor purple crystal thing emit some light so that its not
+//! completely dark, while still remaining purple"): a part in the anchors'
+//! material (`arena::SPAWN_MATERIAL`) glows in its own purple from dusk to
+//! dawn ([`ANCHOR_GLOW`]) and throws a pale purple light from inside its
+//! tip ([`ANCHOR_LUMENS`], [`ANCHOR_RANGE`], [`ANCHOR_COLOR`],
+//! [`ANCHOR_LIFT`]), a fifth of a street lamp's, enough to see its island
+//! by. The light is inside the pillar so that none of it falls on the
+//! pillar's own faces, which are purple by their glow alone. What gives off
+//! light, and how, is [`SOURCES`], by material. A broken anchor's pillar
+//! is hidden (`arena::break_anchors`), and its light goes out with it, as
+//! any lamp's does that is not drawn.
 
 use bevy::gltf::GltfMaterialName;
 use bevy::mesh::VertexAttributeValues;
@@ -52,23 +66,94 @@ const LAMP_LUMENS: f32 = 5_000_000.0;
 const LAMP_RANGE: f32 = 40.0;
 /// A warm white, a little yellower than daylight.
 const LAMP_COLOR: Color = Color::srgb(1.0, 0.87, 0.68);
-/// How brightly a bulb glows when lit, in Bevy's units for emitted light: the
-/// camera's exposure takes this down to four times its colour, which the
-/// tonemapping shows as a bright, warm white.
+/// How brightly a bulb glows when lit, as so many times its colour, added
+/// to what the camera sees as it is: far past white, so a lit bulb is drawn
+/// white. (Until 2026-11-11 this said the camera's exposure took it down to
+/// four times its colour. It does not: Bevy 0.19 takes the exposure to
+/// emitted light only by the material's `emissive_exposure_weight`, which
+/// is 0, and never reads the alpha of `emissive`; read in its source,
+/// `pbr_material.rs` and `pbr_functions.wgsl`, when the anchors' glow at
+/// 1,500 came out white.)
 const BULB_GLOW: f32 = 4_000.0;
 /// The most lamps that throw light at once. More than the town has, so that
-/// in the town every lamp does; it stops a plot with a field of lamps on it
-/// costing as many lights over every spot as it has lamps. The rest still
-/// glow.
+/// in the town every lamp does, and as many as Bridge Wars' map has with its
+/// four anchors (20 lamps and the four); it stops a plot with a field of
+/// lamps on it costing as many lights over every spot as it has lamps. The
+/// rest still glow.
 const MOST_LIT: usize = 24;
 
-/// A lamp's light.
-#[derive(Component)]
-struct Lamp;
+/// How much light one of Bridge Wars' respawn anchors gives, in lumens, and
+/// how far it reaches, in metres: a fifth of a street lamp's, from 3.5 m
+/// up. It lights the middle of its island, 6 m away, about twice as
+/// brightly as the moon does, the slab it stands on about as brightly as
+/// the noon sky, and the island's far edge, 16 m away, hardly at all. My
+/// numbers, for "some light so that its not completely dark".
+const ANCHOR_LUMENS: f32 = 1_000_000.0;
+const ANCHOR_RANGE: f32 = 25.0;
+/// The colour of an anchor's light: a pale purple, pale enough that the
+/// island under it keeps its own colours.
+const ANCHOR_COLOR: Color = Color::srgb(0.78, 0.62, 1.0);
+/// How brightly an anchor glows when lit, as so many times its colour,
+/// added to what the camera sees as it is ([`BULB_GLOW`]): one and a half
+/// times, which the tonemapping shows as a bright purple, about as it is
+/// in daylight. At 1,500, for a first try, it was white.
+const ANCHOR_GLOW: f32 = 1.5;
+/// How far over the middle of an anchor its light is, in metres: inside
+/// its tip, a quarter of a metre under the point, the pillar being 3 m
+/// tall. **Inside it, so that the pillar stays purple**: no face of a
+/// shape is lit from within it, and its glow alone colours it. For a first
+/// try the light was 1.25 m over the tip, and lit the faces under it some
+/// ten times over, the pale light's own shine with it: the pillar came out
+/// white. And high in it, so that the slab under it is not lit several
+/// times as brightly as the noon sky, as from its middle it would be
+/// (three and a half times, worked out, not tried).
+const ANCHOR_LIFT: f32 = 1.25;
 
-/// A mesh of bulbs, which glows while the lamps are on.
+/// Something in a model that gives off light from dusk to dawn, by the
+/// material it is made of: how much light each one throws, how far and in
+/// what colour, from how far over the middle of it, and how brightly the
+/// thing itself glows, in its own colour.
+struct Source {
+    material: &'static str,
+    lumens: f32,
+    range: f32,
+    color: Color,
+    glow: f32,
+    lift: f32,
+}
+
+/// Everything that gives off light: a street lamp's bulbs, and one of
+/// Bridge Wars' respawn anchors.
+const SOURCES: [Source; 2] = [
+    Source {
+        material: BULB_MATERIAL,
+        lumens: LAMP_LUMENS,
+        range: LAMP_RANGE,
+        color: LAMP_COLOR,
+        glow: BULB_GLOW,
+        lift: 0.0,
+    },
+    Source {
+        material: crate::arena::SPAWN_MATERIAL,
+        lumens: ANCHOR_LUMENS,
+        range: ANCHOR_RANGE,
+        color: ANCHOR_COLOR,
+        glow: ANCHOR_GLOW,
+        lift: ANCHOR_LIFT,
+    },
+];
+
+/// A lamp's light, and how much of it there is when it is on, in lumens.
 #[derive(Component)]
-struct Bulb;
+struct Lamp {
+    lumens: f32,
+}
+
+/// A mesh of bulbs, which glows while the lamps are on, this brightly.
+#[derive(Component)]
+struct Bulb {
+    glow: f32,
+}
 
 pub(crate) fn plugin(app: &mut App) {
     app.add_observer(find_bulbs)
@@ -89,9 +174,12 @@ fn find_bulbs(
         let Ok((mesh, material)) = parts.get(part) else {
             continue;
         };
-        if !crate::island::is_material(&material.0, BULB_MATERIAL) {
+        let Some(source) = SOURCES
+            .iter()
+            .find(|source| crate::island::is_material(&material.0, source.material))
+        else {
             continue;
-        }
+        };
         let (Some(mesh), Ok(place)) = (meshes.get(&mesh.0), placement.compute_global_transform(part))
         else {
             continue;
@@ -108,19 +196,19 @@ fn find_bulbs(
             .map(|&corner| place.transform_point(Vec3::from(corner)))
             .collect();
         let into = place.affine().inverse();
-        commands.entity(part).insert(Bulb);
+        commands.entity(part).insert(Bulb { glow: source.glow });
         for middle in lamps_of(&world) {
             commands.spawn((
                 ChildOf(part),
-                Lamp,
+                Lamp { lumens: source.lumens },
                 PointLight {
-                    color: LAMP_COLOR,
+                    color: source.color,
                     intensity: 0.0,
-                    range: LAMP_RANGE,
+                    range: source.range,
                     shadow_maps_enabled: false,
                     ..default()
                 },
-                Transform::from_translation(into.transform_point3(middle)),
+                Transform::from_translation(into.transform_point3(middle + Vec3::Y * source.lift)),
                 Visibility::Hidden,
             ));
         }
@@ -169,9 +257,9 @@ fn lamps_of(bulbs: &[Vec3]) -> Vec<Vec3> {
 fn light_the_lamps(
     daylight: Res<Daylight>,
     cameras: Query<&GlobalTransform, With<ThirdPersonCamera>>,
-    mut lamps: Query<(Entity, &ChildOf, &GlobalTransform, &mut PointLight, &mut Visibility), With<Lamp>>,
+    mut lamps: Query<(Entity, &Lamp, &ChildOf, &GlobalTransform, &mut PointLight, &mut Visibility)>,
     drawn: Query<&InheritedVisibility>,
-    bulbs: Query<&MeshMaterial3d<StandardMaterial>, With<Bulb>>,
+    bulbs: Query<(&MeshMaterial3d<StandardMaterial>, &Bulb)>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut nearest: Local<Vec<(f32, Entity)>>,
 ) {
@@ -182,33 +270,33 @@ fn light_the_lamps(
         nearest.extend(
             lamps
                 .iter()
-                .filter(|(_, bulb, ..)| drawn.get(bulb.parent()).is_ok_and(|drawn| drawn.get()))
-                .map(|(lamp, _, place, ..)| (place.translation().distance_squared(eye), lamp)),
+                .filter(|(_, _, bulb, ..)| drawn.get(bulb.parent()).is_ok_and(|drawn| drawn.get()))
+                .map(|(lamp, _, _, place, ..)| (place.translation().distance_squared(eye), lamp)),
         );
         nearest.sort_unstable_by(|a, b| a.0.total_cmp(&b.0));
         nearest.truncate(MOST_LIT);
     }
-    for (lamp, _, _, mut light, mut visibility) in &mut lamps {
+    for (lamp, source, _, _, mut light, mut visibility) in &mut lamps {
         let lit = nearest.iter().any(|&(_, near)| near == lamp);
         visibility.set_if_neq(if lit {
             Visibility::Inherited
         } else {
             Visibility::Hidden
         });
-        let intensity = LAMP_LUMENS * on;
+        let intensity = source.lumens * on;
         if lit && light.intensity != intensity {
             light.intensity = intensity;
         }
     }
     // Every bulb of a model shares its material, so each is looked at once.
     let mut seen: Vec<AssetId<StandardMaterial>> = Vec::new();
-    for material in &bulbs {
+    for (material, source) in &bulbs {
         let id = material.id();
         if seen.contains(&id) {
             continue;
         }
         seen.push(id);
-        let Some(glow) = materials.get(id).map(|bulb| glow(bulb, on)) else {
+        let Some(glow) = materials.get(id).map(|bulb| glow(bulb, source.glow * on)) else {
             continue;
         };
         if materials.get(id).is_some_and(|bulb| bulb.emissive != glow)
@@ -219,11 +307,12 @@ fn light_the_lamps(
     }
 }
 
-/// How a bulb of `material` glows with the lamps `on` that much: in its own
-/// colour, out by day.
-fn glow(material: &StandardMaterial, on: f32) -> LinearRgba {
-    // Its alpha stays 1, which has the camera's exposure taken to it.
-    let (own, strength) = (material.base_color.to_linear(), BULB_GLOW * on);
+/// How a bulb of `material` glows at `strength`, its own ([`Bulb::glow`])
+/// by how far the lamps are on: in its own colour, out by day.
+fn glow(material: &StandardMaterial, strength: f32) -> LinearRgba {
+    // Added to what the camera sees as it is: the camera's exposure is
+    // taken to it only by the material's `emissive_exposure_weight`, 0.
+    let own = material.base_color.to_linear();
     LinearRgba::rgb(own.red * strength, own.green * strength, own.blue * strength)
 }
 
@@ -276,7 +365,66 @@ mod tests {
             ..default()
         };
         assert_eq!(glow(&bulb, 0.0), LinearRgba::BLACK);
-        let lit = glow(&bulb, 1.0);
+        let lit = glow(&bulb, BULB_GLOW);
         assert!((lit.red - BULB_GLOW).abs() < 1e-2 && (lit.blue - 0.33 * BULB_GLOW).abs() < 1e-2);
+    }
+
+    #[test]
+    fn each_of_bridge_wars_anchors_is_one_light_inside_its_tip_and_glows_purple() {
+        // The pillars as Hajun's map has them, each a part of its own in
+        // the anchors' material: one light to each, at the anchor
+        // (`roundtown_net::ARENA_ANCHORS`), inside the pillar's upper half
+        // and on its axis, where none of its faces is lit by it.
+        let source = SOURCES
+            .iter()
+            .find(|source| source.material == crate::arena::SPAWN_MATERIAL)
+            .expect("the anchors give off light");
+        let parts = crate::island::glb::read("pvptownmap.glb");
+        let pillars: Vec<_> = parts
+            .iter()
+            .filter(|part| {
+                part.material
+                    .as_deref()
+                    .is_some_and(|name| crate::island::is_material(name, source.material))
+            })
+            .collect();
+        assert_eq!(pillars.len(), roundtown_net::ARENA_ANCHORS.len());
+        for pillar in pillars {
+            let corners: Vec<Vec3> = pillar.triangles.iter().flatten().copied().collect();
+            let lights = lamps_of(&corners);
+            assert_eq!(lights.len(), 1, "{}: {lights:?}", pillar.node);
+            let light = lights[0] + Vec3::Y * source.lift;
+            let tip = corners.iter().map(|corner| corner.y).fold(f32::MIN, f32::max);
+            assert!(light.y > lights[0].y && light.y < tip - 0.1, "{}: light {} m up, tip {tip}", pillar.node, light.y);
+            // Behind every face of it: inside.
+            for [a, b, c] in &pillar.triangles {
+                let out = (*b - *a).cross(*c - *a);
+                assert!(out.dot(light - *a) < 0.0, "{}: its light is in front of one of its faces", pillar.node);
+            }
+            let over = roundtown_net::ARENA_ANCHORS
+                .iter()
+                .map(|anchor| anchor.distance(light.xz()))
+                .fold(f32::MAX, f32::min);
+            assert!(over < 0.1, "{}: its light is {over} m from the nearest anchor", pillar.node);
+        }
+        // Reaching the middle of its island, 6 m away, and its far edge,
+        // and not as far as the town's lamps or another island.
+        assert!(source.range > 16.4 && source.range < 40.0);
+        // Its glow is its own colour, as purple as by day: more blue than
+        // red and hardly any green, and no brighter than twice its colour:
+        // the tonemapping takes anything much brighter to white.
+        let crystal = StandardMaterial {
+            base_color: Color::linear_rgb(0.544, 0.066, 0.8),
+            ..default()
+        };
+        assert_eq!(glow(&crystal, 0.0), LinearRgba::BLACK);
+        let lit = glow(&crystal, source.glow);
+        assert!(lit.blue > lit.red && lit.red > 4.0 * lit.green, "{lit:?}");
+        assert!(source.glow <= 2.0);
+        assert!(lit.red <= 2.0 && lit.green <= 2.0 && lit.blue <= 2.0, "{lit:?}");
+        // And its light is purple too: more blue than red, more red than
+        // green.
+        let light = source.color.to_linear();
+        assert!(light.blue > light.red && light.red > light.green, "{light:?}");
     }
 }

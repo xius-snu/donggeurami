@@ -12,11 +12,12 @@
 //! the islands, the void under the map and the punch's knockback.
 //!
 //! Choosing it, a black screen comes down (`games`), and you are stood in
-//! the waiting room: Hajun's glass box floating 100 m over the middle of
-//! the map, the object called [`WAITING_ROOM`] in `pvptownmap.glb` (their
-//! export of 2026-11-07 23:21: 30 m square, its floor a metre thick with
-//! its top at 100.5 m, its walls 1.5 m thick and 5 m high, open to the
-//! sky, in `glass` at a tenth), found by name once the map has spawned
+//! the waiting room: Hajun's glass box floating 150 m over the middle of
+//! the map, the object called [`WAITING_ROOM`] in `pvptownmap.glb` (30 m
+//! square, its floor a metre thick with its top at 150.5 m, its walls
+//! 1.5 m thick and 5 m high, open to the sky, in `glass` at a twentieth,
+//! since their map of 2026-11-11; 100 m up, at a tenth, from their export
+//! of 2026-11-07 23:21 until then), found by name once the map has spawned
 //! ([`read_map`], [`WaitingRoom`]) and stood on as any of the map is,
 //! with the camera fixed straight down over you (`OrbitCamera::top_down`)
 //! and the game's own buttons round the screen (`hud::Layout::Arena`). The
@@ -76,6 +77,29 @@
 //! it (`bridge`): the map's own bridges went on 2026-11-08, and every
 //! bridge is built by walking.
 //!
+//! **Since 2026-11-11 the game has generators, a shop and a timetable**
+//! (Hajun: "i want to now make the generators functional in the pvpmap ...
+//! read the bridgewarsgameevent.txt for events and generator rates"). The
+//! rules are `roundtown_net::bridge_wars`'s, which the server plays by
+//! online and this device by itself offline: a `Mint` of sixteen
+//! generators on the map's pads makes silver and gold on each team's
+//! island, sapphire on the four smaller islands and amethyst in the
+//! middle, each as fast and as many as Hajun's file says; whoever walks
+//! within the magnet's reach of a thing has it (offline [`gather`]; online
+//! the server, whose [`Purses`] say what everyone holds), and what you
+//! hold is counted top left ([`Resources`], `hud`); the things themselves
+//! are drawn by `loot`, and the shop that sells bridge for silver is
+//! `market`. The game lasts 25 minutes, and on the way its timetable
+//! happens ([`timetable`], `rules::TIMETABLE`), each thing said in a line
+//! across the upper half of the screen ([`alert`]; "Sapphire generators
+//! have been upgraded to Lvl II."): the sapphire and amethyst generators
+//! quicken at 2, 4, 6 and 8 minutes; at 10 every anchor left breaks; at
+//! 15, sudden death, twelve zombies rise all over the map ([`Zombie`]:
+//! the body everyone has, gone green, on nobody's team, going for whoever
+//! is nearest and back up a while after it is put down; offline this
+//! device's, online the server's, seated past the players' eight seats);
+//! and at 25 it is a draw.
+//!
 //! Everything the game puts in the world or on the screen carries
 //! [`InArena`] and goes when the game does. Your own body is the only thing
 //! that comes back.
@@ -86,10 +110,10 @@ use bevy::gltf::GltfMaterialName;
 use bevy::prelude::*;
 use bevy::world_serialization::WorldInstanceReady;
 use bevy_replicon::prelude::Remote;
-use roundtown_net::bridge_wars::{self as rules, BOT_WAIT, COUNTDOWN, PLAY_SECS, RESULTS_SECS};
+use roundtown_net::bridge_wars::{self as rules, BOT_WAIT, COUNTDOWN, Happening, Mint, PLAY_SECS, RESULTS_SECS};
 use roundtown_net::{
-    ANCHOR_RADIUS, ARENA_ANCHORS, ARENA_SEATS, ARENA_TEAMS, ArenaRound, ArenaStage, Ask as NetAsk, Member, Seats, Tell,
-    arena_team,
+    ANCHOR_RADIUS, ARENA_ANCHORS, ARENA_SEATS, ARENA_TEAMS, ArenaRound, ArenaStage, Ask as NetAsk, Item, Member, PAD_TOP,
+    Purse, Purses, Seats, Tell, Ware, arena_team,
 };
 
 use crate::ai::{self, Steering};
@@ -98,6 +122,7 @@ use crate::drive::Driving;
 use crate::hud::{self, TakesPress};
 use crate::island::{self, Island, Islands, Land, Venue, is_material};
 use crate::lobby::{self, Lobby, Seat, Whereabouts};
+use crate::loot;
 use crate::net::Online;
 use crate::range::Sector;
 use crate::ui::{fill, ui};
@@ -135,6 +160,16 @@ const BAR_RIM: f32 = 0.15;
 const ANCHOR_BAR_WIDTH: f32 = 9.0;
 const ANCHOR_BAR_HEIGHT: f32 = 1.1;
 const NUMBER_TEXT: f32 = 3.8;
+/// The line that says what the timetable has just done ([`alert`]): how
+/// big, small as Hajun asked ("a small alert"); how far down the screen it
+/// is, as a share of the screen's height, "around middle of the upper half
+/// of screen", under the board; and how long it is up, coming and going,
+/// in seconds.
+const ALERT_TEXT: f32 = 3.6;
+const ALERT_DOWN: f32 = 24.0;
+const ALERT_SECS: f32 = 5.0;
+const ALERT_IN: f32 = 0.3;
+const ALERT_OUT: f32 = 0.8;
 const PANEL_WIDTH: f32 = 58.0;
 const PANEL_TITLE: f32 = 5.6;
 const PANEL_TEXT: f32 = 3.4;
@@ -142,10 +177,12 @@ const PANEL_BUTTON: f32 = 8.4;
 const PANEL_BUTTON_WIDTH: f32 = 22.0;
 const PANEL_BUTTON_TEXT: f32 = 3.4;
 /// How high over a body's feet its name and bar stand, in metres, how high
-/// over the ground an anchor's bar stands over its pillar, and how high a
-/// damage number starts from and rises to over its while, in seconds.
+/// over the ground an anchor's bar stands over its pillar (0.65 m over its
+/// top, 3.75 m up since the map of 2026-11-11; 4.6 over a top at 3.96
+/// until then), and how high a damage number starts from and rises to
+/// over its while, in seconds.
 const TAG_OVER: f32 = 2.2;
-const ANCHOR_BAR_OVER: f32 = 4.6;
+const ANCHOR_BAR_OVER: f32 = 4.4;
 const NUMBER_FROM: f32 = 1.8;
 const NUMBER_RISE: f32 = 1.6;
 const NUMBER_SECS: f32 = 0.9;
@@ -248,40 +285,51 @@ struct Hunter {
     cooldown: f32,
 }
 
-/// The four resources of Bridge Wars, down the right edge of the screen
-/// under the bag (`hud`), in the order Hajun drew them.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum Resource {
-    Wood,
-    Gold,
-    Diamond,
-    Emerald,
-}
-
-/// How much of each resource you hold: the metres of bridge you have left
-/// to lay (`bridge`; the file's `arena.bridge_metres` as a game begins,
-/// shown by the log as "500m", 100 until 2026-11-10; since 2026-11-09,
-/// Hajun: "players will buy the bridge by meter count"), and the rest,
-/// which nothing gives yet.
+/// What you have in a game of Bridge Wars: the metres of bridge left to
+/// lay (`bridge`; the file's `arena.bridge_metres` as a game begins, none
+/// since 2026-11-11, and 50 more for every 4 silver at the shop, `market`;
+/// written in front of you as you build, and in the shop), and how many
+/// you hold of each thing the generators make, counted top left (`hud`):
+/// offline what you have picked up ([`gather`]), online what the server
+/// says you hold ([`Purses`]).
 #[derive(bevy::prelude::Resource, Default)]
 pub(crate) struct Resources {
     pub bridge_metres: f32,
-    pub gold: u32,
-    pub diamond: u32,
-    pub emerald: u32,
+    pub held: Purse,
 }
 
 impl Resources {
-    /// What is shown beside `kind`'s picture.
-    pub(crate) fn of(&self, kind: Resource) -> String {
-        match kind {
-            Resource::Wood => format!("{}m", self.bridge_metres.max(0.0).round()),
-            Resource::Gold => self.gold.to_string(),
-            Resource::Diamond => self.diamond.to_string(),
-            Resource::Emerald => self.emerald.to_string(),
-        }
+    /// How many of `item` you hold, as written beside its picture.
+    pub(crate) fn count(&self, item: Item) -> String {
+        self.held[item.index()].to_string()
+    }
+
+    /// The metres of bridge you have left, as written in front of you
+    /// while you build: "50m".
+    pub(crate) fn metres(&self) -> String {
+        format!("{}m", self.bridge_metres.max(0.0).round())
     }
 }
+
+/// A zombie of sudden death (`rules::ZOMBIES`): a body on nobody's team
+/// (`rules::ZOMBIE_TEAM`), in a seat past the players', drawn green
+/// ([`paint_zombies`]). Offline this device moves it, as it does the
+/// bots; online the server does.
+#[derive(Component)]
+pub(crate) struct Zombie;
+
+/// A zombie whose model has been turned green.
+#[derive(Component)]
+struct Painted;
+
+/// What of a zombie is painted, by what each is called in its model
+/// (`playercharacter.glb`), and the colour: its skin green, and its hair a
+/// darker green, the top of its head being most of what the camera over
+/// you sees of it.
+const ZOMBIE_PAINT: [(&str, Color); 2] = [
+    ("skin", Color::srgb(0.38, 0.6, 0.32)),
+    ("hair", Color::srgb(0.12, 0.3, 0.1)),
+];
 
 /// A game of Bridge Wars, from the waiting room to the end.
 #[derive(bevy::prelude::Resource)]
@@ -316,6 +364,15 @@ struct Game {
     anchor_hurt: [f32; ARENA_TEAMS],
     /// The seats out for good: dead with their anchor broken.
     out: [bool; ARENA_SEATS],
+    /// How far into the fight it is, in seconds: what the timetable goes
+    /// by (`rules::TIMETABLE`). Offline counted here; online what the
+    /// server's time left makes it, to the second.
+    elapsed: f32,
+    /// How far into the fight it was when the timetable was last looked
+    /// at ([`timetable`]).
+    said: f32,
+    /// The generators, offline: online they are the server's.
+    mint: Mint,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -357,9 +414,15 @@ impl Game {
     }
 
     /// `seat` has died: it comes back after the file's `arena.respawn_secs`
-    /// if its team's anchor stands now, and is out for good otherwise.
+    /// if its team's anchor stands now, and is out for good otherwise; a
+    /// zombie, in a seat past the players', is always back, a while later.
     /// What to mark its body dead with.
     fn die(&mut self, seat: usize) -> Dead {
+        if seat >= ARENA_SEATS {
+            return Dead {
+                left: rules::ZOMBIE_RESPAWN_SECS,
+            };
+        }
         let anchor = self.anchors[usize::from(arena_team(seat))];
         if anchor > 0.0 {
             Dead {
@@ -438,6 +501,13 @@ struct BoardText;
 #[derive(Component)]
 struct BoardCaption;
 
+/// A line saying what the timetable has just done ([`alert`]), and how
+/// long it has been up.
+#[derive(Component)]
+struct Alert {
+    age: f32,
+}
+
 /// The words across the screen while you are dead, and the line of them.
 #[derive(Component)]
 struct DeathText;
@@ -488,7 +558,7 @@ pub(crate) fn plugin(app: &mut App) {
         .add_observer(read_map)
         .add_systems(
             Update,
-            (hear, follow_round, cut_off, play, publish, show_board)
+            (hear, follow_round, cut_off, play, timetable, gather, publish, show_board)
                 .chain()
                 .in_set(ArenaSystems)
                 .before(crate::read_player_input)
@@ -507,6 +577,7 @@ pub(crate) fn plugin(app: &mut App) {
                     .after(crate::move_bodies)
                     .before(crate::follow_camera),
                 (show_death, show_panel, place_tags, place_anchor_bars, float_numbers).after(crate::follow_camera),
+                (paint_zombies, fade_alerts),
             ),
         );
 }
@@ -633,7 +704,7 @@ fn hear(
     mut islands: ResMut<Islands>,
     mut visibilities: Query<&mut Visibility>,
     mut bodies: Whereabouts,
-    (mut orbit, mut driving): (ResMut<OrbitCamera>, ResMut<Driving>),
+    (mut orbit, mut driving, mut stock): (ResMut<OrbitCamera>, ResMut<Driving>, ResMut<Resources>),
     mut commands: Commands,
 ) {
     let mut game = game;
@@ -643,6 +714,14 @@ fn hear(
             continue;
         };
         match tell {
+            // The shop has sold you a bridge: its price is out of what
+            // you hold, as the room's purses say; the metres are yours.
+            Tell::Bought(Ware::Bridge) => {
+                if game.as_deref().is_some_and(|game| game.online) {
+                    stock.bridge_metres += rules::BRIDGE_A_BUY;
+                    info!("bought {} m of bridge", rules::BRIDGE_A_BUY);
+                }
+            }
             Tell::Seated { seat: mine } => {
                 // Another game straight after the last keeps the view the
                 // first fixed the camera from.
@@ -706,7 +785,8 @@ fn hear(
 #[allow(clippy::too_many_arguments)]
 fn follow_round(
     game: Option<ResMut<Game>>,
-    rounds: Query<(&ArenaRound, &Seats), With<Remote>>,
+    rounds: Query<(&ArenaRound, &Seats, Option<&Purses>), With<Remote>>,
+    mut stock: ResMut<Resources>,
     mut me: Query<(Entity, &Transform, &mut Health, Option<&Dead>), With<Player>>,
     mut others: Query<
         (Entity, &Member, &Transform, Option<&mut Health>, Has<Dead>),
@@ -720,11 +800,17 @@ fn follow_round(
     if !game.online {
         return;
     }
-    let Ok((round, seats)) = rounds.single() else {
+    let Ok((round, seats, purses)) = rounds.single() else {
         return;
     };
     if game.seats != seats.0 {
         game.seats.clone_from(&seats.0);
+    }
+    // What you hold is what the server says you hold.
+    if let Some(mine) = purses.and_then(|purses| purses.0.get(game.me))
+        && stock.held != *mine
+    {
+        stock.held = *mine;
     }
     let left = f32::from(round.left);
     let stage = match round.stage {
@@ -735,8 +821,13 @@ fn follow_round(
     };
     let was = game.stage;
     game.stage = stage;
-    if matches!(stage, Stage::Playing { .. }) && !matches!(was, Stage::Playing { .. }) {
-        hud::announce(&mut commands, None, &ui().words.arena.fight, hud::HEADLINE, FIGHT_SECS).insert(InArena);
+    if let Stage::Playing { left } = stage {
+        // The timetable's time is the server's, to the second.
+        game.elapsed = PLAY_SECS - left;
+        if !matches!(was, Stage::Playing { .. }) {
+            game.said = game.elapsed;
+            hud::announce(&mut commands, None, &ui().words.arena.fight, hud::HEADLINE, FIGHT_SECS).insert(InArena);
+        }
     }
     if let Stage::Over { winner, .. } = stage
         && !matches!(was, Stage::Over { .. })
@@ -975,8 +1066,16 @@ fn play(
                 }
             }
             hud::announce(&mut commands, None, &ui().words.arena.fight, hud::HEADLINE, FIGHT_SECS).insert(InArena);
-            info!("Bridge Wars: everyone to their islands, {PLAY_SECS} s to play");
-            game.stage = Stage::Playing { left: PLAY_SECS };
+            // From the start, or, for trying the timetable out, from as
+            // far into it as `RT_ARENA_FROM` says.
+            // Begun late, everything before then happens at once, as
+            // the fight begins ([`timetable`], which looks from 0).
+            game.elapsed = fight_from();
+            game.said = 0.0;
+            game.mint = Mint::new(&mut || fastrand::f32());
+            let left = PLAY_SECS - game.elapsed;
+            info!("Bridge Wars: everyone to their islands, {left} s to play");
+            game.stage = Stage::Playing { left };
         }
         Stage::Playing { left } => {
             let teams = game.teams_in_play();
@@ -995,7 +1094,10 @@ fn play(
                         left: RESULTS_SECS,
                     }
                 }
-                None => Stage::Playing { left: left - dt },
+                None => {
+                    game.elapsed += dt;
+                    Stage::Playing { left: left - dt }
+                }
             };
         }
         Stage::Over { winner, left } if left > dt && !skip => {
@@ -1037,10 +1139,11 @@ fn open(
         .entity(you)
         .insert((Seat(me), Team(arena_team(me)), Health::of(full)))
         .remove::<Dead>();
-    // What you have to build with: the file's metres of bridge.
+    // What you have to build with: the file's metres of bridge, and
+    // nothing in your purse.
     commands.insert_resource(Resources {
         bridge_metres: ui().arena.bridge_metres,
-        ..default()
+        held: Purse::default(),
     });
     spawn_board(commands);
     spawn_anchor_bars(commands, arena_team(me));
@@ -1063,6 +1166,257 @@ fn open(
         anchors: [if online { rules::ANCHOR_HEALTH } else { ui().arena.anchor_health }; ARENA_TEAMS],
         anchor_hurt: [0.0; ARENA_TEAMS],
         out: [false; ARENA_SEATS],
+        elapsed: 0.0,
+        said: 0.0,
+        mint: Mint::new(&mut || fastrand::f32()),
+    }
+}
+
+/// How far into its timetable a game played offline begins its fight, in
+/// seconds: none, but for trying the timetable out on desktop, where
+/// `RT_ARENA_FROM=595` begins it five seconds before every anchor breaks
+/// (the server has the same, for its own games).
+fn fight_from() -> f32 {
+    std::env::var("RT_ARENA_FROM")
+        .ok()
+        .and_then(|seconds| seconds.parse::<f32>().ok())
+        .filter(|seconds| seconds.is_finite() && *seconds >= 0.0)
+        .map_or(0.0, |seconds| seconds.min(PLAY_SECS - 1.0))
+}
+
+/// Says each thing on the game's timetable as its time comes
+/// (`rules::TIMETABLE`, Hajun's `bridgewarsgameevent.txt`), in a line
+/// across the upper half of the screen ([`alert`]), online and offline
+/// alike; and offline does it, the server doing it online: the tiers are
+/// the generators' own by the time, every anchor left breaks, and the
+/// zombies rise.
+#[allow(clippy::too_many_arguments)]
+fn timetable(
+    game: Option<ResMut<Game>>,
+    islands: Res<Islands>,
+    assets: Res<AssetServer>,
+    alerts: Query<Entity, With<Alert>>,
+    mut commands: Commands,
+) {
+    let Some(mut game) = game else {
+        return;
+    };
+    if !game.playing() || game.elapsed <= game.said {
+        return;
+    }
+    let (before, now) = (game.said, game.elapsed);
+    game.said = now;
+    // One line at a time, the last: a game begun far into its timetable
+    // (`RT_ARENA_FROM`) has everything before then happen at once.
+    let mut said = None;
+    for happening in rules::happening_between(before, now) {
+        info!("Bridge Wars: {happening:?}, {now:.0} s in");
+        let file = ui();
+        let words = &file.words.arena;
+        said = Some(match happening {
+            Happening::Tier { item, tier } => {
+                fill(&words.tier_up, &[("item", words.item(item)), ("level", roman(tier))])
+            }
+            Happening::AnchorsBreak => words.anchors_broken.clone(),
+            Happening::SuddenDeath => words.sudden_death.clone(),
+        });
+        if game.online {
+            continue;
+        }
+        match happening {
+            Happening::Tier { .. } => {}
+            Happening::AnchorsBreak => game.anchors = [0.0; ARENA_TEAMS],
+            Happening::SuddenDeath => {
+                let map = islands.get(Venue::Arena);
+                for zombie in 0..rules::ZOMBIES {
+                    raise_zombie(&mut commands, &assets, &mut game, map, zombie);
+                }
+            }
+        }
+    }
+    if let Some(line) = said {
+        for old in &alerts {
+            commands.entity(old).try_despawn();
+        }
+        alert(&mut commands, &line);
+    }
+}
+
+/// "I", "II", "III": a generator's tier as it is written.
+fn roman(tier: u8) -> &'static str {
+    match tier {
+        0 | 1 => "I",
+        2 => "II",
+        3 => "III",
+        _ => "IV",
+    }
+}
+
+/// Where the zombie numbered `zombie` rises, and rises again, on `map`:
+/// its spot (`rules::zombie_spot`) on whatever ground is there, facing the
+/// middle of the ground it keeps to.
+fn zombie_place(map: Option<&Island>, zombie: usize) -> Transform {
+    let at = rules::zombie_spot(zombie);
+    let ground = map
+        .and_then(|map| map.floor(at, 3.0))
+        .unwrap_or(island::LAND_TOP_OF_THE_ISLANDS);
+    let (home, _) = rules::zombie_home(zombie);
+    let toward = (home - at).normalize_or(Vec2::NEG_Y);
+    Transform::from_xyz(at.x, ground, at.y).with_rotation(Quat::from_rotation_y((-toward.x).atan2(-toward.y)))
+}
+
+/// A zombie, offline, in the next seat past the players': a body like the
+/// bots', with everyone's health, on nobody's team, that goes for whoever
+/// is nearest ([`hunt`]).
+fn raise_zombie(commands: &mut Commands, assets: &AssetServer, game: &mut Game, map: Option<&Island>, zombie: usize) {
+    let seat = game.seats.len().max(ARENA_SEATS);
+    let member = Member {
+        id: seat as u64 + 1,
+        name: rules::ZOMBIE_NAME.into(),
+        look: rules::ZOMBIE_LOOK.into(),
+        ai: true,
+    };
+    let body = lobby::spawn_player_at(commands, assets, &member, seat, Venue::Arena, false, zombie_place(map, zombie));
+    commands.entity(body).insert((
+        InArena,
+        Zombie,
+        Health::of(ui().arena.health),
+        Hunter::default(),
+        Team(rules::ZOMBIE_TEAM),
+    ));
+    game.seats.resize(seat, member.clone());
+    game.seats.push(member);
+    game.bodies.resize(seat, None);
+    game.bodies.push(Some(body));
+}
+
+/// The generators, offline: what they make comes up on its pad (`loot`),
+/// and whatever you walk within the magnet's reach of is yours, counted
+/// top left. Online both are the server's (`loot::follow_server`,
+/// [`follow_round`]). The computer's players pick up nothing.
+fn gather(
+    time: Res<Time>,
+    game: Option<ResMut<Game>>,
+    look: Res<loot::Look>,
+    me: Query<(Entity, &Transform, Has<Dead>), With<Player>>,
+    things: Query<(Entity, &loot::Thing)>,
+    mut stock: ResMut<Resources>,
+    mut commands: Commands,
+) {
+    if !offline_fight(&game) {
+        return;
+    }
+    let mut game = game.expect("checked");
+    // Picked up before anything new is made, so that whatever is picked
+    // up has been on its pad a frame, and is there to be seen going.
+    if let Ok((you, at, dead)) = me.single()
+        && !dead
+        && (at.translation.y - PAD_TOP).abs() <= rules::MAGNET_HEIGHT
+    {
+        for piece in game.mint.pick_up(at.translation.xz()) {
+            let held = &mut stock.held[piece.item.index()];
+            *held = held.saturating_add(1);
+            if let Some((thing, _)) = things.iter().find(|(_, thing)| thing.key == loot::Key::Own(piece.id)) {
+                loot::take(&mut commands, thing, Some(you));
+            }
+        }
+    }
+    let elapsed = game.elapsed;
+    for piece in game.mint.run(time.delta_secs(), elapsed, &mut || fastrand::f32()) {
+        loot::lay(&mut commands, &look, time.elapsed_secs(), loot::Key::Own(piece.id), piece.item, piece.at);
+    }
+}
+
+/// A line across the upper half of the screen, small, saying what has just
+/// happened in the game, up for a few seconds ([`fade_alerts`]; Hajun,
+/// 2026-11-11: "it should show a small alert in around middle of the
+/// upper half of screen that tells the event, for example: 'Sapphire
+/// generators have been upgraded to Lvl II.'").
+fn alert(commands: &mut Commands, line: &str) {
+    // Put up clear, to be brought up.
+    let ink = ui().colours.arena.alert.with_alpha(0.0);
+    commands.spawn((
+        InArena,
+        Alert { age: 0.0 },
+        Node {
+            position_type: PositionType::Absolute,
+            top: Val::Vh(ALERT_DOWN),
+            left: Val::ZERO,
+            right: Val::ZERO,
+            justify_content: JustifyContent::Center,
+            ..default()
+        },
+        // Over the shop's window, should it be up.
+        GlobalZIndex(builder::DIALOG_LAYER - 1),
+        Pickable::IGNORE,
+        children![hud::words(line, ALERT_TEXT, ink)],
+    ));
+}
+
+/// Brings each alert up, holds it, and takes it away again.
+fn fade_alerts(
+    time: Res<Time>,
+    mut alerts: Query<(Entity, &mut Alert, &Children)>,
+    mut lines: Query<(&mut TextColor, &mut TextShadow)>,
+    mut commands: Commands,
+) {
+    let (ink, shadow) = {
+        let colours = ui().colours;
+        (colours.arena.alert, colours.text_shadow)
+    };
+    for (entity, mut alert, children) in &mut alerts {
+        alert.age += time.delta_secs();
+        if alert.age >= ALERT_SECS {
+            commands.entity(entity).despawn();
+            continue;
+        }
+        let solid = (alert.age / ALERT_IN).min((ALERT_SECS - alert.age) / ALERT_OUT).clamp(0.0, 1.0);
+        let mut words = lines.iter_many_mut(children);
+        while let Some((mut colour, mut under)) = words.fetch_next() {
+            // Only while it is fading: held, the words are left alone.
+            let faded = ink.with_alpha(ink.alpha() * solid);
+            if colour.0 != faded {
+                colour.0 = faded;
+                under.color = shadow.with_alpha(shadow.alpha() * solid);
+            }
+        }
+    }
+}
+
+/// Turns each zombie green as its model spawns: its skin and its hair,
+/// whatever it wears ([`ZOMBIE_PAINT`]). Each a copy of the model's own
+/// material in the new colour, made once and shared by every zombie.
+fn paint_zombies(
+    zombies: Query<Entity, (With<Zombie>, Without<Painted>)>,
+    children: Query<&Children>,
+    parts: Query<(&GltfMaterialName, &MeshMaterial3d<StandardMaterial>)>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut paints: Local<[Option<Handle<StandardMaterial>>; 2]>,
+    mut commands: Commands,
+) {
+    for zombie in &zombies {
+        let mut painted = false;
+        for part in children.iter_descendants(zombie) {
+            let Ok((name, worn)) = parts.get(part) else {
+                continue;
+            };
+            let Some(which) = ZOMBIE_PAINT.iter().position(|(called, _)| is_material(&name.0, called)) else {
+                continue;
+            };
+            let green = paints[which]
+                .get_or_insert_with(|| {
+                    let mut look = materials.get(&worn.0).cloned().unwrap_or_default();
+                    look.base_color = ZOMBIE_PAINT[which].1;
+                    materials.add(look)
+                })
+                .clone();
+            commands.entity(part).insert(MeshMaterial3d(green));
+            painted = true;
+        }
+        // Not until its model is there: it comes a frame or two after.
+        if painted {
+            commands.entity(zombie).insert(Painted);
+        }
     }
 }
 
@@ -1075,7 +1429,11 @@ fn announce_result(commands: &mut Commands, my_team: u8, winner: Option<u8>) {
         Some(_) => words.defeat.clone(),
         None => words.times_up.clone(),
     };
-    let caption = winner.map(|team| fill(&words.team_wins, &[("team", &team_name(team))]));
+    let caption = match winner {
+        Some(team) => fill(&words.team_wins, &[("team", &team_name(team))]),
+        None => words.draw.clone(),
+    };
+    let caption = Some(caption);
     hud::announce(commands, caption.as_deref(), &title, hud::HEADLINE, RESULT_SECS).insert(InArena);
 }
 
@@ -1149,6 +1507,7 @@ fn offline_fight(game: &Option<ResMut<Game>>) -> bool {
 fn team_up(
     game: Option<Res<Game>>,
     others: Query<(Entity, &Member, Option<&Team>), (With<Remote>, With<WalkCycle>)>,
+    zombies: Query<(), With<Zombie>>,
     mut commands: Commands,
 ) {
     let Some(game) = game else {
@@ -1164,6 +1523,10 @@ fn team_up(
         let theirs = Team(arena_team(seat));
         if team != Some(&theirs) {
             commands.entity(body).insert(theirs);
+        }
+        // The server's zombies, to be turned green.
+        if theirs.0 == rules::ZOMBIE_TEAM && !zombies.contains(body) {
+            commands.entity(body).insert(Zombie);
         }
     }
 }
@@ -1245,19 +1608,25 @@ fn hunt(
             }
             let off = (there - here).xz();
             let toward = Vec3::new(off.x, 0.0, off.y).normalize_or_zero();
+            // A zombie comes on slower than anyone runs, and never runs
+            // away.
+            let zombie = mine == Some(Team(rules::ZOMBIE_TEAM));
             // Nearly beaten, it runs for it rather than fights.
-            if health.is_some_and(|health| health.share() < tuning.flee_below) {
+            if !zombie && health.is_some_and(|health| health.share() < tuning.flee_below) {
                 intent.walk = islands.get(Venue::Arena).map_or(-toward, |map| flight(map, here, toward));
                 continue;
             }
-            intent.walk = toward * if off.length() > melee.reach { 1.0 } else { PRESS_IN };
+            let pace = if zombie { (rules::ZOMBIE_SPEED / tuning.run_speed).min(1.0) } else { 1.0 };
+            intent.walk = toward * if off.length() > melee.reach { pace } else { PRESS_IN };
             let facing = body.forward().xz().normalize_or(Vec2::NEG_Y);
             let in_reach = (there.y - here.y).abs() <= PLAYER_HEIGHT && sector.holds(facing, off, PLAYER_RADIUS);
             if !in_reach || hunter.cooldown > 0.0 {
                 continue;
             }
             hunter.cooldown = tuning.bot_punch_every;
-            let running = intent.walk.length() >= 0.5;
+            // A zombie's punch knocks as one thrown standing does: it
+            // comes on at a walk.
+            let running = !zombie && intent.walk.length() >= 0.5;
             (target, here.xz(), there.xz(), running)
         };
         let (target, from, at, running) = punch;
@@ -1331,7 +1700,7 @@ fn reap(
 fn deal_damage(
     mut hits: MessageReader<Landed>,
     game: Option<ResMut<Game>>,
-    mut victims: Query<(&Transform, &mut Health, &Seat), Without<Dead>>,
+    mut victims: Query<(&Transform, &mut Health, &Seat, &mut Shove, &mut PlayerJump, Has<Zombie>), Without<Dead>>,
     mut commands: Commands,
 ) {
     if !offline_fight(&game) {
@@ -1340,9 +1709,15 @@ fn deal_damage(
     }
     let mut game = game.expect("checked");
     for hit in hits.read() {
-        let Ok((at, mut health, seat)) = victims.get_mut(hit.victim) else {
+        let Ok((at, mut health, seat, mut shove, mut jump, zombie)) = victims.get_mut(hit.victim) else {
             continue;
         };
+        // A zombie takes a share of the knock that has just landed on it
+        // (`Shove::knock`): it keeps coming (`rules::ZOMBIE_KNOCK`).
+        if zombie {
+            shove.across *= rules::ZOMBIE_KNOCK;
+            jump.velocity_y *= rules::ZOMBIE_KNOCK;
+        }
         let damage = ui().arena.damage;
         health.take(damage);
         spawn_number(&mut commands, at.translation, damage);
@@ -1434,6 +1809,7 @@ fn respawn(
     time: Res<Time>,
     game: Option<ResMut<Game>>,
     mut dead: Query<(Entity, &mut Dead, &Seat, &mut Health)>,
+    islands: Res<Islands>,
     mut bodies: Whereabouts,
     mut orbit: ResMut<OrbitCamera>,
     mut commands: Commands,
@@ -1455,8 +1831,18 @@ fn respawn(
     }
     for (body, seat) in back {
         commands.entity(body).remove::<Dead>();
-        lobby::send(&mut bodies, &mut orbit, body, Venue::Arena, seat);
-        info!("{body} stands again on island {}", roundtown_net::arena_island(seat));
+        // A zombie rises where it rose; anyone else where their seat
+        // arrives.
+        match seat.checked_sub(ARENA_SEATS) {
+            Some(zombie) => {
+                let place = zombie_place(islands.get(Venue::Arena), zombie);
+                lobby::put(&mut bodies, &mut orbit, body, Venue::Arena, place);
+            }
+            None => {
+                lobby::send(&mut bodies, &mut orbit, body, Venue::Arena, seat);
+                info!("{body} stands again on island {}", roundtown_net::arena_island(seat));
+            }
+        }
     }
 }
 
@@ -1472,6 +1858,12 @@ fn break_anchors(
     let (Some(game), Some(mut anchors)) = (game, anchors) else {
         return;
     };
+    // More than one at once is the timetable's doing, every anchor left
+    // broken at ten minutes, which its own line says ([`timetable`]): a
+    // headline for each would be four on top of each other.
+    let breaking = (0..ARENA_TEAMS)
+        .filter(|&team| game.anchors[team] <= 0.0 && !anchors.broken[team])
+        .count();
     let mut broke = false;
     for team in 0..ARENA_TEAMS {
         if game.anchors[team] > 0.0 || anchors.broken[team] {
@@ -1483,6 +1875,9 @@ fn break_anchors(
             if let Ok(mut visibility) = visibilities.get_mut(pillar) {
                 visibility.set_if_neq(Visibility::Hidden);
             }
+        }
+        if breaking > 1 {
+            continue;
         }
         let words = &ui().words.arena;
         let line = if team as u8 == game.my_team() {
@@ -1521,8 +1916,10 @@ fn break_anchors(
 /// Whether `triangle` is of one of the pillars at `anchors`: every corner of
 /// it within [`ANCHOR_REACH`] of the anchor across the ground, and some of
 /// it higher than the slab the pillar stands on reaches ([`PILLAR_OVER`]):
-/// the pillar's lowest point is 0.54 m up and its highest 3.96, the slab's
-/// top 0.75.
+/// the pillar stands on its point on the slab's top, 0.75 m up, is widest
+/// 2.25 m up, a metre out at its corners, and ends in a point at 3.75 (a
+/// cube on its corner from 0.54 to 3.96 until the map of 2026-11-11), and
+/// every one of its triangles has a corner at 2.25 or over.
 fn is_pillar(triangle: &[Vec3; 3], anchors: &[Vec2]) -> bool {
     anchors.iter().any(|anchor| {
         triangle.iter().all(|corner| corner.xz().distance(*anchor) <= ANCHOR_REACH)
@@ -2167,15 +2564,22 @@ mod tests {
     #[test]
     fn every_arrival_is_dry_land_in_the_map_with_the_void_beyond_the_islands() {
         // Everyone arrives on their island (Hajun, the night of 2026-11-07:
-        // "make the spawnpoint in the center of the island"): there is
-        // ground under each of the eight, about the islands' top, 0.25 m
-        // up, or the desk that lies across the middle, and the void beside
-        // the islands, where the bridges were until 2026-11-08.
+        // "make the spawnpoint in the center of the island"): under each of
+        // the eight is the island's own top, 0.25 m up, and nothing that
+        // stands on the island reaches into a body standing there, not the
+        // market stands either side of the middle, the anchor's slab nor
+        // the pad at the back (Hajun's map of 2026-11-11; until then a desk
+        // lay across the middle, and whoever arrived was shoved off it);
+        // and the void is beside the islands, where the bridges were until
+        // 2026-11-08.
         let map = hajuns_map();
         for seat in 0..ARENA_SEATS {
             let at = island::arrival(Venue::Arena, seat).translation;
             let ground = map.floor(at.xz(), 3.0).unwrap_or_else(|| panic!("seat {seat}: nothing under {at}"));
-            assert!((0.0..=1.3).contains(&ground), "seat {seat}: ground at {ground}");
+            assert!((ground - island::LAND_TOP_OF_THE_ISLANDS).abs() < 0.03, "seat {seat}: ground at {ground}");
+            let body = [(PLAYER_RADIUS, ground + crate::LAND_STEP_UP, ground + PLAYER_HEIGHT)];
+            let walls = map.walls_round(at.xz(), &body);
+            assert!(walls.is_empty(), "seat {seat}: {} squares of something in the way at {at}", walls.len());
         }
         for team in 0..ARENA_TEAMS {
             let island = roundtown_net::ARENA_ISLANDS[team];
@@ -2278,6 +2682,9 @@ mod tests {
             anchors: [120.0; ARENA_TEAMS],
             anchor_hurt: [0.0; ARENA_TEAMS],
             out: [false; ARENA_SEATS],
+            elapsed: 0.0,
+            said: 0.0,
+            mint: Mint::new(&mut || 0.5),
         };
         assert_eq!(game.my_team(), 0);
         assert_eq!(game.teams_in_play(), vec![0, 1, 2, 3]);
@@ -2304,6 +2711,102 @@ mod tests {
         }
         assert_eq!(game.teams_in_play(), vec![0]);
         assert_eq!(team_name(2), "Team 3");
+        // A zombie, in a seat past the players', is always back, whatever
+        // the anchors, and is nobody's team to be left in play.
+        game.anchors = [0.0; ARENA_TEAMS];
+        for zombie in 0..rules::ZOMBIES {
+            let seat = ARENA_SEATS + zombie;
+            assert_eq!(arena_team(seat), rules::ZOMBIE_TEAM);
+            assert_eq!(game.die(seat).left, rules::ZOMBIE_RESPAWN_SECS);
+        }
+        assert_eq!(game.teams_in_play(), vec![0]);
+        assert_eq!(game.out, [false, true, true, true, false, true, true, true]);
+    }
+
+    #[test]
+    fn the_generators_pads_are_where_the_map_has_them() {
+        use roundtown_net::{AMETHYST_PADS, ARENA_PADS, PAD_HALF, SAPPHIRE_PADS};
+        // The pads by what Hajun calls them in Blender: `gen1` to `gen4`
+        // on the teams' islands, `sapphiregen` to `sapphiregen4` on the
+        // smaller ones, `amethystgen` to `.003` in the middle; each the
+        // box round its mesh, across the ground and up.
+        let parts = crate::island::glb::read("pvptownmap.glb");
+        let pads = |called: &str| -> Vec<(Vec3, Vec3)> {
+            parts
+                .iter()
+                .filter(|part| part.node.starts_with(called))
+                .map(|part| {
+                    part.triangles
+                        .iter()
+                        .flatten()
+                        .fold((Vec3::INFINITY, Vec3::NEG_INFINITY), |(low, high), corner| (low.min(*corner), high.max(*corner)))
+                })
+                .collect()
+        };
+        let map = hajuns_map();
+        for (called, wanted) in [("gen", &ARENA_PADS), ("sapphiregen", &SAPPHIRE_PADS), ("amethystgen", &AMETHYST_PADS)] {
+            let found = pads(called);
+            assert_eq!(found.len(), wanted.len(), "{called}: {found:?}");
+            for pad in wanted {
+                // Where the server takes each to be is the middle of one,
+                // a slab 2 m square with its top where things are laid.
+                let (low, high) = found
+                    .iter()
+                    .find(|(low, high)| ((*low + *high) * 0.5).xz().distance(*pad) < 0.05)
+                    .unwrap_or_else(|| panic!("{called}: no pad at {pad}, of {found:?}"));
+                assert!((high.y - PAD_TOP).abs() < 1e-3, "{called} at {pad}: its top is {} up", high.y);
+                let half = (*high - *low).xz() * 0.5;
+                assert!((half.x - PAD_HALF).abs() < 0.01 && (half.y - PAD_HALF).abs() < 0.01, "{called}: {half}");
+                // Wherever on it a thing may come up, the pad's top is
+                // what is under it, and nothing stands over it to hide it
+                // or keep anyone off it.
+                for (dx, dz) in [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0), (0.0, 0.0)] {
+                    let at = *pad + Vec2::new(dx, dz) * rules::PAD_SPREAD;
+                    let ground = map.floor(at, 3.0).unwrap_or_else(|| panic!("{called}: nothing under {at}"));
+                    assert!((ground - PAD_TOP).abs() < 1e-3, "{called}: {ground} up at {at}");
+                }
+                let body = [(PLAYER_RADIUS, PAD_TOP + crate::LAND_STEP_UP, PAD_TOP + PLAYER_HEIGHT)];
+                assert!(map.walls_round(*pad, &body).is_empty(), "{called} at {pad}: something stands on it");
+            }
+        }
+        // And the pad is no higher over the island than a step: walked
+        // onto, not jumped onto.
+        assert!(PAD_TOP - island::LAND_TOP_OF_THE_ISLANDS < crate::LAND_STEP_UP);
+        // Every generator is on one of them.
+        for index in 0..rules::GENERATORS {
+            let (_, pad) = rules::generator(index);
+            assert!(ARENA_PADS.contains(&pad) || SAPPHIRE_PADS.contains(&pad) || AMETHYST_PADS.contains(&pad));
+        }
+    }
+
+    #[test]
+    fn the_zombies_rise_on_open_ground_in_the_map() {
+        // Each on ground, about the islands' top or the town's paving,
+        // with nothing reaching into a body standing there, and inside
+        // the ground the server keeps it to.
+        let map = hajuns_map();
+        for zombie in 0..rules::ZOMBIES {
+            let place = zombie_place(Some(&map), zombie).translation;
+            let at = rules::zombie_spot(zombie);
+            assert_eq!(place.xz(), at);
+            let ground = map.floor(at, 3.0).unwrap_or_else(|| panic!("zombie {zombie}: nothing under {at}"));
+            assert_eq!(place.y, ground);
+            assert!((0.0..=0.3).contains(&ground), "zombie {zombie}: ground at {ground}");
+            let body = [(PLAYER_RADIUS, ground + crate::LAND_STEP_UP, ground + PLAYER_HEIGHT)];
+            assert!(map.walls_round(at, &body).is_empty(), "zombie {zombie} rises inside something at {at}");
+            // Dry land all round it, a few steps each way.
+            for step in [Vec2::X, Vec2::NEG_X, Vec2::Y, Vec2::NEG_Y] {
+                assert!(map.floor(at + step * 2.0, 3.0).is_some(), "zombie {zombie}: no ground beside {at}");
+            }
+        }
+        assert_eq!(roman(1), "I");
+        assert_eq!(roman(2), "II");
+        assert_eq!(roman(3), "III");
+        let words = &ui().words.arena;
+        assert_eq!(
+            fill(&words.tier_up, &[("item", words.item(Item::Sapphire)), ("level", roman(2))]),
+            "Sapphire generators have been upgraded to Lvl II."
+        );
     }
 
     #[test]
