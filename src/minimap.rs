@@ -3,7 +3,10 @@
 //! a red dot and your teammate as a green dot, and the full map in top
 //! down view including the live bridges but not show the other players"):
 //! a picture of the map from above ([`Minimap::image`]), the land in the
-//! file's `colours.arena.map_land` over `map_back`, drawn once from the
+//! file's `colours.arena.map_land`, clear round it for the node's own
+//! background to show, `map_back` (the picture was filled with `map_back`
+//! as well until late on 2026-11-11, so that a see-through one was laid on twice
+//! and came out more solid than the file said), drawn once from the
 //! map's own triangles as they are read ([`draw_land`]), and the bridges
 //! drawn over it again whenever they change ([`draw_bridges`], in the
 //! planks' colour); and over the picture two kinds of dot, you in `map_me`
@@ -122,7 +125,8 @@ fn fill(data: &mut [u8], corners: &[Vec2], colour: [u8; 4]) {
 }
 
 /// Draws the land once the map has been read: every triangle of it that
-/// faces up and lies low, filled in the land's colour over the background.
+/// faces up and lies low, filled in the land's colour, the rest left
+/// clear for the background behind the picture (`hud`).
 fn draw_land(islands: Res<Islands>, mut minimap: ResMut<Minimap>, mut images: ResMut<Assets<Image>>) {
     if minimap.land.is_some() {
         return;
@@ -131,8 +135,11 @@ fn draw_land(islands: Res<Islands>, mut minimap: ResMut<Minimap>, mut images: Re
         return;
     };
     let colours = ui().colours.arena;
-    let mut data = bytes(colours.map_back).repeat((SIZE * SIZE) as usize);
     let land = bytes(colours.map_land);
+    // Clear, in the land's own colour, so that the land's edge, drawn
+    // between a pixel of it and a clear one, shades to nothing rather
+    // than to black.
+    let mut data = [land[0], land[1], land[2], 0].repeat((SIZE * SIZE) as usize);
     for [a, b, c] in corners {
         let normal = (*b - *a).cross(*c - *a);
         if normal.y <= 0.0 || a.y.max(b.y).max(c.y) > LAND_TOP {

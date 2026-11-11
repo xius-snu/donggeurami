@@ -304,8 +304,13 @@ alone; the server is `cargo build -p roundtown_server`. Never `--workspace`,
 which would build the game with the server's half of replicon in it.
 
 Android needs the `release-android` profile, a manual strip step, and Gradle
-(`versionCode` in `mobile/android/app/build.gradle` is the build number: 18
-on the night of 2026-11-11, Bridge Wars' generators, its shop, its
+(`versionCode` in `mobile/android/app/build.gradle` is the build number: 19
+late on the night of 2026-11-11, what the generators make dropping onto
+its pad, the level and the count written by the sapphire and amethyst
+generators, grey panels, 25 m of bridge for 4 silver, and the camera at
+one height over you in Bridge Wars (protocol 12, the server deployed with
+it); 18
+earlier that night, Bridge Wars' generators, its shop, its
 timetable and its zombies, on Hajun's map of that day, with the anchors
 lit by night (protocol 11, the server deployed with it); 17
 on the afternoon of 2026-11-10, the metres of bridge left written in front of you
@@ -619,9 +624,19 @@ holds for the arena now.
     Silver one every 2 s, half a second more or less, 48 to a pad at the
     most; gold every 7.5 s, a second more or less, 6; sapphire every 30 s,
     23 from 2:00 and 12 from 6:00, 4; amethyst every 40 s, 30 from 4:00 and
-    20 from 8:00, 2. A generator holding its most waits, and its next thing
-    is a whole wait on from when one is taken (mine: the file says only
-    "max held on generator"). Each thing comes up at the best of six
+    20 from 8:00, 2. A generator's time comes round whether or not it is
+    full: holding its most, it makes nothing then, and its count starts
+    over (mine: the file says only "max held on generator"; until late
+    that night a full one's count stood still, and its next thing was a
+    whole wait on from when one was taken, which a count written over it
+    could not have shown). The sapphire and the amethyst ones keep time
+    to the second, by the time alone (`bridge_wars::steady`, `next_at`: a
+    sapphire at 30, 60, 90 and 120 s, then every 23 s to 350, then at 372,
+    the third tier having come at 360 and cut the wait in hand to its own
+    12 s, and every 12 s after; an amethyst every 40 s to 240, every 30 to
+    480, every 20 after), which is what lets every device write the same
+    count over them with nothing sent ("The sapphire and the amethyst
+    generators say", below). Each thing comes up at the best of six
     places tried at random within 0.7 m of the pad's middle each way, the
     one furthest from everything lying there (`PAD_SPREAD`: my reading of
     "semi random location"). The pads' places are constants, the server
@@ -629,7 +644,10 @@ holds for the arena now.
     objects (`the_generators_pads_are_where_the_map_has_them`).
   - **Picking up** (`MAGNET`, 1.5 m across the ground from your middle to
     the thing's, with your feet within 3 m of the pad's top: Hajun's
-    "short magnet"; `Mint::pick_up`): online the server gives a thing to
+    "short magnet"; `Mint::pick_up`), and, since late that night, only
+    once the thing has dropped onto its pad and lain there a moment, 0.85
+    s after it was made (`PICK_UP_AFTER`: `DROP_SECS` 0.55 and `LIE_SECS`
+    0.3, mine; "What you see", next): online the server gives a thing to
     whoever of the people in the game comes within reach of it, where
     they last said they stood, the lower seat first within a tick, and it
     is gone for everyone that tick (`server/src/arena.rs`, `mint`,
@@ -644,9 +662,24 @@ holds for the arena now.
     `amethyst_item.glb`, cut stones of three, four, five and six sides,
     0.7 m across, each hung 0.42 m over its pad's top, bobbing 0.1 m
     either way every 2.4 s and turning once in seven, out of step with
-    the one beside it, come up from nothing in a fifth of a second, and
-    taken, flying to whoever took it in 0.16 s, shrinking (online, to the
-    nearest person to it, the server not saying who). Only those within
+    the one beside it, and taken, flying to whoever took it in 0.16 s,
+    shrinking (online, to the nearest person to it, the server not saying
+    who). **Made, it drops onto its pad** (since late that night; Hajun:
+    "the minerals spawning animation is like a growing big animation. i
+    want it to be a drop from a certain height animation. so that even
+    when player is standing on top of the generator, u can see the mineral
+    for a bit before the player pick it up"): it appears 5 m over where it
+    will hang (`loot::DROP_FROM`: over the head of anyone standing on the
+    pad, and well under the camera, so drawn nearly half as big again
+    as it lies), falls there in 0.55 s, faster as it comes
+    (`loot::height`), and
+    lies 0.3 s more before anyone can have it, so that someone standing
+    on a pad sees each thing come down, land and fly to them; until then
+    it came up from nothing to its size in a fifth of a second where it
+    lay, and was theirs the frame after. Online the drop begins as the
+    server's entity for it arrives, and the server keeps the wait. Seen
+    in a burst of shots a tenth of a second apart, offline and against a
+    server on this PC, standing on the pad. Only those within
     48 m of the camera are moved: a full map has 240. At night they glow
     in their own colours, 0.9 times, as far as the lamps are on: a
     sapphire is nearly black by moonlight, and the smaller islands have
@@ -668,15 +701,19 @@ holds for the arena now.
     map's `activation` material, at a stand roofed in `RoofTiles_Red`;
     read off the map once it has spawned, `market::shop_zones`), opens a
     small window over the middle of the screen: "Shop", a card with a
-    plank, "Bridge +50m" and its price, a silver and "4", the line "You
-    have 0m of bridge", and a red cross on its corner. It is not a dialog:
+    plank, "Bridge +25m" (50 until late that night; Hajun: "make it so 4
+    silver gets you 25m of bridge", `bridge_wars::BRIDGE_A_BUY`) and its
+    price, a silver and "4", the line "You have 0m of bridge", and a cross
+    on its corner; all of it white on grey since late that night ("The
+    panels are grey", below: its title was gold, its cross red and a
+    price you could not pay red). It is not a dialog:
     you can walk, and the fight goes on round it. A tap on the card buys
     one at once, as often as you can pay: offline here, online asked of
     the server (`Ask::Buy`), which takes the 4 silver if you hold it, are
     standing, and are within 5 m of a shop where you last said you stood
     (`ARENA_SHOPS`, `SHOP_SLACK`; a test keeps those where the map's red
-    stands are), and says so (`Tell::Bought`), on which the 50 m are
-    yours. Without 4 silver the card is blocked out and its price red.
+    stands are), and says so (`Tell::Bought`), on which the 25 m are
+    yours. Without 4 silver the card is blocked out, its price with it.
     The cross shuts it, and so does a press anywhere else on the screen,
     which is not taken, so that touching the stick walks you away, and
     Escape; shut by hand it stays shut until you have stepped out of the
@@ -686,8 +723,9 @@ holds for the arena now.
   - **Everyone starts with no bridge** (`arena.bridge_metres` in
     `assets/ui.ron`, 0 where it was 500 since 2026-11-10): my call, Hajun
     not having said, as a game of Bedwars begins with no blocks. Four
-    silver, eight seconds of a pad, is 50 m, and an island is 44 m from
-    the middle of the map. It is that one number to change back. Online
+    silver, eight seconds of a pad, is 25 m, and an island is 44 m from
+    the middle of the map: two buys. It is that one number to change
+    back. Online
     the metres are still the device's own; it is the silver the server
     keeps.
   - **The timetable** (`bridge_wars::TIMETABLE`, `PLAY_SECS`): a game
@@ -700,9 +738,99 @@ holds for the arena now.
     shares of the short side), white, up five seconds (`arena::alert`;
     `words.arena.tier_up`, `anchors_broken` and `sudden_death`, and
     `colours.arena.alert`: "Sapphire generators have been upgraded to Lvl
-    II."), over the shop's window if that is up. The four headlines four
+    II."), over the shop's window if that is up; and since late that
+    night a line about an item has that item's picture right after its
+    name, the one its count has top left, in its colour (`arena::Line`,
+    which cuts the file's line after `{item}`, and `AlertPicture`; Hajun:
+    "add the item icon after that item name in that game event text"),
+    coming and going with the words. The four headlines four
     anchors breaking at once would put on top of each other are left out
     for the one line.
+  - **The sapphire and the amethyst generators say their level and count
+    down to their next thing** (`arena::write_over_generators`, since
+    late that night; Hajun: "for the sapphire and the amethyst
+    generators, put a white text above it that shows the generator level
+    like Amethyst Generator Lvl 2, and below it, put 'Next Amethyst in
+    24sec...' that counts down. text should be small enough so it doesnt
+    cover the amethysts or teh generator but large enough to be
+    readable"): two lines of white words, 3.0 shares of the short side
+    (`GENERATOR_TEXT`, mine: between the names over heads, 2.4, and the
+    alert's line, 3.6; about 2 mm letters on the phone), one ending 0.55
+    m north of each of the eight pads and one beginning 0.55 m south of
+    it (`GENERATOR_GAP`), over and under it on the screen under the
+    camera fixed over you, centred on it, shown while the pad is on the
+    screen. The words are `words.arena.generator` ("{item} Generator Lvl
+    {level}", the level as 1, 2 or 3 where the alert writes I, II, III,
+    as Hajun wrote each) and `generator_next` ("Next {item} in
+    {seconds}sec..."), the colour `colours.arena.generator`. **Nothing
+    is sent for them**: the level is the timetable's and the count is
+    `bridge_wars::next_at`, both by the time, which online is the
+    server's to the second (`ArenaRound::left`, rounded up, so the count
+    reads 1 through the last second and the whole wait the moment a
+    thing comes, never 0). It counts on while the generator is full, at
+    the end of which nothing comes and it starts over: mine. Seen in the
+    desktop build, scripted, at a sapphire pad and an
+    amethyst pad, and across 2:00, "Lvl 1" and "2sec" to "Lvl 2" and
+    "23sec" as the sapphire dropped and the line came up with its
+    picture.
+  - **The camera stands at one height in a game and nothing zooms it**
+    (`OrbitCamera::top_down`, `locked`; since late that night, Hajun:
+    "make the camera in that mode's default zoom to be zoom in a bit more
+    so the borders of each players island just fits around perfectly on
+    the camera on my mobile phone, and lock that zoom so u cannot zoom in
+    or out"): `arena.camera_height` in `assets/ui.ron`, 15.5 m over you
+    (as `car.overhead` is, over your chest: 16.7 m over your feet), where
+    an island, 20.8 m across, takes up 96% of the screen's height with
+    you in its middle, its edge just inside the top and the bottom. The
+    camera sees 66 degrees top to bottom on every screen (`CAMERA_FOV`),
+    so that is so on any screen wider than it is tall, the phone on its
+    side among them, with the sides to spare; worked out, measured in a
+    1600 by 900 window (the island from 18 to 882 of 900 pixels), and
+    not seen on the phone. A pinch and the wheel do nothing there
+    (`zoom_by_ratio`); the file saved again moves the camera to its new
+    number (`drive::retune`, `OrbitCamera::relock`); out of the game the
+    camera is as you had it. Until then it stood the car's 24 m up,
+    where the island was 64% of the height, and zoomed between 7 and 60.
+  - **The panels are grey** (since late that night; Hajun: "the shop
+    panel is too colorful. make it all shades of white/black/gray - the
+    text, the red close button, the background, etc - no blue tint. same
+    for the timer background and minimap background, and also the
+    roundtownmap setting panel. i dont want any blue tint. and try to
+    reuse the exact grey color if possible"). The grey is your name's
+    plate's and the buttons', `#666666`: the glass behind the time
+    (`colours.panel`, `panel_lit`, House Builder's too) and the minimap's
+    background (`arena.map_back`) are the plate's very colour, alpha and
+    all (`#66666673`), so the three across the top of the screen are one;
+    the shop's window and the settings' are that grey as solid as each
+    was (`shop.window` `#666666db`, House Builder's shop with it, and
+    `settings.window` `#666666d1`); the cross on a window's corner is
+    that grey, solid, where it was red (`close`, every window's); and
+    the shadow under every word is black where it was a dark blue
+    (`text_shadow`). They were a navy (`#0a1a2e`, `#102033`) and a
+    bluish grey (`#5c5e66`). In the shop the title is white where it was
+    gold, a price you cannot pay is greyed where it was red, and the
+    silver's picture is a plain light grey (`item_silver`, which had a
+    little violet in it). **The minimap's picture is clear round the
+    land** now, its background the node's alone: it was filled with
+    `map_back` as well, so a see-through one was laid on twice and came
+    out more solid than the file said. A grey as see-through as the
+    plate's takes the colour of what is behind it, the sky's blue by day
+    over the void: the plate always has, and the time and the minimap do
+    now as it does; each is one value in the file, its alpha how solid.
+    **Left as they were, being neither blue nor asked about**: the
+    settings' chosen tab, gold, and its Delete account, red; the
+    headlines ("Fight!"), gold; the items' own colours beside their
+    counts. Seen in the desktop build, scripted: the board and the
+    minimap over the sky and over the town's paving, the shop's window,
+    and the settings' window in the town.
+  - **`PROTOCOL_VERSION` 12, the server deployed with it** (the binary
+    before kept on the VM as `roundtown-server.prev-2026-11-11c`): a
+    bridge bought is 25 m where an app from before would count 50. The
+    drop's wait and the generators' counts are the server's online. This
+    PC's build was let in by the VM after. APK 19 is built, its assets
+    checked byte for byte, and **not installed: no phone was attached**;
+    none of this has been seen on the phone, the camera's fit least of
+    all.
   - **The zombies are all mine but that they come**: the file says
     "Sudden death: zombies spawn all over the map", and no more. Twelve
     (`ZOMBIES`): one on each team's island, 4 m to the blue stand's side
@@ -1209,7 +1337,9 @@ holds for the arena now.
     dot and your teammate as a green dot, and the full map in top down view
     including the live bridges but not show the other players"): a picture
     256 pixels square of the map from above, 300 m across with north up,
-    the land in `colours.arena.map_land` over `map_back`, drawn once from
+    the land in `colours.arena.map_land` over `map_back` (the node's
+    background, the picture clear round the land since late on
+    2026-11-11), drawn once from
     the map's own triangles that face up and lie under 2 m (`draw_land`:
     the islands, the town's middle, the desks, and since the map of
     2026-11-11 the barrels; not the stands' roofs, the trees' leaves, the
@@ -1362,9 +1492,11 @@ holds for the arena now.
   `arena::Game::view`; the car's `overhead` keeps its own, and going into
   the arena gets you out of the car, `drive::toggle` on the change of
   island, the camera going back to how it was before the car rather than
-  to the car's, `Driving::take_view`): the file's `car.overhead` up with
-  the top of the screen north, zooming between `overhead_nearest` and
-  `overhead_furthest`, nothing turning it. Everywhere else it is behind
+  to the car's, `Driving::take_view`): the file's `arena.camera_height`
+  up, 15.5 m, with the top of the screen north, nothing turning it and,
+  since late on 2026-11-11, nothing zooming it ("The camera stands at one
+  height in a game", above; the car's `overhead`, 24 m, zooming between
+  `overhead_nearest` and `overhead_furthest`, until then). Everywhere else it is behind
   you as it was before 2026-11-07, "The camera stands where you zoomed
   it" below, and on desktop the cursor is taken for looking round as the
   app opens (`lock_cursor`, unless `RT_FREE_CURSOR`), and let go for as

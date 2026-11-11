@@ -46,7 +46,10 @@
 //! room is sent ([`Loot`]), and whoever of the people in the game comes
 //! within the magnet's reach of one, where they last said they stood, has
 //! it: it is gone for everyone that tick, and theirs in the room's
-//! [`Purses`]. The computer's players pick up nothing. [`Ask::Buy`] takes
+//! [`Purses`]. Not before it has dropped onto its pad and lain there a
+//! moment, though ([`PICK_UP_AFTER`], since late on 2026-11-11), so that someone
+//! standing on the pad sees it come. The computer's players pick up
+//! nothing. [`Ask::Buy`] takes
 //! a ware's price out of the asker's purse and tells them it is theirs
 //! ([`Tell::Bought`]). And the game keeps Hajun's timetable ([`TIMETABLE`]):
 //! the generators' tiers are the mint's own by the time; at ten minutes
@@ -245,14 +248,15 @@ impl Game {
     }
 
     /// Whoever in `seat` stands at `at` picks up everything a generator
-    /// has made within the magnet's reach of them, if they are a person,
-    /// standing, and at a pad's height: it is theirs, and gone from the
-    /// pads. What they took, for the room to stop being sent it.
+    /// has made within the magnet's reach of them that has dropped and
+    /// lain its moment, if they are a person, standing, and at a pad's
+    /// height: it is theirs, and gone from the pads. What they took, for
+    /// the room to stop being sent it.
     fn gather(&mut self, seat: usize, at: Vec3) -> Vec<Piece> {
         if self.bot[seat] || !self.alive(seat) || (at.y - PAD_TOP).abs() > MAGNET_HEIGHT {
             return Vec::new();
         }
-        let taken = self.mint.pick_up(at.xz());
+        let taken = self.mint.pick_up(at.xz(), self.elapsed);
         for piece in &taken {
             let held = &mut self.purses[seat][piece.item.index()];
             *held = held.saturating_add(1);
@@ -445,7 +449,7 @@ impl Arenas {
                     planks: Vec::new(),
                     rungs: Vec::new(),
                     elapsed: 0.0,
-                    mint: Mint::new(&mut || fastrand::f32()),
+                    mint: Mint::new(0.0, &mut || fastrand::f32()),
                     loot: HashMap::new(),
                     purses: Vec::new(),
                     sent: None,
@@ -754,7 +758,7 @@ fn run(
                     // from as far into it as the server was told to.
                     game.elapsed = config.arena_from.clamp(0.0, PLAY_SECS - 1.0);
                     game.left = PLAY_SECS - game.elapsed;
-                    game.mint = Mint::new(&mut || fastrand::f32());
+                    game.mint = Mint::new(game.elapsed, &mut || fastrand::f32());
                     info!("Bridge Wars game {}: fight, {} s to play", game.id, game.left);
                     // Begun late, everything before then has happened.
                     for event in happening_between(-1.0, game.elapsed) {
@@ -769,7 +773,7 @@ fn run(
                 for event in happening_between(before, game.elapsed) {
                     happen(&mut commands, game, event, now);
                 }
-                mint(&mut commands, &bodies, game, dt);
+                mint(&mut commands, &bodies, game);
                 fight(&mut commands, &mut tells, &mut bodies, game, dt, now);
                 let teams = game.teams_in_play();
                 let winner = match (teams.len(), game.left <= 0.0) {
@@ -828,9 +832,9 @@ fn happen(commands: &mut Commands, game: &mut Game, event: Happening, now: f64) 
 /// The generators, for one frame of the fight: what they make comes up on
 /// its pad for the whole room, and what anyone has come near enough to is
 /// theirs, and gone from the room.
-fn mint(commands: &mut Commands, bodies: &Bodies, game: &mut Game, dt: f32) {
+fn mint(commands: &mut Commands, bodies: &Bodies, game: &mut Game) {
     let room = game.room();
-    for piece in game.mint.run(dt, game.elapsed, &mut || fastrand::f32()) {
+    for piece in game.mint.run(game.elapsed, &mut || fastrand::f32()) {
         let entity = commands
             .spawn((
                 Replicated,
@@ -1260,7 +1264,7 @@ mod tests {
             planks: Vec::new(),
             rungs: Vec::new(),
             elapsed: 0.0,
-            mint: Mint::new(&mut || 0.5),
+            mint: Mint::new(0.0, &mut || 0.5),
             loot: HashMap::new(),
             purses: Vec::new(),
             sent: None,
@@ -1392,9 +1396,16 @@ mod tests {
         let (dt, mut dice) = (0.05, || 0.5);
         for _ in 0..410 {
             game.elapsed += dt;
-            game.mint.run(dt, game.elapsed, &mut dice);
+            game.mint.run(game.elapsed, &mut dice);
         }
+        // A second on, with nothing more made, the last of them has
+        // dropped and lain its moment: until then it is nobody's.
         let pad = ARENA_PADS[0];
+        let fresh = game.mint.pieces().iter().filter(|piece| game.elapsed - piece.born < PICK_UP_AFTER).count();
+        assert_eq!(fresh, 4, "the tenth silver of each pad has only just been made");
+        let mut early = game.mint.clone();
+        assert_eq!(early.pick_up(pad, game.elapsed).len(), 11, "the one still dropping is left");
+        game.elapsed += 1.0;
         let lying = game.mint.pieces().len();
         assert_eq!(lying, 4 * (10 + 2));
         let on_pad = Vec3::new(pad.x, PAD_TOP, pad.y);

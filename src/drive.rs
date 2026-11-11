@@ -439,7 +439,15 @@ fn retune(changed: Res<UiChanged>, driving: Res<Driving>, mut orbit: ResMut<Orbi
     }
     let car = tuning();
     let was = last.replace(car.overhead);
-    // Over you in the car, and in a game of Bridge Wars out of it (`arena`).
+    // In a game of Bridge Wars the camera's height is the game's own, and
+    // nothing zooms it (`OrbitCamera::top_down`).
+    if orbit.locked {
+        if !changed.is_added() {
+            orbit.relock();
+        }
+        return;
+    }
+    // Over you in the car.
     if !(orbit.overhead || driving.on()) || changed.is_added() {
         return;
     }

@@ -5,7 +5,17 @@
 //! bridge. make it so u just tap on the bridge and it buys 1 time right
 //! away no confirmation needed. and u can close the shop panel tapping on
 //! close button in top right corner or just tapping anywhere else on
-//! screen").
+//! screen"). 25 m for the 4 silver since late on 2026-11-11 ("make it so 4 silver
+//! gets you 25m of bridge"; `roundtown_net::bridge_wars::BRIDGE_A_BUY`).
+//!
+//! **The window is white on grey, and nothing else** (since late on 2026-11-11;
+//! Hajun: "the shop panel is too colorful. make it all shades of
+//! white/black/gray - the text, the red close button, the background, etc
+//! - no blue tint"): its glass the grey of your name's plate
+//! (`colours.shop.window`), its title white where it was gold, the cross
+//! on its corner grey where it was red (`colours.close`, every window's),
+//! and a price you cannot pay greyed with the rest of its card where it
+//! was red.
 //!
 //! **Where the shops are is the map's**: Hajun drew a white outline on the
 //! ground in front of every stand, in a material called `activation`
@@ -293,7 +303,7 @@ fn open(commands: &mut Commands, images: &mut Assets<Image>, stock: &Resources) 
             GlobalZIndex(builder::DIALOG_LAYER - 2),
         ))
         .with_children(|window| {
-            window.spawn(builder::label(words.shop.clone(), TITLE, colours.gold));
+            window.spawn(builder::label(words.shop.clone(), TITLE, colours.text));
             window
                 .spawn((
                     BridgeCard,
@@ -364,7 +374,7 @@ fn open(commands: &mut Commands, images: &mut Assets<Image>, stock: &Resources) 
 
 /// How the card looks when you can pay for it and when you cannot: its
 /// fill, lit under the pointer only if it can be bought; the name of what
-/// it sells; and its price, a warning with too little.
+/// it sells; and its price, both greyed with too little.
 fn card_look(able: bool) -> (Fill, Color, Color) {
     let colours = ui().colours;
     if able {
@@ -383,12 +393,12 @@ fn card_look(able: bool) -> (Fill, Color, Color) {
                 lit: colours.shop.card_off,
             },
             colours.shop.name_off,
-            colours.warn_lit,
+            colours.shop.name_off,
         )
     }
 }
 
-/// "You have 50m of bridge".
+/// "You have 25m of bridge".
 fn have(stock: &Resources) -> String {
     fill(&ui().words.arena.shop_have, &[("metres", &format!("{:.0}", stock.bridge_metres.max(0.0).round()))])
 }

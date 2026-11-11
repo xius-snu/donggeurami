@@ -774,6 +774,10 @@ struct OrbitCamera {
     /// between the file's `car.overhead_nearest` and `overhead_furthest`,
     /// never into your eyes.
     overhead: bool,
+    /// Fixed over you as high as it is, with nothing zooming it: in a game
+    /// of Bridge Wars (since late on 2026-11-11; Hajun: "lock that zoom so u
+    /// cannot zoom in or out"), the file's `arena.camera_height` up.
+    locked: bool,
 }
 
 /// How the camera was turned and zoomed, to go back to
@@ -794,23 +798,40 @@ impl Default for OrbitCamera {
             distance: CAMERA_DISTANCE,
             past: 1.0,
             overhead: false,
+            locked: false,
         }
     }
 }
 
 impl OrbitCamera {
-    /// Fixes it straight down over you, the file's `car.overhead` up, with
-    /// the top of the screen north (Blender's +Y, the game's -Z), the same
-    /// wherever you are and whichever way you face, so that the map is
-    /// always the same way up: for a game of Bridge Wars (`arena`, since
-    /// the night of 2026-11-07; the town itself for 2026-11-07, Hajun: "make the camera
-    /// top down for even the player mode"). Nothing turns it; it zooms. How
-    /// it was, to go back to, unless it was fixed over you already, in the
-    /// car.
+    /// Fixes it straight down over you, the file's `arena.camera_height`
+    /// up, with the top of the screen north (Blender's +Y, the game's -Z),
+    /// the same wherever you are and whichever way you face, so that the
+    /// map is always the same way up: for a game of Bridge Wars (`arena`,
+    /// since the night of 2026-11-07; the town itself for 2026-11-07,
+    /// Hajun: "make the camera top down for even the player mode").
+    /// Nothing turns it, and since late on 2026-11-11 nothing zooms it either
+    /// (`locked`): it stands where an island just fits the height of the
+    /// screen with you in its middle, on any screen wider than it is
+    /// tall, the camera's view being so many degrees top to bottom
+    /// ([`CAMERA_FOV`]); the car's `overhead`, 24 m, and zoomed between 7
+    /// and 60, until then. How it was, to go back to, unless it was fixed
+    /// over you already, in the car.
     fn top_down(&mut self) -> Option<View> {
         let was = (!self.overhead).then(|| self.overhead());
         self.yaw = 0.0;
+        self.distance = ui::ui().arena.camera_height;
+        self.locked = true;
         was
+    }
+
+    /// The file read again in a game of Bridge Wars: the camera goes to
+    /// the height it says now.
+    fn relock(&mut self) {
+        let height = ui::ui().arena.camera_height;
+        if self.locked && self.distance != height {
+            self.distance = height;
+        }
     }
 
     /// Behind `body`, looking the way it faces, at the starting tilt and
@@ -848,6 +869,7 @@ impl OrbitCamera {
         self.distance = view.distance;
         self.past = view.past;
         self.overhead = false;
+        self.locked = false;
     }
 
     /// Zooms in, for a `ratio` under 1, or out: the camera stands that much
@@ -855,8 +877,12 @@ impl OrbitCamera {
     /// goes into your eyes, and that is as far in as it zooms; zoomed out
     /// from there, it is straight back behind you, as near as it stands
     /// (Hajun, 2026-10-09). Over you, it stays over you, between the file's
-    /// `car.overhead_nearest` and `overhead_furthest`.
+    /// `car.overhead_nearest` and `overhead_furthest`; locked, in a game of
+    /// Bridge Wars, it does not zoom at all.
     fn zoom_by_ratio(&mut self, ratio: f32) {
+        if self.locked {
+            return;
+        }
         if self.overhead {
             let car = ui::ui().car;
             self.distance = (self.distance * ratio).clamp(car.overhead_nearest, car.overhead_furthest);
@@ -3216,6 +3242,61 @@ mod camera_tests {
         // And so it is in your eyes, looking at your feet.
         let feet = camera_view(&OrbitCamera { distance: 0.0, ..you }, &player, None);
         assert!(camera_ahead(&feet).distance(turned) < 1e-4);
+    }
+
+    #[test]
+    fn in_bridge_wars_it_is_fixed_over_you_and_nothing_zooms_it() {
+        // Turned and zoomed some way, then fixed over you for a game: the
+        // top of the screen north, straight down, as high as the file says.
+        let mut you = orbit(0.9, 0.38, 12.0);
+        let was = you.top_down().expect("it was behind you");
+        let height = ui::ui().arena.camera_height;
+        assert!(you.overhead && you.locked);
+        assert_eq!((you.yaw, you.pitch, you.distance), (0.0, PITCH_MAX, height));
+        // Neither a pinch nor the wheel moves it, in or out, and nothing
+        // turns it.
+        for ratio in [0.5, 0.88, 1.12, 2.0] {
+            you.zoom_by_ratio(ratio);
+            assert_eq!(you.distance, height);
+        }
+        you.turn(Vec2::new(300.0, -200.0));
+        assert_eq!((you.yaw, you.pitch), (0.0, PITCH_MAX));
+        // Out of the game it is as it was, and zooms again.
+        you.back_to(was);
+        assert!(!you.overhead && !you.locked);
+        assert_eq!((you.yaw, you.pitch, you.distance), (0.9, 0.38, 12.0));
+        you.zoom_by_ratio(1.1);
+        assert!(you.distance > 12.0);
+        // Over you already, in the car, and then into a game: there is
+        // nothing to go back to, and it is locked at the game's height all
+        // the same.
+        let mut you = orbit(0.3, 0.38, 9.0);
+        you.overhead();
+        you.zoom_by_ratio(1.5);
+        assert!(you.top_down().is_none());
+        assert!(you.locked);
+        assert_eq!(you.distance, height);
+    }
+
+    #[test]
+    fn from_15_5_m_up_an_island_just_fits_the_height_of_the_screen() {
+        // What the file's `arena.camera_height` was chosen by (the file's
+        // own number is Hajun's to change, and is not held to this): with
+        // you in the middle of your island, the island's edge is just
+        // inside the top and the bottom of the screen, the island taking
+        // up all of its height but a twenty-fifth, on any screen wider
+        // than it is tall, the camera seeing so many degrees top to bottom.
+        let you = OrbitCamera {
+            distance: 15.5,
+            ..orbit(0.0, PITCH_MAX, 15.5)
+        };
+        let player = Transform::from_xyz(0.0, 0.25, 130.0);
+        let view = camera_view(&you, &player, None);
+        assert!(view.forward().dot(Vec3::NEG_Y) > 1.0 - 1e-6);
+        let over = view.translation.y - player.translation.y;
+        let seen = 2.0 * over * (CAMERA_FOV * 0.5).tan();
+        let share = 2.0 * roundtown_net::ARENA_ISLAND_RADIUS / seen;
+        assert!(share > 0.95 && share < 0.97, "the island is {share} of the screen's height");
     }
 
     #[test]

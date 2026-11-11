@@ -16,10 +16,11 @@
 (
     colours: (
         // Words, wherever they are: plain, small print, and the shadow under
-        // words that stand over the world.
+        // words that stand over the world (black: a dark blue until
+        // late on 2026-11-11, when every blue tint went).
         text: "#ffffff",
         text_soft: "#ffffffc7",
-        text_shadow: "#051f3866",
+        text_shadow: "#00000066",
         // Gold: titles, prizes, lit stars, a chosen tab, and the gold buttons
         // (Play again, the settings' Save), lit under the pointer; and the
         // dark blue of words on gold.
@@ -31,20 +32,24 @@
         warn: "#ad311e",
         warn_lit: "#d03a1c",
         // Dialogs: the dark over the world behind one, the dialog itself, and
-        // the dark glass behind words that stand over the world (House
-        // Builder's time, the hammer), lit under the pointer.
+        // the glass behind words that stand over the world (Bridge Wars' and
+        // House Builder's time, the hammer), lit under the pointer: the very
+        // grey of your name's plate (hud.name_plate), as the minimap's
+        // background, the shop's window and the settings' are that grey
+        // too, each as solid as its own alpha says.
         dim: "#00000073",
         dialog: "#000000d9",
-        panel: "#0a1a2e6b",
-        panel_lit: "#0a1a2e99",
+        panel: "#66666673",
+        panel_lit: "#66666699",
         // A quiet button (Cancel, Later, Exit, a tab not chosen), lit under
         // the pointer; a button that cannot be pressed, and its words; and
-        // the cross on a window's corner, with its rim.
+        // the cross on a window's corner (the same grey, solid; red until
+        // late on 2026-11-11), with its rim.
         quiet: "#ffffff24",
         quiet_lit: "#ffffff42",
         off: "#ffffff12",
         off_text: "#ffffff59",
-        close: "#ad311e",
+        close: "#666666",
         close_rim: "#ffffffb2",
         // The bar across the top and the round buttons, which a phone's stick
         // and jump button share: a button's disc, the jump button while it is
@@ -74,7 +79,7 @@
         // The settings: the window's glass, and a sign-in not to be had yet,
         // blocked out, with its words.
         settings: (
-            window: "#5c5e66d1",
+            window: "#666666d1",
             blocked: "#ffffff14",
             blocked_text: "#ffffff66",
         ),
@@ -94,7 +99,7 @@
         // under the pointer, a card that cannot be chosen with its picture
         // and name, and the note that says why.
         shop: (
-            window: "#0a1a2edb",
+            window: "#666666db",
             hammer_rim: "#ffffff80",
             handle: "#f5c785",
             card: "#ffffff1a",
@@ -160,11 +165,12 @@
             // their sides.
             plank: "#b98a52",
             plank_side: "#8a6238",
-            // The minimap top right: the land, what shows round it, you
-            // (a red dot) and your teammate (a green dot). The bridges on
-            // it take the planks' colour above.
+            // The minimap top right: the land, what shows round it (the
+            // grey of your name's plate), you (a red dot) and your teammate
+            // (a green dot). The bridges on it take the planks' colour
+            // above.
             map_land: "#d9c9a8",
-            map_back: "#102033b3",
+            map_back: "#66666673",
             map_me: "#ff3b30",
             map_mate: "#3ddc84",
             // The metres of bridge you have left, written in front of you
@@ -178,14 +184,17 @@
             // beside its count top left and in the shop: silver, gold,
             // sapphire and amethyst. (The things lying on the pads are
             // the models' own colours.)
-            item_silver: "#e9e4ee",
+            item_silver: "#e6e6e6",
             item_gold: "#f2b63a",
             item_sapphire: "#5b7dff",
             item_amethyst: "#cf5fe0",
             // The line in the upper half of the screen that says what has
             // just happened: "Sapphire generators have been upgraded to
-            // Lvl II."
+            // Lvl II.", with the item's picture after its name.
             alert: "#ffffff",
+            // What is written over and under each sapphire and amethyst
+            // generator: its level, and the count to its next thing.
+            generator: "#ffffff",
         ),
     ),
     // The font is plain ASCII: no Hangul, and a hyphen for a dash. Where a
@@ -335,8 +344,10 @@
             amethyst: "Amethyst",
             // The lines in the upper half of the screen as the game's
             // timetable moves on: a generator's tier raised ({level} is I,
-            // II or III), every anchor broken at 10:00, and sudden death
-            // at 15:00; and the line under "Time's up!" at 25:00.
+            // II or III; the item's picture is drawn right after {item},
+            // so keep {item} in the line), every anchor broken at 10:00,
+            // and sudden death at 15:00; and the line under "Time's up!"
+            // at 25:00.
             tier_up: "{item} generators have been upgraded to Lvl {level}.",
             anchors_broken: "All respawn anchors have been destroyed.",
             sudden_death: "Sudden death! Zombies are loose on the map.",
@@ -346,6 +357,11 @@
             shop: "Shop",
             shop_bridge: "Bridge +{metres}m",
             shop_have: "You have {metres}m of bridge",
+            // Over each sapphire and amethyst generator, its level
+            // ({level} is 1, 2 or 3), and under it the seconds to its next
+            // thing, counting down.
+            generator: "{item} Generator Lvl {level}",
+            generator_next: "Next {item} in {seconds}sec...",
         ),
     ),
     // The car you drive (the face button, or C on desktop): every number of
@@ -472,7 +488,7 @@
     // pillar on its island, starts with anchor_health: ten punches
     // (2026-11-09; twenty the day before); broken, its team's dead stay
     // dead. Everyone starts a game with bridge_metres of bridge to lay
-    // (none: it is bought at the shop, 50 m for 4 silver; the number is
+    // (none: it is bought at the shop, 25 m for 4 silver; the number is
     // written in front of you while you build), and lays it a plank at a
     // time until it runs out. These numbers rule offline; online the
     // server plays by the same ones built into it
@@ -502,5 +518,11 @@
         // let go of the stick.
         bridge_low_at: 10.0,
         bridge_red_at: 5.0,
+        // The camera in Bridge Wars: fixed straight down over you this far
+        // up, in metres (as car.overhead is, over your chest), and nothing
+        // zooms it. At 15.5 an island, 20.8 m across, just fits the height
+        // of the screen with you in its middle; a bigger number shows more
+        // round it.
+        camera_height: 15.5,
     ),
 )

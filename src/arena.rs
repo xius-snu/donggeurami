@@ -89,10 +89,13 @@
 //! the server, whose [`Purses`] say what everyone holds), and what you
 //! hold is counted top left ([`Resources`], `hud`); the things themselves
 //! are drawn by `loot`, and the shop that sells bridge for silver is
-//! `market`. The game lasts 25 minutes, and on the way its timetable
-//! happens ([`timetable`], `rules::TIMETABLE`), each thing said in a line
-//! across the upper half of the screen ([`alert`]; "Sapphire generators
-//! have been upgraded to Lvl II."): the sapphire and amethyst generators
+//! `market`. Over each sapphire and amethyst generator its level is
+//! written, and under it the seconds to its next thing, counting down
+//! ([`write_over_generators`]). The game lasts 25 minutes, and on the way
+//! its timetable happens ([`timetable`], `rules::TIMETABLE`), each thing
+//! said in a line across the upper half of the screen ([`alert`];
+//! "Sapphire generators have been upgraded to Lvl II.", the item's picture
+//! after its name): the sapphire and amethyst generators
 //! quicken at 2, 4, 6 and 8 minutes; at 10 every anchor left breaks; at
 //! 15, sudden death, twelve zombies rise all over the map ([`Zombie`]:
 //! the body everyone has, gone green, on nobody's team, going for whoever
@@ -112,8 +115,8 @@ use bevy::world_serialization::WorldInstanceReady;
 use bevy_replicon::prelude::Remote;
 use roundtown_net::bridge_wars::{self as rules, BOT_WAIT, COUNTDOWN, Happening, Mint, PLAY_SECS, RESULTS_SECS};
 use roundtown_net::{
-    ANCHOR_RADIUS, ARENA_ANCHORS, ARENA_SEATS, ARENA_TEAMS, ArenaRound, ArenaStage, Ask as NetAsk, Item, Member, PAD_TOP,
-    Purse, Purses, Seats, Tell, Ware, arena_team,
+    ANCHOR_RADIUS, ARENA_ANCHORS, ARENA_SEATS, ARENA_TEAMS, ArenaRound, ArenaStage, Ask as NetAsk, Item, Member, PAD_HALF,
+    PAD_TOP, Purse, Purses, Seats, Tell, Ware, arena_team,
 };
 
 use crate::ai::{self, Steering};
@@ -125,7 +128,7 @@ use crate::lobby::{self, Lobby, Seat, Whereabouts};
 use crate::loot;
 use crate::net::Online;
 use crate::range::Sector;
-use crate::ui::{fill, ui};
+use crate::ui::{UiChanged, fill, ui};
 use crate::{
     Carrying, Dead, Intent, Landed, OrbitCamera, PLAYER_HEIGHT, PLAYER_RADIUS, Player, PlayerJump, Punching, Shove,
     Swung, Team, ThirdPersonCamera, View, WalkCycle, void_y,
@@ -170,6 +173,21 @@ const ALERT_DOWN: f32 = 24.0;
 const ALERT_SECS: f32 = 5.0;
 const ALERT_IN: f32 = 0.3;
 const ALERT_OUT: f32 = 0.8;
+/// The picture of the item such a line is about, after its name: how big,
+/// a little over the words' height; and how far it and the words either
+/// side of it stand apart, about a space.
+const ALERT_PICTURE: f32 = 3.8;
+const ALERT_GAP: f32 = 1.0;
+/// What is written over and under a sapphire or an amethyst generator
+/// ([`write_over_generators`]): how big, between the names over heads
+/// and the alert's line (Hajun: "small enough so it doesnt cover the
+/// amethysts or teh generator but large enough to be readable"; the
+/// number is mine: 2 mm letters on a phone, a line about four pads wide,
+/// which covers nothing of the pad, being over and under it); and
+/// how far past the pad's edge the words begin, in metres across the
+/// ground, clear of what lies on the pad and of what is dropping onto it.
+const GENERATOR_TEXT: f32 = 3.0;
+const GENERATOR_GAP: f32 = 0.55;
 const PANEL_WIDTH: f32 = 58.0;
 const PANEL_TITLE: f32 = 5.6;
 const PANEL_TEXT: f32 = 3.4;
@@ -507,6 +525,58 @@ struct BoardCaption;
 struct Alert {
     age: f32,
 }
+/// The picture in such a line, of the item it is about.
+#[derive(Component)]
+struct AlertPicture(Item);
+
+/// What such a line says: words, and, where it is about an item, that
+/// item's picture standing right after its name, with the rest of the
+/// words after it (Hajun, late on 2026-11-11: "add the item icon after that item
+/// name in that game event text", the picture its count has top left).
+#[derive(Clone, PartialEq, Debug)]
+struct Line {
+    before: String,
+    picture: Option<Item>,
+    after: String,
+}
+
+impl Line {
+    fn plain(words: &str) -> Self {
+        Self {
+            before: words.to_string(),
+            picture: None,
+            after: String::new(),
+        }
+    }
+
+    /// The file's line for a generator's tier raised, `template`, with the
+    /// item's `name` and its `level` filled in, cut after the name for the
+    /// picture of `item` to stand there. A line that does not name the
+    /// item has no picture.
+    fn of_tier(template: &str, item: Item, name: &str, level: &str) -> Self {
+        let fills = [("item", name), ("level", level)];
+        match template.split_once("{item}") {
+            Some((before, after)) => Self {
+                before: format!("{}{name}", fill(before, &fills)),
+                picture: Some(item),
+                after: fill(after, &fills).trim_start().to_string(),
+            },
+            None => Self::plain(&fill(template, &fills)),
+        }
+    }
+}
+
+/// What is written by a sapphire or an amethyst generator
+/// ([`write_over_generators`]): which generator's (`rules::generator`);
+/// whether these are the words under its pad, the count to its next
+/// thing, rather than those over it, its level; and the number they last
+/// said, the seconds or the level, if they have said one.
+#[derive(Component)]
+struct GeneratorWords {
+    generator: usize,
+    under: bool,
+    said: Option<u32>,
+}
 
 /// The words across the screen while you are dead, and the line of them.
 #[derive(Component)]
@@ -576,7 +646,8 @@ pub(crate) fn plugin(app: &mut App) {
                     .chain()
                     .after(crate::move_bodies)
                     .before(crate::follow_camera),
-                (show_death, show_panel, place_tags, place_anchor_bars, float_numbers).after(crate::follow_camera),
+                (show_death, show_panel, place_tags, place_anchor_bars, float_numbers, write_over_generators)
+                    .after(crate::follow_camera),
                 (paint_zombies, fade_alerts),
             ),
         );
@@ -1072,7 +1143,7 @@ fn play(
             // the fight begins ([`timetable`], which looks from 0).
             game.elapsed = fight_from();
             game.said = 0.0;
-            game.mint = Mint::new(&mut || fastrand::f32());
+            game.mint = Mint::new(game.elapsed, &mut || fastrand::f32());
             let left = PLAY_SECS - game.elapsed;
             info!("Bridge Wars: everyone to their islands, {left} s to play");
             game.stage = Stage::Playing { left };
@@ -1168,7 +1239,7 @@ fn open(
         out: [false; ARENA_SEATS],
         elapsed: 0.0,
         said: 0.0,
-        mint: Mint::new(&mut || fastrand::f32()),
+        mint: Mint::new(0.0, &mut || fastrand::f32()),
     }
 }
 
@@ -1196,6 +1267,7 @@ fn timetable(
     islands: Res<Islands>,
     assets: Res<AssetServer>,
     alerts: Query<Entity, With<Alert>>,
+    mut images: ResMut<Assets<Image>>,
     mut commands: Commands,
 ) {
     let Some(mut game) = game else {
@@ -1214,11 +1286,9 @@ fn timetable(
         let file = ui();
         let words = &file.words.arena;
         said = Some(match happening {
-            Happening::Tier { item, tier } => {
-                fill(&words.tier_up, &[("item", words.item(item)), ("level", roman(tier))])
-            }
-            Happening::AnchorsBreak => words.anchors_broken.clone(),
-            Happening::SuddenDeath => words.sudden_death.clone(),
+            Happening::Tier { item, tier } => Line::of_tier(&words.tier_up, item, words.item(item), roman(tier)),
+            Happening::AnchorsBreak => Line::plain(&words.anchors_broken),
+            Happening::SuddenDeath => Line::plain(&words.sudden_death),
         });
         if game.online {
             continue;
@@ -1238,7 +1308,7 @@ fn timetable(
         for old in &alerts {
             commands.entity(old).try_despawn();
         }
-        alert(&mut commands, &line);
+        alert(&mut commands, &mut images, &line);
     }
 }
 
@@ -1290,7 +1360,7 @@ fn raise_zombie(commands: &mut Commands, assets: &AssetServer, game: &mut Game, 
     game.bodies.push(Some(body));
 }
 
-/// The generators, offline: what they make comes up on its pad (`loot`),
+/// The generators, offline: what they make drops onto its pad (`loot`),
 /// and whatever you walk within the magnet's reach of is yours, counted
 /// top left. Online both are the server's (`loot::follow_server`,
 /// [`follow_round`]). The computer's players pick up nothing.
@@ -1307,13 +1377,15 @@ fn gather(
         return;
     }
     let mut game = game.expect("checked");
-    // Picked up before anything new is made, so that whatever is picked
-    // up has been on its pad a frame, and is there to be seen going.
+    let elapsed = game.elapsed;
+    // Whatever is within reach that has dropped and lain its moment
+    // (`rules::PICK_UP_AFTER`): standing on the pad, you see each thing
+    // come down before it is yours.
     if let Ok((you, at, dead)) = me.single()
         && !dead
         && (at.translation.y - PAD_TOP).abs() <= rules::MAGNET_HEIGHT
     {
-        for piece in game.mint.pick_up(at.translation.xz()) {
+        for piece in game.mint.pick_up(at.translation.xz(), elapsed) {
             let held = &mut stock.held[piece.item.index()];
             *held = held.saturating_add(1);
             if let Some((thing, _)) = things.iter().find(|(_, thing)| thing.key == loot::Key::Own(piece.id)) {
@@ -1321,8 +1393,7 @@ fn gather(
             }
         }
     }
-    let elapsed = game.elapsed;
-    for piece in game.mint.run(time.delta_secs(), elapsed, &mut || fastrand::f32()) {
+    for piece in game.mint.run(elapsed, &mut || fastrand::f32()) {
         loot::lay(&mut commands, &look, time.elapsed_secs(), loot::Key::Own(piece.id), piece.item, piece.at);
     }
 }
@@ -1332,38 +1403,64 @@ fn gather(
 /// 2026-11-11: "it should show a small alert in around middle of the
 /// upper half of screen that tells the event, for example: 'Sapphire
 /// generators have been upgraded to Lvl II.'").
-fn alert(commands: &mut Commands, line: &str) {
+/// A line about an item has that item's picture after its name, the one
+/// its count has top left, in the item's colour (since late on 2026-11-11).
+fn alert(commands: &mut Commands, images: &mut Assets<Image>, line: &Line) {
     // Put up clear, to be brought up.
-    let ink = ui().colours.arena.alert.with_alpha(0.0);
-    commands.spawn((
-        InArena,
-        Alert { age: 0.0 },
-        Node {
-            position_type: PositionType::Absolute,
-            top: Val::Vh(ALERT_DOWN),
-            left: Val::ZERO,
-            right: Val::ZERO,
-            justify_content: JustifyContent::Center,
-            ..default()
-        },
-        // Over the shop's window, should it be up.
-        GlobalZIndex(builder::DIALOG_LAYER - 1),
-        Pickable::IGNORE,
-        children![hud::words(line, ALERT_TEXT, ink)],
-    ));
+    let colours = ui().colours.arena;
+    let ink = colours.alert.with_alpha(0.0);
+    commands
+        .spawn((
+            InArena,
+            Alert { age: 0.0 },
+            Node {
+                position_type: PositionType::Absolute,
+                top: Val::Vh(ALERT_DOWN),
+                left: Val::ZERO,
+                right: Val::ZERO,
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                column_gap: Val::VMin(ALERT_GAP),
+                ..default()
+            },
+            // Over the shop's window, should it be up.
+            GlobalZIndex(builder::DIALOG_LAYER - 1),
+            Pickable::IGNORE,
+        ))
+        .with_children(|row| {
+            if !line.before.is_empty() {
+                row.spawn(hud::words(line.before.as_str(), ALERT_TEXT, ink));
+            }
+            if let Some(item) = line.picture {
+                row.spawn((
+                    AlertPicture(item),
+                    ImageNode::new(images.add(hud::item_picture(item))).with_color(colours.item(item).with_alpha(0.0)),
+                    Node {
+                        width: Val::VMin(ALERT_PICTURE),
+                        height: Val::VMin(ALERT_PICTURE),
+                        flex_shrink: 0.0,
+                        ..default()
+                    },
+                    Pickable::IGNORE,
+                ));
+            }
+            if !line.after.is_empty() {
+                row.spawn(hud::words(line.after.as_str(), ALERT_TEXT, ink));
+            }
+        });
 }
 
-/// Brings each alert up, holds it, and takes it away again.
+/// Brings each alert up, holds it, and takes it away again, its picture
+/// with its words.
 fn fade_alerts(
     time: Res<Time>,
     mut alerts: Query<(Entity, &mut Alert, &Children)>,
     mut lines: Query<(&mut TextColor, &mut TextShadow)>,
+    mut pictures: Query<(&AlertPicture, &mut ImageNode)>,
     mut commands: Commands,
 ) {
-    let (ink, shadow) = {
-        let colours = ui().colours;
-        (colours.arena.alert, colours.text_shadow)
-    };
+    let colours = ui().colours;
+    let (ink, shadow) = (colours.arena.alert, colours.text_shadow);
     for (entity, mut alert, children) in &mut alerts {
         alert.age += time.delta_secs();
         if alert.age >= ALERT_SECS {
@@ -1371,15 +1468,144 @@ fn fade_alerts(
             continue;
         }
         let solid = (alert.age / ALERT_IN).min((ALERT_SECS - alert.age) / ALERT_OUT).clamp(0.0, 1.0);
-        let mut words = lines.iter_many_mut(children);
-        while let Some((mut colour, mut under)) = words.fetch_next() {
-            // Only while it is fading: held, the words are left alone.
-            let faded = ink.with_alpha(ink.alpha() * solid);
-            if colour.0 != faded {
-                colour.0 = faded;
-                under.color = shadow.with_alpha(shadow.alpha() * solid);
+        for child in children.iter() {
+            // Only while it is fading: held, the line is left alone.
+            if let Ok((mut colour, mut under)) = lines.get_mut(child) {
+                let faded = ink.with_alpha(ink.alpha() * solid);
+                if colour.0 != faded {
+                    colour.0 = faded;
+                    under.color = shadow.with_alpha(shadow.alpha() * solid);
+                }
+            } else if let Ok((picture, mut image)) = pictures.get_mut(child) {
+                let tint = colours.arena.item(picture.0);
+                let faded = tint.with_alpha(tint.alpha() * solid);
+                if image.color != faded {
+                    image.color = faded;
+                }
             }
         }
+    }
+}
+
+/// Writes over each sapphire and amethyst generator what level it is at,
+/// and under it how long until its next thing, counting down (since
+/// late on 2026-11-11; Hajun: "for the sapphire and the amethyst generators, put a
+/// white text above it that shows the generator level like Amethyst
+/// Generator Lvl 2, and below it, put 'Next Amethyst in 24sec...' that
+/// counts down"): two lines of small white words to each of the eight,
+/// one ending a little north of its pad and one beginning a little south
+/// of it, which under the camera fixed over you are over it and under it
+/// on the screen, put up as the fight begins and gone with the game.
+///
+/// Nothing is sent for them. Both are the time's alone: the level by the
+/// timetable (`rules::tier`), and the count to when the generator next
+/// comes round (`rules::next_at`), which it does whether or not it is
+/// full; full, it makes nothing then, and the count starts over. Online
+/// the time is the server's, to the second (`follow_round`), so every
+/// device writes the same count.
+fn write_over_generators(
+    game: Option<Res<Game>>,
+    changed: Res<UiChanged>,
+    me: Query<&Venue, With<Player>>,
+    cameras: Query<(&Camera, &Transform), With<ThirdPersonCamera>>,
+    windows: Query<&Window>,
+    mut words: Query<(&mut GeneratorWords, &mut Text, &mut TextColor, &mut Visibility, &mut UiTransform, &ComputedNode)>,
+    mut commands: Commands,
+) {
+    let Some(game) = game else {
+        return;
+    };
+    let fighting = game.playing() && me.single().ok() == Some(&Venue::Arena);
+    if words.is_empty() {
+        if fighting {
+            let ink = ui().colours.arena.generator;
+            for generator in (0..rules::GENERATORS).filter(|index| rules::steady(rules::generator(*index).0)) {
+                for under in [false, true] {
+                    commands.spawn((
+                        InArena,
+                        GeneratorWords {
+                            generator,
+                            under,
+                            said: None,
+                        },
+                        hud::words("", GENERATOR_TEXT, ink),
+                        Node {
+                            position_type: PositionType::Absolute,
+                            left: Val::ZERO,
+                            top: Val::ZERO,
+                            ..default()
+                        },
+                        UiTransform::default(),
+                        Visibility::Hidden,
+                        // Under the buttons and the windows, as the names
+                        // over heads are.
+                        GlobalZIndex(-1),
+                    ));
+                }
+            }
+        }
+        return;
+    }
+    let (Ok((camera, eye)), Ok(window)) = (cameras.single(), windows.single()) else {
+        return;
+    };
+    let eye = GlobalTransform::from(*eye);
+    let file = ui();
+    let names = &file.words.arena;
+    // The file's words and colours, taken again as it is saved.
+    let again = changed.is_changed() && !changed.is_added();
+    for (mut label, mut text, mut colour, mut shown, mut place, node) in &mut words {
+        let (item, pad) = rules::generator(label.generator);
+        let off = if label.under { PAD_HALF + GENERATOR_GAP } else { -(PAD_HALF + GENERATOR_GAP) };
+        let point = fighting
+            .then(|| camera.world_to_viewport(&eye, Vec3::new(pad.x, PAD_TOP, pad.y + off)).ok())
+            .flatten()
+            .filter(|point| on_screen(window, *point));
+        let Some(point) = point else {
+            shown.set_if_neq(Visibility::Hidden);
+            continue;
+        };
+        let number = if label.under {
+            seconds_to_next(item, game.elapsed)
+        } else {
+            u32::from(rules::tier(item, game.elapsed))
+        };
+        if label.said != Some(number) || again {
+            label.said = Some(number);
+            let line = generator_line(names, item, label.under, number);
+            if text.0 != line {
+                text.0 = line;
+            }
+            colour.set_if_neq(TextColor(file.colours.arena.generator));
+        }
+        // Centred on the pad across the screen: the words over it end
+        // where the point is, and those under it begin there.
+        let size = node.size() * node.inverse_scale_factor();
+        place.set_if_neq(UiTransform {
+            translation: Val2::px(point.x - size.x * 0.5, if label.under { point.y } else { point.y - size.y }),
+            scale: Vec2::ONE,
+            rotation: Rot2::IDENTITY,
+        });
+        shown.set_if_neq(Visibility::Inherited);
+    }
+}
+
+/// How many seconds until a generator of `item` next comes round, as
+/// written under it, `elapsed` seconds into the fight: whole seconds,
+/// rounded up, so that the last second reads 1, and the moment it comes
+/// the whole wait to the one after.
+fn seconds_to_next(item: Item, elapsed: f32) -> u32 {
+    (rules::next_at(item, elapsed) - elapsed).ceil().max(1.0) as u32
+}
+
+/// "Amethyst Generator Lvl 2", or, `under` the pad, "Next Amethyst in
+/// 24sec...": the file's words with the item's name and `number` in them.
+fn generator_line(words: &crate::ui::ArenaWords, item: Item, under: bool, number: u32) -> String {
+    let (name, number) = (words.item(item), number.to_string());
+    if under {
+        fill(&words.generator_next, &[("item", name), ("seconds", &number)])
+    } else {
+        fill(&words.generator, &[("item", name), ("level", &number)])
     }
 }
 
@@ -2684,7 +2910,7 @@ mod tests {
             out: [false; ARENA_SEATS],
             elapsed: 0.0,
             said: 0.0,
-            mint: Mint::new(&mut || 0.5),
+            mint: Mint::new(0.0, &mut || 0.5),
         };
         assert_eq!(game.my_team(), 0);
         assert_eq!(game.teams_in_play(), vec![0, 1, 2, 3]);
@@ -2799,14 +3025,72 @@ mod tests {
                 assert!(map.floor(at + step * 2.0, 3.0).is_some(), "zombie {zombie}: no ground beside {at}");
             }
         }
+    }
+
+    #[test]
+    fn a_line_about_an_item_has_its_picture_after_its_name() {
         assert_eq!(roman(1), "I");
         assert_eq!(roman(2), "II");
         assert_eq!(roman(3), "III");
-        let words = &ui().words.arena;
+        // The file's line, as it is said at 2:00: the name, the picture,
+        // and the rest.
+        let file = ui();
+        let words = &file.words.arena;
+        let line = Line::of_tier(&words.tier_up, Item::Sapphire, words.item(Item::Sapphire), roman(2));
         assert_eq!(
-            fill(&words.tier_up, &[("item", words.item(Item::Sapphire)), ("level", roman(2))]),
-            "Sapphire generators have been upgraded to Lvl II."
+            line,
+            Line {
+                before: "Sapphire".into(),
+                picture: Some(Item::Sapphire),
+                after: "generators have been upgraded to Lvl II.".into(),
+            }
         );
+        // Wherever the name is in the line, the picture is right after it;
+        // and a line that does not name the item has none.
+        let line = Line::of_tier("Lvl {level} for the {item} generators!", Item::Amethyst, "Amethyst", "III");
+        assert_eq!(line.before, "Lvl III for the Amethyst");
+        assert_eq!(line.picture, Some(Item::Amethyst));
+        assert_eq!(line.after, "generators!");
+        let line = Line::of_tier("Faster generators: Lvl {level}.", Item::Amethyst, "Amethyst", "II");
+        assert_eq!(line, Line::plain("Faster generators: Lvl II."));
+        assert_eq!(Line::plain(&words.anchors_broken).picture, None);
+    }
+
+    #[test]
+    fn a_generator_s_level_and_the_count_to_its_next_thing_are_written_by_the_time() {
+        let file = ui();
+        let words = &file.words.arena;
+        // As the fight begins: the first sapphire is 30 s off and the
+        // first amethyst 40.
+        assert_eq!(generator_line(words, Item::Amethyst, false, 2), "Amethyst Generator Lvl 2");
+        assert_eq!(generator_line(words, Item::Amethyst, true, 24), "Next Amethyst in 24sec...");
+        assert_eq!(seconds_to_next(Item::Sapphire, 0.0), 30);
+        assert_eq!(seconds_to_next(Item::Amethyst, 0.0), 40);
+        // The last second reads 1, and the moment one comes the count is
+        // the whole wait to the next: never 0.
+        assert_eq!(seconds_to_next(Item::Sapphire, 29.2), 1);
+        assert_eq!(seconds_to_next(Item::Sapphire, 30.0), 30);
+        assert_eq!(seconds_to_next(Item::Amethyst, 16.0), 24);
+        // Online the time comes in whole seconds, and at every one of
+        // them the count is a second less than the second before, or a
+        // whole wait again; the waits are the tiers', 23 s for a sapphire
+        // from two minutes and 12 from six, 30 and 20 for an amethyst.
+        for item in [Item::Sapphire, Item::Amethyst] {
+            let mut last = seconds_to_next(item, 0.0);
+            for second in 1..(PLAY_SECS as u32) {
+                let now = seconds_to_next(item, second as f32);
+                assert!(now >= 1 && (now == last - 1 || last == 1), "{item:?}: {now} after {last}, {second} s in");
+                last = now;
+            }
+        }
+        assert_eq!(seconds_to_next(Item::Sapphire, 120.0), 23);
+        assert_eq!(seconds_to_next(Item::Sapphire, 372.0), 12);
+        assert_eq!(seconds_to_next(Item::Amethyst, 240.0), 30);
+        assert_eq!(seconds_to_next(Item::Amethyst, 480.0), 20);
+        // Only the sapphire and the amethyst generators are written over:
+        // eight of the sixteen.
+        let written = (0..rules::GENERATORS).filter(|index| rules::steady(rules::generator(*index).0)).count();
+        assert_eq!(written, 8);
     }
 
     #[test]

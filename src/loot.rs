@@ -8,13 +8,25 @@
 //! `amethyst_item.glb`, each a cut stone with its own number of sides,
 //! hung a little over the pad it came up on, bobbing and turning.
 //!
+//! **A thing drops onto its pad as it is made** (since late on 2026-11-11; Hajun:
+//! "the minerals spawning animation is like a growing big animation. i
+//! want it to be a drop from a certain height animation. so that even
+//! when player is standing on top of the generator, u can see the mineral
+//! for a bit before the player pick it up"): it appears [`DROP_FROM`] over
+//! where it will hang, over the head of anyone standing on the pad, and
+//! falls there in the rules' `DROP_SECS`, faster as it comes, and whoever
+//! runs the generators lets nobody have it until it has lain there a
+//! moment more (`roundtown_net::bridge_wars::PICK_UP_AFTER`). Until then
+//! it came up from nothing to its size where it lay, and someone standing
+//! on the pad had it before it was seen.
+//!
 //! This is only how they look. What is made, where, and who has picked up
 //! what are the rules' (`roundtown_net::bridge_wars::Mint`): the server's
 //! online, where each thing is an entity it sends ([`Loot`]) and takes
 //! away again the moment someone has it, so that everyone sees the same
 //! things at the same times and nobody takes what someone else took; and
 //! the game's own offline (`arena::gather`). Either way a thing here is
-//! [`lay`]n as it comes up and [`take`]n as it goes: taken, it flies to
+//! [`lay`]n as it is made and [`take`]n as it goes: taken, it flies to
 //! whoever took it, shrinking, and is gone, which is all there is to the
 //! magnet.
 //!
@@ -31,7 +43,7 @@ use std::f32::consts::TAU;
 use bevy::prelude::*;
 use bevy::world_serialization::{WorldAsset, WorldAssetRoot, WorldInstanceReady};
 use bevy_replicon::prelude::Remote;
-use roundtown_net::bridge_wars::MAGNET;
+use roundtown_net::bridge_wars::{DROP_SECS, MAGNET};
 use roundtown_net::{Item, Loot, Member, PAD_TOP};
 
 use crate::arena::InArena;
@@ -49,10 +61,13 @@ const HOVER: f32 = 0.42;
 const BOB: f32 = 0.1;
 const BOB_SECS: f32 = 2.4;
 const SPIN: f32 = 0.9;
-/// How long a thing takes to come up to its size as it is made, and to
-/// fly to whoever took it, in seconds; and how small it is as it arrives,
-/// as a share.
-const POP_SECS: f32 = 0.22;
+/// How far over where it will hang a thing appears as it is made, to drop
+/// from there, in metres: over the head of anyone standing on the pad
+/// (1.64 m), and well under the camera, 16 m up. Mine, as the rules' time
+/// for the drop is.
+const DROP_FROM: f32 = 5.0;
+/// How long a thing takes to fly to whoever took it, in seconds; and how
+/// small it is as it arrives, as a share.
 const FLY_SECS: f32 = 0.16;
 const FLY_SMALL: f32 = 0.25;
 /// How high on a body a thing flies to, in metres over its feet.
@@ -62,7 +77,9 @@ const FLY_TO: f32 = 1.0;
 /// server had them as it gave it to them.
 const TAKER_SLACK: f32 = 2.5;
 /// How near the camera a thing has to be, in metres across the ground, to
-/// be moved at all: the camera sees 40 m at the furthest it zooms.
+/// be moved at all: fixed over you (`OrbitCamera::top_down`), the camera
+/// sees 24 m to either side on the widest of phones (40 m at the furthest
+/// it zoomed, until late on 2026-11-11, which is what this was set by).
 const NEAR: f32 = 48.0;
 /// How brightly a thing glows at night, as so many times its own colour
 /// (`lamps::ANCHOR_GLOW`, which says how Bevy counts it): about as it
@@ -89,8 +106,8 @@ pub(crate) enum Key {
 }
 
 /// One thing lying on a pad: which, what it is, where it hangs at the
-/// middle of its bob, when it came up, by the game's clock, and how far
-/// through its bob and its turn it began.
+/// middle of its bob, when it was made, by the game's clock, and how far
+/// through its turn it began.
 #[derive(Component)]
 pub(crate) struct Thing {
     pub(crate) key: Key,
@@ -132,8 +149,8 @@ fn load(assets: Res<AssetServer>, mut commands: Commands) {
     });
 }
 
-/// A thing of `item` come up at `at` across the ground, on a pad's top:
-/// small, to come up to its size ([`animate`]), and turned and bobbing
+/// A thing of `item` made at `at` across the ground, over a pad's top:
+/// high over where it will hang, to drop there ([`animate`]), and turned
 /// out of step with whatever lies beside it, by where it lies.
 pub(crate) fn lay(commands: &mut Commands, look: &Look, now: f32, key: Key, item: Item, at: Vec2) -> Entity {
     let place = Vec3::new(at.x, PAD_TOP + HOVER, at.y);
@@ -151,9 +168,7 @@ pub(crate) fn lay(commands: &mut Commands, look: &Look, now: f32, key: Key, item
             Venue::Arena,
             Name::new(format!("{item:?}")),
             WorldAssetRoot(look.scenes[item.index()].clone()),
-            Transform::from_translation(place)
-                .with_rotation(Quat::from_rotation_y(phase))
-                .with_scale(Vec3::splat(0.01)),
+            Transform::from_translation(place + Vec3::Y * DROP_FROM).with_rotation(Quat::from_rotation_y(phase)),
             // Shown with the island it is on (`island::show_where_i_am`).
             Visibility::Hidden,
         ))
@@ -226,8 +241,8 @@ fn follow_server(
     }
 }
 
-/// Bobs and turns every thing near the camera, brings a new one up to its
-/// size, and flies a taken one to whoever took it, where it is gone.
+/// Bobs and turns every thing near the camera, drops a new one onto its
+/// pad, and flies a taken one to whoever took it, where it is gone.
 fn animate(
     time: Res<Time>,
     cameras: Query<&Transform, (With<ThirdPersonCamera>, Without<Thing>)>,
@@ -239,7 +254,7 @@ fn animate(
     let eye = cameras.single().map(|camera| camera.translation.xz()).ok();
     for (entity, thing, mut transform, flying) in &mut things {
         let age = (now - thing.born).max(0.0);
-        let bob = Vec3::Y * (BOB * (age * TAU / BOB_SECS + thing.phase).sin());
+        let lift = Vec3::Y * height(age);
         let turn = Quat::from_rotation_y(thing.phase + age * SPIN);
         if let Some(mut flying) = flying {
             flying.age += dt;
@@ -248,7 +263,7 @@ fn animate(
                 commands.entity(entity).despawn();
                 continue;
             }
-            let from = thing.at + bob;
+            let from = thing.at + lift;
             let to = flying
                 .to
                 .and_then(|taker| bodies.get(taker).ok())
@@ -260,16 +275,29 @@ fn animate(
             };
             continue;
         }
-        // Far from the camera it is left as it was, out of sight.
-        if eye.is_some_and(|eye| eye.distance(thing.at.xz()) > NEAR) && age > POP_SECS {
+        // Far from the camera it is left as it was, out of sight, once it
+        // has landed.
+        if eye.is_some_and(|eye| eye.distance(thing.at.xz()) > NEAR) && age > DROP_SECS {
             continue;
         }
         *transform = Transform {
-            translation: thing.at + bob,
+            translation: thing.at + lift,
             rotation: turn,
-            scale: Vec3::splat((age / POP_SECS).clamp(0.01, 1.0)),
+            scale: Vec3::ONE,
         };
     }
+}
+
+/// How far over where it hangs a thing is, `age` seconds after it was
+/// made, in metres: dropping from [`DROP_FROM`] for the rules' `DROP_SECS`,
+/// as a thing let go falls, slowly and then fast, and from the moment it
+/// lands bobbing about there, up first.
+fn height(age: f32) -> f32 {
+    if age < DROP_SECS {
+        let fallen = age / DROP_SECS;
+        return DROP_FROM * (1.0 - fallen * fallen);
+    }
+    BOB * ((age - DROP_SECS) * TAU / BOB_SECS).sin()
 }
 
 /// Has the things glow in their own colours from dusk to dawn, as far as
@@ -298,6 +326,32 @@ fn glow(daylight: Res<Daylight>, mut look: ResMut<Look>, mut materials: ResMut<A
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_thing_drops_onto_its_pad_and_then_bobs_there() {
+        // It begins over the head of anyone standing on the pad, comes
+        // down all the way, faster as it comes, and never under where it
+        // hangs on the way.
+        assert_eq!(height(0.0), DROP_FROM);
+        assert!(PAD_TOP + HOVER + DROP_FROM > PAD_TOP + crate::PLAYER_HEIGHT + 1.0);
+        let (mut last, mut last_step) = (height(0.0), 0.0);
+        for step in 1..=20 {
+            let at = height(DROP_SECS * step as f32 / 20.0 - 1e-4);
+            assert!(at < last && at >= 0.0, "{at} after {last}");
+            assert!(last - at > last_step, "it falls no faster as it comes");
+            (last, last_step) = (at, last - at);
+        }
+        assert!(height(DROP_SECS - 1e-4) < 0.01);
+        // Landed, it is where it hangs, and bobs no further than its bob
+        // from there, up first; and it is on its pad, for anyone standing
+        // there to see, before the rules let them have it.
+        assert_eq!(height(DROP_SECS), 0.0);
+        assert!(height(DROP_SECS + 0.1) > 0.0);
+        for step in 0..200 {
+            assert!(height(DROP_SECS + step as f32 * 0.05).abs() <= BOB + 1e-5);
+        }
+        assert!(roundtown_net::bridge_wars::PICK_UP_AFTER >= DROP_SECS + 0.2);
+    }
 
     #[test]
     fn every_item_has_a_model_of_its_own_in_the_apk_that_sits_over_its_pad() {

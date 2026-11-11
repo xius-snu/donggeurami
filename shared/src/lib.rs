@@ -113,7 +113,17 @@ pub const PROTOCOL_ID: u64 = u64::from_be_bytes(*b"DGRMTOWN");
 /// 10 ([`bridge_wars::PLAY_SECS`]), and past its eight seats a game may
 /// seat zombies ([`bridge_wars::ZOMBIE_TEAM`]), whose seats an app from
 /// before would take for a fifth pair of players.
-pub const PROTOCOL_VERSION: u32 = 11;
+///
+/// 12 since late on 2026-11-11: [`Tell::Bought`] of a [`Ware::Bridge`] is 25 m of
+/// bridge where it was 50 ([`bridge_wars::BRIDGE_A_BUY`]; Hajun: "make it
+/// so 4 silver gets you 25m of bridge"), which an app from before would
+/// still count as 50. With it, though no app from before would have
+/// minded: a thing a generator makes drops onto its pad and cannot be
+/// picked up until it has lain there a moment
+/// ([`bridge_wars::PICK_UP_AFTER`]), and a generator's count to its next
+/// thing runs on while it is full ([`bridge_wars::next_at`]), so that
+/// every device can write the same count over it.
+pub const PROTOCOL_VERSION: u32 = 12;
 
 /// The UDP port the game server listens on. 443, where QUIC goes, because a
 /// network that lets any UDP through lets that through: school and office
@@ -696,16 +706,78 @@ pub mod bridge_wars {
     /// pick up what lies on it, in metres: a jump over it, and not the
     /// waiting room nor a fall past it.
     pub const MAGNET_HEIGHT: f32 = 3.0;
+    /// How long a thing takes to drop onto its pad as it is made, in
+    /// seconds, and how long it lies there after that before anyone can
+    /// pick it up (Hajun, 2026-11-11: "i want it to be a drop from a
+    /// certain height animation. so that even when player is standing on
+    /// top of the generator, u can see the mineral for a bit before the
+    /// player pick it up"). Both numbers are mine. The device draws the
+    /// drop (`loot`); whoever runs the generators keeps the thing from
+    /// being picked up until both have passed ([`PICK_UP_AFTER`]).
+    pub const DROP_SECS: f32 = 0.55;
+    pub const LIE_SECS: f32 = 0.3;
+    /// How long after it is made a thing can first be picked up, in
+    /// seconds.
+    pub const PICK_UP_AFTER: f32 = DROP_SECS + LIE_SECS;
 
     /// One thing a generator has made, lying on its pad until someone
     /// picks it up: a number of its own, which generator made it, what it
-    /// is, and where it lies across the ground.
+    /// is, where it lies across the ground, and how far into the fight it
+    /// was made, in seconds.
     #[derive(Clone, Copy, PartialEq, Debug)]
     pub struct Piece {
         pub id: u32,
         pub generator: u8,
         pub item: Item,
         pub at: Vec2,
+        pub born: f32,
+    }
+
+    /// Whether a generator of `item` makes its things to the second, with
+    /// nothing more or less to each wait ([`interval`]): the sapphire and
+    /// the amethyst ones, whose next thing every device can count down to
+    /// by the time alone ([`next_at`]).
+    pub fn steady(item: Item) -> bool {
+        interval(item, 1).1 == 0.0
+    }
+
+    /// When a [`steady`] generator of `item` next comes to make one, later
+    /// than `after`, both in seconds into the fight: a whole wait on from
+    /// the last time it did, counted from the start of the fight, and
+    /// sooner where a tier raised meanwhile has a wait of its own that
+    /// ends sooner, counted from when it was raised (so the sapphire
+    /// ones, every 30 s to 120, then every 23 s to 350, then at 372, the
+    /// third tier having come at 360, and every 12 s from there). It
+    /// comes round whether or not the generator is full, in which case
+    /// nothing is made and the count starts over: so the count is the
+    /// time's alone, and the same on every device, which is how each
+    /// writes "Next Amethyst in 24sec..." over a generator with nothing
+    /// sent for it (the time is the round's, to the second).
+    pub fn next_at(item: Item, after: f32) -> f32 {
+        let mut at = 0.0;
+        loop {
+            let next = following(item, at);
+            if next > after {
+                return next;
+            }
+            at = next;
+        }
+    }
+
+    /// The time a [`steady`] generator of `item` comes to make one after
+    /// the time at `at`.
+    fn following(item: Item, at: f32) -> f32 {
+        let mut next = at + interval(item, tier(item, at)).0;
+        for &(raised_at, happening) in &TIMETABLE {
+            if let Happening::Tier { item: raised, tier } = happening
+                && raised == item
+                && raised_at > at
+                && raised_at < next
+            {
+                next = next.min(raised_at + interval(item, tier).0);
+            }
+        }
+        next
     }
 
     /// Every generator of a game and everything they have made that still
@@ -714,23 +786,32 @@ pub mod bridge_wars {
     /// of its own: whoever runs it hands it some, numbers from 0 up to 1.
     #[derive(Clone, Debug)]
     pub struct Mint {
-        /// Seconds until each generator next makes one. It counts only
-        /// while the generator holds less than its [`cap`].
-        until: [f32; GENERATORS],
+        /// When each generator next comes to make one, in seconds into
+        /// the fight. It comes round whether or not the generator is
+        /// full ([`cap`]): full, nothing is made, and the count starts
+        /// over.
+        due: [f32; GENERATORS],
         pieces: Vec<Piece>,
         next: u32,
     }
 
     impl Mint {
-        /// Every generator at the start of a game: nothing made yet, and
-        /// the first of each a whole wait away.
-        pub fn new(dice: &mut dyn FnMut() -> f32) -> Self {
-            let mut until = [0.0; GENERATORS];
-            for (index, wait) in until.iter_mut().enumerate() {
-                *wait = wait_for(generator(index).0, 1, dice);
+        /// Every generator as a fight begins, `elapsed` seconds into its
+        /// timetable (none, but for trying the timetable out): nothing
+        /// made yet, and the first of each a whole wait away, or, for the
+        /// [`steady`] ones of a fight begun late, when the time says.
+        pub fn new(elapsed: f32, dice: &mut dyn FnMut() -> f32) -> Self {
+            let mut due = [0.0; GENERATORS];
+            for (index, due) in due.iter_mut().enumerate() {
+                let item = generator(index).0;
+                *due = if steady(item) {
+                    next_at(item, elapsed)
+                } else {
+                    elapsed + wait_for(item, tier(item, elapsed), dice)
+                };
             }
             Self {
-                until,
+                due,
                 pieces: Vec::new(),
                 next: 0,
             }
@@ -746,31 +827,40 @@ pub mod bridge_wars {
             self.pieces.iter().filter(|piece| usize::from(piece.generator) == index).count()
         }
 
-        /// Runs every generator for `dt` seconds, `elapsed` seconds into
-        /// the fight (which says what tier each is at): what they made.
-        /// A generator holding its [`cap`] waits, its next thing a whole
-        /// wait off from when one is taken.
-        pub fn run(&mut self, dt: f32, elapsed: f32, dice: &mut dyn FnMut() -> f32) -> Vec<Piece> {
+        /// Runs every generator up to `elapsed` seconds into the fight
+        /// (which says what tier each is at): what they made. A
+        /// generator whose time has come makes one, unless it holds its
+        /// [`cap`], and either way begins its next wait: full, it makes
+        /// nothing until something has been taken and its time comes
+        /// round again (until late on 2026-11-11 its count stood still while it
+        /// was full, and the next thing was a whole wait on from when one
+        /// was taken; the count is written over the sapphire and the
+        /// amethyst ones now, and one that stood still at nothing would
+        /// say so for as long as nobody came).
+        pub fn run(&mut self, elapsed: f32, dice: &mut dyn FnMut() -> f32) -> Vec<Piece> {
             let mut made = Vec::new();
             for index in 0..GENERATORS {
                 let (item, pad) = generator(index);
+                // One at the most a go: a frame is far shorter than a wait.
+                if elapsed < self.due[index] {
+                    continue;
+                }
+                self.due[index] = if steady(item) {
+                    next_at(item, self.due[index])
+                } else {
+                    // Never a wait that has already passed, should a go
+                    // come late.
+                    (self.due[index] + wait_for(item, tier(item, elapsed), dice)).max(elapsed)
+                };
                 if self.held(index) >= cap(item) {
                     continue;
                 }
-                let level = tier(item, elapsed);
-                // A tier raised mid-wait cuts the wait to the new tier's.
-                let (every, spread) = interval(item, level);
-                self.until[index] = self.until[index].min(every + spread) - dt;
-                // One at the most a go: a frame is far shorter than a wait.
-                if self.until[index] > 0.0 {
-                    continue;
-                }
-                self.until[index] += wait_for(item, level, dice);
                 let piece = Piece {
                     id: self.next,
                     generator: index as u8,
                     item,
                     at: self.place(pad, dice),
+                    born: elapsed,
                 };
                 self.next = self.next.wrapping_add(1);
                 self.pieces.push(piece);
@@ -804,16 +894,15 @@ pub mod bridge_wars {
             best.1
         }
 
-        /// Whoever stands at `at` across the ground picks up everything
-        /// within [`MAGNET`] of them: what they took, no longer lying
-        /// there for anyone else.
-        pub fn pick_up(&mut self, at: Vec2) -> Vec<Piece> {
+        /// Whoever stands at `at` across the ground, `elapsed` seconds
+        /// into the fight, picks up everything within [`MAGNET`] of them
+        /// that has dropped and lain a moment ([`PICK_UP_AFTER`]): what
+        /// they took, no longer lying there for anyone else.
+        pub fn pick_up(&mut self, at: Vec2, elapsed: f32) -> Vec<Piece> {
             let reach = MAGNET * MAGNET;
-            let (taken, left): (Vec<Piece>, Vec<Piece>) = self
-                .pieces
-                .iter()
-                .copied()
-                .partition(|piece| piece.at.distance_squared(at) <= reach);
+            let (taken, left): (Vec<Piece>, Vec<Piece>) = self.pieces.iter().copied().partition(|piece| {
+                piece.at.distance_squared(at) <= reach && elapsed - piece.born >= PICK_UP_AFTER
+            });
             self.pieces = left;
             taken
         }
@@ -830,15 +919,17 @@ pub mod bridge_wars {
 
     /// What `ware` costs: so many of an item (Hajun, 2026-11-11: "right
     /// now just have 'bridge' as the option, which should cost 4 silver
-    /// for 50m of bridge").
+    /// for 50m of bridge"; and later that night, "make it so 4 silver gets
+    /// you 25m of bridge").
     pub fn price(ware: Ware) -> (Item, u16) {
         match ware {
             Ware::Bridge => (Item::Silver, 4),
         }
     }
 
-    /// How many metres of bridge one [`Ware::Bridge`] is.
-    pub const BRIDGE_A_BUY: f32 = 50.0;
+    /// How many metres of bridge one [`Ware::Bridge`] is: 25 since
+    /// late on 2026-11-11, 50 for the evening before.
+    pub const BRIDGE_A_BUY: f32 = 25.0;
 
     /// How far from a shop ([`ARENA_SHOPS`]) someone may be, where they
     /// last said they stood, for the server to sell to them, in metres:
@@ -1644,9 +1735,9 @@ mod tests {
 
     #[test]
     fn the_generators_make_what_the_file_says_as_fast_as_it_says_and_hold_no_more_than_it_says() {
-        use bridge_wars::{GENERATORS, Mint, PAD_SPREAD, cap, generator};
+        use bridge_wars::{GENERATORS, Mint, PAD_SPREAD, PICK_UP_AFTER, cap, generator};
         let mut dice = steady(0.5);
-        let mut mint = Mint::new(&mut dice);
+        let mut mint = Mint::new(0.0, &mut dice);
         // A silver every 2 s and a gold every 7.5 s from each team's pad,
         // a sapphire every 30 s and an amethyst every 40 s: after 29 s,
         // 14 silver and 3 gold a pad, and neither of the others yet.
@@ -1654,7 +1745,7 @@ mod tests {
         let mut made = Vec::new();
         while elapsed < 29.0 {
             elapsed += dt;
-            made.extend(mint.run(dt, elapsed, &mut dice));
+            made.extend(mint.run(elapsed, &mut dice));
         }
         let count = |made: &[bridge_wars::Piece], item: Item| made.iter().filter(|piece| piece.item == item).count();
         assert_eq!(count(&made, Item::Silver), 14 * 4);
@@ -1675,29 +1766,127 @@ mod tests {
         // and no more: 48, 6, 4 and 2.
         while elapsed < 125.0 {
             elapsed += dt;
-            mint.run(dt, elapsed, &mut dice);
+            mint.run(elapsed, &mut dice);
         }
         for index in 0..GENERATORS {
             let (item, _) = generator(index);
             assert_eq!(mint.held(index), cap(item), "generator {index}, {item:?}");
         }
         assert_eq!(mint.pieces().len(), 4 * (48 + 6 + 4 + 2));
-        // Emptied, a pad's next thing is a whole wait off, not at once.
+        // Full, a generator makes nothing however long it is left; and
+        // emptied, its next thing comes as its time next comes round,
+        // within a wait, and not all at once.
+        while elapsed < 140.0 {
+            elapsed += dt;
+            assert!(mint.run(elapsed, &mut dice).is_empty(), "something made on a full pad, {elapsed} s in");
+        }
         let pad = ARENA_PADS[0];
-        let taken = mint.pick_up(pad);
+        let taken = mint.pick_up(pad, elapsed);
         assert_eq!(taken.len(), 48 + 6, "everything on a team's pad is within reach of its middle");
-        assert!(mint.run(dt, elapsed + dt, &mut dice).is_empty());
         let mut waited = 0.0;
         let next = loop {
             waited += dt;
-            let made = mint.run(dt, elapsed + waited, &mut dice);
+            let made = mint.run(elapsed + waited, &mut dice);
+            assert!(made.len() <= 1, "{} things at once on an emptied pad", made.len());
             if let Some(piece) = made.first() {
                 break *piece;
             }
-            assert!(waited < 3.0, "nothing after 3 s");
+            assert!(waited < 2.1, "nothing after {waited} s");
         };
         assert_eq!(next.item, Item::Silver);
-        assert!(waited > 1.9, "the next silver after only {waited} s");
+        // And that one is not to be had until it has dropped and lain a
+        // moment, by anyone standing right on it.
+        elapsed += waited;
+        assert!(mint.pick_up(pad, elapsed).is_empty());
+        assert!(mint.pick_up(pad, elapsed + PICK_UP_AFTER - 0.05).is_empty());
+        assert_eq!(mint.pick_up(pad, elapsed + PICK_UP_AFTER + 0.01), vec![next]);
+    }
+
+    #[test]
+    fn a_sapphire_and_an_amethyst_generator_s_next_thing_is_the_time_s_alone() {
+        use bridge_wars::{GENERATORS, Mint, PLAY_SECS, generator, next_at, steady as to_the_second};
+        assert!(to_the_second(Item::Sapphire) && to_the_second(Item::Amethyst));
+        assert!(!to_the_second(Item::Silver) && !to_the_second(Item::Gold));
+        // Every time one comes round, up to `until`.
+        let times = |item: Item, until: f32| {
+            let (mut at, mut times) = (0.0, Vec::new());
+            loop {
+                at = next_at(item, at);
+                if at > until {
+                    return times;
+                }
+                times.push(at);
+            }
+        };
+        // A sapphire every 30 s to two minutes, every 23 s from then, and
+        // from six minutes, when the wait in hand had 13 s to go, every
+        // 12 s.
+        let sapphire = times(Item::Sapphire, 400.0);
+        assert_eq!(sapphire[..6], [30.0, 60.0, 90.0, 120.0, 143.0, 166.0]);
+        assert_eq!(sapphire[sapphire.len() - 4..], [350.0, 372.0, 384.0, 396.0]);
+        // An amethyst every 40 s to four minutes, every 30 s to eight,
+        // and every 20 s after.
+        let amethyst = times(Item::Amethyst, 530.0);
+        assert_eq!(amethyst[..3], [40.0, 80.0, 120.0]);
+        assert_eq!(amethyst[5..8], [240.0, 270.0, 300.0]);
+        assert_eq!(amethyst[amethyst.len() - 4..], [450.0, 480.0, 500.0, 520.0]);
+        // What is written over a generator: the next is always ahead,
+        // never further than a wait, and at the moment one comes it is
+        // the one after.
+        assert_eq!(next_at(Item::Sapphire, 0.0), 30.0);
+        assert_eq!(next_at(Item::Sapphire, 119.0), 120.0);
+        assert_eq!(next_at(Item::Sapphire, 120.0), 143.0);
+        assert_eq!(next_at(Item::Sapphire, 360.0), 372.0);
+        assert_eq!(next_at(Item::Amethyst, 479.5), 480.0);
+        assert_eq!(next_at(Item::Amethyst, 480.0), 500.0);
+        for item in [Item::Sapphire, Item::Amethyst] {
+            let mut at = 0.0;
+            while at < PLAY_SECS {
+                let next = next_at(item, at);
+                assert!(next > at && next - at <= 40.0, "{item:?}: {next} after {at}");
+                at += 0.37;
+            }
+        }
+        // The generators keep those times, to the frame, taken from or
+        // not: one emptied as each thing comes, and one left to fill.
+        let mut dice = steady(0.5);
+        let mut mint = Mint::new(0.0, &mut dice);
+        let (dt, mut elapsed) = (1.0 / 30.0, 0.0);
+        let mut made_at = Vec::new();
+        let mut left_alone = 0;
+        while elapsed < 400.0 {
+            elapsed += dt;
+            for piece in mint.run(elapsed, &mut dice) {
+                if piece.generator == 8 {
+                    made_at.push(elapsed);
+                }
+                left_alone += usize::from(piece.generator == 9);
+            }
+            mint.pick_up(SAPPHIRE_PADS[0], elapsed);
+        }
+        assert_eq!(made_at.len(), sapphire.len(), "{made_at:?}");
+        for (made, due) in made_at.iter().zip(&sapphire) {
+            assert!(*made >= *due && made - due < 2.0 * dt, "made {made} s in, due at {due}");
+        }
+        assert_eq!(left_alone, 4, "a full generator makes nothing as its time comes round");
+        // A fight begun part way through its timetable keeps them too.
+        let mut late = Mint::new(595.0, &mut dice);
+        let mut elapsed = 595.0;
+        let mut first = [None; GENERATORS];
+        while elapsed < 625.0 {
+            elapsed += dt;
+            for piece in late.run(elapsed, &mut dice) {
+                first[usize::from(piece.generator)].get_or_insert(elapsed);
+            }
+        }
+        for (index, first) in first.iter().enumerate() {
+            let (item, _) = generator(index);
+            let first = first.unwrap_or_else(|| panic!("generator {index} made nothing in 30 s"));
+            if to_the_second(item) {
+                let due = next_at(item, 595.0);
+                assert!(first >= due && first - due < 2.0 * dt, "{item:?}: first {first} s in, due at {due}");
+            }
+        }
     }
 
     #[test]
@@ -1735,38 +1924,39 @@ mod tests {
         // as it comes: 4 in the first two minutes, one every 23 s for the
         // next four, and one every 12 s after.
         let mut dice = steady(0.5);
-        let mut mint = Mint::new(&mut dice);
+        let mut mint = Mint::new(0.0, &mut dice);
         let (dt, mut elapsed) = (1.0 / 30.0, 0.0);
         let mut taken = [0usize; 3];
         while elapsed < 600.0 {
             elapsed += dt;
-            mint.run(dt, elapsed, &mut dice);
-            let got = mint.pick_up(SAPPHIRE_PADS[0]);
+            mint.run(elapsed, &mut dice);
+            let got = mint.pick_up(SAPPHIRE_PADS[0], elapsed);
             assert!(got.iter().all(|piece| piece.item == Item::Sapphire));
-            let stretch = if elapsed <= 120.5 {
+            // Each is to be had a little under a second after it is made.
+            let stretch = if elapsed <= 121.5 {
                 0
-            } else if elapsed <= 360.5 {
+            } else if elapsed <= 361.5 {
                 1
             } else {
                 2
             };
             taken[stretch] += got.len();
         }
-        assert_eq!(taken[0], 4, "{taken:?}");
-        assert!((10..=11).contains(&taken[1]), "{taken:?}");
-        assert!((19..=20).contains(&taken[2]), "{taken:?}");
+        assert_eq!(taken, [4, 10, 19]);
     }
 
     #[test]
     fn a_thing_is_picked_up_from_near_it_once_and_things_come_up_apart() {
         use bridge_wars::{MAGNET, Mint, generator};
         let mut dice = rolling();
-        let mut mint = Mint::new(&mut dice);
+        let mut mint = Mint::new(0.0, &mut dice);
         let (dt, mut elapsed) = (0.05, 0.0);
         while elapsed < 20.0 {
             elapsed += dt;
-            mint.run(dt, elapsed, &mut dice);
+            mint.run(elapsed, &mut dice);
         }
+        // A second on, the last of them has dropped and lain its moment.
+        let elapsed = elapsed + 1.0;
         // Ten silver or so and two gold on each team's pad by now, no two
         // of a pad's in one spot.
         let pad = ARENA_PADS[2];
@@ -1785,14 +1975,14 @@ mod tests {
         // From 3 m off the pad nothing is in reach; from its middle all
         // of it is, once: a second go, or someone else's, finds nothing.
         let all = mint.pieces().len();
-        assert!(mint.pick_up(pad + Vec2::new(MAGNET + 1.0 + 0.5, 0.0)).is_empty());
+        assert!(mint.pick_up(pad + Vec2::new(MAGNET + 1.0 + 0.5, 0.0), elapsed).is_empty());
         assert_eq!(mint.pieces().len(), all);
-        let taken = mint.pick_up(pad);
+        let taken = mint.pick_up(pad, elapsed);
         assert_eq!(taken.len(), lying.len());
-        assert!(mint.pick_up(pad).is_empty());
+        assert!(mint.pick_up(pad, elapsed).is_empty());
         assert_eq!(mint.pieces().len(), all - taken.len());
         // Another team's pad is untouched by it.
-        assert!(!mint.pick_up(ARENA_PADS[0]).is_empty());
+        assert!(!mint.pick_up(ARENA_PADS[0], elapsed).is_empty());
     }
 
     #[test]
@@ -1822,7 +2012,7 @@ mod tests {
             assert!(ARENA_ISLANDS.iter().all(|island| island.distance(pad) > ARENA_ISLAND_RADIUS + SAPPHIRE_ISLAND_RADIUS));
         }
         assert_eq!(price(Ware::Bridge), (Item::Silver, 4));
-        assert_eq!(BRIDGE_A_BUY, 50.0);
+        assert_eq!(BRIDGE_A_BUY, 25.0);
         // The seats past the players' are the zombies', on nobody's team
         // but their own; each comes up inside the ground it keeps to,
         // with room round it, and no two in one place.

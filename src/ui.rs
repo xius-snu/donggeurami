@@ -184,7 +184,8 @@ pub(crate) struct Arena {
     /// count ... for now make each person start with 100m"; 500 since
     /// 2026-11-10: "increase the default bridge meter to 500m instead of
     /// 100"; and none since 2026-11-11, when the shop began to sell it,
-    /// 50 m for 4 silver, as a game of Bedwars begins with no blocks: my
+    /// 25 m for 4 silver (50 for its first evening), as a game of Bedwars
+    /// begins with no blocks: my
     /// call, Hajun not having said).
     pub bridge_metres: f32,
     /// With how many metres of bridge left, and fewer, the number written
@@ -195,6 +196,13 @@ pub(crate) struct Arena {
     /// 10m->5m left").
     pub bridge_low_at: f32,
     pub bridge_red_at: f32,
+    /// How far up the camera is fixed over you in a game, in metres, as
+    /// `car.overhead` is over the car (since late on 2026-11-11; Hajun: "make the
+    /// camera in that mode's default zoom to be zoom in a bit more so the
+    /// borders of each players island just fits around perfectly on the
+    /// camera on my mobile phone, and lock that zoom so u cannot zoom in
+    /// or out"): nothing zooms it (`OrbitCamera::top_down`).
+    pub camera_height: f32,
 }
 
 impl Arena {
@@ -218,6 +226,7 @@ impl Arena {
             ("bridge_metres", self.bridge_metres),
             ("bridge_low_at", self.bridge_low_at),
             ("bridge_red_at", self.bridge_red_at),
+            ("camera_height", self.camera_height),
         ];
         for (name, value) in all {
             if !value.is_finite() || value < 0.0 {
@@ -229,6 +238,7 @@ impl Arena {
             ("health", self.health),
             ("bot_punch_every", self.bot_punch_every),
             ("anchor_health", self.anchor_health),
+            ("camera_height", self.camera_height),
         ] {
             if value <= 0.0 {
                 return Err(format!("arena.{name} is {value}: it has to be more than 0"));
@@ -713,6 +723,10 @@ pub(crate) struct ArenaColours {
     pub item_amethyst: Color,
     #[serde(deserialize_with = "colour")]
     pub alert: Color,
+    /// What is written over and under a sapphire or an amethyst generator
+    /// (`arena::write_over_generators`).
+    #[serde(deserialize_with = "colour")]
+    pub generator: Color,
 }
 
 impl ArenaColours {
@@ -796,6 +810,11 @@ pub(crate) struct ArenaWords {
     pub shop: String,
     pub shop_bridge: String,
     pub shop_have: String,
+    /// Over a sapphire or an amethyst generator, its level (`{item}`,
+    /// `{level}` as 1, 2 or 3), and under it the count to its next thing
+    /// (`{item}`, `{seconds}`).
+    pub generator: String,
+    pub generator_next: String,
 }
 
 impl ArenaWords {
@@ -1015,6 +1034,7 @@ mod tests {
         // several to kill.
         assert!(ui.arena.run_speed > crate::MOVE_SPEED);
         assert!(ui.arena.damage > 0.0 && ui.arena.damage < ui.arena.health);
+        assert!(read(&BUILT_IN.replacen("camera_height: 15.5", "camera_height: 0", 1)).unwrap_err().contains("camera_height"));
         assert!(read(&BUILT_IN.replacen("run_speed: 10.0", "run_speed: 0", 1)).unwrap_err().contains("run_speed"));
     }
 
