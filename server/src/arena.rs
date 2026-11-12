@@ -424,8 +424,16 @@ impl Game {
     fn die(&mut self, seat: usize) {
         self.health[seat] = 0.0;
         self.minds[seat] = Mind::default();
-        // Their sword and what was on their second button go with them.
+        // Their sword and what was on their second button go with them,
+        // and everything they held of what the generators make (since
+        // 2026-11-12; Hajun: "death make u lose all ur silver, gold,
+        // sapphire, amethyst, bridge meters"; the metres of bridge are
+        // their own device's to take). The room is sent the empty purse
+        // with the rest (`Purses`).
         self.outfits.die(seat);
+        if let Some(purse) = self.purses.get_mut(seat) {
+            *purse = Purse::default();
+        }
         if self.zombie(seat).is_some() {
             self.dead_for[seat] = Some(ZOMBIE_RESPAWN_SECS);
             return;
@@ -1808,11 +1816,15 @@ mod tests {
         assert_eq!(game.outfits.punch(DAMAGE, 0, 1), DAMAGE + 20.0 + 5.0);
         assert_eq!(game.outfits.punch(DAMAGE, 4, 1), DAMAGE);
         assert!((game.outfits.punch(DAMAGE, 1, 0) - DAMAGE * 0.86).abs() < 1e-4);
-        // Dead, the sword and the fireball are gone, and the shield and
-        // the team's upgrades are not.
+        // Dead, the sword and the fireball are gone, and everything held
+        // of what the generators make; the shield and the team's upgrades
+        // are not, nor anyone else's purse.
+        game.purses[4] = [3, 2, 1, 0];
+        assert_ne!(game.purses[0], [0; 4]);
         game.die(0);
         assert_eq!(game.outfits.kits[0], Kit { shield: 2, ..Kit::default() });
         assert!(game.outfits.teams[0].swords && game.outfits.teams[0].forge == 1);
+        assert_eq!((game.purses[0], game.purses[4]), ([0; 4], [3, 2, 1, 0]));
         // A potion drunk heals at once, or lasts its while.
         game.health[0] = 40.0;
         game.dead_for[0] = None;

@@ -439,11 +439,47 @@ const DRINK_REACH: Vec3 = Vec3::new(-0.62, 0.36, -0.7);
 /// level and swept about the body's upright from this far to the right of
 /// straight ahead to this far to the left of it (a turn to the left is the
 /// greater), in the time a punch takes to go out, and back to the ready in
-/// the time it takes to come back.
+/// the time it takes to come back. This is the first way, the file's
+/// `arena.sword_swing: Sweep`, kept whole since the other came later that
+/// day (`CHOP_LEAN` and the rest, below), which holds the arm at the
+/// ready by the same [`SWORD_READY`].
 const SWORD_READY: f32 = 0.45;
 const SLASH_RAISE: f32 = 1.55;
 pub(crate) const SLASH_FROM: f32 = -1.15;
 pub(crate) const SLASH_TO: f32 = 1.0;
+
+/// The other way a sword is held and swung (since 2026-11-12, the file's
+/// `arena.sword_swing: Chop`; Hajun: "this time instead of holding the
+/// sword flat, hold it narrow and slash downward(?) ... try to choose the
+/// holding angle/slashing animation look good enough even when its like
+/// this way and look nice enough in a top down view"), in radians: held
+/// on its edge, and cut downward from over the right shoulder to low on
+/// the left.
+///
+/// The blade moves in one plane, the plane of the cut, with its edge
+/// leading, as a sword is cut with: an upright plane through the way the
+/// body faces, leant over to the right by [`CHOP_LEAN`]. Upright
+/// altogether, the camera over you would see the blade and its cut edge
+/// on, a hair; leant this far it sees a slim blade and the cut as a
+/// crescent, from out on the right round to the front. In that plane the
+/// blade is [`CHOP_READY`] over level at the ready, out in front and up;
+/// a cut begins with it [`CHOP_FROM`] over level, which is up and back
+/// over the right shoulder, and brings it down through straight ahead to
+/// [`CHOP_TO`], under level, to the left, in the time a punch takes to go
+/// out; and it is back at the ready in the time a punch takes to come
+/// back. The arm goes with it: raised [`CHOP_ARM_FROM`] forward of
+/// hanging (level is `PUNCH_REACH`) and a little out to the right, and
+/// brought down to [`CHOP_ARM_TO`], across to the left
+/// ([`CHOP_ARM_OUT`], [`CHOP_ARM_IN`]: a turn to the left is the
+/// greater). All of them mine.
+const CHOP_LEAN: f32 = 0.62;
+const CHOP_READY: f32 = 0.5;
+pub(crate) const CHOP_FROM: f32 = 2.0;
+pub(crate) const CHOP_TO: f32 = -0.5;
+const CHOP_ARM_FROM: f32 = 2.35;
+const CHOP_ARM_TO: f32 = 1.15;
+const CHOP_ARM_OUT: f32 = -0.2;
+const CHOP_ARM_IN: f32 = 0.35;
 
 /// A body that will not walk off dry land into the sea, nor down anything it
 /// could not step back up ([`strands`]). An AI does not know it could jump
@@ -2487,6 +2523,72 @@ pub(crate) fn blade_way(slash: Option<(f32, f32)>) -> Vec3 {
     out.lerp(ready, back).normalize_or(ready)
 }
 
+/// Eased from 0 to 1: slowly away, quickly through the middle, slowly in.
+fn eased(share: f32) -> f32 {
+    let share = share.clamp(0.0, 1.0);
+    share * share * (3.0 - 2.0 * share)
+}
+
+/// How far over level in front the blade of a sword held on its edge
+/// points, in the plane of its cut ([`CHOP_LEAN`]): at the ready; or, in
+/// a `slash` ([`slash_at`]), from up and back over the shoulder down to
+/// under level, and then back up to the ready.
+pub(crate) fn chop_angle(slash: Option<(f32, f32)>) -> f32 {
+    let Some((swept, back)) = slash else {
+        return CHOP_READY;
+    };
+    let cut = CHOP_FROM + (CHOP_TO - CHOP_FROM) * eased(swept);
+    cut + (CHOP_READY - cut) * eased(back)
+}
+
+/// Which way the blade of a sword held on its edge points, and which way
+/// its flat side faces, in the body's space (`gear`): the blade in the
+/// plane of the cut, as far over level as the cut has got
+/// ([`chop_angle`]), and its flat square to that plane, so that its edge
+/// leads.
+pub(crate) fn chop_blade(slash: Option<(f32, f32)>) -> (Vec3, Vec3) {
+    chop_blade_at(chop_angle(slash))
+}
+
+/// The same, with the blade `angle` over level in front, in the plane of
+/// the cut.
+pub(crate) fn chop_blade_at(angle: f32) -> (Vec3, Vec3) {
+    let (lean_sin, lean_cos) = CHOP_LEAN.sin_cos();
+    // The plane of the cut: straight ahead, and up leant to the right.
+    let up = Vec3::new(lean_sin, lean_cos, 0.0);
+    let along = Vec3::NEG_Z * angle.cos() + up * angle.sin();
+    (along, Vec3::NEG_Z.cross(up))
+}
+
+/// Where the right arm of a body with a sword held on its edge is, in
+/// place of its walk and of a punch: at the ready, a little forward of
+/// hanging, as the other way has it ([`sword_offset`]); or, in a `slash`,
+/// raised over the shoulder and brought down in front and across, and
+/// then back to the ready.
+fn chop_offset(kind: WalkBoneKind, stance: f32, slash: Option<(f32, f32)>) -> Option<Quat> {
+    if !matches!(kind, WalkBoneKind::ArmR) {
+        return None;
+    }
+    let ready = Quat::from_axis_angle(Vec3::X, SWORD_READY) * stood(stance);
+    let Some((swept, back)) = slash else {
+        return Some(ready);
+    };
+    let cut = eased(swept);
+    let raise = CHOP_ARM_FROM + (CHOP_ARM_TO - CHOP_ARM_FROM) * cut;
+    let across = CHOP_ARM_OUT + (CHOP_ARM_IN - CHOP_ARM_OUT) * cut;
+    let out = Quat::from_rotation_y(across) * Quat::from_axis_angle(Vec3::X, raise) * stood(stance);
+    Some(out.slerp(ready, eased(back)))
+}
+
+/// Where the right arm of a body with a sword is, whichever way swords
+/// are swung (`swing`, the file's `arena.sword_swing`).
+fn armed_offset(swing: ui::SwordSwing, kind: WalkBoneKind, stance: f32, slash: Option<(f32, f32)>) -> Option<Quat> {
+    match swing {
+        ui::SwordSwing::Sweep => sword_offset(kind, stance, slash),
+        ui::SwordSwing::Chop => chop_offset(kind, stance, slash),
+    }
+}
+
 /// How far into its slash a body with a sword is, if it is in one
 /// ([`slash_at`]), for whoever draws the sword (`gear`).
 pub(crate) fn slashing(melee: &ui::Melee, punch: Option<&Punching>) -> Option<(f32, f32)> {
@@ -3060,7 +3162,8 @@ pub(crate) fn animate_walk(
     mut commands: Commands,
 ) {
     let dt = time.delta_secs();
-    let melee = ui::ui().melee;
+    let file = ui::ui();
+    let (melee, sword_swing) = (file.melee, file.arena.sword_swing);
     let swing = melee.swing();
     for (body, mut walk, punch, ..) in &mut walks {
         let target = if walk.speed > 0.04 { 1.0 } else { 0.0 };
@@ -3095,7 +3198,7 @@ pub(crate) fn animate_walk(
             .and_then(|drinking| drink_offset(bone.kind, bone.frame, bone.stance, drinking.lifted()))
             .or_else(|| {
                 if armed {
-                    sword_offset(bone.kind, bone.stance, striking.map(|punch| slash_at(&melee, punch.age)))
+                    armed_offset(sword_swing, bone.kind, bone.stance, striking.map(|punch| slash_at(&melee, punch.age)))
                 } else {
                     striking.and_then(|punch| punch_offset(bone.kind, bone.stance, Punching::reach(&melee, punch.age)))
                 }
@@ -3761,6 +3864,23 @@ mod camera_tests {
         assert!(edge(0.0).x > 0.8 && edge(melee.swing_out).x < -0.7 && edge(melee.swing_out * 0.5).z < -0.9);
         assert!(edge(0.0).dot(from) > 0.9 && edge(melee.swing_out).dot(to) > 0.9, "the blade goes with the arm");
         assert!(edge(melee.swing()).distance(blade_way(None)) < 1e-3);
+        // The other way, on its edge: the arm at the ready as before; a
+        // cut raises it over the shoulder, out to the right, and brings
+        // it down in front and across, and back to the ready.
+        let ready = points(right, chop_offset(WalkBoneKind::ArmR, stance, None).unwrap());
+        assert!(ready.z < hung.z - 0.3 && ready.y < -0.7, "{ready:?}");
+        let pose = |age: f32| points(right, chop_offset(WalkBoneKind::ArmR, stance, Some(slash_at(&melee, age))).unwrap());
+        let (from, through, to) = (pose(0.0), pose(melee.swing_out * 0.5), pose(melee.swing_out));
+        assert!(from.y > 0.5 && from.z < -0.3 && from.x > 0.2, "raised, in front, out to the right: {from:?}");
+        assert!(to.y < -0.2 && to.z < -0.8 && to.x < from.x - 0.2, "down in front, and across: {to:?}");
+        assert!(through.y < from.y && through.y > to.y && through.z < -0.8, "{through:?}");
+        assert!(pose(melee.swing()).distance(ready) < 1e-3);
+        assert!(chop_offset(WalkBoneKind::ArmL, stance, None).is_none());
+        // Whichever way swords are swung, the file's word chooses it.
+        assert_eq!(armed_offset(ui::SwordSwing::Sweep, WalkBoneKind::ArmR, stance, None), sword_offset(WalkBoneKind::ArmR, stance, None));
+        let mid = Some(slash_at(&melee, melee.swing_out * 0.5));
+        assert_eq!(armed_offset(ui::SwordSwing::Chop, WalkBoneKind::ArmR, stance, mid), chop_offset(WalkBoneKind::ArmR, stance, mid));
+        assert_ne!(chop_offset(WalkBoneKind::ArmR, stance, mid), sword_offset(WalkBoneKind::ArmR, stance, mid));
         // An arm that rests lower than it hangs, and a leg that rests
         // straighter than it stands, are left as they rest: never turned up,
         // in or out.
@@ -3770,6 +3890,47 @@ mod camera_tests {
         let straight = Quat::from_rotation_z(3.1) * Quat::from_rotation_x(0.05);
         assert_eq!(stance_from_rest(WalkBoneKind::ThighL, straight), 0.0);
         assert_eq!(stance_from_rest(WalkBoneKind::ThighR, Quat::from_rotation_z(-3.1)), 0.0);
+    }
+
+    #[test]
+    fn a_sword_on_its_edge_cuts_down_from_over_the_right_shoulder_to_low_on_the_left() {
+        let melee = ui::ui().melee;
+        let blade = |age: f32| chop_blade(Some(slash_at(&melee, age)));
+        // At the ready: out in front and up, a little out to the right.
+        let (ready, flat) = chop_blade(None);
+        assert!(ready.z < -0.8 && ready.y > 0.3 && ready.y < 0.6 && ready.x > 0.1 && ready.x < 0.4, "{ready:?}");
+        // A cut begins up and back over the right shoulder, passes
+        // straight ahead, and ends under level in front, to the left.
+        let (from, _) = blade(0.0);
+        let (to, _) = blade(melee.swing_out);
+        assert!(from.y > 0.6 && from.z > 0.2 && from.x > 0.3, "{from:?}");
+        assert!(to.y < -0.3 && to.z < -0.8 && to.x < -0.15, "{to:?}");
+        let mut lowest = f32::MAX;
+        for step in 0..=40 {
+            let (along, _) = blade(melee.swing_out * step as f32 / 40.0);
+            // Always downward, never back up, and in the one plane.
+            let over = along.y.atan2(-along.z).rem_euclid(std::f32::consts::TAU);
+            let over = if over > std::f32::consts::PI { over - std::f32::consts::TAU } else { over };
+            assert!(over <= lowest + 1e-4, "it goes back up at step {step}");
+            lowest = over;
+            assert!(along.dot(flat).abs() < 1e-5 && (along.length() - 1.0).abs() < 1e-5);
+        }
+        // The flat is square to the cut all the way, so the edge leads;
+        // on its edge, it faces to the side far more than up or down, and
+        // leans enough that the camera over you sees some of it.
+        for age in [0.0, melee.swing_out * 0.3, melee.swing_out, melee.swing_out + melee.swing_back * 0.5] {
+            let (along, flat_now) = blade(age);
+            assert!(flat_now.distance(flat) < 1e-5 && along.dot(flat_now).abs() < 1e-5);
+        }
+        assert!((flat.length() - 1.0).abs() < 1e-5 && flat.x.abs() > 0.8 && flat.y.abs() > 0.3 && flat.y.abs() < 0.7, "{flat:?}");
+        // And back at the ready as the swing ends.
+        assert!(blade(melee.swing()).0.distance(ready) < 1e-3);
+        assert_eq!(chop_angle(Some((0.0, 0.0))), CHOP_FROM);
+        assert!((chop_angle(Some((1.0, 0.0))) - CHOP_TO).abs() < 1e-6);
+        assert!((chop_angle(Some((1.0, 1.0))) - chop_angle(None)).abs() < 1e-6);
+        // It reaches about as far ahead as a punch lands: the blade from
+        // the hand at the end of the cut.
+        assert!(CHOP_FROM > std::f32::consts::FRAC_PI_2 && CHOP_TO < 0.0 && CHOP_ARM_FROM > PUNCH_REACH && CHOP_ARM_TO < PUNCH_REACH);
     }
 
     #[test]

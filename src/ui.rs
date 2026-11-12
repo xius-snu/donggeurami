@@ -203,6 +203,25 @@ pub(crate) struct Arena {
     /// camera on my mobile phone, and lock that zoom so u cannot zoom in
     /// or out"): nothing zooms it (`OrbitCamera::top_down`).
     pub camera_height: f32,
+    /// How a sword is held and swung ([`SwordSwing`]).
+    pub sword_swing: SwordSwing,
+}
+
+/// How a sword is held and swung in Bridge Wars (`sword_offset` and
+/// `chop_offset` in `lib.rs`, `gear`): the file's `arena.sword_swing`.
+/// Both are kept, to go back and forth between by the one word (Hajun,
+/// 2026-11-12: "instead of removing the code for the sword animation now
+/// (cuz i might wanna change it back after trying this new way), make a
+/// new sword animation").
+#[derive(Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum SwordSwing {
+    /// The first way (2026-11-12): held flat, its flat side up, and swept
+    /// level across in front from the right to the left.
+    Sweep,
+    /// Held on its edge, "narrow", and cut downward from over the right
+    /// shoulder to low on the left ("this time instead of holding the
+    /// sword flat, hold it narrow and slash downward(?)").
+    Chop,
 }
 
 impl Arena {
@@ -754,11 +773,14 @@ pub(crate) struct ArenaColours {
     pub pip_off: Color,
     /// The band on the ground that shows where a fireball or a builder
     /// will go while you aim it (`utility`): its outline and its fill, as
-    /// the punch's range has them (`colours.melee`).
+    /// the punch's range has them (`colours.melee`), and the dark rim
+    /// round it, which is what shows it over the sky (since 2026-11-12).
     #[serde(deserialize_with = "colour")]
     pub aim_outline: Color,
     #[serde(deserialize_with = "colour")]
     pub aim_fill: Color,
+    #[serde(deserialize_with = "colour")]
+    pub aim_rim: Color,
     /// The time left of a drink, written in front of you while a potion
     /// is at your mouth (`utility`).
     #[serde(deserialize_with = "colour")]

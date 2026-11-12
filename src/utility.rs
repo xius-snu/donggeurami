@@ -167,11 +167,13 @@ fn heading_of(rotation: Quat) -> f32 {
 struct AimBand;
 #[derive(Component)]
 struct BandFor(Utility);
-/// Its sheets' looks, to recolour as the file changes.
+/// Its sheets' looks, to recolour as the file changes: the fill, the
+/// outline just inside its edge, and the dark rim just outside it.
 #[derive(Resource)]
 struct BandLook {
     fill: Handle<StandardMaterial>,
     outline: Handle<StandardMaterial>,
+    rim: Handle<StandardMaterial>,
 }
 
 /// The time left of your drink, written in front of you.
@@ -521,24 +523,39 @@ fn show_drink(
 
 /// Makes the band, hidden until something is aimed: for each of the two
 /// things that are, its fill and, a hair over it, its outline, as the
-/// punch's range is made (`range`), under one root with no `Venue`, so
-/// that it is drawn wherever you are and is in nothing's way.
+/// punch's range is made (`range`), and round those a dark rim
+/// (`range::rim`, in the file's `colours.arena.aim_rim`), under one root
+/// with no `Venue`, so that it is drawn wherever you are and is in
+/// nothing's way. The rim is what shows it over the void (since
+/// 2026-11-12; Hajun: "make the hit indicator for fireball appear even
+/// when ur on a bridge (the hit indicator should appear even on void
+/// area)"): the band was drawn there all along, a white as pale as the
+/// sky by day, and from a bridge nearly all of it lies over the void.
 fn spawn_band(mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardMaterial>>, mut commands: Commands) {
     let colours = ui().colours.arena;
     let look = BandLook {
         fill: materials.add(range::look(colours.aim_fill)),
         outline: materials.add(range::look(colours.aim_outline)),
+        rim: materials.add(range::look(colours.aim_rim)),
     };
     let reach = PLAYER_RADIUS + 0.05;
     let shapes = [
-        (Utility::Fireball, range::band(FIREBALL_BAND, reach, FIREBALL_AHEAD + FIREBALL_RANGE)),
-        (Utility::Builder, range::band(BUILDER_BAND, reach, reach + BUILDER_BAND_LENGTH)),
-    ];
+        (Utility::Fireball, FIREBALL_BAND, reach, FIREBALL_AHEAD + FIREBALL_RANGE),
+        (Utility::Builder, BUILDER_BAND, reach, reach + BUILDER_BAND_LENGTH),
+    ]
+    .map(|(utility, width, from, to)| (utility, range::band(width, from, to), range::rim(width, from, to)));
     commands
         .spawn((Name::new("Aim band"), AimBand, Transform::default(), Visibility::Hidden))
         .with_children(|band| {
-            for (utility, (fill, outline)) in shapes {
+            for (utility, (fill, outline), rim) in shapes {
                 band.spawn((BandFor(utility), Transform::default(), Visibility::Hidden)).with_children(|kind| {
+                    kind.spawn((
+                        Mesh3d(meshes.add(rim)),
+                        MeshMaterial3d(look.rim.clone()),
+                        Transform::default(),
+                        NotShadowCaster,
+                        NotShadowReceiver,
+                    ));
                     kind.spawn((
                         Mesh3d(meshes.add(fill)),
                         MeshMaterial3d(look.fill.clone()),
@@ -571,7 +588,7 @@ fn recolour(
         return;
     }
     let colours = ui().colours.arena;
-    for (handle, colour) in [(&look.fill, colours.aim_fill), (&look.outline, colours.aim_outline)] {
+    for (handle, colour) in [(&look.fill, colours.aim_fill), (&look.outline, colours.aim_outline), (&look.rim, colours.aim_rim)] {
         if let Some(mut material) = materials.get_mut(handle) {
             material.base_color = range::bright(colour);
         }

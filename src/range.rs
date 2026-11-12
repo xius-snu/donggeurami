@@ -56,6 +56,11 @@ const WIDTH: f32 = 0.1;
 /// it, over it.
 const OVER: f32 = 0.002;
 
+/// How wide the dark rim round a band that is aimed is ([`rim`]), in
+/// metres, just outside its edge: about three pixels on a phone under
+/// Bridge Wars' camera.
+const RIM: f32 = 0.07;
+
 /// How much brighter than its colours it is drawn, as the fountain's
 /// water is (`fountain::WATER_GAIN`; the clouds at 5): white at full alpha
 /// comes out white rather than tonemapped to grey, and a fainter alpha
@@ -270,13 +275,7 @@ fn restyle(
 /// them. What is aimed in Bridge Wars shows where it will go with one
 /// (`utility`).
 pub(crate) fn band(width: f32, from: f32, to: f32) -> (Mesh, Mesh) {
-    let half = width * 0.5;
-    let corners = vec![
-        Vec2::new(-half, -from),
-        Vec2::new(-half, -to),
-        Vec2::new(half, -to),
-        Vec2::new(half, -from),
-    ];
+    let corners = band_corners(width, from, to);
     let mut indices = Vec::new();
     triangle(&corners, &mut indices, 0, 1, 2);
     triangle(&corners, &mut indices, 0, 2, 3);
@@ -290,6 +289,37 @@ pub(crate) fn band(width: f32, from: f32, to: f32) -> (Mesh, Mesh) {
         triangle(&points, &mut indices, i, 4 + j, 4 + i);
     }
     (fill, flat(points, indices))
+}
+
+/// The four corners of a band `width` across from `from` to `to` ahead of
+/// your middle (-Z), in the ground's (x, z).
+fn band_corners(width: f32, from: f32, to: f32) -> Vec<Vec2> {
+    let half = width * 0.5;
+    vec![
+        Vec2::new(-half, -from),
+        Vec2::new(-half, -to),
+        Vec2::new(half, -to),
+        Vec2::new(half, -from),
+    ]
+}
+
+/// The rim round the same band ([`band`]): a line [`RIM`] wide just
+/// outside its edge, all the way round, to be drawn dark. A white band is
+/// all but the colour of the sky by day, and what is aimed in Bridge Wars
+/// is aimed over the void as often as over land (`utility`; Hajun,
+/// 2026-11-12: "the hit indicator should appear even on void area"): with
+/// a dark line round it, it is seen over anything.
+pub(crate) fn rim(width: f32, from: f32, to: f32) -> Mesh {
+    let corners = band_corners(width, from, to);
+    let mut points = corners.clone();
+    points.extend(inset(&corners, -RIM));
+    let mut indices = Vec::new();
+    for i in 0..4 {
+        let j = (i + 1) % 4;
+        triangle(&points, &mut indices, i, j, 4 + j);
+        triangle(&points, &mut indices, i, 4 + j, 4 + i);
+    }
+    flat(points, indices)
 }
 
 /// What a sheet of it is made of: `colour`, as see-through as its alpha
@@ -480,6 +510,18 @@ mod tests {
             let in_from_edge = (0.4 - across).min(along - 0.5).min(20.0 - along);
             assert!(in_from_edge < 1e-4 || (in_from_edge - WIDTH).abs() < 1e-4, "{point:?}");
         }
+        // The rim's inner edge is the band's too, and it reaches RIM out
+        // from it, all the way round: nothing of it is inside the band.
+        let (points, triangles) = corners(&rim(0.8, 0.5, 20.0));
+        assert_eq!((points.len(), triangles.len()), (8, 8));
+        assert!(faces_up(&triangles));
+        for point in &points {
+            let (across, along) = (point.x.abs(), -point.z);
+            let out_from_edge = (across - 0.4).max(0.5 - along).max(along - 20.0);
+            assert!(out_from_edge.abs() < 1e-4 || (out_from_edge - RIM).abs() < 1e-4, "{point:?}");
+        }
+        let (low, high) = points.iter().fold((Vec3::INFINITY, Vec3::NEG_INFINITY), |(low, high), p| (low.min(*p), high.max(*p)));
+        assert!(low.abs_diff_eq(Vec3::new(-0.4 - RIM, 0.0, -20.0 - RIM), 1e-5) && high.abs_diff_eq(Vec3::new(0.4 + RIM, 0.0, -0.5 + RIM), 1e-5));
     }
 
     #[test]

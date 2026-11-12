@@ -309,12 +309,12 @@ struct Hunter {
 
 /// What you have in a game of Bridge Wars: the metres of bridge left to
 /// lay (`bridge`; the file's `arena.bridge_metres` as a game begins, none
-/// since 2026-11-11, and 50 more for every 4 silver at the shop, `market`;
+/// since 2026-11-11, and 25 more for every 4 silver at the shop, `market`;
 /// written in front of you as you build, and in the shop), and how many
 /// you hold of each thing the generators make, counted top left (`hud`):
 /// offline what you have picked up ([`gather`]), online what the server
-/// says you hold ([`Purses`]).
-#[derive(bevy::prelude::Resource, Default)]
+/// says you hold ([`Purses`]). Dying loses all of it ([`lose_on_death`]).
+#[derive(bevy::prelude::Resource, Default, Clone, Copy, PartialEq, Debug)]
 pub(crate) struct Resources {
     pub bridge_metres: f32,
     pub held: Purse,
@@ -1747,12 +1747,31 @@ fn dress(
 }
 
 /// Dying loses what you bought at the item shop ("all items are lost upon
-/// death"): the server, or this device's own game, takes your sword and
-/// what was on your second button; the metres of bridge are this device's
-/// to take, here.
-fn lose_on_death(died: Query<(), (With<Player>, Added<Dead>)>, mut stock: ResMut<Resources>) {
-    if !died.is_empty() && stock.bridge_metres != 0.0 {
-        stock.bridge_metres = 0.0;
+/// death"), and, since 2026-11-12, everything you hold of what the
+/// generators make (Hajun: "death make u lose all ur silver, gold,
+/// sapphire, amethyst, bridge meters"; until then those were kept). The
+/// server, or this device's own game, takes your sword and what was on
+/// your second button; the metres of bridge are this device's to take,
+/// here, online too; and so, offline, is what you hold, which online the
+/// server empties and says so ([`Purses`], [`follow_round`]).
+fn lose_on_death(died: Query<(), (With<Player>, Added<Dead>)>, game: Option<Res<Game>>, mut stock: ResMut<Resources>) {
+    if died.is_empty() {
+        return;
+    }
+    let offline = game.is_some_and(|game| !game.online);
+    let lost = lost_on_death(&stock, offline);
+    if *stock != lost {
+        *stock = lost;
+    }
+}
+
+/// What is left of `stock` to someone who has died: no metres of bridge,
+/// and, in a game played `offline`, nothing held of what the generators
+/// make (online that is the server's to take).
+fn lost_on_death(stock: &Resources, offline: bool) -> Resources {
+    Resources {
+        bridge_metres: 0.0,
+        held: if offline { Purse::default() } else { stock.held },
     }
 }
 
@@ -3584,6 +3603,24 @@ mod tests {
         assert_eq!(seconds(3.2), "3.5");
         assert_eq!(seconds(0.3), "0.5");
         assert_eq!(seconds(0.0), "0");
+    }
+
+    #[test]
+    fn dying_loses_the_metres_of_bridge_and_offline_everything_held() {
+        let stock = Resources {
+            bridge_metres: 62.5,
+            held: [31, 4, 2, 1],
+        };
+        // Offline all of it is this device's to take.
+        let lost = lost_on_death(&stock, true);
+        assert_eq!((lost.bridge_metres, lost.held), (0.0, [0; 4]));
+        assert_eq!((lost.metres(), lost.count(Item::Silver), lost.count(Item::Amethyst)), ("0m".into(), "0".into(), "0".into()));
+        // Online the metres are, and what is held is the server's, which
+        // empties it as it has you dead.
+        let lost = lost_on_death(&stock, false);
+        assert_eq!((lost.bridge_metres, lost.held), (0.0, [31, 4, 2, 1]));
+        // With nothing, nothing changes.
+        assert_eq!(lost_on_death(&Resources::default(), true), Resources::default());
     }
 
     #[test]

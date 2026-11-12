@@ -208,10 +208,14 @@
             pip: "#ffffff",
             pip_off: "#ffffff38",
             // The band on the ground that shows where a fireball or a
-            // builder will go while you aim it: its outline, and the fill
-            // inside it.
+            // builder will go while you aim it: its outline, the fill
+            // inside it, and the thin dark rim round the outside of it,
+            // which is what shows the band over the sky off the edge of an
+            // island or a bridge (white on the day's sky is all but
+            // invisible).
             aim_outline: "#ffffffb3",
             aim_fill: "#ffffff33",
+            aim_rim: "#00000080",
             // The time left of a drink, written in front of you while a
             // potion is at your mouth: "1.6" down to "0.0".
             drink: "#ffffff",
@@ -606,5 +610,11 @@
         // of the screen with you in its middle; a bigger number shows more
         // round it.
         camera_height: 15.5,
+        // How a sword is held and swung: Chop, on its edge ("narrow") and
+        // cut downward from over the right shoulder to low on the left
+        // (since 2026-11-12), or Sweep, the first way, held flat and
+        // swept level across in front from right to left. Both are still
+        // in the game: change the word to go back.
+        sword_swing: Chop,
     ),
 )

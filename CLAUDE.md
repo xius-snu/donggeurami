@@ -304,8 +304,11 @@ alone; the server is `cargo build -p roundtown_server`. Never `--workspace`,
 which would build the game with the server's half of replicon in it.
 
 Android needs the `release-android` profile, a manual strip step, and Gradle
-(`versionCode` in `mobile/android/app/build.gradle` is the build number: 20
-on 2026-11-12, Bridge Wars' two shops and everything they sell, the swords,
+(`versionCode` in `mobile/android/app/build.gradle` is the build number: 21
+later on 2026-11-12, dying taking everything you hold, the fireball's band
+seen over the void, and a sword held on its edge and cut downward (protocol
+13 still; the server deployed for the first); 20
+in the small hours of 2026-11-12, Bridge Wars' two shops and everything they sell, the swords,
 the second button, and games of two to four people with no bots (protocol
 13, the server deployed with it); 19
 late on the night of 2026-11-11, what the generators make dropping onto
@@ -593,6 +596,107 @@ was the town itself; everything below about the map, its islands, the
 void, the punch's knockback and its range held for the town then, and
 holds for the arena now.
 
+- **Later on 2026-11-12: dying loses everything you hold, what is aimed
+  is seen over the void, and a sword is held on its edge and cut
+  downward** (Hajun: "for the bridge pvp minigame, make it so death make u
+  lose all ur silver, gold, sapphire, amethyst, bridge meters. also make
+  the hit indicator for fireball appear even when ur on a bridge (the hit
+  indicator should appear even on void area) and shootable on bridge. also
+  instead of removing the code for the sword animation now (cuz i might
+  wanna change it back after trying this new way), make a new sword
+  animation, this time instead of holding the sword flat, hold it narrow
+  and slash downward(?) and use that animation instead. try to choose the
+  holding angle/slashing animation look good enough even when its like
+  this way and look nice enough in a top down view. then rebuild apk and
+  push to git"; `PROTOCOL_VERSION` 13 still, nothing that is sent having
+  changed; the server deployed for the first of the three, the binary
+  before kept on the VM as `roundtown-server.prev-2026-11-12c`; APK 21).
+  - **Dying loses everything you hold**: your silver, gold, sapphire and
+    amethyst with the metres of bridge, the sword and what is on the
+    second button; the shield and what your team has bought stay, as
+    before. Online it is the server's (`Game::die` in
+    `server/src/arena.rs` empties the seat's purse, and the room is sent
+    it with the rest, `Purses`), so an app from before, APK 20, loses
+    them online too; offline it is this device's (`arena::lose_on_death`,
+    `lost_on_death`), as the metres are online as well. Until then what
+    you held was kept through a death, which was my call, Hajun's file
+    saying only "all items are lost upon death" of the item shop. They
+    are lost, not dropped: nobody else gets them. Checked in the desktop
+    build, scripted, with a sword, a shield, a fireball and 25 m bought
+    and then walked off the island: offline, [172, 80, 60, 60] to nothing;
+    against a server on this PC, [122, 200, 200, 200] to nothing as the
+    server logged the fall, the shield kept both times.
+  - **The band of what is aimed has a dark rim round it** (`range::rim`,
+    `RIM`, 0.07 m just outside its edge, in `colours.arena.aim_rim` of
+    `assets/ui.ron`, black at a half; `utility::spawn_band`): the
+    fireball's and the builder's. The band was drawn over the void all
+    along, at your feet's height wherever you stand, but it is white,
+    and by day so is the sky, nearly: measured in a screenshot of the
+    desktop build, the sky (140, 209, 247), the band's fill over it (163,
+    213, 243) and its outline (212, 224, 233). Off the edge of an island
+    it was all but gone, and from a bridge nearly all of it lies over the
+    void. With the rim it is seen over anything; over land it is a thin
+    shadow round the white. **Throwing from a bridge was never refused,
+    and I could not make it fail**: in the same scripted run, standing on
+    a bridge 13 m out over the void, three fireballs were thrown, by a
+    drag with building on, by a drag with it off and by Q, and each flew
+    and burst; and the VM's log has Hajun's three of that morning bought
+    and gone from the button within half a minute. If it still will not
+    throw from a bridge on the phone, it is something this did not find:
+    ask what was pressed, and for the log. The punch's own range has no
+    rim, nobody having asked: over the void it is as faint as the band
+    was.
+  - **A sword is held on its edge and cut downward** (`arena.sword_swing:
+    Chop` in `assets/ui.ron`, `ui::SwordSwing`; `chop_offset`,
+    `chop_blade`, `chop_angle` in `src/lib.rs`; `gear::edge_on`, `Cut`,
+    `Cutting`). **The first way is all still there, and `sword_swing:
+    Sweep` is it** (`sword_offset`, `blade_way`, `gear::pointing`,
+    `Trail`): the one word in the file goes back, on desktop as the file
+    is saved, on a phone at its next build. The blade moves in one plane
+    with its edge leading, as a sword is cut with: an upright plane
+    through the way you face, leant over to the right by `CHOP_LEAN`,
+    0.62 rad, 36 degrees. Upright altogether, the camera over you would
+    see the blade and its cut edge on, a hair; flat is what Hajun asked
+    to leave; leant so, it sees a slim blade, about half its breadth, and
+    the cut as a crescent. At the ready the blade is out in front and up,
+    `CHOP_READY`, 0.5 rad over level, which from above points a little out
+    to the right; a press raises the arm (`CHOP_ARM_FROM`, 2.35 rad
+    forward of hanging, where level is 1.7) with the blade up and back
+    over the right shoulder (`CHOP_FROM`, 2.0 rad over level), and brings
+    both down through straight ahead to low on the left (`CHOP_TO`, -0.5;
+    `CHOP_ARM_TO`, 1.15, and across, `CHOP_ARM_OUT` to `CHOP_ARM_IN`) in
+    the time a punch goes out, eased, and back to the ready in the time
+    it comes back. From over you: the sword flicks out to your right and
+    back, whips over to the front, and ends a little left of straight
+    ahead, inside the range drawn there. It is drawn thicker through its
+    flat than the other way (`gear::CHOP_SCALE`, 3.0 where the flat
+    sword's is 1.7), that being what the camera sees most of. **Its trail
+    is the ribbon the blade itself has cut** (`Cutting::follow`,
+    `gear::ribbon`): from a third of the way up the blade to its tip
+    (`BLADE`, each model's own length, which a test reads off the
+    models), a sample to every 5 degrees the blade has turned whatever
+    the frame rate (`CUT_STEP`), the mesh built again each frame of the
+    cut and faded after as the other trail is; fuller than that one along
+    its length (`CUT_RAMP`), the camera seeing it from nearer its edge. A
+    press mid-cut begins the next, as with a punch. What a punch lands
+    on, and when, is as it was, and so is that nobody else sees your
+    swing: someone else's sword is at the ready, the new way. All the
+    angles are mine. Seen in the desktop build, scripted, each of the
+    three swords: from the game's camera in bursts of twelve shots
+    through a cut, and close from the front, the side and behind, at the
+    ready, cutting, and walking and cutting; the first numbers (a lean of
+    0.55, a thickness of 2.6 and the other trail's ramp) left the trail
+    too faint from above, and were raised.
+  - **Unit-tested**: the server's purse at a death, and the device's;
+    the rim round the band; the cut's poses on the model, its blade's
+    path, that the flat stays square to the cut, the ribbon at 3 and at
+    30 frames to a cut, and the blades' lengths against the models. The
+    VM, deployed while nobody was on it, let this PC's build in. **Not
+    by hand, and not on a phone: none was attached, so APK 21 is built,
+    its assets checked byte for byte, and not installed** (APK 20 is kept
+    beside it as `donggeurami_town-release.prev-2026-11-12b.apk`). The Adreno has
+    not drawn the rim or the ribbon (both blended, as the band and the
+    other trail are).
 - **Since 2026-11-12 Bridge Wars has two shops, and everything in Hajun's
   file is in the game** (Hajun: "i updated the bridgewarsgameevent.txt.
   update the generator rates, then add all the itemshop/upgrade shop items,
@@ -636,7 +740,9 @@ holds for the arena now.
     sword or shield than the one you have is sold. **Dying loses the
     sword, what is on the second button, a potion still lasting and the
     metres of bridge; the shield stays** ("sword is lost on death, shield
-    carries on", `Outfits::die`, `arena::lose_on_death`).
+    carries on", `Outfits::die`, `arena::lose_on_death`); and, since
+    later that day, everything you hold of the four things as well
+    (above).
   - **The upgrade shop, at the blue stand** (`Shop::Upgrades`, your whole
     team's, in sapphire): the generator, 2, 4, 6 and 8, half as fast again,
     twice, amethyst too, and three times as fast (`FORGE_SPEED`, "150%",
@@ -673,7 +779,9 @@ holds for the arena now.
     indicator similar to Brock in brawlstars"): once the finger is 4% of
     the short side from where it went down a band lies on the ground from
     you that way (`range::band`, in `colours.arena.aim_outline` and
-    `aim_fill`), as long as a fireball flies and a metre wide, or as wide
+    `aim_fill`, and since later that day with a dark rim round it,
+    `aim_rim`, which is what shows it over the void, above), as long as a
+    fireball flies and a metre wide, or as wide
     as a bridge; let go and it goes that way, and you turn to face it;
     dragged back to where it went down the band is gone, and letting go
     there cancels. A quick tap that never dragged, under 0.3 s, uses it
@@ -743,7 +851,10 @@ holds for the arena now.
     frame once the limbs are posed (the rig's `hand.R`, followed up to the
     body), its flat side up. **It is drawn bigger than modelled**, 1.7
     times and twice across (`gear::SWORD_SCALE`): from the camera 15 m over
-    you a metre of thin blade was a hair. **With a sword the punch is a
+    you a metre of thin blade was a hair. (Since later that day a sword
+    is held on its edge and cut downward instead, above, and what follows
+    is the first way, `arena.sword_swing: Sweep`, kept to go back to.)
+    **With a sword the punch is a
     slash** (`sword_offset`, `blade_way` in `src/lib.rs`): the right arm
     holds it at the ready, a little forward of hanging, the blade out in
     front, and at a press it is raised to level and swept about the body's
@@ -792,15 +903,16 @@ holds for the arena now.
     a `{number}` comes out of the rules; `words.arena.blinded` and
     `trap_sprung`) and the colours (`colours.arena.sword_*`, `shield_*`,
     `fireball`, `potion_*`, `heal_pool`, `trap`, `pip`, `pip_off`,
-    `aim_outline`, `aim_fill`, `drink`, `blind`). No number of the rules is
-    in it.
+    `aim_outline`, `aim_fill`, `aim_rim`, `drink`, `blind`). No number of
+    the rules is in it; `arena.sword_swing` says which way a sword is
+    swung.
   - **For trying it out**: `RT_ARENA_PURSE=<count>` begins a fight with
     that many of each thing in every person's purse, on the server for its
     games and on a desktop build for one played offline, as
     `RT_ARENA_FROM` begins it late.
-  - **What is mine, the file not saying**: what you hold of the four
-    things is kept through a death (only what the item shop sold is lost);
-    Stronger Swords and Better Shields do nothing for a bare hand or
+  - **What is mine, the file not saying**: (what you hold of the four
+    things was kept through a death, until Hajun had it lost, later that
+    day;) Stronger Swords and Better Shields do nothing for a bare hand or
     someone with no shield; the generator's third step keeps the second's
     pace, and its amethyst is one a minute, two on the pad at the most;
     nine of anything but a fireball on the button; the fireball's speed,
