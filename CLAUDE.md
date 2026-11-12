@@ -304,7 +304,11 @@ alone; the server is `cargo build -p roundtown_server`. Never `--workspace`,
 which would build the game with the server's half of replicon in it.
 
 Android needs the `release-android` profile, a manual strip step, and Gradle
-(`versionCode` in `mobile/android/app/build.gradle` is the build number: 22
+(`versionCode` in `mobile/android/app/build.gradle` is the build number: 23
+on the night of 2026-11-12, the computer's players that play the game in
+a game played offline, the line about your anchor, and what a bot takes
+flying to it (protocol 13 still; the server deployed with the bots
+online that night); 22
 in the afternoon of 2026-11-12, the sword held straighter at the ready
 (protocol 13 still, no server change); 21
 at midday on 2026-11-12, dying taking everything you hold, the fireball's band
@@ -598,6 +602,365 @@ was the town itself; everything below about the map, its islands, the
 void, the punch's knockback and its range held for the town then, and
 holds for the arena now.
 
+- **Since the night of 2026-11-12 the computer's players play the
+  game** (Hajun: "right now the other bots dont do anything other than
+  stay in their base. i need the bots to be intelligent enough. think of a
+  way to make this game enjoyable. the difficulty need to moderate - not
+  too hard, not too easy ... maybe one way is every 1~2 seconds the bot
+  scores a short list of goals and does the highest one ... and a bonus
+  for the current goal so the bot doesn't flip between two every tick ...
+  maybe treat islands as graph nodes and every bridge as an edge and bots
+  pathfind over the graph and when no path exist, they buy meters for the
+  straight line distance and bridge it"; the plan Hajun approved is
+  `~/.claude/plans/right-now-when-2-lexical-goblet.md`). They collect,
+  shop, bridge to the middle and to the smaller islands, buy their team's
+  upgrades, raid, defend, back off, break anchors and, at the end, hunt.
+  **Online all of it is the server's** (deployed three times that night:
+  at 12:02 UTC, at 12:44 with a fix, and at 13:19 as it stands, the
+  binaries before kept on the VM as `roundtown-server.prev-2026-11-12e`,
+  `f` and `g`; `PROTOCOL_VERSION` 13 still, nothing that is sent having
+  changed, so APK 22 plays against them as it is, and **tuning them
+  online is a server deploy, not an app update**). `RT_ARENA_BOTS=old`
+  in the VM's `/etc/roundtown/env`, and a restart, goes back to the bots
+  that kept to their islands, without a deploy (`Config::arena_old_bots`,
+  `Game::old_bots`). **A game played offline has the same bots, by the
+  same brain, since APK 23** ("Offline", below); an app from before has
+  the old ones offline, and these online.
+  - **The map the server was missing** (`shared/src/nav.rs`,
+    `roundtown_net::nav`). The server has no map, which is why its bots
+    kept to the disc of their islands. `Grid` is Hajun's
+    `pvptownmap.glb` as a body walks it, half a metre to a square
+    (`CELL`): each square's floor, whether a body fits there and can walk
+    to it (`Grid::clear`: its whole footprint on ground, nothing reaching
+    into it, no step higher than a step), and which piece of land it is
+    (`Region`: a team's island, one of the four smaller islands, the
+    middle, or the pond, `Pocket`, which is standing room nobody walks
+    into). **It is baked out of the map by the game's own collision**
+    (`src/arena/nav_bake.rs`, a test: flooded from the arrivals and the
+    pads with `Island::floor` and `Island::blocked`, as a body is moved)
+    into `shared/src/arena.nav`, 39,832 bytes, built into both binaries
+    (`Grid::arena`). A team's island comes to 294 m² a body can walk, a
+    smaller one 422, the middle 15,883. **After any re-export of the map:
+    `RT_BAKE_NAV=1 cargo test --lib nav_bake`, which writes the file
+    again, and deploy the server**; without it
+    `the_grid_built_in_is_the_map_s_as_it_is` fails, saying so. **The map
+    is a star**: every island reaches every other through the middle (a
+    team's island to the middle 43.6 m, a smaller island to the middle
+    37 m; a team's island straight to a smaller one is 75 m, never worth
+    it), so "no way" always means one of eight straight spans is missing.
+    `Nav` is the grid with every bridge laid on it as its rungs come
+    (`Nav::hear`, from people's `Ask::Rung` and the bots' own, in index
+    order as `bridge` takes them): the squares within a plank's half
+    width less a body's of a plank's middle line are walked (`deck`),
+    which pieces can be walked between is worked out again at each plank
+    (`relabel`, `joined`, `connected`), a way is the shortest over the
+    squares, straightened (`Nav::path`, A*), and `on_plank` and `ground`
+    say what holds a body knocked there. `Span` is the straight bridge
+    across one of the star's gaps (`Grid::span`): from half a metre
+    inside the one shore to half a metre inside the other, 33 planks and
+    44.6 m on an axis, which `bridge` cuts along both shores as it does
+    anyone's (a test lays one on the real map, rung by rung,
+    `a_span_the_computer_lays_is_a_bridge_like_any_other_on_hajuns_map`;
+    the plank's measures are `nav`'s now, `PLANK_HALF_WIDTH`,
+    `PLANK_SPACING`, `PLANK_TOP`, which `bridge` reads). **A plank laid
+    costs next to nothing** (`Nav::lay_deck`, `joined_to`, `piece`): a
+    plank only ever adds squares to walk, so it joins pieces and never
+    parts them, and its own squares take the number of whatever is beside
+    them (the four beside: a step cornerwise needs both squares at the
+    corner) and join what they lie between. For its first hours every
+    plank had the whole map gone over again, 318,096 squares, 3.3 ms on
+    this laptop and a dozen times a second as a game begins; a 33-plank
+    span is 26 millionths of a second now where it was 113 thousandths.
+    **A way is searched for greedily** (`GREED`, 2: what is left weighed
+    twice what is done, each square gone on from once): from a team's
+    island round the pond to the far side of the middle in 0.09 ms where
+    the shortest took 2.1, and to the island across the map in 0.35 ms
+    where it took 4.8, the ways found, once straightened, a metre longer
+    in 274 and 3.6 m shorter in 161 (`timing_of_the_arena_s_map`, an
+    ignored test, prints them). And **a bot keeps the way it has while bridges are built**: a
+    plank only adds ground, so only one with no way looks again as one is
+    laid (every bot did, at every plank anyone laid). All three were
+    found measuring for a phone, where the bots' frame is the game's.
+  - **The brain** (`shared/src/bots.rs`, `roundtown_net::bots`, plain
+    code with dice of its own, so the same seed is the same game).
+    `Squad` is every bot of a game. Each has **a slow layer** (`think`,
+    every 1 to 1.5 s, not all at once): what it might be doing, each with
+    a score, the best taken, the one it is on getting 0.15 more
+    (`Goal`: `Retreat` 0.95, `Defend` 0.88, `Hunt` 0.8, `Lay` 0.78,
+    `Shop` 0.72 at home, `Raid` 0.6 to 0.79, `Collect` about 0.5,
+    `Fetch` about 0.5 to 0.8, `Idle`), a goal it gets nowhere with for
+    3 s, or asks the shop for three times and is not given, left out for
+    a while (`barred`); and **a fast layer** every frame (`act`), which
+    follows its way there, fights whoever comes into reach, lays its
+    planks and keeps to the ground. `Body` is its body: walked only
+    where a body can walk, so **it never walks off an edge**; carried by
+    a knock as anyone is, landing on whatever ground is under it, land
+    or plank, and falling where there is none, which is how one is
+    beaten on a bridge, and how it beats you; knocked into the pond, it
+    hops out over the rim. What a frame comes to that the game has to
+    carry out is an `Order` (a punch, a strike at an anchor, a purchase,
+    rungs laid, a throw, a drink), which the server does as it would for
+    a person who asked (`Game::play_bot`): **nothing is free, and
+    everything is lost on death**, the metres of bridge with it.
+  - **How they play.** Each team's lower seat keeps the base (`Role::
+    Keeper`) and the other goes out (`Runner`); one alone does both.
+    **The opening**: the one that goes out has the pad's first 8 silver
+    (the keeper wants none until the bridge is across), buys 50 m and
+    lays the span to the middle at the pace anyone builds at, 5 m/s, each
+    plank a rung or two ahead of its feet: across by 25 to 29 s. The
+    keeper buys a Basic Sword and a shield. **Then** the one that goes
+    out takes the amethyst from the pad on its side of the middle,
+    bridges from the middle to one of the two smaller islands beside its
+    own (by 65 to 69 s) and brings sapphire home. **What they buy, in
+    order** (`shopping`): the metres its bridge is short of; with
+    sapphire the Heal Pool, the generator, Stronger Swords, Better
+    Shields, a trap (the first upgrade at 83 to 89 s); the Aura Sword
+    with 4 amethyst and the Aura Shield with 6; the Silver Sword once
+    the gold is near, and until then the basic one; a shield; a healing
+    potion for the second button, or, the one that goes out, from 5:00
+    and with 40 silver, a fireball; the Advanced Shield. **At a pad a
+    bot takes only what its next purchases need** (`Squad::wants`,
+    `Mint::pick_up_where`) and leaves the rest lying; people are served
+    first, whatever their seats, and of a team's two bots whichever it
+    matters most to. **Fights** (`foe`): it goes for whoever of another
+    team comes within 6 m at first, growing to its full sight, 24 m,
+    between 2:30 and 10:00 (`Skill::aggro_at`), or within 9 m for 3 s
+    after it is hit; anyone on its island, from anywhere (`Defend`: it meets
+    them on the land, it does not hold the end of a bridge); and on an
+    island it raids, whoever is home. Its first punch comes 0.3 s after
+    it has someone in reach, since it is drawn a moment behind on your
+    screen, then every 0.8 s; it knocks as a punch on the run only when
+    it really was running in (every bot punch did, until then). Whom a
+    team's runner raids first is thrown differently in every game
+    (`Squad::salt`). **Under
+    35% of its health with someone on it, it backs off** to its pad
+    until it has 60%, and drinks its healing potion once nobody is
+    within 6 m; 50% once its anchor is gone and dying is for good.
+    **Raids** (`Goal::Raid`): none before 2:30. Then the one that goes
+    out, with a sword and 70% of its health, goes to another team's
+    island for no more than 45 s, fights whoever is home and takes from
+    their pad until it holds 20 silver and 7 gold; home 40 s after, or
+    after dying on one. One team raids a team at a time, a team raided is left alone
+    for 90 s, and **a team with a person on it gets no more than its
+    share**, one raid in three while there are two other teams to go to
+    (`Squad::raids`, `spared_until`, `raided`). **Anchors** are left
+    alone before 4:00, struck by one bot at a time every 2 s (a person
+    can strike twice a second), and the bots break no more once two are
+    broken, before 8:00. From 5:30 the keeper goes along with its
+    teammate. From 4:00 a team that has built no bridge has one built to
+    it from the middle: nobody sits a game out behind the void. **From
+    13:00 everyone hunts** whoever of another team is nearest that can
+    be walked to, three minutes after the timetable breaks the anchors,
+    so that the end of a game is minutes and not moments. **A
+    fireball** only at someone 4 to 10.5 m off with land under them,
+    never at someone out on a bridge. Not for bots yet: invisibility,
+    the speed potion, the Bridge Builder.
+  - **A bot whose teammate is a person keeps the base** whichever its
+    seat: it leaves the pad's first silver to you for 40 s, then, if
+    nothing joins your island to the middle, buys the 50 m and lays the
+    bridge itself (seen on the VM: begun at 40 s, across at 51 s); then
+    it stands at the pad taking what its own purchases need, the rest
+    piling up for you, steps off to the anchor when you come within
+    3.5 m of the pad, defends, and from 2:00, with nobody of another
+    team within 40 m, bridges to a smaller island and fetches its
+    sapphire, and the amethyst on your side of the middle, for the
+    team's upgrades. It never raids by itself.
+  - **Every number of how hard they play is `Skill::MODERATE`**, in one
+    place: 1 to 1.5 s between thoughts, the 0.15 for the goal it is on,
+    0.3 s and 0.8 s for a punch, 2 s for an anchor, 6 m growing to 24
+    between 2:30 and 10:00, 35% and 60%, raids from 2:30, anchors from
+    4:00, the keeper along from 5:30, two anchors spared until 8:00, 45 s
+    a raid, 40 s after, 90 s for the raided, a third for people, the
+    hunt from 13:00, 50% once the anchor is gone, 6 s between fireballs.
+    All mine, from the plan, but 13:00: with the hunt at 10:00, as
+    planned, every game ended within half a minute of the anchors
+    breaking.
+  - **How the server shows them**: a bot is moved by the game and sent
+    as it moves (`flush`), and once more as standing still when it stops
+    (`Spot::still`), so that nobody watching carries it on the way it
+    was going; its rungs go to the room as a person's do (`Event::Rung`,
+    a `Plank` each), so its bridges are drawn, stood on and on the
+    minimap as anyone's; what it takes from a pad is taken from the
+    room. **In APK 22 a thing a bot takes does not fly to it** (it
+    looked only for people, the computer's picking up nothing until
+    now): it goes where it lay, or to a person standing within reach.
+    `loot::follow_server` takes anyone but a zombie for the taker since,
+    which APK 23 has. Nobody sees a bot carry a plank or
+    drink, as nobody sees anyone else do either.
+  - **Whole games are played in tests** (`server/src/arena.rs`,
+    `bots_alone(seed, old)`, `play`, `chronicle`):
+    `the_computer_s_players_play_whole_games_sensibly`, eight games of
+    bots alone in about four seconds, keeps every team across to the
+    middle within two minutes, a smaller island reached within four, a
+    sword within two and an upgrade within five, nobody ever walking off
+    an edge, no runner idle for 20 s, no anchor broken and nobody out
+    before 4:00, every game over before 20:00, three of the four islands
+    winning at least once, and the same seed the same game; two more put
+    stand-in people in (`with_people`): a team of people raided no more
+    than its share with its anchor left alone at first, and a person's
+    bot teammate keeping the base, bridging for them and never raiding.
+    `cargo test -p roundtown_server many -- --ignored --nocapture` prints
+    sixty games as a table to tune by, or as many as `RT_GAMES` says,
+    with who won by island, and `watch` one game's raids and deaths
+    (`RT_SEED`, `RT_BRIEF=1`). **Over three hundred** (2026-11-12, as
+    deployed at 13:19): over at 11:04 on average, the soonest at 8:31
+    and the latest at 13:19, none drawn; won by island 90, 69, 68 and
+    73; before 10:00 six deaths by punches and fourteen by falls a game
+    (a punch knocks 4.5 m, and an island is 20.8 across) and 1.5 anchors
+    broken by bots; every team across to the middle by 30 s, a smaller
+    island reached by 69 s, a sword by 55 s and an upgrade by 88 s, in
+    every one of them.
+  - **Two things the first deploy had wrong, found that night and
+    deployed at 12:44.** **A body knocked off an edge and carried in
+    under an island or a plank as it fell hung there**, neither on the
+    ground nor in the air, for the rest of the game: unseen under the
+    land, never dying, its team never out. Three of forty games of bots
+    went to 25:00 as a draw for it, which I had first put down to two
+    teams never finishing each other; with it mended, none of three
+    hundred did (`Body::step`: under the ground is in the air, and goes
+    on falling; a test drops one under an island). And **a body stood a
+    little under the ground it is on is put onto it**: a device's
+    arrivals are at the land's own height, a quarter of a metre under an
+    island's top, and offline every bot stood there for good, neither
+    free nor falling. Found by playing the bots offline, where they are
+    seen.
+  - **Checked on 2026-11-12**: with a server on this PC and a scripted
+    desktop copy watching from above (a throwaway `scratch_run`, role
+    `w`, removed since), a runner's bridge growing from its island and landing flush on
+    the middle's rim, on the minimap too; my bot teammate on its bridge;
+    a smaller island bridged, with sapphire on its pad; swords, shields,
+    potions, the Heal Pool and a trap bought; at 3:12 a raider on my
+    island, blinded by the trap, knocking the watcher off the edge. And
+    **on the VM after the deploy**, with this PC's own account: seated
+    with seven of the computer's, three bridges across at 28 s, my bot
+    teammate's begun at 40 s and across at 51 s, bridges to two of the
+    smaller islands by 96 s, the journal clean, and 1.1 to 1.6 KB/s out
+    to a player in a game; and again after each of the two deploys
+    after, a minute of a game each. Not by hand, and not on a phone.
+  - **Offline, the same bots** (APK 23; `arena::drive_bots`, `Brains`,
+    `Brained`). A game played offline has a map and a brain of its own
+    (`Nav::arena`, `Squad`, with `Skill::MODERATE`, the server's own),
+    and each of the computer's seven is **a body put where the brain has
+    it each frame, in nobody's way** (`lobby::spawn_bot_at`: no `Intent`
+    and no `Collider`, so `move_bodies` neither walks it nor bumps you
+    into it): you walk through them, as you do online, where until now
+    offline they bumped. It keeps a `Shove` and a `PlayerJump`, which is
+    what your punch, a zombie's and a blast knock (`Shove::knock`): the
+    knock is handed to the brain (`Squad::shoved`), which carries the
+    body by it, off an edge if it must, and `reap` finds it fallen as it
+    does anyone. What a frame of a bot comes to is carried out as the
+    server carries it out: its punch knocks whoever it lands on and
+    lands (`Landed`, so the damage, the number and the death are
+    `deal_damage`'s, as yours are), an anchor is struck (the file's
+    `arena.damage` and a sword's, `anchor_hurt`), a purchase made at the
+    stand out of what it holds (`Brains::purses`, as yours is
+    `Resources`), its rungs laid as someone else's
+    (`bridge::Bridges::lay_remote`, so its bridges are drawn, stood on
+    and on the minimap), a fireball thrown, a potion drunk. Every bridge
+    is told to the brains' map as it is fixed, yours and a Bridge
+    Builder's among them (`Bridges::laid`, by `Bridges::version`). It
+    takes what its purchases need of what lies in its reach after you
+    have had yours that frame, each thing flying to it; dead, it loses
+    what it held, and stands again as the brain's too. **Laying a
+    bridge, it carries a plank** (`Carrying`, `bridge::carry_for_bots`,
+    `BotPlank`), which online nobody is seen to. `hunt` is the zombies'
+    mind alone now, and they go for the computer's players as for you
+    (its `Intent` is optional for that). The bots walk by the brain's
+    numbers (a run of 10 m/s, a builder's 5), and are hurt and knocked
+    by the file's (`assets/ui.ron`'s `arena` and `melee`).
+  - **"Your anchor is under attack!"** (`arena::warn_of_the_anchor`,
+    `words.arena.anchor_attacked` in `assets/ui.ron`; APK 23, online and
+    offline): said in the line the timetable's are said in whenever your
+    team's anchor has lost health and still stands, no oftener than
+    every 8 s (`ANCHOR_WARN_EVERY`). Nothing said it until now, and
+    until now only a person ever hit one. Broken, it has its headline,
+    as before. Mine, with the plan.
+  - **`loot::follow_server` flies a thing to whoever took it, a bot
+    too** (APK 23), anyone but a zombie being looked for.
+  - **Checked offline on 2026-11-12, scripted, in the desktop build**
+    (`RT_SERVER=off`, the throwaway again, with a role that watches from
+    above and punches whoever comes into reach): three bridges across in
+    half a minute, the planks in their arms; my bot teammate's at 40 to
+    51 s; smaller islands reached within 75 s; swords, shields, potions
+    and the team's upgrades bought; at 3:00 a raider on my island, its
+    name and bar in red, taking 11 through its shield from a punch of
+    mine and thrown up by it,
+    my teammate coming home over our bridge to see it off, and the
+    raider killed and standing again on its own island with nothing,
+    back at its pad for a sword; a raider's three strikes of 22 on
+    another team's anchor; "Your anchor is under attack!" across the screen as
+    mine lost health; from `RT_ARENA_FROM=890`, the twelve zombies and
+    the bots at each other, and seven bodies knocked into the void in
+    twenty seconds, which with the anchors gone ended the game. No
+    error in any log. **Not by hand, and not on a phone**: a phone has
+    never run the brain, and the cost of it there is worked out, above,
+    not measured. APK 23 is built, its 77 asset files checked byte for
+    byte, and not installed, none being attached; APK 22 is kept beside
+    it as `donggeurami_town-release.prev-2026-11-12d.apk`.
+  - **What is mine, Hajun having said only "moderate"**: every number
+    above; that the lower seat keeps and the other goes out; the order
+    they buy in; that they take only what they need at a pad; that the
+    raids are steered (one at a time on a team, a rest, people no more
+    than their share, anchors slow and capped early); that a person's
+    bot teammate bridges for them after 40 s and never raids; that a bot
+    throws no fireball at someone on a bridge; that bot teams fight each
+    other as well as you; that offline you walk through them; and the
+    line about your anchor, its words and its 8 s.
+- **Since the evening of 2026-11-12 every game online is 2v2v2v2, people
+  teamed up with each other first and the computer in every seat left**
+  (Hajun: "right now, when 2 real players queue for the bridge wars game,
+  it becomes a 1v1. i want to change it so that this game is always
+  2v2v2v2, with bots filling the remaining slots, and the 2 player become
+  same team. and if its 4 players, then those 2 players and 2 players are
+  same team too, and so on, so that real players will be teamed up with
+  each other first, and bots on remaining teams"; server deployed, the
+  binary before kept on the VM as `roundtown-server.prev-2026-11-12d`;
+  `PROTOCOL_VERSION` 13 still, nothing that is sent having changed, so APK
+  22 plays it as it is).
+  - **Seats are taken a team at a time** (`SEAT_ORDER` in
+    `server/src/arena.rs`, 0, 4, 2, 6, 1, 5, 3, 7): both seats of the first
+    island, both of the one across the map from it, then both of each of
+    the two at its sides. Two people are a team; four are two teams on
+    opposite islands; the odd one out has the computer for a teammate.
+    Pairs go by the order people join in: mine, there being no parties.
+    Ten seconds after the last to join, the computer takes **every** seat
+    left, however many people there are (for half a day two to four
+    people began with no bots, an island each).
+  - **A seat left before the fight begins is anyone's again**
+    (`Game::leave`, `vacate`): in the waiting room, the next person to
+    come or the computer takes it; left during the countdown, the
+    computer has it as the fight begins, on its island from the start
+    (`seat_bot(.., landed)`). Until then it stayed its leaver's, empty,
+    and a team began short. Once the fight is on, a seat left stays
+    empty: mine.
+  - **The server's fight is a plain function of the game now**
+    (`Game::step`; nothing a player sees has changed by it): where
+    everyone is is kept in the `Game` itself (`at`, `yaw`: a person's
+    copied in each frame from what their device last said, `sync`; a
+    bot's the game's own, to the last of a metre where a `Spot` is whole
+    centimetres), and whatever a step does that takes the world, an
+    entity for the room or a word to a device, it only says (`Event`:
+    `Made`, `Taken`, `Thrown`, `Burst`, `Knocked`, `Land`, `Zombie`),
+    for `flush` to do after. So a whole 25-minute game of the
+    computer's players is played in a test, in a few hundredths of a
+    second (`a_whole_game_of_the_computer_s_players_plays_itself_out`),
+    which is what the bots to come are tuned by. Each game throws its
+    own seeded dice.
+  - **Checked on 2026-11-12 with a server on this PC and scripted desktop
+    copies** (a throwaway `src/arena/scratch_run.rs`): two people in
+    seats 0 and 4, on one island 4 m apart, with six of the computer's
+    players; one of two leaving the waiting room, and the computer in
+    their seat; what the generators make picked up, a fireball and a
+    sword bought, a bot's punches knocking a person off its island, the
+    fall, standing again with nothing held; a fireball thrown at a zombie
+    bursting on it for 20; the twelve zombies risen, on their own team,
+    at `RT_ARENA_FROM=895`; the game skipped to its end, and a second
+    with nobody left over from the first. The VM, deployed with nobody
+    on it, let this PC's build in. Not on a phone.
+  - **This was the first part of a larger job, the computer's players
+    learning to play** (collect, shop, bridge, raid, defend), which came
+    that night (above). For those hours the computer's players kept to
+    their islands, as before.
 - **Later on 2026-11-12: dying loses everything you hold, what is aimed
   is seen over the void, and a sword is held on its edge and cut
   downward** (Hajun: "for the bridge pvp minigame, make it so death make u
@@ -909,7 +1272,8 @@ holds for the arena now.
     with a round hole kept over you, under the buttons, the minimap and
     the rest of the screen's own, over the world and the names and numbers
     written over it. A blinded bot sees no further than that.
-  - **Who is in a game online** (Hajun, the same night: "when ur the only
+  - **Who is in a game online, until the evening of 2026-11-12** (every
+    game is 2v2v2v2 since, above) (Hajun, the same night: "when ur the only
     real person in the queue for the bridge wars, it can be same as now
     where 7 bots join u. but when there is atleast one other real person in
     that same queue lobby, no bots will join, and after the wait time of no
@@ -1058,8 +1422,10 @@ holds for the arena now.
     they last said they stood, the lower seat first within a tick, and it
     is gone for everyone that tick (`server/src/arena.rs`, `mint`,
     `Game::gather`); offline the game does the same for you
-    (`arena::gather`). The computer's players pick up nothing (mine: a
-    teammate that emptied the pad would be no help, and it buys nothing).
+    (`arena::gather`). The computer's players picked up nothing (mine: a
+    teammate that emptied the pad would be no help, and it bought
+    nothing) until 2026-11-12, since when they take what their purchases
+    need, people first ("the computer's players play the game", above).
     Online each thing is an entity the server sends to the game's room
     (`Loot`: what it is and where it lies), and what everyone holds is one
     component on the game's own entity (`Purses`, four counts a seat).
@@ -1374,8 +1740,10 @@ holds for the arena now.
     body is (`KNOCK_BACK`, `KNOCK_UP`, the drags) and falls off the edge if
     knocked over it; it walks through the island's desk and slab (its
     market stands, since the map of 2026-11-11), and never crosses a
-    bridge. Offline the game is this device's own as before, with
-    seven bots. Seen on this PC with a local server (`RT_PORT=5443`,
+    bridge. (Those were the server's bots until 2026-11-12; `think` moves
+    only its zombies since, and the bots it would be gone back to with
+    `RT_ARENA_BOTS=old`.) Offline the game is this device's own as
+    before, with seven bots. Seen on this PC with a local server (`RT_PORT=5443`,
     `RT_ALLOW_SKIP=1`): seated, the bots in, the fight, a bridge to the west
     island, its two bots knocking you to 16 and off the edge, your punches
     taking 12 off them and their health coming back. **And with two copies
@@ -1896,8 +2264,10 @@ holds for the arena now.
   Respawning in 4..." across the screen counting down in halves
   (`words.arena.died`, `arena::show_death`), and then put back where its
   seat arrives with its health full (`arena::respawn`; the camera, fixed
-  over you, is there with you). **A bot goes for whoever is nearest
-  within `hunt_radius`** (`arena::hunt`, after `ai::steer`, over its
+  over you, is there with you). (What follows was every bot's mind
+  offline until 2026-11-12, and is the zombies' alone since; the
+  computer's players have the brain the server's have, above.) **A bot
+  goes for whoever is nearest within `hunt_radius`** (`arena::hunt`, after `ai::steer`, over its
   wandering, only while the game is on): at a run up to them, pressing in
   at `PRESS_IN` of a push once within the punch's reach, and a punch
   whenever they are in the punch's own range (`range::Sector`) and its
@@ -2160,9 +2530,14 @@ gone round: a scripted run north from the middle stopped at it.
   ("Models"), so a point read off the `.glb`'s JSON is at (-x, y, -z) in
   the game, and a dump that forgets it puts a thing on the opposite
   island (as mine did for an hour that evening); the game's own reader,
-  `island::glb::read`, has it right. The
-  pond has no floor under its water, as the old town's had none: under
-  the pond is the void.
+  `island::glb::read`, has it right. **The
+  pond has a floor under its water**, 0.1 m up, out to 24.8 m, inside a
+  rim 0.7 m high: standing room that nobody walks into or out of, the
+  rim being higher than a step, and that a knock can put a body in, to
+  jump out of. Until 2026-11-12 this said it had none, and that under
+  the pond was the void, which was wrong of this map: found baking it
+  for the computer's players ("The computer's players play the game",
+  above).
 - **There is no sea round the town** (`island::bottomless`, which only
   `Venue::Town` is; the home, the lobby and the plots keep theirs):
   `spawn_island` spawns none for it, and `support` in `src/lib.rs` has

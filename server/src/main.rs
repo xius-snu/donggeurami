@@ -80,6 +80,11 @@ pub(crate) struct Config {
     /// How many of each thing everyone in a game of Bridge Wars begins its
     /// fight holding: 0 but for trying the shops out.
     pub arena_purse: u16,
+    /// Bridge Wars' computer players as they were until 2026-11-12, each
+    /// kept to its island, rather than the ones that play the game
+    /// (`roundtown_net::bots`): `RT_ARENA_BOTS=old`, for going back to
+    /// them without a deploy should the new ones go wrong.
+    pub arena_old_bots: bool,
 }
 
 impl Config {
@@ -116,6 +121,7 @@ impl Config {
                 .filter(|seconds: &f32| seconds.is_finite() && *seconds >= 0.0)
                 .unwrap_or(0.0),
             arena_purse: var("RT_ARENA_PURSE").and_then(|count| count.parse().ok()).unwrap_or(0),
+            arena_old_bots: var("RT_ARENA_BOTS").is_some_and(|which| which == "old"),
         }
     }
 }

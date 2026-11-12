@@ -430,6 +430,40 @@ pub(crate) fn spawn_player_at(
     avatar.id()
 }
 
+/// A body for one of Bridge Wars' computer players in a game played
+/// offline, `member`, in `seat`, standing at `spawn` on `venue` (`arena`,
+/// since 2026-11-12): put where the game's own brain has it each frame
+/// (`roundtown_net::bots`), not walked by `move_bodies`, so it has
+/// neither an `Intent` nor a `Collider` and is in nobody's way, as someone
+/// online is, the server's bots among them; its walk is read off how it
+/// moves. It keeps a `Shove` and a `PlayerJump`, which is what a punch or
+/// a blast knocks (`start_punch`, `Shove::knock`): the game hands each
+/// knock on to the brain, which carries the body by it.
+pub(crate) fn spawn_bot_at(
+    commands: &mut Commands,
+    assets: &AssetServer,
+    member: &Member,
+    seat: usize,
+    venue: Venue,
+    spawn: Transform,
+) -> Entity {
+    commands
+        .spawn((
+            body(assets, member, spawn),
+            venue,
+            Seat(seat),
+            PlayerJump::default(),
+            Riding::default(),
+            Shove::default(),
+            WalkFromMotion {
+                last: spawn.translation,
+                on: None,
+            },
+        ))
+        .observe(bind_walk_bones)
+        .id()
+}
+
 /// A body to be seen and nothing more, in `member`'s look, standing `at` on
 /// `venue`: it walks the way it is seen to move, is in nobody's way, and no
 /// punch lands on it (`ForShow`). The builder a Bridge Builder sends off

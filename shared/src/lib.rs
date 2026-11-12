@@ -618,6 +618,9 @@ pub struct Upgrades {
     pub traps: u8,
 }
 
+pub mod bots;
+pub mod nav;
+
 /// Bridge Wars' rules, as the game plays them on the device (`arena`) and
 /// the server does online (`server/src/arena.rs`): in one place, so that
 /// the two never differ. The device's `assets/ui.ron` has the same numbers
@@ -1125,10 +1128,18 @@ pub mod bridge_wars {
         /// [`REACH_OVER`] nor under them than [`REACH_UNDER`]. What they
         /// took, no longer there for anyone else.
         pub fn pick_up(&mut self, at: Vec3, elapsed: f32) -> Vec<Piece> {
+            self.pick_up_where(at, elapsed, &mut |_| true)
+        }
+
+        /// As [`Mint::pick_up`], but only what `wanted` says yes to, asked
+        /// of each thing within reach in turn: the rest is left lying.
+        /// How one of the computer's players takes from a pad no more
+        /// than its next purchase needs (`bots`).
+        pub fn pick_up_where(&mut self, at: Vec3, elapsed: f32, wanted: &mut dyn FnMut(&Piece) -> bool) -> Vec<Piece> {
             let (across, reach) = (Vec2::new(at.x, at.z), MAGNET * MAGNET);
             let (taken, left): (Vec<Piece>, Vec<Piece>) = self.pieces.iter().copied().partition(|piece| {
                 let over = piece.height(elapsed) - at.y;
-                piece.at.distance_squared(across) <= reach && (-REACH_UNDER..=REACH_OVER).contains(&over)
+                piece.at.distance_squared(across) <= reach && (-REACH_UNDER..=REACH_OVER).contains(&over) && wanted(piece)
             });
             self.pieces = left;
             taken

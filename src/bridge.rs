@@ -177,18 +177,19 @@ mod builder_bot;
 pub(crate) use builder_bot::send_builder;
 
 /// Half the width of a plank, in metres: Hajun's bridges in
-/// `pvptownmap.glb` were 2.726 m wide.
-pub(crate) const HALF_WIDTH: f32 = 1.363;
+/// `pvptownmap.glb` were 2.726 m wide. The computer's players lay theirs
+/// by the same measures, which the server has too (`roundtown_net::nav`).
+pub(crate) const HALF_WIDTH: f32 = roundtown_net::nav::PLANK_HALF_WIDTH;
 /// How thick a plank is, in metres: Hajun's bridges' 0.25.
 pub(crate) const THICKNESS: f32 = 0.25;
 /// How far one fixed rung is from the next, in metres: half as far as a
 /// plank is wide, so that the planks follow a curve closely, like the
 /// boards of a dock.
-pub(crate) const SPACING: f32 = HALF_WIDTH;
+pub(crate) const SPACING: f32 = roundtown_net::nav::PLANK_SPACING;
 /// How high the top of every plank lies, in metres: the islands' tops,
 /// 0.25 m up, less a seam, so that where a plank's root overlaps the
 /// island the island shows, and the join is the island's own edge.
-pub(crate) const TOP: f32 = 0.24;
+pub(crate) const TOP: f32 = roundtown_net::nav::PLANK_TOP;
 /// How much slower you walk carrying a plank, as a share of your pace.
 pub(crate) const CARRY_SLOW: f32 = 0.5;
 /// The most a chain turns from one rung to the next, in radians: 35
@@ -644,6 +645,38 @@ impl Bridges {
         self.chains.iter_mut().find(|chain| chain.seat == seat && chain.id == id)
     }
 
+    /// Takes in a rung that is not this device's player's to lay: the
+    /// `index`th of the bridge numbered `chain` of whoever is in `seat`,
+    /// as the server says someone has laid one ([`hear_planks`]), or as
+    /// one of the computer's players lays its own in a game played
+    /// offline. In order, one that comes early waiting for those before
+    /// it ([`take`]).
+    pub(crate) fn lay_remote(&mut self, seat: u8, chain: u16, index: u16, rung: Rung) {
+        if self.chain(seat, chain).is_none() {
+            if self.chains.len() >= MOST_CHAINS {
+                return;
+            }
+            self.chains.push(Chain::new(seat, chain, Vec::new()));
+        }
+        let kept = self.chain(seat, chain).expect("just found or made");
+        take(kept, index, rung);
+        self.dirty = true;
+    }
+
+    /// Every rung fixed so far, of every bridge: whose it is, by seat,
+    /// which of theirs, which of its rungs, and where. What the computer's
+    /// players know of the bridges in a game played offline
+    /// (`roundtown_net::nav::Nav::hear`).
+    pub(crate) fn laid(&self) -> impl Iterator<Item = (u8, u16, u16, Vec2)> + '_ {
+        self.chains.iter().flat_map(|chain| {
+            chain
+                .rungs
+                .iter()
+                .enumerate()
+                .map(move |(index, rung)| (chain.seat, chain.id, index as u16, rung.p))
+        })
+    }
+
     /// Which chain has a fixed plank under `at`, across the ground, if
     /// any has. Never a tip.
     fn plank_under(&self, at: Vec2) -> Option<usize> {
@@ -830,6 +863,13 @@ struct PlankMesh;
 #[derive(Component)]
 struct HeldPlank;
 
+/// The plank in the arms of one of the computer's players while it lays
+/// its bridge, in a game played offline (`arena::drive_bots` gives it
+/// `Carrying`, and takes it away): which entity the plank is, to take it
+/// down by.
+#[derive(Component)]
+struct BotPlank(Entity);
+
 /// What the planks are drawn with: one material, coloured by vertex.
 #[derive(Resource)]
 struct Look(Handle<StandardMaterial>);
@@ -844,7 +884,7 @@ pub(crate) fn plugin(app: &mut App) {
             Update,
             (
                 (toggle, hear_planks).before(crate::read_player_input),
-                (rebuild, carry, light_button).after(lay),
+                (rebuild, carry, carry_for_bots, light_button).after(lay),
                 // A Bridge Builder's builders, whose planks are built with
                 // the rest.
                 (builder_bot::equip, builder_bot::walk).chain().after(lay).before(rebuild),
@@ -1042,9 +1082,35 @@ fn carry(
     }
 }
 
+/// Puts a plank in the arms of each of the computer's players as it begins
+/// to lay a bridge, in a game played offline, and takes it away as it
+/// stops (since 2026-11-12): whoever carries one (`Carrying`) and is
+/// neither you, whose plank is [`HeldPlank`], nor a Bridge Builder's
+/// builder, a body for show with a plank of its own (`builder_bot::equip`).
+#[allow(clippy::type_complexity)]
+fn carry_for_bots(
+    look: Res<Look>,
+    begun: Query<Entity, (Added<Carrying>, Without<Player>, Without<crate::ForShow>, Without<BotPlank>)>,
+    done: Query<(Entity, &BotPlank), Without<Carrying>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut commands: Commands,
+) {
+    for body in &begun {
+        let plank = commands
+            .spawn((Name::new("Bot's plank"), board(&mut meshes, &look), ChildOf(body)))
+            .id();
+        commands.entity(body).insert(BotPlank(plank));
+    }
+    for (body, plank) in &done {
+        commands.entity(plank.0).try_despawn();
+        commands.entity(body).remove::<BotPlank>();
+    }
+}
+
 /// The plank someone building carries, as it hangs in front of them: the
-/// one in your arms ([`carry`]), and the one in a builder's
-/// (`builder_bot`).
+/// one in your arms ([`carry`]), the one in a builder's (`builder_bot`),
+/// and the one in the arms of one of the computer's players
+/// ([`carry_for_bots`]).
 fn board(meshes: &mut Assets<Mesh>, look: &Look) -> impl Bundle {
     let colour = ui().colours.arena.plank.to_linear();
     let mut mesh = Mesh::from(Cuboid::new(HELD.x, HELD.y, HELD.z));
@@ -1542,7 +1608,7 @@ fn yaw_of(d: Vec2) -> f32 {
 }
 
 /// The heading a turn of `yaw` about the upright gives.
-fn heading_of(yaw: f32) -> Vec2 {
+pub(crate) fn heading_of(yaw: f32) -> Vec2 {
     Vec2::new(-yaw.sin(), -yaw.cos())
 }
 
@@ -1893,15 +1959,7 @@ fn hear_planks(
             p: Vec2::new(plank.x, plank.z),
             d: heading_of(plank.heading),
         };
-        if bridges.chain(plank.seat, plank.chain).is_none() {
-            if bridges.chains.len() >= MOST_CHAINS {
-                continue;
-            }
-            bridges.chains.push(Chain::new(plank.seat, plank.chain, Vec::new()));
-        }
-        let chain = bridges.chain(plank.seat, plank.chain).expect("just found or made");
-        take(chain, plank.index, rung);
-        bridges.dirty = true;
+        bridges.lay_remote(plank.seat, plank.chain, plank.index, rung);
     }
 }
 
@@ -2152,6 +2210,79 @@ mod tests {
                 [l0, r0, r1, l1]
             })
             .collect()
+    }
+
+    #[test]
+    fn a_span_the_computer_lays_is_a_bridge_like_any_other_on_hajuns_map() {
+        use roundtown_net::nav::{Grid, Region};
+        // The map as the game reads it, and the land a bridge is cut
+        // against (`rebuild`).
+        let parts = crate::island::glb::read("pvptownmap.glb");
+        let corners: Vec<[Vec3; 3]> = parts
+            .iter()
+            .filter(|part| !part.skinned)
+            .filter(|part| {
+                !part
+                    .material
+                    .as_deref()
+                    .is_some_and(|material| crate::island::is_material(material, crate::island::WATER_MATERIAL))
+            })
+            .flat_map(|part| part.triangles.iter().copied())
+            .collect();
+        let map = Island::new(&corners);
+        let land = |at: Vec2| map.floor_base(at, TOP + LAND_STEP_UP).is_some();
+        // Every span of the star, the islands' to either side of the
+        // middle line as well.
+        let grid = Grid::arena();
+        let mut spans = Vec::new();
+        for land in 0..4u8 {
+            for aside in [0.0, -2.5, 2.5] {
+                spans.push(grid.span(Region::Team(land), Region::Middle, aside).unwrap());
+            }
+            spans.push(grid.span(Region::Middle, Region::Sapphire(land), 0.0).unwrap());
+            spans.push(grid.span(Region::Middle, Region::Team(land), 0.0).unwrap());
+        }
+        for (n, span) in spans.iter().enumerate() {
+            let mut bridges = Bridges::default();
+            let d = span.way();
+            // The rungs come one at a time, as the server sends them, and
+            // the bridge is cut again at each as the game cuts it: no
+            // plank folded, and landed only by the last.
+            for index in 0..=span.planks() {
+                bridges.lay_remote(5, n as u16, index as u16, Rung { p: span.rung(index), d });
+                assert_eq!(bridges.recut(&land), vec![0]);
+                let chain = &bridges.chains[0];
+                if index >= 1 {
+                    assert_unfolded(&chain.corners, chain.top(), chain.complete);
+                }
+                assert_eq!(chain.complete, index == span.planks(), "span {n}: rung {index} of {}", span.planks());
+            }
+            let chain = &bridges.chains[0];
+            assert_eq!(chain.rungs.len(), span.planks() + 1);
+            assert_eq!(bridges.laid().count(), span.planks() + 1);
+            // Its root and its end meet the land: every corner of both on
+            // it, hidden under it or cut onto its edge.
+            let (root, end) = (chain.corners[0], chain.corners[span.planks()]);
+            for corner in [root.0, root.1, end.0, end.1] {
+                assert!(land(corner), "span {n}: a corner over the void at {corner}");
+            }
+            // And from shore to shore there is something under a body
+            // walking it, down its middle and as far to either side as
+            // the computer's players walk.
+            let quads: Vec<[Vec2; 4]> = chain.ground_quads().collect();
+            let steps = (span.length() / 0.1) as usize;
+            for k in 0..=steps {
+                let at = span.from.lerp(span.to, k as f32 / steps as f32);
+                for side in [-0.9, 0.0, 0.9] {
+                    let under = at + perp(d) * side;
+                    assert!(
+                        land(under) || quads.iter().any(|&quad| inside_quad(under, quad)),
+                        "span {n}: nothing under {under}, {:.1} m along",
+                        at.distance(span.from)
+                    );
+                }
+            }
+        }
     }
 
     #[test]

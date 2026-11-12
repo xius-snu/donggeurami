@@ -71,11 +71,23 @@
 //! dead, with Play again and Exit on a panel ([`Panel`]). The last team
 //! with anyone in play wins, or nobody when the time runs out: the result
 //! is up for [`RESULTS_SECS`], with the same buttons, and everyone is back
-//! in the town, the camera as it was. A bot goes for whoever of another
-//! team is within `arena.hunt_radius` ([`hunt`]), runs away when nearly
-//! beaten ([`flight`]), and never crosses a bridge unless one is built for
-//! it (`bridge`): the map's own bridges went on 2026-11-08, and every
-//! bridge is built by walking.
+//! in the town, the camera as it was. Until 2026-11-12 a bot went for
+//! whoever of another team was within `arena.hunt_radius` ([`hunt`]), ran
+//! away when nearly beaten ([`flight`]), and never left its island; the
+//! map's own bridges went on 2026-11-08, and every bridge is built by
+//! walking.
+//!
+//! **Since 2026-11-12 the computer's players play the game** (Hajun: "i
+//! need the bots to be intelligent enough ... the difficulty need to
+//! moderate - not too hard, not too easy"): they collect, shop, lay
+//! bridges to the middle and the smaller islands, buy their team's
+//! upgrades, raid, defend, back off and go for anchors, by one brain
+//! (`roundtown_net::bots`, on a map baked from this one,
+//! `roundtown_net::nav`): the server's for its own bots online, and this
+//! device's for a game played offline ([`drive_bots`], [`Brains`]), where
+//! each is a body put where the brain has it, in nobody's way
+//! ([`Brained`]), as the server's are. Your anchor being hit is said in
+//! the timetable's line ([`warn_of_the_anchor`]).
 //!
 //! **Since 2026-11-11 the game has generators, a shop and a timetable**
 //! (Hajun: "i want to now make the generators functional in the pvpmap ...
@@ -108,14 +120,19 @@
 //! that comes back.
 
 
+#[cfg(test)]
+mod nav_bake;
+
 use bevy::camera::primitives::Aabb;
 use bevy::gltf::GltfMaterialName;
 use bevy::prelude::*;
 use bevy::world_serialization::WorldInstanceReady;
 use bevy_replicon::prelude::Remote;
+use roundtown_net::bots::{self, Seen, Squad};
 use roundtown_net::bridge_wars::{
     self as rules, BOT_WAIT, COUNTDOWN, Flight, Happening, Mint, Outfits, PLAY_SECS, RESULTS_SECS,
 };
+use roundtown_net::nav::Nav;
 use roundtown_net::{
     ANCHOR_RADIUS, ARENA_ANCHORS, ARENA_SEATS, ARENA_TEAMS, ArenaRound, ArenaStage, Ask as NetAsk, Item, Kit, Kits,
     Member, PAD_HALF, PAD_TOP, Purse, Purses, Seats, Tell, Upgraded, Upgrades, Use, Utility, Ware, arena_team,
@@ -299,13 +316,56 @@ fn bar_width(share: f32) -> Val {
     Val::Percent((share.clamp(0.0, 1.0) * 200.0).round() * 0.5)
 }
 
-/// A bot's fighting mind in Bridge Wars, over its wandering ([`hunt`]):
-/// how long until it may punch again, in seconds. Offline only: online the
-/// server moves its bots.
+/// A zombie's fighting mind in a game played offline, over its wandering
+/// ([`hunt`]): how long until it may punch again, in seconds. Online the
+/// server moves its own. Until 2026-11-12 every bot of a game played
+/// offline had one, and kept to its island; the computer's players have
+/// a brain of their own since ([`Brained`]).
 #[derive(Component, Default)]
 struct Hunter {
     cooldown: f32,
 }
+
+/// One of the computer's players in a game played offline (since
+/// 2026-11-12): a body put where the game's brain has it each frame
+/// ([`drive_bots`], [`Brains`]), as the server's bots are online, rather
+/// than walked by `move_bodies` (`lobby::spawn_bot_at`).
+#[derive(Component)]
+struct Brained;
+
+/// The computer's players in a game played offline: the map as they know
+/// it, with every bridge laid on it as it is built (`nav`); the brain of
+/// each (`roundtown_net::bots`, the very one the server plays its own by
+/// online, with the same numbers, `Skill::MODERATE`); what each holds, by
+/// seat, as yours is in [`Resources`]; which of them were dead a frame
+/// ago, to tell a death and a standing again by; and which of the bridges
+/// they have been told of (`bridge::Bridges::version`).
+struct Brains {
+    nav: Nav,
+    squad: Squad,
+    purses: [Purse; ARENA_SEATS],
+    dead: [bool; ARENA_SEATS],
+    heard: Option<u32>,
+    /// How many rungs each has laid ([`MOST_BOT_RUNGS`]).
+    rungs: [usize; ARENA_SEATS],
+}
+
+impl Brains {
+    fn new() -> Self {
+        Self {
+            nav: Nav::arena(),
+            squad: Squad::new(fastrand::u64(..), bots::Skill::MODERATE),
+            purses: [Purse::default(); ARENA_SEATS],
+            dead: [false; ARENA_SEATS],
+            heard: None,
+            rungs: [0; ARENA_SEATS],
+        }
+    }
+}
+
+/// The most rungs one of the computer's players lays in a game played
+/// offline: the server's own limit for anyone (`MOST_RUNGS`).
+const MOST_BOT_RUNGS: usize = 600;
 
 /// What you have in a game of Bridge Wars: the metres of bridge left to
 /// lay (`bridge`; the file's `arena.bridge_metres` as a game begins, none
@@ -440,6 +500,14 @@ struct Game {
     /// 2026-11-12): this device's own to run offline, by the shops' rules,
     /// and online what the server says ([`follow_round`]).
     outfits: Outfits,
+    /// The computer's players, offline ([`drive_bots`]); online they are
+    /// the server's, and there are none here.
+    brains: Option<Box<Brains>>,
+    /// What was left of your team's anchor when it was last looked at,
+    /// and when it was last said to be under attack, in seconds into the
+    /// fight ([`warn_of_the_anchor`]).
+    anchor_was: f32,
+    anchor_said: f32,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -685,7 +753,7 @@ pub(crate) fn plugin(app: &mut App) {
         .add_observer(read_map)
         .add_systems(
             Update,
-            (hear, follow_round, cut_off, play, timetable, gather, sell, use_things, publish, dress, show_board)
+            (hear, follow_round, cut_off, play, timetable, warn_of_the_anchor, gather, sell, use_things, publish, dress, show_board)
                 .chain()
                 .in_set(ArenaSystems)
                 .before(crate::read_player_input)
@@ -698,7 +766,11 @@ pub(crate) fn plugin(app: &mut App) {
         .add_systems(
             Update,
             (
-                (team_up, hunt).chain().after(ai::steer).after(crate::start_punch).before(crate::move_bodies),
+                (team_up, hunt, drive_bots)
+                    .chain()
+                    .after(ai::steer)
+                    .after(crate::start_punch)
+                    .before(crate::move_bodies),
                 (reap, deal_damage, fireballs_offline, hit_anchors, regen, outfit_offline, respawn, break_anchors)
                     .chain()
                     .after(crate::move_bodies)
@@ -1185,19 +1257,20 @@ fn play(
                 while game.seats.len() < ARENA_SEATS {
                     lobby::seat_ai(&mut game.seats, &lobby.seats);
                     let seat = game.bodies.len();
-                    let body = lobby::spawn_player_at(
+                    // A body the game's brain places, as the server's
+                    // bots are placed online ([`drive_bots`]).
+                    let body = lobby::spawn_bot_at(
                         &mut commands,
                         &assets,
                         &game.seats[seat],
                         seat,
                         Venue::Arena,
-                        false,
                         waiting_spot(room.as_ref(), map, seat),
                     );
                     commands.entity(body).insert((
                         InArena,
                         Health::of(ui().arena.health),
-                        Hunter::default(),
+                        Brained,
                         Team(arena_team(seat)),
                     ));
                     game.bodies.push(Some(body));
@@ -1215,6 +1288,13 @@ fn play(
             for (seat, body) in game.bodies.iter().enumerate() {
                 if let Some(body) = body {
                     lobby::send(&mut bodies, &mut orbit, *body, Venue::Arena, seat);
+                }
+            }
+            // The computer's players, each where its seat arrives.
+            if let Some(brains) = game.brains.as_deref_mut() {
+                for seat in (0..game.seats.len().min(ARENA_SEATS)).filter(|&seat| seat != game.me) {
+                    let arrival = island::arrival(Venue::Arena, seat);
+                    brains.squad.seat(seat, arrival.translation, yaw_of(arrival.rotation));
                 }
             }
             hud::announce(&mut commands, None, &ui().words.arena.fight, hud::HEADLINE, FIGHT_SECS).insert(InArena);
@@ -1327,6 +1407,9 @@ fn open(
             outfits.seat(ARENA_SEATS);
             outfits
         },
+        brains: (!online).then(|| Box::new(Brains::new())),
+        anchor_was: if online { rules::ANCHOR_HEALTH } else { ui().arena.anchor_health },
+        anchor_said: f32::NEG_INFINITY,
     }
 }
 
@@ -1457,7 +1540,9 @@ fn raise_zombie(commands: &mut Commands, assets: &AssetServer, game: &mut Game, 
 /// The generators, offline: what they make drops onto its pad (`loot`),
 /// and whatever you walk within the magnet's reach of is yours, counted
 /// top left. Online both are the server's (`loot::follow_server`,
-/// [`follow_round`]). The computer's players pick up nothing.
+/// [`follow_round`]). The computer's players take what their purchases
+/// need of what is left, later in the frame ([`drive_bots`]): you are
+/// served first.
 fn gather(
     time: Res<Time>,
     game: Option<ResMut<Game>>,
@@ -2165,16 +2250,18 @@ fn team_up(
     }
 }
 
-/// Sends each bot for whoever of another team is nearest within its sight,
-/// while the game is on, offline: at a run up to them, over whatever walk
-/// it was on, pressing in on them once there, and a punch whenever they
-/// are in its reach and it may throw one, which knocks them back as yours
-/// does ([`Shove::knock`]) and lands ([`Landed`]) for the damage to be
-/// dealt. It sees no further than the file's `arena.hunt_radius`, the dead
-/// not at all, and never a teammate; walking off its island it is kept
-/// from, as ever (`StaysAshore`), but onto a bridge it will go. With less
-/// than the file's `arena.flee_below` of its health it runs away from them
-/// instead ([`flight`]), until its health has come back ([`regen`]).
+/// Sends each zombie ([`Hunter`]) for whoever of another team is nearest
+/// within its sight, while the game is on, offline: up to them, over
+/// whatever walk it was on, pressing in on them once there, and a punch
+/// whenever they are in its reach and it may throw one, which knocks them
+/// back as yours does ([`Shove::knock`]) and lands ([`Landed`]) for the
+/// damage to be dealt. It sees no further than the file's
+/// `arena.hunt_radius`, the dead not at all, and never a teammate; walking
+/// off its ground it is kept from, as ever (`StaysAshore`), but onto a
+/// bridge it will go. Until 2026-11-12 this was every bot's mind, which
+/// with less than the file's `arena.flee_below` of its health ran away
+/// instead ([`flight`]); the computer's players have a brain of their own
+/// since ([`drive_bots`]), and are among those a zombie goes for.
 #[allow(clippy::too_many_arguments)]
 fn hunt(
     time: Res<Time>,
@@ -2184,7 +2271,8 @@ fn hunt(
         Entity,
         &Transform,
         &Venue,
-        &mut Intent,
+        // The computer's players have none, being placed, not walked.
+        Option<&mut Intent>,
         &mut Shove,
         &mut PlayerJump,
         Option<&mut Hunter>,
@@ -2220,7 +2308,8 @@ fn hunt(
         // What the bot does this frame, with its own body in hand; the
         // punch is thrown once that is let go of.
         let punch = {
-            let Ok((_, body, _, mut intent, _, _, Some(mut hunter), steering, health, team, _)) = bodies.get_mut(bot)
+            let Ok((_, body, _, Some(mut intent), _, _, Some(mut hunter), steering, health, team, _)) =
+                bodies.get_mut(bot)
             else {
                 continue;
             };
@@ -2279,6 +2368,319 @@ fn hunt(
             landed.write(Landed { by: bot, victim: target });
         }
     }
+}
+
+/// How a body turned by `rotation` faces, as a turn about the upright in
+/// radians: -Z turned by it is ahead, as a plank heads.
+fn yaw_of(rotation: Quat) -> f32 {
+    let forward = rotation * Vec3::NEG_Z;
+    (-forward.x).atan2(-forward.z)
+}
+
+/// The computer's players in a game played offline, a frame of each
+/// (since 2026-11-12; `roundtown_net::bots`, the brain the server plays
+/// its own by online, with the same numbers): each thinks and moves, its
+/// body is put where the brain has it, and what comes of it is carried
+/// out here as the server carries it out there (`Game::play_bot`): a
+/// punch knocks whoever it lands on and lands ([`Landed`]) for the damage
+/// to be dealt, an anchor is struck, a purchase made out of what the bot
+/// holds, the rungs of its bridge laid (`bridge::Bridges::lay_remote`), a
+/// fireball thrown, a potion drunk. A knock that has landed on its body,
+/// from a punch or a blast (`Shove::knock`), is handed on to the brain,
+/// which carries it by it, off an edge if it must. Every bridge built is
+/// told to the brains' map as it is fixed, yours among them. And each
+/// takes what its next purchases need of what lies within its reach, you
+/// having had yours already this frame ([`gather`]), and loses it all as
+/// it dies.
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+fn drive_bots(
+    time: Res<Time>,
+    game: Option<ResMut<Game>>,
+    mut bodies: Query<
+        (
+            Entity,
+            &mut Transform,
+            &Venue,
+            &Seat,
+            Option<&mut Health>,
+            &mut Shove,
+            &mut PlayerJump,
+            Has<Dead>,
+            Has<Brained>,
+            Has<Carrying>,
+        ),
+        With<WalkCycle>,
+    >,
+    things: Query<(Entity, &loot::Thing)>,
+    mut bridges: ResMut<bridge::Bridges>,
+    look: Res<fire::Look>,
+    mut landed: MessageWriter<Landed>,
+    mut commands: Commands,
+) {
+    if !offline_fight(&game) {
+        return;
+    }
+    let mut game = game.expect("checked");
+    let game = &mut *game;
+    let Some(brains) = game.brains.as_deref_mut() else {
+        return;
+    };
+    let Brains {
+        nav,
+        squad,
+        purses,
+        dead,
+        heard,
+        rungs,
+    } = brains;
+    let (dt, elapsed, me) = (time.delta_secs(), game.elapsed, game.me);
+    let file = ui();
+    // Every bridge as it stands, whoever built it: a rung heard already
+    // is nothing new.
+    if *heard != Some(bridges.version) {
+        *heard = Some(bridges.version);
+        for (seat, chain, index, at) in bridges.laid() {
+            nav.hear(seat, chain, index, at);
+        }
+    }
+    // Everyone, by seat, as the brains see them.
+    let seats = game.seats.len();
+    let mut seen = vec![Seen::default(); seats];
+    let mut body_of: Vec<Option<Entity>> = vec![None; seats];
+    for (body, at, venue, seat, health, _, _, fallen, ..) in &bodies {
+        if *venue != Venue::Arena || seat.0 >= seats {
+            continue;
+        }
+        body_of[seat.0] = Some(body);
+        seen[seat.0] = Seen {
+            at: at.translation,
+            alive: !fallen,
+            in_play: seat.0 >= ARENA_SEATS || !game.out[seat.0],
+            unseen: game.outfits.kit(seat.0).unseen(elapsed),
+            person: seat.0 == me,
+            health: health.map_or(1.0, Health::share),
+        };
+    }
+    let computers = move |seat: &usize| *seat != me;
+    // Whoever of them has died since the last frame has lost what it
+    // held, and whoever stands again begins again from where it stands.
+    for seat in (0..seats.min(ARENA_SEATS)).filter(computers) {
+        let fallen = !seen[seat].alive;
+        if fallen && !dead[seat] {
+            squad.died(seat, elapsed);
+            purses[seat] = Purse::default();
+        } else if !fallen && dead[seat] {
+            let turn = body_of[seat]
+                .and_then(|body| bodies.get(body).ok())
+                .map_or(0.0, |(_, at, ..)| yaw_of(at.rotation));
+            squad.stand(seat, seen[seat].at, turn, elapsed);
+        }
+        dead[seat] = fallen;
+    }
+    for seat in (0..seats.min(ARENA_SEATS)).filter(computers) {
+        let Some(entity) = body_of[seat].filter(|_| seen[seat].alive) else {
+            continue;
+        };
+        // What the bot does this frame, with its own body in hand; its
+        // punch is thrown once that is let go of.
+        let punch = {
+            let Ok((_, mut transform, _, _, health, mut shove, mut jump, _, brained, carrying)) = bodies.get_mut(entity)
+            else {
+                continue;
+            };
+            if !brained {
+                continue;
+            }
+            // A knock that has landed on the body is the brain's to carry
+            // it by; and it reels from it no longer than anyone.
+            if shove.across != Vec2::ZERO || jump.velocity_y != 0.0 {
+                squad.shoved(seat, shove.across, jump.velocity_y.max(0.0));
+                shove.across = Vec2::ZERO;
+                jump.velocity_y = 0.0;
+            }
+            if shove.hurt > 0.0 {
+                shove.hurt = (shove.hurt - dt).max(0.0);
+            }
+            let order = {
+                let view = bots::View {
+                    elapsed,
+                    nav,
+                    seats: &seen,
+                    purses: purses.as_slice(),
+                    outfits: &game.outfits,
+                    mint: &game.mint,
+                    anchors: game.anchors,
+                };
+                squad.step(seat, &view, dt)
+            };
+            let Some(bot) = squad.bot(seat) else {
+                continue;
+            };
+            let (at, turn) = (bot.body.at, Quat::from_rotation_y(bot.body.yaw));
+            if transform.translation != at {
+                transform.translation = at;
+            }
+            if transform.rotation != turn {
+                transform.rotation = turn;
+            }
+            seen[seat].at = at;
+            let here = at.xz();
+            if let Some(team) = order.strike.map(usize::from)
+                && team < ARENA_TEAMS
+                && team != usize::from(arena_team(seat))
+                && game.anchors[team] > 0.0
+                && game.anchor_hurt[team] <= 0.0
+                && rules::anchor_in_reach(here, ARENA_ANCHORS[team], rules::REACH)
+            {
+                // A sword breaks an anchor sooner, as it does a body.
+                let damage = rules::punch_damage(file.arena.damage, &game.outfits.kit(seat), &game.outfits.team(seat));
+                game.anchor_hurt[team] = file.melee.hurt_time;
+                game.outfits.reveal(seat);
+                game.anchors[team] = (game.anchors[team] - damage).max(0.0);
+                let anchor = ARENA_ANCHORS[team];
+                spawn_number(&mut commands, Vec3::new(anchor.x, 1.2, anchor.y), damage);
+                commands.entity(entity).insert(Punching::next());
+                if game.anchors[team] <= 0.0 {
+                    info!("team {team}'s anchor is broken, by seat {seat}");
+                }
+            }
+            if let Some(ware) = order.buy
+                && rules::at_a_shop(here, rules::sold_at(ware))
+                && game.outfits.buy(seat, ware, &mut purses[seat])
+            {
+                squad.bought(seat, ware, elapsed);
+                debug!("seat {seat} bought {ware:?}");
+            }
+            for (chain, index, rung, heading) in order.rungs {
+                if rungs[seat] >= MOST_BOT_RUNGS {
+                    break;
+                }
+                rungs[seat] += 1;
+                nav.hear(seat as u8, chain, index, rung);
+                bridges.lay_remote(
+                    seat as u8,
+                    chain,
+                    index,
+                    bridge::Rung {
+                        p: rung,
+                        d: bridge::heading_of(heading),
+                    },
+                );
+            }
+            if let Some(heading) = order.throw
+                && game.outfits.spend(seat, Utility::Fireball)
+            {
+                fire::throw(&mut commands, &look, Flight::thrown(at, heading), seat, None);
+            }
+            if order.drink
+                && game.outfits.drink(seat, elapsed) == Some(Utility::Healing)
+                && let Some(mut health) = health
+            {
+                let back = health.full * rules::HEALING;
+                if health.mend(back) {
+                    spawn_healed(&mut commands, at, back);
+                }
+            }
+            // Seen laying its bridge: a plank in its arms (`bridge`).
+            if order.carrying != carrying {
+                if order.carrying {
+                    commands.entity(entity).insert(Carrying);
+                } else {
+                    commands.entity(entity).remove::<Carrying>();
+                }
+            }
+            order.punch.map(|victim| (victim, here, order.running))
+        };
+        let Some((victim, from, running)) = punch else {
+            continue;
+        };
+        let Some(target) = body_of.get(victim).copied().flatten().filter(|_| seen[victim].alive) else {
+            continue;
+        };
+        if arena_team(victim) == arena_team(seat) {
+            continue;
+        }
+        commands.entity(entity).insert(Punching::next());
+        if let Ok((_, there, _, _, _, mut shove, mut jump, ..)) = bodies.get_mut(target) {
+            let at = there.translation.xz();
+            if at.distance(from) <= rules::REACH + PLAYER_RADIUS + 0.5 && shove.knock(&mut jump, from, at, running) {
+                landed.write(Landed {
+                    by: entity,
+                    victim: target,
+                });
+            }
+        }
+    }
+    // What lies within their reach: only what each one's next purchases
+    // need, whoever it matters most to first.
+    let mut takers: Vec<(u8, usize)> = (0..seats.min(ARENA_SEATS))
+        .filter(computers)
+        .filter(|&seat| seen[seat].alive)
+        .map(|seat| (squad.wants(seat).1, seat))
+        .collect();
+    takers.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+    for (_, seat) in takers {
+        let (mut wants, _) = squad.wants(seat);
+        if wants == [0; 4] {
+            continue;
+        }
+        let taken = game.mint.pick_up_where(seen[seat].at, elapsed, &mut |piece| {
+            let wanted = &mut wants[piece.item.index()];
+            let take = *wanted > 0;
+            *wanted = wanted.saturating_sub(1);
+            take
+        });
+        for piece in taken {
+            let held = &mut purses[seat][piece.item.index()];
+            *held = held.saturating_add(1);
+            if let Some((thing, _)) = things.iter().find(|(_, thing)| thing.key == loot::Key::Own(piece.id)) {
+                loot::take(&mut commands, thing, body_of[seat]);
+            }
+        }
+    }
+}
+
+/// How long between two sayings that your anchor is under attack, in
+/// seconds.
+const ANCHOR_WARN_EVERY: f32 = 8.0;
+
+/// Says that your team's anchor is under attack, in the line the
+/// timetable's are said in (since 2026-11-12, the computer's players
+/// going for anchors now): whenever it has lost health and still stands,
+/// no oftener than every [`ANCHOR_WARN_EVERY`] seconds. Online the health
+/// is the server's ([`follow_round`]), offline this device's. Broken, it
+/// has a headline of its own ([`break_anchors`]), and so has the
+/// timetable's breaking of every anchor.
+fn warn_of_the_anchor(
+    game: Option<ResMut<Game>>,
+    alerts: Query<Entity, With<Alert>>,
+    mut images: ResMut<Assets<Image>>,
+    mut commands: Commands,
+) {
+    let Some(mut game) = game else {
+        return;
+    };
+    let left = game.anchors[usize::from(game.my_team())];
+    let was = game.anchor_was;
+    if left == was {
+        return;
+    }
+    game.anchor_was = left;
+    if !anchor_warned(game.playing(), was, left, game.elapsed - game.anchor_said) {
+        return;
+    }
+    game.anchor_said = game.elapsed;
+    for old in &alerts {
+        commands.entity(old).try_despawn();
+    }
+    alert(&mut commands, &mut images, &Line::plain(&ui().words.arena.anchor_attacked));
+}
+
+/// Whether to say that your anchor is under attack: the game `playing`,
+/// the anchor gone from `was` down to `left` and still standing, and
+/// `since` seconds gone since it was last said.
+fn anchor_warned(playing: bool, was: f32, left: f32, since: f32) -> bool {
+    playing && left < was && left > 0.0 && since >= ANCHOR_WARN_EVERY
 }
 
 /// Which way a bot at `here` on `map` runs from someone `toward` it: straight
@@ -3377,6 +3779,9 @@ mod tests {
             said: 0.0,
             mint: Mint::new(0.0, &mut || 0.5),
             outfits: Outfits::default(),
+            brains: None,
+            anchor_was: 120.0,
+            anchor_said: f32::NEG_INFINITY,
         };
         assert_eq!(game.my_team(), 0);
         assert_eq!(game.teams_in_play(), vec![0, 1, 2, 3]);
@@ -3630,5 +4035,73 @@ mod tests {
         assert_eq!(clock(59.0), "0:59");
         assert_eq!(clock(0.4), "0:01");
         assert_eq!(clock(0.0), "0:00");
+    }
+
+    #[test]
+    fn your_anchor_under_attack_is_said_when_it_is_hit_and_stands_and_not_too_often() {
+        // Hit, and still standing, with nothing said lately.
+        assert!(anchor_warned(true, 120.0, 108.0, f32::INFINITY));
+        assert!(anchor_warned(true, 108.0, 86.0, ANCHOR_WARN_EVERY));
+        // Not again within a few seconds of the last.
+        assert!(!anchor_warned(true, 108.0, 96.0, ANCHOR_WARN_EVERY - 0.1));
+        // Not as it breaks, which has a headline of its own, as the
+        // timetable's breaking of every anchor has its line.
+        assert!(!anchor_warned(true, 12.0, 0.0, f32::INFINITY));
+        assert!(!anchor_warned(true, 120.0, 0.0, f32::INFINITY));
+        // Nor when it has lost nothing, nor out of the fight.
+        assert!(!anchor_warned(true, 96.0, 96.0, f32::INFINITY));
+        assert!(!anchor_warned(true, 96.0, 120.0, f32::INFINITY));
+        assert!(!anchor_warned(false, 120.0, 108.0, f32::INFINITY));
+    }
+
+    #[test]
+    fn the_computer_s_players_of_a_game_played_offline_stand_where_their_map_can_be_walked() {
+        // A turn about the upright is read back as a plank heads.
+        for yaw in [0.0f32, 0.7, -1.2, 3.0] {
+            assert!((yaw_of(Quat::from_rotation_y(yaw)) - yaw).abs() < 1e-4, "{yaw}");
+        }
+        // Whoever arrives on the island at +Z faces the middle of the map.
+        assert!(yaw_of(island::arrival(Venue::Arena, 0).rotation).abs() < 1e-3);
+        // Every arrival is somewhere a body walks on the map the brains
+        // have (`roundtown_net::nav`, baked from the map itself), and the
+        // brain stands a body put there, a quarter of a metre under the
+        // island's top as the game's arrivals are, onto it.
+        let mut brains = Brains::new();
+        for seat in 0..ARENA_SEATS {
+            let arrival = island::arrival(Venue::Arena, seat);
+            let at = arrival.translation;
+            assert!(brains.nav.walkable_at(at.xz()), "seat {seat} at {at}");
+            brains.squad.seat(seat, at, yaw_of(arrival.rotation));
+        }
+        let seen: Vec<Seen> = (0..ARENA_SEATS)
+            .map(|seat| Seen {
+                at: island::arrival(Venue::Arena, seat).translation,
+                alive: true,
+                in_play: true,
+                unseen: false,
+                person: false,
+                health: 1.0,
+            })
+            .collect();
+        let mut outfits = Outfits::default();
+        outfits.seat(ARENA_SEATS);
+        let mint = Mint::new(0.0, &mut || 0.5);
+        for seat in 0..ARENA_SEATS {
+            for _ in 0..3 {
+                let view = bots::View {
+                    elapsed: 0.0,
+                    nav: &brains.nav,
+                    seats: &seen,
+                    purses: brains.purses.as_slice(),
+                    outfits: &outfits,
+                    mint: &mint,
+                    anchors: [120.0; ARENA_TEAMS],
+                };
+                brains.squad.step(seat, &view, 1.0 / 60.0);
+            }
+            let body = brains.squad.bot(seat).expect("seated").body;
+            assert_eq!(body.at.y, island::LAND_TOP_OF_THE_ISLANDS, "seat {seat}");
+            assert!(body.free(&brains.nav), "seat {seat}: {body:?}");
+        }
     }
 }

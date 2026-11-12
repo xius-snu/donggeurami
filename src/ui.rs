@@ -917,6 +917,9 @@ pub(crate) struct ArenaWords {
     /// the team whose trap it was.
     pub blinded: String,
     pub trap_sprung: String,
+    /// The line said when your team's anchor has been hit and still
+    /// stands, no oftener than every few seconds (`arena`).
+    pub anchor_attacked: String,
 }
 
 impl ArenaWords {

@@ -404,6 +404,9 @@
             // and to the team whose island it was on.
             blinded: "A trap has blinded you!",
             trap_sprung: "An enemy walked into your trap!",
+            // Someone has hit your team's respawn anchor, and it still
+            // stands: said in the same line, every few seconds at the most.
+            anchor_attacked: "Your anchor is under attack!",
         ),
         // Bridge Wars' two shops: the item shop at the red stand on each
         // island and the upgrade shop at the blue one. Their titles; what a

@@ -209,7 +209,12 @@ fn learn_look(
 
 /// Online, the things are the server's: each [`Loot`] it sends is laid
 /// here as it comes, and one it has taken away is taken here, flying to
-/// the nearest person to it, who is whoever the server gave it to.
+/// whoever is nearest it, who is whoever the server gave it to: a person,
+/// or, since 2026-11-12, one of the computer's players, which pick up
+/// what their purchases need (`roundtown_net::bots`). Until then only
+/// people were looked for, the computer's picking up nothing, and a
+/// thing one of them took would have flown to the nearest person, or
+/// nowhere.
 fn follow_server(
     time: Res<Time>,
     look: Res<Look>,
@@ -233,7 +238,11 @@ fn follow_server(
         let here = lying.at.xz();
         let taker = people
             .iter()
-            .filter(|(_, _, venue, member, mine)| **venue == Venue::Arena && (*mine || member.is_some_and(|member| !member.ai)))
+            // Anyone but a zombie, which picks up nothing.
+            .filter(|(_, _, venue, member, mine)| {
+                **venue == Venue::Arena
+                    && (*mine || member.is_some_and(|member| member.look != roundtown_net::bridge_wars::ZOMBIE_LOOK))
+            })
             .map(|(person, at, ..)| (person, at.translation.xz().distance(here)))
             .filter(|(_, away)| *away <= MAGNET + TAKER_SLACK)
             .min_by(|a, b| a.1.total_cmp(&b.1))
