@@ -702,7 +702,8 @@ holds for the arena now.
     `donggeurami_town-release.prev-2026-11-13.apk`). **Not by hand and not
     on a phone**: whether the outer ring lies well under a thumb, and how
     much of the island the buttons cover on the phone's screen, is unseen.
-    Not committed.
+    Committed and pushed with the other two sessions' work as one commit
+    (`ad147fd`) when Hajun said "push to git".
 
 - **Since late on the night of 2026-11-12 each of the computer's players
   is someone, a knock no longer stuns them, and no two fights with them
@@ -3097,7 +3098,7 @@ the circle with the squat: "ok C+B try it"), in `src/intro.rs`.
   (its pipeline is compiled in the background like any other), and would
   then be the bare sky; reasoned from Bevy's source, not seen. Android's
   own window is black before that
-  (`windowBackground` in `themes.xml`, at the next APK).
+  (`windowBackground` in `themes.xml`, since APK 24).
 - **It opens once the town is there to be seen** (`Loading::there`, `Wait`):
   the town's shape read (`Islands`), every model in the world spawned (every
   `WorldAssetRoot` with its instance ready: the islands, the buses,
