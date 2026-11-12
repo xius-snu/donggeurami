@@ -304,8 +304,10 @@ alone; the server is `cargo build -p roundtown_server`. Never `--workspace`,
 which would build the game with the server's half of replicon in it.
 
 Android needs the `release-android` profile, a manual strip step, and Gradle
-(`versionCode` in `mobile/android/app/build.gradle` is the build number: 21
-later on 2026-11-12, dying taking everything you hold, the fireball's band
+(`versionCode` in `mobile/android/app/build.gradle` is the build number: 22
+in the afternoon of 2026-11-12, the sword held straighter at the ready
+(protocol 13 still, no server change); 21
+at midday on 2026-11-12, dying taking everything you hold, the fireball's band
 seen over the void, and a sword held on its edge and cut downward (protocol
 13 still; the server deployed for the first); 20
 in the small hours of 2026-11-12, Bridge Wars' two shops and everything they sell, the swords,
@@ -658,9 +660,9 @@ holds for the arena now.
     0.62 rad, 36 degrees. Upright altogether, the camera over you would
     see the blade and its cut edge on, a hair; flat is what Hajun asked
     to leave; leant so, it sees a slim blade, about half its breadth, and
-    the cut as a crescent. At the ready the blade is out in front and up,
-    `CHOP_READY`, 0.5 rad over level, which from above points a little out
-    to the right; a press raises the arm (`CHOP_ARM_FROM`, 2.35 rad
+    the cut as a crescent. At the ready the blade was out in front and up,
+    0.5 rad over level in that plane, which from above points a little out
+    to the right (straighter since that afternoon, below); a press raises the arm (`CHOP_ARM_FROM`, 2.35 rad
     forward of hanging, where level is 1.7) with the blade up and back
     over the right shoulder (`CHOP_FROM`, 2.0 rad over level), and brings
     both down through straight ahead to low on the left (`CHOP_TO`, -0.5;
@@ -687,6 +689,30 @@ holds for the arena now.
     ready, cutting, and walking and cutting; the first numbers (a lean of
     0.55, a thickness of 2.6 and the other trail's ramp) left the trail
     too faint from above, and were raised.
+  - **At the ready the sword is held straighter than it cuts** (that
+    afternoon, Hajun, of the hold above, playing APK 21: "i think the
+    sword holding is too tilted now (both forward tilt and side tilt).
+    make it more straight"; APK 22, no server change): 30 degrees forward
+    of straight up and 10 over to the right, where it was 61 and 36 (the
+    blade 0.5 rad over level in the plane of the cut). My reading of
+    "straight" is upright, as "hold it narrow and slash downward" was of
+    a sword held up and brought down; the 30 and the 10 are mine, and
+    **are the file's to change**: `arena.sword_tilt_forward` and
+    `sword_tilt_side` in `assets/ui.ron`, degrees from straight up, read
+    as the file is saved on desktop (`crate::Guard`, `Guard::of`;
+    `Arena::check` refuses anything outside 0 to 90). Straight up
+    altogether the camera over you sees the sword end on, a dot: at 30
+    and 10 it sees a blade about half its length, pointing nearly
+    straight ahead, 0.7 to 0.9 m of it. The cut is as it was, in its own
+    plane (`CHOP_LEAN`, `cut_angle`, `cut_blade_at`): the sword goes from
+    the hold to the cut as it is raised, and on the way back both its
+    angle and its plane's lean come back to the hold's (`chop_angle`).
+    The arm at the ready is where it was. Seen in the desktop build,
+    scripted, each sword at the ready from above, from the side, the
+    front and behind, and through a cut and back; unit-tested with a hold
+    of its own, not the file's. Not by hand or on a phone: APK 22 is
+    built, its assets checked byte for byte, and not installed (APK 21 is
+    kept as `donggeurami_town-release.prev-2026-11-12c.apk`).
   - **Unit-tested**: the server's purse at a death, and the device's;
     the rim round the band; the cut's poses on the model, its blade's
     path, that the flat stays square to the cut, the ribbon at 3 and at

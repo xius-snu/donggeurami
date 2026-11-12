@@ -205,6 +205,14 @@ pub(crate) struct Arena {
     pub camera_height: f32,
     /// How a sword is held and swung ([`SwordSwing`]).
     pub sword_swing: SwordSwing,
+    /// How far a sword held on its edge (`SwordSwing::Chop`) is tilted at
+    /// the ready, in degrees from straight up: forward, toward where you
+    /// face, and over to the right (`crate::Guard`; since later on
+    /// 2026-11-12, Hajun, of 61 and 36: "the sword holding is too tilted
+    /// now (both forward tilt and side tilt). make it more straight").
+    /// Straight up altogether, the camera over you sees it end on, a dot.
+    pub sword_tilt_forward: f32,
+    pub sword_tilt_side: f32,
 }
 
 /// How a sword is held and swung in Bridge Wars (`sword_offset` and
@@ -246,6 +254,8 @@ impl Arena {
             ("bridge_low_at", self.bridge_low_at),
             ("bridge_red_at", self.bridge_red_at),
             ("camera_height", self.camera_height),
+            ("sword_tilt_forward", self.sword_tilt_forward),
+            ("sword_tilt_side", self.sword_tilt_side),
         ];
         for (name, value) in all {
             if !value.is_finite() || value < 0.0 {
@@ -265,6 +275,11 @@ impl Arena {
         }
         if self.flee_below > 1.0 {
             return Err(format!("arena.flee_below is {}: it is a share, 0 to 1", self.flee_below));
+        }
+        for (name, value) in [("sword_tilt_forward", self.sword_tilt_forward), ("sword_tilt_side", self.sword_tilt_side)] {
+            if value > 90.0 {
+                return Err(format!("arena.{name} is {value}: it is degrees from straight up, 0 to 90"));
+            }
         }
         if self.bridge_red_at > self.bridge_low_at {
             return Err(format!(
@@ -1165,6 +1180,21 @@ mod tests {
         assert!(ui.arena.damage > 0.0 && ui.arena.damage < ui.arena.health);
         assert!(read(&BUILT_IN.replacen("camera_height: 15.5", "camera_height: 0", 1)).unwrap_err().contains("camera_height"));
         assert!(read(&BUILT_IN.replacen("run_speed: 10.0", "run_speed: 0", 1)).unwrap_err().contains("run_speed"));
+        // A sword's tilt at the ready is degrees from straight up: none is
+        // straight up, and past lying flat, or less than none, is refused,
+        // whatever the file has just now.
+        assert!(ui.arena.check().is_ok());
+        for (forward, side, wrong) in [(0.0, 0.0, None), (90.0, 90.0, None), (120.0, 10.0, Some("sword_tilt_forward")), (30.0, 91.0, Some("sword_tilt_side")), (-5.0, 10.0, Some("sword_tilt_forward")), (30.0, f32::NAN, Some("sword_tilt_side"))] {
+            let arena = Arena {
+                sword_tilt_forward: forward,
+                sword_tilt_side: side,
+                ..ui.arena
+            };
+            match wrong {
+                None => assert!(arena.check().is_ok(), "{forward} and {side}"),
+                Some(field) => assert!(arena.check().unwrap_err().contains(field), "{forward} and {side}"),
+            }
+        }
     }
 
     #[test]

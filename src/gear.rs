@@ -33,7 +33,11 @@
 //! blade's flat is square to the plane it cuts in (`crate::chop_blade`,
 //! [`edge_on`]), which leans, so that the camera over you sees a slim
 //! blade rather than a hair; it is drawn thicker through its flat for the
-//! same reason ([`CHOP_SCALE`]). Its trail is the ribbon the blade
+//! same reason ([`CHOP_SCALE`]). At the ready it is held straighter than
+//! it cuts, as far forward of straight up and over to the right as the
+//! file says (`crate::Guard`, `arena.sword_tilt_forward` and
+//! `sword_tilt_side`; Hajun, of the first try: "the sword holding is too
+//! tilted now (both forward tilt and side tilt). make it more straight"). Its trail is the ribbon the blade
 //! itself has cut ([`Cut`], [`Cutting`]): where its edge has been from
 //! the start of the cut, a sample to every few degrees whatever the frame
 //! rate, built again each frame of the cut and faded after as the other
@@ -405,7 +409,7 @@ fn hold_swords(
         let (rotation, scale) = match swing {
             SwordSwing::Sweep => (pointing(crate::blade_way(slash)), SWORD_SCALE),
             SwordSwing::Chop => {
-                let (along, flat) = crate::chop_blade(slash);
+                let (along, flat) = crate::chop_blade(crate::Guard::of(&file.arena), slash);
                 (edge_on(along, flat), CHOP_SCALE)
             }
         };
@@ -483,7 +487,7 @@ impl Cutting {
     /// A cut begun, the blade raised, with the grip at `grip`: its trail,
     /// whose shape is `shape`, begins where the blade is, `reach` along it.
     fn begun(shape: Handle<Mesh>, grip: Vec3, reach: (f32, f32)) -> Self {
-        let (along, _) = crate::chop_blade(Some((0.0, 0.0)));
+        let (along, _) = crate::cut_blade_at(crate::cut_angle(0.0));
         Self {
             shape,
             edge: vec![(grip + along * reach.0, grip + along * reach.1)],
@@ -504,12 +508,11 @@ impl Cutting {
         if swept <= self.swept {
             return false;
         }
-        let angle = |swept: f32| crate::chop_angle(Some((swept, 0.0)));
-        let (from, to) = (angle(self.swept), angle(swept));
+        let (from, to) = (crate::cut_angle(self.swept), crate::cut_angle(swept));
         let steps = (((to - from).abs() / CUT_STEP).ceil() as usize).clamp(1, 64);
         for step in 1..=steps {
             let share = step as f32 / steps as f32;
-            let (along, _) = crate::chop_blade_at(from + (to - from) * share);
+            let (along, _) = crate::cut_blade_at(from + (to - from) * share);
             let grip = self.grip.lerp(grip, share);
             self.edge.push((grip + along * reach.0, grip + along * reach.1));
         }
@@ -855,7 +858,7 @@ mod tests {
         let melee = ui().melee;
         for age in [None, Some(0.0), Some(melee.swing_out * 0.5), Some(melee.swing_out), Some(melee.swing_out + melee.swing_back * 0.5)] {
             let slash = age.map(|age: f32| ((age / melee.swing_out).clamp(0.0, 1.0), ((age - melee.swing_out) / melee.swing_back).clamp(0.0, 1.0)));
-            let (along, flat) = crate::chop_blade(slash);
+            let (along, flat) = crate::chop_blade(crate::Guard::tilted(30.0, 10.0), slash);
             let turn = edge_on(along, flat);
             assert!((turn * Vec3::Y).distance(along) < 1e-5, "{along}");
             assert!((turn * Vec3::Z).distance(flat) < 1e-5, "{flat}");
@@ -905,7 +908,7 @@ mod tests {
             // as the trail's share of the blade.
             let (first, last) = (cutting.edge[0], cutting.edge[cutting.edge.len() - 1]);
             let (from, to) = ((first.1 - first.0).normalize(), (last.1 - last.0).normalize());
-            assert!(from.distance(crate::chop_blade(Some((0.0, 0.0))).0) < 1e-4 && to.distance(crate::chop_blade(Some((1.0, 0.0))).0) < 1e-4);
+            assert!(from.distance(crate::cut_blade_at(crate::CHOP_FROM).0) < 1e-4 && to.distance(crate::cut_blade_at(crate::CHOP_TO).0) < 1e-4);
             assert!(from.y > 0.6 && to.y < -0.3 && to.z < -0.8 && to.x < 0.0, "{from} to {to}");
             assert!(cutting.edge.iter().all(|(inner, outer)| (inner.distance(*outer) - (reach.1 - reach.0)).abs() < 1e-4));
             assert!(first.0.distance(grip(0.0) + from * reach.0) < 1e-4 && last.1.distance(grip(1.0) + to * reach.1) < 1e-4);

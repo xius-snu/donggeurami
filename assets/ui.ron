@@ -616,5 +616,12 @@
         // swept level across in front from right to left. Both are still
         // in the game: change the word to go back.
         sword_swing: Chop,
+        // How far the sword is tilted while it is held at the ready, the
+        // Chop way, in degrees from straight up: forward, toward where you
+        // face, and over to your right. 0 and 0 is a sword held straight
+        // up, which the camera over you sees end on, as a dot; 61 and 36
+        // was the first try, which was too tilted.
+        sword_tilt_forward: 30,
+        sword_tilt_side: 10,
     ),
 )

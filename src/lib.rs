@@ -461,9 +461,10 @@ pub(crate) const SLASH_TO: f32 = 1.0;
 /// body faces, leant over to the right by [`CHOP_LEAN`]. Upright
 /// altogether, the camera over you would see the blade and its cut edge
 /// on, a hair; leant this far it sees a slim blade and the cut as a
-/// crescent, from out on the right round to the front. In that plane the
-/// blade is [`CHOP_READY`] over level at the ready, out in front and up;
-/// a cut begins with it [`CHOP_FROM`] over level, which is up and back
+/// crescent, from out on the right round to the front. At the ready the
+/// sword stands straighter than that, as the file has it ([`Guard`]). In
+/// the plane of the cut,
+/// a cut begins with the blade [`CHOP_FROM`] over level, which is up and back
 /// over the right shoulder, and brings it down through straight ahead to
 /// [`CHOP_TO`], under level, to the left, in the time a punch takes to go
 /// out; and it is back at the ready in the time a punch takes to come
@@ -473,13 +474,44 @@ pub(crate) const SLASH_TO: f32 = 1.0;
 /// ([`CHOP_ARM_OUT`], [`CHOP_ARM_IN`]: a turn to the left is the
 /// greater). All of them mine.
 const CHOP_LEAN: f32 = 0.62;
-const CHOP_READY: f32 = 0.5;
 pub(crate) const CHOP_FROM: f32 = 2.0;
 pub(crate) const CHOP_TO: f32 = -0.5;
 const CHOP_ARM_FROM: f32 = 2.35;
 const CHOP_ARM_TO: f32 = 1.15;
 const CHOP_ARM_OUT: f32 = -0.2;
 const CHOP_ARM_IN: f32 = 0.35;
+
+/// How a sword held on its edge stands at the ready, in radians: its
+/// blade this far over level in front, in an upright plane through the
+/// way the body faces leant this far over to the right. The file's
+/// `arena.sword_tilt_forward` and `sword_tilt_side`, which are degrees
+/// from straight up ([`Guard::of`]; since later on 2026-11-12, Hajun:
+/// "the sword holding is too tilted now (both forward tilt and side
+/// tilt). make it more straight": the first try had it 0.5 over level,
+/// 61 degrees forward of upright, in the plane of the cut, 36 degrees
+/// over). A cut is still made in its own plane ([`CHOP_LEAN`]): the sword
+/// goes from the one to the other as it is raised, and comes back to this
+/// as it is brought back to the ready.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub(crate) struct Guard {
+    over: f32,
+    lean: f32,
+}
+
+impl Guard {
+    /// The file's.
+    pub(crate) fn of(arena: &ui::Arena) -> Guard {
+        Guard::tilted(arena.sword_tilt_forward, arena.sword_tilt_side)
+    }
+
+    /// Tilted `forward` and to the `side`, in degrees from straight up.
+    pub(crate) fn tilted(forward: f32, side: f32) -> Guard {
+        Guard {
+            over: std::f32::consts::FRAC_PI_2 - forward.to_radians(),
+            lean: side.to_radians(),
+        }
+    }
+}
 
 /// A body that will not walk off dry land into the sea, nor down anything it
 /// could not step back up ([`strands`]). An AI does not know it could jump
@@ -2530,34 +2562,49 @@ fn eased(share: f32) -> f32 {
 }
 
 /// How far over level in front the blade of a sword held on its edge
-/// points, in the plane of its cut ([`CHOP_LEAN`]): at the ready; or, in
-/// a `slash` ([`slash_at`]), from up and back over the shoulder down to
-/// under level, and then back up to the ready.
-pub(crate) fn chop_angle(slash: Option<(f32, f32)>) -> f32 {
+/// points, `swept` of the way through a cut's sweep, 0 to 1: from up and
+/// back over the shoulder down to under level, eased.
+pub(crate) fn cut_angle(swept: f32) -> f32 {
+    CHOP_FROM + (CHOP_TO - CHOP_FROM) * eased(swept)
+}
+
+/// How far over level in front the blade of a sword held on its edge
+/// points, and how far over to the right the upright plane it lies in
+/// leans: at the ready, as the sword is held (`guard`); or, in a `slash`
+/// ([`slash_at`]), down through the plane of the cut ([`cut_angle`],
+/// [`CHOP_LEAN`]), and then back to the ready.
+pub(crate) fn chop_angle(guard: Guard, slash: Option<(f32, f32)>) -> (f32, f32) {
     let Some((swept, back)) = slash else {
-        return CHOP_READY;
+        return (guard.over, guard.lean);
     };
-    let cut = CHOP_FROM + (CHOP_TO - CHOP_FROM) * eased(swept);
-    cut + (CHOP_READY - cut) * eased(back)
+    let (cut, back) = (cut_angle(swept), eased(back));
+    (cut + (guard.over - cut) * back, CHOP_LEAN + (guard.lean - CHOP_LEAN) * back)
 }
 
 /// Which way the blade of a sword held on its edge points, and which way
-/// its flat side faces, in the body's space (`gear`): the blade in the
-/// plane of the cut, as far over level as the cut has got
-/// ([`chop_angle`]), and its flat square to that plane, so that its edge
+/// its flat side faces, in the body's space (`gear`): the blade as far
+/// over level as it is held, or as the cut has got ([`chop_angle`]), and
+/// its flat square to the plane it lies in, so that in a cut its edge
 /// leads.
-pub(crate) fn chop_blade(slash: Option<(f32, f32)>) -> (Vec3, Vec3) {
-    chop_blade_at(chop_angle(slash))
+pub(crate) fn chop_blade(guard: Guard, slash: Option<(f32, f32)>) -> (Vec3, Vec3) {
+    let (angle, lean) = chop_angle(guard, slash);
+    chop_blade_at(angle, lean)
 }
 
-/// The same, with the blade `angle` over level in front, in the plane of
-/// the cut.
-pub(crate) fn chop_blade_at(angle: f32) -> (Vec3, Vec3) {
-    let (lean_sin, lean_cos) = CHOP_LEAN.sin_cos();
-    // The plane of the cut: straight ahead, and up leant to the right.
+/// The same, with the blade `angle` over level in front, in an upright
+/// plane through the way the body faces leant `lean` over to the right.
+pub(crate) fn chop_blade_at(angle: f32, lean: f32) -> (Vec3, Vec3) {
+    let (lean_sin, lean_cos) = lean.sin_cos();
+    // The plane: straight ahead, and up leant to the right.
     let up = Vec3::new(lean_sin, lean_cos, 0.0);
     let along = Vec3::NEG_Z * angle.cos() + up * angle.sin();
     (along, Vec3::NEG_Z.cross(up))
+}
+
+/// The same, in the plane of the cut: where a cut's blade is, `angle`
+/// over level, for its trail (`gear`).
+pub(crate) fn cut_blade_at(angle: f32) -> (Vec3, Vec3) {
+    chop_blade_at(angle, CHOP_LEAN)
 }
 
 /// Where the right arm of a body with a sword held on its edge is, in
@@ -3895,12 +3942,26 @@ mod camera_tests {
     #[test]
     fn a_sword_on_its_edge_cuts_down_from_over_the_right_shoulder_to_low_on_the_left() {
         let melee = ui::ui().melee;
-        let blade = |age: f32| chop_blade(Some(slash_at(&melee, age)));
-        // At the ready: out in front and up, a little out to the right.
-        let (ready, flat) = chop_blade(None);
-        assert!(ready.z < -0.8 && ready.y > 0.3 && ready.y < 0.6 && ready.x > 0.1 && ready.x < 0.4, "{ready:?}");
+        // Held 30 degrees forward of straight up and 10 over to the right.
+        let guard = Guard::tilted(30.0, 10.0);
+        let blade = |age: f32| chop_blade(guard, Some(slash_at(&melee, age)));
+        // At the ready: up, more than out in front, a little to the right,
+        // its flat facing to the side.
+        let (ready, held_flat) = chop_blade(guard, None);
+        assert!((ready.angle_between(Vec3::Y).to_degrees() - 31.5).abs() < 1.0, "{ready:?}");
+        assert!(ready.z < -0.45 && ready.z > -0.55 && ready.y > 0.8 && ready.x > 0.1 && ready.x < 0.2, "{ready:?}");
+        assert!(ready.dot(held_flat).abs() < 1e-5 && held_flat.x > 0.95, "{held_flat:?}");
+        // Straight up, with no tilt at all; and the more tilt, the further
+        // from it, forward and to the right.
+        assert!(chop_blade(Guard::tilted(0.0, 0.0), None).0.distance(Vec3::Y) < 1e-5);
+        let more = chop_blade(Guard::tilted(61.0, 36.0), None).0;
+        assert!(more.z < ready.z - 0.3 && more.x > ready.x + 0.1 && more.y < ready.y - 0.3, "{more:?}");
+        // The file's own is one the game takes.
+        assert!(ui::ui().arena.sword_tilt_forward <= 90.0 && ui::ui().arena.sword_tilt_side <= 90.0);
+        assert!((chop_blade(Guard::of(&ui::ui().arena), None).0.length() - 1.0).abs() < 1e-5);
         // A cut begins up and back over the right shoulder, passes
         // straight ahead, and ends under level in front, to the left.
+        let flat = cut_blade_at(0.0).1;
         let (from, _) = blade(0.0);
         let (to, _) = blade(melee.swing_out);
         assert!(from.y > 0.6 && from.z > 0.2 && from.x > 0.3, "{from:?}");
@@ -3915,19 +3976,25 @@ mod camera_tests {
             lowest = over;
             assert!(along.dot(flat).abs() < 1e-5 && (along.length() - 1.0).abs() < 1e-5);
         }
-        // The flat is square to the cut all the way, so the edge leads;
-        // on its edge, it faces to the side far more than up or down, and
-        // leans enough that the camera over you sees some of it.
-        for age in [0.0, melee.swing_out * 0.3, melee.swing_out, melee.swing_out + melee.swing_back * 0.5] {
+        // The flat is square to the cut all the way down, so the edge
+        // leads; on its edge, it faces to the side far more than up or
+        // down, and leans enough that the camera over you sees some of
+        // it. On the way back it turns to how the sword is held, square
+        // to the blade all the while.
+        for age in [0.0, melee.swing_out * 0.3, melee.swing_out] {
             let (along, flat_now) = blade(age);
             assert!(flat_now.distance(flat) < 1e-5 && along.dot(flat_now).abs() < 1e-5);
         }
         assert!((flat.length() - 1.0).abs() < 1e-5 && flat.x.abs() > 0.8 && flat.y.abs() > 0.3 && flat.y.abs() < 0.7, "{flat:?}");
-        // And back at the ready as the swing ends.
-        assert!(blade(melee.swing()).0.distance(ready) < 1e-3);
-        assert_eq!(chop_angle(Some((0.0, 0.0))), CHOP_FROM);
-        assert!((chop_angle(Some((1.0, 0.0))) - CHOP_TO).abs() < 1e-6);
-        assert!((chop_angle(Some((1.0, 1.0))) - chop_angle(None)).abs() < 1e-6);
+        let (along, on_the_way) = blade(melee.swing_out + melee.swing_back * 0.5);
+        assert!(along.dot(on_the_way).abs() < 1e-5 && on_the_way.distance(flat) > 0.05 && on_the_way.distance(held_flat) > 0.05);
+        // And back at the ready as the swing ends, flat and all.
+        assert!(blade(melee.swing()).0.distance(ready) < 1e-3 && blade(melee.swing()).1.distance(held_flat) < 1e-3);
+        assert_eq!(chop_angle(guard, Some((0.0, 0.0))), (CHOP_FROM, CHOP_LEAN));
+        assert!((chop_angle(guard, Some((1.0, 0.0))).0 - CHOP_TO).abs() < 1e-6 && (cut_angle(1.0) - CHOP_TO).abs() < 1e-6);
+        let (back, held) = (chop_angle(guard, Some((1.0, 1.0))), chop_angle(guard, None));
+        assert!((back.0 - held.0).abs() < 1e-6 && (back.1 - held.1).abs() < 1e-6);
+        assert!(cut_blade_at(cut_angle(0.3)).0.distance(blade(melee.swing_out * 0.3).0) < 1e-5);
         // It reaches about as far ahead as a punch lands: the blade from
         // the hand at the end of the cut.
         assert!(CHOP_FROM > std::f32::consts::FRAC_PI_2 && CHOP_TO < 0.0 && CHOP_ARM_FROM > PUNCH_REACH && CHOP_ARM_TO < PUNCH_REACH);
