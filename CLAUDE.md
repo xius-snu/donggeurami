@@ -107,7 +107,16 @@ tested on the actual phone, and what not to try again. The short version:
   scripted, with `RT_TIME_OF_DAY=night` and `day`, from 10, 24 and 60 m
   over the island, and with the anchor broken; a test keeps one light to
   each anchor, inside it (`each_of_bridge_wars_anchors_is_one_light_inside_its_tip_and_glows_purple`).
-  Not on a phone; the APK was not rebuilt.
+  Not on a phone; the APK was not rebuilt. **Since 2026-11-13 each anchor
+  is its team's colour, red, blue, green or yellow, and no longer
+  purple** (Hajun: "make it so the color is your team's color. so red blue
+  green yellow glow"; `arena::paint_anchors`, `colours.arena.anchor_*` in
+  `assets/ui.ron`; "Games", below): each team's pillar has a material of
+  its own in that colour, glows in it by night as above, and throws a
+  pale shade of it where all four threw the pale purple. Nothing in
+  `lamps` changed for it: a bulb glows in whatever colour its material
+  is, and `ANCHOR_COLOR` is only what a pillar's light is for the frame
+  or so before it is painted.
 - **The town's fountain has a material and a shader of its own**
   (`src/fountain.rs`, `src/fountain.wgsl`): see-through running water whose
   streaks the GPU moves by the frame's time. It is the one custom shader;
@@ -304,7 +313,11 @@ alone; the server is `cargo build -p roundtown_server`. Never `--workspace`,
 which would build the game with the server's half of replicon in it.
 
 Android needs the `release-android` profile, a manual strip step, and Gradle
-(`versionCode` in `mobile/android/app/build.gradle` is the build number: 24
+(`versionCode` in `mobile/android/app/build.gradle` is the build number: 25
+an hour later, the compass's arrow pointing out with its words clear of
+it, the anchors in their teams' colours, and the computer's players
+carrying up to five kinds of thing and sending Bridge Builders (protocol
+14 still; the server deployed with the bots); 24
 in the small hours of 2026-11-13, five buttons for things to use and
 several kinds held at once (protocol 14, the server deployed with it), and
 with it what two other sessions had in the tree: the computer's players'
@@ -606,6 +619,150 @@ was the town itself; everything below about the map, its islands, the
 void, the punch's knockback and its range held for the town then, and
 holds for the arena now.
 
+- **Later on 2026-11-13: the compass's arrow points out, the anchors are
+  their teams' colours, and the computer's players fill their buttons,
+  each as it is like** (Hajun, having played APK 24, in three messages:
+  "the player compass tracker, i think the arrow need to be flipped? the
+  arrow icon is pointing inward at the player rather than outward. fix and
+  push to git and build apk again"; "also now, there is 4 more item slot,
+  so the ai should be adjusted so it can buy up to 5 even. match it with
+  the personality so more diverse interaction"; and "also make the color
+  of your spawn anchor (right now its purple) but make it so the color is
+  your team's color. so red blue green yellow glow"). **The bots' part is
+  the server's online, deployed at 16:43 UTC on 2026-11-12** (01:43 on the
+  13th here; the binary before kept on the VM as
+  `roundtown-server.prev-2026-11-13b`; `PROTOCOL_VERSION` 14 still, what a
+  bot is ordered to do being the brain's own and nothing sent, so APK 24
+  plays on against it). The arrow, the anchors and the bots of a game
+  played offline are the app's: **APK 25**.
+  - **The compass's arrow was drawn upside down** (`hud::Picture::Compass`).
+    `compass::point` turns the picture from pointing up the screen to
+    pointing at whoever it tracks, and the picture had its tip at the
+    bottom: `hud::drawn` has y up, as every picture's comment says, and I
+    wrote its tip at y -0.92. So round you the arrow sat on the side its
+    target was on and pointed back at you. I had looked at it the day
+    before in a screenshot at full size and taken it for right; enlarged,
+    it plainly points in. **Look at a small thing enlarged.** It is drawn
+    tip up now (its card in the shop too), and a test keeps the tip at the
+    top (`the_compass_s_needle_points_up_its_picture`). **And its words
+    keep clear of it** (`compass::past`, `WORDS_GAP`): their middle was a
+    fixed 15.5 shares of the short side out, which up and down the screen
+    cleared the arrow and across it did not, a name and a distance being
+    eight times as long as they are tall ("Dori 76m" written over the
+    arrow, seen in the run that checked the flip); they begin one share
+    past the arrow's tip now, whichever way it points. Seen from four
+    places: up and to the left at "Ddol 179m" from home, left, right and
+    straight up from the middle of the map, each time pointing out at the
+    island whoever it named was on, in that team's colour.
+  - **Each team's anchor is its team's colour** (`arena::paint_anchors`,
+    `pale`; `colours.arena.anchor_red`, `anchor_blue`, `anchor_green` and
+    `anchor_yellow` in `assets/ui.ron`, `ArenaColours::anchor`): each
+    team's pillar wears a material of its own, the map's `spawn` material
+    in its team's colour (`#e0352b`, `#2f6fe8`, `#2fbf4a`, `#f2c21e`, more
+    solid than the names' `team_*`, which are tints for words), where all
+    four shared the one purple. By night each glows in its colour, `lamps`
+    glowing a bulb in whatever colour its material is (`ANCHOR_GLOW`, one
+    and a half times it), and lights its island in a pale shade of it:
+    three parts of white to two of the colour, its strongest channel 1
+    (`pale`; the purple's light, chosen by eye, was much what this makes
+    of purple). Painted once the map has been read and the pillars' lights
+    are there, and again as the file changes. The bar over an anchor is
+    as it was, green for yours and red for the rest. Seen from over each
+    island by day and by night: red at the bottom of the map, blue on its
+    left, green at its top, yellow on its right, and four tinted pools of
+    light.
+  - **What each bot carries** (`bots::Persona::carries`, `pockets`,
+    `loadout`, `KINDS`; `Bot::loadout`). A kind has its leaning to each of
+    the five things there are for a button, a fireball, a speed potion, an
+    invisibility potion, a healing potion and a Bridge Builder, and how
+    many kinds it carries at the least and the most: the daredevil, the
+    trickster, the mastermind and the tinkerer three to five; the troll,
+    the commander, the free spirit and the drifter two to four; the
+    captain and the enforcer two or three; the host, the watchman, the
+    defender and the lone wolf one to three; the dreamer and the sentinel
+    one or two. Each life it throws which, in what order it buys them (the
+    likeliest mostly first), and how many of each it keeps: three
+    fireballs for one that leans hard to them and two for one that leans
+    some, two healing potions for one that leans on those, one of anything
+    else. `shopping` gives each kind its turn among everything else it
+    buys (0.76 of its kind's leaning to its buttons for the first, 0.05
+    less for each after), a second or third of a kind well after the first
+    of the next, and a keeper with nobody to fetch it amethyst a healing
+    potion in place of what amethyst buys. One kind a life until then.
+  - **Each is used in its own time** (`Squad::intend`; `Bot::drinking`
+    knows which potion is at its mouth): a healing potion whenever it has
+    less than 55% of its health and nobody of another team is within 9 m,
+    or backing off with nobody within 6; an invisibility potion within
+    62 m of the middle of the island it raids; a speed potion setting out
+    on a raid or a hunt, for home from over 30 m off when someone is on
+    its island, or backing off with whoever is after it 8 to 22 m behind;
+    and its fireballs as before, one every 6 s at whoever is a throw away
+    with land under them.
+  - **A bot sends a Bridge Builder** (`Order::build`, `Sent`, `build_on`):
+    with one on a button and a bridge to lay, it walks to where the bridge
+    is to begin and sends the builder off from there, and the bridge goes
+    up straight, a plank or two ahead of where the builder would be, at
+    the pace anyone builds at, while the bot goes about something else: no
+    metres of its own, no plank in its arms. Nobody sees the builder, as
+    nobody sees a person's online: the bridge grows by itself. Whoever
+    runs the game takes the builder off its buttons (`Outfits::spend`;
+    `Squad::unsend` if it was not there after all); its owner dying, it
+    stops where it is. **And there are bridges worth one**
+    (`Squad::spare_span`), which a bot lays only by builder, never with
+    metres, and buys a builder for when it carries them and has the
+    amethyst: from the middle to **the other of the two smaller islands**
+    beside its own, for twice the sapphire; and, once the raids are on,
+    **a side door**, from a smaller island its team has reached straight
+    onto the island of the other team that island lies beside, about 75 m
+    of water, to come at them from where no bridge of theirs lands. A
+    kind that likes a raid opens the side door first, the rest the
+    sapphire; not beside a person. Without these no bot would ever have
+    bought one: its own bridges are built before the first amethyst
+    comes, a minute in. Every way a bot finds goes over a side door as
+    over any bridge, so a raid comes by whichever way is shorter.
+  - **Two faults found on the way.** A bot put the same potion to its
+    mouth twice: in the frame a drink was done, the potion was still on
+    its button as that frame saw its kit, and it began again, 1.6 s at
+    half its pace for nothing, since the bots first drank. And **a
+    person's bot teammate could be given the wrong bridge** since the
+    kinds came: `lay` asked for its bridge again as if it were the one of
+    two bots that goes out, so one whose kind opens to a smaller island
+    was sent to build that, with the metres it had bought for the middle,
+    and one whose kind opens late was given none for up to two minutes. It
+    lays the bridge its last thought settled on now (`Bot::planned`).
+  - **Whole games, again** (two hundred, as deployed): over at 13:03 on
+    average, none drawn; won by island 50, 53, 58 and 39; before 10:00
+    nine deaths by punches and five by falls a game; each kind's team
+    winning 20% to 31% of its games. The eight of a game together bought
+    16 fireballs and threw 14, drank 2.5 speed potions, 0.7 invisibility
+    potions and 16 healing potions of the 29 they bought, and sent two
+    Bridge Builders; the most kinds on one of them at once was two in 87
+    games, three in 88, four in 23 and five in 2: they can fill five, and
+    amethyst, one a minute from each pad at first, is what mostly keeps
+    them from it. `many` prints all of it (`Chronicle::carried`, `used`,
+    `fullest`).
+  - **Checked on 2026-11-13.** Unit-tested: the picture's tip, the words'
+    place, each anchor's colour and its light, what each kind carries,
+    what a bot buys of several kinds and when a builder, a builder's
+    bridge laid rung by rung across a gap while the bot stays ashore, the
+    potion drunk being the one the moment calls for, and, on Hajun's map
+    itself, the second island and the side door, which laid rung by rung
+    joins the two lands. Scripted in the desktop build, offline, by day
+    and by night (the throwaway `src/arena/scratch_run.rs` again,
+    removed): the arrow and the anchors, as above. On the VM, deployed
+    with nobody on it for twenty minutes (Hajun's own game had ended at
+    16:23), this PC's account was seated and played half a minute with
+    seven of the computer's, two of their bridges across with their bends
+    by then, the journal clean. APK 25 is built, its 77 asset files
+    checked byte for byte, its library the stripped one and its number
+    read back, and **not installed, no phone being attached** (APK 24 is
+    kept beside it as `donggeurami_town-release.prev-2026-11-13b.apk`).
+    **Not by hand, not on a phone, and no bot's builder or side door has
+    been seen on a screen**: those are the tests' alone.
+  - **What is mine**: the four colours and how pale their light is; every
+    number of what a kind carries and how many it keeps; when each potion
+    is drunk; that bots send builders at all, the two bridges worth one,
+    and who opens a side door first; and where the compass's words stand.
 - **Since 2026-11-13 there are five buttons for things to use, and you
   hold several kinds at once** (Hajun, with `new4morebuttonlayout.jpg`, a
   screenshot with four circles drawn on it: "i want to update the ui
@@ -664,7 +821,8 @@ holds for the arena now.
     `shared/src/bots.rs`: nothing on any button but what it fancies, and
     none of that left), so the games they were tuned by are the games
     they play: the session that made them ran the same sixty seeded
-    games before and after, number for number.
+    games before and after, number for number. (For an hour: later that
+    day each fills its buttons as it is like, up to all five, above.)
   - **What is mine**: that the dots never put away a button with
     something on it (it could not be used); which of the four fills
     first, the one beside the second button and then outward (53, 27, 80
@@ -802,7 +960,7 @@ holds for the arena now.
     it sets out on a raid or a hunt, an invisibility potion within 62 m of
     the middle of the island it raids, to walk onto it unseen, each with
     nobody of another team within 9 m. The
-    Bridge Builder is still not for bots.
+    Bridge Builder is still not for bots (it is since 2026-11-13, above).
   - **A knock carries a bot for a moment and no more** (`Body::step`,
     `Squad::act`, `Skill::reel`, `Skill::grip`). Until then a bot knocked
     was carried and nothing else until it had come to rest, which is what
@@ -902,7 +1060,10 @@ holds for the arena now.
     the map, points the way whoever of another team is nearest stands,
     with their name by it in their team's colour and how far off they are
     in whole metres. Yours alone, nothing of it sent. It points at nobody
-    unseen, dead, or a zombie. **Close by it gets out of the way**: the
+    unseen, dead, or a zombie. (In APK 24 the arrow pointed back at you,
+    its picture drawn upside down, and across the screen its words lay
+    over it: both put right the next day, above.) **Close by it gets out
+    of the way**: the
     words are put away with them nearer than 6 m, where their own name is
     on the screen (seen in a run: "Yeppi 2m" written across two names),
     and the arrow nearer than 3 m, where it would lie on them; each comes

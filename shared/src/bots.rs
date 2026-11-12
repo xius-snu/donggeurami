@@ -25,7 +25,8 @@
 use bevy::math::{Vec2, Vec3, Vec3Swizzles};
 
 use crate::bridge_wars::{
-    AIR_DRAG, BLIND_SIGHT, BOT_PUNCH_EVERY, BRIDGE_A_BUY, BUILDER_SPEED, DRINK_SECS, DRINK_SLOW, FAST, FIREBALL_RANGE,
+    AIR_DRAG, BLIND_SIGHT, BOT_PUNCH_EVERY, BRIDGE_A_BUY, BUILDER_METRES, BUILDER_SPEED, DRINK_SECS, DRINK_SLOW, FAST,
+    FIREBALL_RANGE,
     GROUND_DRAG, HUNT_RADIUS, KNOCK_BACK, KNOCK_UP, Mint, Outfits, REACH, RUN_SPEED, SPRINT_BONUS, price,
 };
 use crate::nav::{BODY, Nav, Region, Span};
@@ -473,9 +474,18 @@ pub struct Persona {
     /// its team's defences (better shields, the heal pool, traps), and
     /// its team's swords.
     pub spends: [f32; 6],
-    /// What it puts on its second button, as odds: a fireball, a speed
-    /// potion, an invisibility potion, a healing potion.
-    pub button: [f32; 4],
+    /// What it carries on its buttons for things to use (five of them
+    /// since 2026-11-13; Hajun: "there is 4 more item slot, so the ai
+    /// should be adjusted so it can buy up to 5 even. match it with the
+    /// personality so more diverse interaction"): its leaning to each
+    /// kind, as odds ([`KINDS`]: a fireball, a speed potion, an
+    /// invisibility potion, a healing potion and a Bridge Builder), and
+    /// how many kinds it carries, at the least and at the most. Which of
+    /// them, and in what order it buys them, is thrown by these each life
+    /// ([`Persona::loadout`]): the likeliest mostly first. (One kind a
+    /// life until then, there being one button.)
+    pub carries: [f32; 5],
+    pub pockets: [u8; 2],
     /// How readily it goes in, about 1 (how near it lets someone come
     /// before it goes for them, and how hurt it has to be to back off);
     /// how much it jumps about, from 0 to 1; and how widely it weaves as
@@ -503,10 +513,35 @@ pub struct Persona {
 }
 
 impl Persona {
-    /// What it puts on its second button this life, by its odds.
-    fn fancies(&self, dice: &mut Dice) -> Utility {
-        let kinds = [Utility::Fireball, Utility::Speed, Utility::Invisibility, Utility::Healing];
-        kinds[pick(dice, &self.button)]
+    /// What it means to carry this life, in the order it buys them, and
+    /// how many of each it keeps: as many kinds as its pockets have it,
+    /// each thrown by its leanings from the kinds not yet taken. Fireballs
+    /// by the handful for one that leans to them, two healing potions for
+    /// one that leans on those, and one of anything else.
+    fn loadout(&self, dice: &mut Dice) -> Vec<(Utility, u8)> {
+        let all = KINDS.len() as u8;
+        let least = self.pockets[0].clamp(1, all);
+        let most = self.pockets[1].clamp(least, all);
+        let many = (least + (dice.roll() * f32::from(most - least + 1)) as u8).min(most);
+        let whole = self.carries.iter().sum::<f32>().max(1e-3);
+        let mut odds = self.carries;
+        let mut carried = Vec::new();
+        for _ in 0..many {
+            if odds.iter().all(|odd| *odd <= 0.0) {
+                break;
+            }
+            let which = pick(dice, &odds);
+            let share = self.carries[which] / whole;
+            let count = match KINDS[which] {
+                Utility::Fireball if share >= 0.35 => 3,
+                Utility::Fireball if share >= 0.15 => 2,
+                Utility::Healing if share >= 0.45 => 2,
+                _ => 1,
+            };
+            carried.push((KINDS[which], count));
+            odds[which] = 0.0;
+        }
+        carried
     }
 
     /// How its team opens, by its odds, if it is the one that goes out.
@@ -520,6 +555,16 @@ impl Persona {
         }
     }
 }
+
+/// The kinds of thing there are to carry on a button, in the order a
+/// kind's leanings to them are written ([`Persona::carries`]).
+pub const KINDS: [Utility; 5] = [
+    Utility::Fireball,
+    Utility::Speed,
+    Utility::Invisibility,
+    Utility::Healing,
+    Utility::Builder,
+];
 
 /// Which of `odds` comes up: each as likely as it is big.
 fn pick(dice: &mut Dice, odds: &[f32]) -> usize {
@@ -544,7 +589,8 @@ pub const PERSONAS: [Persona; 16] = [
         opening: [0.8, 0.05, 0.15],
         middle_from: 0.0,
         spends: [1.3, 0.6, 1.6, 0.5, 0.5, 0.9],
-        button: [0.5, 0.35, 0.1, 0.05],
+        carries: [0.5, 0.35, 0.1, 0.05, 0.05],
+        pockets: [3, 5],
         bold: 1.4,
         bouncy: 0.8,
         weave: 1.3,
@@ -564,7 +610,8 @@ pub const PERSONAS: [Persona; 16] = [
         opening: [0.7, 0.1, 0.2],
         middle_from: 60.0,
         spends: [0.9, 0.6, 1.8, 0.5, 0.5, 0.6],
-        button: [0.15, 0.2, 0.6, 0.05],
+        carries: [0.15, 0.2, 0.6, 0.05, 0.1],
+        pockets: [2, 4],
         bold: 1.15,
         bouncy: 1.0,
         weave: 1.6,
@@ -583,7 +630,8 @@ pub const PERSONAS: [Persona; 16] = [
         opening: [0.75, 0.05, 0.2],
         middle_from: 0.0,
         spends: [1.5, 1.0, 0.8, 1.1, 0.8, 1.5],
-        button: [0.4, 0.4, 0.05, 0.15],
+        carries: [0.4, 0.4, 0.05, 0.15, 0.15],
+        pockets: [2, 4],
         bold: 1.25,
         bouncy: 0.4,
         weave: 0.8,
@@ -602,7 +650,8 @@ pub const PERSONAS: [Persona; 16] = [
         opening: [0.35, 0.4, 0.25],
         middle_from: 90.0,
         spends: [1.0, 0.7, 1.5, 0.9, 0.7, 0.8],
-        button: [0.45, 0.2, 0.3, 0.05],
+        carries: [0.45, 0.2, 0.3, 0.05, 0.3],
+        pockets: [3, 5],
         bold: 1.1,
         bouncy: 0.7,
         weave: 1.5,
@@ -622,7 +671,8 @@ pub const PERSONAS: [Persona; 16] = [
         opening: [0.7, 0.1, 0.2],
         middle_from: 60.0,
         spends: [1.1, 1.1, 0.8, 1.2, 1.3, 1.3],
-        button: [0.2, 0.3, 0.05, 0.45],
+        carries: [0.2, 0.3, 0.05, 0.45, 0.1],
+        pockets: [2, 3],
         bold: 1.05,
         bouncy: 0.45,
         weave: 0.9,
@@ -641,7 +691,8 @@ pub const PERSONAS: [Persona; 16] = [
         opening: [0.55, 0.25, 0.2],
         middle_from: 45.0,
         spends: [0.9, 0.7, 1.5, 0.7, 0.7, 0.7],
-        button: [0.2, 0.55, 0.2, 0.05],
+        carries: [0.2, 0.55, 0.2, 0.05, 0.1],
+        pockets: [2, 4],
         bold: 1.2,
         bouncy: 1.0,
         weave: 1.8,
@@ -660,7 +711,8 @@ pub const PERSONAS: [Persona; 16] = [
         opening: [0.8, 0.05, 0.15],
         middle_from: 0.0,
         spends: [1.3, 1.2, 0.7, 1.0, 1.0, 1.2],
-        button: [0.35, 0.25, 0.0, 0.4],
+        carries: [0.35, 0.25, 0.0, 0.4, 0.05],
+        pockets: [2, 3],
         bold: 1.2,
         bouncy: 0.3,
         weave: 0.6,
@@ -680,7 +732,8 @@ pub const PERSONAS: [Persona; 16] = [
         opening: [0.65, 0.15, 0.2],
         middle_from: 120.0,
         spends: [1.0, 1.3, 0.9, 1.1, 1.6, 1.0],
-        button: [0.1, 0.15, 0.05, 0.7],
+        carries: [0.1, 0.15, 0.05, 0.7, 0.1],
+        pockets: [1, 3],
         bold: 1.0,
         bouncy: 0.5,
         weave: 1.0,
@@ -699,7 +752,8 @@ pub const PERSONAS: [Persona; 16] = [
         opening: [0.35, 0.25, 0.4],
         middle_from: 150.0,
         spends: [1.4, 1.3, 0.7, 1.6, 1.0, 1.4],
-        button: [0.3, 0.3, 0.1, 0.3],
+        carries: [0.3, 0.3, 0.1, 0.3, 0.3],
+        pockets: [3, 5],
         bold: 1.0,
         bouncy: 0.25,
         weave: 0.6,
@@ -719,7 +773,8 @@ pub const PERSONAS: [Persona; 16] = [
         opening: [0.3, 0.3, 0.4],
         middle_from: 180.0,
         spends: [0.9, 0.9, 1.3, 1.7, 1.1, 0.9],
-        button: [0.4, 0.2, 0.25, 0.15],
+        carries: [0.4, 0.2, 0.25, 0.15, 0.45],
+        pockets: [3, 5],
         bold: 0.8,
         bouncy: 0.3,
         weave: 1.1,
@@ -738,7 +793,8 @@ pub const PERSONAS: [Persona; 16] = [
         opening: [0.4, 0.4, 0.2],
         middle_from: 240.0,
         spends: [0.9, 1.3, 0.9, 1.1, 1.6, 0.8],
-        button: [0.1, 0.1, 0.1, 0.7],
+        carries: [0.1, 0.1, 0.1, 0.7, 0.1],
+        pockets: [1, 3],
         bold: 0.8,
         bouncy: 0.2,
         weave: 0.8,
@@ -757,7 +813,8 @@ pub const PERSONAS: [Persona; 16] = [
         opening: [0.3, 0.45, 0.25],
         middle_from: 300.0,
         spends: [0.7, 1.2, 1.0, 1.2, 1.3, 0.6],
-        button: [0.05, 0.25, 0.3, 0.4],
+        carries: [0.05, 0.25, 0.3, 0.4, 0.1],
+        pockets: [1, 2],
         bold: 0.65,
         bouncy: 0.5,
         weave: 1.5,
@@ -776,7 +833,8 @@ pub const PERSONAS: [Persona; 16] = [
         opening: [0.8, 0.05, 0.15],
         middle_from: 0.0,
         spends: [1.2, 1.3, 0.7, 1.2, 1.2, 1.0],
-        button: [0.15, 0.1, 0.0, 0.75],
+        carries: [0.15, 0.1, 0.0, 0.75, 0.05],
+        pockets: [1, 2],
         bold: 0.95,
         bouncy: 0.15,
         weave: 0.5,
@@ -796,7 +854,8 @@ pub const PERSONAS: [Persona; 16] = [
         opening: [0.1, 0.8, 0.1],
         middle_from: 420.0,
         spends: [0.8, 1.5, 0.9, 1.5, 1.7, 0.6],
-        button: [0.05, 0.05, 0.0, 0.9],
+        carries: [0.05, 0.05, 0.0, 0.9, 0.3],
+        pockets: [1, 3],
         bold: 0.7,
         bouncy: 0.2,
         weave: 0.7,
@@ -816,7 +875,8 @@ pub const PERSONAS: [Persona; 16] = [
         opening: [0.6, 0.2, 0.2],
         middle_from: 60.0,
         spends: [1.5, 0.8, 1.0, 0.7, 0.6, 0.9],
-        button: [0.35, 0.35, 0.2, 0.1],
+        carries: [0.35, 0.35, 0.2, 0.1, 0.05],
+        pockets: [1, 3],
         bold: 1.15,
         bouncy: 0.5,
         weave: 1.0,
@@ -836,7 +896,8 @@ pub const PERSONAS: [Persona; 16] = [
         opening: [0.35, 0.45, 0.2],
         middle_from: 150.0,
         spends: [0.9, 1.0, 1.3, 0.9, 1.0, 0.7],
-        button: [0.1, 0.4, 0.3, 0.2],
+        carries: [0.1, 0.4, 0.3, 0.2, 0.1],
+        pockets: [2, 4],
         bold: 0.85,
         bouncy: 0.7,
         weave: 1.6,
@@ -919,6 +980,21 @@ struct Laying {
     next: usize,
 }
 
+/// A Bridge Builder a bot has sent off: the bridge it is laying, straight
+/// from the one land to the other, which of the bot's bridges that is,
+/// which rung comes next, and how far along it the builder has walked.
+/// Nobody sees the builder itself, as nobody sees anyone else's: its
+/// bridge goes up by itself, a plank or two ahead of where it would be.
+#[derive(Clone, Copy, PartialEq, Debug)]
+struct Sent {
+    span: Span,
+    from: Region,
+    to: Region,
+    chain: u16,
+    next: usize,
+    along: f32,
+}
+
 /// One of the computer's players.
 #[derive(Clone, Debug)]
 pub struct Bot {
@@ -944,8 +1020,8 @@ pub struct Bot {
     metres: f32,
     chains: u16,
     laying: Option<Laying>,
-    /// Until when it is drinking a potion.
-    drinking: Option<f32>,
+    /// Until when it is drinking a potion, and which.
+    drinking: Option<(f32, Utility)>,
     /// What its health was a frame ago, and when it last lost any.
     health_was: f32,
     hurt_at: f32,
@@ -970,10 +1046,16 @@ pub struct Bot {
     /// Who it is ([`Persona`]), and how it is itself ([`Temper`]).
     persona: &'static Persona,
     temper: Temper,
-    /// What it puts on its second button this life; and, on a raid,
-    /// whether it is there for the anchor.
-    fancy: Utility,
+    /// What it means to carry on its buttons this life, in the order it
+    /// buys them, and how many of each ([`Persona::loadout`]); and, on a
+    /// raid, whether it is there for the anchor.
+    loadout: Vec<(Utility, u8)>,
     for_anchor: bool,
+    /// The bridge its last thought settled on laying next, if any
+    /// ([`Squad::next_span`]); and a Bridge Builder it has sent off, and
+    /// how far that has got.
+    planned: Option<(Region, Region, Span)>,
+    sent: Option<Sent>,
     /// How it is fighting whoever it fights; and whom it has given up on
     /// for now, until when.
     duel: Option<Duel>,
@@ -1008,7 +1090,7 @@ impl Bot {
             shoves: persona.shoves,
             minds: persona.minds,
         };
-        let fancy = persona.fancies(dice);
+        let loadout = persona.loadout(dice);
         Self {
             body,
             seat,
@@ -1042,8 +1124,10 @@ impl Bot {
             throw_at: 0.0,
             persona,
             temper,
-            fancy,
+            loadout,
             for_anchor: false,
+            planned: None,
+            sent: None,
             duel: None,
             shun: None,
             reel: None,
@@ -1073,6 +1157,17 @@ impl Bot {
     }
 
     /// How it is fighting whoever it fights, if it is fighting.
+    /// What it means to carry on its buttons this life, in the order it
+    /// buys them, and how many of each.
+    pub fn loadout(&self) -> &[(Utility, u8)] {
+        &self.loadout
+    }
+
+    /// Whether a Bridge Builder it sent off is still laying its bridge.
+    pub fn building(&self) -> bool {
+        self.sent.is_some()
+    }
+
     pub fn stance(&self) -> Option<Stance> {
         self.duel.map(|duel| duel.stance)
     }
@@ -1138,6 +1233,9 @@ pub struct Order {
     pub throw: Option<f32>,
     /// This potion, off its button, is drunk.
     pub drink: Option<Utility>,
+    /// A Bridge Builder is sent off: one comes off its button. Its bridge
+    /// comes as `rungs`, a frame at a time, as one the bot walks does.
+    pub build: bool,
     /// Rungs it lays: which of its bridges, which rung, where, and heading
     /// how.
     pub rungs: Vec<(u16, u16, Vec2, f32)>,
@@ -1307,8 +1405,9 @@ impl Squad {
         bot.reel = None;
         bot.reel_until = f32::NEG_INFINITY;
         bot.face = None;
-        // Another life, and perhaps another thing for its second button.
-        bot.fancy = bot.persona.fancies(&mut self.dice);
+        // Another life, and perhaps other things for its buttons.
+        bot.loadout = bot.persona.loadout(&mut self.dice);
+        bot.planned = None;
         bot.goal = Goal::Idle;
         bot.goal_since = now;
         bot.path.clear();
@@ -1327,6 +1426,10 @@ impl Squad {
         };
         bot.metres = 0.0;
         bot.laying = None;
+        // A builder it had sent off goes with it, its bridge left as far
+        // as it got.
+        bot.sent = None;
+        bot.planned = None;
         bot.drinking = None;
         bot.foe = None;
         bot.duel = None;
@@ -1371,6 +1474,15 @@ impl Squad {
             bot.body.lift = (bot.body.lift * 0.5 + up).min(up.max(0.0));
             bot.reel = Some(reel);
             bot.grip = grip;
+        }
+    }
+
+    /// The Bridge Builder the bot in `seat` meant to send off
+    /// ([`Order::build`]) was not on its buttons after all, as whoever
+    /// runs the game found: no bridge is laid for it. Nothing is free.
+    pub fn unsend(&mut self, seat: usize) {
+        if let Some(bot) = self.bots.get_mut(seat).and_then(Option::as_mut) {
+            bot.sent = None;
         }
     }
 
@@ -1454,6 +1566,8 @@ impl Squad {
         if let Some(reel) = bot.reel.take() {
             bot.reel_until = view.elapsed + reel;
         }
+        // A builder it sent off lays on, wherever the bot itself is.
+        build_on(&mut bot, dt, &mut order);
         if view.elapsed >= bot.think_at {
             self.think(&mut bot, view);
         }
@@ -1543,9 +1657,31 @@ impl Squad {
         // The bridge it means to lay next, and the metres it is short of
         // for it.
         let span = self.next_span(bot, view, runner, with_person);
+        // With none it has to build, one worth a Bridge Builder, for one
+        // that carries them: bought for it when it has the amethyst, and
+        // laid by the builder alone. Not beside a person, whose base it
+        // keeps.
+        let holding = kit.held(Utility::Builder) > 0;
+        let carries_builders = bot.loadout.iter().any(|(kind, _)| *kind == Utility::Builder);
+        let spare = (span.is_none()
+            && runner
+            && !with_person
+            && bot.laying.is_none()
+            && bot.sent.is_none()
+            && (holding || carries_builders))
+            .then(|| self.spare_span(bot, view))
+            .flatten();
+        let span = span.or(spare.filter(|_| holding));
+        bot.planned = span;
+        // A Bridge Builder on one of its buttons lays a new one for it,
+        // straight, if it is no longer than a builder goes: no metres of
+        // its own.
+        let builder = bot.laying.is_none()
+            && holding
+            && span.is_some_and(|(_, _, span)| span.length() <= BUILDER_METRES - 2.0);
         // What is left of one it is part way along; the whole of a new
         // one, and a little over, for the bends it will have.
-        let short = span.map_or(0.0, |(_, _, span)| {
+        let short = span.filter(|_| !builder).map_or(0.0, |(_, _, span)| {
             let laid = bot.laying.map_or(0, |laying| laying.next.saturating_sub(1));
             let bends = if bot.laying.is_some() { 1.0 } else { MOST_BENT };
             let left = span.length() * bends * (1.0 - laid as f32 / span.planks() as f32);
@@ -1565,7 +1701,19 @@ impl Squad {
         // two buy as the one that keeps the base does.
         let building_later = self.plans[team].opening == Opening::Late && now < self.plans[team].bridge_from;
         let buys_as = if building_later { Role::Keeper } else { bot.role };
-        let list = shopping(bot.persona, bot.fancy, buys_as, alone, now, &purse, &kit, &upgrades, short);
+        let list = shopping(
+            bot.persona,
+            &bot.loadout,
+            buys_as,
+            alone,
+            now,
+            &purse,
+            &kit,
+            &upgrades,
+            short,
+            bot.laying.is_some(),
+            spare.is_some() && !holding,
+        );
         let payable = |ware: Ware| price(ware, &kit, &upgrades).is_some_and(|(item, cost)| purse[item.index()] >= cost);
         if let Some(&ware) = list.iter().find(|&&ware| payable(ware)) {
             let score = if on_home {
@@ -1789,17 +1937,71 @@ impl Squad {
                 .map(|other| (Region::Middle, Region::Team(other)));
             direct.or(middle).or(sapphire).or(stranger)?
         };
+        self.span_for(bot, view, wanted)
+    }
+
+    /// The bridge from the one land of `wanted` to the other, for `bot` to
+    /// lay: none if a teammate is laying it, or a Bridge Builder is, its
+    /// own or anyone's. Beside whatever was begun there and left; and not
+    /// on the very line between the two lands' middles, but a little to
+    /// one side of it or the other, by the bot and by the bridge.
+    fn span_for(&mut self, bot: &Bot, view: &View, wanted: (Region, Region)) -> Option<(Region, Region, Span)> {
+        let nav = view.nav;
         if self.claims.iter().any(|&(from, to, by)| (from, to) == wanted && by != bot.seat) {
             return None;
         }
-        // Beside whatever was begun there and left; and not on the very
-        // line between the two lands' middles, but a little to one side of
-        // it or the other, by the bot and by the bridge.
+        let being_built = |sent: Option<Sent>| sent.is_some_and(|sent| (sent.from, sent.to) == wanted);
+        if being_built(bot.sent) || self.bots.iter().flatten().any(|other| being_built(other.sent)) {
+            return None;
+        }
         let tried = self.begun.iter().find(|begun| (begun.0, begun.1) == wanted).map_or(0, |begun| begun.2);
         let off = ((bot.seat * 31 + usize::from(bot.chains) * 17 + self.salt * 7) % 13) as f32 / 6.0 - 1.0;
         let aside = [0.0, 2.9, -2.9][usize::from(tried) % 3] + off * 1.4;
         let span = nav.grid().span(wanted.0, wanted.1, aside).or_else(|| nav.grid().span(wanted.0, wanted.1, 0.0))?;
         Some((wanted.0, wanted.1, span))
+    }
+
+    /// A bridge worth a Bridge Builder, to a bot with none it has to
+    /// build ([`Squad::next_span`]): one its team could do without, and
+    /// which it lays only by sending a builder, never with metres of its
+    /// own. From the middle to the other of the two smaller islands
+    /// beside its own, for twice the sapphire; or, once the raids are on,
+    /// **a side door**: from a smaller island its team has reached
+    /// straight onto the island of the other team that island lies
+    /// beside, to come at them from where no bridge of theirs lands. One
+    /// that likes a raid goes for the side door first, and the rest for
+    /// the sapphire. No side door twice over the same water.
+    fn spare_span(&mut self, bot: &Bot, view: &View) -> Option<(Region, Region, Span)> {
+        let (nav, now) = (view.nav, view.elapsed);
+        let team = arena_team(bot.seat);
+        let home = Region::Team(team);
+        let own = beside(team);
+        let reached = |island: u8| nav.joined(home, Region::Sapphire(island));
+        let in_play = |other: u8| {
+            (0..ARENA_SEATS).any(|seat| arena_team(seat) == other && view.seats.get(seat).is_some_and(|seen| seen.in_play))
+        };
+        let second = nav
+            .joined(home, Region::Middle)
+            .then(|| own.into_iter().find(|&island| !reached(island)))
+            .flatten()
+            .map(|island| (Region::Middle, Region::Sapphire(island)));
+        let side_door = (now >= self.skill.raid_from)
+            .then(|| {
+                own.into_iter().filter(|&island| reached(island)).find_map(|island| {
+                    let from = Region::Sapphire(island);
+                    (0..ARENA_TEAMS as u8)
+                        .find(|&other| {
+                            other != team
+                                && in_play(other)
+                                && beside(other).contains(&island)
+                                && !self.begun.iter().any(|begun| (begun.0, begun.1) == (from, Region::Team(other)))
+                        })
+                        .map(|other| (from, Region::Team(other)))
+                })
+            })
+            .flatten();
+        let wanted = if bot.persona.raids > 0.0 { side_door.or(second) } else { second.or(side_door) }?;
+        self.span_for(bot, view, wanted).filter(|(_, _, span)| span.length() <= BUILDER_METRES - 2.0)
     }
 
     /// The fast layer: which way the bot walks this frame, in metres a
@@ -1872,11 +2074,12 @@ impl Squad {
         // A potion at its mouth: slowly, and nothing else, until it is
         // drunk.
         let mut pace = RUN_SPEED;
-        if let Some(until) = bot.drinking {
+        if let Some((until, potion)) = bot.drinking {
             if now >= until {
                 bot.drinking = None;
-                // The one it has: a bot keeps to one kind of thing a life.
-                order.drink = kit.potion();
+                // The one it put to its mouth, of however many kinds it
+                // carries.
+                order.drink = Some(potion);
             } else {
                 order.drinking = true;
                 pace *= DRINK_SLOW;
@@ -1887,14 +2090,16 @@ impl Squad {
         if kit.fast(now) {
             pace *= FAST;
         }
-        // A potion for the road, with nobody near enough to spill it: a
-        // speed potion as it sets out on a raid or a hunt, and an
-        // invisibility potion as it comes up to the island it is raiding,
-        // to walk onto it unseen.
-        if let Some(potion @ (Utility::Speed | Utility::Invisibility)) = kit.potion()
-            && bot.drinking.is_none()
-            && bot.body.free(nav)
-        {
+        // A potion, of whichever kinds it carries, each in its own time
+        // and with nobody near enough to spill it: an invisibility potion
+        // as it comes up to the island it is raiding, to walk onto it
+        // unseen; a speed potion as it sets out on a raid or a hunt, or
+        // for home from far off when someone is on its island; and a
+        // healing potion whenever it is hurt and has the room to drink it.
+        // Not in the frame one has just been drunk: it is on its button
+        // still, as this frame sees its kit, and for want of this a bot
+        // put the same potion to its mouth a second time, for nothing.
+        if bot.drinking.is_none() && order.drink.is_none() && bot.body.free(nav) {
             let nearest = view
                 .seats
                 .iter()
@@ -1902,15 +2107,24 @@ impl Squad {
                 .filter(|&(other, seen)| seen.alive && arena_team(other) != arena_team(seat))
                 .map(|(_, seen)| seen.at.xz().distance(here))
                 .fold(f32::INFINITY, f32::min);
-            let due = match (potion, bot.goal) {
-                (Utility::Speed, Goal::Raid(_) | Goal::Hunt) => !kit.fast(now),
-                (Utility::Invisibility, Goal::Raid(victim)) => {
-                    !kit.unseen(now) && here.distance(ARENA_ISLANDS[usize::from(victim) % ARENA_ISLANDS.len()]) < 62.0
+            let health = view.seats.get(seat).map_or(1.0, |me| me.health);
+            let speed = kit.held(Utility::Speed) > 0 && !kit.fast(now);
+            let unseen = kit.held(Utility::Invisibility) > 0 && !kit.unseen(now);
+            let potion = match bot.goal {
+                _ if health < 0.55 && kit.held(Utility::Healing) > 0 => Some(Utility::Healing),
+                Goal::Raid(victim)
+                    if unseen && here.distance(ARENA_ISLANDS[usize::from(victim) % ARENA_ISLANDS.len()]) < 62.0 =>
+                {
+                    Some(Utility::Invisibility)
                 }
-                _ => false,
+                Goal::Raid(_) | Goal::Hunt if speed => Some(Utility::Speed),
+                Goal::Defend if speed && here.distance(spots.heart) > 30.0 => Some(Utility::Speed),
+                _ => None,
             };
-            if due && nearest > 9.0 {
-                bot.drinking = Some(now + DRINK_SECS);
+            if let Some(potion) = potion
+                && nearest > 9.0
+            {
+                bot.drinking = Some((now + DRINK_SECS, potion));
             }
         }
 
@@ -2001,8 +2215,14 @@ impl Squad {
                     .filter(|&(other, seen)| seen.alive && arena_team(other) != arena_team(seat))
                     .map(|(_, seen)| seen.at.xz().distance(here))
                     .fold(f32::INFINITY, f32::min);
-                if kit.held(Utility::Healing) > 0 && bot.drinking.is_none() && nearest > 6.0 {
-                    bot.drinking = Some(now + DRINK_SECS);
+                if bot.drinking.is_none() && order.drink.is_none() && bot.body.free(nav) {
+                    if kit.held(Utility::Healing) > 0 && nearest > 6.0 {
+                        bot.drinking = Some((now + DRINK_SECS, Utility::Healing));
+                    } else if kit.held(Utility::Speed) > 0 && !kit.fast(now) && (8.0..22.0).contains(&nearest) {
+                        // Or a speed potion, to get away on, with whoever
+                        // is after it far enough off for it to be drunk.
+                        bot.drinking = Some((now + DRINK_SECS, Utility::Speed));
+                    }
                 }
                 if nav.connected(here, spots.pad) {
                     self.walk_to(bot, view, spots.pad, pace, 2.0)
@@ -2470,10 +2690,44 @@ impl Squad {
         let laying = match bot.laying {
             Some(laying) => laying,
             None => {
-                let Some((_, _, span)) = self.next_span(bot, view, true, false) else {
+                // The bridge its last thought settled on, if that is the
+                // one it is here to lay. (Until 2026-11-13 this asked for
+                // it again, as if for the one of two bots that goes out:
+                // a person's teammate whose kind opens to a smaller
+                // island, or late, was given that bridge, or none yet, in
+                // place of the one to the middle it had the metres for.)
+                let Some((_, _, span)) = bot.planned.filter(|planned| (planned.0, planned.1) == (from, to)) else {
                     bot.think_at = now;
                     return Vec2::ZERO;
                 };
+                // With a Bridge Builder on a button: to where the bridge
+                // is to begin, and the builder is sent off from there to
+                // lay it, straight, while the bot goes about something
+                // else.
+                if view.outfits.kit(bot.seat).held(Utility::Builder) > 0 && span.length() <= BUILDER_METRES - 2.0 {
+                    let near = nav.nearest_walkable(span.from).unwrap_or(span.from);
+                    if here.distance(near) > ARRIVED + 0.3 {
+                        return self.walk_to(bot, view, near, pace, 2.0);
+                    }
+                    order.build = true;
+                    bot.sent = Some(Sent {
+                        span,
+                        from,
+                        to,
+                        chain: bot.chains,
+                        next: 0,
+                        along: 0.0,
+                    });
+                    bot.chains += 1;
+                    match self.begun.iter_mut().find(|begun| (begun.0, begun.1) == (from, to)) {
+                        Some(begun) => begun.2 += 1,
+                        None => self.begun.push((from, to, 1)),
+                    }
+                    self.claims.retain(|claim| claim.2 != bot.seat);
+                    bot.planned = None;
+                    bot.think_at = now;
+                    return Vec2::ZERO;
+                }
                 let laying = Laying {
                     span: self.bends(span),
                     from,
@@ -2547,6 +2801,25 @@ impl Squad {
     }
 }
 
+/// Moves on the Bridge Builder `bot` has sent off, if any: along its
+/// bridge at the pace anyone builds at, each plank laid a rung or two
+/// ahead of it, to the far shore, where it is done.
+fn build_on(bot: &mut Bot, dt: f32, order: &mut Order) {
+    let Some(mut sent) = bot.sent else {
+        return;
+    };
+    let (planks, chord) = (sent.span.planks(), sent.span.chord());
+    let step = chord / planks as f32;
+    sent.along += BUILDER_SPEED * dt;
+    while sent.next <= planks && (sent.next as f32 - 1.0) * step < sent.along + LAID_AHEAD + step {
+        order
+            .rungs
+            .push((sent.chain, sent.next as u16, sent.span.rung(sent.next), sent.span.heading_at(sent.next)));
+        sent.next += 1;
+    }
+    bot.sent = (sent.next <= planks).then_some(sent);
+}
+
 /// Whether someone `at` is out on a bridge with nothing but the void
 /// under it: on a plank, and over no land.
 fn out_over_the_void(nav: &Nav, at: Vec2) -> bool {
@@ -2613,13 +2886,19 @@ fn beside(team: u8) -> [u8; 2] {
 /// something for the second button; a better shield), and its leaning to
 /// each kind of thing moves that up or down. So one puts a fireball
 /// before its sword, another its team's defences before its generator,
-/// and a third buys as they all did. What goes on its second button is
-/// what it fancies this life (`fancy`, [`Persona::button`]), one at a
-/// time.
+/// and a third buys as they all did. What goes on its buttons is what it
+/// means to carry this life (`loadout`, [`Persona::loadout`]): each kind
+/// in its turn, the first before the rest, as many of each as it keeps,
+/// and a second or a third of a kind only after the things it has none
+/// of. A bridge it is short of (`short`) is bought as metres, or, by one
+/// that carries Bridge Builders and has the amethyst, as a builder to lay
+/// it, unless it is part way along laying it itself (`laying`). And with
+/// a bridge worth a builder to be had (`spare`, [`Squad::spare_span`]),
+/// one that carries them buys one in its turn among the rest.
 #[allow(clippy::too_many_arguments)]
 fn shopping(
     persona: &Persona,
-    fancy: Utility,
+    loadout: &[(Utility, u8)],
     role: Role,
     alone: bool,
     elapsed: f32,
@@ -2627,12 +2906,25 @@ fn shopping(
     kit: &Kit,
     team: &Upgrades,
     short: f32,
+    laying: bool,
+    spare: bool,
 ) -> Vec<Ware> {
     let mut list = Vec::new();
     let has = |item: Item| purse[item.index()];
-    // The metres for its bridge before anything.
-    let buys = (short / BRIDGE_A_BUY).ceil() as usize;
-    list.extend(std::iter::repeat_n(Ware::Bridge, buys.min(4)));
+    // Its bridge before anything: a builder to lay it, or the metres.
+    let builder = Ware::Utility(Utility::Builder);
+    let builds = loadout.iter().any(|(kind, _)| *kind == Utility::Builder)
+        && has(Item::Amethyst) >= 1
+        && kit.held(Utility::Builder) == 0
+        && price(builder, kit, team).is_some();
+    if short > 0.0 {
+        if builds && !laying && short <= BUILDER_METRES - 2.0 {
+            list.push(builder);
+        } else {
+            let buys = (short / BRIDGE_A_BUY).ceil() as usize;
+            list.extend(std::iter::repeat_n(Ware::Bridge, buys.min(4)));
+        }
+    }
     let [sword, shield, button, generator, defences, swords] = persona.spends;
     let keeper = role == Role::Keeper && !alone;
     let mut wanted: Vec<(f32, Ware)> = Vec::new();
@@ -2669,28 +2961,41 @@ fn shopping(
     if kit.shield == 0 && (keeper || kit.sword > 0 || shield > 1.25) {
         wanted.push((0.8 * shield, Ware::Shield(1)));
     }
-    // Its second button: what it fancies, once it is armed, or at once if
-    // that is what it is like; a fireball late on and with silver to
-    // spare, unless it is one for fireballs. A keeper with nobody to
-    // fetch it amethyst makes do with a healing potion.
-    let fancy = match fancy {
-        Utility::Speed | Utility::Invisibility if keeper && has(Item::Amethyst) == 0 => Utility::Healing,
-        other => other,
-    };
+    // Its buttons: each kind it means to carry, in its turn, once it is
+    // armed, or at once if that is what it is like; a fireball late on and
+    // with silver to spare, unless it is one for fireballs. A keeper with
+    // nobody to fetch it amethyst makes do with a healing potion in place
+    // of what amethyst buys. As many of a kind as it keeps, the second and
+    // the third of one well after the first of the next.
     let keen = button > 1.2;
-    let ready = match fancy {
-        Utility::Fireball => (elapsed > 300.0 && kit.sword > 0 && kit.shield > 0) || (keen && elapsed > 45.0),
-        Utility::Healing => kit.sword > 0 || keen,
-        Utility::Speed | Utility::Invisibility => has(Item::Amethyst) > 0 || (keen && elapsed > 60.0),
-        Utility::Builder => false,
-    };
-    // One kind of thing a life, as when there was one button for them
-    // (five since 2026-11-13; mine, so that the games they were tuned by
-    // are the games they play): nothing on any button but what it fancies,
-    // and none of that left.
-    let bare = kit.slots.iter().flatten().all(|stack| stack.utility == fancy && stack.count == 0);
-    if ready && bare && price(Ware::Utility(fancy), kit, team).is_some() {
-        wanted.push((0.76 * button, Ware::Utility(fancy)));
+    let stuck = keeper && has(Item::Amethyst) == 0;
+    // A builder for a bridge its team could do without, in its turn.
+    if spare && builds && short == 0.0 {
+        wanted.push((0.74 * button, builder));
+    }
+    let mut kinds: Vec<Utility> = Vec::new();
+    for &(kind, keeps) in loadout {
+        let kind = match kind {
+            Utility::Speed | Utility::Invisibility | Utility::Builder if stuck => Utility::Healing,
+            other => other,
+        };
+        if kinds.contains(&kind) {
+            continue;
+        }
+        kinds.push(kind);
+        let ready = match kind {
+            Utility::Fireball => (elapsed > 300.0 && kit.sword > 0 && kit.shield > 0) || (keen && elapsed > 45.0),
+            Utility::Healing => kit.sword > 0 || keen,
+            Utility::Speed | Utility::Invisibility => has(Item::Amethyst) > 0 || (keen && elapsed > 60.0),
+            // Bought for a bridge it is short of, before anything.
+            Utility::Builder => false,
+        };
+        let held = kit.held(kind);
+        if ready && held < keeps && price(Ware::Utility(kind), kit, team).is_some() {
+            let turn = 0.76 - 0.05 * (kinds.len() - 1) as f32;
+            let again = if held > 0 { 0.6 } else { 1.0 };
+            wanted.push((turn * again * button, Ware::Utility(kind)));
+        }
     }
     if kit.sword >= 2 && kit.shield < 2 {
         wanted.push((0.72 * shield, Ware::Shield(2)));
@@ -2726,6 +3031,17 @@ mod tests {
     /// origin and `Middle` at (30, 0), with a straight bridge between
     /// them: for trying a fight at a bridge's end.
     fn bridged() -> Nav {
+        let (mut nav, span) = two_islands();
+        for index in 0..=span.planks() {
+            nav.hear(1, 0, index as u16, span.rung(index));
+        }
+        assert!(nav.joined(Region::Team(1), Region::Middle));
+        nav
+    }
+
+    /// The two islands of [`bridged`] with nothing between them yet, and
+    /// the straight bridge there would be.
+    fn two_islands() -> (Nav, Span) {
         let mut grid = Grid::blank(100, 40, Vec2::new(-10.0, -10.0));
         for row in 0..40 {
             for column in 0..100 {
@@ -2741,12 +3057,7 @@ mod tests {
         grid.place_land(Region::Team(1), Vec2::ZERO);
         grid.place_land(Region::Middle, Vec2::new(30.0, 0.0));
         let span = grid.span(Region::Team(1), Region::Middle, 0.0).expect("a span between them");
-        let mut nav = Nav::new(Arc::new(grid));
-        for index in 0..=span.planks() {
-            nav.hear(1, 0, index as u16, span.rung(index));
-        }
-        assert!(nav.joined(Region::Team(1), Region::Middle));
-        nav
+        (Nav::new(Arc::new(grid)), span)
     }
 
     /// What became of a bot sent over the bridge at someone standing on
@@ -3014,8 +3325,9 @@ mod tests {
     fn what_a_bot_buys_goes_by_what_it_holds_and_what_it_does_and_who_it_is() {
         let (kit, team) = (Kit::default(), Upgrades::default());
         let plain = plain();
+        let healing = [(Utility::Healing, 1)];
         let list = |role, elapsed, purse: &Purse, kit: &Kit, short| {
-            shopping(&plain, Utility::Healing, role, false, elapsed, purse, kit, &team, short)
+            shopping(&plain, &healing, role, false, elapsed, purse, kit, &team, short, false, false)
         };
         // Short of 44 m of bridge: two buys of it before anything.
         assert_eq!(&list(Role::Runner, 10.0, &[8, 0, 0, 0], &kit, 44.6)[..2], &[Ware::Bridge, Ware::Bridge]);
@@ -3034,25 +3346,27 @@ mod tests {
         // Who it is moves things up and down. The daredevil has its
         // fireball before its sword; the sentinel, by the book, its sword.
         let silver: Purse = [60, 0, 0, 0];
-        let daring = shopping(persona("ESTP"), Utility::Fireball, Role::Runner, false, 60.0, &silver, &kit, &team, 0.0);
+        let fireballs = [(Utility::Fireball, 3)];
+        let daring = shopping(persona("ESTP"), &fireballs, Role::Runner, false, 60.0, &silver, &kit, &team, 0.0, false, false);
         assert_eq!(daring[0], Ware::Utility(Utility::Fireball), "{daring:?}");
-        let steady = shopping(persona("ISTJ"), Utility::Fireball, Role::Runner, false, 60.0, &silver, &kit, &team, 0.0);
+        let steady = shopping(persona("ISTJ"), &fireballs, Role::Runner, false, 60.0, &silver, &kit, &team, 0.0, false, false);
         assert!(matches!(steady[0], Ware::Sword(1) | Ware::Shield(1)), "{steady:?}");
         assert!(!steady.contains(&Ware::Utility(Utility::Fireball)), "not before it is armed, and late: {steady:?}");
         // The defender spends its team's sapphire on defences, the
         // commander on swords.
         let sapphire: Purse = [0, 0, 9, 0];
-        let safe = shopping(persona("ISFJ"), Utility::Healing, Role::Keeper, false, 200.0, &sapphire, &armed, &team, 0.0);
+        let safe = shopping(persona("ISFJ"), &healing, Role::Keeper, false, 200.0, &sapphire, &armed, &team, 0.0, false, false);
         assert_eq!(&safe[..3], &[Ware::HealPool, Ware::BetterShields, Ware::Trap], "{safe:?}");
-        let bent_on = shopping(persona("ENTJ"), Utility::Healing, Role::Runner, false, 200.0, &sapphire, &armed, &team, 0.0);
+        let bent_on = shopping(persona("ENTJ"), &healing, Role::Runner, false, 200.0, &sapphire, &armed, &team, 0.0, false, false);
         assert_eq!(bent_on[0], Ware::StrongerSwords, "{bent_on:?}");
         // The troll has an invisibility potion as soon as it has the
         // amethyst for it, before the best of swords; a keeper who
         // fancies one, with nobody to fetch amethyst, a healing potion.
         let amethyst: Purse = [0, 0, 0, 4];
-        let sly = shopping(persona("ESFP"), Utility::Invisibility, Role::Runner, false, 200.0, &amethyst, &armed, &team, 0.0);
+        let unseen = [(Utility::Invisibility, 1)];
+        let sly = shopping(persona("ESFP"), &unseen, Role::Runner, false, 200.0, &amethyst, &armed, &team, 0.0, false, false);
         assert_eq!(sly[0], Ware::Utility(Utility::Invisibility), "{sly:?}");
-        let home = shopping(persona("ESFP"), Utility::Invisibility, Role::Keeper, false, 200.0, &[0, 9, 0, 0], &armed, &team, 0.0);
+        let home = shopping(persona("ESFP"), &unseen, Role::Keeper, false, 200.0, &[0, 9, 0, 0], &armed, &team, 0.0, false, false);
         assert!(home.contains(&Ware::Utility(Utility::Healing)) && !home.contains(&Ware::Utility(Utility::Invisibility)));
         // Sixteen of them, each by its own name, and none with odds of
         // nothing at all.
@@ -3061,7 +3375,9 @@ mod tests {
         names.dedup();
         assert_eq!(names.len(), 16);
         for persona in &PERSONAS {
-            assert!(persona.opening.iter().sum::<f32>() > 0.0 && persona.button.iter().sum::<f32>() > 0.0, "{}", persona.name);
+            assert!(persona.opening.iter().sum::<f32>() > 0.0 && persona.carries.iter().sum::<f32>() > 0.0, "{}", persona.name);
+            let [least, most] = persona.pockets;
+            assert!(1 <= least && least <= most && usize::from(most) <= KINDS.len(), "{}", persona.name);
             assert!(persona.fights.iter().all(|leaning| *leaning > 0.0), "{}", persona.name);
         }
     }
@@ -3082,5 +3398,366 @@ mod tests {
             assert_eq!(roll, b.roll());
         }
         assert_ne!(Dice::new(5).roll(), Dice::new(6).roll());
+    }
+
+    #[test]
+    fn what_each_carries_on_its_buttons_goes_by_who_it_is() {
+        let place = |kind: Utility| KINDS.iter().position(|other| *other == kind).expect("one of the five");
+        let mut dice = Dice::new(11);
+        let mut builders = std::collections::HashMap::new();
+        for persona in &PERSONAS {
+            let [least, most] = persona.pockets;
+            let (mut firsts, mut fullest) = ([0u32; 5], 0);
+            for _ in 0..600 {
+                let loadout = persona.loadout(&mut dice);
+                // As many kinds as its pockets have it, none of them
+                // twice, none it has no leaning to, some of each, and no
+                // more fireballs than a button holds.
+                assert!((usize::from(least)..=usize::from(most)).contains(&loadout.len()), "{}: {loadout:?}", persona.name);
+                for (turn, (kind, keeps)) in loadout.iter().enumerate() {
+                    assert!(loadout[..turn].iter().all(|(other, _)| other != kind), "{}: {loadout:?}", persona.name);
+                    assert!(persona.carries[place(*kind)] > 0.0, "{}: {loadout:?}", persona.name);
+                    assert!((1..=3).contains(keeps), "{}: {loadout:?}", persona.name);
+                    assert!(*keeps == 1 || matches!(kind, Utility::Fireball | Utility::Healing));
+                }
+                firsts[place(loadout[0].0)] += 1;
+                fullest = fullest.max(loadout.len());
+                *builders.entry(persona.name).or_insert(0u32) += u32::from(loadout.iter().any(|(kind, _)| *kind == Utility::Builder));
+            }
+            // What it leans to most is what it mostly buys first (or as
+            // good as, where it leans to two alike); and over enough
+            // lives it fills as many buttons as it has pockets.
+            let likeliest = (0..5).max_by(|a, b| persona.carries[*a].total_cmp(&persona.carries[*b])).unwrap();
+            let most_often = *firsts.iter().max().unwrap();
+            assert!(firsts[likeliest] as f32 >= 0.75 * most_often as f32, "{}: {firsts:?}", persona.name);
+            assert_eq!(fullest, usize::from(most), "{}", persona.name);
+        }
+        // Some fill all five buttons, and some keep to one or two.
+        assert!(PERSONAS.iter().any(|persona| persona.pockets[1] == 5));
+        assert!(PERSONAS.iter().any(|persona| persona.pockets[1] <= 2));
+        // The tinkerer has a Bridge Builder far oftener than the sentinel.
+        assert!(builders["INTP"] > 3 * builders["ISTJ"], "{builders:?}");
+        // The daredevil's fireballs come by the handful; the sentinel has
+        // one, when it has any.
+        let keeps = |name: &str, kind: Utility, seed: u64| {
+            let mut dice = Dice::new(seed);
+            (0..200).find_map(|_| persona(name).loadout(&mut dice).into_iter().find(|(carried, _)| *carried == kind)).map(|(_, keeps)| keeps)
+        };
+        assert_eq!(keeps("ESTP", Utility::Fireball, 3), Some(3));
+        assert_eq!(keeps("ISTJ", Utility::Fireball, 3), Some(1));
+        assert_eq!(keeps("ISFJ", Utility::Healing, 3), Some(2));
+        // The defender never goes unseen: it has no leaning to that.
+        assert_eq!(keeps("ISFJ", Utility::Invisibility, 3), None);
+    }
+
+    #[test]
+    fn a_bot_buys_each_kind_it_carries_in_its_turn_and_a_builder_for_its_bridge() {
+        let team = Upgrades::default();
+        let armed = Kit {
+            sword: 2,
+            shield: 2,
+            ..Kit::default()
+        };
+        let plain = plain();
+        let carried = [(Utility::Fireball, 2), (Utility::Healing, 1), (Utility::Speed, 1), (Utility::Builder, 1)];
+        let rich: Purse = [200, 20, 0, 5];
+        let buy = |kit: &Kit, purse: &Purse, short: f32, laying: bool| {
+            shopping(&plain, &carried, Role::Runner, false, 400.0, purse, kit, &team, short, laying, false)
+        };
+        let things = |list: &[Ware]| -> Vec<Utility> {
+            list.iter()
+                .filter_map(|ware| match ware {
+                    Ware::Utility(kind) => Some(*kind),
+                    _ => None,
+                })
+                .collect()
+        };
+        // Nothing on its buttons: each kind it carries, in its turn, and
+        // no builder with no bridge to lay.
+        assert_eq!(things(&buy(&armed, &rich, 0.0, false)), vec![Utility::Fireball, Utility::Healing, Utility::Speed]);
+        // With one fireball, the second comes after the first of the rest.
+        let one = armed.holding(Utility::Fireball, 1);
+        assert_eq!(things(&buy(&one, &rich, 0.0, false)), vec![Utility::Healing, Utility::Speed, Utility::Fireball]);
+        // As many of each as it keeps, and no more.
+        let full = armed.holding(Utility::Fireball, 2).holding(Utility::Healing, 1).holding(Utility::Speed, 1);
+        assert!(things(&buy(&full, &rich, 0.0, false)).is_empty());
+        // Short of a bridge: a builder to lay it, with the amethyst for
+        // one, in place of the metres; the metres without the amethyst,
+        // part way along laying it itself, or with a builder in hand
+        // that this bridge is not for.
+        let short = buy(&armed, &rich, 44.6, false);
+        assert_eq!(short[0], Ware::Utility(Utility::Builder), "{short:?}");
+        assert!(!short.contains(&Ware::Bridge), "{short:?}");
+        assert_eq!(&buy(&armed, &[200, 20, 0, 0], 44.6, false)[..2], &[Ware::Bridge, Ware::Bridge]);
+        assert_eq!(buy(&armed, &rich, 20.0, true)[0], Ware::Bridge);
+        assert_eq!(buy(&armed.holding(Utility::Builder, 1), &rich, 44.6, false)[0], Ware::Bridge);
+        // One that carries none buys the metres, whatever amethyst it has.
+        let none = shopping(&plain, &[(Utility::Healing, 1)], Role::Runner, false, 400.0, &rich, &armed, &team, 44.6, false, false);
+        assert_eq!(&none[..2], &[Ware::Bridge, Ware::Bridge]);
+        // A keeper with nobody to fetch it amethyst makes do with healing
+        // potions in place of what amethyst buys, once.
+        let home = shopping(&plain, &carried, Role::Keeper, false, 400.0, &[200, 20, 0, 0], &armed, &team, 0.0, false, false);
+        assert_eq!(things(&home), vec![Utility::Fireball, Utility::Healing]);
+        // With a bridge worth a builder to be had, one that carries them
+        // buys one in its turn among the rest; with one in hand, with no
+        // amethyst, or carrying none, it does not.
+        let spare = |kit: &Kit, purse: &Purse, carried: &[(Utility, u8)]| {
+            things(&shopping(&plain, carried, Role::Runner, false, 400.0, purse, kit, &team, 0.0, false, true))
+        };
+        assert_eq!(spare(&armed, &rich, &carried), vec![Utility::Fireball, Utility::Builder, Utility::Healing, Utility::Speed]);
+        assert!(!spare(&armed.holding(Utility::Builder, 1), &rich, &carried).contains(&Utility::Builder));
+        assert!(!spare(&armed, &[200, 20, 0, 0], &carried).contains(&Utility::Builder));
+        assert!(!spare(&armed, &rich, &[(Utility::Healing, 1)]).contains(&Utility::Builder));
+    }
+
+    #[test]
+    fn a_bot_with_a_builder_and_nothing_it_has_to_build_opens_a_way_its_team_could_do_without() {
+        // Hajun's map, with the island at the bottom joined to the middle
+        // and to the smaller island on its one side, as a team has them
+        // a minute or two in.
+        let mut nav = Nav::arena();
+        let (home, middle) = (Region::Team(0), Region::Middle);
+        let [first, other] = beside(0);
+        let mut chain = 0;
+        let mut lay = |nav: &mut Nav, from: Region, to: Region| {
+            let span = nav.grid().span(from, to, 0.0).expect("a span between them");
+            for index in 0..=span.planks() {
+                nav.hear(0, chain, index as u16, span.rung(index));
+            }
+            chain += 1;
+            assert!(nav.joined(from, to), "{from:?} to {to:?}");
+            span
+        };
+        lay(&mut nav, home, middle);
+        lay(&mut nav, middle, Region::Sapphire(first));
+        let outfits = {
+            let mut outfits = Outfits::default();
+            outfits.seat(ARENA_SEATS);
+            outfits
+        };
+        let mint = Mint::new(0.0, &mut || 0.5);
+        let purses = [[0u16; 4]; ARENA_SEATS];
+        let mut seen = vec![Seen::default(); ARENA_SEATS];
+        for (seat, one) in seen.iter_mut().enumerate() {
+            *one = Seen {
+                at: Vec3::new(ARENA_ISLANDS[seat % ARENA_TEAMS].x, 0.25, ARENA_ISLANDS[seat % ARENA_TEAMS].y),
+                alive: true,
+                in_play: true,
+                unseen: false,
+                person: false,
+                health: 1.0,
+            };
+        }
+        let spare = |nav: &Nav, name: &str, elapsed: f32| {
+            let mut squad = Squad::new(3, Skill::MODERATE);
+            squad.seat(4, Vec3::new(0.0, 0.25, 130.0), 0.0);
+            assert!(squad.cast(4, name));
+            let bot = squad.bot(4).expect("seated").clone();
+            let view = View {
+                elapsed,
+                nav,
+                seats: &seen,
+                purses: &purses,
+                outfits: &outfits,
+                mint: &mint,
+                anchors: [120.0; ARENA_TEAMS],
+            };
+            squad.spare_span(&bot, &view)
+        };
+        // Early on, whoever it is: the other of the two smaller islands
+        // beside its own, from the middle. No side door before the raids.
+        for name in ["ISFJ", "ESTP"] {
+            let (from, to, span) = spare(&nav, name, 100.0).expect("a bridge worth a builder");
+            assert_eq!((from, to), (middle, Region::Sapphire(other)), "{name}");
+            assert!(span.length() <= BUILDER_METRES - 2.0);
+        }
+        // Once the raids are on, one that likes a raid opens a side door:
+        // from the smaller island its team has reached onto the island of
+        // the other team that island lies beside. One that does not goes
+        // for the sapphire still.
+        let raids_on = Skill::MODERATE.raid_from + 10.0;
+        assert!(persona("ESTP").raids > 0.0 && persona("ISFJ").raids <= 0.0);
+        let (from, to, door) = spare(&nav, "ESTP", raids_on).expect("a side door");
+        let Region::Team(theirs) = to else {
+            panic!("not onto a team's island: {to:?}");
+        };
+        assert_eq!(from, Region::Sapphire(first));
+        assert!(theirs != 0 && beside(theirs).contains(&first));
+        assert!(door.length() <= BUILDER_METRES - 2.0, "{} m", door.length());
+        assert_eq!(spare(&nav, "ISFJ", raids_on).map(|(from, to, _)| (from, to)), Some((middle, Region::Sapphire(other))));
+        // A builder's bridge over that water is one a body walks: laid
+        // rung by rung it joins the two lands, though nothing else did.
+        let mut alone = Nav::arena();
+        for index in 0..=door.planks() {
+            alone.hear(4, 0, index as u16, door.rung(index));
+        }
+        assert!(alone.joined(from, to), "the side door does not land");
+        // With both smaller islands reached and no raids yet, there is
+        // nothing worth a builder.
+        lay(&mut nav, middle, Region::Sapphire(other));
+        assert!(spare(&nav, "ISFJ", 100.0).is_none());
+    }
+
+    /// One frame after another of the bot in `seat` alone in `nav`, with
+    /// its kit as `outfits` has it and its health `health`, until `secs`
+    /// are up or `done` says so: what it is ordered to do is done as a
+    /// game would do it (a builder off its buttons, its rungs onto the
+    /// map, a potion drunk), and each frame's order is shown to `each`.
+    #[allow(clippy::too_many_arguments)]
+    fn alone(
+        squad: &mut Squad,
+        nav: &mut Nav,
+        outfits: &mut Outfits,
+        seat: usize,
+        foe: Option<Vec3>,
+        mut health: f32,
+        from: f32,
+        secs: f32,
+        mut each: impl FnMut(f32, &Order, &Nav, &Bot) -> bool,
+    ) {
+        let mint = Mint::new(0.0, &mut || 0.5);
+        let purses = [[0u16; 4]; ARENA_SEATS];
+        let mut seen = vec![Seen::default(); ARENA_SEATS];
+        if let Some(at) = foe {
+            seen[0] = Seen {
+                at,
+                alive: true,
+                in_play: true,
+                unseen: false,
+                person: true,
+                health: 1.0,
+            };
+        }
+        let dt = 1.0 / 60.0;
+        let mut now = from;
+        while now < from + secs {
+            now += dt;
+            seen[seat] = Seen {
+                at: squad.bot(seat).expect("seated").body.at,
+                alive: true,
+                in_play: true,
+                unseen: false,
+                person: false,
+                health,
+            };
+            let order = {
+                let view = View {
+                    elapsed: now,
+                    nav,
+                    seats: &seen,
+                    purses: &purses,
+                    outfits,
+                    mint: &mint,
+                    anchors: [120.0; ARENA_TEAMS],
+                };
+                squad.step(seat, &view, dt)
+            };
+            if order.build && !outfits.spend(seat, Utility::Builder) {
+                squad.unsend(seat);
+            }
+            for &(chain, index, at, _) in &order.rungs {
+                nav.hear(seat as u8, chain, index, at);
+            }
+            if let Some(potion) = order.drink
+                && outfits.drink(seat, potion, now) == Some(Utility::Healing)
+            {
+                health = (health + crate::bridge_wars::HEALING).min(1.0);
+            }
+            if each(now, &order, nav, squad.bot(seat).expect("seated")) {
+                break;
+            }
+        }
+    }
+
+    #[test]
+    fn a_bridge_builder_sent_off_lays_its_bridge_while_the_bot_stays_ashore() {
+        let (mut nav, span) = two_islands();
+        let mut squad = Squad::new(5, Skill::MODERATE);
+        let seat = 5;
+        squad.seat(seat, Vec3::new(0.0, 0.25, 0.0), 0.0);
+        assert!(squad.cast(seat, "ISTJ"));
+        squad.set_plan(1, Plan::PLAIN);
+        let mut outfits = Outfits::default();
+        outfits.seat(ARENA_SEATS);
+        outfits.kits[seat] = Kit::default().holding(Utility::Builder, 1);
+        let (mut sent, mut joined, mut rungs, mut carried, mut furthest) = (None, None, Vec::new(), false, 0.0f32);
+        alone(&mut squad, &mut nav, &mut outfits, seat, None, 1.0, 1.0, 40.0, |now, order, nav, bot| {
+            if order.build {
+                sent = Some(now);
+            }
+            carried |= order.carrying;
+            rungs.extend(order.rungs.iter().map(|rung| (rung.1, rung.2)));
+            furthest = furthest.max(bot.body.at.x);
+            if sent.is_some() && nav.joined(Region::Team(1), Region::Middle) {
+                joined = Some(now);
+            }
+            joined.is_some()
+        });
+        let (sent, joined) = (sent.expect("it sent its builder off"), joined.expect("its bridge reached the far land"));
+        // Every rung of one straight bridge, in its order, from its own
+        // shore to the far one, a little to one side of the line between
+        // the two lands' middles or on it, as any bridge of a bot's is.
+        let (first, last) = (rungs[0].1, rungs[rungs.len() - 1].1);
+        let way = (last - first).normalize();
+        assert!(rungs.len() >= 10 && rungs.len() <= span.planks() + 3, "{} rungs", rungs.len());
+        for (index, (rung, at)) in rungs.iter().enumerate() {
+            assert_eq!(usize::from(*rung), index);
+            assert!(way.perp_dot(*at - first).abs() < 1e-3, "rung {index} is off the line");
+            assert!(index == 0 || at.distance(rungs[index - 1].1) <= crate::nav::PLANK_SPACING + 1e-3);
+        }
+        assert!(first.x < 6.0 && last.x > 24.0 && first.y.abs() < 5.0 && (first.y - last.y).abs() < 0.5, "{first} to {last}");
+        // The void between them at the pace anyone builds at, and no
+        // quicker: the bridge goes up a rung at a time.
+        let across = first.distance(last) / BUILDER_SPEED;
+        assert!(joined - sent < across + 1.0 && joined - sent > across * 0.5, "{} s for {} m", joined - sent, first.distance(last));
+        // And nothing of it the bot's own: no plank in its arms, no
+        // metres spent, the builder gone from its button, and its feet on
+        // its own island.
+        assert!(!carried);
+        let bot = squad.bot(seat).expect("seated");
+        assert_eq!(bot.metres(), 0.0);
+        assert!(!bot.building());
+        assert_eq!(outfits.kit(seat).held(Utility::Builder), 0);
+        assert!(furthest < 6.01, "it walked out to {furthest}");
+        // And it lays no second bridge beside the one being built: with
+        // the two joined there is none to lay.
+        assert!(nav.joined(Region::Team(1), Region::Middle));
+    }
+
+    #[test]
+    fn it_drinks_the_potion_the_moment_calls_for_of_those_it_carries() {
+        // Late in a game, when everyone hunts everyone, with someone to
+        // go for on the far land, and a speed potion, a healing potion
+        // and an invisibility potion on its buttons.
+        let drunk = |health: f32| {
+            let mut nav = bridged();
+            let mut squad = Squad::new(9, Skill::MODERATE);
+            let seat = 5;
+            squad.seat(seat, Vec3::new(0.0, 0.25, 0.0), 0.0);
+            assert!(squad.cast(seat, "ISTJ"));
+            let mut outfits = Outfits::default();
+            outfits.seat(ARENA_SEATS);
+            outfits.kits[seat] = Kit::default()
+                .holding(Utility::Invisibility, 1)
+                .holding(Utility::Speed, 1)
+                .holding(Utility::Healing, 1);
+            let mut drinks = Vec::new();
+            let foe = Some(Vec3::new(32.0, 0.25, 0.0));
+            let from = Skill::MODERATE.hunt_from + 5.0;
+            alone(&mut squad, &mut nav, &mut outfits, seat, foe, health, from, 4.5, |_, order, _, _| {
+                drinks.extend(order.drink);
+                false
+            });
+            (drinks, outfits.kit(seat))
+        };
+        // Whole: the speed potion for the chase, and nothing else. An
+        // invisibility potion is for walking onto an island it raids.
+        let (drinks, kit) = drunk(1.0);
+        assert_eq!(drinks, vec![Utility::Speed]);
+        assert_eq!((kit.held(Utility::Healing), kit.held(Utility::Invisibility)), (1, 1));
+        // Hurt: the healing potion first, and then the speed potion.
+        let (drinks, kit) = drunk(0.45);
+        assert_eq!(drinks, vec![Utility::Healing, Utility::Speed]);
+        assert_eq!(kit.held(Utility::Invisibility), 1);
     }
 }

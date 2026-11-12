@@ -1053,6 +1053,16 @@ impl Game {
                 heading,
             }));
         }
+        // A Bridge Builder sent off: one comes off its buttons, as off a
+        // person's who sends one (`Use::Builder`), and its bridge comes
+        // as rungs in the frames after, as a person's does.
+        if order.build {
+            if self.outfits.spend(seat, Utility::Builder) {
+                debug!("Bridge Wars game {}: seat {seat} (bot) sent a Bridge Builder", self.id);
+            } else {
+                self.squad.unsend(seat);
+            }
+        }
         if let Some(heading) = order.throw {
             self.throw(seat, self.at[seat], heading);
         }
@@ -2674,6 +2684,14 @@ mod tests {
         who: [&'static str; ARENA_SEATS],
         openings: [char; ARENA_TEAMS],
         deaths: [u32; ARENA_SEATS],
+        /// How many of each kind of thing for a button they came by, all
+        /// of them together, and how many they used (`bots::KINDS`: a
+        /// fireball, a speed potion, an invisibility potion, a healing
+        /// potion, a Bridge Builder); and the most kinds any one of them
+        /// had on its buttons at once.
+        carried: [u32; 5],
+        used: [u32; 5],
+        fullest: usize,
     }
 
     impl Default for Chronicle {
@@ -2695,6 +2713,9 @@ mod tests {
                 who: ["-"; ARENA_SEATS],
                 openings: ['M'; ARENA_TEAMS],
                 deaths: [0; ARENA_SEATS],
+                carried: [0; 5],
+                used: [0; 5],
+                fullest: 0,
             }
         }
     }
@@ -2718,6 +2739,7 @@ mod tests {
         let dt = 1.0 / 30.0;
         let mut alive = [true; ARENA_SEATS];
         let mut idle = [0.0f32; ARENA_SEATS];
+        let mut held = [[0u8; 5]; ARENA_SEATS];
         while game.playing() {
             game.step(dt);
             game.events.clear();
@@ -2746,6 +2768,19 @@ mod tests {
             }
             for seat in 0..ARENA_SEATS {
                 let standing = game.alive(seat);
+                // What it has on its buttons: more of a kind is bought,
+                // and less of one, while it stands, is used.
+                let kit = game.outfits.kit(seat);
+                for (kind, utility) in roundtown_net::bots::KINDS.into_iter().enumerate() {
+                    let (now_held, was) = (kit.held(utility), held[seat][kind]);
+                    if now_held > was {
+                        told.carried[kind] += u32::from(now_held - was);
+                    } else if now_held < was && standing && alive[seat] {
+                        told.used[kind] += u32::from(was - now_held);
+                    }
+                    held[seat][kind] = now_held;
+                }
+                told.fullest = told.fullest.max(kit.slots.iter().flatten().filter(|stack| stack.count > 0).count());
                 if alive[seat] && !standing {
                     told.deaths[seat] += 1;
                     let fallen = game.at[seat].y < -5.0;
@@ -2933,6 +2968,22 @@ mod tests {
         for (which, (teams, won)) in ["to the middle", "to a smaller island", "later"].into_iter().zip(opened) {
             println!("opened {which}: {teams} teams, won {:.0}%", 100.0 * won as f32 / teams.max(1) as f32);
         }
+        // What they had on their buttons, all eight together, a game.
+        let each = |pick: &dyn Fn(&Chronicle) -> [u32; 5]| {
+            let mut sum = [0.0f32; 5];
+            for game in &games {
+                for (kind, count) in pick(game).into_iter().enumerate() {
+                    sum[kind] += count as f32 / games.len() as f32;
+                }
+            }
+            sum.map(|mean| format!("{mean:.1}")).join(", ")
+        };
+        println!("a game, of fireballs, speed, invisibility and healing potions and Bridge Builders: bought {}; used {}", each(&|game| game.carried), each(&|game| game.used));
+        let mut fullest = [0u32; 6];
+        for game in &games {
+            fullest[game.fullest.min(5)] += 1;
+        }
+        println!("the most kinds on one of them at once, by how many games (none to five): {fullest:?}");
     }
 
     /// A game with people in `people` seats who do nothing but stand where

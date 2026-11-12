@@ -181,6 +181,15 @@
             // another's.
             anchor_mine: "#4fd46acc",
             anchor_enemy: "#e0402fcc",
+            // The respawn anchors themselves, each its team's colour: red
+            // for the island at the bottom of the map, blue for the one on
+            // its left, green for the one at its top and yellow for the
+            // one on its right. Each glows in it by night, and lights its
+            // island in a pale shade of it.
+            anchor_red: "#e0352b",
+            anchor_blue: "#2f6fe8",
+            anchor_green: "#2fbf4a",
+            anchor_yellow: "#f2c21e",
             // The planks of the bridges built as you walk: their tops and
             // their sides.
             plank: "#b98a52",

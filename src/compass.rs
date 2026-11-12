@@ -31,11 +31,16 @@ use crate::{Dead, Player, Team, ThirdPersonCamera, WalkCycle};
 /// Sizes, as shares of the short side of the screen: how big the arrow
 /// is, how far out from you its middle is (about two metres of the map,
 /// under the game's camera: clear of your body and of the punch's range
-/// drawn in front of you), how far out the words' middle is, and how big
-/// they are, the names over heads' size.
+/// drawn in front of you), how far past the arrow's tip the words begin,
+/// and how big they are, the names over heads' size. The words are put
+/// past the arrow by however much of them lies that way ([`past`]): for
+/// their first day their middle was a fixed 15.5 out, which up and down
+/// the screen cleared the arrow and across it did not, the words being
+/// much longer than they are tall ("Dori 76m" written over the arrow,
+/// seen in a scripted run).
 const ARROW: f32 = 4.2;
 const ARROW_OUT: f32 = 10.0;
-const WORDS_OUT: f32 = 15.5;
+const WORDS_GAP: f32 = 1.0;
 const WORDS: f32 = 2.6;
 /// How high over your feet the point is that the arrow is drawn round, in
 /// metres: about your middle.
@@ -146,6 +151,15 @@ pub(crate) fn metres(away: f32) -> String {
     format!("{}m", away.round().max(0.0) as u32)
 }
 
+/// How far from the middle of a box of `size` its edge is, going `way`
+/// from it, as the words' box lies along the arrow's way: half its width
+/// across the screen, half its height up and down it, and between the
+/// two at a slant. What keeps the words clear of the arrow whichever way
+/// it points.
+fn past(way: Vec2, size: Vec2) -> f32 {
+    0.5 * (way.x.abs() * size.x + way.y.abs() * size.y)
+}
+
 /// Whether what is shown only of someone `from` metres off or further is
 /// shown of someone `away`: from there while it is `shown`, and from
 /// [`SLACK`] further once it is not.
@@ -241,7 +255,7 @@ fn point(
         }
     }
     let words_size = words_node.size() * words_node.inverse_scale_factor();
-    let words_middle = from + way * WORDS_OUT * vmin;
+    let words_middle = from + way * ((ARROW_OUT + ARROW * 0.5 + WORDS_GAP) * vmin + past(way, words_size));
     words_at.set_if_neq(UiTransform {
         translation: Val2::px(words_middle.x - words_size.x * 0.5, words_middle.y - words_size.y * 0.5),
         scale: Vec2::ONE,
@@ -293,5 +307,22 @@ mod tests {
         // The words go before the arrow does, and the arrow goes before it
         // would lie on a body beside you.
         const { assert!(WORDS_FROM > ARROW_FROM + SLACK && ARROW_FROM > 2.0) };
+    }
+
+    #[test]
+    fn the_words_are_clear_of_the_arrow_whichever_way_it_points() {
+        // Words eight times as long as they are tall, as a name and a
+        // distance are: their near edge is the gap past the arrow's tip
+        // across the screen and up and down it alike, where a fixed
+        // distance out had them over the arrow across it.
+        let size = Vec2::new(160.0, 20.0);
+        assert_eq!(past(Vec2::X, size), 80.0);
+        assert_eq!(past(Vec2::NEG_X, size), 80.0);
+        assert_eq!(past(Vec2::Y, size), 10.0);
+        assert_eq!(past(Vec2::NEG_Y, size), 10.0);
+        let slant = Vec2::new(1.0, -1.0).normalize();
+        assert!(past(slant, size) > 10.0 && past(slant, size) < 80.0);
+        // And nothing of nothing: the frame before they are laid out.
+        assert_eq!(past(Vec2::X, Vec2::ZERO), 0.0);
     }
 }

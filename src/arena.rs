@@ -783,7 +783,7 @@ pub(crate) fn plugin(app: &mut App) {
                     .before(crate::follow_camera),
                 (show_death, show_panel, place_tags, place_anchor_bars, float_numbers, write_over_generators)
                     .after(crate::follow_camera),
-                (paint_zombies, fade_alerts, lose_on_death, trap_alerts),
+                (paint_zombies, paint_anchors, fade_alerts, lose_on_death, trap_alerts),
             ),
         );
 }
@@ -2182,6 +2182,97 @@ fn paint_zombies(
     }
 }
 
+/// Each team's respawn anchor in its team's colour (since 2026-11-13;
+/// Hajun: "make the color of your spawn anchor (right now its purple) but
+/// make it so the color is your team's color. so red blue green yellow
+/// glow"): every pillar of a team's anchor wears a material of its team's
+/// own, the map's `spawn` material in the file's `colours.arena.anchor_*`,
+/// in place of the one purple all four shared. By night it glows in that
+/// colour, `lamps` glowing a bulb in whatever colour its material is, and
+/// the light it throws is a pale shade of it ([`pale`]), where all four
+/// threw the one pale purple. Painted once the map has been read, and
+/// again as the file changes.
+#[allow(clippy::too_many_arguments)]
+fn paint_anchors(
+    anchors: Option<Res<Anchors>>,
+    changed: Res<UiChanged>,
+    worn: Query<&MeshMaterial3d<StandardMaterial>>,
+    children: Query<&Children>,
+    mut lights: Query<&mut PointLight>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut paints: Local<[Option<Handle<StandardMaterial>>; ARENA_TEAMS]>,
+    mut painted: Local<bool>,
+    mut commands: Commands,
+) {
+    let Some(anchors) = anchors else {
+        return;
+    };
+    // As the map is read; until every pillar's light has been found, which
+    // is there a moment after the pillar; and as the file changes.
+    let again = changed.is_changed() && !changed.is_added();
+    if *painted && !anchors.is_added() && !again {
+        return;
+    }
+    let colours = ui().colours.arena;
+    let mut lit = true;
+    for team in 0..ARENA_TEAMS {
+        let colour = colours.anchor(team);
+        let Some(&first) = anchors.pillars[team].first() else {
+            continue;
+        };
+        // Its team's own material: the map's, in its colour.
+        let paint = match &paints[team] {
+            Some(paint) => paint.clone(),
+            None => {
+                let Ok(was) = worn.get(first) else {
+                    lit = false;
+                    continue;
+                };
+                let mut look = materials.get(&was.0).cloned().unwrap_or_default();
+                look.base_color = colour;
+                let paint = materials.add(look);
+                paints[team] = Some(paint.clone());
+                paint
+            }
+        };
+        if materials.get(&paint).is_some_and(|look| look.base_color != colour)
+            && let Some(mut look) = materials.get_mut(&paint)
+        {
+            look.base_color = colour;
+        }
+        let light = pale(colour);
+        for &pillar in &anchors.pillars[team] {
+            if worn.get(pillar).is_ok_and(|was| was.0 != paint) {
+                commands.entity(pillar).insert(MeshMaterial3d(paint.clone()));
+            }
+            // The light inside it (`lamps`), in a pale shade of its colour.
+            let mut found = false;
+            for part in children.get(pillar).into_iter().flatten() {
+                if let Ok(mut lamp) = lights.get_mut(*part) {
+                    found = true;
+                    if lamp.color != light {
+                        lamp.color = light;
+                    }
+                }
+            }
+            lit &= found;
+        }
+    }
+    *painted = lit;
+}
+
+/// The colour of the light an anchor of `colour` throws: a pale shade of
+/// it, three parts of white to two of the colour, as bright as a light is
+/// (its strongest channel 1), pale enough that the island under it keeps
+/// its own colours. The purple every anchor was until 2026-11-13 threw
+/// (0.78, 0.62, 1.0), chosen by eye; this makes (0.89, 0.68, 1.0) of it.
+fn pale(colour: Color) -> Color {
+    let own = colour.to_linear();
+    let mixed = [own.red, own.green, own.blue].map(|channel| 0.6 + 0.4 * channel);
+    let most = mixed.into_iter().fold(0.0f32, f32::max).max(1e-3);
+    Color::linear_rgb(mixed[0] / most, mixed[1] / most, mixed[2] / most)
+}
+
 /// Says how the game went across the screen as it ends: for you, over who
 /// won, or that the time ran out.
 fn announce_result(commands: &mut Commands, my_team: u8, winner: Option<u8>) {
@@ -2609,6 +2700,16 @@ fn drive_bots(
                         d: bridge::heading_of(heading),
                     },
                 );
+            }
+            // A Bridge Builder sent off: one comes off its buttons, and
+            // its bridge comes as rungs in the frames after. Nobody sees
+            // the builder, as nobody sees anyone else's online.
+            if order.build {
+                if game.outfits.spend(seat, Utility::Builder) {
+                    debug!("seat {seat} sent a Bridge Builder");
+                } else {
+                    squad.unsend(seat);
+                }
             }
             if let Some(heading) = order.throw
                 && game.outfits.spend(seat, Utility::Fireball)
@@ -4134,6 +4235,35 @@ mod tests {
         assert!(!anchor_warned(true, 96.0, 96.0, f32::INFINITY));
         assert!(!anchor_warned(true, 96.0, 120.0, f32::INFINITY));
         assert!(!anchor_warned(false, 120.0, 108.0, f32::INFINITY));
+    }
+
+    #[test]
+    fn each_team_s_anchor_is_its_own_colour_and_lights_its_island_in_a_pale_shade_of_it() {
+        let colours = ui().colours.arena;
+        let [red, blue, green, yellow] = [0, 1, 2, 3].map(|team| colours.anchor(team).to_linear());
+        // Red, blue, green and yellow, each plainly its own.
+        assert!(red.red > 3.0 * red.green && red.red > 3.0 * red.blue, "{red:?}");
+        assert!(blue.blue > 2.0 * blue.red && blue.blue > 2.0 * blue.green, "{blue:?}");
+        assert!(green.green > 3.0 * green.red && green.green > 3.0 * green.blue, "{green:?}");
+        assert!(yellow.red > 5.0 * yellow.blue && yellow.green > 5.0 * yellow.blue && yellow.red >= yellow.green, "{yellow:?}");
+        for team in 0..ARENA_TEAMS {
+            let own = colours.anchor(team).to_linear();
+            let light = pale(colours.anchor(team)).to_linear();
+            let (own, light) = ([own.red, own.green, own.blue], [light.red, light.green, light.blue]);
+            // As bright as a light is, pale enough to leave the island
+            // its own colours, and of the anchor's colour: what is
+            // strongest in the one is strongest in the other.
+            let most = light.into_iter().fold(0.0f32, f32::max);
+            let least = light.into_iter().fold(1.0f32, f32::min);
+            assert!((most - 1.0).abs() < 1e-4 && least >= 0.55, "team {team}: {light:?}");
+            for (a, b) in [(0, 1), (1, 2), (0, 2)] {
+                assert_eq!(own[a] > own[b], light[a] > light[b], "team {team}: {own:?} lit as {light:?}");
+            }
+        }
+        // The purple they all were threw a light chosen by eye, (0.78,
+        // 0.62, 1.0): this makes much the same of it.
+        let was = pale(Color::linear_rgb(0.544, 0.066, 0.8)).to_linear();
+        assert!((was.red - 0.78).abs() < 0.12 && (was.green - 0.62).abs() < 0.08 && (was.blue - 1.0).abs() < 1e-4, "{was:?}");
     }
 
     #[test]

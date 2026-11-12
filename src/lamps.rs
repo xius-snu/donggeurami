@@ -33,6 +33,15 @@
 //! light, and how, is [`SOURCES`], by material. A broken anchor's pillar
 //! is hidden (`arena::break_anchors`), and its light goes out with it, as
 //! any lamp's does that is not drawn.
+//!
+//! **Since 2026-11-13 each anchor is its team's colour, not purple**
+//! (Hajun: "make it so the color is your team's color. so red blue green
+//! yellow glow"): `arena::paint_anchors` gives each team's pillar a
+//! material of its own in that colour, and its light a pale shade of it.
+//! Nothing here changed for it: a bulb glows in whatever colour its
+//! material is ([`glow`]), each material looked at once, and the light is
+//! this module's, recoloured there. [`ANCHOR_COLOR`] is what a pillar's
+//! light is until it has been painted, a frame or so.
 
 use bevy::gltf::GltfMaterialName;
 use bevy::mesh::VertexAttributeValues;

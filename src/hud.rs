@@ -1812,11 +1812,17 @@ impl Picture {
                 (lens.abs() - 0.07).min(pupil).min(stroke)
             }),
             // An arrowhead pointing up, notched at its tail: the compass's
-            // needle, on its card and round you in the game (`compass`).
+            // needle, on its card and round you in the game (`compass`,
+            // which turns it from pointing up the screen to pointing at
+            // whoever it tracks). Its tip is at the top, y being up here:
+            // for its first day (2026-11-12, APK 24) it was drawn with its
+            // tip at the bottom, and round you it pointed back at you from
+            // the side whoever it tracked was on (Hajun: "the arrow icon is
+            // pointing inward at the player rather than outward").
             Picture::Compass => drawn(|at| {
                 polygon_distance(
                     at,
-                    &[Vec2::new(0.0, -0.92), Vec2::new(0.62, 0.8), Vec2::new(0.0, 0.42), Vec2::new(-0.62, 0.8)],
+                    &[Vec2::new(0.0, 0.92), Vec2::new(-0.62, -0.8), Vec2::new(0.0, -0.42), Vec2::new(0.62, -0.8)],
                 ) - 0.03
             }),
         }
@@ -2187,6 +2193,25 @@ mod tests {
         for image in [&sword, &bag, &dots, &plank] {
             assert!(image.data.as_ref().unwrap().chunks(4).all(|pixel| pixel[..3] == [255, 255, 255]));
         }
+    }
+
+    #[test]
+    fn the_compass_s_needle_points_up_its_picture() {
+        // `compass::point` turns the picture from pointing up the screen
+        // to pointing at whoever it tracks, so up is where its tip has to
+        // be: solid down its middle from near the top, nothing either side
+        // of the tip, wide at its tail, and the notch cut out of the tail's
+        // middle. Drawn the other way up it pointed back at you.
+        let needle = Picture::Compass.image();
+        for y in [0.8, 0.4, 0.0, -0.3] {
+            assert_eq!(alpha_at(&needle, 0.0, y), 255, "its middle at {y}");
+        }
+        assert_eq!(alpha_at(&needle, 0.3, 0.8), 0);
+        assert_eq!(alpha_at(&needle, -0.3, 0.8), 0);
+        assert_eq!(alpha_at(&needle, 0.52, -0.7), 255);
+        assert_eq!(alpha_at(&needle, -0.52, -0.7), 255);
+        assert_eq!(alpha_at(&needle, 0.0, -0.65), 0);
+        assert_eq!(alpha_at(&needle, 0.0, -0.97), 0);
     }
 
     #[test]

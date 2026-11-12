@@ -753,6 +753,14 @@ pub(crate) struct ArenaColours {
     #[serde(deserialize_with = "colour")]
     pub anchor_enemy: Color,
     #[serde(deserialize_with = "colour")]
+    pub anchor_red: Color,
+    #[serde(deserialize_with = "colour")]
+    pub anchor_blue: Color,
+    #[serde(deserialize_with = "colour")]
+    pub anchor_green: Color,
+    #[serde(deserialize_with = "colour")]
+    pub anchor_yellow: Color,
+    #[serde(deserialize_with = "colour")]
     pub plank: Color,
     #[serde(deserialize_with = "colour")]
     pub plank_side: Color,
@@ -853,6 +861,14 @@ impl ArenaColours {
             .get(usize::from(team))
             .copied()
             .unwrap_or(self.zombie)
+    }
+
+    /// The colour of a team's respawn anchor, the pillar itself, by the
+    /// team's number: red, blue, green and yellow, as its names are
+    /// (Hajun, 2026-11-13: "make the color of your spawn anchor (right now
+    /// its purple) ... your team's color. so red blue green yellow glow").
+    pub(crate) fn anchor(&self, team: usize) -> Color {
+        [self.anchor_red, self.anchor_blue, self.anchor_green, self.anchor_yellow][team % 4]
     }
 
     /// The colour a sword's picture is tinted, by its tier, 1 to 3.
