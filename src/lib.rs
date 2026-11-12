@@ -30,10 +30,12 @@ mod minimap;
 mod car;
 mod games;
 mod clock;
+mod compass;
 mod drive;
 mod editor;
 mod fountain;
 mod hud;
+mod intro;
 mod island;
 mod lamps;
 mod log_file;
@@ -392,6 +394,37 @@ pub(crate) struct Carrying;
 /// How far the arms swing forward from hanging to carry a plank, in
 /// radians: a little under level, so that the plank rests on them.
 const CARRY_REACH: f32 = 1.45;
+
+/// A body coming down out of the sky as the app opens, and landing
+/// (`intro`): how far its knees are bent, 0 standing to 1 in the squat it
+/// lands in, and how far up its arms are, 0 hanging to 1 up over its head.
+/// Its limbs are posed by these in place of their walk ([`landing_offset`]).
+#[derive(Component, Clone, Copy, PartialEq, Debug)]
+pub(crate) struct Landing {
+    pub(crate) squat: f32,
+    pub(crate) arms: f32,
+}
+
+/// How far forward a thigh is turned in the squat a body lands in, in
+/// radians, its shin bent back by twice that, so that its feet stay under
+/// it; how far an arm is turned up from hanging, out at its side, with
+/// its arms all the way up, in radians: about 50 degrees over level; and
+/// how far the ball of a foot is in front of its ankle, in metres, which
+/// a squat stands on.
+const SQUAT_BEND: f32 = 1.05;
+const ARMS_UP: f32 = 2.2;
+const BALL_OF_FOOT: f32 = 0.13;
+
+impl Landing {
+    /// How far a body this deep in its knees comes down, in metres, for
+    /// its feet to stay on the ground: its hips `hip` over them standing.
+    /// Its legs take up that much less height bent, and its heels come up
+    /// off the ground as its shins lean back.
+    pub(crate) fn sink(&self, hip: f32) -> f32 {
+        let bend = SQUAT_BEND * self.squat;
+        (hip * (1.0 - bend.cos()) - BALL_OF_FOOT * bend.sin()).max(0.0)
+    }
+}
 
 /// A body that is only there to be seen, like the builder a Bridge Builder
 /// sends off (`bridge`, since 2026-11-12): it is in nobody's way, and no
@@ -1318,6 +1351,8 @@ pub fn main() {
     settings::plugin(&mut app);
     // Your balance, and the welcome.
     hud::plugin(&mut app);
+    // The opening: the cover the town loads under, and your drop into it.
+    intro::plugin(&mut app);
     // Talking to the town's AIs and the House Builder.
     talk::plugin(&mut app);
     // The House Builder in the town, and the game they ask you to play: the
@@ -1333,6 +1368,7 @@ pub fn main() {
     market::plugin(&mut app);
     utility::plugin(&mut app);
     gear::plugin(&mut app);
+    compass::plugin(&mut app);
     bridge::plugin(&mut app);
     minimap::plugin(&mut app);
     games::plugin(&mut app);
@@ -2488,6 +2524,23 @@ fn punch_offset(kind: WalkBoneKind, stance: f32, reach: f32) -> Option<Quat> {
     Some(Quat::from_axis_angle(Vec3::X, PUNCH_REACH * reach) * stood(stance))
 }
 
+/// Where a limb of a body coming down and landing is ([`Landing`]), in
+/// place of its walk: a thigh turned forward and its shin bent back under
+/// it by twice as much, as deep as the squat is; an arm turned up from
+/// where it hangs, out at its side, as far up as the arms are.
+fn landing_offset(kind: WalkBoneKind, stance: f32, landing: &Landing) -> Quat {
+    let bend = SQUAT_BEND * landing.squat;
+    let up = ARMS_UP * landing.arms;
+    match kind {
+        WalkBoneKind::ThighL | WalkBoneKind::ThighR => Quat::from_axis_angle(Vec3::X, bend) * stood(stance),
+        WalkBoneKind::ShinL | WalkBoneKind::ShinR => Quat::from_axis_angle(Vec3::X, -2.0 * bend) * stood(stance),
+        // The left arm hangs by a turn one way about the body's front to
+        // back axis and the right by a turn the other ([`stance_from_rest`]).
+        WalkBoneKind::ArmL => stood(stance - up),
+        WalkBoneKind::ArmR => stood(stance + up),
+    }
+}
+
 /// Where an arm carrying a plank is ([`Carrying`]): held out in front, a
 /// little under level, in place of its walk, as a punch is held at
 /// [`CARRY_REACH`] of its reach.
@@ -3204,6 +3257,7 @@ pub(crate) fn animate_walk(
         Has<Carrying>,
         Option<&Drinking>,
         Option<&arena::Wears>,
+        Option<&Landing>,
     )>,
     mut bones: Query<(&WalkBone, &mut Transform)>,
     mut commands: Commands,
@@ -3228,9 +3282,18 @@ pub(crate) fn animate_walk(
         }
     }
     for (bone, mut transform) in &mut bones {
-        let Ok((_, walk, punch, carrying, drinking, wears)) = walks.get(bone.owner) else {
+        let Ok((_, walk, punch, carrying, drinking, wears, landing)) = walks.get(bone.owner) else {
             continue;
         };
+        // Coming down out of the sky as the app opens, every limb is the
+        // landing's (`intro`).
+        if let Some(landing) = landing {
+            let rotation = bone.turned(landing_offset(bone.kind, bone.stance, landing));
+            if transform.rotation != rotation {
+                transform.rotation = rotation;
+            }
+            continue;
+        }
         // The right arm punches; carrying a plank, both arms hold it out
         // in front; every other limb walks. Running, faster than a walk
         // (`Intent::sprint`), the limbs swing that much further as well as
@@ -3876,6 +3939,49 @@ mod camera_tests {
             let swung = points(arm_frame, walk_offset(arm, 1.0, 1.0, stance));
             assert!((swung.z - hung.z).abs() > 0.3, "{swung:?}");
         }
+        // Landing as the app opens (`intro`): in the squat a thigh points
+        // forward and its shin, going round with it, back, so that the
+        // foot is under the hip and the body that much lower; with the arms
+        // all the way up each points up and out on its own side; and with
+        // neither, every limb is as it stands.
+        let (deep, up, standing) = (
+            Landing { squat: 1.0, arms: 0.0 },
+            Landing { squat: 0.0, arms: 1.0 },
+            Landing { squat: 0.0, arms: 0.0 },
+        );
+        for (thigh, shin) in [
+            (WalkBoneKind::ThighL, WalkBoneKind::ShinL),
+            (WalkBoneKind::ThighR, WalkBoneKind::ShinR),
+        ] {
+            let stance = stance_from_rest(thigh, frame(thigh));
+            let bent = landing_offset(thigh, stance, &deep);
+            let knee = points(frame(thigh), bent);
+            let foot = (bent * landing_offset(shin, 0.0, &deep) * frame(shin)) * Vec3::Y;
+            assert!(knee.z < -0.7 && knee.y < -0.3, "{knee:?}");
+            assert!(foot.z > 0.7 && foot.y < -0.3, "{foot:?}");
+            assert!((knee.z + foot.z).abs() < 0.15, "the foot under the hip: {knee:?} {foot:?}");
+        }
+        for (arm, side) in [(WalkBoneKind::ArmL, -1.0), (WalkBoneKind::ArmR, 1.0)] {
+            let stance = stance_from_rest(arm, frame(arm));
+            let raised = points(frame(arm), landing_offset(arm, stance, &up));
+            assert!(raised.y > 0.5 && raised.x * side > 0.3 && raised.z.abs() < 0.3, "{raised:?}");
+        }
+        for kind in [
+            WalkBoneKind::ThighL,
+            WalkBoneKind::ThighR,
+            WalkBoneKind::ShinL,
+            WalkBoneKind::ShinR,
+            WalkBoneKind::ArmL,
+            WalkBoneKind::ArmR,
+        ] {
+            let stance = stance_from_rest(kind, frame(kind));
+            let (stood, walked) = (landing_offset(kind, stance, &standing), walk_offset(kind, 0.0, 0.0, stance));
+            for axis in [Vec3::X, Vec3::Y, Vec3::Z] {
+                assert!((stood * axis).abs_diff_eq(walked * axis, 1e-5), "{stood:?} {walked:?}");
+            }
+        }
+        assert_eq!(standing.sink(0.75), 0.0);
+        assert!(deep.sink(0.75) > 0.15 && deep.sink(0.75) < 0.4, "{}", deep.sink(0.75));
         let right = frame(WalkBoneKind::ArmR);
         let stance = stance_from_rest(WalkBoneKind::ArmR, right);
         let punch = points(right, punch_offset(WalkBoneKind::ArmR, stance, 1.0).unwrap());

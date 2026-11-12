@@ -53,7 +53,7 @@ use bevy::picking::pointer::PointerId;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 
-use roundtown_net::Item;
+use roundtown_net::{Item, UTILITY_SLOTS};
 
 use crate::Player;
 use crate::arena::{Health, Resources};
@@ -116,6 +116,33 @@ pub(crate) const ARENA_JUMP: (f32, f32, f32) = (24.5, 4.0, ACTION_BUTTON);
 const ARENA_SLOT: (f32, f32) = (18.5, 18.5);
 const ARENA_BRIDGE: (f32, f32) = (4.0, 24.5);
 const ARENA_DOTS: (f32, f32, f32) = (0.0, 42.0, 8.0);
+/// The four more buttons for things to use (since 2026-11-13, Hajun's
+/// `new4morebuttonlayout.jpg`: "4 more buttons that are hidden by default
+/// until either u press the ... toggle button or u buy an item that fills
+/// up another slot"), on a second ring round the sword's middle: how far
+/// out, in shares of the short side, where the jump button, the second
+/// button and the bridge button are 20.5 out; and where on it each is, in
+/// degrees up from straight left of the sword, in the order they fill.
+/// Measured off the sketch, whose circles are 37 to 40 out at 0, 25, 52
+/// and 80 degrees, and evened out as the first three were: 3.5 clear of
+/// each other and of the first ring, the last ending beside the dots. The
+/// order is mine: the one beside the second button first, then outward,
+/// so that two or three things lie together under the thumb.
+const MORE_RING: f32 = 38.0;
+const MORE_ANGLES: [f32; UTILITY_SLOTS - 1] = [53.3, 26.7, 80.0, 0.0];
+
+/// Where the button for things to use numbered `slot` is, as its right and
+/// bottom offsets in the box round the jump button: the second button for
+/// the first, and the four more on their ring.
+fn slot_place(slot: usize) -> (f32, f32) {
+    let Some(angle) = slot.checked_sub(1).and_then(|more| MORE_ANGLES.get(more)) else {
+        return ARENA_SLOT;
+    };
+    let (up, left) = angle.to_radians().sin_cos();
+    // From the sword's middle, which is the box's.
+    let from = (crate::JUMP_SIZE_VMIN - ACTION_BUTTON) * 0.5;
+    (from + MORE_RING * left, from + MORE_RING * up)
+}
 /// The metres of bridge you have, written small inside the bridge button,
 /// under the plank (since 2026-11-12, Hajun: "above the ui bridge button
 /// add a small white text "123m"", and a few minutes later, "instead of
@@ -138,7 +165,7 @@ pub(crate) const EDGE: f32 = 4.0;
 pub(crate) const JUMP_ARROW: f32 = 56.0;
 /// Room left under a headline, as a share of the screen's height, which lifts
 /// it clear of your own character in the middle.
-const ABOVE_YOU: f32 = 36.0;
+pub(crate) const ABOVE_YOU: f32 = 36.0;
 
 /// How long a headline takes to come up and to go, in seconds, and how long
 /// the welcome is up for altogether.
@@ -712,12 +739,17 @@ fn spawn_arena_bar(commands: &mut Commands, images: &mut Assets<Image>, minimap:
         // off (`bridge`).
         let (right, bottom, size) = ARENA_JUMP;
         round.spawn(jump_button(arrow, size, beside_the_jump(right, bottom)));
-        let (right, bottom) = ARENA_SLOT;
-        round.spawn(utility_slot(beside_the_jump(right, bottom)));
+        // The buttons for things to use: the second button, and four more
+        // on a ring round these, put away until something is on them or
+        // the dots show them (`utility`).
+        for slot in 0..UTILITY_SLOTS {
+            let (right, bottom) = slot_place(slot);
+            round.spawn(utility_slot(slot, beside_the_jump(right, bottom)));
+        }
         let (right, bottom) = ARENA_BRIDGE;
         round.spawn(bridge_button(images.add(plank()), beside_the_jump(right, bottom)));
         let (right, bottom, size) = ARENA_DOTS;
-        round.spawn(round_button(images.add(dots()), size, beside_the_jump(right, bottom)));
+        round.spawn((MoreButton, round_button(images.add(dots()), size, beside_the_jump(right, bottom))));
     });
 }
 
@@ -908,16 +940,20 @@ fn show_resources(
     }
 }
 
-/// Bridge Wars' second button, where `place` puts it (since 2026-11-12;
-/// an empty slot until then): the buttons' disc with a faint rim, empty
-/// until something to use is bought at the item shop, and then with its
-/// picture on it, how many of it in its corner, and over it, while a
-/// potion lasts, how long it still does. `utility` fills it in and takes
-/// its presses: a press for a potion, a hold and a drag for what is aimed.
-fn utility_slot(place: Node) -> impl Bundle {
+/// One of Bridge Wars' buttons for things to use, where `place` puts it:
+/// the second button (since 2026-11-12; an empty slot until then), which
+/// is `slot` 0, or one of the four more (since 2026-11-13), which are put
+/// away until something is on them or the dots show them. The buttons'
+/// disc with a faint rim, empty until something to use is bought at the
+/// item shop, and then with its picture on it, how many of it in its
+/// corner, and over it, while a potion lasts, how long it still does.
+/// `utility` fills it in, shows it and takes its presses: a press for a
+/// potion, a hold and a drag for what is aimed.
+fn utility_slot(slot: usize, place: Node) -> impl Bundle {
     let colours = ui().colours;
     (
-        UtilitySlot,
+        UtilitySlot(slot),
+        if slot == 0 { Visibility::Inherited } else { Visibility::Hidden },
         TakesPress,
         Button,
         Node {
@@ -933,7 +969,7 @@ fn utility_slot(place: Node) -> impl Bundle {
         BorderColor::all(colours.arena.slot_rim),
         children![
             (
-                UtilityPicture,
+                UtilityPicture(slot),
                 ImageNode::default(),
                 Node {
                     width: Val::Percent(PICTURE),
@@ -951,7 +987,7 @@ fn utility_slot(place: Node) -> impl Bundle {
                     ..default()
                 },
                 Pickable::IGNORE,
-                children![(UtilityCount, words("", UTILITY_COUNT_TEXT, colours.text))],
+                children![(UtilityCount(slot), words("", UTILITY_COUNT_TEXT, colours.text))],
             ),
             (
                 Node {
@@ -963,22 +999,29 @@ fn utility_slot(place: Node) -> impl Bundle {
                     ..default()
                 },
                 Pickable::IGNORE,
-                children![(UtilityTimer, words("", UTILITY_TIMER_TEXT, colours.text))],
+                children![(UtilityTimer(slot), words("", UTILITY_TIMER_TEXT, colours.text))],
             ),
         ],
     )
 }
 
-/// Bridge Wars' second button ([`utility_slot`]), its picture, the count
-/// in its corner and the time over it.
+/// One of Bridge Wars' buttons for things to use ([`utility_slot`]), its
+/// picture, the count in its corner and the time over it, each by which
+/// button it is, from 0, the second button (`Kit::slots`).
 #[derive(Component)]
-pub(crate) struct UtilitySlot;
+pub(crate) struct UtilitySlot(pub(crate) usize);
 #[derive(Component)]
-pub(crate) struct UtilityPicture;
+pub(crate) struct UtilityPicture(pub(crate) usize);
 #[derive(Component)]
-pub(crate) struct UtilityCount;
+pub(crate) struct UtilityCount(pub(crate) usize);
 #[derive(Component)]
-pub(crate) struct UtilityTimer;
+pub(crate) struct UtilityTimer(pub(crate) usize);
+
+/// The three dots over Bridge Wars' buttons, which show the four more
+/// buttons for things to use, empty as they may be, and put the empty ones
+/// away again (`utility::MoreSlots`): lit while they are shown.
+#[derive(Component)]
+pub(crate) struct MoreButton;
 
 /// How big the count in the second button's corner and the time over it
 /// are, in shares of the short side.
@@ -1296,9 +1339,15 @@ fn arrive(
 fn welcome(
     islands: Res<Islands>,
     signup: Res<Signup>,
+    intro: Res<crate::intro::Intro>,
     mut due: ResMut<WelcomeDue>,
     mut commands: Commands,
 ) {
+    // As the app opens, the town's name is the opening's own: on its cover,
+    // and over the town for a moment as the cover opens (`intro`).
+    if due.0 && intro.welcomes() {
+        due.0 = false;
+    }
     if !due.0 || signup.up() || islands.get(Venue::Town).is_none() {
         return;
     }
@@ -1694,11 +1743,12 @@ pub(crate) enum Picture {
     ShieldPlus,
     Cross,
     Eye,
+    Compass,
 }
 
 impl Picture {
     #[cfg_attr(not(test), allow(dead_code))]
-    pub(crate) const ALL: [Picture; 11] = [
+    pub(crate) const ALL: [Picture; 12] = [
         Picture::Plank,
         Picture::Sword,
         Picture::Shield,
@@ -1710,6 +1760,7 @@ impl Picture {
         Picture::ShieldPlus,
         Picture::Cross,
         Picture::Eye,
+        Picture::Compass,
     ];
 
     /// The picture, drawn.
@@ -1759,6 +1810,14 @@ impl Picture {
                 let turned = Vec2::new(at.x * cos + at.y * sin, at.y * cos - at.x * sin);
                 let stroke = box_distance(turned, Vec2::new(0.07, 0.95));
                 (lens.abs() - 0.07).min(pupil).min(stroke)
+            }),
+            // An arrowhead pointing up, notched at its tail: the compass's
+            // needle, on its card and round you in the game (`compass`).
+            Picture::Compass => drawn(|at| {
+                polygon_distance(
+                    at,
+                    &[Vec2::new(0.0, -0.92), Vec2::new(0.62, 0.8), Vec2::new(0.0, 0.42), Vec2::new(-0.62, 0.8)],
+                ) - 0.03
             }),
         }
     }
@@ -1889,8 +1948,8 @@ pub(crate) fn plank() -> Image {
     })
 }
 
-/// Three dots in a row, for the button over Bridge Wars' slots, which is to
-/// show more buttons one day.
+/// Three dots in a row, for the button over Bridge Wars' slots, which
+/// shows the four more buttons ([`MoreButton`]).
 pub(crate) fn dots() -> Image {
     drawn(|at| {
         [-0.56, 0.0, 0.56]
@@ -1952,6 +2011,51 @@ fn box_distance(at: Vec2, reach: Vec2) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_four_more_buttons_lie_on_a_ring_round_the_sword_clear_of_every_other_button() {
+        // A button's middle from the sword's, to the left and up, in
+        // shares of the short side, from its place in the box round the
+        // jump button, whose middle is the sword's.
+        let middle = |(right, bottom): (f32, f32), size: f32| {
+            Vec2::new(right + size * 0.5, bottom + size * 0.5) - Vec2::splat(crate::JUMP_SIZE_VMIN * 0.5)
+        };
+        let slots: Vec<Vec2> = (0..UTILITY_SLOTS).map(|slot| middle(slot_place(slot), ACTION_BUTTON)).collect();
+        // The second button is where it was, on the first ring; the four
+        // more are on theirs, from straight left of the sword round to
+        // nearly straight over it.
+        assert_eq!(slot_place(0), ARENA_SLOT);
+        assert!((slots[0].length() - 20.5).abs() < 0.05);
+        for more in &slots[1..] {
+            assert!((more.length() - MORE_RING).abs() < 1e-3);
+            assert!(more.x > 0.0 && more.y > -1e-3, "{more}");
+        }
+        // They fill from the one beside the second button.
+        let nearest = slots[1..].iter().map(|more| more.distance(slots[0])).fold(f32::INFINITY, f32::min);
+        assert_eq!(slots[1].distance(slots[0]), nearest);
+        // No two of all the buttons there touch: these five, the sword,
+        // the jump button, the bridge button and the dots.
+        let mut discs: Vec<(Vec2, f32)> = slots.iter().map(|at| (*at, ACTION_BUTTON)).collect();
+        discs.push((Vec2::ZERO, crate::JUMP_SIZE_VMIN));
+        let (right, bottom, size) = ARENA_JUMP;
+        discs.push((middle((right, bottom), size), size));
+        discs.push((middle(ARENA_BRIDGE, ACTION_BUTTON), ACTION_BUTTON));
+        let (right, bottom, size) = ARENA_DOTS;
+        discs.push((middle((right, bottom), size), size));
+        for (index, (at, size)) in discs.iter().enumerate() {
+            for (other, other_size) in &discs[..index] {
+                let gap = at.distance(*other) - (size + other_size) * 0.5;
+                assert!(gap > 1.5, "{at} and {other} are {gap} apart");
+            }
+        }
+        // And the four more are as far from each other as from the first
+        // ring's.
+        let mut round: Vec<Vec2> = slots[1..].to_vec();
+        round.sort_by(|a, b| a.y.total_cmp(&b.y));
+        for pair in round.windows(2) {
+            assert!((pair[0].distance(pair[1]) - ACTION_BUTTON - 3.5).abs() < 0.1);
+        }
+    }
 
     #[test]
     fn the_jump_arrow_points_up_with_a_broad_head_on_a_narrow_shaft() {

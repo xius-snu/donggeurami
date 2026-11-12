@@ -134,7 +134,14 @@ pub const PROTOCOL_ID: u64 = u64::from_be_bytes(*b"DGRMTOWN");
 /// [`Ware`] has them all, what everyone has is the game's [`Kits`] and
 /// what each team has bought its [`Upgraded`], a fireball in the air is a
 /// [`Fireball`], and [`Ask::Use`] uses what is on the second button.
-pub const PROTOCOL_VERSION: u32 = 13;
+///
+/// 14 since 2026-11-13: there are five buttons for things to use where
+/// there was one (Hajun: "4 more buttons that are hidden by default until
+/// either u press the ... toggle button or u buy an item that fills up
+/// another slot ... so u can buy more than 1 item and hold it at once"): a
+/// [`Kit`] has a [`Stack`] to each of its [`UTILITY_SLOTS`] where it had
+/// one kind and a count, and [`Use::Potion`] says which potion was drunk.
+pub const PROTOCOL_VERSION: u32 = 14;
 
 /// The UDP port the game server listens on. 443, where QUIC goes, because a
 /// network that lets any UDP through lets that through: school and office
@@ -516,8 +523,9 @@ pub enum Ware {
     /// A shield, by its tier, 1 to 3: a share of every blow kept off.
     /// Only one better than the one worn; kept for the game.
     Shield(u8),
-    /// One more of something to use, for the second button, which holds
-    /// one kind of thing at a time.
+    /// One more of something to use: onto the button that holds its kind,
+    /// or, a new kind, onto the first empty one of the five
+    /// ([`UTILITY_SLOTS`]).
     Utility(Utility),
     /// The next step of the team's own generator: faster, faster again,
     /// amethyst too, and fastest.
@@ -532,10 +540,38 @@ pub enum Ware {
     /// One more blindness trap waiting on the team's island, three at the
     /// most.
     Trap,
+    /// The Player Compass Tracker (Hajun's file, 2026-11-12: "one time per
+    /// life purchase - lost on death, which is a non slot filling item
+    /// that basically shows a small white arrow around your character
+    /// that is pointing at the direction of the nearest nonteammate
+    /// player + name (color of team) + '123m'"): yours until you die,
+    /// and nothing on the second button. The last of the wares, so that an
+    /// app from before it, which never asks for it, reads the rest as it
+    /// did.
+    Compass,
 }
 
-/// Something to use in Bridge Wars, bought at the item shop and put on the
-/// second button, however many of it ([`Kit::count`]).
+/// How many buttons Bridge Wars has for things to use ([`Utility`]): the
+/// second button, beside the sword, and four more on an arc round those
+/// (since 2026-11-13, Hajun's `new4morebuttonlayout.jpg`: "4 more buttons
+/// that are hidden by default until either u press the ... toggle button
+/// or u buy an item that fills up another slot"; one until then). Each
+/// holds one kind of thing, however many of it, and they fill in the
+/// order things are bought ("it fills up the slots according to buy order
+/// so u can buy more than 1 item and hold it at once").
+pub const UTILITY_SLOTS: usize = 5;
+
+/// So many of one kind of thing to use, on one of the buttons
+/// ([`Kit::slots`]). With none left it stays on its button for as long as
+/// what was drunk from it lasts ([`bridge_wars::Outfits::tick`]).
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Stack {
+    pub utility: Utility,
+    pub count: u8,
+}
+
+/// Something to use in Bridge Wars, bought at the item shop and put on a
+/// button of its own, however many of it ([`Stack`]).
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Utility {
     /// Aimed and thrown: it flies straight and bursts at the end of its
@@ -578,21 +614,64 @@ impl Utility {
 
 /// What someone in a game of Bridge Wars has, besides what is in their
 /// [`Purse`]: the sword in their hand and the shield round them, by tier
-/// (0 is none); what is on their second button and how many of it; until
+/// (0 is none); what is on each of their buttons for things to use and how
+/// many of it, button by button ([`UTILITY_SLOTS`]; one kind and a count
+/// until 2026-11-13, when there was one button); until
 /// when, in whole seconds into the fight, they run fast and go unseen (0
-/// is not at all); and whether a trap has blinded them.
+/// is not at all); and whether a trap has blinded them. And whether they
+/// have the compass ([`Ware::Compass`]), **which is not sent**: only its
+/// owner's device draws it, and is told it is theirs as they buy it
+/// ([`Tell::Bought`]), so a kit goes over the network as it did before
+/// there was one, and an app from before reads it as it did. Whoever runs
+/// the game has it here, the server online and the device offline; online
+/// a device keeps its own word of it and puts it back on its own kit as
+/// the room's kits come.
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub struct Kit {
     pub sword: u8,
     pub shield: u8,
-    pub utility: Option<Utility>,
-    pub count: u8,
+    pub slots: [Option<Stack>; UTILITY_SLOTS],
     pub fast_until: u16,
     pub unseen_until: u16,
     pub blind: bool,
+    #[serde(skip)]
+    pub compass: bool,
 }
 
 impl Kit {
+    /// Which button `utility` is on, if any: with some of it, or with none
+    /// left and what was drunk from it still lasting.
+    pub fn slot_of(&self, utility: Utility) -> Option<usize> {
+        self.slots.iter().position(|slot| slot.is_some_and(|stack| stack.utility == utility))
+    }
+
+    /// The first button with nothing on it: where a new kind of thing
+    /// goes, so that the buttons fill in the order things are bought.
+    pub fn free_slot(&self) -> Option<usize> {
+        self.slots.iter().position(Option::is_none)
+    }
+
+    /// How many of `utility` they have.
+    pub fn held(&self, utility: Utility) -> u8 {
+        self.slot_of(utility).and_then(|slot| self.slots[slot]).map_or(0, |stack| stack.count)
+    }
+
+    /// The first potion they have one of, button by button.
+    pub fn potion(&self) -> Option<Utility> {
+        self.slots.iter().flatten().find(|stack| stack.count > 0 && stack.utility.drunk()).map(|stack| stack.utility)
+    }
+
+    /// This kit with `count` of `utility` on the button that kind is on,
+    /// or, with none, on the first empty one; as it is, with every button
+    /// taken by other kinds.
+    pub fn holding(mut self, utility: Utility, count: u8) -> Self {
+        if let Some(slot) = self.slot_of(utility).or(self.free_slot()) {
+            self.slots[slot] = Some(Stack { utility, count });
+        }
+        self
+    }
+
+
     /// Whether they are running fast, `elapsed` seconds into the fight.
     pub fn fast(&self, elapsed: f32) -> bool {
         f32::from(self.fast_until) > elapsed
@@ -629,7 +708,7 @@ pub mod nav;
 pub mod bridge_wars {
     use super::{
         AMETHYST_PADS, ARENA_ISLAND_RADIUS, ARENA_ISLANDS, ARENA_PADS, ARENA_SEATS, ARENA_SHOPS, ARENA_TEAMS,
-        ARENA_UPGRADE_SHOPS, Item, Kit, PAD_HALF, PAD_TOP, Purse, Quat, SAPPHIRE_ISLAND_RADIUS, SAPPHIRE_PADS, TAU,
+        ARENA_UPGRADE_SHOPS, Item, Kit, PAD_HALF, PAD_TOP, Purse, Quat, SAPPHIRE_ISLAND_RADIUS, SAPPHIRE_PADS, Stack, TAU,
         Upgrades, Utility, Vec2, Vec3, Ware, arena_team,
     };
 
@@ -1166,7 +1245,7 @@ pub mod bridge_wars {
     /// Which shop sells `ware`.
     pub fn sold_at(ware: Ware) -> Shop {
         match ware {
-            Ware::Bridge | Ware::Sword(_) | Ware::Shield(_) | Ware::Utility(_) => Shop::Items,
+            Ware::Bridge | Ware::Sword(_) | Ware::Shield(_) | Ware::Utility(_) | Ware::Compass => Shop::Items,
             Ware::Forge | Ware::StrongerSwords | Ware::BetterShields | Ware::HealPool | Ware::Trap => Shop::Upgrades,
         }
     }
@@ -1192,7 +1271,7 @@ pub mod bridge_wars {
     pub const FORGE_MOST: u8 = 4;
     pub const TRAPS_MOST: u8 = 3;
 
-    /// How many of `utility` the second button holds: three fireballs
+    /// How many of `utility` its button holds: three fireballs
     /// (Hajun's file: "can buy multiple - cap at 3 stack"), and nine of
     /// anything else (mine: one figure in the button's corner).
     pub const fn most_held(utility: Utility) -> u8 {
@@ -1205,11 +1284,13 @@ pub mod bridge_wars {
     /// What `ware` costs someone with `kit` on a team with `team`: so many
     /// of an item, from Hajun's file. Nothing if it is not to be had: a
     /// sword or a shield no better than the one they have ("you cannot buy
-    /// a same/lower tier sword/shield, only greater"); something for the
-    /// second button while it holds another thing ("you can only buy if
-    /// the 2nd ui button is either empty or its filled by the same item u
-    /// already have"), or as many as it holds; or an upgrade the team has
-    /// to its last step.
+    /// a same/lower tier sword/shield, only greater"); something to use
+    /// with as many of it on its button as that holds ([`most_held`]), or,
+    /// a kind they have none of, with every button taken by another kind
+    /// (since 2026-11-13 a kind takes the first empty button of five;
+    /// until then there was one button, and "you can only buy if the 2nd
+    /// ui button is either empty or its filled by the same item u already
+    /// have"); or an upgrade the team has to its last step.
     pub fn price(ware: Ware, kit: &Kit, team: &Upgrades) -> Option<(Item, u16)> {
         let step = |prices: &[u16], taken: u8| prices.get(usize::from(taken)).map(|cost| (Item::Sapphire, *cost));
         match ware {
@@ -1221,7 +1302,10 @@ pub mod bridge_wars {
             Ware::Shield(2) if kit.shield < 2 => Some((Item::Gold, 12)),
             Ware::Shield(3) if kit.shield < 3 => Some((Item::Amethyst, 6)),
             Ware::Utility(utility)
-                if kit.utility.is_none_or(|held| held == utility) && kit.count < most_held(utility) =>
+                if match kit.slot_of(utility) {
+                    Some(_) => kit.held(utility) < most_held(utility),
+                    None => kit.free_slot().is_some(),
+                } =>
             {
                 Some(match utility {
                     Utility::Fireball => (Item::Silver, 40),
@@ -1236,6 +1320,8 @@ pub mod bridge_wars {
             Ware::BetterShields => step(&[2, 3, 4, 6], team.shields),
             Ware::HealPool if !team.heal_pool => Some((Item::Sapphire, 1)),
             Ware::Trap => step(&[1, 2, 4], team.traps),
+            // Once a life: with one, there is none to buy.
+            Ware::Compass if !kit.compass => Some((Item::Amethyst, 2)),
             _ => None,
         }
     }
@@ -1258,14 +1344,18 @@ pub mod bridge_wars {
             Ware::Sword(tier) => kit.sword = tier,
             Ware::Shield(tier) => kit.shield = tier,
             Ware::Utility(utility) => {
-                kit.utility = Some(utility);
-                kit.count += 1;
+                // Onto the button its kind is on, or the first empty one:
+                // the price was only there with one of the two.
+                if let Some(slot) = kit.slot_of(utility).or(kit.free_slot()) {
+                    kit.slots[slot].get_or_insert(Stack { utility, count: 0 }).count += 1;
+                }
             }
             Ware::Forge => team.forge += 1,
             Ware::StrongerSwords => team.swords = true,
             Ware::BetterShields => team.shields += 1,
             Ware::HealPool => team.heal_pool = true,
             Ware::Trap => team.traps += 1,
+            Ware::Compass => kit.compass = true,
         }
         true
     }
@@ -1458,29 +1548,30 @@ pub mod bridge_wars {
             buy(ware, purse, &mut self.kits[seat], team)
         }
 
-        /// The one in `seat` uses one `utility` off their second button,
-        /// if that is what is on it: whether they had one. The button is
-        /// empty once none is left and nothing drunk from it still lasts
-        /// ([`Outfits::tick`]).
+        /// The one in `seat` uses one `utility` off the button it is on:
+        /// whether they had one. The button is empty once none is left
+        /// and nothing drunk from it still lasts ([`Outfits::tick`]).
         pub fn spend(&mut self, seat: usize, utility: Utility) -> bool {
-            let Some(kit) = self.kits.get_mut(seat) else {
-                return false;
-            };
-            if kit.utility != Some(utility) || kit.count == 0 {
-                return false;
+            let stack = self
+                .kits
+                .get_mut(seat)
+                .and_then(|kit| kit.slots.iter_mut().flatten().find(|stack| stack.utility == utility && stack.count > 0));
+            match stack {
+                Some(stack) => {
+                    stack.count -= 1;
+                    true
+                }
+                None => false,
             }
-            kit.count -= 1;
-            true
         }
 
-        /// The one in `seat` has drunk the potion on their second button,
+        /// The one in `seat` has drunk a `potion` off its button,
         /// `elapsed` seconds into the fight: which it was, if they had
         /// one. The speed and the invisibility last from now; the healing
         /// is the caller's to give ([`HEALING`]). Whoever asks has taken
         /// [`DRINK_SECS`] over it already: the drinking is the drinker's
         /// own device's.
-        pub fn drink(&mut self, seat: usize, elapsed: f32) -> Option<Utility> {
-            let potion = self.kits.get(seat)?.utility?;
+        pub fn drink(&mut self, seat: usize, potion: Utility, elapsed: f32) -> Option<Utility> {
             if potion.aimed() || !self.spend(seat, potion) {
                 return None;
             }
@@ -1555,8 +1646,19 @@ pub mod bridge_wars {
                 if kit.unseen_until != 0 && !kit.unseen(elapsed) {
                     kit.unseen_until = 0;
                 }
-                if kit.utility.is_some() && kit.count == 0 && kit.fast_until == 0 && kit.unseen_until == 0 {
-                    kit.utility = None;
+                // A button with none left on it is empty, unless what was
+                // drunk from it still lasts: the speed potion's while they
+                // run fast, the invisibility's while they are unseen.
+                let (fast, unseen) = (kit.fast_until != 0, kit.unseen_until != 0);
+                for slot in &mut kit.slots {
+                    let lasting = |stack: &Stack| match stack.utility {
+                        Utility::Speed => fast,
+                        Utility::Invisibility => unseen,
+                        _ => false,
+                    };
+                    if slot.is_some_and(|stack| stack.count == 0 && !lasting(&stack)) {
+                        *slot = None;
+                    }
                 }
             }
             for (kit, left) in self.kits.iter_mut().zip(&mut self.blind_left) {
@@ -2098,15 +2200,16 @@ pub struct Fireball {
     pub heading: f32,
 }
 
-/// Using what is on the second button in Bridge Wars ([`Ask::Use`]).
+/// Using what is on one of the buttons in Bridge Wars ([`Ask::Use`]).
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Debug)]
 pub enum Use {
     /// Throw a fireball this way, as a [`Plank`] heads.
     Fireball { heading: f32 },
     /// A builder has been sent off: its bridge comes as [`Ask::Rung`]s.
     Builder,
-    /// The potion on the button has been drunk.
-    Potion,
+    /// This potion has been drunk (which, since 2026-11-13: there may be
+    /// several kinds on the buttons at once).
+    Potion(Utility),
 }
 
 // --------------------------------------------------------------- messages
@@ -2769,16 +2872,18 @@ mod tests {
         assert!(price(Ware::Sword(3), &silver, &none).is_some());
         assert_eq!(price(Ware::Shield(1), &silver, &none), None);
         assert!(price(Ware::Shield(2), &silver, &none).is_some() && price(Ware::Shield(3), &silver, &none).is_some());
-        // The second button holds one kind of thing: three fireballs at
-        // the most, and nine of anything else.
-        let fire = Kit { utility: Some(Utility::Fireball), count: 2, ..bare };
+        // A button holds one kind of thing: three fireballs at the most,
+        // and nine of anything else. Another kind is to be had beside
+        // it, on a button of its own.
+        let fire = bare.holding(Utility::Fireball, 2);
         assert!(price(Ware::Utility(Utility::Fireball), &fire, &none).is_some());
-        assert_eq!(price(Ware::Utility(Utility::Speed), &fire, &none), None);
-        let full = Kit { count: 3, ..fire };
+        assert!(price(Ware::Utility(Utility::Speed), &fire, &none).is_some());
+        let full = fire.holding(Utility::Fireball, 3);
         assert_eq!(price(Ware::Utility(Utility::Fireball), &full, &none), None);
-        let potions = Kit { utility: Some(Utility::Healing), count: 8, ..bare };
+        assert!(price(Ware::Utility(Utility::Speed), &full, &none).is_some());
+        let potions = bare.holding(Utility::Healing, 8);
         assert!(price(Ware::Utility(Utility::Healing), &potions, &none).is_some());
-        assert_eq!(price(Ware::Utility(Utility::Healing), &Kit { count: 9, ..potions }, &none), None);
+        assert_eq!(price(Ware::Utility(Utility::Healing), &potions.holding(Utility::Healing, 9), &none), None);
         // What is aimed and what is drunk; and of what is drunk, what
         // lasts.
         for utility in Utility::ALL {
@@ -2815,7 +2920,75 @@ mod tests {
         purse[0] = 100;
         assert!(buy(Ware::Utility(Utility::Fireball), &mut purse, &mut kit, &mut team));
         assert!(buy(Ware::Utility(Utility::Fireball), &mut purse, &mut kit, &mut team));
-        assert_eq!((purse[0], kit.utility, kit.count), (20, Some(Utility::Fireball), 2));
+        assert_eq!((purse[0], kit.slots[0]), (20, Some(Stack { utility: Utility::Fireball, count: 2 })));
+        assert_eq!(kit.held(Utility::Fireball), 2);
+    }
+
+    #[test]
+    fn the_buttons_fill_in_the_order_things_are_bought_one_kind_to_each() {
+        use bridge_wars::{FAST_SECS, Outfits, buy, most_held, price};
+        let none = Upgrades::default();
+        let stack = |utility, count| Some(Stack { utility, count });
+        // Five kinds bought in turn take the five buttons in that order,
+        // and more of a kind goes onto the button it is on.
+        let order = [Utility::Healing, Utility::Fireball, Utility::Speed, Utility::Builder, Utility::Invisibility];
+        let (mut purse, mut kit, mut team): (Purse, Kit, Upgrades) = ([200; 4], Kit::default(), none);
+        for (slot, utility) in order.into_iter().enumerate() {
+            assert_eq!((kit.free_slot(), kit.slot_of(utility), kit.held(utility)), (Some(slot), None, 0));
+            assert!(buy(Ware::Utility(utility), &mut purse, &mut kit, &mut team));
+            assert_eq!((kit.slot_of(utility), kit.held(utility)), (Some(slot), 1));
+        }
+        assert_eq!(kit.free_slot(), None);
+        assert!(buy(Ware::Utility(Utility::Fireball), &mut purse, &mut kit, &mut team));
+        assert!(buy(Ware::Utility(Utility::Fireball), &mut purse, &mut kit, &mut team));
+        assert!(!buy(Ware::Utility(Utility::Fireball), &mut purse, &mut kit, &mut team), "three to a button");
+        assert_eq!(kit.slots[1], stack(Utility::Fireball, most_held(Utility::Fireball)));
+        assert_eq!(kit.slots.map(|slot| slot.map(|stack| stack.utility)), order.map(Some));
+        assert_eq!(kit.potion(), Some(Utility::Healing), "the first potion, button by button");
+        // With every button taken by another kind, a kind they have none
+        // of is not to be had; with one free, it is, and goes there.
+        let crowded = Kit { slots: [stack(Utility::Fireball, 1); UTILITY_SLOTS], ..Kit::default() };
+        assert_eq!(price(Ware::Utility(Utility::Healing), &crowded, &none), None);
+        assert_eq!(crowded.holding(Utility::Healing, 2), crowded);
+
+        // Used up, a button is empty, the rest staying where they are; and
+        // the next kind bought goes onto the first empty one.
+        let mut outfits = Outfits::default();
+        outfits.seat(ARENA_SEATS);
+        outfits.kits[0] = kit;
+        assert_eq!(outfits.drink(0, Utility::Healing, 10.0), Some(Utility::Healing));
+        assert_eq!(outfits.drink(0, Utility::Healing, 10.0), None, "there was only one");
+        assert!(outfits.spend(0, Utility::Builder) && !outfits.spend(0, Utility::Builder));
+        outfits.tick(0.1, 10.1, &[]);
+        let after = outfits.kits[0];
+        assert_eq!(after.slots[0], None);
+        assert_eq!((after.slots[1], after.slots[2]), (stack(Utility::Fireball, 3), stack(Utility::Speed, 1)));
+        assert_eq!((after.slots[3], after.slots[4]), (None, stack(Utility::Invisibility, 1)));
+        let mut purse: Purse = [200; 4];
+        assert!(outfits.buy(0, Ware::Utility(Utility::Builder), &mut purse));
+        assert!(outfits.buy(0, Ware::Utility(Utility::Healing), &mut purse));
+        assert_eq!((outfits.kits[0].slot_of(Utility::Builder), outfits.kits[0].slot_of(Utility::Healing)), (Some(0), Some(3)));
+        // Both potions that last, drunk: each keeps its own button, with
+        // none left on it, for as long as it lasts and no longer.
+        assert_eq!(outfits.drink(0, Utility::Speed, 20.0), Some(Utility::Speed));
+        assert_eq!(outfits.drink(0, Utility::Invisibility, 20.0), Some(Utility::Invisibility));
+        outfits.tick(0.1, 21.0, &[]);
+        let kit = outfits.kits[0];
+        assert_eq!((kit.slots[2], kit.slots[4]), (stack(Utility::Speed, 0), stack(Utility::Invisibility, 0)));
+        assert!(kit.fast(21.0) && kit.unseen(21.0) && kit.potion() == Some(Utility::Healing));
+        // Seen again by a hit, the invisibility's button is empty and the
+        // speed's is not; and that one is once the speed has run out.
+        assert!(outfits.reveal(0));
+        outfits.tick(0.1, 22.0, &[]);
+        assert_eq!((outfits.kits[0].slots[2], outfits.kits[0].slots[4]), (stack(Utility::Speed, 0), None));
+        outfits.tick(0.1, 20.0 + FAST_SECS + 0.1, &[]);
+        assert_eq!(outfits.kits[0].slots[2], None);
+        // Dying empties every button.
+        outfits.die(0);
+        assert_eq!(outfits.kits[0], Kit::default());
+        // And a kit is sent button by button.
+        let sent = postcard::to_allocvec(&Kit::default().holding(Utility::Speed, 2)).unwrap();
+        assert_eq!(postcard::from_bytes::<Kit>(&sent).unwrap().slots[0], stack(Utility::Speed, 2));
     }
 
     #[test]
@@ -2851,11 +3024,57 @@ mod tests {
         // A zombie, in a seat past the players', has nothing.
         assert_eq!(outfits.punch(DAMAGE, ARENA_SEATS, 2), 12.0);
         assert!((outfits.through(1, 20.0) - 18.8).abs() < 1e-4);
-        // Dying loses the sword and what was on the second button, and
-        // keeps the shield.
-        outfits.kits[1] = Kit { sword: 2, shield: 1, utility: Some(Utility::Speed), count: 2, fast_until: 90, unseen_until: 0, blind: true };
+        // Dying loses the sword and what was on the buttons, and keeps
+        // the shield.
+        outfits.kits[1] = Kit {
+            sword: 2,
+            shield: 1,
+            fast_until: 90,
+            unseen_until: 0,
+            blind: true,
+            compass: true,
+            ..Kit::default()
+        }
+        .holding(Utility::Speed, 2)
+        .holding(Utility::Fireball, 1);
         outfits.die(1);
         assert_eq!(outfits.kits[1], Kit { shield: 1, ..Kit::default() });
+    }
+
+    #[test]
+    fn the_compass_is_bought_once_a_life_at_the_item_shop_and_is_not_sent() {
+        use bridge_wars::{Outfits, Shop, price, sold_at};
+        let none = Upgrades::default();
+        // 2 amethyst at the red stand, and nothing on the second button.
+        assert_eq!(sold_at(Ware::Compass), Shop::Items);
+        assert_eq!(price(Ware::Compass, &Kit::default(), &none), Some((Item::Amethyst, 2)));
+        let mut outfits = Outfits::default();
+        outfits.seat(ARENA_SEATS);
+        let mut purse: Purse = [0, 0, 0, 5];
+        assert!(!outfits.buy(0, Ware::Compass, &mut [0, 0, 0, 1]), "one amethyst is not its price");
+        assert!(outfits.buy(0, Ware::Compass, &mut purse));
+        assert_eq!(purse, [0, 0, 0, 3]);
+        let kit = outfits.kit(0);
+        assert!(kit.compass && kit.slots == [None; UTILITY_SLOTS]);
+        // Once a life: not again while it is theirs.
+        assert_eq!(price(Ware::Compass, &kit, &none), None);
+        assert!(!outfits.buy(0, Ware::Compass, &mut purse));
+        // A potion goes on the second button beside it all the same.
+        assert!(outfits.buy(0, Ware::Utility(Utility::Speed), &mut purse));
+        // Lost on dying, and to be bought again.
+        outfits.die(0);
+        assert!(!outfits.kit(0).compass);
+        assert!(outfits.buy(0, Ware::Compass, &mut [0, 0, 0, 2]));
+        // A kit goes over the network as it did before there was one: the
+        // same bytes with it and without, and read back without it.
+        let with = Kit { sword: 2, compass: true, ..Kit::default() };
+        let without = Kit { sword: 2, ..Kit::default() };
+        let (sent, plain) = (postcard::to_allocvec(&with).unwrap(), postcard::to_allocvec(&without).unwrap());
+        assert_eq!(sent, plain);
+        assert_eq!(postcard::from_bytes::<Kit>(&sent).unwrap(), without);
+        // And the wares before it are numbered as they were.
+        assert_eq!(postcard::to_allocvec(&Ware::Trap).unwrap(), vec![8]);
+        assert_eq!(postcard::to_allocvec(&Ware::Compass).unwrap(), vec![9]);
     }
 
     #[test]
@@ -2950,35 +3169,35 @@ mod tests {
         let mut purse: Purse = [0, 3, 0, 6];
         assert!(outfits.buy(0, Ware::Utility(Utility::Speed), &mut purse));
         assert!(!outfits.spend(0, Utility::Fireball) && !outfits.kits[0].fast(10.0));
-        assert_eq!(outfits.drink(0, 10.0), Some(Utility::Speed));
-        assert_eq!(outfits.drink(0, 10.0), None, "there was only one");
+        assert_eq!(outfits.drink(0, Utility::Healing, 10.0), None, "not the potion they have");
+        assert_eq!(outfits.drink(0, Utility::Speed, 10.0), Some(Utility::Speed));
+        assert_eq!(outfits.drink(0, Utility::Speed, 10.0), None, "there was only one");
         assert!(outfits.kits[0].fast(10.0) && outfits.kits[0].fast(10.0 + FAST_SECS - 0.5));
-        assert!(!outfits.buy(0, Ware::Utility(Utility::Healing), &mut purse), "the button still holds the speed");
         outfits.tick(0.1, 30.0, &[]);
-        assert_eq!(outfits.kits[0].utility, Some(Utility::Speed));
+        assert_eq!(outfits.kits[0].slots[0], Some(Stack { utility: Utility::Speed, count: 0 }));
         outfits.tick(0.1, 10.0 + FAST_SECS + 0.1, &[]);
         assert_eq!(outfits.kits[0], Kit::default());
         // The invisibility lasts its 30 s, or until they hit or are hit;
         // the healing is at once, and the button empty the moment the
         // last is gone.
         assert!(outfits.buy(0, Ware::Utility(Utility::Invisibility), &mut purse));
-        assert_eq!(outfits.drink(0, 100.0), Some(Utility::Invisibility));
+        assert_eq!(outfits.drink(0, Utility::Invisibility, 100.0), Some(Utility::Invisibility));
         assert!(outfits.kits[0].unseen(100.0 + UNSEEN_SECS - 0.5) && !outfits.kits[0].unseen(100.0 + UNSEEN_SECS));
         outfits.tick(0.1, 200.0, &[]);
         assert_eq!(outfits.kits[0], Kit::default());
         assert!(outfits.buy(0, Ware::Utility(Utility::Invisibility), &mut purse));
-        assert_eq!(outfits.drink(0, 150.0), Some(Utility::Invisibility));
+        assert_eq!(outfits.drink(0, Utility::Invisibility, 150.0), Some(Utility::Invisibility));
         assert!(outfits.kits[0].unseen(151.0) && !outfits.reveal(1), "seat 1 was in plain sight");
         assert!(outfits.reveal(0) && !outfits.kits[0].unseen(151.0) && !outfits.reveal(0));
         outfits.tick(0.1, 151.0, &[]);
         assert_eq!(outfits.kits[0], Kit::default(), "and the button is empty again");
         assert!(outfits.buy(0, Ware::Utility(Utility::Healing), &mut purse));
-        assert_eq!(outfits.drink(0, 200.0), Some(Utility::Healing));
+        assert_eq!(outfits.drink(0, Utility::Healing, 200.0), Some(Utility::Healing));
         outfits.tick(0.1, 200.1, &[]);
-        assert_eq!(outfits.kits[0].utility, None);
+        assert_eq!(outfits.kits[0].slots, [None; UTILITY_SLOTS]);
         // A fireball is not drunk.
-        outfits.kits[0] = Kit { utility: Some(Utility::Fireball), count: 1, ..Kit::default() };
-        assert_eq!(outfits.drink(0, 200.0), None);
+        outfits.kits[0] = Kit::default().holding(Utility::Fireball, 1);
+        assert_eq!(outfits.drink(0, Utility::Fireball, 200.0), None);
         assert!(outfits.spend(0, Utility::Fireball) && !outfits.spend(0, Utility::Fireball));
 
         // Team 1 has two traps waiting and a heal pool. Seat 0, of team 0,

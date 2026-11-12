@@ -395,49 +395,124 @@ impl Grid {
             }
         }
         let (left, landed) = (left?, landed?);
-        let span = Span {
-            from: start + along * (left - SPAN_INSET),
-            to: start + along * (landed + SPAN_INSET),
-        };
+        let span = Span::straight(start + along * (left - SPAN_INSET), start + along * (landed + SPAN_INSET));
         (self.height(span.from).is_some() && self.height(span.to).is_some()).then_some(span)
     }
 }
 
-/// A straight bridge to be laid: from its first rung to its last, each
-/// over land.
+/// A bridge to be laid: from its first rung to its last, each over land,
+/// and how it bends on the way. Straight between the two until
+/// 2026-11-12, when Hajun found a straight bridge "look too ai": nobody
+/// walks 40 m over the void in a dead straight line.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct Span {
     pub from: Vec2,
     pub to: Vec2,
+    /// How far it swings to the right of the straight line between the
+    /// two, in metres: in one sweep, in two and in three along its length
+    /// (so much of the sine of one, two and three half turns), each
+    /// nothing at both ends, where it meets the land as it would straight.
+    /// All nothing for a straight one.
+    pub bend: [f32; 3],
 }
 
 impl Span {
-    /// How long it is, in metres: what it costs to lay.
-    pub fn length(&self) -> f32 {
+    /// The straight bridge from `from` to `to`.
+    pub fn straight(from: Vec2, to: Vec2) -> Self {
+        Self {
+            from,
+            to,
+            bend: [0.0; 3],
+        }
+    }
+
+    /// This one, bending by `bend` on the way ([`Span::bend`]).
+    pub fn bent(self, bend: [f32; 3]) -> Self {
+        Self { bend, ..self }
+    }
+
+    /// How far it is straight from its one end to its other, in metres.
+    pub fn chord(&self) -> f32 {
         self.from.distance(self.to)
     }
 
-    /// How many planks it is: as few as are no longer than a plank is
-    /// ([`PLANK_SPACING`]), all of a length.
+    /// How long it is, in metres, bends and all: what it costs to lay.
+    pub fn length(&self) -> f32 {
+        if self.bend == [0.0; 3] {
+            return self.chord();
+        }
+        const PIECES: usize = 48;
+        (0..PIECES)
+            .map(|piece| {
+                self.point(piece as f32 / PIECES as f32)
+                    .distance(self.point((piece + 1) as f32 / PIECES as f32))
+            })
+            .sum()
+    }
+
+    /// How many planks it is: as few as are, on average, no longer than a
+    /// plank is ([`PLANK_SPACING`]).
     pub fn planks(&self) -> usize {
         ((self.length() / PLANK_SPACING).ceil() as usize).max(1)
+    }
+
+    /// Where it is `share` of the way from its one end to its other.
+    pub fn point(&self, share: f32) -> Vec2 {
+        let share = share.clamp(0.0, 1.0);
+        let along = self.way();
+        let aside: f32 = self
+            .bend
+            .iter()
+            .enumerate()
+            .map(|(swing, far)| far * ((swing + 1) as f32 * std::f32::consts::PI * share).sin())
+            .sum();
+        self.from.lerp(self.to, share) + Vec2::new(-along.y, along.x) * aside
+    }
+
+    /// Which way it runs there.
+    pub fn tangent(&self, share: f32) -> Vec2 {
+        let share = share.clamp(0.0, 1.0);
+        let along = self.way();
+        let turn: f32 = self
+            .bend
+            .iter()
+            .enumerate()
+            .map(|(swing, far)| {
+                let turns = (swing + 1) as f32 * std::f32::consts::PI;
+                far * turns * (turns * share).cos()
+            })
+            .sum();
+        (along * self.chord() + Vec2::new(-along.y, along.x) * turn).normalize_or(along)
+    }
+
+    /// How far along it `at` is, by the straight line between its ends:
+    /// from 0 at the one to 1 at the other.
+    pub fn share_of(&self, at: Vec2) -> f32 {
+        ((at - self.from).dot(self.way()) / self.chord().max(1e-3)).clamp(0.0, 1.0)
     }
 
     /// Where its rung numbered `index` is: the first at its start, the
     /// last, numbered [`Span::planks`], at its end.
     pub fn rung(&self, index: usize) -> Vec2 {
-        self.from.lerp(self.to, (index as f32 / self.planks() as f32).min(1.0))
+        self.point(index as f32 / self.planks() as f32)
     }
 
-    /// Which way it runs, across the ground.
+    /// Which way it runs from its one end to its other, across the
+    /// ground.
     pub fn way(&self) -> Vec2 {
         (self.to - self.from).normalize_or_zero()
     }
 
-    /// Which way it runs as a plank heads, in radians: a turn of this
-    /// about the upright points -Z along it.
+    /// Which way it runs from end to end as a plank heads, in radians: a
+    /// turn of this about the upright points -Z along it.
     pub fn heading(&self) -> f32 {
         let way = self.way();
+        (-way.x).atan2(-way.y)
+    }
+
+    /// Which way it runs at its rung numbered `index`, as a plank heads.
+    pub fn heading_at(&self, index: usize) -> f32 {
+        let way = self.tangent(index as f32 / self.planks() as f32);
         (-way.x).atan2(-way.y)
     }
 }
@@ -774,6 +849,14 @@ impl Nav {
             return Some(at);
         }
         self.foothold(at).map(|index| self.grid.centre(index))
+    }
+
+    /// The place to walk on nearest `at`, no further than `within`: what
+    /// someone knocked off an edge steers back for, in the air.
+    pub fn nearest_walkable_within(&self, at: Vec2, within: f32) -> Option<Vec2> {
+        self.grid
+            .nearest(at, within, |index| self.walkable(index))
+            .map(|index| self.grid.centre(index))
     }
 
     /// Whether there is a way to walk from `a` to `b`, over land and
@@ -1156,6 +1239,48 @@ mod tests {
         assert!(back.from.x > 17.0 && back.to.x < 3.0 && (back.from.y + 1.0).abs() < 0.01, "{back:?}");
         // No span to land that is not there.
         assert_eq!(grid.span(Region::Team(0), Region::Sapphire(1), 0.0), None);
+    }
+
+    #[test]
+    fn a_bent_span_ends_where_the_straight_one_does_and_is_longer_and_walked() {
+        let grid = Arc::new(two_islands());
+        let straight = grid.span(Region::Team(0), Region::Middle, 0.0).unwrap();
+        let bent = straight.bent([0.8, -0.3, 0.15]);
+        // The same ends, the same way in at them or nearly; out to the
+        // side between, to its right for the first sweep.
+        assert_eq!((bent.from, bent.to), (straight.from, straight.to));
+        assert_eq!(bent.rung(0), straight.from);
+        assert!(bent.rung(bent.planks()).distance(straight.to) < 1e-3);
+        let middle = bent.point(0.5);
+        assert!((middle.y - (0.8 - 0.15)).abs() < 1e-3 && (middle.x - 10.0).abs() < 0.3, "{middle}");
+        assert!(bent.length() > straight.length() && bent.length() < straight.length() * 1.1);
+        assert!(bent.planks() >= straight.planks());
+        // No plank much longer than a plank, none turned far from the
+        // last, and each headed as the bridge runs there.
+        let planks = bent.planks();
+        for index in 1..=planks {
+            let (a, b) = (bent.rung(index - 1), bent.rung(index));
+            assert!(a.distance(b) <= PLANK_SPACING * 1.08, "plank {index} is {} m", a.distance(b));
+            let run = (b - a).normalize();
+            let heading = bent.heading_at(index);
+            let headed = Vec2::new(-heading.sin(), -heading.cos());
+            assert!(run.dot(headed) > 0.96, "rung {index}: {run} against {headed}");
+            if index > 1 {
+                let before = (a - bent.rung(index - 2)).normalize();
+                assert!(run.dot(before) > (0.2f32).cos(), "a turn of {} at rung {index}", run.angle_to(before));
+            }
+        }
+        // How far along someone beside it is.
+        assert!((bent.share_of(Vec2::new(10.0, 3.0)) - 0.5).abs() < 0.02);
+        // Laid, it joins the two as the straight one would, and is walked
+        // along its own middle.
+        let mut nav = Nav::new(grid);
+        for index in 0..=planks {
+            nav.hear(4, 0, index as u16, bent.rung(index));
+        }
+        assert!(nav.joined(Region::Team(0), Region::Middle));
+        assert!(nav.walkable_at(middle) && nav.on_plank(middle));
+        assert!(!nav.on_plank(Vec2::new(10.0, -1.2)), "the straight line's middle is off it");
     }
 
     #[test]

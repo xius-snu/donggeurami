@@ -314,7 +314,7 @@ fn shelves(shop: Shop) -> Vec<Vec<Ware>> {
     match shop {
         Shop::Items => vec![
             vec![Ware::Bridge, Ware::Sword(1), Ware::Sword(2), Ware::Sword(3)],
-            vec![Ware::Shield(1), Ware::Shield(2), Ware::Shield(3)],
+            vec![Ware::Shield(1), Ware::Shield(2), Ware::Shield(3), Ware::Compass],
             Utility::ALL.into_iter().map(Ware::Utility).collect(),
         ],
         Shop::Upgrades => vec![vec![
@@ -329,8 +329,8 @@ fn shelves(shop: Shop) -> Vec<Vec<Ware>> {
 
 /// How a card stands for you: to be bought, for so many of an item, which
 /// you have or have not; yours already; with no more of it to have; or,
-/// for something that goes on the second button, kept off it by what is
-/// on it.
+/// for something that goes on a button, with every button taken by
+/// another kind.
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum State {
     Buy { item: Item, cost: u16, able: bool },
@@ -473,6 +473,13 @@ fn offer(ware: Ware, outfit: &Outfit, held: &Purse) -> Offer {
             fill(&words.trap_stat, &[("seconds", &whole(rules::BLIND_SECS))]),
             Some((team.traps, rules::TRAPS_MOST)),
         ),
+        Ware::Compass => (
+            Picture::Compass,
+            colours.arena.compass.with_alpha(1.0),
+            words.compass.clone(),
+            words.compass_stat.clone(),
+            None,
+        ),
     };
     let state = match price(ware, kit, team) {
         Some((item, cost)) => State::Buy {
@@ -481,13 +488,16 @@ fn offer(ware: Ware, outfit: &Outfit, held: &Purse) -> Offer {
             able: held[item.index()] >= cost,
         },
         None => match ware {
-            Ware::Sword(_) | Ware::Shield(_) | Ware::StrongerSwords | Ware::HealPool => State::Owned,
-            Ware::Utility(utility) if kit.utility.is_some_and(|on| on != utility) => State::Taken,
+            Ware::Sword(_) | Ware::Shield(_) | Ware::StrongerSwords | Ware::HealPool | Ware::Compass => State::Owned,
+            // None of it, and not to be had: every button holds another
+            // kind (five buttons since 2026-11-13; with the one there was,
+            // any other kind on it).
+            Ware::Utility(utility) if kit.slot_of(utility).is_none() => State::Taken,
             _ => State::Max,
         },
     };
     let on_the_button = match ware {
-        Ware::Utility(utility) if kit.utility == Some(utility) => kit.count,
+        Ware::Utility(utility) => kit.held(utility),
         _ => 0,
     };
     Offer {
@@ -874,7 +884,7 @@ mod tests {
         // five cards.
         let (items, upgrades) = (shelves(Shop::Items), shelves(Shop::Upgrades));
         assert_eq!((items.len(), upgrades.len()), (3, 1));
-        assert_eq!(items.iter().map(Vec::len).sum::<usize>(), 12);
+        assert_eq!(items.iter().map(Vec::len).sum::<usize>(), 13);
         assert_eq!(upgrades[0].len(), 5);
         for (shop, rows) in [(Shop::Items, &items), (Shop::Upgrades, &upgrades)] {
             for ware in rows.iter().flatten() {
@@ -901,17 +911,26 @@ mod tests {
         assert_eq!(offer(Ware::Sword(1), &bare, &[9, 0, 0, 0]).stat, "+5 dmg");
         assert_eq!(offer(Ware::Shield(3), &bare, &[0; 4]).stat, "-22% dmg");
         assert_eq!(offer(Ware::Utility(Utility::Speed), &bare, &[0; 4]).stat, "+40% 45s");
+        // The compass, beside the shields: 2 amethyst, and yours until you
+        // die, with nothing more of it to buy.
+        assert!(items[1].contains(&Ware::Compass));
+        let compass = offer(Ware::Compass, &bare, &[0, 0, 0, 2]);
+        assert_eq!(compass.state, State::Buy { item: Item::Amethyst, cost: 2, able: true });
+        let tracking = Outfit {
+            kit: Kit { compass: true, ..Kit::default() },
+            ..bare
+        };
+        assert_eq!(offer(Ware::Compass, &tracking, &[0, 0, 0, 9]).state, State::Owned);
         // With the silver sword, the basic and the silver are yours and
-        // the aura is still to buy; with a fireball on the button, a
-        // potion is kept off it, and the fireball's card counts them, up
-        // to the three the button holds.
+        // the aura is still to buy; with fireballs on a button, a potion
+        // is to be had beside them, on the next, and the fireball's card
+        // counts them, up to the three a button holds.
         let armed = Outfit {
             kit: Kit {
                 sword: 2,
-                utility: Some(Utility::Fireball),
-                count: 2,
                 ..Kit::default()
-            },
+            }
+            .holding(Utility::Fireball, 2),
             team: Upgrades {
                 forge: 4,
                 shields: 2,
@@ -924,15 +943,26 @@ mod tests {
         assert_eq!(offer(Ware::Sword(1), &armed, &rich).state, State::Owned);
         assert_eq!(offer(Ware::Sword(2), &armed, &rich).state, State::Owned);
         assert!(matches!(offer(Ware::Sword(3), &armed, &rich).state, State::Buy { able: true, .. }));
-        assert_eq!(offer(Ware::Utility(Utility::Speed), &armed, &rich).state, State::Taken);
+        let speed = offer(Ware::Utility(Utility::Speed), &armed, &rich);
+        assert!(matches!(speed.state, State::Buy { able: true, .. }) && speed.held == 0);
         let fireball = offer(Ware::Utility(Utility::Fireball), &armed, &rich);
         assert!(matches!(fireball.state, State::Buy { able: true, .. }) && fireball.held == 2);
         let full = Outfit {
-            kit: Kit { count: 3, ..armed.kit },
+            kit: armed.kit.holding(Utility::Fireball, 3),
             ..armed
         };
         let fireball = offer(Ware::Utility(Utility::Fireball), &full, &rich);
         assert_eq!((fireball.state, fireball.held), (State::Max, 3));
+        // With every button taken by another kind, there is nowhere for
+        // one more kind to go.
+        let crowded = Outfit {
+            kit: Kit {
+                slots: [Some(roundtown_net::Stack { utility: Utility::Fireball, count: 1 }); roundtown_net::UTILITY_SLOTS],
+                ..Kit::default()
+            },
+            ..armed
+        };
+        assert_eq!(offer(Ware::Utility(Utility::Speed), &crowded, &rich).state, State::Taken);
         // An upgrade taken to its last step has no more to sell, and
         // shows every pip lit; one part way shows the next step's price.
         let forge = offer(Ware::Forge, &armed, &rich);

@@ -1,5 +1,10 @@
 <resources>
     <style name="Theme.Donggeurami" parent="Theme.AppCompat.NoActionBar">
+        <!-- What shows before the game has drawn its first frame: black,
+             as the cover the game opens under is (src/intro.rs,
+             colours.intro.cover in assets/ui.ron), so that nothing
+             flashes between the two. -->
+        <item name="android:windowBackground">@android:color/black</item>
         <item name="android:windowFullscreen">true</item>
         <item name="android:windowContentOverlay">@null</item>
         <item name="android:windowDrawsSystemBarBackgrounds">true</item>

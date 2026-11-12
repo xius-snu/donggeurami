@@ -39,16 +39,35 @@
 //!
 //! All of it is this device's own: nobody else sees the band, the count
 //! in front of you, or your hand at your mouth.
+//!
+//! **There are five such buttons** (since 2026-11-13, Hajun's
+//! `new4morebuttonlayout.jpg`: "4 more buttons that are hidden by default
+//! until either u press the ... toggle button or u buy an item that fills
+//! up another slot", and "it fills up the slots according to buy order so
+//! u can buy more than 1 item and hold it at once"): the second button,
+//! which is always there, and four more on a ring round it and the
+//! others (`hud::utility_slot`), each with one kind of thing on it, in
+//! the order the kinds were bought (`Kit::slots`). Each works as the one
+//! button did: its own picture and count, a potion's time over its own
+//! button, a press or a hold and a drag by what is on it. One of the
+//! four more is shown while something is on it; the three dots over them
+//! all ([`MoreSlots`], `hud::MoreButton`) show the empty ones as well,
+//! and put those away again, lit while they do, and are off again at each
+//! new game. The dots never put away a button with something on it
+//! (mine: it could not be used). One thing at a time: while a finger
+//! aims, no other button aims or drinks; with a potion at your mouth, a
+//! press on its button puts it down and one on another potion's does
+//! nothing. Q is the second button on desktop, and 1 to 5 the five.
 
 use bevy::light::{NotShadowCaster, NotShadowReceiver};
 use bevy::picking::pointer::PointerId;
 use bevy::prelude::*;
-use roundtown_net::Utility;
 use roundtown_net::bridge_wars::{DRINK_SECS, FIREBALL_AHEAD, FIREBALL_RADIUS, FIREBALL_RANGE};
+use roundtown_net::{Stack, UTILITY_SLOTS, Utility};
 
 use crate::arena::{ArenaSystems, FightTime, Fighting, Health, InArena, Outfit, Used};
 use crate::bridge;
-use crate::hud::{self, DialogUp, Pictures, UtilityCount, UtilityPicture, UtilitySlot, UtilityTimer};
+use crate::hud::{self, DialogUp, MoreButton, Pictures, UtilityCount, UtilityPicture, UtilitySlot, UtilityTimer};
 use crate::island::{Islands, Venue};
 use crate::market;
 use crate::range;
@@ -86,14 +105,31 @@ const DRINK_OVER: f32 = 0.25;
 /// effect still lasting: this share of its alpha.
 const NONE_LEFT: f32 = 0.38;
 
-/// The second button was pressed, by this finger or the mouse.
-#[derive(Message, Clone, Copy)]
-struct SlotPressed(PointerId);
+/// The keys that use each button on desktop: Q the second button, as when
+/// it was the only one, and 1 to 5 the five.
+const SLOT_KEYS: [&[KeyCode]; UTILITY_SLOTS] = [
+    &[KeyCode::KeyQ, KeyCode::Digit1],
+    &[KeyCode::Digit2],
+    &[KeyCode::Digit3],
+    &[KeyCode::Digit4],
+    &[KeyCode::Digit5],
+];
 
-/// What your hand is doing at the second button.
+/// One of the buttons was pressed: which (`Kit::slots`), by this finger
+/// or the mouse.
+#[derive(Message, Clone, Copy)]
+struct SlotPressed(usize, PointerId);
+
+/// Whether the four more buttons are shown though nothing is on them:
+/// what the three dots turn on and off (`hud::MoreButton`). One with
+/// something on it is shown either way.
+#[derive(Resource, Default, PartialEq)]
+pub(crate) struct MoreSlots(pub(crate) bool);
+
+/// What your hand is doing at the buttons.
 #[derive(Resource, Default)]
 struct Hand {
-    /// The finger holding it down to aim, if one is.
+    /// The finger holding one down to aim, if one is.
     hold: Option<Hold>,
     /// How long until something aimed can be used again, in seconds.
     rest: f32,
@@ -103,13 +139,15 @@ struct Hand {
     health: f32,
 }
 
-/// A finger, or the mouse, holding the button down to aim: which; where
-/// it went down, once that is read, in the window's own pixels; for how
-/// long; whether it has ever been dragged out far enough to aim; and
-/// which way it aims now, as a plank heads, if it is out that far.
+/// A finger, or the mouse, holding a button down to aim: which, and what
+/// is on the button it holds; where it went down, once that is read, in
+/// the window's own pixels; for how long; whether it has ever been
+/// dragged out far enough to aim; and which way it aims now, as a plank
+/// heads, if it is out that far.
 #[derive(Clone, Copy, Debug)]
 struct Hold {
     pointer: PointerId,
+    utility: Utility,
     from: Option<Vec2>,
     age: f32,
     out: bool,
@@ -117,9 +155,10 @@ struct Hold {
 }
 
 impl Hold {
-    fn new(pointer: PointerId) -> Self {
+    fn new(pointer: PointerId, utility: Utility) -> Self {
         Self {
             pointer,
+            utility,
             from: None,
             age: 0.0,
             out: false,
@@ -183,6 +222,7 @@ struct DrinkText;
 pub(crate) fn plugin(app: &mut App) {
     app.add_message::<SlotPressed>()
         .init_resource::<Hand>()
+        .init_resource::<MoreSlots>()
         .add_observer(press)
         .add_systems(Startup, spawn_band)
         .add_systems(
@@ -191,18 +231,55 @@ pub(crate) fn plugin(app: &mut App) {
                 // Ahead of the game's own reading of what was used, so
                 // that it is used the frame it is let go.
                 (buttons, aim, drink).chain().before(ArenaSystems),
-                (fill_slot, recolour),
+                (fold_away, fill_slots).chain(),
+                recolour,
                 // The camera's place for this frame is set by then.
                 show_drink.after(crate::follow_camera),
             ),
         );
 }
 
-/// A press on the second button, as it goes down.
-fn press(press: On<Pointer<Press>>, slots: Query<(), With<UtilitySlot>>, mut pressed: MessageWriter<SlotPressed>) {
-    if press.button == PointerButton::Primary && slots.contains(press.entity) {
-        pressed.write(SlotPressed(press.pointer_id));
+/// A press on one of the buttons, as it goes down; or on the dots, which
+/// show the four more buttons, empty as they may be, or put the empty
+/// ones away again.
+fn press(
+    press: On<Pointer<Press>>,
+    slots: Query<&UtilitySlot>,
+    dots: Query<(), With<MoreButton>>,
+    mut pressed: MessageWriter<SlotPressed>,
+    mut more: ResMut<MoreSlots>,
+) {
+    if press.button != PointerButton::Primary {
+        return;
     }
+    if let Ok(slot) = slots.get(press.entity) {
+        pressed.write(SlotPressed(slot.0, press.pointer_id));
+    }
+    if dots.contains(press.entity) {
+        more.0 = !more.0;
+        info!("the four more buttons are {}", if more.0 { "shown" } else { "put away" });
+    }
+}
+
+/// Puts the empty buttons away again as a new game begins: the dots are
+/// off at the start of each.
+fn fold_away(fighting: Res<Fighting>, mut game: Local<u32>, mut more: ResMut<MoreSlots>) {
+    if fighting.game != *game {
+        *game = fighting.game;
+        more.set_if_neq(MoreSlots(false));
+    }
+}
+
+/// What is on the button numbered `slot` of `kit`, if anything is.
+fn on_slot(kit: &roundtown_net::Kit, slot: usize) -> Option<Stack> {
+    kit.slots.get(slot).copied().flatten()
+}
+
+/// Whether the button numbered `slot` is to be seen: the second button
+/// always, and each of the four more while something is on it, or the
+/// dots are on.
+fn slot_shown(slot: usize, filled: bool, more: bool) -> bool {
+    slot == 0 || filled || more
 }
 
 /// Whether you are in a fight, alive, with nothing in the way of using
@@ -211,9 +288,11 @@ fn in_play(fighting: &Fighting, dialog: &DialogUp, venue: Venue, dead: bool) -> 
     fighting.playing && !dialog.0 && venue == Venue::Arena && !dead
 }
 
-/// Takes a press on the button, or Q: a potion is begun, or, pressed
-/// again, put down; what is aimed is held to aim from then, or, by the
-/// key, used the way you face.
+/// Takes a press on one of the buttons, or its key: a potion is begun,
+/// or, its button pressed again, put down; what is aimed is held to aim
+/// from then, or, by the key, used the way you face. One thing at a
+/// time: nothing while a finger aims, and no aiming with a potion at your
+/// mouth.
 #[allow(clippy::too_many_arguments)]
 fn buttons(
     mut pressed: MessageReader<SlotPressed>,
@@ -227,30 +306,30 @@ fn buttons(
     mut used: MessageWriter<Used>,
     mut commands: Commands,
 ) {
-    let by_finger = pressed.read().last().map(|pressed| pressed.0);
-    let by_key = keyboard.just_pressed(KeyCode::KeyQ);
-    if by_finger.is_none() && !by_key {
+    let by_finger = pressed.read().last().map(|pressed| (pressed.0, Some(pressed.1)));
+    let by_key = || SLOT_KEYS.iter().position(|keys| keyboard.any_just_pressed(keys.iter().copied()));
+    let Some((slot, by_finger)) = by_finger.or_else(|| by_key().map(|slot| (slot, None))) else {
         return;
-    }
+    };
     let Ok((you, mut body, &venue, dead, drinking, health)) = me.single_mut() else {
         return;
     };
-    if !in_play(&fighting, &dialog, venue, dead) {
+    if !in_play(&fighting, &dialog, venue, dead) || hand.hold.is_some() {
         return;
     }
-    let Some(utility) = outfit.kit.utility.filter(|_| outfit.kit.count > 0) else {
+    let Some(utility) = on_slot(&outfit.kit, slot).filter(|stack| stack.count > 0).map(|stack| stack.utility) else {
         return;
     };
     if utility.drunk() {
-        if drinking {
-            commands.entity(you).remove::<Drinking>();
-            hand.potion = None;
-            info!("put the potion down");
-        } else {
+        if !drinking {
             commands.entity(you).insert(Drinking { left: DRINK_SECS });
             hand.potion = Some(utility);
             hand.health = health.map_or(1.0, Health::share);
             info!("drinking {utility:?}");
+        } else if hand.potion == Some(utility) {
+            commands.entity(you).remove::<Drinking>();
+            hand.potion = None;
+            info!("put the potion down");
         }
         return;
     }
@@ -260,7 +339,7 @@ fn buttons(
         return;
     }
     match by_finger {
-        Some(pointer) => hand.hold = Some(Hold::new(pointer)),
+        Some(pointer) => hand.hold = Some(Hold::new(pointer, utility)),
         None => {
             let heading = heading_of(body.rotation);
             if throw(utility, heading, &mut body, &islands, &mut used) {
@@ -326,7 +405,7 @@ fn aim(
         shown.set_if_neq(Visibility::Hidden);
         return;
     };
-    let aimed = outfit.kit.utility.filter(|utility| utility.aimed() && outfit.kit.count > 0);
+    let aimed = Some(hold.utility).filter(|utility| utility.aimed() && outfit.kit.held(*utility) > 0);
     let (Some(utility), Ok((mut body, &venue, dead)), Ok(window)) = (aimed, me.single_mut(), windows.single()) else {
         hand.hold = None;
         shown.set_if_neq(Visibility::Hidden);
@@ -389,7 +468,7 @@ fn drink(
     };
     let share = health.map_or(1.0, Health::share);
     let hit = share < hand.health - 1e-4;
-    let still_held = outfit.kit.utility == hand.potion && hand.potion.is_some() && outfit.kit.count > 0;
+    let still_held = hand.potion.is_some_and(|potion| outfit.kit.held(potion) > 0);
     if !in_play(&fighting, &dialog, venue, dead) || hit || !still_held {
         commands.entity(you).remove::<Drinking>();
         hand.potion = None;
@@ -400,37 +479,43 @@ fn drink(
     drinking.left -= time.delta_secs();
     if drinking.left <= 0.0 {
         commands.entity(you).remove::<Drinking>();
-        hand.potion = None;
-        used.write(Used::Potion);
+        if let Some(potion) = hand.potion.take() {
+            used.write(Used::Potion(potion));
+        }
     }
 }
 
-/// Shows on the button what is on it: its picture, how many, and the time
-/// its effect still lasts; and lights it while it is held to aim or a
-/// potion is at your mouth. Only what has changed is written.
+/// Shows on each button what is on it: its picture, how many, and the
+/// time its effect still lasts; lights the one held to aim, or whose
+/// potion is at your mouth; shows each of the four more while something
+/// is on it or the dots are on, and puts it away otherwise
+/// ([`slot_shown`]); and lights the dots while they are on. Only what has
+/// changed is written.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
-fn fill_slot(
+fn fill_slots(
     outfit: Res<Outfit>,
     clock: Res<FightTime>,
     changed: Res<UiChanged>,
     hand: Res<Hand>,
+    more: Res<MoreSlots>,
     drinking: Query<(), (With<Player>, With<Drinking>)>,
     added: Query<(), Added<UtilitySlot>>,
     mut images: ResMut<Assets<Image>>,
     mut pictures: ResMut<Pictures>,
-    mut shown: Query<(&mut ImageNode, &mut Visibility), With<UtilityPicture>>,
-    mut counts: Query<&mut Text, (With<UtilityCount>, Without<UtilityTimer>)>,
-    mut timers: Query<&mut Text, (With<UtilityTimer>, Without<UtilityCount>)>,
-    mut slots: Query<&mut BackgroundColor, With<UtilitySlot>>,
+    mut shown: Query<(&UtilityPicture, &mut ImageNode, &mut Visibility), Without<UtilitySlot>>,
+    mut counts: Query<(&UtilityCount, &mut Text), Without<UtilityTimer>>,
+    mut timers: Query<(&UtilityTimer, &mut Text), Without<UtilityCount>>,
+    mut slots: Query<(&UtilitySlot, &mut BackgroundColor, &mut Visibility), Without<UtilityPicture>>,
+    mut dots: Query<&mut BackgroundColor, (With<MoreButton>, Without<UtilitySlot>)>,
 ) {
     let kit = outfit.kit;
     if outfit.is_changed() || !added.is_empty() || (changed.is_changed() && !changed.is_added()) {
-        for (mut image, mut visibility) in &mut shown {
-            match kit.utility {
-                Some(utility) => {
-                    let (picture, tint) = market::look_of(utility);
+        for (of, mut image, mut visibility) in &mut shown {
+            match on_slot(&kit, of.0) {
+                Some(stack) => {
+                    let (picture, tint) = market::look_of(stack.utility);
                     let handle = pictures.of(&mut images, picture);
-                    let tint = if kit.count == 0 { tint.with_alpha(tint.alpha() * NONE_LEFT) } else { tint };
+                    let tint = if stack.count == 0 { tint.with_alpha(tint.alpha() * NONE_LEFT) } else { tint };
                     if image.image != handle || image.color != tint {
                         image.image = handle;
                         image.color = tint;
@@ -442,23 +527,41 @@ fn fill_slot(
                 }
             }
         }
-        let count = if kit.utility.is_some() && kit.count > 0 { kit.count.to_string() } else { String::new() };
-        for mut text in &mut counts {
+        for (of, mut text) in &mut counts {
+            let count = on_slot(&kit, of.0).filter(|stack| stack.count > 0).map_or(String::new(), |stack| stack.count.to_string());
             if text.0 != count {
-                text.0.clone_from(&count);
+                text.0 = count;
             }
         }
     }
-    let lasting = timer_text(f32::from(kit.fast_until.max(kit.unseen_until)) - clock.0);
-    for mut text in &mut timers {
+    for (of, mut text) in &mut timers {
+        let lasting = timer_text(f32::from(lasts_until(&kit, of.0)) - clock.0);
         if text.0 != lasting {
-            text.0.clone_from(&lasting);
+            text.0 = lasting;
         }
     }
     let colours = ui().colours.hud;
-    let lit = hand.hold.is_some() || !drinking.is_empty();
-    for mut fill in &mut slots {
-        fill.set_if_neq(BackgroundColor(if lit { colours.button_held } else { colours.button }));
+    let in_hand = hand.hold.map(|hold| hold.utility).or(hand.potion.filter(|_| !drinking.is_empty()));
+    let lit = in_hand.and_then(|utility| kit.slot_of(utility));
+    for (slot, mut fill, mut visibility) in &mut slots {
+        fill.set_if_neq(BackgroundColor(if lit == Some(slot.0) { colours.button_held } else { colours.button }));
+        let seen = slot_shown(slot.0, on_slot(&kit, slot.0).is_some(), more.0);
+        visibility.set_if_neq(if seen { Visibility::Inherited } else { Visibility::Hidden });
+    }
+    for mut fill in &mut dots {
+        fill.set_if_neq(BackgroundColor(if more.0 { colours.button_held } else { colours.button }));
+    }
+}
+
+/// Until when, in whole seconds into the fight, what was drunk off the
+/// button numbered `slot` of `kit` lasts: the speed potion's button by how
+/// long they run fast, the invisibility's by how long they are unseen, and
+/// 0 for any other, or an empty one.
+fn lasts_until(kit: &roundtown_net::Kit, slot: usize) -> u16 {
+    match on_slot(kit, slot).map(|stack| stack.utility) {
+        Some(Utility::Speed) => kit.fast_until,
+        Some(Utility::Invisibility) => kit.unseen_until,
+        _ => 0,
     }
 }
 
@@ -633,7 +736,7 @@ mod tests {
         let facing = PI;
         // Held and dragged east, past the dead zone: it aims east, and
         // goes east let go, whichever way you face.
-        let mut hold = Hold::new(PointerId::Mouse);
+        let mut hold = Hold::new(PointerId::Mouse, Utility::Fireball);
         hold.drag(Vec2::new(500.0, 300.0), dt, dead, north);
         assert!(hold.aim.is_none() && !hold.out);
         hold.drag(Vec2::new(530.0, 300.0), dt, dead, north);
@@ -648,7 +751,7 @@ mod tests {
         assert_eq!(hold.let_go(facing), None);
         // A quick tap that never dragged goes the way you face; a long
         // press that never dragged is nothing.
-        let mut tap = Hold::new(PointerId::Mouse);
+        let mut tap = Hold::new(PointerId::Mouse, Utility::Builder);
         tap.drag(Vec2::new(500.0, 300.0), 0.1, dead, north);
         assert_eq!(tap.let_go(facing), Some(facing));
         tap.drag(Vec2::new(501.0, 300.0), 0.5, dead, north);
@@ -666,5 +769,39 @@ mod tests {
         // flies, the builder's as wide as its bridge.
         assert!(FIREBALL_BAND < 1.2 && FIREBALL_AHEAD + FIREBALL_RANGE > 10.0 * FIREBALL_BAND);
         assert!((BUILDER_BAND - 2.726).abs() < 1e-3);
+    }
+
+    #[test]
+    fn the_four_more_buttons_show_while_filled_or_the_dots_are_on_and_each_potion_times_its_own() {
+        use roundtown_net::Kit;
+        // The second button is always there. One of the four more is
+        // there with something on it, whatever the dots say, and empty
+        // only while the dots are on.
+        for more in [false, true] {
+            assert!(slot_shown(0, false, more) && slot_shown(0, true, more));
+            for slot in 1..UTILITY_SLOTS {
+                assert!(slot_shown(slot, true, more), "the dots never put away what you hold");
+                assert_eq!(slot_shown(slot, false, more), more);
+            }
+        }
+        // A key to each button, Q the second button's as it was, and no
+        // key two buttons'.
+        assert!(SLOT_KEYS[0].contains(&KeyCode::KeyQ));
+        let keys: Vec<KeyCode> = SLOT_KEYS.iter().flat_map(|keys| keys.iter().copied()).collect();
+        assert!(keys.iter().enumerate().all(|(at, key)| !keys[..at].contains(key)));
+        // Fireballs, then a speed potion, then an invisibility potion:
+        // three buttons in that order; each potion's time is over its own
+        // button, and a fireball's has none.
+        let kit = Kit {
+            fast_until: 70,
+            unseen_until: 55,
+            ..Kit::default()
+        }
+        .holding(Utility::Fireball, 2)
+        .holding(Utility::Speed, 0)
+        .holding(Utility::Invisibility, 1);
+        assert_eq!(on_slot(&kit, 1), Some(Stack { utility: Utility::Speed, count: 0 }));
+        assert_eq!((on_slot(&kit, 3), on_slot(&kit, UTILITY_SLOTS)), (None, None));
+        assert_eq!([0, 1, 2, 3, 4].map(|slot| lasts_until(&kit, slot)), [0, 70, 55, 0, 0]);
     }
 }

@@ -431,14 +431,14 @@ pub(crate) struct FightTime(pub(crate) f32);
 #[derive(Message, Clone, Copy)]
 pub(crate) struct Want(pub(crate) Ware);
 
-/// You have used what is on your second button (`utility`): a fireball
-/// thrown that way, as a plank heads; a builder sent off that way; or the
-/// potion drunk.
+/// You have used what is on one of your buttons (`utility`): a fireball
+/// thrown that way, as a plank heads; a builder sent off that way; or
+/// this potion drunk.
 #[derive(Message, Clone, Copy, Debug)]
 pub(crate) enum Used {
     Fireball { heading: f32 },
     Builder { heading: f32 },
-    Potion,
+    Potion(Utility),
 }
 
 /// A zombie whose model has been turned green.
@@ -508,6 +508,11 @@ struct Game {
     /// fight ([`warn_of_the_anchor`]).
     anchor_was: f32,
     anchor_said: f32,
+    /// Online, whether you have the compass (`compass`): this device's
+    /// own word of it, the server having sold it to you ([`hear`]) and
+    /// not sending it with the room's kits (`roundtown_net::Kit::compass`),
+    /// until you die. Offline it is in your kit as the rest is.
+    compass: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -923,6 +928,19 @@ fn hear(
                     info!("bought {} m of bridge", rules::BRIDGE_A_BUY);
                 }
             }
+            // The shop has sold you the compass: nobody is sent that but
+            // you, so this device keeps its own word of it.
+            Tell::Bought(Ware::Compass) => {
+                if let Some(game) = game.as_deref_mut()
+                    && game.online
+                {
+                    game.compass = true;
+                    let me = game.me;
+                    game.outfits.seat(me + 1);
+                    game.outfits.kits[me].compass = true;
+                    info!("bought the compass");
+                }
+            }
             Tell::Seated { seat: mine } => {
                 // Another game straight after the last keeps the view the
                 // first fixed the camera from.
@@ -1007,11 +1025,25 @@ fn follow_round(
     if game.seats != seats.0 {
         game.seats.clone_from(&seats.0);
     }
-    // What everyone has, and what each team has bought, is the server's.
-    if let Some(kits) = kits
-        && game.outfits.kits != kits.0
-    {
-        game.outfits.kits.clone_from(&kits.0);
+    // What everyone has, and what each team has bought, is the server's:
+    // but for your compass, which is not sent with it, and is put back on
+    // your own kit as this device has it.
+    if let Some(kits) = kits {
+        let (me, mine) = (game.me, game.compass);
+        let same = game.outfits.kits.len() == kits.0.len()
+            && game.outfits.kits.iter().zip(&kits.0).enumerate().all(|(seat, (here, theirs))| {
+                *here
+                    == Kit {
+                        compass: seat == me && mine,
+                        ..*theirs
+                    }
+            });
+        if !same {
+            game.outfits.kits.clone_from(&kits.0);
+            if let Some(kit) = game.outfits.kits.get_mut(me) {
+                kit.compass = mine;
+            }
+        }
     }
     if let Some(upgraded) = upgraded
         && game.outfits.teams != upgraded.0
@@ -1038,7 +1070,8 @@ fn follow_round(
         game.elapsed = PLAY_SECS - left;
         if !matches!(was, Stage::Playing { .. }) {
             game.said = game.elapsed;
-            hud::announce(&mut commands, None, &ui().words.arena.fight, hud::HEADLINE, FIGHT_SECS).insert(InArena);
+            let mine = your_team(game.my_team());
+            hud::announce(&mut commands, Some(&mine), &ui().words.arena.fight, hud::HEADLINE, FIGHT_SECS).insert(InArena);
         }
     }
     if let Stage::Over { winner, .. } = stage
@@ -1059,6 +1092,14 @@ fn follow_round(
     for (seat, &left) in health.iter().enumerate() {
         let before = game.health.get(seat).copied().unwrap_or(rules::HEALTH);
         if seat == game.me {
+            // Dead, your compass is gone with the rest.
+            if left <= 0.0 && game.compass {
+                game.compass = false;
+                let me = game.me;
+                if let Some(kit) = game.outfits.kits.get_mut(me) {
+                    kit.compass = false;
+                }
+            }
             if let Ok((you, at, mut mine, dead)) = me.single_mut() {
                 if (mine.left - left).abs() > 1e-3 {
                     mine.left = left;
@@ -1297,7 +1338,8 @@ fn play(
                     brains.squad.seat(seat, arrival.translation, yaw_of(arrival.rotation));
                 }
             }
-            hud::announce(&mut commands, None, &ui().words.arena.fight, hud::HEADLINE, FIGHT_SECS).insert(InArena);
+            let mine = your_team(game.my_team());
+            hud::announce(&mut commands, Some(&mine), &ui().words.arena.fight, hud::HEADLINE, FIGHT_SECS).insert(InArena);
             // From the start, or, for trying the timetable out, from as
             // far into it as `RT_ARENA_FROM` says.
             // Begun late, everything before then happens at once, as
@@ -1410,6 +1452,7 @@ fn open(
         brains: (!online).then(|| Box::new(Brains::new())),
         anchor_was: if online { rules::ANCHOR_HEALTH } else { ui().arena.anchor_health },
         anchor_said: f32::NEG_INFINITY,
+        compass: false,
     }
 }
 
@@ -1643,7 +1686,7 @@ fn use_things(
             requests.write(NetAsk::Use(match used {
                 Used::Fireball { heading } => Use::Fireball { heading },
                 Used::Builder { .. } => Use::Builder,
-                Used::Potion => Use::Potion,
+                Used::Potion(potion) => Use::Potion(potion),
             }));
             // The server takes the builder off your button; the builder
             // itself is yours to send (`utility` asks only with one there).
@@ -1669,8 +1712,8 @@ fn use_things(
                     bridge::send_builder(&mut commands, &assets, member, seat as u8, at.translation, heading);
                 }
             }
-            Used::Potion => {
-                if game.outfits.drink(seat, elapsed) == Some(Utility::Healing)
+            Used::Potion(potion) => {
+                if game.outfits.drink(seat, potion, elapsed) == Some(Utility::Healing)
                     && let Ok((at, mut health)) = me.single_mut()
                 {
                     let back = health.full * rules::HEALING;
@@ -2572,8 +2615,8 @@ fn drive_bots(
             {
                 fire::throw(&mut commands, &look, Flight::thrown(at, heading), seat, None);
             }
-            if order.drink
-                && game.outfits.drink(seat, elapsed) == Some(Utility::Healing)
+            if let Some(potion) = order.drink
+                && game.outfits.drink(seat, potion, elapsed) == Some(Utility::Healing)
                 && let Some(mut health) = health
             {
                 let back = health.full * rules::HEALING;
@@ -3006,9 +3049,24 @@ fn stand_anchors_up(anchors: &mut Anchors, islands: &mut Islands, visibilities: 
     }
 }
 
-/// "Team 3": `team` as it is written on the screen, counted from 1.
+/// "Team Green": `team` as it is written on the screen, by its colour
+/// (since 2026-11-12, Hajun: "team should be red, blue, green, yellow";
+/// "Team 3", counted from 1, until then). Red is the island at the bottom
+/// of the map, blue the one on its left, green the one at its top and
+/// yellow the one on its right, by seat (`arena_team`).
 fn team_name(team: u8) -> String {
-    fill(&ui().words.arena.team, &[("team", &(team + 1).to_string())])
+    let file = ui();
+    let words = &file.words.arena;
+    let colour = [&words.team_red, &words.team_blue, &words.team_green, &words.team_yellow]
+        .get(usize::from(team))
+        .map_or("?", |word| word.as_str());
+    fill(&words.team, &[("team", colour)])
+}
+
+/// "You are on Team Red": said under "Fight!" as the game begins, the
+/// names over heads being in their teams' colours now.
+fn your_team(team: u8) -> String {
+    fill(&ui().words.arena.your_team, &[("team", &team_name(team))])
 }
 
 // ---------------------------------------------------- what is drawn over it
@@ -3170,11 +3228,19 @@ fn panel_button(ask: Ask, text: String, fill: Fill, ink: Color) -> impl Bundle {
 }
 
 /// A name and a health bar over the head of everyone else in the game with
-/// health and a team: made as they come, in a teammate's colours or an
-/// enemy's, kept over their heads as the camera moves, the bar filled as
-/// far as their health goes, and put away while they are dead or off the
-/// screen, or you are not in the game. Small and faint, so as not to hide
-/// the fight.
+/// health and a team: made as they come, the name in their team's colour
+/// and the bar a teammate's or an enemy's, kept over their heads as the
+/// camera moves, the bar filled as far as their health goes, and put away
+/// while they are dead or off the screen, or you are not in the game.
+/// Small and faint, so as not to hide the fight.
+///
+/// **The bar's fill is the bar's child, not the tag's**: from 2026-11-08,
+/// when the name went over the bar and the two were put in a column,
+/// until 2026-11-12, this looked for the fill among the tag's own
+/// children, found none, and every bar stayed full whatever its body's
+/// health (Hajun: "i think i noticed the healthbar doesnt decrease
+/// visually"). The numbers floating off a body and the deaths were right
+/// all along.
 #[allow(clippy::too_many_arguments)]
 fn place_tags(
     me: Query<(&Venue, Option<&Team>), With<Player>>,
@@ -3183,6 +3249,7 @@ fn place_tags(
     bodies: Query<(Entity, &Transform, &Health, &Team, &Name, Has<Dead>), Without<Player>>,
     wears: Query<&Wears>,
     mut tags: Query<(Entity, &TagOf, &mut Visibility, &mut UiTransform, &ComputedNode, &Children)>,
+    parts: Query<&Children>,
     mut fills: Query<&mut Node, With<TagFill>>,
     mut commands: Commands,
 ) {
@@ -3191,7 +3258,7 @@ fn place_tags(
     if in_arena {
         for (body, _, _, team, name, _) in &bodies {
             if !tags.iter().any(|(_, of, ..)| of.0 == body) {
-                spawn_tag(&mut commands, body, name.as_str(), Some(*team) == my_team);
+                spawn_tag(&mut commands, body, name.as_str(), team.0, Some(*team) == my_team);
             }
         }
     }
@@ -3223,8 +3290,8 @@ fn place_tags(
         });
         shown.set_if_neq(Visibility::Inherited);
         let width = bar_width(health.share());
-        for child in children.iter() {
-            if let Ok(mut fill) = fills.get_mut(child)
+        for fill in fills_of(children, &parts) {
+            if let Ok(mut fill) = fills.get_mut(fill)
                 && fill.width != width
             {
                 fill.width = width;
@@ -3233,17 +3300,29 @@ fn place_tags(
     }
 }
 
+/// Everything a tag is made of that might be its bar's fill: its own
+/// parts, and theirs, the fill being inside the bar, which is inside the
+/// tag ([`spawn_tag`]).
+fn fills_of(tag: &Children, parts: &Query<&Children>) -> Vec<Entity> {
+    tag.iter()
+        .flat_map(|part| std::iter::once(part).chain(parts.get(part).into_iter().flat_map(|inner| inner.iter())))
+        .collect()
+}
+
 /// Whether `point`, in the window's logical pixels, is on the screen.
 fn on_screen(window: &Window, point: Vec2) -> bool {
     point.x >= 0.0 && point.y >= 0.0 && point.x <= window.width() && point.y <= window.height()
 }
 
-/// The name and the bar over `body`'s head, in a teammate's colours if
-/// `ally`, or an enemy's.
-fn spawn_tag(commands: &mut Commands, body: Entity, name: &str, ally: bool) {
+/// The name and the bar over `body`'s head: the name in its `team`'s
+/// colour (red, blue, green or yellow, since 2026-11-12; a teammate's
+/// green or an enemy's red until then), and the bar in a teammate's
+/// colour if `ally`, or an enemy's.
+fn spawn_tag(commands: &mut Commands, body: Entity, name: &str, team: u8, ally: bool) {
     let colours = ui().colours;
     let arena = colours.arena;
-    let (ink, hp) = if ally { (arena.ally, arena.hp_ally) } else { (arena.enemy, arena.hp_enemy) };
+    let ink = arena.team(team);
+    let hp = if ally { arena.hp_ally } else { arena.hp_enemy };
     commands
         .spawn((
             InArena,
@@ -3782,6 +3861,7 @@ mod tests {
             brains: None,
             anchor_was: 120.0,
             anchor_said: f32::NEG_INFINITY,
+            compass: false,
         };
         assert_eq!(game.my_team(), 0);
         assert_eq!(game.teams_in_play(), vec![0, 1, 2, 3]);
@@ -3807,7 +3887,9 @@ mod tests {
             game.die(seat);
         }
         assert_eq!(game.teams_in_play(), vec![0]);
-        assert_eq!(team_name(2), "Team 3");
+        assert_eq!(team_name(2), "Team Green");
+        assert_eq!(team_name(0), "Team Red");
+        assert_eq!(your_team(3), "You are on Team Yellow");
         // A zombie, in a seat past the players', is always back, whatever
         // the anchors, and is nobody's team to be left in play.
         game.anchors = [0.0; ARENA_TEAMS];
@@ -4068,10 +4150,8 @@ mod tests {
         // island's top as the game's arrivals are, onto it.
         let mut brains = Brains::new();
         for seat in 0..ARENA_SEATS {
-            let arrival = island::arrival(Venue::Arena, seat);
-            let at = arrival.translation;
+            let at = island::arrival(Venue::Arena, seat).translation;
             assert!(brains.nav.walkable_at(at.xz()), "seat {seat} at {at}");
-            brains.squad.seat(seat, at, yaw_of(arrival.rotation));
         }
         let seen: Vec<Seen> = (0..ARENA_SEATS)
             .map(|seat| Seen {
@@ -4086,22 +4166,41 @@ mod tests {
         let mut outfits = Outfits::default();
         outfits.seat(ARENA_SEATS);
         let mint = Mint::new(0.0, &mut || 0.5);
-        for seat in 0..ARENA_SEATS {
-            for _ in 0..3 {
-                let view = bots::View {
-                    elapsed: 0.0,
-                    nav: &brains.nav,
-                    seats: &seen,
-                    purses: brains.purses.as_slice(),
-                    outfits: &outfits,
-                    mint: &mint,
-                    anchors: [120.0; ARENA_TEAMS],
-                };
-                brains.squad.step(seat, &view, 1.0 / 60.0);
+        // Whoever each of them is and whichever way it sets off, by dice
+        // seeded here (a game's own are not, and for a night this test
+        // went by those). With nothing to do a bot wanders its island
+        // (since 2026-11-12), and the white outline in front of a stand is
+        // 2 cm over the island's top: the second of a team, who arrives at
+        // the edge of one, stood on it at 0.27 m now and then, where this
+        // asked for the island's top to the last of a metre, and failed two
+        // times in six (found by the session adding the item slots,
+        // 2026-11-13).
+        for seed in 0..16 {
+            brains.squad = Squad::new(seed, bots::Skill::MODERATE);
+            for seat in 0..ARENA_SEATS {
+                let arrival = island::arrival(Venue::Arena, seat);
+                brains.squad.seat(seat, arrival.translation, yaw_of(arrival.rotation));
             }
-            let body = brains.squad.bot(seat).expect("seated").body;
-            assert_eq!(body.at.y, island::LAND_TOP_OF_THE_ISLANDS, "seat {seat}");
-            assert!(body.free(&brains.nav), "seat {seat}: {body:?}");
+            for seat in 0..ARENA_SEATS {
+                for _ in 0..3 {
+                    let view = bots::View {
+                        elapsed: 0.0,
+                        nav: &brains.nav,
+                        seats: &seen,
+                        purses: brains.purses.as_slice(),
+                        outfits: &outfits,
+                        mint: &mint,
+                        anchors: [120.0; ARENA_TEAMS],
+                    };
+                    brains.squad.step(seat, &view, 1.0 / 60.0);
+                }
+                let body = brains.squad.bot(seat).expect("seated").body;
+                // On the ground, which is the island's top or the outline
+                // on it: no longer a quarter of a metre under it.
+                assert!(body.free(&brains.nav), "seed {seed}, seat {seat}: {body:?}");
+                let over = body.at.y - island::LAND_TOP_OF_THE_ISLANDS;
+                assert!((-1e-4..=0.03).contains(&over), "seed {seed}, seat {seat}: {body:?}");
+            }
         }
     }
 }

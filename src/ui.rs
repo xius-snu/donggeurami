@@ -544,6 +544,7 @@ pub(crate) struct Colours {
     #[serde(deserialize_with = "colour")]
     pub close_rim: Color,
     pub hud: HudColours,
+    pub intro: IntroColours,
     pub signup: SignupColours,
     pub settings: SettingsColours,
     pub house_builder: HouseBuilderColours,
@@ -567,6 +568,20 @@ pub(crate) struct HudColours {
     pub name_plate: Color,
     #[serde(deserialize_with = "colour")]
     pub icon: Color,
+}
+
+/// The opening, as the app starts (`intro`): the cover the town loads
+/// under, the town's name on it, and the ring of dust that goes out from
+/// your feet as you land.
+#[derive(Deserialize, Clone, Copy, PartialEq, Debug)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct IntroColours {
+    #[serde(deserialize_with = "colour")]
+    pub cover: Color,
+    #[serde(deserialize_with = "colour")]
+    pub title: Color,
+    #[serde(deserialize_with = "colour")]
+    pub dust: Color,
 }
 
 #[derive(Deserialize, Clone, Copy, PartialEq, Debug)]
@@ -718,13 +733,21 @@ pub(crate) struct ArenaColours {
     #[serde(deserialize_with = "colour")]
     pub damage: Color,
     #[serde(deserialize_with = "colour")]
-    pub ally: Color,
+    pub team_red: Color,
     #[serde(deserialize_with = "colour")]
-    pub enemy: Color,
+    pub team_blue: Color,
+    #[serde(deserialize_with = "colour")]
+    pub team_green: Color,
+    #[serde(deserialize_with = "colour")]
+    pub team_yellow: Color,
+    #[serde(deserialize_with = "colour")]
+    pub zombie: Color,
     #[serde(deserialize_with = "colour")]
     pub hp_ally: Color,
     #[serde(deserialize_with = "colour")]
     pub hp_enemy: Color,
+    #[serde(deserialize_with = "colour")]
+    pub compass: Color,
     #[serde(deserialize_with = "colour")]
     pub anchor_mine: Color,
     #[serde(deserialize_with = "colour")]
@@ -821,6 +844,17 @@ pub(crate) struct ArenaColours {
 }
 
 impl ArenaColours {
+    /// A team's colour, by its number: red, blue, green and yellow
+    /// (Hajun, 2026-11-12: "team should be red, blue, green, yellow. and
+    /// the name color should indicate the team"). A zombie's, which is on
+    /// no team, for any number past the four.
+    pub(crate) fn team(&self, team: u8) -> Color {
+        [self.team_red, self.team_blue, self.team_green, self.team_yellow]
+            .get(usize::from(team))
+            .copied()
+            .unwrap_or(self.zombie)
+    }
+
     /// The colour a sword's picture is tinted, by its tier, 1 to 3.
     pub(crate) fn sword(&self, tier: u8) -> Color {
         [self.sword_basic, self.sword_silver, self.sword_aura][usize::from(tier.clamp(1, 3)) - 1]
@@ -884,7 +918,14 @@ pub(crate) struct ArenaWords {
     pub match_found: String,
     pub fight: String,
     pub died: String,
+    /// A team as it is written, `{team}` its colour's word, one of the
+    /// four after it; and what is said of your own as the fight begins.
     pub team: String,
+    pub team_red: String,
+    pub team_blue: String,
+    pub team_green: String,
+    pub team_yellow: String,
+    pub your_team: String,
     pub out: String,
     pub anchor_gone: String,
     pub anchor_destroyed: String,
@@ -1045,6 +1086,9 @@ pub(crate) struct MarketWords {
     pub heal_pool_stat: String,
     pub trap: String,
     pub trap_stat: String,
+    /// The Player Compass Tracker's card.
+    pub compass: String,
+    pub compass_stat: String,
 }
 
 #[derive(Deserialize, PartialEq, Debug)]

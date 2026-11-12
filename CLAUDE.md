@@ -304,7 +304,11 @@ alone; the server is `cargo build -p roundtown_server`. Never `--workspace`,
 which would build the game with the server's half of replicon in it.
 
 Android needs the `release-android` profile, a manual strip step, and Gradle
-(`versionCode` in `mobile/android/app/build.gradle` is the build number: 23
+(`versionCode` in `mobile/android/app/build.gradle` is the build number: 24
+in the small hours of 2026-11-13, five buttons for things to use and
+several kinds held at once (protocol 14, the server deployed with it), and
+with it what two other sessions had in the tree: the computer's players'
+second round, the teams' colours, the compass, and the app's opening; 23
 on the night of 2026-11-12, the computer's players that play the game in
 a game played offline, the line about your anchor, and what a bot takes
 flying to it (protocol 13 still; the server deployed with the bots
@@ -602,6 +606,375 @@ was the town itself; everything below about the map, its islands, the
 void, the punch's knockback and its range held for the town then, and
 holds for the arena now.
 
+- **Since 2026-11-13 there are five buttons for things to use, and you
+  hold several kinds at once** (Hajun, with `new4morebuttonlayout.jpg`, a
+  screenshot with four circles drawn on it: "i want to update the ui
+  buttons on the minigame so that it has 4 more buttons that are hidden by
+  default until either u press the ... toggle button or u buy an item that
+  fills up another slot", and: "update the item shop purchase mechanic
+  correspondingly so that it fills up the slots according to buy order so
+  u can buy more than 1 item and hold it at once and adjust
+  bridgewarsgameevent.txt file accordingly to remove any of the 'only can
+  fill 1' mentions"). It is what makes room for more items to come.
+  **`PROTOCOL_VERSION` 14: what a kit is on the wire has changed, so the
+  server was deployed with it** (2026-11-12 15:49 UTC, the binary before
+  kept on the VM as `roundtown-server.prev-2026-11-13`), **and APK 23 is
+  told to update: APK 24 is the one that plays online** (below).
+  - **The rules** (`shared/src/lib.rs`): a `Kit` has `slots:
+    [Option<Stack>; UTILITY_SLOTS]`, five, a `Stack` being a kind and how
+    many, where it had one `utility` and a `count`. Buying a kind you
+    hold adds to its button (three fireballs, nine of anything else, as
+    before, `most_held`); a new kind goes on the first empty button
+    (`Kit::free_slot`), so they fill in the order things are bought; a
+    button keeps its place until it is empty, and nothing moves up to
+    fill a gap, so that what is under your thumb stays there. A potion
+    whose effect still lasts keeps its own button with none left on it,
+    the speed's while you run fast and the invisibility's while you are
+    unseen, each by itself (`Outfits::tick`). `Outfits::drink` and
+    `Use::Potion` say which potion. Dying empties every button, as it
+    emptied the one. With five kinds sold and five buttons, "Slots full"
+    (`words.market.taken`, "Slot full" until then) cannot come up yet: it
+    is there for the sixth kind. `Kit::held`, `slot_of`, `potion` and
+    `holding` are what everything else reads a kit by.
+  - **Where they are** (`hud::slot_place`, `MORE_RING`, `MORE_ANGLES`):
+    the second button where it was, and the four more on a second ring
+    round the sword's middle, 38 shares of the short side out where the
+    jump, second and bridge buttons are 20.5 out, at 0, 26.7, 53.3 and 80
+    degrees up from straight left of the sword, each the others' size,
+    3.5 clear of each other and of the first ring, the last ending beside
+    the dots. Measured off the sketch, whose circles are 37 to 40 out at
+    0, 25, 52 and 80 degrees, and evened out as the first three were. A
+    test keeps every button there clear of every other.
+  - **When they are seen** (`utility::fill_slots`, `slot_shown`,
+    `MoreSlots`): the second button always; each of the four more while
+    something is on it; and the empty ones too while the three dots are
+    on (`hud::MoreButton`, which did nothing until now), which are lit
+    while they are, as the bridge button is, and off again at each new
+    game (`fold_away`). A button put away takes no press (`Visibility`;
+    Bevy's picking and `hud::Presses` both pass over what is hidden).
+  - **Using them** (`utility::buttons`, `aim`, `drink`): each as the one
+    was, by what is on it: a hold and a drag to aim a fireball or a
+    builder, a press to drink, the count in its corner, a potion's
+    seconds over its own button. One thing at a time: while a finger
+    aims, no other button aims or drinks; with a potion at your mouth, a
+    press on its button puts it down and one on another potion's does
+    nothing. On desktop Q is the second button, as it was, and 1 to 5
+    the five.
+  - **The bots keep to one kind a life** (`shopping` in
+    `shared/src/bots.rs`: nothing on any button but what it fancies, and
+    none of that left), so the games they were tuned by are the games
+    they play: the session that made them ran the same sixty seeded
+    games before and after, number for number.
+  - **What is mine**: that the dots never put away a button with
+    something on it (it could not be used); which of the four fills
+    first, the one beside the second button and then outward (53, 27, 80
+    and 0 degrees), so that two or three things lie together under the
+    thumb, where a plain sweep along the arc is `MORE_ANGLES` in another
+    order; that an empty button looks as the empty second button did;
+    the keys; and the bots' one kind.
+  - **Hajun's file** says so now: the Utilities heading has the five
+    buttons, the order and the stacking, and the fireball's and the speed
+    potion's lines say "its button" where they said the 2nd.
+  - **Checked on 2026-11-13, scripted, in the desktop build** (a throwaway
+    `src/arena/scratch_run.rs`, removed, pressing the buttons with
+    touches through picking). Offline: the dots showing four empty
+    outlines and putting them away; healing, two fireballs, speed,
+    invisibility and a builder bought in turn, a button appearing for
+    each in that order; both potions drunk off outer buttons, "43s" and
+    "31s" each over its own; a fireball thrown by a quick tap and one by
+    a hold and a drag from an outer button, its band on the ground; that
+    button gone once empty, the others where they were, and the next
+    fireball bought back on it; a fall into the void emptying all five.
+    Against a server on this PC: the same purchases sold by the server,
+    the buttons as its kits have them, both drinks and both fireballs in
+    its log. Unit-tested: the order, the stacking, a freed button filled
+    first, each potion's button outlasting its count, death, the bytes,
+    the layout. **Deployed and built at Hajun's word that night** ("Deploy
+    and build now"), from the working tree as it stood, which held two
+    other sessions' uncommitted work as well (the bots' second round with
+    the compass and the teams' colours, and the app's opening, both said
+    by their sessions to be finished): nobody had been on the VM for half
+    an hour; after it this PC's own account was let in and seated in a
+    game there, which ran half a minute with seven of the computer's and
+    a clean journal. APK 24 is built, its 77 asset files checked byte for
+    byte and its library the stripped one, and **not installed, no phone
+    being attached** (APK 23 is kept beside it as
+    `donggeurami_town-release.prev-2026-11-13.apk`). **Not by hand and not
+    on a phone**: whether the outer ring lies well under a thumb, and how
+    much of the island the buttons cover on the phone's screen, is unseen.
+    Not committed.
+
+- **Since late on the night of 2026-11-12 each of the computer's players
+  is someone, a knock no longer stuns them, and no two fights with them
+  go the same way; the teams are red, blue, green and yellow; and the item
+  shop sells a compass** (Hajun, playing the bots of that evening, in four
+  messages: "when im fighting the bot, i attack the bot, and the bot is
+  like 'stunned' or stop moving so they get knocked back, and while they
+  are being knocked back they are not running toward me so its so easy to
+  knock them off the map. make the bot run toward u even while being
+  knocked back. also add some random bell curve variation to the
+  'straightness' of their bridging. straight line bridge look too ai. also
+  add variation to strategy ... your ai teammate going to idle when u step
+  on the generator ... seem a bit weird. just let it stay on the generator
+  even while ur collecting but the item collection goes to the player ...
+  there is a very easy way to kill the bots which is make them chase you
+  on the bridge to the center island, and then right when u reach the
+  center island, turn around and knock them off ... think of some way to
+  randomize this interaction and also reverse this interaction ... so that
+  there is no 'optimal' way to kill bots"; "team should be red, blue,
+  green, yellow. and the name color should indicate the team. and add the
+  Player compass tracker item in the bridgewarsgameevent.txt as well. also
+  i want ai to jump while running/ and also randomly while attacking. more
+  nonlinear/curve/slightly random not efficient movements to make it seem
+  like a real player"; "it should be like a personality/playstyle, and at
+  game start the bots each take a certain personality/playstyle that is a
+  predefined set of probability distribution for the if ___ then do ___
+  thing ... there should be more personalty than 8"; and "check if the
+  enemy/team character's health bar is displaying correctly after they
+  take damage"). The bots are `shared/src/bots.rs` still, the server's
+  online and the device's own offline, so **online all of the bots' part
+  is the server's, deployed at 15:17 UTC** (the binary before kept on the
+  VM as `roundtown-server.prev-2026-11-12h`; `PROTOCOL_VERSION` 13 still
+  then: the compass is a ware added after the rest and a kit's word of it
+  is not sent, so APK 23 played on against it as it was). The colours, the
+  compass and the health bars are the app's, **and APK 24 has them**: half
+  an hour later, at 15:49 UTC, the five item buttons went out from the
+  same tree as protocol 14 (their own account is beside this one; the
+  15:17 binary kept on the VM as `roundtown-server.prev-2026-11-13`), and
+  the APK built with them carries this round and the app's opening as
+  well. From that deploy on APK 23 is told to update, so on a phone all of
+  this comes with APK 24, built and not installed.
+  - **Who each is** (`bots::PERSONAS`, `Persona`): sixteen ways of
+    playing, called by the four letters people sort each other by. Each
+    bot takes one by chance as it is seated (`Squad::seat`), two of a game
+    the same as likely as not, and plays the whole game by it. Every number
+    of one is odds or a leaning about 1, not a rule, and what a bot does at
+    each turn is still thrown for: how much it wants to be the one that
+    goes out (`drive`), its odds of each opening (`opening`), what it
+    spends on first (`spends`: its sword, its shield, its second button,
+    its team's generator, its team's defences, its team's swords), what it
+    puts on its second button (`button`: a fireball, a speed potion, an
+    invisibility potion, a healing potion, thrown again each life,
+    `Bot::fancy`), how readily it goes in, how much it jumps and how widely
+    it weaves (`bold`, `bouncy`, `weave`, each bot's own a little off its
+    kind's, `Temper`), its leaning to each way of fighting (`fights`), how
+    much it goes for throwing people off an edge and minds being thrown
+    off (`shoves`, `minds`), and how it raids (`eager`, seconds sooner or
+    later than 2:30; `raids`, added to a raid's score; `lingers`, times
+    the 45 s; `anchors`, how likely it is there for the anchor rather than
+    for whoever is home and their pad). ESTP the daredevil, the action
+    items and into every fight; ESFP the troll, an invisibility potion and
+    over to someone's island to lurk by its edge; ENTJ the commander,
+    straight for the anchors; ENTP the trickster, odd openings, a fireball,
+    in and out; ENFJ the captain, its team's swords and shields; ENFP the
+    free spirit, a speed potion, all over the map, jumping; ESTJ the
+    enforcer, head on and on to the anchor; ESFJ the host, traps and a pool
+    for whoever comes; INTJ the mastermind, everything bought first and
+    then to battle; INTP the tinkerer, its generator and no hurry to fight;
+    INFJ the watchman, waiting beside where your bridge comes ashore; INFP
+    the dreamer, out of everyone's way; ISTJ the sentinel, by the book;
+    ISFJ the defender, the smaller islands and not the middle, its
+    generator and its team's defences; ISTP the lone wolf, a sword, round
+    you and off the edge with you; ISFP the drifter, a potion in hand and
+    never mind the anchors. The server logs who is who as a fight begins
+    ("Bridge Wars game 0: 1 Kimbap is INTP, 2 Nana is ESTP, ...; the teams
+    open Middle, Late, Middle, Middle"). Nothing on the screen says who is
+    which: it shows in how they play.
+  - **Who keeps the base, and how a team opens.** Of a team's two bots
+    the one that wants to go out more goes (`Persona::drive`; the higher
+    seat until then), the other keeps the base; beside a person the bot
+    keeps, as before. The one that goes out settles how its team opens
+    (`Plan`, `Persona::plan`, `Squad::settle`; `Opening`): **to the
+    middle** at once, as every team did until then; **straight to one of
+    the two smaller islands beside its own** (75 m, four buys, for its
+    sapphire, the middle left until its kind's `middle_from`, a minute for
+    some and five for others); or **later**, arms first, both of the team
+    buying as the one that keeps does, and no bridge until 45 to 120 s in.
+    In two hundred games of bots 62% of teams opened to the middle, 17% to
+    a smaller island and 21% late, and won 26%, 23% and 22% of the time.
+    From 4:00 a team that has built no bridge still has one built to it.
+  - **What they buy** (`shopping`): everything a bot might buy next keeps
+    its place in the order they all bought in, and its kind's leaning to
+    that sort of thing moves it up or down: one puts a fireball before its
+    sword, another its team's defences before its generator. **The speed
+    and the invisibility potions are used now**: a speed potion drunk as
+    it sets out on a raid or a hunt, an invisibility potion within 62 m of
+    the middle of the island it raids, to walk onto it unseen, each with
+    nobody of another team within 9 m. The
+    Bridge Builder is still not for bots.
+  - **A knock carries a bot for a moment and no more** (`Body::step`,
+    `Squad::act`, `Skill::reel`, `Skill::grip`). Until then a bot knocked
+    was carried and nothing else until it had come to rest, which is what
+    Hajun saw as stunned. Its legs are its own in the air and with a knock
+    on it now, as anyone's are: 0.06 to 0.36 s after a knock lands
+    (`reel`, mostly about 0.2) it is going about what it was doing again,
+    which in a fight is at you; in the air over the void it steers for the
+    nearest ground within 8 m (`REACH_BACK`); and carried toward an edge it
+    walks against what carries it. How hard it steers is from half its
+    pace to all of it (`grip`), and both are thrown again at every knock:
+    now it is back on its feet at once, now it goes over. On the ground it
+    still walks only where a body can walk, and never off an edge by
+    itself.
+  - **How it fights is thrown for every few seconds** (`Stance`,
+    `Squad::fight`, `take_stance`, `spot`). Until then every bot ran
+    straight at whoever it fought and stood in front of them, wherever
+    that was: on the last plank of a bridge, with them to one side of its
+    end, where one punch put it in the void. Six ways now: **press**, up
+    to them and at them; **circle**, round them as it punches; **poke**,
+    in for a punch and back out of their reach to 3.6 m (`POKE_BACK`);
+    **wait**, standing off 4.2 m (`HOLD_OFF`) for them to come; **ambush**,
+    on the land beside where their bridge comes ashore, to one side
+    (`lair`), so that whoever steps off it is thrown back over its side,
+    which is Hajun's own trick turned on people and on other bots; and
+    **rush**, off the bridge it is on and past them onto the land at a
+    run. Which, and for how long (1.4 to 4.2 s, an ambush 5 and a rush 3),
+    goes by
+    where the two of them stand, on the land or out on a bridge, by how
+    bold it is and by its kind's leanings: on the land it presses, circles
+    or pokes; with them coming over a bridge it mostly lies in wait or
+    waits; out on a bridge with them on the land ahead it stops short of
+    their reach or runs for the land past them; and it is thought of again
+    whenever either steps onto a bridge or off one. Having stood off
+    someone on the land from out on a bridge, three times in ten it gives
+    them up for 3 to 8 s (`Bot::shun`) and goes about something else.
+    **Where it stands to punch** is the best of twelve places 1.45 m round
+    them (`RING`): better for being near, much better if a punch from
+    there would carry them off the land (`flung`, by `shoves`), worse if
+    one of theirs would carry it off (by `minds`), and a little by chance.
+    Its punches are not to the beat either (every 0.6 to 1.04 s, the first
+    0.15 to 0.48 s after it has someone in reach), now and then thrown
+    with a jump, and it faces whoever it fights whichever way it walks.
+  - **It jumps and it does not walk a ruler's line.** Running somewhere,
+    it jumps now and then, the more the bouncier it is (`Body::jump`, the
+    game's own jump; not with a plank in its arms or a potion at its
+    mouth); in a fight it jumps to no purpose now and then, and with one
+    punch in ten to four in ten. Walking a way, it weaves to one side and
+    the other of it (`Squad::walk_to`: up to about 14 degrees either side
+    for a plain one, half that for the straightest kind and nearly twice
+    for the widest weavers; a third of that on a bridge, and none close to
+    where it is going). With nothing to do it wanders its island from one
+    thing on it to another, the keeper mostly by its anchor, where until
+    then it stood on one spot.
+  - **Their bridges bend** (`nav::Span::bend`, `Squad::bends`): a sweep to
+    one side, a wave and a ripple along its length (so much of the sine of
+    one, two and three half turns, each nothing at both ends, so that it
+    leaves and meets the land where the straight one would), each as a
+    bell rings it, and all of them by how straight this bridge is to be,
+    thrown as a bell rings too: most a little wavy, a few all but
+    straight, a few all over the place; on a line a little to one side or
+    the other of the one between the two lands' middles. Never slanting
+    more than 0.45 to the side for each metre on where it leaves and
+    meets the land (`MOST_SLANT`, 24 degrees), nor more than a twentieth
+    longer than the straight one (`MOST_BENT`), which is the metres a bot
+    buys for it. Its planks are laid rung by rung along the curve, each
+    headed as the curve runs there (`Span::rung`, `heading_at`), and cut
+    and drawn by `bridge` as anyone's.
+  - **Your bot teammate stays on the pad with you** (`Bot::yields`,
+    `Squad::wants`): while you are within 3.5 m of your team's pad it
+    stands on it and takes nothing, so what the pad makes is yours; when
+    you leave, it takes what its own purchases need again. Until then it
+    stepped off to the anchor as you came and back on as you left.
+  - **The teams are red, blue, green and yellow** (`colours.arena.
+    team_red`, `team_blue`, `team_green`, `team_yellow` in
+    `assets/ui.ron`, `ArenaColours::team`): red the island at the bottom
+    of the map, blue the one on its left, green the one at its top and
+    yellow the one on its right. Everyone else's name over their head is
+    in their team's colour (`arena::spawn_tag`; a teammate's green or an
+    enemy's red until then, `ally` and `enemy`, gone from the file); a
+    zombie's in its own (`zombie`). The bar under a name is still green
+    for your team and red for any other (`hp_ally`, `hp_enemy`), which is
+    what says friend or foe at a glance: mine. A team is written by its
+    colour, "Team Green" where it was "Team 3" (`arena::team_name`;
+    `words.arena.team_red` and the rest), and "You are on Team Red" is
+    said over "Fight!" as the game begins (`your_team`), your own name not
+    being over your own head. The minimap's dots are as they were, you red
+    and your teammate green, whatever your team.
+  - **The Player Compass Tracker** (`src/compass.rs`; Hajun's file: "2
+    amethyst (one time per life purchase - lost on death, which is a non
+    slot filling item that basically shows a small white arrow around
+    your character that is pointing at the direction of the nearest
+    nonteammate player + name (color of team) + '123m'"): the fourth card
+    of the item shop's second row, "Tracker", "Nearest enemy"
+    (`Ware::Compass`, `Kit::compass`, `words.market.compass`,
+    `hud::Picture::Compass`), "Owned" once you have it. With it, a white
+    arrow 10 shares of the short side out from you, about two metres of
+    the map, points the way whoever of another team is nearest stands,
+    with their name by it in their team's colour and how far off they are
+    in whole metres. Yours alone, nothing of it sent. It points at nobody
+    unseen, dead, or a zombie. **Close by it gets out of the way**: the
+    words are put away with them nearer than 6 m, where their own name is
+    on the screen (seen in a run: "Yeppi 2m" written across two names),
+    and the arrow nearer than 3 m, where it would lie on them; each comes
+    back three quarters of a metre further off than it went. Online the
+    server sells it as it sells anything, to someone within 5 m of the
+    item shop, and says so (`Tell::Bought`); **a kit's word of it is not
+    sent** (`#[serde(skip)]`), so what the room is sent is what it was,
+    and this device keeps its own word of yours (`arena::Game::compass`,
+    put back on your kit as the room's kits come, `follow_round`) until
+    you die. The computer's players do not buy it.
+  - **The health bars over heads never shrank, and do now**
+    (`arena::place_tags`, `fills_of`). Hajun was right. Since 2026-11-08,
+    when the name went over the bar and the two were put in a column, the
+    bar's fill was looked for among the tag's own children; it is the
+    bar's child, so none was ever found, and every bar stayed full
+    whatever its body's health, online and offline. The numbers floating
+    off a body, the health itself and the deaths were right all along,
+    and so was your own bar top left.
+  - **`Skill::MODERATE` has two numbers more**, `reel` (0.06, 0.36) and
+    `grip` (0.5, 1.0); the constants of the fights and the bridges are at
+    the top of `bots.rs` (`RING`, `POKE_BACK`, `HOLD_OFF`, `CARRY`,
+    `REACH_BACK`, `MOST_SLANT`, `MOST_BENT`), and everything of a kind is
+    its line of `PERSONAS`. `Squad::cast(seat, name)` makes a bot someone
+    for trying one out, and `Squad::set_plan` a team's opening.
+  - **Whole games, again** (`server/src/arena.rs`): the eight-game test
+    asks that someone be across to the middle within a minute, a smaller
+    island reached within four, a sword within two, an upgrade within
+    five, and no anchor broken before 4:00; no longer that every team be
+    across within two minutes, nor that no runner stand 20 s, teams
+    opening late or to a smaller island as they do. `many` prints each
+    kind's games, wins and deaths and each opening's, and `RT_WHO=1` who
+    was who. **Over two hundred games** (as deployed): over at 13:00 on
+    average, the soonest at 10:07 and the latest at 13:42, none drawn; won
+    by island 46, 64, 43 and 47; before 10:00 ten deaths by punches and
+    six by falls a game, where it was six and fourteen: they are thrown
+    off the map less than half as often, and kill each other more; 0.3
+    anchors broken by bots before 10:00; each kind's team winning 19% to
+    34% of its games, an ISFJ dying 1.6 times a game and an ESTP 3.9. And
+    someone standing still beside the far end of a bridge, punching
+    whatever comes off it twice a second, throws 217 of 960 bots into the
+    void in half a minute, where 916 of them get onto the land
+    (`crossings_to_someone_waiting_at_a_bridge_s_end`, an ignored test,
+    by kind).
+  - **Checked on the night of 2026-11-12, scripted, in the desktop
+    build** (the throwaway `src/arena/scratch_run.rs` again, removed).
+    Offline: "You are on Team Red" over "Fight!"; a teammate's name red
+    over a green bar, the bots of the island on the left blue over red
+    bars; the compass bought for 2 amethyst, its arrow up and to the right
+    at "Ssal 181m", in yellow, from the red island, turning as I flew
+    toward the blue one, and gone, with everything held, at a death; two
+    bots' bars shrinking under my punches while theirs took me from 100 to
+    16. Against a server on this PC: the compass refused 5.002 m from the
+    shop, where a seat arrives, and sold standing at it; kept through the
+    room's kits coming, and gone at the death the server logged; the
+    server's bots' bars shrinking as it logged each hit; my bot teammate
+    standing on the pad. Unit-tested: the compass's rules and whom it
+    points at, a bent span's ends, length and planks, a knocked body
+    brought back by its legs, and what each kind buys first. The VM,
+    deployed with nobody on it for eleven minutes, let this PC's build in.
+    **Not by hand, not on a phone, and no game has been played on the VM
+    with it by me** (after the 15:49 deploy this PC's account was seated
+    there and played half a minute with seven of the computer's, the
+    journal clean). The cost of the brain on a phone is no more measured
+    than it was.
+  - **What is mine, Hajun having asked for the thing and not the
+    numbers**: the sixteen kinds, their names and every number of them;
+    that the one that wants to go out more goes; the three openings' odds
+    and that a late team arms first; the six ways of fighting and their
+    odds; the reel and the grip; how bridges bend and how far; that the
+    bars stay green and red; the caption over "Fight!"; where the compass
+    sits in the shop, its size and where it is drawn, that it leaves out
+    the unseen and the zombies, that it gets out of the way close by, and
+    that bots do not buy it.
 - **Since the night of 2026-11-12 the computer's players play the
   game** (Hajun: "right now the other bots dont do anything other than
   stay in their base. i need the bots to be intelligent enough. think of a
@@ -702,7 +1075,11 @@ holds for the arena now.
     rungs laid, a throw, a drink), which the server does as it would for
     a person who asked (`Game::play_bot`): **nothing is free, and
     everything is lost on death**, the metres of bridge with it.
-  - **How they play.** Each team's lower seat keeps the base (`Role::
+  - **How they play.** (Since later that night who keeps and who goes
+    out, how a team opens, what each buys first, how each fights and how
+    each raids go by who the bot is, above; what follows is how they all
+    played for those hours, and is still what the kinds lean away from.)
+    Each team's lower seat keeps the base (`Role::
     Keeper`) and the other goes out (`Runner`); one alone does both.
     **The opening**: the one that goes out has the pad's first 8 silver
     (the keeper wants none until the bridge is across), buys 50 m and
@@ -754,14 +1131,17 @@ holds for the arena now.
     so that the end of a game is minutes and not moments. **A
     fireball** only at someone 4 to 10.5 m off with land under them,
     never at someone out on a bridge. Not for bots yet: invisibility,
-    the speed potion, the Bridge Builder.
+    the speed potion, the Bridge Builder (the two potions since later
+    that night, above; the builder still not).
   - **A bot whose teammate is a person keeps the base** whichever its
     seat: it leaves the pad's first silver to you for 40 s, then, if
     nothing joins your island to the middle, buys the 50 m and lays the
     bridge itself (seen on the VM: begun at 40 s, across at 51 s); then
     it stands at the pad taking what its own purchases need, the rest
     piling up for you, steps off to the anchor when you come within
-    3.5 m of the pad, defends, and from 2:00, with nobody of another
+    3.5 m of the pad (until later that night: it stays on the pad with
+    you since, taking nothing while you are there, above), defends, and
+    from 2:00, with nobody of another
     team within 40 m, bridges to a smaller island and fetches its
     sapphire, and the amethyst on your side of the middle, for the
     team's upgrades. It never raids by itself.
@@ -1802,6 +2182,9 @@ holds for the arena now.
     the short side) and faint, a teammate's in `colours.arena.ally` over a
     bar in `hp_ally` (green), an enemy's in `enemy` and `hp_enemy` (red),
     2.2 m over the feet, not scaled by distance under the fixed camera.
+    (Since late on 2026-11-12 the name is in its team's colour, red, blue,
+    green or yellow, and the bar alone says friend or foe; and the bar,
+    which until then never shrank with its body's health, does: above.)
     Its shadow, like every text's, falls under the letters by 0.12 of
     their size since 2026-11-10 (`hud::shade`, `SHADOW_DROP`; 3 logical
     pixels whatever the size until then, which under these small names on
@@ -2691,7 +3074,115 @@ gone round: a scripted run north from the middle stopped at it.
   none and says so), and nobody to talk to but the AIs. The town's name
   still shows as the app opens.
 
+## The app opens under a cover, and you drop into the town
+
+Since 2026-11-13 (Hajun: "right now, when i open the game, there is no
+smooth introduction animation. i need a short 0.5~1s animation in the
+beginning. also when i open the game, some part of the map is not loaded
+yet so it looks bad. only show the map after it gets loaded. im thinking
+maybe it can be falling from an extreme height, and when it lands, maybe a
+short sit on but fall landing animation, and then get up/standup and then u
+can play"; of the four ways I put to them, a drop onto your bottom, a drop
+into a squat, a circle opening and a dive from above the town, they chose
+the circle with the squat: "ok C+B try it"), in `src/intro.rs`.
+
+- **The cover.** From the first frame the screen is black with the town's
+  name on it in white (`colours.intro.cover` and `title`, and
+  `words.welcome`, in `assets/ui.ron`), over everything on the screen but
+  the sign-up's pages (its layers are 25 to 27, theirs 30), and the town
+  loads under it. It takes every press (`TakesPress`) and holds
+  `hud::DialogUp`, so you stand still under it as under a dialog. While it
+  is up the camera clears each frame to the cover's colour too: the first
+  frames may be drawn before the GPU has what draws the cover itself
+  (its pipeline is compiled in the background like any other), and would
+  then be the bare sky; reasoned from Bevy's source, not seen. Android's
+  own window is black before that
+  (`windowBackground` in `themes.xml`, at the next APK).
+- **It opens once the town is there to be seen** (`Loading::there`, `Wait`):
+  the town's shape read (`Islands`), every model in the world spawned (every
+  `WorldAssetRoot` with its instance ready: the islands, the buses,
+  everyone's bodies), the buses' way round worked out (`car::Planned`), and
+  your own limbs bound; and then only once the GPU has had nothing left to
+  compile for eight frames running (`Compiling`: a system in the render
+  world, `count_compiling`, counts `PipelineCache::waiting_pipelines` after
+  each frame; Bevy compiles each material's pipeline in the background and
+  leaves out whatever is not ready, which is one way a town comes up a
+  piece at a time), and not on the heels of a frame that took over 50 ms.
+  With anything never coming it opens anyway after 10 s (`MOST_COVERED`),
+  and the log says what was missing. It logs one line as it opens, with
+  when each thing was there: on this PC, a dev build, covered for 1.5 s,
+  the town and its models at 0.3 s and the buses' way at 1.4 (it takes a
+  second to work out here). The first time the app is run the sign-up's
+  pages stand over it, the wait is theirs, and it opens as they go, 0.13 s
+  after Save here.
+- **The opening is 0.85 s** (`UP_AT`; `pose`, `hole`): the cover opens as a
+  circle about where you stand, 동그라미, reaching every corner in 0.55 s
+  (`OPEN_SECS`; one node, all border, with a round hole, as Bridge Wars'
+  blindfold is, `gear::blindfold`); you drop in from 11 m up, over the top
+  of the screen, arms up in a V and knees a little bent, faster as you
+  come, and land at 0.4 s (`FALL_SECS`, `FALL_FROM`); you sink into a deep
+  squat in 0.07 s, arms out at your sides, leaning in, drawn 14% shorter
+  and 8% wider, stay down 0.06 s, and spring up over 0.32 s, through
+  a little taller than you are; a white ring goes out over the ground from
+  your feet as you land, to 2 m in 0.45 s, fading (`Dust`, drawn as the
+  punch's range is, `range::look`, and as brightly as the sky lights the
+  ground, `Daylight::unlit`, so that it does not shine at night; it waits
+  at your feet under the cover, too small and faint to see, so that the
+  GPU has it ready); and the camera dips 0.12 m as you land. From 0.85 s
+  you can move, and the buttons are yours.
+- **Nothing of the fall is your body's.** Your body stands where it
+  arrived all along; what drops is its model, the node your limbs hang
+  under, hung that much higher over it and put back as it was at the end
+  (`Model`, `hang`). So it is no move to the island, to anyone else, or to
+  the server, and nobody online sees it. The squat is your limbs'
+  (`Landing` in `src/lib.rs`, a component as `Carrying` and `Drinking`
+  are, `landing_offset`, read by `animate_walk` before anything else): a
+  thigh turned 1.05 rad forward at the deepest and its shin bent back by
+  twice that, an arm turned up to 2.2 rad from hanging; and the model
+  comes down by what its bent legs take off its height, less what its
+  heels come up (`Landing::sink`, from how high its hips are, measured off
+  its thigh bones as the cover opens), so its feet stay on the ground.
+- **The town's name stays where it was on the cover**, over the town now,
+  for 2.2 s and fades in 0.8 (`TITLE_STAYS`, `TITLE_OUT`): it is the
+  welcome, in white. `hud::welcome` leaves that one to it
+  (`Intro::welcomes`); back from a game, the gold welcome fades in as
+  before.
+- **For trying it on desktop**: `RT_INTRO_SLOW=<times>` plays the opening
+  that many times slower; `RT_INTRO=off` leaves all of it out, cover and
+  held input and all, with the gold welcome as before, for a scripted run
+  that presses or looks from its first frame.
+- **What is mine**: every number; the white name, staying on in place of
+  the gold welcome; the ring of dust and the dip; that the buttons come
+  into sight with the circle rather than after you stand; and **that the
+  cover waits for the buses**, where I had told Hajun I would let them
+  drive in: it is the last 1.1 s of the 1.5 s the cover is up here, and a
+  bus coming onto the ring road a second after the town is first seen is
+  the kind of thing that was asked to go. Taking `car::Planned` out of
+  `Loading::there` is all it takes to let them drive in instead.
+- **Checked on 2026-11-13, scripted, in the desktop build** (a throwaway
+  `src/intro/scratch.rs`, removed, that had the game save its own
+  screenshots through the opening): at a fifth of its speed, from the
+  game's camera and from the side close up, by day and by night: the
+  cover from the first frame, the circle from nothing to past the
+  corners, the drop, the squat with the feet on the ground and the knees
+  forward, the ring, the name fading; at its own speed, three runs, every
+  frame of the opening 16.2 to 17.6 ms on a 60 Hz screen, and the stick
+  let go at 0.85 s; and the first run, with an empty `APPDATA`, through
+  the sign-up's pages by keys and a tap, the cover opening as they went.
+  Unit-tested: the poses on the models (`limbs_of`), the fall, the
+  circle, the dust, and the wait. **Not by hand, and not on a phone**: how
+  long a phone is covered, whether its first frames are black rather than
+  sky, and the Adreno drawing the ring are all unseen. APK 24, built that
+  night by the session that made Bridge Wars' five item slots, is the
+  first with it, and was not installed, no phone being attached; a phone's
+  log says how long it was covered and for what ("the opening: covered
+  for ... s").
+
 ## The app opens in Round Town
+
+(Since 2026-11-13 the app opens under a cover, and you drop into the town
+as it lifts: the section above. What this one says of the first frame, and
+of the town's name fading in as the app opens, is how it was until then.)
 
 There is no menu. Once you have signed up (above), the app opens straight
 into the town (`roundtownmap.glb`, from 2026-10-30, `circlemap1.glb`
@@ -2993,7 +3484,9 @@ where things come from, not what they are.
   thing in every person's purse, for trying the shops out.
   `RT_CLOCK_OFF=<seconds>` puts a copy's own clock that far out, for
   trying the town's clock out on one machine, whose clock both copies
-  share. A
+  share. `RT_INTRO=off` leaves out the opening's cover, which otherwise
+  holds every press for the first second or two of a run (above, "The app
+  opens under a cover"). A
   server on this PC for two copies to meet on: `cargo build -p
   roundtown_server`, then `target/debug/roundtown-server.exe` with
   `RT_PORT=5443` and no `RT_KEY`, and the copies with

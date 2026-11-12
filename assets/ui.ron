@@ -62,6 +62,16 @@
             name_plate: "#66666673",
             icon: "#fffffff0",
         ),
+        // The opening, as the app starts: the cover the town loads under,
+        // which opens as a circle about where you land; the town's name on
+        // it (words.welcome), which stays over the town for a moment as it
+        // opens; and the ring of dust that goes out from your feet as you
+        // land, as see-through as its alpha says.
+        intro: (
+            cover: "#000000",
+            title: "#ffffff",
+            dust: "#ffffffb3",
+        ),
         // The sign-up's pages: the page; the box the name goes in and the
         // characters' cards, lit under the pointer; the chosen card; a button
         // and its words, lit under the pointer; and the arrows beside the
@@ -150,13 +160,23 @@
             slot_rim: "#ffffff80",
             // The number that floats up off a body as a punch lands on it.
             damage: "#ff6a5a",
-            // Everyone else's name over their head, a teammate's and an
-            // enemy's, and the bar under it, each kept faint so as not to
-            // hide the fight (Hajun: "not distracting").
-            ally: "#8ef0a0c0",
-            enemy: "#ff8a80c0",
+            // Everyone else's name over their head, in their team's colour:
+            // red, blue, green and yellow, for the island at the bottom of
+            // the map, the one on its left, the one at its top and the one
+            // on its right. A zombie's, which is on no team, in its own.
+            // And the bar under each name, a teammate's and an enemy's.
+            // Each kept faint so as not to hide the fight (Hajun: "not
+            // distracting").
+            team_red: "#ff6b61d9",
+            team_blue: "#6aa8ffd9",
+            team_green: "#6fe07ed9",
+            team_yellow: "#ffd95ad9",
+            zombie: "#a8c79ac0",
             hp_ally: "#4fd46ab3",
             hp_enemy: "#e0402fb3",
+            // The Player Compass Tracker's arrow round you, and the metres
+            // written by it (the name by it is in its team's colour).
+            compass: "#ffffffe6",
             // The bar over a team's respawn anchor: your own team's, and
             // another's.
             anchor_mine: "#4fd46acc",
@@ -363,8 +383,17 @@
             // Across the screen while you are dead, counting down in
             // halves: "4", "3.5", ... "0.5".
             died: "You died. Respawning in {seconds}...",
-            // A team, by its number, 1 to 4.
+            // A team, by its colour: {team} is one of the four words under
+            // it, red for the island at the bottom of the map, blue for the
+            // one on its left, green for the one at its top and yellow for
+            // the one on its right. And what is said under "Fight!" as the
+            // game begins, of your own.
             team: "Team {team}",
+            team_red: "Red",
+            team_blue: "Blue",
+            team_green: "Green",
+            team_yellow: "Yellow",
+            your_team: "You are on {team}",
             // The panel when you are dead with your anchor gone, and the
             // headlines as an anchor breaks, another team's and your own.
             out: "You're out!",
@@ -420,7 +449,7 @@
             upgrades: "Upgrades",
             owned: "Owned",
             max: "Max",
-            taken: "Slot full",
+            taken: "Slots full",
             bridge: "Bridge",
             bridge_stat: "+{metres}m",
             // The swords and the shields, by tier.
@@ -451,6 +480,9 @@
             heal_pool_stat: "Base +{health}hp",
             trap: "Blindness Trap",
             trap_stat: "Blinds {seconds}s",
+            // The Player Compass Tracker, in the item shop.
+            compass: "Tracker",
+            compass_stat: "Nearest enemy",
         ),
     ),
     // The car you drive (the face button, or C on desktop): every number of

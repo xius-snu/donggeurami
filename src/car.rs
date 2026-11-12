@@ -281,6 +281,22 @@ fn read_roads(
 #[derive(Resource)]
 struct Planning(Task<Option<Route>>);
 
+/// Whether the cars' way round the town is still to come: its roads read
+/// and waiting to be worked out, or being worked out. The opening keeps
+/// its cover up until it has (`intro`), so that no bus comes onto the road
+/// a moment after the town is first seen.
+#[derive(SystemParam)]
+pub(crate) struct Planned<'w> {
+    roads: Option<Res<'w, TownRoads>>,
+    planning: Option<Res<'w, Planning>>,
+}
+
+impl Planned<'_> {
+    pub(crate) fn pending(&self) -> bool {
+        self.roads.is_some() || self.planning.is_some()
+    }
+}
+
 /// Works out the cars' way round the town once its roads, its shape and the
 /// shape of every car have been read, in the background: turning, none of
 /// any of them is to go off the road.
