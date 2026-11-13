@@ -63,6 +63,14 @@ bevy_replicon_renet = { version = "=0.20.0", default-features = false, features 
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
 ring = "0.17"
 
+# The friends' panel copies your name and tag for you (`friends::copy`): to
+# the system's own clipboard on desktop, which Bevy reaches only with this
+# feature. Not for the phones: Bevy's clipboard has no system behind it
+# there (Android's is reached through `MainActivity` instead), and the
+# crate behind the feature, arboard, is not built for them.
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+bevy = { version = "0.19.1", features = ["system_clipboard"] }
+
 # Faster debug iteration without tanking frame rate.
 [profile.dev]
 opt-level = 1

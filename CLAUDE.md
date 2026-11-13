@@ -313,8 +313,17 @@ alone; the server is `cargo build -p roundtown_server`. Never `--workspace`,
 which would build the game with the server's half of replicon in it.
 
 Android needs the `release-android` profile, a manual strip step, and Gradle
-(`versionCode` in `mobile/android/app/build.gradle` is the build number: 25
-an hour later, the compass's arrow pointing out with its words clear of
+(`versionCode` in `mobile/android/app/build.gradle` is the build number: 26
+on the night of 2026-11-13, every word in Inter, a tag after every name,
+and the friends' panel with its requests, groups and messages ("Friends,
+groups and messages", "The font is Inter"), and with it what another
+session had in the tree, Bridge Wars' dynamite and the computer's players
+that no longer fall for three easy tricks ("Games"; protocol 15, the
+server deployed with both at 14:07 UTC that day, its tables given the
+friends' columns and tables as it started; the binary before kept on the
+VM as `roundtown-server.prev-2026-11-13c`, and the database as it was
+before tags as `/var/backups/roundtown/before-tags-2026-11-13.dump`); 25
+an hour after 24, the compass's arrow pointing out with its words clear of
 it, the anchors in their teams' colours, and the computer's players
 carrying up to five kinds of thing and sending Bridge Builders (protocol
 14 still; the server deployed with the bots); 24
@@ -522,7 +531,9 @@ instead of yellow for the buttons"; dark blue, blue and gold until then).
   all, and the account keeps its generated name online.
 - **A name is 2 to 16 characters of plain ASCII** (`roundtown_net::profile`,
   checked on both sides, the server ignoring any other): the game's font has
-  no Hangul. It need not be unique. Typing: on desktop the keys and Enter;
+  no Hangul. It need not be unique: since 2026-11-13 every account has a
+  tag after its name, `#1000` to `#9999`, and no two have both the same
+  ("Friends, groups and messages", below). Typing: on desktop the keys and Enter;
   on a phone the soft keyboard, asked for by the window's `ime_enabled`,
   which winit shows on both phones. An iPhone's sends each letter as a key
   press and Return as a newline; Android's sends no keys at all, and
@@ -618,6 +629,283 @@ deployed with it, the binary before kept on the VM as
 was the town itself; everything below about the map, its islands, the
 void, the punch's knockback and its range held for the town then, and
 holds for the arena now.
+
+- **Since the night of 2026-11-13 there is dynamite, which cuts bridges;
+  the computer's players no longer fall for three easy tricks, and are not
+  all as good as each other at a fight; and one whose teammate is a person
+  is out and about** (Hajun, in three messages: "read the
+  bridgewarsgameevent.md, i made some update like adding the dynamite
+  item. add the dynamite item and functionality to the minigame, test it
+  thoroughly. dont need to build apk or push to git when ur done"; "also
+  read BridgewarsAIbottlenecks.txt. those are some of the things i noticed
+  while playtesting against the current ai bots. try to fix them as well";
+  and "the ai teammate right now when ur in a team with a bot, the bot
+  stays on the iron/gold generator for toooo long. reduce the time it
+  spends on the generator and make it go out more or use shop longer or
+  bridging or raiding an island more and just come back to pick up
+  resource and leave again quickly not stay"). **Hajun's rules file is
+  `bridgewarsgameevent.md` since that day** (`bridgewarsgameevent.txt`
+  wherever this file says so of an earlier day); besides the dynamite it
+  has the healing potion giving back half of your health where it gave a
+  quarter (`bridge_wars::HEALING`; a green "+50"), and so does the game.
+  **`PROTOCOL_VERSION` 15, the number it shares with the friends system of
+  the same day** ("Friends, groups and messages", below): a `Kit` with a
+  stick of dynamite on a button is nothing an app from before can read,
+  so the server and the app go out together, and the two pieces of work
+  with each other. **The session that made this neither deployed, built an
+  APK nor committed**, as asked: it goes out with the friends system, by
+  the session that made that ("Building", above, has the build).
+  - **The rules** (`roundtown_net::bridge_wars`; Hajun's file: "Dynamite: 1
+    amethyst (similar to default dynamite attack for dynamike in
+    brawlstars, hold&drag&letgo mechanic like fireball, but instead of one
+    straight rectangular hit range indicator its like an long arched
+    curved rectangular, with ability to change the total distance with the
+    magnitude of the hold&drag&letgo, and when fired, it will throw an
+    arched dynamite (2 minimalistic mini red cylinder shape with smaller
+    brown cylinder sticking out of one face which is the string), and
+    after landing on the ground/bridge, it will show a circular blast
+    radius range around it and it will shine bright red 3 time before it
+    explode, and when it explode, it will do 20 damage to player in that
+    blast radius and destroy that blast radius region of the bridge - can
+    stack up to 3 times max at once)"). `Utility::Dynamite` is the sixth
+    thing for the buttons: 1 amethyst at the item shop, three to a button
+    (`most_held`), aimed as the fireball is (`Utility::aimed`). A stick
+    thrown is a `Lob`: from the hand, 1.2 m up and half a metre in front
+    of the thrower (`DYNAMITE_HAND`, `DYNAMITE_AHEAD`), to the ground 2.5
+    to 10 m from them (`DYNAMITE_NEAREST`, `DYNAMITE_FURTHEST`; whatever
+    is asked for is brought within those), in 0.45 s and 0.04 s more for
+    each metre (`Lob::secs`: 0.55 s the nearest, 0.85 s the furthest),
+    along an arch that also swings out to the thrower's right by 0.18 of
+    its length (`DYNAMITE_BULGE`, `lob_track`), so that the camera
+    straight over you sees an arch at all. Down, it lies 1.2 s
+    (`DYNAMITE_FUSE`), shining three times (`DYNAMITE_FLASHES`,
+    `Lob::shine`), and blows: 20 (`DYNAMITE_DAMAGE`), less what a shield
+    keeps off, to everyone of another team than the thrower's whose feet
+    are within 3 m of it and half a body's width more (`DYNAMITE_RADIUS`,
+    `in_dynamite`), zombies among them, with no knock; whoever it hurts is
+    seen again if they were unseen, as by any blow. And **every plank
+    whose middle is within 3 m of it is gone** (`nav::plank_in_blast`),
+    whoever laid it, from under whoever stands on it: mostly four planks,
+    5.45 m of bridge, sometimes five. One that comes down with nothing to
+    lie on within half a metre (`DYNAMITE_CATCH`, `caught`) falls on into
+    the void and never blows. The server's online (`Game::lob`,
+    `Game::dynamites` in `server/src/arena.rs`), this device's own in a
+    game played offline (`arena::dynamites_offline`).
+  - **Aiming it** (`utility::aim`, `Hold::reach`, `Hold::far`): held and
+    dragged as the fireball is, and **the further the finger is dragged
+    the further the throw**: from 4 shares of the short side from where it
+    went down (`AIM_DEAD`, as ever), the nearest of throws, to 22
+    (`AIM_FULL`, about a button and a half), the furthest. What is drawn
+    is a band 0.6 m wide that bends as the stick will fly, out to your
+    right and back (`range::ribbon` along `lob_line`, built again as the
+    throw changes by 4 cm; `LobBand`), ending at a ring as wide as the
+    blast, round where it will come down (`LandingRing`, `range::disc`:
+    mine, as Brawl Stars shows where a thrower's shot lands), in the
+    fireball band's own colours with its dark rim (`colours.arena.aim_*`).
+    In the nearest of throws the ring reaches back past your hand, and
+    the ring alone is drawn. Dragged back to where the finger went down
+    it is cancelled, a quick tap that never dragged throws 4.5 m the way
+    you face (`DYNAMITE_TAP`), and so does its key. Half a second between
+    two, as with the fireball.
+  - **What you see** (`src/dynamite.rs`): two red sticks side by side, 0.8
+    m long and 0.64 across the pair, with a brown fuse out of one end
+    (`colours.arena.dynamite`, `dynamite_fuse`), turning end over end one
+    and a half times on their way; lying, a red ring on the ground as far
+    as the blast will reach (`blast_outline`, `blast_fill`, with the
+    band's dark rim, so that it is seen over the void), and the sticks
+    shining three times: five times their own red given off (`SHINE`) and
+    a red glow round them out to 1.1 m; then the fireball's own ball of
+    fire (`fire::burst`). One that found nothing to lie on tumbles on
+    down and is gone 35 m below. A plank blown leaves its bridge with a
+    hole: the ends left are capped, what is left of the bridge stays as
+    it was built (`Chain::gone`, `holed`; `bridge::Bridges::blast`,
+    `break_planks`), the plank you are laying goes too if the blast
+    reaches its middle (`blast_tip`), the minimap shows the gap, and
+    planks laid across a hole afterwards meet the ends left flush, as a
+    bridge meets a shore. The button's picture and the shop's card are
+    the two sticks and the fuse (`hud::Picture::Dynamite`).
+  - **Online** each stick is an entity the server sends as it is thrown
+    (`Dynamite`: who threw it, from where and to where), which every
+    device lobs on by itself (`dynamite::follow_server`), and takes away
+    as it blows, sending in its place where it blew and which planks went
+    (`Blasted`, kept in the game's room with its planks, so that someone
+    who comes late has the holes; `dynamite::hear_blasts`); one taken
+    away with no blast fell into the void there, and falls on here.
+    `Ask::Use(Use::Dynamite { heading, far })` throws one: the server
+    takes it off the button, throws it from where it has you standing,
+    and refuses numbers that are none.
+  - **The shop**: the item shop's third row is six cards now, the
+    dynamite's last ("Dynamite", "Cuts bridges", `words.market.dynamite`
+    and `dynamite_stat`: the line is mine), and a card in a row of six is
+    narrower, 14 shares of the short side where the rest are 15.5
+    (`market::NARROW_CARD`, `card_width`), so that the row ends short of
+    the second button on a screen of sixteen by nine: six of the other
+    width reached under it. **"Slots full" comes up now**: with five other
+    kinds on the five buttons, the sixth cannot be bought.
+  - **The computer's players and dynamite** (`shared/src/bots.rs`). Each
+    kind has its leaning to it as to the other five things
+    (`Persona::carries`, six numbers now: the trickster and the tinkerer
+    most, 0.4, the captain and the sentinel least, 0.05), and one a fifth
+    of whose leanings are to it keeps two, the rest one
+    (`Persona::loadout`). **It is thrown at whoever of another team is out on a
+    bridge** a throw away, at where they will be when it blows if that is
+    still on a bridge, to take the bridge from under them or from in
+    front of them: from the land, or from a bridge itself if what would
+    go is well clear of where it stands; never where a teammate stands on
+    the planks that would go; 6 to 12 s between two (`Order::blast`).
+    **A stick thrown at one it gets out from under** (`Squad::mind_sticks`,
+    `Stick`, `View::sticks`): once it has woken up to it, 0.75 to 2 s
+    after the throw for the worst of them at a fight and 0.35 to 1 s for
+    the best, a quarter of a second later for anyone in a fight
+    (`STICK_WAKES`, `STICK_WAKES_SOONER`, `STICK_BUSY`), it runs for the
+    nearest ground clear of the blast and keeps out until it has blown,
+    whoever it was fighting in there; one lying on a bridge ahead it
+    waits short of; its own team's is nothing to it on the land. Of
+    eighty sticks thrown from close by to come down right where one
+    stood: the four best kinds were never caught, the middling ones
+    hardly ever in the open and up to 15 times in a fight, the worst
+    (INFP) 34 times in the open and 55 in a fight; a test has every
+    kind's
+    (`a_bot_gets_out_from_under_a_stick_of_dynamite_and_waits_short_of_one_on_its_way`). For its first hours every kind was out in half a second, and
+    then walked back in after whoever it was fighting. **A hole in a
+    bridge it jumps or mends** (`nav::Nav::blast`, `gaps`, `crossing`,
+    `leap`; `Body::leap`; `Squad::reach_of_a_jump`): one of up to 5.8 m,
+    the four planks a stick mostly takes, a bot at a run jumps, on its
+    way anywhere and after whoever it fights; a longer one, in its team's
+    way to the middle, either of the team lays planks across, from
+    whichever side it stands on, half a metre inside what stands to half
+    a metre inside what stands on the far side (`mend_for`, `MEND_INSET`),
+    with the metres it has or buys.
+  - **The three easy ways to beat them** (Hajun's
+    `BridgewarsAIbottlenecks.txt`: "These are the list of my personally
+    observed "easy" optimal ways to defeat AI's"). **Running round in a
+    circle** ("the AI always is one step behind so he just keeps
+    following in a circle behind me in an endless loop"): a bot goes for
+    where whoever it is after will be, not where they are (`Squad::meet`,
+    `foresee`, `Track`: their pace and how fast they turn, watched from
+    frame to frame; no further ahead than 1.6 s, and no further than there
+    is ground under them), so someone going round and round is cut off
+    across the round. **Jumping from one bridge to another beside it**
+    ("instead of the ai also jumping across, it goes all the way back to
+    the island"): with a gap it could jump between it and whoever it
+    fights, no walking straight to them and the way round far or none, it
+    stands a moment and jumps, the likelier the bolder and the better it
+    is (about one time in two for the worst of them, nearly always for
+    the best), or thinks better of it, goes round, and thinks of it
+    again in a few seconds. **All of them
+    equally moderate** ("when i spam click the attack button while
+    fighting, i always seem to hit them first, and they seem to get
+    knocked back more than they knock me back, so i can always win even
+    in 1v2 ... some bots are like pro-er, and some bots are moderate like
+    now"): each kind has how good it is at a fight, from 0, as they all
+    were, to 1 (`Persona::pvp`, each bot's own a little off its kind's,
+    `Temper::pvp`): the lone wolf 1, the daredevil 0.9, the commander 0.8,
+    the enforcer 0.7, the trickster 0.65, the mastermind 0.6, the troll
+    0.55, the free spirit 0.5, the captain and the sentinel 0.4, the
+    watchman 0.35, the drifter 0.25, the tinkerer and the host 0.2, the
+    defender 0.1, the dreamer 0. The better it is, the sooner its first
+    punch comes once it has someone in reach and the nearer its punches
+    come to as fast as they count (down to one every 0.53 s, a body being
+    past hurting for half a second); the oftener it steps back out of
+    reach between two and comes in again on the run timed to the next,
+    since a punch thrown running in knocks further than one thrown
+    standing, which is why they were knocked back more than they knocked;
+    the sooner it is on its feet after a knock and the harder it steers
+    against one; and the more of where you are going it reads.
+  - **A bot whose teammate is a person is no keeper of the pad** any
+    more. It comes to the pad for what lies there once that is worth the
+    walk (as many things as it wants, six at the most) and you are not
+    there for it yourself, is on it no longer than 1.4 s, and is not back
+    for 9 to 16 s; between visits it shops, wanders its island away from
+    the pad, and goes out: from 45 s, with nobody of another team within
+    25 m of its island, for the amethyst on your side of the middle and
+    the sapphire of the smaller islands beside yours; from 30 s it builds
+    the bridge to the middle if nothing joins your island to it, unless
+    you are out over the void building one yourself (40 s until then),
+    and from 75 s one to a smaller island (two minutes until then); and
+    from a little after the raids begin, 2:50 at the soonest, it raids by
+    itself, which it never did. In a test of seven minutes beside a
+    person who stays in the middle of their island, three times over, it
+    is by the pad 14 to 18 times, 6 to 10 s of it in all and never longer
+    than 2.8 s at a time, off the island for 249 to 299 s, and has raided
+    and fetched every time
+    (`a_person_s_bot_teammate_comes_to_the_pad_for_what_lies_there_and_is_off_again`).
+  - **Three faults found on the way.** A bot's body that came down to
+    within a hair of the ground without quite touching it stood there
+    still falling, as far as it knew, for as long as it stayed on ground
+    of that height: neither in the air nor its own to move, so it never
+    jumped nor drank (`Body::step`). **A mesh with no corner in it is
+    not to be put in `Assets<Mesh>`**: Bevy's mesh allocator logs "Use-
+    after-free: attempted to copy element data for an unallocated key"
+    for each, as the nearest of throws did for the band's three sheets,
+    none of it being outside the ring; they are put away as they are
+    instead (`LobSheet`). And a bot that had got out of a blast walked
+    straight back into it, above.
+  - **Whole games, again** (two hundred of bots alone, as it stands):
+    over at 12:29 on average, none drawn; won by island 43, 40, 63 and
+    54; before 10:00 twelve and a half deaths by punches and ten and a
+    half by falls a game, where it was nine and five (the ones that are
+    good at a fight punch on the run, which throws whoever they hit
+    further), and 0.4 anchors broken by bots; each kind's team winning 7%
+    (the sentinel) to 55% (the lone wolf) of its games, where every
+    kind's won 20% to 31%: a lone wolf dies 2.0 times a game and a
+    captain 4.4. The eight of a game together bought 1.9 sticks of
+    dynamite and threw 0.6, which took 2.5 planks, the most in one game
+    four sticks and eighteen planks; and 12.9 fireballs, 2.3 speed
+    potions, 1.0 invisibility potions, 25.0 healing potions and 1.4
+    Bridge Builders, of which they used 11.1, 2.0, 0.6, 8.8 and 1.2.
+    `many` prints all of it (`Chronicle::blasts`, `planks_blown`).
+  - **Checked on 2026-11-13.** Unit-tested: the lob, its arch, its fuse
+    and its three flashes, whom a blast reaches, and what a kit and a
+    shop make of a sixth kind; planks taken out of a map and out of a
+    drawn bridge, the ends left, the plank being laid, and a hole mended
+    flush; the server's stick from throw to blast; the band and the ring;
+    a bot out from under a stick kind by kind, short of one on its way,
+    over a hole of four planks and mending one of five, throwing at
+    whoever comes over a bridge and at nobody else, cutting off someone
+    who runs in circles, and jumping after someone on the next bridge;
+    and the teammate's visits to the pad. **Scripted in the desktop
+    build** (a throwaway `src/arena/scratch_run.rs`, removed), offline,
+    by day, at sunset and at night: the card bought three times and
+    refused a fourth, "Slots full" with five other kinds; the band at
+    three lengths and four ways, over the land and over the void, and
+    dragged back; a throw watched through its flight, its ring, its three
+    flashes and its blast from the game's camera and from close by; one
+    thrown off the island, falling; a bridge of fifteen rungs cut from the
+    shore, four planks gone, the gap on the minimap, standing on what was
+    left past it, the planks under my own feet blown by my own stick and
+    the fall, and walking off the cut end into the hole; sticks thrown at
+    me: 20 off, 18.8 through a Basic Shield, nothing from a teammate's,
+    and dead of one, with everything held gone; sticks thrown at two of
+    the computer's players on their island, one of which got out every
+    time and the other was caught twice, 100 to 80 to 60; and their
+    bridge to the middle cut, on which, within six seconds, the one
+    coming home jumped the hole while its teammate came out from the
+    island and laid six rungs across it. **Against a server on this PC,
+    with two copies** seated as teammates: the sticks bought from the
+    server, the fourth refused; the second copy seeing the first's stick
+    fly, lie, flash and blow, and four planks go from the bridge on its
+    own screen; one thrown over the void, which the server had fall; the
+    near end of the bridge blown from under the second copy, which took
+    no harm from its teammate's stick and fell with the planks, the
+    server logging the fall; and one of the server's bots taking 20 from
+    a stick, the number floating off it. **Not by hand, and not on a
+    phone**; no stick thrown by one of the computer's players has been
+    seen on a screen, they throw so few, and that is the tests' alone.
+    Known and left: thrown the full 10 m straight up or down the screen,
+    half of the ring is off it, and a far throw up the screen lands under
+    the time; and on a window of sixteen by nine the four more buttons,
+    when they are shown, lie over the right end of the shop's bottom row,
+    as they have since there were five.
+  - **What is mine, the file not saying**: that a blast harms neither its
+    thrower's team nor an anchor, and knocks nobody; that a plank goes
+    whole, by its middle; the 3 m of the blast (the fireball's), the 2.5
+    to 10 m of a throw and the 4.5 m of a tap; how long it flies and the
+    1.2 s it lies; that the arch leans to the thrower's right; the ring
+    where it will land; that one over the void falls and never blows;
+    the sticks' size and their glow; "Cuts bridges"; the narrower cards;
+    everything about the computer's players and it; every kind's number
+    for a fight and what it changes; and every number of the teammate.
 
 - **Later on 2026-11-13: the compass's arrow points out, the anchors are
   their teams' colours, and the computer's players fill their buttons,
@@ -791,7 +1079,8 @@ holds for the arena now.
     `Use::Potion` say which potion. Dying empties every button, as it
     emptied the one. With five kinds sold and five buttons, "Slots full"
     (`words.market.taken`, "Slot full" until then) cannot come up yet: it
-    is there for the sixth kind. `Kit::held`, `slot_of`, `potion` and
+    is there for the sixth kind (which the dynamite is, since that
+    night: above). `Kit::held`, `slot_of`, `potion` and
     `holding` are what everything else reads a kit by.
   - **Where they are** (`hud::slot_place`, `MORE_RING`, `MORE_ANGLES`):
     the second button where it was, and the four more on a second ring
@@ -1763,7 +2052,8 @@ holds for the arena now.
   - **The potions**: speed, 45 s at 1.4 times your pace (measured in the
     desktop build: 10.0 m/s before, 5.0 drinking, 14.0 after); the healing
     one, a quarter of your health back as it is drunk, with a green "+25"
-    floating off you; and invisibility, 30 s in which nobody of another
+    floating off you (half of it, and "+50", since 2026-11-13, as the
+    file has it since); and invisibility, 30 s in which nobody of another
     team draws you, your name or your bar (`island::show_where_i_am`,
     `arena::place_tags`), and no bot goes for you (`arena::hunt`, the
     server's `think`), while you and your own team see you see-through
@@ -3390,13 +3680,17 @@ Wars, are chosen from the gamepad button (above, "Games").
   jump button's corner so as to sit about 2.5% clear of it, the face up
   and to the left, the bubble over it and the fist beside it, as Hajun's
   sketch has them. **Only the gear, the stick, the jump button, the fist,
-  the face and the gamepad do anything** (Hajun: "u dont need to make any button
+  the face, the gamepad and the speech bubble under the gift do anything**
+  (Hajun: "u dont need to make any button
   functional yet other than jump, joystick, settings"; the fist since
   2026-11-01, below, "The fist throws a punch"; the face since 2026-11-05,
   the car's switch, below, "The car you drive", where the fist is the
   reverse and the jump button the boost; the gift since 2026-11-06,
-  which held in the car is its gun, there too; and the gamepad since the
-  night of 2026-11-07, the game selector, above, "Games"); the rest take a press and drop it. The three round the jump button are placed from where
+  which held in the car is its gun, there too; the gamepad since the
+  night of 2026-11-07, the game selector, above, "Games"; and the speech
+  bubble under the gift since 2026-11-13, your friends, with how many
+  things wait in your inbox counted in gold on its corner, below,
+  "Friends, groups and messages"); the rest take a press and drop it. The three round the jump button are placed from where
   the jump button is, on every platform (until 2026-11-06 the desktop
   build showed the three with no stick or jump button among them; since
   then it has both, below, "The stick and the jump button are on Windows
@@ -3490,8 +3784,10 @@ Wars, are chosen from the gamepad button (above, "Games").
   with 1,000 in, and sent to the device (`Tell::Balance`). The only things
   that change it are House Builder's entry fee and its prizes (below).
   `assets/coin.glb` is still in the repo, but nothing loads it.
-- The text is Bevy's built-in font, which is plain ASCII: no Hangul, and no ★,
-  `…` or `·` either. The rating star is drawn in code (`builder::star_image`).
+- The text is Inter since 2026-11-13 ("The font is Inter", below); until
+  then Bevy's built-in font, which is plain ASCII: no Hangul, and no ★,
+  `…` or `·` either. Inter has no Hangul either. The rating star is drawn
+  in code (`builder::star_image`).
 
 ## Settings
 
@@ -3521,7 +3817,321 @@ the profile changing), and goes back to the tab; "Sign in with Google" and
 **Delete account**, which asks once more, then has the login forget the
 account; this device forgets its secret and its profile, and the sign-up's
 pages come back. Offline, Delete says "Not online: try again". Seen in the
-desktop build on 2026-10-31, scripted; not yet on a phone.
+desktop build on 2026-10-31, scripted; not yet on a phone. Since 2026-11-13
+an account deleted takes its friends, what it asked and was asked, and
+what was written to and by it with it ("Friends, groups and messages",
+below).
+
+## Friends, groups and messages
+
+Since 2026-11-13 (Hajun, with four sketches of the panel at the root of the
+repo, `Friendtabdesign1.png` and `friendtabdesign2.png` to `4`: "I want to
+add a friend system. First every account need a random number between
+1000~9999 that is gona serve as a #1234 tag for identification when there
+is duplicate name and your friend need to know which one u are, and
+whenever u change ur name to sth, it will first check if there is someone
+else that has your #1234 tag is also that same name, and so that there can
+be same names, but never BOTH same name AND same number. The friend panel
+popup will open when u tap the top right corner chat bubblt icon under the
+gift icon ... you should be able to search the username, and it will give u
+a list of everyone with that username and u can choose which one to add,
+and when u add the other person, will get a small 1 badge next to the chat
+icon, and the "message" tab inside the panel, andthey can accept or reject
+the add friend request. and when youre in the group with ur friend, only
+the leader can queue for a minigame, and everyone get queued at the same
+time in the same team (unless group is >2 and ur playing 2v2v2v2 bridge
+wars, then it will need to be 2 ppl same team 1 ppl other team i guess).
+and inviting to group should also land in the same panel's messaging icon
+tab with the small 1 circular badge in gold background as a subscript of
+the chat icon. and they can accept or reject the group invite too"; and of
+the sketches, "just the concept + the general vibe/colorscheme/design
+vibe. you can adjust the actual layout and add functions that are not
+shown in the design if u think its necessary. but atleast have all the
+features that are shown in the designs"). What the two sides say is
+`roundtown_net::social` (in `shared/src/lib.rs`: `Ask::Social(Act)`,
+`Tell::Social(News)`, the last of each, and `Refusal::NotLeader`); what the
+server keeps and does is `server/src/social.rs`; the panel is
+`src/friends.rs`. **`PROTOCOL_VERSION` 15**: a `Tell` an app from before
+cannot read, so the server went out with the app: **deployed at 14:07 UTC
+on 2026-11-13** (23:07 here), with Bridge Wars' dynamite of the same day
+("Games"), nobody having been on it for three and a half hours; **APK 26
+is the one that plays online**, and an APK from before is told to update.
+The binary before is kept on the VM as `roundtown-server.prev-2026-11-13c`
+and a dump of the database as it was before tags as
+`/var/backups/roundtown/before-tags-2026-11-13.dump`, out of the nightly
+backups' rotation.
+
+- **Everything about friends is the server's, and there are none offline**
+  (the panel says "You are offline. Friends need a connection."). The
+  server holds all of it in memory (`social::Social`): what every account
+  is called and its tag, who is whose friend, every inbox, every group. It
+  is read from the database once, as the server starts
+  (`accounts::Snapshot`, out of `accounts::set_up`), and from then on the
+  game's loop goes by its own copy, so nothing about friends waits on a
+  query; whatever is to outlast the server is written down after the fact,
+  in the order it happened (`accounts::Keep`, `Bank::keep`, `keep_it`,
+  through the accounts' thread). Without a database (`RT_DB` unset, a
+  server on this PC) it all lasts as long as the server runs. `Social`
+  knows nothing of the world: it takes what is asked (`Social::act`) and
+  where everyone is (`saw`, `left`, `tick`), and says what is to be told
+  and to whom and what is to be kept (`told`, `kept`), which three small
+  systems carry out (`hear`; `track`, four times a second; `flush`), so
+  all of it is unit-tested with no server running. **A device is told
+  everything of its account's as it comes** (`Social::greet`: its tag and
+  level, its friends, its inbox, its group), and nothing is kept on the
+  device: it forgets all of it the moment it is offline
+  (`friends::forget_offline`). That has to hold for a device let in while
+  the server still thinks the one before it connected, a phone's app put
+  away and opened again within the few seconds a dead connection takes
+  to be given up: `players::admit` says so (`Social::connected`), or the
+  panel came back empty until something changed.
+- **The tag** is `players.tag`, `#1000` to `#9999`
+  (`social::TAG_FIRST`, `TAG_LAST`). No two accounts have both the same
+  name, whatever its capitals, and the same tag: the server's copy keeps to
+  it (`Social::enroll`, `rename`, `taken`), and the table has a unique
+  index on `(lower(name), tag)` (`players_name_tag`, `SCHEMA_AFTER`),
+  which holds the login to it as well. A new account is given a tag nobody
+  of its generated name has (`login::account_of`, trying again up to 16
+  times should the index refuse it); every account from before was given
+  one the first time the server started with tags (`accounts::give_tags`).
+  **Taking a name that someone with your tag already has gives you another
+  tag**, at random, that nobody of that name has (`Social::rename`, from
+  `Ask::Profile`): mine. Hajun asked that the two never both be the same;
+  the other way is to refuse the name, which would make a name something
+  that can be taken. The device is told its tag and level whenever either
+  changes (`News::Me`), and so are its friends (`News::Friend`).
+- **The tables** (`accounts::SCHEMA`, made as the server starts, each
+  statement leaving what is there alone): `players.tag` and `players.xp`;
+  `friends (a, b)`, the lesser number first; `friend_requests (sender,
+  receiver)`; `messages (id, sender, receiver, body)`. Every one goes with
+  its account (`ON DELETE CASCADE`): the login's `/delete` takes them with
+  the row, and tells the game's loop which account has gone
+  (`login::Setup::gone`, `social::forget_deleted`), so that its own copy
+  lets go of it too. **The server from before runs on the tables as they
+  are now** (its own INSERT and UPDATE of `players` tried on a migrated
+  copy: a row made without a tag is allowed), so going back to a
+  `.prev` binary needs nothing undone in the database; a rename that
+  lands on someone's name and tag would be refused by the index there,
+  and that is all.
+- **A level** is what an account has earned playing (`players.xp`,
+  `Social::award`, `social::level`): 20 for playing a game to its end
+  (`XP_PLAYED`), 50 more on the team that wins Bridge Wars (`XP_WON`), 50,
+  30 and 15 more for House Builder's first three places (`XP_PLACED`),
+  and a level for every 100 (`XP_A_LEVEL`), from 1. All mine: the sketch
+  has "Level 53" by each name and nothing says what a level is. A game
+  skipped to its end (`RT_ALLOW_SKIP`) earns as it pays its prizes.
+- **The panel** (`src/friends.rs`; every colour and word of it
+  `assets/ui.ron`'s `colours.friends` and `words.friends`): the speech
+  bubble under the gift (`hud::FriendsButton`, the "social" button that did
+  nothing) opens it, a dialog (`hud::DialogUp`: you stand still, presses
+  are its own; the cross, a tap outside it or Escape shuts it), dark and
+  see-through as sketched, 112 by 66 shares of the short side, which is
+  the sketch's own size on a phone and fits a 4:3 tablet (a test keeps it
+  inside both). Along its top two tabs, your own name and tag and your
+  level, and the cross. It is drawn again whole whenever what it shows
+  changes (`redraw`, as the settings' window is), keeping what is typed
+  (`signup::NameBox`) and how far each list is scrolled (`Scrolled`); a
+  list scrolls under a finger or the mouse held (`drag_list`), and a
+  press dragged more than 16 px is no tap on the button it began on
+  (`TAP_SLOP`).
+  - **Friends**, the first tab: your group, if you are in one ("Group
+    (2/4):", Leave, each member with "(Leader)" and "(You)", and for the
+    leader a cross that puts a member out); then "Friends (1/2):", how
+    many are here of how many, with the person and plus that opens Add
+    Friend; and a row to each friend, whoever is here first and then by
+    name: a disc with a dot, green here and grey gone, the name, where
+    they are ("In Main Lobby #1", the channel of the town; "At home";
+    "Bridge Wars: In Queue" and "In Game"; "Offline for 15 hours", drawn
+    again each minute), "Level 53", a button that asks them into your
+    group (the sketch's question first, "Would you like to invite ... to
+    your group?", Cancel and Yes; faint when they cannot be asked: gone,
+    in your group already, or you in a group you do not lead), and a
+    gear, under which Message and Remove Friend (which asks first).
+  - **Add Friend**: a name typed into the sign-up's box
+    (`NameBox::open_for`), which on a phone slides up over the keyboard as
+    the name's page does; the glass, or Enter, looks for it (`Act::Find`):
+    everyone of that name, whatever its capitals, and whoever has that
+    name and tag if it ends in one (`social::split_handle`), up to 20,
+    whoever is here first and then whoever was here last, never yourself.
+    Beside each, "Add friend" (`Act::Befriend`), or "Requested",
+    "Friends", or "Accept" for one who has asked you. Under them "My ID"
+    and your own name and tag, the tag fainter, with a button that copies
+    it.
+  - **The envelope**, the second tab, is your inbox, newest first: who
+    wants to be your friend (Accept, Reject), who invites you to their
+    group (Join, Reject), and what your friends have written (Reply, OK).
+    How many wait there is counted in gold on the envelope's corner and
+    on the speech bubble's among the buttons (`hang_badge`, `count_badge`;
+    "9+" past nine). A request and a message wait for someone who is not
+    here, and are there when they next come.
+  - What came of something asked is said in a line along the panel's
+    bottom for 3.5 s ("Friend request sent.", `Outcome`, `words.friends.
+    said`); what happens to your group while the panel may be shut is said
+    across the lower screen (`toast`).
+- **A message** (`Act::Write`) is up to 80 characters of what the game's
+  keyboard types (`social::message`, `MESSAGE_LONGEST`), to a friend, here
+  or not; it waits in their inbox until they press OK, 30 at the most
+  (`LETTERS_MOST`), and is kept in the database until then. Mine: the
+  sketch's gear has "Message" under it and nothing more is said of it.
+  **It is the first thing one player writes that another reads**: friends
+  only, no filter, no block and no report, which a shop's review may ask
+  for (Apple does of user-generated content) before a release to
+  strangers. Hajun's call.
+- **A group** (`Act::Invite`, `Answer`, `LeaveGroup`, `Kick`; `News::Group`)
+  has a leader, whoever first asked someone into it, and up to four in it
+  (`GROUP_MOST`: two teams of Bridge Wars; mine). Being asked stands for
+  ten minutes and only while whoever asked is here (`INVITE_SECS`); saying
+  yes to one group leaves the one you were in; the leader leaving, the
+  first of the rest who is here leads; one alone is no group. Whoever's
+  connection goes is kept in their group for two minutes (`GROUP_GRACE`: a
+  phone closes its connection whenever the app is put in the background).
+  Groups are never written down: the server starting again ends them all.
+- **Only a group's leader starts a game.** Anyone else in a group finds
+  the game selector's cards blocked out over "Only your group's leader can
+  start a game." (`games`, `Friends::follows`), and the server refuses
+  them (`Refusal::NotLeader`). The leader choosing a game takes with them
+  everyone of the group who is free to go: connected, and in the town or
+  in a game that is over for them, and, for House Builder, with its 100
+  coins, each paying their own (`Social::party`; `Ask::Arena` in
+  `server/src/arena.rs`, `Ask::Play` in `server/src/builder.rs`). Whoever
+  is not is told "Your group started a game without you." and stays in
+  the group. **In Bridge Wars they are seated two by two onto a team**
+  (`Game::seats_for`, `seat_together`): two on one team; of three, two on
+  one team and the third on the island across the map, as Hajun has it;
+  four, two teams; in the game filling now if it has the seats for all of
+  them, and in a new one if not (`Arenas::filling`). In House Builder they
+  are all in one game (`Games::filling`). Whoever is taken along has the
+  panel put away and "Your group is playing Bridge Wars" across the
+  screen.
+- **Copying your name and tag**: on desktop to the system's clipboard
+  (Bevy's `system_clipboard` feature, on for desktop alone in
+  `Cargo.toml`). On Android the game cannot reach the clipboard, so it
+  keeps what is to be copied until `MainActivity` has taken it, asked
+  every 300 ms by numbers alone (`clipLength`, `clipByte`, `clipTaken`,
+  exported from `friends` as the keyboard's `imeInset` is from `signup`:
+  nothing of Java's is touched from the game's side, which is what
+  crashed the first build of the keyboard's lift). An iPhone has no copy
+  button: the name and tag are there to read.
+- **What is mine, Hajun having drawn the panel and said the rules above**:
+  another tag rather than a refused name; what a level is; messages, their
+  80 characters and 30 waiting; the 100 friends and 50 unanswered
+  requests an account may have (`FRIENDS_MOST`, `REQUESTS_MOST`); four to
+  a group, its ten minutes and two; that whoever cannot go is left behind
+  rather than holding the group back; that a request turned down says
+  nothing to whoever asked, who may ask again; your own name, tag and
+  level in the panel's top; "9+"; and no copy button on an iPhone.
+- **Not built**: blocking or reporting someone; anything said to you while
+  the app is shut (a request waits for when you next open it); a group's
+  own chat; Hangul in a name (below, "The font is Inter").
+- **Checked on 2026-11-13.** Unit-tested: the rules both sides share (56
+  in `shared`), the server's `Social` and a group's seats in Bridge Wars
+  (45 in `server`, nineteen of them new for this), the panel's own (276
+  in the game). **The database, on the VM's own Postgres, against scratch
+  databases made and dropped for it** (the server's own never written
+  to, its accounts' names, looks and coins hashed before and after): two
+  ignored tests that will run only on a database whose name ends in
+  `_scratch` (`RT_TEST_DB`; `accounts::tests::scratch`), three times
+  each: everything `social` asks to be kept written and read back, the
+  login making forty accounts, each with a tag nobody of its name has,
+  and **a copy of the server's own accounts taken through starting up**,
+  each given its tag with nothing else of it changed. **End to end with a
+  real Postgres**: the new server on this PC against a scratch database
+  on the VM (reached through SSH as the VM's own `roundtown` user, with
+  nothing opened there and nothing left), three scripted desktop copies:
+  accounts from before given their tags as it started, two requests, one
+  answered, two messages, one seen off, a group taken into a game of
+  Bridge Wars and its 20 earned; the server stopped and started; and
+  every tag, the friendship, the request still unanswered and the
+  message not yet seen off were as they had been, in the table and on
+  the three screens, the request then answered. That run found accounts
+  numbered past the
+  middle of what the table counts read back as one account (ids clamped
+  at nought where everything else casts them: `Snapshot::read`, and
+  `keep_it` ordering two friends other than the table does), which only
+  a server run without the login can have, and which is mended. **In the
+  desktop build with a server on this PC, scripted, six runs of two or
+  three copies**, one of them by touches on the buttons alone and two
+  more in part, each run again as the code changed: a search finding two
+  players of one name, one gone; asked, accepted, rejected and asked
+  again; the gold count on both corners; a group of three with its
+  leader, a member put out, one leaving; a message written, read,
+  answered and seen off, seven of them scrolled with a finger, a drag
+  begun on a button pressing nothing; the leader taking three into
+  Bridge Wars, two on one team and one on another; a follower refused,
+  and the selector blocked for them; a group into House Builder, each
+  paying; a friend gone and back, with what was written meanwhile
+  waiting; and a copy killed outright and opened again at once, which
+  the server took for never having left ("is back"), with its friend and
+  its message there again. **Not by hand, and not on a phone**: the keyboard's lift for
+  the two boxes typed into, the copy on Android, and how the panel sits
+  under a thumb are all unseen. The desktop's copy was read back off the
+  system's clipboard after a scripted press of the button ("Copied").
+  With a phone's keyboard written in by the script, over the lower 55% of
+  the window, both boxes slid up clear of it: Add Friend with its box,
+  its results and "My ID" all in sight and its title off the top, and the
+  message's box with Cancel and Send.
+- **As it went out.** The server's own tables were given the columns, the
+  three tables and the index as the new server first started, and its
+  three accounts their tags ("3 accounts were given their tags"), with
+  every account's name, look and coins as they were (hashed before and
+  after). This PC's own account was then let in through the login, shown
+  its tag and level in the panel, told "Nobody goes by that name." of a
+  name nobody has, and written down as seen when it left. **Nothing
+  between two accounts has been done on the VM itself**: no request, no
+  group and no message, there being one account to try it with and no new
+  ones made for it; that is the tests', the scratch databases' and the
+  runs' on this PC alone. APK 26 is built, its 85 asset files checked
+  byte for byte, its library the stripped one with the four entry points
+  `MainActivity` calls (`imeInset`, `clipLength`, `clipByte`,
+  `clipTaken`), and its number read back, and **not installed, no phone
+  being attached** (APK 25 is kept beside it as
+  `donggeurami_town-release.prev-2026-11-13c.apk`).
+
+## The font is Inter
+
+Since 2026-11-13 (Hajun: "I want to change the font of most things to the
+font "Inter" Regular"), every word on the screen is written in Inter
+Regular (`src/font.rs`), in place of the font Bevy comes with, FiraMono, a
+fixed-width font cut down to plain ASCII.
+
+- **Nothing that draws words names a font.** Each takes Bevy's default
+  (`TextFont::default()`), which is whatever font sits under the default
+  handle; `font::plugin` puts Inter there as the app is built
+  (`AssetId::default()`, after `DefaultPlugins`, whose text plugin puts
+  its own there), so every word is Inter's from the first frame, the
+  opening's cover included, with nothing loaded later to swap in. So
+  "most things" came to everything: the bar, the dialogs, the shops, the
+  names over heads, the headlines, Bridge Wars' numbers. Should one thing
+  want another font, it names it in its own `TextFont`.
+- **The file is compiled in** (`include_bytes!`), as `assets/ui.ron` is:
+  `assets/fonts/Inter-Regular.ttf`, 411,640 bytes, the static Regular of
+  Inter 4.1 (`extras/ttf/Inter-Regular.ttf` of the release at
+  github.com/rsms/inter), under the SIL Open Font License, which is
+  beside it (`LICENSE-inter.txt`). A phone needs nothing packaged for it:
+  both files are left out of the APK (`assets-left-out.txt`; a test
+  keeps it so, and that the font built in is Inter's Regular).
+- **Every text asks for fixed-width digits** (`font::sized`, `tnum`,
+  which every text's `TextFont` is made by: `hud::words`, `builder::label`
+  and the rest). Inter's digits are of different widths, a 1 narrower
+  than an 8, where FiraMono's were all one: a clock or a count would
+  shift a hair as its digits changed, the whole line with it where it is
+  centred. A test keeps every text asking.
+- **No Hangul.** Inter has Latin, Greek and Cyrillic, and the signs
+  FiraMono's subset had not (an ellipsis, a middle dot, dashes, arrows).
+  Names are plain ASCII still (`roundtown_net::profile`), though Hajun's
+  sketches of the friends' panel have "동그라미<3" for a name: a font with
+  Hangul in Inter's own shapes for the rest (Pretendard is one, under the
+  same licence, several times Inter's 0.4 MB a weight) and a name's
+  rule that lets Hangul through, with a phone's keyboard composing it,
+  are what that takes. Not built; Hajun's call.
+- Inter is proportional and a little narrower than FiraMono was at one
+  size, so every line is shorter than it was; nothing was resized for it.
+  Seen in the desktop build, scripted, on the screens that day's runs went
+  through: the bar, the sign-up's three pages, the settings, the game
+  selector, House Builder's lobby, Bridge Wars' board, counts, buttons
+  and both its shops' windows, and the friends' panel. Not opened in it:
+  House Builder's shop, stars and results, and what is said when you talk
+  to someone. Not on a phone.
 
 ## Playing online
 
@@ -3592,7 +4202,9 @@ where things come from, not what they are.
   VM (`src/login.rs`, TCP 443, the server's own certificate pinned by its
   SHA-256, `login::PINNED`: no domain), and gets a signed connect token. A new
   device is a new guest account in Postgres with a generated name ("Mochi
-  482"), 1,000 coins, and the blue look; the name and the character chosen
+  482"), since 2026-11-13 a tag after it that nobody of that name has
+  ("Friends, groups and messages", above), 1,000 coins, and the blue look;
+  the name and the character chosen
   on signing up replace those as soon as it is let in ("The first time, you
   sign up"). **The VM's addresses and certificate are compiled into the app**
   (`net::SERVERS`, `login::PINNED`): a new VM means a new app.
@@ -4984,7 +5596,8 @@ node of that name in a town's model still stands where it is put
   a tie settled by lot (`roundtown_net::standings`; the lot for every place
   is my reading, the winner's was before), and everyone stands at the
   winner's plot. All eight rows: the place, the first three on gold, silver
-  and bronze medals in bold (the built-in font has one weight: the number
+  and bronze medals in bold (the game's font has one weight, Inter's
+  Regular since 2026-11-13 as Bevy's own before it: the number
   is drawn twice, a hair apart), the name, the stars, and what the place
   paid. **Every place pays** (`rules::PRIZES`, Hajun's): +500, +400, +300,
   +200, +100, +50, +25 and +0, the computer's players too offline; online

@@ -22,9 +22,11 @@ use roundtown_net::rules::ENTRY;
 
 use crate::arena;
 use crate::builder::{self, DIALOG_LAYER, Fill, TITLE};
+use crate::friends::Friends;
 use crate::hud::{self, DialogUp, GamesButton, TakesPress};
 use crate::island::{Islands, Venue};
 use crate::lobby::Balance;
+use crate::net::Online;
 use crate::ui::{fill, ui};
 use crate::{CloseUp, Player};
 
@@ -108,6 +110,7 @@ fn choose(
     me: Query<(&Venue, &Balance), With<Player>>,
     close_up: Res<CloseUp>,
     loading: Option<Res<Loading>>,
+    (online, friends): (Res<Online>, Res<Friends>),
     dialogs: Query<Entity, With<GamesDialog>>,
     mut up: ResMut<DialogUp>,
     mut selector: ResMut<Selector>,
@@ -124,7 +127,10 @@ fn choose(
         if selector.open || up.0 || close_up.busy() || loading.is_some() || here != Venue::Town {
             return;
         }
-        open(&mut commands, balance.0 >= ENTRY);
+        // In a group someone else leads, its games are theirs to start
+        // (`friends`): the cards are blocked out, and say so.
+        let follows = online.me().is_some_and(|me| friends.follows(me.id));
+        open(&mut commands, balance.0 >= ENTRY, follows);
         selector.open = true;
         up.0 = true;
         return;
@@ -160,8 +166,11 @@ fn keys(
 
 /// The dialog: the screen dimmed behind it, its title, the three games on
 /// cards across it, and the cross on its corner. Home Builders is blocked
-/// out when you cannot pay for it.
-fn open(commands: &mut Commands, affordable: bool) {
+/// out when you cannot pay for it; and both games when you `follows`
+/// someone else's group, whose leader starts its games (since 2026-11-13,
+/// Hajun: "when youre in the group with ur friend, only the leader can
+/// queue for a minigame"), with a line under the cards that says so.
+fn open(commands: &mut Commands, affordable: bool, follows: bool) {
     let ui = ui();
     let (colours, words) = (ui.colours, &ui.words.games);
     let coins = hud::money(ENTRY);
@@ -178,20 +187,25 @@ fn open(commands: &mut Commands, affordable: bool) {
                 Pickable::IGNORE,
             ))
             .with_children(|cards| {
-                cards
-                    .spawn(card(words.bridge_wars.clone(), words.free.clone(), colours.text_soft, true))
-                    .insert((Choice::BridgeWars, TakesPress, Button));
+                let mut wars = cards.spawn(card(words.bridge_wars.clone(), words.free.clone(), colours.text_soft, !follows));
+                if !follows {
+                    wars.insert((Choice::BridgeWars, TakesPress, Button));
+                }
                 let (note, tint) = if affordable {
                     (fill(&ui.words.house_builder.price, &[("coins", &coins)]), colours.text_soft)
                 } else {
                     (fill(&ui.words.house_builder.need_coins, &[("coins", &coins)]), colours.warn)
                 };
-                let mut home = cards.spawn(card(words.home_builders.clone(), note, tint, affordable));
-                if affordable {
+                let able = affordable && !follows;
+                let mut home = cards.spawn(card(words.home_builders.clone(), note, tint, able));
+                if able {
                     home.insert((Choice::HomeBuilders, TakesPress, Button));
                 }
                 cards.spawn(card(words.coming_soon.clone(), words.coming_soon_note.clone(), colours.off_text, false));
             });
+        if follows {
+            panel.spawn(builder::label(ui.words.friends.only_leader.clone(), NOTE_TEXT, colours.warn));
+        }
         panel.spawn(hud::close_cross(CLOSE, Choice::Close));
     });
 }

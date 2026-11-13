@@ -39,6 +39,7 @@ use crate::accounts::{Bank, Loaded, Record};
 use crate::arena::Arenas;
 use crate::builder::Games;
 use crate::rooms::{ClientRoom, InRoom, NotFor, Room, Towns};
+use crate::social::Social;
 
 /// How fast a body can go across the ground, in metres a second: the car
 /// anyone can drive, boosted (`cars::DRIVEN_TOP_SPEED`, since 2026-11-05,
@@ -270,6 +271,7 @@ fn hear(
     mut bodies: Query<(&mut Body, &mut Spot, &mut Venue, &Member)>,
     mut towns: ResMut<Towns>,
     bank: Res<Bank>,
+    mut social: ResMut<Social>,
     time: Res<Time>,
     mut tells: MessageWriter<ToClients<Tell>>,
     mut commands: Commands,
@@ -333,13 +335,20 @@ fn hear(
                 let Ok((_, _, _, member)) = bodies.get(body) else {
                     continue;
                 };
+                // The tag that goes with the name: their own, unless
+                // someone of that name has it, and then another (`social`),
+                // so that no two accounts have both the same.
+                let Some(tag) = social.rename(member.id, &name) else {
+                    warn!("{} cannot be called {name}: every tag of that name is taken", member.id);
+                    continue;
+                };
                 let member = Member {
                     name,
                     look: look.clone(),
                     ..member.clone()
                 };
-                info!("{} is now {}, a {}", member.id, member.name, member.look);
-                bank.profile(member.id, &member.name, &member.look);
+                info!("{} is now {}#{tag}, a {}", member.id, member.name, member.look);
+                bank.profile(member.id, &member.name, &member.look, tag);
                 commands.entity(body).insert(member.clone());
                 tell(&mut tells, client, Tell::Welcome { me: member });
             }
@@ -511,6 +520,7 @@ fn admit(
     mut towns: ResMut<Towns>,
     mut games: ResMut<Games>,
     mut arenas: ResMut<Arenas>,
+    mut social: ResMut<Social>,
     time: Res<Time>,
     mut tells: MessageWriter<ToClients<Tell>>,
     mut commands: Commands,
@@ -542,6 +552,9 @@ fn admit(
                 .insert((Plays(body), who, ClientRoom(kept.room)))
                 .remove::<(Hello, Loading)>();
             commands.entity(body).insert(NotFor(client));
+            // This device has heard nothing of its friends yet, though the
+            // account may never have been seen to leave.
+            social.connected(who.0);
             let member = member.clone();
             tell(&mut tells, client, Tell::Welcome { me: member.clone() });
             tell(&mut tells, client, Tell::Balance(kept.coins));
@@ -618,8 +631,22 @@ fn admit(
                 }
             }
         } else {
-            Record::made_up()
+            // Nothing is kept: whoever has been here since the server
+            // started is who they were then, by their name, their tag and
+            // what they have earned (`social`); anyone else is made up.
+            match social.person(who.0) {
+                Some(person) => Record {
+                    name: person.name.clone(),
+                    tag: Some(person.tag),
+                    xp: person.xp,
+                    ..Record::made_up()
+                },
+                None => Record::made_up(),
+            }
         };
+        // Known to their friends by this name and tag from here on: the
+        // account's own, or, with none yet, one given now.
+        let tag = social.enroll(who.0, &record.name, record.tag, record.xp);
         let member = Member {
             id: who.0,
             name: record.name,
@@ -672,7 +699,7 @@ fn admit(
                 arrival: 0,
             },
         );
-        info!("{} joined, in {room:?}", member.name);
+        info!("{}#{tag} joined, in {room:?}", member.name);
     }
 }
 

@@ -38,6 +38,8 @@ use crate::Config;
 use crate::accounts::{Bank, Charged, Credited};
 use crate::players::{Body, Everyone, Plays, Who, move_to, tell};
 use crate::rooms::{InRoom, Room, Towns};
+use crate::social::Social;
+use roundtown_net::social::{XP_PLACED, XP_PLAYED};
 
 /// How long after building ends a piece put down still counts, in seconds: a
 /// device puts down whatever it still had out once it hears the time is up.
@@ -69,9 +71,12 @@ pub(crate) fn plugin(app: &mut App) {
         .add_systems(Update, run_games.run_if(in_state(ServerState::Running)));
 }
 
-/// A body whose fee is being taken in the database.
+/// A body whose fee is being taken in the database, and the game it is to be
+/// seated in once it has been: the one that was filling as it asked, which
+/// everyone of a group going in together was given alike (`social`), so
+/// that they are seated in one game whichever of their fees is taken first.
 #[derive(Component)]
-struct Paying;
+struct Paying(Option<u32>);
 
 /// Every game under way, by id, and the one filling now.
 #[derive(Resource, Default)]
@@ -156,13 +161,19 @@ impl Game {
 }
 
 impl Games {
-    /// The game filling now, if it still has room; otherwise a new one.
-    fn filling(&mut self, commands: &mut Commands) -> &mut Game {
-        let open = self.filling.filter(|id| {
-            self.games
-                .get(id)
-                .is_some_and(|game| game.stage == Stage::Queue && !game.closing && game.seats.len() < GAME_SEATS)
-        });
+    /// Whether the game numbered `id` can still seat `count` more: in its
+    /// queue, with that many seats free.
+    fn has_room(&self, id: u32, count: usize) -> bool {
+        self.games
+            .get(&id)
+            .is_some_and(|game| game.stage == Stage::Queue && !game.closing && game.seats.len() + count <= GAME_SEATS)
+    }
+
+    /// The game filling now, if it still has room for `count` who go in
+    /// together; otherwise a new one, the old one left to fill with whoever
+    /// is in it and the computer.
+    fn filling(&mut self, commands: &mut Commands, count: usize) -> &mut Game {
+        let open = self.filling.filter(|&id| self.has_room(id, count));
         let id = open.unwrap_or_else(|| {
             let id = self.next;
             self.next += 1;
@@ -210,12 +221,6 @@ impl Games {
         Some((game, seat))
     }
 
-    /// The id of the game filling now, for the line in `coin_changes` saying
-    /// what a fee was for: most likely the one it seats them in.
-    fn filling_id(&self) -> Option<u32> {
-        self.filling
-    }
-
     /// `body` has left the game in `room` while it was going on: the
     /// connection went, and it gave the game up.
     pub(crate) fn walk_out(&mut self, room: Room, body: Entity) {
@@ -223,9 +228,22 @@ impl Games {
             game.gone[usize::from(seat)] = true;
         }
     }
+
+    /// Whether the game in `room` is still in its lobby, filling or full
+    /// and about to go: what someone's friends are told of where they are
+    /// (`social`).
+    pub(crate) fn queued(&self, room: Room) -> bool {
+        let Room::Game(id) = room else {
+            return false;
+        };
+        self.games
+            .get(&id)
+            .is_some_and(|game| matches!(game.stage, Stage::Queue | Stage::Full))
+    }
 }
 
-/// Seats `body`, paid up, in the game filling now: out of the town, or out of
+/// Seats `body`, paid up, in the game numbered `into`, if it still has
+/// room, and otherwise in the one filling now: out of the town, or out of
 /// the game it has just finished, for another.
 #[allow(clippy::too_many_arguments)]
 fn seat(
@@ -236,6 +254,7 @@ fn seat(
     body: Entity,
     body_of: (Mut<Body>, Mut<Spot>, Mut<Venue>),
     member: Member,
+    into: Option<u32>,
     now: f64,
 ) {
     let room = body_of.0.room;
@@ -243,7 +262,10 @@ fn seat(
         old.gone[usize::from(seat)] = true;
     }
     towns.stand(body);
-    let game = games.filling(commands);
+    let game = match into.filter(|&id| games.has_room(id, 1)) {
+        Some(id) => games.games.get_mut(&id).expect("it has room, so it is there"),
+        None => games.filling(commands, 1),
+    };
     let seat = game.seats.len() as u8;
     game.seats.push(body);
     game.members.push(member);
@@ -262,6 +284,7 @@ fn paid(
     mut charged: MessageReader<Charged>,
     everyone: Res<Everyone>,
     mut bodies: Bodies,
+    paying: Query<&Paying>,
     mut games: ResMut<Games>,
     mut towns: ResMut<Towns>,
     time: Res<Time>,
@@ -273,6 +296,8 @@ fn paid(
         let Some(&body) = everyone.0.get(&Who(answer.id)) else {
             continue;
         };
+        // The game they were to be seated in as they asked.
+        let into = paying.get(body).ok().and_then(|paying| paying.0);
         commands.entity(body).try_remove::<Paying>();
         let Ok((mut body_of, spot, venue, member)) = bodies.get_mut(body) else {
             continue;
@@ -296,6 +321,7 @@ fn paid(
             body,
             (body_of, spot, venue),
             member,
+            into,
             now,
         );
     }
@@ -347,6 +373,7 @@ fn hear(
     paying: Query<(), With<Paying>>,
     mut games: ResMut<Games>,
     mut towns: ResMut<Towns>,
+    (everyone, mut social): (Res<Everyone>, ResMut<Social>),
     bank: Res<Bank>,
     config: Res<Config>,
     time: Res<Time>,
@@ -367,45 +394,84 @@ fn hear(
         let room = body_of.room;
         match &ask.message {
             Ask::Play => {
-                // From the town, or from a game that is over, for another.
-                let free = match room {
-                    Room::Town(_) => true,
-                    Room::Game(_) => games
-                        .of(room, body)
-                        .is_some_and(|(game, _)| matches!(game.stage, Stage::Over { .. })),
-                    Room::Home(_) | Room::Arena(_) => false,
-                };
-                if !free {
-                    tell(&mut tells, client, Tell::Refused(Refusal::Busy));
+                // Whoever asks goes in, and with them, if they lead a
+                // group, everyone of it who is here, free to and has the
+                // fee (`social`, since 2026-11-13); in a group someone else
+                // leads, nobody does: only its leader starts a game.
+                let Some(party) = social.party(body_of.who.0) else {
+                    tell(&mut tells, client, Tell::Refused(Refusal::NotLeader));
                     continue;
+                };
+                // Free to: in the town, or at the results of a game that
+                // is over, for another. And able to pay: with the fee, and
+                // not paying one already.
+                let (mut going, mut staying) = (Vec::new(), Vec::new());
+                let mut cannot_pay = false;
+                for id in party {
+                    let entity = everyone.0.get(&Who(id)).copied();
+                    let able = entity.and_then(|entity| {
+                        let (body_of, ..) = bodies.get(entity).ok()?;
+                        let free = body_of.client.is_some()
+                            && match body_of.room {
+                                Room::Town(_) => true,
+                                Room::Game(_) => games
+                                    .of(body_of.room, entity)
+                                    .is_some_and(|(game, _)| matches!(game.stage, Stage::Over { .. })),
+                                Room::Home(_) | Room::Arena(_) => false,
+                            };
+                        Some((free, body_of.coins >= ENTRY && !paying.contains(entity)))
+                    });
+                    match (entity, able) {
+                        (Some(entity), Some((true, true))) => going.push(entity),
+                        (Some(entity), Some((true, false))) if entity == body => cannot_pay = true,
+                        _ => staying.push(id),
+                    }
                 }
-                let Ok((mut body_of, spot, venue, member)) = bodies.get_mut(body) else {
-                    continue;
-                };
-                if body_of.coins < ENTRY || paying.contains(body) {
+                if cannot_pay {
                     tell(&mut tells, client, Tell::Refused(Refusal::Coins));
                     continue;
                 }
-                // Kept in the database: taken there, in one transaction with
-                // the line saying why, and seated once it has been ([`paid`]).
-                if bank.kept() {
-                    bank.charge(body_of.who.0, ENTRY, "House Builder entry", games.filling_id());
-                    commands.entity(body).insert(Paying);
+                // The one who asked is first of them, or it is nobody's to
+                // go.
+                if going.first() != Some(&body) {
+                    tell(&mut tells, client, Tell::Refused(Refusal::Busy));
                     continue;
                 }
-                body_of.coins -= ENTRY;
-                tell(&mut tells, client, Tell::Balance(body_of.coins));
-                let member = member.clone();
-                seat(
-                    &mut games,
-                    &mut towns,
-                    &mut commands,
-                    &mut tells,
-                    body,
-                    (body_of, spot, venue),
-                    member,
-                    now,
-                );
+                for id in staying {
+                    social.left_behind(id);
+                }
+                // One game for all of them: the one filling now, if it has
+                // the room, or a new one.
+                let into = games.filling(&mut commands, going.len()).id;
+                for &body in &going {
+                    let Ok((mut body_of, spot, venue, member)) = bodies.get_mut(body) else {
+                        continue;
+                    };
+                    // Kept in the database: taken there, in one transaction
+                    // with the line saying why, and seated once it has been
+                    // ([`paid`]).
+                    if bank.kept() {
+                        bank.charge(body_of.who.0, ENTRY, "House Builder entry", Some(into));
+                        commands.entity(body).insert(Paying(Some(into)));
+                        continue;
+                    }
+                    body_of.coins -= ENTRY;
+                    if let Some(client) = body_of.client {
+                        tell(&mut tells, client, Tell::Balance(body_of.coins));
+                    }
+                    let member = member.clone();
+                    seat(
+                        &mut games,
+                        &mut towns,
+                        &mut commands,
+                        &mut tells,
+                        body,
+                        (body_of, spot, venue),
+                        member,
+                        Some(into),
+                        now,
+                    );
+                }
             }
             Ask::Leave => {
                 let Some((game, seat)) = games.of(room, body) else {
@@ -484,7 +550,7 @@ fn hear(
             | Ask::Arena
             | Ask::HitAnchor { .. }
             | Ask::Rung { .. }
-            | Ask::Buy(_) | Ask::Use(_) => {}
+            | Ask::Buy(_) | Ask::Use(_) | Ask::Social(_) => {}
         }
     }
 }
@@ -515,6 +581,7 @@ fn run_games(
     mut everyone: ResMut<Everyone>,
     mut towns: ResMut<Towns>,
     bank: Res<Bank>,
+    mut social: ResMut<Social>,
     mut tells: MessageWriter<ToClients<Tell>>,
     mut commands: Commands,
 ) {
@@ -598,6 +665,17 @@ fn run_games(
                         };
                         game.left = RESULTS_SECS;
                         pay_out(game, &order, &bank, &mut bodies, &mut tells);
+                        // And toward their level (`social`, since
+                        // 2026-11-13): for having played it to its end,
+                        // and more for the first three places.
+                        for (place, &plot) in order.iter().enumerate() {
+                            let seat = usize::from(plot);
+                            let person = game.bot.get(seat) == Some(&false) && !game.gone[seat];
+                            if let (true, Some(member)) = (person, game.members.get(seat)) {
+                                let placed = XP_PLACED.get(place).copied().unwrap_or(0);
+                                social.award(member.id, XP_PLAYED + placed);
+                            }
+                        }
                         info!(
                             "House Builder game {}: plots {order:?} in that order, with {:?} stars",
                             game.id, game.stars

@@ -1,7 +1,10 @@
 The pictures in this folder are Google's Material Design icons
 (https://github.com/google/material-design-icons: person, card_giftcard,
-leaderboard, groups, videogame_asset, mood, textsms and sports_mma, the
-48dp 2x PNGs), turned white on clear for the game's buttons to tint.
+leaderboard, groups, videogame_asset, mood, textsms and sports_mma, and,
+for the friends' panel, group (friends.png), person_add (add_friend.png),
+search, content_copy (copy.png), mail, close, arrow_back_ios_new (back.png)
+and logout (leave.png), the 48dp 2x PNGs), turned white on clear for the
+game's buttons to tint.
 
 They are licensed under the Apache License, Version 2.0:
 http://www.apache.org/licenses/LICENSE-2.0

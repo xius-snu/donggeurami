@@ -86,6 +86,11 @@ const TOP_ITEMS: f32 = 16.0;
 const TOP_UPGRADES: f32 = 24.0;
 const TITLE: f32 = 3.6;
 const CARD_WIDTH: f32 = 15.5;
+/// A card in a row of six, which the things for the buttons are since the
+/// dynamite (2026-11-13): narrower, so that the row ends short of the
+/// buttons on the right of a screen no wider than sixteen by nine, where
+/// six cards of the other width reached under the second button.
+const NARROW_CARD: f32 = 14.0;
 const CARD_HEIGHT: f32 = 17.2;
 const UPGRADE_CARD_HEIGHT: f32 = 21.5;
 const PICTURE: f32 = 6.0;
@@ -365,6 +370,7 @@ pub(crate) fn look_of(utility: Utility) -> (Picture, Color) {
         Utility::Speed => (Picture::Flask, colours.arena.potion_speed),
         Utility::Invisibility => (Picture::Flask, colours.arena.potion_invisibility),
         Utility::Healing => (Picture::Flask, colours.arena.potion_healing),
+        Utility::Dynamite => (Picture::Dynamite, colours.arena.dynamite),
     }
 }
 
@@ -423,6 +429,10 @@ fn offer(ware: Ware, outfit: &Outfit, held: &Purse) -> Offer {
                     fill(&words.invisibility_stat, &[("seconds", &whole(rules::UNSEEN_SECS))]),
                 ),
                 Utility::Healing => (&words.healing, fill(&words.healing_stat, &[("share", &percent(rules::HEALING))])),
+                Utility::Dynamite => (
+                    &words.dynamite,
+                    fill(&words.dynamite_stat, &[("damage", &whole(rules::DYNAMITE_DAMAGE))]),
+                ),
             };
             (picture, tint, name.clone(), stat, None)
         }
@@ -512,6 +522,18 @@ fn offer(ware: Ware, outfit: &Outfit, held: &Purse) -> Offer {
     }
 }
 
+/// How wide a card is in a row of `cards` of them, as a share of the short
+/// side of the screen.
+fn card_width(cards: usize) -> f32 {
+    if cards > 5 { NARROW_CARD } else { CARD_WIDTH }
+}
+
+/// How wide a row of `cards` of them makes the window, margins and all.
+#[cfg(test)]
+fn row_width(cards: usize) -> f32 {
+    cards as f32 * card_width(cards) + cards.saturating_sub(1) as f32 * GAP + 2.0 * PAD
+}
+
 /// A shop's window: its title, a row of cards to each of its shelves, and
 /// the cross on its corner.
 fn open(
@@ -568,8 +590,9 @@ fn open(
                             Shop::Items => CARD_HEIGHT,
                             Shop::Upgrades => UPGRADE_CARD_HEIGHT,
                         };
+                        let width = card_width(shelf.len());
                         for ware in shelf {
-                            card(row, images, pictures, &offer(ware, outfit, held), height);
+                            card(row, images, pictures, &offer(ware, outfit, held), width, height);
                         }
                     });
             }
@@ -577,11 +600,18 @@ fn open(
         });
 }
 
-/// One card, `height` tall: the picture, the name, the line under it, the
-/// pips of an upgrade that goes by steps, and the price, or why there is
-/// none. Lit under the pointer only if it can be bought; blocked out
-/// otherwise.
-fn card(row: &mut ChildSpawnerCommands, images: &mut Assets<Image>, pictures: &mut Pictures, offer: &Offer, height: f32) {
+/// One card, `width` wide and `height` tall: the picture, the name, the
+/// line under it, the pips of an upgrade that goes by steps, and the
+/// price, or why there is none. Lit under the pointer only if it can be
+/// bought; blocked out otherwise.
+fn card(
+    row: &mut ChildSpawnerCommands,
+    images: &mut Assets<Image>,
+    pictures: &mut Pictures,
+    offer: &Offer,
+    width: f32,
+    height: f32,
+) {
     let file = ui();
     let (colours, words) = (file.colours, &file.words.market);
     let able = matches!(offer.state, State::Buy { able: true, .. });
@@ -613,7 +643,7 @@ fn card(row: &mut ChildSpawnerCommands, images: &mut Assets<Image>, pictures: &m
         TakesPress,
         Button,
         Node {
-            width: Val::VMin(CARD_WIDTH),
+            width: Val::VMin(width),
             height: Val::VMin(height),
             flex_direction: FlexDirection::Column,
             align_items: AlignItems::Center,
@@ -881,18 +911,53 @@ mod tests {
         let bare = Outfit::default();
         // Every ware of both shops is on a shelf once, the item shop's in
         // three rows and the upgrade shop's in one, no row longer than
-        // five cards.
+        // six cards: the six things for the buttons are one row, of
+        // narrower cards, so that it is no more than a card's width wider
+        // than a row of five was, and ends short of the second button on
+        // a screen of sixteen by nine.
         let (items, upgrades) = (shelves(Shop::Items), shelves(Shop::Upgrades));
         assert_eq!((items.len(), upgrades.len()), (3, 1));
-        assert_eq!(items.iter().map(Vec::len).sum::<usize>(), 13);
+        assert_eq!(items.iter().map(Vec::len).sum::<usize>(), 14);
         assert_eq!(upgrades[0].len(), 5);
         for (shop, rows) in [(Shop::Items, &items), (Shop::Upgrades, &upgrades)] {
             for ware in rows.iter().flatten() {
                 assert_eq!(rules::sold_at(*ware), shop, "{ware:?}");
                 assert!(rows.iter().flatten().filter(|other| *other == ware).count() == 1);
             }
-            assert!(rows.iter().all(|row| row.len() <= 5));
+            assert!(rows.iter().all(|row| row.len() <= 6));
+            let widest = rows.iter().map(|row| row_width(row.len())).fold(0.0, f32::max);
+            assert!(widest < row_width(5) + 0.6 * CARD_WIDTH, "{widest}");
+            // (The second button's left edge there, from the middle of the
+            // screen, where the window is: half the screen's width, less
+            // the jump button's margin, 6% of it, and the second button's
+            // own place and width in the box round the jump button, 18.5
+            // and 14, `hud::ARENA_SLOT`.)
+            let second_button = 1600.0 / 9.0 * (0.5 - 0.06) - 32.5;
+            assert!(widest * 0.5 - PAD < second_button, "{widest} against {second_button}");
         }
+        // A stick of dynamite, the last of the things for the buttons: 1
+        // amethyst, three to a button, and not to be had with five other
+        // kinds on the five buttons.
+        assert_eq!(items[2].last(), Some(&Ware::Utility(Utility::Dynamite)));
+        let stick = offer(Ware::Utility(Utility::Dynamite), &bare, &[0, 0, 0, 1]);
+        assert_eq!((stick.name.as_str(), stick.picture), ("Dynamite", Picture::Dynamite));
+        assert_eq!(stick.state, State::Buy { item: Item::Amethyst, cost: 1, able: true });
+        let three = Outfit {
+            kit: Kit::default().holding(Utility::Dynamite, 3),
+            ..bare
+        };
+        let full = offer(Ware::Utility(Utility::Dynamite), &three, &[0, 0, 0, 9]);
+        assert_eq!((full.state, full.held), (State::Max, 3));
+        let five = Outfit {
+            kit: Kit::default()
+                .holding(Utility::Fireball, 1)
+                .holding(Utility::Builder, 1)
+                .holding(Utility::Speed, 1)
+                .holding(Utility::Invisibility, 1)
+                .holding(Utility::Healing, 1),
+            ..bare
+        };
+        assert_eq!(offer(Ware::Utility(Utility::Dynamite), &five, &[0, 0, 0, 9]).state, State::Taken);
         // With nothing, everything has a price, which you cannot pay; a
         // name and a line that are short and plain; and nothing filled in
         // is left with its braces.

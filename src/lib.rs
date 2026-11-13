@@ -32,8 +32,11 @@ mod games;
 mod clock;
 mod compass;
 mod drive;
+mod dynamite;
 mod editor;
+mod font;
 mod fountain;
+mod friends;
 mod hud;
 mod intro;
 mod island;
@@ -1312,6 +1315,9 @@ pub fn main() {
     .add_message::<Landed>()
     .add_message::<Swung>()
     .add_systems(Startup, (setup_world, cluster_lights_on_the_cpu));
+    // The font everything is written in, Inter, in place of Bevy's own:
+    // before anything that draws a word.
+    font::plugin(&mut app);
     // The screen's colours and words, from `assets/ui.ron`, read again as
     // it changes on desktop.
     ui::plugin(&mut app);
@@ -1364,6 +1370,7 @@ pub fn main() {
     // the game selector both games are chosen from.
     arena::plugin(&mut app);
     fire::plugin(&mut app);
+    dynamite::plugin(&mut app);
     loot::plugin(&mut app);
     market::plugin(&mut app);
     utility::plugin(&mut app);
@@ -1372,6 +1379,9 @@ pub fn main() {
     bridge::plugin(&mut app);
     minimap::plugin(&mut app);
     games::plugin(&mut app);
+    // Friends, behind the speech bubble under the gift: who they are,
+    // where they are, your inbox and your group.
+    friends::plugin(&mut app);
     // Standing in a house in House Builder, whatever stands between the
     // camera and you, see-through, and out of a tap's reach.
     see_through::plugin(&mut app);

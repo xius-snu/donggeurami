@@ -518,13 +518,68 @@ impl Span {
 }
 
 /// One bridge: whose it is, by seat, its number among theirs, and its
-/// rungs in order; and those that have come ahead of the ones before them.
+/// rungs in order; those that have come ahead of the ones before them;
+/// and which of its planks a blast has taken, by the plank's number, the
+/// one between its rung of that number and the next ([`Nav::blast`]).
 #[derive(Clone, Debug)]
 struct Chain {
     seat: u8,
     id: u16,
     rungs: Vec<Vec2>,
     waiting: Vec<(u16, Vec2)>,
+    gone: Vec<bool>,
+}
+
+impl Chain {
+    /// Whether its plank numbered `plank` is there to be stood on: laid,
+    /// and not blown up since.
+    fn stands(&self, plank: usize) -> bool {
+        plank + 1 < self.rungs.len() && !self.gone.get(plank).copied().unwrap_or(false)
+    }
+}
+
+/// A hole a blast has left in a bridge: a run of planks gone, one after
+/// another, of one bridge. `a` and `b` are the rungs either side of it,
+/// on the very ends of what still stands (or was never there: a bridge
+/// blown at its root has the land it left on that side); `a_in` and
+/// `b_in` are a body's standing room either side, a step back from each
+/// end along the bridge. What a bot jumps, if it is short enough
+/// ([`Nav::crossing`]), and what it lays planks across to mend.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct Gap {
+    pub a: Vec2,
+    pub b: Vec2,
+    pub a_in: Vec2,
+    pub b_in: Vec2,
+}
+
+impl Gap {
+    /// How far it is across, from the one end of what stands to the other.
+    pub fn length(&self) -> f32 {
+        self.a.distance(self.b)
+    }
+
+    /// The same hole, seen from its other side.
+    pub fn turned(self) -> Self {
+        Self {
+            a: self.b,
+            b: self.a,
+            a_in: self.b_in,
+            b_in: self.a_in,
+        }
+    }
+}
+
+/// How far back from the end of what stands, either side of a hole, a
+/// body stands to jump it or to begin mending it, in metres ([`Gap`]).
+const GAP_STEP_BACK: f32 = 0.9;
+
+/// Whether the plank between the rungs `a` and `b` goes with a blast at
+/// `at` that reaches `radius` across the ground: its middle is within the
+/// blast. One rule for whoever says which planks a blast takes, the
+/// server's map online and the game's own bridges offline.
+pub fn plank_in_blast(a: Vec2, b: Vec2, at: Vec2, radius: f32) -> bool {
+    ((a + b) * 0.5).distance(at) <= radius
 }
 
 /// The map with every bridge laid on it so far: what the computer's
@@ -550,8 +605,15 @@ pub struct Nav {
     /// phone, where a game played offline lays a dozen a second as it
     /// begins).
     joined_to: Vec<u16>,
-    /// Counts up each time a plank is laid.
+    /// Counts up each time a plank is laid, or taken.
     pub version: u32,
+    /// Counts up each time planks are taken by a blast ([`Nav::blast`]):
+    /// a way found before then may lead over a hole now, where a plank
+    /// laid only ever adds to the ways there are.
+    pub cuts: u32,
+    /// Every hole a blast has left in a bridge, as they stand
+    /// ([`Nav::gaps`]).
+    gaps: Vec<Gap>,
     /// Somewhere to stand on each land ([`Region::LANDS`]): the square a
     /// body can walk that is nearest its middle.
     hearts: [Option<usize>; 9],
@@ -568,6 +630,8 @@ impl Nav {
             label: vec![0; squares],
             joined_to: vec![0],
             version: 0,
+            cuts: 0,
+            gaps: Vec::new(),
             hearts: [None; 9],
         };
         for index in 0..squares {
@@ -608,20 +672,8 @@ impl Nav {
         if !at.is_finite() {
             return false;
         }
-        let found = match self.chains.iter().position(|kept| kept.seat == seat && kept.id == chain) {
-            Some(found) => found,
-            None => {
-                if self.chains.len() >= MOST_CHAINS {
-                    return false;
-                }
-                self.chains.push(Chain {
-                    seat,
-                    id: chain,
-                    rungs: Vec::new(),
-                    waiting: Vec::new(),
-                });
-                self.chains.len() - 1
-            }
+        let Some(found) = self.chain(seat, chain) else {
+            return false;
         };
         let kept = &mut self.chains[found];
         if usize::from(index) < kept.rungs.len() || kept.rungs.len() >= MOST_RUNGS || kept.waiting.len() >= MOST_RUNGS {
@@ -630,12 +682,23 @@ impl Nav {
         kept.waiting.push((index, at));
         kept.waiting.sort_by_key(|(index, _)| *index);
         let mut laid = Vec::new();
+        let mut holed = false;
         while kept.waiting.first().is_some_and(|(index, _)| usize::from(*index) == kept.rungs.len()) {
             let (_, rung) = kept.waiting.remove(0);
             if let Some(&last) = kept.rungs.last() {
-                laid.push((last, rung));
+                // A plank a blast took before its rungs had come is never
+                // there: a hole from the start.
+                let plank = kept.rungs.len() - 1;
+                if kept.gone.get(plank).copied().unwrap_or(false) {
+                    holed = true;
+                } else {
+                    laid.push((last, rung));
+                }
             }
             kept.rungs.push(rung);
+        }
+        if holed {
+            self.find_gaps();
         }
         let mut any = false;
         for (a, b) in laid {
@@ -656,12 +719,236 @@ impl Nav {
             .map_or(&[], |kept| kept.rungs.as_slice())
     }
 
-    /// Every plank laid, as the two rungs it is between.
+    /// Which of the bridges kept is the one numbered `chain` of whoever
+    /// is in `seat`: kept from now on, if it was not and there is room.
+    fn chain(&mut self, seat: u8, chain: u16) -> Option<usize> {
+        if let Some(found) = self.chains.iter().position(|kept| kept.seat == seat && kept.id == chain) {
+            return Some(found);
+        }
+        if self.chains.len() >= MOST_CHAINS {
+            return None;
+        }
+        self.chains.push(Chain {
+            seat,
+            id: chain,
+            rungs: Vec::new(),
+            waiting: Vec::new(),
+            gone: Vec::new(),
+        });
+        Some(self.chains.len() - 1)
+    }
+
+    /// Every plank that stands, as the two rungs it is between: laid, and
+    /// not blown up since.
     pub fn planks(&self) -> impl Iterator<Item = (Vec2, Vec2)> + '_ {
         self.chains
             .iter()
-            .flat_map(|kept| kept.rungs.windows(2).map(|pair| (pair[0], pair[1])))
+            .flat_map(|kept| {
+                kept.rungs
+                    .windows(2)
+                    .enumerate()
+                    .filter(|(plank, _)| kept.stands(*plank))
+                    .map(|(_, pair)| (pair[0], pair[1]))
+            })
             .filter(|(a, b)| a.distance(*b) <= MOST_PLANK)
+    }
+
+    /// A blast at `at` reaching `radius` across the ground: every plank
+    /// whose middle it reaches is gone ([`plank_in_blast`]), from under
+    /// whoever stands on it. Which they were, each as whose bridge it was
+    /// part of, by seat, which of theirs, and which plank of that: what
+    /// everyone else in the game is told ([`Nav::break_planks`]).
+    pub fn blast(&mut self, at: Vec2, radius: f32) -> Vec<(u8, u16, u16)> {
+        let taken: Vec<(u8, u16, u16)> = self
+            .chains
+            .iter()
+            .flat_map(|kept| {
+                kept.rungs
+                    .windows(2)
+                    .enumerate()
+                    .filter(|(plank, pair)| kept.stands(*plank) && plank_in_blast(pair[0], pair[1], at, radius))
+                    .map(|(plank, _)| (kept.seat, kept.id, plank as u16))
+            })
+            .collect();
+        self.break_planks(&taken);
+        taken
+    }
+
+    /// These planks are gone, each the plank numbered so of the bridge
+    /// numbered so of whoever is in that seat: as [`Nav::blast`] says of
+    /// its own, and as a game that works the blast out for itself says of
+    /// its bridges. One that is gone already, or has not been laid yet, is
+    /// nothing new; one not laid yet is never laid. The squares that only
+    /// they made walkable no longer are, and which squares can be walked
+    /// between is worked out afresh, all of it: a plank laid only joins
+    /// pieces, but one taken may part them. Whether any stood until now.
+    pub fn break_planks(&mut self, planks: &[(u8, u16, u16)]) -> bool {
+        let mut fallen: Vec<(Vec2, Vec2)> = Vec::new();
+        for &(seat, chain, plank) in planks {
+            let Some(found) = self.chain(seat, chain) else {
+                continue;
+            };
+            let kept = &mut self.chains[found];
+            let plank = usize::from(plank);
+            if plank >= MOST_RUNGS {
+                continue;
+            }
+            let stood = kept.stands(plank);
+            if kept.gone.len() <= plank {
+                kept.gone.resize(plank + 1, false);
+            }
+            kept.gone[plank] = true;
+            if stood {
+                fallen.push((kept.rungs[plank], kept.rungs[plank + 1]));
+            }
+        }
+        if fallen.is_empty() {
+            return false;
+        }
+        // The squares along what fell are walkable now only where a plank
+        // that still stands makes them so.
+        let grid = self.grid.clone();
+        let (width, height) = grid.size();
+        let standing: Vec<(Vec2, Vec2)> = self.planks().collect();
+        for (a, b) in fallen {
+            if a.distance(b) > MOST_PLANK {
+                continue;
+            }
+            let low = ((a.min(b) - DECK_HALF - grid.corner) / CELL).floor().max(Vec2::ZERO);
+            let high = ((a.max(b) + DECK_HALF - grid.corner) / CELL).floor();
+            if high.x < 0.0 || high.y < 0.0 {
+                continue;
+            }
+            let (first, last) = (low.as_uvec2(), high.as_uvec2().min(bevy::math::UVec2::new(width as u32 - 1, height as u32 - 1)));
+            for row in first.y..=last.y {
+                for column in first.x..=last.x {
+                    let index = row as usize * width + column as usize;
+                    if !self.deck[index] {
+                        continue;
+                    }
+                    let at = grid.centre_of(column as usize, row as usize);
+                    self.deck[index] = standing.iter().any(|&(a, b)| away_from(at, a, b) <= DECK_HALF);
+                }
+            }
+        }
+        self.relabel();
+        self.find_gaps();
+        self.version += 1;
+        self.cuts += 1;
+        true
+    }
+
+    /// Whether the plank numbered `plank` of the bridge numbered `chain`
+    /// of whoever is in `seat` has been taken by a blast.
+    pub fn broken(&self, seat: u8, chain: u16, plank: u16) -> bool {
+        self.chains
+            .iter()
+            .find(|kept| kept.seat == seat && kept.id == chain)
+            .is_some_and(|kept| kept.gone.get(usize::from(plank)).copied().unwrap_or(false))
+    }
+
+    /// Every hole a blast has left in a bridge, as they stand: each run of
+    /// planks gone one after another, of one bridge, between rungs that
+    /// have come. A hole laid across since, by planks of another bridge,
+    /// is still one here: whoever asks sees whether its two sides can be
+    /// walked between ([`Nav::crossing`]).
+    pub fn gaps(&self) -> &[Gap] {
+        &self.gaps
+    }
+
+    /// Works out the holes again ([`Nav::gaps`]).
+    fn find_gaps(&mut self) {
+        let mut gaps = Vec::new();
+        for kept in &self.chains {
+            let planks = kept.rungs.len().saturating_sub(1);
+            let gone = |plank: usize| kept.gone.get(plank).copied().unwrap_or(false);
+            let mut plank = 0;
+            while plank < planks {
+                if !gone(plank) {
+                    plank += 1;
+                    continue;
+                }
+                let first = plank;
+                while plank < planks && gone(plank) {
+                    plank += 1;
+                }
+                // Planks `first` up to `plank` are gone: between the rung
+                // numbered `first` and the one numbered `plank`.
+                let (a, b) = (kept.rungs[first], kept.rungs[plank]);
+                let across = (b - a).normalize_or_zero();
+                // A step back along what stands on each side: toward the
+                // rung before, or after; at the bridge's own end, straight
+                // back from the hole, onto whatever the bridge left or
+                // came to.
+                let back = |end: Vec2, beyond: Option<Vec2>, away: Vec2| {
+                    let way = beyond.map_or(away, |beyond| (beyond - end).normalize_or(away));
+                    end + way * GAP_STEP_BACK
+                };
+                gaps.push(Gap {
+                    a,
+                    b,
+                    a_in: back(a, first.checked_sub(1).map(|before| kept.rungs[before]), -across),
+                    b_in: back(b, kept.rungs.get(plank + 1).copied(), across),
+                });
+            }
+        }
+        self.gaps = gaps;
+    }
+
+    /// A hole to get over on the way from `here` to `to`, where there is
+    /// no walking from the one to the other: one no further across than
+    /// `most` whose one side can be walked to from `here` and whose other
+    /// side can be walked from to `to`, turned so that `a` is the side
+    /// `here` is on; the shortest way round by it, if there are several.
+    /// None if they can be walked between already, or no one hole lies
+    /// between them.
+    pub fn crossing(&self, here: Vec2, to: Vec2, most: f32) -> Option<Gap> {
+        if self.gaps.is_empty() || self.connected(here, to) {
+            return None;
+        }
+        self.gaps
+            .iter()
+            .flat_map(|gap| [*gap, gap.turned()])
+            .filter(|gap| gap.length() <= most)
+            .filter(|gap| !self.connected(gap.a_in, gap.b_in))
+            .filter(|gap| self.connected(here, gap.a_in) && self.connected(gap.b_in, to))
+            .min_by(|one, other| {
+                let far = |gap: &Gap| here.distance(gap.a_in) + gap.length() + gap.b_in.distance(to);
+                far(one).total_cmp(&far(other))
+            })
+    }
+
+    /// A jump straight from `here` toward `there` over a stretch of the
+    /// void: where the ground ends on the way, and where to come down
+    /// past it, a little in from where the ground begins again. None if
+    /// the ground does not end between them, if the void is further
+    /// across than `most`, or if there is no ground to come down on with
+    /// room to stand. How a bot gets at someone on the bridge beside its
+    /// own, or across a hole (Hajun, 2026-11-13: "i jump across to the
+    /// other bridge, and instead of the ai also jumping across, it goes
+    /// all the way back to the island").
+    pub fn leap(&self, here: Vec2, there: Vec2, most: f32) -> Option<(Vec2, Vec2)> {
+        const STEP: f32 = 0.2;
+        const ROOM: f32 = 0.9;
+        let whole = here.distance(there);
+        if whole < 1.0 || self.ground(here).is_none() {
+            return None;
+        }
+        let way = (there - here) / whole;
+        let steps = (whole / STEP).ceil() as usize;
+        let at = |step: usize| here + way * (step as f32 * STEP).min(whole);
+        // The last of the ground on this side, and the first of it on the
+        // other.
+        let off = (1..=steps).find(|&step| self.ground(at(step)).is_none())?;
+        let on = (off + 1..=steps).find(|&step| self.ground(at(step)).is_some())?;
+        let (edge, shore) = (at(off - 1), at(on));
+        if edge.distance(shore) > most {
+            return None;
+        }
+        // Room to come down: ground on past where it begins again.
+        let down = shore + way * ROOM.min(shore.distance(there));
+        let room = (0..=4).all(|step| self.ground(shore.lerp(down, step as f32 / 4.0)).is_some());
+        room.then_some((edge, down))
     }
 
     /// Marks the squares along the plank from `a` to `b` as walkable, and
@@ -1431,5 +1718,135 @@ mod tests {
         // Asked for somewhere that cannot be walked, the nearest that can.
         let beside = nav.path(from, Vec2::new(0.0, 0.5)).unwrap();
         assert!(beside.last().unwrap().distance(Vec2::new(0.0, 0.5)) < 1.0);
+    }
+
+    /// The two islands with the span between them laid, by seat 4, and
+    /// the span.
+    fn bridged() -> (Nav, Span) {
+        let grid = Arc::new(two_islands());
+        let span = grid.span(Region::Team(0), Region::Middle, 0.0).unwrap();
+        let mut nav = Nav::new(grid);
+        for index in 0..=span.planks() {
+            nav.hear(4, 0, index as u16, span.rung(index));
+        }
+        (nav, span)
+    }
+
+    #[test]
+    fn a_blast_takes_the_planks_whose_middles_it_reaches_and_parts_what_they_joined() {
+        let (mut nav, span) = bridged();
+        let (here, there) = (Vec2::new(-1.0, 0.5), Vec2::new(21.0, -1.0));
+        assert!(nav.connected(here, there) && nav.gaps().is_empty());
+        let planks = span.planks();
+        // A blast on the bridge's middle line, 3 m across: four or five
+        // planks, one after another, each with its middle within 3 m.
+        let at = span.point(0.5);
+        let (version, cuts) = (nav.version, nav.cuts);
+        let taken = nav.blast(at, 3.0);
+        assert!((4..=5).contains(&taken.len()), "{taken:?}");
+        assert!(taken.iter().all(|&(seat, chain, _)| (seat, chain) == (4, 0)));
+        for pair in taken.windows(2) {
+            assert_eq!(pair[1].2, pair[0].2 + 1, "not one after another: {taken:?}");
+        }
+        for &(_, _, plank) in &taken {
+            let (a, b) = (span.rung(usize::from(plank)), span.rung(usize::from(plank) + 1));
+            assert!(plank_in_blast(a, b, at, 3.0) && nav.broken(4, 0, plank));
+        }
+        assert!(nav.version > version && nav.cuts == cuts + 1);
+        // Nothing to stand on where they were, nor to walk; what is left
+        // either side still stands and is walked.
+        assert_eq!(nav.ground(at), None);
+        assert!(!nav.on_plank(at) && !nav.walkable_at(at));
+        let (first, last) = (usize::from(taken[0].2), usize::from(taken[taken.len() - 1].2));
+        let (before, after) = (span.rung(first) - Vec2::X * 0.6, span.rung(last + 1) + Vec2::X * 0.6);
+        assert!(nav.on_plank(before) && nav.walkable_at(before), "the plank before the hole");
+        assert!(nav.on_plank(after) && nav.walkable_at(after), "the plank after the hole");
+        // The two islands are parted again, each with its stump of bridge.
+        assert!(!nav.joined(Region::Team(0), Region::Middle) && !nav.connected(here, there));
+        assert!(nav.connected(here, before) && nav.connected(there, after) && !nav.connected(before, after));
+        assert_eq!(nav.path(here, there), None);
+        // The hole: from the end of what stands on the one side to the
+        // end of it on the other, with standing room a step back on each.
+        assert_eq!(nav.gaps().len(), 1);
+        let gap = nav.gaps()[0];
+        assert!(gap.a.distance(span.rung(first)) < 1e-4 && gap.b.distance(span.rung(last + 1)) < 1e-4);
+        assert!((gap.length() - taken.len() as f32 * span.length() / planks as f32).abs() < 0.05);
+        assert!(gap.a_in.x < gap.a.x && gap.b_in.x > gap.b.x, "{gap:?}");
+        assert!(nav.walkable_at(gap.a_in) && nav.walkable_at(gap.b_in));
+        // It is the way from the one island to the other, from either
+        // side, if it is not too far across to be one.
+        let over = nav.crossing(here, there, 10.0).expect("a hole to get over");
+        assert!(over.a.distance(gap.a) < 1e-4 && over.b.distance(gap.b) < 1e-4);
+        let back = nav.crossing(there, here, 10.0).expect("and back");
+        assert!(back.a.distance(gap.b) < 1e-4 && back.a_in.distance(gap.b_in) < 1e-4);
+        assert_eq!(nav.crossing(here, there, gap.length() - 0.1), None);
+        assert_eq!(nav.crossing(here, Vec2::new(1.5, -1.0), 10.0), None, "they can be walked between");
+        // A jump straight over it, from the one stump to the other: off
+        // the end of the one and down past the end of the other.
+        let (edge, down) = nav.leap(gap.a_in, gap.b_in, 8.0).expect("a jump over the hole");
+        assert!(edge.distance(gap.a) < 0.25 && down.x > gap.b.x && nav.ground(down).is_some(), "{edge} {down}");
+        assert_eq!(nav.leap(gap.a_in, gap.b_in, gap.length() - 0.5), None, "too far");
+        assert_eq!(nav.leap(here, Vec2::new(1.5, -1.0), 8.0), None, "no void between");
+        assert_eq!(nav.leap(gap.a_in, gap.a_in + Vec2::Y * 6.0, 8.0), None, "nothing to come down on");
+        // Blown again, there is nothing new; nor is a plank that was
+        // never laid.
+        assert!(nav.blast(at, 3.0).is_empty());
+        let cuts = nav.cuts;
+        assert!(!nav.break_planks(&taken) && !nav.break_planks(&[(4, 0, 500)]) && nav.cuts == cuts);
+        // Mended by another bridge laid across the hole, the islands are
+        // joined again, and there is nothing to get over.
+        let mend = Span::straight(gap.a_in, gap.b_in);
+        for index in 0..=mend.planks() {
+            nav.hear(0, 3, index as u16, mend.rung(index));
+        }
+        assert!(nav.joined(Region::Team(0), Region::Middle) && nav.path(here, there).is_some());
+        assert_eq!(nav.crossing(here, there, 10.0), None);
+    }
+
+    #[test]
+    fn planks_taken_part_pieces_as_going_over_the_whole_map_would_and_one_taken_early_is_never_laid() {
+        // Two bridges side by side over the same water: a blast that
+        // takes planks of the one leaves the other to walk; one that
+        // takes planks of both parts the islands.
+        let grid = Arc::new(two_islands());
+        let mut nav = Nav::new(grid.clone());
+        let spans = [0.0, 1.5].map(|aside| grid.span(Region::Team(0), Region::Middle, aside).unwrap());
+        for (chain, span) in spans.iter().enumerate() {
+            for index in 0..=span.planks() {
+                nav.hear(1, chain as u16, index as u16, span.rung(index));
+            }
+        }
+        // Off to one side of the first bridge's fourth plank, reaching its
+        // middle and no other's.
+        let fourth = (spans[0].rung(3) + spans[0].rung(4)) * 0.5;
+        let first = nav.blast(fourth - Vec2::Y * 2.0, 2.2);
+        assert_eq!(first, vec![(1, 0, 3)]);
+        assert!(nav.joined(Region::Team(0), Region::Middle), "the other bridge still stands");
+        // Where the two overlapped, what the one that stands makes
+        // walkable still is.
+        assert!(nav.walkable_at(fourth + Vec2::Y * 1.5) && !nav.walkable_at(fourth - Vec2::Y * 0.6));
+        let both = nav.blast((spans[1].rung(8) + spans[1].rung(9)) * 0.5, 3.0);
+        assert!(both.iter().any(|&(_, chain, _)| chain == 0) && both.iter().any(|&(_, chain, _)| chain == 1), "{both:?}");
+        assert!(!nav.joined(Region::Team(0), Region::Middle));
+        let mut afresh = nav.clone();
+        afresh.relabel();
+        for x in 0..40 {
+            for y in [-1.0, 0.0, 1.5, 2.5] {
+                let at = Vec2::new(x as f32 * 0.5, y);
+                assert_eq!(nav.connected(Vec2::ZERO, at), afresh.connected(Vec2::ZERO, at), "{at}");
+            }
+        }
+        assert_eq!(nav.gaps().len(), 3, "{:?}", nav.gaps());
+        // A plank said to be gone before its rungs have come is never
+        // laid: its bridge comes with a hole in it.
+        let mut late = Nav::new(grid.clone());
+        assert!(!late.break_planks(&[(2, 0, 3), (2, 0, 4)]));
+        for index in 0..=spans[0].planks() {
+            late.hear(2, 0, index as u16, spans[0].rung(index));
+        }
+        assert!(!late.joined(Region::Team(0), Region::Middle));
+        let hole = (spans[0].rung(3) + spans[0].rung(5)) * 0.5;
+        assert!(!late.on_plank(hole) && !late.walkable_at(hole));
+        assert!(late.on_plank((spans[0].rung(2) + spans[0].rung(3)) * 0.5));
     }
 }

@@ -1,16 +1,21 @@
 //! What is drawn over the world, laid out as Hajun sketched it
 //! (`assets/UIbuttonlayout.jpg`, 2026-10-31): top left your name on a plate,
 //! with a person button and the settings' gear beside it (`settings`) and
-//! your balance under; down the right edge a gift, a leaderboard, a group
-//! of people and a gamepad; round a phone's jump button a face, a speech
-//! bubble and a fist; and headlines across the middle — the town's name, as
-//! a welcome, whenever you arrive in the town, and whatever else is
-//! [`announce`]d, like House Builder's theme. And how the stick and the
+//! your balance under; down the right edge a gift, a speech bubble (your
+//! friends, `friends`) and a gamepad; round a phone's jump button a face, a
+//! speech bubble and a fist; and headlines across the middle — the town's
+//! name, as a welcome, whenever you arrive in the town, and whatever else
+//! is [`announce`]d, like House Builder's theme. And how the stick and the
 //! jump button look (`setup_hud`; a phone's, and since 2026-11-06 the
 //! desktop's too, driven by the mouse). Of the buttons only the gear, the stick,
 //! the jump button, the fist, the face, the gamepad (the game selector,
-//! `games`) and, in the car, the gift do anything yet (Hajun: "i dont need
-//! you to make them functional yet. just make them in the screen").
+//! `games`), the speech bubble under the gift (the friends' panel, since
+//! 2026-11-13; [`FriendsButton`]) and, in the car, the gift do anything
+//! yet (Hajun: "i dont need you to make them functional yet. just make
+//! them in the screen").
+//!
+//! Every word on the screen is in Inter (`font`, since 2026-11-13; Bevy's
+//! built-in font until then).
 //!
 //! Every button is in one style, the stick's and the jump button's: a
 //! see-through grey disc with a whitish picture on it and no rim
@@ -192,11 +197,18 @@ const WELCOME_SECS: f32 = 3.5;
 /// screenshots showed, 2026-11-01, rendered from their SVGs), the gift and
 /// the social chat's bubble down the right edge. The fist with the face
 /// and the bubble is drawn in code ([`fist`]). A test keeps every one in
-/// the APK. The leaderboard's (`leaderboard.png`), the group of people
-/// (`groups.png`) and the boxing glove (`punch.png`) are still beside them,
-/// unused since 2026-11-01.
+/// the APK. The leaderboard's (`leaderboard.png`) and the boxing glove
+/// (`punch.png`) are still beside them, unused since 2026-11-01. And, since
+/// 2026-11-13, the friends' panel's (`friends`), Material's too: two people
+/// (`group`), a person with a plus (`person_add`), a magnifying glass
+/// (`search`), two sheets (`content_copy`), an envelope (`mail`), a cross
+/// (`close`), a chevron (`arrow_back_ios_new`), a door (`logout`), and the
+/// group of three (`groups`), unused for twelve days until then.
 #[cfg_attr(not(test), allow(dead_code))]
-pub(crate) const ICONS: [&str; 7] = ["person", "settings", "gift", "social", "gamepad", "mood", "chat"];
+pub(crate) const ICONS: [&str; 16] = [
+    "person", "settings", "gift", "social", "gamepad", "mood", "chat", "friends", "add_friend", "search", "copy", "mail",
+    "close", "back", "leave", "groups",
+];
 
 /// Your balance, top left.
 #[derive(Component)]
@@ -222,6 +234,12 @@ pub(crate) enum Layout {
 /// (`games`).
 #[derive(Component)]
 pub(crate) struct GamesButton;
+
+/// The speech bubble over it, under the gift, which opens your friends
+/// (`friends`, since 2026-11-13; Hajun: "The friend panel popup will open
+/// when u tap the top right corner chat bubblt icon under the gift icon").
+#[derive(Component)]
+pub(crate) struct FriendsButton;
 
 /// The fill of your health bar in Bridge Wars, as wide as your health.
 #[derive(Component)]
@@ -539,10 +557,7 @@ pub(crate) fn words(text: impl Into<String>, size_vmin: f32, colour: Color) -> i
     let shadow = ui().colours.text_shadow;
     (
         Text::new(text),
-        TextFont {
-            font_size: FontSize::VMin(size_vmin),
-            ..default()
-        },
+        crate::font::sized(size_vmin),
         TextColor(colour),
         TextShadow {
             offset: Vec2::new(0.0, 3.0),
@@ -1101,8 +1116,10 @@ fn spawn_town_bar(commands: &mut Commands, assets: &AssetServer, images: &mut As
                         "gamepad" => {
                             right.spawn((GamesButton, button));
                         }
+                        // Your friends (`friends`), which hangs a count of
+                        // what waits in your inbox on its corner.
                         _ => {
-                            right.spawn(button);
+                            right.spawn((FriendsButton, button));
                         }
                     }
                 }
@@ -1216,10 +1233,7 @@ fn name_plate() -> impl Bundle {
         children![(
             NamePlate,
             Text::new(""),
-            TextFont {
-                font_size: FontSize::VMin(NAME_TEXT),
-                ..default()
-            },
+            crate::font::sized(NAME_TEXT),
             TextColor(colours.text),
             Pickable::IGNORE,
         )],
@@ -1744,11 +1758,12 @@ pub(crate) enum Picture {
     Cross,
     Eye,
     Compass,
+    Dynamite,
 }
 
 impl Picture {
     #[cfg_attr(not(test), allow(dead_code))]
-    pub(crate) const ALL: [Picture; 12] = [
+    pub(crate) const ALL: [Picture; 13] = [
         Picture::Plank,
         Picture::Sword,
         Picture::Shield,
@@ -1761,6 +1776,7 @@ impl Picture {
         Picture::Cross,
         Picture::Eye,
         Picture::Compass,
+        Picture::Dynamite,
     ];
 
     /// The picture, drawn.
@@ -1824,6 +1840,21 @@ impl Picture {
                     at,
                     &[Vec2::new(0.0, 0.92), Vec2::new(-0.62, -0.8), Vec2::new(0.0, -0.42), Vec2::new(0.62, -0.8)],
                 ) - 0.03
+            }),
+            // Two sticks of dynamite side by side, leaning as the sword
+            // does, with the fuse out of their top and a spark at its end
+            // (since 2026-11-13).
+            Picture::Dynamite => drawn(|at| {
+                let (sin, cos) = std::f32::consts::FRAC_PI_4.sin_cos();
+                // `at` as the sticks see it, standing up their own y.
+                let local = Vec2::new(at.x * cos - at.y * sin, at.x * sin + at.y * cos);
+                let sticks = [-0.24, 0.24]
+                    .into_iter()
+                    .map(|x| box_distance(local - Vec2::new(x, -0.2), Vec2::new(0.15, 0.5)) - 0.06)
+                    .fold(f32::INFINITY, f32::min);
+                let fuse = box_distance(local - Vec2::new(0.0, 0.52), Vec2::new(0.045, 0.2));
+                let spark = circle_distance(local, Vec2::new(0.0, 0.82), 0.13);
+                sticks.min(fuse).min(spark)
             }),
         }
     }

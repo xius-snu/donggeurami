@@ -62,7 +62,10 @@
 use bevy::light::{NotShadowCaster, NotShadowReceiver};
 use bevy::picking::pointer::PointerId;
 use bevy::prelude::*;
-use roundtown_net::bridge_wars::{DRINK_SECS, FIREBALL_AHEAD, FIREBALL_RADIUS, FIREBALL_RANGE};
+use roundtown_net::bridge_wars::{
+    DRINK_SECS, DYNAMITE_AHEAD, DYNAMITE_FURTHEST, DYNAMITE_NEAREST, DYNAMITE_RADIUS, DYNAMITE_TAP, FIREBALL_AHEAD, FIREBALL_RADIUS,
+    FIREBALL_RANGE, lob_track,
+};
 use roundtown_net::{Stack, UTILITY_SLOTS, Utility};
 
 use crate::arena::{ArenaSystems, FightTime, Fighting, Health, InArena, Outfit, Used};
@@ -92,6 +95,18 @@ const FIREBALL_BAND: f32 = 2.0 * FIREBALL_RADIUS + 0.2;
 /// screen whichever way it points.
 const BUILDER_BAND: f32 = 2.0 * bridge::HALF_WIDTH;
 const BUILDER_BAND_LENGTH: f32 = 30.0;
+/// How far the finger has to be dragged from where it went down to throw
+/// a stick of dynamite as far as one can be thrown, as a share of the
+/// short side of the screen: from [`AIM_DEAD`], where it is thrown as near
+/// as one can be, the further the finger the further the throw ("with
+/// ability to change the total distance with the magnitude of the
+/// hold&drag&letgo"). About a button and a half.
+const AIM_FULL: f32 = 22.0;
+/// How wide the band a stick of dynamite's aim lays on the ground is, in
+/// metres: about as wide as the two sticks; and how many stretches its
+/// bend is drawn in.
+const DYNAMITE_BAND: f32 = 0.6;
+const DYNAMITE_BAND_PIECES: usize = 24;
 /// How far up from the ground you have to be to be in the air, in metres:
 /// a builder is sent off from the ground.
 const IN_THE_AIR: f32 = 0.3;
@@ -142,8 +157,10 @@ struct Hand {
 /// A finger, or the mouse, holding a button down to aim: which, and what
 /// is on the button it holds; where it went down, once that is read, in
 /// the window's own pixels; for how long; whether it has ever been
-/// dragged out far enough to aim; and which way it aims now, as a plank
-/// heads, if it is out that far.
+/// dragged out far enough to aim; which way it aims now, as a plank
+/// heads, if it is out that far; and how far out it is dragged, from 0
+/// where it begins to aim to 1 at its furthest, which is how far a stick
+/// of dynamite is thrown.
 #[derive(Clone, Copy, Debug)]
 struct Hold {
     pointer: PointerId,
@@ -152,6 +169,7 @@ struct Hold {
     age: f32,
     out: bool,
     aim: Option<f32>,
+    reach: f32,
 }
 
 impl Hold {
@@ -163,17 +181,21 @@ impl Hold {
             age: 0.0,
             out: false,
             aim: None,
+            reach: 0.0,
         }
     }
 
     /// The finger is `at` now, `dt` seconds on: aiming the way it has been
     /// dragged from where it went down, across a screen whose up is
-    /// `ahead` on the ground, once it is `dead` or more from there.
-    fn drag(&mut self, at: Vec2, dt: f32, dead: f32, ahead: Vec3) {
+    /// `ahead` on the ground, once it is `dead` or more from there; and
+    /// reaching the further the further it is dragged, to its furthest at
+    /// `full` from there.
+    fn drag(&mut self, at: Vec2, dt: f32, dead: f32, full: f32, ahead: Vec3) {
         let drag = at - *self.from.get_or_insert(at);
         self.age += dt;
         self.aim = (drag.length() >= dead).then(|| heading_of_drag(drag, ahead));
         self.out |= self.aim.is_some();
+        self.reach = ((drag.length() - dead) / (full - dead).max(1.0)).clamp(0.0, 1.0);
     }
 
     /// What letting go does, with you facing `facing`: the heading to use
@@ -181,6 +203,18 @@ impl Hold {
     /// dragged, the way you face; or nothing, cancelled.
     fn let_go(&self, facing: f32) -> Option<f32> {
         self.aim.or((!self.out && self.age <= QUICK_TAP).then_some(facing))
+    }
+
+    /// How far a stick of dynamite let go of now is thrown, in metres:
+    /// aimed, from as near as one can be to as far, by how far the finger
+    /// is dragged; a quick tap that never dragged, a few metres
+    /// ([`DYNAMITE_TAP`]).
+    fn far(&self) -> f32 {
+        if self.aim.is_some() {
+            DYNAMITE_NEAREST + (DYNAMITE_FURTHEST - DYNAMITE_NEAREST) * self.reach
+        } else {
+            DYNAMITE_TAP
+        }
     }
 }
 
@@ -201,11 +235,64 @@ fn heading_of(rotation: Quat) -> f32 {
 }
 
 /// The band on the ground that shows where what you aim will go, and
-/// which of the two it is drawn for.
+/// which of the things that are aimed it is drawn for.
 #[derive(Component)]
 struct AimBand;
 #[derive(Component)]
 struct BandFor(Utility);
+
+/// The band a stick of dynamite is aimed with (since 2026-11-13; Hajun:
+/// "instead of one straight rectangular hit range indicator its like an
+/// long arched curved rectangular, with ability to change the total
+/// distance with the magnitude of the hold&drag&letgo"): its three sheets,
+/// built again as the throw grows longer or shorter, and how far the throw
+/// they were last built for comes down, in metres. It bends as the stick
+/// will fly ([`lob_track`]), out to the thrower's right and back, and ends
+/// at a ring as wide as the blast will reach, round where it comes down
+/// ([`LandingRing`]: mine, as Brawl Stars shows where a thrower's shot
+/// lands).
+#[derive(Resource)]
+struct LobBand {
+    sheets: [Handle<Mesh>; 3],
+    built_for: f32,
+    /// Whether there is any of it to draw: in the nearest of throws the
+    /// ring reaches back past the hand, and its sheets are put away.
+    drawn: bool,
+}
+
+/// One of the three sheets of the dynamite's band, to put away when there
+/// is none of it outside the ring.
+#[derive(Component)]
+struct LobSheet;
+
+/// The ring at the end of the dynamite's band: where it comes down, and
+/// as far round that as its blast will reach.
+#[derive(Component)]
+struct LandingRing;
+
+/// The line a stick of dynamite thrown to come down `far` from you flies
+/// along, over the ground, in the band's own space, straight ahead being
+/// -Z: from where it leaves the hand to where the ring round where it
+/// comes down begins, in so many stretches. With the ring reaching back
+/// past the hand, as in the nearest of throws, nothing.
+fn lob_line(far: f32) -> Vec<Vec2> {
+    let (from, to) = (Vec2::new(0.0, -DYNAMITE_AHEAD), Vec2::new(0.0, -far));
+    let pieces = DYNAMITE_BAND_PIECES;
+    let line: Vec<Vec2> = (0..=pieces).map(|piece| lob_track(from, to, piece as f32 / pieces as f32)).collect();
+    // As far as the ring's edge and no further: the first of it inside
+    // the ring is drawn back onto the ring's edge.
+    let Some(inside) = line.iter().position(|point| point.distance(to) <= DYNAMITE_RADIUS) else {
+        return line;
+    };
+    if inside == 0 {
+        return Vec::new();
+    }
+    let (before, within) = (line[inside - 1], line[inside]);
+    let (out, into) = (before.distance(to) - DYNAMITE_RADIUS, DYNAMITE_RADIUS - within.distance(to));
+    let mut kept = line[..inside].to_vec();
+    kept.push(before.lerp(within, out / (out + into).max(1e-4)));
+    kept
+}
 /// Its sheets' looks, to recolour as the file changes: the fill, the
 /// outline just inside its edge, and the dark rim just outside it.
 #[derive(Resource)]
@@ -341,8 +428,10 @@ fn buttons(
     match by_finger {
         Some(pointer) => hand.hold = Some(Hold::new(pointer, utility)),
         None => {
+            // By its key, a stick of dynamite goes as far as a quick tap
+            // throws one.
             let heading = heading_of(body.rotation);
-            if throw(utility, heading, &mut body, &islands, &mut used) {
+            if throw(utility, heading, DYNAMITE_TAP, &mut body, &islands, &mut used) {
                 hand.rest = AIM_REST;
             }
         }
@@ -351,11 +440,15 @@ fn buttons(
 
 /// Uses `utility`, which is aimed, along `heading`, from where your `body`
 /// stands, turning you to face that way: whether it was. A builder is sent
-/// off only from the ground.
-fn throw(utility: Utility, heading: f32, body: &mut Transform, islands: &Islands, used: &mut MessageWriter<Used>) -> bool {
+/// off only from the ground; a stick of dynamite is thrown to come down
+/// `far` from you.
+fn throw(utility: Utility, heading: f32, far: f32, body: &mut Transform, islands: &Islands, used: &mut MessageWriter<Used>) -> bool {
     match utility {
         Utility::Fireball => {
             used.write(Used::Fireball { heading });
+        }
+        Utility::Dynamite => {
+            used.write(Used::Dynamite { heading, far });
         }
         Utility::Builder => {
             let feet = body.translation;
@@ -380,8 +473,8 @@ fn throw(utility: Utility, heading: f32, body: &mut Transform, islands: &Islands
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn aim(
     time: Res<Time>,
-    touches: Res<Touches>,
-    mouse: Res<ButtonInput<MouseButton>>,
+    // (Together, to keep to the sixteen things a system may ask for.)
+    (touches, mouse): (Res<Touches>, Res<ButtonInput<MouseButton>>),
     windows: Query<&Window>,
     cameras: Query<&Transform, (With<ThirdPersonCamera>, Without<Player>)>,
     dialog: Res<DialogUp>,
@@ -392,6 +485,12 @@ fn aim(
     mut hand: ResMut<Hand>,
     mut bands: Query<(&mut Transform, &mut Visibility), (With<AimBand>, Without<Player>, Without<ThirdPersonCamera>, Without<BandFor>)>,
     mut kinds: Query<(&BandFor, &mut Visibility), (Without<AimBand>, Without<Player>)>,
+    (mut rings, mut lob_sheets): (
+        Query<&mut Transform, (With<LandingRing>, Without<AimBand>, Without<Player>, Without<ThirdPersonCamera>)>,
+        Query<&mut Visibility, (With<LobSheet>, Without<AimBand>, Without<BandFor>)>,
+    ),
+    mut lob: ResMut<LobBand>,
+    mut meshes: ResMut<Assets<Mesh>>,
     mut used: MessageWriter<Used>,
 ) {
     let dt = time.delta_secs();
@@ -426,20 +525,51 @@ fn aim(
         hand.hold = None;
         shown.set_if_neq(Visibility::Hidden);
         if let Some(heading) = hold.let_go(heading_of(body.rotation))
-            && throw(utility, heading, &mut body, &islands, &mut used)
+            && throw(utility, heading, hold.far(), &mut body, &islands, &mut used)
         {
             hand.rest = AIM_REST;
         }
         return;
     };
     let ahead = cameras.single().map_or(Vec3::NEG_Z, camera_ahead);
-    let dead_zone = window.width().min(window.height()) * AIM_DEAD / 100.0;
-    hold.drag(at, dt, dead_zone, ahead);
+    let short_side = window.width().min(window.height());
+    hold.drag(at, dt, short_side * AIM_DEAD / 100.0, short_side * AIM_FULL / 100.0, ahead);
     hand.hold = Some(hold);
     let Some(heading) = hold.aim else {
         shown.set_if_neq(Visibility::Hidden);
         return;
     };
+    // A stick of dynamite's band is as long as the throw: built again as
+    // that changes by a hand's breadth, with the ring where it comes down.
+    if utility == Utility::Dynamite {
+        let far = hold.far();
+        if (far - lob.built_for).abs() > 0.04 {
+            lob.built_for = far;
+            // With none of it outside the ring its sheets are put away as
+            // they are: a mesh of nothing is none the GPU can be given
+            // (Bevy's mesh allocator logs a use after free for each).
+            let line = lob_line(far);
+            lob.drawn = line.len() >= 2;
+            if lob.drawn {
+                let (fill, outline, rim) = range::ribbon(&line, DYNAMITE_BAND);
+                for (handle, mesh) in lob.sheets.iter().zip([rim, fill, outline]) {
+                    if meshes.insert(handle, mesh).is_err() {
+                        warn!("the dynamite's band has lost a mesh");
+                    }
+                }
+            }
+        }
+        let sheets_shown = if lob.drawn { Visibility::Inherited } else { Visibility::Hidden };
+        for mut sheet in &mut lob_sheets {
+            sheet.set_if_neq(sheets_shown);
+        }
+        for mut ring in &mut rings {
+            let place = Vec3::new(0.0, 0.0, -far);
+            if ring.translation != place {
+                ring.translation = place;
+            }
+        }
+    }
     band.set_if_neq(Transform {
         translation: body.translation + Vec3::Y * range::HEIGHT,
         rotation: Quat::from_rotation_y(heading),
@@ -647,35 +777,54 @@ fn spawn_band(mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<Sta
         (Utility::Builder, BUILDER_BAND, reach, reach + BUILDER_BAND_LENGTH),
     ]
     .map(|(utility, width, from, to)| (utility, range::band(width, from, to), range::rim(width, from, to)));
+    // A stick of dynamite's: the band, built again as the throw changes
+    // (`aim`), and the ring round where it comes down, which is always as
+    // wide as the blast.
+    let (lob_fill, lob_outline, lob_rim) = range::ribbon(&lob_line(DYNAMITE_TAP), DYNAMITE_BAND);
+    let lob = LobBand {
+        sheets: [meshes.add(lob_rim), meshes.add(lob_fill), meshes.add(lob_outline)],
+        built_for: DYNAMITE_TAP,
+        drawn: true,
+    };
+    let (ring_fill, ring_outline, ring_rim) = range::disc(DYNAMITE_RADIUS);
+    let ring = [meshes.add(ring_rim), meshes.add(ring_fill), meshes.add(ring_outline)];
+    // A band's three sheets, the outline a hair over the rest.
+    let sheets = |sheets: [Handle<Mesh>; 3]| {
+        let looks = [look.rim.clone(), look.fill.clone(), look.outline.clone()];
+        let over = [0.0, 0.0, 0.002];
+        std::array::from_fn::<_, 3, _>(|sheet| {
+            (
+                Mesh3d(sheets[sheet].clone()),
+                MeshMaterial3d(looks[sheet].clone()),
+                Transform::from_xyz(0.0, over[sheet], 0.0),
+                NotShadowCaster,
+                NotShadowReceiver,
+            )
+        })
+    };
     commands
         .spawn((Name::new("Aim band"), AimBand, Transform::default(), Visibility::Hidden))
         .with_children(|band| {
             for (utility, (fill, outline), rim) in shapes {
                 band.spawn((BandFor(utility), Transform::default(), Visibility::Hidden)).with_children(|kind| {
-                    kind.spawn((
-                        Mesh3d(meshes.add(rim)),
-                        MeshMaterial3d(look.rim.clone()),
-                        Transform::default(),
-                        NotShadowCaster,
-                        NotShadowReceiver,
-                    ));
-                    kind.spawn((
-                        Mesh3d(meshes.add(fill)),
-                        MeshMaterial3d(look.fill.clone()),
-                        Transform::default(),
-                        NotShadowCaster,
-                        NotShadowReceiver,
-                    ));
-                    kind.spawn((
-                        Mesh3d(meshes.add(outline)),
-                        MeshMaterial3d(look.outline.clone()),
-                        Transform::from_xyz(0.0, 0.002, 0.0),
-                        NotShadowCaster,
-                        NotShadowReceiver,
-                    ));
+                    for sheet in sheets([meshes.add(rim), meshes.add(fill), meshes.add(outline)]) {
+                        kind.spawn(sheet);
+                    }
                 });
             }
+            band.spawn((BandFor(Utility::Dynamite), Transform::default(), Visibility::Hidden)).with_children(|kind| {
+                for sheet in sheets(lob.sheets.clone()) {
+                    kind.spawn((sheet, LobSheet));
+                }
+                kind.spawn((LandingRing, Transform::from_xyz(0.0, 0.0, -DYNAMITE_TAP), Visibility::Inherited))
+                    .with_children(|landing| {
+                        for sheet in sheets(ring.clone()) {
+                            landing.spawn(sheet);
+                        }
+                    });
+            });
         });
+    commands.insert_resource(lob);
     commands.insert_resource(look);
 }
 
@@ -732,30 +881,75 @@ mod tests {
 
     #[test]
     fn letting_go_uses_it_the_way_it_aimed_and_dragging_back_cancels() {
-        let (dead, north, dt) = (40.0, Vec3::NEG_Z, 1.0 / 60.0);
+        let (dead, full, north, dt) = (40.0, 220.0, Vec3::NEG_Z, 1.0 / 60.0);
         let facing = PI;
         // Held and dragged east, past the dead zone: it aims east, and
         // goes east let go, whichever way you face.
         let mut hold = Hold::new(PointerId::Mouse, Utility::Fireball);
-        hold.drag(Vec2::new(500.0, 300.0), dt, dead, north);
+        hold.drag(Vec2::new(500.0, 300.0), dt, dead, full, north);
         assert!(hold.aim.is_none() && !hold.out);
-        hold.drag(Vec2::new(530.0, 300.0), dt, dead, north);
+        hold.drag(Vec2::new(530.0, 300.0), dt, dead, full, north);
         assert!(hold.aim.is_none(), "30 pixels is short of the dead zone");
-        hold.drag(Vec2::new(600.0, 300.0), dt, dead, north);
+        hold.drag(Vec2::new(600.0, 300.0), dt, dead, full, north);
         assert!(hold.out && way(hold.aim.unwrap()).distance(Vec3::X) < 1e-5);
         assert!(way(hold.let_go(facing).unwrap()).distance(Vec3::X) < 1e-5);
         // Dragged back to where it went down, it aims nowhere, and letting
         // go there cancels, however quick.
-        hold.drag(Vec2::new(505.0, 302.0), dt, dead, north);
+        hold.drag(Vec2::new(505.0, 302.0), dt, dead, full, north);
         assert!(hold.aim.is_none() && hold.out && hold.age < QUICK_TAP);
         assert_eq!(hold.let_go(facing), None);
         // A quick tap that never dragged goes the way you face; a long
         // press that never dragged is nothing.
         let mut tap = Hold::new(PointerId::Mouse, Utility::Builder);
-        tap.drag(Vec2::new(500.0, 300.0), 0.1, dead, north);
+        tap.drag(Vec2::new(500.0, 300.0), 0.1, dead, full, north);
         assert_eq!(tap.let_go(facing), Some(facing));
-        tap.drag(Vec2::new(501.0, 300.0), 0.5, dead, north);
+        tap.drag(Vec2::new(501.0, 300.0), 0.5, dead, full, north);
         assert_eq!(tap.let_go(facing), None);
+    }
+
+    #[test]
+    fn a_stick_of_dynamite_is_thrown_as_far_as_the_finger_is_dragged_along_a_band_that_bends_to_a_ring() {
+        let (dead, full, north, dt) = (40.0, 220.0, Vec3::NEG_Z, 1.0 / 60.0);
+        // A quick tap that never dragged: a few metres, the way you face.
+        let mut tap = Hold::new(PointerId::Mouse, Utility::Dynamite);
+        tap.drag(Vec2::new(500.0, 300.0), 0.1, dead, full, north);
+        assert_eq!((tap.let_go(1.0), tap.far()), (Some(1.0), DYNAMITE_TAP));
+        // Dragged just past where it begins to aim: as near as one can be
+        // thrown. Halfway out: halfway between. All the way, and past it:
+        // as far as one can be.
+        let mut hold = Hold::new(PointerId::Mouse, Utility::Dynamite);
+        hold.drag(Vec2::new(500.0, 300.0), dt, dead, full, north);
+        hold.drag(Vec2::new(500.0, 259.0), dt, dead, full, north);
+        assert!(hold.aim.is_some() && (hold.far() - DYNAMITE_NEAREST).abs() < 0.1, "{}", hold.far());
+        hold.drag(Vec2::new(500.0, 300.0 - 130.0), dt, dead, full, north);
+        assert!((hold.far() - (DYNAMITE_NEAREST + DYNAMITE_FURTHEST) * 0.5).abs() < 1e-3, "{}", hold.far());
+        hold.drag(Vec2::new(500.0, 300.0 - 220.0), dt, dead, full, north);
+        assert!((hold.far() - DYNAMITE_FURTHEST).abs() < 1e-4);
+        hold.drag(Vec2::new(500.0, -400.0), dt, dead, full, north);
+        assert!((hold.far() - DYNAMITE_FURTHEST).abs() < 1e-4 && way(hold.let_go(0.0).unwrap()).distance(Vec3::NEG_Z) < 1e-5);
+        // Its band, at its furthest: from the hand, out to the thrower's
+        // right (+X, with straight ahead -Z) and back, to the edge of the
+        // ring round where it comes down, and no further.
+        let line = lob_line(DYNAMITE_FURTHEST);
+        let down = Vec2::new(0.0, -DYNAMITE_FURTHEST);
+        assert_eq!(line[0], Vec2::new(0.0, -DYNAMITE_AHEAD));
+        assert!((line[line.len() - 1].distance(down) - DYNAMITE_RADIUS).abs() < 1e-3, "{:?}", line.last());
+        assert!(line.iter().all(|point| point.x >= 0.0 && point.distance(down) >= DYNAMITE_RADIUS - 1e-3));
+        let widest = line.iter().map(|point| point.x).fold(0.0, f32::max);
+        assert!(widest > 1.2 && widest < 2.2, "it bends {widest} m to the side");
+        assert!(line.windows(2).all(|pair| pair[1].y < pair[0].y), "it runs on ahead all the way");
+        // Thrown as near as one can be, the ring reaches back past the
+        // hand: there is no band to draw, only the ring.
+        assert!(lob_line(DYNAMITE_NEAREST).is_empty());
+        assert!(lob_line(DYNAMITE_TAP).len() >= 2);
+        // The band is a narrow one, and its sheets are built whole.
+        assert!(DYNAMITE_BAND < 1.0 && AIM_FULL > 3.0 * AIM_DEAD);
+        let (fill, outline, rim) = range::ribbon(&line, DYNAMITE_BAND);
+        for sheet in [fill, outline, rim] {
+            assert!(sheet.count_vertices() > 8 && sheet.indices().is_some_and(|indices| indices.len() >= 24));
+        }
+        let (fill, outline, rim) = range::ribbon(&[], DYNAMITE_BAND);
+        assert!([fill, outline, rim].iter().all(|sheet| sheet.count_vertices() == 0));
     }
 
     #[test]

@@ -142,6 +142,7 @@ use crate::ai::{self, Steering};
 use crate::bridge;
 use crate::builder::{self, Fill};
 use crate::drive::Driving;
+use crate::dynamite;
 use crate::fire;
 use crate::hud::{self, TakesPress};
 use crate::island::{self, Island, Islands, Land, Venue, is_material};
@@ -439,6 +440,9 @@ pub(crate) enum Used {
     Fireball { heading: f32 },
     Builder { heading: f32 },
     Potion(Utility),
+    /// A stick of dynamite thrown that way, to come down this far off, in
+    /// metres (since 2026-11-13).
+    Dynamite { heading: f32, far: f32 },
 }
 
 /// A zombie whose model has been turned green.
@@ -776,7 +780,7 @@ pub(crate) fn plugin(app: &mut App) {
                     .after(ai::steer)
                     .after(crate::start_punch)
                     .before(crate::move_bodies),
-                (reap, deal_damage, fireballs_offline, hit_anchors, regen, outfit_offline, respawn, break_anchors)
+                (reap, deal_damage, fireballs_offline, dynamites_offline, hit_anchors, regen, outfit_offline, respawn, break_anchors)
                     .chain()
                     .after(crate::move_bodies)
                     .after(fire::fly)
@@ -1669,6 +1673,7 @@ fn use_things(
     game: Option<ResMut<Game>>,
     look: Res<fire::Look>,
     assets: Res<AssetServer>,
+    islands: Res<Islands>,
     mut me: Query<(&Transform, &mut Health), With<Player>>,
     mut requests: MessageWriter<NetAsk>,
     mut commands: Commands,
@@ -1687,6 +1692,7 @@ fn use_things(
                 Used::Fireball { heading } => Use::Fireball { heading },
                 Used::Builder { .. } => Use::Builder,
                 Used::Potion(potion) => Use::Potion(potion),
+                Used::Dynamite { heading, far } => Use::Dynamite { heading, far },
             }));
             // The server takes the builder off your button; the builder
             // itself is yours to send (`utility` asks only with one there).
@@ -1710,6 +1716,15 @@ fn use_things(
                     && let (Ok((at, _)), Some(member)) = (me.single(), game.seats.get(seat))
                 {
                     bridge::send_builder(&mut commands, &assets, member, seat as u8, at.translation, heading);
+                }
+            }
+            // A stick of dynamite, offline: `dynamite` lobs it on, and
+            // [`dynamites_offline`] blows it.
+            Used::Dynamite { heading, far } => {
+                if game.outfits.spend(seat, Utility::Dynamite)
+                    && let Ok((at, _)) = me.single()
+                {
+                    dynamite::throw(&mut commands, lobbed(&islands, at.translation, heading, far), seat, None);
                 }
             }
             Used::Potion(potion) => {
@@ -1808,6 +1823,68 @@ fn fireballs_offline(
         }
         fire::burst(&mut commands, burst);
         commands.entity(ball).despawn();
+    }
+}
+
+/// A stick of dynamite thrown by someone whose feet are at `feet`, the way
+/// `heading` says, to come down `far` from them, in a game this device
+/// runs: at the ground where it is to come down, as high as that is now,
+/// or, with none there, as high as the ground they stand on, as the
+/// server throws one online (its `Game::lob`).
+fn lobbed(islands: &Islands, feet: Vec3, heading: f32, far: f32) -> rules::Lob {
+    let aimed = rules::Lob::thrown(feet, heading, far, feet.y);
+    let island = islands.get(Venue::Arena);
+    let ground = |at: Vec2, reach: f32| island.and_then(|island| island.floor(at, reach));
+    let floor = ground(aimed.to.xz(), feet.y + 2.0)
+        .or(ground(feet.xz(), feet.y + crate::LAND_STEP_UP))
+        .unwrap_or(feet.y);
+    rules::Lob::thrown(feet, heading, far, floor)
+}
+
+/// Blows this device's own sticks of dynamite, offline, once each has
+/// lain for its fuse (`dynamite` draws them, lobs them on, and has them
+/// fall past where there is nothing to lie on): the blast's damage off
+/// everyone of another team than the thrower's that it reaches
+/// (`rules::in_dynamite`), less what their shields keep off, with a
+/// number off each and no knock; and every plank whose middle it reaches
+/// gone, whoever laid it, from under whoever stands on it
+/// (`bridge::Bridges::blast`), yours among them, and the one you are
+/// laying. Online the server does all of it, and says which planks went
+/// (`dynamite::hear_blasts`).
+fn dynamites_offline(
+    game: Option<ResMut<Game>>,
+    sticks: Query<(Entity, &dynamite::Stick)>,
+    mut bodies: Query<(Entity, &Transform, &Venue, &mut Health, &Seat), (With<WalkCycle>, Without<Dead>)>,
+    mut bridges: ResMut<bridge::Bridges>,
+    mut commands: Commands,
+) {
+    if !offline_fight(&game) {
+        return;
+    }
+    let mut game = game.expect("checked");
+    for (stick, lying) in &sticks {
+        if lying.served || !lying.blows() {
+            continue;
+        }
+        let at = lying.lob.to;
+        let team = arena_team(lying.seat);
+        for (body, place, venue, mut health, seat) in &mut bodies {
+            if *venue != Venue::Arena || arena_team(seat.0) == team || !rules::in_dynamite(at, place.translation) {
+                continue;
+            }
+            let damage = game.outfits.through(seat.0, rules::DYNAMITE_DAMAGE);
+            game.outfits.reveal(seat.0);
+            health.take(damage);
+            spawn_number(&mut commands, place.translation, damage);
+            if health.gone() {
+                let dead = game.die(seat.0);
+                commands.entity(body).insert(dead);
+            }
+        }
+        let taken = bridges.blast(at.xz(), rules::DYNAMITE_RADIUS);
+        info!("seat {}'s dynamite blew at {:.1}, taking {} planks", lying.seat, at.xz(), taken.len());
+        fire::burst(&mut commands, at + Vec3::Y * 0.3);
+        commands.entity(stick).despawn();
     }
 }
 
@@ -2548,6 +2625,8 @@ fn drive_bots(
     things: Query<(Entity, &loot::Thing)>,
     mut bridges: ResMut<bridge::Bridges>,
     look: Res<fire::Look>,
+    islands: Res<Islands>,
+    lobbed_sticks: Query<&dynamite::Stick>,
     mut landed: MessageWriter<Landed>,
     mut commands: Commands,
 ) {
@@ -2559,6 +2638,18 @@ fn drive_bots(
     let Some(brains) = game.brains.as_deref_mut() else {
         return;
     };
+    // Every stick of dynamite there is, as a bot sees one: where it lies
+    // or will, how long until it blows, and whose it is. One falling past
+    // the ground into the void is nothing to mind.
+    let sticks: Vec<bots::Stick> = lobbed_sticks
+        .iter()
+        .filter(|stick| stick.live())
+        .map(|stick| bots::Stick {
+            at: stick.lob.to.xz(),
+            left: (stick.lob.secs() + rules::DYNAMITE_FUSE - stick.lob.age).max(0.0),
+            team: arena_team(stick.seat),
+        })
+        .collect();
     let Brains {
         nav,
         squad,
@@ -2575,6 +2666,12 @@ fn drive_bots(
         *heard = Some(bridges.version);
         for (seat, chain, index, at) in bridges.laid() {
             nav.hear(seat, chain, index, at);
+        }
+        // And every plank a blast has taken: one known to be gone already
+        // is nothing new.
+        let broken: Vec<(u8, u16, u16)> = bridges.broken().collect();
+        if !broken.is_empty() {
+            nav.break_planks(&broken);
         }
     }
     // Everyone, by seat, as the brains see them.
@@ -2644,6 +2741,7 @@ fn drive_bots(
                     outfits: &game.outfits,
                     mint: &game.mint,
                     anchors: game.anchors,
+                    sticks: &sticks,
                 };
                 squad.step(seat, &view, dt)
             };
@@ -2715,6 +2813,12 @@ fn drive_bots(
                 && game.outfits.spend(seat, Utility::Fireball)
             {
                 fire::throw(&mut commands, &look, Flight::thrown(at, heading), seat, None);
+            }
+            if let Some((heading, far)) = order.blast
+                && game.outfits.spend(seat, Utility::Dynamite)
+            {
+                dynamite::throw(&mut commands, lobbed(&islands, at, heading, far), seat, None);
+                debug!("seat {seat} threw a stick of dynamite");
             }
             if let Some(potion) = order.drink
                 && game.outfits.drink(seat, potion, elapsed) == Some(Utility::Healing)
@@ -4321,6 +4425,7 @@ mod tests {
                         outfits: &outfits,
                         mint: &mint,
                         anchors: [120.0; ARENA_TEAMS],
+                        sticks: &[],
                     };
                     brains.squad.step(seat, &view, 1.0 / 60.0);
                 }

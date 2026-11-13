@@ -715,10 +715,7 @@ fn spawn_talk(
             ),
             (
                 Text::new(line),
-                TextFont {
-                    font_size: FontSize::VMin(SAY_TEXT),
-                    ..default()
-                },
+                crate::font::sized(SAY_TEXT),
                 TextColor(colours.talk.ink),
                 TextLayout::justify(Justify::Left),
                 Pickable::IGNORE,

@@ -1581,10 +1581,7 @@ fn icon(image: Handle<Image>, tint: Color) -> impl Bundle {
 fn cell(text: impl Into<String>, size_vmin: f32, colour: Color) -> impl Bundle {
     (
         Text::new(text),
-        TextFont {
-            font_size: FontSize::VMin(size_vmin),
-            ..default()
-        },
+        crate::font::sized(size_vmin),
         TextColor(colour),
         TextLayout::no_wrap(),
         Pickable::IGNORE,
@@ -1797,10 +1794,7 @@ pub(crate) fn choices() -> impl Bundle {
 pub(crate) fn label(text: impl Into<String>, size_vmin: f32, colour: Color) -> impl Bundle {
     (
         Text::new(text),
-        TextFont {
-            font_size: FontSize::VMin(size_vmin),
-            ..default()
-        },
+        crate::font::sized(size_vmin),
         TextColor(colour),
         TextLayout::justify(Justify::Center),
         Pickable::IGNORE,

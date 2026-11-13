@@ -39,6 +39,7 @@ mod clock;
 mod login;
 mod players;
 mod rooms;
+mod social;
 mod stats;
 
 use std::io;
@@ -146,7 +147,9 @@ fn main() {
     .insert_resource(Time::<Fixed>::from_hz(TICK_HZ))
     .insert_resource(config.clone());
     roundtown_net::protocol(&mut app);
-    accounts::plugin(&mut app, config.db.clone());
+    // Everything kept about who is whose friend comes back from setting
+    // the accounts up, for `social` to go by from here on.
+    let friends = accounts::plugin(&mut app, config.db.clone());
     rooms::plugin(&mut app);
     players::plugin(&mut app);
     builder::plugin(&mut app);
@@ -154,15 +157,23 @@ fn main() {
     clock::plugin(&mut app);
     stats::plugin(&mut app);
     app.add_systems(Startup, listen);
-    match (config.key, config.db) {
-        (Some(key), Some(db)) => login::start(login::Setup {
-            db,
-            key,
-            public: config.public,
-        }),
+    // The login says which accounts it has deleted, so that they are
+    // nobody's friends any more.
+    let deleted = match (config.key, config.db) {
+        (Some(key), Some(db)) => {
+            let (gone, deleted) = std::sync::mpsc::channel();
+            login::start(login::Setup {
+                db,
+                key,
+                public: config.public,
+                gone,
+            });
+            Some(deleted)
+        }
         (Some(_), None) => panic!("RT_KEY without RT_DB: the login needs the database"),
-        (None, _) => {}
-    }
+        (None, _) => None,
+    };
+    social::plugin(&mut app, friends, deleted);
     app.run();
 }
 

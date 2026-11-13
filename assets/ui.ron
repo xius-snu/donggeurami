@@ -230,6 +230,15 @@
             potion_speed: "#ffd84a",
             potion_invisibility: "#c8d2de",
             potion_healing: "#ff5a6e",
+            // A stick of dynamite: its two sticks (and its picture on its
+            // card and its button); the fuse out of one end of it; and the
+            // ring on the ground round where one lies, as far as its blast
+            // will reach: its outline, and the fill inside it. (The thin
+            // dark rim round that ring is aim_rim, below.)
+            dynamite: "#e2382c",
+            dynamite_fuse: "#8a5a2b",
+            blast_outline: "#ff4a3ad9",
+            blast_fill: "#ff3b3040",
             heal_pool: "#5fe08a",
             trap: "#d9d9d9",
             // The pips on an upgrade's card: a step taken, and one still
@@ -268,9 +277,68 @@
             // generator: its level, and the count to its next thing.
             generator: "#ffffff",
         ),
+        // The friends' panel, behind the speech bubble under the gift: the
+        // panel itself; a box that comes up over it (Add Friend, a
+        // question, a message being written), and the dark over the panel
+        // behind such a box.
+        friends: (
+            panel: "#1e1e1ee6",
+            popup: "#101010f7",
+            scrim: "#0000008c",
+            // The line under the tab that is shown, and the picture of the
+            // tab that is not; a heading ("Friends (2/5):").
+            line: "#ffffff",
+            tab_off: "#ffffff70",
+            title: "#ffffff",
+            // A friend's name, here and not here, and the line under it
+            // that says where they are.
+            name: "#ffffff",
+            name_off: "#ffffff85",
+            status: "#ffffffb8",
+            // The disc behind someone's picture and the picture on it; and
+            // the dot on its corner, here and not.
+            avatar: "#5c5c5c",
+            avatar_mark: "#ffffff",
+            online: "#27c93f",
+            offline: "#6b6b6b",
+            // A round button on a row (ask into your group, the gear), lit
+            // under the pointer, the picture on it, and the picture on one
+            // that cannot be pressed just now.
+            button: "#121212",
+            button_lit: "#333333",
+            button_mark: "#ffffff",
+            button_off: "#ffffff3d",
+            // The box something is typed into: a name to look for, a
+            // message.
+            field: "#2b2b2b",
+            // Yes and no (Yes, Accept, Send; Cancel, Reject), each lit
+            // under the pointer, and the words on them.
+            yes: "#1db81d",
+            yes_lit: "#34d634",
+            no: "#5c0d0d",
+            no_lit: "#7d1717",
+            on_choice: "#ffffff",
+            // The count of what waits in your inbox, on the corner of the
+            // speech bubble and of the envelope: the disc, and the number.
+            badge: "#edb62a",
+            badge_text: "#1a1a1a",
+            // The gear's menu (Message, Remove Friend): an entry, one lit
+            // under the pointer, and its outline.
+            menu: "#000000",
+            menu_lit: "#2e2e2e",
+            menu_rim: "#ffffff",
+            // The line along the bottom that says what came of something
+            // ("Friend request sent.").
+            notice: "#ffd98a",
+            // Words that are pressed ("Add friend"), and words that only
+            // say ("Requested").
+            link: "#ffffff",
+            link_off: "#ffffff80",
+        ),
     ),
-    // The font is plain ASCII: no Hangul, and a hyphen for a dash. Where a
-    // word has {something} in it, the game fills that in.
+    // The font is Inter (since 2026-11-13; Bevy's own, plain ASCII, until
+    // then): Latin, Greek and Cyrillic, with dashes and an ellipsis, and no
+    // Hangul. Where a word has {something} in it, the game fills that in.
     words: (
         // Across the middle of the screen as you arrive in the town.
         welcome: "Donggeurami Town",
@@ -477,6 +545,8 @@
             invisibility_stat: "{seconds}s",
             healing: "Heal",
             healing_stat: "+{share}% hp",
+            dynamite: "Dynamite",
+            dynamite_stat: "Cuts bridges",
             // The upgrade shop. The generator's four steps, each with its
             // line; the rest once, or step by step.
             forge: ("Better Generator", "Advanced Generator", "Amethyst Generator", "Molten Generator"),
@@ -492,6 +562,96 @@
             // The Player Compass Tracker, in the item shop.
             compass: "Tracker",
             compass_stat: "Nearest enemy",
+        ),
+        // The friends' panel. Its two headings: {online} of {all} your
+        // friends are here; {count} of {most} are in your group. Who leads
+        // a group, and which of it is you. A level.
+        friends: (
+            friends: "Friends ({online}/{all}):",
+            group: "Group ({count}/{most}):",
+            leader: "Leader",
+            you: "You",
+            level: "Level {level}",
+            // With nobody in a list, nothing in the inbox, and no
+            // connection.
+            no_friends: "No friends yet. Tap the + to add one.",
+            no_mail: "Nothing new.",
+            not_online: "You are offline. Friends need a connection.",
+            // Add Friend: its title; beside each player found, what is
+            // pressed to ask them, what stands there once they are asked
+            // or your friend, and yes and no to one who asked you; your
+            // own name and tag, and what copying it says; what stands
+            // there before a search, and after one that found nobody.
+            add_friend: "Add Friend",
+            add: "Add friend",
+            asked: "Requested",
+            is_friend: "Friends",
+            accept: "Accept",
+            reject: "Reject",
+            my_id: "My ID",
+            copied: "Copied",
+            search_first: "Type a username, then tap the glass.",
+            nobody: "Nobody goes by that name.",
+            // The inbox: under the name of someone who asked to be your
+            // friend, and of someone who asked you into their group; and
+            // the buttons beside an invitation and beside a message.
+            wants_friend: "wants to be your friend",
+            wants_group: "invites you to their group",
+            join: "Join",
+            reply: "Reply",
+            seen: "OK",
+            // The two questions, with their buttons.
+            invite_ask: "Would you like to invite\n{name}\nto your group?",
+            remove_ask: "Remove\n{name}\nfrom your friends?",
+            cancel: "Cancel",
+            yes: "Yes",
+            // The gear's menu beside a friend, and leaving your group.
+            message: "Message",
+            remove: "Remove Friend",
+            leave: "Leave",
+            // Writing to a friend.
+            message_to: "Message {name}",
+            send: "Send",
+            // Where a friend is, under their name: in channel {channel} of
+            // the town, at home, in a game ({game} is a game's name from
+            // `games`, above), or gone for {time}, which is made of one of
+            // the pairs after it, for one and for many ({n} is how many),
+            // or, for under a minute, of the word before them.
+            in_town: "In Main Lobby #{channel}",
+            at_home: "At home",
+            in_queue: "{game}: In Queue",
+            in_game: "{game}: In Game",
+            offline: "Offline",
+            offline_for: "Offline for {time}",
+            moments: "a moment",
+            minutes: ("{n} minute", "{n} minutes"),
+            hours: ("{n} hour", "{n} hours"),
+            days: ("{n} day", "{n} days"),
+            // What the panel says of what came of something you asked.
+            said: (
+                asked: "Friend request sent.",
+                befriended: "You are friends now!",
+                unfriended: "Removed.",
+                already: "Already done.",
+                full: "Your friends list is full.",
+                theirs_full: "Their friends list is full.",
+                no_such: "No such player.",
+                not_friend: "They are not your friend.",
+                offline: "They are offline.",
+                invited: "Invited to your group.",
+                not_leader: "Only the group's leader can do that.",
+                group_full: "The group is full.",
+                stale: "That is no longer there.",
+                sent: "Message sent.",
+                inbox_full: "Their inbox is full.",
+                not_a_message: "That cannot be sent.",
+                left_behind: "Your group started a game without you.",
+            ),
+            // Across the screen as your group's leader takes you into a
+            // game; and in the game selector, to anyone in a group who
+            // does not lead it.
+            summoned: "Your group is playing {game}",
+            only_leader: "Only your group's leader can start a game.",
         ),
     ),
     // The car you drive (the face button, or C on desktop): every number of

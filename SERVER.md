@@ -120,19 +120,38 @@ KB/s out per player, most of it renet keeping the connection alive.
 ## The database
 
 ```
-players       id, name, look, coins, created, seen
-devices       secret (SHA-256 of the device's secret), player
-coin_changes  player, amount, reason, game, at
+players          id, name, look, coins, created, seen, tag, xp
+devices          secret (SHA-256 of the device's secret), player
+coin_changes     player, amount, reason, game, at
+friends          a, b (the lesser number first), since
+friend_requests  sender, receiver, at
+messages         id, sender, receiver, body, at
 ```
 
-The server makes the tables when it starts (`accounts::SCHEMA`). Coins change
+`tag`, `xp` and the last three tables are the friends' (since 2026-11-13;
+`CLAUDE.md`, "Friends, groups and messages"): the number after a name,
+`#1000` to `#9999`, no two accounts having both the same name and the same
+tag (the unique index `players_name_tag`, on `lower(name), tag`); what an
+account has earned toward its level; who is whose friend; who has asked
+whom and not been answered; and what a friend wrote that has not been seen
+off. The server reads all of it once as it starts and goes by its own copy
+from then on (`social`), writing changes down after the fact: **a row
+changed by hand is not noticed until the server starts again**. Groups are
+not kept at all.
+
+The server makes the tables when it starts (`accounts::SCHEMA`), each
+statement leaving what is there alone, and gives a tag to any account
+without one. The server from before 2026-11-13 runs on the tables as they
+are now, so going back to an older binary needs nothing undone. Coins change
 only in one transaction with a line in `coin_changes` saying why: so far
 `starting balance` (+1,000, as the login makes the account), `House
 Builder entry` (-100) and `House Builder prize` (+500 down to +25, by
 place; 8th place pays nothing and writes no line). A prize carries its
 game's number; a fee, the number of the game filling when it was paid, and
-none if none was yet. Deleting an account (in the app: the button beside
-the balance) deletes its row, and its devices and coin history with it.
+none if none was yet. Deleting an account (in the app: Settings, Accounts,
+Delete account) deletes its row, and its devices, its coin history, its
+friends, what it asked and was asked, and what was written to and by it
+with it; the login tells the game's loop, which forgets it too.
 
 **Backups:** `/var/backups/roundtown/`, the last 14 nights, root only. To
 restore one:
@@ -145,6 +164,35 @@ systemctl start roundtown-server
 ```
 
 A restore was tried on 2026-10-08, into a scratch database, and matched.
+
+**Before a deploy that changes the tables**, try it on a copy, never on
+`roundtown` itself. Two tests in `server/src/accounts.rs` are for that,
+ignored unless asked for, and they refuse any database whose name does not
+end in `_scratch`: one empties its database and writes and reads back
+everything the server keeps; the other takes a copy of the server's own
+accounts through starting up and checks nothing of them changed but what
+should. From this PC, in Git Bash:
+
+```
+export CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=rust-lld
+export CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_RUSTFLAGS="-C linker-flavor=ld.lld -C target-feature=+crt-static"
+cargo test -p roundtown_server --release --target x86_64-unknown-linux-musl --no-run
+scp -i ~/.ssh/roundtown_vultr target/x86_64-unknown-linux-musl/release/deps/roundtown_server-<hash> root@141.164.62.193:/tmp/rt-test
+```
+
+and on the VM:
+
+```
+sudo -u postgres createdb -O roundtown empty_scratch
+sudo -u postgres createdb -O roundtown copy_scratch
+sudo -u roundtown pg_dump --format=custom --dbname=roundtown | sudo -u roundtown pg_restore --dbname=copy_scratch
+cd /tmp && chmod +x rt-test
+sudo -u roundtown env RT_TEST_DB="host=/var/run/postgresql user=roundtown dbname=empty_scratch" ./rt-test --ignored the_database --nocapture
+sudo -u roundtown env RT_TEST_DB="host=/var/run/postgresql user=roundtown dbname=copy_scratch" ./rt-test --ignored the_accounts_there --nocapture
+sudo -u postgres dropdb empty_scratch; sudo -u postgres dropdb copy_scratch; rm rt-test
+```
+
+Both were run so on 2026-11-13, before tags and friends went out.
 
 ## When something is wrong
 

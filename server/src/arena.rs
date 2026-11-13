@@ -79,9 +79,11 @@ use std::collections::HashMap;
 
 use bevy::prelude::*;
 use bevy_replicon::prelude::*;
-use roundtown_net::bots::{Seen, Skill, Squad, View};
+use roundtown_net::bots::{Seen, Skill, Squad, Stick, View};
 use roundtown_net::bridge_wars::*;
 use roundtown_net::nav::Nav;
+use roundtown_net::{Blasted, Dynamite};
+use roundtown_net::social::{Minigame, XP_PLAYED, XP_WON};
 use roundtown_net::{
     ARENA_ANCHORS, ARENA_ISLAND_RADIUS, ARENA_ISLANDS, ARENA_SEATS, ARENA_TEAMS, ArenaRound,
     ArenaStage, Ask, Fireball, Kit, Kits, Loot, Member, Plank, Purse, Purses, Refusal, Seats, Spot,
@@ -89,8 +91,9 @@ use roundtown_net::{
 };
 
 use crate::Config;
-use crate::players::{Body, Everyone, Plays, move_to, place, tell};
+use crate::players::{Body, Everyone, Plays, Who, move_to, place, tell};
 use crate::rooms::{InRoom, Room, Towns};
+use crate::social::Social;
 
 /// How long a game goes on with nobody connected to it, in seconds, before
 /// it is given up.
@@ -196,6 +199,15 @@ struct Game {
     balls: Vec<(u32, Flight, usize)>,
     next_ball: u32,
     shown_balls: HashMap<u32, Entity>,
+    /// Every stick of dynamite thrown and not yet blown ([`Lobbed`]), and
+    /// the entity its room is sent for each, by its number; and how many
+    /// have blown, and how many planks they took with them, for reading a
+    /// game back by.
+    sticks: Vec<Lobbed>,
+    next_stick: u32,
+    shown_sticks: HashMap<u32, Entity>,
+    blasts: u32,
+    planks_blown: u32,
     /// Where everyone stands and which way they face, by seat: a
     /// person's where they last said, copied in each frame ([`sync`]); the
     /// computer's players' where the game has moved them, which is what
@@ -273,6 +285,15 @@ enum Event {
     /// The fireball numbered so has burst: the room is sent it no longer,
     /// which is how every device knows to draw the blast.
     Burst(u32),
+    /// A stick of dynamite, numbered so, has been thrown: the room is
+    /// sent it.
+    Lobbed { stick: u32, shown: Dynamite },
+    /// The stick numbered so has blown up: the room is sent it no longer,
+    /// and is sent where it blew and which planks went with it, for good.
+    Blew { stick: u32, shown: Blasted },
+    /// The stick numbered so came down where there was nothing to lie
+    /// on, and is gone into the void: the room is sent it no longer.
+    Fell(u32),
     /// The person in `seat` has been knocked, by whoever has the id `by`
     /// from `from`, who was `running` if so: their device is told, and
     /// knocks its own body.
@@ -302,6 +323,17 @@ fn nobody() -> Member {
         look: String::new(),
         ai: true,
     }
+}
+
+/// A stick of dynamite thrown in a game: its number, how far through its
+/// throw and its fuse it is ([`Lob`]), who threw it, by seat, and whether
+/// it has come down and found ground to lie on.
+#[derive(Clone, Copy, Debug)]
+struct Lobbed {
+    id: u32,
+    lob: Lob,
+    by: usize,
+    lies: bool,
 }
 
 /// A bot's mind: how long until it may punch again, what a punch is carrying
@@ -357,6 +389,11 @@ impl Game {
             balls: Vec::new(),
             next_ball: 0,
             shown_balls: HashMap::new(),
+            sticks: Vec::new(),
+            next_stick: 0,
+            shown_sticks: HashMap::new(),
+            blasts: 0,
+            planks_blown: 0,
             at: Vec::new(),
             yaw: Vec::new(),
             present: Vec::new(),
@@ -513,6 +550,33 @@ impl Game {
             .find(|&seat| seat >= self.seats.len() || self.vacant[seat])
     }
 
+    /// The seats `count` people take who go in together, in the order they
+    /// take them (since 2026-11-13, a group of friends going in with its
+    /// leader, `social`; Hajun: "everyone get queued at the same time in
+    /// the same team (unless group is >2 and ur playing 2v2v2v2 bridge
+    /// wars, then it will need to be 2 ppl same team 1 ppl other team i
+    /// guess)"): two by two onto teams with both seats free, in the order
+    /// the teams fill in ([`SEAT_ORDER`], which has each team's two seats
+    /// together), and an odd one last, wherever the next to come alone
+    /// would sit. One alone takes [`Game::free_seat`]. None if the room is
+    /// no longer waiting, or has not the teams free.
+    fn seats_for(&self, count: usize) -> Option<Vec<usize>> {
+        if self.stage != ArenaStage::Waiting {
+            return None;
+        }
+        let free = |seat: usize| seat >= self.seats.len() || self.vacant[seat];
+        let mut seats = Vec::with_capacity(count);
+        let mut teams = SEAT_ORDER.chunks(2);
+        for _ in 0..count / 2 {
+            let pair = teams.by_ref().find(|pair| pair.iter().all(|&seat| free(seat)))?;
+            seats.extend_from_slice(pair);
+        }
+        if count % 2 == 1 {
+            seats.push(SEAT_ORDER.into_iter().find(|&seat| free(seat) && !seats.contains(&seat))?);
+        }
+        Some(seats)
+    }
+
     /// How many people are in it: not the computer's players, nor whoever
     /// has left.
     fn people(&self) -> usize {
@@ -523,7 +587,10 @@ impl Game {
 
     /// Seats `member`, whose body is `body`, in the next of the players'
     /// seats ([`Game::free_seat`]); or, with those all taken or the fight
-    /// begun, in the next seat past them, as a zombie is.
+    /// begun, in the next seat past them, as a zombie is. Only the tests
+    /// seat anyone so since 2026-11-13: people are seated together, each
+    /// where [`Game::seats_for`] says ([`seat_together`]).
+    #[cfg(test)]
     fn seat(&mut self, body: Entity, member: Member, bot: bool) -> usize {
         let seat = match self.free_seat() {
             Some(seat) if self.stage == ArenaStage::Waiting => seat,
@@ -685,20 +752,31 @@ impl Game {
         self.harm(victim, hitter, from, running, damage);
     }
 
-    /// Takes `damage` off `victim`, struck from `from` by `hitter`: dead at
-    /// none, and knocked back from there otherwise, further if `running`,
-    /// a person through their device ([`Event::Knocked`]) and a bot here.
-    /// Whoever was unseen is seen again for being hit.
-    fn harm(&mut self, victim: usize, hitter: usize, from: Spot, running: bool, damage: f32) {
+    /// Takes `damage` off `victim`, by `hitter`'s doing, and no more than
+    /// that: dead at none. Whoever was unseen is seen again for being
+    /// hit. Whether they are still standing. What a stick of dynamite's
+    /// blast does to whoever it reaches: it knocks nobody.
+    fn hurt_by(&mut self, victim: usize, hitter: usize, damage: f32) -> bool {
         self.outfits.reveal(victim);
         self.health[victim] = (self.health[victim] - damage).max(0.0);
         self.since_hit[victim] = 0.0;
         if self.health[victim] <= 0.0 {
             info!("Bridge Wars game {}: seat {hitter} killed seat {victim}", self.id);
             self.die(victim);
-            return;
+            return false;
         }
         debug!("Bridge Wars game {}: seat {hitter} hit seat {victim}, left with {}", self.id, self.health[victim]);
+        true
+    }
+
+    /// Takes `damage` off `victim`, struck from `from` by `hitter`: dead at
+    /// none, and knocked back from there otherwise, further if `running`,
+    /// a person through their device ([`Event::Knocked`]) and a bot here.
+    /// Whoever was unseen is seen again for being hit.
+    fn harm(&mut self, victim: usize, hitter: usize, from: Spot, running: bool, damage: f32) {
+        if !self.hurt_by(victim, hitter, damage) {
+            return;
+        }
         if self.brained(victim) {
             self.squad.knock(victim, from.translation().xz(), running);
             return;
@@ -815,6 +893,47 @@ impl Game {
         true
     }
 
+    /// Whoever in `seat`, standing at `at`, throws a stick of dynamite the
+    /// way `heading` says, to come down `far` from them, if there is one
+    /// on their buttons: it is in the air, the room is sent it
+    /// ([`Event::Lobbed`]), and the game lobs it on and blows it
+    /// ([`Game::dynamites`]). It is thrown at the ground where it is to
+    /// come down, as high as that is now, or, with none there, as high as
+    /// the ground the thrower stands on. Whether it was thrown.
+    fn lob(&mut self, seat: usize, at: Vec3, heading: f32, far: f32) -> bool {
+        if !self.playing() || !self.alive(seat) || !heading.is_finite() || !far.is_finite() {
+            return false;
+        }
+        if !self.outfits.spend(seat, Utility::Dynamite) {
+            return false;
+        }
+        let aimed = Lob::thrown(at, heading, far, at.y);
+        let floor = self.nav.ground(aimed.to.xz()).or(self.nav.ground(at.xz())).unwrap_or(at.y);
+        let lob = Lob::thrown(at, heading, far, floor);
+        let stick = self.next_stick;
+        self.next_stick = self.next_stick.wrapping_add(1);
+        self.events.push(Event::Lobbed {
+            stick,
+            shown: Dynamite {
+                seat: seat as u8,
+                x: lob.from.x,
+                y: lob.from.y,
+                z: lob.from.z,
+                to_x: lob.to.x,
+                to_y: lob.to.y,
+                to_z: lob.to.z,
+            },
+        });
+        self.sticks.push(Lobbed {
+            id: stick,
+            lob,
+            by: seat,
+            lies: false,
+        });
+        debug!("Bridge Wars game {}: seat {seat} threw a stick of dynamite {:.1} m", self.id, lob.chord());
+        true
+    }
+
     /// A punch by whoever is in `hitter`, standing at `from` across the
     /// ground, on the respawn anchor of `team`, if it is another team's,
     /// still stands and is within `reach` of them ([`anchor_in_reach`]):
@@ -861,6 +980,7 @@ impl Game {
         self.mint_step();
         self.fight(dt);
         self.fireballs(dt);
+        self.dynamites(dt);
         self.outfit(dt);
         let teams = self.teams_in_play();
         let winner = match (teams.len(), self.left <= 0.0) {
@@ -1006,6 +1126,17 @@ impl Game {
     /// enough, it is dead.
     fn play_bot(&mut self, seat: usize, seen: &mut [Seen], dt: f32) {
         let was = Spot::of(self.at[seat], Quat::from_rotation_y(self.yaw[seat]));
+        // Every stick of dynamite there is, as a bot sees one: where it
+        // lies or will, how long until it blows, and whose it is.
+        let sticks: Vec<Stick> = self
+            .sticks
+            .iter()
+            .map(|stick| Stick {
+                at: stick.lob.to.xz(),
+                left: (stick.lob.secs() + DYNAMITE_FUSE - stick.lob.age).max(0.0),
+                team: arena_team(stick.by),
+            })
+            .collect();
         let view = View {
             elapsed: self.elapsed,
             nav: &self.nav,
@@ -1014,6 +1145,7 @@ impl Game {
             outfits: &self.outfits,
             mint: &self.mint,
             anchors: self.anchors,
+            sticks: &sticks,
         };
         let order = self.squad.step(seat, &view, dt);
         if let Some(bot) = self.squad.bot(seat) {
@@ -1066,6 +1198,9 @@ impl Game {
         if let Some(heading) = order.throw {
             self.throw(seat, self.at[seat], heading);
         }
+        if let Some((heading, far)) = order.blast {
+            self.lob(seat, self.at[seat], heading, far);
+        }
         if let Some(potion) = order.drink
             && self.outfits.drink(seat, potion, self.elapsed) == Some(Utility::Healing)
         {
@@ -1111,6 +1246,70 @@ impl Game {
         self.balls = flying;
     }
 
+    /// Every stick of dynamite thrown, for one frame of the fight: lobbed
+    /// on; as it comes down, lying there if there is ground for it to lie
+    /// on ([`caught`]), a bridge's plank or the land, and gone into the
+    /// void if there is not ([`Event::Fell`]); and once its fuse has burnt
+    /// down, blown up. Its blast takes its damage off everyone of another
+    /// team than its thrower's that it reaches, less what their shields
+    /// keep off, knocking nobody (mine: Hajun's file gives the fireball a
+    /// knock and this none); and every plank whose middle it reaches is
+    /// gone, whoever laid it, from under whoever stands on it
+    /// ([`Nav::blast`]): the computer's players fall with them, and a
+    /// person's own device has them fall, told which planks went
+    /// ([`Event::Blew`], [`Blasted`]). An anchor it does not touch.
+    fn dynamites(&mut self, dt: f32) {
+        let mut lying = std::mem::take(&mut self.sticks);
+        lying.retain_mut(|stick| {
+            stick.lob.tick(dt);
+            if !stick.lob.down() {
+                return true;
+            }
+            let at = stick.lob.to;
+            if !stick.lies {
+                if !caught(at.xz(), |spot| self.nav.ground(spot).is_some()) {
+                    debug!("Bridge Wars game {}: seat {}'s dynamite fell into the void at {:.1}", self.id, stick.by, at.xz());
+                    self.events.push(Event::Fell(stick.id));
+                    return false;
+                }
+                stick.lies = true;
+            }
+            if !stick.lob.blown() {
+                return true;
+            }
+            let team = arena_team(stick.by);
+            let reached: Vec<usize> = (0..self.seats.len())
+                .filter(|&seat| arena_team(seat) != team && self.alive(seat) && self.present[seat])
+                .filter(|&seat| in_dynamite(at, self.at[seat]))
+                .collect();
+            for seat in reached {
+                let damage = self.outfits.through(seat, DYNAMITE_DAMAGE);
+                self.hurt_by(seat, stick.by, damage);
+            }
+            let planks = self.nav.blast(at.xz(), DYNAMITE_RADIUS);
+            info!(
+                "Bridge Wars game {}: seat {}'s dynamite blew at {:.1}, taking {} planks",
+                self.id,
+                stick.by,
+                at.xz(),
+                planks.len()
+            );
+            self.blasts += 1;
+            self.planks_blown += planks.len() as u32;
+            self.events.push(Event::Blew {
+                stick: stick.id,
+                shown: Blasted {
+                    x: at.x,
+                    y: at.y,
+                    z: at.z,
+                    planks,
+                },
+            });
+            false
+        });
+        self.sticks = lying;
+    }
+
     /// The potions, the traps and the heal pools, for one frame of the
     /// fight ([`Outfits::tick`]), with every living player where they
     /// stand: whoever a pool heals has that much health back.
@@ -1130,12 +1329,14 @@ impl Game {
 }
 
 impl Arenas {
-    /// The game filling now, if it still has room; otherwise a new one.
-    fn filling(&mut self, commands: &mut Commands, old_bots: bool) -> &mut Game {
+    /// The game filling now, if it still has room for `count` who go in
+    /// together ([`Game::seats_for`]); otherwise a new one, the old one
+    /// left to fill with whoever is in it and the computer.
+    fn filling(&mut self, commands: &mut Commands, old_bots: bool, count: usize) -> &mut Game {
         let open = self.filling.filter(|id| {
             self.games
                 .get(id)
-                .is_some_and(|game| game.stage == ArenaStage::Waiting && !game.closing && game.free_seat().is_some())
+                .is_some_and(|game| !game.closing && game.seats_for(count).is_some())
         });
         let id = open.unwrap_or_else(|| {
             let id = self.next;
@@ -1170,6 +1371,70 @@ impl Arenas {
             game.leave(seat);
         }
     }
+
+    /// Whether the game in `room` has yet to begin its fight: in its
+    /// waiting room still, or counting down. What someone's friends are
+    /// told of where they are (`social`).
+    pub(crate) fn queued(&self, room: Room) -> bool {
+        let Room::Arena(id) = room else {
+            return false;
+        };
+        self.games
+            .get(&id)
+            .is_some_and(|game| matches!(game.stage, ArenaStage::Waiting | ArenaStage::Countdown))
+    }
+}
+
+/// Seats `going`, who go in together, the first of them having asked, in
+/// the game filling now, or in a new one if that has not the room for them:
+/// two by two onto one team ([`Game::seats_for`]), each out of the town, or
+/// out of the game that was over for them, and into the waiting room.
+#[allow(clippy::too_many_arguments)]
+fn seat_together(
+    commands: &mut Commands,
+    tells: &mut MessageWriter<ToClients<Tell>>,
+    bodies: &mut Bodies,
+    arenas: &mut Arenas,
+    towns: &mut Towns,
+    old_bots: bool,
+    going: &[Entity],
+    now: f64,
+) {
+    for &body in going {
+        let Ok((body_of, ..)) = bodies.get(body) else {
+            continue;
+        };
+        if let Some((old, seat)) = arenas.of(body_of.room, body) {
+            old.leave(seat);
+        }
+        towns.stand(body);
+    }
+    let game = arenas.filling(commands, old_bots, going.len());
+    let Some(seats) = game.seats_for(going.len()) else {
+        return;
+    };
+    let room = game.room();
+    for (&body, seat) in going.iter().zip(seats) {
+        let Ok((body_of, spot, venue, member)) = bodies.get_mut(body) else {
+            continue;
+        };
+        game.put(seat, body, member.clone(), false);
+        if let Some(client) = body_of.client {
+            tell(tells, client, Tell::Seated { seat: seat as u8 });
+        }
+        let (at, turn) = waiting_spot(seat);
+        place(
+            commands,
+            tells,
+            body,
+            (body_of, spot, venue),
+            room,
+            Venue::Arena,
+            seat as u8,
+            Some(Spot::of(at, turn)),
+            now,
+        );
+    }
 }
 
 type Bodies<'w, 's> = Query<
@@ -1191,6 +1456,7 @@ fn hear(
     mut bodies: Bodies,
     mut arenas: ResMut<Arenas>,
     mut towns: ResMut<Towns>,
+    (everyone, mut social): (Res<Everyone>, ResMut<Social>),
     config: Res<Config>,
     time: Res<Time>,
     mut tells: MessageWriter<ToClients<Tell>>,
@@ -1210,40 +1476,52 @@ fn hear(
         let room = body_of.room;
         match &ask.message {
             Ask::Arena => {
-                // From the town, or from a game that is over for me.
-                let free = match room {
-                    Room::Town(_) => true,
-                    Room::Arena(_) => arenas
-                        .of(room, body)
-                        .is_some_and(|(game, seat)| game.over() || game.out[seat]),
-                    Room::Home(_) | Room::Game(_) => false,
+                // Whoever asks goes in, and with them, if they lead a
+                // group, everyone of it who is here and free to (`social`,
+                // since 2026-11-13); in a group someone else leads, nobody
+                // does: only its leader starts a game.
+                let Some(party) = social.party(body_of.who.0) else {
+                    tell(&mut tells, client, Tell::Refused(Refusal::NotLeader));
+                    continue;
                 };
-                if !free {
+                // Free to: in the town, or in a game that is over for them.
+                let (mut going, mut staying) = (Vec::new(), Vec::new());
+                for id in party {
+                    let entity = everyone.0.get(&Who(id)).copied();
+                    let free = entity.is_some_and(|entity| {
+                        bodies.get(entity).is_ok_and(|(body_of, ..)| {
+                            body_of.client.is_some()
+                                && match body_of.room {
+                                    Room::Town(_) => true,
+                                    Room::Arena(_) => arenas
+                                        .of(body_of.room, entity)
+                                        .is_some_and(|(game, seat)| game.over() || game.out[seat]),
+                                    Room::Home(_) | Room::Game(_) => false,
+                                }
+                        })
+                    });
+                    match entity {
+                        Some(entity) if free => going.push(entity),
+                        _ => staying.push(id),
+                    }
+                }
+                // The one who asked is first of them, or it is nobody's to
+                // go.
+                if going.first() != Some(&body) {
                     tell(&mut tells, client, Tell::Refused(Refusal::Busy));
                     continue;
                 }
-                if let Some((old, seat)) = arenas.of(room, body) {
-                    old.leave(seat);
+                for id in staying {
+                    social.left_behind(id);
                 }
-                towns.stand(body);
-                let Ok((body_of, spot, venue, member)) = bodies.get_mut(body) else {
-                    continue;
-                };
-                let member = member.clone();
-                let game = arenas.filling(&mut commands, config.arena_old_bots);
-                let seat = game.seat(body, member, false);
-                let room = game.room();
-                tell(&mut tells, client, Tell::Seated { seat: seat as u8 });
-                let (at, turn) = waiting_spot(seat);
-                place(
+                seat_together(
                     &mut commands,
                     &mut tells,
-                    body,
-                    (body_of, spot, venue),
-                    room,
-                    Venue::Arena,
-                    seat as u8,
-                    Some(Spot::of(at, turn)),
+                    &mut bodies,
+                    &mut arenas,
+                    &mut towns,
+                    config.arena_old_bots,
+                    &going,
                     now,
                 );
             }
@@ -1376,6 +1654,12 @@ fn hear(
                     Use::Builder => {
                         game.outfits.spend(seat, Utility::Builder);
                     }
+                    Use::Dynamite { heading, far } => {
+                        let Ok((_, at, ..)) = bodies.get(game.seats[seat]) else {
+                            continue;
+                        };
+                        game.lob(seat, at.translation(), *heading, *far);
+                    }
                     Use::Potion(potion) => {
                         let drunk = game.outfits.drink(seat, *potion, game.elapsed);
                         if drunk == Some(Utility::Healing) {
@@ -1411,6 +1695,7 @@ fn run(
     mut arenas: ResMut<Arenas>,
     mut bodies: Bodies,
     mut everyone: ResMut<Everyone>,
+    mut social: ResMut<Social>,
     mut towns: ResMut<Towns>,
     mut tells: MessageWriter<ToClients<Tell>>,
     mut commands: Commands,
@@ -1515,6 +1800,21 @@ fn run(
         }
         flush(&mut commands, &mut tells, &mut bodies, game, now);
 
+        // Whoever of the people in it played it to its end has earned
+        // toward their level (`social`, since 2026-11-13): more, on the
+        // team that won. Once a game.
+        if let ArenaStage::Over { winner } = game.stage
+            && social.first_time(Minigame::BridgeWars, game.id)
+        {
+            for seat in 0..game.seats.len().min(ARENA_SEATS) {
+                if game.bot[seat] || game.vacant[seat] || game.gone[seat] {
+                    continue;
+                }
+                let won = winner == Some(arena_team(seat));
+                social.award(game.members[seat].id, XP_PLAYED + if won { XP_WON } else { 0 });
+            }
+        }
+
         // Only what has changed goes out again.
         let round = game.round();
         if game.sent.as_ref() != Some(&round) {
@@ -1608,6 +1908,24 @@ fn flush(
             }
             Event::Burst(ball) => {
                 if let Some(entity) = game.shown_balls.remove(&ball) {
+                    commands.entity(entity).try_despawn();
+                }
+            }
+            Event::Lobbed { stick, shown } => {
+                let entity = commands.spawn((Replicated, InRoom(room), shown)).id();
+                game.shown_sticks.insert(stick, entity);
+            }
+            Event::Blew { stick, shown } => {
+                if let Some(entity) = game.shown_sticks.remove(&stick) {
+                    commands.entity(entity).try_despawn();
+                }
+                // Kept to the end of the game with the rungs: which planks
+                // are gone is part of every bridge from now on.
+                let entity = commands.spawn((Replicated, InRoom(room), shown)).id();
+                game.planks.push(entity);
+            }
+            Event::Fell(stick) => {
+                if let Some(entity) = game.shown_sticks.remove(&stick) {
                     commands.entity(entity).try_despawn();
                 }
             }
@@ -1873,9 +2191,13 @@ fn close(commands: &mut Commands, game: &mut Game) {
     for (_, ball) in game.shown_balls.drain() {
         commands.entity(ball).try_despawn();
     }
+    for (_, stick) in game.shown_sticks.drain() {
+        commands.entity(stick).try_despawn();
+    }
     // Whatever the game had still to say goes unsaid: there is no room
     // left to be shown it.
     game.balls.clear();
+    game.sticks.clear();
     game.events.clear();
     commands.entity(game.shown).try_despawn();
     game.closing = true;
@@ -2047,6 +2369,69 @@ mod tests {
         let zombie = game.seat(Entity::from_bits(99), person(99), true);
         assert_eq!(zombie, ARENA_SEATS);
         assert_eq!(game.zombie(zombie), Some(0));
+    }
+
+    #[test]
+    fn a_group_goes_in_two_by_two_onto_one_team_and_an_odd_one_onto_another() {
+        // Each team's two seats are together in the order seats are taken,
+        // the lower first: what going in two by two goes by.
+        for pair in SEAT_ORDER.chunks(2) {
+            assert_eq!(arena_team(pair[0]), arena_team(pair[1]), "{pair:?}");
+            assert!(pair[0] < pair[1], "{pair:?}");
+        }
+        let teams = |seats: &[usize]| -> Vec<u8> { seats.iter().map(|&seat| arena_team(seat)).collect() };
+        // Into an empty room: one where one alone sits; two on one team;
+        // three, two on one team and the third on another; four, two
+        // teams, on opposite islands.
+        let room = empty_room();
+        assert_eq!(room.seats_for(1), Some(vec![SEAT_ORDER[0]]));
+        assert_eq!(room.seats_for(1).map(|seats| seats[0]), room.free_seat());
+        assert_eq!(room.seats_for(2), Some(vec![0, 4]));
+        assert_eq!(room.seats_for(3), Some(vec![0, 4, 2]));
+        assert_eq!(room.seats_for(4), Some(vec![0, 4, 2, 6]));
+        assert_eq!(teams(&room.seats_for(4).unwrap()), vec![0, 0, 2, 2]);
+        assert_eq!(ARENA_ISLANDS[arena_island(0)], -ARENA_ISLANDS[arena_island(2)]);
+        // With one person in it already, alone on their team: two go onto
+        // the next team whole, and never beside the stranger; three, two
+        // onto a team of their own and the third beside the stranger.
+        let mut room = empty_room();
+        room.seat(Entity::from_bits(1), person(1), false);
+        assert_eq!(room.seats_for(2), Some(vec![2, 6]));
+        assert_eq!(room.seats_for(3), Some(vec![2, 6, 4]));
+        assert_eq!(room.seats_for(4), Some(vec![2, 6, 1, 5]));
+        // Seated so, each pair is one team, and the next to come alone
+        // sits where there is room.
+        for (n, seat) in room.seats_for(4).unwrap().into_iter().enumerate() {
+            room.put(seat, Entity::from_bits(10 + n as u64), person(10 + n as u64), false);
+        }
+        assert_eq!(room.people(), 5);
+        assert_eq!(arena_team(room.seat_of(Entity::from_bits(10)).unwrap()), arena_team(room.seat_of(Entity::from_bits(11)).unwrap()));
+        assert_eq!(arena_team(room.seat_of(Entity::from_bits(12)).unwrap()), arena_team(room.seat_of(Entity::from_bits(13)).unwrap()));
+        assert_eq!(room.seats_for(1), Some(vec![4]));
+        // One team is left whole: two more fit, four do not, nor three
+        // once the stranger's teammate has come.
+        assert_eq!(room.seats_for(2), Some(vec![3, 7]));
+        assert_eq!(room.seats_for(3), Some(vec![3, 7, 4]));
+        assert_eq!(room.seats_for(4), None);
+        room.seat(Entity::from_bits(2), person(2), false);
+        assert_eq!(room.seats_for(3), None);
+        assert_eq!(room.seats_for(2), Some(vec![3, 7]));
+        // Full, or no longer waiting: nobody.
+        fill_with_bots(&mut room);
+        assert_eq!(room.seats_for(1), None);
+        let mut begun = empty_room();
+        begun.stage = ArenaStage::Countdown;
+        assert_eq!(begun.seats_for(2), None);
+        // The computer still takes every seat a group left.
+        let mut room = empty_room();
+        for (n, seat) in room.seats_for(3).unwrap().into_iter().enumerate() {
+            room.put(seat, Entity::from_bits(1 + n as u64), person(1 + n as u64), false);
+        }
+        fill_with_bots(&mut room);
+        assert_eq!(room.people(), 3);
+        assert_eq!(room.bot.iter().filter(|bot| **bot).count(), ARENA_SEATS - 3);
+        assert!(room.vacant.iter().all(|vacant| !vacant));
+        assert_eq!(room.teams_in_play(), vec![0, 1, 2, 3]);
     }
 
     #[test]
@@ -2480,6 +2865,100 @@ mod tests {
         assert_eq!(game.health[4], HEALTH);
     }
 
+    #[test]
+    fn a_stick_of_dynamite_comes_down_blows_hurts_other_teams_and_takes_the_planks_under_it() {
+        use roundtown_net::nav::{PLANK_TOP, Region};
+        let mut game = full_game();
+        // A bridge from seat 0's island to the middle, its teammate's.
+        let span = game.nav.grid().span(Region::Team(0), Region::Middle, 0.0).expect("a span");
+        for index in 0..=span.planks() {
+            game.nav.hear(4, 0, index as u16, span.rung(index));
+        }
+        assert!(game.nav.joined(Region::Team(0), Region::Middle));
+        // Seat 0 on the island at the bridge's end, with two sticks; the
+        // bridge runs north from there. Seat 1, a bot of another team
+        // with the best shield there is, stands on it 8 m out, and seat
+        // 4, of the thrower's own team, beside it; seat 2 well off.
+        game.outfits.kits[0] = Kit::default().holding(Utility::Dynamite, 2);
+        game.outfits.kits[1].shield = 3;
+        let from = Vec3::new(span.from.x, ISLAND_TOP, span.from.y + 1.0);
+        let down = Vec3::new(from.x, PLANK_TOP, from.z - 8.0);
+        game.at[0] = from;
+        game.at[2] = down + Vec3::new(0.0, 0.0, -12.0);
+        for seat in [1, 4] {
+            game.at[seat] = down + Vec3::new(0.3, 0.0, -1.0);
+            game.squad.stand(seat, game.at[seat], 0.0, 0.0);
+        }
+        assert!(!game.lob(1, game.at[1], 0.0, 8.0), "with none at all");
+        assert!(game.lob(0, from, 0.0, 8.0));
+        let [Event::Lobbed { stick: 0, shown }] = game.events.as_slice() else {
+            panic!("the room is not shown it: {:?}", game.events);
+        };
+        assert_eq!(shown.seat, 0);
+        assert!(Vec3::new(shown.to_x, shown.to_y, shown.to_z).distance(down) < 1e-3, "{shown:?}");
+        assert!(Vec3::new(shown.x, shown.y, shown.z).distance(from + Vec3::new(0.0, DYNAMITE_HAND, -DYNAMITE_AHEAD)) < 1e-3);
+        game.events.clear();
+        assert_eq!(game.outfits.kit(0).held(Utility::Dynamite), 1);
+        // It is in the air for most of a second, lies for its fuse, and
+        // blows: nothing happens to anyone until then.
+        let mut seconds = 0.0;
+        while !game.sticks.is_empty() {
+            assert_eq!((game.health[1], game.blasts), (HEALTH, 0));
+            assert!(game.events.is_empty() && game.nav.joined(Region::Team(0), Region::Middle));
+            game.dynamites(1.0 / 60.0);
+            seconds += 1.0 / 60.0;
+            assert!(seconds < 4.0, "it never blew");
+        }
+        assert!((seconds - (0.45 + 0.04 * 8.0 + DYNAMITE_FUSE)).abs() < 0.05, "{seconds} s");
+        // Its damage off the one of another team within its reach, less
+        // what their shield keeps off, and nobody knocked; nothing off the
+        // thrower's teammate beside them, nor off anyone further away.
+        assert!((game.health[1] - (HEALTH - DYNAMITE_DAMAGE * (1.0 - SHIELD_SHARE[3]))).abs() < 1e-3, "{}", game.health[1]);
+        assert_eq!((game.health[4], game.health[2], game.health[0]), (HEALTH, HEALTH, HEALTH));
+        let body = game.squad.bot(1).expect("the computer's").body;
+        assert_eq!((body.shove, body.lift), (Vec2::ZERO, 0.0), "a stick of dynamite knocks nobody");
+        // The planks whose middles it reached are gone, one after another
+        // of that one bridge, and the room is told which, with where it
+        // blew; the island is parted from the middle again.
+        let [Event::Blew { stick: 0, shown }] = game.events.as_slice() else {
+            panic!("the room is not shown the blast: {:?}", game.events);
+        };
+        assert!(Vec3::new(shown.x, shown.y, shown.z).distance(down) < 1e-3);
+        assert!((4..=5).contains(&shown.planks.len()), "{:?}", shown.planks);
+        assert!(shown.planks.iter().all(|&(seat, chain, _)| (seat, chain) == (4, 0)));
+        assert!(shown.planks.windows(2).all(|pair| pair[1].2 == pair[0].2 + 1));
+        assert_eq!((game.blasts, game.planks_blown), (1, shown.planks.len() as u32));
+        assert!(!game.nav.joined(Region::Team(0), Region::Middle));
+        assert_eq!(game.nav.ground(down.xz()), None);
+        game.events.clear();
+        // Whoever of the computer's stood on them falls with them, and is
+        // dead of it soon enough.
+        for _ in 0..150 {
+            game.step(1.0 / 60.0);
+        }
+        assert!(!game.alive(1) && !game.alive(4), "they stand on nothing still: {} {}", game.at[1], game.at[4]);
+        game.events.clear();
+        // One thrown where there is nothing to lie on is gone into the
+        // void as it comes down, and nothing blows.
+        let west = std::f32::consts::FRAC_PI_2;
+        assert!(game.lob(0, from, west, 9.0));
+        game.events.clear();
+        while !game.sticks.is_empty() {
+            game.dynamites(1.0 / 60.0);
+        }
+        assert!(matches!(game.events.as_slice(), [Event::Fell(1)]), "{:?}", game.events);
+        assert_eq!((game.blasts, game.outfits.kit(0).held(Utility::Dynamite)), (1, 0));
+        assert!(!game.lob(0, from, 0.0, 5.0), "with none left");
+        // And one thrown onto the land blows there and takes no plank.
+        game.outfits.kits[0] = Kit::default().holding(Utility::Dynamite, 1);
+        assert!(game.lob(0, from, std::f32::consts::PI, 5.0));
+        game.events.clear();
+        while !game.sticks.is_empty() {
+            game.dynamites(1.0 / 60.0);
+        }
+        assert!(matches!(game.events.as_slice(), [Event::Blew { stick: 2, shown }] if shown.planks.is_empty()), "{:?}", game.events);
+    }
+
     /// Plays `game` on by itself for `secs` seconds, or until it is over,
     /// a thirtieth of a second at a time, with nobody to show or tell
     /// what it says is to be.
@@ -2687,11 +3166,15 @@ mod tests {
         /// How many of each kind of thing for a button they came by, all
         /// of them together, and how many they used (`bots::KINDS`: a
         /// fireball, a speed potion, an invisibility potion, a healing
-        /// potion, a Bridge Builder); and the most kinds any one of them
-        /// had on its buttons at once.
-        carried: [u32; 5],
-        used: [u32; 5],
+        /// potion, a Bridge Builder, a stick of dynamite); and the most
+        /// kinds any one of them had on its buttons at once.
+        carried: [u32; 6],
+        used: [u32; 6],
         fullest: usize,
+        /// How many sticks of dynamite blew, and how many planks they
+        /// took with them.
+        blasts: u32,
+        planks_blown: u32,
     }
 
     impl Default for Chronicle {
@@ -2713,9 +3196,11 @@ mod tests {
                 who: ["-"; ARENA_SEATS],
                 openings: ['M'; ARENA_TEAMS],
                 deaths: [0; ARENA_SEATS],
-                carried: [0; 5],
-                used: [0; 5],
+                carried: [0; 6],
+                used: [0; 6],
                 fullest: 0,
+                blasts: 0,
+                planks_blown: 0,
             }
         }
     }
@@ -2739,7 +3224,7 @@ mod tests {
         let dt = 1.0 / 30.0;
         let mut alive = [true; ARENA_SEATS];
         let mut idle = [0.0f32; ARENA_SEATS];
-        let mut held = [[0u8; 5]; ARENA_SEATS];
+        let mut held = [[0u8; 6]; ARENA_SEATS];
         while game.playing() {
             game.step(dt);
             game.events.clear();
@@ -2813,6 +3298,8 @@ mod tests {
             ArenaStage::Over { winner } => winner,
             _ => None,
         };
+        told.blasts = game.blasts;
+        told.planks_blown = game.planks_blown;
         told
     }
 
@@ -2969,8 +3456,8 @@ mod tests {
             println!("opened {which}: {teams} teams, won {:.0}%", 100.0 * won as f32 / teams.max(1) as f32);
         }
         // What they had on their buttons, all eight together, a game.
-        let each = |pick: &dyn Fn(&Chronicle) -> [u32; 5]| {
-            let mut sum = [0.0f32; 5];
+        let each = |pick: &dyn Fn(&Chronicle) -> [u32; 6]| {
+            let mut sum = [0.0f32; 6];
             for game in &games {
                 for (kind, count) in pick(game).into_iter().enumerate() {
                     sum[kind] += count as f32 / games.len() as f32;
@@ -2978,7 +3465,18 @@ mod tests {
             }
             sum.map(|mean| format!("{mean:.1}")).join(", ")
         };
-        println!("a game, of fireballs, speed, invisibility and healing potions and Bridge Builders: bought {}; used {}", each(&|game| game.carried), each(&|game| game.used));
+        println!(
+            "a game, of fireballs, speed, invisibility and healing potions, Bridge Builders and sticks of dynamite: bought {}; used {}",
+            each(&|game| game.carried),
+            each(&|game| game.used)
+        );
+        println!(
+            "a game: {:.1} sticks of dynamite blew, taking {:.1} planks; the most in one game {} sticks and {} planks",
+            mean(&|game| game.blasts as f32),
+            mean(&|game| game.planks_blown as f32),
+            games.iter().map(|game| game.blasts).max().unwrap_or(0),
+            games.iter().map(|game| game.planks_blown).max().unwrap_or(0),
+        );
         let mut fullest = [0u32; 6];
         for game in &games {
             fullest[game.fullest.min(5)] += 1;
@@ -3075,57 +3573,103 @@ mod tests {
     }
 
     #[test]
-    fn a_person_s_bot_teammate_keeps_the_base_bridges_for_them_and_never_raids() {
+    fn a_person_s_bot_teammate_comes_to_the_pad_for_what_lies_there_and_is_off_again() {
         use roundtown_net::bots::{Goal, Role};
         use roundtown_net::nav::Region;
         use roundtown_net::{ARENA_PADS, PAD_TOP};
-        // A person in seat 0 who stands on their pad for the first half
-        // minute and in the middle of their island after; the computer in
-        // seat 4 beside them.
-        let pad = ARENA_PADS[0];
-        let mut game = with_people(9, &[0], |_| Vec3::new(pad.x, PAD_TOP, pad.y));
-        let mut raided = false;
-        let mut collected_beside_them = false;
-        let mut armed = false;
-        let mut given = [0; 4];
-        while game.playing() && game.elapsed < 420.0 {
-            let now = game.elapsed;
-            let stands = |_: usize| {
-                if now < 30.0 {
-                    Vec3::new(pad.x, PAD_TOP, pad.y)
-                } else {
-                    Vec3::new(0.0, ISLAND_TOP, 130.0)
+        // A person in seat 0 who stands on their pad for the first twenty
+        // seconds and in the middle of their island after, never going
+        // near the pad again; the computer in seat 4 beside them. Seven
+        // minutes of it, three times over.
+        let (pad, island) = (ARENA_PADS[0], ARENA_ISLANDS[0]);
+        let dt = 1.0 / 30.0;
+        let (mut went_out, mut went_raiding, mut fetched) = (0, 0, 0);
+        for seed in [9, 2, 5] {
+            let mut game = with_people(seed, &[0], |_| Vec3::new(pad.x, PAD_TOP, pad.y));
+            let (mut armed, mut raided, mut fetching) = (false, false, false);
+            let mut given = [0; 4];
+            // How long it has been by the pad this time, the longest it
+            // ever was, how long in all, and how many times it came; and
+            // how long it was off its own island.
+            let (mut stay, mut longest, mut by_the_pad, mut visits, mut away) = (0.0f32, 0.0f32, 0.0f32, 0u32, 0.0f32);
+            let mut alive_for = 0.0f32;
+            while game.playing() && game.elapsed < 420.0 {
+                let now = game.elapsed;
+                let stands = |_: usize| {
+                    if now < 20.0 {
+                        Vec3::new(pad.x, PAD_TOP, pad.y)
+                    } else {
+                        Vec3::new(0.0, ISLAND_TOP, 130.0)
+                    }
+                };
+                game.at[0] = stands(0);
+                step_with_people(&mut game, &stands);
+                let bot = game.squad.bot(4).expect("the computer's");
+                // Once it has thought at all, it is the one that keeps, as
+                // far as who goes for whom is concerned.
+                if now > 2.0 {
+                    assert_eq!(bot.role(), Role::Keeper, "at {now} s");
                 }
-            };
-            game.at[0] = stands(0);
-            step_with_people(&mut game, &stands);
-            let bot = game.squad.bot(4).expect("the computer's");
-            // Once it has thought at all, it is the one that keeps.
-            if now > 2.0 {
-                assert_eq!(bot.role(), Role::Keeper, "at {now} s");
+                raided |= matches!(bot.goal(), Goal::Raid(_));
+                fetching |= matches!(bot.goal(), Goal::Fetch(..));
+                // A sword is lost with a death: had at any time, it was
+                // bought.
+                armed |= game.outfits.kit(4).sword > 0;
+                // While the person is on the pad, the bot is not there for
+                // what it makes: that is theirs.
+                if now < 19.0 && now > 2.0 {
+                    given = game.purses[0];
+                    assert_ne!(bot.goal(), Goal::Collect, "seed {seed}: at {now} s it is at the pad with them");
+                    assert_eq!(game.purses[4], [0; 4], "seed {seed}: at {now} s the bot holds {:?}", game.purses[4]);
+                }
+                if !game.alive(4) || now < 30.0 {
+                    stay = 0.0;
+                    continue;
+                }
+                alive_for += dt;
+                let at = game.at[4].xz();
+                if at.distance(pad) < 2.0 {
+                    if stay == 0.0 {
+                        visits += 1;
+                    }
+                    stay += dt;
+                    by_the_pad += dt;
+                    longest = longest.max(stay);
+                } else {
+                    stay = 0.0;
+                }
+                if at.distance(island) > ARENA_ISLAND_RADIUS + 1.0 {
+                    away += dt;
+                }
             }
-            raided |= matches!(bot.goal(), Goal::Raid(_));
-            // A sword is lost with a death: had at any time, it was bought.
-            armed |= game.outfits.kit(4).sword > 0;
-            // While the person is on the pad, the bot is not: what the
-            // generators make is theirs.
-            if now < 29.0 && now > 2.0 {
-                given = game.purses[0];
-                collected_beside_them |= bot.goal() == Goal::Collect;
-                assert_eq!(game.purses[4], [0; 4], "at {now} s the bot holds {:?}", game.purses[4]);
-            }
+            println!(
+                "seed {seed}: the bot beside a person is {}: by the pad {visits} times, {by_the_pad:.0} s of {alive_for:.0} in all and {longest:.1} s at the longest; off its island {away:.0} s; raided {raided}, fetched {fetching}; kit {:?}, upgrades {:?}",
+                game.squad.bot(4).unwrap().persona().name,
+                game.outfits.kit(4),
+                game.outfits.teams[0],
+            );
+            assert!(given[0] >= 7 && given[1] >= 1, "seed {seed}: the person on the pad was given what it made: {given:?}");
+            // It comes for what lies there, again and again, and is never
+            // there long: a few seconds at the most, and a small part of
+            // its time in all (until 2026-11-13 it stood there whenever it
+            // was saving for anything, most of the game).
+            assert!(visits >= 6, "seed {seed}: it came to the pad {visits} times in seven minutes");
+            assert!(longest < 5.0, "seed {seed}: it stood by the pad for {longest} s");
+            assert!(by_the_pad < 0.15 * alive_for, "seed {seed}: by the pad {by_the_pad} s of {alive_for}");
+            // With no bridge built by the person, it has collected for
+            // one, bought it and laid it; and it has a sword.
+            assert!(game.nav.joined(Region::Team(0), Region::Middle), "seed {seed}: no bridge to the middle by seven minutes");
+            assert!(armed, "seed {seed}: it never had a sword in seven minutes");
+            went_out += u32::from(away > 0.2 * alive_for);
+            went_raiding += u32::from(raided);
+            fetched += u32::from(fetching);
         }
-        // It stands on the pad with them, and takes nothing while they
-        // are there (until 2026-11-12 it stepped off as they came).
-        assert!(collected_beside_them, "it never stood on the pad with them");
-        assert!(!raided, "it went raiding by itself");
-        assert!(given[0] >= 10 && given[1] >= 2, "the person on the pad was given what it made: {given:?}");
-        // With the person off the pad and no bridge built, the bot has
-        // collected for one, bought it and laid it; and the team has
-        // something of what its sapphire buys.
-        assert!(game.nav.joined(Region::Team(0), Region::Middle), "no bridge to the middle by seven minutes");
-        let upgrades = game.outfits.teams[0];
-        println!("the bot beside a person: {:?}, kit {:?}, upgrades {upgrades:?}", game.squad.bot(4).unwrap().goal(), game.outfits.kit(4));
-        assert!(armed, "it never had a sword in seven minutes");
+        // And it is out and about: off its island for a good part of the
+        // time, out to the pads in the middle and on the smaller islands,
+        // and off on a raid of its own, where until 2026-11-13 it never
+        // went on one by itself.
+        assert!(went_out >= 2, "off its island for a fifth of the time in {went_out} games of three");
+        assert!(fetched >= 2, "it went out for amethyst or sapphire in {fetched} games of three");
+        assert!(went_raiding >= 1, "it went on a raid in {went_raiding} games of three");
     }
 }

@@ -1,8 +1,13 @@
 package town.donggeurami;
 
+import android.content.ClipData;
+import android.content.ClipboardManager;
+import android.content.Context;
 import android.graphics.Matrix;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.view.Display;
 import android.view.MotionEvent;
 import android.view.Surface;
@@ -16,6 +21,8 @@ import androidx.core.view.WindowInsetsCompat;
 import androidx.core.view.WindowInsetsControllerCompat;
 
 import com.google.androidgamesdk.GameActivity;
+
+import java.nio.charset.StandardCharsets;
 
 public class MainActivity extends GameActivity {
     /** How many frames a second the game aims for. */
@@ -107,11 +114,71 @@ public class MainActivity extends GameActivity {
         return super.onApplyWindowInsets(view, insets);
     }
 
+    /**
+     * What the game wants copied to the clipboard: your name and tag, from
+     * the friends' panel ({@code friends::copy}). The game cannot reach the
+     * phone's clipboard itself, so it keeps what is to be copied until this
+     * has taken it: how many bytes wait, each of them, and that they have
+     * been taken. Numbers only, each way, as with {@link #imeInset}.
+     */
+    private static native int clipLength();
+
+    private static native int clipByte(int index);
+
+    private static native void clipTaken();
+
+    /** How often the game is asked whether it has anything to copy. */
+    private static final long CLIP_POLL_MS = 300;
+
+    private final Handler clipHandler = new Handler(Looper.getMainLooper());
+    private final Runnable clipPoll = new Runnable() {
+        @Override
+        public void run() {
+            takeClip();
+            clipHandler.postDelayed(this, CLIP_POLL_MS);
+        }
+    };
+
+    /**
+     * Copies whatever the game has waiting to the phone's clipboard. Nothing
+     * that goes wrong here may stop the game: with the game's library not
+     * there to ask, or the clipboard refusing, nothing is copied and that is
+     * all.
+     */
+    private void takeClip() {
+        try {
+            int length = clipLength();
+            if (length <= 0 || length > 4096) {
+                return;
+            }
+            byte[] bytes = new byte[length];
+            for (int i = 0; i < length; i++) {
+                bytes[i] = (byte) clipByte(i);
+            }
+            clipTaken();
+            String text = new String(bytes, StandardCharsets.UTF_8);
+            ClipboardManager clipboard = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+            if (clipboard != null) {
+                clipboard.setPrimaryClip(ClipData.newPlainText("Donggeurami Town", text));
+            }
+        } catch (Throwable ignored) {
+            // Nothing copied.
+        }
+    }
+
     @Override
     protected void onResume() {
         super.onResume();
         applyImmersive();
         preferTargetRefresh();
+        clipHandler.removeCallbacks(clipPoll);
+        clipHandler.postDelayed(clipPoll, CLIP_POLL_MS);
+    }
+
+    @Override
+    protected void onPause() {
+        clipHandler.removeCallbacks(clipPoll);
+        super.onPause();
     }
 
     /**

@@ -254,14 +254,19 @@ impl Signup {
 }
 
 /// A box a name is typed into, with the caret blinking after it: on the
-/// sign-up's page, and in the settings' Edit name. At most one is up at a
-/// time, and while it is, it takes every key and asks a phone for its
-/// keyboard. [`name_box`] is the box itself.
-#[derive(Resource, Default)]
+/// sign-up's page, and in the settings' Edit name; and, since 2026-11-13,
+/// whatever else is typed, a name to look for and a message to a friend
+/// (`friends`), which are the same letters and only longer
+/// ([`NameBox::open_for`]). At most one is up at a time, and while it is,
+/// it takes every key and asks a phone for its keyboard. [`name_box`] is
+/// the box itself, and [`field`] one of any size.
+#[derive(Resource)]
 pub(crate) struct NameBox {
     up: bool,
     /// The name as typed so far.
     text: String,
+    /// The most characters it takes.
+    most: usize,
     /// Seconds the caret has blinked for.
     blink: f32,
     /// Enter was pressed, or typed, and not yet taken.
@@ -271,11 +276,31 @@ pub(crate) struct NameBox {
     keyboard_again: bool,
 }
 
+impl Default for NameBox {
+    fn default() -> Self {
+        Self {
+            up: false,
+            text: String::new(),
+            most: profile::LONGEST,
+            blink: 0.0,
+            entered: false,
+            keyboard_again: false,
+        }
+    }
+}
+
 impl NameBox {
-    /// A box has come up, with `text` in it to go on from.
+    /// A box for a name has come up, with `text` in it to go on from.
     pub(crate) fn open(&mut self, text: &str) {
+        self.open_for(text, profile::LONGEST);
+    }
+
+    /// A box has come up, with `text` in it to go on from, which takes up
+    /// to `most` characters, each one a name may be made of.
+    pub(crate) fn open_for(&mut self, text: &str, most: usize) {
         self.up = true;
         self.text = text.to_string();
+        self.most = most;
         self.blink = 0.0;
         self.entered = false;
         #[cfg(target_os = "android")]
@@ -286,6 +311,16 @@ impl NameBox {
     pub(crate) fn close(&mut self) {
         self.up = false;
         self.entered = false;
+    }
+
+    /// Whether a box is up.
+    pub(crate) fn up(&self) -> bool {
+        self.up
+    }
+
+    /// What has been typed so far.
+    pub(crate) fn text(&self) -> &str {
+        &self.text
     }
 
     /// The name as typed, if it is a name.
@@ -304,7 +339,7 @@ impl NameBox {
     fn typed(&mut self, c: char) {
         if c == '\n' || c == '\r' {
             self.entered = true;
-        } else if profile::allowed(c) && self.text.len() < profile::LONGEST {
+        } else if profile::allowed(c) && self.text.len() < self.most {
             self.text.push(c);
         }
     }
@@ -637,10 +672,8 @@ fn name_page(commands: &mut Commands, name: &str) {
 /// from, which [`NameBox`] takes the keys for once it is [`open`](NameBox::open).
 pub(crate) fn name_box(name: &str, width: f32) -> impl Bundle {
     let colours = ui().colours;
-    (
-        NameBoxTap,
-        TakesPress,
-        Button,
+    field(
+        name,
         Node {
             width: Val::VMin(width),
             height: Val::VMin(BUTTON_HEIGHT),
@@ -649,15 +682,29 @@ pub(crate) fn name_box(name: &str, width: f32) -> impl Bundle {
             border_radius: BorderRadius::all(Val::VMin(ROUNDED)),
             ..default()
         },
-        BackgroundColor(colours.signup.field),
+        NAME_TEXT,
+        colours.signup.field,
+        colours.text,
+    )
+}
+
+/// A box something is typed into, laid out as `node` says, with `text` in
+/// it to go on from in words `size` big, in `ink` on `fill`: what
+/// [`NameBox`] takes the keys for once it is open, and shows what is typed
+/// in, with the caret after it. Tapped, it asks a phone for its keyboard
+/// again.
+pub(crate) fn field(text: &str, node: Node, size: f32, fill: Color, ink: Color) -> impl Bundle {
+    (
+        NameBoxTap,
+        TakesPress,
+        Button,
+        node,
+        BackgroundColor(fill),
         children![(
             NameText,
-            Text::new(shown(name, true)),
-            TextFont {
-                font_size: FontSize::VMin(NAME_TEXT),
-                ..default()
-            },
-            TextColor(colours.text),
+            Text::new(shown(text, true)),
+            crate::font::sized(size),
+            TextColor(ink),
             TextLayout::justify(Justify::Left),
             Pickable::IGNORE,
         )],
@@ -850,16 +897,17 @@ fn type_name(
     }
 }
 
-/// What a text would leave in the name: every character of it that may be
-/// in one, as many as fit; and whether Enter was in it.
+/// What a text would leave in a box that takes `most` characters: every
+/// character of it that may be in a name, as many as fit; and whether
+/// Enter was in it.
 #[cfg_attr(not(target_os = "android"), allow(dead_code))]
-fn typed(text: &str) -> (String, bool) {
+fn typed(text: &str, most: usize) -> (String, bool) {
     let mut name = String::new();
     let mut entered = false;
     for c in text.chars() {
         if c == '\n' || c == '\r' {
             entered = true;
-        } else if profile::allowed(c) && name.len() < profile::LONGEST {
+        } else if profile::allowed(c) && name.len() < most {
             name.push(c);
         }
     }
@@ -880,7 +928,7 @@ fn android_text(mut name_box: ResMut<NameBox>) {
         return;
     };
     let mut state = app.text_input_state();
-    let (name, entered) = typed(&state.text);
+    let (name, entered) = typed(&state.text, name_box.most);
     if name != state.text {
         state.text.clone_from(&name);
         state.selection.start = name.len();
@@ -1290,10 +1338,22 @@ mod tests {
 
     #[test]
     fn what_is_typed_is_kept_as_far_as_it_can_be_a_name() {
-        assert_eq!(typed("Hajun"), ("Hajun".into(), false));
-        assert_eq!(typed("Hajun\n"), ("Hajun".into(), true));
-        assert_eq!(typed("하준 Park"), (" Park".into(), false));
-        assert_eq!(typed("a very long name indeed"), ("a very long name".into(), false));
+        let name = profile::LONGEST;
+        assert_eq!(typed("Hajun", name), ("Hajun".into(), false));
+        assert_eq!(typed("Hajun\n", name), ("Hajun".into(), true));
+        assert_eq!(typed("하준 Park", name), (" Park".into(), false));
+        assert_eq!(typed("a very long name indeed", name), ("a very long name".into(), false));
+        // A box for something longer takes that much, and the same letters.
+        assert_eq!(typed("a very long name indeed", 40), ("a very long name indeed".into(), false));
+        let mut search = NameBox::default();
+        search.open_for("", 21);
+        for c in "Hajooon#1323 and more besides".chars() {
+            search.typed(c);
+        }
+        assert_eq!(search.text(), "Hajooon#1323 and more");
+        assert!(search.up());
+        search.close();
+        assert!(!search.up());
         let mut name_box = NameBox::default();
         name_box.open("");
         for c in "Mochi 482".chars() {

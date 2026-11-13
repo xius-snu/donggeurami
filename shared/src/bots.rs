@@ -25,11 +25,12 @@
 use bevy::math::{Vec2, Vec3, Vec3Swizzles};
 
 use crate::bridge_wars::{
-    AIR_DRAG, BLIND_SIGHT, BOT_PUNCH_EVERY, BRIDGE_A_BUY, BUILDER_METRES, BUILDER_SPEED, DRINK_SECS, DRINK_SLOW, FAST,
+    AIR_DRAG, BLIND_SIGHT, BOT_PUNCH_EVERY, BRIDGE_A_BUY, BUILDER_METRES, BUILDER_SPEED, DRINK_SECS, DRINK_SLOW,
+    DYNAMITE_FURTHEST, DYNAMITE_FUSE, DYNAMITE_NEAREST, DYNAMITE_RADIUS, FAST,
     FIREBALL_RANGE,
     GROUND_DRAG, HUNT_RADIUS, KNOCK_BACK, KNOCK_UP, Mint, Outfits, REACH, RUN_SPEED, SPRINT_BONUS, price,
 };
-use crate::nav::{BODY, Nav, Region, Span};
+use crate::nav::{BODY, Gap, Nav, Region, Span};
 use crate::{
     AMETHYST_PADS, ANCHOR_RADIUS, ARENA_ANCHORS, ARENA_ISLANDS, ARENA_PADS, ARENA_SEATS, ARENA_SHOPS, ARENA_TEAMS,
     ARENA_UPGRADE_SHOPS, Item, Kit, Purse, SAPPHIRE_PADS, Upgrades, Utility, Ware, arena_team,
@@ -75,6 +76,50 @@ const HOLD_OFF: f32 = 4.2;
 /// ends it may be, bends and all ([`Squad::bends`]).
 const MOST_SLANT: f32 = 0.45;
 const MOST_BENT: f32 = 1.05;
+/// How long a body is in the air in a jump of its own, in seconds, at the
+/// least (the game's `JUMP_SPEED` against its two gravities; a frame or
+/// two more as it is stepped); and how much of the ground it would cross
+/// in that while a bot keeps in hand when it jumps a gap, in metres: it
+/// comes down that far past where the ground begins again, or does not
+/// jump ([`Squad::reach_of_a_jump`]). At a run that is a gap of 5.8 m:
+/// the four planks a stick of dynamite mostly takes out of a bridge
+/// (5.45 m), and not the five it sometimes does (6.8), which a body at a
+/// run does clear, but by too little to count on.
+const JUMP_SECS: f32 = 0.7;
+const JUMP_SPARE: f32 = 1.2;
+/// How far ahead a bot reads where whoever it is after will be, at the
+/// most, in seconds ([`Squad::meet`]).
+const FORESEE: f32 = 1.6;
+/// How far past where a stick of dynamite's blast reaches a bot gets out
+/// of its way, and how far short of it one waits that was walking into
+/// it, in metres ([`Squad::mind_sticks`]).
+const CLEAR_OF_BLAST: f32 = 1.0;
+const SHORT_OF_BLAST: f32 = 3.0;
+/// And how much further off than that one walking at a stick takes note
+/// of it, in metres: what it runs in the while it takes to wake up to it.
+const NOTICED_FROM: f32 = 12.0;
+/// How long a bot takes to wake up to a stick of dynamite thrown at it, in
+/// seconds from the throw, at the soonest and at the latest: the worst of
+/// them at a fight ([`Persona::pvp`] nothing), and how much sooner the
+/// best. A stick is in the air about 0.6 s and lies 1.2 s, and getting out
+/// of its blast takes a third of a second: the best are moving about as it
+/// comes down, most by its second flash, and the worst are caught by one
+/// thrown from close by that comes down on them about two times in five
+/// (a test counts them, kind by kind). In a fight everyone is that much
+/// later ([`STICK_BUSY`]), which is when a stick dropped at your own feet
+/// catches them. One lying ahead on its way a bot has seen coming, and
+/// takes this share of the time over ([`STICK_AHEAD`]).
+const STICK_WAKES: (f32, f32) = (0.75, 2.0);
+const STICK_WAKES_SOONER: (f32, f32) = (0.4, 1.0);
+const STICK_BUSY: f32 = 0.25;
+const STICK_AHEAD: f32 = 0.5;
+/// A bridge this short is a hole mended, and is laid straight, with no
+/// bends of its own ([`Squad::lay`]).
+const MEND: f32 = 12.0;
+/// How far inside what stands, either side of a hole, the planks that
+/// mend it begin and end, in metres: as a bridge's first and last rungs
+/// lie inside the shores it joins.
+const MEND_INSET: f32 = 0.5;
 
 /// How hard the computer's players play: every number of their pacing, in
 /// one place, to tune by.
@@ -209,8 +254,9 @@ impl Dice {
     }
 }
 
-/// A bot's body: where it is, which way it faces, and what a knock is
-/// carrying it by, across the ground and upward.
+/// A bot's body: where it is, which way it faces, what a knock is
+/// carrying it by, across the ground and upward, and whether it is
+/// jumping a gap ([`Body::leap`]).
 #[derive(Clone, Copy, PartialEq, Debug, Default)]
 pub struct Body {
     pub at: Vec3,
@@ -218,6 +264,11 @@ pub struct Body {
     pub yaw: f32,
     pub shove: Vec2,
     pub lift: f32,
+    /// It means to leave the ground it is on: walking, it goes on over any
+    /// ground there is, to its very edge, and off that with a jump, as
+    /// anyone jumps a gap, where otherwise it never walks off an edge
+    /// (since 2026-11-13). Its brain's to say, each frame.
+    pub leap: bool,
 }
 
 impl Body {
@@ -306,6 +357,14 @@ impl Body {
                 self.at.y = floor;
                 self.lift = 0.0;
             }
+        } else if self.lift != 0.0 {
+            // Come down to within a hair of the ground without quite
+            // touching it: it is on it. (Until 2026-11-13 it stood there
+            // still falling, as far as it knew, for as long as it stayed on
+            // ground of that height: neither in the air nor its own to
+            // move, so it never jumped nor drank.)
+            self.at.y = floor;
+            self.lift = 0.0;
         }
         if self.shove != Vec2::ZERO {
             here += self.shove * dt;
@@ -326,13 +385,33 @@ impl Body {
         let whole = here + walk * dt;
         let tries = [whole, Vec2::new(whole.x, here.y), Vec2::new(here.x, whole.y)];
         if airborne {
-            // In the air: over the void, wherever it steers; over ground,
-            // only on over ground, and not out of where a body walks.
+            // In the air: over the void, wherever it steers, as it does
+            // jumping a gap; over ground, only on over ground, and not out
+            // of where a body walks.
             let over_void = nav.ground(here).is_none();
-            let open = |to: Vec2| over_void || ((nav.walkable_at(to) || astray) && nav.ground(to).is_some());
+            let open = |to: Vec2| over_void || self.leap || ((nav.walkable_at(to) || astray) && nav.ground(to).is_some());
             if let Some(to) = tries.into_iter().find(|&to| to != here && open(to)) {
                 self.at.x = to.x;
                 self.at.z = to.y;
+            }
+        } else if self.leap {
+            // Jumping a gap: on over any ground there is, to its very
+            // edge, and off that with a jump.
+            match nav.ground(whole) {
+                Some(there) if there - self.at.y <= STEP => {
+                    self.at.x = whole.x;
+                    self.at.z = whole.y;
+                    if self.at.y - there <= STEP {
+                        self.at.y = there;
+                    }
+                }
+                // Something too high to step up.
+                Some(_) => {}
+                None => {
+                    self.lift = JUMP_UP;
+                    self.at.x = whole.x;
+                    self.at.z = whole.y;
+                }
             }
         } else {
             let open = |to: Vec2| {
@@ -479,13 +558,27 @@ pub struct Persona {
     /// should be adjusted so it can buy up to 5 even. match it with the
     /// personality so more diverse interaction"): its leaning to each
     /// kind, as odds ([`KINDS`]: a fireball, a speed potion, an
-    /// invisibility potion, a healing potion and a Bridge Builder), and
+    /// invisibility potion, a healing potion, a Bridge Builder and, since
+    /// 2026-11-13, a stick of dynamite), and
     /// how many kinds it carries, at the least and at the most. Which of
     /// them, and in what order it buys them, is thrown by these each life
     /// ([`Persona::loadout`]): the likeliest mostly first. (One kind a
     /// life until then, there being one button.)
-    pub carries: [f32; 5],
+    pub carries: [f32; 6],
     pub pockets: [u8; 2],
+    /// How much better than the rest it is in a fight, hand to hand, from
+    /// 0 to 1 (since 2026-11-13; Hajun, having played them: "pvp seems
+    /// moderate right now for all the bots equally ... i can always win
+    /// even in 1v2 ... the bots, depending on personality, need to vary
+    /// in pvp skill based on personality so some bots are like pro-er, and
+    /// some bots are moderate like now"). At 0 it fights as they all did
+    /// until then; at 1 its punches come as fast as they count, each
+    /// thrown on the run, from out of your reach and back out of it; it
+    /// is on its feet again sooner after a knock; it reads where you are
+    /// going rather than where you are; and it is quicker to jump a gap
+    /// after you and to get out from under a stick of dynamite
+    /// ([`Temper::pvp`]).
+    pub pvp: f32,
     /// How readily it goes in, about 1 (how near it lets someone come
     /// before it goes for them, and how hurt it has to be to back off);
     /// how much it jumps about, from 0 to 1; and how widely it weaves as
@@ -517,9 +610,11 @@ impl Persona {
     /// how many of each it keeps: as many kinds as its pockets have it,
     /// each thrown by its leanings from the kinds not yet taken. Fireballs
     /// by the handful for one that leans to them, two healing potions for
-    /// one that leans on those, and one of anything else.
+    /// one that leans on those, two sticks of dynamite for one a fifth of
+    /// whose leanings are to it, and one of anything else.
     fn loadout(&self, dice: &mut Dice) -> Vec<(Utility, u8)> {
-        let all = KINDS.len() as u8;
+        // No more kinds than there are buttons for them.
+        let all = (KINDS.len().min(crate::UTILITY_SLOTS)) as u8;
         let least = self.pockets[0].clamp(1, all);
         let most = self.pockets[1].clamp(least, all);
         let many = (least + (dice.roll() * f32::from(most - least + 1)) as u8).min(most);
@@ -536,6 +631,7 @@ impl Persona {
                 Utility::Fireball if share >= 0.35 => 3,
                 Utility::Fireball if share >= 0.15 => 2,
                 Utility::Healing if share >= 0.45 => 2,
+                Utility::Dynamite if share >= 0.2 => 2,
                 _ => 1,
             };
             carried.push((KINDS[which], count));
@@ -558,12 +654,13 @@ impl Persona {
 
 /// The kinds of thing there are to carry on a button, in the order a
 /// kind's leanings to them are written ([`Persona::carries`]).
-pub const KINDS: [Utility; 5] = [
+pub const KINDS: [Utility; 6] = [
     Utility::Fireball,
     Utility::Speed,
     Utility::Invisibility,
     Utility::Healing,
     Utility::Builder,
+    Utility::Dynamite,
 ];
 
 /// Which of `odds` comes up: each as likely as it is big.
@@ -589,7 +686,8 @@ pub const PERSONAS: [Persona; 16] = [
         opening: [0.8, 0.05, 0.15],
         middle_from: 0.0,
         spends: [1.3, 0.6, 1.6, 0.5, 0.5, 0.9],
-        carries: [0.5, 0.35, 0.1, 0.05, 0.05],
+        carries: [0.5, 0.35, 0.1, 0.05, 0.05, 0.3],
+        pvp: 0.9,
         pockets: [3, 5],
         bold: 1.4,
         bouncy: 0.8,
@@ -610,7 +708,8 @@ pub const PERSONAS: [Persona; 16] = [
         opening: [0.7, 0.1, 0.2],
         middle_from: 60.0,
         spends: [0.9, 0.6, 1.8, 0.5, 0.5, 0.6],
-        carries: [0.15, 0.2, 0.6, 0.05, 0.1],
+        carries: [0.15, 0.2, 0.6, 0.05, 0.1, 0.35],
+        pvp: 0.55,
         pockets: [2, 4],
         bold: 1.15,
         bouncy: 1.0,
@@ -630,7 +729,8 @@ pub const PERSONAS: [Persona; 16] = [
         opening: [0.75, 0.05, 0.2],
         middle_from: 0.0,
         spends: [1.5, 1.0, 0.8, 1.1, 0.8, 1.5],
-        carries: [0.4, 0.4, 0.05, 0.15, 0.15],
+        carries: [0.4, 0.4, 0.05, 0.15, 0.15, 0.15],
+        pvp: 0.8,
         pockets: [2, 4],
         bold: 1.25,
         bouncy: 0.4,
@@ -650,7 +750,8 @@ pub const PERSONAS: [Persona; 16] = [
         opening: [0.35, 0.4, 0.25],
         middle_from: 90.0,
         spends: [1.0, 0.7, 1.5, 0.9, 0.7, 0.8],
-        carries: [0.45, 0.2, 0.3, 0.05, 0.3],
+        carries: [0.45, 0.2, 0.3, 0.05, 0.3, 0.4],
+        pvp: 0.65,
         pockets: [3, 5],
         bold: 1.1,
         bouncy: 0.7,
@@ -671,7 +772,8 @@ pub const PERSONAS: [Persona; 16] = [
         opening: [0.7, 0.1, 0.2],
         middle_from: 60.0,
         spends: [1.1, 1.1, 0.8, 1.2, 1.3, 1.3],
-        carries: [0.2, 0.3, 0.05, 0.45, 0.1],
+        carries: [0.2, 0.3, 0.05, 0.45, 0.1, 0.05],
+        pvp: 0.4,
         pockets: [2, 3],
         bold: 1.05,
         bouncy: 0.45,
@@ -691,7 +793,8 @@ pub const PERSONAS: [Persona; 16] = [
         opening: [0.55, 0.25, 0.2],
         middle_from: 45.0,
         spends: [0.9, 0.7, 1.5, 0.7, 0.7, 0.7],
-        carries: [0.2, 0.55, 0.2, 0.05, 0.1],
+        carries: [0.2, 0.55, 0.2, 0.05, 0.1, 0.15],
+        pvp: 0.5,
         pockets: [2, 4],
         bold: 1.2,
         bouncy: 1.0,
@@ -711,7 +814,8 @@ pub const PERSONAS: [Persona; 16] = [
         opening: [0.8, 0.05, 0.15],
         middle_from: 0.0,
         spends: [1.3, 1.2, 0.7, 1.0, 1.0, 1.2],
-        carries: [0.35, 0.25, 0.0, 0.4, 0.05],
+        carries: [0.35, 0.25, 0.0, 0.4, 0.05, 0.1],
+        pvp: 0.7,
         pockets: [2, 3],
         bold: 1.2,
         bouncy: 0.3,
@@ -732,7 +836,8 @@ pub const PERSONAS: [Persona; 16] = [
         opening: [0.65, 0.15, 0.2],
         middle_from: 120.0,
         spends: [1.0, 1.3, 0.9, 1.1, 1.6, 1.0],
-        carries: [0.1, 0.15, 0.05, 0.7, 0.1],
+        carries: [0.1, 0.15, 0.05, 0.7, 0.1, 0.2],
+        pvp: 0.2,
         pockets: [1, 3],
         bold: 1.0,
         bouncy: 0.5,
@@ -752,7 +857,8 @@ pub const PERSONAS: [Persona; 16] = [
         opening: [0.35, 0.25, 0.4],
         middle_from: 150.0,
         spends: [1.4, 1.3, 0.7, 1.6, 1.0, 1.4],
-        carries: [0.3, 0.3, 0.1, 0.3, 0.3],
+        carries: [0.3, 0.3, 0.1, 0.3, 0.3, 0.25],
+        pvp: 0.6,
         pockets: [3, 5],
         bold: 1.0,
         bouncy: 0.25,
@@ -773,7 +879,8 @@ pub const PERSONAS: [Persona; 16] = [
         opening: [0.3, 0.3, 0.4],
         middle_from: 180.0,
         spends: [0.9, 0.9, 1.3, 1.7, 1.1, 0.9],
-        carries: [0.4, 0.2, 0.25, 0.15, 0.45],
+        carries: [0.4, 0.2, 0.25, 0.15, 0.45, 0.4],
+        pvp: 0.2,
         pockets: [3, 5],
         bold: 0.8,
         bouncy: 0.3,
@@ -793,7 +900,8 @@ pub const PERSONAS: [Persona; 16] = [
         opening: [0.4, 0.4, 0.2],
         middle_from: 240.0,
         spends: [0.9, 1.3, 0.9, 1.1, 1.6, 0.8],
-        carries: [0.1, 0.1, 0.1, 0.7, 0.1],
+        carries: [0.1, 0.1, 0.1, 0.7, 0.1, 0.3],
+        pvp: 0.35,
         pockets: [1, 3],
         bold: 0.8,
         bouncy: 0.2,
@@ -813,7 +921,8 @@ pub const PERSONAS: [Persona; 16] = [
         opening: [0.3, 0.45, 0.25],
         middle_from: 300.0,
         spends: [0.7, 1.2, 1.0, 1.2, 1.3, 0.6],
-        carries: [0.05, 0.25, 0.3, 0.4, 0.1],
+        carries: [0.05, 0.25, 0.3, 0.4, 0.1, 0.1],
+        pvp: 0.0,
         pockets: [1, 2],
         bold: 0.65,
         bouncy: 0.5,
@@ -833,7 +942,8 @@ pub const PERSONAS: [Persona; 16] = [
         opening: [0.8, 0.05, 0.15],
         middle_from: 0.0,
         spends: [1.2, 1.3, 0.7, 1.2, 1.2, 1.0],
-        carries: [0.15, 0.1, 0.0, 0.75, 0.05],
+        carries: [0.15, 0.1, 0.0, 0.75, 0.05, 0.05],
+        pvp: 0.4,
         pockets: [1, 2],
         bold: 0.95,
         bouncy: 0.15,
@@ -854,7 +964,8 @@ pub const PERSONAS: [Persona; 16] = [
         opening: [0.1, 0.8, 0.1],
         middle_from: 420.0,
         spends: [0.8, 1.5, 0.9, 1.5, 1.7, 0.6],
-        carries: [0.05, 0.05, 0.0, 0.9, 0.3],
+        carries: [0.05, 0.05, 0.0, 0.9, 0.3, 0.25],
+        pvp: 0.1,
         pockets: [1, 3],
         bold: 0.7,
         bouncy: 0.2,
@@ -875,7 +986,8 @@ pub const PERSONAS: [Persona; 16] = [
         opening: [0.6, 0.2, 0.2],
         middle_from: 60.0,
         spends: [1.5, 0.8, 1.0, 0.7, 0.6, 0.9],
-        carries: [0.35, 0.35, 0.2, 0.1, 0.05],
+        carries: [0.35, 0.35, 0.2, 0.1, 0.05, 0.15],
+        pvp: 1.0,
         pockets: [1, 3],
         bold: 1.15,
         bouncy: 0.5,
@@ -896,7 +1008,8 @@ pub const PERSONAS: [Persona; 16] = [
         opening: [0.35, 0.45, 0.2],
         middle_from: 150.0,
         spends: [0.9, 1.0, 1.3, 0.9, 1.0, 0.7],
-        carries: [0.1, 0.4, 0.3, 0.2, 0.1],
+        carries: [0.1, 0.4, 0.3, 0.2, 0.1, 0.1],
+        pvp: 0.25,
         pockets: [2, 4],
         bold: 0.85,
         bouncy: 0.7,
@@ -923,6 +1036,47 @@ pub struct Temper {
     pub weave: f32,
     pub shoves: f32,
     pub minds: f32,
+    /// How much better than the rest it is in a fight, from 0 to 1: its
+    /// kind's ([`Persona::pvp`]), a little more or less.
+    pub pvp: f32,
+}
+
+/// A jump a bot is making over a gap ([`Body::leap`]): where it means to
+/// come down, how fast it runs at it, until when it keeps to it whatever
+/// comes of it, and whether it has left the ground yet.
+#[derive(Clone, Copy, PartialEq, Debug)]
+struct Leap {
+    to: Vec2,
+    pace: f32,
+    until: f32,
+    aloft: bool,
+}
+
+/// Where someone was last seen to be and when they last moved, how fast
+/// and which way they were going, and how fast that was turning, in
+/// radians a second: what a bot reads where they will be from
+/// ([`Squad::foresee`]). People's places come a few times a second
+/// online, and every frame offline: both are taken as they come.
+#[derive(Clone, Copy, PartialEq, Debug, Default)]
+struct Track {
+    known: bool,
+    at: Vec2,
+    since: f32,
+    velocity: Vec2,
+    /// How they went between the last two places they were seen at, not
+    /// smoothed: what the turning is read off.
+    last: Vec2,
+    turning: f32,
+}
+
+/// A stick of dynamite a bot can see: where it lies, or will come down;
+/// how long until it blows, in seconds, its flight and its fuse together;
+/// and whose it is, by team.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct Stick {
+    pub at: Vec2,
+    pub left: f32,
+    pub team: u8,
 }
 
 /// How a bot is fighting whoever it fights, for a few seconds at a time
@@ -967,10 +1121,22 @@ struct Duel {
     back_until: f32,
     me_out: bool,
     foe_out: bool,
+    /// When it makes up its mind about jumping a gap to get at them;
+    /// until when, having thought better of it, it goes round by the land
+    /// instead; and whether the way round was far, when it last looked,
+    /// with where they stood then.
+    leap_at: f32,
+    round_until: f32,
+    far: Option<(bool, Vec2)>,
+    /// It stepped back from its last punch to come in again as the next
+    /// falls due: that one is thrown the moment they are in its reach,
+    /// on the run, with no waiting to take it in that they are.
+    lunge: bool,
 }
 
-/// A bridge a bot is laying: the span, which of its bridges it is, and
-/// which rung comes next.
+/// A bridge a bot is laying: the span, which of its bridges it is, which
+/// rung comes next, and how many blasts the map had seen when it was last
+/// looked over for holes ([`Nav::cuts`]).
 #[derive(Clone, Copy, PartialEq, Debug)]
 struct Laying {
     span: Span,
@@ -978,6 +1144,7 @@ struct Laying {
     to: Region,
     chain: u16,
     next: usize,
+    cuts: u32,
 }
 
 /// A Bridge Builder a bot has sent off: the bridge it is laying, straight
@@ -1079,6 +1246,21 @@ pub struct Bot {
     /// With nothing to do, where on its island it is wandering to, and
     /// until when.
     loiter: Option<(Vec2, f32)>,
+    /// A gap it is jumping ([`Leap`]); a hole in a bridge it is on its
+    /// way to, to jump it ([`Nav::crossing`]); and how many blasts the map
+    /// had seen when it last found its way ([`Nav::cuts`]).
+    leaping: Option<Leap>,
+    cross: Option<Gap>,
+    path_cuts: u32,
+    /// A stick of dynamite it is in the way of, and when it wakes up to
+    /// it; and when it may next throw one of its own.
+    alarm: Option<(Vec2, f32)>,
+    blast_at: f32,
+    /// Beside a person: since when it has been at its team's pad on this
+    /// visit, and when it may next come for what lies there
+    /// ([`Goal::Collect`]).
+    pad_since: Option<f32>,
+    pad_again: f32,
 }
 
 impl Bot {
@@ -1089,6 +1271,7 @@ impl Bot {
             weave: (persona.weave * (1.0 + 0.15 * dice.bell())).clamp(0.3, 2.0),
             shoves: persona.shoves,
             minds: persona.minds,
+            pvp: (persona.pvp + 0.07 * dice.bell()).clamp(0.0, 1.0),
         };
         let loadout = persona.loadout(dice);
         Self {
@@ -1139,7 +1322,19 @@ impl Bot {
             face: None,
             yields: false,
             loiter: None,
+            leaping: None,
+            cross: None,
+            path_cuts: 0,
+            alarm: None,
+            blast_at: 0.0,
+            pad_since: None,
+            pad_again: 0.0,
         }
+    }
+
+    /// Whether it is in the middle of jumping a gap.
+    pub fn leaping(&self) -> bool {
+        self.leaping.is_some()
     }
 
     pub fn goal(&self) -> Goal {
@@ -1217,6 +1412,8 @@ pub struct View<'a> {
     pub outfits: &'a Outfits,
     pub mint: &'a Mint,
     pub anchors: [f32; ARENA_TEAMS],
+    /// Every stick of dynamite thrown and not yet blown.
+    pub sticks: &'a [Stick],
 }
 
 /// What a frame of a bot comes to that the game is to carry out.
@@ -1231,6 +1428,9 @@ pub struct Order {
     pub buy: Option<Ware>,
     /// Throw a fireball, as a plank heads.
     pub throw: Option<f32>,
+    /// Throw a stick of dynamite, as a plank heads, to come down this far
+    /// off, in metres.
+    pub blast: Option<(f32, f32)>,
     /// This potion, off its button, is drunk.
     pub drink: Option<Utility>,
     /// A Bridge Builder is sent off: one comes off its button. Its bridge
@@ -1283,6 +1483,10 @@ pub struct Squad {
     salt: usize,
     /// How each team means to open ([`Plan`]).
     plans: [Plan; ARENA_TEAMS],
+    /// How everyone in the game has been moving, by seat, and when that
+    /// was last looked at ([`Squad::watch`]).
+    tracks: Vec<Track>,
+    watched_at: f32,
     dice: Dice,
 }
 
@@ -1306,6 +1510,8 @@ impl Squad {
             strikers: [None; ARENA_TEAMS],
             salt: (dice.roll() * 11.0) as usize,
             plans: [Plan::PLAIN; ARENA_TEAMS],
+            tracks: Vec::new(),
+            watched_at: f32::NEG_INFINITY,
             dice,
         }
     }
@@ -1405,6 +1611,9 @@ impl Squad {
         bot.reel = None;
         bot.reel_until = f32::NEG_INFINITY;
         bot.face = None;
+        bot.leaping = None;
+        bot.cross = None;
+        bot.alarm = None;
         // Another life, and perhaps other things for its buttons.
         bot.loadout = bot.persona.loadout(&mut self.dice);
         bot.planned = None;
@@ -1433,6 +1642,9 @@ impl Squad {
         bot.drinking = None;
         bot.foe = None;
         bot.duel = None;
+        bot.leaping = None;
+        bot.cross = None;
+        bot.alarm = None;
         bot.wants = [0; 4];
         // Dead on a raid, it stays home a while once it stands again.
         if matches!(bot.goal, Goal::Raid(_)) {
@@ -1447,19 +1659,28 @@ impl Squad {
     /// carried before it answers, and how well it steers when it does,
     /// are thrown again each time ([`Skill::reel`], [`Skill::grip`]).
     pub fn knock(&mut self, seat: usize, from: Vec2, running: bool) {
-        let (reel, grip) = self.reeling();
+        let (reel, grip) = self.reeling(seat);
         if let Some(bot) = self.bots.get_mut(seat).and_then(Option::as_mut) {
             bot.body.knock(from, running, 1.0);
             bot.reel = Some(reel);
             bot.grip = grip;
+            // A jump it was making is whatever the knock makes of it.
+            bot.leaping = None;
         }
     }
 
-    /// How long a knock landing now carries a bot before it answers, and
-    /// how much of its pace it then steers by in the air.
-    fn reeling(&mut self) -> (f32, f32) {
+    /// How long a knock landing now carries the bot in `seat` before it
+    /// answers, and how much of its pace it then steers by in the air:
+    /// the better it is in a fight, the sooner and the surer
+    /// ([`Temper::pvp`]): one that is as good as they come is never
+    /// carried longer than the quickest third of what the rest may be,
+    /// and never steers by less than most of its pace.
+    fn reeling(&mut self, seat: usize) -> (f32, f32) {
         let skill = self.skill;
-        (self.dice.around(skill.reel.0, skill.reel.1), self.dice.around(skill.grip.0, skill.grip.1))
+        let pvp = self.bot(seat).map_or(0.0, |bot| bot.temper.pvp);
+        let slowest = skill.reel.0 + (skill.reel.1 - skill.reel.0) * (1.0 - 0.7 * pvp);
+        let weakest = skill.grip.0 + (skill.grip.1 - skill.grip.0) * 0.7 * pvp;
+        (self.dice.around(skill.reel.0, slowest), self.dice.around(weakest, skill.grip.1))
     }
 
     /// The bot in `seat` has been knocked by this much, across the ground
@@ -1468,12 +1689,13 @@ impl Squad {
     /// lands on the body the device draws. On top of half of whatever
     /// already carried it, as [`Body::knock`] has it.
     pub fn shoved(&mut self, seat: usize, across: Vec2, up: f32) {
-        let (reel, grip) = self.reeling();
+        let (reel, grip) = self.reeling(seat);
         if let Some(bot) = self.bots.get_mut(seat).and_then(Option::as_mut) {
             bot.body.shove = bot.body.shove * 0.5 + across;
             bot.body.lift = (bot.body.lift * 0.5 + up).min(up.max(0.0));
             bot.reel = Some(reel);
             bot.grip = grip;
+            bot.leaping = None;
         }
     }
 
@@ -1542,6 +1764,7 @@ impl Squad {
     /// carry out of it is given back.
     pub fn step(&mut self, seat: usize, view: &View, dt: f32) -> Order {
         let mut order = Order::default();
+        self.watch(view);
         let Some(mut bot) = self.bots.get_mut(seat).and_then(Option::take) else {
             return order;
         };
@@ -1583,6 +1806,221 @@ impl Squad {
         order
     }
 
+    /// Looks at where everyone is, once a frame, whichever bot's turn it
+    /// is first: how fast and which way each is going, and how fast that
+    /// is turning, each smoothed a little, from where they were when they
+    /// last moved ([`Track`]). What a bot reads where someone will be
+    /// from ([`Squad::foresee`]).
+    fn watch(&mut self, view: &View) {
+        let now = view.elapsed;
+        if now <= self.watched_at {
+            return;
+        }
+        self.watched_at = now;
+        if self.tracks.len() < view.seats.len() {
+            self.tracks.resize(view.seats.len(), Track::default());
+        }
+        for (track, seen) in self.tracks.iter_mut().zip(view.seats) {
+            let at = seen.at.xz();
+            let begun = Track {
+                known: seen.alive,
+                at,
+                since: now,
+                ..Track::default()
+            };
+            if !seen.alive || !track.known {
+                *track = begun;
+                continue;
+            }
+            let moved = at - track.at;
+            let dt = now - track.since;
+            if moved.length_squared() < 1e-6 {
+                // Nothing new for a while is standing still: online a
+                // person's place comes only while it changes.
+                if dt > 0.25 {
+                    *track = begun;
+                }
+                continue;
+            }
+            // Sent somewhere, not walked there: begun again from it.
+            if dt < 1e-4 || moved.length() > 8.0 {
+                *track = begun;
+                continue;
+            }
+            let fresh = moved / dt;
+            if track.last.length() > 2.0 && fresh.length() > 2.0 {
+                let rate = (track.last.angle_to(fresh) / dt).clamp(-6.0, 6.0);
+                track.turning += (rate - track.turning) * (1.0 - (-dt / 0.25).exp());
+            } else {
+                track.turning *= 0.5;
+            }
+            track.velocity += (fresh - track.velocity) * (1.0 - (-dt / 0.1).exp());
+            track.last = fresh;
+            track.at = at;
+            track.since = now;
+        }
+    }
+
+    /// Where whoever is in `seat`, now `at`, will be in `secs` seconds if
+    /// they go on as they are going: on round the bend they are on, if
+    /// they are turning, and no further than there is ground under them.
+    /// `at` itself for someone standing, or not seen moving.
+    fn foresee(&self, nav: &Nav, seat: usize, at: Vec2, secs: f32) -> Vec2 {
+        let Some(track) = self.tracks.get(seat).filter(|track| track.known && track.velocity.length() >= 1.0) else {
+            return at;
+        };
+        let mut velocity = track.velocity;
+        let mut place = at;
+        let mut left = secs;
+        while left > 1e-3 {
+            let step = left.min(0.05);
+            velocity = Vec2::from_angle(track.turning * step).rotate(velocity);
+            let next = place + velocity * step;
+            if nav.ground(next).is_none() {
+                break;
+            }
+            place = next;
+            left -= step;
+        }
+        place
+    }
+
+    /// How fast whoever is in `seat` is going, in metres a second.
+    fn speed_of(&self, seat: usize) -> f32 {
+        self.tracks.get(seat).filter(|track| track.known).map_or(0.0, |track| track.velocity.length())
+    }
+
+    /// Where the bot heads to get at whoever is in `foe`, now `there`,
+    /// going at `pace`: not where they are but where it can be on them,
+    /// the soonest it could be within a punch of where they will be then
+    /// ([`Squad::foresee`], no further ahead than [`FORESEE`]). Someone
+    /// running round and round is cut off across the round, where running
+    /// at where they are only ever follows them (Hajun, 2026-11-13:
+    /// "instead of attacking i just run around in a circle, the AI always
+    /// is one step behind so he just keeps following in a circle behind
+    /// me in an endless loop"). How much of that it goes by is how good
+    /// it is in a fight: all of it for the best, a little over half for
+    /// the rest.
+    fn meet(&self, nav: &Nav, bot: &Bot, foe: usize, there: Vec2, pace: f32) -> Vec2 {
+        let here = bot.body.at.xz();
+        if self.speed_of(foe) < 1.0 {
+            return there;
+        }
+        let mut meet = there;
+        let mut secs = 0.1;
+        while secs <= FORESEE {
+            meet = self.foresee(nav, foe, there, secs);
+            if here.distance(meet) - RING <= pace.max(1.0) * secs {
+                break;
+            }
+            secs += 0.1;
+        }
+        there.lerp(meet, 0.55 + 0.45 * bot.temper.pvp)
+    }
+
+    /// How far across a gap a bot going at `pace` jumps: what it crosses
+    /// in the air, less what it keeps in hand ([`JUMP_SPARE`]).
+    fn reach_of_a_jump(pace: f32) -> f32 {
+        pace * JUMP_SECS - JUMP_SPARE
+    }
+
+    /// Whether a bot at a run can get from `a` to `b`: walking, or walking
+    /// and jumping one hole in a bridge on the way ([`Nav::crossing`]).
+    fn reachable(nav: &Nav, a: Vec2, b: Vec2) -> bool {
+        nav.connected(a, b) || nav.crossing(a, b, Self::reach_of_a_jump(RUN_SPEED)).is_some()
+    }
+
+    /// What a stick of dynamite makes of the way the bot was going to
+    /// walk ([`Stick`]). In the way of one, a plank of a bridge under it
+    /// and the stick near enough to take it, or the stick another team's
+    /// and near enough to hurt, it runs for the nearest ground clear of
+    /// the blast, once it has woken up to it, which the better ones do
+    /// sooner and anyone in a fight later ([`STICK_WAKES`]): the worst of
+    /// them are still in it now and then as it blows. Out of it, it
+    /// keeps out until it has blown, whatever it was doing there: it does
+    /// not walk back in after whoever it was fighting. Walking toward one
+    /// that lies on a bridge, it waits short of it. The three times a
+    /// stick shines are there for this. A stick of its own team's on the
+    /// land is nothing to it.
+    fn mind_sticks(&mut self, bot: &mut Bot, view: &View, walk: Vec2) -> Vec2 {
+        if view.sticks.is_empty() {
+            bot.alarm = None;
+            return walk;
+        }
+        let (nav, now) = (view.nav, view.elapsed);
+        let here = bot.body.at.xz();
+        let team = arena_team(bot.seat);
+        let out = out_over_the_void(nav, here);
+        let clear = DYNAMITE_RADIUS + BODY + CLEAR_OF_BLAST;
+        // The nearest it has to mind: one that would take the floor from
+        // under it or hurt it where it stands, or one lying on a bridge
+        // that it is walking at; and one it has in mind already it keeps
+        // in mind until it has blown, from as far off as it waits for one.
+        // (One it is walking at it takes note of from further off than it
+        // waits at, so that it has woken up to it by the time it is there.)
+        let heading = walk.normalize_or_zero();
+        let in_mind = bot.alarm.map(|(at, _)| at);
+        let minded = view
+            .sticks
+            .iter()
+            .filter(|stick| {
+                let away = stick.at.distance(here);
+                let harms = stick.team != team || out;
+                let on_a_bridge = nav.on_plank(stick.at) && nav.grid().height(stick.at).is_none();
+                let walking_at = heading.dot((stick.at - here).normalize_or_zero()) > 0.3;
+                let known = in_mind.is_some_and(|at| at.distance(stick.at) < 0.2);
+                (away < clear && harms)
+                    || (away < clear + SHORT_OF_BLAST + NOTICED_FROM && on_a_bridge && walking_at)
+                    || (away < clear + SHORT_OF_BLAST && harms && known)
+            })
+            .min_by(|a, b| a.at.distance_squared(here).total_cmp(&b.at.distance_squared(here)))
+            .copied();
+        let Some(stick) = minded else {
+            bot.alarm = None;
+            return walk;
+        };
+        // It wakes up to it a while after it is thrown.
+        let woken = match bot.alarm {
+            Some((at, when)) if at.distance(stick.at) < 0.2 => when,
+            _ => {
+                let pvp = bot.temper.pvp;
+                let busy = if bot.duel.is_some() { STICK_BUSY } else { 0.0 };
+                let soonest = STICK_WAKES.0 - STICK_WAKES_SOONER.0 * pvp + busy;
+                let latest = STICK_WAKES.1 - STICK_WAKES_SOONER.1 * pvp + busy;
+                let share = if stick.at.distance(here) >= clear { STICK_AHEAD } else { 1.0 };
+                let when = now + self.dice.around(soonest, latest) * share;
+                bot.alarm = Some((stick.at, when));
+                when
+            }
+        };
+        if now < woken {
+            return walk;
+        }
+        let pace = RUN_SPEED * if bot.drinking.is_some() { DRINK_SLOW } else { 1.0 };
+        let away = stick.at.distance(here);
+        if away >= clear {
+            // Clear of it: no nearer it than a little short of the blast
+            // until it has blown, whether it lies on the bridge ahead or
+            // where the fight was; any other way it goes as it would.
+            let nearer = heading.dot((stick.at - here).normalize_or_zero()) > 0.0;
+            return if away < clear + SHORT_OF_BLAST && nearer { Vec2::ZERO } else { walk };
+        }
+        // Out of it: to the nearest place clear of it that can be walked
+        // straight to, or failing that straight away from it for as far
+        // as there is ground.
+        let ring = clear + 0.3;
+        let best = (0..16)
+            .map(|k| stick.at + Vec2::from_angle(k as f32 * std::f32::consts::TAU / 16.0) * ring)
+            .filter(|&to| nav.walkable_at(to) && nav.line(here, to))
+            .min_by(|a, b| a.distance_squared(here).total_cmp(&b.distance_squared(here)));
+        bot.path.clear();
+        bot.path_to = None;
+        match best {
+            Some(to) => (to - here).normalize_or_zero() * pace,
+            None => (here - stick.at).normalize_or(-heading) * pace,
+        }
+    }
+
     /// The slow layer: what the bot might be doing, each with a score,
     /// the best of them taken, the one it is on getting a bonus.
     fn think(&mut self, bot: &mut Bot, view: &View) {
@@ -1620,7 +2058,8 @@ impl Squad {
         let purse = view.purses.get(seat).copied().unwrap_or_default();
         let kit = view.outfits.kit(seat);
         let upgrades = view.outfits.team(seat);
-        let can_go_home = nav.connected(here, spots.heart);
+        // Walking, or over a hole in a bridge that it can jump.
+        let can_go_home = Self::reachable(nav, here, spots.heart);
         let on_home = nav.grid().region(here) == Some(home) && !nav.on_plank(here);
         let foes: Vec<Seen> = view
             .seats
@@ -1689,7 +2128,7 @@ impl Squad {
         });
         if let Some((from, to, span)) = span
             && short == 0.0
-            && nav.connected(here, span.from)
+            && Self::reachable(nav, here, span.from)
         {
             offers.push((0.78, Goal::Lay(from, to)));
         }
@@ -1754,26 +2193,43 @@ impl Squad {
             1
         };
         let saving = wants[Item::Silver.index()] > 0 || wants[Item::Gold.index()] > 0;
-        // On its pad for them, a person of its team there or not: while
-        // they are, what it makes is theirs ([`Squad::wants`]).
+        // On its pad for them. **Beside a person it is no keeper of the
+        // pad**: it comes for what lies there once enough of it does,
+        // and they are not there for it themselves, picks it up, and is
+        // off again, to the shop, a bridge, another pad or a raid, and not
+        // back for a while (since 2026-11-13; Hajun: "the bot stays on the
+        // iron/gold generator for toooo long ... just come back to pick up
+        // resource and leave again quickly not stay"; until then it stood
+        // on the pad for as long as it was saving for anything, which was
+        // nearly always).
         if saving && can_go_home {
             let stock = view.mint.held(team) + view.mint.held(ARENA_TEAMS + team);
-            offers.push((if stock > 0 { 0.52 } else { 0.48 }, Goal::Collect));
+            if with_person {
+                let worth = usize::from(wants[Item::Silver.index()] + wants[Item::Gold.index()]).clamp(1, 6);
+                let there = bot.goal == Goal::Collect;
+                if !bot.yields && now >= bot.pad_again && (there || stock >= worth) {
+                    offers.push((0.56, Goal::Collect));
+                }
+            } else {
+                offers.push((if stock > 0 { 0.52 } else { 0.48 }, Goal::Collect));
+            }
         }
 
         // Out to a pad for what lies on it: the amethyst in the middle,
         // and the sapphire on the smaller islands. The keeper stays home,
-        // unless it is alone.
+        // unless it is alone, or its teammate is a person: then it goes
+        // out for them as the one that goes out does, from early on and
+        // with nobody of another team near its island.
         // Its own: the amethyst pad toward its island, and the two smaller
         // islands beside it. The rest are other teams' to go to, until
         // late.
-        let quiet = nearest_foe > 40.0;
+        let quiet = nearest_foe > 25.0;
         let late = now >= skill.keeper_raids_from;
-        if runner || (with_person && quiet && now > 120.0) {
-            let base = if runner { 0.5 } else { 0.3 };
+        if runner || (with_person && quiet && now > 45.0) {
+            let base = 0.5;
             for (pad, &at) in AMETHYST_PADS.iter().enumerate() {
                 let stock = view.mint.held(12 + pad);
-                if stock > 0 && (pad == team || late) && nav.connected(here, at) {
+                if stock > 0 && (pad == team || late) && Self::reachable(nav, here, at) {
                     let score = base + 0.06 + 0.08 * stock.min(2) as f32 - here.distance(at) / 300.0;
                     offers.push((score, Goal::Fetch(at, Item::Amethyst)));
                 }
@@ -1781,7 +2237,7 @@ impl Squad {
             let beside = beside(team as u8);
             for (pad, &at) in SAPPHIRE_PADS.iter().enumerate() {
                 let stock = view.mint.held(8 + pad);
-                if stock > 0 && (beside.contains(&(pad as u8)) || late) && nav.connected(here, at) {
+                if stock > 0 && (beside.contains(&(pad as u8)) || late) && Self::reachable(nav, here, at) {
                     let score = base + 0.07 * stock.min(4) as f32 - here.distance(at) / 300.0;
                     offers.push((score, Goal::Fetch(at, Item::Sapphire)));
                 }
@@ -1791,23 +2247,27 @@ impl Squad {
         // The anchors gone, everyone goes for everyone: whoever of another
         // team is nearest that it can get at.
         let in_play = |team: usize| (0..ARENA_SEATS).any(|other| usize::from(arena_team(other)) == team && view.seats.get(other).is_some_and(|seen| seen.in_play));
-        if now >= skill.hunt_from && foes.iter().any(|foe| nav.connected(here, foe.at.xz())) {
+        if now >= skill.hunt_from && foes.iter().any(|foe| Self::reachable(nav, here, foe.at.xz())) {
             offers.push((0.8, Goal::Hunt));
         }
 
         // A raid: to another team's island, armed and whole, when its
         // turn comes. The one that goes out goes; the keeper with it,
-        // late on; a person's teammate never by itself.
+        // late on; and a person's teammate by itself, a little after the
+        // rest have begun and with nobody of another team near its own
+        // island (since 2026-11-13, Hajun: "make it go out more ... or
+        // raiding an island more"; never by itself until then).
         // Sooner or later than the rest, by who it is.
         let rested = now >= bot.rest_until && me.health >= 0.7 && kit.sword > 0;
-        if now >= skill.raid_from + bot.persona.eager && now < skill.hunt_from && rested && !with_person {
+        let goes_out = runner || (with_person && quiet && now >= skill.raid_from + bot.persona.eager.max(0.0) + 20.0);
+        if now >= skill.raid_from + bot.persona.eager && now < skill.hunt_from && rested {
             let others = (0..ARENA_TEAMS).filter(|&other| other != team && in_play(other)).count();
             for victim in (0..ARENA_TEAMS).filter(|&victim| victim != team && in_play(victim)) {
                 let mine = matches!(bot.goal, Goal::Raid(on) if usize::from(on) == victim);
                 // Along with its teammate, unless it is one for staying
                 // at home; or, the one that goes out, by its own choice.
                 let along = mate_raids == Some(victim) && (runner || (now >= skill.keeper_raids_from && bot.persona.raids > -0.05));
-                if !mine && !along && !runner {
+                if !mine && !along && !goes_out {
                     continue;
                 }
                 // One team's raid on a team at a time, a rest after each,
@@ -1817,7 +2277,7 @@ impl Squad {
                 let share = (self.raided.1 + 1) as f32 <= skill.people_share * (self.raided.0 + 1) as f32 + 1.0;
                 let allowed = mine || along || (theirs && now >= self.spared_until[victim] && (!people || others < 2 || share));
                 let their_heart = self.spots(nav)[victim].heart;
-                if !allowed || !nav.connected(here, their_heart) {
+                if !allowed || !Self::reachable(nav, here, their_heart) {
                     continue;
                 }
                 let ramp = ((now - skill.raid_from) / (skill.hunt_from - skill.raid_from)).clamp(0.0, 1.0);
@@ -1905,12 +2365,25 @@ impl Squad {
         let own = Region::Sapphire(beside[usize::from(plan.side) % 2]);
         let to_middle = nav.joined(home, Region::Middle);
         let to_sapphire = beside.iter().any(|&island| nav.joined(home, Region::Sapphire(island)));
+        // A hole blown in its team's way to the middle is either of the
+        // team's to mend, whichever of them goes out and whoever is
+        // beside it, from whichever side of it they stand on: a few
+        // planks, where a bridge is the one that goes out's to lay.
+        if !to_middle && let Some(mend) = self.mend_for(bot, view, (home, Region::Middle)) {
+            return Some(mend);
+        }
         let wanted = if with_person {
             // Beside a person: the bridge to the middle once they have
-            // had the time to build it, and later one to a smaller island.
-            if !to_middle && now > 40.0 {
+            // had the time to build it, unless they are out over the void
+            // building one now; and a little later one to a smaller
+            // island. (After 40 s and two minutes until 2026-11-13, when
+            // Hajun asked for the bot beside them to be out and about
+            // more: "bridging or raiding an island more".)
+            let mate = view.seats.get(mate_of(bot.seat)).copied().unwrap_or_default();
+            let theirs = mate.alive && out_over_the_void(nav, mate.at.xz());
+            if !to_middle && now > 30.0 && !theirs {
                 (home, Region::Middle)
-            } else if to_middle && !to_sapphire && now > 120.0 {
+            } else if to_middle && !to_sapphire && now > 75.0 {
                 (Region::Middle, own)
             } else {
                 return None;
@@ -1954,11 +2427,44 @@ impl Squad {
         if being_built(bot.sent) || self.bots.iter().flatten().any(|other| being_built(other.sent)) {
             return None;
         }
+        // A bridge there with one hole blown in it is mended, not built
+        // again beside itself.
+        if let Some(mend) = self.mend_for(bot, view, wanted) {
+            return Some(mend);
+        }
         let tried = self.begun.iter().find(|begun| (begun.0, begun.1) == wanted).map_or(0, |begun| begun.2);
         let off = ((bot.seat * 31 + usize::from(bot.chains) * 17 + self.salt * 7) % 13) as f32 / 6.0 - 1.0;
         let aside = [0.0, 2.9, -2.9][usize::from(tried) % 3] + off * 1.4;
         let span = nav.grid().span(wanted.0, wanted.1, aside).or_else(|| nav.grid().span(wanted.0, wanted.1, 0.0))?;
+        // From its far end, for a bot that stands on that side of the
+        // water and cannot get round to this one.
+        let here = bot.body.at.xz();
+        if !Self::reachable(nav, here, span.from) && Self::reachable(nav, here, span.to) {
+            let back = nav.grid().span(wanted.1, wanted.0, -aside).or_else(|| nav.grid().span(wanted.1, wanted.0, 0.0))?;
+            return Some((wanted.0, wanted.1, back));
+        }
         Some((wanted.0, wanted.1, span))
+    }
+
+    /// The planks that would mend the way between the two lands of
+    /// `wanted`, for `bot` to lay: across the one hole a blast has left
+    /// in a bridge between them ([`Nav::crossing`]), from a little inside
+    /// what stands on the side the bot can get to, to a little inside
+    /// what stands on the other ([`MEND_INSET`]), straight. None if they
+    /// are joined, if no one hole lies between them (a bridge blown in
+    /// two places has a stretch of itself standing in the middle of
+    /// nowhere: a new bridge, then), if the bot can get to neither side
+    /// of it, or if a teammate is at it already.
+    fn mend_for(&mut self, bot: &Bot, view: &View, wanted: (Region, Region)) -> Option<(Region, Region, Span)> {
+        let nav = view.nav;
+        if nav.gaps().is_empty() || self.claims.iter().any(|&(from, to, by)| (from, to) == wanted && by != bot.seat) {
+            return None;
+        }
+        let here = bot.body.at.xz();
+        let gap = nav.crossing(nav.heart(wanted.0), nav.heart(wanted.1), f32::INFINITY)?;
+        let gap = [gap, gap.turned()].into_iter().find(|gap| nav.connected(here, gap.a_in))?;
+        let inside = |end: Vec2, step_back: Vec2| end + (step_back - end).normalize_or_zero() * MEND_INSET;
+        Some((wanted.0, wanted.1, Span::straight(inside(gap.a, gap.a_in), inside(gap.b, gap.b_in))))
     }
 
     /// A bridge worth a Bridge Builder, to a bot with none it has to
@@ -2016,11 +2522,30 @@ impl Squad {
         let (nav, now) = (view.nav, view.elapsed);
         let here = bot.body.at.xz();
         bot.face = None;
+        bot.body.leap = false;
         if now < bot.reel_until {
             return Vec2::ZERO;
         }
         let ground = nav.ground(here);
         let in_air = bot.body.lift != 0.0 || ground.is_none_or(|ground| (bot.body.at.y - ground).abs() > 0.02);
+        // Jumping a gap: at where it means to come down and nothing else,
+        // off the edge with a jump ([`Body::leap`]), until it is down
+        // again, or has come to where it was going with no gap on the way,
+        // or it has come to nothing.
+        if let Some(mut leap) = bot.leaping {
+            leap.aloft |= in_air;
+            let down = leap.aloft && !in_air;
+            if down || here.distance(leap.to) < 0.4 || now >= leap.until {
+                bot.leaping = None;
+                bot.path.clear();
+                bot.path_to = None;
+                bot.progress = (here, now);
+            } else {
+                bot.leaping = Some(leap);
+                bot.body.leap = true;
+                return (leap.to - here).normalize_or_zero() * leap.pace;
+            }
+        }
         if in_air && ground.is_none() {
             return nav
                 .nearest_walkable_within(here, REACH_BACK)
@@ -2035,6 +2560,12 @@ impl Squad {
             }
         }
         let walk = self.intend(bot, view, dt, order);
+        // A jump it has just begun is next frame's; and a stick of
+        // dynamite comes before wherever it was going.
+        if bot.leaping.is_some() {
+            return walk;
+        }
+        let walk = self.mind_sticks(bot, view, walk);
         // Running somewhere, a jump now and then, as people run: the more
         // the bouncier it is. Not with a plank in its arms or a potion at
         // its mouth, nor in a fight, which has jumps of its own.
@@ -2147,6 +2678,62 @@ impl Squad {
             }
         }
 
+        // A stick of dynamite, at whoever of another team is out on a
+        // bridge a throw away: at where they will be by the time it
+        // blows, if that is on a bridge still, and otherwise at where
+        // they are, to take the bridge from under them or from in front
+        // of them. From the land, or from out on a bridge itself if what
+        // would go is well clear of where it stands; never where one of
+        // its own team stands on the planks that would go, and not with a
+        // plank in its arms. Not the moment it could, but soon.
+        let ashore = nav.grid().height(here).is_some();
+        if kit.held(Utility::Dynamite) > 0
+            && now >= bot.blast_at
+            && bot.drinking.is_none()
+            && bot.laying.is_none()
+            && bot.body.free(nav)
+        {
+            let team = arena_team(seat);
+            let mates: Vec<Vec2> = view
+                .seats
+                .iter()
+                .enumerate()
+                .filter(|&(other, seen)| other != seat && seen.alive && arena_team(other) == team)
+                .map(|(_, seen)| seen.at.xz())
+                .collect();
+            let aim = view
+                .seats
+                .iter()
+                .enumerate()
+                .filter(|&(other, seen)| seen.alive && !seen.unseen && arena_team(other) != team)
+                .filter(|(_, seen)| (seen.at.y - bot.body.at.y).abs() < 1.5 && out_over_the_void(nav, seen.at.xz()))
+                .filter_map(|(other, seen)| {
+                    let there = seen.at.xz();
+                    let away = there.distance(here);
+                    if !(3.5..=DYNAMITE_FURTHEST + 2.0).contains(&away) {
+                        return None;
+                    }
+                    // In the air for about as long as it is far, and
+                    // then most of its fuse.
+                    let ahead = self.foresee(nav, other, there, 0.45 + 0.04 * away + 0.6 * DYNAMITE_FUSE);
+                    let at = if out_over_the_void(nav, ahead) { ahead } else { there };
+                    let far = at.distance(here);
+                    let nearest = if ashore { DYNAMITE_NEAREST + 0.3 } else { DYNAMITE_RADIUS + 2.0 };
+                    let reached = (nearest..=DYNAMITE_FURTHEST).contains(&far);
+                    let spares = mates.iter().all(|mate| !nav.on_plank(*mate) || mate.distance(at) > DYNAMITE_RADIUS + 1.5);
+                    (reached && spares).then_some((away, at))
+                })
+                .min_by(|a, b| a.0.total_cmp(&b.0))
+                .map(|(_, at)| at);
+            if let Some(at) = aim
+                && self.dice.roll() < dt * 4.0
+            {
+                let off = at - here;
+                order.blast = Some(((-off.x).atan2(-off.y), off.length()));
+                bot.blast_at = now + self.dice.around(6.0, 12.0);
+            }
+        }
+
         // Whoever it fights, if anyone.
         if bot.shun.is_some_and(|(_, until)| now >= until) {
             bot.shun = None;
@@ -2167,7 +2754,16 @@ impl Squad {
                 // stood on one spot.)
                 if bot.loiter.is_none_or(|(_, until)| now >= until) {
                     let places = [spots.guard, spots.heart, spots.pad, spots.items, spots.upgrades];
-                    let odds = if bot.role == Role::Keeper { [5.0, 1.5, 1.5, 1.0, 1.0] } else { [1.0, 3.0, 2.0, 1.5, 1.5] };
+                    // (Beside a person, not by the pad: what it makes is
+                    // theirs to stand on.)
+                    let mate = view.seats.get(mate_of(seat)).copied().unwrap_or_default();
+                    let odds = if mate.person && mate.in_play {
+                        [3.5, 3.0, 0.0, 1.5, 1.5]
+                    } else if bot.role == Role::Keeper {
+                        [5.0, 1.5, 1.5, 1.0, 1.0]
+                    } else {
+                        [1.0, 3.0, 2.0, 1.5, 1.5]
+                    };
                     let about = Vec2::from_angle(self.dice.roll() * std::f32::consts::TAU) * self.dice.between(0.0, 1.6);
                     let to = places[pick(&mut self.dice, &odds)] + about;
                     let to = nav.nearest_walkable(to).filter(|to| nav.connected(here, *to)).unwrap_or(spots.heart);
@@ -2176,7 +2772,23 @@ impl Squad {
                 let to = bot.loiter.map_or(spots.heart, |(to, _)| to);
                 self.walk_to(bot, view, to, pace * 0.6, 2.0)
             }
-            Goal::Collect => self.walk_to(bot, view, spots.pad, pace, 2.0),
+            Goal::Collect => {
+                // Beside a person, a visit and no more: once it has been
+                // at the pad a moment, or there is nothing left lying
+                // there, it is off, and not back for a while.
+                let mate = view.seats.get(mate_of(seat)).copied().unwrap_or_default();
+                if mate.person && mate.in_play {
+                    let lying = view.mint.held(team) + view.mint.held(ARENA_TEAMS + team);
+                    let since = (here.distance(spots.pad) < 1.3).then(|| *bot.pad_since.get_or_insert(now));
+                    if since.is_some_and(|since| now - since > 1.4 || lying == 0) || bot.yields {
+                        bot.pad_since = None;
+                        bot.pad_again = now + self.dice.around(9.0, 16.0);
+                        bot.think_at = now;
+                        return Vec2::ZERO;
+                    }
+                }
+                self.walk_to(bot, view, spots.pad, pace, 2.0)
+            }
             Goal::Shop(ware) => {
                 let shop = if matches!(crate::bridge_wars::sold_at(ware), crate::bridge_wars::Shop::Items) {
                     spots.items
@@ -2240,7 +2852,7 @@ impl Squad {
                     .enumerate()
                     .filter(|&(other, seen)| seen.alive && !seen.unseen && arena_team(other) != arena_team(seat))
                     .map(|(_, seen)| seen.at.xz())
-                    .filter(|&at| nav.connected(here, at))
+                    .filter(|&at| Self::reachable(nav, here, at))
                     .min_by(|a, b| a.distance_squared(here).total_cmp(&b.distance_squared(here)));
                 match prey {
                     Some(prey) => self.walk_to(bot, view, prey, pace, 1.0),
@@ -2313,13 +2925,24 @@ impl Squad {
         let away = off.length();
         bot.face = Some((-off.x).atan2(-off.y));
 
+        // How good it is in a fight ([`Temper::pvp`]): the better, the
+        // sooner its first punch comes once it has someone in reach, and
+        // the nearer its punches come to as fast as they count (a body is
+        // past hurting for half a second after a blow that took).
+        let pvp = bot.temper.pvp;
+        let every = skill.punch_every - (skill.punch_every - 0.53).max(0.0) * pvp;
+        let windup = skill.windup * (1.0 - 0.65 * pvp);
+        // Coming in again from a step back timed to its next punch, that
+        // punch is thrown as they come into its reach: it knew they would.
+        let lunging = bot.duel.is_some_and(|duel| duel.foe == foe && duel.lunge);
         let mut struck = false;
         if away <= REACH + BODY - 0.1 {
             let since = *bot.in_reach_since.get_or_insert(now);
-            if now - since >= bot.windup && now >= bot.punch_at {
-                // Not to the beat: a little sooner, a little later.
-                bot.punch_at = now + self.dice.around(skill.punch_every * 0.75, skill.punch_every * 1.3);
-                bot.windup = self.dice.around(skill.windup * 0.5, skill.windup * 1.6);
+            if (lunging || now - since >= bot.windup) && now >= bot.punch_at {
+                // Not to the beat: a little sooner, a little later; the
+                // best of them nearly to it.
+                bot.punch_at = now + self.dice.around(every * (0.75 + 0.2 * pvp), every * (1.3 - 0.24 * pvp));
+                bot.windup = self.dice.around(windup * 0.5, windup * 1.6);
                 order.punch = Some(foe);
                 // On the run only if it really was running in.
                 order.running = bot.speed > RUN_SPEED * 0.6;
@@ -2363,16 +2986,91 @@ impl Squad {
             return Vec2::ZERO;
         };
         if struck {
+            // In and out: back out of their reach until its next punch is
+            // nearly due, to come in again on the run, where a punch
+            // knocks further. Poking is that; and the better a bot is in a
+            // fight, the oftener it does so however it is fighting, and
+            // the closer to the moment it cuts it (Hajun, 2026-11-13:
+            // "they seem to get knocked back more than they knock me
+            // back": a bot stood where it was between its punches, and a
+            // punch thrown standing knocks half as far as one thrown
+            // running in).
+            // (Back in from where it steps back to, to where they come
+            // into its reach, as its next punch falls due.)
+            let timed = (bot.punch_at - (POKE_BACK - (REACH + BODY - 0.1)) / pace.max(1.0)).max(now + 0.12);
+            duel.lunge = false;
             match duel.stance {
-                // In and out: back out of their reach for a moment.
-                Stance::Poke => duel.back_until = now + self.dice.around(0.45, 1.0),
+                Stance::Poke if self.dice.roll() >= pvp => duel.back_until = now + self.dice.around(0.45, 1.0),
                 // It has had its punch from where it lay in wait: at them.
                 Stance::Ambush => {
                     duel.stance = Stance::Press;
                     duel.spot = None;
                     duel.until = now + self.dice.around(1.5, 3.5);
                 }
+                Stance::Poke => (duel.back_until, duel.lunge) = (timed, true),
+                Stance::Press | Stance::Circle if self.dice.roll() < 0.9 * pvp => (duel.back_until, duel.lunge) = (timed, true),
                 _ => {}
+            }
+            // Wherever it stood to punch, it is somewhere else next.
+            duel.spot_until = now;
+        }
+        // Where it goes for them: at where they will be, not where they
+        // are ([`Squad::meet`]).
+        let aim = self.meet(nav, bot, foe, there, pace);
+        let brisk = self.speed_of(foe) > 3.0;
+        // A gap between it and them that it could jump, with no walking
+        // straight to them and the way round far, or none: now and then
+        // it jumps it, the likelier the bolder and the better it is, as
+        // someone after you would (Hajun, 2026-11-13: "i jump across to
+        // the other bridge, and instead of the ai also jumping across, it
+        // goes all the way back to the island and then go on the other
+        // bridge - so i can jump back and forth between the 2 bridge").
+        // It stands where it is for the moment it takes to make up its
+        // mind, rather than set off round and be out of reach of the jump
+        // by then; and having thought better of it, it goes round, and
+        // thinks of it again in a while.
+        if bot.leaping.is_none()
+            && pace >= RUN_SPEED * 0.9
+            && now >= duel.round_until
+            && bot.body.free(nav)
+            && !nav.line(here, there)
+            && let Some((_, down)) = nav.leap(here, there, Self::reach_of_a_jump(pace))
+        {
+            let far = match duel.far {
+                Some((far, stood)) if stood.distance(there) < 2.0 => far,
+                _ => {
+                    let round = nav.path(here, there).map(|path| {
+                        let mut from = here;
+                        path.iter().fold(0.0, |walked, &point| {
+                            let step = from.distance(point);
+                            from = point;
+                            walked + step
+                        })
+                    });
+                    let far = round.is_none_or(|round| round > 2.0 * away + 5.0);
+                    duel.far = Some((far, there));
+                    far
+                }
+            };
+            if far && now < duel.leap_at {
+                bot.duel = Some(duel);
+                return Vec2::ZERO;
+            }
+            if far {
+                let keen = (0.3 + 0.3 * bot.temper.bold + 0.35 * pvp).clamp(0.3, 0.95);
+                if self.dice.roll() < keen {
+                    bot.leaping = Some(Leap {
+                        to: down,
+                        pace,
+                        until: now + 2.0,
+                        aloft: false,
+                    });
+                    bot.duel = Some(duel);
+                    return (down - here).normalize_or_zero() * pace;
+                }
+                duel.round_until = now + self.dice.around(1.5, 3.0);
+                duel.leap_at = duel.round_until + self.dice.between(0.1, 0.4);
+                duel.far = None;
             }
         }
         // Straight to somewhere near, no further than it is in a frame;
@@ -2398,7 +3096,7 @@ impl Squad {
                     duel.until = now + self.dice.around(1.5, 3.5);
                     Vec2::ZERO
                 } else if away > HOLD_OFF + 1.2 {
-                    toward(self, bot, there, pace)
+                    toward(self, bot, aim, pace)
                 } else {
                     Vec2::ZERO
                 }
@@ -2408,7 +3106,7 @@ impl Squad {
                 None => Vec2::ZERO,
             },
             Stance::Press | Stance::Circle | Stance::Poke | Stance::Rush => {
-                let backing = duel.stance == Stance::Poke && now < duel.back_until;
+                let backing = duel.stance != Stance::Rush && now < duel.back_until;
                 if duel.spot.is_none() || now >= duel.spot_until {
                     duel.spot = if backing {
                         // Straight back from them, as far as there is
@@ -2416,17 +3114,23 @@ impl Squad {
                         let back = here - off.normalize_or_zero() * (POKE_BACK - away).max(0.0);
                         (nav.walkable_at(back) && flung(nav, there, back) == 0.0).then_some(back)
                     } else {
-                        self.spot(bot, view, there, &duel)
+                        self.spot(bot, view, aim, &duel)
                     };
-                    duel.spot_until = now + self.dice.between(0.3, 0.7);
+                    // Sooner again for someone on the move, who is not
+                    // where they were by then; and, backing off, the
+                    // moment that is over.
+                    let again = now + if brisk { self.dice.between(0.1, 0.22) } else { self.dice.between(0.3, 0.7) };
+                    duel.spot_until = if backing { again.min(duel.back_until) } else { again };
                 }
-                let pace = if duel.stance == Stance::Circle { pace * 0.85 } else { pace };
+                // Circling, a little slower; but not after someone who is
+                // running, which would never catch them.
+                let pace = if duel.stance == Stance::Circle && !brisk { pace * 0.85 } else { pace };
                 match duel.spot {
                     Some(spot) => toward(self, bot, spot, pace),
                     // Nowhere to stand round them: up to them as it used
                     // to go, or, backing, where it is.
                     None if backing || away <= REACH * PRESS_IN => Vec2::ZERO,
-                    None => toward(self, bot, there, pace),
+                    None => toward(self, bot, aim, pace),
                 }
             }
         };
@@ -2493,6 +3197,11 @@ impl Squad {
             back_until: 0.0,
             me_out,
             foe_out,
+            // A moment to take in that there is a gap between them.
+            leap_at: now + self.dice.between(0.15, 0.5),
+            round_until: 0.0,
+            far: None,
+            lunge: false,
         }
     }
 
@@ -2581,7 +3290,11 @@ impl Squad {
                 if on_plank && me.health < 0.5 && away > 3.0 {
                     return None;
                 }
-                if !nav.connected(here, there) {
+                // Someone it can walk to; or, with only the void between
+                // them, someone a jump away, over a hole in a bridge or
+                // from the one bridge to the next.
+                let jump = Self::reach_of_a_jump(RUN_SPEED);
+                if !nav.connected(here, there) && nav.crossing(here, there, jump).is_none() && nav.leap(here, there, jump).is_none() {
                     return None;
                 }
                 // Whoever it is on already, a little sooner than another.
@@ -2611,14 +3324,46 @@ impl Squad {
             bot.progress = (here, now);
             return Vec2::ZERO;
         }
+        // A plank laid only adds to the ways there are; a blast takes
+        // some away, and a way found before one may lead over a hole now.
         let stale = bot.path_to.is_none_or(|was| was.distance(to) > 1.0)
             || (bot.path.is_empty() && (bot.path_version != nav.version || now - bot.path_at > 0.5))
-            || now - bot.path_at > again.max(0.5) * 4.0;
+            || now - bot.path_at > again.max(0.5) * 4.0
+            || bot.path_cuts != nav.cuts;
         if stale {
-            bot.path = nav.path(here, to).unwrap_or_default();
+            bot.cross = None;
+            bot.path = match nav.path(here, to) {
+                Some(path) => path,
+                // No way there: to the edge of a hole in a bridge that it
+                // can jump, if one lies on the way, and over it.
+                None => match nav.crossing(here, to, Self::reach_of_a_jump(pace)).filter(|_| pace >= RUN_SPEED * 0.9) {
+                    Some(gap) => {
+                        bot.cross = Some(gap);
+                        nav.path(here, gap.a_in).unwrap_or_default()
+                    }
+                    None => Vec::new(),
+                },
+            };
             bot.path_to = Some(to);
             bot.path_version = nav.version;
             bot.path_at = now;
+            bot.path_cuts = nav.cuts;
+        }
+        if let Some(gap) = bot.cross
+            && here.distance(gap.a_in) <= 0.6
+            && bot.body.free(nav)
+        {
+            bot.cross = None;
+            bot.path.clear();
+            bot.path_to = None;
+            bot.progress = (here, now);
+            bot.leaping = Some(Leap {
+                to: gap.b_in,
+                pace,
+                until: now + 2.0,
+                aloft: false,
+            });
+            return (gap.b_in - here).normalize_or_zero() * pace;
         }
         while bot.path.first().is_some_and(|next| next.distance(here) <= ARRIVED) {
             bot.path.remove(0);
@@ -2687,6 +3432,23 @@ impl Squad {
     fn lay(&mut self, bot: &mut Bot, view: &View, from: Region, to: Region, pace: f32, order: &mut Order, dt: f32) -> Vec2 {
         let (nav, now) = (view.nav, view.elapsed);
         let here = bot.body.at.xz();
+        // A blast has taken planks since it last looked: if any were of
+        // the bridge it is laying, behind it, there is no walking on along
+        // it. It leaves it as it is and thinks again: of mending the hole,
+        // or of another bridge.
+        if let Some(laying) = bot.laying
+            && laying.cuts != nav.cuts
+        {
+            let holed = (0..laying.next.saturating_sub(1)).any(|plank| nav.broken(bot.seat as u8, laying.chain, plank as u16));
+            if holed {
+                bot.laying = None;
+                bot.planned = None;
+                self.claims.retain(|claim| claim.2 != bot.seat);
+                bot.think_at = now;
+                return Vec2::ZERO;
+            }
+            bot.laying = Some(Laying { cuts: nav.cuts, ..laying });
+        }
         let laying = match bot.laying {
             Some(laying) => laying,
             None => {
@@ -2729,11 +3491,13 @@ impl Squad {
                     return Vec2::ZERO;
                 }
                 let laying = Laying {
-                    span: self.bends(span),
+                    // A hole mended is a few planks, laid straight.
+                    span: if span.chord() < MEND { span } else { self.bends(span) },
                     from,
                     to,
                     chain: bot.chains,
                     next: 0,
+                    cuts: nav.cuts,
                 };
                 bot.chains += 1;
                 match self.begun.iter_mut().find(|begun| (begun.0, begun.1) == (from, to)) {
@@ -2976,7 +3740,7 @@ fn shopping(
     let mut kinds: Vec<Utility> = Vec::new();
     for &(kind, keeps) in loadout {
         let kind = match kind {
-            Utility::Speed | Utility::Invisibility | Utility::Builder if stuck => Utility::Healing,
+            Utility::Speed | Utility::Invisibility | Utility::Builder | Utility::Dynamite if stuck => Utility::Healing,
             other => other,
         };
         if kinds.contains(&kind) {
@@ -2986,7 +3750,7 @@ fn shopping(
         let ready = match kind {
             Utility::Fireball => (elapsed > 300.0 && kit.sword > 0 && kit.shield > 0) || (keen && elapsed > 45.0),
             Utility::Healing => kit.sword > 0 || keen,
-            Utility::Speed | Utility::Invisibility => has(Item::Amethyst) > 0 || (keen && elapsed > 60.0),
+            Utility::Speed | Utility::Invisibility | Utility::Dynamite => has(Item::Amethyst) > 0 || (keen && elapsed > 60.0),
             // Bought for a bridge it is short of, before anything.
             Utility::Builder => false,
         };
@@ -3128,6 +3892,7 @@ mod tests {
                 outfits: &outfits,
                 mint: &mint,
                 anchors: [120.0; ARENA_TEAMS],
+                sticks: &[],
             };
             squad.step(seat, &view, dt);
             let bot = squad.bot(seat).expect("seated");
@@ -3402,34 +4167,41 @@ mod tests {
 
     #[test]
     fn what_each_carries_on_its_buttons_goes_by_who_it_is() {
-        let place = |kind: Utility| KINDS.iter().position(|other| *other == kind).expect("one of the five");
+        let place = |kind: Utility| KINDS.iter().position(|other| *other == kind).expect("one of the six");
         let mut dice = Dice::new(11);
         let mut builders = std::collections::HashMap::new();
+        let mut sticks = std::collections::HashMap::new();
+        // Every kind there is to carry is one of them, each once.
+        assert_eq!(KINDS.len(), Utility::ALL.len());
+        assert!(Utility::ALL.iter().all(|kind| KINDS.contains(kind)));
         for persona in &PERSONAS {
             let [least, most] = persona.pockets;
-            let (mut firsts, mut fullest) = ([0u32; 5], 0);
+            let (mut firsts, mut fullest) = ([0u32; 6], 0);
             for _ in 0..600 {
                 let loadout = persona.loadout(&mut dice);
-                // As many kinds as its pockets have it, none of them
-                // twice, none it has no leaning to, some of each, and no
-                // more fireballs than a button holds.
+                // As many kinds as its pockets have it, and no more than
+                // there are buttons; none of them twice, none it has no
+                // leaning to, some of each, and no more fireballs or
+                // sticks of dynamite than a button holds.
                 assert!((usize::from(least)..=usize::from(most)).contains(&loadout.len()), "{}: {loadout:?}", persona.name);
+                assert!(loadout.len() <= crate::UTILITY_SLOTS, "{}: {loadout:?}", persona.name);
                 for (turn, (kind, keeps)) in loadout.iter().enumerate() {
                     assert!(loadout[..turn].iter().all(|(other, _)| other != kind), "{}: {loadout:?}", persona.name);
                     assert!(persona.carries[place(*kind)] > 0.0, "{}: {loadout:?}", persona.name);
-                    assert!((1..=3).contains(keeps), "{}: {loadout:?}", persona.name);
-                    assert!(*keeps == 1 || matches!(kind, Utility::Fireball | Utility::Healing));
+                    assert!(*keeps >= 1 && *keeps <= crate::bridge_wars::most_held(*kind).min(3), "{}: {loadout:?}", persona.name);
+                    assert!(*keeps == 1 || matches!(kind, Utility::Fireball | Utility::Healing | Utility::Dynamite));
                 }
                 firsts[place(loadout[0].0)] += 1;
                 fullest = fullest.max(loadout.len());
                 *builders.entry(persona.name).or_insert(0u32) += u32::from(loadout.iter().any(|(kind, _)| *kind == Utility::Builder));
+                *sticks.entry(persona.name).or_insert(0u32) += u32::from(loadout.iter().any(|(kind, _)| *kind == Utility::Dynamite));
             }
             // What it leans to most is what it mostly buys first (or as
             // good as, where it leans to two alike); and over enough
             // lives it fills as many buttons as it has pockets.
-            let likeliest = (0..5).max_by(|a, b| persona.carries[*a].total_cmp(&persona.carries[*b])).unwrap();
-            let most_often = *firsts.iter().max().unwrap();
-            assert!(firsts[likeliest] as f32 >= 0.75 * most_often as f32, "{}: {firsts:?}", persona.name);
+            let leaning_most = persona.carries.iter().copied().fold(0.0, f32::max);
+            let most_often = (0..6).max_by_key(|kind| firsts[*kind]).unwrap();
+            assert!(persona.carries[most_often] >= 0.75 * leaning_most, "{}: {firsts:?}", persona.name);
             assert_eq!(fullest, usize::from(most), "{}", persona.name);
         }
         // Some fill all five buttons, and some keep to one or two.
@@ -3437,6 +4209,10 @@ mod tests {
         assert!(PERSONAS.iter().any(|persona| persona.pockets[1] <= 2));
         // The tinkerer has a Bridge Builder far oftener than the sentinel.
         assert!(builders["INTP"] > 3 * builders["ISTJ"], "{builders:?}");
+        // And the trickster a stick of dynamite far oftener than the
+        // captain; everyone has one now and then.
+        assert!(sticks["ENTP"] > 3 * sticks["ENFJ"], "{sticks:?}");
+        assert!(sticks.values().all(|lives| *lives > 0), "{sticks:?}");
         // The daredevil's fireballs come by the handful; the sentinel has
         // one, when it has any.
         let keeps = |name: &str, kind: Utility, seed: u64| {
@@ -3561,6 +4337,7 @@ mod tests {
                 outfits: &outfits,
                 mint: &mint,
                 anchors: [120.0; ARENA_TEAMS],
+                sticks: &[],
             };
             squad.spare_span(&bot, &view)
         };
@@ -3649,6 +4426,7 @@ mod tests {
                     outfits,
                     mint: &mint,
                     anchors: [120.0; ARENA_TEAMS],
+                    sticks: &[],
                 };
                 squad.step(seat, &view, dt)
             };
@@ -3759,5 +4537,542 @@ mod tests {
         let (drinks, kit) = drunk(0.45);
         assert_eq!(drinks, vec![Utility::Healing, Utility::Speed]);
         assert_eq!(kit.held(Utility::Invisibility), 1);
+    }
+
+    /// A round island `radius` across from its middle at the origin, its
+    /// top 0.25 m up, `Team(1)`: room to run round and round on.
+    fn round_island(radius: f32) -> Nav {
+        let side = ((radius + 4.0) * 4.0) as usize;
+        let mut grid = Grid::blank(side, side, Vec2::splat(-(radius + 4.0)));
+        for row in 0..side {
+            for column in 0..side {
+                let away = grid.centre_of(column, row).length();
+                if away <= radius {
+                    grid.set(column, row, Some(0.25), away <= radius - 0.5, Some(Region::Team(1)));
+                }
+            }
+        }
+        grid.place_land(Region::Team(1), Vec2::ZERO);
+        Nav::new(Arc::new(grid))
+    }
+
+    /// One of the computer's players, in seat 5, with someone of another
+    /// team in seat 0 and, if `mate` says where, one of its own in seat 1,
+    /// on a map of their own, a frame at a time: where the someone is each
+    /// frame is the caller's to say, and so is every stick of dynamite
+    /// there is; the bot's rungs go onto the map as a game would lay them.
+    struct Rig {
+        nav: Nav,
+        squad: Squad,
+        outfits: Outfits,
+        mint: Mint,
+        seat: usize,
+        now: f32,
+        sticks: Vec<Stick>,
+        mate: Option<Vec2>,
+        rungs: usize,
+    }
+
+    impl Rig {
+        const FRAME: f32 = 1.0 / 60.0;
+
+        /// `who` standing `at` on `nav`, `now` seconds into a fight.
+        fn new(nav: Nav, seed: u64, who: &str, at: Vec2, now: f32) -> Self {
+            let mut squad = Squad::new(seed, Skill::MODERATE);
+            let seat = 5;
+            squad.seat(seat, Vec3::new(at.x, 0.25, at.y), 0.0);
+            assert!(squad.cast(seat, who), "nobody is called {who}");
+            let mut outfits = Outfits::default();
+            outfits.seat(ARENA_SEATS);
+            Self {
+                nav,
+                squad,
+                outfits,
+                mint: Mint::new(0.0, &mut || 0.5),
+                seat,
+                now,
+                sticks: Vec::new(),
+                mate: None,
+                rungs: 0,
+            }
+        }
+
+        /// Late in a game, when everyone goes for everyone they can get at.
+        fn hunting(nav: Nav, seed: u64, who: &str, at: Vec2) -> Self {
+            Self::new(nav, seed, who, at, Skill::MODERATE.hunt_from + 5.0)
+        }
+
+        fn bot(&self) -> &Bot {
+            self.squad.bot(self.seat).expect("seated")
+        }
+
+        fn at(&self) -> Vec2 {
+            self.bot().body.at.xz()
+        }
+
+        /// Whether the bot has fallen off everything.
+        fn fallen(&self) -> bool {
+            self.bot().body.at.y < -2.0
+        }
+
+        /// One frame, with the someone at `person` if they are there: what
+        /// the bot is ordered to do.
+        fn step(&mut self, person: Option<Vec2>) -> Order {
+            self.now += Self::FRAME;
+            let standing = |at: Vec2, person: bool| Seen {
+                at: Vec3::new(at.x, 0.25, at.y),
+                alive: true,
+                in_play: true,
+                unseen: false,
+                person,
+                health: 1.0,
+            };
+            let mut seen = vec![Seen::default(); ARENA_SEATS];
+            if let Some(at) = person {
+                seen[0] = standing(at, true);
+            }
+            if let Some(at) = self.mate {
+                seen[1] = standing(at, false);
+            }
+            seen[self.seat] = Seen {
+                at: self.bot().body.at,
+                ..standing(Vec2::ZERO, false)
+            };
+            let purses = [[0u16; 4]; ARENA_SEATS];
+            let order = {
+                let view = View {
+                    elapsed: self.now,
+                    nav: &self.nav,
+                    seats: &seen,
+                    purses: &purses,
+                    outfits: &self.outfits,
+                    mint: &self.mint,
+                    anchors: [120.0; ARENA_TEAMS],
+                    sticks: &self.sticks,
+                };
+                self.squad.step(self.seat, &view, Self::FRAME)
+            };
+            for &(chain, index, at, _) in &order.rungs {
+                self.nav.hear(self.seat as u8, chain, index, at);
+                self.rungs += 1;
+            }
+            for stick in &mut self.sticks {
+                stick.left -= Self::FRAME;
+            }
+            order
+        }
+    }
+
+    #[test]
+    fn a_body_jumping_a_gap_goes_off_the_edge_it_would_never_walk_off_and_comes_down_past_it() {
+        // A bridge with four planks blown out of it, 5.4 m of nothing.
+        let mut nav = bridged();
+        let span = two_islands().1;
+        let taken = nav.blast(span.rung(6), 3.0);
+        assert_eq!(taken.len(), 4, "{taken:?}");
+        let gap = nav.gaps()[0];
+        assert!(gap.length() < Squad::reach_of_a_jump(RUN_SPEED), "{} m", gap.length());
+        let frame = 1.0 / 60.0;
+        let run = (gap.b_in - gap.a_in).normalize() * RUN_SPEED;
+        // Walked at it, a body stops at the end of what stands.
+        let mut walker = Body::standing(Vec3::new(gap.a_in.x, PLANK, gap.a_in.y), 0.0);
+        for _ in 0..90 {
+            walker.step(&nav, run, frame);
+        }
+        assert!(walker.free(&nav) && walker.at.x <= gap.a.x + 0.1, "{}", walker.at);
+        // Jumping it, it leaves the ground at the end of what stands, and
+        // is down again on the far side well inside what stands there.
+        let mut jumper = Body::standing(Vec3::new(gap.a_in.x, PLANK, gap.a_in.y), 0.0);
+        jumper.leap = true;
+        let (mut left_at, mut highest, mut down_at) = (None, 0.0f32, None);
+        for _ in 0..90 {
+            let before = jumper;
+            jumper.step(&nav, run, frame);
+            if left_at.is_none() && jumper.lift > 0.0 {
+                left_at = Some(before.at.x);
+            }
+            highest = highest.max(jumper.at.y);
+            if left_at.is_some() && down_at.is_none() && jumper.free(&nav) {
+                down_at = Some(jumper.at.x);
+                break;
+            }
+        }
+        let (left_at, down_at) = (left_at.expect("it jumped"), down_at.expect("it came down"));
+        assert!((left_at - gap.a.x).abs() < 0.3, "it left the ground at {left_at}, the edge being at {}", gap.a.x);
+        assert!(highest > 1.6, "as high as anyone jumps: {highest}");
+        assert!(down_at > gap.b.x + 0.6, "down at {down_at}, the far edge being at {}", gap.b.x);
+        // Five planks gone, 6.8 m, a body at a run clears too, by less: a
+        // bot jumps no gap it has not a good deal in hand over
+        // ([`JUMP_SPARE`]), and this is not one it jumps.
+        let mut wide = bridged();
+        assert_eq!(wide.blast((span.rung(6) + span.rung(7)) * 0.5, 3.0).len(), 5);
+        let hole = wide.gaps()[0];
+        assert!(hole.length() > Squad::reach_of_a_jump(RUN_SPEED) && hole.length() < RUN_SPEED * JUMP_SECS);
+        let mut close = Body::standing(Vec3::new(hole.a_in.x, PLANK, hole.a_in.y), 0.0);
+        close.leap = true;
+        let mut down_at = None;
+        for _ in 0..90 {
+            close.step(&wide, run, frame);
+            if close.at.x > hole.a.x + 1.0 && close.free(&wide) {
+                down_at = Some(close.at.x);
+                break;
+            }
+        }
+        let down_at = down_at.expect("it clears it");
+        assert!(down_at - hole.b.x < JUMP_SPARE, "it came down {} m past the far edge", down_at - hole.b.x);
+        // Six planks gone is further than a jump goes.
+        let mut wider = bridged();
+        assert_eq!(wider.blast(span.rung(7), 3.7).len(), 6);
+        let hole = wider.gaps()[0];
+        let mut gone = Body::standing(Vec3::new(hole.a_in.x, PLANK, hole.a_in.y), 0.0);
+        gone.leap = true;
+        for _ in 0..180 {
+            gone.step(&wider, run, frame);
+        }
+        assert!(gone.at.y < -10.0, "{}", gone.at);
+    }
+
+    /// How high a plank's top is: where a body stands on a bridge.
+    const PLANK: f32 = crate::nav::PLANK_TOP;
+
+    /// How many punches a bot called `who` lands in `secs` on someone who
+    /// runs round and round a ring `radius` across from the middle of an
+    /// island and never hits back, and how near it gets to them at its
+    /// nearest.
+    fn punches_on_a_runner(who: &str, seed: u64, radius: f32, secs: f32) -> (u32, f32) {
+        let mut rig = Rig::hunting(round_island(10.0), seed, who, Vec2::new(-7.0, 0.5));
+        let (mut punches, mut nearest) = (0, f32::INFINITY);
+        for frame in 0..(secs / Rig::FRAME) as usize {
+            let angle = frame as f32 * Rig::FRAME * RUN_SPEED / radius;
+            let person = Vec2::from_angle(angle) * radius;
+            let order = rig.step(Some(person));
+            let away = rig.at().distance(person);
+            nearest = nearest.min(away);
+            punches += u32::from(order.punch == Some(0) && away <= REACH + BODY + 0.5);
+        }
+        assert!(!rig.fallen());
+        (punches, nearest)
+    }
+
+    #[test]
+    fn someone_running_round_and_round_is_cut_off_and_not_followed_for_ever() {
+        // Round a ring 3.5 m across from its middle and round one 6 m, at
+        // a run, for ten seconds: every kind of bot lands punches on them,
+        // a few seeds of each together, where one that ran at where they
+        // were would follow them round for ever a step behind.
+        for radius in [3.5, 6.0] {
+            for persona in &PERSONAS {
+                let landed: u32 = (0..4).map(|seed| punches_on_a_runner(persona.name, seed, radius, 10.0).0).sum();
+                assert!(landed >= 12, "{} landed {landed} punches in four tries on someone running a ring of {radius} m", persona.name);
+            }
+        }
+        // And the best of them land the most.
+        let of = |who: &str| (0..6).map(|seed| punches_on_a_runner(who, seed, 3.5, 10.0).0).sum::<u32>();
+        let (best, plain) = (of("ISTP"), of("INFP"));
+        assert!(best > plain, "the lone wolf landed {best}, the dreamer {plain}");
+    }
+
+    #[test]
+    fn the_better_a_bot_is_in_a_fight_the_faster_its_punches_come_and_the_more_of_them_on_the_run() {
+        // Someone standing still on an island, never hitting back, for
+        // twelve seconds: how many punches, and how many thrown running.
+        let fight = |who: &str, seed: u64| {
+            let mut rig = Rig::hunting(round_island(10.0), seed, who, Vec2::new(-6.0, 0.0));
+            let (mut punches, mut running) = (0u32, 0u32);
+            for _ in 0..(12.0 / Rig::FRAME) as usize {
+                let order = rig.step(Some(Vec2::ZERO));
+                if order.punch == Some(0) {
+                    punches += 1;
+                    running += u32::from(order.running);
+                }
+            }
+            (punches, running)
+        };
+        let sum = |who: &str| (0..5).map(|seed| fight(who, seed)).fold((0, 0), |all, one| (all.0 + one.0, all.1 + one.1));
+        let (best, plain) = (sum("ISTP"), sum("INFP"));
+        assert!(persona("ISTP").pvp > 0.9 && persona("INFP").pvp < 0.1);
+        // The dreamer as they all were: a punch every 0.8 s or so, once it
+        // is there. The lone wolf nearly as fast as punches count, two a
+        // second, and most of them thrown running in.
+        assert!((45..=75).contains(&plain.0), "the dreamer threw {} in a minute", plain.0);
+        assert!(best.0 as f32 > plain.0 as f32 * 1.3, "the lone wolf threw {} against {}", best.0, plain.0);
+        assert!(best.1 as f32 > 0.6 * best.0 as f32, "{} of its {} on the run", best.1, best.0);
+        assert!((best.1 as f32 / best.0 as f32) > (plain.1 as f32 / plain.0 as f32) + 0.2, "{best:?} against {plain:?}");
+        // Every kind is somewhere between, by how good it is.
+        assert!(PERSONAS.iter().all(|persona| (0.0..=1.0).contains(&persona.pvp)));
+        assert!(PERSONAS.iter().filter(|persona| persona.pvp >= 0.6).count() >= 4, "some are good at it");
+        assert!(PERSONAS.iter().filter(|persona| persona.pvp <= 0.25).count() >= 4, "and some are as they all were");
+    }
+
+    /// The two islands with two bridges between them, side by side, 7 m
+    /// from the middle of the one to the middle of the other: 4.3 m of
+    /// nothing between their edges. And how far to each side of the line
+    /// between the islands' middles they lie.
+    fn two_bridges() -> (Nav, f32) {
+        let (mut nav, _) = two_islands();
+        let aside = 3.5;
+        for (chain, side) in [aside, -aside].into_iter().enumerate() {
+            let span = nav.grid().span(Region::Team(1), Region::Middle, side).expect("a span to one side");
+            for index in 0..=span.planks() {
+                nav.hear(1, chain as u16, index as u16, span.rung(index));
+            }
+        }
+        (nav, aside)
+    }
+
+    #[test]
+    fn a_bot_jumps_from_one_bridge_to_the_next_after_someone_and_back_after_them() {
+        let (nav, aside) = two_bridges();
+        let across = 2.0 * aside - 2.0 * crate::nav::PLANK_HALF_WIDTH;
+        assert!(across > 4.0 && across < Squad::reach_of_a_jump(RUN_SPEED));
+        // Halfway out on the one bridge, with someone halfway out on the
+        // other: 7 m off as the crow flies, and 30 m round by the island.
+        let (mut jumped, mut went_round) = (0, 0);
+        for seed in 0..6 {
+            let mut rig = Rig::hunting(nav.clone(), seed, "ISTP", Vec2::new(15.0, aside));
+            let mut side = -aside;
+            let mut crossings = 0;
+            for _ in 0..(12.0 / Rig::FRAME) as usize {
+                rig.step(Some(Vec2::new(15.0, side)));
+                assert!(!rig.fallen(), "seed {seed}: it fell");
+                let at = rig.at();
+                // On their bridge and down, having come over the gap and
+                // not round by an island: they jump back to the other.
+                if (at.y - side).abs() < 1.2 && rig.bot().body.free(&rig.nav) {
+                    crossings += 1;
+                    side = -side;
+                }
+                // Back on an island: it went round. It is put back out on
+                // the bridge across from them, to try again.
+                if rig.nav.grid().height(at).is_some() {
+                    went_round += 1;
+                    let now = rig.now;
+                    rig.squad.stand(rig.seat, Vec3::new(15.0, PLANK, -side), 0.0, now);
+                }
+            }
+            jumped += crossings;
+        }
+        // Over and back and over again, nearly every time: now and then
+        // it thinks better of it and goes round.
+        assert!(jumped >= 30, "{jumped} jumps in six tries of twelve seconds");
+        assert!(went_round * 5 <= jumped, "round by the island {went_round} times, over the gap {jumped}");
+    }
+
+    #[test]
+    fn a_bot_gets_out_from_under_a_stick_of_dynamite_and_waits_short_of_one_on_its_way() {
+        let span = two_islands().1;
+        let middle = span.rung(7);
+        // Standing on a bridge, a stick comes down beside it: the quick
+        // ones are clear of the blast by the time it blows, on what still
+        // stands, whichever team threw it.
+        for (who, team) in [("ISTP", 0), ("ESTP", 1), ("ENTJ", 0)] {
+            for seed in 0..4 {
+                let mut rig = Rig::new(bridged(), seed, who, middle, 200.0);
+                rig.sticks.push(Stick {
+                    at: middle + Vec2::X * 0.8,
+                    left: 0.6 + DYNAMITE_FUSE,
+                    team,
+                });
+                while rig.sticks[0].left > 0.0 {
+                    rig.step(None);
+                }
+                let stick = rig.sticks.remove(0);
+                let away = rig.at().distance(stick.at);
+                assert!(away > DYNAMITE_RADIUS + BODY, "{who}, seed {seed}: {away} m from it as it blew");
+                rig.nav.blast(stick.at, DYNAMITE_RADIUS);
+                for _ in 0..60 {
+                    rig.step(None);
+                }
+                assert!(!rig.fallen() && rig.nav.ground(rig.at()).is_some(), "{who}, seed {seed}: it went with the planks");
+            }
+        }
+        // On the land, one of its own team's is nothing to it: it stays
+        // where it is. Another team's it gets away from.
+        for (team, moves) in [(1, false), (0, true)] {
+            let mut rig = Rig::new(bridged(), 3, "ISTP", Vec2::new(1.0, 1.0), 200.0);
+            let from = rig.at();
+            rig.sticks.push(Stick {
+                at: from + Vec2::new(0.8, 0.0),
+                left: 1.6,
+                team,
+            });
+            let mut furthest = 0.0f32;
+            while rig.sticks[0].left > 0.0 {
+                rig.step(None);
+                furthest = furthest.max(rig.at().distance(rig.sticks[0].at));
+            }
+            assert_eq!(furthest > DYNAMITE_RADIUS + BODY, moves, "a stick of team {team}'s: {furthest} m at the furthest");
+        }
+        // How soon one is out of a blast goes by how good it is at a fight.
+        // A stick of another team's thrown from close by to come down right
+        // where it stands, in the open: the best of them is clear of it
+        // every time, and the worst is still in it now and then, more
+        // often than not when it comes down in the middle of a fight with
+        // someone.
+        let caught = |who: &str, fighting: bool| -> usize {
+            (0..80)
+                .filter(|&seed| {
+                    let at = Vec2::new(-2.0, 1.0);
+                    let mut rig = if fighting {
+                        Rig::hunting(bridged(), seed, who, at)
+                    } else {
+                        Rig::new(bridged(), seed, who, at, 200.0)
+                    };
+                    let foe = fighting.then_some(at + Vec2::new(0.0, 1.6));
+                    // (A moment of it first, to have the fight begun.)
+                    for _ in 0..30 {
+                        rig.step(foe);
+                    }
+                    rig.sticks.push(Stick {
+                        at: rig.at(),
+                        left: 0.55 + DYNAMITE_FUSE,
+                        team: 0,
+                    });
+                    while rig.sticks[0].left > 0.0 {
+                        rig.step(foe);
+                    }
+                    rig.at().distance(rig.sticks[0].at) <= DYNAMITE_RADIUS + BODY
+                })
+                .count()
+        };
+        assert_eq!((caught("ISTP", false), caught("ISTP", true)), (0, 0));
+        assert_eq!(caught("ESTJ", false), 0);
+        let (worst, worst_fighting) = (caught("INFP", false), caught("INFP", true));
+        assert!((12..=48).contains(&worst), "the worst of them was caught {worst} times in eighty");
+        assert!(worst_fighting > worst && worst_fighting >= 40, "and {worst_fighting} times in a fight");
+        let middling = caught("ENFJ", true);
+        assert!(middling > 0 && middling < worst_fighting, "one in the middle, in a fight: {middling} times in eighty");
+        // (As it stood on 2026-11-13, of eighty, in the open and in a
+        // fight: ISTP, ESTP, ENTJ and ESTJ never; ENTP 0 and 1, INTJ 0 and
+        // 4, ESFP 0 and 1, ENFP 1 and 10, ENFJ 0 and 14, ISTJ 2 and 15,
+        // INFJ 5 and 14, ISFP 12 and 30, INTP 12 and 36, ESFJ 14 and 31,
+        // ISFJ 17 and 49, INFP 34 and 55.)
+        // After someone on the far land, with a stick lying on the bridge
+        // between: it waits short of the blast, and does not run into it.
+        let far = Vec2::new(30.0, 0.5);
+        let mut rig = Rig::hunting(bridged(), 2, "ENTJ", Vec2::new(4.0, 0.0));
+        rig.sticks.push(Stick {
+            at: span.rung(8),
+            left: 0.7 + DYNAMITE_FUSE,
+            team: 0,
+        });
+        while rig.sticks[0].left > 0.0 {
+            rig.step(Some(far));
+            assert!(rig.at().distance(rig.sticks[0].at) > DYNAMITE_RADIUS, "it ran into the blast: {}", rig.at());
+        }
+        assert!(rig.at().x < span.rung(8).x, "and it is on its own side of it");
+    }
+
+    #[test]
+    fn a_hole_blown_in_a_bridge_is_jumped_if_it_is_short_and_mended_if_it_is_not() {
+        let span = two_islands().1;
+        let far = Vec2::new(30.0, 0.5);
+        // Four planks gone, 5.4 m: after someone on the far land, a bot
+        // runs up to the hole and jumps it.
+        let mut over = 0;
+        for seed in 0..5 {
+            let mut rig = Rig::hunting(bridged(), seed, "ESTJ", Vec2::new(2.0, 0.0));
+            assert_eq!(rig.nav.blast(span.rung(7), DYNAMITE_RADIUS).len(), 4);
+            let gap = rig.nav.gaps()[0];
+            for _ in 0..(8.0 / Rig::FRAME) as usize {
+                rig.step(Some(far));
+                assert!(!rig.fallen(), "seed {seed}: it fell into the hole");
+                if rig.at().x > gap.b.x + 1.0 && rig.bot().body.free(&rig.nav) {
+                    over += 1;
+                    break;
+                }
+            }
+            assert_eq!(rig.rungs, 0, "it laid planks where it could jump");
+        }
+        assert_eq!(over, 5, "over the hole {over} times of five");
+        // Five planks gone, 6.8 m, is further than it jumps. With nobody
+        // it can get at, and the metres for it, it lays planks across the
+        // hole, from the end of what stands on its side to the end of what
+        // stands on the other: a few planks, not a bridge.
+        let mut rig = Rig::new(bridged(), 4, "ISTJ", Vec2::new(2.0, 0.0), 400.0);
+        let hole = (span.rung(7) + span.rung(8)) * 0.5;
+        assert_eq!(rig.nav.blast(hole, DYNAMITE_RADIUS).len(), 5);
+        let gap = rig.nav.gaps()[0];
+        assert!(!rig.nav.joined(Region::Team(1), Region::Middle));
+        // Nothing to lay them with yet: it stays on its own side.
+        for _ in 0..(4.0 / Rig::FRAME) as usize {
+            rig.step(Some(far));
+            assert!(!rig.fallen() && rig.at().x < gap.a.x + 0.3, "{}", rig.at());
+        }
+        assert_eq!(rig.rungs, 0);
+        // 25 m, as the shop sells them.
+        let now = rig.now;
+        rig.squad.bought(rig.seat, Ware::Bridge, now);
+        let mut mended = None;
+        for _ in 0..(25.0 / Rig::FRAME) as usize {
+            rig.step(Some(far));
+            assert!(!rig.fallen(), "it fell mending the hole");
+            if rig.nav.joined(Region::Team(1), Region::Middle) {
+                mended = Some(rig.now - now);
+                break;
+            }
+        }
+        let took = mended.expect("the hole was not mended");
+        assert!(took < 20.0, "{took} s");
+        // (Joined as its last plank but one comes within a body's reach
+        // of what stands: it lays the last, and walks to the end of it.)
+        for _ in 0..(3.0 / Rig::FRAME) as usize {
+            rig.step(Some(far));
+        }
+        assert!(!rig.fallen());
+        // One rung to begin on and a plank's worth after it for each plank
+        // of the hole, and one over for the ends: not the fifteen of a
+        // bridge begun again.
+        assert!((6..=9).contains(&rig.rungs), "{} rungs", rig.rungs);
+        let left = rig.bot().metres();
+        assert!(left > 14.0 && left < 19.5, "{left} m left of 25");
+        // Its planks begin inside what stands on the near side and end
+        // inside what stands on the far side, straight along the bridge.
+        let laid = rig.nav.rungs(rig.seat as u8, 0);
+        assert!(laid[0].x < gap.a.x && laid[0].x > gap.a.x - 1.0 && laid[0].y.abs() < 0.3, "{:?}", laid[0]);
+        let last = laid[laid.len() - 1];
+        assert!(last.x > gap.b.x && last.x < gap.b.x + 1.0 && last.y.abs() < 0.3, "{last:?}");
+    }
+
+    #[test]
+    fn a_bot_on_the_land_throws_dynamite_at_whoever_comes_over_a_bridge_and_at_nobody_else() {
+        // Someone coming over the bridge at a walk, 9 m off and nearer, a
+        // few minutes into a game, with the bot minding its own island and
+        // a stick of dynamite on a button.
+        let thrown = |at: Vec2, mate: Option<Vec2>, holds: u8, seed: u64, walks: f32| {
+            let mut rig = Rig::new(bridged(), seed, "INTP", at, 200.0);
+            rig.outfits.kits[5] = Kit::default().holding(Utility::Dynamite, holds);
+            rig.mate = mate;
+            let mut person = Vec2::new(15.0, 0.0);
+            for _ in 0..(2.5 / Rig::FRAME) as usize {
+                person.x -= walks * Rig::FRAME;
+                let order = rig.step(Some(person));
+                if let Some((heading, far)) = order.blast {
+                    let way = Vec2::new(-heading.sin(), -heading.cos());
+                    return Some((rig.at() + way * far, far, person, rig.nav.clone()));
+                }
+            }
+            None
+        };
+        let home = Vec2::new(4.0, 0.3);
+        for seed in 0..5 {
+            let (down, far, person, nav) = thrown(home, None, 1, seed, 3.0).expect("it never threw it");
+            // Onto the bridge, at where they are going, no further than
+            // one can be thrown.
+            assert!((DYNAMITE_NEAREST..=DYNAMITE_FURTHEST).contains(&far), "{far} m");
+            assert!(out_over_the_void(&nav, down), "it comes down off the bridge, at {down}");
+            assert!(down.x <= person.x + 0.5 && down.x > 6.0, "at {down}, with them at {person}");
+        }
+        // Not with none to throw; nor at where one of its own stands on
+        // the planks that would go.
+        assert!(thrown(home, None, 0, 1, 3.0).is_none());
+        assert!(thrown(home, Some(Vec2::new(9.0, 0.0)), 1, 1, 3.0).is_none());
+        // From out on a bridge itself, only at what is well clear of
+        // where it stands: at someone standing 7 m along it, and not at
+        // someone coming at it who is nearly on it.
+        let out = Vec2::new(8.0, 0.0);
+        let (down, far, _, _) = thrown(out, None, 1, 1, 0.0).expect("it never threw it from the bridge");
+        assert!(far > DYNAMITE_RADIUS + 1.9 && down.distance(Vec2::new(15.0, 0.0)) < 0.5, "{far} m, at {down}");
+        assert!(thrown(Vec2::new(11.0, 0.0), None, 1, 1, 2.0).is_none());
     }
 }

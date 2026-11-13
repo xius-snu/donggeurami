@@ -141,7 +141,26 @@ pub const PROTOCOL_ID: u64 = u64::from_be_bytes(*b"DGRMTOWN");
 /// another slot ... so u can buy more than 1 item and hold it at once"): a
 /// [`Kit`] has a [`Stack`] to each of its [`UTILITY_SLOTS`] where it had
 /// one kind and a count, and [`Use::Potion`] says which potion was drunk.
-pub const PROTOCOL_VERSION: u32 = 14;
+///
+/// 15 since 2026-11-13: friends, groups and messages ([`social`]; Hajun: "I
+/// want to add a friend system ... every account need a random number
+/// between 1000~9999 that is gona serve as a #1234 tag"): [`Ask::Social`]
+/// and [`Tell::Social`], which an app from before would not read, and
+/// [`Refusal::NotLeader`], as only the leader of a group starts a game.
+///
+/// And with it, the same day and under the same number, the two having
+/// never been out apart: Bridge Wars' dynamite (Hajun's
+/// `bridgewarsgameevent.md`: "it will throw an arched dynamite ... and
+/// destroy that blast radius region of the bridge"). [`Utility::Dynamite`]
+/// is a sixth thing for the buttons, which an app from before could not
+/// read in a [`Kit`]; a stick in the air or lying is a [`Dynamite`] and
+/// where one blew, with the planks it took, a [`Blasted`], both registered
+/// after [`Fireball`]; [`Use::Dynamite`] throws one; and the healing
+/// potion gives back half of your health where it gave a quarter
+/// ([`bridge_wars::HEALING`]). Either of the two changes alone would have
+/// needed the number raised: should one ever go out without the other,
+/// raise it again.
+pub const PROTOCOL_VERSION: u32 = 15;
 
 /// The UDP port the game server listens on. 443, where QUIC goes, because a
 /// network that lets any UDP through lets that through: school and office
@@ -276,6 +295,8 @@ pub fn protocol(app: &mut App) {
         .replicate::<Kits>()
         .replicate::<Upgraded>()
         .replicate::<Fireball>()
+        .replicate::<Dynamite>()
+        .replicate::<Blasted>()
         .add_client_message::<Moved>(Channel::Unreliable)
         .add_client_message::<Ask>(Channel::Ordered)
         .add_server_message::<Tell>(Channel::Ordered)
@@ -583,18 +604,30 @@ pub enum Utility {
     Speed,
     /// Drunk: [`bridge_wars::UNSEEN_SECS`] of not being seen.
     Invisibility,
-    /// Drunk: a quarter of your health back, at once.
+    /// Drunk: half of your health back, at once.
     Healing,
+    /// Aimed and lobbed, as far as the drag is long: it comes down, lies
+    /// there while its fuse burns, and blows up, taking the planks of
+    /// every bridge in its blast with it ([`bridge_wars::Lob`]; since
+    /// 2026-11-13). The last of the kinds, so that the rest are sent as
+    /// they were.
+    Dynamite,
 }
 
 impl Utility {
-    pub const ALL: [Utility; 5] =
-        [Utility::Fireball, Utility::Builder, Utility::Speed, Utility::Invisibility, Utility::Healing];
+    pub const ALL: [Utility; 6] = [
+        Utility::Fireball,
+        Utility::Builder,
+        Utility::Speed,
+        Utility::Invisibility,
+        Utility::Healing,
+        Utility::Dynamite,
+    ];
 
     /// Whether it is aimed, by holding its button and dragging, rather
     /// than pressed.
     pub const fn aimed(self) -> bool {
-        matches!(self, Utility::Fireball | Utility::Builder)
+        matches!(self, Utility::Fireball | Utility::Builder | Utility::Dynamite)
     }
 
     /// Whether it takes [`bridge_wars::DRINK_SECS`] to drink before it
@@ -1272,11 +1305,12 @@ pub mod bridge_wars {
     pub const TRAPS_MOST: u8 = 3;
 
     /// How many of `utility` its button holds: three fireballs
-    /// (Hajun's file: "can buy multiple - cap at 3 stack"), and nine of
+    /// (Hajun's file: "can buy multiple - cap at 3 stack"), three sticks
+    /// of dynamite ("can stack up to 3 times max at once"), and nine of
     /// anything else (mine: one figure in the button's corner).
     pub const fn most_held(utility: Utility) -> u8 {
         match utility {
-            Utility::Fireball => 3,
+            Utility::Fireball | Utility::Dynamite => 3,
             _ => 9,
         }
     }
@@ -1313,6 +1347,7 @@ pub mod bridge_wars {
                     Utility::Speed => (Item::Amethyst, 1),
                     Utility::Invisibility => (Item::Amethyst, 2),
                     Utility::Healing => (Item::Gold, 3),
+                    Utility::Dynamite => (Item::Amethyst, 1),
                 })
             }
             Ware::Forge => step(&[2, 4, 6, 8], team.forge),
@@ -1390,13 +1425,14 @@ pub mod bridge_wars {
     /// potion lasts ("30second complete invisibility ... being hit or
     /// attacking reveals u", [`Outfits::reveal`]); and what share of
     /// their health the healing potion gives back once it is drunk
-    /// ("instantly heal 25% of your health").
+    /// ("instantly heal 50% of your health", since Hajun's file of
+    /// 2026-11-13; 25% until then).
     pub const DRINK_SECS: f32 = 1.6;
     pub const DRINK_SLOW: f32 = 0.5;
     pub const FAST_SECS: f32 = 45.0;
     pub const FAST: f32 = 1.4;
     pub const UNSEEN_SECS: f32 = 30.0;
-    pub const HEALING: f32 = 0.25;
+    pub const HEALING: f32 = 0.5;
     /// What a team's heal pool gives each of the team on its own island,
     /// and how often, in seconds ("heals 5hp every 2.5sec").
     pub const HEAL_POOL: f32 = 5.0;
@@ -1492,6 +1528,188 @@ pub mod bridge_wars {
     pub fn in_blast(centre: Vec3, feet: Vec3) -> bool {
         let across = Vec2::new(centre.x - feet.x, centre.z - feet.z).length();
         across <= BLAST_RADIUS + BODY && (centre.y - (feet.y + 1.0)).abs() <= BLAST_HEIGHT
+    }
+
+    /// A stick of dynamite (since 2026-11-13; Hajun's file: "similar to
+    /// default dynamite attack for dynamike in brawlstars, hold&drag&letgo
+    /// mechanic like fireball ... with ability to change the total
+    /// distance with the magnitude of the hold&drag&letgo, and when fired,
+    /// it will throw an arched dynamite ... after landing on the
+    /// ground/bridge, it will show a circular blast radius range around it
+    /// and it will shine bright red 3 time before it explode, and when it
+    /// explode, it will do 20 damage to player in that blast radius and
+    /// destroy that blast radius region of the bridge"). What its blast
+    /// takes off everyone of another team it reaches ("20 damage"), and
+    /// how far it reaches across the ground, which is also how far from
+    /// it a plank's middle may be for the plank to go with it
+    /// ([`super::nav::plank_in_blast`]); the nearest and the furthest it
+    /// can be thrown, from the thrower's middle to where it comes down,
+    /// and how far a quick tap throws it; how long it lies before it
+    /// blows, and how many times it shines in that while; how high over
+    /// the thrower's feet it leaves the hand, and how far in front of
+    /// them; how far to the right of the straight line it swings on its
+    /// way, as a share of how far it is thrown ([`Lob::track`]); and how
+    /// near ground it has to come down to lie on it rather than fall
+    /// past. All but the damage, the three and the price are mine: a blast
+    /// as wide as the fireball's, which takes four or five planks out of
+    /// a bridge, about as far as a running jump clears; a throw that ends
+    /// on the screen under the camera over you, which shows 11 m up and
+    /// down from you, so that whoever throws it sees where it comes down;
+    /// and a fuse long enough to get out of the way of, as the three
+    /// flashes are there to say.
+    pub const DYNAMITE_DAMAGE: f32 = 20.0;
+    pub const DYNAMITE_RADIUS: f32 = 3.0;
+    pub const DYNAMITE_NEAREST: f32 = 2.5;
+    pub const DYNAMITE_FURTHEST: f32 = 10.0;
+    pub const DYNAMITE_TAP: f32 = 4.5;
+    pub const DYNAMITE_FUSE: f32 = 1.2;
+    pub const DYNAMITE_FLASHES: u32 = 3;
+    pub const DYNAMITE_HAND: f32 = 1.2;
+    pub const DYNAMITE_AHEAD: f32 = 0.5;
+    pub const DYNAMITE_BULGE: f32 = 0.18;
+    pub const DYNAMITE_CATCH: f32 = 0.5;
+    /// What a stick falls by on its way, in metres a second a second: the
+    /// game's own gravity on the way up. With how long it flies, this is
+    /// how high it goes ([`Lob::apex`]).
+    const LOB_GRAVITY: f32 = 22.0;
+
+    /// A stick of dynamite from the hand to the ground and until it blows:
+    /// where it left the hand, where it comes down, and for how long it
+    /// has been going. The server lobs the ones thrown online and the
+    /// device its own offline, by the same rules: over whatever stands on
+    /// the map, down in [`Lob::secs`], and blown [`DYNAMITE_FUSE`] after
+    /// that, if there was ground for it to lie on; whoever runs it says
+    /// whether there was.
+    ///
+    /// **It does not fly straight** ([`Lob::track`]): it swings out to the
+    /// right of the line from the hand to where it comes down and back,
+    /// as it rises and falls. The camera of this game is straight over
+    /// you, and from there a throw that only rose and fell would be seen
+    /// going along a straight line, however high it went; leant over to
+    /// one side, as a sword's cut is, its arch is seen (Hajun: "instead of
+    /// one straight rectangular hit range indicator its like an long
+    /// arched curved rectangular", "it will throw an arched dynamite").
+    /// Always to the same side, the thrower's right, so that the arch
+    /// turns with the aim and never flips.
+    #[derive(Clone, Copy, PartialEq, Debug)]
+    pub struct Lob {
+        pub from: Vec3,
+        pub to: Vec3,
+        pub age: f32,
+    }
+
+    impl Lob {
+        /// One thrown by someone whose feet are at `feet`, the way
+        /// `heading` says, as a `Plank` heads, to come down `far` from
+        /// their middle, as near and as far as one can be thrown, on
+        /// ground `floor` high.
+        pub fn thrown(feet: Vec3, heading: f32, far: f32, floor: f32) -> Self {
+            let way = Vec3::new(-heading.sin(), 0.0, -heading.cos());
+            let far = far.clamp(DYNAMITE_NEAREST, DYNAMITE_FURTHEST);
+            let down = feet + way * far;
+            Self {
+                from: feet + way * DYNAMITE_AHEAD + Vec3::Y * DYNAMITE_HAND,
+                to: Vec3::new(down.x, floor, down.z),
+                age: 0.0,
+            }
+        }
+
+        /// How far it flies, across the ground, from the hand to where it
+        /// comes down.
+        pub fn chord(&self) -> f32 {
+            Vec2::new(self.from.x, self.from.z).distance(Vec2::new(self.to.x, self.to.z))
+        }
+
+        /// How long it is in the air, in seconds: a little longer the
+        /// further it is thrown, half a second close by and most of one
+        /// at its furthest.
+        pub fn secs(&self) -> f32 {
+            0.45 + 0.04 * (self.chord() + DYNAMITE_AHEAD)
+        }
+
+        /// How high it rises over the straight line from the hand to
+        /// where it comes down, in metres: as anything thrown for that
+        /// long would.
+        pub fn apex(&self) -> f32 {
+            LOB_GRAVITY * self.secs().powi(2) / 8.0
+        }
+
+        /// Where over the ground it is `share` of the way through its
+        /// flight, from 0 to 1: on the straight line from the hand to
+        /// where it comes down, swung out to the right of it by
+        /// [`DYNAMITE_BULGE`] of its length at the middle and by nothing
+        /// at either end.
+        pub fn track(&self, share: f32) -> Vec2 {
+            lob_track(Vec2::new(self.from.x, self.from.z), Vec2::new(self.to.x, self.to.z), share)
+        }
+
+        /// Where it is: on its way, or lying where it came down.
+        pub fn at(&self) -> Vec3 {
+            let share = (self.age / self.secs()).clamp(0.0, 1.0);
+            let across = self.track(share);
+            let height = self.from.y + (self.to.y - self.from.y) * share + 4.0 * self.apex() * share * (1.0 - share);
+            Vec3::new(across.x, height, across.y)
+        }
+
+        /// Moves it on by `dt` seconds.
+        pub fn tick(&mut self, dt: f32) {
+            self.age += dt;
+        }
+
+        /// Whether it has come down.
+        pub fn down(&self) -> bool {
+            self.age >= self.secs()
+        }
+
+        /// How long until it blows, in seconds, once it is down: its fuse.
+        pub fn fuse_left(&self) -> f32 {
+            (self.secs() + DYNAMITE_FUSE - self.age).clamp(0.0, DYNAMITE_FUSE)
+        }
+
+        /// Whether its fuse has burnt down: it blows.
+        pub fn blown(&self) -> bool {
+            self.age >= self.secs() + DYNAMITE_FUSE
+        }
+
+        /// How bright it shines, from 0 to 1, as it lies: three times
+        /// before it blows ([`DYNAMITE_FLASHES`]), each a swell and a
+        /// fade, the last at its brightest as it goes. Nothing in the air.
+        pub fn shine(&self) -> f32 {
+            if !self.down() {
+                return 0.0;
+            }
+            let burnt = 1.0 - self.fuse_left() / DYNAMITE_FUSE;
+            let beat = (burnt * DYNAMITE_FLASHES as f32).fract();
+            (beat * std::f32::consts::PI).sin().max(0.0)
+        }
+    }
+
+    /// Where over the ground a stick thrown from `from` to come down at
+    /// `to` is, `share` of the way through its flight ([`Lob::track`]):
+    /// what the band that aims one is drawn along, too.
+    pub fn lob_track(from: Vec2, to: Vec2, share: f32) -> Vec2 {
+        let share = share.clamp(0.0, 1.0);
+        let along = to - from;
+        // The thrower's right: east, for a throw to the north (-Z).
+        let right = Vec2::new(-along.y, along.x);
+        from + along * share + right * (DYNAMITE_BULGE * 4.0 * share * (1.0 - share))
+    }
+
+    /// Whether a stick of dynamite coming down at `to`, across the ground,
+    /// has ground to lie on, `ground` saying where there is any: under
+    /// where it comes down, or within a hand's reach of it all round
+    /// ([`DYNAMITE_CATCH`]), so that one thrown at the very edge of a
+    /// bridge stays on it. With none it falls past, into the void, and
+    /// never blows.
+    pub fn caught(to: Vec2, ground: impl Fn(Vec2) -> bool) -> bool {
+        ground(to) || (0..8).any(|spoke| ground(to + Vec2::from_angle(spoke as f32 * TAU / 8.0) * DYNAMITE_CATCH))
+    }
+
+    /// Whether a stick of dynamite blowing at `centre` reaches a body
+    /// whose feet are at `feet`.
+    pub fn in_dynamite(centre: Vec3, feet: Vec3) -> bool {
+        let across = Vec2::new(centre.x - feet.x, centre.z - feet.z).length();
+        across <= DYNAMITE_RADIUS + BODY && (centre.y - (feet.y + 1.0)).abs() <= BLAST_HEIGHT
     }
 
     /// What has happened in a go of [`Outfits::tick`]: who a heal pool has
@@ -2200,6 +2418,41 @@ pub struct Fireball {
     pub heading: f32,
 }
 
+/// A stick of dynamite on its way, or lying with its fuse burning, in a
+/// game of Bridge Wars (since 2026-11-13): who threw it, by seat, where it
+/// left the hand, and where it comes down ([`bridge_wars::Lob`]). Sent
+/// once as it is thrown; every device lobs it on from there by the same
+/// rules, and it is gone, for everyone, the moment the server has it blow
+/// ([`Blasted`]) or fall past the ground into the void.
+#[derive(Component, Serialize, Deserialize, Clone, Copy, PartialEq, Debug)]
+#[component(immutable)]
+pub struct Dynamite {
+    pub seat: u8,
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
+    pub to_x: f32,
+    pub to_y: f32,
+    pub to_z: f32,
+}
+
+/// A stick of dynamite has blown up in a game of Bridge Wars: where, and
+/// which planks went with it, each as whose bridge it was part of, by
+/// seat, which of their bridges, and which plank of that one (the one
+/// between its rung of that number and the next). Sent once as it blows
+/// and kept to the end of the game, so that every device has every plank
+/// that is gone, in whatever order the rest of the bridge reaches it.
+/// The server says which planks: a device's own word of where a bridge
+/// ends may be a rung ahead of the server's.
+#[derive(Component, Serialize, Deserialize, Clone, PartialEq, Debug)]
+#[component(immutable)]
+pub struct Blasted {
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
+    pub planks: Vec<(u8, u16, u16)>,
+}
+
 /// Using what is on one of the buttons in Bridge Wars ([`Ask::Use`]).
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Debug)]
 pub enum Use {
@@ -2210,6 +2463,309 @@ pub enum Use {
     /// This potion has been drunk (which, since 2026-11-13: there may be
     /// several kinds on the buttons at once).
     Potion(Utility),
+    /// Throw a stick of dynamite this way, as a [`Plank`] heads, to come
+    /// down this far from me, in metres (since 2026-11-13).
+    Dynamite { heading: f32, far: f32 },
+}
+
+// ---------------------------------------------------------------- friends
+
+/// Friends, groups, and what is said between them (since 2026-11-13; Hajun:
+/// "I want to add a friend system. First every account need a random
+/// number between 1000~9999 that is gona serve as a #1234 tag ... you should
+/// be able to search the username ... they can accept or reject the add
+/// friend request ... when youre in the group with ur friend, only the
+/// leader can queue for a minigame, and everyone get queued at the same
+/// time in the same team"). All of it is the server's, kept with the
+/// accounts (`server/src/social.rs`); a device asks ([`Act`], in
+/// [`Ask::Social`](super::Ask::Social)) and is told ([`News`], in
+/// [`Tell::Social`](super::Tell::Social)), and shows what it was last told
+/// (the game's `friends`). Offline there is none of it.
+///
+/// * **A tag**: every account has a number from [`TAG_FIRST`] to
+///   [`TAG_LAST`] after its name, `Hajooon#1323` ([`handle`]), so that two
+///   people of one name can be told apart. No two accounts have both the
+///   same name, whatever its capitals, and the same tag: an account that
+///   takes a name someone with its tag already has is given another tag.
+/// * **Friends**: you ask someone by their account ([`Act::Befriend`]),
+///   found by their name ([`Act::Find`]); they are told so in their inbox
+///   ([`Post::Request`]) and say yes or no ([`Act::Answer`]). Up to
+///   [`FRIENDS_MOST`].
+/// * **A group**: a friend who is online can be asked into yours
+///   ([`Act::Invite`], [`Post::Invite`]); whoever asks first leads it. Only
+///   its leader starts a game ([`Refusal::NotLeader`](super::Refusal)), and
+///   everyone of it who is free to goes in with them: into the same game,
+///   and in Bridge Wars onto the same team, two by two. Up to
+///   [`GROUP_MOST`]. Kept in the server's memory alone: a group is over
+///   when the server restarts, or when all but one have left it.
+/// * **A message** to a friend ([`Act::Write`], [`Post::Message`]), plain
+///   ASCII and short ([`MESSAGE_LONGEST`]), kept for them until they have
+///   seen it off.
+/// * **A level**, from what an account has earned playing ([`level`]).
+pub mod social {
+    use serde::{Deserialize, Serialize};
+
+    use super::profile;
+
+    /// The tags there are, the number after a name: `#1000` to `#9999`.
+    pub const TAG_FIRST: u16 = 1000;
+    pub const TAG_LAST: u16 = 9999;
+    /// The most friends one account has, and the most who can be waiting
+    /// on its answer at once.
+    pub const FRIENDS_MOST: usize = 100;
+    pub const REQUESTS_MOST: usize = 50;
+    /// The most in a group, its leader among them: two teams of Bridge
+    /// Wars. Mine, Hajun not having said.
+    pub const GROUP_MOST: usize = 4;
+    /// How long a message may be, in characters, and how many wait for one
+    /// account at the most.
+    pub const MESSAGE_LONGEST: usize = 80;
+    pub const LETTERS_MOST: usize = 30;
+    /// The most players a search answers with, and the longest it reads:
+    /// a name with its tag after it.
+    pub const FOUND_MOST: usize = 20;
+    pub const SOUGHT_LONGEST: usize = profile::LONGEST + 5;
+    /// How long being asked into a group stands, in seconds, and how long
+    /// someone whose connection has gone is kept in theirs: a phone closes
+    /// its connection whenever the app is put in the background.
+    pub const INVITE_SECS: f64 = 600.0;
+    pub const GROUP_GRACE: f64 = 120.0;
+
+    /// What a game earns an account toward its [`level`]: for having played
+    /// it to its end, for winning it (in House Builder, for coming first,
+    /// second and third), and how much makes a level. All mine: Hajun's
+    /// sketch of the friends' list has a level by each name, and nothing
+    /// else says what a level is.
+    pub const XP_PLAYED: u32 = 20;
+    pub const XP_WON: u32 = 50;
+    pub const XP_PLACED: [u32; 3] = [50, 30, 15];
+    pub const XP_A_LEVEL: u32 = 100;
+    /// The highest level shown.
+    pub const LEVEL_MOST: u16 = 999;
+
+    /// The level of an account that has earned `xp`: 1 to start, and one
+    /// more for every [`XP_A_LEVEL`].
+    pub fn level(xp: u32) -> u16 {
+        (1 + xp / XP_A_LEVEL).min(u32::from(LEVEL_MOST)) as u16
+    }
+
+    /// A name with its tag after it, as a friend is told who you are:
+    /// `Hajooon#1323`.
+    pub fn handle(name: &str, tag: u16) -> String {
+        format!("{name}#{tag}")
+    }
+
+    /// `text` as a name with a tag after it, if it is one: `Hajooon#1323`
+    /// is `Hajooon` and 1323. A name may have a `#` in it, so whoever
+    /// looks for a player by this looks for the whole of `text` as a name
+    /// as well.
+    pub fn split_handle(text: &str) -> Option<(&str, u16)> {
+        let (name, tag) = text.trim().rsplit_once('#')?;
+        let tag: u16 = (tag.len() == 4 && tag.bytes().all(|digit| digit.is_ascii_digit()))
+            .then(|| tag.parse().ok())
+            .flatten()?;
+        ((TAG_FIRST..=TAG_LAST).contains(&tag) && profile::name(name).is_some_and(|whole| whole == name))
+            .then_some((name, tag))
+    }
+
+    /// `text` as a message, if it is one: something, once the spaces round
+    /// it are trimmed, no longer than [`MESSAGE_LONGEST`], and all of it
+    /// what a name may be made of ([`profile::allowed`]), which is what
+    /// the game's keyboard types.
+    pub fn message(text: &str) -> Option<String> {
+        let text = text.trim();
+        (!text.is_empty() && text.len() <= MESSAGE_LONGEST && text.chars().all(profile::allowed))
+            .then(|| text.to_string())
+    }
+
+    /// One of the games there are to be in.
+    #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Hash, Debug)]
+    pub enum Minigame {
+        BridgeWars,
+        HouseBuilder,
+    }
+
+    /// Where someone is, as their friends are told.
+    #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
+    pub enum Presence {
+        /// Not connected, since this time, in seconds since 1970 by the
+        /// server's clock; 0 if it does not know.
+        Offline { since: u64 },
+        /// In the town, in this channel of it, counted from 0.
+        Town { channel: u16 },
+        /// At home.
+        Home,
+        /// In a game: still waiting for it to fill, or playing it.
+        Playing { game: Minigame, queued: bool },
+    }
+
+    impl Presence {
+        pub fn online(&self) -> bool {
+            !matches!(self, Self::Offline { .. })
+        }
+    }
+
+    /// Someone, as their friends and their group see them: who they are,
+    /// what they go by, and where they are now.
+    #[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug)]
+    pub struct Card {
+        /// Their account: [`Member::id`](super::Member::id) while they are
+        /// connected, and what everything asked about them says.
+        pub id: u64,
+        pub name: String,
+        pub tag: u16,
+        pub level: u16,
+        pub presence: Presence,
+    }
+
+    impl Card {
+        /// `Hajooon#1323`.
+        pub fn handle(&self) -> String {
+            handle(&self.name, self.tag)
+        }
+    }
+
+    /// What someone found by their name is to you already.
+    #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
+    pub enum Tie {
+        /// Nothing yet.
+        Stranger,
+        /// Your friend.
+        Friend,
+        /// You have asked them, and they have not answered.
+        Asked,
+        /// They have asked you: it is in your inbox.
+        AskedYou,
+    }
+
+    /// Someone a search turned up.
+    #[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug)]
+    pub struct Found {
+        pub card: Card,
+        pub tie: Tie,
+    }
+
+    /// Something in your inbox: who it is from, and what it is.
+    #[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug)]
+    pub struct Mail {
+        /// The server's number for it, which an answer names
+        /// ([`Act::Answer`]).
+        pub id: u64,
+        pub from: Card,
+        pub what: Post,
+    }
+
+    #[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug)]
+    pub enum Post {
+        /// They ask to be your friend.
+        Request,
+        /// They ask you into their group.
+        Invite,
+        /// They wrote this to you.
+        Message(String),
+    }
+
+    /// A group, as everyone in it is told: who leads it, and everyone in
+    /// it, the leader among them, in the order they came into it.
+    #[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug)]
+    pub struct Group {
+        pub leader: u64,
+        pub members: Vec<Card>,
+    }
+
+    /// Something asked of the server about friends ([`Ask::Social`](super::Ask::Social)).
+    /// Each is answered by what it changes ([`News`]), and where it could
+    /// not be done, or leaves nothing to show, by a word ([`News::Said`]).
+    #[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug)]
+    pub enum Act {
+        /// Who goes by this name, or this name and tag? [`News::Found`]
+        /// answers.
+        Find(String),
+        /// Ask this account to be my friend; or, if they have asked me
+        /// already, yes.
+        Befriend(u64),
+        /// No longer my friend; or, of someone I have asked who has not
+        /// answered, never mind.
+        Unfriend(u64),
+        /// My answer to something in my inbox: yes or no to being
+        /// someone's friend or going into their group, and of a message,
+        /// either way, that I have seen it.
+        Answer { mail: u64, yes: bool },
+        /// Ask this friend into my group: mine to lead, if I am in none.
+        Invite(u64),
+        /// Out of my group.
+        LeaveGroup,
+        /// Put this account out of the group I lead.
+        Kick(u64),
+        /// Write this to a friend.
+        Write { to: u64, text: String },
+    }
+
+    /// What the server tells a device about its friends ([`Tell::Social`](super::Tell::Social)).
+    #[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug)]
+    pub enum News {
+        /// The tag after your name, and your level: on being let in, and
+        /// whenever either changes.
+        Me { tag: u16, level: u16 },
+        /// Your friends, all of them: on being let in, and whenever one is
+        /// made or lost.
+        Friends(Vec<Card>),
+        /// One of your friends as they are now: gone somewhere else, or by
+        /// another name.
+        Friend(Card),
+        /// Your inbox, all of it: on being let in, and whenever it changes.
+        Inbox(Vec<Mail>),
+        /// Your group, or that you are in none: on being let in, and
+        /// whenever it changes.
+        Group(Option<Group>),
+        /// Who goes by what you looked for.
+        Found { sought: String, people: Vec<Found> },
+        /// What became of something you asked.
+        Said(Outcome),
+    }
+
+    /// What became of something asked ([`Act`]), in a word, for the device
+    /// to say in its own.
+    #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
+    pub enum Outcome {
+        /// They have been asked to be your friend.
+        Asked,
+        /// You are friends now.
+        Befriended,
+        /// No longer your friend, or no longer asked.
+        Unfriended,
+        /// There was nothing to do: your friend already, asked already, in
+        /// your group already.
+        Already,
+        /// You have as many friends as an account has.
+        Full,
+        /// They have, or as many waiting on their answer.
+        TheirsFull,
+        /// There is no such player, or it is you.
+        NoSuch,
+        /// They are not your friend.
+        NotFriend,
+        /// They are not online.
+        Offline,
+        /// They have been asked into your group.
+        Invited,
+        /// Only the leader of a group can do that.
+        NotLeader,
+        /// The group has as many in it as a group has.
+        GroupFull,
+        /// What was answered is no longer there to answer: taken back, or
+        /// too old.
+        Stale,
+        /// Your message has gone to them.
+        Sent,
+        /// They have as many messages waiting as an account keeps.
+        InboxFull,
+        /// That is no message: nothing, too long, or not plain letters.
+        NotAMessage,
+        /// Your group has gone into a game without you: you were not free
+        /// to go, or could not pay for it.
+        LeftBehind,
+    }
 }
 
 // --------------------------------------------------------------- messages
@@ -2288,6 +2844,9 @@ pub enum Ask {
     /// I have used what is on my second button in Bridge Wars: one fewer
     /// of it, and what it does is done (since 2026-11-12).
     Use(Use),
+    /// Something about my friends, my group or my inbox ([`social::Act`],
+    /// since 2026-11-13).
+    Social(social::Act),
 }
 
 /// What the server tells you alone. In order, and never lost.
@@ -2323,6 +2882,9 @@ pub enum Tell {
     /// The shop has sold you this ([`Ask::Buy`]): its price is out of what
     /// you hold, as the room's [`Purses`] will show.
     Bought(Ware),
+    /// Something about your friends, your group or your inbox
+    /// ([`social::News`], since 2026-11-13).
+    Social(social::News),
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
@@ -2331,6 +2893,9 @@ pub enum Refusal {
     Coins,
     /// You are in the middle of something else.
     Busy,
+    /// You are in a group someone else leads, and only its leader starts a
+    /// game ([`social`], since 2026-11-13).
+    NotLeader,
 }
 
 /// What time it is, asked of the server to set the town's clock by (the
@@ -2358,6 +2923,97 @@ pub struct TheTime {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_handle_is_a_name_and_its_tag() {
+        use social::{handle, split_handle};
+        assert_eq!(handle("Hajooon", 1323), "Hajooon#1323");
+        assert_eq!(split_handle("Hajooon#1323"), Some(("Hajooon", 1323)));
+        assert_eq!(split_handle("  Mochi 482#9999 "), Some(("Mochi 482", 9999)));
+        // A name may have a # in it: the tag is what comes after the last.
+        assert_eq!(split_handle("a#b#1000"), Some(("a#b", 1000)));
+        // Four digits, from 1000 up, after something that is a name.
+        for not in ["Hajooon", "Hajooon#", "Hajooon#123", "Hajooon#12345", "Hajooon#0999", "Hajooon#12a4", "#1234", "a#1234", "Hajooon #1234"] {
+            assert_eq!(split_handle(not), None, "{not:?}");
+        }
+        // Every tag there is reads back.
+        for tag in [social::TAG_FIRST, 5000, social::TAG_LAST] {
+            assert_eq!(split_handle(&handle("Bob", tag)), Some(("Bob", tag)));
+        }
+    }
+
+    #[test]
+    fn a_message_is_short_plain_and_something() {
+        use social::{MESSAGE_LONGEST, message};
+        assert_eq!(message("  play at 9?  ").as_deref(), Some("play at 9?"));
+        assert_eq!(message(""), None);
+        assert_eq!(message("   "), None);
+        assert_eq!(message("안녕"), None, "the font has no Hangul");
+        assert_eq!(message("two\nlines"), None);
+        let longest = "x".repeat(MESSAGE_LONGEST);
+        assert_eq!(message(&longest).as_deref(), Some(longest.as_str()));
+        assert_eq!(message(&"x".repeat(MESSAGE_LONGEST + 1)), None);
+    }
+
+    #[test]
+    fn a_level_is_one_to_start_and_one_more_for_every_hundred() {
+        use social::{LEVEL_MOST, XP_A_LEVEL, level};
+        assert_eq!(level(0), 1);
+        assert_eq!(level(XP_A_LEVEL - 1), 1);
+        assert_eq!(level(XP_A_LEVEL), 2);
+        assert_eq!(level(52 * XP_A_LEVEL + 7), 53);
+        assert_eq!(level(u32::MAX), LEVEL_MOST);
+    }
+
+    #[test]
+    fn what_is_said_about_friends_goes_over_the_wire_and_back() {
+        use social::*;
+        let card = Card {
+            id: 7,
+            name: "BobTheBuilder".into(),
+            tag: 1234,
+            level: 123,
+            presence: Presence::Playing {
+                game: Minigame::BridgeWars,
+                queued: true,
+            },
+        };
+        assert_eq!(card.handle(), "BobTheBuilder#1234");
+        assert!(card.presence.online());
+        assert!(!Presence::Offline { since: 0 }.online());
+        let news = News::Inbox(vec![
+            Mail {
+                id: 3,
+                from: card.clone(),
+                what: Post::Request,
+            },
+            Mail {
+                id: 4,
+                from: card.clone(),
+                what: Post::Message("play at 9?".into()),
+            },
+        ]);
+        let bytes = postcard::to_allocvec(&Tell::Social(news.clone())).unwrap();
+        let Tell::Social(back) = postcard::from_bytes(&bytes).unwrap() else {
+            panic!("not what was sent");
+        };
+        assert_eq!(back, news);
+        let act = Act::Write {
+            to: 7,
+            text: "ok".into(),
+        };
+        let bytes = postcard::to_allocvec(&Ask::Social(act.clone())).unwrap();
+        let Ask::Social(back) = postcard::from_bytes(&bytes).unwrap() else {
+            panic!("not what was sent");
+        };
+        assert_eq!(back, act);
+        // A friend standing in the town is a dozen bytes and their name.
+        let town = Card {
+            presence: Presence::Town { channel: 0 },
+            ..card
+        };
+        assert!(postcard::to_allocvec(&town).unwrap().len() < 24, "a card is small");
+    }
 
     #[test]
     fn a_spot_keeps_where_and_which_way() {
@@ -2843,9 +3499,10 @@ mod tests {
     fn the_shops_sell_what_the_file_says_for_what_it_says() {
         use bridge_wars::{Shop, buy, price, sold_at};
         let (bare, none) = (Kit::default(), Upgrades::default());
-        // The item shop: the bridge, three swords, three shields and five
-        // things for the second button.
+        // The item shop: the bridge, three swords, three shields and six
+        // things for the buttons.
         for (ware, cost) in [
+            (Ware::Utility(Utility::Dynamite), (Item::Amethyst, 1)),
             (Ware::Bridge, (Item::Silver, 4)),
             (Ware::Sword(1), (Item::Silver, 10)),
             (Ware::Sword(2), (Item::Gold, 7)),
@@ -2884,13 +3541,22 @@ mod tests {
         let potions = bare.holding(Utility::Healing, 8);
         assert!(price(Ware::Utility(Utility::Healing), &potions, &none).is_some());
         assert_eq!(price(Ware::Utility(Utility::Healing), &potions.holding(Utility::Healing, 9), &none), None);
+        // And three sticks of dynamite ("can stack up to 3 times max at
+        // once").
+        let sticks = bare.holding(Utility::Dynamite, 2);
+        assert!(price(Ware::Utility(Utility::Dynamite), &sticks, &none).is_some());
+        assert_eq!(price(Ware::Utility(Utility::Dynamite), &sticks.holding(Utility::Dynamite, 3), &none), None);
+        assert_eq!(bridge_wars::most_held(Utility::Dynamite), 3);
         // What is aimed and what is drunk; and of what is drunk, what
         // lasts.
         for utility in Utility::ALL {
             assert_ne!(utility.aimed(), utility.drunk(), "{utility:?}");
             assert!(!utility.lasts() || utility.drunk());
         }
-        assert!(Utility::Fireball.aimed() && Utility::Builder.aimed() && Utility::Healing.drunk());
+        assert!(Utility::Fireball.aimed() && Utility::Builder.aimed() && Utility::Dynamite.aimed() && Utility::Healing.drunk());
+        // The healing potion gives half of one's health back ("instantly
+        // heal 50% of your health").
+        assert_eq!(bridge_wars::HEALING, 0.5);
         assert!(Utility::Speed.lasts() && Utility::Invisibility.lasts() && !Utility::Healing.lasts());
         // The upgrade shop: each step dearer than the last, to its last.
         let steps = |ware: Ware, raise: &dyn Fn(&mut Upgrades)| {
@@ -2939,6 +3605,13 @@ mod tests {
             assert_eq!((kit.slot_of(utility), kit.held(utility)), (Some(slot), 1));
         }
         assert_eq!(kit.free_slot(), None);
+        // There are six kinds and five buttons: with five kinds held, the
+        // sixth is not to be had until a button is empty.
+        assert_eq!(Utility::ALL.len(), UTILITY_SLOTS + 1);
+        assert_eq!(price(Ware::Utility(Utility::Dynamite), &kit, &none), None);
+        let held = purse;
+        assert!(!buy(Ware::Utility(Utility::Dynamite), &mut purse, &mut kit, &mut team));
+        assert_eq!(purse, held, "and nothing is paid for it");
         assert!(buy(Ware::Utility(Utility::Fireball), &mut purse, &mut kit, &mut team));
         assert!(buy(Ware::Utility(Utility::Fireball), &mut purse, &mut kit, &mut team));
         assert!(!buy(Ware::Utility(Utility::Fireball), &mut purse, &mut kit, &mut team), "three to a button");
@@ -3157,6 +3830,107 @@ mod tests {
         assert!(in_blast(burst, under) && in_blast(burst, under + Vec3::X * BLAST_RADIUS));
         assert!(!in_blast(burst, under + Vec3::X * (BLAST_RADIUS + 0.6)));
         assert!(!in_blast(burst, under - Vec3::Y * 8.0));
+    }
+
+    #[test]
+    fn a_stick_of_dynamite_is_lobbed_in_an_arch_to_where_it_was_aimed_and_blows_after_its_fuse() {
+        use bridge_wars::{
+            DYNAMITE_AHEAD, DYNAMITE_BULGE, DYNAMITE_FLASHES, DYNAMITE_FURTHEST, DYNAMITE_FUSE, DYNAMITE_HAND, DYNAMITE_NEAREST,
+            DYNAMITE_RADIUS, DYNAMITE_TAP, Lob, in_dynamite, lob_track,
+        };
+        // Thrown north from an island, 8 m: out of the hand, in front of
+        // the thrower and over their feet, to come down 8 m north of them
+        // on the ground it was thrown at.
+        let feet = Vec3::new(3.0, 0.25, 130.0);
+        let mut lob = Lob::thrown(feet, 0.0, 8.0, 0.24);
+        assert!(lob.from.distance(feet + Vec3::new(0.0, DYNAMITE_HAND, -DYNAMITE_AHEAD)) < 1e-5);
+        assert!(lob.to.distance(Vec3::new(3.0, 0.24, 122.0)) < 1e-4);
+        assert_eq!(lob.at(), lob.from);
+        // A throw is no nearer and no further than one can be.
+        let across = |lob: Lob| Vec2::new(lob.to.x - feet.x, lob.to.z - feet.z).length();
+        assert!((across(Lob::thrown(feet, 1.0, 0.3, 0.25)) - DYNAMITE_NEAREST).abs() < 1e-4);
+        assert!((across(Lob::thrown(feet, 1.0, 99.0, 0.25)) - DYNAMITE_FURTHEST).abs() < 1e-4);
+        assert!(DYNAMITE_NEAREST < DYNAMITE_TAP && DYNAMITE_TAP < DYNAMITE_FURTHEST);
+        // Further takes longer, and goes higher; none of them long.
+        let (near, far) = (Lob::thrown(feet, 0.0, DYNAMITE_NEAREST, 0.25), Lob::thrown(feet, 0.0, DYNAMITE_FURTHEST, 0.25));
+        assert!(near.secs() < far.secs() && near.secs() > 0.4 && far.secs() < 1.0, "{} and {}", near.secs(), far.secs());
+        assert!(near.apex() < far.apex() && far.apex() > 1.5 && far.apex() < 3.0, "{} and {}", near.apex(), far.apex());
+        // On its way it rises and comes down again, and swings out to the
+        // thrower's right, east for a throw to the north, and back: by
+        // most at the middle, a share of how far it is thrown, and by
+        // nothing at either end.
+        let frame = 1.0 / 60.0;
+        let (mut highest, mut widest, mut flown) = (lob.from.y, 0.0f32, 0.0);
+        let mut last = lob.at();
+        while !lob.down() {
+            lob.tick(frame);
+            flown += frame;
+            let at = lob.at();
+            assert!(at.z <= last.z + 1e-4, "it flies on north");
+            assert!(at.x >= feet.x - 1e-4, "never to the thrower's left");
+            highest = highest.max(at.y);
+            widest = widest.max(at.x - feet.x);
+            assert!(lob.down() || lob.shine() == 0.0, "it does not shine in the air");
+            last = at;
+        }
+        assert!((flown - lob.secs()).abs() <= frame + 1e-4);
+        assert!((highest - (DYNAMITE_HAND + 0.25) - lob.apex()).abs() < 0.6, "it rose to {highest}");
+        assert!((widest - DYNAMITE_BULGE * lob.chord()).abs() < 0.02, "it swung {widest} m out");
+        assert!(lob.at().distance(lob.to) < 1e-4, "and it lies where it was aimed");
+        // The band that aims one is drawn along the same way.
+        let (from, to) = (Vec2::new(lob.from.x, lob.from.z), Vec2::new(lob.to.x, lob.to.z));
+        assert_eq!(lob_track(from, to, 0.0), from);
+        assert!(lob_track(from, to, 1.0).distance(to) < 1e-5);
+        assert!(lob_track(from, to, 0.5).distance((from + to) * 0.5 + Vec2::X * DYNAMITE_BULGE * from.distance(to)) < 1e-4);
+        // A throw to the west swings north, the thrower's right.
+        let west = Lob::thrown(feet, std::f32::consts::FRAC_PI_2, 8.0, 0.25);
+        assert!(west.to.x < feet.x - 7.9 && west.track(0.5).y < feet.z - 1.0, "{:?}", west.track(0.5));
+        // Down, it lies there for its fuse, shining three times, each a
+        // swell and a fade; and then it blows.
+        let (mut lain, mut peaks, mut rising, mut before) = (0.0, 0, false, 0.0);
+        while !lob.blown() {
+            assert!(lob.at().distance(lob.to) < 1e-4);
+            let shine = lob.shine();
+            assert!((0.0..=1.0).contains(&shine));
+            if rising && shine < before {
+                peaks += 1;
+            }
+            rising = shine > before;
+            before = shine;
+            lob.tick(frame);
+            lain += frame;
+        }
+        assert!((lain - DYNAMITE_FUSE).abs() <= 2.0 * frame, "{lain} s");
+        assert_eq!(peaks, DYNAMITE_FLASHES, "it shone {peaks} times");
+        assert_eq!(lob.fuse_left(), 0.0);
+        // Its blast reaches whoever stands within its reach of it, across
+        // the ground, on about its level; and nobody further off, or far
+        // under it.
+        assert!(in_dynamite(lob.to, lob.to) && in_dynamite(lob.to, lob.to + Vec3::X * DYNAMITE_RADIUS));
+        assert!(!in_dynamite(lob.to, lob.to + Vec3::X * (DYNAMITE_RADIUS + 0.6)));
+        assert!(!in_dynamite(lob.to, lob.to - Vec3::Y * 8.0));
+        // What the room is sent of one, and of its blast, is small.
+        let thrown = Dynamite {
+            seat: 3,
+            x: lob.from.x,
+            y: lob.from.y,
+            z: lob.from.z,
+            to_x: lob.to.x,
+            to_y: lob.to.y,
+            to_z: lob.to.z,
+        };
+        assert!(postcard::to_allocvec(&thrown).unwrap().len() <= 25);
+        let blast = Blasted {
+            x: lob.to.x,
+            y: lob.to.y,
+            z: lob.to.z,
+            planks: vec![(3, 1, 4), (3, 1, 5), (3, 1, 6), (3, 1, 7), (3, 1, 8)],
+        };
+        let sent = postcard::to_allocvec(&blast).unwrap();
+        assert!(sent.len() <= 32, "{} bytes", sent.len());
+        assert_eq!(postcard::from_bytes::<Blasted>(&sent).unwrap(), blast);
+        let used = postcard::to_allocvec(&Use::Dynamite { heading: 1.0, far: 6.0 }).unwrap();
+        assert_eq!(postcard::from_bytes::<Use>(&used).unwrap(), Use::Dynamite { heading: 1.0, far: 6.0 });
     }
 
     #[test]

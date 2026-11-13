@@ -553,6 +553,89 @@ pub(crate) struct Colours {
     pub edit_menu: EditMenuColours,
     pub melee: MeleeColours,
     pub arena: ArenaColours,
+    pub friends: FriendsColours,
+}
+
+/// The friends' panel (`friends`, since 2026-11-13), in the colours of
+/// Hajun's sketches of it (`friendtabdesign1.png` to `4`): the panel, a
+/// box that comes up over it (Add Friend, a question, a message being
+/// written) and the dark over the panel behind such a box; the line under
+/// the tab that is shown, and the picture of one that is not; a heading; a
+/// friend's name, here and not, and the line under it that says where they
+/// are; the disc behind someone's picture, the picture, and the dot on its
+/// corner, here and not; a round button on a row, lit under the pointer,
+/// the picture on it, and the picture on one that cannot be pressed; the
+/// box something is typed into; yes and no, each lit under the pointer,
+/// and the words on them; the count of what waits in your inbox, on the
+/// speech bubble's corner and the envelope's, and the number in it; the
+/// gear's menu, an entry lit under the pointer, and its outline; the line
+/// that says what the server made of something; and the words that are
+/// pressed ("Add friend"), and those that only say ("Requested").
+#[derive(Deserialize, Clone, Copy, PartialEq, Debug)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct FriendsColours {
+    #[serde(deserialize_with = "colour")]
+    pub panel: Color,
+    #[serde(deserialize_with = "colour")]
+    pub popup: Color,
+    #[serde(deserialize_with = "colour")]
+    pub scrim: Color,
+    #[serde(deserialize_with = "colour")]
+    pub line: Color,
+    #[serde(deserialize_with = "colour")]
+    pub tab_off: Color,
+    #[serde(deserialize_with = "colour")]
+    pub title: Color,
+    #[serde(deserialize_with = "colour")]
+    pub name: Color,
+    #[serde(deserialize_with = "colour")]
+    pub name_off: Color,
+    #[serde(deserialize_with = "colour")]
+    pub status: Color,
+    #[serde(deserialize_with = "colour")]
+    pub avatar: Color,
+    #[serde(deserialize_with = "colour")]
+    pub avatar_mark: Color,
+    #[serde(deserialize_with = "colour")]
+    pub online: Color,
+    #[serde(deserialize_with = "colour")]
+    pub offline: Color,
+    #[serde(deserialize_with = "colour")]
+    pub button: Color,
+    #[serde(deserialize_with = "colour")]
+    pub button_lit: Color,
+    #[serde(deserialize_with = "colour")]
+    pub button_mark: Color,
+    #[serde(deserialize_with = "colour")]
+    pub button_off: Color,
+    #[serde(deserialize_with = "colour")]
+    pub field: Color,
+    #[serde(deserialize_with = "colour")]
+    pub yes: Color,
+    #[serde(deserialize_with = "colour")]
+    pub yes_lit: Color,
+    #[serde(deserialize_with = "colour")]
+    pub no: Color,
+    #[serde(deserialize_with = "colour")]
+    pub no_lit: Color,
+    #[serde(deserialize_with = "colour")]
+    pub on_choice: Color,
+    #[serde(deserialize_with = "colour")]
+    pub badge: Color,
+    #[serde(deserialize_with = "colour")]
+    pub badge_text: Color,
+    #[serde(deserialize_with = "colour")]
+    pub menu: Color,
+    #[serde(deserialize_with = "colour")]
+    pub menu_lit: Color,
+    #[serde(deserialize_with = "colour")]
+    pub menu_rim: Color,
+    #[serde(deserialize_with = "colour")]
+    pub notice: Color,
+    #[serde(deserialize_with = "colour")]
+    pub link: Color,
+    #[serde(deserialize_with = "colour")]
+    pub link_off: Color,
 }
 
 #[derive(Deserialize, Clone, Copy, PartialEq, Debug)]
@@ -807,6 +890,19 @@ pub(crate) struct ArenaColours {
     pub potion_invisibility: Color,
     #[serde(deserialize_with = "colour")]
     pub potion_healing: Color,
+    /// A stick of dynamite (`dynamite`, since 2026-11-13): its two
+    /// sticks, which is also what its picture is tinted on its card and
+    /// its button; its fuse; and the ring on the ground round where one
+    /// lies, as far as its blast will reach, its outline and its fill.
+    /// The dark rim round that ring is the aim band's, `aim_rim`.
+    #[serde(deserialize_with = "colour")]
+    pub dynamite: Color,
+    #[serde(deserialize_with = "colour")]
+    pub dynamite_fuse: Color,
+    #[serde(deserialize_with = "colour")]
+    pub blast_outline: Color,
+    #[serde(deserialize_with = "colour")]
+    pub blast_fill: Color,
     #[serde(deserialize_with = "colour")]
     pub heal_pool: Color,
     #[serde(deserialize_with = "colour")]
@@ -909,6 +1005,97 @@ pub(crate) struct Words {
     pub games: GamesWords,
     pub arena: ArenaWords,
     pub market: MarketWords,
+    pub friends: FriendsWords,
+}
+
+/// The friends' panel (`friends`): its headings, with `{online}` and `{all}`
+/// of your friends, `{count}` and `{most}` of your group; who leads a
+/// group, and which of it is you; a level; what an empty list, an empty
+/// inbox and no connection say. Add Friend: its title, what is pressed
+/// beside someone found and what stands there once they are asked or your
+/// friend, yes and no to someone who asked you, "My ID" and what copying
+/// it says, and what finding nobody says. The inbox: what someone asking
+/// to be your friend or asking you into their group is doing, and the
+/// buttons beside each and beside a message. The two questions (`{name}`),
+/// and their buttons. The gear's menu, and leaving a group. Writing a
+/// message (`{name}`). Where a friend is: `{channel}` of the town,
+/// `{game}`, and how long gone (`{time}`, made of the three pairs after
+/// it, one and many, each with its `{n}`). What the server made of
+/// something asked ([`SaidWords`]), what is said across the screen as your
+/// group's leader takes you into a game (`{game}`), and what the game
+/// selector says to anyone else in a group.
+#[derive(Deserialize, PartialEq, Debug)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct FriendsWords {
+    pub friends: String,
+    pub group: String,
+    pub leader: String,
+    pub you: String,
+    pub level: String,
+    pub no_friends: String,
+    pub no_mail: String,
+    pub not_online: String,
+    pub add_friend: String,
+    pub add: String,
+    pub asked: String,
+    pub is_friend: String,
+    pub accept: String,
+    pub reject: String,
+    pub my_id: String,
+    pub copied: String,
+    pub search_first: String,
+    pub nobody: String,
+    pub wants_friend: String,
+    pub wants_group: String,
+    pub join: String,
+    pub reply: String,
+    pub seen: String,
+    pub invite_ask: String,
+    pub remove_ask: String,
+    pub cancel: String,
+    pub yes: String,
+    pub message: String,
+    pub remove: String,
+    pub leave: String,
+    pub message_to: String,
+    pub send: String,
+    pub in_town: String,
+    pub at_home: String,
+    pub in_queue: String,
+    pub in_game: String,
+    pub offline: String,
+    pub offline_for: String,
+    pub moments: String,
+    pub minutes: [String; 2],
+    pub hours: [String; 2],
+    pub days: [String; 2],
+    pub said: SaidWords,
+    pub summoned: String,
+    pub only_leader: String,
+}
+
+/// What the friends' panel says of what the server made of something
+/// asked, one line to each `roundtown_net::social::Outcome`.
+#[derive(Deserialize, PartialEq, Debug)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct SaidWords {
+    pub asked: String,
+    pub befriended: String,
+    pub unfriended: String,
+    pub already: String,
+    pub full: String,
+    pub theirs_full: String,
+    pub no_such: String,
+    pub not_friend: String,
+    pub offline: String,
+    pub invited: String,
+    pub not_leader: String,
+    pub group_full: String,
+    pub stale: String,
+    pub sent: String,
+    pub inbox_full: String,
+    pub not_a_message: String,
+    pub left_behind: String,
 }
 
 /// The game selector (`games`): its title, the three games, and what each
@@ -1092,6 +1279,8 @@ pub(crate) struct MarketWords {
     pub invisibility_stat: String,
     pub healing: String,
     pub healing_stat: String,
+    pub dynamite: String,
+    pub dynamite_stat: String,
     pub forge: [String; 4],
     pub forge_stats: [String; 4],
     pub stronger_swords: String,

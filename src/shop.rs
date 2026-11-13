@@ -403,10 +403,7 @@ fn close_button() -> impl Bundle {
 fn label(text: &str, size_vmin: f32, colour: Color) -> impl Bundle {
     (
         Text::new(text),
-        TextFont {
-            font_size: FontSize::VMin(size_vmin),
-            ..default()
-        },
+        crate::font::sized(size_vmin),
         TextColor(colour),
         TextLayout::justify(Justify::Center),
         Pickable::IGNORE,

@@ -322,6 +322,80 @@ pub(crate) fn rim(width: f32, from: f32, to: f32) -> Mesh {
     flat(points, indices)
 }
 
+/// A band lying on the ground along `line`, points of the ground's (x, z)
+/// in order, `width` across: its fill, its outline, [`WIDTH`] wide just
+/// inside its edge all the way round, and the dark rim just outside it
+/// ([`rim`]). What a stick of dynamite is aimed with in Bridge Wars
+/// (`utility`): a band that bends as the stick will fly, where a
+/// fireball's is straight. A line of fewer than two points is nothing:
+/// meshes with no corner in them, which are not to be drawn (Bevy's mesh
+/// allocator logs a use after free for one; `utility::aim` puts the band's
+/// sheets away instead).
+pub(crate) fn ribbon(line: &[Vec2], width: f32) -> (Mesh, Mesh, Mesh) {
+    let half = width * 0.5;
+    let n = line.len();
+    if n < 2 {
+        let nothing = || flat(Vec::new(), Vec::new());
+        return (nothing(), nothing(), nothing());
+    }
+    // Which way across the band is to the left of the way it runs, at
+    // each point: square to the line through the points either side.
+    let across = |i: usize| {
+        let along = line[(i + 1).min(n - 1)] - line[i.saturating_sub(1)];
+        along.normalize_or(Vec2::NEG_Y).perp()
+    };
+    let left: Vec<Vec2> = (0..n).map(|i| line[i] + across(i) * half).collect();
+    let right: Vec<Vec2> = (0..n).map(|i| line[i] - across(i) * half).collect();
+    // The fill: a strip between its two edges.
+    let mut points = left.clone();
+    points.extend(right.iter().copied());
+    let mut indices = Vec::new();
+    for i in 0..n - 1 {
+        triangle(&points, &mut indices, i, i + 1, n + i + 1);
+        triangle(&points, &mut indices, i, n + i + 1, n + i);
+    }
+    let fill = flat(points, indices);
+    // Its edge, all the way round: up the one side and back down the
+    // other.
+    let mut edge = left;
+    edge.extend(right.into_iter().rev());
+    (fill, edging(&edge, WIDTH), edging(&edge, -RIM))
+}
+
+/// A disc lying on the ground about the origin, `radius` across from its
+/// middle: its fill, its outline just inside its edge and the dark rim
+/// just outside it, as [`ribbon`] has them. How far a stick of dynamite's
+/// blast reaches, where it is aimed and where it lies (`utility`,
+/// `dynamite`).
+pub(crate) fn disc(radius: f32) -> (Mesh, Mesh, Mesh) {
+    let steps = (360.0 / STEP_DEG) as usize;
+    let edge: Vec<Vec2> = (0..steps)
+        .map(|i| Vec2::from_angle(i as f32 * std::f32::consts::TAU / steps as f32) * radius)
+        .collect();
+    let mut points = vec![Vec2::ZERO];
+    points.extend(edge.iter().copied());
+    let mut indices = Vec::new();
+    for i in 0..steps {
+        triangle(&points, &mut indices, 0, 1 + i, 1 + (i + 1) % steps);
+    }
+    (flat(points, indices), edging(&edge, WIDTH), edging(&edge, -RIM))
+}
+
+/// A line `width` wide along the closed `edge`: just inside it, or, for
+/// a `width` less than nothing, just outside it ([`inset`]).
+fn edging(edge: &[Vec2], width: f32) -> Mesh {
+    let n = edge.len();
+    let mut points = edge.to_vec();
+    points.extend(inset(edge, width));
+    let mut indices = Vec::new();
+    for i in 0..n {
+        let j = (i + 1) % n;
+        triangle(&points, &mut indices, i, j, n + j);
+        triangle(&points, &mut indices, i, n + j, n + i);
+    }
+    flat(points, indices)
+}
+
 /// What a sheet of it is made of: `colour`, as see-through as its alpha
 /// says, unlit and drawn [`GAIN`] times as bright, from either side.
 pub(crate) fn look(colour: Color) -> StandardMaterial {

@@ -1,0 +1,9 @@
+These are the list of my personally observed "easy" optimal ways to defeat AI's in the bridgewars. I expect you to find a way to improve their intelligence so these optimal ways don't exist as easily as these:
+
+1. When im engaging in combat with an ai, and instead of attacking i just run around in a circle, the AI always is one step behind so he just keeps following in a circle behind me in an endless loop. 
+
+2. When there is 2 bridge close to each other toward an island, and i am on one bridge, the enemy chases me through one of the bridge, but then i jump across to the other bridge, and instead of the ai also jumping across, it goes all the way back to the island and then go on the other bridge - so i can jump back and forth between the 2 bridge to make the ai go back and forth etc.
+
+3. pvp seems moderate right now for all the bots equally- when i spam click the attack button while fighting, i always seem to hit them first, and they seem to get knocked back more than they knock me back, so i can always win even in 1v2 (cuz im pro). the bots, depending on personality, need to vary in pvp skill based on personality so some bots are like pro-er, and some bots are moderate like now.
+
+  

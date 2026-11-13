@@ -164,6 +164,7 @@ use bevy::light::{NotShadowCaster, NotShadowReceiver};
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
 use bevy_replicon::prelude::Remote;
+use roundtown_net::nav::plank_in_blast;
 use roundtown_net::{Ask as NetAsk, Plank};
 
 use crate::arena::{Fighting, InArena, Resources};
@@ -447,6 +448,14 @@ struct Chain {
     /// chain ends where it is, and off their side a fork begins (`lay`).
     /// Yours alone.
     behind: bool,
+    /// Which of its planks a stick of dynamite has taken, by the plank's
+    /// number, the one between its rung of that number and the next
+    /// (since 2026-11-13; [`Bridges::break_planks`]): neither drawn nor
+    /// stood on any more, and nothing for another bridge to begin on or
+    /// land on. The rest of the chain is as it was built. And whether one
+    /// has gone since it was last drawn.
+    gone: Vec<bool>,
+    holed: bool,
     mesh: Entity,
     handle: Handle<Mesh>,
 }
@@ -457,6 +466,8 @@ impl Chain {
             seat,
             id,
             rungs,
+            gone: Vec::new(),
+            holed: false,
             tip: None,
             built_rungs: usize::MAX,
             built_tip: None,
@@ -486,23 +497,35 @@ impl Chain {
         k + 1 < self.rungs.len()
     }
 
+    /// Whether the plank `k` is there still: not taken by a blast.
+    fn stands(&self, k: usize) -> bool {
+        !self.gone.get(k).copied().unwrap_or(false)
+    }
+
+    /// Its fixed planks that still stand, by number, as built.
+    fn fixed_planks(&self) -> impl Iterator<Item = usize> + '_ {
+        (0..self.corners.len().saturating_sub(1)).filter(|&k| self.fixed(k) && self.stands(k))
+    }
+
     /// Its fixed planks' tops as built, each a quad of its corners, the
-    /// tip's left out: the ground another chain may begin on or land on.
+    /// tip's left out, and whatever a blast has taken: the ground another
+    /// chain may begin on or land on.
+    #[cfg(test)]
     fn fixed_quads(&self) -> impl Iterator<Item = [Vec2; 4]> + '_ {
-        (0..self.corners.len().saturating_sub(1)).filter(|&k| self.fixed(k)).map(|k| {
+        self.fixed_planks().map(|k| {
             let (l0, r0) = self.corners[k];
             let (l1, r1) = self.corners[k + 1];
             [l0, r0, r1, l1]
         })
     }
 
-    /// Its fixed planks' tops as built, the tip's left out, the first and
-    /// the last in strips where the root or the end follows a bent edge
-    /// ([`strips`]): the ground another chain stands on, begins on or
-    /// lands on, exactly as it is drawn.
+    /// Its fixed planks' tops as built, the tip's left out, and whatever
+    /// a blast has taken, the first and the last in strips where the root
+    /// or the end follows a bent edge ([`strips`]): the ground another
+    /// chain stands on, begins on or lands on, exactly as it is drawn.
     fn ground_quads(&self) -> impl Iterator<Item = [Vec2; 4]> + '_ {
         let n = self.corners.len();
-        (0..n.saturating_sub(1)).filter(|&k| self.fixed(k)).flat_map(move |k| {
+        self.fixed_planks().flat_map(move |k| {
             let root: &[(f32, Vec2)] = if k == 0 { &self.root_edge } else { &[] };
             let end: &[(f32, Vec2)] = if k + 2 == n { &self.end_edge } else { &[] };
             let (near, far) = (self.corners[k], self.corners[k + 1]);
@@ -535,18 +558,22 @@ impl Chain {
 
     /// Which way is off its fixed planks at `e`, a point on their edge:
     /// square to whichever edge of theirs is nearest, outward; the sides,
-    /// and the ends of the first and the last, never the joints between.
-    /// None with no fixed plank.
+    /// the ends of the first and the last, and the ends a blast has left
+    /// either side of a hole, never the joints between two planks that
+    /// both stand. None with no fixed plank standing.
     fn edge_normal(&self, e: Vec2) -> Option<Vec2> {
-        let quads: Vec<[Vec2; 4]> = self.fixed_quads().collect();
+        let planks: Vec<usize> = self.fixed_planks().collect();
         let mut best: Option<(f32, Vec2)> = None;
-        for (k, quad) in quads.iter().enumerate() {
+        for &k in &planks {
+            let ((l0, r0), (l1, r1)) = (self.corners[k], self.corners[k + 1]);
+            let quad = [l0, r0, r1, l1];
             let middle = (quad[0] + quad[1] + quad[2] + quad[3]) * 0.25;
             let mut edges = vec![(quad[1], quad[2]), (quad[3], quad[0])];
-            if k == 0 {
+            // An end is an edge where no plank stands on from it.
+            if k == 0 || !planks.contains(&(k - 1)) {
                 edges.push((quad[0], quad[1]));
             }
-            if k + 1 == quads.len() {
+            if !planks.contains(&(k + 1)) {
                 edges.push((quad[2], quad[3]));
             }
             for (a, b) in edges {
@@ -695,14 +722,106 @@ impl Bridges {
             .collect()
     }
 
-    /// Every plank's top, as a quad of its corners, tips included: for the
-    /// minimap.
+    /// Every plank's top that stands, as a quad of its corners, tips
+    /// included: for the minimap.
     pub(crate) fn quads(&self) -> impl Iterator<Item = [Vec2; 4]> + '_ {
         self.chains.iter().flat_map(|chain| {
-            chain.corners.windows(2).map(|pair| {
+            chain.corners.windows(2).enumerate().filter(|(k, _)| chain.stands(*k)).map(|(_, pair)| {
                 let ((l0, r0), (l1, r1)) = (pair[0], pair[1]);
                 [l0, r0, r1, l1]
             })
+        })
+    }
+
+    /// These planks are gone, each the plank numbered so of the bridge
+    /// numbered so of whoever is in that seat: a stick of dynamite has
+    /// taken them (since 2026-11-13; Hajun's file: "destroy that blast
+    /// radius region of the bridge"). The server says which online
+    /// (`roundtown_net::Blasted`), and [`Bridges::blast`] offline. Each is
+    /// no longer drawn, stood on, nor anything for a bridge to begin on or
+    /// land on, from the next time the planks are built ([`rebuild`]); the
+    /// rest of its bridge stays as it was built, its ends either side of
+    /// the hole as they were cut where they met the plank that is gone.
+    /// One said to be gone before its rungs have come is never there.
+    pub(crate) fn break_planks(&mut self, planks: &[(u8, u16, u16)]) {
+        for &(seat, id, plank) in planks {
+            let plank = usize::from(plank);
+            if plank >= MOST_RUNGS {
+                continue;
+            }
+            if self.chain(seat, id).is_none() {
+                if self.chains.len() >= MOST_CHAINS {
+                    continue;
+                }
+                self.chains.push(Chain::new(seat, id, Vec::new()));
+            }
+            let chain = self.chain(seat, id).expect("just found or made");
+            if chain.gone.len() <= plank {
+                chain.gone.resize(plank + 1, false);
+            }
+            if !chain.gone[plank] {
+                chain.gone[plank] = true;
+                chain.holed = true;
+                self.dirty = true;
+            }
+        }
+    }
+
+    /// A stick of dynamite blows at `at`, reaching `radius` across the
+    /// ground, in a game this device runs: every fixed plank whose middle
+    /// it reaches is gone (`roundtown_net::nav::plank_in_blast`, the rule
+    /// the server goes by online), and so is the plank you are laying, if
+    /// its middle is ([`Bridges::blast_tip`]). Which fixed planks went, as
+    /// [`Bridges::break_planks`] takes them.
+    pub(crate) fn blast(&mut self, at: Vec2, radius: f32) -> Vec<(u8, u16, u16)> {
+        let taken: Vec<(u8, u16, u16)> = self
+            .chains
+            .iter()
+            .flat_map(|chain| {
+                chain
+                    .rungs
+                    .windows(2)
+                    .enumerate()
+                    .filter(|(k, pair)| chain.stands(*k) && plank_in_blast(pair[0].p, pair[1].p, at, radius))
+                    .map(|(k, _)| (chain.seat, chain.id, k as u16))
+            })
+            .collect();
+        self.break_planks(&taken);
+        self.blast_tip(at, radius);
+        taken
+    }
+
+    /// The plank you are laying now, not fixed yet and nobody's but this
+    /// device's, goes with a blast at `at` reaching `radius` if its middle
+    /// is within it: the bridge ends where its fixed planks got to, with
+    /// nothing under you if you stood on it. Whether it went.
+    pub(crate) fn blast_tip(&mut self, at: Vec2, radius: f32) -> bool {
+        let Some(c) = self.active else {
+            return false;
+        };
+        let chain = &self.chains[c];
+        let (Some(last), Some(tip)) = (chain.rungs.last(), chain.tip) else {
+            return false;
+        };
+        if !plank_in_blast(last.p, tip.p, at, radius) {
+            return false;
+        }
+        self.abandon(c);
+        true
+    }
+
+    /// Every plank a blast has taken, of every bridge: whose it was, by
+    /// seat, which of theirs, and which plank of that. What the computer's
+    /// players know of the holes in a game played offline
+    /// (`roundtown_net::nav::Nav::break_planks`).
+    pub(crate) fn broken(&self) -> impl Iterator<Item = (u8, u16, u16)> + '_ {
+        self.chains.iter().flat_map(|chain| {
+            chain
+                .gone
+                .iter()
+                .enumerate()
+                .filter(|(_, gone)| **gone)
+                .map(move |(plank, _)| (chain.seat, chain.id, plank as u16))
         })
     }
 
@@ -2042,7 +2161,9 @@ fn rebuild(
     let cut = bridges.recut(&land);
     let mut parts = Vec::new();
     for (c, chain) in bridges.chains.iter_mut().enumerate() {
-        let redraw = restyled || cut.contains(&c);
+        // Drawn again, as it was built, with a plank of it gone since.
+        let redraw = restyled || cut.contains(&c) || chain.holed;
+        chain.holed = false;
         if relay {
             chain.overlaid_tip = chain.tip;
         }
@@ -2067,6 +2188,7 @@ fn rebuild(
             &chain.root_edge,
             &chain.end_edge,
             chain.complete,
+            &chain.gone,
             chain.top(),
             colours.plank,
             colours.plank_side,
@@ -2106,12 +2228,16 @@ fn rebuild(
 /// stand on: each plank's top, underside, left side and right side, and a
 /// cap across the tip if the chain is not `complete`. The first plank's
 /// near edge follows `root` and the last one's far edge `end`, where those
-/// bend, its top and its underside in strips ([`strips`]).
+/// bend, its top and its underside in strips ([`strips`]). A plank that is
+/// `gone`, by its number, taken by a blast, is left out, and the planks
+/// either side of it are capped where they met it.
+#[allow(clippy::too_many_arguments)]
 fn planks(
     corners: &[(Vec2, Vec2)],
     root: &[(f32, Vec2)],
     end: &[(f32, Vec2)],
     complete: bool,
+    gone: &[bool],
     height: f32,
     top: Color,
     side: Color,
@@ -2148,7 +2274,11 @@ fn planks(
         triangles.push([a, b, c]);
         triangles.push([a, c, d]);
     };
+    let stands = |k: usize| !gone.get(k).copied().unwrap_or(false);
     for k in 0..corners.len().saturating_sub(1) {
+        if !stands(k) {
+            continue;
+        }
         let (l0, r0) = corners[k];
         let (l1, r1) = corners[k + 1];
         let along = ((l1 + r1) - (l0 + r0)).normalize_or(Vec2::X);
@@ -2162,8 +2292,14 @@ fn planks(
         }
         face(up(l0), up(l1), down(l1), down(l0), Vec3::new(left_out.x, 0.0, left_out.y), side_tint);
         face(up(r0), up(r1), down(r1), down(r0), Vec3::new(-left_out.x, 0.0, -left_out.y), side_tint);
-        if k + 2 == corners.len() && !complete {
+        // Capped where nothing goes on from it: at the tip of a chain not
+        // finished, and at a hole.
+        let last = k + 2 == corners.len();
+        if (last && !complete) || (!last && !stands(k + 1)) {
             face(up(l1), up(r1), down(r1), down(l1), Vec3::new(along.x, 0.0, along.y), side_tint);
+        }
+        if k > 0 && !stands(k - 1) {
+            face(up(l0), up(r0), down(r0), down(l0), Vec3::new(-along.x, 0.0, -along.y), side_tint);
         }
     }
     let mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default())
@@ -2390,7 +2526,7 @@ mod tests {
         }
         assert_unfolded(&built, TOP, complete);
         // An unfinished chain is capped at its tip.
-        let (open, _) = planks(&built[..3], &[], &[], false, TOP, Color::WHITE, Color::BLACK);
+        let (open, _) = planks(&built[..3], &[], &[], false, &[], TOP, Color::WHITE, Color::BLACK);
         assert_eq!(open.count_vertices(), 2 * 16 + 4);
     }
 
@@ -2398,7 +2534,7 @@ mod tests {
     /// at its sides, and none is folded: each plank's two edges run on the
     /// way the plank goes.
     fn assert_unfolded(corners: &[(Vec2, Vec2)], height: f32, complete: bool) {
-        let (mesh, triangles) = planks(corners, &[], &[], complete, height, Color::WHITE, Color::BLACK);
+        let (mesh, triangles) = planks(corners, &[], &[], complete, &[], height, Color::WHITE, Color::BLACK);
         let caps = if complete { 0 } else { 2 };
         assert_eq!(triangles.len(), (corners.len() - 1) * 8 + caps);
         assert_eq!(mesh.count_vertices(), (corners.len() - 1) * 16 + caps * 2);
@@ -3051,7 +3187,7 @@ mod tests {
                 assert!((b - a).perp_dot(d - a) > 0.0 && (c - b).perp_dot(d - c) < 0.0 || (b - a).perp_dot(d - a) < 0.0, "a strip is twisted");
             }
         }
-        let (_, triangles) = planks(&chain.corners, &chain.root_edge, &chain.end_edge, chain.complete, TOP, Color::WHITE, Color::BLACK);
+        let (_, triangles) = planks(&chain.corners, &chain.root_edge, &chain.end_edge, chain.complete, &chain.gone, TOP, Color::WHITE, Color::BLACK);
         for [a, b, c] in &triangles {
             let normal = (*b - *a).cross(*c - *a);
             let middle = (*a + *b + *c) / 3.0;
@@ -3332,5 +3468,174 @@ mod tests {
         assert_eq!(chain.rungs.len(), 3);
         assert!(chain.waiting.is_empty());
         assert!((chain.rungs[2].p.x - 2.0 * SPACING).abs() < 1e-4);
+    }
+
+    /// Two islands 10 m across from their middles with eight planks'
+    /// worth of void between their shores, and seat 1's bridge laid
+    /// straight across it, as it comes from the server: rungs from the one
+    /// shore, at x = 10, to the other.
+    fn bridged() -> (Island, Bridges) {
+        let mut corners = disc(Vec2::ZERO, 10.0);
+        // (A hair nearer than eight planks off, so that the last rung is
+        // on the far shore and not at its very edge.)
+        corners.extend(disc(Vec2::new(20.0 + 8.0 * SPACING - 0.05, 0.0), 10.0));
+        let island = Island::new(&corners);
+        let mut bridges = Bridges::default();
+        bridges.chains.push(left(1, 0, straight(Vec2::new(10.0, 0.0), Vec2::X, 8)));
+        bridges.recut(&is_land(&island));
+        assert!(bridges.chains[0].complete, "it lands on the far shore");
+        (island, bridges)
+    }
+
+    /// Where the rung numbered `rung` of [`bridged`]'s bridge is, along x.
+    fn rung_at(rung: usize) -> f32 {
+        10.0 + rung as f32 * SPACING
+    }
+
+    #[test]
+    fn a_blast_takes_planks_out_of_a_bridge_and_what_is_left_stays_as_it_was_built() {
+        let (island, mut bridges) = bridged();
+        let land = is_land(&island);
+        let before = bridges.chains[0].corners.clone();
+        let white = Color::WHITE;
+        let whole = {
+            let chain = &bridges.chains[0];
+            planks(&chain.corners, &chain.root_edge, &chain.end_edge, chain.complete, &chain.gone, chain.top(), white, white).1
+        };
+        // Before it, the joint between two planks is no edge to walk off:
+        // the nearest edge to a point on it is a side.
+        let joint = Vec2::new(rung_at(2), 0.3);
+        assert!(bridges.chains[0].edge_normal(joint).unwrap().y.abs() > 0.99);
+        // A stick of dynamite on the joint in the middle of the bridge,
+        // reaching 3 m: the four planks whose middles are within that,
+        // two either side of it.
+        let at = Vec2::new(rung_at(4), 0.0);
+        let taken = bridges.blast(at, 3.0);
+        assert_eq!(taken, vec![(1, 0, 2), (1, 0, 3), (1, 0, 4), (1, 0, 5)]);
+        assert!(bridges.dirty && bridges.chains[0].holed);
+        assert_eq!(bridges.broken().collect::<Vec<_>>(), taken);
+        // The bridge itself has not changed: nothing of it is worked out
+        // again, and every corner of it is where it was.
+        assert!(bridges.recut(&land).is_empty());
+        assert_eq!(bridges.chains[0].corners, before);
+        // Nothing is under the hole; the planks either side of it are
+        // stood on still, and are what another bridge may begin on.
+        for x in [rung_at(2) + 0.1, rung_at(4), rung_at(6) - 0.1] {
+            assert_eq!(bridges.plank_under(Vec2::new(x, 0.4)), None, "something under {x}");
+        }
+        assert_eq!(bridges.plank_under(Vec2::new(rung_at(2) - 0.1, -0.4)), Some(0));
+        assert_eq!(bridges.plank_under(Vec2::new(rung_at(6) + 0.1, 0.4)), Some(0));
+        assert!(bridges.ground_but(7).iter().all(|&quad| !inside_quad(at, quad)));
+        assert_eq!(bridges.chains[0].fixed_quads().count(), 4);
+        // On the minimap: the four planks left.
+        assert_eq!(bridges.quads().count(), 4);
+        // Drawn and stood on: all of the bridge but the four planks, with
+        // a cap across each of the two ends left either side of the hole
+        // and nothing in between.
+        let chain = &bridges.chains[0];
+        let holed = planks(&chain.corners, &chain.root_edge, &chain.end_edge, chain.complete, &chain.gone, chain.top(), white, white).1;
+        let (from, to) = (rung_at(2), rung_at(6));
+        let mut caps = 0;
+        for triangle in &holed {
+            let xs = triangle.map(|corner| corner.x);
+            assert!(xs.iter().all(|x| *x <= from + 1e-3 || *x >= to - 1e-3), "a triangle in the hole: {triangle:?}");
+            caps += usize::from(xs.iter().all(|x| (*x - from).abs() < 1e-3) || xs.iter().all(|x| (*x - to).abs() < 1e-3));
+        }
+        assert_eq!(caps, 4, "two triangles to each end");
+        // (A plank between straight edges is a top, an underside and two
+        // sides: eight triangles.)
+        assert_eq!(whole.len() - holed.len(), 4 * 8 - 4);
+        // Off either end is straight on along the bridge, out over the
+        // hole: where someone mending it begins.
+        assert!(chain.edge_normal(joint).unwrap().distance(Vec2::X) < 1e-4);
+        assert!(chain.edge_normal(Vec2::new(rung_at(6), -0.4)).unwrap().distance(Vec2::NEG_X) < 1e-4);
+        // Said again, it is nothing new.
+        bridges.dirty = false;
+        bridges.chains[0].holed = false;
+        bridges.break_planks(&taken);
+        assert!(bridges.blast(at, 3.0).is_empty());
+        assert!(!bridges.dirty && !bridges.chains[0].holed);
+        // A hole said of a bridge before its rungs have come is in it
+        // from the start.
+        let mut late = Bridges::default();
+        late.break_planks(&[(3, 2, 1)]);
+        for (index, rung) in straight(Vec2::new(10.0, 0.0), Vec2::X, 3).into_iter().enumerate() {
+            late.lay_remote(3, 2, index as u16, rung);
+        }
+        late.recut(&land);
+        assert_eq!(late.plank_under(Vec2::new(rung_at(1) + 0.5, 0.0)), None);
+        assert_eq!(late.plank_under(Vec2::new(rung_at(0) + 0.5, 0.0)), Some(0));
+        assert_eq!(late.plank_under(Vec2::new(rung_at(2) + 0.5, 0.0)), Some(0));
+    }
+
+    #[test]
+    fn the_plank_being_laid_goes_with_a_blast_that_reaches_its_middle_and_a_hole_is_mended_flush() {
+        // Out from a shore with one plank fixed and the next being laid.
+        let root = Rung { p: Vec2::new(10.0, 0.0), d: Vec2::X };
+        let building = || {
+            let mut bridges = Bridges::default();
+            bridges.begin(0, root, false);
+            bridges.chains[0].rungs.push(Rung { p: Vec2::new(rung_at(1), 0.0), d: Vec2::X });
+            bridges.chains[0].tip = Some(Rung { p: Vec2::new(rung_at(1) + 1.2, 0.0), d: Vec2::X });
+            bridges
+        };
+        // A blast well off is nothing to it.
+        let mut bridges = building();
+        assert!(!bridges.blast_tip(Vec2::new(30.0, 0.0), 3.0));
+        assert!(bridges.active == Some(0) && bridges.chains[0].tip.is_some());
+        // One that reaches the middle of the plank being laid takes it:
+        // the bridge ends where its fixed planks got to, and nothing is
+        // being built.
+        assert!(bridges.blast_tip(Vec2::new(rung_at(1) + 2.5, 0.5), 3.0));
+        assert!(bridges.active.is_none() && bridges.chains.len() == 1 && bridges.chains[0].tip.is_none());
+        // With the fixed plank behind it in reach too, both go.
+        let mut bridges = building();
+        assert_eq!(bridges.blast(Vec2::new(rung_at(1), 0.0), 3.0), vec![(0, 0, 0)]);
+        assert!(bridges.active.is_none() && bridges.chains[0].tip.is_none());
+        assert_eq!(bridges.plank_under(Vec2::new(10.5, 0.0)), None);
+        // A bridge of nothing but its root and the plank being laid is
+        // forgotten with it.
+        let mut bridges = Bridges::default();
+        bridges.begin(0, root, false);
+        bridges.chains[0].tip = Some(Rung { p: Vec2::new(11.0, 0.0), d: Vec2::X });
+        assert!(bridges.blast(Vec2::new(10.5, 0.0), 3.0).is_empty());
+        assert!(bridges.chains.is_empty() && bridges.active.is_none());
+
+        // A hole of four planks, and planks laid across it as one of the
+        // computer's players mends one: from half a metre inside what
+        // stands on the one side to half a metre inside what stands on the
+        // other. Its two ends are cut flush with the ends the blast left,
+        // and there is a plank underfoot all the way across again.
+        let (island, mut bridges) = bridged();
+        let land = is_land(&island);
+        bridges.blast(Vec2::new(rung_at(4), 0.0), 3.0);
+        let (from, to) = (rung_at(2) - 0.5, rung_at(6) + 0.5);
+        let count = ((to - from) / SPACING).ceil() as usize;
+        for index in 0..=count {
+            let rung = Rung {
+                p: Vec2::new(from + (to - from) * index as f32 / count as f32, 0.0),
+                d: Vec2::X,
+            };
+            bridges.lay_remote(5, 0, index as u16, rung);
+        }
+        assert_eq!(bridges.recut(&land), vec![1]);
+        let mend = &bridges.chains[1];
+        assert!(mend.complete, "it lands on what stands on the far side");
+        let (root, end) = (mend.corners[0], mend.corners[mend.corners.len() - 1]);
+        for corner in [root.0, root.1] {
+            assert!((corner.x - rung_at(2)).abs() < 0.05, "its root is not flush with the end left: {corner}");
+        }
+        for corner in [end.0, end.1] {
+            assert!((corner.x - rung_at(6)).abs() < 0.05, "its end is not flush with the end left: {corner}");
+        }
+        let mut x = 10.05;
+        while x < rung_at(8) - 0.05 {
+            for y in [-1.0, 0.0, 1.0] {
+                assert!(bridges.plank_under(Vec2::new(x, y)).is_some(), "nothing underfoot at {x}, {y}");
+            }
+            x += 0.1;
+        }
+        // And the bridge it mends is as it was built, hole and all.
+        assert_eq!(bridges.chains[0].fixed_quads().count(), 4);
     }
 }

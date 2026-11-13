@@ -9,11 +9,15 @@
 //!
 //! * `POST /login` with `{"device": "<32 hex digits>", "to": "<address>"}`:
 //!   the token, for the game server at `to`, one of its public addresses. A
-//!   device never seen before gets an account: a name, a look and
-//!   [`STARTING_BALANCE`] coins.
+//!   device never seen before gets an account: a name, the tag after it
+//!   (`#1000` to `#9999`, one nobody of that name has: [`account_of`]), a
+//!   look and [`STARTING_BALANCE`] coins.
 //! * `POST /delete` with `{"device": "..."}`: the account that device plays,
-//!   and everything kept about it, gone for good. Apple asks for that inside
-//!   the app, even for accounts nobody signed up for.
+//!   and everything kept about it, gone for good: its friends, what it asked
+//!   and was asked, and what was written to and by it go with its row, and
+//!   the game server is told, to forget it too (`Setup::gone`,
+//!   `social::forget_deleted`). Apple asks for that inside the app, even
+//!   for accounts nobody signed up for.
 //!
 //! Only a hash of each secret is kept, so a copy of the database is no way
 //! in. A device that asks too often is turned away for a while.
@@ -28,6 +32,7 @@ use bevy_replicon_renet::netcode::{ConnectToken, NETCODE_USER_DATA_BYTES};
 use postgres::Client;
 use roundtown_net::PROTOCOL_ID;
 use roundtown_net::rules::STARTING_BALANCE;
+use roundtown_net::social::{TAG_FIRST, TAG_LAST};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use tiny_http::{Header, Method, Request, Response, Server};
@@ -46,6 +51,10 @@ const TIMEOUT_SECS: i32 = 15;
 const PER_MINUTE: u32 = 30;
 /// The longest request read.
 const MOST_BYTES: usize = 1024;
+/// How many names and tags are thrown for a new account before it is given
+/// up: each throw is one of 162 million, and one that is taken is thrown
+/// again.
+const NEW_ACCOUNT_TRIES: u32 = 16;
 
 /// What the login was set up with.
 pub(crate) struct Setup {
@@ -54,6 +63,9 @@ pub(crate) struct Setup {
     /// The game server's addresses, as devices reach it: what a token may
     /// name.
     pub public: Vec<SocketAddr>,
+    /// Where each account deleted is told to the game's loop, which keeps
+    /// its own copy of who is whose friend (`social`).
+    pub gone: std::sync::mpsc::Sender<u64>,
 }
 
 /// Starts the login on a thread of its own.
@@ -137,7 +149,7 @@ fn serve(setup: &Setup) {
         };
         let answer = match path.as_str() {
             "/login" => login(client, setup, &secret, asked.to.as_deref()),
-            "/delete" => delete(client, &secret),
+            "/delete" => delete(client, &secret, &setup.gone),
             _ => Ok((404, Vec::new())),
         };
         match answer {
@@ -190,29 +202,9 @@ fn login(
     else {
         return Ok((400, Vec::new()));
     };
-    let found = db.query_opt("SELECT player FROM devices WHERE secret = $1", &[&secret])?;
-    let id: i64 = match found {
-        Some(row) => row.get(0),
-        None => {
-            let mut transaction = db.transaction()?;
-            let name = crate::players::new_name();
-            let row = transaction.query_one(
-                "INSERT INTO players (name, look, coins) VALUES ($1, $2, $3) RETURNING id",
-                &[&name, &roundtown_net::PLAYER_LOOK, &i64::from(STARTING_BALANCE)],
-            )?;
-            let id: i64 = row.get(0);
-            transaction.execute(
-                "INSERT INTO devices (secret, player) VALUES ($1, $2)",
-                &[&secret, &id],
-            )?;
-            transaction.execute(
-                "INSERT INTO coin_changes (player, amount, reason) VALUES ($1, $2, 'starting balance')",
-                &[&id, &i64::from(STARTING_BALANCE)],
-            )?;
-            transaction.commit()?;
-            info!("a new account, {id}: {name}");
-            id
-        }
+    let Some(id) = account_of(db, secret)? else {
+        error!("the login could not find a name and a tag for a new account");
+        return Ok((503, Vec::new()));
     };
     let mut user_data = [0u8; NETCODE_USER_DATA_BYTES];
     user_data[..8].copy_from_slice(&(id as u64).to_le_bytes());
@@ -241,15 +233,64 @@ fn login(
     Ok((200, bytes))
 }
 
+/// The account of the device whose secret hashes to `secret`: made now, if
+/// it has none, with a name of the server's making, [`STARTING_BALANCE`]
+/// coins, and a tag after its name that nobody of that name has (`social`;
+/// since 2026-11-13). The tag is thrown, and the row goes in only if nobody
+/// of the name has it; thrown again, with another name, until it does. None
+/// if it never did, which no number of accounts there could be would come
+/// to.
+pub(crate) fn account_of(db: &mut Client, secret: &[u8]) -> Result<Option<i64>, postgres::Error> {
+    if let Some(row) = db.query_opt("SELECT player FROM devices WHERE secret = $1", &[&secret])? {
+        return Ok(Some(row.get(0)));
+    }
+    let mut transaction = db.transaction()?;
+    let mut made = None;
+    for _ in 0..NEW_ACCOUNT_TRIES {
+        let name = crate::players::new_name();
+        let tag = fastrand::u16(TAG_FIRST..=TAG_LAST) as i16;
+        let row = transaction.query_opt(
+            "INSERT INTO players (name, look, coins, tag) \
+             SELECT $1::text, $2::text, $3::bigint, $4::smallint \
+             WHERE NOT EXISTS (SELECT 1 FROM players WHERE lower(name) = lower($1::text) AND tag = $4::smallint) \
+             RETURNING id",
+            &[&name, &roundtown_net::PLAYER_LOOK, &i64::from(STARTING_BALANCE), &tag],
+        )?;
+        if let Some(row) = row {
+            made = Some((row.get::<_, i64>(0), name, tag));
+            break;
+        }
+    }
+    let Some((id, name, tag)) = made else {
+        return Ok(None);
+    };
+    transaction.execute("INSERT INTO devices (secret, player) VALUES ($1, $2)", &[&secret, &id])?;
+    transaction.execute(
+        "INSERT INTO coin_changes (player, amount, reason) VALUES ($1, $2, 'starting balance')",
+        &[&id, &i64::from(STARTING_BALANCE)],
+    )?;
+    transaction.commit()?;
+    info!("a new account, {id}: {name}#{tag}");
+    Ok(Some(id))
+}
+
 /// Deletes the account of the device whose secret hashes to `secret`, and
-/// everything kept about it.
-fn delete(db: &mut Client, secret: &[u8]) -> Result<(u16, Vec<u8>), postgres::Error> {
-    let gone = db.execute(
-        "DELETE FROM players WHERE id = (SELECT player FROM devices WHERE secret = $1)",
+/// everything kept about it: its friends, what it asked and what was
+/// written to it and by it go with it, by the tables' own rules, and the
+/// game's loop is told through `gone`, so that its own copy lets go of them
+/// too.
+fn delete(
+    db: &mut Client,
+    secret: &[u8],
+    gone: &std::sync::mpsc::Sender<u64>,
+) -> Result<(u16, Vec<u8>), postgres::Error> {
+    let deleted = db.query(
+        "DELETE FROM players WHERE id = (SELECT player FROM devices WHERE secret = $1) RETURNING id",
         &[&secret],
     )?;
-    if gone > 0 {
+    for row in &deleted {
         info!("an account was deleted");
+        let _ = gone.send(row.get::<_, i64>(0) as u64);
     }
     Ok((204, Vec::new()))
 }

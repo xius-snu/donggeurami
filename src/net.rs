@@ -700,7 +700,8 @@ fn hear(
             Tell::Balance(coins) => {
                 balance.set_if_neq(Balance(*coins));
             }
-            Tell::Joined { .. } | Tell::Seated { .. } | Tell::Refused(_) | Tell::Bought(_) => {}
+            // What it says of your friends is `friends`' to hear.
+            Tell::Joined { .. } | Tell::Seated { .. } | Tell::Refused(_) | Tell::Bought(_) | Tell::Social(_) => {}
         }
     }
 }
