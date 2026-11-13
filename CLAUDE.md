@@ -313,7 +313,14 @@ alone; the server is `cargo build -p roundtown_server`. Never `--workspace`,
 which would build the game with the server's half of replicon in it.
 
 Android needs the `release-android` profile, a manual strip step, and Gradle
-(`versionCode` in `mobile/android/app/build.gradle` is the build number: 27
+(`versionCode` in `mobile/android/app/build.gradle` is the build number: 28
+later the same night, the stick's middle wherever the finger holding it
+first goes down, its disc going there and back to its own place as it is
+let go (Hajun: "wherever the user tap first should be the middle";
+`TouchControls::stick_origin`, `JoystickBase`, `stick_corner` in
+`src/lib.rs`; protocol 15 still, no server change; built and not
+installed, APK 27 kept beside it as
+`donggeurami_town-release.prev-2026-11-14b.apk`); 27
 in the small hours of 2026-11-14, the dynamite's arch drawn up the screen
 with an X where it will land, its brown fuse, no three dots and no empty
 buttons, the computer's players standing their ground against whoever

@@ -732,6 +732,12 @@ struct JumpButtonVisual;
 #[derive(Component)]
 struct TouchHud;
 
+/// The stick's disc, which goes to wherever the finger holding it went
+/// down and back to its own place when it is let go
+/// ([`TouchControls::stick_origin`]).
+#[derive(Component)]
+struct JoystickBase;
+
 /// The mouse, as a finger on the stick or the jump button on desktop
 /// ([`read_mouse_controls`]): an id no touch has.
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
@@ -744,6 +750,12 @@ const MOUSE_ID: u64 = u64::MAX;
 struct TouchControls {
     stick_id: Option<u64>,
     stick_value: Vec2,
+    /// Where the finger holding the stick went down, in the window's logical
+    /// pixels: the stick's middle for as long as it is held (Hajun,
+    /// 2026-11-14: a press that has not been dragged has chosen no way yet,
+    /// so "wherever the user tap first should be the middle"). None with
+    /// the stick let go, when it is back in its own place.
+    stick_origin: Option<Vec2>,
     look_id: Option<u64>,
     look_last: Vec2,
     jump_id: Option<u64>,
@@ -1597,6 +1609,7 @@ fn setup_hud(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
     commands
         .spawn((
             TouchHud,
+            JoystickBase,
             Node {
                 position_type: PositionType::Absolute,
                 left: Val::Vw(STICK_LEFT_VW),
@@ -1687,6 +1700,7 @@ fn read_touch_controls(
         && released(id)
     {
         controls.stick_id = None;
+        controls.stick_origin = None;
         controls.stick_value = Vec2::ZERO;
     }
     if let Some(id) = controls.look_id
@@ -1762,6 +1776,7 @@ fn read_touch_controls(
             pointer.press();
         } else if controls.stick_id.is_none() && on_stick {
             controls.stick_id = Some(id);
+            controls.stick_origin = Some(pos);
         } else if controls.jump_id.is_none() && on_jump {
             controls.jump_id = Some(id);
             controls.jump_just_pressed = true;
@@ -1792,7 +1807,8 @@ fn read_touch_controls(
     if let Some(id) = controls.stick_id
         && let Some(touch) = touches.get_pressed(id)
     {
-        let delta = touch.position() - layout.stick_center;
+        // From where the finger went down, not from the stick's own middle.
+        let delta = touch.position() - controls.stick_origin.unwrap_or(layout.stick_center);
         let raw = Vec2::new(delta.x, -delta.y) / layout.stick_radius;
         controls.stick_value = raw.clamp_length_max(1.0);
     } else {
@@ -1990,6 +2006,7 @@ fn read_mouse_controls(
     if !mouse.pressed(MouseButton::Left) || position.is_none() {
         if controls.stick_id == Some(MOUSE_ID) {
             controls.stick_id = None;
+            controls.stick_origin = None;
             controls.stick_value = Vec2::ZERO;
         }
         if controls.jump_id == Some(MOUSE_ID) {
@@ -2003,13 +2020,14 @@ fn read_mouse_controls(
     if mouse.just_pressed(MouseButton::Left) && !presses.claimed(window, pos) {
         if controls.stick_id.is_none() && in_circle(pos, layout.stick_center, layout.stick_radius * 1.15) {
             controls.stick_id = Some(MOUSE_ID);
+            controls.stick_origin = Some(pos);
         } else if controls.jump_id.is_none() && in_circle(pos, layout.jump_center, layout.jump_radius * 1.2) {
             controls.jump_id = Some(MOUSE_ID);
             controls.jump_just_pressed = true;
         }
     }
     if controls.stick_id == Some(MOUSE_ID) {
-        let delta = pos - layout.stick_center;
+        let delta = pos - controls.stick_origin.unwrap_or(layout.stick_center);
         let raw = Vec2::new(delta.x, -delta.y) / layout.stick_radius;
         controls.stick_value = raw.clamp_length_max(1.0);
     }
@@ -2024,10 +2042,37 @@ impl TouchControls {
     }
 }
 
+/// Where the stick's disc has its left and bottom edges: in its own place,
+/// or, held, round where the finger holding it went down. In shares of the
+/// window, as its own place is, so that it is where the touch was whatever
+/// the UI's scale.
+fn stick_corner(window: &Window, origin: Option<Vec2>) -> (Val, Val) {
+    let Some(origin) = origin else {
+        return (Val::Vw(STICK_LEFT_VW), Val::Vh(STICK_BOTTOM_VH));
+    };
+    let (width, height) = (window.width().max(1.0), window.height().max(1.0));
+    let radius = width.min(height) * (STICK_SIZE_VMIN / 100.0) * 0.5;
+    (
+        Val::Vw((origin.x - radius) / width * 100.0),
+        Val::Vh((height - origin.y - radius) / height * 100.0),
+    )
+}
+
 fn update_joystick_knob(
     controls: Res<TouchControls>,
-    mut knobs: Query<&mut Node, With<JoystickKnob>>,
+    windows: Query<&Window>,
+    mut knobs: Query<&mut Node, (With<JoystickKnob>, Without<JoystickBase>)>,
+    mut bases: Query<&mut Node, (With<JoystickBase>, Without<JoystickKnob>)>,
 ) {
+    // The disc goes to where the finger went down, and back when it is let
+    // go: written only then, the middle staying put while the stick is held.
+    if let (Ok(mut base), Ok(window)) = (bases.single_mut(), windows.single()) {
+        let (left, bottom) = stick_corner(window, controls.stick_origin);
+        if base.left != left || base.bottom != bottom {
+            base.left = left;
+            base.bottom = bottom;
+        }
+    }
     let Ok(mut node) = knobs.single_mut() else {
         return;
     };
