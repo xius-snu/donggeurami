@@ -1547,8 +1547,8 @@ pub mod bridge_wars {
     /// and how far a quick tap throws it; how long it lies before it
     /// blows, and how many times it shines in that while; how high over
     /// the thrower's feet it leaves the hand, and how far in front of
-    /// them; how far to the right of the straight line it swings on its
-    /// way, as a share of how far it is thrown ([`Lob::track`]); and how
+    /// them; how far up the map it is drawn for each metre it has risen
+    /// over the straight line of its throw ([`Lob::track`]); and how
     /// near ground it has to come down to lie on it rather than fall
     /// past. All but the damage, the three and the price are mine: a blast
     /// as wide as the fireball's, which takes four or five planks out of
@@ -1566,7 +1566,10 @@ pub mod bridge_wars {
     pub const DYNAMITE_FLASHES: u32 = 3;
     pub const DYNAMITE_HAND: f32 = 1.2;
     pub const DYNAMITE_AHEAD: f32 = 0.5;
-    pub const DYNAMITE_BULGE: f32 = 0.18;
+    pub const DYNAMITE_LEAN: f32 = 1.0;
+    /// Which way across the ground, in its (x, z), is up the map: north,
+    /// the top of the screen under the camera fixed over you in a game.
+    pub const UP_THE_MAP: Vec2 = Vec2::NEG_Y;
     pub const DYNAMITE_CATCH: f32 = 0.5;
     /// What a stick falls by on its way, in metres a second a second: the
     /// game's own gravity on the way up. With how long it flies, this is
@@ -1581,16 +1584,25 @@ pub mod bridge_wars {
     /// that, if there was ground for it to lie on; whoever runs it says
     /// whether there was.
     ///
-    /// **It does not fly straight** ([`Lob::track`]): it swings out to the
-    /// right of the line from the hand to where it comes down and back,
-    /// as it rises and falls. The camera of this game is straight over
-    /// you, and from there a throw that only rose and fell would be seen
-    /// going along a straight line, however high it went; leant over to
-    /// one side, as a sword's cut is, its arch is seen (Hajun: "instead of
-    /// one straight rectangular hit range indicator its like an long
-    /// arched curved rectangular", "it will throw an arched dynamite").
-    /// Always to the same side, the thrower's right, so that the arch
-    /// turns with the aim and never flips.
+    /// **It is thrown straight at where it comes down, in an arch, and
+    /// drawn as an arch is on a map** ([`Lob::track`]): up the screen as
+    /// it rises and back down it as it falls, by [`DYNAMITE_LEAN`] of
+    /// however high it is over the straight line of its throw, as a game
+    /// seen from a little to the south would show anything thrown. The
+    /// camera of this game is straight over you, and from there a throw
+    /// that only rose and fell would be seen going along a straight line,
+    /// however high it went (Hajun: "instead of one straight rectangular
+    /// hit range indicator its like an long arched curved rectangular",
+    /// "it will throw an arched dynamite"). Thrown to the left or the
+    /// right, its arch is seen whole; thrown up the screen or down it,
+    /// it goes along a straight line, a little further on or behind.
+    /// **Never to one side of its throw as such** (since 2026-11-13,
+    /// Hajun: "i want the dynamites hit indicator's curved part to be
+    /// curved only in the Y axis (up and down) not the sideways axis. its
+    /// a arch projectile not a boomarang"): for its first day it swung out
+    /// to the thrower's right and back, whichever way it was thrown,
+    /// which thrown up the screen was a curve to the right and thrown to
+    /// the right a sag down the screen.
     #[derive(Clone, Copy, PartialEq, Debug)]
     pub struct Lob {
         pub from: Vec3,
@@ -1634,20 +1646,27 @@ pub mod bridge_wars {
             LOB_GRAVITY * self.secs().powi(2) / 8.0
         }
 
-        /// Where over the ground it is `share` of the way through its
-        /// flight, from 0 to 1: on the straight line from the hand to
-        /// where it comes down, swung out to the right of it by
-        /// [`DYNAMITE_BULGE`] of its length at the middle and by nothing
-        /// at either end.
-        pub fn track(&self, share: f32) -> Vec2 {
-            lob_track(Vec2::new(self.from.x, self.from.z), Vec2::new(self.to.x, self.to.z), share)
+        /// How high it is over the straight line from the hand to where
+        /// it comes down, `share` of the way through its flight, from 0
+        /// to 1: nothing at either end, and [`Lob::apex`] at the middle.
+        pub fn rise(&self, share: f32) -> f32 {
+            let share = share.clamp(0.0, 1.0);
+            4.0 * self.apex() * share * (1.0 - share)
         }
 
-        /// Where it is: on its way, or lying where it came down.
+        /// Where over the ground it is drawn `share` of the way through
+        /// its flight, from 0 to 1: on the straight line from the hand to
+        /// where it comes down, and up the map from there by
+        /// [`DYNAMITE_LEAN`] of how high it has risen ([`lob_track`]).
+        pub fn track(&self, share: f32) -> Vec2 {
+            lob_track(Vec2::new(self.from.x, self.from.z), Vec2::new(self.to.x, self.to.z), self.apex(), UP_THE_MAP, share)
+        }
+
+        /// Where it is drawn: on its way, or lying where it came down.
         pub fn at(&self) -> Vec3 {
             let share = (self.age / self.secs()).clamp(0.0, 1.0);
             let across = self.track(share);
-            let height = self.from.y + (self.to.y - self.from.y) * share + 4.0 * self.apex() * share * (1.0 - share);
+            let height = self.from.y + (self.to.y - self.from.y) * share + self.rise(share);
             Vec3::new(across.x, height, across.y)
         }
 
@@ -1685,14 +1704,15 @@ pub mod bridge_wars {
     }
 
     /// Where over the ground a stick thrown from `from` to come down at
-    /// `to` is, `share` of the way through its flight ([`Lob::track`]):
-    /// what the band that aims one is drawn along, too.
-    pub fn lob_track(from: Vec2, to: Vec2, share: f32) -> Vec2 {
+    /// `to`, rising `apex` over the straight line between them at the
+    /// middle of its flight, is drawn `share` of the way through it
+    /// ([`Lob::track`]): on that line, and `up` from it, the way the top
+    /// of the screen is, by [`DYNAMITE_LEAN`] of how high it has risen.
+    /// What the band that aims one is drawn along, too, in whatever space
+    /// that is built in.
+    pub fn lob_track(from: Vec2, to: Vec2, apex: f32, up: Vec2, share: f32) -> Vec2 {
         let share = share.clamp(0.0, 1.0);
-        let along = to - from;
-        // The thrower's right: east, for a throw to the north (-Z).
-        let right = Vec2::new(-along.y, along.x);
-        from + along * share + right * (DYNAMITE_BULGE * 4.0 * share * (1.0 - share))
+        from + (to - from) * share + up * (DYNAMITE_LEAN * apex * 4.0 * share * (1.0 - share))
     }
 
     /// Whether a stick of dynamite coming down at `to`, across the ground,
@@ -3835,8 +3855,8 @@ mod tests {
     #[test]
     fn a_stick_of_dynamite_is_lobbed_in_an_arch_to_where_it_was_aimed_and_blows_after_its_fuse() {
         use bridge_wars::{
-            DYNAMITE_AHEAD, DYNAMITE_BULGE, DYNAMITE_FLASHES, DYNAMITE_FURTHEST, DYNAMITE_FUSE, DYNAMITE_HAND, DYNAMITE_NEAREST,
-            DYNAMITE_RADIUS, DYNAMITE_TAP, Lob, in_dynamite, lob_track,
+            DYNAMITE_AHEAD, DYNAMITE_FLASHES, DYNAMITE_FURTHEST, DYNAMITE_FUSE, DYNAMITE_HAND, DYNAMITE_LEAN, DYNAMITE_NEAREST,
+            DYNAMITE_RADIUS, DYNAMITE_TAP, Lob, UP_THE_MAP, in_dynamite, lob_track,
         };
         // Thrown north from an island, 8 m: out of the hand, in front of
         // the thrower and over their feet, to come down 8 m north of them
@@ -3855,36 +3875,52 @@ mod tests {
         let (near, far) = (Lob::thrown(feet, 0.0, DYNAMITE_NEAREST, 0.25), Lob::thrown(feet, 0.0, DYNAMITE_FURTHEST, 0.25));
         assert!(near.secs() < far.secs() && near.secs() > 0.4 && far.secs() < 1.0, "{} and {}", near.secs(), far.secs());
         assert!(near.apex() < far.apex() && far.apex() > 1.5 && far.apex() < 3.0, "{} and {}", near.apex(), far.apex());
-        // On its way it rises and comes down again, and swings out to the
-        // thrower's right, east for a throw to the north, and back: by
-        // most at the middle, a share of how far it is thrown, and by
-        // nothing at either end.
+        // On its way it rises and comes down again. Thrown up the map,
+        // north, it is drawn along the straight line of its throw, to
+        // neither side of it, and always on northward.
         let frame = 1.0 / 60.0;
-        let (mut highest, mut widest, mut flown) = (lob.from.y, 0.0f32, 0.0);
+        let (mut highest, mut flown) = (lob.from.y, 0.0);
         let mut last = lob.at();
         while !lob.down() {
             lob.tick(frame);
             flown += frame;
             let at = lob.at();
             assert!(at.z <= last.z + 1e-4, "it flies on north");
-            assert!(at.x >= feet.x - 1e-4, "never to the thrower's left");
+            assert!((at.x - feet.x).abs() < 1e-4, "to neither side of its throw: {}", at.x - feet.x);
             highest = highest.max(at.y);
-            widest = widest.max(at.x - feet.x);
             assert!(lob.down() || lob.shine() == 0.0, "it does not shine in the air");
             last = at;
         }
         assert!((flown - lob.secs()).abs() <= frame + 1e-4);
         assert!((highest - (DYNAMITE_HAND + 0.25) - lob.apex()).abs() < 0.6, "it rose to {highest}");
-        assert!((widest - DYNAMITE_BULGE * lob.chord()).abs() < 0.02, "it swung {widest} m out");
         assert!(lob.at().distance(lob.to) < 1e-4, "and it lies where it was aimed");
-        // The band that aims one is drawn along the same way.
-        let (from, to) = (Vec2::new(lob.from.x, lob.from.z), Vec2::new(lob.to.x, lob.to.z));
-        assert_eq!(lob_track(from, to, 0.0), from);
-        assert!(lob_track(from, to, 1.0).distance(to) < 1e-5);
-        assert!(lob_track(from, to, 0.5).distance((from + to) * 0.5 + Vec2::X * DYNAMITE_BULGE * from.distance(to)) < 1e-4);
-        // A throw to the west swings north, the thrower's right.
-        let west = Lob::thrown(feet, std::f32::consts::FRAC_PI_2, 8.0, 0.25);
-        assert!(west.to.x < feet.x - 7.9 && west.track(0.5).y < feet.z - 1.0, "{:?}", west.track(0.5));
+        assert_eq!((lob.rise(0.0), lob.rise(1.0)), (0.0, 0.0));
+        assert!((lob.rise(0.5) - lob.apex()).abs() < 1e-5);
+        // Thrown to the east or the west it is drawn as an arch is on a
+        // map: up it as it rises and back down it as it falls, by as much
+        // as it has risen, the same whichever of the two ways it goes, and
+        // never down the map from the line of its throw. The band that
+        // aims one is drawn along the same way.
+        for heading in [std::f32::consts::FRAC_PI_2, -std::f32::consts::FRAC_PI_2] {
+            let side = Lob::thrown(feet, heading, 8.0, 0.25);
+            let (from, to) = (Vec2::new(side.from.x, side.from.z), Vec2::new(side.to.x, side.to.z));
+            assert!((side.to.x - feet.x).abs() > 7.9 && (side.to.z - feet.z).abs() < 1e-4);
+            assert_eq!(side.track(0.0), from);
+            assert!(side.track(1.0).distance(to) < 1e-5);
+            let top = side.track(0.5);
+            assert!(top.distance((from + to) * 0.5 + UP_THE_MAP * DYNAMITE_LEAN * side.apex()) < 1e-4, "{top:?}");
+            assert!(top.y < feet.z - 1.0, "its arch is seen: {top:?}");
+            for step in 0..=20 {
+                let share = step as f32 / 20.0;
+                let at = side.track(share);
+                assert!(at.y <= feet.z + 1e-4, "never down the map from its throw");
+                assert!((at.x - (from.x + (to.x - from.x) * share)).abs() < 1e-4, "nor ahead of itself or behind");
+                assert_eq!(at, lob_track(from, to, side.apex(), UP_THE_MAP, share));
+            }
+        }
+        // Thrown down the map, south, it is on the line of its throw too.
+        let south = Lob::thrown(feet, std::f32::consts::PI, 8.0, 0.25);
+        assert!((0..=20).all(|step| (south.track(step as f32 / 20.0).x - feet.x).abs() < 1e-4));
         // Down, it lies there for its fuse, shining three times, each a
         // swell and a fade; and then it blows.
         let (mut lain, mut peaks, mut rising, mut before) = (0.0, 0, false, 0.0);

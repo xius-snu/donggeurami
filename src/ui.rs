@@ -611,6 +611,8 @@ pub(crate) struct FriendsColours {
     #[serde(deserialize_with = "colour")]
     pub field: Color,
     #[serde(deserialize_with = "colour")]
+    pub hint: Color,
+    #[serde(deserialize_with = "colour")]
     pub yes: Color,
     #[serde(deserialize_with = "colour")]
     pub yes_lit: Color,
@@ -1043,7 +1045,7 @@ pub(crate) struct FriendsWords {
     pub reject: String,
     pub my_id: String,
     pub copied: String,
-    pub search_first: String,
+    pub search_hint: String,
     pub nobody: String,
     pub wants_friend: String,
     pub wants_group: String,

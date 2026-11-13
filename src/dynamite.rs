@@ -7,11 +7,14 @@
 //! it will do 20 damage to player in that blast radius and destroy that
 //! blast radius region of the bridge"): two red sticks side by side with a
 //! brown fuse out of one end, tumbling end over end along an arch from the
-//! hand to the ground ([`Lob`], which swings out to the thrower's right so
-//! that the camera straight over you sees an arch at all); lying where
-//! they came down with a red ring on the ground round them as far as the
-//! blast will reach; shining three times, the sticks themselves and a glow
-//! round them; and then the fireball's own ball of fire (`fire::burst`).
+//! hand to the ground ([`Lob`]: thrown straight at where they come down,
+//! rising toward the camera over you, and drawn up the screen as they rise
+//! and back down it as they fall, as an arch is on a map: never to one
+//! side of the throw as such, Hajun, 2026-11-13: "its a arch projectile
+//! not a boomarang"); lying where they came down with a red ring on the
+//! ground round them as far as the blast will reach; shining three times,
+//! the sticks themselves and a glow round them; and then the fireball's
+//! own ball of fire (`fire::burst`).
 //!
 //! This is only how they look, and where they are from frame to frame.
 //! What a blast does is the rules' (`roundtown_net::bridge_wars`): the
@@ -43,9 +46,13 @@ use crate::ui::{UiChanged, ui};
 const STICK_RADIUS: f32 = 0.16;
 const STICK_LENGTH: f32 = 0.8;
 /// The fuse out of one end of them: how thick, from its middle, and how
-/// long.
-const FUSE_RADIUS: f32 = 0.045;
-const FUSE_LENGTH: f32 = 0.26;
+/// long. A string, and brown as one (`colours.arena.dynamite_fuse`;
+/// Hajun, 2026-11-13: "the dynamite's string part should be brown, like a
+/// string"): thicker and longer than it was for its first day (0.045 and
+/// 0.26), when from the camera over you it was a dark hair at the sticks'
+/// end, and no colour at all.
+const FUSE_RADIUS: f32 = 0.07;
+const FUSE_LENGTH: f32 = 0.42;
 /// How many times it turns end over end on its way.
 const TUMBLES: f32 = 1.5;
 /// How big the glow round it is at its brightest, in metres from its
@@ -466,8 +473,10 @@ mod tests {
         // it as they are thick.
         assert!((place(&lob).y - (0.24 + STICK_RADIUS)).abs() < 1e-5);
         assert!(place(&lob).xz().distance(Vec2::new(0.0, 124.0)) < 1e-4);
-        // The sticks are small, and still wider across than the fuse.
+        // The sticks are small, and still wider across than the fuse,
+        // which is long enough to be seen for the string it is.
         assert!(STICK_LENGTH < 1.0 && 4.0 * STICK_RADIUS < 1.0 && FUSE_RADIUS < 0.5 * STICK_RADIUS);
+        assert!(FUSE_LENGTH > 0.4 * STICK_LENGTH && FUSE_LENGTH < STICK_LENGTH);
         // One that lies with its fuse burnt down is for the game to blow;
         // one falling never is.
         let mut stick = Stick {

@@ -361,7 +361,9 @@ struct Offer {
 }
 
 /// The picture of something for the second button, and the colour it is
-/// tinted: on its card here, and on the button (`utility`).
+/// tinted: on its card here, and on the button (`utility`). The
+/// dynamite's is in two colours of its own, and tinted white, which
+/// leaves it as it is (`hud::Picture::in_its_own_colours`).
 pub(crate) fn look_of(utility: Utility) -> (Picture, Color) {
     let colours = ui().colours;
     match utility {
@@ -370,7 +372,7 @@ pub(crate) fn look_of(utility: Utility) -> (Picture, Color) {
         Utility::Speed => (Picture::Flask, colours.arena.potion_speed),
         Utility::Invisibility => (Picture::Flask, colours.arena.potion_invisibility),
         Utility::Healing => (Picture::Flask, colours.arena.potion_healing),
-        Utility::Dynamite => (Picture::Dynamite, colours.arena.dynamite),
+        Utility::Dynamite => (Picture::Dynamite, Color::WHITE),
     }
 }
 

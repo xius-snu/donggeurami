@@ -31,8 +31,11 @@
 //! there is counted in gold on its corner, and on the speech bubble's
 //! ([`hang_badge`]).
 //!
-//! It is a dialog (`hud::DialogUp`): you stand still, and presses are its
-//! own; the cross, a tap outside it, or Escape shuts it. It is drawn again
+//! It is a dialog (`hud::DialogUp`): you stand still, and a press on it is
+//! its own. The cross or Escape shuts it, and so does a press anywhere off
+//! it, as it goes down, which is then whatever it landed on's as well: the
+//! stick, the jump button, a button, the town ([`press_outside`]). It is
+//! drawn again
 //! whole whenever what it shows changes ([`redraw`]), as the settings'
 //! window is, which keeps what is typed (`signup::NameBox`) and how far a
 //! list is scrolled ([`Scrolled`]).
@@ -75,7 +78,13 @@ const TAB_WIDTH: f32 = 19.0;
 const TAB_HEIGHT: f32 = 8.2;
 const TAB_ICON: f32 = 5.2;
 const LINE: f32 = 0.4;
-const CLOSE: f32 = 7.0;
+/// The cross on the panel's corner (8 since 2026-11-13, Hajun: "increase
+/// size of the close button slightly"; 7 for its first evening), and how
+/// far its middle is in from the panel's top and right, which stays where
+/// it was whatever its size.
+const CLOSE: f32 = 8.0;
+const CLOSE_DOWN: f32 = PAD + 3.1;
+const CLOSE_IN: f32 = PAD + 2.7;
 const HEADING: f32 = 3.1;
 const ROW: f32 = 10.4;
 const AVATAR: f32 = 7.6;
@@ -94,6 +103,12 @@ const FIELD_TEXT: f32 = 3.0;
 /// tag after it, beside "Add friend".
 const ADD_WIDTH: f32 = 76.0;
 const FOUND_ROW: f32 = 6.8;
+/// How many of the players a search found are in sight at once: past
+/// that the list of them scrolls.
+const FOUND_SHOWN: usize = 3;
+/// How far in from the search bar's left the hint in it begins: where
+/// what is typed begins, and past the caret.
+const HINT_IN: f32 = 4.3;
 const FOUND_AVATAR: f32 = 5.2;
 const LINK_TEXT: f32 = 2.8;
 const MENU_WIDTH: f32 = 27.0;
@@ -224,6 +239,25 @@ struct Pressed {
     /// How far the press now down has been dragged, so that a drag to
     /// scroll a list is not also a tap on what it began on.
     dragged: f32,
+    /// The press now down, or last down, put the panel away as it landed
+    /// outside it ([`press_outside`]): let go on the speech bubble, it does
+    /// not open the panel again.
+    shut_it: bool,
+    /// When the press now down, or last down, went down, by the game's
+    /// time: one press is heard of once for everything under it.
+    began: f64,
+}
+
+impl Pressed {
+    /// A press has gone down at `now`: the first word of it starts it
+    /// afresh, with nothing dragged and nothing shut.
+    fn begin(&mut self, now: f64) {
+        if self.began != now {
+            self.began = now;
+            self.dragged = 0.0;
+            self.shut_it = false;
+        }
+    }
 }
 
 /// The line along the panel's bottom that says what came of something, and
@@ -259,6 +293,11 @@ struct NoticeLine;
 #[derive(Component)]
 struct Toast(f32);
 
+/// What stands in Add Friend's search bar until something is typed
+/// ("Friend's Username").
+#[derive(Component)]
+struct Hint;
+
 /// The count on the speech bubble's corner, and the number in it.
 #[derive(Component)]
 struct HudBadge;
@@ -275,8 +314,12 @@ pub(crate) fn plugin(app: &mut App) {
         .add_observer(start_press)
         .add_systems(
             Update,
-            (hear, forget_offline, act, redraw, show_notice, remember_scroll, hang_badge, count_badge, clear_toasts).chain(),
-        );
+            (hear, forget_offline, show_tag, act, redraw, show_hint, show_notice, remember_scroll, hang_badge, count_badge, clear_toasts)
+                .chain(),
+        )
+        // Before the stick and the jump button are read for you, so that
+        // the press that puts the panel away walks or jumps you as well.
+        .add_systems(Update, shut_under_a_press.before(crate::read_player_input));
 }
 
 // ------------------------------------------------------------ what is heard
@@ -405,8 +448,39 @@ fn forget_offline(online: Res<Online>, mut friends: ResMut<Friends>) {
 // ------------------------------------------------------------ what is pressed
 
 /// A new press: nothing dragged yet.
-fn start_press(_press: On<Pointer<Press>>, mut pressed: ResMut<Pressed>) {
-    pressed.dragged = 0.0;
+fn start_press(_press: On<Pointer<Press>>, time: Res<Time>, mut pressed: ResMut<Pressed>) {
+    pressed.begin(time.elapsed_secs_f64());
+}
+
+/// A press outside the panel puts the panel away as it goes down, and is
+/// not the panel's: whatever it landed on has it as well, the stick, the
+/// jump button, a button, the town (Hajun, 2026-11-13: "it should close
+/// just from the DOWN. and also when i for example touch the joystick as
+/// the way of closing it or jump button, it should register the joystick
+/// tap/drag or the jump button rather than needing to press twice"; until
+/// then a tap, down and up, on the dark round the panel shut it, and that
+/// tap was the panel's alone). The panel's root is over the whole screen,
+/// takes no press for itself and lets what is under it be pressed
+/// ([`draw`]); this hears the ones that land on it and on nothing of the
+/// panel's. Put away here, before anything reads the press for the world
+/// (picking's presses come before `Update`), the panel is no dialog by
+/// the time the stick and the jump button are read.
+fn press_outside(
+    press: On<Pointer<Press>>,
+    time: Res<Time>,
+    mut pressed: ResMut<Pressed>,
+    mut panel: ResMut<Panel>,
+    mut up: ResMut<DialogUp>,
+    mut name_box: ResMut<NameBox>,
+) {
+    if press.button != PointerButton::Primary || press.original_event_target() != press.entity {
+        return;
+    }
+    pressed.begin(time.elapsed_secs_f64());
+    if panel.open {
+        shut(&mut panel, &mut up, &mut name_box);
+        pressed.shut_it = true;
+    }
 }
 
 /// Whatever of the panel's was tapped or clicked, or the speech bubble, to
@@ -422,7 +496,9 @@ fn press(
     if click.button != PointerButton::Primary || click.original_event_target() != click.entity {
         return;
     }
-    if bubbles.contains(click.entity) {
+    // The speech bubble opens the panel; not with the press that has just
+    // put it away, which shuts it and no more.
+    if bubbles.contains(click.entity) && !pressed.shut_it {
         pressed.open = true;
     }
     if let Ok(&tap) = taps.get(click.entity)
@@ -445,6 +521,37 @@ fn drag_list(drag: On<Pointer<Drag>>, mut lists: Query<(&ComputedNode, &mut Scro
     let to = (scroll.y - drag.delta.y).clamp(0.0, most);
     if scroll.y != to {
         scroll.y = to;
+    }
+}
+
+/// A press that lands on nothing that takes one, with the panel up, puts
+/// the panel away in the frame it lands, before you are moved by it: a
+/// finger put on the stick or on the jump button, or on the town. Picking
+/// tells of the same press ([`press_outside`]), and of one on a button
+/// under the panel, which this leaves to it; but the stick and the jump
+/// button do not go by picking, and a jump is read only in the frame its
+/// press lands (`read_player_input`, which stands you still under a
+/// dialog), so the panel has to be no dialog by then whatever picking's
+/// own time is.
+fn shut_under_a_press(
+    touches: Res<Touches>,
+    mouse: Res<ButtonInput<MouseButton>>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    presses: hud::Presses,
+    mut panel: ResMut<Panel>,
+    mut up: ResMut<DialogUp>,
+    mut name_box: ResMut<NameBox>,
+) {
+    if !panel.open {
+        return;
+    }
+    let Ok(window) = windows.single() else {
+        return;
+    };
+    let fingers = touches.iter_just_pressed().map(|touch| touch.position());
+    let cursor = if mouse.just_pressed(MouseButton::Left) { window.cursor_position() } else { None };
+    if fingers.chain(cursor).any(|at| !presses.claimed(window, at)) {
+        shut(&mut panel, &mut up, &mut name_box);
     }
 }
 
@@ -699,6 +806,34 @@ fn redraw(
     draw(&mut commands, &assets, &view);
 }
 
+/// How many rows tall Add Friend's list of who was found is, `found` being
+/// how many a search turned up, if anything has been looked for: none
+/// before that, so that the box is no taller than its search bar and your
+/// own name under it (Hajun, 2026-11-13: "there should be barely any gap
+/// between the search bar and the "My ID" box. that gap only appears after
+/// you press enter/click the search icon"); one for "Nobody goes by that
+/// name."; and one to each player found, up to [`FOUND_SHOWN`], past which
+/// the list scrolls.
+fn found_rows(found: Option<usize>) -> usize {
+    found.map_or(0, |people| people.clamp(1, FOUND_SHOWN))
+}
+
+/// Has your tag written after your name on its plate, top left, for as
+/// long as the server has said what it is (`hud::YourTag`): none offline.
+fn show_tag(friends: Res<Friends>, mut plate: ResMut<hud::YourTag>) {
+    plate.set_if_neq(hud::YourTag(friends.me.map(|(tag, _)| tag)));
+}
+
+/// Shows the hint in the search bar while nothing is typed in it, and puts
+/// it away at the first letter: what is typed changes without the panel
+/// being drawn again.
+fn show_hint(name_box: Res<NameBox>, mut hints: Query<&mut Visibility, With<Hint>>) {
+    let shown = if name_box.text().is_empty() { Visibility::Inherited } else { Visibility::Hidden };
+    for mut visibility in &mut hints {
+        visibility.set_if_neq(shown);
+    }
+}
+
 /// Words on the panel, which has a colour of its own behind them and needs
 /// no shadow: on one line, from the left.
 fn words(text: impl Into<String>, size: f32, colour: Color) -> impl Bundle {
@@ -788,9 +923,12 @@ fn round(image: Handle<Image>, size: f32, tap: Tap, able: bool) -> impl Bundle {
     )
 }
 
-/// A button with a picture on it and nothing behind it, lit under the
-/// pointer: the cross, the chevron back, the glass, the two sheets.
-fn bare(image: Handle<Image>, size: f32, tap: Tap) -> impl Bundle {
+/// A button with a picture on it and nothing behind it: the cross, the
+/// chevron back, the glass, the two sheets. `lit`, a disc comes up behind
+/// it under the pointer or a finger; the cross has none (Hajun, 2026-11-13:
+/// "i dont want the circle hover/click background that appears when u press
+/// the close button ... it should just close it").
+fn bare(image: Handle<Image>, size: f32, tap: Tap, lit: bool) -> impl Bundle {
     let colours = ui().colours.friends;
     (
         tap,
@@ -808,7 +946,7 @@ fn bare(image: Handle<Image>, size: f32, tap: Tap) -> impl Bundle {
         BackgroundColor(Color::NONE),
         Fill {
             idle: Color::NONE,
-            lit: colours.button_lit,
+            lit: if lit { colours.button_lit } else { Color::NONE },
         },
         children![picture(image, Val::Percent(72.0), colours.button_mark)],
     )
@@ -957,15 +1095,16 @@ fn how_long(seconds: f64) -> String {
     fill(&unit[usize::from(count != 1)], &[("n", &count.to_string())])
 }
 
-/// The panel as things stand: its root, over the whole screen, which a tap
-/// on shuts it.
+/// The panel as things stand: its root, over the whole screen, which a
+/// press on, as it goes down, shuts it ([`press_outside`]). The root takes
+/// no press for itself and lets what is under it be pressed, so that the
+/// press that shuts the panel is whatever else it landed on's as well; the
+/// panel itself, and whatever comes up over it, takes its own.
 fn draw(commands: &mut Commands, assets: &AssetServer, view: &View) -> Entity {
     let colours = ui().colours.friends;
     let root = commands
         .spawn((
             Root,
-            Tap::Close,
-            TakesPress,
             Node {
                 position_type: PositionType::Absolute,
                 width: Val::Percent(100.0),
@@ -976,11 +1115,17 @@ fn draw(commands: &mut Commands, assets: &AssetServer, view: &View) -> Entity {
             },
             BackgroundColor(Color::NONE),
             GlobalZIndex(DIALOG_LAYER),
+            Pickable {
+                should_block_lower: false,
+                is_hoverable: true,
+            },
         ))
+        .observe(press_outside)
         .id();
     let panel = commands
         .spawn((
             ChildOf(root),
+            TakesPress,
             Node {
                 width: Val::VMin(WIDTH),
                 height: Val::VMin(HEIGHT),
@@ -1027,10 +1172,9 @@ fn draw(commands: &mut Commands, assets: &AssetServer, view: &View) -> Entity {
     root
 }
 
-/// The panel's top: its two tabs, who you are, and the cross.
+/// The panel's top: its two tabs, and the cross.
 fn header(commands: &mut Commands, assets: &AssetServer, panel: Entity, view: &View) {
-    let ui = ui();
-    let (colours, said) = (ui.colours.friends, &ui.words.friends);
+    let colours = ui().colours.friends;
     let row = commands
         .spawn((
             ChildOf(panel),
@@ -1087,34 +1231,19 @@ fn header(commands: &mut Commands, assets: &AssetServer, panel: Entity, view: &V
             commands.spawn((ChildOf(mark), badge(waiting, ())));
         }
     }
-    // Who you are to your friends, at the right: your name and tag, and
-    // your level.
-    if let (Some((_, name)), Some((tag, level))) = (view.me, view.friends.me) {
-        commands.spawn((
-            ChildOf(row),
-            Node {
-                flex_grow: 1.0,
-                justify_content: JustifyContent::FlexEnd,
-                column_gap: Val::VMin(2.4),
-                ..default()
-            },
-            Pickable::IGNORE,
-            children![
-                words(handle(name, tag), STATUS + 0.5, colours.status),
-                words(fill(&said.level, &[("level", &level.to_string())]), STATUS + 0.5, colours.status),
-            ],
-        ));
-    }
+    // Nothing of your own beside the cross: your tag is after your name on
+    // its plate, top left (`hud::YourTag`), and your own level is shown
+    // nowhere for now (Hajun, 2026-11-13; both stood here for an evening).
     commands.spawn((
         ChildOf(panel),
         Node {
             position_type: PositionType::Absolute,
-            top: Val::VMin(PAD - 0.4),
-            right: Val::VMin(PAD - 0.8),
+            top: Val::VMin(CLOSE_DOWN - CLOSE * 0.5),
+            right: Val::VMin(CLOSE_IN - CLOSE * 0.5),
             ..default()
         },
         Pickable::IGNORE,
-        children![bare(assets.load("icons/close.png"), CLOSE, Tap::Close)],
+        children![bare(assets.load("icons/close.png"), CLOSE, Tap::Close, false)],
     ));
 }
 
@@ -1192,7 +1321,7 @@ fn friends_tab(commands: &mut Commands, assets: &AssetServer, panel: Entity, vie
     let count = [("online", here.to_string()), ("all", view.friends.friends.len().to_string())];
     let count: Vec<(&str, &str)> = count.iter().map(|(name, value)| (*name, value.as_str())).collect();
     let head = heading(commands, list, fill(&said.friends, &count));
-    commands.spawn((ChildOf(head), bare(assets.load("icons/add_friend.png"), SMALL_BUTTON, Tap::Add)));
+    commands.spawn((ChildOf(head), bare(assets.load("icons/add_friend.png"), SMALL_BUTTON, Tap::Add, true)));
     if view.friends.friends.is_empty() {
         note(commands, list, &said.no_friends);
     }
@@ -1352,8 +1481,11 @@ fn popup(commands: &mut Commands, panel: Entity, width: f32, typed_into: bool) -
             BackgroundColor(colours.scrim),
         ))
         .id();
+    // Its own presses are its own wherever it stands: slid up over a
+    // phone's keyboard, its top is past the panel's.
     let mut within = commands.spawn((
         ChildOf(dark),
+        TakesPress,
         Node {
             width: Val::VMin(width),
             flex_direction: FlexDirection::Column,
@@ -1364,8 +1496,10 @@ fn popup(commands: &mut Commands, panel: Entity, width: f32, typed_into: bool) -
         },
         BackgroundColor(colours.popup),
     ));
+    // Its top never off the top of the screen: its title and the way back
+    // out of it stay in sight, and what does not fit is under the keyboard.
     if typed_into {
-        within.insert(LiftsForKeyboard::default());
+        within.insert(LiftsForKeyboard::whole());
     }
     within.id()
 }
@@ -1385,11 +1519,12 @@ fn add_friend(commands: &mut Commands, assets: &AssetServer, panel: Entity, view
         },
         Pickable::IGNORE,
         children![
-            bare(assets.load("icons/back.png"), SMALL_BUTTON, Tap::Back),
+            bare(assets.load("icons/back.png"), SMALL_BUTTON, Tap::Back, true),
             words(said.add_friend.clone(), POPUP_TITLE, colours.title),
         ],
     ));
-    // The name typed, in a pill, with the glass at its end.
+    // The name typed, in a pill, with the glass at its end; and in it,
+    // until something is typed, what goes there ([`show_hint`]).
     commands.spawn((
         ChildOf(within),
         Node {
@@ -1415,62 +1550,91 @@ fn add_friend(commands: &mut Commands, assets: &AssetServer, panel: Entity, view
                 Color::NONE,
                 colours.name,
             ),
-            bare(assets.load("icons/search.png"), SMALL_BUTTON, Tap::Search),
+            bare(assets.load("icons/search.png"), SMALL_BUTTON, Tap::Search, true),
+            (
+                Hint,
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: Val::VMin(HINT_IN),
+                    top: Val::ZERO,
+                    height: Val::Percent(100.0),
+                    align_items: AlignItems::Center,
+                    ..default()
+                },
+                if view.typed.is_empty() { Visibility::Inherited } else { Visibility::Hidden },
+                Pickable::IGNORE,
+                children![words(said.search_hint.clone(), FIELD_TEXT, colours.hint)],
+            ),
         ],
     ));
-    // Who goes by it.
-    let found = commands
-        .spawn((
-            ChildOf(within),
-            List::Found,
-            ScrollArea,
-            Node {
-                height: Val::VMin(FOUND_ROW * 3.0),
-                flex_direction: FlexDirection::Column,
-                overflow: Overflow::scroll_y(),
-                ..default()
-            },
-            ScrollPosition(Vec2::new(0.0, view.scrolled.found)),
-        ))
-        .observe(drag_list)
-        .id();
-    match &view.friends.found {
-        None => note(commands, found, &said.search_first),
-        Some((_, people)) if people.is_empty() => note(commands, found, &said.nobody),
-        Some((_, people)) => {
-            for person in people {
-                let (text, able) = match person.tie {
-                    Tie::Stranger => (&said.add, true),
-                    Tie::Asked => (&said.asked, false),
-                    Tie::Friend => (&said.is_friend, false),
-                    Tie::AskedYou => (&said.accept, true),
-                };
-                commands.spawn((
-                    ChildOf(found),
-                    Node {
-                        height: Val::VMin(FOUND_ROW),
-                        align_items: AlignItems::Center,
-                        column_gap: Val::VMin(2.0),
-                        flex_shrink: 0.0,
-                        ..default()
-                    },
-                    Pickable::IGNORE,
-                    children![
-                        avatar(assets.load("icons/person.png"), FOUND_AVATAR, person.card.presence.online()),
-                        (
-                            Node {
-                                flex_grow: 1.0,
-                                min_width: Val::ZERO,
-                                overflow: Overflow::clip_x(),
-                                ..default()
-                            },
-                            Pickable::IGNORE,
-                            children![words(person.card.handle(), FIELD_TEXT, colours.name)],
-                        ),
-                        link(text.clone(), Tap::Befriend(person.card.id), able),
-                    ],
-                ));
-            }
+    // Who goes by it: nothing at all until something has been looked for,
+    // so that your own name stands right under the search bar, and then as
+    // many rows as were found, up to as many as are shown at once.
+    let people: &[Found] = view.friends.found.as_ref().map_or(&[], |(_, people)| people);
+    let rows = found_rows(view.friends.found.as_ref().map(|(_, people)| people.len()));
+    if rows > 0 {
+        let found = commands
+            .spawn((
+                ChildOf(within),
+                List::Found,
+                ScrollArea,
+                Node {
+                    height: Val::VMin(FOUND_ROW * rows as f32),
+                    flex_direction: FlexDirection::Column,
+                    overflow: Overflow::scroll_y(),
+                    ..default()
+                },
+                ScrollPosition(Vec2::new(0.0, view.scrolled.found)),
+            ))
+            .observe(drag_list)
+            .id();
+        if people.is_empty() {
+            // One row, the words level with where a name would be.
+            commands.spawn((
+                ChildOf(found),
+                Node {
+                    height: Val::VMin(FOUND_ROW),
+                    align_items: AlignItems::Center,
+                    padding: UiRect::left(Val::VMin(0.4)),
+                    flex_shrink: 0.0,
+                    ..default()
+                },
+                Pickable::IGNORE,
+                children![words(said.nobody.clone(), HEADING, colours.status)],
+            ));
+        }
+        for person in people {
+            let (text, able) = match person.tie {
+                Tie::Stranger => (&said.add, true),
+                Tie::Asked => (&said.asked, false),
+                Tie::Friend => (&said.is_friend, false),
+                Tie::AskedYou => (&said.accept, true),
+            };
+            commands.spawn((
+                ChildOf(found),
+                Node {
+                    height: Val::VMin(FOUND_ROW),
+                    align_items: AlignItems::Center,
+                    column_gap: Val::VMin(2.0),
+                    flex_shrink: 0.0,
+                    ..default()
+                },
+                Pickable::IGNORE,
+                children![
+                    avatar(assets.load("icons/person.png"), FOUND_AVATAR, person.card.presence.online()),
+                    (
+                        Node {
+                            flex_grow: 1.0,
+                            min_width: Val::ZERO,
+                            overflow: Overflow::clip_x(),
+                            ..default()
+                        },
+                        Pickable::IGNORE,
+                        children![words(person.card.handle(), FIELD_TEXT, colours.name)],
+                    ),
+                    link(text.clone(), Tap::Befriend(person.card.id), able),
+                ],
+            ));
         }
     }
     // Your own, to give to someone looking for you, and the two sheets
@@ -1510,7 +1674,7 @@ fn add_friend(commands: &mut Commands, assets: &AssetServer, panel: Entity, view
         ))
         .id();
     if cfg!(not(target_os = "ios")) {
-        commands.spawn((ChildOf(bar), bare(assets.load("icons/copy.png"), SMALL_BUTTON, Tap::Copy)));
+        commands.spawn((ChildOf(bar), bare(assets.load("icons/copy.png"), SMALL_BUTTON, Tap::Copy, true)));
     }
 }
 
@@ -1834,5 +1998,56 @@ mod tests {
         assert!(80.0 < WIDTH - 2.0 * PAD, "the box a message is written in");
         // A row holds a picture, and two round buttons beside the words.
         assert!(AVATAR < ROW && ROW_BUTTON < ROW);
+        // The cross, about its middle, is on the panel.
+        assert!(CLOSE * 0.5 <= CLOSE_IN.min(CLOSE_DOWN));
+    }
+
+    #[test]
+    fn a_press_on_nothing_puts_the_panel_away_in_the_frame_it_lands() {
+        use bevy::ecs::system::RunSystemOnce;
+        use bevy::input::touch::{TouchInput, TouchPhase, touch_screen_input_system};
+
+        let mut world = World::new();
+        let window = world.spawn((Window::default(), PrimaryWindow)).id();
+        world.init_resource::<Messages<TouchInput>>();
+        world.init_resource::<Touches>();
+        world.init_resource::<ButtonInput<MouseButton>>();
+        world.init_resource::<NameBox>();
+        world.insert_resource(Panel { open: true, ..default() });
+        world.insert_resource(DialogUp(true));
+        // Nothing pressed: it stays up, a dialog.
+        world.run_system_once(shut_under_a_press).expect("looked");
+        assert!(world.resource::<Panel>().open && world.resource::<DialogUp>().0);
+        // A finger down where nothing takes a press, as on the stick: away
+        // at once, and no dialog, before the finger has come up.
+        world.resource_mut::<Messages<TouchInput>>().write(TouchInput {
+            phase: TouchPhase::Started,
+            position: Vec2::new(200.0, 640.0),
+            window,
+            force: None,
+            id: 1,
+        });
+        world.run_system_once(touch_screen_input_system).expect("the touch is read");
+        world.run_system_once(shut_under_a_press).expect("looked");
+        assert!(!world.resource::<Panel>().open && !world.resource::<DialogUp>().0);
+        // Shut, a press is nothing of its own.
+        world.insert_resource(DialogUp(true));
+        world.run_system_once(shut_under_a_press).expect("looked");
+        assert!(world.resource::<DialogUp>().0, "another dialog is not its to put away");
+    }
+
+    #[test]
+    fn add_friend_is_no_taller_than_what_it_has_to_show() {
+        // Nothing looked for yet: no room kept for anyone, and your own
+        // name stands right under the search bar.
+        assert_eq!(found_rows(None), 0);
+        // Looked for, and nobody found: a row to say so.
+        assert_eq!(found_rows(Some(0)), 1);
+        // A row to each player found, up to as many as are shown at once;
+        // past that the list scrolls.
+        assert_eq!(found_rows(Some(1)), 1);
+        assert_eq!(found_rows(Some(2)), 2);
+        assert_eq!(found_rows(Some(FOUND_SHOWN)), FOUND_SHOWN);
+        assert_eq!(found_rows(Some(20)), FOUND_SHOWN);
     }
 }

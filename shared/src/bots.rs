@@ -113,6 +113,43 @@ const STICK_WAKES: (f32, f32) = (0.75, 2.0);
 const STICK_WAKES_SOONER: (f32, f32) = (0.4, 1.0);
 const STICK_BUSY: f32 = 0.25;
 const STICK_AHEAD: f32 = 0.5;
+/// A bot and someone who keeps coming at its base ([`Vigil`]), every
+/// number of it a spread that each time is thrown from: how long it looks
+/// after them when they step back, before it has had enough of them, in
+/// seconds; how long it stands its ground once it has, before it either
+/// goes at them or lets them be; how far from it they may be for it to go
+/// at them from where it stands, in metres, for a bot as bold as most; how
+/// far from the middle of its island they have to be to be gone, and for
+/// how long; how far from them it stands, and how far in from the edge of
+/// its island; and how long after they were last about it has forgotten
+/// them. All mine: Hajun asked for the patience, and for it to differ from
+/// one to the next ([`Persona::patience`]).
+const VIGIL_LOOK: (f32, f32) = (0.8, 4.0);
+const VIGIL_STAND: (f32, f32) = (12.0, 36.0);
+const VIGIL_WATCH: (f32, f32) = (5.0, 12.0);
+const VIGIL_GONE: (f32, f32) = (24.0, 38.0);
+const VIGIL_CALM: (f32, f32) = (2.5, 8.0);
+const VIGIL_OFF: (f32, f32) = (3.0, 5.0);
+const VIGIL_INSIDE: (f32, f32) = (0.9, 2.2);
+const VIGIL_FORGET: (f32, f32) = (50.0, 110.0);
+/// What a bot's offer to stand its ground scores, of a score of 1
+/// ([`Goal::Guard`]): over anything it does about its island, and, with
+/// what the goal it is on has over the rest, still under backing off hurt.
+const GUARD_SCORE: f32 = 0.79;
+/// How much further off than it would go for someone a bot keeps after
+/// one it is on already, as so many times as far; how far either side of
+/// how near it lets people come it wanders from one while to the next
+/// ([`Bot::keen`]), and for how long each while is, in seconds; how long a
+/// blow smarts, in which it goes for whoever is near; and how far either
+/// side of where it backs off hurt its nerve is from one fright to the
+/// next, as a share of its health. Nothing a bot does begins or ends on a
+/// line that is the same twice (Hajun, 2026-11-13: "if some thing becomes
+/// a definite if-then, then its not a real human, but a program").
+const KEEPS_ON: f32 = 1.3;
+const KEEN: (f32, f32) = (0.72, 1.35);
+const KEEN_LASTS: (f32, f32) = (4.0, 11.0);
+const STING: (f32, f32) = (2.2, 6.5);
+const NERVE: (f32, f32) = (-0.08, 0.08);
 /// A bridge this short is a hole mended, and is laid straight, with no
 /// bends of its own ([`Squad::lay`]).
 const MEND: f32 = 12.0;
@@ -450,6 +487,11 @@ pub enum Goal {
     Fetch(Vec2, Item),
     /// Home, where someone of another team is, to see them off.
     Defend,
+    /// Between its base and someone who was at it and has only stepped
+    /// back: looking after them a moment, or, having had enough of their
+    /// coming and going, standing its ground until they are gone for good
+    /// ([`Vigil`]).
+    Guard,
     /// Away from whoever is after it, to get its health back.
     Retreat,
     /// To this team's island: to fight whoever is home, take what lies on
@@ -579,6 +621,22 @@ pub struct Persona {
     /// after you and to get out from under a stick of dynamite
     /// ([`Temper::pvp`]).
     pub pvp: f32,
+    /// How many times someone has to come at its base and step back
+    /// before it stands its ground against them rather than go back to
+    /// what it was doing, about: from 1, at once, to 3 (since 2026-11-13;
+    /// Hajun, who had a team's anchor down by stepping onto their island
+    /// and back onto his bridge over and over, the two of them coming at
+    /// him and going back to their generator each time: "Real humans have
+    /// like a patience(?) threshold that depends on the person - some
+    /// people, after 1 agitation they choose to just stand between me and
+    /// their generator ... some people who have stronger patience, maybe
+    /// they will go back to their generator 1 time but after i come back
+    /// again to attack they will be like oh this guy keep coming back, so
+    /// ill just stay here until he rly rly leaves, and some ppl have more
+    /// patience so maybe they will wait until the 3rd agitation"). Each
+    /// bot's own is thrown about its kind's, and again each time it has
+    /// forgotten whoever it was ([`Vigil`]).
+    pub patience: f32,
     /// How readily it goes in, about 1 (how near it lets someone come
     /// before it goes for them, and how hurt it has to be to back off);
     /// how much it jumps about, from 0 to 1; and how widely it weaves as
@@ -688,6 +746,7 @@ pub const PERSONAS: [Persona; 16] = [
         spends: [1.3, 0.6, 1.6, 0.5, 0.5, 0.9],
         carries: [0.5, 0.35, 0.1, 0.05, 0.05, 0.3],
         pvp: 0.9,
+        patience: 1.4,
         pockets: [3, 5],
         bold: 1.4,
         bouncy: 0.8,
@@ -710,6 +769,7 @@ pub const PERSONAS: [Persona; 16] = [
         spends: [0.9, 0.6, 1.8, 0.5, 0.5, 0.6],
         carries: [0.15, 0.2, 0.6, 0.05, 0.1, 0.35],
         pvp: 0.55,
+        patience: 2.4,
         pockets: [2, 4],
         bold: 1.15,
         bouncy: 1.0,
@@ -731,6 +791,7 @@ pub const PERSONAS: [Persona; 16] = [
         spends: [1.5, 1.0, 0.8, 1.1, 0.8, 1.5],
         carries: [0.4, 0.4, 0.05, 0.15, 0.15, 0.15],
         pvp: 0.8,
+        patience: 1.5,
         pockets: [2, 4],
         bold: 1.25,
         bouncy: 0.4,
@@ -752,6 +813,7 @@ pub const PERSONAS: [Persona; 16] = [
         spends: [1.0, 0.7, 1.5, 0.9, 0.7, 0.8],
         carries: [0.45, 0.2, 0.3, 0.05, 0.3, 0.4],
         pvp: 0.65,
+        patience: 2.2,
         pockets: [3, 5],
         bold: 1.1,
         bouncy: 0.7,
@@ -774,6 +836,7 @@ pub const PERSONAS: [Persona; 16] = [
         spends: [1.1, 1.1, 0.8, 1.2, 1.3, 1.3],
         carries: [0.2, 0.3, 0.05, 0.45, 0.1, 0.05],
         pvp: 0.4,
+        patience: 1.6,
         pockets: [2, 3],
         bold: 1.05,
         bouncy: 0.45,
@@ -795,6 +858,7 @@ pub const PERSONAS: [Persona; 16] = [
         spends: [0.9, 0.7, 1.5, 0.7, 0.7, 0.7],
         carries: [0.2, 0.55, 0.2, 0.05, 0.1, 0.15],
         pvp: 0.5,
+        patience: 2.7,
         pockets: [2, 4],
         bold: 1.2,
         bouncy: 1.0,
@@ -816,6 +880,7 @@ pub const PERSONAS: [Persona; 16] = [
         spends: [1.3, 1.2, 0.7, 1.0, 1.0, 1.2],
         carries: [0.35, 0.25, 0.0, 0.4, 0.05, 0.1],
         pvp: 0.7,
+        patience: 1.3,
         pockets: [2, 3],
         bold: 1.2,
         bouncy: 0.3,
@@ -838,6 +903,7 @@ pub const PERSONAS: [Persona; 16] = [
         spends: [1.0, 1.3, 0.9, 1.1, 1.6, 1.0],
         carries: [0.1, 0.15, 0.05, 0.7, 0.1, 0.2],
         pvp: 0.2,
+        patience: 1.5,
         pockets: [1, 3],
         bold: 1.0,
         bouncy: 0.5,
@@ -859,6 +925,7 @@ pub const PERSONAS: [Persona; 16] = [
         spends: [1.4, 1.3, 0.7, 1.6, 1.0, 1.4],
         carries: [0.3, 0.3, 0.1, 0.3, 0.3, 0.25],
         pvp: 0.6,
+        patience: 1.8,
         pockets: [3, 5],
         bold: 1.0,
         bouncy: 0.25,
@@ -881,6 +948,7 @@ pub const PERSONAS: [Persona; 16] = [
         spends: [0.9, 0.9, 1.3, 1.7, 1.1, 0.9],
         carries: [0.4, 0.2, 0.25, 0.15, 0.45, 0.4],
         pvp: 0.2,
+        patience: 2.5,
         pockets: [3, 5],
         bold: 0.8,
         bouncy: 0.3,
@@ -902,6 +970,7 @@ pub const PERSONAS: [Persona; 16] = [
         spends: [0.9, 1.3, 0.9, 1.1, 1.6, 0.8],
         carries: [0.1, 0.1, 0.1, 0.7, 0.1, 0.3],
         pvp: 0.35,
+        patience: 1.1,
         pockets: [1, 3],
         bold: 0.8,
         bouncy: 0.2,
@@ -923,6 +992,7 @@ pub const PERSONAS: [Persona; 16] = [
         spends: [0.7, 1.2, 1.0, 1.2, 1.3, 0.6],
         carries: [0.05, 0.25, 0.3, 0.4, 0.1, 0.1],
         pvp: 0.0,
+        patience: 2.8,
         pockets: [1, 2],
         bold: 0.65,
         bouncy: 0.5,
@@ -944,6 +1014,7 @@ pub const PERSONAS: [Persona; 16] = [
         spends: [1.2, 1.3, 0.7, 1.2, 1.2, 1.0],
         carries: [0.15, 0.1, 0.0, 0.75, 0.05, 0.05],
         pvp: 0.4,
+        patience: 1.2,
         pockets: [1, 2],
         bold: 0.95,
         bouncy: 0.15,
@@ -966,6 +1037,7 @@ pub const PERSONAS: [Persona; 16] = [
         spends: [0.8, 1.5, 0.9, 1.5, 1.7, 0.6],
         carries: [0.05, 0.05, 0.0, 0.9, 0.3, 0.25],
         pvp: 0.1,
+        patience: 1.0,
         pockets: [1, 3],
         bold: 0.7,
         bouncy: 0.2,
@@ -988,6 +1060,7 @@ pub const PERSONAS: [Persona; 16] = [
         spends: [1.5, 0.8, 1.0, 0.7, 0.6, 0.9],
         carries: [0.35, 0.35, 0.2, 0.1, 0.05, 0.15],
         pvp: 1.0,
+        patience: 1.7,
         pockets: [1, 3],
         bold: 1.15,
         bouncy: 0.5,
@@ -1010,6 +1083,7 @@ pub const PERSONAS: [Persona; 16] = [
         spends: [0.9, 1.0, 1.3, 0.9, 1.0, 0.7],
         carries: [0.1, 0.4, 0.3, 0.2, 0.1, 0.1],
         pvp: 0.25,
+        patience: 2.6,
         pockets: [2, 4],
         bold: 0.85,
         bouncy: 0.7,
@@ -1252,6 +1326,9 @@ pub struct Bot {
     leaping: Option<Leap>,
     cross: Option<Gap>,
     path_cuts: u32,
+    /// Whoever it is fighting is on their way over a gap to it, this
+    /// frame: it jumps none itself until they are down ([`Squad::fight`]).
+    awaits: bool,
     /// A stick of dynamite it is in the way of, and when it wakes up to
     /// it; and when it may next throw one of its own.
     alarm: Option<(Vec2, f32)>,
@@ -1261,6 +1338,21 @@ pub struct Bot {
     /// ([`Goal::Collect`]).
     pad_since: Option<f32>,
     pad_again: f32,
+    /// Whoever has been coming at its base, and how it is taking it
+    /// ([`Vigil`]); how many of their comings it takes before it stands
+    /// its ground ([`Persona::patience`]); and what its team's anchor had
+    /// left when it last thought.
+    vigil: Option<Vigil>,
+    patience: u8,
+    anchor_was: f32,
+    /// How near it lets people come before it goes for them, as so many
+    /// times what it usually does, for the while until `keen_until`; how
+    /// long the blow it last took smarts; and how far off its usual it
+    /// backs off hurt this time ([`KEEN`], [`STING`], [`NERVE`]).
+    keen: f32,
+    keen_until: f32,
+    sting: f32,
+    nerve: f32,
 }
 
 impl Bot {
@@ -1323,13 +1415,37 @@ impl Bot {
             yields: false,
             loiter: None,
             leaping: None,
+            awaits: false,
             cross: None,
             path_cuts: 0,
             alarm: None,
             blast_at: 0.0,
             pad_since: None,
             pad_again: 0.0,
+            vigil: None,
+            patience: patience_of(persona, dice),
+            anchor_was: f32::INFINITY,
+            keen: dice.around(KEEN.0, KEEN.1),
+            keen_until: dice.between(KEEN_LASTS.0, KEEN_LASTS.1),
+            sting: 3.0,
+            nerve: dice.around(NERVE.0, NERVE.1),
         }
+    }
+
+    /// Whoever it has in mind for coming at its base, if anyone.
+    pub fn vigil(&self) -> Option<Vigil> {
+        self.vigil
+    }
+
+    /// How many comings at its base it takes before it stands its ground.
+    pub fn patience(&self) -> u8 {
+        self.patience
+    }
+
+    /// Whether it is standing its ground against whoever keeps coming at
+    /// its base, rather than only looking after them a moment.
+    pub fn stands_its_ground(&self) -> bool {
+        self.vigil.is_some_and(|vigil| vigil.stand.is_some_and(|stand| stand.resolved))
     }
 
     /// Whether it is in the middle of jumping a gap.
@@ -1386,6 +1502,99 @@ impl Bot {
             self.progress = (self.body.at.xz(), now);
         }
     }
+}
+
+/// A bot's mind of someone who has come at its base: on the land of its
+/// island, or at its anchor as that lost health. Who, and how many times
+/// they have come, counted each time they come again after having stepped
+/// back; whether they are at it now; when they were last about; how long
+/// after that it will have forgotten them; and how it stands toward them
+/// while they are only stepped back ([`Stand`]).
+///
+/// Until 2026-11-13 a bot had no memory of anyone: it went home for
+/// whoever stood on its island, and back to what it was doing the moment
+/// they stepped off it, as often as they liked. Now it looks after them a
+/// moment each time; and once they have come as many times as it has the
+/// patience for, which is 1 to 3 by who it is and by chance, it stands
+/// its ground: between them and its anchor, at them if they come near
+/// enough, there until they are gone a good way off for a while. Standing
+/// there long enough with them still about, it either goes out at them or
+/// lets them be, as it is like, and it has not forgotten them either way:
+/// the next time they come, it stands at once.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct Vigil {
+    pub foe: usize,
+    pub comings: u8,
+    at_it: bool,
+    about: f32,
+    forget: f32,
+    stand: Option<Stand>,
+}
+
+/// How a bot stands toward someone who was at its base and has stepped
+/// back: where, between them and what it keeps; until when, at the
+/// longest; whether it has had enough of them and stands its ground, or
+/// only looks after them a moment; how far from it they may be for it to
+/// go at them; how far from the middle of its island they have to be to
+/// be gone, for how long, and since when they have been.
+#[derive(Clone, Copy, PartialEq, Debug)]
+struct Stand {
+    spot: Vec2,
+    until: f32,
+    resolved: bool,
+    watch: f32,
+    gone: f32,
+    calm: f32,
+    gone_since: Option<f32>,
+    off: f32,
+    inside: f32,
+}
+
+/// Where a bot stands between what its team keeps, at `keep`, and someone
+/// `there` who has stepped back from it: on the land of its island
+/// `home`, on the line from them to it, the nearest place to them that a
+/// body can stand which is `off` or more from them and `inside` or more
+/// in from where that line comes ashore; or, with too little land between
+/// the shore and what it keeps for that, the last place on that land
+/// before what it keeps, right in front of it. `None` with no land
+/// between them at all: they are on the island still, or beside what it
+/// keeps.
+fn guard_spot(nav: &Nav, home: Region, keep: Vec2, there: Vec2, off: f32, inside: f32) -> Option<Vec2> {
+    let line = keep - there;
+    let far = line.length();
+    if far < 1.0 {
+        return None;
+    }
+    let way = line / far;
+    let ashore = |at: Vec2| nav.grid().region(at) == Some(home) && nav.grid().height(at).is_some() && nav.walkable_at(at);
+    let mut landed: Option<f32> = None;
+    let mut last = None;
+    let mut along = 0.0;
+    // (No nearer what it keeps than a body and a half: that is in the
+    // way of nothing.)
+    while along <= far - 1.3 {
+        let at = there + way * along;
+        if ashore(at) {
+            let from = *landed.get_or_insert(along);
+            if along >= off && along - from >= inside {
+                return Some(at);
+            }
+            // (Not on the very edge, at the least.)
+            if along - from >= 0.5 {
+                last = Some(at);
+            }
+        } else {
+            landed = None;
+        }
+        along += 0.25;
+    }
+    last
+}
+
+/// How many times someone has to come at a bot's base before it stands
+/// its ground, thrown about its kind's: 1, 2 or 3.
+fn patience_of(persona: &Persona, dice: &mut Dice) -> u8 {
+    (persona.patience + 0.6 * dice.bell()).round().clamp(1.0, 3.0) as u8
 }
 
 /// Someone in the game, as a bot sees them: where they are, whether they
@@ -1456,6 +1665,9 @@ struct Spots {
     /// Where another team's bot stands to hit this island's anchor: on
     /// the side of it the bridges come from.
     strike: Vec2,
+    /// What the team keeps: its anchor, where the map has it on the
+    /// island, and the middle of the island otherwise.
+    keep: Vec2,
 }
 
 /// Every one of the computer's players in a game.
@@ -1614,6 +1826,9 @@ impl Squad {
         bot.leaping = None;
         bot.cross = None;
         bot.alarm = None;
+        if let Some(vigil) = &mut bot.vigil {
+            vigil.stand = None;
+        }
         // Another life, and perhaps other things for its buttons.
         bot.loadout = bot.persona.loadout(&mut self.dice);
         bot.planned = None;
@@ -1645,6 +1860,11 @@ impl Squad {
         bot.leaping = None;
         bot.cross = None;
         bot.alarm = None;
+        // Whoever it stood against it has not forgotten; where it stood
+        // it has.
+        if let Some(vigil) = &mut bot.vigil {
+            vigil.stand = None;
+        }
         bot.wants = [0; 4];
         // Dead on a raid, it stays home a while once it stands again.
         if matches!(bot.goal, Goal::Raid(_)) {
@@ -1754,6 +1974,8 @@ impl Squad {
             let inward = (island - anchor).normalize_or_zero();
             spot.guard = near(anchor + inward * 2.4 + Vec2::new(-inward.y, inward.x) * 1.6);
             spot.strike = near(anchor - inward * 1.9);
+            let on_it = grid.nearest_clear(anchor, 4.0).is_some_and(|by| grid.region(by) == Some(Region::Team(team as u8)));
+            spot.keep = if on_it { anchor } else { spot.heart };
         }
         self.spots = Some(spots);
         spots
@@ -1771,6 +1993,8 @@ impl Squad {
         let me = view.seats.get(seat).copied().unwrap_or_default();
         if me.health < bot.health_was - 1e-3 {
             bot.hurt_at = view.elapsed;
+            // How long this one smarts: not the same as the last.
+            bot.sting = self.dice.around(STING.0, STING.1);
             // A drink is spilt by a blow.
             bot.drinking = None;
         }
@@ -2072,25 +2296,54 @@ impl Squad {
 
         let mut offers: Vec<(f32, Goal)> = vec![(0.05, Goal::Idle)];
 
+        // How near it lets people come, for the next while: nobody keeps
+        // to the same line all day ([`KEEN`]).
+        if now >= bot.keen_until {
+            bot.keen = self.dice.around(KEEN.0, KEEN.1);
+            bot.keen_until = now + self.dice.around(KEEN_LASTS.0, KEEN_LASTS.1);
+        }
+
         // Hurt, with someone after it: away, until it has its health back.
-        let pressed = nearest_foe < 10.0 || now - bot.hurt_at < 3.0;
+        let pressed = nearest_foe < 10.0 || now - bot.hurt_at < bot.sting;
         let mortal = view.anchors[team] <= 0.0;
-        // The bolder, the longer it stays in.
-        let give_way = (if mortal { skill.careful_below } else { skill.retreat_below }) + (1.0 - bot.temper.bold) * 0.15;
+        // The bolder, the longer it stays in; and a little sooner or later
+        // each time than the last ([`NERVE`]).
+        let give_way = (if mortal { skill.careful_below } else { skill.retreat_below }) + (1.0 - bot.temper.bold) * 0.15 + bot.nerve;
         if me.health < give_way && pressed {
             offers.push((0.95, Goal::Retreat));
-        } else if bot.goal == Goal::Retreat && me.health < skill.recovered && nearest_foe < 16.0 {
+        } else if bot.goal == Goal::Retreat && me.health < skill.recovered + bot.nerve && nearest_foe < 16.0 {
             offers.push((0.9, Goal::Retreat));
         }
 
         // Someone of another team on its island, standing on the land of
         // it: home, to see them off.
-        let intruder = foes.iter().any(|foe| {
-            let at = foe.at.xz();
-            nav.grid().region(at) == Some(home) && !nav.on_plank(at) && foe.at.y > -1.0
-        });
+        let on_its_land = |at: Vec3| {
+            let across = at.xz();
+            nav.grid().region(across) == Some(home) && !nav.on_plank(across) && at.y > -1.0
+        };
+        let intruder = foes.iter().any(|foe| on_its_land(foe.at));
         if intruder && can_go_home {
             offers.push((if on_home || keeper { 0.88 } else { 0.6 }, Goal::Defend));
+        }
+
+        // Whoever is at its base: on the land of its island, or by its
+        // anchor as that loses health. It has them in mind from then on,
+        // and once they have only stepped back it looks after them, or
+        // stands its ground ([`Vigil`]).
+        let anchor_left = view.anchors[team];
+        let struck = anchor_left < bot.anchor_was - 1e-3;
+        bot.anchor_was = anchor_left;
+        let caller = view
+            .seats
+            .iter()
+            .enumerate()
+            .filter(|&(other, seen)| seen.alive && !seen.unseen && arena_team(other) != arena_team(seat))
+            .filter(|(_, seen)| on_its_land(seen.at) || (struck && seen.at.xz().distance(spots.keep) < 5.0))
+            .min_by(|a, b| a.1.at.xz().distance_squared(spots.keep).total_cmp(&b.1.at.xz().distance_squared(spots.keep)))
+            .map(|(other, _)| other);
+        self.keep_vigil(bot, view, caller, on_home, &spots);
+        if bot.vigil.is_some_and(|vigil| vigil.stand.is_some()) && can_go_home {
+            offers.push((GUARD_SCORE, Goal::Guard));
         }
 
         // The bridge it means to lay next, and the metres it is short of
@@ -2338,7 +2591,116 @@ impl Squad {
             Goal::Raid(_) => [20u16.saturating_sub(purse[0]), 7u16.saturating_sub(purse[1]), 0, 0],
             _ => wants,
         };
+        // Over a fright: the next one finds it a little braver, or less.
+        if bot.goal == Goal::Retreat && best != Goal::Retreat {
+            bot.nerve = self.dice.around(NERVE.0, NERVE.1);
+        }
         bot.set_goal(best, now);
+    }
+
+    /// Keeps the bot's mind of whoever comes at its base ([`Vigil`]), as
+    /// often as it thinks. `caller` is whoever is at it now, if anyone;
+    /// `at_home` whether the bot is on its island. With someone at it: it
+    /// has them in mind, and counts their coming if they had been away.
+    /// With them stepped back: it takes its stand toward them, if it is
+    /// home or was seeing them off, for a look or, having had enough, for
+    /// good; keeps between them and what its team keeps as they move; and
+    /// ends it once they are gone a good way off for a while, or it has
+    /// been long enough, when it either goes out at them or lets them be.
+    /// Left alone long enough, it forgets them, and how patient it is
+    /// with the next is thrown again.
+    fn keep_vigil(&mut self, bot: &mut Bot, view: &View, caller: Option<usize>, at_home: bool, spots: &Spots) {
+        let (nav, now) = (view.nav, view.elapsed);
+        let home = Region::Team(arena_team(bot.seat));
+        if let Some(foe) = caller {
+            let mut vigil = bot.vigil.unwrap_or(Vigil {
+                foe,
+                comings: 0,
+                at_it: false,
+                about: now,
+                forget: self.dice.around(VIGIL_FORGET.0, VIGIL_FORGET.1),
+                stand: None,
+            });
+            if !vigil.at_it {
+                vigil.comings = vigil.comings.saturating_add(1);
+            }
+            vigil.foe = foe;
+            vigil.at_it = true;
+            vigil.about = now;
+            vigil.stand = None;
+            bot.vigil = Some(vigil);
+            return;
+        }
+        let Some(mut vigil) = bot.vigil else {
+            return;
+        };
+        let them = view.seats.get(vigil.foe).copied().unwrap_or_default();
+        let there = them.at.xz();
+        let seen = them.alive && !them.unseen;
+        let here = bot.body.at.xz();
+        if vigil.at_it {
+            // They have just stepped back from it.
+            vigil.at_it = false;
+            if at_home || bot.goal == Goal::Defend {
+                let resolved = vigil.comings >= bot.patience;
+                let lasts = if resolved { VIGIL_STAND } else { VIGIL_LOOK };
+                vigil.stand = Some(Stand {
+                    spot: here,
+                    until: now + self.dice.around(lasts.0, lasts.1),
+                    resolved,
+                    watch: self.dice.around(VIGIL_WATCH.0, VIGIL_WATCH.1) * bot.temper.bold,
+                    gone: self.dice.around(VIGIL_GONE.0, VIGIL_GONE.1),
+                    calm: self.dice.around(VIGIL_CALM.0, VIGIL_CALM.1),
+                    gone_since: None,
+                    off: self.dice.around(VIGIL_OFF.0, VIGIL_OFF.1),
+                    inside: self.dice.between(VIGIL_INSIDE.0, VIGIL_INSIDE.1) * bot.temper.minds.clamp(0.6, 1.5),
+                });
+            }
+        }
+        let away = there.distance(spots.heart);
+        if seen && away < VIGIL_GONE.1 + 8.0 {
+            vigil.about = now;
+        }
+        if let Some(mut stand) = vigil.stand {
+            let gone = !seen || away > stand.gone;
+            let gone_for = if gone { now - *stand.gone_since.get_or_insert(now) } else { 0.0 };
+            if !gone {
+                stand.gone_since = None;
+            }
+            let over = now >= stand.until || (stand.resolved && gone_for >= stand.calm);
+            vigil.stand = if !over {
+                // Between them and what it keeps, as they move; the two of
+                // a team a little apart.
+                let side = if bot.seat < ARENA_TEAMS { 0.9 } else { -0.9 };
+                if let Some(spot) = guard_spot(nav, home, spots.keep, there, stand.off, stand.inside) {
+                    let across = (spots.keep - there).normalize_or_zero().perp() * side;
+                    let apart = spot + across;
+                    let stands = nav.grid().region(apart) == Some(home) && nav.grid().height(apart).is_some() && nav.walkable_at(apart);
+                    stand.spot = if stands { apart } else { spot };
+                } else if stand.spot == here {
+                    stand.spot = spots.guard;
+                }
+                Some(stand)
+            } else if stand.resolved && !gone && self.dice.roll() < (0.25 + 0.3 * bot.temper.pvp + 0.35 * (bot.temper.bold - 1.0)).clamp(0.1, 0.85) {
+                // It has stood there long enough with them still about:
+                // out at them, for as far as they are and a while.
+                stand.watch = stand.spot.distance(there) + 6.0;
+                stand.until = now + self.dice.around(6.0, 14.0);
+                Some(stand)
+            } else {
+                // Or it lets them be: back to what it was doing, with
+                // them still in mind.
+                bot.think_at = bot.think_at.min(now + 0.2);
+                None
+            };
+        }
+        // Left alone long enough, it has forgotten them.
+        if vigil.stand.is_none() && now - vigil.about > vigil.forget {
+            bot.vigil = None;
+            bot.patience = patience_of(bot.persona, &mut self.dice);
+            return;
+        }
+        bot.vigil = Some(vigil);
     }
 
     /// The bridge the bot would lay next, if any, as its team means to
@@ -2523,6 +2885,7 @@ impl Squad {
         let here = bot.body.at.xz();
         bot.face = None;
         bot.body.leap = false;
+        bot.awaits = false;
         if now < bot.reel_until {
             return Vec2::ZERO;
         }
@@ -2530,12 +2893,23 @@ impl Squad {
         let in_air = bot.body.lift != 0.0 || ground.is_none_or(|ground| (bot.body.at.y - ground).abs() > 0.02);
         // Jumping a gap: at where it means to come down and nothing else,
         // off the edge with a jump ([`Body::leap`]), until it is down
-        // again, or has come to where it was going with no gap on the way,
-        // or it has come to nothing.
+        // again; or, still on the ground, has come to where it was going
+        // with no gap on the way; or where it meant to come down is gone,
+        // to a blast; or it has come to nothing. **In the air it keeps on
+        // for where it means to come down, and stops over that very
+        // spot**: until 2026-11-14 the jump was over as soon as it was
+        // within 0.4 m of there, in the air or not, which over the void,
+        // with the place to come down on the very edge of a hole, left it
+        // to steer for the nearest ground from there, and it fell
+        // ([`Nav::nearest_walkable_within`]); and going at its pace all
+        // the way, it would have been to one side of the spot and the
+        // other of it, frame by frame, as it came down.
         if let Some(mut leap) = bot.leaping {
             leap.aloft |= in_air;
             let down = leap.aloft && !in_air;
-            if down || here.distance(leap.to) < 0.4 || now >= leap.until {
+            let there = !in_air && here.distance(leap.to) < 0.4;
+            let gone = in_air && nav.ground(leap.to).is_none();
+            if down || there || gone || now >= leap.until {
                 bot.leaping = None;
                 bot.path.clear();
                 bot.path_to = None;
@@ -2543,7 +2917,8 @@ impl Squad {
             } else {
                 bot.leaping = Some(leap);
                 bot.body.leap = true;
-                return (leap.to - here).normalize_or_zero() * leap.pace;
+                let off = leap.to - here;
+                return off.normalize_or_zero() * leap.pace.min(off.length() / dt.max(1e-4));
             }
         }
         if in_air && ground.is_none() {
@@ -2816,6 +3191,23 @@ impl Squad {
                 self.walk_to(bot, view, pad, pace, 2.0)
             }
             Goal::Defend => self.walk_to(bot, view, spots.guard, pace, 1.0),
+            Goal::Guard => {
+                // Where it stands, between them and what its team keeps,
+                // turned to them.
+                let Some((spot, foe)) = bot.vigil.and_then(|vigil| vigil.stand.map(|stand| (stand.spot, vigil.foe))) else {
+                    bot.think_at = bot.think_at.min(now);
+                    return Vec2::ZERO;
+                };
+                if here.distance(spot) <= 1.5
+                    && let Some(them) = view.seats.get(foe)
+                {
+                    let off = them.at.xz() - here;
+                    if off.length() > 0.5 {
+                        bot.face = Some((-off.x).atan2(-off.y));
+                    }
+                }
+                self.walk_to(bot, view, spot, pace, 1.0)
+            }
             Goal::Retreat => {
                 // Home if there is a way, to its pad, the far side of its
                 // island from anyone coming; and a healing potion there,
@@ -3018,6 +3410,22 @@ impl Squad {
         // are ([`Squad::meet`]).
         let aim = self.meet(nav, bot, foe, there, pace);
         let brisk = self.speed_of(foe) > 3.0;
+        // Someone on their way over a gap to it, in the air over the void
+        // or running at it with no straight way between them, is waited
+        // for: it jumps no gap itself until they are down or have stopped
+        // (seen in a game of bots on 2026-11-14: two of them after each
+        // other across a hole a blast had left in a bridge jumped it at
+        // the same moment, passing each other in the air, three times
+        // running, and the third time one of them fell).
+        let coming = !nav.line(here, there) && {
+            let aloft = nav.ground(there).is_none_or(|ground| view.seats[foe].at.y - ground > 0.3);
+            let closing = self
+                .tracks
+                .get(foe)
+                .is_some_and(|track| track.known && track.velocity.dot(-off / away.max(1e-3)) > 3.0);
+            aloft || closing
+        };
+        bot.awaits = coming;
         // A gap between it and them that it could jump, with no walking
         // straight to them and the way round far, or none: now and then
         // it jumps it, the likelier the bolder and the better it is, as
@@ -3030,6 +3438,7 @@ impl Squad {
         // by then; and having thought better of it, it goes round, and
         // thinks of it again in a while.
         if bot.leaping.is_none()
+            && !coming
             && pace >= RUN_SPEED * 0.9
             && now >= duel.round_until
             && bot.body.free(nav)
@@ -3259,15 +3668,25 @@ impl Squad {
         let me = view.seats[seat];
         let kit = view.outfits.kit(seat);
         let sight = if kit.blind { BLIND_SIGHT } else { HUNT_RADIUS };
-        let stung = now - bot.hurt_at < 3.0;
+        let stung = now - bot.hurt_at < bot.sting;
         let reach = match bot.goal {
             // Backing off, it fights only whoever is on top of it.
             Goal::Retreat => 2.6,
-            Goal::Defend | Goal::Hunt => sight,
+            Goal::Defend | Goal::Guard | Goal::Hunt => sight,
             // On the island it is raiding, whoever is home.
             Goal::Raid(victim) if nav.grid().region(here) == Some(Region::Team(victim)) => sight,
-            _ => (self.skill.aggro_at(now) * bot.temper.bold).max(if stung { 9.0 } else { 0.0 }).min(sight),
+            // As near as it lets people come just now ([`KEEN`]).
+            _ => (self.skill.aggro_at(now) * bot.temper.bold * bot.keen).max(if stung { 9.0 } else { 0.0 }).min(sight),
         };
+        // Standing toward someone who has stepped back from its base, it
+        // goes at them too, for as far from where it stands as it means
+        // to this time: not from wherever it has got to after them, or it
+        // would be after them for as long as they kept walking (as one
+        // was, 30 m down its own bridge, the first time this was tried).
+        let watched = bot
+            .vigil
+            .filter(|_| bot.goal == Goal::Guard)
+            .and_then(|vigil| vigil.stand.map(|stand| (vigil.foe, stand.spot, stand.watch)));
         let home = Region::Team(arena_team(seat));
         let on_plank = out_over_the_void(nav, here);
         view.seats
@@ -3278,13 +3697,20 @@ impl Squad {
             .filter_map(|(other, seen)| {
                 let there = seen.at.xz();
                 let away = there.distance(here);
+                // Whoever it is on already it keeps after a little
+                // further than it would have gone for them.
+                let reach = if bot.foe == Some(other) { (reach * KEEPS_ON).min(sight.max(reach)) } else { reach };
                 if away > reach || (seen.at.y - bot.body.at.y).abs() > 3.0 {
                     return None;
                 }
                 // Seeing someone off its island, it meets them on the
-                // land: it does not hold the end of a bridge against them.
-                if bot.goal == Goal::Defend && away > 2.6 && nav.grid().region(there) != Some(home) {
-                    return None;
+                // land: it does not hold the end of a bridge against
+                // them, but for whoever it stands toward.
+                if matches!(bot.goal, Goal::Defend | Goal::Guard) && away > 2.6 && nav.grid().region(there) != Some(home) {
+                    let at_them = watched.is_some_and(|(foe, spot, watch)| foe == other && there.distance(spot) <= watch);
+                    if !at_them {
+                        return None;
+                    }
                 }
                 // Hurt and out on a bridge, it starts nothing.
                 if on_plank && me.health < 0.5 && away > 3.0 {
@@ -3352,6 +3778,7 @@ impl Squad {
         if let Some(gap) = bot.cross
             && here.distance(gap.a_in) <= 0.6
             && bot.body.free(nav)
+            && !bot.awaits
         {
             bot.cross = None;
             bot.path.clear();
@@ -4963,6 +5390,212 @@ mod tests {
         assert!(rig.at().x < span.rung(8).x, "and it is on its own side of it");
     }
 
+    /// Someone comes at the base of `who` and steps back onto their
+    /// bridge, five times over: three seconds on its island, seven on the
+    /// bridge three and a half metres out. How patient the bot was thrown;
+    /// at which coming it first stood its ground; and whether, having not
+    /// yet had enough of them, it ever went back to what it was doing with
+    /// them still there.
+    fn baited(who: &str, seed: u64) -> (u8, Option<u8>, bool) {
+        let mut rig = Rig::new(bridged(), seed, who, Vec2::new(-3.0, 0.5), 200.0);
+        let patience = rig.bot().patience();
+        let (on, off) = (Vec2::new(3.5, 0.0), Vec2::new(9.5, 0.0));
+        let mut went_back = false;
+        for coming in 1..=5u8 {
+            for _ in 0..180 {
+                rig.step(Some(on));
+                assert!(!rig.bot().stands_its_ground(), "they are on its island: it is at them");
+            }
+            assert_eq!(rig.bot().vigil().map(|vigil| vigil.comings), Some(coming), "{who}, seed {seed}");
+            let mut stood = false;
+            for _ in 0..420 {
+                rig.step(Some(off));
+                assert!(!rig.fallen(), "{who}, seed {seed}: it went off its island after them");
+                stood |= rig.bot().stands_its_ground();
+                went_back |= !stood && !matches!(rig.bot().goal(), Goal::Guard | Goal::Defend);
+            }
+            if stood {
+                return (patience, Some(coming), went_back);
+            }
+        }
+        (patience, None, went_back)
+    }
+
+    #[test]
+    fn someone_who_keeps_coming_at_a_bot_s_base_is_stood_against_sooner_or_later_by_who_it_is() {
+        // Where it stands: on its island, between what it keeps and them,
+        // so far from them and so far in from where their bridge lands.
+        let nav = bridged();
+        let spot = guard_spot(&nav, Region::Team(1), Vec2::ZERO, Vec2::new(9.5, 0.0), 3.5, 1.0).expect("a place to stand");
+        assert!((spot.x - 4.5).abs() < 0.35 && spot.y.abs() < 1e-3, "{spot}");
+        assert_eq!(guard_spot(&nav, Region::Team(1), Vec2::ZERO, Vec2::new(0.6, 0.0), 3.5, 1.0), None);
+        // Each of them stands its ground at the coming it was thrown the
+        // patience for, the first, the second or the third, and not
+        // before: until then it looks after them a moment and goes back
+        // to what it was doing. Nobody's patience is the same every time,
+        // and one kind is not as patient as another.
+        let mut mean = std::collections::HashMap::new();
+        for persona in PERSONAS.iter() {
+            let mut stood_at = [0u32; 4];
+            for seed in 0..24 {
+                let (patience, stood, went_back) = baited(persona.name, seed);
+                assert!((1..=3).contains(&patience));
+                assert_eq!(stood, Some(patience), "{}, seed {seed}", persona.name);
+                assert_eq!(went_back, patience > 1, "{}, seed {seed}: patient for {patience}", persona.name);
+                stood_at[usize::from(patience)] += 1;
+            }
+            assert!(stood_at.iter().filter(|times| **times > 0).count() >= 2, "{}: always at the same coming, {stood_at:?}", persona.name);
+            let comings = (stood_at[1] + 2 * stood_at[2] + 3 * stood_at[3]) as f32 / 24.0;
+            assert!((comings - persona.patience).abs() < 0.5, "{}: at {comings} on average, for {}", persona.name, persona.patience);
+            // (As it stood on 2026-11-14, of twenty-four: the defender at
+            // the first coming 21 times and the second 3; the mastermind
+            // 2, 21 and 1 at the first, the second and the third; the
+            // free spirit at the second 8 times and the third 16.)
+            mean.insert(persona.name, comings);
+        }
+        assert!(mean["ISFJ"] + 1.0 < mean["INFP"] && mean["INFJ"] + 1.0 < mean["ENFP"], "{mean:?}");
+        assert!(PERSONAS.iter().all(|persona| (1.0..=3.0).contains(&persona.patience)));
+    }
+
+    #[test]
+    fn a_bot_standing_its_ground_keeps_between_them_and_its_base_until_they_are_really_gone() {
+        let (on, off) = (Vec2::new(3.5, 0.0), Vec2::new(9.5, 0.0));
+        for (who, seed) in [("ISFJ", 1), ("INFJ", 4), ("ISTJ", 2), ("ESTJ", 7), ("ISFJ", 9)] {
+            let mut rig = Rig::new(bridged(), seed, who, Vec2::new(-3.0, 0.5), 200.0);
+            // Baited until it stands.
+            let mut comings = 0;
+            while !rig.bot().stands_its_ground() {
+                comings += 1;
+                assert!(comings <= 3, "{who}, seed {seed}");
+                for _ in 0..180 {
+                    rig.step(Some(on));
+                }
+                for _ in 0..120 {
+                    rig.step(Some(off));
+                }
+            }
+            // With them a good way down their bridge, further than it
+            // goes at anyone from where it stands and nearer than gone,
+            // it is on its island on their side of what it keeps, turned
+            // to them; and it does not go back to anything else.
+            let down = Vec2::new(22.5, 0.0);
+            for frame in 0..(6.0 / Rig::FRAME) as usize {
+                rig.step(Some(down));
+                if frame > 150 && rig.bot().stands_its_ground() && rig.bot().foe.is_none() {
+                    let at = rig.at();
+                    assert!(at.x > 0.8 && at.x < 5.6 && at.y.abs() < 2.5, "{who}, seed {seed}: it stands at {at}");
+                    assert_eq!(rig.bot().goal(), Goal::Guard);
+                }
+            }
+            // They come back onto its island: it is at them at once, and
+            // it has counted another coming.
+            let mut struck = false;
+            for _ in 0..(4.0 / Rig::FRAME) as usize {
+                struck |= rig.step(Some(on)).punch == Some(0);
+            }
+            assert!(struck, "{who}, seed {seed}: they came back and it did nothing");
+            assert_eq!(rig.bot().vigil().map(|vigil| vigil.comings), Some(comings + 1));
+            // They step back, and it stands again, having had enough long
+            // since; they go for good, and within the while it takes to
+            // believe it, it stands there no longer. It has not forgotten
+            // them: the next time they come and step back, it stands at
+            // once, however patient it was thrown.
+            for _ in 0..120 {
+                rig.step(Some(off));
+            }
+            assert!(rig.bot().stands_its_ground(), "{who}, seed {seed}");
+            let mut stood_down = None;
+            for frame in 0..(12.0 / Rig::FRAME) as usize {
+                rig.step(None);
+                if !rig.bot().stands_its_ground() {
+                    stood_down = Some(frame as f32 * Rig::FRAME);
+                    break;
+                }
+            }
+            let after = stood_down.expect("it never stood down");
+            assert!(after > 1.0 && after < VIGIL_CALM.1 + 2.0, "{who}, seed {seed}: after {after} s");
+            for _ in 0..180 {
+                rig.step(Some(on));
+            }
+            for _ in 0..120 {
+                rig.step(Some(off));
+            }
+            assert!(rig.bot().stands_its_ground(), "{who}, seed {seed}: it had forgotten them");
+            // Out on their bridge near enough for it to go at them, and
+            // then away to the far land: it goes no further after them
+            // than it means to from where it stands, and is on its own
+            // island again, whatever it was doing to them on the bridge.
+            for _ in 0..(5.0 / Rig::FRAME) as usize {
+                rig.step(Some(off));
+                assert!(!rig.fallen(), "{who}, seed {seed}");
+            }
+            for _ in 0..(10.0 / Rig::FRAME) as usize {
+                rig.step(Some(Vec2::new(28.0, 0.0)));
+                assert!(!rig.fallen(), "{who}, seed {seed}");
+            }
+            assert!(rig.at().x < 6.3, "{who}, seed {seed}: it is after them still, at {}", rig.at());
+        }
+    }
+
+    #[test]
+    fn a_bot_does_not_stand_its_ground_for_ever_and_what_it_does_then_is_not_the_same_twice() {
+        // Someone who has had a bot stand its ground, and then stays out
+        // on their bridge where it does not go at them from where it
+        // stands: for a minute and a half. Sooner or later it has stood
+        // there long enough, and either goes out at them or lets them be
+        // and goes back to what it was doing; which, and when, differs
+        // from one time to the next, and the good at a fight go out at
+        // them oftener than the rest.
+        let (on, off, down) = (Vec2::new(3.5, 0.0), Vec2::new(9.5, 0.0), Vec2::new(22.5, 0.0));
+        let outcomes = |who: &str| -> (u32, u32, Vec<f32>) {
+            let (mut went_out, mut let_be, mut whens) = (0, 0, Vec::new());
+            for seed in 0..30 {
+                let mut rig = Rig::new(bridged(), seed, who, Vec2::new(-3.0, 0.5), 200.0);
+                for _ in 0..4 {
+                    for _ in 0..180 {
+                        rig.step(Some(on));
+                    }
+                    for _ in 0..90 {
+                        rig.step(Some(off));
+                    }
+                    if rig.bot().stands_its_ground() {
+                        break;
+                    }
+                }
+                assert!(rig.bot().stands_its_ground(), "{who}, seed {seed}");
+                let (mut out, mut back) = (false, false);
+                for frame in 0..(90.0 / Rig::FRAME) as usize {
+                    rig.step(Some(down));
+                    assert!(!rig.fallen(), "{who}, seed {seed}");
+                    // Out on the bridge after them; or about its island
+                    // again with nobody in mind to stand against.
+                    let now_out = rig.at().x > 8.0;
+                    let now_back = !rig.bot().stands_its_ground() && rig.bot().goal() != Goal::Guard;
+                    if (now_out && !out) || (now_back && !back) {
+                        whens.push(frame as f32 * Rig::FRAME);
+                    }
+                    out |= now_out;
+                    back |= now_back;
+                }
+                assert!(out || back, "{who}, seed {seed}: it stood there for a minute and a half");
+                went_out += u32::from(out);
+                let_be += u32::from(back && !out);
+            }
+            (went_out, let_be, whens)
+        };
+        let (bold_out, bold_be, whens) = outcomes("ISTP");
+        let (meek_out, meek_be, _) = outcomes("INFP");
+        // (As it stood on 2026-11-14, of thirty: the lone wolf out at them
+        // 19 times and letting them be 11, the dreamer 4 and 26.)
+        assert!(bold_out > 0 && bold_be > 0, "the lone wolf: out at them {bold_out} times, let them be {bold_be}");
+        assert!(meek_out > 0 && meek_be > 0, "the dreamer: out at them {meek_out} times, let them be {meek_be}");
+        assert!(bold_out > meek_out, "{bold_out} against {meek_out}");
+        // And not on the stroke of anything: the first thing it did came
+        // anywhere from a quarter of a minute on to well over half of one.
+        let (soonest, latest) = whens.iter().fold((f32::INFINITY, 0.0f32), |(low, high), when| (low.min(*when), high.max(*when)));
+        assert!(soonest < 20.0 && latest > 30.0, "between {soonest} and {latest} s");
+    }
+
     #[test]
     fn a_hole_blown_in_a_bridge_is_jumped_if_it_is_short_and_mended_if_it_is_not() {
         let span = two_islands().1;
@@ -5032,6 +5665,63 @@ mod tests {
         assert!(laid[0].x < gap.a.x && laid[0].x > gap.a.x - 1.0 && laid[0].y.abs() < 0.3, "{:?}", laid[0]);
         let last = laid[laid.len() - 1];
         assert!(last.x > gap.b.x && last.x < gap.b.x + 1.0 && last.y.abs() < 0.3, "{last:?}");
+    }
+
+    #[test]
+    fn a_bot_comes_down_past_someone_on_the_edge_of_a_hole_and_waits_for_someone_coming_over_it() {
+        let span = two_islands().1;
+        let holed = || {
+            let mut nav = bridged();
+            assert_eq!(nav.blast(span.rung(7), DYNAMITE_RADIUS).len(), 4);
+            let gap = nav.gaps()[0];
+            (nav, gap)
+        };
+        // Someone standing on the very edge of what is left past a hole
+        // of four planks. A bot after them jumps it and comes down on the
+        // planks behind them, whoever it is, and never in the hole: for a
+        // night the place to come down was where they stood, the edge
+        // itself, the jump was over a step short of it, in the air, and
+        // what it then steered for was a square with nothing under it.
+        let mut over = 0;
+        for who in ["ESTP", "ISTP", "ENTJ", "INFP"] {
+            for seed in 0..6 {
+                let (nav, gap) = holed();
+                let mut rig = Rig::hunting(nav, seed, who, Vec2::new(2.0, 0.0));
+                for _ in 0..(9.0 / Rig::FRAME) as usize {
+                    rig.step(Some(gap.b));
+                    assert!(!rig.fallen(), "{who}, seed {seed}: it fell into the hole");
+                    if rig.at().x > gap.b.x - 0.1 && rig.bot().body.free(&rig.nav) {
+                        over += 1;
+                        break;
+                    }
+                }
+            }
+        }
+        assert!(over >= 20, "over the hole {over} times of twenty-four");
+        // Someone running at it from the far land, off the edge and over
+        // the hole: it lets them come. It is not jumping the hole itself
+        // while they are on their way, to pass them in the air.
+        for seed in 0..10 {
+            let (nav, gap) = holed();
+            let mut rig = Rig::hunting(nav, seed, "ESTP", gap.a_in - Vec2::X * 2.0);
+            // From the far land, 16 m past the hole, to a step in from the
+            // edge on the bot's side: a little over two seconds of it.
+            let from = gap.b.x + 16.0;
+            let frames = ((from - gap.a.x + 0.8) / (RUN_SPEED * Rig::FRAME)) as usize;
+            let mut was = false;
+            for frame in 0..frames {
+                let run = frame as f32 * RUN_SPEED * Rig::FRAME;
+                rig.step(Some(Vec2::new(from - run, 0.0)));
+                assert!(!rig.fallen(), "seed {seed}: it fell");
+                // (For the first quarter of a second it cannot know which
+                // way they are going.)
+                let leaping = rig.bot().leaping();
+                assert!(frame < 15 || was || !leaping, "seed {seed}: it jumped at someone on their way over, {run} m into their run");
+                was = leaping;
+            }
+            // And they are met where it stood, on its own side.
+            assert!(rig.at().x < gap.a.x + 0.1, "seed {seed}: it is at {}", rig.at());
+        }
     }
 
     #[test]

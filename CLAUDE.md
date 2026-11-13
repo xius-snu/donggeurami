@@ -313,7 +313,14 @@ alone; the server is `cargo build -p roundtown_server`. Never `--workspace`,
 which would build the game with the server's half of replicon in it.
 
 Android needs the `release-android` profile, a manual strip step, and Gradle
-(`versionCode` in `mobile/android/app/build.gradle` is the build number: 26
+(`versionCode` in `mobile/android/app/build.gradle` is the build number: 27
+in the small hours of 2026-11-14, the dynamite's arch drawn up the screen
+with an X where it will land, its brown fuse, no three dots and no empty
+buttons, the computer's players standing their ground against whoever
+keeps coming at their base ("Games"), and the friends' panel's changes of
+the night before ("Friends, groups and messages"; protocol 15 still, the
+server deployed for the bots at 15:45 UTC on 2026-11-13, the binary before
+kept on the VM as `roundtown-server.prev-2026-11-14`); 26
 on the night of 2026-11-13, every word in Inter, a tag after every name,
 and the friends' panel with its requests, groups and messages ("Friends,
 groups and messages", "The font is Inter"), and with it what another
@@ -630,6 +637,202 @@ was the town itself; everything below about the map, its islands, the
 void, the punch's knockback and its range held for the town then, and
 holds for the arena now.
 
+- **Since the small hours of 2026-11-14 the dynamite's arch rises and falls
+  and leans to neither side, with an X where it will land; its fuse is seen
+  to be brown; the three dots are gone, and a button for a thing to use is
+  shown only with something on it; and whoever keeps coming at a team's
+  base is stood against, sooner or later, by who each of them is** (Hajun,
+  having played APK 26, in three messages late on the night of 2026-11-13:
+  "i want the dynamites hit indicator's curved part to be curved only in
+  the Y axis (up and down) not the sideways axis. its a arch projectile not
+  a boomarang. also i want there to be some indicator of where the dynamite
+  will land, maybe a x in the middle of the circle, and the arched hit
+  indicator rectangular part should be connected to the middle of the
+  circle. also read BridgewarsAIbottleneck. i just tested the new version
+  and found another ai interaction that could solved. fix and
+  rebuild+repush"; "also i think the dynamite's string part should be
+  brown, like a string."; and "also i dont think the UI ... button is
+  necessary. just remove it and keep the default as the only option - only
+  showing the button if the slot is filled and not showing empty
+  buttons"). **`PROTOCOL_VERSION` 15 still**: nothing that is sent has
+  changed (a stick is sent as where it was thrown from and to, as before,
+  and how it is drawn between the two is each device's), so APK 26 plays
+  on against the server. The bots' part is the server's online, **deployed
+  at 15:45 UTC on 2026-11-13** (00:45 on the 14th here; the binary before
+  kept on the VM as `roundtown-server.prev-2026-11-14`); the rest is the
+  app's, **APK 27**, which has the friends' panel's changes of the same
+  night as well ("Friends, groups and messages", below).
+  - **The arch** (`bridge_wars::lob_track`, `Lob::track`, `Lob::rise`,
+    `DYNAMITE_LEAN`, `UP_THE_MAP`). A stick is thrown straight at where it
+    comes down, and rises and falls on the way (`Lob::apex`: 0.8 m over
+    the straight line of the nearest throw, 2 m over that of the
+    furthest). The camera is straight over you, and from there a throw
+    that only rose and fell would be seen going along a straight line,
+    however high; so it is drawn as an arch is on a map, **up the screen
+    as it rises and back down it as it falls**, by as much as it is high
+    (`DYNAMITE_LEAN`, 1; north, the game's -Z, whichever way it is
+    thrown). Thrown to the left or the right, the whole arch is seen;
+    thrown up the screen or down it, it goes along a straight line. For
+    its first day it swung out to the thrower's right by 0.18 of the
+    throw's length (`DYNAMITE_BULGE`, gone), which is what Hajun saw as a
+    boomerang. Where it comes down, when, and what it blows are as they
+    were, and the server's online; the leaning is only where each device
+    draws it on the way.
+  - **The band** (`utility::lob_arch`, `range::arch`): the same arch, 0.6
+    m wide as before, built in the air: each of its 24 stretches as high
+    as the stick will be there, and as far up the screen, from the hand to
+    **the middle of the ring** (it stopped at the ring's edge, and in the
+    nearest of throws was not drawn at all), with its fill, its outline
+    and its dark rim (`range::arch` takes a line through the air;
+    `range::ribbon`, along the ground, is gone). Built again as the throw
+    changes by 4 cm or turns by half a degree, which way the top of the
+    screen is from it changing as it turns; its sheets are never left out
+    for where they were a moment ago (`NoFrustumCulling`). **And an X in
+    the middle of the ring** (`range::cross`, `LANDING_CROSS`): two
+    strokes a metre long and 17 cm thick, in the band's white with its
+    dark rim, aslant on the screen whichever way you aim (the ring is
+    turned back by as much as the band is turned with the aim).
+  - **The fuse** (`dynamite::FUSE_RADIUS`, `FUSE_LENGTH`): 0.42 m long and
+    0.14 across where it was 0.26 and 0.09. It was brown all along
+    (`colours.arena.dynamite_fuse`), and from the camera over you a dark
+    hair at the sticks' end, of no colour at all. **Its picture is in two
+    colours** (`hud::painted`, `Picture::in_its_own_colours`,
+    `hud::repaint`): the sticks red and the fuse brown, the file's own
+    two, on the button and on the shop's card, where the whole picture
+    was tinted the sticks' red, with a dot for a spark at the fuse's end,
+    which is gone. It is the one picture not tinted where it is shown
+    (`market::look_of` gives it white), so it is painted again as the
+    file changes.
+  - **The buttons** (`hud::DOTS`, `utility::SECOND_ALWAYS`, both `false`,
+    the code behind each kept): the three dots are not put up, and
+    nothing shows an empty button. **A button is shown only with
+    something on it**, the second one too, which until then stood empty
+    up and to the left of the sword from the start: with nothing to use,
+    the sword has the jump and the bridge buttons round it and no more.
+    That the second one goes with the rest is my reading of "not showing
+    empty buttons"; `SECOND_ALWAYS` is the one word to have it back.
+  - **What Hajun found** (`BridgewarsAIbottlenecks.txt`, its one item
+    now: "When i go to invade another base, i go near their island, and
+    attack the spawner, then the 2 enemies of that island come toward me
+    to defend, and i retreat back a slight bit to the bridge, and then
+    they both go back to what they were doing (going to their generator)
+    so i go back to attack the spawner a little bit, then i retreat back,
+    and i keep repeating this until their spawner destroyed"; it asks for
+    a patience that differs from one to the next, standing ground after
+    the first, second or third "agitation", "until he rly rly leaves",
+    and says "if some thing becomes a definite if-then, then its not a
+    real human, but a program"). A bot had no memory of anyone: it went
+    home for whoever stood on its island, and back to what it was doing
+    the moment they stepped off it, as often as they liked.
+  - **Standing their ground** (`shared/src/bots.rs`: `Vigil`, `Stand`,
+    `Squad::keep_vigil`, `guard_spot`, `Goal::Guard`, `GUARD_SCORE`
+    0.79, over anything a bot does about its island and under seeing
+    someone off it and backing off hurt). Whoever of another team is on
+    the land of a bot's island, or within 5 m of its anchor as that loses
+    health, it has in mind from then on, and counts each time they come
+    again after having stepped back (`Vigil::comings`). **Each bot has
+    its patience, 1 to 3 comings** (`Persona::patience`, `patience_of`:
+    its kind's number and a bell's throw, rounded: ISFJ 1.0, INFJ 1.1,
+    ISTJ 1.2, ESTJ 1.3, ESTP 1.4, ENTJ and ESFJ 1.5, ENFJ 1.6, ISTP 1.7,
+    INTJ 1.8, ENTP 2.2, ESFP 2.4, INTP 2.5, ISFP 2.6, ENFP 2.7, INFP
+    2.8; thrown again each time it has forgotten someone). When they step
+    back and it has not had enough of them, it looks after them for 0.8
+    to 4 s (`VIGIL_LOOK`) and goes back to what it was doing; once they
+    have come as many times as it has the patience for, **it stands its
+    ground**: on its own land between them and its anchor, on the line
+    from them to it, 3 to 5 m from them and 0.9 to 2.2 m in from the
+    shore (`VIGIL_OFF`, `VIGIL_INSIDE`, the more for one that minds being
+    thrown off), or, with too little land for that, right in front of the
+    anchor; the two of a team 0.9 m to either side of the line; turned to
+    them, and moving as they move. **At them if they come near**: within
+    5 to 12 m of where it stands, times how bold it is (`VIGIL_WATCH`:
+    measured from where it stands, not from where it is, so that it is
+    not led out a step at a time), it goes out onto the bridge after
+    them, and back to its place when they are further. **There until
+    they are really gone**: 24 to 38 m from the middle of its island
+    (`VIGIL_GONE`; the bridge's far end is 44 m off) for 2.5 to 8 s
+    (`VIGIL_CALM`), when it goes back to what it was doing. **And not for
+    ever**: after 12 to 36 s of it (`VIGIL_STAND`) with them still about,
+    it either goes out at them, as far as they are and 6 m more, for 6 to
+    14 s (the likelier the bolder and the better at a fight: 0.25 and 0.3
+    of its `pvp` and 0.35 for each 1 of `bold` over 1, between 0.1 and
+    0.85), or lets them be, and has not forgotten them either way: the
+    next time they come it stands at once. Left alone 50 to 110 s
+    (`VIGIL_FORGET`), it has forgotten them. Every number is thrown from
+    its spread each time it is needed, so no two stands are alike.
+  - **And nothing else it does about a fight begins or ends on the same
+    line twice** (`KEEPS_ON`, `KEEN`, `KEEN_LASTS`, `STING`, `NERVE`):
+    how near it lets people come before it goes for them is 0.72 to 1.35
+    times its usual, thrown again every 4 to 11 s; someone it is on
+    already it keeps after 1.3 times as far; a blow smarts for 2.2 to
+    6.5 s, in which it goes for whoever is within 9 m (3 s, always,
+    until then); and where it backs off hurt is up to 0.08 of its health
+    either side of its usual, thrown again after each fright.
+  - **Two bots after each other across a hole fell into it, and do not
+    now** (`Squad::act`, `Squad::fight`, `Bot::awaits`, `Nav::leap`,
+    `Nav::nearest_walkable_within`). Found by the server's whole games:
+    with the dice falling otherwise for the throws above, in one of its
+    eight a bot walked off an edge. Two bots of different teams, either
+    side of a hole a stick had left in a bridge, each jumped it at the
+    other at the same moment, passing in the air, three times running,
+    and the third time one fell. Four things, each mended: **someone on
+    their way over a gap to it is waited for** (in the air over the
+    void, or running at it with no straight way between them: it jumps
+    none itself until they are down or have stopped); **a jump comes
+    down a step in from the edge** (0.9 m, wherever whoever it is after
+    stands: with them on the very edge, the place to come down was the
+    edge itself); **in the air it keeps on for where it means to come
+    down and stops over that very spot** (the jump was over as soon as it
+    was within 0.4 m of there, in the air or not); and **what someone in
+    the air steers back for has ground under it** (the squares walked
+    along a plank reach round its end, out over the hole: it steered for
+    the middle of the one it was in, to and fro about it, down into the
+    void).
+  - **Whole games, again** (a hundred and twenty of bots alone, as
+    deployed): over at 12:32 on average, none drawn; won by island 33,
+    26, 26 and 35; before 10:00 twelve and a half deaths by punches and
+    eleven by falls a game, and 0.5 anchors broken by bots: much as it
+    was (12:29, twelve and a half and ten and a half, 0.4).
+  - **Checked on 2026-11-14.** Unit-tested: the arch (to neither side of
+    its throw, up the map by its height, straight thrown up or down it),
+    the band and the X, the two-coloured picture, that no empty button
+    is shown; someone who keeps coming stood against at the coming its
+    kind is like (of 24 each: ISFJ at the first 21 times, INTJ at the
+    second 21, ENFP at the second 8 and at the third 16), a bot keeping
+    between them and its anchor until they are gone, and what it does
+    when it has stood long enough (of thirty stand-offs the lone wolf
+    went out at them 19 times and let them be 11, the dreamer 4 and 26);
+    the jump past someone on the edge of a hole, 24 of 24 down on the
+    planks, and the wait for someone coming over, which fails without it.
+    **Scripted in the desktop build**, offline (a throwaway
+    `src/arena/scratch_run.rs`, removed): the band aimed nine ways, to
+    the right at three lengths, to the left, up the screen, down it and
+    across the corners, by day and by night, the X an X in each and the
+    band meeting the ring's middle; a near throw and a far one watched
+    along their arch; the fuse close by and on the button; the buttons
+    with nothing held and with one kind; and a team baited as Hajun did
+    it: both at the head of their bridge between the baiter and their
+    anchor, one out at the baiter standing 4 m off, both back to their
+    places, and both back to what they were doing 7 to 16 s after the
+    baiter had gone 31 m off. **On the VM after the deploy**, nobody
+    having been on it for an hour, this PC's own account was let in and
+    seated with seven of the computer's, three of their bridges across
+    by half a minute; the script then stood on another team's island,
+    whose two bots had it dead in six seconds; the journal clean. APK 27
+    is built, its 85 asset files checked byte for byte, its
+    library the stripped one with its entry points, and its number read
+    back, and **not installed, no phone being attached** (APK 26 is kept
+    beside it as `donggeurami_town-release.prev-2026-11-14.apk`). **Not
+    by hand, and not on a phone**: the arch and its X under a thumb, and
+    a real person baiting the server's bots, are unseen.
+  - **What is mine**: that the arch is drawn up the screen, and by as
+    much as it is high; that the band is built in the air; the X's size;
+    the longer, thicker fuse; hiding the empty second button; every
+    kind's patience and every number of a stand; that a bot which has
+    stood long enough goes out at them or lets them be by chance; that it
+    forgets; the spreads of `KEEN`, `STING` and `NERVE`; and that a bot
+    waits for someone already on their way over a gap.
+
 - **Since the night of 2026-11-13 there is dynamite, which cuts bridges;
   the computer's players no longer fall for three easy tricks, and are not
   all as good as each other at a fight; and one whose teammate is a person
@@ -675,9 +878,10 @@ holds for the arena now.
     to 10 m from them (`DYNAMITE_NEAREST`, `DYNAMITE_FURTHEST`; whatever
     is asked for is brought within those), in 0.45 s and 0.04 s more for
     each metre (`Lob::secs`: 0.55 s the nearest, 0.85 s the furthest),
-    along an arch that also swings out to the thrower's right by 0.18 of
-    its length (`DYNAMITE_BULGE`, `lob_track`), so that the camera
-    straight over you sees an arch at all. Down, it lies 1.2 s
+    along an arch (for its first day one that also swung out to the
+    thrower's right by 0.18 of its length, `DYNAMITE_BULGE`, so that the
+    camera straight over you saw an arch at all; since 2026-11-14 it is
+    drawn up the screen as it rises, above). Down, it lies 1.2 s
     (`DYNAMITE_FUSE`), shining three times (`DYNAMITE_FLASHES`,
     `Lob::shine`), and blows: 20 (`DYNAMITE_DAMAGE`), less what a shield
     keeps off, to everyone of another team than the thrower's whose feet
@@ -696,14 +900,16 @@ holds for the arena now.
     the further the throw**: from 4 shares of the short side from where it
     went down (`AIM_DEAD`, as ever), the nearest of throws, to 22
     (`AIM_FULL`, about a button and a half), the furthest. What is drawn
-    is a band 0.6 m wide that bends as the stick will fly, out to your
-    right and back (`range::ribbon` along `lob_line`, built again as the
-    throw changes by 4 cm; `LobBand`), ending at a ring as wide as the
-    blast, round where it will come down (`LandingRing`, `range::disc`:
-    mine, as Brawl Stars shows where a thrower's shot lands), in the
-    fireball band's own colours with its dark rim (`colours.arena.aim_*`).
-    In the nearest of throws the ring reaches back past your hand, and
-    the ring alone is drawn. Dragged back to where the finger went down
+    is a band 0.6 m wide that bends as the stick will fly (for its first
+    day out to your right and back along the ground, `range::ribbon`
+    along `lob_line`, ending at the ring's edge; since 2026-11-14 an arch
+    in the air to the ring's middle, with an X there, above; `LobBand`),
+    and a ring as wide as the blast, round where it will come down
+    (`LandingRing`, `range::disc`: mine, as Brawl Stars shows where a
+    thrower's shot lands), in the fireball band's own colours with its
+    dark rim (`colours.arena.aim_*`). In the nearest of throws the ring
+    reaches back past your hand (and for that first day the ring alone
+    was drawn). Dragged back to where the finger went down
     it is cancelled, a quick tap that never dragged throws 4.5 m the way
     you face (`DYNAMITE_TAP`), and so does its key. Half a second between
     two, as with the fireball.
@@ -901,7 +1107,8 @@ holds for the arena now.
     thrower's team nor an anchor, and knocks nobody; that a plank goes
     whole, by its middle; the 3 m of the blast (the fireball's), the 2.5
     to 10 m of a throw and the 4.5 m of a tap; how long it flies and the
-    1.2 s it lies; that the arch leans to the thrower's right; the ring
+    1.2 s it lies; that the arch leant to the thrower's right (for its
+    first day); the ring
     where it will land; that one over the void falls and never blows;
     the sticks' size and their glow; "Cuts bridges"; the narrower cards;
     everything about the computer's players and it; every kind's number
@@ -1098,6 +1305,8 @@ holds for the arena now.
     while they are, as the bridge button is, and off again at each new
     game (`fold_away`). A button put away takes no press (`Visibility`;
     Bevy's picking and `hud::Presses` both pass over what is hidden).
+    (Since 2026-11-14 there are no dots, and a button is shown only with
+    something on it, the second one too: above.)
   - **Using them** (`utility::buttons`, `aim`, `drink`): each as the one
     was, by what is on it: a hold and a drag to aim a fireball or a
     builder, a press to drink, the count in its corner, a potion's
@@ -3186,7 +3395,9 @@ holds for the arena now.
   bridge button since 2026-11-08, and the other the second button, for
   what the item shop sells to use, since 2026-11-12: `hud::utility_slot`,
   `utility`); and over those a smaller
-  button of three dots (`hud::ARENA_DOTS`), which does nothing yet; the
+  button of three dots (`hud::ARENA_DOTS`), which does nothing yet (it
+  showed the empty item buttons from 2026-11-13, and is not put up at all
+  since 2026-11-14, `hud::DOTS`: "Games", above); the
   stick stays, and nothing else of the town's bar is there (no balance,
   person, gear, gift, social, face or chat). The pictures are drawn in code
   (`hud::sword`, `item_picture`, `plank`, `dots`, and the `bag`
@@ -3923,17 +4134,51 @@ backups' rotation.
 - **The panel** (`src/friends.rs`; every colour and word of it
   `assets/ui.ron`'s `colours.friends` and `words.friends`): the speech
   bubble under the gift (`hud::FriendsButton`, the "social" button that did
-  nothing) opens it, a dialog (`hud::DialogUp`: you stand still, presses
-  are its own; the cross, a tap outside it or Escape shuts it), dark and
+  nothing) opens it, a dialog (`hud::DialogUp`: you stand still, and a
+  press on it is its own; the cross or Escape shuts it), dark and
   see-through as sketched, 112 by 66 shares of the short side, which is
   the sketch's own size on a phone and fits a 4:3 tablet (a test keeps it
-  inside both). Along its top two tabs, your own name and tag and your
-  level, and the cross. It is drawn again whole whenever what it shows
+  inside both). Along its top two tabs and the cross. It is drawn again
+  whole whenever what it shows
   changes (`redraw`, as the settings' window is), keeping what is typed
   (`signup::NameBox`) and how far each list is scrolled (`Scrolled`); a
   list scrolls under a finger or the mouse held (`drag_list`), and a
   press dragged more than 16 px is no tap on the button it began on
   (`TAP_SLOP`).
+  - **A press anywhere off the panel shuts it as it goes down, and is
+    whatever it landed on's as well** (since the night of 2026-11-13,
+    Hajun: "it should close just from the DOWN. and also when i for
+    example touch the joystick as the way of closing it or jump button,
+    it should register the joystick tap/drag or the jump button rather
+    than needing to press twice"; for its first evening a tap, down and
+    up, on the dark round it shut it, and that tap was the panel's
+    alone). The panel's root is over the whole screen, takes no press for
+    itself (`TakesPress` is on the panel and on what comes up over it)
+    and lets what is under it be pressed (`Pickable` that blocks nothing):
+    `press_outside` hears a press that lands on it through picking and
+    puts the panel away, so a thumb on a button under it presses that
+    button too, the gamepad opening the games with the one tap; and
+    `shut_under_a_press`, ordered before `read_player_input`, puts it
+    away in the very frame a press lands on nothing that takes one, so
+    that the stick has that touch and a press on the jump button jumps
+    (a jump is read only in the frame its press lands, and you stand
+    still under a dialog). The speech bubble itself, pressed with the
+    panel up, shuts it and does not open it again with the same press
+    (`Pressed::shut_it`).
+  - **Your tag is after your name on its plate, top left**
+    (`hud::YourTag`, which `friends::show_tag` writes as the server says
+    it; `hud::show_name`: "Hajooon#5571" online, your name alone
+    offline), in the town and in Bridge Wars alike, and nothing of your
+    own is in the panel's top; **your own level is shown nowhere but on
+    your row of a group's list** (Hajun, the same night: "i dont need
+    that text there. just put that number in the main Ui top left corner
+    name tag ... Your own Level doesnt need to be shown anywhere for
+    now"; for its first evening the panel's top had your name, tag and
+    level beside the cross). The cross is 8 shares across (`CLOSE`; 7
+    until "increase size of the close button slightly") and has no disc
+    come up behind it under the pointer or a finger, as the panel's other
+    bare buttons have ("it should just close it no hover/click
+    background"; `bare`'s `lit`).
   - **Friends**, the first tab: your group, if you are in one ("Group
     (2/4):", Leave, each member with "(Leader)" and "(You)", and for the
     leader a cross that puts a member out); then "Friends (1/2):", how
@@ -3948,18 +4193,38 @@ backups' rotation.
     in your group already, or you in a group you do not lead), and a
     gear, under which Message and Remove Friend (which asks first).
   - **Add Friend**: a name typed into the sign-up's box
-    (`NameBox::open_for`), which on a phone slides up over the keyboard as
-    the name's page does; the glass, or Enter, looks for it (`Act::Find`):
+    (`NameBox::open_for`), with "Friend's Username" standing faint in it
+    until the first letter (`Hint`, `show_hint`, `words.friends.
+    search_hint`, `colours.friends.hint`; a line under the box said to
+    type a name and tap the glass, until Hajun had it put in the box);
+    the glass, or Enter, looks for it (`Act::Find`):
     everyone of that name, whatever its capitals, and whoever has that
     name and tag if it ends in one (`social::split_handle`), up to 20,
     whoever is here first and then whoever was here last, never yourself.
     Beside each, "Add friend" (`Act::Befriend`), or "Requested",
     "Friends", or "Accept" for one who has asked you. Under them "My ID"
     and your own name and tag, the tag fainter, with a button that copies
-    it.
+    it. **Until something has been looked for, "My ID" stands right under
+    the search bar**: the list of who was found is as many rows tall as
+    it has to show, none before a search, one for "Nobody goes by that
+    name.", and up to three, past which it scrolls (`found_rows`; Hajun:
+    "there should be barely any gap between the search bar and the "My
+    ID" box. that gap only appears after you press enter/click the search
+    icon"; three rows' room was kept from the start until then). **On a
+    phone the box, like the one a message is written in, slides up over
+    the keyboard only until its own top is at the top of the screen**
+    (`signup::LiftsForKeyboard::whole`, `lifting_whole`; Hajun: "the Add
+    Friend popup's top edge should touch the top of the screen when
+    keyboard is up. right now the top area is hidden by going over the
+    border"), so its title and the way back out of it stay in sight and
+    whatever does not fit is under the keyboard; the sign-up's name page
+    and the settings' Edit name still slide as far as keeps the box typed
+    into on the screen, their headings going off the top.
   - **The envelope**, the second tab, is your inbox, newest first: who
     wants to be your friend (Accept, Reject), who invites you to their
-    group (Join, Reject), and what your friends have written (Reply, OK).
+    group (Join, Reject), and what your friends have written (Reply, OK);
+    with nothing in it, "All Caught Up." (and an empty list of friends
+    says "No friends."; both Hajun's words, that night).
     How many wait there is counted in gold on the envelope's corner and
     on the speech bubble's among the buttons (`hang_badge`, `count_badge`;
     "9+" past nine). A request and a message wait for someone who is not
@@ -4018,8 +4283,12 @@ backups' rotation.
   requests an account may have (`FRIENDS_MOST`, `REQUESTS_MOST`); four to
   a group, its ten minutes and two; that whoever cannot go is left behind
   rather than holding the group back; that a request turned down says
-  nothing to whoever asked, who may ask again; your own name, tag and
-  level in the panel's top; "9+"; and no copy button on an iPhone.
+  nothing to whoever asked, who may ask again; "9+"; no copy button on an
+  iPhone; and, of the night's changes, that a press off the panel is a
+  button's under it as well as the stick's and the jump button's, that
+  the list of who was found is as tall as what it shows rather than three
+  rows once anything has been looked for, and that your own row of a
+  group's list still has your level, as every row of it has.
 - **Not built**: blocking or reporting someone; anything said to you while
   the app is shut (a request waits for when you next open it); a group's
   own chat; Hangul in a name (below, "The font is Inter").
@@ -4086,6 +4355,29 @@ backups' rotation.
   `clipTaken`), and its number read back, and **not installed, no phone
   being attached** (APK 25 is kept beside it as
   `donggeurami_town-release.prev-2026-11-13c.apk`).
+- **The changes Hajun asked for later that night, having tried APK 26**
+  (said where each is, above: the tag on the plate and the panel's bare
+  top, the bigger cross with no disc behind it, "No friends." and "All
+  Caught Up.", Add Friend's hint and its "My ID" right under the search
+  bar, the boxes' tops kept on the screen over a keyboard, and a press off
+  the panel shutting it as it lands and passing on) **are not in APK 26**:
+  the app's own, nothing of the server's or of what is sent, so they went
+  out with the next build, **APK 27**, in the small hours of 2026-11-14,
+  with Bridge Wars' changes of that night ("Games"; built by the session
+  that made those, and not installed, no phone being attached). Seen in
+  the desktop build, scripted, against a
+  server on this PC and offline: the tag on the plate online and the name
+  alone offline; Add Friend with its hint, one row for nobody found and
+  two for two; with a phone's keyboard written in over the lower 55% of
+  the window, the short box whole above it and the taller one with its
+  top at the top of the screen; a finger put down off the panel shutting
+  it before the finger came up, where the stick is, where the jump button
+  is, on the gamepad (the games up with that one tap) and on the speech
+  bubble (shut, and not opened again); and a tap on the panel leaving it
+  up. **That the stick and the jump button have that touch is the code's
+  and a test's of the frame's order, not a run's**: on desktop they go by
+  the mouse, which a script cannot hold down there, and a phone has not
+  been tried.
 
 ## The font is Inter
 

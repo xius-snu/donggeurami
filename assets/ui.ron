@@ -309,8 +309,10 @@
             button_mark: "#ffffff",
             button_off: "#ffffff3d",
             // The box something is typed into: a name to look for, a
-            // message.
+            // message; and the words that stand in the search bar until
+            // something is typed ("Friend's Username").
             field: "#2b2b2b",
+            hint: "#ffffff59",
             // Yes and no (Yes, Accept, Send; Cancel, Reject), each lit
             // under the pointer, and the words on them.
             yes: "#1db81d",
@@ -574,14 +576,15 @@
             level: "Level {level}",
             // With nobody in a list, nothing in the inbox, and no
             // connection.
-            no_friends: "No friends yet. Tap the + to add one.",
-            no_mail: "Nothing new.",
+            no_friends: "No friends.",
+            no_mail: "All Caught Up.",
             not_online: "You are offline. Friends need a connection.",
             // Add Friend: its title; beside each player found, what is
             // pressed to ask them, what stands there once they are asked
             // or your friend, and yes and no to one who asked you; your
-            // own name and tag, and what copying it says; what stands
-            // there before a search, and after one that found nobody.
+            // own name and tag, and what copying it says; what stands in
+            // the search bar until something is typed; and what a search
+            // that found nobody says.
             add_friend: "Add Friend",
             add: "Add friend",
             asked: "Requested",
@@ -590,7 +593,7 @@
             reject: "Reject",
             my_id: "My ID",
             copied: "Copied",
-            search_first: "Type a username, then tap the glass.",
+            search_hint: "Friend's Username",
             nobody: "Nobody goes by that name.",
             // The inbox: under the name of someone who asked to be your
             // friend, and of someone who asked you into their group; and

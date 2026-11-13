@@ -121,6 +121,15 @@ pub(crate) const ARENA_JUMP: (f32, f32, f32) = (24.5, 4.0, ACTION_BUTTON);
 const ARENA_SLOT: (f32, f32) = (18.5, 18.5);
 const ARENA_BRIDGE: (f32, f32) = (4.0, 24.5);
 const ARENA_DOTS: (f32, f32, f32) = (0.0, 42.0, 8.0);
+/// Whether the three dots are there at all. Not since 2026-11-14 (Hajun:
+/// "i dont think the UI ... button is necessary. just remove it and keep
+/// the default as the only option - only showing the button if the slot
+/// is filled and not showing empty buttons"): a button for things to use
+/// is there while something is on it, and there is nothing to show the
+/// empty ones with (`utility::slot_shown`). The button, its picture and
+/// what it turned on and off (`utility::MoreSlots`) are all still here:
+/// this one word puts it back.
+const DOTS: bool = false;
 /// The four more buttons for things to use (since 2026-11-13, Hajun's
 /// `new4morebuttonlayout.jpg`: "4 more buttons that are hidden by default
 /// until either u press the ... toggle button or u buy an item that fills
@@ -217,6 +226,16 @@ struct BalanceText;
 /// Your name, top left, on its plate.
 #[derive(Component)]
 struct NamePlate;
+
+/// The tag after your name, as the server has it: the number your friends
+/// tell you from anyone else of your name by (`friends`, which writes it
+/// here as the server says it). Written after your name on its plate,
+/// "Hajooon#5571" (since 2026-11-13; Hajun: "just put that number in the
+/// main Ui top left corner name tag ... so that its Username#5571 instead
+/// of just Username"). None offline, where there are no tags, and the
+/// plate has your name alone.
+#[derive(Resource, Default, PartialEq)]
+pub(crate) struct YourTag(pub Option<u16>);
 
 /// Which buttons are round the screen: the town's, everywhere but in a game
 /// of Bridge Wars, where they are the game's own (`arena`; Hajun,
@@ -328,6 +347,7 @@ pub(crate) fn plugin(app: &mut App) {
         .init_resource::<Held>()
         .init_resource::<Layout>()
         .init_resource::<Pictures>()
+        .init_resource::<YourTag>()
         .add_observer(press_buttons)
         .add_systems(Startup, show_top_bar)
         .add_systems(Update, shade)
@@ -343,6 +363,7 @@ pub(crate) fn plugin(app: &mut App) {
                 hide_round_the_jump,
                 release_held,
                 repicture.after(restyle),
+                repaint,
                 (arrive, welcome, fade_headlines).chain(),
             ),
         );
@@ -763,8 +784,12 @@ fn spawn_arena_bar(commands: &mut Commands, images: &mut Assets<Image>, minimap:
         }
         let (right, bottom) = ARENA_BRIDGE;
         round.spawn(bridge_button(images.add(plank()), beside_the_jump(right, bottom)));
-        let (right, bottom, size) = ARENA_DOTS;
-        round.spawn((MoreButton, round_button(images.add(dots()), size, beside_the_jump(right, bottom))));
+        // The three dots, which showed the empty buttons, are not put up
+        // ([`DOTS`]).
+        if DOTS {
+            let (right, bottom, size) = ARENA_DOTS;
+            round.spawn((MoreButton, round_button(images.add(dots()), size, beside_the_jump(right, bottom))));
+        }
     });
 }
 
@@ -957,18 +982,19 @@ fn show_resources(
 
 /// One of Bridge Wars' buttons for things to use, where `place` puts it:
 /// the second button (since 2026-11-12; an empty slot until then), which
-/// is `slot` 0, or one of the four more (since 2026-11-13), which are put
-/// away until something is on them or the dots show them. The buttons'
-/// disc with a faint rim, empty until something to use is bought at the
-/// item shop, and then with its picture on it, how many of it in its
-/// corner, and over it, while a potion lasts, how long it still does.
-/// `utility` fills it in, shows it and takes its presses: a press for a
-/// potion, a hold and a drag for what is aimed.
+/// is `slot` 0, or one of the four more (since 2026-11-13). Each is put
+/// away until something is on it (the second button too since
+/// 2026-11-14, `utility::slot_shown`; it was there empty until then). The
+/// buttons' disc with a faint rim, and on it the picture of what was
+/// bought for it at the item shop, how many of it in its corner, and
+/// over it, while a potion lasts, how long it still does. `utility` fills
+/// it in, shows it and takes its presses: a press for a potion, a hold
+/// and a drag for what is aimed.
 fn utility_slot(slot: usize, place: Node) -> impl Bundle {
     let colours = ui().colours;
     (
         UtilitySlot(slot),
-        if slot == 0 { Visibility::Inherited } else { Visibility::Hidden },
+        Visibility::Hidden,
         TakesPress,
         Button,
         Node {
@@ -1240,17 +1266,30 @@ fn name_plate() -> impl Bundle {
     )
 }
 
-/// Shows your name on its plate, as you are called now: as the app opens,
-/// again when you sign up or change it (`signup`), and on a plate put up
-/// afresh ([`restyle`]).
-fn show_name(me: Query<Ref<Name>, With<Player>>, mut plates: Query<&mut Text, With<NamePlate>>) {
+/// Shows your name on its plate, as you are called now, with your tag after
+/// it once the server has said what it is ([`YourTag`]): as the app opens,
+/// again when you sign up or change it (`signup`), as the tag comes and
+/// goes with the connection, and on a plate put up afresh ([`restyle`]).
+fn show_name(me: Query<Ref<Name>, With<Player>>, tag: Res<YourTag>, mut plates: Query<&mut Text, With<NamePlate>>) {
     let Ok(name) = me.single() else {
         return;
     };
     for mut text in &mut plates {
-        if (name.is_changed() || text.is_added()) && text.0 != name.as_str() {
-            text.0 = name.to_string();
+        if name.is_changed() || tag.is_changed() || text.is_added() {
+            let shown = on_the_plate(&name, tag.0);
+            if text.0 != shown {
+                text.0 = shown;
+            }
         }
+    }
+}
+
+/// What the plate says of someone called `name` whose tag is `tag`, if it
+/// is known: `Hajooon#5571`, or `Hajooon` alone.
+fn on_the_plate(name: &str, tag: Option<u16>) -> String {
+    match tag {
+        Some(tag) => roundtown_net::social::handle(name, tag),
+        None => name.to_string(),
     }
 }
 
@@ -1707,6 +1746,62 @@ fn drawn_at(size: u32, outside: impl Fn(Vec2) -> f32) -> Image {
     )
 }
 
+/// A picture in colours of its own, where [`drawn`] makes one white for
+/// whoever shows it to tint: each of `parts` a shape, as `drawn` takes
+/// one, and the colour it is filled with, a later one over an earlier.
+/// Whoever shows it tints it white, to leave it as it is. For a picture of
+/// two colours, which one tint cannot give: the dynamite's red sticks and
+/// brown fuse.
+fn painted(parts: &[(&dyn Fn(Vec2) -> f32, Color)]) -> Image {
+    const SIZE: u32 = 128;
+    let pixel = 2.0 / SIZE as f32;
+    let mut data = Vec::with_capacity((SIZE * SIZE * 4) as usize);
+    for row in 0..SIZE {
+        for column in 0..SIZE {
+            let at = Vec2::new((column as f32 + 0.5) * pixel - 1.0, 1.0 - (row as f32 + 0.5) * pixel);
+            // The pixel's colour so far, and how much of it is covered.
+            let (mut colour, mut cover) = (Vec3::ZERO, 0.0f32);
+            for (outside, paint) in parts {
+                let paint = paint.to_srgba();
+                let over = (0.5 - outside(at) / pixel).clamp(0.0, 1.0) * paint.alpha;
+                let all = over + cover * (1.0 - over);
+                if all > 0.0 {
+                    colour = (Vec3::new(paint.red, paint.green, paint.blue) * over + colour * cover * (1.0 - over)) / all;
+                }
+                cover = all;
+            }
+            let byte = |share: f32| (share.clamp(0.0, 1.0) * 255.0).round() as u8;
+            data.extend_from_slice(&[byte(colour.x), byte(colour.y), byte(colour.z), byte(cover)]);
+        }
+    }
+    Image::new(
+        Extent3d {
+            width: SIZE,
+            height: SIZE,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        data,
+        TextureFormat::Rgba8UnormSrgb,
+        RenderAssetUsages::default(),
+    )
+}
+
+/// Makes the pictures that are in colours of their own again as the file
+/// changes on desktop (`ui::reread`), each where it is, so that whatever
+/// shows one shows it in the new colours: a tint follows the file by
+/// itself, and a picture painted out of it does not.
+fn repaint(changed: Res<UiChanged>, pictures: Res<Pictures>, mut images: ResMut<Assets<Image>>) {
+    if !changed.is_changed() || changed.is_added() {
+        return;
+    }
+    for (picture, handle) in &pictures.0 {
+        if picture.in_its_own_colours() && images.insert(handle, picture.image()).is_err() {
+            warn!("the picture of {picture:?} is gone");
+        }
+    }
+}
+
 /// A sword, for Bridge Wars' main button (Hajun's sketch,
 /// `assets/pvpmapbuttonui.jpg`): a broad blade with a point, a crossguard,
 /// a grip and a round pommel, leaning so that the point is up and to the
@@ -1779,6 +1874,13 @@ impl Picture {
         Picture::Dynamite,
     ];
 
+    /// Whether it is drawn in colours of its own out of the file
+    /// ([`painted`]), to be shown tinted white, rather than white for a
+    /// tint: the dynamite's, whose fuse is brown and whose sticks are red.
+    pub(crate) fn in_its_own_colours(self) -> bool {
+        self == Picture::Dynamite
+    }
+
     /// The picture, drawn.
     pub(crate) fn image(self) -> Image {
         match self {
@@ -1842,20 +1944,28 @@ impl Picture {
                 ) - 0.03
             }),
             // Two sticks of dynamite side by side, leaning as the sword
-            // does, with the fuse out of their top and a spark at its end
-            // (since 2026-11-13).
-            Picture::Dynamite => drawn(|at| {
+            // does, with the fuse out from between them at the top (since
+            // 2026-11-13): the sticks red and the fuse brown, as the ones
+            // thrown are, in the file's own colours for them (Hajun, of a
+            // picture that was one red all over, with a dot for a spark
+            // at the fuse's end: "the dynamite's string part should be
+            // brown, like a string"). The fuse first, so that it comes
+            // out from behind the sticks.
+            Picture::Dynamite => {
+                let colours = ui().colours.arena;
                 let (sin, cos) = std::f32::consts::FRAC_PI_4.sin_cos();
-                // `at` as the sticks see it, standing up their own y.
-                let local = Vec2::new(at.x * cos - at.y * sin, at.x * sin + at.y * cos);
-                let sticks = [-0.24, 0.24]
-                    .into_iter()
-                    .map(|x| box_distance(local - Vec2::new(x, -0.2), Vec2::new(0.15, 0.5)) - 0.06)
-                    .fold(f32::INFINITY, f32::min);
-                let fuse = box_distance(local - Vec2::new(0.0, 0.52), Vec2::new(0.045, 0.2));
-                let spark = circle_distance(local, Vec2::new(0.0, 0.82), 0.13);
-                sticks.min(fuse).min(spark)
-            }),
+                // A point as the sticks see it, standing up their own y.
+                let local = move |at: Vec2| Vec2::new(at.x * cos - at.y * sin, at.x * sin + at.y * cos);
+                let sticks = move |at: Vec2| {
+                    let local = local(at);
+                    [-0.24, 0.24]
+                        .into_iter()
+                        .map(|x| box_distance(local - Vec2::new(x, -0.24), Vec2::new(0.15, 0.5)) - 0.06)
+                        .fold(f32::INFINITY, f32::min)
+                };
+                let fuse = move |at: Vec2| box_distance(local(at) - Vec2::new(0.0, 0.56), Vec2::new(0.05, 0.3)) - 0.03;
+                painted(&[(&fuse, colours.dynamite_fuse), (&sticks, colours.dynamite)])
+            }
         }
     }
 }
@@ -2182,6 +2292,47 @@ mod tests {
         let column = (((x + 1.0) * 0.5 * size as f32) as u32).min(size - 1);
         let row = (((1.0 - y) * 0.5 * size as f32) as u32).min(size - 1);
         data[((row * size + column) * 4 + 3) as usize]
+    }
+
+    #[test]
+    fn the_dynamite_s_picture_is_red_sticks_with_a_brown_fuse() {
+        let image = Picture::Dynamite.image();
+        let pixel = |x: f32, y: f32| -> [u8; 4] {
+            let size = image.width();
+            let data = image.data.as_ref().unwrap();
+            let column = (((x + 1.0) * 0.5 * size as f32) as u32).min(size - 1);
+            let row = (((1.0 - y) * 0.5 * size as f32) as u32).min(size - 1);
+            let at = ((row * size + column) * 4) as usize;
+            [data[at], data[at + 1], data[at + 2], data[at + 3]]
+        };
+        let bytes = |colour: Color| {
+            let colour = colour.to_srgba();
+            [colour.red, colour.green, colour.blue].map(|share| (share * 255.0).round() as u8)
+        };
+        let colours = ui().colours.arena;
+        // A place on the picture, given as the sticks see it: across them
+        // and up them, the picture's upper right being their top.
+        let seen = |across: f32, up: f32| ((across + up) * 0.7071, (up - across) * 0.7071);
+        // In the middle of each stick, the file's red; up the fuse, its
+        // brown; and both solid.
+        for across in [-0.24, 0.24] {
+            let (x, y) = seen(across, -0.3);
+            assert_eq!(pixel(x, y)[..3], bytes(colours.dynamite), "a stick at {across}");
+            assert_eq!(pixel(x, y)[3], 255);
+        }
+        let (x, y) = seen(0.0, 0.7);
+        assert_eq!(pixel(x, y)[..3], bytes(colours.dynamite_fuse), "the fuse");
+        assert_eq!(pixel(x, y)[3], 255);
+        assert_ne!(bytes(colours.dynamite), bytes(colours.dynamite_fuse));
+        // Nothing beside the fuse, past its end, or in the far corners.
+        for (across, up) in [(0.3, 0.7), (-0.3, 0.7), (0.0, 1.05)] {
+            let (x, y) = seen(across, up);
+            assert_eq!(pixel(x, y)[3], 0, "at {across}, {up}");
+        }
+        assert_eq!(pixel(-0.9, 0.9)[3], 0);
+        assert_eq!(pixel(0.9, -0.9)[3], 0);
+        // It is the one picture that is not white for a tint.
+        assert!(Picture::ALL.iter().all(|picture| picture.in_its_own_colours() == (*picture == Picture::Dynamite)));
     }
 
     #[test]

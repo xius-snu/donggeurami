@@ -945,8 +945,12 @@ impl Nav {
         if edge.distance(shore) > most {
             return None;
         }
-        // Room to come down: ground on past where it begins again.
-        let down = shore + way * ROOM.min(shore.distance(there));
+        // Room to come down: ground on past where it begins again, and
+        // that far in from its edge wherever `there` is. (Until 2026-11-14
+        // no further than `there` itself: with someone standing on the
+        // very edge, the place to come down was the edge, with no room at
+        // all.)
+        let down = shore + way * ROOM;
         let room = (0..=4).all(|step| self.ground(shore.lerp(down, step as f32 / 4.0)).is_some());
         room.then_some((edge, down))
     }
@@ -1139,10 +1143,19 @@ impl Nav {
     }
 
     /// The place to walk on nearest `at`, no further than `within`: what
-    /// someone knocked off an edge steers back for, in the air.
+    /// someone knocked off an edge steers back for, in the air. **One
+    /// with ground under it**: the squares walked along a plank reach
+    /// round its end, half a body's width or so past where the plank
+    /// itself stops ([`Nav::lay_deck`] goes by how far a square is from
+    /// the plank's middle line, its ends included), and one of those, at
+    /// the edge of a hole a blast has left, is over the void. Until
+    /// 2026-11-14 a bot in the air there steered for the middle of just
+    /// such a square, the one it was in, to and fro about it, and fell.
     pub fn nearest_walkable_within(&self, at: Vec2, within: f32) -> Option<Vec2> {
         self.grid
-            .nearest(at, within, |index| self.walkable(index))
+            .nearest(at, within, |index| {
+                self.walkable(index) && (self.grid.clear_index(index) || self.ground(self.grid.centre(index)).is_some())
+            })
             .map(|index| self.grid.centre(index))
     }
 
@@ -1788,6 +1801,22 @@ mod tests {
         assert_eq!(nav.leap(gap.a_in, gap.b_in, gap.length() - 0.5), None, "too far");
         assert_eq!(nav.leap(here, Vec2::new(1.5, -1.0), 8.0), None, "no void between");
         assert_eq!(nav.leap(gap.a_in, gap.a_in + Vec2::Y * 6.0, 8.0), None, "nothing to come down on");
+        // At someone standing on the very edge of what stands past the
+        // hole, it still comes down a step in from that edge: past them,
+        // with room, not on the edge itself.
+        let (_, down) = nav.leap(gap.a_in, gap.b, 8.0).expect("a jump at someone on the edge");
+        assert!(down.x > gap.b.x + 0.6 && nav.ground(down).is_some() && nav.walkable_at(down), "{down}");
+        // The squares walked along a plank reach round its end, out over
+        // the hole, where there is nothing to stand on; what someone in
+        // the air there steers back for is ground all the same, from
+        // anywhere over the hole.
+        let cap = gap.b - Vec2::X * 0.3;
+        assert!(nav.walkable_at(cap) && nav.ground(cap).is_none(), "a square round the plank's end, over the hole");
+        for step in 0..=20 {
+            let over = gap.a.lerp(gap.b, step as f32 / 20.0) + Vec2::Y * 0.3;
+            let back = nav.nearest_walkable_within(over, 8.0).expect("ground within reach");
+            assert!(nav.ground(back).is_some(), "from {over}: {back} has nothing under it");
+        }
         // Blown again, there is nothing new; nor is a plank that was
         // never laid.
         assert!(nav.blast(at, 3.0).is_empty());

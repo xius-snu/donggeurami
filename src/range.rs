@@ -322,49 +322,96 @@ pub(crate) fn rim(width: f32, from: f32, to: f32) -> Mesh {
     flat(points, indices)
 }
 
-/// A band lying on the ground along `line`, points of the ground's (x, z)
-/// in order, `width` across: its fill, its outline, [`WIDTH`] wide just
+/// A band `width` across along `line`, points in order, each as high over
+/// the ground as its y says: its fill, its outline, [`WIDTH`] wide just
 /// inside its edge all the way round, and the dark rim just outside it
 /// ([`rim`]). What a stick of dynamite is aimed with in Bridge Wars
-/// (`utility`): a band that bends as the stick will fly, where a
-/// fireball's is straight. A line of fewer than two points is nothing:
-/// meshes with no corner in them, which are not to be drawn (Bevy's mesh
-/// allocator logs a use after free for one; `utility::aim` puts the band's
-/// sheets away instead).
-pub(crate) fn ribbon(line: &[Vec2], width: f32) -> (Mesh, Mesh, Mesh) {
+/// (`utility`): a band that rises and comes down as the stick will, an
+/// arch standing over the ground, where a fireball's lies straight along
+/// it. It is level from side to side all the way: across it is across the
+/// ground. A line of fewer than two points is nothing: meshes with no
+/// corner in them, which are not to be drawn (Bevy's mesh allocator logs
+/// a use after free for one; `utility::aim` puts the band's sheets away
+/// instead).
+pub(crate) fn arch(line: &[Vec3], width: f32) -> (Mesh, Mesh, Mesh) {
     let half = width * 0.5;
     let n = line.len();
     if n < 2 {
         let nothing = || flat(Vec::new(), Vec::new());
         return (nothing(), nothing(), nothing());
     }
+    let ground: Vec<Vec2> = line.iter().map(|point| point.xz()).collect();
     // Which way across the band is to the left of the way it runs, at
-    // each point: square to the line through the points either side.
-    let across = |i: usize| {
-        let along = line[(i + 1).min(n - 1)] - line[i.saturating_sub(1)];
-        along.normalize_or(Vec2::NEG_Y).perp()
-    };
-    let left: Vec<Vec2> = (0..n).map(|i| line[i] + across(i) * half).collect();
-    let right: Vec<Vec2> = (0..n).map(|i| line[i] - across(i) * half).collect();
+    // each point: square to the line through the points either side, or,
+    // where those are over one another, as it was the point before.
+    let mut across: Vec<Vec2> = Vec::with_capacity(n);
+    for i in 0..n {
+        let along = ground[(i + 1).min(n - 1)] - ground[i.saturating_sub(1)];
+        let before = across.last().copied().unwrap_or(Vec2::X);
+        across.push(if along.length() > 1e-4 { along.normalize().perp() } else { before });
+    }
+    let left: Vec<Vec2> = (0..n).map(|i| ground[i] + across[i] * half).collect();
+    let right: Vec<Vec2> = (0..n).map(|i| ground[i] - across[i] * half).collect();
+    let high: Vec<f32> = line.iter().map(|point| point.y).collect();
     // The fill: a strip between its two edges.
     let mut points = left.clone();
     points.extend(right.iter().copied());
+    let mut heights = high.clone();
+    heights.extend(high.iter().copied());
     let mut indices = Vec::new();
     for i in 0..n - 1 {
         triangle(&points, &mut indices, i, i + 1, n + i + 1);
         triangle(&points, &mut indices, i, n + i + 1, n + i);
     }
-    let fill = flat(points, indices);
+    let fill = raised(points, &heights, indices);
     // Its edge, all the way round: up the one side and back down the
-    // other.
+    // other, each corner as high as the point of the line it is beside.
     let mut edge = left;
     edge.extend(right.into_iter().rev());
-    (fill, edging(&edge, WIDTH), edging(&edge, -RIM))
+    let mut round = high.clone();
+    round.extend(high.iter().rev().copied());
+    (fill, edging_at(&edge, &round, WIDTH), edging_at(&edge, &round, -RIM))
+}
+
+/// A cross lying on the ground about the origin, its two strokes
+/// `reach` long each way from its middle and `thick` either side of their
+/// own middles, lying aslant as an X does: its fill, and the dark rim just
+/// outside its edge ([`rim`]). Where a stick of dynamite will come down,
+/// in the middle of the ring of its blast (`utility`; Hajun, 2026-11-13:
+/// "some indicator of where the dynamite will land, maybe a x in the
+/// middle of the circle").
+pub(crate) fn cross(reach: f32, thick: f32) -> (Mesh, Mesh) {
+    let (r, t) = (reach, thick);
+    // A plus sign, round by its twelve corners, turned an eighth of a turn.
+    let plus = [
+        Vec2::new(t, r),
+        Vec2::new(t, t),
+        Vec2::new(r, t),
+        Vec2::new(r, -t),
+        Vec2::new(t, -t),
+        Vec2::new(t, -r),
+        Vec2::new(-t, -r),
+        Vec2::new(-t, -t),
+        Vec2::new(-r, -t),
+        Vec2::new(-r, t),
+        Vec2::new(-t, t),
+        Vec2::new(-t, r),
+    ];
+    let turn = Vec2::from_angle(std::f32::consts::FRAC_PI_4);
+    let edge: Vec<Vec2> = plus.iter().map(|corner| turn.rotate(*corner)).collect();
+    // Every corner is seen from its middle: a fan from there fills it.
+    let mut points = vec![Vec2::ZERO];
+    points.extend(edge.iter().copied());
+    let mut indices = Vec::new();
+    for i in 0..edge.len() {
+        triangle(&points, &mut indices, 0, 1 + i, 1 + (i + 1) % edge.len());
+    }
+    (flat(points, indices), edging(&edge, -RIM))
 }
 
 /// A disc lying on the ground about the origin, `radius` across from its
 /// middle: its fill, its outline just inside its edge and the dark rim
-/// just outside it, as [`ribbon`] has them. How far a stick of dynamite's
+/// just outside it, as [`arch`] has them. How far a stick of dynamite's
 /// blast reaches, where it is aimed and where it lies (`utility`,
 /// `dynamite`).
 pub(crate) fn disc(radius: f32) -> (Mesh, Mesh, Mesh) {
@@ -384,16 +431,24 @@ pub(crate) fn disc(radius: f32) -> (Mesh, Mesh, Mesh) {
 /// A line `width` wide along the closed `edge`: just inside it, or, for
 /// a `width` less than nothing, just outside it ([`inset`]).
 fn edging(edge: &[Vec2], width: f32) -> Mesh {
+    edging_at(edge, &vec![0.0; edge.len()], width)
+}
+
+/// The same, each corner of `edge` as high over the ground as `heights`
+/// has it, and the line beside it as high as its corner.
+fn edging_at(edge: &[Vec2], heights: &[f32], width: f32) -> Mesh {
     let n = edge.len();
     let mut points = edge.to_vec();
     points.extend(inset(edge, width));
+    let mut high = heights.to_vec();
+    high.extend(heights.iter().copied());
     let mut indices = Vec::new();
     for i in 0..n {
         let j = (i + 1) % n;
         triangle(&points, &mut indices, i, j, n + j);
         triangle(&points, &mut indices, i, n + j, n + i);
     }
-    flat(points, indices)
+    raised(points, &high, indices)
 }
 
 /// What a sheet of it is made of: `colour`, as see-through as its alpha
@@ -531,7 +586,14 @@ fn triangle(points: &[Vec2], indices: &mut Vec<u32>, a: usize, b: usize, c: usiz
 
 /// A flat mesh of `points` in the ground's (x, z), facing up.
 fn flat(points: Vec<Vec2>, indices: Vec<u32>) -> Mesh {
-    let positions: Vec<[f32; 3]> = points.iter().map(|point| [point.x, 0.0, point.y]).collect();
+    let level = vec![0.0; points.len()];
+    raised(points, &level, indices)
+}
+
+/// A mesh of `points` in the ground's (x, z), each as high over it as
+/// `heights` has it, facing up.
+fn raised(points: Vec<Vec2>, heights: &[f32], indices: Vec<u32>) -> Mesh {
+    let positions: Vec<[f32; 3]> = points.iter().zip(heights).map(|(point, high)| [point.x, *high, point.y]).collect();
     let normals = vec![[0.0, 1.0, 0.0]; points.len()];
     let uvs = vec![[0.0, 0.0]; points.len()];
     Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default())

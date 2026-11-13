@@ -1225,6 +1225,23 @@ const CLEAR_OF_THE_KEYBOARD: f32 = 2.0;
 pub(crate) struct LiftsForKeyboard {
     /// How far up it is slid now, in logical pixels.
     lifted: f32,
+    /// Slid no further than brings its own top to the top of the screen
+    /// ([`LiftsForKeyboard::whole`]), rather than as far as keeps the box
+    /// typed into on it.
+    whole: bool,
+}
+
+impl LiftsForKeyboard {
+    /// One that stays on the screen from its top down: slid up until its
+    /// bottom is clear of the keyboard or its top is at the top of the
+    /// screen, whichever comes first, so that what heads it is never slid
+    /// off, and what does not fit is under the keyboard instead. The
+    /// friends' boxes (since 2026-11-13; Hajun: "the Add Friend popup's top
+    /// edge should touch the top of the screen when keyboard is up. right
+    /// now the top area is hidden by going over the border").
+    pub(crate) fn whole() -> Self {
+        Self { lifted: 0.0, whole: true }
+    }
 }
 
 /// How far up from the bottom of the screen the soft keyboard reaches, on
@@ -1298,7 +1315,12 @@ fn lift_for_keyboard(
     });
     for (mut lift, node, place, mut transform) in &mut lifted {
         let bottom = (place.translation.y + node.size().y * 0.5) * node.inverse_scale_factor() + lift.lifted;
-        let wanted = lifting(bottom, box_top.map(|top| top + lift.lifted), keyboard_top, clear);
+        let wanted = if lift.whole {
+            let top = (place.translation.y - node.size().y * 0.5) * node.inverse_scale_factor() + lift.lifted;
+            lifting_whole(bottom, top, keyboard_top, clear)
+        } else {
+            lifting(bottom, box_top.map(|top| top + lift.lifted), keyboard_top, clear)
+        };
         if (wanted - lift.lifted).abs() < 0.5 {
             continue;
         }
@@ -1318,6 +1340,15 @@ fn lifting(bottom: f32, box_top: Option<f32>, keyboard_top: f32, clear: f32) -> 
     wanted.min(most)
 }
 
+/// How far up something laid out from `top` to `bottom` is to be slid to
+/// clear a keyboard whose top is at `keyboard_top` by `clear`, all in pixels
+/// down the screen, when it is to stay on the screen from its top down
+/// ([`LiftsForKeyboard::whole`]): as far as that takes, and no further than
+/// brings its top to the top of the screen.
+fn lifting_whole(bottom: f32, top: f32, keyboard_top: f32, clear: f32) -> f32 {
+    (bottom + clear - keyboard_top).max(0.0).min(top.max(0.0))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1334,6 +1365,13 @@ mod tests {
         assert_eq!(lifting(450.0, Some(300.0), 500.0, 20.0), 0.0);
         // With no box to keep, as far as it takes.
         assert_eq!(lifting(600.0, None, 500.0, 20.0), 120.0);
+        // One kept on the screen from its top down, laid out from 100 to
+        // 600: clear of the keyboard where that leaves its top on the
+        // screen, and with its top at the very top where it does not.
+        assert_eq!(lifting_whole(600.0, 100.0, 1000.0, 20.0), 0.0, "no keyboard");
+        assert_eq!(lifting_whole(600.0, 100.0, 540.0, 20.0), 80.0);
+        assert_eq!(lifting_whole(600.0, 100.0, 400.0, 20.0), 100.0, "its top at the top of the screen");
+        assert_eq!(lifting_whole(600.0, -30.0, 400.0, 20.0), 0.0, "laid out past the top already");
     }
 
     #[test]
