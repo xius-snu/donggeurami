@@ -163,7 +163,7 @@ Has to change:
 - **Names.** Bevy's built-in font is plain ASCII, and no other font is
   bundled. Korean names need one. (Done on 2026-11-14: Inter since
   2026-11-13, and Pretendard for Hangul; names, chat and messages take
-  English, Korean and Vietnamese. `CLAUDE.md`, "The font is Inter".)
+  English, Korean and Vietnamese. `docs/chat-and-text.md`, "The font is Inter".)
 - **The player model.** It has 3,180 triangles in 11 to 13 separate meshes
   (`limbperson.glb` 13, the AI looks 11), and in a crowd every mesh is drawn
   on its own. One or two meshes each would make crowds cheaper; that is a
@@ -607,7 +607,7 @@ legal advice.
   message. (The chat came on 2026-11-14, at Hajun's asking, with a basic
   filter for swear words by that evening and neither report nor block, as
   the friends' messages of 2026-11-13: still to do before a release.
-  `CLAUDE.md`, "The chat".)
+  `docs/chat-and-text.md`, "The chat".)
 - **Kakao, Naver or Google login.** Sign in with Apple, or an equivalent,
   as well.
 - **Real money.** In-app purchase, published odds for anything random, and

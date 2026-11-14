@@ -7,7 +7,7 @@ With no kinds, it makes them all. Each is built from boxes, cylinders and
 convex hulls so that it can be remade from here; once you have reshaped one in
 Blender, export it again from its own .blend rather than running this over it.
 
-What the game expects of each (see CLAUDE.md, "Building your house"):
+What the game expects of each (see docs/house-builder.md, "Building your house"):
 
 * Blender units are metres, Z is up, and the front faces -Y.
 * A house (foundation) stands on its origin at ground level, centred on its

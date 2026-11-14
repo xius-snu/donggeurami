@@ -129,7 +129,7 @@ messages         id, sender, receiver, body, at
 ```
 
 `tag`, `xp` and the last three tables are the friends' (since 2026-11-13;
-`CLAUDE.md`, "Friends, groups and messages"): the number after a name,
+`docs/friends.md`): the number after a name,
 `#1000` to `#9999`, no two accounts having both the same name and the same
 tag (the unique index `players_name_tag`, on `lower(name), tag`); what an
 account has earned toward its level; who is whose friend; who has asked
@@ -140,11 +140,11 @@ changed by hand is not noticed until the server starts again**. Groups are
 not kept at all.
 
 A name and a message may be in Korean or Vietnamese since 2026-11-14
-(`CLAUDE.md`, "The font is Inter"): both columns are `TEXT`, the database is
+(`docs/chat-and-text.md`, "The font is Inter"): both columns are `TEXT`, the database is
 UTF-8 with `en_US.UTF-8` (so `lower()` in the index lowers a Vietnamese
 letter as the server's own copy does), and nothing in the tables changed for
 it. What is said in the chat is kept nowhere, and is not written to the
-journal (`CLAUDE.md`, "The chat").
+journal (`docs/chat-and-text.md`, "The chat").
 
 The server makes the tables when it starts (`accounts::SCHEMA`), each
 statement leaving what is there alone, and gives a tag to any account
