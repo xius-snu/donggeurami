@@ -7,6 +7,105 @@
 > "above" or "below", or names another section in quotes, that section may be
 > in another file here: the table in `CLAUDE.md` says which.
 
+## The chat is its words alone until you type, and a bubble of things to say
+
+Since the night of 2026-11-14, a few hours after the chat itself ("The
+chat", below: how it was until then, and how it still is while a line is
+typed). Hajun, having played it on the phone: "I think I don't want the
+permanent dark. Chat box for both the global chat and the Bridgewaters game
+chat, but rather just the text and the. Box should only appear when the
+when you are typing a message. And when. It's idle, um, the older line
+should be drawn fainter because it's partway through fading. And the input
+text box and the send button, they should not appear until you press the
+the chat icon on the right bottom right corner. And instead of being like
+the first text starts at the top of the rectangle and makes its way
+downward, no, it should be like every new text starts at the same line.
+Even the first message stays at the same area, and it goes up and fades as
+new messages come." And, of the buttons: "the bottom right chat icon is too
+big of a button to be used for the global chat. So make a smaller circle
+above the current chat icon, a little bit to the right, and. That button
+can be in the same location for both the Bridgewaters minigame and the
+lobby map. And that button is used for the chatting. Opening the chat. Box
+input." And, typed after it: "the current larger chat icon button should be
+used for a quick chat selector for preset chat messages that flannel out"
+(dictated: I take it for "fan out"). `src/chat.rs`, `src/quick.rs`,
+`src/hud.rs`. Nothing of `shared/` or the server changed: protocol 16
+still, no deploy. APK 31.
+
+- **With nothing typed the chat is its words alone.** No box behind them
+  (`chat::Backdrop`, hidden), no box to type into (`InputBox`, hidden, its
+  room kept, so that nothing moves when it comes). The words take no
+  press: a finger put down on them looks round, and the wheel over them
+  zooms. Each line has a darker shadow than other words on the screen
+  (`colours.chat.shadow`, `#000000b3`, mine: it is all that sets them off
+  from the world).
+- **The newest line is always on the same line**, the lowest of the room
+  the lines have (four in the town, three in a game, where they were): a
+  spacer over the lines takes whatever room they leave, so the first thing
+  said is written there too, and each line after moves the others up.
+- **A line fades from the moment it is said** (`chat::faded`): by
+  `1 - (age / 12 s) ^ 2.2`, in 40 steps, so it is nine parts in ten there
+  after 4 s, three quarters after 6, half after 9 and gone at 12, and of
+  any two lines the older is the fainter, as asked. Its words, each piece
+  in its own colour, and its shadow, written only as it comes to its next
+  step (a `TextColor` written lays nothing out again in Bevy 0.19: it is
+  read as the frame is drawn). `LINE_SECS`, `FADE_BEND` and the steps are
+  mine. When each line was said is kept by its number (`Drawn::said`), so a
+  line drawn again as the file changes is as old as it was.
+- **A press on the small keyboard, bottom right, begins a line**
+  (`hud::ChatButton`; T or Enter on desktop): then the dark box is behind
+  the lines, every line kept is in full strength and scrolls under a
+  finger or the wheel, and the box to type into is under them with its
+  dart. Said, or let go of (Escape, a press anywhere else, or the
+  keyboard's button again, which only lets go: `Typing::shut`), it is its
+  words alone again, back at the newest line.
+- **The keyboard's button** (`hud::CHAT_BUTTON`): 9 shares of the short
+  side across, where the big speech bubble is 14; 1.6 over the bubble and
+  its middle 5.5 to the right of the bubble's; in the same place in Bridge
+  Wars, over the bridge button. Its picture, a keyboard drawn in code
+  (`hud::keyboard`), is mine: none was named, and a second speech bubble
+  over the big one would not have said which of the two types. The three
+  dots that used to stand there in Bridge Wars are off (`hud::DOTS`); put
+  back, they would stand over this (`ARENA_DOTS`, moved).
+- **The big speech bubble fans out things to say** (`src/quick.rs`,
+  `hud::QuickChatButton`), in the town: the file's `words.chat.quick`, the
+  first six that are lines anyone could type, each on a grey plate
+  (`colours.chat.quick`, `quick_text`), one over another from just over
+  the face, their right ends on a curve that leans in over the bubble,
+  each coming out of the bubble 35 ms after the one under it. A press on
+  one says it as if typed (`chat::Say`: asked of the server online, which
+  tells the room; written in your own chat offline) and shuts the fan; so
+  does a press on the bubble again, or anywhere else, which is whatever it
+  landed on's as well. You can walk with it out. The server lets anyone
+  say four lines at once and then one every second and a half, typed or
+  not. **What it offers is mine** ("Hello!", "Follow me!", "Anyone for
+  Bridge Wars?", "Thanks!", "Good game!", "Bye!"), for Hajun to change in
+  the file; so are how it fans, how big, and how fast. **Bridge Wars has no
+  such bubble** (the bridge button is about there) and nothing was asked of
+  it: there the chat is typed, or not said.
+- **Checked.** Unit tests: 299 of the game's (a line's fading, and that
+  the older is fainter; when each was said, kept; the keyboard's picture;
+  its button clear of every other, the gamepad and the minimap on screens
+  from 4:3 to 19.5:9; the fan's plates clear of the buttons, on the
+  screen, and coming out of the bubble; what the file offers being lines
+  as written), 65 of `shared/`, 50 of the server's. The desktop build,
+  scripted, offline: the town with no box; the keyboard's button putting
+  the box and the dart up, and letting go at a second press; "hello
+  there" written on the lowest line, and three more said three seconds
+  apart each fainter than the one under it, enlarged to see; the fan half
+  way out and out; "Follow me!" said by a press on it; the fan shut by the
+  bubble and by a press on the world. Bridge Wars, offline: the keyboard's
+  button over the bridge button, a line typed and the chat idle after it.
+  Two copies against a server on this PC: "Hello!" from one's fan and a
+  line it typed, and "Follow me!" from the other's, each in both chats.
+- **Not checked.** A phone: APK 31 is built and not installed. So how the
+  bare words read over the town and over Bridge Wars' sky on a phone's
+  screen (they are 2.5 shares tall, as they were in the box), the fan
+  under a thumb, and the keyboard's button beside the gamepad. Scrolling
+  the lines back while typing was not run again; what it is dragged on
+  changed (the dark box, where it was the lines' own). Nothing was said
+  through the VM.
+
 ## The chat
 
 Since 2026-11-14 (Hajun: "I think there should be a global chat in the

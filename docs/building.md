@@ -17,7 +17,16 @@ alone; the server is `cargo build -p roundtown_server`. Never `--workspace`,
 which would build the game with the server's half of replicon in it.
 
 Android needs the `release-android` profile, a manual strip step, and Gradle
-(`versionCode` in `mobile/android/app/build.gradle` is the build number: 30
+(`versionCode` in `mobile/android/app/build.gradle` is the build number: 31
+on the night of 2026-11-14, the chat its words alone until a line is typed,
+a small keyboard button that begins one, things to say fanned out of the
+big speech bubble, two people on the friends' button, and the top bar and
+the chat kept clear of the camera's hole ("The chat is its words alone" in
+`docs/chat-and-text.md`, "Clear of the camera's hole" in
+`docs/town-hud.md`; protocol 16 still and nothing of the server's changed,
+so no deploy; a sixth native method, `safeInsets`, on the stripped
+library; built and not installed, APK 30 kept beside it as
+`donggeurami_town-release.prev-2026-11-14e.apk`); 30
 an hour after 29, swear words starred out of the chat and of messages, and
 a name with one in it refused ("The chat"; protocol 16 still, the server
 deployed for the one at 09:52 UTC and for the other at 10:15, the binaries

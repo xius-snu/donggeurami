@@ -11,7 +11,7 @@ bundles). It plays online against a server in Seoul (`server/`; `shared/` is
 Bridge Wars. House Builder, the build-battle game, is stalled: keep it
 working, and spend nothing on it unasked.
 
-As of 2026-11-14: `PROTOCOL_VERSION` 16, APK 30 (`versionCode`), the server
+As of 2026-11-14: `PROTOCOL_VERSION` 16, APK 31 (`versionCode`), the server
 deployed that day.
 
 ## This file, and where the rest is
@@ -34,9 +34,9 @@ heading in one of these:
 | the sign-up's pages, anything typed into | `docs/signup.md` | "The first time, you sign up" |
 | **Bridge Wars** | `docs/bridge-wars.md`, `bridgewarsgameevent.md` | "Games" |
 | Bridge Wars' map | `docs/bridge-wars-map.md` | "The PvP map itself" |
-| the opening, the buttons round the screen, settings | `docs/town-hud.md` | "The app opens under a cover", "The app opens in Round Town", "Settings" |
+| the opening, the buttons round the screen, the camera's hole, settings | `docs/town-hud.md` | "The app opens under a cover", "The app opens in Round Town", "Settings" |
 | friends, groups, messages | `docs/friends.md` | "Friends, groups and messages" |
-| the chat, fonts, Korean and Vietnamese, the word filter | `docs/chat-and-text.md` | "The chat", "The font is Inter" |
+| the chat, the quick chat, fonts, Korean and Vietnamese, the word filter | `docs/chat-and-text.md` | "The chat", "The font is Inter" |
 | netcode, the login, the town's clock | `docs/online.md`, `SERVER.md`, `MULTIPLAYER.md` | "Playing online" |
 | a map's model, collision | `docs/maps-and-collision.md` | "The islands are Blender models" |
 | fountain, music, town houses, town objects and their editor, AIs, talking | `docs/town.md` | "The fountain runs", "The town has music", "The town's houses", "The town is data", "The town holds 32 players", "You can talk to anyone" |
@@ -161,7 +161,8 @@ to try again.
 - Desktop testing knobs: `RT_SERVER=<addr>|off`, `RT_UNSECURE=1` (debug
   build, a server with no key), `RT_FREE_CURSOR=1`, `RT_INTRO=off`,
   `RT_SIGNUP=1`, `RT_TIME_OF_DAY`, `RT_CAR_AT`, `RT_CLOCK_OFF`,
-  `RT_ARENA_FROM=<seconds>`, `RT_ARENA_PURSE=<count>`. Two copies need
+  `RT_ARENA_FROM=<seconds>`, `RT_ARENA_PURSE=<count>`,
+  `RT_SAFE_AREA=<left>,<right>` (a camera's hole made up). Two copies need
   their own `APPDATA`. A server on this PC: `RT_PORT=5443
   RT_ALLOW_SKIP=1 target/debug/roundtown-server.exe`, and the copies with
   `RT_SERVER=127.0.0.1:5443 RT_UNSECURE=1`.
@@ -257,15 +258,18 @@ to try again.
   the input method through one ordered stream (`WindowEvent`); Android
   reads the activity's own text each frame; iOS gets keys. **Android is
   reached only through native methods `MainActivity` calls** (`imeInset`,
-  `imeAction`, `clipLength`...): calling GameActivity's C API on
+  `imeAction`, `safeInsets`, `clipLength`...): calling GameActivity's C API on
   `AndroidApp::activity_as_ptr()` crashed the app at launch.
 - The first run shows three pages: Start, a name, a character
   (`src/signup.rs`); kept in `profile.json` beside `town.json`, and online
   it is the account's (`Ask::Profile`, Postgres `players`).
-- The chat (`src/chat.rs`, `server/src/chat.rs`): a box down the left, in
-  the town and in Bridge Wars; a line goes to everyone in the room; nothing
-  is kept or logged. No block and no report yet, nor for friends' messages:
-  both are wanted before a release to the shops (`MULTIPLAYER.md`).
+- The chat (`src/chat.rs`, `server/src/chat.rs`), down the left in the
+  town and in Bridge Wars: its words alone, the newest always on the
+  lowest line, each fading over 12 s; the dark box, every line in full and
+  the box to type into come only while a line is typed (the small
+  keyboard button). A line goes to everyone in the room; nothing is kept
+  or logged. No block and no report yet, nor for friends' messages: both
+  are wanted before a release to the shops (`MULTIPLAYER.md`).
 - Friends (`src/friends.rs`, `server/src/social.rs`) are the server's
   alone, none offline: a `#1000`-`#9999` tag after every name, requests,
   groups of up to four whose leader alone starts a game, messages that wait
@@ -285,12 +289,15 @@ to try again.
 - **The buttons** (`src/hud.rs`, as Hajun sketched them): top left your
   name on a plate (with its tag online), a person button (nothing yet), the
   gear (settings), and your balance under them; down the right edge a gift
-  (the car's gun, in the car), a speech bubble (friends, with the inbox's
+  (the car's gun, in the car), two people (friends, with the inbox's
   count in gold), a gamepad (the game selector); round the jump button a
-  face (in and out of the car), a speech bubble (the chat) and a fist (a
-  punch; the car's reverse); the stick, whose middle is set where the
-  finger first goes down, within half its radius; the chat box down the
-  left. On Windows the stick and the jump button take the mouse.
+  face (in and out of the car), a speech bubble (a fan of things to say
+  at a press, `src/quick.rs`, `words.chat.quick`), a small keyboard over
+  it (the chat's box) and a fist (a punch; the car's reverse); the stick,
+  whose middle is set where the finger first goes down, within half its
+  radius. On Windows the stick and the jump button take the mouse.
+- The top bar and the chat keep clear of the camera's hole (`src/safe.rs`:
+  Android's cutout, by `MainActivity`; unseen on a phone; not on iOS).
 - The gamepad opens the selector (`src/games.rs`): Bridge Wars, Home
   Builders (100 coins), and one to come.
 - You can talk to any AI (`src/talk.rs`), ride the four buses that go
@@ -344,8 +351,8 @@ and the game is as that file has it. The rules both sides play by are
   team's upgrades (generator, swords, shields, heal pool, blindness trap,
   builder's speed). What everyone has is `Outfits` (`Kit`, `Upgrades`).
 - **Buttons** (`hud::Layout::Arena`): the sword where the jump button was,
-  jump beside it, the plank (building on and off), and up to five buttons
-  for things to use, shown only with something on them (`src/utility.rs`).
+  jump beside it, the plank (building on and off), the chat's keyboard, and
+  up to five for things to use, shown only when filled (`src/utility.rs`).
   What is aimed is held and dragged; a potion is a press, drunk for 1.6 s
   at half pace, put down by a press anywhere else.
 - **Bridges** (`src/bridge.rs`): with building on you carry a plank at the

@@ -52,8 +52,10 @@ mod market;
 mod net;
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 mod pace;
+mod quick;
 mod range;
 mod roads;
+mod safe;
 mod see_through;
 mod settings;
 mod shop;
@@ -1407,6 +1409,8 @@ pub fn main() {
     // The chat box on the left: what is said in your room, and what a game
     // of Bridge Wars says as it goes.
     chat::plugin(&mut app);
+    quick::plugin(&mut app);
+    safe::plugin(&mut app);
     // The sparks someone running fast, or leaping, leaves behind them.
     trail::plugin(&mut app);
     // Standing in a house in House Builder, whatever stands between the

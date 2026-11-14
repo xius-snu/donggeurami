@@ -557,18 +557,24 @@ pub(crate) struct Colours {
     pub chat: ChatColours,
 }
 
-/// The chat box on the left of the screen (`chat`, since 2026-11-14): what
-/// shows behind the lines said; a line someone said, and the name before
+/// The chat on the left of the screen (`chat`, since 2026-11-14): what
+/// shows behind the lines said while a line is typed, and the shadow under
+/// each line's words, which is all there is behind them the rest of the
+/// time; a line someone said, and the name before
 /// it where they are on no team (in Bridge Wars a name is its team's
 /// colour, `arena.team_*`); a line about what has happened in a game; the
 /// box a line is typed into, at rest and while it is typed into, the words
-/// typed, and the words that stand in it until something is; and the
-/// arrow that sends a line, with something to send and with nothing.
+/// typed, and the words that stand in it until something is; the
+/// arrow that sends a line, with something to send and with nothing; and
+/// one of the things the big speech bubble offers to say (`quick`), and
+/// its words.
 #[derive(Deserialize, Clone, Copy, PartialEq, Debug)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ChatColours {
     #[serde(deserialize_with = "colour")]
     pub back: Color,
+    #[serde(deserialize_with = "colour")]
+    pub shadow: Color,
     #[serde(deserialize_with = "colour")]
     pub text: Color,
     #[serde(deserialize_with = "colour")]
@@ -587,6 +593,10 @@ pub(crate) struct ChatColours {
     pub send: Color,
     #[serde(deserialize_with = "colour")]
     pub send_off: Color,
+    #[serde(deserialize_with = "colour")]
+    pub quick: Color,
+    #[serde(deserialize_with = "colour")]
+    pub quick_text: Color,
 }
 
 /// The friends' panel (`friends`, since 2026-11-13), in the colours of
@@ -1062,11 +1072,14 @@ pub(crate) struct Words {
 /// with a bare hand or with something (`{weapon}`: one of the three
 /// swords, by tier, a fireball or dynamite); someone bought something for
 /// your team (`{name}`, `{ware}`, as the upgrade shop's cards call it);
-/// and someone broke a team's anchor (`{name}`, `{team}`).
+/// and someone broke a team's anchor (`{name}`, `{team}`). And what the
+/// big speech bubble offers to say at a press (`quick`), nearest the
+/// bubble first: the first six of them that are lines at all are offered.
 #[derive(Deserialize, PartialEq, Debug)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ChatWords {
     pub hint: String,
+    pub quick: Vec<String>,
     pub said: String,
     pub fell: String,
     pub knocked: String,

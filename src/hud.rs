@@ -1,18 +1,21 @@
 //! What is drawn over the world, laid out as Hajun sketched it
 //! (`assets/UIbuttonlayout.jpg`, 2026-10-31): top left your name on a plate,
 //! with a person button and the settings' gear beside it (`settings`) and
-//! your balance under; down the right edge a gift, a speech bubble (your
-//! friends, `friends`) and a gamepad; round a phone's jump button a face, a
-//! speech bubble and a fist; and headlines across the middle — the town's
+//! your balance under; down the right edge a gift, two people (your
+//! friends, `friends`; a speech bubble until 2026-11-14) and a gamepad;
+//! round a phone's jump button a face, a speech bubble (things to say at a
+//! press, `quick`), a small keyboard over that (the chat, `chat`) and a
+//! fist; and headlines across the middle — the town's
 //! name, as a welcome, whenever you arrive in the town, and whatever else
 //! is [`announce`]d, like House Builder's theme. And how the stick and the
 //! jump button look (`setup_hud`; a phone's, and since 2026-11-06 the
 //! desktop's too, driven by the mouse). Of the buttons only the gear, the stick,
 //! the jump button, the fist, the face, the gamepad (the game selector,
-//! `games`), the speech bubble under the gift (the friends' panel, since
-//! 2026-11-13; [`FriendsButton`]) and, in the car, the gift do anything
-//! yet (Hajun: "i dont need you to make them functional yet. just make
-//! them in the screen").
+//! `games`), the two people under the gift (the friends' panel, since
+//! 2026-11-13; [`FriendsButton`]), the speech bubble and the keyboard over
+//! the jump button ([`QuickChatButton`], [`ChatButton`]) and, in the car,
+//! the gift do anything yet (Hajun: "i dont need you to make them
+//! functional yet. just make them in the screen").
 //!
 //! Every word on the screen is in Inter (`font`, since 2026-11-13; Bevy's
 //! built-in font until then).
@@ -67,6 +70,7 @@ use crate::drive::{CarPressed, Driving};
 use crate::island::{Islands, Venue};
 use crate::lobby::{Balance, STARTING_BALANCE};
 use crate::minimap::{Minimap, MinimapNode};
+use crate::safe::KeepsClear;
 use crate::signup::Signup;
 use crate::ui::{UiChanged, ui};
 
@@ -120,7 +124,28 @@ pub(crate) const ARENA_JUMP: (f32, f32, f32) = (24.5, 4.0, ACTION_BUTTON);
 /// bridging mode vs normal mode"; an empty slot until then).
 const ARENA_SLOT: (f32, f32) = (18.5, 18.5);
 const ARENA_BRIDGE: (f32, f32) = (4.0, 24.5);
-const ARENA_DOTS: (f32, f32, f32) = (0.0, 42.0, 8.0);
+/// (Over the bridge button, at 0 and 42, until 2026-11-14: the chat's
+/// button stands there now, [`CHAT_BUTTON`], and the dots, were they put
+/// back, over that.)
+const ARENA_DOTS: (f32, f32, f32) = (-1.5, 50.5, 8.0);
+/// The small button that takes up the chat's box to type a line into
+/// ([`ChatButton`]), in the town and in Bridge Wars alike, as its right and
+/// bottom offsets in the box round the jump button and how big it is, in
+/// shares of the short side (since 2026-11-14, Hajun: "the bottom right
+/// chat icon is too big of a button to be used for the global chat. So
+/// make a smaller circle above the current chat icon, a little bit to the
+/// right, and. That button can be in the same location for both the
+/// Bridgewaters minigame and the lobby map"). The big speech bubble it
+/// stands over is 14 across, from 1 to 15 in from the box's right and up
+/// to 38.3; in Bridge Wars the bridge button is about there. This one is 9
+/// across, 1.6 over that and its middle 5.5 to the right of the bubble's:
+/// under the gamepad in the town and the minimap in a game, and clear of
+/// the button for things to use that is nearly straight over the sword.
+/// How big and exactly where are mine.
+pub(crate) const CHAT_BUTTON: (f32, f32, f32) = (-2.0, 39.9, 9.0);
+/// The big speech bubble over the town's jump button ([`QuickChatButton`]),
+/// the same way: where it has been since 2026-10-31.
+pub(crate) const QUICK_BUTTON: (f32, f32, f32) = (1.0, 24.3, ACTION_BUTTON);
 /// Whether the three dots are there at all. Not since 2026-11-14 (Hajun:
 /// "i dont think the UI ... button is necessary. just remove it and keep
 /// the default as the only option - only showing the button if the slot
@@ -200,16 +225,25 @@ const WELCOME_SECS: f32 = 3.5;
 /// The pictures on the buttons that are not drawn in code, in
 /// `assets/icons/`, white on clear: Google's Material icons (its
 /// `LICENSE-material-icons.txt` says which), a person and the settings'
-/// gear beside your name, a gamepad down the right edge, and a face and a
-/// speech bubble round the jump button; and Font Awesome's gift and
-/// comment-dots (`LICENSE-font-awesome.txt`; the ones Hajun's FlutterFlow
-/// screenshots showed, 2026-11-01, rendered from their SVGs), the gift and
-/// the social chat's bubble down the right edge. The fist with the face
-/// and the bubble is drawn in code ([`fist`]). A test keeps every one in
+/// gear beside your name, a gamepad down the right edge, and a face round
+/// the jump button; and
+/// Font Awesome's gift and comment-dots (`LICENSE-font-awesome.txt`; the
+/// ones Hajun's FlutterFlow screenshots showed, 2026-11-01, rendered from
+/// their SVGs), the gift down the right edge and the bubble with its three
+/// dots, `social`, which was your friends' button under the gift until
+/// 2026-11-14 and is the big button over the jump button since (Hajun:
+/// "there's 2 chat icons. I like the top chat icon design better, so use
+/// that chat icon for the bottom chat icon. And instead of the top chat
+/// icon, which was for friends, uh, use a, uh, person, 2-person icon for
+/// the friend UI button"). Material's own bubble, `chat`, which was there
+/// until then, is on nothing now. The fist with the face and the bubble,
+/// and the keyboard over the bubble, are drawn in code ([`fist`],
+/// [`keyboard`]). A test keeps every one in
 /// the APK. The leaderboard's (`leaderboard.png`) and the boxing glove
 /// (`punch.png`) are still beside them, unused since 2026-11-01. And, since
 /// 2026-11-13, the friends' panel's (`friends`), Material's too: two people
-/// (`group`), a person with a plus (`person_add`), a magnifying glass
+/// (`group`, the friends' button's own picture too since 2026-11-14), a
+/// person with a plus (`person_add`), a magnifying glass
 /// (`search`), two sheets (`content_copy`), an envelope (`mail`), a cross
 /// (`close`), a chevron (`arrow_back_ios_new`), a door (`logout`), and the
 /// group of three (`groups`), unused for twelve days until then.
@@ -254,9 +288,10 @@ pub(crate) enum Layout {
 #[derive(Component)]
 pub(crate) struct GamesButton;
 
-/// The speech bubble over it, under the gift, which opens your friends
+/// The two people over it, under the gift, which open your friends
 /// (`friends`, since 2026-11-13; Hajun: "The friend panel popup will open
-/// when u tap the top right corner chat bubblt icon under the gift icon").
+/// when u tap the top right corner chat bubblt icon under the gift icon";
+/// a speech bubble until 2026-11-14, [`ICONS`]).
 #[derive(Component)]
 pub(crate) struct FriendsButton;
 
@@ -373,9 +408,10 @@ pub(crate) fn plugin(app: &mut App) {
 #[derive(Component)]
 struct TopBar;
 
-/// The box round a phone's jump button, with the three buttons about it.
+/// The box round a phone's jump button, with the buttons about it, and
+/// what the big speech bubble fans out from among them (`quick`).
 #[derive(Component)]
-struct RoundTheJump;
+pub(crate) struct RoundTheJump;
 
 /// The fist among them, or in Bridge Wars the sword in the jump button's
 /// place, which throws a punch (`start_punch` in `src/lib.rs`) and, in the
@@ -405,11 +441,19 @@ struct GunButton;
 #[derive(Component)]
 pub(crate) struct BridgeButton;
 
-/// The speech bubble over the town's jump button, which takes up the
-/// chat's box to type a line into (`chat`, since 2026-11-14; it did
-/// nothing until then).
+/// The small keyboard over the speech bubble, in the town, and in the
+/// same place in Bridge Wars ([`CHAT_BUTTON`]), which takes up the chat's
+/// box to type a line into (`chat`). For a few hours of 2026-11-14 the big
+/// speech bubble did that, in the town alone.
 #[derive(Component)]
 pub(crate) struct ChatButton;
+
+/// The big speech bubble over the town's jump button, which fans out a few
+/// things to say at a press (`quick`, since 2026-11-14; Hajun: "the current
+/// larger chat icon button should be used for a quick chat selector for
+/// preset chat messages that flannel out", which I take for "fan out").
+#[derive(Component)]
+pub(crate) struct QuickChatButton;
 
 /// The buttons held down just now, each by the pointer holding it, a finger
 /// or the mouse. A press on a button is picking's, which says when it goes
@@ -719,6 +763,8 @@ fn spawn_arena_bar(commands: &mut Commands, images: &mut Assets<Image>, minimap:
     commands
         .spawn((
             TopBar,
+            // Moved in from whichever side the camera's hole is on.
+            KeepsClear,
             Node {
                 position_type: PositionType::Absolute,
                 top: Val::VMin(EDGE),
@@ -790,6 +836,9 @@ fn spawn_arena_bar(commands: &mut Commands, images: &mut Assets<Image>, minimap:
         }
         let (right, bottom) = ARENA_BRIDGE;
         round.spawn(bridge_button(images.add(plank()), beside_the_jump(right, bottom)));
+        // The chat: a line to type (`chat`), where the town has it.
+        let (right, bottom, size) = CHAT_BUTTON;
+        round.spawn((ChatButton, round_button(images.add(keyboard()), size, beside_the_jump(right, bottom))));
         // The three dots, which showed the empty buttons, are not put up
         // ([`DOTS`]).
         if DOTS {
@@ -1090,6 +1139,8 @@ fn spawn_town_bar(commands: &mut Commands, assets: &AssetServer, images: &mut As
     commands
         .spawn((
             TopBar,
+            // Moved in from whichever side the camera's hole is on.
+            KeepsClear,
             Node {
                 position_type: PositionType::Absolute,
                 top: Val::VMin(EDGE),
@@ -1144,8 +1195,9 @@ fn spawn_town_bar(commands: &mut Commands, assets: &AssetServer, images: &mut As
             .with_children(|right| {
                 // A leaderboard stood between the gift and the group until
                 // Hajun had it taken out (2026-11-01), and the group became
-                // a speech bubble the same day.
-                for name in ["gift", "social", "gamepad"] {
+                // a speech bubble the same day, and two people again on
+                // 2026-11-14 ([`ICONS`]).
+                for name in ["gift", "friends", "gamepad"] {
                     let button = round_button(icon(name), SIDE_BUTTON, Node::default());
                     match name {
                         // In the car, held, the gun (`drive::shoot`).
@@ -1168,11 +1220,13 @@ fn spawn_town_bar(commands: &mut Commands, assets: &AssetServer, images: &mut As
     // Round the jump button: a box where it is, and the three about it, each
     // placed from the box's corner, in shares of the short side: the face up
     // and to the left of it, the speech bubble over it and the fist beside
-    // it, each about 2.5 shares clear of it, as Hajun sketched them.
+    // it, each about 2.5 shares clear of it, as Hajun sketched them; and
+    // over the bubble, a little to the right, the chat's small button.
     commands.spawn(round_the_jump()).with_children(|round| {
         let fist = images.add(fist());
         let arrow = images.add(jump_arrow());
-        for (name, right, bottom) in [("mood", 18.5, 18.5), ("chat", 1.0, 24.3), ("punch", 24.3, 1.2)] {
+        let (quick_right, quick_bottom, _) = QUICK_BUTTON;
+        for (name, right, bottom) in [("mood", 18.5, 18.5), ("social", quick_right, quick_bottom), ("punch", 24.3, 1.2)] {
             let picture = if name == "punch" { fist.clone() } else { icon(name) };
             let mut button = round.spawn(round_button(picture, ACTION_BUTTON, beside_the_jump(right, bottom)));
             // The fist throws a punch each time it is pressed, and the
@@ -1188,12 +1242,15 @@ fn spawn_town_bar(commands: &mut Commands, assets: &AssetServer, images: &mut As
                 "mood" => {
                     button.insert(CarButton);
                 }
-                // The chat: a line to say (`chat`).
+                // Things to say at a press (`quick`).
                 _ => {
-                    button.insert(ChatButton);
+                    button.insert(QuickChatButton);
                 }
             }
         }
+        // The chat: a line to type (`chat`).
+        let (right, bottom, size) = CHAT_BUTTON;
+        round.spawn((ChatButton, round_button(images.add(keyboard()), size, beside_the_jump(right, bottom))));
     });
 }
 
@@ -1729,6 +1786,33 @@ pub(crate) fn pencil() -> Image {
     )
 }
 
+/// A keyboard, for the small button that takes up the chat's box to type
+/// into ([`ChatButton`]): a slab with rounded corners, seen from above,
+/// with its keys cut out of it, two rows of five and the long one under
+/// them, white on clear for the button to tint. The picture is mine: Hajun
+/// asked for the button and named none for it, and a second speech bubble
+/// over the big one would not have said which of the two types.
+pub(crate) fn keyboard() -> Image {
+    drawn(keyboard_distance)
+}
+
+/// How far `at` is from the edge of the keyboard's picture.
+fn keyboard_distance(at: Vec2) -> f32 {
+    const ROUND: f32 = 0.12;
+    /// Half a key, and how far its corners are rounded out past that.
+    const KEY: f32 = 0.08;
+    const KEY_ROUND: f32 = 0.02;
+    let slab = box_distance(at, Vec2::new(0.88 - ROUND, 0.58 - ROUND)) - ROUND;
+    let mut keys = box_distance(at - Vec2::new(0.0, -0.31), Vec2::new(0.4, 0.07)) - KEY_ROUND;
+    for row in [0.3, 0.0] {
+        for column in -2..=2 {
+            let key = box_distance(at - Vec2::new(column as f32 * 0.31, row), Vec2::splat(KEY)) - KEY_ROUND;
+            keys = keys.min(key);
+        }
+    }
+    slab.max(-keys)
+}
+
 /// A picture drawn from a shape, white on clear for a button to tint, and
 /// edged by how far each pixel is from it, as the fist and the arrows are:
 /// `outside` says how far a point is from the shape's edge, in shares of
@@ -2231,6 +2315,9 @@ mod tests {
         discs.push((middle(ARENA_BRIDGE, ACTION_BUTTON), ACTION_BUTTON));
         let (right, bottom, size) = ARENA_DOTS;
         discs.push((middle((right, bottom), size), size));
+        // And the chat's small button, over the bridge button.
+        let (right, bottom, size) = CHAT_BUTTON;
+        discs.push((middle((right, bottom), size), size));
         for (index, (at, size)) in discs.iter().enumerate() {
             for (other, other_size) in &discs[..index] {
                 let gap = at.distance(*other) - (size + other_size) * 0.5;
@@ -2244,6 +2331,76 @@ mod tests {
         for pair in round.windows(2) {
             assert!((pair[0].distance(pair[1]) - ACTION_BUTTON - 3.5).abs() < 0.1);
         }
+    }
+
+    #[test]
+    fn the_chat_s_button_is_small_over_the_speech_bubble_and_clear_of_everything() {
+        let (right, bottom, size) = CHAT_BUTTON;
+        let (quick_right, quick_bottom, quick_size) = QUICK_BUTTON;
+        // Smaller than the bubble, over it, and a little to the right of it:
+        // its middle to the right of the bubble's, and still over the
+        // bubble.
+        assert!(size < quick_size * 0.75);
+        assert!(bottom > quick_bottom + quick_size + 1.0);
+        let (middle, quick_middle) = (right + size * 0.5, quick_right + quick_size * 0.5);
+        assert!(middle < quick_middle - 2.0 && middle > quick_right, "{middle} against {quick_middle}");
+        // In the town: clear of the bubble, the face, the fist and the jump
+        // button, each a disc, by its middle from the box's corner.
+        let at = |(right, bottom): (f32, f32), size: f32| Vec2::new(right + size * 0.5, bottom + size * 0.5);
+        let chat = at((right, bottom), size);
+        let town = [
+            (at((quick_right, quick_bottom), quick_size), quick_size),
+            (at((18.5, 18.5), ACTION_BUTTON), ACTION_BUTTON),
+            (at((24.3, 1.2), ACTION_BUTTON), ACTION_BUTTON),
+            (at((0.0, 0.0), crate::JUMP_SIZE_VMIN), crate::JUMP_SIZE_VMIN),
+        ];
+        for (other, other_size) in town {
+            let gap = chat.distance(other) - (size + other_size) * 0.5;
+            assert!(gap > 1.5, "{other} is {gap} from the chat's button");
+        }
+        // And of what is top right, on a screen lying on its side as wide
+        // as a tablet's, a monitor's and a phone's (the short side is the
+        // height, 100 shares): the gamepad, the lowest of the town's three
+        // down the right edge, and in a game the minimap. From the top and
+        // the right of the screen, in shares of the short side.
+        for wide in [4.0 / 3.0, 16.0 / 9.0, 19.5 / 9.0] {
+            let chat = Vec2::new(
+                crate::JUMP_RIGHT_VW * wide + right + size * 0.5,
+                100.0 - crate::JUMP_BOTTOM_VH - bottom - size * 0.5,
+            );
+            let top = EDGE + SIDE_INSET;
+            let gamepad = Vec2::new(top + SIDE_BUTTON * 0.5, top + SIDE_BUTTON * 2.5 + 1.6 * 2.0);
+            let gap = chat.distance(gamepad) - (size + SIDE_BUTTON) * 0.5;
+            assert!(gap > 1.5, "{wide}: {gap} from the gamepad");
+            let minimap_ends = top + MINIMAP;
+            assert!(chat.y - size * 0.5 > minimap_ends + 1.5, "{wide}: under the minimap");
+            // On the screen, with room to its right.
+            assert!(chat.x - size * 0.5 > EDGE, "{wide}: {} from the right", chat.x - size * 0.5);
+        }
+    }
+
+    #[test]
+    fn the_keyboard_is_a_slab_with_its_keys_cut_out() {
+        let image = keyboard();
+        // Solid between the keys and round them; clear in the middle of
+        // each of the ten, and along the long one under them; clear outside
+        // the slab, which is wider than it is tall.
+        for (x, y) in [(0.155, 0.3), (-0.155, 0.0), (0.0, 0.15), (0.0, -0.16), (0.8, 0.0), (-0.8, 0.0), (0.0, 0.5), (0.0, -0.5), (0.6, -0.31)] {
+            assert_eq!(alpha_at(&image, x, y), 255, "at {x} {y}");
+        }
+        for row in [0.3, 0.0] {
+            for column in -2..=2 {
+                assert_eq!(alpha_at(&image, column as f32 * 0.31, row), 0, "key {column} of row {row}");
+            }
+        }
+        for x in [-0.3, 0.0, 0.3] {
+            assert_eq!(alpha_at(&image, x, -0.31), 0, "the long key at {x}");
+        }
+        for (x, y) in [(0.0, 0.75), (0.0, -0.75), (0.95, 0.0), (-0.95, 0.0), (0.86, 0.56)] {
+            assert_eq!(alpha_at(&image, x, y), 0, "outside at {x} {y}");
+        }
+        let data = image.data.as_ref().unwrap();
+        assert!(data.chunks(4).all(|pixel| pixel[..3] == [255, 255, 255]));
     }
 
     #[test]

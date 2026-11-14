@@ -7,6 +7,77 @@
 > "above" or "below", or names another section in quotes, that section may be
 > in another file here: the table in `CLAUDE.md` says which.
 
+## Clear of the camera's hole; two people for friends; the chat's own button
+
+Since the night of 2026-11-14. Hajun, having played on the phone: "Right
+now I checked, and in my mobile Samsung phone, the chat box is covered
+slightly, uh, and the input field too, by the, uh, small camera hole. Uh,
+so I guess I need the UI elements to use the OS safe area, so that the
+left margin is just for the UI elements is shifted to the safe area so
+it's not covered. So right now in the UI, right side, there's 2 chat icons.
+I like the top chat icon design better, so use that chat icon for the
+bottom chat icon. And instead of the top chat icon, which was for friends,
+uh, use a, uh, person, 2-person icon for the friend UI button." The rest of
+what they said that night is the chat's ("The chat is its words alone",
+in `docs/chat-and-text.md`). `src/safe.rs`, `src/hud.rs`,
+`MainActivity.java`. APK 31; no change to `shared/`.
+
+- **The camera's hole** (`src/safe.rs`). The game is drawn under it
+  (`MainActivity.applyImmersive`: the window lies in the cutout along the
+  short edges), and held on its side the phone has it half way down the
+  left edge, where the chat is, or the right one, turned the other way up
+  (`sensorLandscape`). `MainActivity.tellSafeInsets` reads the cutout's
+  safe insets, left and right, off the decor view's root insets, as the
+  window takes the focus and every 300 ms with the clipboard's poll, and
+  hands them to the game by a native method (`safeInsets(int, int)`, the
+  sixth; numbers only, as the keyboard's height is). The game brings them
+  to logical pixels (`safe::SafeArea`).
+- **What moves** (`safe::KeepsClear`): what stands 4 shares of the short
+  side in from the sides (`hud::EDGE`): the bar across the top, in the
+  town and in Bridge Wars (your name and what is under it on the left;
+  the three buttons, or the minimap, on the right), and the chat. Each is
+  given a margin that brings it 1.5 shares inside the safe area's edge on
+  the side the hole is on, and none on a screen with no hole. **My
+  reading**: "shifted to the safe area so it's not covered" is moved just
+  clear of the hole, not the whole screen's worth of margins added to the
+  hole's depth. **What does not move**: the stick and the buttons round
+  the jump button (7 and 6 parts in a hundred of the width in, where a
+  hole ends 3 or 4 in, by my reckoning from a status bar's height, not
+  measured), and whatever comes up in the middle of the screen.
+- **`RT_SAFE_AREA=<left>,<right>`**, in logical pixels, makes a hole up on
+  desktop.
+- **An iPhone is not asked**, and its island still lies over what is
+  beside it: winit 0.30 has the safe area, but nothing behind
+  `target_os = "ios"` can be checked on this PC.
+- **The friends' button is two people** (`icons/friends.png`, Material's
+  `group`, the friends' panel's own tab picture), and **the big bubble
+  over the jump button is the one with three dots** that the friends'
+  button had (`icons/social.png`, Font Awesome's comment-dots). Material's
+  bubble (`icons/chat.png`) is on nothing now, and still in the APK.
+- **The chat's own small button**, a keyboard, over the bubble and a
+  little to the right, in the town and in Bridge Wars alike, and the
+  bubble's fan of things to say: in `docs/chat-and-text.md`.
+- **Checked.** A unit test of how far in a thing is moved for a hole
+  (none with no hole, just clear of one, never back out). The desktop
+  build, scripted, with a hole made up 70 pixels deep on the left and then
+  on the right, in the town and in a game of Bridge Wars: the name, the
+  balance (or the health and the four counts) and the chat moved in on the
+  left; the three buttons, or the minimap, on the right; the stick and the
+  buttons round the jump button where they were, and nothing run into
+  anything. The new pictures, enlarged.
+- **Not checked: anything on a phone.** The Java that reads the cutout has
+  never run: that Android hands the hole over the way it is read, that it
+  is told again when the phone is turned the other way up, and how deep
+  the S26's hole is, are all still to be seen on it. **If the chat is
+  still under the hole on the phone, read the phone's log first**: the
+  game says what it was handed to begin with and each time it changes
+  (`adb logcat`, a line with "the safe area begins", in logical pixels and
+  in the screen's own), and the activity says once if it could not hand
+  it over at all (`adb logcat -s Donggeurami`). Nothing handed over, or
+  nothing but noughts, is the Java's side; numbers that look right and a
+  chat still covered is `safe::CLEAR`, or the hole being deeper than its
+  safe inset says.
+
 ## The app opens under a cover, and you drop into the town
 
 Since 2026-11-13 (Hajun: "right now, when i open the game, there is no

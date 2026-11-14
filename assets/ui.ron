@@ -345,18 +345,24 @@
             link: "#ffffff",
             link_off: "#ffffff80",
         ),
-        // The chat box on the left of the screen, in the town and in
-        // Bridge Wars: what shows behind the lines said, as see-through as
-        // its alpha says; a line someone said, and the name before it
+        // The chat on the left of the screen, in the town and in Bridge
+        // Wars: what shows behind the lines said while you type, as
+        // see-through as its alpha says (the rest of the time the lines
+        // are drawn with nothing behind them); the shadow under each
+        // line's words, darker than the other words' on the screen
+        // (text_shadow), since it is all that sets them off from the
+        // world; a line someone said, and the name before it
         // where they are on no team (in Bridge Wars a name is its team's
         // colour, arena.team_red and the rest); a line about what has
         // happened in the game ("Bob fell off the world."); the box a
         // line is typed into, at rest and while you type, the words
-        // typed, and the words that stand in it until something is; and
+        // typed, and the words that stand in it until something is;
         // the arrow that sends it, with something to send and with
-        // nothing.
+        // nothing; and one of the things the big speech bubble offers to
+        // say, and its words.
         chat: (
             back: "#00000073",
+            shadow: "#000000b3",
             text: "#ffffff",
             name: "#ffe9a8",
             event: "#ffffffc7",
@@ -366,6 +372,8 @@
             hint: "#ffffff80",
             send: "#ffffffe6",
             send_off: "#ffffff59",
+            quick: "#666666cc",
+            quick_text: "#ffffff",
         ),
     ),
     // The font is Inter (since 2026-11-13; Bevy's own, plain ASCII, until
@@ -707,8 +715,20 @@
         // fireball, dynamite); {name} bought {ware} for your team (the
         // upgrade shop's own name for it); and {name} broke {team}'s
         // anchor. Every name is drawn in its team's colour.
+        // quick is what the big speech bubble by the jump button offers
+        // to say at a press, the first nearest the bubble: up to six, each
+        // a line anyone could type (80 letters at the most, or 40 in
+        // Korean). More than six, the rest are left out.
         chat: (
             hint: "Type a message",
+            quick: [
+                "Hello!",
+                "Follow me!",
+                "Anyone for Bridge Wars?",
+                "Thanks!",
+                "Good game!",
+                "Bye!",
+            ],
             said: "{name}: {text}",
             fell: "{name} fell off the world.",
             knocked: "{killer} knocked {name} off the world.",

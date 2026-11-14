@@ -8,12 +8,15 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.util.Log;
 import android.view.Display;
+import android.view.DisplayCutout;
 import android.view.MotionEvent;
 import android.view.Surface;
 import android.view.SurfaceHolder;
 import android.view.View;
 import android.view.Window;
+import android.view.WindowInsets;
 import android.view.WindowManager;
 
 import androidx.core.view.WindowCompat;
@@ -96,6 +99,7 @@ public class MainActivity extends GameActivity {
         super.onWindowFocusChanged(hasFocus);
         if (hasFocus) {
             applyImmersive();
+            tellSafeInsets();
         }
     }
 
@@ -136,6 +140,50 @@ public class MainActivity extends GameActivity {
     }
 
     /**
+     * How far in from the left and from the right of the screen the camera's
+     * hole reaches (the display's cutout: the game is drawn under it, {@link
+     * #applyImmersive}), in the screen's pixels: handed to the game ({@code
+     * safe::read}), which moves what stands by those edges clear of it. Held
+     * on its side the phone has the hole on one of them, and turned the
+     * other way up, on the other.
+     */
+    private static native void safeInsets(int left, int right);
+
+    /**
+     * Reads the cutout off the window's insets and tells the game: as the
+     * window comes to the front, and every time the game is asked for what
+     * it wants copied ({@link #poll}), so that it is told however the
+     * insets were handed out, and told again once the phone has been turned
+     * the other way up. Nothing that goes wrong here may stop the game:
+     * with the game's library not there to tell, or no insets yet, the game
+     * goes on with what it had, which to begin with is no hole; the first
+     * time, the phone's log is told why ({@code adb logcat -s Donggeurami}).
+     */
+    private void tellSafeInsets() {
+        try {
+            WindowInsets insets = getWindow().getDecorView().getRootWindowInsets();
+            if (insets == null) {
+                return;
+            }
+            DisplayCutout cutout = insets.getDisplayCutout();
+            if (cutout == null) {
+                safeInsets(0, 0);
+            } else {
+                safeInsets(cutout.getSafeInsetLeft(), cutout.getSafeInsetRight());
+            }
+        } catch (Throwable error) {
+            // The margins stay as they were.
+            if (!safeInsetsFailed) {
+                safeInsetsFailed = true;
+                Log.w("Donggeurami", "the camera's hole was not handed to the game", error);
+            }
+        }
+    }
+
+    /** Whether handing the hole over has failed, and been said to have. */
+    private boolean safeInsetsFailed;
+
+    /**
      * What the game wants copied to the clipboard: your name and tag, from
      * the friends' panel ({@code friends::copy}). The game cannot reach the
      * phone's clipboard itself, so it keeps what is to be copied until this
@@ -148,17 +196,26 @@ public class MainActivity extends GameActivity {
 
     private static native void clipTaken();
 
-    /** How often the game is asked whether it has anything to copy. */
+    /**
+     * How often the game is asked whether it has anything to copy, and told
+     * where the camera's hole is.
+     */
     private static final long CLIP_POLL_MS = 300;
 
     private final Handler clipHandler = new Handler(Looper.getMainLooper());
     private final Runnable clipPoll = new Runnable() {
         @Override
         public void run() {
-            takeClip();
+            poll();
             clipHandler.postDelayed(this, CLIP_POLL_MS);
         }
     };
+
+    /** What is done every {@link #CLIP_POLL_MS} while the game is up. */
+    private void poll() {
+        takeClip();
+        tellSafeInsets();
+    }
 
     /**
      * Copies whatever the game has waiting to the phone's clipboard. Nothing
