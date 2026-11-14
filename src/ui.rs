@@ -555,9 +555,11 @@ pub(crate) struct Colours {
 /// The chat on the left of the screen (`chat`, since 2026-11-14): what
 /// shows behind the lines said while a line is typed; the thin stroke
 /// round each line's words, which is all that sets them off from the
-/// world the rest of the time; how much of itself each of the three lines
-/// in sight is drawn with while nothing is typed, the lowest first, from
-/// 1, all of it, to 0, none; a line someone said, and the name before
+/// world the rest of the time; how much of itself a line in sight is drawn
+/// with while nothing is typed, by where it stands, the lowest line first,
+/// from 1, all of it, to 0, none (every one 1 since 2026-11-15: no line is
+/// faded, and other numbers bring the fading back, `chat::strength_at`); a
+/// line someone said, and the name before
 /// it where they are on no team (in Bridge Wars a name is its team's
 /// colour, `arena.team_*`); a line about what has happened in a game; the
 /// box a line is typed into, at rest and while it is typed into, the words

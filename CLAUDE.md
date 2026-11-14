@@ -11,8 +11,9 @@ bundles). It plays online against a server in Seoul (`server/`; `shared/` is
 Bridge Wars. House Builder, the build-battle game, is stalled: keep it
 working, and spend nothing on it unasked.
 
-As of 2026-11-14: `PROTOCOL_VERSION` 16, APK 32 (`versionCode`), the server
-deployed that night (14:47 UTC) with everything in `shared/`.
+As of 2026-11-15: `PROTOCOL_VERSION` 16, APK 33 (`versionCode`), the server
+deployed that night (16:42 UTC on 2026-11-14) with everything in `server/`
+and `shared/`.
 
 ## This file, and where the rest is
 
@@ -65,7 +66,8 @@ rule or how things stand has changed, and then in a line or two. No logs here.
   copies against a server on this PC, the VM, a phone. A phone is rarely
   attached; never let "built" read as "seen on the phone".
 - "Remove" usually means turn off: keep the mechanism behind a switch
-  (`sound::PLAYING`, `hud::DOTS`, `hud::GIFT`, `utility::SECOND_ALWAYS`).
+  (`sound::PLAYING`, `hud::DOTS`, `hud::GIFT`, `drive::GUN`,
+  `utility::SECOND_ALWAYS`).
 - **Every window looks as the friends' panel does** (Hajun, 2026-11-14: "I
   want to use this same design style throughout the project"): friends,
   settings, the game selector, Bridge Wars' shops and its "You're out!" are
@@ -161,7 +163,8 @@ to try again.
   commands are in `mobile/android/app/build.gradle`'s closing comment and
   `RENDERING.md` ("Build gotchas"). `versionCode` there is the APK's
   number. What `mobile/android/app/assets-left-out.txt` names stays out of
-  the APK; tests fail if that leaves out something the game loads.
+  the APK; tests fail if that leaves out something the game loads. One APK
+  is kept, the newest, `donggeurami_town-release.apk`: no `prev-` copies.
 - iOS cannot be built here: Codemagic builds it on a pushed tag
   `ios-<version>`. Code behind `target_os = "ios"` cannot be type-checked
   on this PC: keep it to call sites. An iPhone writes `log.txt` to its
@@ -170,6 +173,7 @@ to try again.
   build, a server with no key), `RT_FREE_CURSOR=1`, `RT_INTRO=off`,
   `RT_SIGNUP=1`, `RT_TIME_OF_DAY`, `RT_CAR_AT`, `RT_CLOCK_OFF`,
   `RT_ARENA_FROM=<seconds>`, `RT_ARENA_PURSE=<count>`,
+  `RT_ARENA_TEAM=red|blue|green|yellow` (offline),
   `RT_SAFE_AREA=<left>,<right>` (a camera's hole made up). Two copies need
   their own `APPDATA`. A server on this PC: `RT_PORT=5443
   RT_ALLOW_SKIP=1 target/debug/roundtown-server.exe`, and the copies with
@@ -272,9 +276,9 @@ to try again.
   (`src/signup.rs`); kept in `profile.json` beside `town.json`, and online
   it is the account's (`Ask::Profile`, Postgres `players`).
 - The chat (`src/chat.rs`, `server/src/chat.rs`), down the left in the
-  town and in Bridge Wars: its words alone with a thin stroke, three lines
-  in sight, each over the lowest fainter (`colours.chat.strengths`, no
-  clock), scrolled by a drag; the dark box, every line in full and the box
+  town and in Bridge Wars: its words alone with a thin stroke, two lines
+  and a half in sight, none faded (`colours.chat.strengths`, all 1; other
+  numbers fade them by place), scrolled by a drag; the dark box and the box
   to type into come only while a line is typed (the keyboard button). A
   line goes to everyone in the room; nothing is kept or logged. No block
   and no report yet, nor for friends' messages: both are wanted before a
@@ -300,8 +304,9 @@ to try again.
   balance under them; down the right edge two people (friends, with the
   inbox's count in gold) and a gamepad (the game selector). The person
   button that stood by the gear and the gift over the two people (the
-  car's gun on a phone) are turned off since 2026-11-14, "too many lobby
-  ui buttons" (`hud::PERSON`, `hud::GIFT`). Round the jump button a
+  car's gun, itself off since, `drive::GUN`) are turned off since
+  2026-11-14, "too many lobby ui buttons" (`hud::PERSON`, `hud::GIFT`).
+  Round the jump button a
   face (in and out of the car), a speech bubble (a fan of things to say
   at a press, `src/quick.rs`, `words.chat.quick`), a small keyboard over
   it (the chat's box) and a fist (a punch; the car's reverse); the stick,
@@ -340,7 +345,9 @@ and the game is as that file has it. The rules both sides play by are
   150 m over the map; ten seconds after the last person joins the computer
   takes every seat left; a countdown; 25 minutes. **Always 2v2v2v2**: eight
   seats, four teams, a team to an island (seat modulo four); people are
-  teamed with each other first, and a group is seated together. Online the
+  teamed with each other first, and a group is seated together; which team
+  they begin on is thrown for each game (`seat_order` on the server,
+  `thrown_seat` offline). Online the
   server runs it (`server/src/arena.rs`); offline the device does, with
   seven bots (`src/arena.rs`).
 - **The map** (`pvptownmap.glb`): the town's middle, four team islands 130
@@ -394,7 +401,8 @@ and the game is as that file has it. The rules both sides play by are
   (`Ask::Buy`), a fall is a death (`Ask::Respawn`). What happens is said in
   the chat by the game (`chat::Feed`), names in their teams' colours.
 - The camera is fixed straight overhead, 15.5 m up, and nothing zooms it
-  (`arena.camera_height`). Top right a minimap (`src/minimap.rs`).
+  (`arena.camera_height`). Top right a minimap (`src/minimap.rs`), each
+  team's island lined in its colour; top left your name in your team's.
 - Also: `src/gear.rs` (swords, shields, the blindfold), `src/fire.rs`,
   `src/dynamite.rs`, `src/compass.rs`, `src/range.rs` (the punch's range),
   `src/trail.rs` (sparks behind a potion), `src/bridge/builder_bot.rs`.

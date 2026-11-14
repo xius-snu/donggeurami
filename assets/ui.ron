@@ -159,6 +159,8 @@
             // red, blue, green and yellow, for the island at the bottom of
             // the map, the one on its left, the one at its top and the one
             // on its right. A zombie's, which is on no team, in its own.
+            // Your own name top left is in your team's too, and the thin
+            // line round each team's island on the minimap is that team's.
             // And the bar under each name, a teammate's and an enemy's.
             // Each kept faint so as not to hide the fight (Hajun: "not
             // distracting").
@@ -192,7 +194,8 @@
             // The minimap top right: the land, what shows round it (the
             // grey of your name's plate), you (a red dot) and your teammate
             // (a green dot). The bridges on it take the planks' colour
-            // above.
+            // above, and the line round each team's island that team's
+            // (team_red and the rest, above).
             map_land: "#d9c9a8",
             map_back: "#66666673",
             map_me: "#ff3b30",
@@ -369,12 +372,15 @@
         // Wars: what shows behind the lines said while you type, as
         // see-through as its alpha says (the rest of the time the lines
         // are drawn with nothing behind them); the thin stroke round each
-        // line's words, which is all that sets them off from the world;
-        // how much of itself each of the three lines in sight is drawn with
-        // while you are not typing, the lowest first, then the one over
-        // it, then the one over that: 1 is all of it and 0 none of it,
-        // and whatever is over those three is not drawn until you scroll
-        // back to it or type; a line someone said, and the name before it
+        // line's words, which is all that sets them off from the world
+        // (and round your name top left in Bridge Wars, where it is in
+        // your team's colour);
+        // how much of itself a line in sight is drawn with while you are
+        // not typing, by where it stands: the lowest line first, then the
+        // one over it, then the half line over that; 1 is all of it and 0
+        // none of it. Every one is 1 since 2026-11-15, so no line is
+        // faded (1.0, 0.55, 0.25 was each line fainter than the one under
+        // it); a line someone said, and the name before it
         // where they are on no team (in Bridge Wars a name is its team's
         // colour, arena.team_red and the rest); a line about what has
         // happened in the game ("Bob fell off the world."); the box a
@@ -386,7 +392,7 @@
         chat: (
             back: "#00000073",
             stroke: "#000000",
-            strengths: (1.0, 0.55, 0.25),
+            strengths: (1.0, 1.0, 1.0),
             text: "#ffffff",
             name: "#ffe9a8",
             event: "#ffffffc7",
@@ -810,6 +816,8 @@
         // every this many seconds while the button is held (the first as it
         // goes down), gone once this far, in metres, from where it was fired,
         // and each a ball of this radius, in metres. They hit nothing yet.
+        // (The gun is turned off since 2026-11-15, GUN in src/drive.rs:
+        // these four are kept for when it is back, and do nothing now.)
         bullet_speed: 60.0,
         bullet_every: 0.12,
         bullet_range: 40.0,

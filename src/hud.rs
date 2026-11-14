@@ -64,10 +64,10 @@ use bevy::picking::pointer::PointerId;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 
-use roundtown_net::{Item, UTILITY_SLOTS};
+use roundtown_net::{Item, UTILITY_SLOTS, arena_team};
 
 use crate::Player;
-use crate::arena::{Health, Resources};
+use crate::arena::{Fighting, Health, Resources};
 use crate::bridge::BridgePressed;
 use crate::drive::{CarPressed, Driving};
 use crate::island::{Islands, Venue};
@@ -87,6 +87,11 @@ pub(crate) const COIN_ICON: &str = "coin.png";
 /// increase the size of every button the right hand side both top and
 /// bottom"; 8 and 12 until then).
 const NAME_TEXT: f32 = 4.2;
+/// How far each of the four copies of your name that make its stroke is
+/// set from the name itself, across and down, in shares of the short side:
+/// as thin for the name's size as the stroke round the chat's words is for
+/// theirs (`chat`, 0.09 for words of 2.5).
+const NAME_STROKE: f32 = NAME_TEXT * 0.036;
 const BALANCE_TEXT: f32 = 5.0;
 const BALANCE_ICON: f32 = 5.0;
 pub(crate) const SMALL_BUTTON: f32 = 8.0;
@@ -103,9 +108,11 @@ const ACTION_BUTTON: f32 = 14.0;
 /// buttons in place of those"): the two people and the gamepad stand one
 /// place higher each, and the gear right beside your name. The person did
 /// nothing yet. The gift, held in the car, was its gun ([`GunButton`],
-/// `drive::shoot`): while the gift is away the gun is G on desktop and
-/// nothing on a phone. Everything of both is still here, and each of these
-/// words puts its button back.
+/// `drive::shoot`): with the gift away the gun was G on desktop and
+/// nothing on a phone, and since 2026-11-15 the gun is turned off too
+/// (`drive::GUN`), so that the gift put back would do nothing until that
+/// is. Everything of both is still here, and each of these words puts its
+/// button back.
 const GIFT: bool = false;
 const PERSON: bool = false;
 /// Bridge Wars' layout ([`Layout::Arena`]): the health bar under your name,
@@ -276,6 +283,12 @@ struct BalanceText;
 #[derive(Component)]
 struct NamePlate;
 
+/// One of the four copies of your name that lie under it on its plate and
+/// make the thin stroke round it while it is in your team's colour
+/// ([`colour_name`], [`NAME_STROKE`]).
+#[derive(Component)]
+struct NameRim;
+
 /// The tag after your name, as the server has it: the number your friends
 /// tell you from anyone else of your name by (`friends`, which writes it
 /// here as the server says it). Written after your name on its plate,
@@ -407,6 +420,7 @@ pub(crate) fn plugin(app: &mut App) {
                 relayout,
                 restyle.after(relayout),
                 show_name.after(restyle),
+                colour_name.after(restyle),
                 count_balance.after(restyle),
                 show_health.after(restyle),
                 show_resources.after(restyle),
@@ -1317,7 +1331,9 @@ pub(crate) fn round_button(icon: Handle<Image>, size_vmin: f32, place: Node) -> 
 // shop still draws its own like it, `shop::close_button`.)
 
 /// Your name on a plate: the buttons' grey, a little more solid, with its
-/// corners rounded a little.
+/// corners rounded a little. Under the name, laid out by themselves over
+/// the same room, the four copies of it that are its stroke, put away
+/// until the name is in your team's colour ([`colour_name`]).
 fn name_plate() -> impl Bundle {
     let colours = ui().colours;
     (
@@ -1329,12 +1345,43 @@ fn name_plate() -> impl Bundle {
         BackgroundColor(colours.hud.name_plate),
         Pickable::IGNORE,
         children![(
-            NamePlate,
-            Text::new(""),
-            crate::font::sized(NAME_TEXT),
-            TextColor(colours.text),
+            Node::default(),
             Pickable::IGNORE,
+            children![
+                name_rim(Vec2::new(-1.0, -1.0)),
+                name_rim(Vec2::new(1.0, -1.0)),
+                name_rim(Vec2::new(-1.0, 1.0)),
+                name_rim(Vec2::new(1.0, 1.0)),
+                (
+                    NamePlate,
+                    Text::new(""),
+                    crate::font::sized(NAME_TEXT),
+                    TextColor(colours.text),
+                    Pickable::IGNORE,
+                ),
+            ],
         )],
+    )
+}
+
+/// One of the four copies of your name that make its stroke, set off
+/// toward `corner`: in the colour of the stroke round the chat's words
+/// (the file's `colours.chat.stroke`), and not drawn until it is wanted.
+fn name_rim(corner: Vec2) -> impl Bundle {
+    (
+        NameRim,
+        Text::new(""),
+        crate::font::sized(NAME_TEXT),
+        TextColor(ui().colours.chat.stroke),
+        Node {
+            position_type: PositionType::Absolute,
+            left: Val::ZERO,
+            top: Val::ZERO,
+            ..default()
+        },
+        UiTransform::from_translation(Val2::new(Val::VMin(corner.x * NAME_STROKE), Val::VMin(corner.y * NAME_STROKE))),
+        Visibility::Hidden,
+        Pickable::IGNORE,
     )
 }
 
@@ -1342,7 +1389,12 @@ fn name_plate() -> impl Bundle {
 /// it once the server has said what it is ([`YourTag`]): as the app opens,
 /// again when you sign up or change it (`signup`), as the tag comes and
 /// goes with the connection, and on a plate put up afresh ([`restyle`]).
-fn show_name(me: Query<Ref<Name>, With<Player>>, tag: Res<YourTag>, mut plates: Query<&mut Text, With<NamePlate>>) {
+fn show_name(
+    me: Query<Ref<Name>, With<Player>>,
+    tag: Res<YourTag>,
+    // (The name, and the four copies of it that are its stroke.)
+    mut plates: Query<&mut Text, Or<(With<NamePlate>, With<NameRim>)>>,
+) {
     let Ok(name) = me.single() else {
         return;
     };
@@ -1353,6 +1405,35 @@ fn show_name(me: Query<Ref<Name>, With<Player>>, tag: Res<YourTag>, mut plates: 
                 text.0 = shown;
             }
         }
+    }
+}
+
+/// Colours your name on its plate: in a game of Bridge Wars, from its
+/// waiting room on, your team's colour, as it is in the chat, and as your
+/// teammate's is over their head (since 2026-11-15; Hajun: "in the bridge
+/// wars minigame, make the color of your name that u see in the top left
+/// corner like NAME#5571 to also be the color of your team"); anywhere
+/// else, and until you have a seat, the colour of words. **In its team's
+/// colour it has a thin black stroke round it**, as the chat's words have
+/// (mine): the plate is see-through, light by day with the sky behind it,
+/// and on it the blue team's name could not be read, nor the green's and
+/// the red's easily (seen in the desktop build, by day). Written only as
+/// it changes.
+fn colour_name(
+    layout: Res<Layout>,
+    fighting: Res<Fighting>,
+    mut plates: Query<&mut TextColor, With<NamePlate>>,
+    mut rims: Query<&mut Visibility, With<NameRim>>,
+) {
+    let colours = ui().colours;
+    let team = fighting.seat.filter(|_| *layout == Layout::Arena).map(|seat| arena_team(usize::from(seat)));
+    let wanted = team.map_or(colours.text, |team| colours.arena.team(team));
+    for mut colour in &mut plates {
+        colour.set_if_neq(TextColor(wanted));
+    }
+    let stroke = if team.is_some() { Visibility::Inherited } else { Visibility::Hidden };
+    for mut visibility in &mut rims {
+        visibility.set_if_neq(stroke);
     }
 }
 

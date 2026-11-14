@@ -19,12 +19,22 @@
 //! smaller sapphire island in the minimap"). `hud` puts the picture on the screen
 //! ([`MinimapNode`]); the top of it is north, as the top of the screen is
 //! under the camera fixed over you.
+//!
+//! **Round each team's island there is a thin line in its team's colour**
+//! ([`outline_islands`], the file's `colours.arena.team_red` and the
+//! rest; since 2026-11-15, Hajun: "also in the minimap. put a small color
+//! outline around each island to indicate which color that island is"),
+//! drawn into the picture with the land, just outside the island's edge,
+//! so that none of the island is covered. The four smaller islands and
+//! the middle are no team's and have none (mine). A bridge built off an
+//! island is drawn over its line where it leaves.
 
 use bevy::asset::RenderAssetUsages;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 
 use roundtown_net::bridge_wars::{GENERATORS, generator, steady};
+use roundtown_net::{ARENA_ISLAND_RADIUS, ARENA_ISLANDS};
 
 use crate::bridge::Bridges;
 use crate::hud;
@@ -53,6 +63,16 @@ const DOT: f32 = 6.0;
 /// five- and a six-sided dot of the item's colour, the stone its count
 /// has top left, drawn for this size (`hud::item_mark`).
 const MARK: f32 = 5.5;
+/// How thick the line round each team's island is, outward from the
+/// island's edge, in pixels of the picture ([`outline_islands`]): a pixel
+/// of the picture is a little over a pixel of a screen 1,080 high, and an
+/// island is 18 of them across. Mine ("a small color outline"): of 2.5,
+/// 3, 3.5 and 4, looked at as a phone draws them, at three quarters size,
+/// the thinnest whose yellow still reads against the land's sand.
+const OUTLINE: f32 = 3.5;
+/// How far past its island's own reach (`ARENA_ISLAND_RADIUS`) land is
+/// still that island's, in metres: its edge is where the map has it.
+const ISLAND_SLACK: f32 = 4.0;
 
 /// The picture, and what it was drawn from.
 #[derive(Resource)]
@@ -147,18 +167,11 @@ fn fill(data: &mut [u8], corners: &[Vec2], colour: [u8; 4]) {
     }
 }
 
-/// Draws the land once the map has been read: every triangle of it that
-/// faces up and lies low, filled in the land's colour, the rest left
-/// clear for the background behind the picture (`hud`).
-fn draw_land(islands: Res<Islands>, mut minimap: ResMut<Minimap>, mut images: ResMut<Assets<Image>>) {
-    if minimap.land.is_some() {
-        return;
-    }
-    let Some(corners) = islands.corners(Venue::Arena) else {
-        return;
-    };
-    let colours = ui().colours.arena;
-    let land = bytes(colours.map_land);
+/// The picture of the land, from every triangle of the map, `corners`:
+/// each that faces up and lies low filled in `land`, the rest left clear
+/// for the background behind the picture (`hud`); and round each team's
+/// island a line in its team's colour (`team`, [`outline_islands`]).
+fn land_picture(corners: &[[Vec3; 3]], land: [u8; 4], team: impl Fn(usize) -> [u8; 4]) -> Vec<u8> {
     // Clear, in the land's own colour, so that the land's edge, drawn
     // between a pixel of it and a clear one, shades to nothing rather
     // than to black.
@@ -170,6 +183,76 @@ fn draw_land(islands: Res<Islands>, mut minimap: ResMut<Minimap>, mut images: Re
         }
         fill(&mut data, &[pixel(a.xz()), pixel(b.xz()), pixel(c.xz())], land);
     }
+    outline_islands(&mut data, OUTLINE, team);
+    data
+}
+
+/// Draws a line round each team's island in its team's colour (`team`, by
+/// the team's number), over a picture of the land: every clear pixel
+/// outside the land that is within `thick` pixels ([`OUTLINE`]) of a pixel
+/// of that island's land. Outside the land is what can be come to from the
+/// picture's edge without crossing any, so that a gap in an island, under
+/// something tall that is not drawn as land, is left as it is; and an
+/// island's land is what lies within its reach of its middle
+/// (`ARENA_ISLANDS`, `ARENA_ISLAND_RADIUS`, and [`ISLAND_SLACK`]).
+fn outline_islands(data: &mut [u8], thick: f32, team: impl Fn(usize) -> [u8; 4]) {
+    let size = SIZE as i32;
+    let at = |x: i32, y: i32| (y * size + x) as usize;
+    let land: Vec<bool> = data.chunks_exact(4).map(|pixel| pixel[3] != 0).collect();
+    let mut outside = vec![false; land.len()];
+    let mut edge: Vec<(i32, i32)> = (0..size).flat_map(|k| [(k, 0), (k, size - 1), (0, k), (size - 1, k)]).collect();
+    while let Some((x, y)) = edge.pop() {
+        if x < 0 || y < 0 || x >= size || y >= size || land[at(x, y)] || outside[at(x, y)] {
+            continue;
+        }
+        outside[at(x, y)] = true;
+        edge.extend([(x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)]);
+    }
+    let reach = thick.ceil() as i32;
+    // (All of them found before any is drawn: a line is not land.)
+    let mut lines = Vec::new();
+    for (number, middle) in ARENA_ISLANDS.iter().enumerate() {
+        let middle = pixel(*middle);
+        let far = (ARENA_ISLAND_RADIUS + ISLAND_SLACK) / (2.0 * HALF) * SIZE as f32;
+        let its = |x: i32, y: i32| {
+            x >= 0
+                && y >= 0
+                && x < size
+                && y < size
+                && land[at(x, y)]
+                && Vec2::new(x as f32 + 0.5, y as f32 + 0.5).distance(middle) <= far
+        };
+        let span = (far + thick).ceil() as i32 + 1;
+        let (across, down) = (middle.x as i32, middle.y as i32);
+        for y in (down - span).max(0)..=(down + span).min(size - 1) {
+            for x in (across - span).max(0)..=(across + span).min(size - 1) {
+                if !outside[at(x, y)] {
+                    continue;
+                }
+                let near = (-reach..=reach).any(|dy| {
+                    (-reach..=reach).any(|dx| ((dx * dx + dy * dy) as f32) <= thick * thick && its(x + dx, y + dy))
+                });
+                if near {
+                    lines.push((at(x, y), number));
+                }
+            }
+        }
+    }
+    for (k, number) in lines {
+        data[k * 4..k * 4 + 4].copy_from_slice(&team(number));
+    }
+}
+
+/// Draws the land once the map has been read ([`land_picture`]).
+fn draw_land(islands: Res<Islands>, mut minimap: ResMut<Minimap>, mut images: ResMut<Assets<Image>>) {
+    if minimap.land.is_some() {
+        return;
+    }
+    let Some(corners) = islands.corners(Venue::Arena) else {
+        return;
+    };
+    let colours = ui().colours.arena;
+    let data = land_picture(corners, bytes(colours.map_land), |team| bytes(colours.team(team as u8)));
     if let Some(mut image) = images.get_mut(&minimap.image) {
         image.data = Some(data.clone());
     }
@@ -344,6 +427,65 @@ mod tests {
         let mut other = vec![0u8; (SIZE * SIZE * 4) as usize];
         fill(&mut other, &[Vec2::new(10.0, 30.0), Vec2::new(30.0, 10.0), Vec2::new(10.0, 10.0)], [255, 255, 255, 255]);
         assert_eq!(other[((12 * SIZE + 12) * 4 + 3) as usize], 255);
+    }
+
+    #[test]
+    fn each_team_s_island_has_a_thin_line_round_it_in_its_team_s_colour() {
+        // The map as it is, drawn as the game draws it, the land white
+        // and each team's line a colour of its own.
+        let parts = crate::island::glb::read("pvptownmap.glb");
+        let corners: Vec<[Vec3; 3]> = parts.iter().filter(|part| !part.skinned).flat_map(|part| part.triangles.iter().copied()).collect();
+        let (land, lines) = ([255u8, 255, 255, 255], [[255u8, 0, 0, 255], [0, 0, 255, 255], [0, 255, 0, 255], [255, 255, 0, 255]]);
+        let data = land_picture(&corners, land, |team| lines[team]);
+        let pixels: Vec<[u8; 4]> = data.chunks_exact(4).map(|pixel| [pixel[0], pixel[1], pixel[2], pixel[3]]).collect();
+        let middle_of = |k: usize| Vec2::new((k as u32 % SIZE) as f32 + 0.5, (k as u32 / SIZE) as f32 + 0.5);
+        let metres = 2.0 * HALF / SIZE as f32;
+        for (team, line) in lines.iter().enumerate() {
+            let island = pixel(ARENA_ISLANDS[team]);
+            let drawn: Vec<Vec2> = (0..pixels.len()).filter(|&k| pixels[k] == *line).map(middle_of).collect();
+            // A ring of it: about as many pixels as a line that thick
+            // round a disc that big comes to, all of them just outside
+            // the island's edge, and all the way round it.
+            let round = std::f32::consts::TAU * (ARENA_ISLAND_RADIUS / metres + OUTLINE * 0.5) * OUTLINE;
+            assert!((drawn.len() as f32) > round * 0.6 && (drawn.len() as f32) < round * 1.6, "team {team}: {} pixels, about {round} looked for", drawn.len());
+            for at in &drawn {
+                let out = at.distance(island) * metres;
+                assert!(out > ARENA_ISLAND_RADIUS - 2.5 && out < ARENA_ISLAND_RADIUS + ISLAND_SLACK + (OUTLINE + 1.0) * metres, "team {team}: a pixel of its line {out} m from its middle");
+            }
+            for eighth in 0..8 {
+                let way = Vec2::from_angle(eighth as f32 * std::f32::consts::FRAC_PI_4);
+                assert!(drawn.iter().any(|at| (*at - island).normalize().dot(way) > 0.95), "team {team}: no line toward {way}");
+            }
+            // The island itself is still land, under none of it.
+            let k = (island.y as u32 * SIZE + island.x as u32) as usize;
+            assert_eq!(pixels[k], land, "team {team}: the middle of its island");
+        }
+        // Nothing else has a line: every pixel is land, clear, or one of
+        // the four lines', and the four smaller islands and the middle
+        // have none near them.
+        for (k, pixel_) in pixels.iter().enumerate() {
+            assert!(*pixel_ == land || pixel_[3] == 0 || lines.contains(pixel_), "{pixel_:?}");
+            if lines.contains(pixel_) {
+                let at = (middle_of(k) / SIZE as f32 - Vec2::splat(0.5)) * 2.0 * HALF;
+                assert!(ARENA_ISLANDS.iter().any(|island| island.distance(at) < ARENA_ISLAND_RADIUS + ISLAND_SLACK + 6.0), "a line at {at}");
+            }
+        }
+        // A gap inside an island is not lined, only its outside.
+        let mut data = [255u8, 255, 255, 0].repeat((SIZE * SIZE) as usize);
+        let island = pixel(ARENA_ISLANDS[0]);
+        for y in 0..SIZE {
+            for x in 0..SIZE {
+                let from = Vec2::new(x as f32 + 0.5, y as f32 + 0.5).distance(island);
+                if from < 8.0 && from > 2.0 {
+                    data[((y * SIZE + x) * 4 + 3) as usize] = 255;
+                }
+            }
+        }
+        outline_islands(&mut data, OUTLINE, |team| lines[team]);
+        let k = ((island.y as u32 * SIZE + island.x as u32) * 4) as usize;
+        assert_eq!(data[k + 3], 0, "the gap in the middle is still clear");
+        let lined = data.chunks_exact(4).filter(|pixel| *pixel == lines[0].as_slice()).count();
+        assert!(lined > 80, "{lined}");
     }
 
     #[test]

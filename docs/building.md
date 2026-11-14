@@ -7,6 +7,55 @@
 > "above" or "below", or names another section in quotes, that section may be
 > in another file here: the table in `CLAUDE.md` says which.
 
+## Only the newest APK is kept, and what the folder's size was
+
+On 2026-11-15 (Hajun: "also this RoundTown foldersize is HUGE now. check
+why. i dont rly need multiple apk files. just the latstet"). The folder was
+76 GB, 72 of it `target/`, cargo's builds, of which cargo never deletes
+one: every change of a dependency's version or features since September
+had left what it built before behind, for each kind of build. (Sizes here
+are as `du` gives them, which counts a file under two names twice, as the
+finished programs in `target/` are.)
+
+- **One APK is kept**, `donggeurami_town-release.apk`, the newest (APK 33,
+  built later that night). The 29 kept beside it as
+  `donggeurami_town-release.prev-<date>.apk`, 3.1 GB, are deleted, and no
+  more are made: a new APK goes over the old one. Every "kept beside it
+  as" below is how it was; none of those files is there. (A file of the
+  APK that shipped, to compare a new one with, has to be taken out of it
+  before the next is built.)
+- **`target/` is 32 GB, and the folder 33** (23 and 24 on disk), and
+  everything in it is of a build still in use, so nothing builds from
+  nothing: the
+  desktop game and its tests (`target/debug`, 27 GB: 4 of it one file,
+  `donggeurami_town.lib`, the library an iPhone links, which every desktop
+  build makes too, the crate being one for all three), the server and its
+  tests, the server for Linux (`target/release` and
+  `x86_64-unknown-linux-musl`), and the phone's library
+  (`target/release-android` and `aarch64-linux-android`). Gone: what
+  cargo keeps to rebuild the desktop game quickly (`debug/incremental`,
+  22 GB; it is back at 4 after a few builds, and will grow again), an
+  iPhone's build and a debug one for Android that nothing here makes, a
+  desktop build of each release profile from September and October, and
+  in every `deps` folder each file of a build no longer made (28 GB, told
+  by the sixteen digits in its name, against what cargo says each build
+  in use is made of, `--message-format=json`).
+- **It will grow again**, by a few GB with every change to `Cargo.lock`.
+  `cargo clean` takes all of it at once, and the next build of each kind
+  is then from nothing, about a quarter of an hour for the desktop game.
+- **A trap in listing the phone's build**: cargo-ndk keeps cargo's
+  listing to itself, and `cargo ndk-env` does not print what cargo-ndk
+  really sets (it leaves out `CC_aarch64-linux-android` and the rest
+  whose names have hyphens, `ANDROID_ABI`, and its own linker's). Plain
+  cargo run under what it prints builds `ring` and `android-activity`
+  again and everything over them. What cargo-ndk sets was read off a
+  `cargo-printenv` of two lines put on the `PATH` (`cargo ndk -t
+  arm64-v8a -P 26 printenv`), and under exactly that cargo lists 463
+  files and builds none. The phone's library was built twice into
+  `target/` for this and never into `jniLibs`: the library APK 32 was made
+  of, and that APK, stayed the bytes they were (checked by their hashes
+  before and after) until APK 33 was built an hour on.
+
 ## Building
 
 Desktop: `cargo run`.
@@ -17,7 +66,19 @@ alone; the server is `cargo build -p roundtown_server`. Never `--workspace`,
 which would build the game with the server's half of replicon in it.
 
 Android needs the `release-android` profile, a manual strip step, and Gradle
-(`versionCode` in `mobile/android/app/build.gradle` is the build number: 32
+(`versionCode` in `mobile/android/app/build.gradle` is the build number: 33
+in the small hours of 2026-11-15: a team thrown for each game of Bridge
+Wars, each team's island lined in its colour on the minimap, your name top
+left in your team's colour, the chat two lines and a half with none faded
+and a little lower in a game, and the car's gun off (the first entries of
+`docs/bridge-wars.md`, `docs/chat-and-text.md` and `docs/vehicles.md`).
+Protocol 16 still; **the server deployed with it at 16:42 UTC on
+2026-11-14** (01:42 on the 15th here), `server/` alone having changed and
+nothing of `shared/` (nobody had been connected since 15:39; the binary
+before kept on the VM as `roundtown-server.prev-2026-11-15`; this PC's own
+account came online after). Built and not installed, no phone being
+attached, and put over APK 32, of which no copy is kept ("Only the newest
+APK is kept", above); 32
 late on the night of 2026-11-14, the work of two sessions in the one tree:
 the chat's three lines that fade upward and scroll, with a stroke round
 their words; a plank a tenth wider than the map's; a kill's sapphire and

@@ -258,8 +258,10 @@ pub(crate) fn seat_ai(seats: &mut Vec<Member>, elsewhere: &[Member]) {
 /// for the boy ais and girly cute ai names for the girl ais"; by seat,
 /// red, yellow or purple in turn, under any of 48 names, until then). The
 /// names a town holds ([`TOWN_BODIES`], 32) are more than a side has, so
-/// some of a full town are "Bot".
-fn ai_member(seat: usize, id: u64, seats: &[Member], elsewhere: &[Member]) -> Member {
+/// some of a full town are "Bot". A room whose seats are not taken in
+/// order seats its own with this (Bridge Wars offline, where which seat is
+/// yours is thrown, `arena`).
+pub(crate) fn ai_member(seat: usize, id: u64, seats: &[Member], elsewhere: &[Member]) -> Member {
     let _ = seat;
     let boy = fastrand::bool();
     let names: Vec<&str> = roundtown_net::ai_names(boy)

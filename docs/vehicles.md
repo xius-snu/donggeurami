@@ -7,6 +7,24 @@
 > "above" or "below", or names another section in quotes, that section may be
 > in another file here: the table in `CLAUDE.md` says which.
 
+## The car's gun is turned off
+
+Since 2026-11-15 (`drive::GUN`, false). The night before, the gift went
+from the town's buttons (`hud::GIFT`; "too many lobby ui buttons"), and the
+gift, held in the car, was the gun: that left it G on desktop and nothing on
+a phone. Told so, Hajun: "ye u can remove the car's gun feature. no need
+for rebuild or repush". Turned off, not taken out, as "remove" has meant
+before: with the word false the gun's two systems (`drive::shoot`, `fly`)
+are not run at all, so neither G nor the gift, were it put back, fires
+anything; the gun, its bullets, their four numbers in `assets/ui.ron`
+(`car.bullet_*`, which do nothing now) and their two tests are all still
+there, and the word set true puts it back as it was ("The car you drive",
+below, has it as it was made). **Not in APK 32**, which was built an hour
+before and has the gun on G for a keyboard and no button for it; **APK 33
+has it off**, built two hours on with the rest of that night's work, at
+"build apk and push". Checked: it builds, and the game's tests pass; not
+run by hand.
+
 ## The town's buses
 
 (For the day of 2026-11-07 the town was the PvP map, whose only roads are

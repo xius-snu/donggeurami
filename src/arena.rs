@@ -586,6 +586,18 @@ impl Game {
         arena_team(self.me)
     }
 
+    /// Whether someone is in `seat`, offline, where everyone in the game
+    /// has a body here: you from the start, and the computer's players
+    /// once they have come ([`play`]).
+    fn taken(&self, seat: usize) -> bool {
+        self.bodies.get(seat).is_some_and(Option::is_some)
+    }
+
+    /// Whether every one of the players' seats is taken, offline.
+    fn full(&self) -> bool {
+        (0..ARENA_SEATS).all(|seat| self.taken(seat))
+    }
+
     /// Which teams still have anyone in play: anyone not out.
     fn teams_in_play(&self) -> Vec<u8> {
         let mut teams: Vec<u8> = (0..self.seats.len().min(ARENA_SEATS))
@@ -1426,8 +1438,10 @@ fn play(
     let Some(mut game) = game else {
         if *asked_in && let Some(map) = islands.get(Venue::Arena) {
             *asked_in = false;
-            let spot = waiting_spot(room.as_ref(), map, 0);
-            let game = open(&mut commands, you, 0, seat.0, false, &mut begun, &lobby, &mut orbit, &mut driving);
+            // Which team is yours is thrown for each game.
+            let me = thrown_seat();
+            let spot = waiting_spot(room.as_ref(), map, me);
+            let game = open(&mut commands, you, me, seat.0, false, &mut begun, &lobby, &mut orbit, &mut driving);
             lobby::put(&mut bodies, &mut orbit, you, Venue::Arena, spot);
             commands.insert_resource(game);
         }
@@ -1459,13 +1473,27 @@ fn play(
             // Nobody else is coming. Once nobody has for a while, the
             // computer takes every seat left, all at once.
             let since_join = if skip { BOT_WAIT } else { since_join + dt };
-            if since_join >= BOT_WAIT && game.seats.len() < ARENA_SEATS {
+            if since_join >= BOT_WAIT && !game.full() {
                 let Some(map) = islands.get(Venue::Arena) else {
                     return;
                 };
-                while game.seats.len() < ARENA_SEATS {
-                    lobby::seat_ai(&mut game.seats, &lobby.seats);
-                    let seat = game.bodies.len();
+                game.seats.resize(game.seats.len().max(ARENA_SEATS), nobody());
+                game.bodies.resize(game.bodies.len().max(ARENA_SEATS), None);
+                let (me, mine) = (game.me, game.seats[game.me].id);
+                for seat in (0..ARENA_SEATS).filter(|&seat| seat != me) {
+                    if game.taken(seat) {
+                        continue;
+                    }
+                    // Each as its seat's number and one, as they were
+                    // while yours was the first seat of every game; and
+                    // whichever of them that makes you, as the number your
+                    // own seat would have had.
+                    let id = match seat as u64 + 1 {
+                        id if id == mine => me as u64 + 1,
+                        id => id,
+                    };
+                    let member = lobby::ai_member(seat, id, &game.seats, &lobby.seats);
+                    game.seats[seat] = member;
                     // A body the game's brain places, as the server's
                     // bots are placed online ([`drive_bots`]).
                     let body = lobby::spawn_bot_at(
@@ -1482,14 +1510,14 @@ fn play(
                         Brained,
                         Team(arena_team(seat)),
                     ));
-                    game.bodies.push(Some(body));
+                    game.bodies[seat] = Some(body);
                 }
                 info!("Bridge Wars: nobody joined in {BOT_WAIT} s, so the computer takes the seats left");
             }
-            game.stage = if game.seats.len() < ARENA_SEATS {
-                Stage::Waiting { since_join }
-            } else {
+            game.stage = if game.full() {
                 Stage::Countdown { left: COUNTDOWN }
+            } else {
+                Stage::Waiting { since_join }
             };
         }
         Stage::Countdown { left } if left > dt && !skip => game.stage = Stage::Countdown { left: left - dt },
@@ -1592,13 +1620,21 @@ fn open(
     spawn_anchor_bars(commands, arena_team(me));
     hud::announce(commands, None, &ui().words.arena.name, hud::HEADLINE, NAME_SECS).insert(InArena);
     begun.0 += 1;
-    info!("Bridge Wars: into the waiting room{}", if online { " (online)" } else { "" });
+    info!("Bridge Wars: into the waiting room, in seat {me}{}", if online { " (online)" } else { "" });
     let mut bodies = vec![None; ARENA_SEATS.max(me + 1)];
     bodies[me] = Some(you);
+    // Offline, you alone are in it until the computer takes the rest
+    // ([`play`]): the seats before yours are nobody's till then, as the
+    // server has the seats between two that are taken.
+    let mut seats = Vec::new();
+    if !online {
+        seats = vec![nobody(); me + 1];
+        seats[me] = lobby.mine();
+    }
     Game {
         id: begun.0,
-        seats: if online { Vec::new() } else { vec![lobby.mine()] },
-        bodies: if online { bodies } else { vec![Some(you)] },
+        seats,
+        bodies,
         town_seat,
         me,
         online,
@@ -1625,6 +1661,45 @@ fn open(
         won: Purse::default(),
         killed_by: None,
     }
+}
+
+/// Who is in a seat nobody is in yet: nobody, with no id, no name and no
+/// look, as the server has an empty seat (`Seats`).
+fn nobody() -> Member {
+    Member {
+        id: 0,
+        name: String::new(),
+        look: String::new(),
+        ai: true,
+    }
+}
+
+/// The colours' names, by team, for [`thrown_seat`]'s `RT_ARENA_TEAM`.
+const TEAM_NAMES: [&str; ARENA_TEAMS] = ["red", "blue", "green", "yellow"];
+
+/// Which seat is yours in a game played offline: the first of the two of
+/// whichever of the four teams the throw gives, each as likely as another
+/// (since 2026-11-15; Hajun: "right now, it seems like the real player's
+/// team is fixed. but i want it so each game u are a random color, and the
+/// color is fixed to which island, but the real players' team is not fixed
+/// to red - one game they are blue team together one game they are yellow
+/// team together etc, so they sometime play in the east island, some time
+/// they play in the west island, etc."). Until then yours was the first
+/// seat of every game: red, on the south island, every time. An island is
+/// still its team's and a seat still an island and a team by its number
+/// (`arena_team`); the server throws the same for its own games, for
+/// whoever comes first (`seat_order` there). For trying a team out on
+/// desktop, `RT_ARENA_TEAM=red`, `blue`, `green` or `yellow` (or 0 to 3)
+/// makes it that one.
+fn thrown_seat() -> usize {
+    let asked = std::env::var("RT_ARENA_TEAM").ok().and_then(|team| {
+        let team = team.trim().to_ascii_lowercase();
+        TEAM_NAMES
+            .iter()
+            .position(|name| *name == team)
+            .or_else(|| team.parse().ok().filter(|team| *team < ARENA_TEAMS))
+    });
+    asked.unwrap_or_else(|| fastrand::usize(..ARENA_TEAMS))
 }
 
 /// How many of each thing you begin a game played offline with: none, but

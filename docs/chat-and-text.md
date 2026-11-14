@@ -7,6 +7,65 @@
 > "above" or "below", or names another section in quotes, that section may be
 > in another file here: the table in `CLAUDE.md` says which.
 
+## Two lines and a half, none of them faded; a little lower in a game
+
+In the small hours of 2026-11-15, an hour after APK 32, in four messages
+from Hajun about the chat as that APK has it. **APK 33 has it** (asked for
+an hour on, "build apk and push"; `docs/building.md`). `src/chat.rs`,
+`colours.chat` in `assets/ui.ron`.
+
+- **No line is faded.** First Hajun asked for two lines in sight and for
+  the scrolling to go on until one was left, "so that every text in the
+  chat can be full visibility with no transparency by scrolling"; then,
+  before any of it was made: "actually now i think about it i think no
+  line should be transparent they should all be fully visible. just keep
+  chat height to like 2.5 line or sth", and "nvm about the being able to
+  scroll even when there is 2 line of text that doesnt make sense". So
+  every line in sight is whole, and the scrolling is as it was. **The
+  fading by place is still there, turned off**: `colours.chat.strengths`
+  is `(1.0, 1.0, 1.0)`, and `(1.0, 0.55, 0.25)` there is what APK 32 has.
+  (`chat::strength_at` holds the third of them a line further up than it
+  did, past what is in sight, so that with other numbers a line is not
+  seen to go as it leaves.)
+- **Two lines and a half are in sight** (`LOG_HEIGHT` 8.6 shares of the
+  short side: two and a half lines of 3.0 and the room round them), in
+  the town and in a game alike, where there was room for four in the town
+  and three in a game: the newest, the one over it, and the lower half of
+  the one over that, cut along the top. **The half line is how I read
+  "2.5 line"**: it says there is more above; if a cut line looks wrong on
+  the phone, `LOG_HEIGHT` is the one number. The box is shorter from its
+  top, so the lowest line is where it was in the town, 48.6 shares down.
+  While a line is typed the dark box is that tall too.
+- **It scrolls as it did**, by a finger dragged on the lines or the
+  wheel, once there is more than is in sight: three lines, or two where
+  one of them is two lines tall (what is behind the lines takes a press
+  by what was last laid out, the lines taller than their box, and no
+  longer by how many there are). With two lines or one there is nothing
+  to scroll to. It goes back to the newest five seconds after it was last
+  touched, as before.
+- **In a game it is lower.** "also i think you could move the chatbox
+  downward a bit to have a tiny slightly more gap between chatbox and the
+  amethyst inventory number in the bridge wars minigame." `ARENA_TOP` 41.0
+  where it was 39.0, the box being shorter from its top besides: three
+  shares between the last of the four counts and the box where there was
+  one, three and a half to the words where there was one and a half, and
+  the lowest line half a share lower than it was, 49.6. **It is as low as
+  it goes** with the box a line is typed into under it: that ends 57.6
+  down, and the stick's disc reaches up to 57.75. How much is mine.
+- **Offline, your name before what you say is your team's colour from
+  the waiting room on** (`chat::say`), as it is online, and as your name
+  top left is now ("the team you begin on is thrown" in
+  `docs/bridge-wars.md`): until now it was the plain colour for a name
+  until the computer's players had come.
+- **Checked** in the desktop build, scripted, 1,920 by 1,080, the chat
+  cropped and enlarged: one, two, three and seven lines in the town, one
+  of them two lines tall; a drag back by two lines, and the return five
+  seconds on; a drag with two lines, which scrolled nothing (whether the
+  finger looks round there instead is a phone's to show: a touch turns
+  nothing on Windows); the dark box while a line is typed; in a game by
+  day and by night, under the four counts. The game's unit tests pass
+  (304). **Not on a phone.**
+
 ## The last three lines, fainter upward, that scroll; a stroke round the words; wider
 
 Later on the night of 2026-11-14, an hour after the entry under this one,

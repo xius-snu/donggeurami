@@ -12,27 +12,28 @@
 The entries of the log below, in its order (the newest dated work first,
 then the game as it was first made). Search for an entry by its first words.
 
-1. Later on the night of 2026-11-14 the two shops and the panel that says you are out are drawn as the friends' panel is
-2. Since the night of 2026-11-14 a plank is a tenth wider than Hajun's and not a quarter, whoever kills someone has their sapphire and amethyst, and the comp...
-3. Since the evening of 2026-11-14 there is a Leap Potion and a faster builder to buy, a drink shows, a potion that is on leaves sparks, the bridge is...
-4. Since the small hours of 2026-11-14 the dynamite's arch rises and falls and leans to neither side, with an X where it will land; its fuse is seen t...
-5. Since the night of 2026-11-13 there is dynamite, which cuts bridges; the computer's players no longer fall for three easy tricks, and are not all a...
-6. Later on 2026-11-13: the compass's arrow points out, the anchors are their teams' colours, and the computer's players fill their buttons, each as i...
-7. Since 2026-11-13 there are five buttons for things to use, and you hold several kinds at once
-8. Since late on the night of 2026-11-12 each of the computer's players is someone, a knock no longer stuns them, and no two fights with them go the s...
-9. Since the night of 2026-11-12 the computer's players play the game
-10. Since the evening of 2026-11-12 every game online is 2v2v2v2, people teamed up with each other first and the computer in every seat left
-11. Later on 2026-11-12: dying loses everything you hold, what is aimed is seen over the void, and a sword is held on its edge and cut downward
-12. Since 2026-11-12 Bridge Wars has two shops, and everything in Hajun's file is in the game
-13. Since the night of 2026-11-11 Bridge Wars has generators, a shop and a timetable
-14. Since the night of 2026-11-08 Bridge Wars is the server's online, eight to a game in four teams of two, with respawn anchors and bridges you build
-15. The gamepad down the right edge opens the game selector
-16. Bridge Wars
-17. The fight
-18. Online, a game of Bridge Wars is a room of your own
-19. The camera is fixed straight down over you only in the arena
-20. In the arena the buttons are Hajun's `pvpmapbuttonui.jpg`
-21. Falling off the map
+1. Since the small hours of 2026-11-15 the team you begin on is thrown for each game, each team's island is lined in its colour on the minimap, and yo...
+2. Later on the night of 2026-11-14 the two shops and the panel that says you are out are drawn as the friends' panel is
+3. Since the night of 2026-11-14 a plank is a tenth wider than Hajun's and not a quarter, whoever kills someone has their sapphire and amethyst, and the comp...
+4. Since the evening of 2026-11-14 there is a Leap Potion and a faster builder to buy, a drink shows, a potion that is on leaves sparks, the bridge is...
+5. Since the small hours of 2026-11-14 the dynamite's arch rises and falls and leans to neither side, with an X where it will land; its fuse is seen t...
+6. Since the night of 2026-11-13 there is dynamite, which cuts bridges; the computer's players no longer fall for three easy tricks, and are not all a...
+7. Later on 2026-11-13: the compass's arrow points out, the anchors are their teams' colours, and the computer's players fill their buttons, each as i...
+8. Since 2026-11-13 there are five buttons for things to use, and you hold several kinds at once
+9. Since late on the night of 2026-11-12 each of the computer's players is someone, a knock no longer stuns them, and no two fights with them go the s...
+10. Since the night of 2026-11-12 the computer's players play the game
+11. Since the evening of 2026-11-12 every game online is 2v2v2v2, people teamed up with each other first and the computer in every seat left
+12. Later on 2026-11-12: dying loses everything you hold, what is aimed is seen over the void, and a sword is held on its edge and cut downward
+13. Since 2026-11-12 Bridge Wars has two shops, and everything in Hajun's file is in the game
+14. Since the night of 2026-11-11 Bridge Wars has generators, a shop and a timetable
+15. Since the night of 2026-11-08 Bridge Wars is the server's online, eight to a game in four teams of two, with respawn anchors and bridges you build
+16. The gamepad down the right edge opens the game selector
+17. Bridge Wars
+18. The fight
+19. Online, a game of Bridge Wars is a room of your own
+20. The camera is fixed straight down over you only in the arena
+21. In the arena the buttons are Hajun's `pvpmapbuttonui.jpg`
+22. Falling off the map
 
 ## Games: the gamepad opens a selector, and Bridge Wars is the PvP map
 
@@ -62,6 +63,88 @@ was the town itself; everything below about the map, its islands, the
 void, the punch's knockback and its range held for the town then, and
 holds for the arena now.
 
+- **Since the small hours of 2026-11-15 the team you begin on is thrown
+  for each game, each team's island is lined in its colour on the minimap,
+  and your name top left is your team's colour** (two messages from
+  Hajun, an hour after APK 32). `server/src/arena.rs`, `src/arena.rs`,
+  `src/lobby.rs`, `src/minimap.rs`, `src/hud.rs`. Nothing of `shared/`,
+  nothing sent has changed its shape, protocol 16 still. **APK 33 has it,
+  and the server since 16:42 UTC on 2026-11-14** (01:42 on the 15th here;
+  asked for an hour on, "build apk and push"; `docs/building.md`).
+  - **Which team the people of a game begin on is thrown for each
+    game.** "right now, it seems like the real player's team is fixed. but
+    i want it so each game u are a random color, and the color is fixed to
+    which island, but the real players' team is not fixed to red - one
+    game they are blue team together one game they are yellow team
+    together etc, so they sometime play in the east island, some time they
+    play in the west island, etc." It was fixed: seats were taken in one
+    order, 0, 4, 2, 6, 1, 5, 3, 7 (`SEAT_ORDER`), so whoever came first
+    was in seat 0 of every game, red, on the south island, and offline
+    you were always seat 0. **An island is still its team's**, and a seat
+    still an island and a team by its number (`arena_team`): what is
+    thrown is which seats people are given.
+    - **On the server** each game has its own order (`Game::order`,
+      `seat_order`, thrown as the game is opened, `Arenas::filling`): the
+      same order begun on any of the four teams, each as likely as
+      another, with the team across the map next and the two at its sides
+      after, either way round. So what the order was for holds for every
+      game: two people are a team, four are two teams on opposite
+      islands, a group goes in two by two (`Game::seats_for`), a seat
+      left before the fight is the next to come's. The log says which:
+      "Bridge Wars game 7 opened, its people on team 2 first". A game
+      made (`Game::new`) is the old order until whoever opens it throws,
+      and not by its seed: the kinds of the computer's players are thrown
+      in the order their seats are taken, and a game the tests play from
+      a seed is the game it was.
+    - **Offline** your seat is the first of a thrown team's two
+      (`arena::thrown_seat`), the computer your teammate in the other.
+      The seats before yours are nobody's until the computer comes
+      (`nobody`, a member with no id, as the server has an empty seat),
+      and it then takes every seat with no body in it (`Game::taken`,
+      `Game::full`), each of its players numbered as its seat and one, as
+      they were (and whichever of them that makes you, as your own seat
+      and one). `RT_ARENA_TEAM=red`, `blue`, `green` or `yellow` (or 0 to
+      3) has it that one, on desktop.
+    - **Online it is the server's alone**, deployed with APK 33: a phone
+      with APK 32 is given its team by it as it is.
+  - **Each team's island has a thin line round it on the minimap, in its
+    team's colour.** "also in the minimap. put a small color outline
+    around each island to indicate which color that island is." Drawn
+    into the picture with the land (`minimap::outline_islands`): every
+    clear pixel outside the land within 3.5 pixels of that island's own
+    (`OUTLINE`; the picture is 256 across, an island 18), so none of the
+    island is covered, and a bridge built off it is drawn over the line
+    where it leaves. The colours are the names' (`colours.arena.team_red`
+    and the rest). **Mine**: that the four smaller islands and the middle,
+    which are no team's, have none; and the thickness, the thinnest of
+    2.5, 3, 3.5 and 4 whose yellow still read against the land's sand as
+    a phone would draw it (at three quarters size, made up on this PC).
+    **Your dot is still red and your teammate's green**, as Hajun asked
+    on 2026-11-09: on a blue island a red dot may now be taken for the
+    red team. Theirs to say.
+  - **Your name top left is your team's colour.** "also in the bridge
+    wars minigame, make the color of your name that u see in the top left
+    corner like NAME#5571 to also be the color of your team." From the
+    waiting room on (`hud::colour_name`, by your seat), and the colour of
+    words again in the town. **With a thin black stroke round it, which
+    is mine**: the plate is see-through and light by day, with the sky
+    behind it, and the blue team's name could not be read on it, nor the
+    green's and the red's easily. Four copies of the name under it, as
+    the chat's words have (`NameRim`, `NAME_STROKE`, in the chat's
+    `colours.chat.stroke`), put away while the name is white.
+  - **Checked.** The server's tests (52, one new: every order of the
+    eight, people seated by each, and 800 thrown) and the game's (304,
+    one new, which draws the map as it is and looks for each island's
+    line). In the desktop build, scripted, offline: a game as each of the
+    four teams, by day and by night, the plate, the chat and the minimap
+    cropped and enlarged; six games with the team thrown, in seats 3, 2,
+    3, 1, 2 and 3; as yellow, a sword bought, a fall, and back on the east
+    island with the sword gone; the computer's players bridging from
+    their islands meanwhile. Two copies against a server on this PC: "its
+    people on team 2 first", seats 2 and 6, both green on the north
+    island, their names green in each other's chat, the computer in the
+    six seats left. **Not on a phone.** On the VM, only that this PC's own
+    account came online after the deploy: no game was played there.
 - **Later on the night of 2026-11-14 the two shops and the panel that
   says you are out are drawn as the friends' panel is** (Hajun: "I think I
   like the ui design/color choice/ close button layout/ etc. of the friends

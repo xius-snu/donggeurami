@@ -161,8 +161,11 @@ struct Game {
     minds: Vec<Mind>,
     /// Who has left it.
     gone: Vec<bool>,
+    /// The order its seats are taken in as people join: [`SEAT_ORDER`],
+    /// begun on a team thrown for this game ([`seat_order`]).
+    order: [usize; ARENA_SEATS],
     /// The seats nobody is sitting in: between two that are taken, as the
-    /// seats are taken out of order ([`SEAT_ORDER`]), and whoever's they
+    /// seats are taken out of order ([`Game::order`]), and whoever's they
     /// were who left before the fight began ([`Game::leave`]). Such a
     /// seat is gone and out, with no body, until someone takes it; the
     /// computer takes every one left as the wait ends, and again as the
@@ -288,7 +291,46 @@ struct Game {
 /// wait ends. For half a day before, the order was an island each, 0, 2,
 /// 1, 3, 4, 6, 5, 7, and two to four people began with no bots at all, a
 /// 1v1 for two.
+///
+/// **This is the order of a game whose people begin on the first team,
+/// red, and since 2026-11-15 a game begins them on any of the four**
+/// ([`seat_order`], [`Game::order`]): until then whoever came first was
+/// red in every game, on the same island every time.
 const SEAT_ORDER: [usize; ARENA_SEATS] = [0, 4, 2, 6, 1, 5, 3, 7];
+
+/// The order a game's seats are taken in whose people begin on the team
+/// `first`: as [`SEAT_ORDER`] has it, both seats of that team's island,
+/// both of the one across the map from it, and then both of each of the
+/// two at its sides, the one on its left first or, `flip`, the one on its
+/// right. Thrown for each game as it is opened ([`Arenas::filling`];
+/// since 2026-11-15, Hajun: "right now, it seems like the real player's
+/// team is fixed. but i want it so each game u are a random color, and
+/// the color is fixed to which island, but the real players' team is not
+/// fixed to red - one game they are blue team together one game they are
+/// yellow team together etc, so they sometime play in the east island,
+/// some time they play in the west island, etc."). An island is still its
+/// team's, and a seat still an island and a team by its number
+/// ([`arena_team`]): what is thrown is only which seats people are given.
+/// Everything the order was for holds for each of them: two people are a
+/// team, four are two teams on opposite islands, and a group goes in two
+/// by two ([`Game::seats_for`]).
+fn seat_order(first: usize, flip: bool) -> [usize; ARENA_SEATS] {
+    let side = if flip { 3 } else { 1 };
+    let teams = [first, first + 2, first + side, first + side + 2];
+    let mut order = [0; ARENA_SEATS];
+    for (pair, team) in order.chunks_mut(2).zip(teams) {
+        let team = team % ARENA_TEAMS;
+        pair[0] = team;
+        pair[1] = team + ARENA_TEAMS;
+    }
+    order
+}
+
+/// The order of a game being opened, begun on any of the four teams as
+/// likely as on another.
+fn thrown_order() -> [usize; ARENA_SEATS] {
+    seat_order(fastrand::usize(..ARENA_TEAMS), fastrand::bool())
+}
 
 /// Something a step of the fight has done ([`Game::step`], and what
 /// players ask, [`hear`]) that takes the world to carry out: an entity for
@@ -380,12 +422,17 @@ const RISE_GRAVITY: f32 = 22.0;
 
 impl Game {
     /// A game numbered `id`, its waiting room empty, whose room is sent
-    /// the entity `shown`; its dice thrown from `seed`.
+    /// the entity `shown`; its dice thrown from `seed`. Its people begin
+    /// on the first team until whoever opens it throws for that
+    /// ([`Arenas::filling`]): not by `seed`, so that a game played out
+    /// from a seed by the computer alone, as the tests play them, is the
+    /// game that seed always was.
     fn new(id: u32, shown: Entity, seed: u64) -> Self {
         let mut dice = fastrand::Rng::with_seed(seed);
         Self {
             id,
             shown,
+            order: SEAT_ORDER,
             seats: Vec::new(),
             members: Vec::new(),
             bot: Vec::new(),
@@ -662,9 +709,9 @@ impl Game {
     }
 
     /// The next of the players' seats to be taken: the first, in the order
-    /// they are taken in ([`SEAT_ORDER`]), that nobody has sat in.
+    /// this game's are taken in ([`Game::order`]), that nobody has sat in.
     fn free_seat(&self) -> Option<usize> {
-        SEAT_ORDER
+        self.order
             .into_iter()
             .find(|&seat| seat >= self.seats.len() || self.vacant[seat])
     }
@@ -675,7 +722,7 @@ impl Game {
     /// the same team (unless group is >2 and ur playing 2v2v2v2 bridge
     /// wars, then it will need to be 2 ppl same team 1 ppl other team i
     /// guess)"): two by two onto teams with both seats free, in the order
-    /// the teams fill in ([`SEAT_ORDER`], which has each team's two seats
+    /// the teams fill in ([`Game::order`], which has each team's two seats
     /// together), and an odd one last, wherever the next to come alone
     /// would sit. One alone takes [`Game::free_seat`]. None if the room is
     /// no longer waiting, or has not the teams free.
@@ -685,13 +732,13 @@ impl Game {
         }
         let free = |seat: usize| seat >= self.seats.len() || self.vacant[seat];
         let mut seats = Vec::with_capacity(count);
-        let mut teams = SEAT_ORDER.chunks(2);
+        let mut teams = self.order.chunks(2);
         for _ in 0..count / 2 {
             let pair = teams.by_ref().find(|pair| pair.iter().all(|&seat| free(seat)))?;
             seats.extend_from_slice(pair);
         }
         if count % 2 == 1 {
-            seats.push(SEAT_ORDER.into_iter().find(|&seat| free(seat) && !seats.contains(&seat))?);
+            seats.push(self.order.into_iter().find(|&seat| free(seat) && !seats.contains(&seat))?);
         }
         Some(seats)
     }
@@ -1501,8 +1548,10 @@ impl Arenas {
                 .id();
             let mut game = Game::new(id, shown, fastrand::u64(..));
             game.old_bots = old_bots;
+            // Which team its people begin on is this game's own.
+            game.order = thrown_order();
+            info!("Bridge Wars game {id} opened, its people on team {} first", arena_team(game.order[0]));
             self.games.insert(id, game);
-            info!("Bridge Wars game {id} opened");
             self.filling = Some(id);
             id
         });
@@ -1937,7 +1986,7 @@ fn run(
                     // The computer takes every seat left, however many
                     // people there are: every game is two to a team on
                     // four islands, the people teamed up with each other
-                    // first ([`SEAT_ORDER`]).
+                    // first ([`Game::order`]).
                     let people = game.people();
                     while game.free_seat().is_some() {
                         seat_bot(&mut commands, game, now, false);
@@ -2646,6 +2695,100 @@ mod tests {
         let zombie = game.seat(Entity::from_bits(99), person(99), true);
         assert_eq!(zombie, ARENA_SEATS);
         assert_eq!(game.zombie(zombie), Some(0));
+    }
+
+    #[test]
+    fn which_team_people_begin_on_is_thrown_for_each_game_and_an_island_is_still_its_team_s() {
+        // The order as it was is that of a game begun on the first team,
+        // and a game made is that until whoever opens it throws.
+        assert_eq!(seat_order(0, false), SEAT_ORDER);
+        assert_eq!(empty_room().order, SEAT_ORDER);
+        for first in 0..ARENA_TEAMS {
+            for flip in [false, true] {
+                let order = seat_order(first, flip);
+                let what = format!("begun on team {first}, {flip}: {order:?}");
+                // Every seat is taken once; each team's two seats are
+                // together, the lower first; and the team begun on is the
+                // one asked for, with the one across the map from it next
+                // and the two at its sides after, one way round or the
+                // other.
+                let mut sorted = order;
+                sorted.sort_unstable();
+                assert_eq!(sorted, [0, 1, 2, 3, 4, 5, 6, 7], "{what}");
+                for pair in order.chunks(2) {
+                    assert_eq!(arena_team(pair[0]), arena_team(pair[1]), "{what}");
+                    assert_eq!(pair[1], pair[0] + ARENA_TEAMS, "{what}");
+                }
+                assert_eq!(usize::from(arena_team(order[0])), first, "{what}");
+                assert_eq!(ARENA_ISLANDS[arena_island(order[0])], -ARENA_ISLANDS[arena_island(order[2])], "{what}");
+                assert_eq!(ARENA_ISLANDS[arena_island(order[4])], -ARENA_ISLANDS[arena_island(order[6])], "{what}");
+                assert_ne!(seat_order(first, !flip)[4], order[4], "{what}");
+                // A game seated by it: whoever comes is given its seats in
+                // that order, so the first two are a team, on that team's
+                // island and no other, and the next two are a team across
+                // the map; the computer takes every seat left, the lower
+                // of a team's two being a person's where there is one.
+                for people in 1..=ARENA_SEATS {
+                    let mut game = empty_room();
+                    game.order = order;
+                    // (Bodies numbered from 20: the one numbered 1 is the
+                    // one that stands for nobody, `Entity::PLACEHOLDER`,
+                    // which every empty seat has.)
+                    for n in 0..people {
+                        let seat = game.seat(Entity::from_bits(n as u64 + 20), person(n as u64 + 1), false);
+                        assert_eq!(seat, order[n], "{what}: the {n}th of {people} to come");
+                    }
+                    assert_eq!(usize::from(arena_team(game.seat_of(Entity::from_bits(20)).unwrap())), first, "{what}");
+                    if people >= 2 {
+                        let second = game.seat_of(Entity::from_bits(21)).unwrap();
+                        assert_eq!(usize::from(arena_team(second)), first, "{what}");
+                        assert_eq!(ARENA_ISLANDS[arena_island(second)], ARENA_ISLANDS[first], "{what}");
+                    }
+                    fill_with_bots(&mut game);
+                    assert_eq!((game.seats.len(), game.people(), game.free_seat()), (ARENA_SEATS, people, None), "{what}");
+                    assert!(game.vacant.iter().all(|vacant| !vacant), "{what}: a seat left empty with {people} people");
+                    assert_eq!(game.teams_in_play(), vec![0, 1, 2, 3], "{what}");
+                    for team in 0..ARENA_TEAMS {
+                        assert!(!game.bot[team] || game.bot[team + ARENA_TEAMS], "{what}: team {team} with {people} people");
+                    }
+                    let mut names: Vec<&str> = game.members.iter().map(|member| member.name.as_str()).collect();
+                    names.sort_unstable();
+                    names.dedup();
+                    assert_eq!(names.len(), ARENA_SEATS, "{what}: {names:?}");
+                }
+                // A group goes onto it two by two as onto any: two onto
+                // the team begun on, four onto it and the one across the
+                // map, and with a stranger there already, two onto the
+                // team across the map whole.
+                let mut room = empty_room();
+                room.order = order;
+                assert_eq!(room.seats_for(1), Some(vec![first]), "{what}");
+                assert_eq!(room.seats_for(2), Some(vec![first, first + ARENA_TEAMS]), "{what}");
+                assert_eq!(room.seats_for(4), Some(order[..4].to_vec()), "{what}");
+                assert_eq!(room.seats_for(3), Some(order[..3].to_vec()), "{what}");
+                room.seat(Entity::from_bits(20), person(1), false);
+                assert_eq!(room.seats_for(2), Some(order[2..4].to_vec()), "{what}");
+                assert_eq!(room.seats_for(3), Some(vec![order[2], order[3], order[1]]), "{what}");
+                // A seat left before the fight is the next to come's
+                // again, wherever in the order it was.
+                room.leave(first);
+                assert_eq!(room.free_seat(), Some(first), "{what}");
+            }
+        }
+        // Thrown, a game begins on any of the four about as often as on
+        // another, and on its side islands either way round: of 800
+        // thrown, each team has about 200 (and never as few as 120, which
+        // is one chance in many millions), and each way round about half.
+        let (mut firsts, mut flipped) = ([0usize; ARENA_TEAMS], 0usize);
+        for _ in 0..800 {
+            let order = thrown_order();
+            let first = usize::from(arena_team(order[0]));
+            firsts[first] += 1;
+            assert!(order == seat_order(first, false) || order == seat_order(first, true), "{order:?}");
+            flipped += usize::from(order == seat_order(first, true));
+        }
+        assert!(firsts.iter().all(|&count| (120..=280).contains(&count)), "{firsts:?}");
+        assert!((300..=500).contains(&flipped), "{flipped}");
     }
 
     #[test]

@@ -32,34 +32,38 @@
 //! every new text starts at the same line. Even the first message stays at
 //! the same area, and it goes up and fades as new messages come"): the
 //! first thing said is written there, and each line after it moves what
-//! was said before up one. **The last three things said are in sight, each
-//! fainter than the one under it** ([`strength`], the file's
-//! `colours.chat.strengths`): the newest whole, the one over it somewhat
-//! faded, the one over that very faded, and whatever was said before those
-//! not drawn. **Nothing goes with time**: the last thing said stays until
-//! something else is. For the hour before, a line faded as it aged and was
-//! gone twelve seconds on, which was my reading of "partway through
-//! fading" and not what was meant (Hajun: "i dont want timed fades for the
-//! chat messages. the last message sent should be visible always
-//! including the above one, but the above ones would just look faded a bit
-//! more compared to the last one. so maybe just 3 lines visible. with the
-//! top one looking sooo faded, and the second to top one looking somewhat
-//! faded, and the last one not faded at all").
+//! was said before up one. **Two lines and a half are in sight, and every
+//! one of them is whole** (since 2026-11-15; Hajun: "actually now i think
+//! about it i think no line should be transparent they should all be fully
+//! visible. just keep chat height to like 2.5 line or sth"): the newest,
+//! the one over it, and the lower half of the one over that, cut along the
+//! top of what is in sight, which says there is more above. **Nothing goes
+//! with time**: the last thing said stays until something else is.
 //!
-//! **It scrolls, and its fading scrolls with it** ([`fade`], [`drag_log`];
-//! Hajun, the same night: "also test if you can scroll up on the chat.
-//! when u scroll, the "fade" of the text should be "scroll" too i guess").
-//! A finger dragged on the lines, or the mouse's wheel over them, goes
-//! back through the last [`KEPT`], as while a line is typed; and how
-//! faint a line is goes by where it is in sight, not by how new it is:
-//! whatever is on the lowest line is whole, what is on the line over it
-//! somewhat faded, what is on the third very faded, and nothing is drawn
-//! over that, with every line growing and fading as it is drawn past. So
-//! the lines do take a press after all, once there are more of them than
-//! are in sight: with three or fewer there is nothing to scroll to, and a
-//! finger put down on them looks round. Left scrolled back, it goes to
-//! its newest line again [`RETURN_SECS`] after it was last touched (mine:
-//! or what is said next is said out of sight).
+//! That is the third way of it in a night. First a line faded as it aged
+//! and was gone twelve seconds on, my reading of "partway through fading"
+//! and not what was meant ("i dont want timed fades for the chat
+//! messages. the last message sent should be visible always"); then the
+//! three lines in sight were each fainter than the one under it, by where
+//! they stood, scrolling with them ("the top one looking sooo faded, and
+//! the second to top one looking somewhat faded, and the last one not
+//! faded at all"; "when u scroll, the "fade" of the text should be
+//! "scroll" too"). **That second way is still here, turned off**: how much
+//! of itself a line is drawn with by where it stands is the file's
+//! `colours.chat.strengths` ([`strength_at`], [`fade`]), every one of them
+//! 1 now, and other numbers there bring the fading back.
+//!
+//! **It scrolls with nothing typed** ([`drag_log`]; Hajun: "also test if
+//! you can scroll up on the chat", "u should be able to scroll the chat
+//! without needing to open the chatbox input box/keyboard"). A finger
+//! dragged on the lines, or the mouse's wheel over them, goes back through
+//! the last [`KEPT`], as while a line is typed. So the lines take a press,
+//! once there is more of them than is in sight: with two lines or one
+//! there is nothing to scroll to ("nvm about the being able to scroll even
+//! when there is 2 line of text that doesnt make sense"), and a finger put
+//! down on them looks round. Left scrolled back, it goes to its newest
+//! line again [`RETURN_SECS`] after it was last touched (mine: or what is
+//! said next is said out of sight).
 //!
 //! **Each line has a thin black stroke round its words** ([`STROKE`],
 //! `colours.chat.stroke`), which is all that sets them off from the world
@@ -69,9 +73,9 @@
 //! chatboxes"). Bevy 0.19 draws no stroke round words, so a line is
 //! written five times: four in the stroke's colour, a hair up and to the
 //! left, up and to the right, and so on, and its own over them
-//! ([`write`]). A line that is faded has a stroke that is more faded
-//! still: the four copies show through words that are see-through, and
-//! would make a faded line a dark one.
+//! ([`write`]). (A line that is faded, were the fading turned on again,
+//! has a stroke that is more faded still: the four copies show through
+//! words that are see-through, and would make a faded line a dark one.)
 //!
 //! **Saying something** ([`act`]): a press on the small keyboard over the
 //! speech bubble, bottom right (`hud::ChatButton`, in the town and in
@@ -103,9 +107,8 @@
 //! typed (`quick`).
 //!
 //! Where it is, how big and how many lines it keeps are here; its
-//! colours, how faint the older lines are, and its words are the file's
-//! (`colours.chat`, `words.chat`). It keeps clear of the camera's hole
-//! (`safe`).
+//! colours and its words are the file's (`colours.chat`, `words.chat`).
+//! It keeps clear of the camera's hole (`safe`).
 
 use std::collections::VecDeque;
 
@@ -126,15 +129,19 @@ use crate::{CloseUp, Player};
 /// Sizes, as shares of the short side of the screen. Where the chat begins
 /// down the screen in the town, well under your name and your balance,
 /// which end 20 shares down, and how wide it is; how tall the box of lines
-/// is there, four lines and the room round them (a line is 3 shares from
-/// the next, 1.2 times its words: whole lines, so that none is cut along
-/// the box's top), the gap under it, and how tall the box a line is typed
-/// into is:
-/// together they end 57 shares down, over the stick, whose disc reaches up
-/// to 58 when it is held from as high as it may be. The words in each, the
-/// room round them, and how round the corners are.
-const TOP: f32 = 35.5;
-const LOG_HEIGHT: f32 = 13.1;
+/// is, two lines and a half and the room round them (a line is 3 shares
+/// from the next, 1.2 times its words; since 2026-11-15, Hajun: "just keep
+/// chat height to like 2.5 line or sth": four whole lines in the town and
+/// three in a game until then, so that none was cut along the box's top,
+/// which the half line now is on purpose), the gap under it, and how tall
+/// the box a line is typed into is: together they end 57 shares down, over
+/// the stick, whose disc reaches up to 58 when it is held from as high as
+/// it may be. The words in each, the room round them, and how round the
+/// corners are. **The lowest line is where it was** in the town, 48.6
+/// shares down, the box being shorter from its top; in a game it is half
+/// a share lower than it was, 49.6 ([`ARENA_TOP`]).
+const TOP: f32 = 40.0;
+const LOG_HEIGHT: f32 = 8.6;
 /// How wide it is, in shares of the short side: 80 since the night of
 /// 2026-11-14 (Hajun: "the width of the chatbox region could be
 /// wider/longer so more text fits in each line"), where it was 50: about
@@ -152,14 +159,18 @@ const MOST_WIDE: f32 = 40.0;
 const STROKE: f32 = 0.09;
 /// Where the four copies are set: the four corners.
 const CORNERS: [Vec2; 4] = [Vec2::new(-1.0, -1.0), Vec2::new(1.0, -1.0), Vec2::new(-1.0, 1.0), Vec2::new(1.0, 1.0)];
-/// The same in a game of Bridge Wars, where what is top left, your name,
-/// your health and the four things you hold, ends 38 shares down (411 of
-/// 1,080 pixels, measured): the chat begins under those, and its box of
-/// lines is a line shorter, three in sight, so as to end over the stick all
-/// the same. Begun where the town's is, it lay over the last of the four
-/// counts.
-const ARENA_TOP: f32 = 39.0;
-const ARENA_LOG_HEIGHT: f32 = 10.1;
+/// Where it begins in a game of Bridge Wars, where what is top left, your
+/// name, your health and the four things you hold, ends 38 shares down
+/// (411 of 1,080 pixels, measured): under those, with three shares
+/// between the last of the four counts, the amethyst, and the box, and
+/// three and a half between it and the top of the half line (Hajun,
+/// 2026-11-15: "you could move the chatbox downward a bit to have a tiny
+/// slightly more gap between chatbox and the amethyst inventory number in
+/// the bridge wars minigame"; it was one share, and one and a half to the
+/// words, while the box began 39 down and was three lines tall). How much
+/// lower is mine, and it is as low as it goes: the box a line is typed
+/// into ends 57.6 down, and the stick's disc reaches up to 57.75.
+const ARENA_TOP: f32 = 41.0;
 const GAP: f32 = 0.6;
 const INPUT_HEIGHT: f32 = 7.4;
 const TEXT: f32 = 2.5;
@@ -285,16 +296,24 @@ fn strength(strengths: &[f32; 3], since: usize) -> f32 {
 /// How much of itself a line is drawn with whose foot is `up` lines over
 /// the foot of what is in sight, with nothing being typed: the file's
 /// three strengths on the lowest line, the one over it and the one over
-/// that, nothing over those, and between two lines so much of the one
-/// and so much of the other, in steps of [`STRENGTH_STEP`]; all of the
-/// lowest line's for a line scrolled past the foot. So the fading goes by
-/// where a line is in sight, and scrolls as the lines do.
+/// that, and between two lines so much of the one and so much of the
+/// other, in steps of [`STRENGTH_STEP`]; all of the lowest line's for a
+/// line scrolled past the foot. The third holds for a line more, which is
+/// further than anything is in sight (two lines and a half), and over
+/// that there is nothing: a line on its way out of sight is not seen to
+/// fade unless the file's numbers have it fade. So the fading, when there
+/// is any, goes by where a line is in sight, and scrolls as the lines do.
 fn strength_at(strengths: &[f32; 3], up: f32) -> f32 {
+    let on = |line: usize| match line {
+        line if line < strengths.len() => strength(strengths, line),
+        line if line == strengths.len() => strength(strengths, line - 1),
+        _ => 0.0,
+    };
     let share = if up <= 0.0 {
-        strength(strengths, 0)
+        on(0)
     } else {
         let line = up.floor();
-        let (under, over) = (strength(strengths, line as usize), strength(strengths, line as usize + 1));
+        let (under, over) = (on(line as usize), on(line as usize + 1));
         under + (over - under) * (up - line)
     };
     (share / STRENGTH_STEP).round() * STRENGTH_STEP
@@ -595,10 +614,10 @@ pub(crate) fn shown_on(here: Venue) -> bool {
 }
 
 /// Where the chat begins down the screen `here`, and how tall its box of
-/// lines is there, in shares of the short side: under what each place has
-/// top left, and over the stick in both.
+/// lines is, in shares of the short side: under what each place has top
+/// left, and over the stick in both.
 fn place(here: Venue) -> (f32, f32) {
-    if here == Venue::Arena { (ARENA_TOP, ARENA_LOG_HEIGHT) } else { (TOP, LOG_HEIGHT) }
+    (if here == Venue::Arena { ARENA_TOP } else { TOP }, LOG_HEIGHT)
 }
 
 /// Shows the chat in the town and in Bridge Wars, where each has room for
@@ -801,9 +820,11 @@ fn write(writings: &mut ChildSpawnerCommands, line: &Line, rim: Option<(Color, V
 }
 
 /// Keeps each line as much there as where it is in sight makes it
-/// ([`strength_at`]): whatever is on the lowest line whole, what is on
-/// the two over it fainter and fainter, and nothing over those; and all
-/// of them wholly while a line is typed. By where each was last laid out
+/// ([`strength_at`]), which is wholly, as the file's strengths are now,
+/// and with others whatever is on the lowest line as the first has it and
+/// what is over it as the next two do; nothing of a line well out of
+/// sight over those, which is not gone over for drawing; and all of them
+/// wholly while a line is typed. By where each was last laid out
 /// against the foot of the box, so that the fading scrolls as the lines
 /// do, and a line two lines tall pushes what is over it a line further
 /// up; a line not laid out yet, by how many have been said since
@@ -858,19 +879,21 @@ fn fade(
 /// only then. Let go of, the lines are back at the newest, however far
 /// back they were scrolled. With nothing typed, what is behind the lines
 /// is still there to be dragged on, with nothing of it to see, once there
-/// are more lines than are in sight; and lines left scrolled back go to
-/// the newest again [`RETURN_SECS`] after they were last scrolled.
+/// is more of them than is in sight, as they were last laid out; and
+/// lines left scrolled back go to the newest again [`RETURN_SECS`] after
+/// they were last scrolled.
+#[allow(clippy::type_complexity)]
 fn dress(
     time: Res<Time<Real>>,
     typing: Res<Typing>,
-    log: Res<Log>,
     mut backs: Query<(&mut Visibility, &mut BackgroundColor), (With<Backdrop>, Without<InputBox>)>,
     mut inputs: Query<&mut Visibility, (With<InputBox>, Without<Backdrop>)>,
-    mut boxes: Query<&mut ScrollPosition, With<LogBox>>,
+    mut boxes: Query<(&ComputedNode, &mut ScrollPosition), With<LogBox>>,
     mut was: Local<bool>,
 ) {
     let colours = ui().colours.chat;
-    let more_than_in_sight = log.lines.len() > colours.strengths.len();
+    // (Over by more than a pixel or two of rounding.)
+    let more_than_in_sight = boxes.iter().any(|(node, _)| node.content_size().y > node.size().y + 2.0);
     for (mut visibility, mut fill) in &mut backs {
         let shown = typing.on || more_than_in_sight;
         visibility.set_if_neq(if shown { Visibility::Inherited } else { Visibility::Hidden });
@@ -882,7 +905,7 @@ fn dress(
     let let_go = *was && !typing.on;
     let left_alone = !typing.on && time.elapsed_secs() - typing.scrolled_at > RETURN_SECS;
     if let_go || left_alone {
-        for mut scroll in &mut boxes {
+        for (_, mut scroll) in &mut boxes {
             if scroll.y != STUCK {
                 scroll.y = STUCK;
             }
@@ -1101,8 +1124,9 @@ fn say(
         if online.is() {
             asks.write(Ask::Chat(text));
         } else {
-            let mine = online.me().map_or(0, |me| me.id);
-            let colour = match fighting.seat.filter(|_| fighting.members.len() > 1 || mine != 0) {
+            // In a game, its waiting room too, in your team's colour, as
+            // your name is on its plate (`hud::colour_name`).
+            let colour = match fighting.seat {
                 Some(seat) => ui().colours.arena.team(arena_team(usize::from(seat))),
                 None => ui().colours.chat.name,
             };
@@ -1219,14 +1243,26 @@ mod tests {
     }
 
     #[test]
-    fn the_last_three_lines_show_each_older_one_fainter_and_no_clock_comes_into_it() {
-        // As the file has them: the newest whole, or as near it as makes
-        // no difference; the one before it fainter, and still there to be
-        // read; the one before that fainter again, and not gone; and
-        // nothing of any older ("the top one looking sooo faded, and the
-        // second to top one looking somewhat faded, and the last one not
-        // faded at all").
-        let strengths = ui().colours.chat.strengths;
+    fn no_line_in_sight_is_faded_and_the_fading_that_is_turned_off_goes_by_where_a_line_is() {
+        // As the file has them now, every line in sight is whole ("no
+        // line should be transparent they should all be fully visible"),
+        // wherever in sight it is, the half line at the top among them,
+        // and for half a line past the top of what is in sight, two lines
+        // and a half up; a line further out of sight than that is going,
+        // where nobody sees it go, and a line and a half out is not drawn.
+        let file = ui().colours.chat.strengths;
+        assert_eq!(file, [1.0, 1.0, 1.0]);
+        let in_sight = (LOG_HEIGHT - PAD) / (TEXT * 1.2);
+        for tenth in -10..=30 {
+            assert_eq!(strength_at(&file, tenth as f32 / 10.0), 1.0, "{tenth} tenths of a line up");
+        }
+        assert!(in_sight + 0.45 < 3.0, "{in_sight} lines in sight");
+        assert_eq!(strength_at(&file, 4.0), 0.0, "out of sight, and not drawn");
+        // The fading that is still here, with the numbers it had for an
+        // evening: the newest whole, the one before it fainter and still
+        // there to be read, the one before that fainter again, and
+        // nothing of any older.
+        let strengths = [1.0, 0.55, 0.25];
         let shares: Vec<f32> = (0..5).map(|since| strength(&strengths, since)).collect();
         assert!(shares[0] >= 0.95, "{shares:?}");
         assert!(shares[1] < shares[0] - 0.2 && shares[1] >= 0.4, "{shares:?}");
@@ -1253,20 +1289,22 @@ mod tests {
         // Scrolled, the fading goes by where a line is in sight: on the
         // lowest line, the one over it and the one over that it is what
         // it is by its place among them; half way from one line to the
-        // next, half way from the one strength to the other; over the
-        // third line, going; and over the fourth, gone. Never the fainter
-        // for being lower.
-        for line in 0..5 {
+        // next, half way from the one strength to the other; the third
+        // line's strength for a line more, which is past what is in
+        // sight; and over that, going, and gone. Never the fainter for
+        // being lower.
+        for line in 0..3 {
             assert!((strength_at(&strengths, line as f32) - strength(&strengths, line)).abs() <= STRENGTH_STEP * 0.5 + 1e-6, "on line {line}");
         }
         assert_eq!(strength_at(&strengths, -0.7), strength_at(&strengths, 0.0), "scrolled past the foot");
         let between = strength_at(&strengths, 0.5);
         assert!((between - (shares[0] + shares[1]) * 0.5).abs() <= STRENGTH_STEP, "{between}");
-        let going = strength_at(&strengths, 2.5);
+        assert!((strength_at(&strengths, 2.5) - shares[2]).abs() <= STRENGTH_STEP && (strength_at(&strengths, 3.0) - shares[2]).abs() <= STRENGTH_STEP);
+        let going = strength_at(&strengths, 3.5);
         assert!(going > 0.0 && going < shares[2], "{going}");
-        assert_eq!((strength_at(&strengths, 3.0), strength_at(&strengths, 7.3)), (0.0, 0.0));
+        assert_eq!((strength_at(&strengths, 4.0), strength_at(&strengths, 7.3)), (0.0, 0.0));
         let mut last = 1.0;
-        for tenth in 0..40 {
+        for tenth in 0..50 {
             let share = strength_at(&strengths, tenth as f32 / 10.0);
             assert!(share <= last + 1e-6, "{tenth} tenths of a line up: {share} after {last}");
             last = share;
@@ -1332,13 +1370,17 @@ mod tests {
             assert!(top > top_left_ends + 0.5, "{here:?}: {top}");
             let ends = top + height + GAP + INPUT_HEIGHT;
             assert!(ends < stick_top, "{here:?}: {ends} against {stick_top}");
-            // Not too tall, and its words small beside the buttons': three
-            // lines in sight at the least, and five at the most; and whole
-            // lines, none cut along the top of the box.
+            // Two lines and a half in sight: two whole, and the half of
+            // a third cut along the top, which says there is more.
             let lines = (height - PAD) / (TEXT * 1.2);
-            assert!((2.95..=5.05).contains(&lines), "{here:?}: {lines} lines");
-            assert!((lines - lines.round()).abs() < 0.02, "{here:?}: {lines} lines");
+            assert!((lines - 2.5).abs() < 0.02, "{here:?}: {lines} lines");
         }
+        // The lowest line is where it was while the box was taller in
+        // the town, 48.6 shares down; in a game it is half a share lower
+        // than it was, 49.6, and the box three shares under the last of
+        // the four counts top left, where it was one.
+        assert!((place(Venue::Town).0 + LOG_HEIGHT - 48.6).abs() < 1e-4 && (place(Venue::Arena).0 + LOG_HEIGHT - 49.6).abs() < 1e-4);
+        assert!(place(Venue::Arena).0 - 38.1 > 2.8);
         // The chat is in the town and in Bridge Wars, and nowhere else.
         assert!(shown_on(Venue::Town) && shown_on(Venue::Arena));
         assert!(!shown_on(Venue::Home) && !shown_on(Venue::Lobby) && !shown_on(Venue::Plot(3)));

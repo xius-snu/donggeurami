@@ -78,6 +78,11 @@
 //! `bullet_speed` level the way the car faces, and gone once
 //! `bullet_range` from where it was fired; the four in the file with the
 //! rest. A bullet hits nothing, and nothing of it goes over the network.
+//! **Turned off since 2026-11-15** ([`GUN`]): the gift went from the town's
+//! buttons the night before (`hud::GIFT`), which left the gun G on desktop
+//! and nothing on a phone, and Hajun, told so: "ye u can remove the car's
+//! gun feature". All of it is still here, its numbers in the file and its
+//! tests too, and that one word puts it back.
 
 use std::f32::consts::TAU;
 
@@ -347,15 +352,25 @@ impl Gun {
     }
 }
 
+/// Whether the car has its gun ([`shoot`], [`fly`]). Not since 2026-11-15
+/// (Hajun: "ye u can remove the car's gun feature"): neither the gift
+/// button, were it put back (`hud::GIFT`), nor G fires anything, and
+/// nothing of it runs. The gun, its bullets, their numbers in
+/// `assets/ui.ron` and their tests are all still here: this one word puts
+/// it back.
+const GUN: bool = false;
+
 pub(crate) fn plugin(app: &mut App) {
     app.init_resource::<Driving>()
         .init_resource::<Gun>()
         .add_message::<CarPressed>()
         .add_systems(Startup, spawn_my_car)
-        .add_systems(Update, (toggle.before(crate::read_player_input), retune))
+        .add_systems(Update, (toggle.before(crate::read_player_input), retune));
+    if GUN {
         // The gun fires from where the car has been put this frame, and
         // its bullets fly on from there.
-        .add_systems(Update, (shoot.after(place), fly.after(shoot)));
+        app.add_systems(Update, (shoot.after(place), fly.after(shoot)));
+    }
 }
 
 /// Fires the gun while the gift button, or G, is held in the car
