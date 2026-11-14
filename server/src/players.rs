@@ -851,6 +851,21 @@ mod tests {
     }
 
     #[test]
+    fn every_name_a_player_is_given_is_a_name() {
+        // With any number after it: nothing the word filter takes for a
+        // swear word, which a name may not have in it (`profile::name`).
+        for name in NAMES {
+            for number in [100, 482, 999] {
+                let given = format!("{name} {number}");
+                assert_eq!(profile::name(&given).as_deref(), Some(given.as_str()));
+            }
+        }
+        assert!(profile::name(&new_name()).is_some());
+        // And a name that has one is not taken from a device.
+        assert_eq!(profile::name("asshole"), None);
+    }
+
+    #[test]
     fn a_jump_is_a_rise_a_body_can_make_and_a_flight_is_not() {
         let mut pace = Pace::new(0.0);
         // Up 1.64 m over the 0.39 s a jump takes to its top.

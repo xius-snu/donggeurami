@@ -515,6 +515,9 @@ fn renaming(commands: &mut Commands, name: &str) {
         .with_children(|panel| {
             panel.spawn(hud::words(words.edit_name.as_str(), TITLE, colours.gold));
             panel.spawn(signup::name_box(name, NAME_FIELD));
+            // "Pick another name.", while the one typed has a swear word
+            // in it; nothing otherwise, and as tall either way.
+            panel.spawn(signup::name_notice("", BODY, colours.text_soft));
             panel.spawn(builder::choices()).with_children(|choices| {
                 choices.spawn(button(&words.cancel, Choice::CancelRename, quiet(), BUTTON_WIDTH));
                 choices.spawn((

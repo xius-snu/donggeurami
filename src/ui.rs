@@ -1262,6 +1262,7 @@ pub(crate) struct SignupWords {
     pub not_available: String,
     pub choose_name: String,
     pub name_hint: String,
+    pub name_refused: String,
     pub save: String,
     pub choose_character: String,
     pub change_later: String,

@@ -599,13 +599,15 @@ legal advice.
 - **Typed names.** The usual Rust filter, rustrict, has no Hangul at all.
   Korean lists exist (korcen; LDNOOBW's `ko`). Allow only Hangul syllables,
   ASCII letters and digits, which shuts out ㅅㅂ-style jamo. (Typed names
-  came on 2026-10-31 and Korean ones on 2026-11-14, with no filter yet,
-  and with the letters alone allowed, in names as in chat: still to do
-  before a release.)
+  came on 2026-10-31 and Korean ones on 2026-11-14, with the letters
+  alone allowed, in names as in chat, and that evening a basic filter of
+  our own: a name with a common swear word in it is refused. A fuller
+  list is still to do before a release.)
 - **Chat.** Apple's messaging questions, and report and block on every
-  message. (The chat came on 2026-11-14, at Hajun's asking, with none of
-  these, as the friends' messages of 2026-11-13 have none: still to do
-  before a release. `CLAUDE.md`, "The chat".)
+  message. (The chat came on 2026-11-14, at Hajun's asking, with a basic
+  filter for swear words by that evening and neither report nor block, as
+  the friends' messages of 2026-11-13: still to do before a release.
+  `CLAUDE.md`, "The chat".)
 - **Kakao, Naver or Google login.** Sign in with Apple, or an equivalent,
   as well.
 - **Real money.** In-app purchase, published odds for anything random, and

@@ -293,7 +293,10 @@ pub fn ai_names(boy: bool) -> &'static [&'static str] {
 /// ([`masked`], since 2026-11-14; Hajun: "add basic word filter for common
 /// swear words so they turn to ****** of that word's length"): a line of
 /// chat and a message to a friend, as both sides clean them, so that the
-/// server does it to whatever it is sent. Not names.
+/// server does it to whatever it is sent. **And a name with one in it is no
+/// name** ([`swears`], `profile::name`; Hajun, later that evening: "yes add
+/// the username filter too"): stars would be no name to go by, so it is
+/// refused, and another has to be picked.
 pub mod text {
     use unicode_normalization::UnicodeNormalization;
 
@@ -479,16 +482,42 @@ pub mod text {
                         }
                     }
                 }
+            } else if swear_word(run) {
+                hide[at..end].fill(true);
             } else {
-                let word: String = run.iter().flat_map(|c| c.to_lowercase()).collect();
-                let squeezed = squeezed(&word);
-                if WORDS.contains(&word.as_str()) || STEMS.iter().any(|stem| squeezed.contains(stem)) {
-                    hide[at..end].fill(true);
+                // Words run together with a capital to begin each, as a
+                // name often is ("BigDick"): each by itself.
+                let mut from = 0;
+                for to in 1..=run.len() {
+                    let ends = to == run.len() || (run[to - 1].is_lowercase() && run[to].is_uppercase());
+                    if ends {
+                        if swear_word(&run[from..to]) {
+                            hide[at + from..at + to].fill(true);
+                        }
+                        from = to;
+                    }
                 }
             }
             at = end;
         }
         chars.iter().zip(hide).map(|(c, hide)| if hide { '*' } else { *c }).collect()
+    }
+
+    /// Whether `word`, a run of letters that are not Hangul, is a swear
+    /// word: one of [`WORDS`], whatever its capitals, or with one of
+    /// [`STEMS`] in it once its doubled letters are taken out.
+    fn swear_word(word: &[char]) -> bool {
+        let word: String = word.iter().flat_map(|c| c.to_lowercase()).collect();
+        WORDS.contains(&word.as_str()) || {
+            let squeezed = squeezed(&word);
+            STEMS.iter().any(|stem| squeezed.contains(stem))
+        }
+    }
+
+    /// Whether `text` has a common swear word in it, which [`masked`]
+    /// would star out.
+    pub fn swears(text: &str) -> bool {
+        masked(text) != text
     }
 }
 
@@ -504,10 +533,20 @@ pub mod profile {
 
     /// `text` as a name, if it is one: [`SHORTEST`] to [`LONGEST`] wide
     /// once it is cleaned ([`text::clean`]: its letters put together, what
-    /// the game does not write left out, the spaces round it trimmed).
+    /// the game does not write left out, the spaces round it trimmed), and
+    /// with no common swear word in it ([`text::swears`], since
+    /// 2026-11-14). The server goes by this too, and takes no other.
     pub fn name(text: &str) -> Option<String> {
         let name = text::clean(text);
-        (SHORTEST..=LONGEST).contains(&text::length(&name)).then_some(name)
+        ((SHORTEST..=LONGEST).contains(&text::length(&name)) && !text::swears(&name)).then_some(name)
+    }
+
+    /// Whether `text` would be a name but for a swear word in it: what
+    /// whoever typed it is told, to pick another, where anything else that
+    /// is no name is only too short or too long.
+    pub fn rude(text: &str) -> bool {
+        let name = text::clean(text);
+        (SHORTEST..=LONGEST).contains(&text::length(&name)) && text::swears(&name)
     }
 
     /// Whether `c` may be in a name: what the game writes ([`text`]).
@@ -3501,12 +3540,45 @@ mod tests {
             assert_eq!(masked(said).chars().count(), said.chars().count());
             assert_eq!(masked(&masked(said)), masked(said));
         }
+        // Words run together with a capital to each, as names are: each
+        // by itself, and the rest left.
+        assert_eq!(masked("BigDick and fuckYou"), "Big**** and *******");
+        assert_eq!(masked("fUcK"), "****");
+        assert_eq!(masked("McDonald DeAndre iPhone"), "McDonald DeAndre iPhone");
         // What is said and what is written to a friend are masked, by
-        // whoever cleans them; a name is not.
+        // whoever cleans them.
         assert_eq!(chat::line("  fuck this  ").as_deref(), Some("**** this"));
         assert_eq!(social::message("씨발 뭐야").as_deref(), Some("** 뭐야"));
-        assert_eq!(profile::name("Dickens").as_deref(), Some("Dickens"));
-        assert_eq!(profile::name("asshole").as_deref(), Some("asshole"), "names are not filtered");
+        assert!(text::swears("oh shit") && !text::swears("oh ship") && !text::swears(""));
+    }
+
+    #[test]
+    fn a_name_with_a_swear_word_in_it_is_no_name_and_is_said_to_be_rude() {
+        // Refused, in any of the three languages, however it is dressed
+        // up with capitals, digits and signs round it.
+        for rude in ["asshole", "xXfuckXx", "BigDick", "Shit Head", "bitch_99", "씨발놈", "개새끼", "ㅅㅂ", "Địt mẹ", "fuuuck"] {
+            assert_eq!(profile::name(rude), None, "{rude}");
+            assert!(profile::rude(rude), "{rude}");
+        }
+        // Names that only have such letters in them are names.
+        for fine in [
+            "Dickens", "Hancock", "Cassidy", "Bassist", "Scunthorpe", "Mochi 482", "Hajun", "하준", "민", "동그라미<3",
+            "다시발견", "Nguyễn Văn Hải", "iLikeQuynhAnh", "hihihohohaha", "xd", "Glass Bass1", "Peacock",
+        ] {
+            assert_eq!(profile::name(fine).as_deref(), Some(fine), "{fine}");
+            assert!(!profile::rude(fine), "{fine}");
+        }
+        // What is no name for its length is not rude, only no name: there
+        // is nothing to pick another of.
+        assert!(!profile::rude("a") && !profile::rude("") && !profile::rude("a name far too long to be one"));
+        assert!(!profile::rude("fuck this is far too long to be a name"));
+        // Nobody the computer plays is called anything rude.
+        for name in BOY_NAMES.iter().chain(GIRL_NAMES.iter()) {
+            assert!(!text::swears(name), "{name}");
+        }
+        // A name with its tag is found by its tag only if it is a name.
+        assert_eq!(social::split_handle("Dickens#1234"), Some(("Dickens", 1234)));
+        assert_eq!(social::split_handle("asshole#1234"), None);
     }
 
     #[test]

@@ -313,7 +313,13 @@ alone; the server is `cargo build -p roundtown_server`. Never `--workspace`,
 which would build the game with the server's half of replicon in it.
 
 Android needs the `release-android` profile, a manual strip step, and Gradle
-(`versionCode` in `mobile/android/app/build.gradle` is the build number: 29
+(`versionCode` in `mobile/android/app/build.gradle` is the build number: 30
+an hour after 29, swear words starred out of the chat and of messages, and
+a name with one in it refused ("The chat"; protocol 16 still, the server
+deployed for the one at 09:52 UTC and for the other at 10:15, the binaries
+before kept on the VM as `roundtown-server.prev-2026-11-14c` and `d`;
+built and not installed, APK 29 kept beside it as
+`donggeurami_town-release.prev-2026-11-14d.apk`); 29
 on the evening of 2026-11-14, the chat, Korean and Vietnamese in it and in
 names and messages, the Leap Potion and the builder's upgrade, a drink that
 shows, a wider bridge, the Bridge Builder seen by everyone, and the stick's
@@ -561,7 +567,12 @@ instead of yellow for the buttons"; dark blue, blue and gold until then).
   is a name, and "동그라미타운주민" as long a one as fits. What may be
   written, and how a letter typed in pieces is put together, is under "The
   font is Inter", below; the page says "2-16 characters, or 8 in Korean"
-  (`words.signup.name_hint`, my wording). It need not be unique: since 2026-11-13 every account has a
+  (`words.signup.name_hint`, my wording). **A name with a common swear
+  word in it is no name** (since later that evening; "The chat", below):
+  Save stays grey, and the hint's line reads "Pick another name." in the
+  colour of a warning for as long as it is in the box, here and under the
+  box of the settings' Edit name (`signup::NameNotice`,
+  `words.signup.name_refused`). It need not be unique: since 2026-11-13 every account has a
   tag after its name, `#1000` to `#9999`, and no two have both the same
   ("Friends, groups and messages", below). Typing: on desktop the keys and Enter;
   on a phone the soft keyboard, asked for by the window's `ime_enabled`,
@@ -4678,15 +4689,39 @@ day's work ("Games").
   passes on (deployed at 09:52 UTC, protocol 16 still, so APK 29, built
   before it, is filtered online; the binary before kept on the VM as
   `roundtown-server.prev-2026-11-14c`). English words whole (a stem inside
-  a word, drawn-out letters squeezed; "class" and "cockpit" left alone),
-  Korean where it stands in a run of Hangul with its shortened letters,
-  Vietnamese words as spelt with their marks. Basic: nothing spelt with
-  digits or signs, and **not names**. The lists are mine (`STEMS`,
-  `WORDS`, `HANGUL` in `shared/src/lib.rs`). Unit-tested only; no line was
-  said through the VM.
+  a word, drawn-out letters squeezed; "class" and "cockpit" left alone;
+  words run together with a capital to each, "BigDick", each by itself),
+  Korean where it stands in a run of Hangul with its shortened letters
+  ("다시발견" let be), Vietnamese words as spelt with their marks (without
+  them most are everyday words: "cac ban" is "các bạn"). Basic: nothing
+  spelt with digits or signs, or with spaces between its letters, and
+  whoever means to get a word past it will. The lists are mine (`STEMS`,
+  `WORDS`, `HANGUL`, `HANGUL_FINE` in `shared/src/lib.rs`): 보지, 자지,
+  새끼 and 미친 alone are not in them, nor "cc", "cl" and "dm", being
+  everyday words. Checked against a server on this PC with two copies, the
+  lines said to it raw, as an app from before the filter says them: both
+  were told "what the **** is this ********", "아 ** 진짜 **" and "***
+  mẹ, ngu **", and "class pass cockpit, 다시발견, các bạn" as it was. No
+  line has been said through the VM.
+- **A name with one of them in it is refused** (`text::swears`,
+  `profile::name`, `profile::rude`; an hour later, Hajun: "yes add the
+  username filter too"): stars would be no name to go by, so it is no
+  name, on both sides. The server takes none from a device (deployed at
+  10:15 UTC, protocol 16 still; the binary before kept as
+  `roundtown-server.prev-2026-11-14d`), so an app from before, which would
+  send one, keeps the name it had online. In the app (APK 30) Save stays
+  grey and the box's line says "Pick another name." ("The first time, you
+  sign up"). **A name kept on a device from before, with one in it, is no
+  longer a name there**: the sign-up's pages come up at the next launch
+  with it in the box, to be changed (`Profile::set`); none of the server's
+  three accounts has one. What the server makes up for a new account, and
+  what the computer's players are called, pass (tests keep it so). Seen in
+  the desktop build, scripted: "BigDick" and "씨발놈" refused on the name
+  page, Enter doing nothing, "Dickens" taken; "shithead" refused in Edit
+  name and "Hajun2" not, the dialog as tall either way. Not on a phone.
 - **It is the first thing anyone writes that strangers read**, and has no
-  block and no report (and until that evening no filter for words), as
-  the friends' messages have none: whoever is in your channel of the town, or your game, reads it.
+  block and no report (and until that evening no filter for words, which
+  is a basic one), as the friends' messages have none: whoever is in your channel of the town, or your game, reads it.
   Hajun asked for it as it is; the plan (`MULTIPLAYER.md`, "Only once it
   is added") has those down as what a release to the shops wants, Apple's
   asking them of anything users write to each other. The game is not

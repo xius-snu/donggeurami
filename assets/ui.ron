@@ -384,6 +384,9 @@
             not_available: "Log in is not available yet",
             choose_name: "Choose Username",
             name_hint: "Shown to other players. 2-16 characters, or 8 in Korean.",
+            // In the hint's place, and in the settings' Edit name, while
+            // the name typed has a swear word in it and cannot be saved.
+            name_refused: "Pick another name.",
             save: "Save",
             choose_character: "Choose Character",
             change_later: "You may change this later.",

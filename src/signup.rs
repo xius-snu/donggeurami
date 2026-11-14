@@ -495,6 +495,7 @@ pub(crate) fn plugin(app: &mut App) {
                 redraw,
                 act,
                 show_name,
+                show_name_notice,
                 light_save,
                 light_cards,
                 turn_cards,
@@ -720,11 +721,67 @@ fn name_page(commands: &mut Commands, name: &str) {
             // One line (Hajun, 2026-11-01; three lines of explanation until
             // then), so not held to the box's width. A hyphen, not an en
             // dash, which the built-in font has no glyph for.
-            column.spawn(builder::label(words.name_hint.as_str(), SMALL, colours.text_soft));
+            // In its place, while the name typed has a swear word in it,
+            // that another is to be picked ([`NameNotice`]).
+            column.spawn(name_notice(&words.name_hint, SMALL, colours.text_soft));
             column.spawn(name_box(name, FIELD_WIDTH));
             column.spawn((Save, button(&words.save, Action::SaveName)));
         });
     });
+}
+
+/// A line by a box a name is typed into that says so when the name typed
+/// cannot be had (since 2026-11-14; Hajun: "yes add the username filter
+/// too"): a name with a common swear word in it is no name
+/// (`roundtown_net::profile::name`), and Save going grey for it, as for a
+/// name too short, would not say why. While what is in the box would be a
+/// name but for that (`profile::rude`), the line reads "Pick another
+/// name." (`words.signup.name_refused`) in the colour of a warning;
+/// otherwise the words it has of its own, `fine`, in `ink`: the name
+/// page's hint, and nothing in the settings' Edit name.
+#[derive(Component)]
+pub(crate) struct NameNotice {
+    fine: String,
+    ink: Color,
+}
+
+/// A [`NameNotice`], in words `size` big, reading `fine` in `ink` while
+/// there is nothing to say: a line tall even with no words, so that
+/// nothing moves as it speaks.
+pub(crate) fn name_notice(fine: &str, size: f32, ink: Color) -> impl Bundle {
+    (
+        NameNotice {
+            fine: fine.to_string(),
+            ink,
+        },
+        builder::label(fine.to_string(), size, ink),
+        Node {
+            min_height: Val::VMin(size * 1.2),
+            ..default()
+        },
+    )
+}
+
+/// Has every [`NameNotice`] say that another name is to be picked while
+/// the one in the box is refused, and its own words otherwise. Written only
+/// as it changes.
+fn show_name_notice(name_box: Res<NameBox>, mut notices: Query<(&NameNotice, &mut Text, &mut TextColor)>) {
+    if notices.is_empty() {
+        return;
+    }
+    let file = ui();
+    let refused = name_box.up && profile::rude(&name_box.shown());
+    for (notice, mut text, mut colour) in &mut notices {
+        let (words, ink) = if refused {
+            (file.words.signup.name_refused.as_str(), file.colours.warn)
+        } else {
+            (notice.fine.as_str(), notice.ink)
+        };
+        if text.0 != words {
+            text.0 = words.to_string();
+        }
+        colour.set_if_neq(TextColor(ink));
+    }
 }
 
 /// The box a name is typed into, `width` wide, with `name` in it to go on
@@ -1575,6 +1632,16 @@ mod tests {
         let mut short = NameBox::default();
         short.typed('a');
         assert_eq!(short.name(), None, "one letter is not a name");
+        // A name with a swear word in it is typed as any is, and is no
+        // name: Save stays grey, and it is said to be rude, which a name
+        // too short is not.
+        let mut rude = NameBox::default();
+        rude.open("");
+        for c in "BigDick".chars() {
+            rude.typed(c);
+        }
+        assert_eq!((rude.text(), rude.name()), ("BigDick", None));
+        assert!(profile::rude(&rude.shown()) && !profile::rude("a") && !profile::rude("Dickens"));
         // Korean: one syllable is a name, and eight are as many as fit.
         let mut korean = NameBox::default();
         korean.open("");
@@ -1639,7 +1706,10 @@ mod tests {
         assert!(!profile.set());
         profile.look = "girl".into();
         assert!(profile.set());
-        // Only as it would be kept: trimmed, and a look there is.
+        // Only as it would be kept: trimmed, and a look there is. A name
+        // from before swear words were refused, with one in it, is not
+        // set, and the pages ask for another.
+        assert!(!Profile { name: "asshole".into(), look: "girl".into() }.set());
         assert!(!Profile { name: " Hajun".into(), look: "girl".into() }.set());
         assert!(!Profile { name: "Hajun".into(), look: "blue".into() }.set());
         // Any colour of either side is a look.
