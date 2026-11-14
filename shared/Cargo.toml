@@ -15,6 +15,9 @@ bevy = { version = "0.19.1", default-features = false, features = ["std", "bevy_
 bevy_replicon = { version = "=0.44.3", default-features = false }
 bytes = "1"
 serde = { version = "1.0", features = ["derive"] }
+# Puts a letter typed in pieces together (`text::clean`): a Vietnamese vowel
+# and its tone mark, the parts of a Hangul syllable.
+unicode-normalization = "0.1"
 
 [dev-dependencies]
 postcard = { version = "1", features = ["alloc"] }

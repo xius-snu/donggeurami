@@ -35,6 +35,7 @@
 mod accounts;
 mod arena;
 mod builder;
+mod chat;
 mod clock;
 mod login;
 mod players;
@@ -154,6 +155,7 @@ fn main() {
     players::plugin(&mut app);
     builder::plugin(&mut app);
     arena::plugin(&mut app);
+    chat::plugin(&mut app);
     clock::plugin(&mut app);
     stats::plugin(&mut app);
     app.add_systems(Startup, listen);

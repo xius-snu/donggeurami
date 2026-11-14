@@ -115,6 +115,27 @@ public class MainActivity extends GameActivity {
     }
 
     /**
+     * The soft keyboard's own Enter: its action key ("Done", a tick, an
+     * arrow), which is no key press and types no letter. The keyboard asks
+     * for what the box is for, {@code GameActivity} hands that here, and
+     * the game is told ({@code signup::ime_action}), so that Enter looks
+     * for the name typed, or sends the line, as on a desktop's keyboard. A
+     * keyboard that is plugged in sends its Enter the same way. Nothing
+     * that goes wrong here may stop the game.
+     */
+    private static native void imeAction(int action);
+
+    @Override
+    public void onEditorAction(int action) {
+        try {
+            imeAction(action);
+        } catch (Throwable ignored) {
+            // Enter does nothing, as it did before.
+        }
+        super.onEditorAction(action);
+    }
+
+    /**
      * What the game wants copied to the clipboard: your name and tag, from
      * the friends' panel ({@code friends::copy}). The game cannot reach the
      * phone's clipboard itself, so it keeps what is to be copied until this

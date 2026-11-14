@@ -550,7 +550,11 @@ fn hear(
             | Ask::Arena
             | Ask::HitAnchor { .. }
             | Ask::Rung { .. }
-            | Ask::Buy(_) | Ask::Use(_) | Ask::Social(_) => {}
+            | Ask::Buy(_)
+            | Ask::Use(_)
+            | Ask::Social(_)
+            | Ask::Chat(_)
+            | Ask::Builder { .. } => {}
         }
     }
 }

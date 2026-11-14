@@ -628,8 +628,9 @@ fn act(
                 friends.found = None;
             }
             Tap::Search => {
-                let sought = name_box.text().trim().to_string();
-                if sought.chars().count() >= profile::SHORTEST {
+                // As the server looks for it: cleaned as a name is.
+                let sought = roundtown_net::social::sought(&name_box.shown());
+                if roundtown_net::text::length(&sought) >= profile::SHORTEST {
                     ask(Act::Find(sought));
                 }
             }
@@ -659,7 +660,7 @@ fn act(
                 name_box.open_for("", MESSAGE_LONGEST);
             }
             Tap::Send => {
-                if let (Some(Over::Write(to)), Some(text)) = (panel.over, message(name_box.text())) {
+                if let (Some(Over::Write(to)), Some(text)) = (panel.over, message(&name_box.shown())) {
                     ask(Act::Write { to, text });
                     name_box.close();
                     panel.over = None;
@@ -828,7 +829,7 @@ fn show_tag(friends: Res<Friends>, mut plate: ResMut<hud::YourTag>) {
 /// it away at the first letter: what is typed changes without the panel
 /// being drawn again.
 fn show_hint(name_box: Res<NameBox>, mut hints: Query<&mut Visibility, With<Hint>>) {
-    let shown = if name_box.text().is_empty() { Visibility::Inherited } else { Visibility::Hidden };
+    let shown = if name_box.is_empty() { Visibility::Inherited } else { Visibility::Hidden };
     for mut visibility in &mut hints {
         visibility.set_if_neq(shown);
     }

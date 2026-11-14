@@ -405,6 +405,12 @@ struct GunButton;
 #[derive(Component)]
 pub(crate) struct BridgeButton;
 
+/// The speech bubble over the town's jump button, which takes up the
+/// chat's box to type a line into (`chat`, since 2026-11-14; it did
+/// nothing until then).
+#[derive(Component)]
+pub(crate) struct ChatButton;
+
 /// The buttons held down just now, each by the pointer holding it, a finger
 /// or the mouse. A press on a button is picking's, which says when it goes
 /// down but not, once the finger has slid off the button, when it comes up:
@@ -992,6 +998,11 @@ fn show_resources(
 /// and a drag for what is aimed.
 fn utility_slot(slot: usize, place: Node) -> impl Bundle {
     let colours = ui().colours;
+    // The time over the second button stands a quarter of the button to
+    // the right of its middle: straight over it, it ran into the count in
+    // the corner of the button up and to its left, a "1" and "43s" read as
+    // "143s". No other button has one there.
+    let lean = if slot == 0 { UTILITY_TIMER_LEAN } else { 0.0 };
     (
         UtilitySlot(slot),
         Visibility::Hidden,
@@ -1033,8 +1044,8 @@ fn utility_slot(slot: usize, place: Node) -> impl Bundle {
             (
                 Node {
                     position_type: PositionType::Absolute,
-                    left: Val::Percent(-50.0),
-                    right: Val::Percent(-50.0),
+                    left: Val::Percent(-50.0 + lean),
+                    right: Val::Percent(-50.0 - lean),
                     bottom: Val::Percent(104.0),
                     justify_content: JustifyContent::Center,
                     ..default()
@@ -1068,6 +1079,9 @@ pub(crate) struct MoreButton;
 /// are, in shares of the short side.
 const UTILITY_COUNT_TEXT: f32 = 3.4;
 const UTILITY_TIMER_TEXT: f32 = 3.0;
+/// How far to the right of its button's middle the time over the second
+/// button stands, as a share of the button ([`utility_slot`]).
+const UTILITY_TIMER_LEAN: f32 = 25.0;
 
 /// The town's buttons, as Hajun sketched them (`assets/UIbuttonlayout.jpg`,
 /// 2026-10-31): the bar across the top, and the box round the jump button.
@@ -1174,7 +1188,10 @@ fn spawn_town_bar(commands: &mut Commands, assets: &AssetServer, images: &mut As
                 "mood" => {
                     button.insert(CarButton);
                 }
-                _ => {}
+                // The chat: a line to say (`chat`).
+                _ => {
+                    button.insert(ChatButton);
+                }
             }
         }
     });
@@ -1854,11 +1871,16 @@ pub(crate) enum Picture {
     Eye,
     Compass,
     Dynamite,
+    /// The builder on its plank with a plus beside it: the team's
+    /// building quickened (since 2026-11-14).
+    BuilderPlus,
+    /// A dart pointing to the right: what sends a line of chat (`chat`).
+    Send,
 }
 
 impl Picture {
     #[cfg_attr(not(test), allow(dead_code))]
-    pub(crate) const ALL: [Picture; 13] = [
+    pub(crate) const ALL: [Picture; 15] = [
         Picture::Plank,
         Picture::Sword,
         Picture::Shield,
@@ -1872,6 +1894,8 @@ impl Picture {
         Picture::Eye,
         Picture::Compass,
         Picture::Dynamite,
+        Picture::BuilderPlus,
+        Picture::Send,
     ];
 
     /// Whether it is drawn in colours of its own out of the file
@@ -1892,11 +1916,20 @@ impl Picture {
                 let tail = polygon_distance(at, &[Vec2::new(-0.9, 0.9), Vec2::new(0.16, 0.24), Vec2::new(-0.24, -0.16)]);
                 ball.min(tail) - 0.03
             }),
-            Picture::Builder => drawn(|at| {
-                let head = circle_distance(at, Vec2::new(0.0, 0.6), 0.24);
-                let body = box_distance(at - Vec2::new(0.0, 0.02), Vec2::new(0.2, 0.3)) - 0.06;
-                let plank = box_distance(at - Vec2::new(0.0, -0.72), Vec2::new(0.82, 0.12)) - 0.04;
-                head.min(body).min(plank)
+            Picture::Builder => drawn(builder_distance),
+            // The same builder, smaller and down to the right, with a plus
+            // up and to the left of it, as the team's stronger swords have.
+            Picture::BuilderPlus => drawn(|at| {
+                let builder = builder_distance((at - Vec2::new(0.16, -0.14)) / 0.82) * 0.82;
+                builder.min(plus_distance(at - Vec2::new(-0.64, 0.62), 0.28, 0.09) - 0.02)
+            }),
+            // A dart seen from above, pointing to the right, notched at
+            // its tail.
+            Picture::Send => drawn(|at| {
+                polygon_distance(
+                    at,
+                    &[Vec2::new(0.9, 0.0), Vec2::new(-0.8, 0.74), Vec2::new(-0.4, 0.0), Vec2::new(-0.8, -0.74)],
+                ) - 0.03
             }),
             Picture::Flask => drawn(|at| {
                 let body = circle_distance(at, Vec2::new(0.0, -0.3), 0.56);
@@ -1968,6 +2001,15 @@ impl Picture {
             }
         }
     }
+}
+
+/// How far `at` is from the edge of the builder's picture: a head, a body,
+/// and the plank it stands on.
+fn builder_distance(at: Vec2) -> f32 {
+    let head = circle_distance(at, Vec2::new(0.0, 0.6), 0.24);
+    let body = box_distance(at - Vec2::new(0.0, 0.02), Vec2::new(0.2, 0.3)) - 0.06;
+    let plank = box_distance(at - Vec2::new(0.0, -0.72), Vec2::new(0.82, 0.12)) - 0.04;
+    head.min(body).min(plank)
 }
 
 /// How far `at` is from the edge of the shield's picture: a ring, and a

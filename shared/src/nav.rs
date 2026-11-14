@@ -37,11 +37,16 @@ use crate::{ARENA_ISLANDS, SAPPHIRE_PADS};
 
 /// How far across a square of the grid is, in metres.
 pub const CELL: f32 = 0.5;
-/// Half of how wide a plank is, in metres: Hajun's `bridge` object's
-/// measure (2.726 m across), which the game's `bridge` builds by.
-pub const PLANK_HALF_WIDTH: f32 = 1.363;
+/// Half of how wide a plank is, in metres: a quarter as wide again as
+/// Hajun's `bridge` object's measure (2.726 m across; since 2026-11-14,
+/// Hajun: "The bridge could also be a little wider, maybe 1.25 times its
+/// current width"), so 3.41 m across, which the game's `bridge` builds by.
+pub const PLANK_HALF_WIDTH: f32 = 1.363 * 1.25;
 /// How far apart a bridge's rungs are fixed, in metres: half a plank's
-/// width, the boards of a dock.
+/// width, the boards of a dock. A plank is as much longer as it is wider,
+/// so that a bridge is the shape it was, a quarter bigger: how sharply it
+/// may turn from one plank to the next, and how far a slant cuts into a
+/// plank, go by the one against the other (the game's `bridge`).
 pub const PLANK_SPACING: f32 = PLANK_HALF_WIDTH;
 /// How high a plank's top is, in metres: a hair under the islands' tops.
 pub const PLANK_TOP: f32 = 0.24;
@@ -1751,12 +1756,12 @@ mod tests {
         let (here, there) = (Vec2::new(-1.0, 0.5), Vec2::new(21.0, -1.0));
         assert!(nav.connected(here, there) && nav.gaps().is_empty());
         let planks = span.planks();
-        // A blast on the bridge's middle line, 3 m across: four or five
+        // A blast on the bridge's middle line, 3 m across: three or four
         // planks, one after another, each with its middle within 3 m.
         let at = span.point(0.5);
         let (version, cuts) = (nav.version, nav.cuts);
         let taken = nav.blast(at, 3.0);
-        assert!((4..=5).contains(&taken.len()), "{taken:?}");
+        assert!((3..=4).contains(&taken.len()), "{taken:?}");
         assert!(taken.iter().all(|&(seat, chain, _)| (seat, chain) == (4, 0)));
         for pair in taken.windows(2) {
             assert_eq!(pair[1].2, pair[0].2 + 1, "not one after another: {taken:?}");
@@ -1852,8 +1857,10 @@ mod tests {
         assert_eq!(first, vec![(1, 0, 3)]);
         assert!(nav.joined(Region::Team(0), Region::Middle), "the other bridge still stands");
         // Where the two overlapped, what the one that stands makes
-        // walkable still is.
-        assert!(nav.walkable_at(fourth + Vec2::Y * 1.5) && !nav.walkable_at(fourth - Vec2::Y * 0.6));
+        // walkable still is; and along the far side of the plank that
+        // went, clear of the round ends of the planks either side of it,
+        // nothing is.
+        assert!(nav.walkable_at(fourth + Vec2::Y * 1.5) && !nav.walkable_at(fourth - Vec2::Y * 1.1));
         let both = nav.blast((spans[1].rung(8) + spans[1].rung(9)) * 0.5, 3.0);
         assert!(both.iter().any(|&(_, chain, _)| chain == 0) && both.iter().any(|&(_, chain, _)| chain == 1), "{both:?}");
         assert!(!nav.joined(Region::Team(0), Region::Middle));

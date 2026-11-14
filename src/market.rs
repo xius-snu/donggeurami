@@ -317,10 +317,25 @@ fn watch(
 /// What each shop sells, a row of cards to a kind of thing.
 fn shelves(shop: Shop) -> Vec<Vec<Ware>> {
     match shop {
+        // What builds bridges, and the swords; the shields, and the
+        // tracker; and what is thrown, then what is drunk. (Seven things
+        // go on the buttons since the leap potion, 2026-11-14: a row of
+        // seven cards would reach under the buttons on the right, so the
+        // Bridge Builder stands beside the bridge it builds.)
         Shop::Items => vec![
-            vec![Ware::Bridge, Ware::Sword(1), Ware::Sword(2), Ware::Sword(3)],
+            vec![Ware::Bridge, Ware::Utility(Utility::Builder), Ware::Sword(1), Ware::Sword(2), Ware::Sword(3)],
             vec![Ware::Shield(1), Ware::Shield(2), Ware::Shield(3), Ware::Compass],
-            Utility::ALL.into_iter().map(Ware::Utility).collect(),
+            [
+                Utility::Fireball,
+                Utility::Dynamite,
+                Utility::Speed,
+                Utility::Leap,
+                Utility::Invisibility,
+                Utility::Healing,
+            ]
+            .into_iter()
+            .map(Ware::Utility)
+            .collect(),
         ],
         Shop::Upgrades => vec![vec![
             Ware::Forge,
@@ -328,6 +343,7 @@ fn shelves(shop: Shop) -> Vec<Vec<Ware>> {
             Ware::BetterShields,
             Ware::HealPool,
             Ware::Trap,
+            Ware::BuildSpeed,
         ]],
     }
 }
@@ -373,6 +389,7 @@ pub(crate) fn look_of(utility: Utility) -> (Picture, Color) {
         Utility::Invisibility => (Picture::Flask, colours.arena.potion_invisibility),
         Utility::Healing => (Picture::Flask, colours.arena.potion_healing),
         Utility::Dynamite => (Picture::Dynamite, Color::WHITE),
+        Utility::Leap => (Picture::Flask, colours.arena.potion_leap),
     }
 }
 
@@ -435,6 +452,13 @@ fn offer(ware: Ware, outfit: &Outfit, held: &Purse) -> Offer {
                     &words.dynamite,
                     fill(&words.dynamite_stat, &[("damage", &whole(rules::DYNAMITE_DAMAGE))]),
                 ),
+                Utility::Leap => (
+                    &words.leap,
+                    fill(
+                        &words.leap_stat,
+                        &[("times", &whole(rules::LEAP)), ("seconds", &whole(rules::LEAP_SECS))],
+                    ),
+                ),
             };
             (picture, tint, name.clone(), stat, None)
         }
@@ -492,6 +516,18 @@ fn offer(ware: Ware, outfit: &Outfit, held: &Purse) -> Offer {
             words.compass_stat.clone(),
             None,
         ),
+        Ware::BuildSpeed => {
+            // The next step, or, with every step taken, the last: how
+            // fast the team builds once it has it.
+            let step = usize::from(team.build_speed.min(rules::BUILD_SPEED_MOST - 1));
+            (
+                Picture::BuilderPlus,
+                colours.hud.icon,
+                words.build_speed[step].clone(),
+                fill(&words.build_speed_stat, &[("percent", &percent(rules::BUILD_PACE[step + 1]))]),
+                Some((team.build_speed, rules::BUILD_SPEED_MOST)),
+            )
+        }
     };
     let state = match price(ware, kit, team) {
         Some((item, cost)) => State::Buy {
@@ -913,14 +949,19 @@ mod tests {
         let bare = Outfit::default();
         // Every ware of both shops is on a shelf once, the item shop's in
         // three rows and the upgrade shop's in one, no row longer than
-        // six cards: the six things for the buttons are one row, of
-        // narrower cards, so that it is no more than a card's width wider
-        // than a row of five was, and ends short of the second button on
-        // a screen of sixteen by nine.
+        // six cards: a row of six is of narrower cards, so that it is no
+        // more than a card's width wider than a row of five was, and
+        // ends short of the second button on a screen of sixteen by nine.
+        // Seven things go on the buttons: the Bridge Builder stands
+        // beside the bridge, and the other six are a row.
         let (items, upgrades) = (shelves(Shop::Items), shelves(Shop::Upgrades));
         assert_eq!((items.len(), upgrades.len()), (3, 1));
-        assert_eq!(items.iter().map(Vec::len).sum::<usize>(), 14);
-        assert_eq!(upgrades[0].len(), 5);
+        assert_eq!(items.iter().map(Vec::len).sum::<usize>(), 15);
+        assert_eq!(upgrades[0].len(), 6);
+        for utility in Utility::ALL {
+            assert!(items.iter().flatten().any(|ware| *ware == Ware::Utility(utility)), "{utility:?} is not sold");
+        }
+        assert_eq!(items[0][..2], [Ware::Bridge, Ware::Utility(Utility::Builder)]);
         for (shop, rows) in [(Shop::Items, &items), (Shop::Upgrades, &upgrades)] {
             for ware in rows.iter().flatten() {
                 assert_eq!(rules::sold_at(*ware), shop, "{ware:?}");
@@ -940,7 +981,7 @@ mod tests {
         // A stick of dynamite, the last of the things for the buttons: 1
         // amethyst, three to a button, and not to be had with five other
         // kinds on the five buttons.
-        assert_eq!(items[2].last(), Some(&Ware::Utility(Utility::Dynamite)));
+        assert!(items[2].contains(&Ware::Utility(Utility::Dynamite)));
         let stick = offer(Ware::Utility(Utility::Dynamite), &bare, &[0, 0, 0, 1]);
         assert_eq!((stick.name.as_str(), stick.picture), ("Dynamite", Picture::Dynamite));
         assert_eq!(stick.state, State::Buy { item: Item::Amethyst, cost: 1, able: true });
@@ -966,7 +1007,8 @@ mod tests {
         for ware in items.iter().chain(&upgrades).flatten() {
             let card = offer(*ware, &bare, &[0; 4]);
             assert!(matches!(card.state, State::Buy { able: false, .. }), "{ware:?}: {:?}", card.state);
-            assert!(!card.name.is_empty() && card.name.is_ascii() && card.stat.is_ascii());
+            let drawn = |words: &str| words.chars().all(roundtown_net::text::allowed);
+            assert!(!card.name.is_empty() && drawn(&card.name) && drawn(&card.stat));
             assert!(!card.name.contains('{') && !card.stat.contains('{'), "{ware:?}: {} / {}", card.name, card.stat);
             assert!(card.stat.len() <= 16, "{ware:?}: {:?} is a long line for a card", card.stat);
             assert!(card.name.split(' ').all(|word| word.len() <= 10), "{ware:?}: {:?} will not fit a card", card.name);
@@ -1004,6 +1046,7 @@ mod tests {
                 traps: 3,
                 swords: true,
                 heal_pool: false,
+                build_speed: 1,
             },
         };
         let rich: Purse = [99; 4];
@@ -1041,5 +1084,23 @@ mod tests {
         assert_eq!(offer(Ware::StrongerSwords, &armed, &rich).state, State::Owned);
         assert!(matches!(offer(Ware::HealPool, &armed, &rich).state, State::Buy { cost: 1, .. }));
         assert_eq!(offer(Ware::Forge, &bare, &rich).name, ui().words.market.forge[0]);
+        // The leap potion, 1 amethyst, five times as high for 45 s; and
+        // the team's building, three steps for 4, 8 and 16 sapphire, each
+        // card saying how fast the team builds once it has it.
+        let leap = offer(Ware::Utility(Utility::Leap), &bare, &[0, 0, 0, 1]);
+        assert_eq!((leap.name.as_str(), leap.stat.as_str(), leap.picture), ("Leap", "x5 jump 45s", Picture::Flask));
+        assert_eq!(leap.state, State::Buy { item: Item::Amethyst, cost: 1, able: true });
+        let first = offer(Ware::BuildSpeed, &bare, &rich);
+        assert_eq!((first.name.as_str(), first.stat.as_str()), ("Advanced Builder", "75% speed"));
+        assert_eq!((first.state, first.pips), (State::Buy { item: Item::Sapphire, cost: 4, able: true }, Some((0, 3))));
+        let second = offer(Ware::BuildSpeed, &armed, &rich);
+        assert_eq!((second.name.as_str(), second.stat.as_str()), ("Master Builder", "100% speed"));
+        assert_eq!(second.state, State::Buy { item: Item::Sapphire, cost: 8, able: true });
+        let done = Outfit {
+            team: Upgrades { build_speed: 3, ..armed.team },
+            ..armed
+        };
+        let last = offer(Ware::BuildSpeed, &done, &rich);
+        assert_eq!((last.name.as_str(), last.stat.as_str(), last.state), ("Grand Builder", "125% speed", State::Max));
     }
 }

@@ -2601,6 +2601,7 @@ dependencies = [
  "bevy_replicon",
  "bevy_replicon_renet",
  "fastrand",
+ "fontique",
  "ring",
  "ron",
  "roundtown_net",
@@ -5085,6 +5086,7 @@ dependencies = [
  "bytes",
  "postcard",
  "serde",
+ "unicode-normalization",
 ]
 
 [[package]]

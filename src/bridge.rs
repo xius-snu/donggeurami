@@ -178,20 +178,31 @@ mod builder_bot;
 pub(crate) use builder_bot::send_builder;
 
 /// Half the width of a plank, in metres: Hajun's bridges in
-/// `pvptownmap.glb` were 2.726 m wide. The computer's players lay theirs
-/// by the same measures, which the server has too (`roundtown_net::nav`).
+/// `pvptownmap.glb` were 2.726 m wide, and a plank is a quarter wider
+/// than that since 2026-11-14, 3.41 m (Hajun: "The bridge could also be a
+/// little wider, maybe 1.25 times its current width"). The computer's
+/// players lay theirs by the same measures, which the server has too
+/// (`roundtown_net::nav`).
 pub(crate) const HALF_WIDTH: f32 = roundtown_net::nav::PLANK_HALF_WIDTH;
 /// How thick a plank is, in metres: Hajun's bridges' 0.25.
 pub(crate) const THICKNESS: f32 = 0.25;
 /// How far one fixed rung is from the next, in metres: half as far as a
 /// plank is wide, so that the planks follow a curve closely, like the
-/// boards of a dock.
+/// boards of a dock. A plank is as much longer as it is wider (1.70 m
+/// since 2026-11-14, 1.36 until then), so that a bridge is the shape it
+/// was, a quarter bigger: everything below that sets one length of a
+/// plank against another, how far a mitre or a slant cuts into it, holds
+/// as it did. A bridge turns round in about 2.8 m where it took 2.3.
 pub(crate) const SPACING: f32 = roundtown_net::nav::PLANK_SPACING;
 /// How high the top of every plank lies, in metres: the islands' tops,
 /// 0.25 m up, less a seam, so that where a plank's root overlaps the
 /// island the island shows, and the join is the island's own edge.
 pub(crate) const TOP: f32 = roundtown_net::nav::PLANK_TOP;
-/// How much slower you walk carrying a plank, as a share of your pace.
+/// How much slower you walk carrying a plank, as a share of your pace,
+/// until your team has quickened its building at the upgrade shop
+/// (`roundtown_net::bridge_wars::BUILD_PACE`, which this is the first of;
+/// since 2026-11-14 `read_player_input` goes by that).
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) const CARRY_SLOW: f32 = 0.5;
 /// The most a chain turns from one rung to the next, in radians: 35
 /// degrees. The joint between two planks is mitred ([`corners_of`]), and
@@ -248,11 +259,12 @@ const ONTO_EDGE: f32 = 2.0 * SPACING;
 /// looked for as it lands ([`LAND_REACH`]): as far as a stretched tip
 /// reaches, a fork's first plank and that.
 const STRETCH: f32 = SPACING;
-const LAND_REACH: f32 = 4.5;
+const LAND_REACH: f32 = 5.6;
 /// How far an end's corner is pushed on to meet the shore, at the most, in
-/// metres: at [`MAX_END_SLANT`] on a straight shore a corner has 1.6 m to
-/// go, and on the round islands up to about 2.7.
-const END_PUSH: f32 = 3.0;
+/// metres: at [`MAX_END_SLANT`] on a straight shore a corner has 2.0 m to
+/// go, and on the round islands up to about 3.4 (1.6 and 2.7, and this 3.0,
+/// with the planks a quarter narrower, until 2026-11-14).
+const END_PUSH: f32 = 3.75;
 /// How much of a plank's length is left when its root or its end is cut
 /// along an edge, as a share, past the mitre at its other end, so that no
 /// plank folds; and a little room on top of the cut, in metres, which the
@@ -262,8 +274,15 @@ const SLANT_ROOM: f32 = 0.1;
 /// How far past the far edge of a fork the plank it leaves at an L corner
 /// runs, in metres ([`Bridges::corner`]): a hair, so that the fork's far
 /// root corner, cut back onto the plank's side, finds the plank there
-/// rather than grazing its very corner and missing.
-const CORNER_ROOM: f32 = 0.05;
+/// rather than grazing its very corner and missing. The corner is felt
+/// for along the fork's own way, a step of [`SHORE_STEP`] at a time, and
+/// at the most a fork may slant ([`MAX_SLANT`]) this much of plank is
+/// 1.4 times as long along that way: it has to be a step long there for
+/// one step to be sure of landing on it. 0.05 until 2026-11-14, 7 cm
+/// along the way, which a step landed on with the planks as wide as they
+/// were and stepped over once they were wider: the fork's far corner was
+/// left hanging off the corner of the plank.
+const CORNER_ROOM: f32 = 0.08;
 /// How many fixed rungs a chain has to have for the cut of its root to be
 /// kept for good ([`Chain::cut`]): three, its first plank and the joint at
 /// that plank's far end both fixed. How far a root's corner may be pulled
@@ -296,7 +315,7 @@ const TUCK: f32 = 0.015;
 /// asked after in cutting it, in metres: as far as a corner is pushed or
 /// pulled, and across the plank; other chains' planks further off than
 /// that are left out of the asking ([`Bridges::recut`]).
-const NEAR: f32 = 6.0;
+const NEAR: f32 = 7.5;
 /// How far off the first plank's line you may drift, in metres, before its
 /// rung is fixed early, shorter than [`first_length`] asks, so that the
 /// chain can turn after you: walking off a bridge nearly along its edge.
@@ -968,7 +987,9 @@ fn fix_tip(chain: &mut Chain, metres: &mut f32, grown: &mut Grown) {
     };
     let length = last.p.distance(tip.p);
     if length >= MIN_LAND && chain.rungs.len() < MOST_RUNGS {
-        *metres = (*metres - length).max(0.0);
+        // (Less than a millimetre left is none: the last plank took it.)
+        let left = *metres - length;
+        *metres = if left < 1e-3 { 0.0 } else { left };
         grown.added.push((chain.rungs.len() as u16, tip));
         chain.rungs.push(tip);
     }
@@ -1007,6 +1028,7 @@ pub(crate) fn plugin(app: &mut App) {
                 // A Bridge Builder's builders, whose planks are built with
                 // the rest.
                 (builder_bot::equip, builder_bot::walk).chain().after(lay).before(rebuild),
+                builder_bot::dress_remote,
                 // The camera's place for this frame is set by then.
                 show_left.after(crate::follow_camera),
             ),
@@ -1204,12 +1226,16 @@ fn carry(
 /// Puts a plank in the arms of each of the computer's players as it begins
 /// to lay a bridge, in a game played offline, and takes it away as it
 /// stops (since 2026-11-12): whoever carries one (`Carrying`) and is
-/// neither you, whose plank is [`HeldPlank`], nor a Bridge Builder's
-/// builder, a body for show with a plank of its own (`builder_bot::equip`).
+/// neither you, whose plank is [`HeldPlank`], nor a builder your own
+/// Bridge Builder sent, which has a plank of its own (`builder_bot::equip`).
+/// And, since 2026-11-14, the builders everyone else has sent, which are
+/// bodies for show that carry one: another player's online
+/// (`builder_bot::dress_remote`), and one of the computer's players' in a
+/// game played offline (`arena::show_bot_builders`).
 #[allow(clippy::type_complexity)]
 fn carry_for_bots(
     look: Res<Look>,
-    begun: Query<Entity, (Added<Carrying>, Without<Player>, Without<crate::ForShow>, Without<BotPlank>)>,
+    begun: Query<Entity, (Added<Carrying>, Without<Player>, Without<builder_bot::Builder>, Without<BotPlank>)>,
     done: Query<(Entity, &BotPlank), Without<Carrying>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut commands: Commands,
@@ -2489,7 +2515,7 @@ mod tests {
             assert!((tip.p - here).dot(tip.d) >= AHEAD - 0.5, "the tip stops short at {here}");
         };
         assert!(grown.landed && chain.complete || grown.landed, "did not land");
-        assert!(chain.rungs.len() > 8, "{} rungs", chain.rungs.len());
+        assert!(chain.rungs.len() > 5, "{} rungs", chain.rungs.len());
         for pair in chain.rungs.windows(2) {
             let apart = pair[0].p.distance(pair[1].p);
             assert!(apart <= SPACING * 1.5 + 1e-4 || pair[1] == *chain.rungs.last().unwrap(), "{apart} m between rungs");
@@ -2604,9 +2630,9 @@ mod tests {
         let land = is_land(&island);
         let root = Rung { p: Vec2::new(10.0, 0.0), d: Vec2::X };
         let mut chain = Chain::new(0, 0, vec![root]);
-        // Three metres of bridge: two rungs fixed and a tip to the end of
-        // them, and no more however far you walk.
-        let mut metres = 3.0;
+        // A little over two planks' worth of bridge: two rungs fixed and
+        // a tip to the end of them, and no more however far you walk.
+        let mut metres = 2.2 * SPACING;
         for step in 1..60 {
             let here = Vec2::new(10.0 + step as f32 * 0.1, 0.0);
             grow(&mut chain, here, Some(Vec2::X), None, &mut metres, &land, &land);
@@ -2897,13 +2923,13 @@ mod tests {
 
     #[test]
     fn a_short_fork_lands_with_a_slant_its_length_can_cut() {
-        // Off the parent's +y side toward a shore 0.6 m out, walking 40
+        // Off the parent's +y side toward a shore 0.75 m out, walking 40
         // degrees off square: the plank that lands slants far less than
         // that, so that both its root corners are cut onto the parent's
         // side.
         let parent = parent();
         let ground = |at: Vec2| parent.iter().any(|&quad| inside_quad(at, quad));
-        let land = |at: Vec2| at.y >= HALF_WIDTH + 0.6;
+        let land = |at: Vec2| at.y >= HALF_WIDTH + 0.75;
         let both = |at: Vec2| ground(at) || land(at);
         let dir = Vec2::from_angle(40.0f32.to_radians()).rotate(Vec2::Y);
         let here = Vec2::new(0.0, HALF_WIDTH - 0.3);

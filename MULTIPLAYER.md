@@ -161,7 +161,9 @@ Has to change:
 - **Arrival spots.** `island::arrival(seat)` has eight spots on a 6 m ring;
   a town room needs more.
 - **Names.** Bevy's built-in font is plain ASCII, and no other font is
-  bundled. Korean names need one.
+  bundled. Korean names need one. (Done on 2026-11-14: Inter since
+  2026-11-13, and Pretendard for Hangul; names, chat and messages take
+  English, Korean and Vietnamese. `CLAUDE.md`, "The font is Inter".)
 - **The player model.** It has 3,180 triangles in 11 to 13 separate meshes
   (`limbperson.glb` 13, the AI looks 11), and in a crowd every mesh is drawn
   on its own. One or two meshes each would make crowds cheaper; that is a
@@ -596,9 +598,14 @@ legal advice.
 
 - **Typed names.** The usual Rust filter, rustrict, has no Hangul at all.
   Korean lists exist (korcen; LDNOOBW's `ko`). Allow only Hangul syllables,
-  ASCII letters and digits, which shuts out ㅅㅂ-style jamo.
+  ASCII letters and digits, which shuts out ㅅㅂ-style jamo. (Typed names
+  came on 2026-10-31 and Korean ones on 2026-11-14, with no filter yet,
+  and with the letters alone allowed, in names as in chat: still to do
+  before a release.)
 - **Chat.** Apple's messaging questions, and report and block on every
-  message.
+  message. (The chat came on 2026-11-14, at Hajun's asking, with none of
+  these, as the friends' messages of 2026-11-13 have none: still to do
+  before a release. `CLAUDE.md`, "The chat".)
 - **Kakao, Naver or Google login.** Sign in with Apple, or an equivalent,
   as well.
 - **Real money.** In-app purchase, published odds for anything random, and

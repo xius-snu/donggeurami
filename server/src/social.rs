@@ -540,8 +540,11 @@ impl Social {
     /// Who goes by `text`, as `id` is told: by all of it as a name, and, if
     /// it ends in a tag, by the name before the tag with that tag. Whoever
     /// is here first, then whoever was here last; never `id` themselves.
+    /// What is looked for is cleaned as a name is (`social::sought`), so
+    /// that a Korean or a Vietnamese name is found whichever keyboard
+    /// typed either.
     fn find(&mut self, id: u64, text: &str) {
-        let sought: String = text.trim().chars().take(SOUGHT_LONGEST).collect();
+        let sought = roundtown_net::social::sought(text);
         let mut ids: Vec<u64> = self.named.get(&sought.to_lowercase()).cloned().unwrap_or_default();
         if let Some((name, tag)) = split_handle(&sought) {
             let tagged = self
@@ -1350,6 +1353,51 @@ mod tests {
     }
 
     #[test]
+    fn korean_and_vietnamese_names_and_messages_go_as_english_ones_do() {
+        let mut social = with(&["하준", "Nguyễn Hải", "Bobby", "하준"]);
+        let ids = |news: &[News]| match news {
+            [News::Found { people, .. }] => people.iter().map(|found| found.card.id).collect::<Vec<_>>(),
+            other => panic!("{other:?}"),
+        };
+        // Two of a name have different tags, in Hangul as in English.
+        let tag = |social: &Social, id: u64| social.person(id).unwrap().tag;
+        assert_ne!(tag(&social, 1), tag(&social, 4));
+        // Found by name, and by name and tag.
+        social.act(3, Act::Find(" 하준 ".into()), 0.0);
+        assert_eq!(ids(&told(&mut social, 3)), vec![1, 4]);
+        social.act(3, Act::Find(handle("하준", tag(&social, 4))), 0.0);
+        assert_eq!(ids(&told(&mut social, 3)), vec![4]);
+        // Whatever its capitals, and whichever keyboard typed it: each
+        // vowel and its marks as one letter, or as two or three.
+        social.act(3, Act::Find("nguyễn hải".into()), 0.0);
+        assert_eq!(ids(&told(&mut social, 3)), vec![2]);
+        social.act(3, Act::Find("NGUYE\u{302}\u{303}N HA\u{309}I".into()), 0.0);
+        let news = told(&mut social, 3);
+        assert!(matches!(&news[..], [News::Found { sought, .. }] if sought == "NGUYỄN HẢI"), "{news:?}");
+        assert_eq!(ids(&news), vec![2]);
+        // Taking the name someone of your tag has gives you another tag.
+        let theirs = tag(&social, 1);
+        social.people.get_mut(&3).unwrap().tag = theirs;
+        let mine = social.rename(3, "하준").expect("a tag");
+        assert_ne!(mine, theirs);
+        social.told();
+        social.kept();
+        // A message, in either, cleaned as a name is.
+        befriended(&mut social, 1, 2);
+        social.act(1, Act::Write { to: 2, text: " 안녕 ㅋㅋ ".into() }, 5.0);
+        social.act(2, Act::Write { to: 1, text: "Cha\u{300}o ba\u{323}n!".into() }, 6.0);
+        let (mine, theirs) = (told(&mut social, 1), told(&mut social, 2));
+        assert_eq!((said(&mine), said(&theirs)), (vec![Outcome::Sent], vec![Outcome::Sent]));
+        let theirs = inbox(&theirs).expect("their inbox");
+        assert_eq!(theirs.iter().map(|mail| mail.what.clone()).collect::<Vec<_>>(), vec![Post::Message("안녕 ㅋㅋ".into())]);
+        let mine = inbox(&mine).expect("my inbox");
+        assert_eq!(mine.iter().map(|mail| mail.what.clone()).collect::<Vec<_>>(), vec![Post::Message("Chào bạn!".into())]);
+        // No longer than forty syllables, which are eighty letters' width.
+        social.act(1, Act::Write { to: 2, text: "가".repeat(MESSAGE_LONGEST / 2 + 1) }, 7.0);
+        assert_eq!(said(&told(&mut social, 1)), vec![Outcome::NotAMessage]);
+    }
+
+    #[test]
     fn a_message_goes_to_a_friend_and_waits_until_it_is_seen_off() {
         let mut social = with(&["Hajooon", "Bobby", "Dongi"]);
         befriended(&mut social, 1, 2);
@@ -1359,11 +1407,11 @@ mod tests {
         assert_eq!(mail.len(), 1);
         assert_eq!(mail[0].what, Post::Message("play at 9?".into()));
         assert_eq!(social.kept(), vec![Keep::Letter(Letter { id: mail[0].id, from: 1, to: 2, text: "play at 9?".into() })]);
-        // Not to someone who is no friend; nor nothing, nor Hangul, which
-        // the font has not.
+        // Not to someone who is no friend; nor nothing, nor what the game
+        // does not write and nothing else.
         social.act(1, Act::Write { to: 3, text: "hi".into() }, 5.0);
         social.act(1, Act::Write { to: 2, text: "   ".into() }, 5.0);
-        social.act(1, Act::Write { to: 2, text: "안녕".into() }, 5.0);
+        social.act(1, Act::Write { to: 2, text: "\u{1F600}".into() }, 5.0);
         assert_eq!(said(&told(&mut social, 1)), vec![Outcome::NotFriend, Outcome::NotAMessage, Outcome::NotAMessage]);
         assert!(told(&mut social, 2).is_empty() && told(&mut social, 3).is_empty());
         // Seen off, either way: gone, here and where it was kept.

@@ -67,8 +67,9 @@ const MOST_RIDE: f32 = cars::TOP_SPEED * 1.3 + MOST_SPEED;
 /// has got to since its device last said.
 const PUNCH_REACH: f32 = 6.5;
 
-/// The names a player is given, with a number after: plain ASCII, as the
-/// game's font is. The game's own AIs go by the same names without one.
+/// The names a player is given, with a number after: plain ASCII, as
+/// every name was until 2026-11-14. The game's own AIs go by the same names
+/// without one.
 const NAMES: &[&str] = &[
     "Mochi", "Dubu", "Hodu", "Bori", "Gamja", "Mandu", "Kimbap", "Yuja", "Maru", "Nabi", "Kong",
     "Podo", "Sagwa", "Gyul", "Hobak", "Bam", "Dalgi", "Haru", "Byeol", "Nuri",
@@ -915,5 +916,43 @@ mod tests {
             at = next;
         }
         assert_eq!(y, floor, "back down in the bowl");
+    }
+
+    #[test]
+    fn a_jump_on_a_leap_potion_is_a_rise_a_body_can_make() {
+        // Bridge Wars' leap potion has a jump go five times as high
+        // (`bridge_wars::LEAP`): up at the square root of five times a
+        // jump's 8.5 m/s, 19 m/s, which is 8.2 m under the game's gravity,
+        // and slower than the fountain throws. Three of them one after
+        // another, each begun as the last comes down, as someone on the
+        // potion jumps; and a run of 14 m/s across the ground all the
+        // while, as someone on a speed potion too goes.
+        let floor = 0.25f32;
+        let speed = 8.5 * roundtown_net::bridge_wars::leap_speed();
+        let (mut x, mut y, mut rising) = (0.0f32, floor, speed);
+        let mut highest = floor;
+        let mut pace = Pace::new(0.0);
+        let mut at = spot(x, y, 0.0);
+        let mut jumps = 1;
+        for step in 1..=75 {
+            for _ in 0..8 {
+                let dt = 1.0 / 120.0;
+                rising -= if rising > 0.0 { 22.0 } else { 33.0 } * dt;
+                y += rising * dt;
+                x += 14.0 * dt;
+                if y <= floor {
+                    // Down, and up again at once.
+                    y = floor;
+                    rising = speed;
+                    jumps += 1;
+                }
+                highest = highest.max(y);
+            }
+            let next = spot(x, y, 0.0);
+            assert!(pace.take(&at, &next, f64::from(step) / 15.0), "step {step}, {y} m up");
+            at = next;
+        }
+        assert!(jumps >= 3, "{jumps} jumps");
+        assert!((highest - floor - 8.2).abs() < 0.2, "{highest}");
     }
 }

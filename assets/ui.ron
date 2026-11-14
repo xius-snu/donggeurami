@@ -227,9 +227,17 @@
             shield_advanced: "#ffd76a40",
             shield_aura: "#4fd9e84d",
             fireball: "#ff5a2a",
-            potion_speed: "#ffd84a",
+            potion_speed: "#4db8ff",
             potion_invisibility: "#c8d2de",
             potion_healing: "#ff5a6e",
+            // The leap potion; the sparks left behind by someone running
+            // fast on a speed potion, and by someone on a leap potion;
+            // and what is written over your head while you are unseen
+            // ("Invisible (12s)").
+            potion_leap: "#52e05c",
+            trail_speed: "#59c2ffe6",
+            trail_leap: "#62f06ee6",
+            unseen_text: "#ffffffe6",
             // A stick of dynamite: its two sticks (and its picture on its
             // card and its button); the fuse out of one end of it; and the
             // ring on the ground round where one lies, as far as its blast
@@ -337,10 +345,34 @@
             link: "#ffffff",
             link_off: "#ffffff80",
         ),
+        // The chat box on the left of the screen, in the town and in
+        // Bridge Wars: what shows behind the lines said, as see-through as
+        // its alpha says; a line someone said, and the name before it
+        // where they are on no team (in Bridge Wars a name is its team's
+        // colour, arena.team_red and the rest); a line about what has
+        // happened in the game ("Bob fell off the world."); the box a
+        // line is typed into, at rest and while you type, the words
+        // typed, and the words that stand in it until something is; and
+        // the arrow that sends it, with something to send and with
+        // nothing.
+        chat: (
+            back: "#00000073",
+            text: "#ffffff",
+            name: "#ffe9a8",
+            event: "#ffffffc7",
+            field: "#0000008c",
+            field_lit: "#000000b3",
+            typed: "#ffffff",
+            hint: "#ffffff80",
+            send: "#ffffffe6",
+            send_off: "#ffffff59",
+        ),
     ),
     // The font is Inter (since 2026-11-13; Bevy's own, plain ASCII, until
-    // then): Latin, Greek and Cyrillic, with dashes and an ellipsis, and no
-    // Hangul. Where a word has {something} in it, the game fills that in.
+    // then): Latin, with every letter Vietnamese has, Greek and Cyrillic,
+    // dashes and an ellipsis. Hangul is drawn too (since 2026-11-14, in
+    // Pretendard), so a word here may be written in Korean. Where a word
+    // has {something} in it, the game fills that in.
     words: (
         // Across the middle of the screen as you arrive in the town.
         welcome: "Donggeurami Town",
@@ -351,7 +383,7 @@
             log_in: "Log In",
             not_available: "Log in is not available yet",
             choose_name: "Choose Username",
-            name_hint: "Shown to other players. 2-16 characters.",
+            name_hint: "Shown to other players. 2-16 characters, or 8 in Korean.",
             save: "Save",
             choose_character: "Choose Character",
             change_later: "You may change this later.",
@@ -515,6 +547,8 @@
             // Someone has hit your team's respawn anchor, and it still
             // stands: said in the same line, every few seconds at the most.
             anchor_attacked: "Your anchor is under attack!",
+            // Written over your head while you are unseen, counting down.
+            invisible: "Invisible ({seconds}s)",
         ),
         // Bridge Wars' two shops: the item shop at the red stand on each
         // island and the upgrade shop at the blue one. Their titles; what a
@@ -549,6 +583,8 @@
             healing_stat: "+{share}% hp",
             dynamite: "Dynamite",
             dynamite_stat: "Cuts bridges",
+            leap: "Leap",
+            leap_stat: "x{times} jump {seconds}s",
             // The upgrade shop. The generator's four steps, each with its
             // line; the rest once, or step by step.
             forge: ("Better Generator", "Advanced Generator", "Amethyst Generator", "Molten Generator"),
@@ -563,7 +599,12 @@
             trap_stat: "Blinds {seconds}s",
             // The Player Compass Tracker, in the item shop.
             compass: "Tracker",
-            compass_stat: "Nearest enemy",
+            compass_stat: "Nearest foe",
+            // The upgrade shop's builders, step by step: how fast your
+            // team walks carrying a plank, and the builders its Bridge
+            // Builders send, as a share of a run ({percent}).
+            build_speed: ("Advanced Builder", "Master Builder", "Grand Builder"),
+            build_speed_stat: "{percent}% speed",
         ),
         // The friends' panel. Its two headings: {online} of {all} your
         // friends are here; {count} of {most} are in your group. Who leads
@@ -655,6 +696,26 @@
             // does not lead it.
             summoned: "Your group is playing {game}",
             only_leader: "Only your group's leader can start a game.",
+        ),
+        // The chat box. What stands in the box you type into until you
+        // type; a line someone said; and what Bridge Wars says as a game
+        // goes: {name} fell, {killer} knocked {name} off, or killed them,
+        // with a bare hand or with {weapon} (one of the three swords, a
+        // fireball, dynamite); {name} bought {ware} for your team (the
+        // upgrade shop's own name for it); and {name} broke {team}'s
+        // anchor. Every name is drawn in its team's colour.
+        chat: (
+            hint: "Type a message",
+            said: "{name}: {text}",
+            fell: "{name} fell off the world.",
+            knocked: "{killer} knocked {name} off the world.",
+            killed: "{killer} killed {name}.",
+            killed_with: "{killer} killed {name} with {weapon}.",
+            swords: ("a Basic Sword", "a Silver Sword", "an Aura Sword"),
+            fireball: "a Fireball",
+            dynamite: "Dynamite",
+            bought: "{name} purchased {ware} for your team.",
+            anchor_broken: "{name} destroyed {team}'s anchor.",
         ),
     ),
     // The car you drive (the face button, or C on desktop): every number of

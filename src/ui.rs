@@ -554,6 +554,39 @@ pub(crate) struct Colours {
     pub melee: MeleeColours,
     pub arena: ArenaColours,
     pub friends: FriendsColours,
+    pub chat: ChatColours,
+}
+
+/// The chat box on the left of the screen (`chat`, since 2026-11-14): what
+/// shows behind the lines said; a line someone said, and the name before
+/// it where they are on no team (in Bridge Wars a name is its team's
+/// colour, `arena.team_*`); a line about what has happened in a game; the
+/// box a line is typed into, at rest and while it is typed into, the words
+/// typed, and the words that stand in it until something is; and the
+/// arrow that sends a line, with something to send and with nothing.
+#[derive(Deserialize, Clone, Copy, PartialEq, Debug)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ChatColours {
+    #[serde(deserialize_with = "colour")]
+    pub back: Color,
+    #[serde(deserialize_with = "colour")]
+    pub text: Color,
+    #[serde(deserialize_with = "colour")]
+    pub name: Color,
+    #[serde(deserialize_with = "colour")]
+    pub event: Color,
+    #[serde(deserialize_with = "colour")]
+    pub field: Color,
+    #[serde(deserialize_with = "colour")]
+    pub field_lit: Color,
+    #[serde(deserialize_with = "colour")]
+    pub typed: Color,
+    #[serde(deserialize_with = "colour")]
+    pub hint: Color,
+    #[serde(deserialize_with = "colour")]
+    pub send: Color,
+    #[serde(deserialize_with = "colour")]
+    pub send_off: Color,
 }
 
 /// The friends' panel (`friends`, since 2026-11-13), in the colours of
@@ -892,6 +925,17 @@ pub(crate) struct ArenaColours {
     pub potion_invisibility: Color,
     #[serde(deserialize_with = "colour")]
     pub potion_healing: Color,
+    /// The leap potion (since 2026-11-14); the sparks someone running
+    /// fast and someone leaping leave behind them (`trail`); and what is
+    /// written over you while you are unseen (`utility`).
+    #[serde(deserialize_with = "colour")]
+    pub potion_leap: Color,
+    #[serde(deserialize_with = "colour")]
+    pub trail_speed: Color,
+    #[serde(deserialize_with = "colour")]
+    pub trail_leap: Color,
+    #[serde(deserialize_with = "colour")]
+    pub unseen_text: Color,
     /// A stick of dynamite (`dynamite`, since 2026-11-13): its two
     /// sticks, which is also what its picture is tinted on its card and
     /// its button; its fuse; and the ring on the ground round where one
@@ -1008,6 +1052,31 @@ pub(crate) struct Words {
     pub arena: ArenaWords,
     pub market: MarketWords,
     pub friends: FriendsWords,
+    pub chat: ChatWords,
+}
+
+/// The chat box (`chat`): what stands in the box a line is typed into
+/// until something is typed; a line someone said (`{name}`, `{text}`); and
+/// what a game of Bridge Wars says as it goes: someone fell off the world
+/// (`{name}`), was knocked off it (`{killer}`, `{name}`), or was killed,
+/// with a bare hand or with something (`{weapon}`: one of the three
+/// swords, by tier, a fireball or dynamite); someone bought something for
+/// your team (`{name}`, `{ware}`, as the upgrade shop's cards call it);
+/// and someone broke a team's anchor (`{name}`, `{team}`).
+#[derive(Deserialize, PartialEq, Debug)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ChatWords {
+    pub hint: String,
+    pub said: String,
+    pub fell: String,
+    pub knocked: String,
+    pub killed: String,
+    pub killed_with: String,
+    pub swords: [String; 3],
+    pub fireball: String,
+    pub dynamite: String,
+    pub bought: String,
+    pub anchor_broken: String,
 }
 
 /// The friends' panel (`friends`): its headings, with `{online}` and `{all}`
@@ -1166,6 +1235,9 @@ pub(crate) struct ArenaWords {
     /// The line said when your team's anchor has been hit and still
     /// stands, no oftener than every few seconds (`arena`).
     pub anchor_attacked: String,
+    /// What is written over you while you are unseen, with the seconds
+    /// it still lasts (`{seconds}`; `utility`).
+    pub invisible: String,
 }
 
 impl ArenaWords {
@@ -1283,6 +1355,9 @@ pub(crate) struct MarketWords {
     pub healing_stat: String,
     pub dynamite: String,
     pub dynamite_stat: String,
+    /// The leap potion (`{times}` as high, for `{seconds}`).
+    pub leap: String,
+    pub leap_stat: String,
     pub forge: [String; 4],
     pub forge_stats: [String; 4],
     pub stronger_swords: String,
@@ -1296,6 +1371,10 @@ pub(crate) struct MarketWords {
     /// The Player Compass Tracker's card.
     pub compass: String,
     pub compass_stat: String,
+    /// The team's building quickened, by its step, and the line under
+    /// each (`{percent}` of a run).
+    pub build_speed: [String; 3],
+    pub build_speed_stat: String,
 }
 
 #[derive(Deserialize, PartialEq, Debug)]
@@ -1417,11 +1496,14 @@ mod tests {
         let ui = Ui::built_in();
         assert_eq!(ui.words.signup.title, "Donggeurami Town");
         assert!(ui.words.talk.small_talk.len() > 10);
-        // Every word is plain ASCII, which is all the built-in font draws.
+        // Every word is of what the game's fonts draw (plain ASCII until
+        // 2026-11-14; Korean and Vietnamese too since).
+        let drawn = |words: &str| words.chars().all(roundtown_net::text::allowed);
         for (says, back) in &ui.words.talk.small_talk {
-            assert!(says.is_ascii() && back.is_ascii(), "{says}");
+            assert!(drawn(says) && drawn(back), "{says}");
         }
-        assert!(ui.words.settings.guest.is_ascii());
+        assert!(drawn(&ui.words.settings.guest));
+        assert!(drawn("안녕, Việt Nam!") && !drawn("\u{1F600}"));
         // A colour's alpha is read: the dark behind a dialog is see-through.
         assert!(ui.colours.dim.alpha() < 1.0);
         assert_eq!(ui.colours.text.alpha(), 1.0);

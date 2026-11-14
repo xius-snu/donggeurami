@@ -123,12 +123,15 @@
 #[cfg(test)]
 mod nav_bake;
 
+use std::collections::HashMap;
+
 use bevy::camera::primitives::Aabb;
 use bevy::gltf::GltfMaterialName;
 use bevy::prelude::*;
 use bevy::world_serialization::WorldInstanceReady;
 use bevy_replicon::prelude::Remote;
 use roundtown_net::bots::{self, Seen, Squad};
+use roundtown_net::chat::{CREDIT_SECS, Feed, Weapon};
 use roundtown_net::bridge_wars::{
     self as rules, BOT_WAIT, COUNTDOWN, Flight, Happening, Mint, Outfits, PLAY_SECS, RESULTS_SECS,
 };
@@ -141,6 +144,7 @@ use roundtown_net::{
 use crate::ai::{self, Steering};
 use crate::bridge;
 use crate::builder::{self, Fill};
+use crate::chat;
 use crate::drive::Driving;
 use crate::dynamite;
 use crate::fire;
@@ -404,14 +408,18 @@ pub(crate) struct Zombie;
 /// What a body in a game of Bridge Wars has on it that is to be seen
 /// (since 2026-11-12, `gear`): the sword in its hand and the shield round
 /// it, by tier, 0 for none, and whether it has drunk the invisibility
-/// potion and is not to be drawn for anyone else. On every body in a game
-/// that is on ([`dress`]), from the game's kits: this device's offline, the
-/// server's online.
+/// potion and is not to be drawn for anyone else; and, since 2026-11-14,
+/// whether it runs fast on a speed potion and whether it leaps on a leap
+/// potion, each of which leaves sparks behind it (`trail`). On every body
+/// in a game that is on ([`dress`]), from the game's kits: this device's
+/// offline, the server's online.
 #[derive(Component, Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub(crate) struct Wears {
     pub(crate) sword: u8,
     pub(crate) shield: u8,
     pub(crate) unseen: bool,
+    pub(crate) fast: bool,
+    pub(crate) leaping: bool,
 }
 
 /// What you have yourself, and what your team has bought, for the shops
@@ -444,6 +452,26 @@ pub(crate) enum Used {
     /// metres (since 2026-11-13).
     Dynamite { heading: f32, far: f32 },
 }
+
+/// Something has happened in the game that its chat says (`chat`; since
+/// 2026-11-14): written by whatever of this device's own game does it,
+/// offline, and as the server says it online ([`hear`]); [`feed_chat`]
+/// writes each out, in the file's words.
+#[derive(Message, Clone, Copy, Debug)]
+pub(crate) struct Fed(pub(crate) Feed);
+
+/// Where the builder each of the computer's players has sent off is now,
+/// in a game played offline: whose, by seat, where it stands and which way
+/// it faces ([`drive_bots`]); each is shown there as a body carrying a
+/// plank ([`show_bot_builders`], since 2026-11-14; nobody saw them until
+/// then). Online the server shows its own (`roundtown_net::BuilderOf`).
+#[derive(bevy::prelude::Resource, Default, PartialEq)]
+struct BotBuilders(Vec<(u8, Vec3, f32)>);
+
+/// The body shown for the builder the computer's player in this seat has
+/// sent off.
+#[derive(Component)]
+struct BotBuilder(u8);
 
 /// A zombie whose model has been turned green.
 #[derive(Component)]
@@ -517,6 +545,10 @@ struct Game {
     /// not sending it with the room's kits (`roundtown_net::Kit::compass`),
     /// until you die. Offline it is in your kit as the rest is.
     compass: bool,
+    /// Offline, who last hit each seat, how far into the fight, and with
+    /// what: a fall soon after is their doing ([`Game::fell`]). Online
+    /// the server keeps its own.
+    last_hit: HashMap<usize, (usize, f32, Weapon)>,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -564,6 +596,7 @@ impl Game {
     fn die(&mut self, seat: usize) -> Dead {
         // Their sword and what was on their second button go with them.
         self.outfits.die(seat);
+        self.last_hit.remove(&seat);
         if seat >= ARENA_SEATS {
             return Dead {
                 left: rules::ZOMBIE_RESPAWN_SECS,
@@ -583,15 +616,87 @@ impl Game {
     }
 }
 
+impl Game {
+    /// What whoever is in `seat` hits with: the sword in their hand, by
+    /// its tier, or a bare hand.
+    fn weapon_of(&self, seat: usize) -> Weapon {
+        match self.outfits.kit(seat).sword {
+            0 => Weapon::Fists,
+            tier => Weapon::Sword(tier),
+        }
+    }
+
+    /// `by` has hit `victim`, `with` that, offline: remembered, for a fall
+    /// soon after to be theirs ([`Game::fell`]); and if it has killed
+    /// them, what the chat says of it. A zombie's death is nothing to
+    /// say, nor a blow from nobody.
+    fn struck(&mut self, victim: usize, by: usize, with: Weapon, killed: bool) -> Option<Fed> {
+        if by >= self.seats.len() {
+            return None;
+        }
+        self.last_hit.insert(victim, (by, self.elapsed, with));
+        (killed && victim < ARENA_SEATS).then_some(Fed(Feed::Killed {
+            seat: victim as u8,
+            by: by as u8,
+            with,
+        }))
+    }
+
+    /// `seat` has fallen into the void, offline: what the chat says of
+    /// it, knocked off by whoever last hit them if that was no longer ago
+    /// than [`CREDIT_SECS`], and fallen otherwise. Nothing of a zombie.
+    fn fell(&self, seat: usize) -> Option<Fed> {
+        if seat >= ARENA_SEATS {
+            return None;
+        }
+        let by = self
+            .last_hit
+            .get(&seat)
+            .filter(|&&(by, when, _)| by != seat && self.elapsed - when <= CREDIT_SECS)
+            .map(|&(by, ..)| by);
+        Some(Fed(match by {
+            Some(by) => Feed::Knocked {
+                seat: seat as u8,
+                by: by as u8,
+            },
+            None => Feed::Fell { seat: seat as u8 },
+        }))
+    }
+
+    /// What the chat says of `ware` bought by whoever is in `seat`, if it
+    /// is something of the whole team's, with how far the team has it now.
+    fn bought(&self, seat: usize, ware: Ware) -> Option<Fed> {
+        if rules::sold_at(ware) != rules::Shop::Upgrades {
+            return None;
+        }
+        let team = self.outfits.team(seat);
+        let step = match ware {
+            Ware::Forge => team.forge,
+            Ware::BetterShields => team.shields,
+            Ware::Trap => team.traps,
+            Ware::BuildSpeed => team.build_speed,
+            _ => 1,
+        };
+        Some(Fed(Feed::Bought {
+            by: seat as u8,
+            ware,
+            step,
+        }))
+    }
+}
+
 /// How the fight stands, for the bridges (`bridge`): whether a game is on,
 /// your seat in it, whether it is the server's, and which game it is, so
-/// that another game's bridges are not this one's.
+/// that another game's bridges are not this one's; and who is in it, by
+/// seat, each by their id (none out of a game), for the chat to write a
+/// name in its team's colour (`chat`).
 #[derive(bevy::prelude::Resource, Default, PartialEq)]
 pub(crate) struct Fighting {
     pub(crate) playing: bool,
     pub(crate) seat: Option<u8>,
     pub(crate) online: bool,
     pub(crate) game: u32,
+    pub(crate) members: Vec<u64>,
 }
 
 /// A game of Bridge Wars is being played offline: nothing goes online in
@@ -752,6 +857,8 @@ pub(crate) fn plugin(app: &mut App) {
     app.add_message::<Ask>()
         .add_message::<Want>()
         .add_message::<Used>()
+        .add_message::<Fed>()
+        .init_resource::<BotBuilders>()
         .init_resource::<Resources>()
         .init_resource::<Outfit>()
         .init_resource::<FightTime>()
@@ -788,6 +895,9 @@ pub(crate) fn plugin(app: &mut App) {
                 (show_death, show_panel, place_tags, place_anchor_bars, float_numbers, write_over_generators)
                     .after(crate::follow_camera),
                 (paint_zombies, paint_anchors, fade_alerts, lose_on_death, trap_alerts),
+                // What the game has said this frame, into the chat; and the
+                // builders the computer's players have out, where they are.
+                (feed_chat, show_bot_builders).after(crate::move_bodies).after(break_anchors),
             ),
         );
 }
@@ -915,6 +1025,7 @@ fn hear(
     mut visibilities: Query<&mut Visibility>,
     mut bodies: Whereabouts,
     (mut orbit, mut driving, mut stock): (ResMut<OrbitCamera>, ResMut<Driving>, ResMut<Resources>),
+    mut fed: MessageWriter<Fed>,
     mut commands: Commands,
 ) {
     let mut game = game;
@@ -924,6 +1035,12 @@ fn hear(
             continue;
         };
         match tell {
+            // Something has happened in the game: for its chat.
+            Tell::Feed(feed) => {
+                if game.as_deref().is_some_and(|game| game.online) {
+                    fed.write(Fed(*feed));
+                }
+            }
             // The shop has sold you a bridge: its price is out of what
             // you hold, as the room's purses say; the metres are yours.
             Tell::Bought(Ware::Bridge) => {
@@ -1457,6 +1574,7 @@ fn open(
         anchor_was: if online { rules::ANCHOR_HEALTH } else { ui().arena.anchor_health },
         anchor_said: f32::NEG_INFINITY,
         compass: false,
+        last_hit: HashMap::new(),
     }
 }
 
@@ -1636,6 +1754,7 @@ fn sell(
     game: Option<ResMut<Game>>,
     mut stock: ResMut<Resources>,
     mut requests: MessageWriter<NetAsk>,
+    mut fed: MessageWriter<Fed>,
 ) {
     let Some(mut game) = game else {
         wants.clear();
@@ -1657,6 +1776,10 @@ fn sell(
                 stock.bridge_metres += rules::BRIDGE_A_BUY;
             }
             info!("bought {ware:?}");
+            // What is the whole team's, the chat says.
+            if let Some(said) = game.bought(me, ware) {
+                fed.write(said);
+            }
         }
     }
 }
@@ -1782,6 +1905,7 @@ fn fireballs_offline(
         (Entity, &Transform, &Venue, &mut Health, &Seat, &mut Shove, &mut PlayerJump, Has<Zombie>),
         (With<WalkCycle>, Without<Dead>),
     >,
+    mut fed: MessageWriter<Fed>,
     mut commands: Commands,
 ) {
     if !offline_fight(&game) {
@@ -1801,6 +1925,7 @@ fn fireballs_offline(
             continue;
         }
         let burst = flight.at();
+        let mut hurt = false;
         for (body, at, venue, mut health, seat, mut shove, mut jump, zombie) in &mut bodies {
             if *venue != Venue::Arena || arena_team(seat.0) == team || !rules::in_blast(burst, at.translation) {
                 continue;
@@ -1808,6 +1933,10 @@ fn fireballs_offline(
             let damage = game.outfits.through(seat.0, rules::FIREBALL_DAMAGE);
             game.outfits.reveal(seat.0);
             health.take(damage);
+            hurt = true;
+            if let Some(said) = game.struck(seat.0, flying.seat, Weapon::Fireball, health.gone()) {
+                fed.write(said);
+            }
             spawn_number(&mut commands, at.translation, damage);
             // Knocked from where it burst, whatever they were reeling from.
             shove.hurt = 0.0;
@@ -1820,6 +1949,11 @@ fn fireballs_offline(
                 let dead = game.die(seat.0);
                 commands.entity(body).insert(dead);
             }
+        }
+        // To have hurt someone is to have attacked them: whoever threw it
+        // unseen is seen again.
+        if hurt {
+            game.outfits.reveal(flying.seat);
         }
         fire::burst(&mut commands, burst);
         commands.entity(ball).despawn();
@@ -1856,6 +1990,7 @@ fn dynamites_offline(
     sticks: Query<(Entity, &dynamite::Stick)>,
     mut bodies: Query<(Entity, &Transform, &Venue, &mut Health, &Seat), (With<WalkCycle>, Without<Dead>)>,
     mut bridges: ResMut<bridge::Bridges>,
+    mut fed: MessageWriter<Fed>,
     mut commands: Commands,
 ) {
     if !offline_fight(&game) {
@@ -1874,7 +2009,11 @@ fn dynamites_offline(
             }
             let damage = game.outfits.through(seat.0, rules::DYNAMITE_DAMAGE);
             game.outfits.reveal(seat.0);
+            game.outfits.reveal(lying.seat);
             health.take(damage);
+            if let Some(said) = game.struck(seat.0, lying.seat, Weapon::Dynamite, health.gone()) {
+                fed.write(said);
+            }
             spawn_number(&mut commands, place.translation, damage);
             if health.gone() {
                 let dead = game.die(seat.0);
@@ -1923,6 +2062,8 @@ fn dress(
             sword: kit.sword,
             shield: kit.shield,
             unseen: kit.unseen(elapsed),
+            fast: kit.fast(elapsed),
+            leaping: kit.leaping(elapsed),
         }
     };
     let mut put = |body: Entity, had: Option<&Wears>, seat: usize| {
@@ -2408,19 +2549,24 @@ fn finish(
 /// Says how the fight stands, for the bridges (`bridge`) and the network
 /// (`net`).
 fn publish(game: Option<Res<Game>>, mut fighting: ResMut<Fighting>, mut offline: ResMut<OfflineArena>) {
-    let now = match game.as_deref() {
-        Some(game) => Fighting {
-            playing: game.playing(),
-            seat: Some(game.me as u8),
-            online: game.online,
-            game: game.id,
-        },
-        None => Fighting {
-            game: fighting.game,
-            ..default()
-        },
+    // (Who is in it is taken again only when that has changed, so that
+    // nothing is made every frame to say the same.)
+    let (playing, seat, online, id) = match game.as_deref() {
+        Some(game) => (game.playing(), Some(game.me as u8), game.online, game.id),
+        None => (false, None, false, fighting.game),
     };
-    fighting.set_if_neq(now);
+    let seats: &[Member] = game.as_deref().map_or(&[], |game| game.seats.as_slice());
+    let same_members =
+        fighting.members.len() == seats.len() && fighting.members.iter().zip(seats).all(|(id, member)| *id == member.id);
+    if (fighting.playing, fighting.seat, fighting.online, fighting.game) != (playing, seat, online, id) || !same_members {
+        *fighting = Fighting {
+            playing,
+            seat,
+            online,
+            game: id,
+            members: seats.iter().map(|member| member.id).collect(),
+        };
+    }
     offline.set_if_neq(OfflineArena(game.is_some_and(|game| !game.online)));
 }
 
@@ -2628,9 +2774,13 @@ fn drive_bots(
     islands: Res<Islands>,
     lobbed_sticks: Query<&dynamite::Stick>,
     mut landed: MessageWriter<Landed>,
+    (mut fed, mut builders): (MessageWriter<Fed>, ResMut<BotBuilders>),
     mut commands: Commands,
 ) {
     if !offline_fight(&game) {
+        if !builders.0.is_empty() {
+            builders.0.clear();
+        }
         return;
     }
     let mut game = game.expect("checked");
@@ -2774,6 +2924,10 @@ fn drive_bots(
                 commands.entity(entity).insert(Punching::next());
                 if game.anchors[team] <= 0.0 {
                     info!("team {team}'s anchor is broken, by seat {seat}");
+                    fed.write(Fed(Feed::AnchorBroken {
+                        team: team as u8,
+                        by: seat as u8,
+                    }));
                 }
             }
             if let Some(ware) = order.buy
@@ -2782,6 +2936,23 @@ fn drive_bots(
             {
                 squad.bought(seat, ware, elapsed);
                 debug!("seat {seat} bought {ware:?}");
+                // What is its whole team's, that team's chat says: yours,
+                // if it is your teammate.
+                if rules::sold_at(ware) == rules::Shop::Upgrades {
+                    let team = game.outfits.team(seat);
+                    let step = match ware {
+                        Ware::Forge => team.forge,
+                        Ware::BetterShields => team.shields,
+                        Ware::Trap => team.traps,
+                        Ware::BuildSpeed => team.build_speed,
+                        _ => 1,
+                    };
+                    fed.write(Fed(Feed::Bought {
+                        by: seat as u8,
+                        ware,
+                        step,
+                    }));
+                }
             }
             for (chain, index, rung, heading) in order.rungs {
                 if rungs[seat] >= MOST_BOT_RUNGS {
@@ -2800,8 +2971,8 @@ fn drive_bots(
                 );
             }
             // A Bridge Builder sent off: one comes off its buttons, and
-            // its bridge comes as rungs in the frames after. Nobody sees
-            // the builder, as nobody sees anyone else's online.
+            // its bridge comes as rungs in the frames after, with the
+            // builder shown walking it ([`show_bot_builders`]).
             if order.build {
                 if game.outfits.spend(seat, Utility::Builder) {
                     debug!("seat {seat} sent a Bridge Builder");
@@ -2859,6 +3030,19 @@ fn drive_bots(
             }
         }
     }
+    // Where the builder each of them has out is now, to be shown there:
+    // on the land or on its own planks, facing the way it walks.
+    let out: Vec<(u8, Vec3, f32)> = (0..seats.min(ARENA_SEATS))
+        .filter(computers)
+        .filter_map(|seat| {
+            let (at, way) = squad.builder_at(seat)?;
+            let height = nav.ground(at).unwrap_or(roundtown_net::nav::PLANK_TOP);
+            Some((seat as u8, Vec3::new(at.x, height, at.y), (-way.x).atan2(-way.y)))
+        })
+        .collect();
+    if builders.0 != out {
+        builders.0 = out;
+    }
     // What lies within their reach: only what each one's next purchases
     // need, whoever it matters most to first.
     let mut takers: Vec<(u8, usize)> = (0..seats.min(ARENA_SEATS))
@@ -2886,6 +3070,129 @@ fn drive_bots(
             }
         }
     }
+}
+
+/// Shows the builder each of the computer's players has sent off, in a
+/// game played offline, where it is ([`BotBuilders`]): a body for show in
+/// its owner's look, carrying a plank (`bridge::carry_for_bots` puts it in
+/// its arms), walked along its bridge as the brain has it, and gone as it
+/// is done (since 2026-11-14, Hajun: "make your bridgebot visible to other
+/// players too"; until then a bot's builder's bridge went up by itself).
+fn show_bot_builders(
+    game: Option<Res<Game>>,
+    out: Res<BotBuilders>,
+    assets: Res<AssetServer>,
+    mut shown: Query<(Entity, &BotBuilder, &mut Transform)>,
+    mut commands: Commands,
+) {
+    for (entity, of, mut place) in &mut shown {
+        match out.0.iter().find(|(seat, ..)| *seat == of.0) {
+            Some(&(_, at, yaw)) => {
+                let next = Transform::from_translation(at).with_rotation(Quat::from_rotation_y(yaw));
+                place.set_if_neq(next);
+            }
+            None => commands.entity(entity).despawn(),
+        }
+    }
+    let Some(game) = game else {
+        return;
+    };
+    for &(seat, at, yaw) in &out.0 {
+        if shown.iter().any(|(_, of, _)| of.0 == seat) {
+            continue;
+        }
+        let Some(member) = game.seats.get(usize::from(seat)) else {
+            continue;
+        };
+        let place = Transform::from_translation(at).with_rotation(Quat::from_rotation_y(yaw));
+        let puppet = lobby::puppet(&mut commands, &assets, member, Venue::Arena, place);
+        commands
+            .entity(puppet)
+            .insert((BotBuilder(seat), InArena, Carrying, Name::new("A bot's bridge builder")));
+    }
+}
+
+/// Writes what the game has said this frame ([`Fed`]) into the chat
+/// (`chat::Log`), in the file's words, every name in its team's colour:
+/// what is for one team alone, a purchase for it, only if that team is
+/// yours.
+fn feed_chat(mut fed: MessageReader<Fed>, game: Option<Res<Game>>, mut log: ResMut<chat::Log>) {
+    let Some(game) = game else {
+        fed.clear();
+        return;
+    };
+    for Fed(feed) in fed.read() {
+        if feed.only_for().is_some_and(|team| team != game.my_team()) {
+            continue;
+        }
+        if let Some(line) = feed_line(feed, &game.seats) {
+            log.push(line);
+        }
+    }
+}
+
+/// What the chat says of `feed`, of the players in `seats`: a line in the
+/// file's words (`words.chat`), each name in its team's colour, a zombie's
+/// in its own; nothing of a seat nobody is in.
+fn feed_line(feed: &Feed, seats: &[Member]) -> Option<chat::Line> {
+    let file = ui();
+    let (words, colours) = (&file.words.chat, file.colours);
+    let ink = colours.chat.event;
+    let who = |seat: u8| {
+        let member = seats.get(usize::from(seat)).filter(|member| !member.name.is_empty())?;
+        Some((member.name.as_str(), colours.arena.team(arena_team(usize::from(seat)))))
+    };
+    Some(match *feed {
+        Feed::Fell { seat } => {
+            let (name, colour) = who(seat)?;
+            chat::spans(&words.fell, ink, &[("name", name, colour)])
+        }
+        Feed::Knocked { seat, by } => {
+            let ((name, colour), (killer, theirs)) = (who(seat)?, who(by)?);
+            chat::spans(&words.knocked, ink, &[("name", name, colour), ("killer", killer, theirs)])
+        }
+        Feed::Killed { seat, by, with } => {
+            let ((name, colour), (killer, theirs)) = (who(seat)?, who(by)?);
+            let weapon = match with {
+                Weapon::Fists => None,
+                Weapon::Sword(tier) => Some(&words.swords[usize::from(tier.clamp(1, 3)) - 1]),
+                Weapon::Fireball => Some(&words.fireball),
+                Weapon::Dynamite => Some(&words.dynamite),
+            };
+            match weapon {
+                Some(weapon) => chat::spans(
+                    &words.killed_with,
+                    ink,
+                    &[("name", name, colour), ("killer", killer, theirs), ("weapon", weapon, ink)],
+                ),
+                None => chat::spans(&words.killed, ink, &[("name", name, colour), ("killer", killer, theirs)]),
+            }
+        }
+        Feed::Bought { by, ware, step } => {
+            let (name, colour) = who(by)?;
+            let market = &file.words.market;
+            let step = usize::from(step.max(1)) - 1;
+            let ware = match ware {
+                Ware::Forge => market.forge.get(step)?,
+                Ware::StrongerSwords => &market.stronger_swords,
+                Ware::BetterShields => &market.better_shields,
+                Ware::HealPool => &market.heal_pool,
+                Ware::Trap => &market.trap,
+                Ware::BuildSpeed => market.build_speed.get(step)?,
+                _ => return None,
+            };
+            chat::spans(&words.bought, ink, &[("name", name, colour), ("ware", ware, colours.chat.text)])
+        }
+        Feed::AnchorBroken { team, by } => {
+            let (name, colour) = who(by)?;
+            let whose = team_name(team);
+            chat::spans(
+                &words.anchor_broken,
+                ink,
+                &[("name", name, colour), ("team", &whose, colours.arena.team(team))],
+            )
+        }
+    })
 }
 
 /// How long between two sayings that your anchor is under attack, in
@@ -2953,6 +3260,7 @@ fn reap(
     game: Option<ResMut<Game>>,
     fallen: Query<(Entity, &Transform, &Venue, &Seat, Has<Player>, Has<Remote>), (With<WalkCycle>, Without<Dead>)>,
     mut requests: MessageWriter<NetAsk>,
+    mut fed: MessageWriter<Fed>,
     mut commands: Commands,
 ) {
     let Some(mut game) = game else {
@@ -2980,6 +3288,11 @@ fn reap(
             }
             continue;
         }
+        // What the chat says of it: fallen, or knocked off by whoever
+        // last hit them.
+        if let Some(said) = game.fell(seat.0) {
+            fed.write(said);
+        }
         let dead = game.die(seat.0);
         commands.entity(body).insert(dead);
         info!("{body} fell into the void");
@@ -2994,6 +3307,7 @@ fn deal_damage(
     game: Option<ResMut<Game>>,
     mut victims: Query<(&Transform, &mut Health, &Seat, &mut Shove, &mut PlayerJump, Has<Zombie>), Without<Dead>>,
     seats: Query<&Seat>,
+    mut fed: MessageWriter<Fed>,
     mut commands: Commands,
 ) {
     if !offline_fight(&game) {
@@ -3021,6 +3335,10 @@ fn deal_damage(
         game.outfits.reveal(hitter);
         game.outfits.reveal(seat.0);
         health.take(damage);
+        let with = game.weapon_of(hitter);
+        if let Some(said) = game.struck(seat.0, hitter, with, health.gone()) {
+            fed.write(said);
+        }
         spawn_number(&mut commands, at.translation, damage);
         if health.gone() {
             let dead = game.die(seat.0);
@@ -3040,6 +3358,7 @@ fn hit_anchors(
     mut swings: MessageReader<Swung>,
     game: Option<ResMut<Game>>,
     mut requests: MessageWriter<NetAsk>,
+    mut fed: MessageWriter<Fed>,
     mut commands: Commands,
 ) {
     let Some(mut game) = game else {
@@ -3082,6 +3401,10 @@ fn hit_anchors(
                 game.anchors[team] = (game.anchors[team] - damage).max(0.0);
                 if game.anchors[team] <= 0.0 {
                     info!("team {team}'s anchor is broken");
+                    fed.write(Fed(Feed::AnchorBroken {
+                        team: team as u8,
+                        by: me as u8,
+                    }));
                 }
             }
         }
@@ -4067,6 +4390,7 @@ mod tests {
             anchor_was: 120.0,
             anchor_said: f32::NEG_INFINITY,
             compass: false,
+            last_hit: HashMap::new(),
         };
         assert_eq!(game.my_team(), 0);
         assert_eq!(game.teams_in_play(), vec![0, 1, 2, 3]);
@@ -4313,6 +4637,62 @@ mod tests {
         assert_eq!((lost.bridge_metres, lost.held), (0.0, [31, 4, 2, 1]));
         // With nothing, nothing changes.
         assert_eq!(lost_on_death(&Resources::default(), true), Resources::default());
+    }
+
+    #[test]
+    fn the_chat_says_what_happened_with_each_name_in_its_team_s_colour() {
+        let member = |name: &str| Member {
+            id: 1,
+            name: name.into(),
+            look: "boy".into(),
+            ai: false,
+        };
+        // Eight players, and a zombie in the seat past them.
+        let mut seats: Vec<Member> = ["Bob", "Hannah", "Cy", "Dee", "Eve", "Finn", "Gus", "Hal"].map(member).to_vec();
+        seats.push(member("Zombie"));
+        let colours = ui().colours;
+        let text = |line: &chat::Line| line.0.iter().map(|(words, _)| words.as_str()).collect::<String>();
+        let colour_of = |line: &chat::Line, words: &str| line.0.iter().find(|(part, _)| part == words).map(|(_, colour)| *colour);
+        let said = |feed: Feed| feed_line(&feed, &seats).expect("a line");
+        // Fallen, by nobody's doing; and knocked off, by someone's.
+        let fell = said(Feed::Fell { seat: 0 });
+        assert_eq!(text(&fell), "Bob fell off the world.");
+        assert_eq!(colour_of(&fell, "Bob"), Some(colours.arena.team(0)));
+        assert_eq!(colour_of(&fell, " fell off the world."), Some(colours.chat.event));
+        let knocked = said(Feed::Knocked { seat: 1, by: 0 });
+        assert_eq!(text(&knocked), "Bob knocked Hannah off the world.");
+        assert_eq!(colour_of(&knocked, "Bob"), Some(colours.arena.team(0)));
+        assert_eq!(colour_of(&knocked, "Hannah"), Some(colours.arena.team(1)));
+        assert_ne!(colours.arena.team(0), colours.arena.team(1));
+        // Killed: with a bare hand, a sword, a fireball, dynamite.
+        let kill = |with: Weapon| text(&said(Feed::Killed { seat: 1, by: 0, with }));
+        assert_eq!(kill(Weapon::Fists), "Bob killed Hannah.");
+        assert_eq!(kill(Weapon::Sword(1)), "Bob killed Hannah with a Basic Sword.");
+        assert_eq!(kill(Weapon::Sword(2)), "Bob killed Hannah with a Silver Sword.");
+        assert_eq!(kill(Weapon::Sword(3)), "Bob killed Hannah with an Aura Sword.");
+        assert_eq!(kill(Weapon::Fireball), "Bob killed Hannah with a Fireball.");
+        assert_eq!(kill(Weapon::Dynamite), "Bob killed Hannah with Dynamite.");
+        // By a zombie, which is on no team and in its own colour.
+        let bitten = said(Feed::Killed { seat: 2, by: 8, with: Weapon::Fists });
+        assert_eq!(text(&bitten), "Zombie killed Cy.");
+        assert_eq!(colour_of(&bitten, "Zombie"), Some(colours.arena.zombie));
+        assert_eq!(colour_of(&bitten, "Cy"), Some(colours.arena.team(2)));
+        // What someone bought for their team, as the upgrade shop's card
+        // calls it, by its step where it goes by steps.
+        let bought = |ware: Ware, step: u8| text(&said(Feed::Bought { by: 4, ware, step }));
+        assert_eq!(bought(Ware::HealPool, 1), "Eve purchased Heal Pool for your team.");
+        assert_eq!(bought(Ware::Forge, 3), "Eve purchased Amethyst Generator for your team.");
+        assert_eq!(bought(Ware::BuildSpeed, 2), "Eve purchased Master Builder for your team.");
+        assert_eq!(bought(Ware::Trap, 2), "Eve purchased Blindness Trap for your team.");
+        assert_eq!(colour_of(&said(Feed::Bought { by: 4, ware: Ware::HealPool, step: 1 }), "Eve"), Some(colours.arena.team(0)));
+        assert!(feed_line(&Feed::Bought { by: 4, ware: Ware::Sword(2), step: 1 }, &seats).is_none(), "not the team's");
+        // An anchor broken, the team's name in the team's colour.
+        let broke = said(Feed::AnchorBroken { team: 1, by: 0 });
+        assert_eq!(text(&broke), "Bob destroyed Team Blue's anchor.");
+        assert_eq!(colour_of(&broke, "Team Blue"), Some(colours.arena.team(1)));
+        // Of a seat nobody is in, nothing.
+        assert!(feed_line(&Feed::Fell { seat: 30 }, &seats).is_none());
+        assert!(feed_line(&Feed::Knocked { seat: 0, by: 30 }, &seats).is_none());
     }
 
     #[test]

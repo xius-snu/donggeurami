@@ -28,6 +28,7 @@ mod build;
 mod builder;
 mod minimap;
 mod car;
+mod chat;
 mod games;
 mod clock;
 mod compass;
@@ -61,6 +62,7 @@ mod sky;
 mod sound;
 mod tags;
 mod talk;
+mod trail;
 mod ui;
 mod utility;
 mod gear;
@@ -336,6 +338,11 @@ struct Intent {
     /// running rather than walking"). The legs swing that much faster and
     /// further ([`animate_walk`]).
     sprint: f32,
+    /// How many times as fast as a jump its jump leaves the ground: 1,
+    /// and with the leap potion drunk in a game of Bridge Wars as much
+    /// faster as takes it five times as high
+    /// (`roundtown_net::bridge_wars::leap_speed`, since 2026-11-14).
+    leap: f32,
 }
 
 impl Default for Intent {
@@ -346,6 +353,7 @@ impl Default for Intent {
             pace: None,
             face: None,
             sprint: 1.0,
+            leap: 1.0,
         }
     }
 }
@@ -753,8 +761,10 @@ struct TouchControls {
     /// Where the finger holding the stick went down, in the window's logical
     /// pixels: the stick's middle for as long as it is held (Hajun,
     /// 2026-11-14: a press that has not been dragged has chosen no way yet,
-    /// so "wherever the user tap first should be the middle"). None with
-    /// the stick let go, when it is back in its own place.
+    /// so "wherever the user tap first should be the middle"), or, for a
+    /// finger gone down far from the stick's own middle, as near there as
+    /// the middle may be set ([`stick_origin`]). None with the stick let
+    /// go, when it is back in its own place.
     stick_origin: Option<Vec2>,
     look_id: Option<u64>,
     look_last: Vec2,
@@ -1394,6 +1404,11 @@ pub fn main() {
     // Friends, behind the speech bubble under the gift: who they are,
     // where they are, your inbox and your group.
     friends::plugin(&mut app);
+    // The chat box on the left: what is said in your room, and what a game
+    // of Bridge Wars says as it goes.
+    chat::plugin(&mut app);
+    // The sparks someone running fast, or leaping, leaves behind them.
+    trail::plugin(&mut app);
     // Standing in a house in House Builder, whatever stands between the
     // camera and you, see-through, and out of a tap's reach.
     see_through::plugin(&mut app);
@@ -1776,7 +1791,7 @@ fn read_touch_controls(
             pointer.press();
         } else if controls.stick_id.is_none() && on_stick {
             controls.stick_id = Some(id);
-            controls.stick_origin = Some(pos);
+            controls.stick_origin = Some(stick_origin(pos, layout.stick_center, layout.stick_radius));
         } else if controls.jump_id.is_none() && on_jump {
             controls.jump_id = Some(id);
             controls.jump_just_pressed = true;
@@ -1959,11 +1974,20 @@ fn read_mouse_look(
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 fn read_mouse_zoom(
     dialog: Res<hud::DialogUp>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    presses: hud::Presses,
     mut scroll: MessageReader<MouseWheel>,
     mut orbit: ResMut<OrbitCamera>,
 ) {
-    // With a dialog up the wheel is its: the shop scrolls with it.
-    if dialog.0 {
+    // With a dialog up the wheel is its: the shop scrolls with it. And
+    // over anything on the screen that takes a press, it is that thing's:
+    // the chat's lines scroll by it (`chat::wheel`).
+    let over_something = windows
+        .single()
+        .ok()
+        .and_then(|window| window.cursor_position().map(|cursor| presses.claimed(window, cursor)))
+        .unwrap_or(false);
+    if dialog.0 || over_something {
         scroll.clear();
         return;
     }
@@ -2020,7 +2044,7 @@ fn read_mouse_controls(
     if mouse.just_pressed(MouseButton::Left) && !presses.claimed(window, pos) {
         if controls.stick_id.is_none() && in_circle(pos, layout.stick_center, layout.stick_radius * 1.15) {
             controls.stick_id = Some(MOUSE_ID);
-            controls.stick_origin = Some(pos);
+            controls.stick_origin = Some(stick_origin(pos, layout.stick_center, layout.stick_radius));
         } else if controls.jump_id.is_none() && in_circle(pos, layout.jump_center, layout.jump_radius * 1.2) {
             controls.jump_id = Some(MOUSE_ID);
             controls.jump_just_pressed = true;
@@ -2040,6 +2064,26 @@ impl TouchControls {
     pub(crate) fn has_the_mouse(&self) -> bool {
         self.stick_id == Some(MOUSE_ID) || self.jump_id == Some(MOUSE_ID)
     }
+}
+
+/// How far from the stick's own middle the middle it is held by may be set,
+/// as a share of its radius (Hajun, 2026-11-14: "if I tap the very bottom
+/// of the circle, the joystick's origin gets set too low, so it's hard to
+/// move downward at full speed. Limit the area where the origin can be set
+/// to 50% of the current radius").
+const STICK_ORIGIN_REACH: f32 = 0.5;
+
+/// The stick's middle for a finger gone down at `pos` on a stick whose own
+/// middle is `center` and whose radius is `radius`: where the finger went
+/// down, if that is within [`STICK_ORIGIN_REACH`] of the stick's own
+/// middle; further out than that, on the edge of that reach, the same way
+/// out ("If the first tap lands outside that radius but still inside the
+/// joystick hitbox, set the origin on the edge of the 50% radius at the
+/// same angle. Movement magnitude should then be measured from that
+/// origin"). So a finger put down on the stick's very edge is already
+/// pushing it half way, that way, and has the other half to go.
+fn stick_origin(pos: Vec2, center: Vec2, radius: f32) -> Vec2 {
+    center + (pos - center).clamp_length_max(radius * STICK_ORIGIN_REACH)
 }
 
 /// Where the stick's disc has its left and bottom edges: in its own place,
@@ -2866,9 +2910,11 @@ fn read_player_input(
     }
     // In a game of Bridge Wars everyone runs (`arena`); carrying a plank,
     // at half the pace (`bridge`; Hajun, 2026-11-09: "when bride mode is
-    // toggled, decrease player speed to 1/2").
+    // toggled, decrease player speed to 1/2"), or as much of it as your
+    // team has quickened its building to at the upgrade shop (since
+    // 2026-11-14: three quarters, all of it, and a quarter over).
     let sprint = if venue == Venue::Arena { ui::ui().arena.run_speed / MOVE_SPEED } else { 1.0 };
-    let sprint = if bridging.0 { sprint * bridge::CARRY_SLOW } else { sprint };
+    let sprint = if bridging.0 { sprint * roundtown_net::bridge_wars::build_pace(&outfit.team) } else { sprint };
     // The speed potion, while it lasts; and drinking any potion, at half
     // the pace (`utility`, `arena::Outfit`).
     let rules_fast = roundtown_net::bridge_wars::FAST;
@@ -2932,6 +2978,8 @@ fn read_player_input(
     intent.walk = wish.normalize_or_zero() * speed_scale;
     intent.sprint = sprint;
     intent.jump = keyboard.just_pressed(KeyCode::Space) || controls.jump_just_pressed;
+    // The leap potion, while it lasts: five times as high.
+    intent.leap = if outfit.kit.leaping(clock.0) { roundtown_net::bridge_wars::leap_speed() } else { 1.0 };
     // A walk's own speed, facing the way it goes: the car writes its own
     // over these every frame you drive (`drive::steer`, after this), and
     // nothing else does. Until 2026-11-07 they were left as the car last
@@ -3145,7 +3193,7 @@ impl Motion<'_> {
         }
         jump.buffer = (jump.buffer - dt).max(0.0);
         if jump.buffer > 0.0 && jump.coyote > 0.0 {
-            jump.velocity_y = JUMP_SPEED;
+            jump.velocity_y = JUMP_SPEED * intent.leap;
             jump.buffer = 0.0;
             jump.coyote = 0.0;
         }
@@ -4417,6 +4465,7 @@ mod ground_tests {
                     pace: Some(40.0),
                     face: Some(Vec3::X),
                     sprint: 1.0,
+                    leap: 1.0,
                 },
                 WalkCycle::default(),
             ))
@@ -4593,6 +4642,76 @@ mod body_tests {
     use super::*;
 
     const DT: f32 = 1.0 / 120.0;
+
+    #[test]
+    fn the_stick_s_middle_is_set_no_further_than_half_its_radius_from_its_own() {
+        let (center, radius) = (Vec2::new(200.0, 600.0), 100.0);
+        // A finger put down near the stick's own middle: the middle is
+        // where it went down, and nothing is pushed yet.
+        for pos in [center, center + Vec2::new(30.0, -20.0), center + Vec2::new(0.0, 50.0)] {
+            assert!(stick_origin(pos, center, radius).distance(pos) < 1e-4, "{pos}");
+        }
+        // Put down on its very bottom edge: the middle is half a radius
+        // down from the stick's own, the same way out, and the finger is
+        // already half a radius past it, with the other half to go for
+        // full speed.
+        let low = center + Vec2::new(0.0, 100.0);
+        let origin = stick_origin(low, center, radius);
+        assert!(origin.distance(center + Vec2::new(0.0, 50.0)) < 1e-4, "{origin}");
+        let pushed = (low - origin) / radius;
+        assert!((pushed.length() - 0.5).abs() < 1e-4);
+        let full = (low + Vec2::new(0.0, 50.0) - origin) / radius;
+        assert!((full.length() - 1.0).abs() < 1e-4, "full speed is half a radius further on");
+        // Anywhere in what counts as on the stick, a little past its
+        // edge, at any angle: on the edge of that half, the same way out.
+        for angle in [0.3f32, 1.9, 3.7, 5.5] {
+            let pos = center + Vec2::from_angle(angle) * radius * 1.15;
+            let origin = stick_origin(pos, center, radius);
+            assert!((origin.distance(center) - radius * STICK_ORIGIN_REACH).abs() < 1e-3);
+            assert!((origin - center).angle_to(pos - center).abs() < 1e-4);
+        }
+    }
+
+    #[test]
+    fn on_a_leap_potion_a_jump_goes_five_times_as_high() {
+        // Open ground, its top at no height.
+        let island = island(&[(Vec3::new(-40.0, -2.0, -40.0), Vec3::new(40.0, LAND_TOP, 40.0))]);
+        let rise = |leap: f32| {
+            let mut transform = Transform::from_translation(Vec3::new(0.0, LAND_TOP, 0.0));
+            let mut jump = PlayerJump::default();
+            let mut highest = 0.0f32;
+            for frame in 0..600 {
+                let motion = Motion {
+                    ground: Ground::bare(&island),
+                    solids: &[],
+                    stays_ashore: false,
+                    dt: DT,
+                    elapsed: frame as f32 * DT,
+                    melee: ui::ui().melee,
+                };
+                let intent = Intent {
+                    jump: frame == 5,
+                    leap,
+                    ..default()
+                };
+                motion.step(&mut transform, &mut jump, &mut Shove::default(), &intent);
+                highest = highest.max(transform.translation.y - LAND_TOP);
+            }
+            // Down again by the end.
+            assert!((transform.translation.y - LAND_TOP).abs() < 1e-3, "still {} up", transform.translation.y);
+            highest
+        };
+        let (jump, leap) = (rise(1.0), rise(roundtown_net::bridge_wars::leap_speed()));
+        assert!((jump - 1.64).abs() < 0.08, "a jump is {jump} m");
+        assert!((leap / jump - roundtown_net::bridge_wars::LEAP).abs() < 0.2, "a leap is {leap} m, a jump {jump}");
+        // No faster off the ground, and no higher, than the server takes
+        // a move for (`server/src/players.rs`: a rise of 8.5 * 1.3 m/s,
+        // with 4 m in hand): the most it is ever ahead of that is well
+        // inside what is in hand.
+        let speed = JUMP_SPEED * roundtown_net::bridge_wars::leap_speed();
+        let most_ahead = (speed - 8.5 * 1.3).powi(2) / (2.0 * GRAVITY);
+        assert!(most_ahead < 3.0, "{most_ahead} m ahead of what the server lets a body rise");
+    }
 
     /// A body on `island` for `frames` frames, from `at`, walking `walk` and
     /// jumping on frame `jump_on`: where it is after each.

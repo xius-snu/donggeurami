@@ -14,22 +14,26 @@
 //! "Log In", under Start, is for an account made on another device, which
 //! is not to be had yet, and says so when pressed.
 //!
-//! Typing the name: on desktop the keys; on a phone the soft keyboard, which
-//! the window's `ime_enabled` asks for. An iPhone's sends each letter as a
-//! key press, and Return as a newline. Android's sends no keys at all and
-//! writes into a text of its own, which the name is read off every frame
-//! ([`android_text`]). Only plain ASCII the game's font can draw is kept
-//! (`roundtown_net::profile`): no Hangul. A phone lying on its side has its
-//! keyboard over most of the screen, so the name's page, and the settings'
-//! Edit name, slide up out from under it ([`Keyboard`],
-//! [`LiftsForKeyboard`]).
+//! Typing the name: on desktop the keys, and whatever its input method
+//! composes; on a phone the soft keyboard, which the window's `ime_enabled`
+//! asks for. An iPhone's sends each letter as a key press, and Return as a
+//! newline. Android's sends no keys at all and writes into a text of its
+//! own, which the name is read off every frame ([`android_text`]). What is
+//! kept is what the game writes (`roundtown_net::text`): English, Korean
+//! and Vietnamese since 2026-11-14 (Hajun: "i need korean text to be able
+//! to work in the global chat not just english. same for username and send
+//! message", "also vietnamese text as well"), plain ASCII until then. A
+//! phone lying on its side has its keyboard over most of the screen, so the
+//! name's page, and the settings' Edit name, slide up out from under it
+//! ([`Keyboard`], [`LiftsForKeyboard`]).
 
 #[cfg(not(target_os = "android"))]
-use bevy::input::keyboard::{Key, KeyboardInput};
+use bevy::input::keyboard::Key;
 use bevy::prelude::*;
-#[cfg(not(target_os = "android"))]
-use bevy::window::Ime;
 use bevy::window::PrimaryWindow;
+#[cfg(not(target_os = "android"))]
+use bevy::window::{Ime, WindowEvent};
+use roundtown_net::text as letters;
 use roundtown_net::{Ask, BOY_LOOKS, GIRL_LOOKS, Member, PEOPLE_LOOKS, profile};
 use serde::{Deserialize, Serialize};
 
@@ -263,9 +267,15 @@ impl Signup {
 #[derive(Resource)]
 pub(crate) struct NameBox {
     up: bool,
-    /// The name as typed so far.
+    /// What has been typed so far, as the keyboard sent it: a letter may
+    /// still be in its pieces (`roundtown_net::text::piece`).
     text: String,
-    /// The most characters it takes.
+    /// What a desktop's input method is in the middle of composing, a
+    /// Hangul syllable not yet done: shown after what is typed, and not
+    /// yet part of it.
+    composing: String,
+    /// The most it takes, in widths (`roundtown_net::text::length`: a
+    /// Hangul syllable is two).
     most: usize,
     /// Seconds the caret has blinked for.
     blink: f32,
@@ -281,6 +291,7 @@ impl Default for NameBox {
         Self {
             up: false,
             text: String::new(),
+            composing: String::new(),
             most: profile::LONGEST,
             blink: 0.0,
             entered: false,
@@ -296,10 +307,11 @@ impl NameBox {
     }
 
     /// A box has come up, with `text` in it to go on from, which takes up
-    /// to `most` characters, each one a name may be made of.
+    /// to `most` widths of what the game writes.
     pub(crate) fn open_for(&mut self, text: &str, most: usize) {
         self.up = true;
         self.text = text.to_string();
+        self.composing.clear();
         self.most = most;
         self.blink = 0.0;
         self.entered = false;
@@ -311,6 +323,7 @@ impl NameBox {
     pub(crate) fn close(&mut self) {
         self.up = false;
         self.entered = false;
+        self.composing.clear();
     }
 
     /// Whether a box is up.
@@ -318,14 +331,33 @@ impl NameBox {
         self.up
     }
 
-    /// What has been typed so far.
+    /// What has been typed so far, as the keyboard sent it, without what is
+    /// still being composed: for going on from. What is in the box, to
+    /// show or to take, is [`shown`](Self::shown).
     pub(crate) fn text(&self) -> &str {
         &self.text
     }
 
+    /// What is in the box: what has been typed, each letter put together
+    /// from its pieces, and after it what is being composed, which is
+    /// taken with the rest when the box is done with by a button rather
+    /// than by Enter (a syllable not yet done is not left behind).
+    /// Whatever takes it for a name, a line or a message cleans it
+    /// (`roundtown_net::text::clean`).
+    pub(crate) fn shown(&self) -> String {
+        let mut shown = letters::whole(&self.text);
+        shown.push_str(&self.composing);
+        shown
+    }
+
+    /// Whether nothing has been typed, nor is being composed.
+    pub(crate) fn is_empty(&self) -> bool {
+        self.text.is_empty() && self.composing.is_empty()
+    }
+
     /// The name as typed, if it is a name.
     pub(crate) fn name(&self) -> Option<String> {
-        profile::name(&self.text)
+        profile::name(&self.shown())
     }
 
     /// Whether Enter has been pressed, or typed, since this was last asked.
@@ -333,14 +365,35 @@ impl NameBox {
         std::mem::take(&mut self.entered)
     }
 
-    /// Takes `c` as typed into the name: kept if it may be in one and there
-    /// is room; a newline is Enter.
+    /// The box has been tapped: a phone is asked for its keyboard again,
+    /// which brings it back if it was put away ([`keyboard`]).
+    pub(crate) fn ask_for_the_keyboard_again(&mut self) {
+        if self.up {
+            self.keyboard_again = true;
+        }
+    }
+
+    /// Takes `c` as typed into the box: kept if the game writes it, or it
+    /// is a piece of what it writes, and there is room; a newline is Enter.
     #[cfg_attr(target_os = "android", allow(dead_code))]
     fn typed(&mut self, c: char) {
         if c == '\n' || c == '\r' {
             self.entered = true;
-        } else if profile::allowed(c) && self.text.len() < self.most {
+        } else if letters::typed(c) && letters::length(&self.text) + letters::width(c) <= self.most {
             self.text.push(c);
+        }
+    }
+
+    /// What a desktop's input method is composing now: nothing, once it is
+    /// done ([`type_name`]). Shown only as far as the game writes it and
+    /// there is room for it after what is typed.
+    #[cfg_attr(target_os = "android", allow(dead_code))]
+    fn compose(&mut self, composing: &str) {
+        let composing: String = composing.chars().filter(|c| letters::typed(*c)).collect();
+        let fits = letters::length(&self.text) + letters::length(&composing) <= self.most;
+        let composing = if fits { composing } else { String::new() };
+        if self.composing != composing {
+            self.composing = composing;
         }
     }
 }
@@ -436,9 +489,9 @@ pub(crate) fn plugin(app: &mut App) {
             Update,
             (
                 #[cfg(target_os = "android")]
-                android_text,
+                android_text.in_set(Typed),
                 #[cfg(not(target_os = "android"))]
-                type_name,
+                type_name.in_set(Typed),
                 redraw,
                 act,
                 show_name,
@@ -454,6 +507,12 @@ pub(crate) fn plugin(app: &mut App) {
                 .chain(),
         );
 }
+
+/// What is typed being taken into the box that is up ([`NameBox`]), each
+/// frame: whatever opens a box on a key runs after this, so that the key
+/// that opened it is not typed into it (`chat`).
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct Typed;
 
 /// The first time the app is run, or the name and the character are not
 /// set: the pages come before the town. And on desktop with `RT_SIGNUP` set,
@@ -862,67 +921,92 @@ fn tap_box(click: On<Pointer<Click>>, boxes: Query<(), With<NameBoxTap>>, mut na
 }
 
 /// Keys, on desktop, and on a phone the keyboard's Enter: typed into the
-/// name while a box for it is up. Each letter comes as a key press with the
-/// letter in it, and a space and a backspace as themselves; what a desktop's
-/// own input method composes, Hangul say, comes whole once it is done, and
-/// is kept only as far as the game's font can draw it, which is not at all.
+/// box that is up. Each letter comes as a key press with the letter in it,
+/// and a space and a backspace as themselves. What a desktop's own input
+/// method composes, a Hangul syllable or a Vietnamese vowel with its tone,
+/// is shown after what is typed while it is composed (`Ime::Preedit`) and
+/// typed once it is done (`Ime::Commit`).
+///
+/// **Both are read from one list, in the order they came**
+/// (`WindowEvent`): a syllable is done by the very key that comes after
+/// it, a space say, and read as two lists, every key and then everything
+/// composed, the space went in before the syllable it was typed after.
+/// (Until 2026-11-14 it was read so, and nothing composed was kept
+/// anyway, the game's font having no Hangul.)
 #[cfg(not(target_os = "android"))]
-fn type_name(
-    mut keys: MessageReader<KeyboardInput>,
-    mut composed: MessageReader<Ime>,
-    mut name_box: ResMut<NameBox>,
-) {
+fn type_name(mut events: MessageReader<WindowEvent>, mut name_box: ResMut<NameBox>) {
     if !name_box.up {
-        keys.clear();
-        composed.clear();
+        events.clear();
         return;
     }
-    for key in keys.read() {
-        if !key.state.is_pressed() {
-            continue;
-        }
-        match &key.logical_key {
-            Key::Character(text) => text.chars().for_each(|c| name_box.typed(c)),
-            Key::Space => name_box.typed(' '),
-            Key::Backspace => {
-                name_box.text.pop();
+    for event in events.read() {
+        match event {
+            WindowEvent::KeyboardInput(key) if key.state.is_pressed() => match &key.logical_key {
+                Key::Character(text) => text.chars().for_each(|c| name_box.typed(c)),
+                Key::Space => name_box.typed(' '),
+                Key::Backspace => {
+                    name_box.text.pop();
+                }
+                _ => {}
+            },
+            WindowEvent::Ime(Ime::Preedit { value, .. }) => name_box.compose(value),
+            WindowEvent::Ime(Ime::Commit { value, .. }) => {
+                name_box.compose("");
+                value.chars().for_each(|c| name_box.typed(c));
             }
+            WindowEvent::Ime(Ime::Disabled { .. }) => name_box.compose(""),
             _ => {}
-        }
-    }
-    for event in composed.read() {
-        if let Ime::Commit { value, .. } = event {
-            value.chars().for_each(|c| name_box.typed(c));
         }
     }
 }
 
-/// What a text would leave in a box that takes `most` characters: every
-/// character of it that may be in a name, as many as fit; and whether
-/// Enter was in it.
+/// What a text would leave in a box that takes `most` widths: every letter
+/// of it that the game writes, or that is a piece of one, as many as fit;
+/// and whether Enter was in it.
 #[cfg_attr(not(target_os = "android"), allow(dead_code))]
 fn typed(text: &str, most: usize) -> (String, bool) {
     let mut name = String::new();
+    let mut long = 0;
     let mut entered = false;
     for c in text.chars() {
         if c == '\n' || c == '\r' {
             entered = true;
-        } else if profile::allowed(c) && name.len() < most {
+        } else if letters::typed(c) && long + letters::width(c) <= most {
+            long += letters::width(c);
             name.push(c);
         }
     }
     (name, entered)
 }
 
+/// How long `text` is as the activity's text counts it, which is as Java
+/// does: in UTF-16 units, one to a Hangul syllable where UTF-8 has three
+/// bytes. Where the keyboard's caret goes, after all of it.
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+fn java_length(text: &str) -> usize {
+    text.encode_utf16().count()
+}
+
 /// On Android, the soft keyboard sends no keys: it writes into a text the
 /// activity keeps (`GameTextInput`), which the name is read off every frame
-/// while a box for it is up. Whatever may not be in a name, or past its
-/// end, is taken back out of that text, so that the keyboard goes on from
-/// what is shown.
+/// while a box for it is up. Whatever the game does not write, or is past
+/// the box's end, is taken back out of that text, so that the keyboard goes
+/// on from what is shown. A syllable the keyboard is still composing is in
+/// that text as far as it has got, and is left alone: the text is written
+/// back only when something was taken out of it, which ends whatever was
+/// being composed.
 #[cfg(target_os = "android")]
-fn android_text(mut name_box: ResMut<NameBox>) {
+fn android_text(mut name_box: ResMut<NameBox>, time: Res<Time<Real>>, mut seen: Local<(u32, f64)>) {
+    // The keyboard's own Enter, which is no key and no letter: counted by
+    // the activity ([`IME_ACTIONS`]). One pressed with no box up is
+    // forgotten.
+    let pressed = IME_ACTIONS.load(std::sync::atomic::Ordering::Relaxed);
+    let by_its_key = enter_pressed(pressed, &mut seen, time.elapsed_secs_f64());
     if !name_box.up {
         return;
+    }
+    if by_its_key {
+        name_box.entered = true;
     }
     let Some(app) = bevy::android::ANDROID_APP.get() else {
         return;
@@ -930,9 +1014,10 @@ fn android_text(mut name_box: ResMut<NameBox>) {
     let mut state = app.text_input_state();
     let (name, entered) = typed(&state.text, name_box.most);
     if name != state.text {
+        let end = java_length(&name);
         state.text.clone_from(&name);
-        state.selection.start = name.len();
-        state.selection.end = name.len();
+        state.selection.start = end;
+        state.selection.end = end;
         state.compose_region = None;
         app.set_text_input_state(state);
     }
@@ -944,6 +1029,57 @@ fn android_text(mut name_box: ResMut<NameBox>) {
     }
 }
 
+/// How many times the soft keyboard's own Enter has been pressed, on
+/// Android, since the app opened: its action key, "Done" or a tick or an
+/// arrow, by the keyboard. That key is no key press and types no letter:
+/// the keyboard tells the activity to do what the box is for
+/// (`InputConnection.performEditorAction`, which `GameActivity` hands to
+/// `onEditorAction`), and `MainActivity` counts it here ([`ime_action`]),
+/// as it hands over the keyboard's height ([`IME_INSET`]). Until
+/// 2026-11-14 nothing heard it (Hajun: "in the friend popup's Add Friend
+/// popup, when i type the name, and i press enter nothing happens - only
+/// when i press the search bar"): a name was looked for, or saved, only by
+/// its button. A newline in the text would have done it ([`typed`]), but
+/// the activity's text is one line, and takes none.
+#[cfg(target_os = "android")]
+static IME_ACTIONS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// `MainActivity.imeAction(int)`: the activity, on its own thread, saying
+/// that the keyboard's action key was pressed. JNI finds it by this name.
+#[cfg(target_os = "android")]
+#[unsafe(no_mangle)]
+pub extern "C" fn Java_town_donggeurami_MainActivity_imeAction(
+    _env: *mut std::ffi::c_void,
+    _class: *mut std::ffi::c_void,
+    _action: i32,
+) {
+    IME_ACTIONS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// How long after one press of the keyboard's Enter another counts, in
+/// seconds: an Enter that comes as a key, a keyboard's that is plugged in,
+/// is handed over twice, once as it goes down and once as it comes up.
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+const ENTER_AGAIN: f64 = 0.25;
+
+/// Whether the keyboard's Enter has been pressed since this was last
+/// asked, `pressed` being how many times it has been in all, `seen` how
+/// many of those have been heard of and when the last one that counted
+/// was, and `now` the time, in seconds: once for presses that come within
+/// [`ENTER_AGAIN`] of each other.
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+fn enter_pressed(pressed: u32, seen: &mut (u32, f64), now: f64) -> bool {
+    if pressed == seen.0 {
+        return false;
+    }
+    seen.0 = pressed;
+    if now - seen.1 <= ENTER_AGAIN {
+        return false;
+    }
+    seen.1 = now;
+    true
+}
+
 /// Starts the activity's text from `name`, as a box for it comes up.
 #[cfg(target_os = "android")]
 fn android_reset(name: &str) {
@@ -951,9 +1087,10 @@ fn android_reset(name: &str) {
         return;
     };
     let mut state = app.text_input_state();
+    let end = java_length(name);
     state.text = name.to_string();
-    state.selection.start = name.len();
-    state.selection.end = name.len();
+    state.selection.start = end;
+    state.selection.end = end;
     state.compose_region = None;
     app.set_text_input_state(state);
 }
@@ -1049,7 +1186,7 @@ fn show_name(
     }
     name_box.blink += time.delta_secs();
     let caret = (name_box.blink / BLINK_SECS) as u32 % 2 == 0;
-    let text = shown(&name_box.text, caret);
+    let text = shown(&name_box.shown(), caret);
     for mut shown in &mut texts {
         if shown.0 != text {
             shown.0.clone_from(&text);
@@ -1375,12 +1512,45 @@ mod tests {
     }
 
     #[test]
+    fn the_keyboard_s_enter_counts_once_however_it_is_handed_over() {
+        // Nothing pressed: nothing.
+        let mut seen = (0, f64::NEG_INFINITY);
+        assert!(!enter_pressed(0, &mut seen, 1.0));
+        // Pressed once: Enter, once.
+        assert!(enter_pressed(1, &mut seen, 2.0));
+        assert!(!enter_pressed(1, &mut seen, 2.1));
+        // Handed over twice for one press, down and up, a moment apart:
+        // still once.
+        assert!(enter_pressed(2, &mut seen, 5.0));
+        assert!(!enter_pressed(3, &mut seen, 5.05));
+        assert!(!enter_pressed(3, &mut seen, 9.0));
+        // And again later is another press. One made with no box up is
+        // forgotten by having been asked about.
+        assert!(enter_pressed(4, &mut seen, 9.5));
+        assert!(enter_pressed(7, &mut seen, 20.0));
+        assert!(!enter_pressed(7, &mut seen, 21.0));
+    }
+
+    #[test]
     fn what_is_typed_is_kept_as_far_as_it_can_be_a_name() {
         let name = profile::LONGEST;
         assert_eq!(typed("Hajun", name), ("Hajun".into(), false));
         assert_eq!(typed("Hajun\n", name), ("Hajun".into(), true));
-        assert_eq!(typed("하준 Park", name), (" Park".into(), false));
+        assert_eq!(typed("하준 Park", name), ("하준 Park".into(), false));
         assert_eq!(typed("a very long name indeed", name), ("a very long name".into(), false));
+        // A Hangul syllable takes the room of two letters: eight of them,
+        // and a syllable still being composed is one as far as it has got.
+        assert_eq!(typed("동그라미타운주민들", name), ("동그라미타운주민".into(), false));
+        assert_eq!(typed("동그라미타운주ㅁ", name), ("동그라미타운주ㅁ".into(), false));
+        assert_eq!(typed("동그라미타운주민a", name), ("동그라미타운주민".into(), false));
+        // Vietnamese, a letter each whatever marks it has, in one piece or
+        // in two; and what the game does not write is left out.
+        assert_eq!(typed("Nguyễn Văn Hải!!!", name), ("Nguyễn Văn Hải!!".into(), false));
+        assert_eq!(typed("Ha\u{309}i", name), ("Ha\u{309}i".into(), false));
+        assert_eq!(typed("gg\u{1F600}!", name), ("gg!".into(), false));
+        // Where the keyboard's caret goes after it, as Java counts.
+        assert_eq!((java_length("Hajun"), java_length("하준"), java_length("Hải")), (5, 2, 3));
+        assert_eq!("하준".len(), 6);
         // A box for something longer takes that much, and the same letters.
         assert_eq!(typed("a very long name indeed", 40), ("a very long name indeed".into(), false));
         let mut search = NameBox::default();
@@ -1405,6 +1575,48 @@ mod tests {
         let mut short = NameBox::default();
         short.typed('a');
         assert_eq!(short.name(), None, "one letter is not a name");
+        // Korean: one syllable is a name, and eight are as many as fit.
+        let mut korean = NameBox::default();
+        korean.open("");
+        korean.typed('민');
+        assert_eq!(korean.name().as_deref(), Some("민"));
+        for c in "동그라미타운주민들".chars() {
+            korean.typed(c);
+        }
+        assert_eq!(korean.text(), "민동그라미타운주");
+        // What a desktop's input method is composing is shown after what
+        // is typed and is no part of it until it is done.
+        let mut composing = NameBox::default();
+        composing.open("");
+        composing.typed('하');
+        composing.compose("ㅈ");
+        assert_eq!((composing.text(), composing.shown().as_str()), ("하", "하ㅈ"));
+        assert!(!composing.is_empty());
+        composing.compose("준");
+        assert_eq!(composing.shown(), "하준");
+        composing.compose("");
+        composing.typed('준');
+        assert_eq!((composing.text(), composing.shown().as_str(), composing.name().as_deref()), ("하준", "하준", Some("하준")));
+        // Taken with what is typed, if the box is done with before it is.
+        composing.compose("ㅎ");
+        assert_eq!(composing.name().as_deref(), Some("하준ㅎ"));
+        // Not shown past the end of the box: eight syllables are a name.
+        let mut full = NameBox::default();
+        full.open("동그라미타운주민");
+        full.compose("들");
+        assert_eq!(full.shown(), "동그라미타운주민");
+        composing.compose("x");
+        composing.close();
+        assert!(composing.composing.is_empty(), "nothing composed is kept for the next box");
+        // Vietnamese typed in pieces is shown, and kept, put together.
+        let mut vietnamese = NameBox::default();
+        vietnamese.open("");
+        for c in "Ha\u{309}i Vie\u{302}\u{323}t".chars() {
+            vietnamese.typed(c);
+        }
+        assert_eq!(vietnamese.shown(), "Hải Việt");
+        assert_eq!(vietnamese.name().as_deref(), Some("Hải Việt"));
+        assert!(NameBox::default().is_empty());
     }
 
     #[test]

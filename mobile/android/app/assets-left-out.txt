@@ -64,6 +64,10 @@ ui.ron
 # into the game by src/font.rs, and its licence: a phone never reads either.
 Inter-Regular.ttf
 LICENSE-inter.txt
+# And Pretendard Regular, which draws Hangul (since 2026-11-14), compiled in
+# beside it, and its licence.
+Pretendard-Regular.ttf
+LICENSE-pretendard.txt
 
 # The plank texture of the PvP map's bridges (2026-11-07), which the exporter
 # embedded in pvptownmap.glb until the bridges went out of the map

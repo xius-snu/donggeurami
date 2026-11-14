@@ -82,7 +82,9 @@ use bevy_replicon::prelude::*;
 use roundtown_net::bots::{Seen, Skill, Squad, Stick, View};
 use roundtown_net::bridge_wars::*;
 use roundtown_net::nav::Nav;
-use roundtown_net::{Blasted, Dynamite};
+use roundtown_net::chat::{CREDIT_SECS, Feed, Weapon};
+use roundtown_net::nav::PLANK_TOP;
+use roundtown_net::{Blasted, BuilderOf, Dynamite};
 use roundtown_net::social::{Minigame, XP_PLAYED, XP_WON};
 use roundtown_net::{
     ARENA_ANCHORS, ARENA_ISLAND_RADIUS, ARENA_ISLANDS, ARENA_SEATS, ARENA_TEAMS, ArenaRound,
@@ -92,7 +94,7 @@ use roundtown_net::{
 
 use crate::Config;
 use crate::players::{Body, Everyone, Plays, Who, move_to, place, tell};
-use crate::rooms::{InRoom, Room, Towns};
+use crate::rooms::{InRoom, NotFor, Room, Towns};
 use crate::social::Social;
 
 /// How long a game goes on with nobody connected to it, in seconds, before
@@ -122,6 +124,12 @@ const THINK_EVERY: f32 = 3.0;
 const STROLL: f32 = 7.0;
 /// How near a bot stands off whoever it goes for, as a share of the reach.
 const PRESS_IN: f32 = 0.7;
+/// The most builders one seat can have out for the room to be sent
+/// ([`BuilderOf`]), and how long one goes on being sent with nothing heard
+/// of it from its owner's device, in seconds: a device says where its
+/// builder is as it walks, and that it is gone.
+const MOST_BUILDERS: usize = 4;
+const BUILDER_SILENT: f64 = 2.0;
 
 pub(crate) fn plugin(app: &mut App) {
     app.init_resource::<Arenas>()
@@ -240,6 +248,19 @@ struct Game {
     /// players: seeded, so that a game played in a test plays the same
     /// each time.
     dice: fastrand::Rng,
+    /// Who last hit each seat, how far into the fight, and with what: a
+    /// fall soon after is their doing ([`CREDIT_SECS`], [`Game::fall`]).
+    last_hit: Vec<Option<(usize, f32, Weapon)>>,
+    /// The builders people's Bridge Builders have sent off, as the room
+    /// is sent them ([`BuilderOf`], since 2026-11-14): by seat and the
+    /// owner's number for it, the body the room is sent and when its
+    /// owner's device last said where it was ([`Ask::Builder`]).
+    builders: HashMap<(usize, u8), (Entity, f64)>,
+    /// Where the builder each of the computer's players has out is now,
+    /// by seat, and which way it faces ([`Squad::builder_at`]); and the
+    /// body the room is sent for each, with where it was last sent as.
+    bot_builders: [Option<(Vec3, f32)>; ARENA_SEATS],
+    shown_bot_builders: HashMap<usize, (Entity, Spot)>,
     /// What its room was last sent, to send again only what has changed.
     sent: Option<ArenaRound>,
     sent_seats: Vec<Member>,
@@ -306,6 +327,9 @@ enum Event {
     /// One of the computer's players has laid this rung: the room is sent
     /// it, as it is a person's ([`Ask::Rung`]).
     Rung(Plank),
+    /// Something for the chat ([`Feed`]): everyone in the game is told, or
+    /// the one team it is for.
+    Feed(Feed),
 }
 
 /// The turn about the upright a body facing as `turn` has, in radians:
@@ -402,6 +426,10 @@ impl Game {
             squad: Squad::new(seed, Skill::MODERATE),
             old_bots: false,
             dice,
+            last_hit: Vec::new(),
+            builders: HashMap::new(),
+            bot_builders: [None; ARENA_SEATS],
+            shown_bot_builders: HashMap::new(),
             sent: None,
             sent_seats: Vec::new(),
             sent_purses: Vec::new(),
@@ -518,7 +546,69 @@ impl Game {
         if !self.playing() || !self.alive(seat) || !at_a_shop(at, sold_at(ware)) {
             return false;
         }
-        self.outfits.buy(seat, ware, &mut self.purses[seat])
+        let bought = self.outfits.buy(seat, ware, &mut self.purses[seat]);
+        // What is the whole team's, the team is told of ("Bob purchased
+        // Heal Pool for your team."): how far it has it now, for what goes
+        // by steps.
+        if bought && sold_at(ware) == Shop::Upgrades {
+            let team = self.outfits.team(seat);
+            let step = match ware {
+                Ware::Forge => team.forge,
+                Ware::BetterShields => team.shields,
+                Ware::Trap => team.traps,
+                Ware::BuildSpeed => team.build_speed,
+                _ => 1,
+            };
+            self.say(Feed::Bought {
+                by: seat as u8,
+                ware,
+                step,
+            });
+        }
+        bought
+    }
+
+    /// Says `feed` in the game's chat ([`Event::Feed`]): to everyone in
+    /// it, or to the one team it is for. A zombie's death is nothing to
+    /// say: there are twelve of them, each back a moment after it is put
+    /// down (mine: Hajun's "when anyone dies" was said of players).
+    fn say(&mut self, feed: Feed) {
+        let died = match feed {
+            Feed::Fell { seat } | Feed::Knocked { seat, .. } | Feed::Killed { seat, .. } => Some(usize::from(seat)),
+            Feed::Bought { .. } | Feed::AnchorBroken { .. } => None,
+        };
+        if died.is_some_and(|seat| seat >= ARENA_SEATS) {
+            return;
+        }
+        self.events.push(Event::Feed(feed));
+    }
+
+    /// What whoever is in `seat` hits with: the sword in their hand, by
+    /// its tier, or a bare hand.
+    fn weapon_of(&self, seat: usize) -> Weapon {
+        match self.outfits.kit(seat).sword {
+            0 => Weapon::Fists,
+            tier => Weapon::Sword(tier),
+        }
+    }
+
+    /// `seat` has fallen into the void: dead ([`Game::die`]), by the
+    /// doing of whoever last hit them, if that was no longer ago than
+    /// [`CREDIT_SECS`] ("Bob knocked Hannah off the world."), and by
+    /// nobody's otherwise ("Bob fell off the world.").
+    fn fall(&mut self, seat: usize) {
+        info!("Bridge Wars game {}: seat {seat} fell", self.id);
+        let by = self.last_hit[seat]
+            .filter(|&(hitter, when, _)| hitter != seat && self.elapsed - when <= CREDIT_SECS)
+            .map(|(hitter, ..)| hitter);
+        self.say(match by {
+            Some(by) => Feed::Knocked {
+                seat: seat as u8,
+                by: by as u8,
+            },
+            None => Feed::Fell { seat: seat as u8 },
+        });
+        self.die(seat);
     }
 
     /// What the room is shown of how it is going.
@@ -616,6 +706,7 @@ impl Game {
         self.vacant[seat] = false;
         self.health[seat] = HEALTH;
         self.out[seat] = false;
+        self.last_hit[seat] = None;
         self.since_join = 0.0;
         // In the waiting room, until the game says otherwise: where a
         // person is put as they are seated, and where the computer's
@@ -647,6 +738,7 @@ impl Game {
         self.hurt[seat] = 0.0;
         self.dead_for[seat] = None;
         self.out[seat] = true;
+        self.last_hit[seat] = None;
         self.rungs[seat] = 0;
         self.purses[seat] = Purse::default();
         self.present[seat] = false;
@@ -685,6 +777,7 @@ impl Game {
         self.hurt.push(0.0);
         self.dead_for.push(None);
         self.out.push(true);
+        self.last_hit.push(None);
         self.rungs.push(0);
         self.purses.push(Purse::default());
         self.at.push(Vec3::ZERO);
@@ -708,6 +801,7 @@ impl Game {
     /// while later ([`ZOMBIE_RESPAWN_SECS`]).
     fn die(&mut self, seat: usize) {
         self.health[seat] = 0.0;
+        self.last_hit[seat] = None;
         self.minds[seat] = Mind::default();
         // The metres of bridge one of the computer's players had go with
         // the rest, and the bridge it was laying is anyone's to finish.
@@ -749,19 +843,27 @@ impl Game {
         }
         self.hurt[victim] = HURT_TIME;
         let damage = self.outfits.punch(DAMAGE, hitter, victim);
-        self.harm(victim, hitter, from, running, damage);
+        let with = self.weapon_of(hitter);
+        self.harm(victim, hitter, from, running, damage, with);
     }
 
-    /// Takes `damage` off `victim`, by `hitter`'s doing, and no more than
-    /// that: dead at none. Whoever was unseen is seen again for being
+    /// Takes `damage` off `victim`, by `hitter`'s doing, `with` that, and
+    /// no more than that: dead at none, which the game's chat says
+    /// ([`Feed::Killed`]). Whoever was unseen is seen again for being
     /// hit. Whether they are still standing. What a stick of dynamite's
     /// blast does to whoever it reaches: it knocks nobody.
-    fn hurt_by(&mut self, victim: usize, hitter: usize, damage: f32) -> bool {
+    fn hurt_by(&mut self, victim: usize, hitter: usize, damage: f32, with: Weapon) -> bool {
         self.outfits.reveal(victim);
         self.health[victim] = (self.health[victim] - damage).max(0.0);
         self.since_hit[victim] = 0.0;
+        self.last_hit[victim] = Some((hitter, self.elapsed, with));
         if self.health[victim] <= 0.0 {
             info!("Bridge Wars game {}: seat {hitter} killed seat {victim}", self.id);
+            self.say(Feed::Killed {
+                seat: victim as u8,
+                by: hitter as u8,
+                with,
+            });
             self.die(victim);
             return false;
         }
@@ -769,12 +871,12 @@ impl Game {
         true
     }
 
-    /// Takes `damage` off `victim`, struck from `from` by `hitter`: dead at
-    /// none, and knocked back from there otherwise, further if `running`,
-    /// a person through their device ([`Event::Knocked`]) and a bot here.
-    /// Whoever was unseen is seen again for being hit.
-    fn harm(&mut self, victim: usize, hitter: usize, from: Spot, running: bool, damage: f32) {
-        if !self.hurt_by(victim, hitter, damage) {
+    /// Takes `damage` off `victim`, struck from `from` by `hitter`, `with`
+    /// that: dead at none, and knocked back from there otherwise, further
+    /// if `running`, a person through their device ([`Event::Knocked`])
+    /// and a bot here. Whoever was unseen is seen again for being hit.
+    fn harm(&mut self, victim: usize, hitter: usize, from: Spot, running: bool, damage: f32, with: Weapon) {
+        if !self.hurt_by(victim, hitter, damage, with) {
             return;
         }
         if self.brained(victim) {
@@ -958,6 +1060,10 @@ impl Game {
         self.anchors[team] = (self.anchors[team] - damage).max(0.0);
         if self.anchors[team] <= 0.0 {
             info!("Bridge Wars game {}: seat {hitter} broke team {team}'s anchor", self.id);
+            self.say(Feed::AnchorBroken {
+                team: team as u8,
+                by: hitter as u8,
+            });
         }
         true
     }
@@ -1113,9 +1219,18 @@ impl Game {
                 self.wound(victim, seat, was, running);
             }
             if self.minds[seat].falling.is_some() && self.at[seat].y < ISLAND_TOP - FALL_TO_DIE {
-                info!("Bridge Wars game {}: seat {seat} fell", self.id);
-                self.die(seat);
+                self.fall(seat);
             }
+        }
+        // Where the builder each of the computer's players has out is
+        // now, for the room to be shown it (`flush`): on the ground or on
+        // its own planks, facing the way it walks.
+        for seat in 0..ARENA_SEATS {
+            let builder = if seat < self.seats.len() && self.brained(seat) { self.squad.builder_at(seat) } else { None };
+            self.bot_builders[seat] = builder.map(|(at, way)| {
+                let height = self.nav.ground(at).unwrap_or(PLANK_TOP);
+                (Vec3::new(at.x, height, at.y), (-way.x).atan2(-way.y))
+            });
         }
     }
 
@@ -1207,8 +1322,7 @@ impl Game {
             self.health[seat] = (self.health[seat] + HEALTH * HEALING).min(HEALTH);
         }
         if self.at[seat].y < ISLAND_TOP - FALL_TO_DIE {
-            info!("Bridge Wars game {}: seat {seat} fell", self.id);
-            self.die(seat);
+            self.fall(seat);
         }
     }
 
@@ -1234,11 +1348,19 @@ impl Game {
             let burst = flight.at();
             let from = Spot::of(burst - Vec3::Y * FIREBALL_HEIGHT, Quat::IDENTITY);
             debug!("Bridge Wars game {}: seat {thrower}'s fireball burst at {burst:.1}, {:.1} m on", self.id, flight.flown);
+            let mut hurt = false;
             for (seat, feet) in others {
                 if in_blast(burst, feet) {
                     let damage = self.outfits.through(seat, FIREBALL_DAMAGE);
-                    self.harm(seat, *thrower, from, false, damage);
+                    self.harm(seat, *thrower, from, false, damage, Weapon::Fireball);
+                    hurt = true;
                 }
+            }
+            // To have hurt someone is to have attacked them: whoever
+            // threw it unseen is seen again ("attacking another person or
+            // anchor reveals u").
+            if hurt {
+                self.outfits.reveal(*thrower);
             }
             self.events.push(Event::Burst(*ball));
             false
@@ -1282,9 +1404,12 @@ impl Game {
                 .filter(|&seat| arena_team(seat) != team && self.alive(seat) && self.present[seat])
                 .filter(|&seat| in_dynamite(at, self.at[seat]))
                 .collect();
+            if !reached.is_empty() {
+                self.outfits.reveal(stick.by);
+            }
             for seat in reached {
                 let damage = self.outfits.through(seat, DYNAMITE_DAMAGE);
-                self.hurt_by(seat, stick.by, damage);
+                self.hurt_by(seat, stick.by, damage, Weapon::Dynamite);
             }
             let planks = self.nav.blast(at.xz(), DYNAMITE_RADIUS);
             info!(
@@ -1621,8 +1746,7 @@ fn hear(
                     continue;
                 };
                 if game.playing() && game.alive(seat) {
-                    info!("Bridge Wars game {}: seat {seat} fell", game.id);
-                    game.die(seat);
+                    game.fall(seat);
                 }
             }
             Ask::Buy(ware) if matches!(room, Room::Arena(_)) => {
@@ -1666,6 +1790,56 @@ fn hear(
                             game.health[seat] = (game.health[seat] + HEALTH * HEALING).min(HEALTH);
                         }
                         debug!("Bridge Wars game {}: seat {seat} drank {drunk:?}", game.id);
+                    }
+                }
+            }
+            // Where the builder they sent off is now, for everyone else
+            // in the game to see it; or that it is gone.
+            Ask::Builder { id, spot } if matches!(room, Room::Arena(_)) => {
+                let Some((game, seat)) = arenas.of(room, body) else {
+                    continue;
+                };
+                let key = (seat, *id);
+                let Some(spot) = spot else {
+                    if let Some((shown, _)) = game.builders.remove(&key) {
+                        commands.entity(shown).try_despawn();
+                    }
+                    continue;
+                };
+                let at = spot.translation();
+                let sane = at.x.abs() < FURTHEST && at.z.abs() < FURTHEST && at.y.abs() < FURTHEST && spot.aboard.is_none();
+                if !game.playing() || !sane {
+                    continue;
+                }
+                match game.builders.get_mut(&key) {
+                    Some((shown, heard)) => {
+                        *heard = now;
+                        commands.entity(*shown).insert(*spot);
+                    }
+                    None => {
+                        let out = game.builders.keys().filter(|(owner, _)| *owner == seat).count();
+                        if out >= MOST_BUILDERS {
+                            continue;
+                        }
+                        // In its owner's name and look, and never sent to
+                        // its owner's own device, which draws its own.
+                        let member = Member {
+                            id: builder_id(game.id, seat, *id),
+                            ai: true,
+                            ..game.members[seat].clone()
+                        };
+                        let shown = commands
+                            .spawn((
+                                Replicated,
+                                member,
+                                *spot,
+                                Venue::Arena,
+                                InRoom(game.room()),
+                                NotFor(client),
+                                BuilderOf(seat as u8),
+                            ))
+                            .id();
+                        game.builders.insert(key, (shown, now));
                     }
                 }
             }
@@ -1941,6 +2115,20 @@ fn flush(
                 let entity = commands.spawn((Replicated, InRoom(room), plank)).id();
                 game.planks.push(entity);
             }
+            Event::Feed(feed) => {
+                let only = feed.only_for();
+                for seat in 0..game.seats.len().min(ARENA_SEATS) {
+                    if game.bot[seat] || game.vacant[seat] || game.gone[seat] || only.is_some_and(|team| team != arena_team(seat)) {
+                        continue;
+                    }
+                    if let Ok((body, ..)) = bodies.get(game.seats[seat])
+                        && body.room == room
+                        && let Some(client) = body.client
+                    {
+                        tell(tells, client, Tell::Feed(feed));
+                    }
+                }
+            }
             Event::Zombie(seat) => {
                 let body = commands
                     .spawn((
@@ -1970,6 +2158,49 @@ fn flush(
         next.still = (next.x, next.y, next.z) == (spot.x, spot.y, spot.z);
         if !next.same(&spot) {
             *spot = next;
+        }
+    }
+    // A builder a person sent off, with nothing heard of it from their
+    // device for a while, is gone: the device has, or its connection.
+    game.builders.retain(|_, (shown, heard)| {
+        let kept = now - *heard <= BUILDER_SILENT;
+        if !kept {
+            commands.entity(*shown).try_despawn();
+        }
+        kept
+    });
+    // The builders the computer's players have out: a body for each, in
+    // its owner's name and look, moved as it walks, and gone as it is.
+    for seat in 0..ARENA_SEATS {
+        match (game.bot_builders[seat], game.shown_bot_builders.get(&seat).copied()) {
+            (Some((at, yaw)), shown) => {
+                let mut next = Spot::of(at, Quat::from_rotation_y(yaw));
+                match shown {
+                    Some((entity, last)) => {
+                        next.still = (next.x, next.y, next.z) == (last.x, last.y, last.z);
+                        if !next.same(&last) {
+                            commands.entity(entity).insert(next);
+                            game.shown_bot_builders.insert(seat, (entity, next));
+                        }
+                    }
+                    None => {
+                        let member = Member {
+                            id: builder_id(game.id, seat, u8::MAX),
+                            ai: true,
+                            ..game.members[seat].clone()
+                        };
+                        let entity = commands
+                            .spawn((Replicated, member, next, Venue::Arena, InRoom(room), BuilderOf(seat as u8)))
+                            .id();
+                        game.shown_bot_builders.insert(seat, (entity, next));
+                    }
+                }
+            }
+            (None, Some((entity, _))) => {
+                commands.entity(entity).try_despawn();
+                game.shown_bot_builders.remove(&seat);
+            }
+            (None, None) => {}
         }
     }
 }
@@ -2168,6 +2399,14 @@ fn bot_id(game: u32, seat: usize) -> u64 {
 /// The most seats a game has: its players' and its zombies', and room.
 const MOST_SEATS: u64 = 32;
 
+/// Who the builder numbered `builder` that the one in `seat` of the game
+/// numbered `game` has sent off is to everyone ([`BuilderOf`]): clear of
+/// people's ids, of every bot's ([`bot_id`]), and of every other
+/// builder's.
+fn builder_id(game: u32, seat: usize, builder: u8) -> u64 {
+    u64::MAX / 4 - (u64::from(game) * MOST_SEATS + seat as u64) * 256 - u64::from(builder)
+}
+
 /// The first tick of a game's end: its planks, its computer players and
 /// its board go, while everyone in it is still in its room to be told so.
 /// Told the tick after, as [`end`] moves them out, they would never be: an
@@ -2194,6 +2433,13 @@ fn close(commands: &mut Commands, game: &mut Game) {
     for (_, stick) in game.shown_sticks.drain() {
         commands.entity(stick).try_despawn();
     }
+    for (_, (builder, _)) in game.builders.drain() {
+        commands.entity(builder).try_despawn();
+    }
+    for (_, (builder, _)) in game.shown_bot_builders.drain() {
+        commands.entity(builder).try_despawn();
+    }
+    game.bot_builders = [None; ARENA_SEATS];
     // Whatever the game had still to say goes unsaid: there is no room
     // left to be shown it.
     game.balls.clear();
@@ -2279,6 +2525,7 @@ mod tests {
         }
         game.seats.clear();
         game.members.clear();
+        game.last_hit.clear();
         game.minds.clear();
         game.health.clear();
         game.since_hit.clear();
@@ -2703,6 +2950,101 @@ mod tests {
         game.outfits.kits[0] = Kit { unseen_until: 600, ..Kit::default() };
         assert!(game.outfits.kit(0).unseen(game.elapsed));
         assert!(game.outfits.reveal(0) && !game.outfits.kit(0).unseen(game.elapsed));
+    }
+
+    /// What `game` has said for the chat since this was last asked.
+    fn said(game: &mut Game) -> Vec<Feed> {
+        let (feeds, rest): (Vec<Event>, Vec<Event>) =
+            std::mem::take(&mut game.events).into_iter().partition(|event| matches!(event, Event::Feed(_)));
+        game.events = rest;
+        feeds
+            .into_iter()
+            .filter_map(|event| match event {
+                Event::Feed(feed) => Some(feed),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_chat_is_told_who_killed_whom_with_what_who_fell_and_what_a_team_bought() {
+        use roundtown_net::{ARENA_SHOPS, ARENA_UPGRADE_SHOPS};
+        let mut game = full_game();
+        let from = Spot::of(game.at[0], Quat::IDENTITY);
+        // Killed by a punch: with a bare hand, and with the sword in hand.
+        game.health[1] = 5.0;
+        game.wound(1, 0, from, false);
+        assert_eq!(said(&mut game), vec![Feed::Killed { seat: 1, by: 0, with: Weapon::Fists }]);
+        game.outfits.kits[0].sword = 2;
+        game.health[2] = 5.0;
+        game.wound(2, 0, from, false);
+        assert_eq!(said(&mut game), vec![Feed::Killed { seat: 2, by: 0, with: Weapon::Sword(2) }]);
+        // By a fireball's blast, and by a stick of dynamite's.
+        game.health[6] = 5.0;
+        game.harm(6, 3, from, false, 20.0, Weapon::Fireball);
+        game.health[7] = 5.0;
+        assert!(!game.hurt_by(7, 3, 20.0, Weapon::Dynamite));
+        assert_eq!(
+            said(&mut game),
+            vec![
+                Feed::Killed { seat: 6, by: 3, with: Weapon::Fireball },
+                Feed::Killed { seat: 7, by: 3, with: Weapon::Dynamite },
+            ]
+        );
+        // Hit, and fallen within a few seconds: knocked off the world, by
+        // whoever hit them. Fallen later than that, or never hit: fell.
+        game.wound(3, 0, from, true);
+        assert_eq!(said(&mut game), vec![]);
+        game.elapsed += CREDIT_SECS - 0.5;
+        game.fall(3);
+        assert_eq!(said(&mut game), vec![Feed::Knocked { seat: 3, by: 0 }]);
+        game.wound(5, 0, from, true);
+        game.elapsed += CREDIT_SECS + 0.5;
+        game.fall(5);
+        game.fall(4);
+        assert_eq!(said(&mut game), vec![Feed::Fell { seat: 5 }, Feed::Fell { seat: 4 }]);
+        // Whoever hit them in the life before has nothing to do with a
+        // fall in this one.
+        game.dead_for[3] = None;
+        game.health[3] = HEALTH;
+        game.fall(3);
+        assert_eq!(said(&mut game), vec![Feed::Fell { seat: 3 }]);
+        // What is the whole team's, the team is told of, with how far it
+        // has it now; what is one's own is nobody's to be told.
+        let (items, upgrades) = (ARENA_SHOPS[0], ARENA_UPGRADE_SHOPS[0]);
+        game.purses[0] = [60, 20, 40, 10];
+        assert!(game.buy(0, Ware::Sword(3), items) && game.buy(0, Ware::Utility(Utility::Leap), items));
+        assert_eq!(said(&mut game), vec![]);
+        assert!(game.buy(0, Ware::HealPool, upgrades));
+        assert!(game.buy(0, Ware::BuildSpeed, upgrades) && game.buy(0, Ware::BuildSpeed, upgrades));
+        let told = said(&mut game);
+        assert_eq!(
+            told,
+            vec![
+                Feed::Bought { by: 0, ware: Ware::HealPool, step: 1 },
+                Feed::Bought { by: 0, ware: Ware::BuildSpeed, step: 1 },
+                Feed::Bought { by: 0, ware: Ware::BuildSpeed, step: 2 },
+            ]
+        );
+        assert!(told.iter().all(|feed| feed.only_for() == Some(arena_team(0))));
+        assert_eq!(game.purses[0][2], 40 - 1 - 4 - 8);
+        assert_eq!(Feed::Fell { seat: 1 }.only_for(), None);
+        // An anchor broken by someone's punches is said, to everyone.
+        for _ in 0..20 {
+            game.anchor_hurt = [0.0; ARENA_TEAMS];
+            game.strike_anchor(0, 1, ARENA_ANCHORS[1], REACH);
+        }
+        assert_eq!(game.anchors[1], 0.0);
+        assert_eq!(said(&mut game), vec![Feed::AnchorBroken { team: 1, by: 0 }]);
+        // A zombie put down is nothing to say; one that kills is.
+        game.happen(Happening::SuddenDeath);
+        let zombie = ARENA_SEATS;
+        game.health[zombie] = 5.0;
+        game.wound(zombie, 0, from, false);
+        assert_eq!(said(&mut game), vec![]);
+        game.health[0] = 5.0;
+        game.wound(0, zombie + 1, from, false);
+        assert_eq!(said(&mut game), vec![Feed::Killed { seat: 0, by: (zombie + 1) as u8, with: Weapon::Fists }]);
     }
 
     #[test]

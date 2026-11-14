@@ -90,11 +90,11 @@ Bridge Builder: 1 amethyst (similar button ui as fireball - hold\&drag\&aim /let
 
 
 
-Speed Potion: 1 amethyst (45 second 40% speed boost, is a push button on its utility ui button, push it once and it shows 1.6s timer running to 0 in front of ur character while ur movement is slowed 50% while drinking, and after it u gain the 40%speed boost. if attacked or press the button again before finish, it cancels. u can move while drinking but 50% slowed. sword unequips while drinking and short hand to mouth animation while drinking,cannot attack while drinking, shows 45sec timer as a small text above its ui button, and the ui button becomes empty after the speed effect is gone and speed potion count is 0)
+Speed Potion: 1 amethyst (45 second 40% speed boost, is a push button on its utility ui button, push it once and it shows 1.6s timer running to 0 in front of ur character while ur movement is slowed 50% while drinking, and after it u gain the 40%speed boost. if attacked or press the joystick/other part of the screen before finish, it cancels (pressing the same potion twice doesn't cancel it). u can move while drinking but 50% slowed. sword unequips while drinking and short hand to mouth animation while drinking,cannot attack while drinking, shows 45sec timer as a small text above its ui button, and the ui button becomes empty after the speed effect is gone and speed potion count is 0)
 
 
 
-Invisibility Potion: 2 amethyst (after drinking time 1.6s, speed reduct, same as speed potion, 30second complete invisibility - bots dont target u, other players cant see u but they can still hit u - being hit or attacking reveals u, similar ui button as speed potion)
+Invisibility Potion: 2 amethyst (after drinking time 1.6s, speed reduct, same as speed potion, 30second complete invisibility - bots dont target u, other players cant see u but they can still hit u - being hit or attacking another person or anchor reveals u, similar ui button as speed potion)
 
 
 
@@ -106,9 +106,7 @@ Dynamite: 1 amethyst (similar to default dynamite attack for dynamike in brawlst
 
 
 
-
-
-
+Leap Potion: 1 amethyst (after drinking time 1.6s, you get 5x jump height jump boost for 45 sec, similar ui as speed potions)
 
 
 
@@ -147,4 +145,8 @@ Heal Pool: 1 sapphire (Permanent health regeneration while at your base (heals 5
 
 
 Blindness Trap (1st 2nd, 3rd queued): 1sapphire, 2sapphire, 4sapphire (when enemy steps on your base, the enemy become blinded - they can only see a very small circle around their character and the rest of their screen is black except their ui menu/buttons/minimap for fixed 8 seconds -> this trap is consumable so 1 trap trigger means 1 usage, so u need to buy it again after it gets activated)
+
+
+
+Bridge building speed upgrade: Default = 50% bridge speed \& 50% bridge speed for your bridge bot. One upgrade - Advanced Builder (cost = 4 diamond) = 75% bridge speed \& 75% bridge speed for your bridge bot. Master Builder (cost = 8 diamond) = 100% bridge speed \& 100% bridge speed for your bridge bot. Grand Builder (cost = 16 diamond) = 125% bridge speed \& 125% bridge speed.
 

@@ -28,14 +28,32 @@
 //!
 //! **What is drunk** ([`drink`]; "push it once and it shows 1.6s timer
 //! running to 0 in front of ur character while ur movement is slowed 50%
-//! while drinking ... if attacked or press the button again before finish,
-//! it cancels"): a press, or Q, begins it (`crate::Drinking` on your body:
-//! half your pace, no punch, the hand at the mouth, the sword put away,
-//! `gear`), with the time left written in front of you in tenths
-//! ([`show_drink`]); a press again, or any hit that takes health off you,
-//! or dying, stops it with nothing drunk; left to run out, the potion is
-//! drunk (`arena::Used::Potion`). All three potions are drunk this way
-//! (the healing one too, since the file of 2026-11-12).
+//! while drinking ... if attacked or press the joystick/other part of the
+//! screen before finish, it cancels (pressing the same potion twice
+//! doesn't cancel it)"): a press, or Q, begins it (`crate::Drinking` on
+//! your body: half your pace, no punch, the hand at the mouth, the sword
+//! put away, `gear`), with the time left written in front of you in
+//! tenths ([`show_drink`]) and a ring on the ground round you that
+//! shrinks to your feet as it runs out ([`show_ring`]); a press anywhere
+//! else on the screen, the stick, the jump button, the sword, the world,
+//! or any hit that takes health off you, or dying, stops it with nothing
+//! drunk; left to run out, the potion is drunk (`arena::Used::Potion`).
+//! Every potion is drunk this way (the healing one too, since the file of
+//! 2026-11-12; the leap potion since 2026-11-14). **Its own button
+//! pressed again does nothing** (since 2026-11-14, Hajun: "pressing the
+//! potion button again shouldnt cancel it, only other part of screen like
+//! joystick or jump or world"; until then that was what put it down, and
+//! nothing else on the screen did): a thumb already on the stick as the
+//! drink begins goes on walking you, at half your pace, and it is a
+//! finger put down afresh that stops the drink. Whatever that finger
+//! lands on has the press as well: the stick walks you, the jump button
+//! jumps, the sword swings, another potion is drunk in its place.
+//!
+//! **While you are unseen**, "Invisible (12s)" is written over your head,
+//! counting down ([`show_unseen`]; Hajun: "its also not noticeable when ur
+//! effect runs out - so maybe add a 'Invisible (##s)' text above the
+//! player while you are invisible"). Someone running fast or leaping
+//! leaves sparks behind them (`trail`).
 //!
 //! All of it is this device's own: nobody else sees the band, the count
 //! in front of you, or your hand at your mouth.
@@ -60,8 +78,9 @@
 //! (`hud::DOTS`), and what they turned on and off stays off. One thing
 //! at a time: while a finger
 //! aims, no other button aims or drinks; with a potion at your mouth, a
-//! press on its button puts it down and one on another potion's does
-//! nothing. Q is the second button on desktop, and 1 to 5 the five.
+//! press on its own button does nothing, one on another potion's puts it
+//! down and takes that one up, and one on something aimed puts it down
+//! and aims. Q is the second button on desktop, and 1 to 5 the five.
 
 use bevy::camera::visibility::NoFrustumCulling;
 use bevy::light::{NotShadowCaster, NotShadowReceiver};
@@ -79,7 +98,7 @@ use crate::hud::{self, DialogUp, MoreButton, Pictures, UtilityCount, UtilityPict
 use crate::island::{Islands, Venue};
 use crate::market;
 use crate::range;
-use crate::ui::{UiChanged, ui};
+use crate::ui::{UiChanged, fill, ui};
 use crate::{Dead, Drinking, LAND_STEP_UP, PLAYER_RADIUS, Player, ThirdPersonCamera, camera_ahead};
 
 /// How far the finger has to be dragged from where it went down for the
@@ -130,6 +149,26 @@ const DRINK_OVER: f32 = 0.25;
 /// How faint the picture on the button is with none of it left, its
 /// effect still lasting: this share of its alpha.
 const NONE_LEFT: f32 = 0.38;
+/// The ring round you while you drink ([`show_ring`]): how far out from
+/// your middle it begins, and how near it has shrunk as the drink is
+/// done, in metres, a little outside your own width; how far across the
+/// one disc it is drawn with is built, which is made bigger and smaller
+/// to be the ring; and how solid its outline and its fill are, each in
+/// the colour of the potion at your mouth.
+const DRINK_RING_FROM: f32 = 2.3;
+const DRINK_RING_TO: f32 = 0.55;
+const DRINK_RING_BUILT: f32 = 1.2;
+const DRINK_RING_OUTLINE: f32 = 0.92;
+const DRINK_RING_FILL: f32 = 0.2;
+/// "Invisible (12s)", written over your head while you are unseen
+/// ([`show_unseen`]): how big, in shares of the short side, a little over
+/// the names over other heads; how high over your feet the point it is
+/// written over is, in metres; and how far up the screen from that point
+/// its foot is, in shares of the short side, clear of your own head and
+/// of the ball of a shield round you.
+const UNSEEN_TEXT: f32 = 2.8;
+const UNSEEN_OVER: f32 = 1.0;
+const UNSEEN_UP: f32 = 7.5;
 
 /// The keys that use each button on desktop: Q the second button, as when
 /// it was the only one, and 1 to 5 the five.
@@ -163,6 +202,11 @@ struct Hand {
     /// looked at: any less, and you were hit.
     potion: Option<Utility>,
     health: f32,
+    /// Every press on a button this frame, which button and by what
+    /// ([`buttons`]): a finger put down on the button of the potion at
+    /// your mouth is the one press that does not stop the drink
+    /// ([`drink`]).
+    pressed: Vec<(usize, PointerId)>,
 }
 
 /// A finger, or the mouse, holding a button down to aim: which, and what
@@ -327,6 +371,25 @@ struct BandLook {
 #[derive(Component)]
 struct DrinkText;
 
+/// The ring on the ground round you while you drink, which shrinks to
+/// your feet as the drink runs out ([`show_ring`]).
+#[derive(Component)]
+struct DrinkRing;
+
+/// The ring's own looks, its fill and its outline, which take the colour
+/// of the potion at your mouth; and the potion they were last coloured
+/// for.
+#[derive(Resource)]
+struct RingLook {
+    fill: Handle<StandardMaterial>,
+    outline: Handle<StandardMaterial>,
+    tinted: Option<Utility>,
+}
+
+/// "Invisible (12s)", written over your head while you are unseen.
+#[derive(Component)]
+struct UnseenText;
+
 pub(crate) fn plugin(app: &mut App) {
     app.add_message::<SlotPressed>()
         .init_resource::<Hand>()
@@ -342,7 +405,7 @@ pub(crate) fn plugin(app: &mut App) {
                 (fold_away, fill_slots).chain(),
                 recolour,
                 // The camera's place for this frame is set by then.
-                show_drink.after(crate::follow_camera),
+                (show_drink, show_ring, show_unseen).after(crate::follow_camera),
             ),
         );
 }
@@ -423,7 +486,11 @@ fn buttons(
     mut used: MessageWriter<Used>,
     mut commands: Commands,
 ) {
-    let by_finger = pressed.read().last().map(|pressed| (pressed.0, Some(pressed.1)));
+    // Every press on a button this frame, for the drink to tell a finger
+    // on its own potion's button from one anywhere else ([`drink`]).
+    hand.pressed.clear();
+    hand.pressed.extend(pressed.read().map(|pressed| (pressed.0, pressed.1)));
+    let by_finger = hand.pressed.last().map(|&(slot, pointer)| (slot, Some(pointer)));
     let by_key = || SLOT_KEYS.iter().position(|keys| keyboard.any_just_pressed(keys.iter().copied()));
     let Some((slot, by_finger)) = by_finger.or_else(|| by_key().map(|slot| (slot, None))) else {
         return;
@@ -438,22 +505,27 @@ fn buttons(
         return;
     };
     if utility.drunk() {
-        if !drinking {
+        // The button of the potion at your mouth, pressed again, does
+        // nothing: it is drunk on. Another potion's puts that one down
+        // and takes this one up, from the start.
+        if !drinking || hand.potion != Some(utility) {
             commands.entity(you).insert(Drinking { left: DRINK_SECS });
             hand.potion = Some(utility);
             hand.health = health.map_or(1.0, Health::share);
             info!("drinking {utility:?}");
-        } else if hand.potion == Some(utility) {
-            commands.entity(you).remove::<Drinking>();
-            hand.potion = None;
-            info!("put the potion down");
         }
         return;
     }
-    // Aimed: no drinking and aiming at once, and not too soon after the
-    // last.
-    if drinking || hand.rest > 0.0 {
+    // Aimed: not too soon after the last. With a potion at your mouth,
+    // the potion is put down, as by a press anywhere but on its own
+    // button, and this is aimed.
+    if hand.rest > 0.0 {
         return;
+    }
+    if drinking {
+        commands.entity(you).remove::<Drinking>();
+        hand.potion = None;
+        info!("put the potion down to aim");
     }
     match by_finger {
         Some(pointer) => hand.hold = Some(Hold::new(pointer, utility)),
@@ -617,13 +689,29 @@ fn aim(
     }
 }
 
+/// Whether a press has been made anywhere but on the button numbered
+/// `own`, given every finger that went down this frame, whether the mouse
+/// did, and every press on a button this frame, which button and by what:
+/// a finger put down on the stick, the jump button, the sword, another
+/// button or the world, which stops a drink; never one on the button of
+/// the potion being drunk.
+fn pressed_elsewhere(fingers: &[u64], mouse: bool, on_buttons: &[(usize, PointerId)], own: Option<usize>) -> bool {
+    let on_its_own = |pointer: PointerId| on_buttons.iter().any(|&(slot, by)| by == pointer && Some(slot) == own);
+    fingers.iter().any(|&finger| !on_its_own(PointerId::Touch(finger))) || (mouse && !on_its_own(PointerId::Mouse))
+}
+
 /// Counts your drink down, and stops it if you are hit, or die, or the
-/// potion is no longer on the button; run out, the potion is drunk.
+/// potion is no longer on the button, or a finger is put down anywhere on
+/// the screen but on that potion's own button ([`pressed_elsewhere`]; on
+/// desktop the mouse, and the keys that jump and punch); run out, the
+/// potion is drunk.
+#[allow(clippy::too_many_arguments)]
 fn drink(
     time: Res<Time>,
     dialog: Res<DialogUp>,
     fighting: Res<Fighting>,
     outfit: Res<Outfit>,
+    (touches, mouse, keyboard): (Res<Touches>, Res<ButtonInput<MouseButton>>, Res<ButtonInput<KeyCode>>),
     mut me: Query<(Entity, &Venue, Has<Dead>, &mut Drinking, Option<&Health>), With<Player>>,
     mut hand: ResMut<Hand>,
     mut used: MessageWriter<Used>,
@@ -635,10 +723,24 @@ fn drink(
     let share = health.map_or(1.0, Health::share);
     let hit = share < hand.health - 1e-4;
     let still_held = hand.potion.is_some_and(|potion| outfit.kit.held(potion) > 0);
-    if !in_play(&fighting, &dialog, venue, dead) || hit || !still_held {
+    // A finger put down anywhere but on this potion's own button.
+    let fingers: Vec<u64> = touches.iter_just_pressed().map(|touch| touch.id()).collect();
+    let own = hand.potion.and_then(|potion| outfit.kit.slot_of(potion));
+    let elsewhere = pressed_elsewhere(&fingers, mouse.just_pressed(MouseButton::Left), &hand.pressed, own)
+        || keyboard.any_just_pressed([KeyCode::Space, KeyCode::KeyF]);
+    if !in_play(&fighting, &dialog, venue, dead) || hit || !still_held || elsewhere {
         commands.entity(you).remove::<Drinking>();
         hand.potion = None;
-        info!("the drink is stopped{}", if hit { ": hit" } else { "" });
+        info!(
+            "the drink is stopped{}",
+            if hit {
+                ": hit"
+            } else if elsewhere {
+                ": a press elsewhere"
+            } else {
+                ""
+            }
+        );
         return;
     }
     hand.health = share;
@@ -721,14 +823,11 @@ fn fill_slots(
 
 /// Until when, in whole seconds into the fight, what was drunk off the
 /// button numbered `slot` of `kit` lasts: the speed potion's button by how
-/// long they run fast, the invisibility's by how long they are unseen, and
-/// 0 for any other, or an empty one.
+/// long they run fast, the invisibility's by how long they are unseen, the
+/// leap potion's by how long they leap, and 0 for any other, or an empty
+/// one.
 fn lasts_until(kit: &roundtown_net::Kit, slot: usize) -> u16 {
-    match on_slot(kit, slot).map(|stack| stack.utility) {
-        Some(Utility::Speed) => kit.fast_until,
-        Some(Utility::Invisibility) => kit.unseen_until,
-        _ => 0,
-    }
+    on_slot(kit, slot).map_or(0, |stack| kit.lasts_until(stack.utility))
 }
 
 /// The time a potion's effect still lasts, as written over the button:
@@ -784,6 +883,124 @@ fn show_drink(
     let size = node.size() * node.inverse_scale_factor();
     place.set_if_neq(UiTransform {
         translation: Val2::px(point.x - size.x * 0.5, point.y - size.y * 0.5),
+        scale: Vec2::ONE,
+        rotation: Rot2::IDENTITY,
+    });
+    shown.set_if_neq(Visibility::Inherited);
+}
+
+/// How far out from your middle the ring round you is with `left` seconds
+/// of your drink to go: from [`DRINK_RING_FROM`] as the drink begins, in
+/// evenly to [`DRINK_RING_TO`] as it is done.
+fn ring_radius(left: f32) -> f32 {
+    DRINK_RING_TO + (DRINK_RING_FROM - DRINK_RING_TO) * (left / DRINK_SECS).clamp(0.0, 1.0)
+}
+
+/// Keeps a ring on the ground round you while a potion is at your mouth,
+/// in that potion's colour, shrinking to your feet as the drink runs out
+/// (since 2026-11-14, Hajun: "when you drink a potion, it's not very
+/// noticeable that you are drinking. There should be an indicator, like a
+/// shrinking circle around you when you use the potion, so it's more
+/// noticeable than just the number counting down like right now"). Yours
+/// alone, as the number is. One disc, made bigger and smaller.
+fn show_ring(
+    me: Query<(&Transform, &Drinking), With<Player>>,
+    hand: Res<Hand>,
+    mut look: ResMut<RingLook>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut rings: Query<(&mut Transform, &mut Visibility), (With<DrinkRing>, Without<Player>)>,
+) {
+    let Ok((mut ring, mut shown)) = rings.single_mut() else {
+        return;
+    };
+    let Ok((body, drinking)) = me.single() else {
+        shown.set_if_neq(Visibility::Hidden);
+        return;
+    };
+    // In the colour of what is being drunk.
+    if look.tinted != hand.potion
+        && let Some(potion) = hand.potion
+    {
+        look.tinted = Some(potion);
+        let (_, tint) = market::look_of(potion);
+        for (handle, solid) in [(look.fill.clone(), DRINK_RING_FILL), (look.outline.clone(), DRINK_RING_OUTLINE)] {
+            if let Some(mut material) = materials.get_mut(&handle) {
+                material.base_color = range::bright(tint.with_alpha(solid));
+            }
+        }
+    }
+    let scale = ring_radius(drinking.left) / DRINK_RING_BUILT;
+    ring.set_if_neq(Transform {
+        translation: body.translation + Vec3::Y * range::HEIGHT,
+        rotation: Quat::IDENTITY,
+        scale: Vec3::new(scale, 1.0, scale),
+    });
+    shown.set_if_neq(Visibility::Inherited);
+}
+
+/// What is written over your head while you are unseen, with `left`
+/// seconds of it to go: "Invisible (12s)", in whole seconds, counted up.
+fn unseen_line(left: f32) -> String {
+    fill(&ui().words.arena.invisible, &[("seconds", &format!("{}", left.max(0.0).ceil() as u32))])
+}
+
+/// Writes "Invisible (12s)" over your head while you are unseen, counting
+/// down, and takes it away as you are seen again (since 2026-11-14,
+/// Hajun: "its also not noticeable when ur effect runs out - so maybe add
+/// a 'Invisible (##s)' text above the player while you are invisible").
+/// Yours alone.
+#[allow(clippy::type_complexity)]
+fn show_unseen(
+    outfit: Res<Outfit>,
+    clock: Res<FightTime>,
+    cameras: Query<(&Camera, &Transform), With<ThirdPersonCamera>>,
+    windows: Query<&Window>,
+    me: Query<(&Transform, Has<Dead>), With<Player>>,
+    mut written: Query<(&mut Text, &mut Visibility, &mut UiTransform, &ComputedNode), With<UnseenText>>,
+    mut commands: Commands,
+) {
+    let left = f32::from(outfit.kit.unseen_until) - clock.0;
+    let unseen = left > 0.0 && me.single().is_ok_and(|(_, dead)| !dead);
+    let Ok((mut text, mut shown, mut place, node)) = written.single_mut() else {
+        if unseen {
+            commands.spawn((
+                InArena,
+                UnseenText,
+                Name::new("Invisible, and for how long"),
+                hud::words(unseen_line(left), UNSEEN_TEXT, ui().colours.arena.unseen_text),
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: Val::ZERO,
+                    top: Val::ZERO,
+                    ..default()
+                },
+                UiTransform::default(),
+                Visibility::Hidden,
+            ));
+        }
+        return;
+    };
+    let point = unseen
+        .then(|| {
+            let (camera, eye) = cameras.single().ok()?;
+            let (body, _) = me.single().ok()?;
+            camera
+                .world_to_viewport(&GlobalTransform::from(*eye), body.translation + Vec3::Y * UNSEEN_OVER)
+                .ok()
+        })
+        .flatten();
+    let (Some(point), Ok(window)) = (point, windows.single()) else {
+        shown.set_if_neq(Visibility::Hidden);
+        return;
+    };
+    let said = unseen_line(left);
+    if text.0 != said {
+        text.0 = said;
+    }
+    let size = node.size() * node.inverse_scale_factor();
+    let up = window.width().min(window.height()) * UNSEEN_UP / 100.0;
+    place.set_if_neq(UiTransform {
+        translation: Val2::px(point.x - size.x * 0.5, point.y - up - size.y),
         scale: Vec2::ONE,
         rotation: Rot2::IDENTITY,
     });
@@ -875,6 +1092,33 @@ fn spawn_band(mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<Sta
                     });
             });
         });
+    // The ring round you while you drink: one disc, hidden until then,
+    // with looks of its own for its fill and its outline, which take the
+    // colour of the potion at your mouth, and the band's dark rim.
+    let ring_look = RingLook {
+        fill: materials.add(range::look(colours.drink.with_alpha(DRINK_RING_FILL))),
+        outline: materials.add(range::look(colours.drink.with_alpha(DRINK_RING_OUTLINE))),
+        tinted: None,
+    };
+    let (ring_fill, ring_outline, ring_rim) = range::disc(DRINK_RING_BUILT);
+    commands
+        .spawn((Name::new("Drink ring"), DrinkRing, Transform::default(), Visibility::Hidden))
+        .with_children(|ring| {
+            for (mesh, material, over) in [
+                (ring_rim, look.rim.clone(), 0.0),
+                (ring_fill, ring_look.fill.clone(), 0.0),
+                (ring_outline, ring_look.outline.clone(), 0.002),
+            ] {
+                ring.spawn((
+                    Mesh3d(meshes.add(mesh)),
+                    MeshMaterial3d(material),
+                    Transform::from_xyz(0.0, over, 0.0),
+                    NotShadowCaster,
+                    NotShadowReceiver,
+                ));
+            }
+        });
+    commands.insert_resource(ring_look);
     commands.insert_resource(lob);
     commands.insert_resource(look);
 }
@@ -885,7 +1129,8 @@ fn recolour(
     changed: Res<UiChanged>,
     look: Res<BandLook>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    mut written: Query<&mut TextColor, With<DrinkText>>,
+    mut written: Query<&mut TextColor, (With<DrinkText>, Without<UnseenText>)>,
+    mut unseen: Query<&mut TextColor, (With<UnseenText>, Without<DrinkText>)>,
 ) {
     if !changed.is_changed() || changed.is_added() {
         return;
@@ -898,6 +1143,9 @@ fn recolour(
     }
     for mut colour in &mut written {
         colour.set_if_neq(TextColor(colours.drink));
+    }
+    for mut colour in &mut unseen {
+        colour.set_if_neq(TextColor(colours.unseen_text));
     }
 }
 
@@ -1031,6 +1279,54 @@ mod tests {
     }
 
     #[test]
+    fn a_drink_is_stopped_by_a_press_anywhere_but_on_its_own_button() {
+        // The potion at your mouth is on the third button.
+        let own = Some(2);
+        // Nothing pressed: it is drunk on.
+        assert!(!pressed_elsewhere(&[], false, &[], own));
+        // Its own button pressed again, by a finger or the mouse: nothing.
+        assert!(!pressed_elsewhere(&[7], false, &[(2, PointerId::Touch(7))], own));
+        assert!(!pressed_elsewhere(&[], true, &[(2, PointerId::Mouse)], own));
+        // A finger put down on the stick, the jump button, the sword or
+        // the world, none of which is a button of these: stopped.
+        assert!(pressed_elsewhere(&[7], false, &[], own));
+        assert!(pressed_elsewhere(&[], true, &[], own));
+        // On another of the buttons: stopped (and that button's press is
+        // its own to take).
+        assert!(pressed_elsewhere(&[7], false, &[(1, PointerId::Touch(7))], own));
+        // Two fingers down in one frame, one on its own button and one
+        // elsewhere: stopped.
+        assert!(pressed_elsewhere(&[7, 9], false, &[(2, PointerId::Touch(7))], own));
+        // Another finger's press on its own button does not excuse this
+        // one's elsewhere.
+        assert!(pressed_elsewhere(&[9], false, &[(2, PointerId::Touch(7))], own));
+        // With no button of its own any more, any press is elsewhere.
+        assert!(pressed_elsewhere(&[7], false, &[(2, PointerId::Touch(7))], None));
+    }
+
+    #[test]
+    fn the_ring_shrinks_to_your_feet_as_the_drink_runs_out_and_the_words_over_you_count_down() {
+        // From well out round you to just outside your own width, evenly.
+        assert!((ring_radius(DRINK_SECS) - DRINK_RING_FROM).abs() < 1e-5);
+        assert!((ring_radius(0.0) - DRINK_RING_TO).abs() < 1e-5);
+        assert!((ring_radius(DRINK_SECS * 0.5) - (DRINK_RING_FROM + DRINK_RING_TO) * 0.5).abs() < 1e-5);
+        assert!(ring_radius(DRINK_SECS * 2.0) <= DRINK_RING_FROM && ring_radius(-1.0) >= DRINK_RING_TO);
+        assert!(DRINK_RING_TO > PLAYER_RADIUS && DRINK_RING_FROM > 4.0 * PLAYER_RADIUS);
+        // "Invisible (30s)" down to "Invisible (1s)", in whole seconds.
+        assert_eq!(unseen_line(29.2), "Invisible (30s)");
+        assert_eq!(unseen_line(0.4), "Invisible (1s)");
+        // The leap potion's time is over its own button, as the others'.
+        let kit = roundtown_net::Kit {
+            leap_until: 90,
+            ..Default::default()
+        }
+        .holding(Utility::Fireball, 1)
+        .holding(Utility::Leap, 0);
+        assert_eq!([0, 1, 2].map(|slot| lasts_until(&kit, slot)), [0, 90, 0]);
+        assert_eq!(timer_text(f32::from(lasts_until(&kit, 1)) - 60.5), "30s");
+    }
+
+    #[test]
     fn the_time_over_the_button_counts_whole_seconds_down_to_nothing() {
         assert_eq!(timer_text(45.0), "45s");
         assert_eq!(timer_text(44.2), "45s");
@@ -1040,7 +1336,7 @@ mod tests {
         // The bands are narrow and long: the fireball's as far as it
         // flies, the builder's as wide as its bridge.
         assert!(FIREBALL_BAND < 1.2 && FIREBALL_AHEAD + FIREBALL_RANGE > 10.0 * FIREBALL_BAND);
-        assert!((BUILDER_BAND - 2.726).abs() < 1e-3);
+        assert!((BUILDER_BAND - 2.726 * 1.25).abs() < 1e-3);
     }
 
     #[test]

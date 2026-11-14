@@ -160,7 +160,20 @@ pub const PROTOCOL_ID: u64 = u64::from_be_bytes(*b"DGRMTOWN");
 /// ([`bridge_wars::HEALING`]). Either of the two changes alone would have
 /// needed the number raised: should one ever go out without the other,
 /// raise it again.
-pub const PROTOCOL_VERSION: u32 = 15;
+///
+/// 16 since 2026-11-14 (Hajun: "implement the new items in the shop listed
+/// in the bridgewarsgameevent.md (leap potion and bridge speed upgrade)",
+/// "I think there should be a global chat", "The bridge could also be a
+/// little wider, maybe 1.25 times its current width"): [`Utility::Leap`] is
+/// a seventh thing for the buttons and a [`Kit`] has until when its owner
+/// leaps ([`Kit::leap_until`]); an [`Upgrades`] has how far its team's
+/// building has been quickened ([`Upgrades::build_speed`],
+/// [`Ware::BuildSpeed`]); what is said in a room, and what happens in a
+/// game of Bridge Wars, is told to everyone in it ([`chat`]:
+/// [`Ask::Chat`], [`Tell::Said`], [`Tell::Feed`]); and a plank is a quarter
+/// as wide and as long again ([`nav::PLANK_HALF_WIDTH`]), which the
+/// server's bots walk and the devices draw by the same measure.
+pub const PROTOCOL_VERSION: u32 = 16;
 
 /// The UDP port the game server listens on. 443, where QUIC goes, because a
 /// network that lets any UDP through lets that through: school and office
@@ -249,26 +262,259 @@ pub fn ai_names(boy: bool) -> &'static [&'static str] {
     if boy { &BOY_NAMES } else { &GIRL_NAMES }
 }
 
+/// What can be written: the letters and signs a name, a line of chat and a
+/// message to a friend are made of, as both sides check them. Since
+/// 2026-11-14 that is English, Korean and Vietnamese (Hajun: "i need korean
+/// text to be able to work in the global chat not just english. same for
+/// username and send message", and "also vietnamese text as well"); until
+/// then plain ASCII, the game's font having no Hangul.
+///
+/// It is what the game's fonts draw (the game's `font`: Inter, and
+/// Pretendard for Hangul), no more: what is on an English keyboard; the
+/// accented letters of western Europe (Latin-1), which Vietnamese shares;
+/// the rest of Vietnamese's letters, each vowel with each tone; the curly
+/// quotes, dashes and ellipsis a phone's keyboard writes by itself; and
+/// Hangul, every syllable and the letters they are made of, as they are
+/// typed alone ("ㅋㅋ"). Nothing else: no emoji, no Hanja, no other
+/// script.
+///
+/// **Lengths are counted in widths** ([`length`]): a Hangul syllable is
+/// two, being about as wide as two Latin letters, so that a name or a line
+/// is as long on the screen in either. A name of 16 is 16 Latin letters or
+/// 8 syllables.
+///
+/// **A letter is the same letter however it was typed** ([`clean`]): some
+/// keyboards send a Vietnamese vowel and its tone mark as two, or a Hangul
+/// syllable as its two or three parts, and they are put together
+/// (Unicode's NFC), so that a name looked for is found whichever keyboard
+/// wrote it.
+///
+/// **Common swear words are starred out of what people say to each other**
+/// ([`masked`], since 2026-11-14; Hajun: "add basic word filter for common
+/// swear words so they turn to ****** of that word's length"): a line of
+/// chat and a message to a friend, as both sides clean them, so that the
+/// server does it to whatever it is sent. Not names.
+pub mod text {
+    use unicode_normalization::UnicodeNormalization;
+
+    /// Whether `c` is something the game writes: see the module.
+    pub fn allowed(c: char) -> bool {
+        matches!(
+            c,
+            // What is on an English keyboard, and a space.
+            ' '..='~'
+            // Latin-1's letters and signs, but the soft hyphen.
+            | '\u{A1}'..='\u{AC}' | '\u{AE}'..='\u{FF}'
+            // Vietnamese's own: A with a breve, D with a stroke, I and U
+            // with a tilde, O and U with a horn, capital and small; and
+            // every vowel with every tone.
+            | '\u{102}' | '\u{103}' | '\u{110}' | '\u{111}' | '\u{128}' | '\u{129}' | '\u{168}' | '\u{169}'
+            | '\u{1A0}' | '\u{1A1}' | '\u{1AF}' | '\u{1B0}'
+            | '\u{1EA0}'..='\u{1EF9}'
+            // An en dash and an em dash, curly quotes, an ellipsis.
+            | '\u{2013}' | '\u{2014}' | '\u{2018}' | '\u{2019}' | '\u{201C}' | '\u{201D}' | '\u{2026}'
+            // Hangul: its letters as typed alone, and every syllable.
+            | '\u{3131}'..='\u{3163}'
+            | '\u{AC00}'..='\u{D7A3}'
+        )
+    }
+
+    /// Whether `c` is a piece of a letter, as some keyboards send one: a
+    /// mark that goes on the vowel before it (Vietnamese's five tones, and
+    /// the circumflex, the breve and the horn), or one of the parts of a
+    /// Hangul syllable. [`clean`] puts the pieces together; any left over
+    /// is no letter, and is left out.
+    pub fn piece(c: char) -> bool {
+        matches!(c, '\u{300}'..='\u{303}' | '\u{306}' | '\u{309}' | '\u{31B}' | '\u{323}' | '\u{1100}'..='\u{11FF}')
+    }
+
+    /// Whether `c` may go into a box that is typed into: what is
+    /// [`allowed`], and the [`piece`]s of it on their way to being put
+    /// together.
+    pub fn typed(c: char) -> bool {
+        allowed(c) || piece(c)
+    }
+
+    /// How wide `c` is, in the widths lengths are counted in: a Hangul
+    /// syllable or letter is two; a mark on the letter before it, and the
+    /// second and third parts of a syllable typed in parts, none; anything
+    /// else one.
+    pub fn width(c: char) -> usize {
+        match c {
+            '\u{300}'..='\u{36F}' | '\u{1160}'..='\u{11FF}' => 0,
+            '\u{1100}'..='\u{115F}' | '\u{3131}'..='\u{3163}' | '\u{AC00}'..='\u{D7A3}' => 2,
+            _ => 1,
+        }
+    }
+
+    /// How long `text` is, in those widths.
+    pub fn length(text: &str) -> usize {
+        text.chars().map(width).sum()
+    }
+
+    /// `text` as it is kept and sent: every letter put together from its
+    /// pieces, a new line or a tab or any other space a plain space, what
+    /// the game does not write left out, and the spaces round it trimmed.
+    /// Cleaning what is clean changes nothing, so both sides can.
+    pub fn clean(text: &str) -> String {
+        let whole: String = text
+            .nfc()
+            .map(|c| if c.is_whitespace() { ' ' } else { c })
+            .filter(|c| allowed(*c))
+            .collect();
+        whole.trim().to_string()
+    }
+
+    /// `typed` with every letter put together from its pieces, and nothing
+    /// else changed: what a box shows while it is typed into, before it is
+    /// [`clean`]ed.
+    pub fn whole(typed: &str) -> String {
+        typed.nfc().collect()
+    }
+
+    /// As much of the front of `text` as is no longer than `most` widths.
+    pub fn fitted(text: &str, most: usize) -> &str {
+        let mut long = 0;
+        for (at, c) in text.char_indices() {
+            long += width(c);
+            if long > most {
+                return &text[..at];
+            }
+        }
+        text
+    }
+
+    /// English swear words that are masked wherever they are in a word,
+    /// the whole word with them ("motherfucker", "bullshit"), each written
+    /// with no letter doubled, as a word is compared once its own doubled
+    /// letters are taken out ("fuuuck", "shiiit"). Only ones no everyday
+    /// word has in it.
+    const STEMS: &[&str] = &["fuck", "shit", "bitch", "ashole", "arsehole", "bastard", "fagot", "whore"];
+    /// Swear words that are masked only as a whole word, whatever their
+    /// capitals: English ones that are part of everyday words ("class",
+    /// "cockpit", "Dickens"), and Vietnamese ones, each a word of its own
+    /// as Vietnamese is written, with the short forms they are typed in.
+    /// Only as they are spelt with their marks: without them most are
+    /// everyday words ("cac ban" is "các bạn").
+    const WORDS: &[&str] = &[
+        "ass", "asses", "arse", "dick", "dicks", "dickhead", "dickheads", "cock", "cocks", "cocksucker",
+        "cocksuckers", "pussy", "pussies", "cunt", "cunts", "slut", "sluts", "twat", "twats", "wanker",
+        "wankers", "nigger", "niggers", "nigga", "niggas", "fag", "fags",
+        "địt", "đụ", "đù", "đéo", "lồn", "cặc", "buồi", "đĩ", "loz",
+        "đm", "đmm", "dmm", "đcm", "dcm", "đkm", "vcl", "vkl", "vl", "clgt",
+    ];
+    /// Korean swear words, masked wherever they are in a run of Hangul,
+    /// Korean being written with few spaces: themselves and no more of
+    /// what they are in. With the letters alone they are shortened to.
+    const HANGUL: &[&str] = &[
+        "시발", "씨발", "씨빨", "씨팔", "시팔", "씨바", "ㅅㅂ", "ㅆㅂ", "병신", "ㅂㅅ", "좆", "좃", "존나", "ㅈㄴ",
+        "개새끼", "개새", "개색", "미친새끼", "미친놈", "미친년", "씹새", "씹년", "지랄", "ㅈㄹ", "느금마", "니애미",
+        "창녀",
+    ];
+    /// Everyday Korean that has one of those in it, and is left alone:
+    /// "다시 발견" written without its space, a starting point, a first
+    /// station.
+    const HANGUL_FINE: &[&str] = &["다시발", "시발점", "시발역"];
+
+    /// Whether `c` is Hangul, a syllable or a letter alone.
+    fn hangul(c: char) -> bool {
+        matches!(c, '\u{3131}'..='\u{3163}' | '\u{AC00}'..='\u{D7A3}')
+    }
+
+    /// `word` with each run of one letter over and over as that letter
+    /// once.
+    fn squeezed(word: &str) -> String {
+        let mut out = String::new();
+        for c in word.chars() {
+            if !out.ends_with(c) {
+                out.push(c);
+            }
+        }
+        out
+    }
+
+    /// Where `needle` is in `run`, by where each begins.
+    fn found<'a>(run: &'a [char], needle: &'a str) -> impl Iterator<Item = (usize, usize)> + 'a {
+        let needle: Vec<char> = needle.chars().collect();
+        let long = needle.len();
+        (0..run.len().saturating_sub(long.saturating_sub(1)))
+            .filter(move |&at| long > 0 && run[at..at + long] == needle[..])
+            .map(move |at| (at, long))
+    }
+
+    /// `text` with the common swear words in it starred out, a star to
+    /// each letter, so that it is as long as it was (in letters: a Hangul
+    /// syllable is one star). **A basic filter**, for a chat anyone may
+    /// read: the commonest words of English, Korean and Vietnamese, as
+    /// they are plainly spelt. An English or a Vietnamese word is masked
+    /// whole, if it is one of [`WORDS`] or has one of [`STEMS`] in it;
+    /// Korean, which runs its words together, has each of [`HANGUL`]
+    /// masked where it stands. It does not look for a word spelt with
+    /// digits or signs, or with spaces between its letters, and whoever
+    /// means to get a word past it will. What is masked stays masked:
+    /// both sides do this, the server to whatever it is sent.
+    pub fn masked(text: &str) -> String {
+        let chars: Vec<char> = text.chars().collect();
+        let mut hide = vec![false; chars.len()];
+        let mut at = 0;
+        while at < chars.len() {
+            // A run of Hangul, or a run of other letters: a word.
+            let korean = hangul(chars[at]);
+            if !korean && !chars[at].is_alphabetic() {
+                at += 1;
+                continue;
+            }
+            let mut end = at;
+            while end < chars.len() && hangul(chars[end]) == korean && (korean || chars[end].is_alphabetic()) {
+                end += 1;
+            }
+            let run = &chars[at..end];
+            if korean {
+                let fine: Vec<(usize, usize)> = HANGUL_FINE.iter().flat_map(|fine| found(run, fine)).collect();
+                for swear in HANGUL {
+                    for (begins, long) in found(run, swear) {
+                        let let_be = fine.iter().any(|&(from, span)| from <= begins && begins + long <= from + span);
+                        if !let_be {
+                            hide[at + begins..at + begins + long].fill(true);
+                        }
+                    }
+                }
+            } else {
+                let word: String = run.iter().flat_map(|c| c.to_lowercase()).collect();
+                let squeezed = squeezed(&word);
+                if WORDS.contains(&word.as_str()) || STEMS.iter().any(|stem| squeezed.contains(stem)) {
+                    hide[at..end].fill(true);
+                }
+            }
+            at = end;
+        }
+        chars.iter().zip(hide).map(|(c, hide)| if hide { '*' } else { *c }).collect()
+    }
+}
+
 /// What a person says about themselves on signing up, as both sides check
 /// it: a name to go by, and which of [`PEOPLE_LOOKS`] they wear.
 pub mod profile {
-    /// How long a name may be, in characters.
+    use super::text;
+
+    /// How long a name may be, in widths ([`text::length`]): 2 to 16 Latin
+    /// letters, or 1 to 8 Hangul syllables, or as much of both.
     pub const SHORTEST: usize = 2;
     pub const LONGEST: usize = 16;
 
-    /// `text` as a name, if it is one: [`SHORTEST`] to [`LONGEST`]
-    /// characters once the spaces round it are trimmed, all of them
-    /// [`allowed`].
+    /// `text` as a name, if it is one: [`SHORTEST`] to [`LONGEST`] wide
+    /// once it is cleaned ([`text::clean`]: its letters put together, what
+    /// the game does not write left out, the spaces round it trimmed).
     pub fn name(text: &str) -> Option<String> {
-        let name = text.trim();
-        let fits = (SHORTEST..=LONGEST).contains(&name.len());
-        (fits && name.chars().all(allowed)).then(|| name.to_string())
+        let name = text::clean(text);
+        (SHORTEST..=LONGEST).contains(&text::length(&name)).then_some(name)
     }
 
-    /// Whether `c` may be in a name: plain ASCII that the game's font can
-    /// draw, letters, digits and what is on a keyboard, and a space.
+    /// Whether `c` may be in a name: what the game writes ([`text`]).
+    /// English, Korean and Vietnamese since 2026-11-14; plain ASCII until
+    /// then.
     pub fn allowed(c: char) -> bool {
-        c.is_ascii_graphic() || c == ' '
+        text::allowed(c)
     }
 
     /// Whether `look` is one a person may choose: any of either side's
@@ -297,6 +543,7 @@ pub fn protocol(app: &mut App) {
         .replicate::<Fireball>()
         .replicate::<Dynamite>()
         .replicate::<Blasted>()
+        .replicate::<BuilderOf>()
         .add_client_message::<Moved>(Channel::Unreliable)
         .add_client_message::<Ask>(Channel::Ordered)
         .add_server_message::<Tell>(Channel::Ordered)
@@ -570,6 +817,12 @@ pub enum Ware {
     /// app from before it, which never asks for it, reads the rest as it
     /// did.
     Compass,
+    /// The next step of the team's building: everyone of the team walks
+    /// faster carrying a plank, and the builders their Bridge Builders
+    /// send walk as fast ([`bridge_wars::BUILD_PACE`]; since 2026-11-14,
+    /// Hajun's file: "Advanced Builder ... Master Builder ... Grand
+    /// Builder"). At the upgrade shop, three steps.
+    BuildSpeed,
 }
 
 /// How many buttons Bridge Wars has for things to use ([`Utility`]): the
@@ -609,19 +862,25 @@ pub enum Utility {
     /// Aimed and lobbed, as far as the drag is long: it comes down, lies
     /// there while its fuse burns, and blows up, taking the planks of
     /// every bridge in its blast with it ([`bridge_wars::Lob`]; since
-    /// 2026-11-13). The last of the kinds, so that the rest are sent as
-    /// they were.
+    /// 2026-11-13).
     Dynamite,
+    /// Drunk: [`bridge_wars::LEAP_SECS`] of jumping [`bridge_wars::LEAP`]
+    /// times as high (since 2026-11-14; Hajun's file: "Leap Potion: 1
+    /// amethyst (after drinking time 1.6s, you get 5x jump height jump
+    /// boost for 45 sec, similar ui as speed potions)"). The last of the
+    /// kinds, so that the rest are sent as they were.
+    Leap,
 }
 
 impl Utility {
-    pub const ALL: [Utility; 6] = [
+    pub const ALL: [Utility; 7] = [
         Utility::Fireball,
         Utility::Builder,
         Utility::Speed,
         Utility::Invisibility,
         Utility::Healing,
         Utility::Dynamite,
+        Utility::Leap,
     ];
 
     /// Whether it is aimed, by holding its button and dragging, rather
@@ -641,7 +900,7 @@ impl Utility {
     /// Whether what it does lasts a while once it is drunk, with the time
     /// left written over the button.
     pub const fn lasts(self) -> bool {
-        matches!(self, Utility::Speed | Utility::Invisibility)
+        matches!(self, Utility::Speed | Utility::Invisibility | Utility::Leap)
     }
 }
 
@@ -669,6 +928,9 @@ pub struct Kit {
     pub blind: bool,
     #[serde(skip)]
     pub compass: bool,
+    /// Until when they jump higher, for having drunk the leap potion
+    /// (since 2026-11-14): sent after the rest.
+    pub leap_until: u16,
 }
 
 impl Kit {
@@ -714,13 +976,31 @@ impl Kit {
     pub fn unseen(&self, elapsed: f32) -> bool {
         f32::from(self.unseen_until) > elapsed
     }
+
+    /// Whether they jump higher then, for the leap potion.
+    pub fn leaping(&self, elapsed: f32) -> bool {
+        f32::from(self.leap_until) > elapsed
+    }
+
+    /// Until when, in whole seconds into the fight, what was drunk of
+    /// `potion` lasts: 0 for one that is over, or that does not last.
+    pub fn lasts_until(&self, potion: Utility) -> u16 {
+        match potion {
+            Utility::Speed => self.fast_until,
+            Utility::Invisibility => self.unseen_until,
+            Utility::Leap => self.leap_until,
+            _ => 0,
+        }
+    }
 }
 
 /// What a team has bought at the upgrade shop: how far its generator has
 /// been raised (0 to [`bridge_wars::FORGE_MOST`]), whether its swords are
 /// stronger, how far its shields have been bettered (0 to
-/// [`bridge_wars::BETTER_SHIELDS_MOST`]), whether it has a heal pool, and
-/// how many blindness traps wait on its island.
+/// [`bridge_wars::BETTER_SHIELDS_MOST`]), whether it has a heal pool, how
+/// many blindness traps wait on its island, and how far its building has
+/// been quickened (0 to [`bridge_wars::BUILD_SPEED_MOST`], since
+/// 2026-11-14).
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub struct Upgrades {
     pub forge: u8,
@@ -728,6 +1008,7 @@ pub struct Upgrades {
     pub shields: u8,
     pub heal_pool: bool,
     pub traps: u8,
+    pub build_speed: u8,
 }
 
 pub mod bots;
@@ -1279,7 +1560,12 @@ pub mod bridge_wars {
     pub fn sold_at(ware: Ware) -> Shop {
         match ware {
             Ware::Bridge | Ware::Sword(_) | Ware::Shield(_) | Ware::Utility(_) | Ware::Compass => Shop::Items,
-            Ware::Forge | Ware::StrongerSwords | Ware::BetterShields | Ware::HealPool | Ware::Trap => Shop::Upgrades,
+            Ware::Forge
+            | Ware::StrongerSwords
+            | Ware::BetterShields
+            | Ware::HealPool
+            | Ware::Trap
+            | Ware::BuildSpeed => Shop::Upgrades,
         }
     }
 
@@ -1303,6 +1589,32 @@ pub mod bridge_wars {
     /// wait on its island ("1st 2nd, 3rd queued").
     pub const FORGE_MOST: u8 = 4;
     pub const TRAPS_MOST: u8 = 3;
+    /// How fast someone carrying a plank walks, laying a bridge, as a
+    /// share of a run, by how far their team has quickened its building
+    /// at the upgrade shop, and how many steps of that there are (Hajun's
+    /// file, 2026-11-14: "Default = 50% bridge speed & 50% bridge speed
+    /// for your bridge bot. One upgrade - Advanced Builder (cost = 4
+    /// diamond) = 75% bridge speed & 75% bridge speed for your bridge
+    /// bot. Master Builder (cost = 8 diamond) = 100% ... Grand Builder
+    /// (cost = 16 diamond) = 125% bridge speed & 125% bridge speed"). The
+    /// builder a Bridge Builder sends walks as fast ([`builder_speed`]).
+    /// That it is the whole team's, as everything else at the upgrade
+    /// shop is, is mine: the file says only "your bridge bot".
+    pub const BUILD_PACE: [f32; 4] = [0.5, 0.75, 1.0, 1.25];
+    pub const BUILD_SPEED_MOST: u8 = 3;
+
+    /// What share of a run someone of a team with `team` walks at while
+    /// they carry a plank ([`BUILD_PACE`]).
+    pub fn build_pace(team: &Upgrades) -> f32 {
+        BUILD_PACE[usize::from(team.build_speed.min(BUILD_SPEED_MOST))]
+    }
+
+    /// How fast the builder a Bridge Builder sends walks, laying its
+    /// bridge, for a team with `team`, in metres a second; and how fast
+    /// one of the computer's players lays its own.
+    pub fn builder_speed(team: &Upgrades) -> f32 {
+        RUN_SPEED * build_pace(team)
+    }
 
     /// How many of `utility` its button holds: three fireballs
     /// (Hajun's file: "can buy multiple - cap at 3 stack"), three sticks
@@ -1348,9 +1660,15 @@ pub mod bridge_wars {
                     Utility::Invisibility => (Item::Amethyst, 2),
                     Utility::Healing => (Item::Gold, 3),
                     Utility::Dynamite => (Item::Amethyst, 1),
+                    Utility::Leap => (Item::Amethyst, 1),
                 })
             }
             Ware::Forge => step(&[2, 4, 6, 8], team.forge),
+            // "Advanced Builder (cost = 4 diamond) ... Master Builder
+            // (cost = 8 diamond) ... Grand Builder (cost = 16 diamond)":
+            // in sapphire, as everything at the upgrade shop is (the game
+            // has no diamond; it was what sapphire was called at first).
+            Ware::BuildSpeed => step(&[4, 8, 16], team.build_speed),
             Ware::StrongerSwords if !team.swords => Some((Item::Sapphire, 4)),
             Ware::BetterShields => step(&[2, 3, 4, 6], team.shields),
             Ware::HealPool if !team.heal_pool => Some((Item::Sapphire, 1)),
@@ -1391,6 +1709,7 @@ pub mod bridge_wars {
             Ware::HealPool => team.heal_pool = true,
             Ware::Trap => team.traps += 1,
             Ware::Compass => kit.compass = true,
+            Ware::BuildSpeed => team.build_speed += 1,
         }
         true
     }
@@ -1433,6 +1752,19 @@ pub mod bridge_wars {
     pub const FAST: f32 = 1.4;
     pub const UNSEEN_SECS: f32 = 30.0;
     pub const HEALING: f32 = 0.5;
+    /// How long the leap potion lasts, in seconds, and how many times as
+    /// high its drinker jumps meanwhile ("you get 5x jump height jump
+    /// boost for 45 sec"): the same fall and the same gravity, so the
+    /// jump leaves the ground the square root of that many times as fast
+    /// ([`leap_speed`]), and is in the air about twice as long.
+    pub const LEAP_SECS: f32 = 45.0;
+    pub const LEAP: f32 = 5.0;
+
+    /// How many times as fast as a jump a leap leaves the ground: as fast
+    /// as takes it [`LEAP`] times as high.
+    pub fn leap_speed() -> f32 {
+        LEAP.sqrt()
+    }
     /// What a team's heal pool gives each of the team on its own island,
     /// and how often, in seconds ("heals 5hp every 2.5sec").
     pub const HEAL_POOL: f32 = 5.0;
@@ -1446,7 +1778,8 @@ pub mod bridge_wars {
     pub const BLIND_SIGHT: f32 = 2.6;
     /// How far a builder lays its bridge, in metres ("creating a bridge in
     /// a straight line for 100m or until it reaches a island/land"), and
-    /// how fast it walks, as anyone building does, half a run.
+    /// how fast it walks, as anyone building does, half a run, until the
+    /// team has quickened its building ([`builder_speed`]).
     pub const BUILDER_METRES: f32 = 100.0;
     pub const BUILDER_SPEED: f32 = 5.0;
 
@@ -1817,6 +2150,7 @@ pub mod bridge_wars {
             match potion {
                 Utility::Speed => kit.fast_until = (elapsed + FAST_SECS).ceil() as u16,
                 Utility::Invisibility => kit.unseen_until = (elapsed + UNSEEN_SECS).ceil() as u16,
+                Utility::Leap => kit.leap_until = (elapsed + LEAP_SECS).ceil() as u16,
                 _ => {}
             }
             Some(potion)
@@ -1884,14 +2218,19 @@ pub mod bridge_wars {
                 if kit.unseen_until != 0 && !kit.unseen(elapsed) {
                     kit.unseen_until = 0;
                 }
+                if kit.leap_until != 0 && !kit.leaping(elapsed) {
+                    kit.leap_until = 0;
+                }
                 // A button with none left on it is empty, unless what was
                 // drunk from it still lasts: the speed potion's while they
-                // run fast, the invisibility's while they are unseen.
-                let (fast, unseen) = (kit.fast_until != 0, kit.unseen_until != 0);
+                // run fast, the invisibility's while they are unseen, the
+                // leap potion's while they leap.
+                let (fast, unseen, leaping) = (kit.fast_until != 0, kit.unseen_until != 0, kit.leap_until != 0);
                 for slot in &mut kit.slots {
                     let lasting = |stack: &Stack| match stack.utility {
                         Utility::Speed => fast,
                         Utility::Invisibility => unseen,
+                        Utility::Leap => leaping,
                         _ => false,
                     };
                     if slot.is_some_and(|stack| stack.count == 0 && !lasting(&stack)) {
@@ -2091,8 +2430,8 @@ pub struct Member {
     /// Unique and stable for as long as they are connected, so that whatever
     /// is said about them can say who it is about.
     pub id: u64,
-    /// What everyone else sees them called. Plain ASCII: the game's font has
-    /// no more.
+    /// What everyone else sees them called: what the game writes
+    /// ([`text`]).
     pub name: String,
     /// Which of the game's looks they wear.
     pub look: String,
@@ -2473,6 +2812,19 @@ pub struct Blasted {
     pub planks: Vec<(u8, u16, u16)>,
 }
 
+/// The builder a Bridge Builder has sent off, walking and laying its bridge
+/// (since 2026-11-14; Hajun: "right now, the bridge bot is not visible to
+/// other players, just the bridge that it creates. make your bridgebot
+/// visible to other players too"): whose it is, by seat. On a body the
+/// server sends the game's room, with a [`Member`] in its owner's name and
+/// look and a [`Spot`] that the owner's device moves ([`Ask::Builder`]), or
+/// the server itself, for one of the computer's players'; gone as the
+/// builder is. A device draws it as a body carrying a plank, in nobody's
+/// way, and is never sent its own, which it draws itself.
+#[derive(Component, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
+#[component(immutable)]
+pub struct BuilderOf(pub u8);
+
 /// Using what is on one of the buttons in Bridge Wars ([`Ask::Use`]).
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Debug)]
 pub enum Use {
@@ -2518,14 +2870,14 @@ pub enum Use {
 ///   and in Bridge Wars onto the same team, two by two. Up to
 ///   [`GROUP_MOST`]. Kept in the server's memory alone: a group is over
 ///   when the server restarts, or when all but one have left it.
-/// * **A message** to a friend ([`Act::Write`], [`Post::Message`]), plain
-///   ASCII and short ([`MESSAGE_LONGEST`]), kept for them until they have
-///   seen it off.
+/// * **A message** to a friend ([`Act::Write`], [`Post::Message`]), short
+///   ([`MESSAGE_LONGEST`]) and of what the game writes ([`text`](super::text)),
+///   kept for them until they have seen it off.
 /// * **A level**, from what an account has earned playing ([`level`]).
 pub mod social {
     use serde::{Deserialize, Serialize};
 
-    use super::profile;
+    use super::{profile, text};
 
     /// The tags there are, the number after a name: `#1000` to `#9999`.
     pub const TAG_FIRST: u16 = 1000;
@@ -2537,14 +2889,23 @@ pub mod social {
     /// The most in a group, its leader among them: two teams of Bridge
     /// Wars. Mine, Hajun not having said.
     pub const GROUP_MOST: usize = 4;
-    /// How long a message may be, in characters, and how many wait for one
-    /// account at the most.
+    /// How long a message may be, in widths ([`text::length`]: 80 Latin
+    /// letters, or 40 Hangul syllables), and how many wait for one account
+    /// at the most.
     pub const MESSAGE_LONGEST: usize = 80;
     pub const LETTERS_MOST: usize = 30;
-    /// The most players a search answers with, and the longest it reads:
-    /// a name with its tag after it.
+    /// The most players a search answers with, and the longest it reads,
+    /// in widths: a name with its tag after it.
     pub const FOUND_MOST: usize = 20;
     pub const SOUGHT_LONGEST: usize = profile::LONGEST + 5;
+
+    /// What is typed to look for a player by, as it is looked for: cleaned
+    /// as a name is ([`text::clean`]), so that a name is found however its
+    /// letters were typed, and no longer than [`SOUGHT_LONGEST`].
+    pub fn sought(typed: &str) -> String {
+        let clean = text::clean(typed);
+        text::fitted(&clean, SOUGHT_LONGEST).trim().to_string()
+    }
     /// How long being asked into a group stands, in seconds, and how long
     /// someone whose connection has gone is kept in theirs: a phone closes
     /// its connection whenever the app is put in the background.
@@ -2588,14 +2949,12 @@ pub mod social {
             .then_some((name, tag))
     }
 
-    /// `text` as a message, if it is one: something, once the spaces round
-    /// it are trimmed, no longer than [`MESSAGE_LONGEST`], and all of it
-    /// what a name may be made of ([`profile::allowed`]), which is what
-    /// the game's keyboard types.
-    pub fn message(text: &str) -> Option<String> {
-        let text = text.trim();
-        (!text.is_empty() && text.len() <= MESSAGE_LONGEST && text.chars().all(profile::allowed))
-            .then(|| text.to_string())
+    /// `typed` as a message, if it is one: something, once it is cleaned
+    /// ([`text::clean`]), and no longer than [`MESSAGE_LONGEST`]; with the
+    /// common swear words in it starred out ([`text::masked`]).
+    pub fn message(typed: &str) -> Option<String> {
+        let message = text::clean(typed);
+        (!message.is_empty() && text::length(&message) <= MESSAGE_LONGEST).then(|| text::masked(&message))
     }
 
     /// One of the games there are to be in.
@@ -2788,6 +3147,106 @@ pub mod social {
     }
 }
 
+// ------------------------------------------------------------------- chat
+
+/// What is said in a room, and what a game of Bridge Wars tells everyone in
+/// it as it goes (since 2026-11-14; Hajun: "I think there should be a
+/// global chat in the Bridge Wars game, with notifications that pop up
+/// based on game events: When anyone dies: 'Bob fell off the world.' When
+/// someone kills someone: 'Bob killed Hannah with a Stone Sword,' or 'Bob
+/// knocked Hannah off the world.' Team-specific notifications, like 'Bob
+/// purchased Heal Pool for your team.' ... This chat box should also be in
+/// the main lobby ... everyone in the lobby should see the message with
+/// your name tag followed by your text, like chat on a Minecraft server").
+///
+/// * **A line** ([`Ask::Chat`](super::Ask::Chat)) is short and of what the
+///   game writes ([`line`], [`text`](super::text): English, Korean and
+///   Vietnamese); the server passes it on to everyone in the asker's room, a
+///   channel of the town or a game, the asker among them
+///   ([`Tell::Said`](super::Tell::Said)), no oftener than [`EVERY`] once
+///   [`BURST`] have gone out together. Nothing is kept of it anywhere: a
+///   device shows what it heard while it was there (the game's `chat`).
+/// * **What happens in a game of Bridge Wars** ([`Feed`]) is the server's
+///   to say online ([`Tell::Feed`](super::Tell::Feed)), by seat, and the
+///   device's own in a game played offline; each device writes it out in
+///   its own words, with every name in its team's colour.
+pub mod chat {
+    use serde::{Deserialize, Serialize};
+
+    use super::{Ware, text};
+
+    /// The longest line someone may say, in widths ([`text::length`]): 80
+    /// Latin letters, or 40 Hangul syllables.
+    pub const LONGEST: usize = 80;
+    /// How many lines someone may say one after another, and how long each
+    /// one more takes to be theirs to say, in seconds: for someone leaning
+    /// on a key, not for a conversation.
+    pub const BURST: f32 = 4.0;
+    pub const EVERY: f32 = 1.5;
+    /// How long after someone was last hit by another their fall is that
+    /// other's doing, in seconds ([`Feed::Knocked`]): Minecraft's five
+    /// seconds of being in a fight.
+    pub const CREDIT_SECS: f32 = 5.0;
+
+    /// `typed` as a line to say, if it is one: something, once it is
+    /// cleaned ([`text::clean`]: its letters put together, what the game
+    /// does not write left out, the spaces round it trimmed), and no longer
+    /// than [`LONGEST`]; with the common swear words in it starred out
+    /// ([`text::masked`]), which the server does to every line it passes
+    /// on.
+    pub fn line(typed: &str) -> Option<String> {
+        let line = text::clean(typed);
+        (!line.is_empty() && text::length(&line) <= LONGEST).then(|| text::masked(&line))
+    }
+
+    /// How many lines someone may say now, who had `had` to say `since`
+    /// seconds ago: one more for every [`EVERY`] gone by, up to
+    /// [`BURST`]. Saying one takes one of them.
+    pub fn lines_left(had: f32, since: f32) -> f32 {
+        (had + since.max(0.0) / EVERY).min(BURST)
+    }
+
+    /// What someone was killed with.
+    #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
+    pub enum Weapon {
+        /// A bare hand.
+        Fists,
+        /// A sword, by its tier, 1 to 3.
+        Sword(u8),
+        Fireball,
+        Dynamite,
+    }
+
+    /// Something that has happened in a game of Bridge Wars, for the chat:
+    /// who, by seat (a zombie's is past the players' eight).
+    #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
+    pub enum Feed {
+        /// They fell off the world, by nobody's doing.
+        Fell { seat: u8 },
+        /// They fell off the world, `by` having hit them a moment before
+        /// ([`CREDIT_SECS`]).
+        Knocked { seat: u8, by: u8 },
+        /// `by` killed them, with this.
+        Killed { seat: u8, by: u8, with: Weapon },
+        /// `by` bought this at the upgrade shop, for their team, which is
+        /// who is told: `step` is how far the team has it now, for what
+        /// goes by steps.
+        Bought { by: u8, ware: Ware, step: u8 },
+        /// `by` broke `team`'s respawn anchor.
+        AnchorBroken { team: u8, by: u8 },
+    }
+
+    impl Feed {
+        /// Which team alone is told of it, if it is not for everyone.
+        pub fn only_for(&self) -> Option<u8> {
+            match *self {
+                Feed::Bought { by, .. } => Some(super::arena_team(usize::from(by))),
+                _ => None,
+            }
+        }
+    }
+}
+
 // --------------------------------------------------------------- messages
 
 /// Where you are now: sent while it changes, 15 times a second, and nothing
@@ -2867,6 +3326,15 @@ pub enum Ask {
     /// Something about my friends, my group or my inbox ([`social::Act`],
     /// since 2026-11-13).
     Social(social::Act),
+    /// Say this to everyone in my room ([`chat`], since 2026-11-14): the
+    /// town's channel I am in, or my game. One that is no line
+    /// ([`chat::line`]), or one too many too fast, is dropped.
+    Chat(String),
+    /// Where the builder I sent off is now ([`BuilderOf`], since
+    /// 2026-11-14), for everyone else in the game to see it: `id` is my
+    /// number for it, as I may have several out; with no spot, it is
+    /// gone. Sent while it walks, as my own moves are.
+    Builder { id: u8, spot: Option<Spot> },
 }
 
 /// What the server tells you alone. In order, and never lost.
@@ -2905,6 +3373,12 @@ pub enum Tell {
     /// Something about your friends, your group or your inbox
     /// ([`social::News`], since 2026-11-13).
     Social(social::News),
+    /// Someone in your room has said this ([`Ask::Chat`], since
+    /// 2026-11-14), you among them: who, by their [`Member::id`], the name
+    /// they go by, and what they said.
+    Said { who: u64, name: String, text: String },
+    /// Something has happened in your game of Bridge Wars ([`chat::Feed`]).
+    Feed(chat::Feed),
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
@@ -2968,11 +3442,127 @@ mod tests {
         assert_eq!(message("  play at 9?  ").as_deref(), Some("play at 9?"));
         assert_eq!(message(""), None);
         assert_eq!(message("   "), None);
-        assert_eq!(message("안녕"), None, "the font has no Hangul");
-        assert_eq!(message("two\nlines"), None);
+        // Korean and Vietnamese, as English; a new line is a space; what
+        // the game does not write is left out, and nothing left is none.
+        assert_eq!(message(" 안녕 ㅋㅋ ").as_deref(), Some("안녕 ㅋㅋ"));
+        assert_eq!(message("Chào bạn!").as_deref(), Some("Chào bạn!"));
+        assert_eq!(message("two\nlines").as_deref(), Some("two lines"));
+        assert_eq!(message("gg \u{1F600}").as_deref(), Some("gg"));
+        assert_eq!(message("\u{1F600}"), None);
         let longest = "x".repeat(MESSAGE_LONGEST);
         assert_eq!(message(&longest).as_deref(), Some(longest.as_str()));
         assert_eq!(message(&"x".repeat(MESSAGE_LONGEST + 1)), None);
+        // A Hangul syllable is as long as two letters.
+        let longest = "가".repeat(MESSAGE_LONGEST / 2);
+        assert_eq!(message(&longest).as_deref(), Some(longest.as_str()));
+        assert_eq!(message(&"가".repeat(MESSAGE_LONGEST / 2 + 1)), None);
+    }
+
+    #[test]
+    fn common_swear_words_are_starred_out_letter_for_letter_and_everyday_words_left_alone() {
+        use text::masked;
+        // English: the word, whatever its capitals, and whatever it is
+        // part of or drawn out to; the rest of the line as it was.
+        assert_eq!(masked("what the fuck"), "what the ****");
+        assert_eq!(masked("FUCK you, Shithead!"), "**** you, ********!");
+        assert_eq!(masked("fuuuuck this bullshit"), "******* this ********");
+        assert_eq!(masked("you motherfucker, biiitch"), "you ************, *******");
+        assert_eq!(masked("kick ass, asshole"), "kick ***, *******");
+        assert_eq!(masked("fuck123 fuck_you"), "****123 ****_you");
+        assert_eq!(masked("dick, cock and pussy"), "****, **** and *****");
+        // Everyday words with those letters in them are not swear words.
+        for fine in [
+            "class pass assassin grass bass", "cockpit peacock cocktail Hancock", "Dickens dickson", "Scunthorpe",
+            "snigger", "as is", "shut the door", "duck luck", "I pushed it", "hello world gg wp", "analysis",
+            "cac ban oi", "di choi", "lon coca", "lol", "dm me", "cc", "",
+        ] {
+            assert_eq!(masked(fine), fine);
+        }
+        // Korean: where it stands in a run of Hangul, itself and no more,
+        // and the letters alone it is shortened to.
+        assert_eq!(masked("아 시발 진짜"), "아 ** 진짜");
+        assert_eq!(masked("아씨발진짜뭐야"), "아**진짜뭐야");
+        assert_eq!(masked("ㅅㅂ ㅋㅋㅋ"), "** ㅋㅋㅋ");
+        assert_eq!(masked("이 개새끼야 병신아"), "이 ***야 **아");
+        assert_eq!(masked("좆같네 지랄하네"), "*같네 **하네");
+        for fine in ["안녕하세요 ㅋㅋ ㅎㅎ", "다시발견했다", "시발점", "보지 마 자지 마", "새끼 고양이", "미친 듯이 달려"] {
+            assert_eq!(masked(fine), fine);
+        }
+        // Vietnamese: a word of its own, as it is spelt with its marks.
+        assert_eq!(masked("Địt mẹ mày"), "*** mẹ mày");
+        assert_eq!(masked("ngu vl, đéo hiểu"), "ngu **, *** hiểu");
+        assert_eq!(masked("vcl ĐM"), "*** **");
+        for fine in ["Xin chào các bạn", "tôi đi chơi", "đẹp quá", "Việt Nam"] {
+            assert_eq!(masked(fine), fine);
+        }
+        // As long as it was, letter for letter; and done twice it is as
+        // done once.
+        for said in ["what the fuck", "아씨발진짜", "Địt mẹ", "ok"] {
+            assert_eq!(masked(said).chars().count(), said.chars().count());
+            assert_eq!(masked(&masked(said)), masked(said));
+        }
+        // What is said and what is written to a friend are masked, by
+        // whoever cleans them; a name is not.
+        assert_eq!(chat::line("  fuck this  ").as_deref(), Some("**** this"));
+        assert_eq!(social::message("씨발 뭐야").as_deref(), Some("** 뭐야"));
+        assert_eq!(profile::name("Dickens").as_deref(), Some("Dickens"));
+        assert_eq!(profile::name("asshole").as_deref(), Some("asshole"), "names are not filtered");
+    }
+
+    #[test]
+    fn what_is_written_is_english_korean_and_vietnamese_put_together_from_its_pieces() {
+        use text::{allowed, clean, fitted, length, piece, typed, width};
+        // English, as ever; Korean, syllables and the letters alone;
+        // Vietnamese, every vowel with every tone, capital and small.
+        for c in "Az09 !~<3#".chars().chain("한글ㅋㅎㅏ".chars()).chain("ăâđêôơưĂÂĐÊÔƠƯàáảãạằắẳẵặầấẩẫậèéẻẽẹềếểễệìíỉĩịòóỏõọồốổỗộờớởỡợùúủũụừứửữựỳýỷỹỵỲÝỶỸỴ".chars()) {
+            assert!(allowed(c), "{c:?}");
+        }
+        // And what a phone's keyboard writes by itself.
+        for c in "\u{2018}\u{2019}\u{201C}\u{201D}\u{2026}\u{2013}\u{2014}".chars() {
+            assert!(allowed(c), "{c:?}");
+        }
+        // Not what the fonts cannot draw: emoji, Hanja, kana, Cyrillic,
+        // the letters of other languages, a new line, a soft hyphen.
+        for c in "\u{1F600}漢かЖłİ\n\t\u{AD}\u{A0}\u{3164}".chars() {
+            assert!(!allowed(c), "{c:?}");
+        }
+        // The pieces a letter may come in are typed, and are no letter by
+        // themselves.
+        for c in "\u{300}\u{301}\u{303}\u{309}\u{323}\u{302}\u{306}\u{31B}\u{1100}\u{1161}\u{11AB}".chars() {
+            assert!(piece(c) && typed(c) && !allowed(c), "{c:?}");
+        }
+        assert!(typed('a') && typed('한') && !typed('\u{1F600}'));
+        // Put together: a vowel and its marks, in whatever order a
+        // keyboard sent them; a syllable from its parts.
+        assert_eq!(clean("Vie\u{302}\u{323}t"), "Việt");
+        assert_eq!(clean("Vi\u{EA}\u{323}t"), "Việt");
+        assert_eq!(clean("Việt"), "Việt");
+        assert_eq!(clean("\u{1112}\u{1161}\u{11AB}\u{1100}\u{1173}\u{11AF}"), "한글");
+        // A piece with nothing to go on, or on a letter that takes none,
+        // is left out.
+        assert_eq!(clean("q\u{301}x"), "qx");
+        assert_eq!(clean("\u{1100}"), "");
+        // Spaces of every kind are a space, and those round it trimmed.
+        assert_eq!(clean("\ta\u{A0}b\u{3000}c\n"), "a b c");
+        // As it is shown while it is typed: put together, nothing left
+        // out.
+        assert_eq!(text::whole(" Vie\u{302}\u{323}t\u{1F600} "), " Việt\u{1F600} ");
+        // Clean twice is clean once.
+        for raw in ["  Vie\u{302}\u{323}t  Nam ", "한\u{1F600}글", "plain", ""] {
+            assert_eq!(clean(&clean(raw)), clean(raw), "{raw:?}");
+        }
+        // Widths: a Latin letter one, Hangul two, a mark none.
+        assert_eq!((width('a'), width('ệ'), width('한'), width('ㅋ'), width('\u{301}')), (1, 1, 2, 2, 0));
+        assert_eq!(length("Việt Nam"), 8);
+        assert_eq!(length("한글 ab"), 7);
+        assert_eq!(length("Vie\u{302}\u{323}t"), 4);
+        assert_eq!(length("\u{1112}\u{1161}\u{11AB}"), 2);
+        // The front of a text that fits, never cut inside a letter.
+        assert_eq!(fitted("한글abc", 5), "한글a");
+        assert_eq!(fitted("한글abc", 3), "한");
+        assert_eq!(fitted("abc", 10), "abc");
+        assert_eq!(fitted("e\u{301}x", 1), "e\u{301}");
+        assert_eq!(fitted("", 4), "");
     }
 
     #[test]
@@ -2983,6 +3573,135 @@ mod tests {
         assert_eq!(level(XP_A_LEVEL), 2);
         assert_eq!(level(52 * XP_A_LEVEL + 7), 53);
         assert_eq!(level(u32::MAX), LEVEL_MOST);
+    }
+
+    #[test]
+    fn the_leap_potion_lasts_its_while_and_a_team_s_building_quickens_step_by_step() {
+        use bridge_wars::{
+            BUILD_PACE, BUILD_SPEED_MOST, BUILDER_SPEED, LEAP, LEAP_SECS, Outfits, Shop, build_pace, builder_speed, buy,
+            leap_speed, price, sold_at,
+        };
+        // The leap potion: 1 amethyst at the item shop, drunk, and lasting
+        // its while from the moment it is.
+        let mut outfits = Outfits::default();
+        outfits.seat(ARENA_SEATS);
+        let mut purse: Purse = [0, 0, 0, 2];
+        assert_eq!(sold_at(Ware::Utility(Utility::Leap)), Shop::Items);
+        assert!(outfits.buy(0, Ware::Utility(Utility::Leap), &mut purse));
+        assert_eq!(purse, [0, 0, 0, 1]);
+        assert!(Utility::Leap.drunk() && Utility::Leap.lasts() && !Utility::Leap.aimed());
+        assert!(!outfits.kit(0).leaping(100.0));
+        assert_eq!(outfits.drink(0, Utility::Leap, 100.2), Some(Utility::Leap));
+        let kit = outfits.kit(0);
+        assert_eq!((LEAP_SECS, kit.leap_until, kit.lasts_until(Utility::Leap)), (45.0, 146, 146));
+        assert!(kit.leaping(100.2) && kit.leaping(145.9) && !kit.leaping(146.0));
+        assert_eq!((kit.lasts_until(Utility::Speed), kit.lasts_until(Utility::Healing)), (0, 0));
+        // Its button is its own while it lasts, with none left on it, and
+        // empty once it is over.
+        outfits.tick(0.1, 120.0, &[]);
+        assert_eq!(outfits.kit(0).slots[0], Some(Stack { utility: Utility::Leap, count: 0 }));
+        outfits.tick(0.1, 146.5, &[]);
+        assert_eq!((outfits.kit(0).slots[0], outfits.kit(0).leap_until), (None, 0));
+        // Five times as high is the square root of five times as fast off
+        // the ground, the fall being what it is.
+        assert_eq!(LEAP, 5.0);
+        assert!((leap_speed() * leap_speed() - LEAP).abs() < 1e-5);
+        // Dying, it is gone with the rest.
+        assert!(outfits.buy(0, Ware::Utility(Utility::Leap), &mut purse));
+        assert_eq!(outfits.drink(0, Utility::Leap, 200.0), Some(Utility::Leap));
+        outfits.die(0);
+        assert!(!outfits.kit(0).leaping(201.0));
+        // It goes over the wire with the rest of a kit.
+        let kit = Kit { leap_until: 300, ..Kit::default() }.holding(Utility::Leap, 2);
+        let back: Kit = postcard::from_bytes(&postcard::to_allocvec(&kit).unwrap()).unwrap();
+        assert_eq!(back, kit);
+
+        // A team's building: half a run to begin with, and three steps at
+        // the upgrade shop, for 4, 8 and 16 sapphire, to three quarters of
+        // one, all of one, and a quarter over.
+        let (mut kit, mut team) = (Kit::default(), Upgrades::default());
+        assert_eq!(sold_at(Ware::BuildSpeed), Shop::Upgrades);
+        assert_eq!((build_pace(&team), builder_speed(&team)), (0.5, BUILDER_SPEED));
+        let mut purse: Purse = [0, 0, 40, 0];
+        let mut steps = Vec::new();
+        while let Some((item, cost)) = price(Ware::BuildSpeed, &kit, &team) {
+            assert_eq!(item, Item::Sapphire);
+            assert!(buy(Ware::BuildSpeed, &mut purse, &mut kit, &mut team));
+            steps.push((cost, build_pace(&team)));
+        }
+        assert_eq!(steps, vec![(4, 0.75), (8, 1.0), (16, 1.25)]);
+        assert_eq!((team.build_speed, purse[2]), (BUILD_SPEED_MOST, 40 - 28));
+        assert!(!buy(Ware::BuildSpeed, &mut purse, &mut kit, &mut team));
+        assert_eq!(builder_speed(&team), 12.5);
+        assert_eq!(BUILD_PACE.len(), usize::from(BUILD_SPEED_MOST) + 1);
+        let back: Upgrades = postcard::from_bytes(&postcard::to_allocvec(&team).unwrap()).unwrap();
+        assert_eq!(back, team);
+    }
+
+    #[test]
+    fn a_line_of_chat_is_short_and_plain_and_what_a_game_says_goes_over_the_wire() {
+        use chat::{BURST, CREDIT_SECS, EVERY, Feed, LONGEST, Weapon, line, lines_left};
+        // A line: something, cleaned, no longer than it may be; English,
+        // Korean or Vietnamese.
+        assert_eq!(line("  gg wp  ").as_deref(), Some("gg wp"));
+        assert_eq!(line(""), None);
+        assert_eq!(line("   "), None);
+        assert_eq!(line("two\nlines").as_deref(), Some("two lines"));
+        assert_eq!(line("\u{c548}\u{b155} ㅎㅎ").as_deref(), Some("안녕 ㅎㅎ"));
+        assert_eq!(line("xin cha\u{300}o").as_deref(), Some("xin chào"));
+        assert_eq!(line("\u{1F600}\u{1F600}"), None, "nothing the game writes");
+        let longest = "x".repeat(LONGEST);
+        assert_eq!(line(&longest).as_deref(), Some(longest.as_str()));
+        assert_eq!(line(&"x".repeat(LONGEST + 1)), None);
+        let longest = "글".repeat(LONGEST / 2);
+        assert_eq!(line(&longest).as_deref(), Some(longest.as_str()));
+        assert_eq!(line(&"글".repeat(LONGEST / 2 + 1)), None);
+        // So many at once, and one more for every while gone by.
+        assert_eq!(lines_left(BURST, 1000.0), BURST);
+        assert_eq!(lines_left(0.0, 0.0), 0.0);
+        assert!((lines_left(0.0, EVERY) - 1.0).abs() < 1e-6);
+        assert!(lines_left(0.5, -3.0) == 0.5, "time never runs back");
+        assert!(CREDIT_SECS > 2.0 && CREDIT_SECS < 15.0);
+        // What a game says, and what someone says, there and back.
+        for feed in [
+            Feed::Fell { seat: 3 },
+            Feed::Knocked { seat: 3, by: 6 },
+            Feed::Killed { seat: 0, by: 11, with: Weapon::Sword(2) },
+            Feed::Killed { seat: 0, by: 1, with: Weapon::Dynamite },
+            Feed::Bought { by: 4, ware: Ware::BuildSpeed, step: 2 },
+            Feed::AnchorBroken { team: 2, by: 5 },
+        ] {
+            let bytes = postcard::to_allocvec(&Tell::Feed(feed)).unwrap();
+            let Tell::Feed(back) = postcard::from_bytes(&bytes).unwrap() else {
+                panic!("not what was sent");
+            };
+            assert_eq!(back, feed);
+            assert!(bytes.len() <= 6, "{feed:?} is {} bytes", bytes.len());
+        }
+        // What a team bought is for that team alone; the rest for all.
+        assert_eq!(Feed::Bought { by: 4, ware: Ware::HealPool, step: 1 }.only_for(), Some(arena_team(4)));
+        assert_eq!(Feed::Fell { seat: 4 }.only_for(), None);
+        let said = Tell::Said { who: 9, name: "Bob".into(), text: "hello".into() };
+        let Tell::Said { who, name, text } = postcard::from_bytes(&postcard::to_allocvec(&said).unwrap()).unwrap() else {
+            panic!("not what was sent");
+        };
+        assert_eq!((who, name.as_str(), text.as_str()), (9, "Bob", "hello"));
+        let Ask::Chat(back) = postcard::from_bytes(&postcard::to_allocvec(&Ask::Chat("hello".into())).unwrap()).unwrap()
+        else {
+            panic!("not what was sent");
+        };
+        assert_eq!(back, "hello");
+        // And where a builder is, or that it is gone.
+        let spot = Spot::of(Vec3::new(12.5, 0.24, -40.0), Quat::from_rotation_y(1.0));
+        for ask in [Ask::Builder { id: 3, spot: Some(spot) }, Ask::Builder { id: 3, spot: None }] {
+            let Ask::Builder { id, spot: back } = postcard::from_bytes(&postcard::to_allocvec(&ask).unwrap()).unwrap() else {
+                panic!("not what was sent");
+            };
+            let Ask::Builder { spot: sent, .. } = ask else { unreachable!() };
+            assert_eq!(id, 3);
+            assert_eq!(back.is_some(), sent.is_some());
+            assert!(back.zip(sent).is_none_or(|(back, sent)| back.same(&sent)));
+        }
     }
 
     #[test]
@@ -3194,9 +3913,25 @@ mod tests {
         assert_eq!(profile::name("a"), None);
         assert_eq!(profile::name(" a "), None);
         assert_eq!(profile::name("seventeen chars!!"), None);
-        // Nothing the game's font cannot draw.
-        assert_eq!(profile::name("하준"), None);
-        assert_eq!(profile::name("tab\there"), None);
+        // Korean, a syllable as long as two letters: one to eight of them,
+        // or fewer with letters beside them.
+        assert_eq!(profile::name("하준").as_deref(), Some("하준"));
+        assert_eq!(profile::name("민").as_deref(), Some("민"));
+        assert_eq!(profile::name("동그라미타운주민").as_deref(), Some("동그라미타운주민"));
+        assert_eq!(profile::name("동그라미타운주민들"), None);
+        assert_eq!(profile::name("동그라미<3").as_deref(), Some("동그라미<3"));
+        assert_eq!(profile::name("동그라미타운 abc").as_deref(), Some("동그라미타운 abc"));
+        assert_eq!(profile::name("동그라미타운 abcd"), None);
+        // Vietnamese, each letter one whatever marks it has, and the same
+        // name however its letters were typed.
+        assert_eq!(profile::name("Nguyễn Văn Hải").as_deref(), Some("Nguyễn Văn Hải"));
+        assert_eq!(profile::name("Ha\u{309}i"), profile::name("Hải"));
+        assert_eq!(profile::name("Nguyễn Thị Minh Hà"), None, "eighteen letters");
+        // What the game does not write is left out of it, and a tab is a
+        // space.
+        assert_eq!(profile::name("Bob\u{1F600}").as_deref(), Some("Bob"));
+        assert_eq!(profile::name("\u{1F600}\u{1F600}"), None);
+        assert_eq!(profile::name("tab\there").as_deref(), Some("tab here"));
         assert!(profile::look("boy") && profile::look("girl"));
         assert!(!profile::look("blue") && !profile::look("red") && !profile::look(""));
     }
@@ -3625,10 +4360,11 @@ mod tests {
             assert_eq!((kit.slot_of(utility), kit.held(utility)), (Some(slot), 1));
         }
         assert_eq!(kit.free_slot(), None);
-        // There are six kinds and five buttons: with five kinds held, the
-        // sixth is not to be had until a button is empty.
-        assert_eq!(Utility::ALL.len(), UTILITY_SLOTS + 1);
+        // There are seven kinds and five buttons: with five kinds held,
+        // another is not to be had until a button is empty.
+        assert_eq!(Utility::ALL.len(), UTILITY_SLOTS + 2);
         assert_eq!(price(Ware::Utility(Utility::Dynamite), &kit, &none), None);
+        assert_eq!(price(Ware::Utility(Utility::Leap), &kit, &none), None);
         let held = purse;
         assert!(!buy(Ware::Utility(Utility::Dynamite), &mut purse, &mut kit, &mut team));
         assert_eq!(purse, held, "and nothing is paid for it");

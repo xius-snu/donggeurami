@@ -25,10 +25,10 @@
 use bevy::math::{Vec2, Vec3, Vec3Swizzles};
 
 use crate::bridge_wars::{
-    AIR_DRAG, BLIND_SIGHT, BOT_PUNCH_EVERY, BRIDGE_A_BUY, BUILDER_METRES, BUILDER_SPEED, DRINK_SECS, DRINK_SLOW,
+    AIR_DRAG, BLIND_SIGHT, BOT_PUNCH_EVERY, BRIDGE_A_BUY, BUILDER_METRES, DRINK_SECS, DRINK_SLOW,
     DYNAMITE_FURTHEST, DYNAMITE_FUSE, DYNAMITE_NEAREST, DYNAMITE_RADIUS, FAST,
     FIREBALL_RANGE,
-    GROUND_DRAG, HUNT_RADIUS, KNOCK_BACK, KNOCK_UP, Mint, Outfits, REACH, RUN_SPEED, SPRINT_BONUS, price,
+    GROUND_DRAG, HUNT_RADIUS, KNOCK_BACK, KNOCK_UP, Mint, Outfits, REACH, RUN_SPEED, SPRINT_BONUS, builder_speed, price,
 };
 use crate::nav::{BODY, Gap, Nav, Region, Span};
 use crate::{
@@ -1224,8 +1224,9 @@ struct Laying {
 /// A Bridge Builder a bot has sent off: the bridge it is laying, straight
 /// from the one land to the other, which of the bot's bridges that is,
 /// which rung comes next, and how far along it the builder has walked.
-/// Nobody sees the builder itself, as nobody sees anyone else's: its
-/// bridge goes up by itself, a plank or two ahead of where it would be.
+/// Its bridge goes up a plank or two ahead of where it is, and whoever
+/// runs the game shows the builder there ([`Squad::builder_at`]; until
+/// 2026-11-14 nobody saw it, and the bridge went up by itself).
 #[derive(Clone, Copy, PartialEq, Debug)]
 struct Sent {
     span: Span,
@@ -1470,6 +1471,14 @@ impl Bot {
     /// How it is fighting whoever it fights, if it is fighting.
     /// What it means to carry on its buttons this life, in the order it
     /// buys them, and how many of each.
+    /// Where the builder it has sent off is now, if it has one out, across
+    /// the ground, and which way it walks ([`Squad::builder_at`]).
+    pub fn builder_at(&self) -> Option<(Vec2, Vec2)> {
+        let sent = self.sent?;
+        let way = sent.span.way();
+        Some((sent.span.from + way * sent.along.min(sent.span.chord()), way))
+    }
+
     pub fn loadout(&self) -> &[(Utility, u8)] {
         &self.loadout
     }
@@ -1806,6 +1815,15 @@ impl Squad {
         self.bots.get(seat).and_then(Option::as_ref)
     }
 
+    /// Where the builder the bot in `seat` has sent off is now, if it has
+    /// one out, across the ground, and which way it walks: along the
+    /// bridge it is laying, as far as it has walked. For whoever runs the
+    /// game to show it there (since 2026-11-14; Hajun: "make your
+    /// bridgebot visible to other players too").
+    pub fn builder_at(&self, seat: usize) -> Option<(Vec2, Vec2)> {
+        self.bot(seat)?.builder_at()
+    }
+
     /// The bot in `seat` stands `at`: as the fight begins, and each time
     /// it stands again.
     pub fn stand(&mut self, seat: usize, at: Vec3, yaw: f32, now: f32) {
@@ -2014,7 +2032,7 @@ impl Squad {
             bot.reel_until = view.elapsed + reel;
         }
         // A builder it sent off lays on, wherever the bot itself is.
-        build_on(&mut bot, dt, &mut order);
+        build_on(&mut bot, builder_speed(&view.outfits.team(seat)), dt, &mut order);
         if view.elapsed >= bot.think_at {
             self.think(&mut bot, view);
         }
@@ -3977,7 +3995,8 @@ impl Squad {
         // Out along it, no further than it is laid.
         let laid = (next.saturating_sub(1)) as f32 * step;
         let limit = if next > planks { chord } else { (laid - 0.4).max(0.0) };
-        let speed = BUILDER_SPEED.min((limit - along).max(0.0) / dt.max(1e-3));
+        // (At the pace its team builds at, quickened or not.)
+        let speed = builder_speed(&view.outfits.team(bot.seat)).min((limit - along).max(0.0) / dt.max(1e-3));
         // Onto its middle line, and on along it as it bends.
         let sideways = onto - here;
         if speed <= 0.0 && sideways.length() < 0.05 {
@@ -3995,13 +4014,13 @@ impl Squad {
 /// Moves on the Bridge Builder `bot` has sent off, if any: along its
 /// bridge at the pace anyone builds at, each plank laid a rung or two
 /// ahead of it, to the far shore, where it is done.
-fn build_on(bot: &mut Bot, dt: f32, order: &mut Order) {
+fn build_on(bot: &mut Bot, speed: f32, dt: f32, order: &mut Order) {
     let Some(mut sent) = bot.sent else {
         return;
     };
     let (planks, chord) = (sent.span.planks(), sent.span.chord());
     let step = chord / planks as f32;
-    sent.along += BUILDER_SPEED * dt;
+    sent.along += speed * dt;
     while sent.next <= planks && (sent.next as f32 - 1.0) * step < sent.along + LAID_AHEAD + step {
         order
             .rungs
@@ -4180,6 +4199,8 @@ fn shopping(
             Utility::Speed | Utility::Invisibility | Utility::Dynamite => has(Item::Amethyst) > 0 || (keen && elapsed > 60.0),
             // Bought for a bridge it is short of, before anything.
             Utility::Builder => false,
+            // Not theirs to carry ([`KINDS`]).
+            Utility::Leap => false,
         };
         let held = kit.held(kind);
         if ready && held < keeps && price(Ware::Utility(kind), kit, team).is_some() {
@@ -4201,6 +4222,7 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
+    use crate::bridge_wars::BUILDER_SPEED;
     use crate::nav::Grid;
 
     /// An island 12 m across at the origin, its top 0.25 m up, `Team(0)`.
@@ -4599,8 +4621,10 @@ mod tests {
         let mut builders = std::collections::HashMap::new();
         let mut sticks = std::collections::HashMap::new();
         // Every kind there is to carry is one of them, each once.
-        assert_eq!(KINDS.len(), Utility::ALL.len());
-        assert!(Utility::ALL.iter().all(|kind| KINDS.contains(kind)));
+        // Every kind there is but the leap potion, which is not theirs to
+        // carry: none of them would know what to do with it.
+        assert_eq!(KINDS.len(), Utility::ALL.len() - 1);
+        assert!(Utility::ALL.iter().all(|kind| KINDS.contains(kind) || *kind == Utility::Leap));
         for persona in &PERSONAS {
             let [least, most] = persona.pockets;
             let (mut firsts, mut fullest) = ([0u32; 6], 0);
@@ -4886,10 +4910,12 @@ mod tests {
         outfits.seat(ARENA_SEATS);
         outfits.kits[seat] = Kit::default().holding(Utility::Builder, 1);
         let (mut sent, mut joined, mut rungs, mut carried, mut furthest) = (None, None, Vec::new(), false, 0.0f32);
+        let mut walk: Vec<(Vec2, Vec2)> = Vec::new();
         alone(&mut squad, &mut nav, &mut outfits, seat, None, 1.0, 1.0, 40.0, |now, order, nav, bot| {
             if order.build {
                 sent = Some(now);
             }
+            walk.extend(bot.builder_at());
             carried |= order.carrying;
             rungs.extend(order.rungs.iter().map(|rung| (rung.1, rung.2)));
             furthest = furthest.max(bot.body.at.x);
@@ -4915,6 +4941,18 @@ mod tests {
         // quicker: the bridge goes up a rung at a time.
         let across = first.distance(last) / BUILDER_SPEED;
         assert!(joined - sent < across + 1.0 && joined - sent > across * 0.5, "{} s for {} m", joined - sent, first.distance(last));
+        // The builder itself is to be seen walking it, for whoever runs
+        // the game to show: from where the bridge begins, along its line
+        // and the way it goes, never back, and never past the planks laid
+        // ahead of it.
+        assert!(walk.len() > 60, "seen for {} frames", walk.len());
+        assert!(walk[0].0.distance(first) < 0.5, "it sets off from {}", walk[0].0);
+        for (at, heading) in &walk {
+            assert!(heading.distance(way) < 1e-3 && way.perp_dot(*at - first).abs() < 1e-3, "{at}, heading {heading}");
+        }
+        assert!(walk.windows(2).all(|pair| (pair[1].0 - pair[0].0).dot(way) >= -1e-4));
+        let far = (walk[walk.len() - 1].0 - first).dot(way);
+        assert!(far > first.distance(last) * 0.6 && far <= first.distance(last) + 1e-3, "{far} m along");
         // And nothing of it the bot's own: no plank in its arms, no
         // metres spent, the builder gone from its button, and its feet on
         // its own island.
@@ -5092,11 +5130,13 @@ mod tests {
 
     #[test]
     fn a_body_jumping_a_gap_goes_off_the_edge_it_would_never_walk_off_and_comes_down_past_it() {
-        // A bridge with four planks blown out of it, 5.4 m of nothing.
+        // A bridge with three planks blown out of it, 4.7 m of nothing: a
+        // blast on a plank's middle takes that plank and the one either
+        // side of it.
         let mut nav = bridged();
         let span = two_islands().1;
-        let taken = nav.blast(span.rung(6), 3.0);
-        assert_eq!(taken.len(), 4, "{taken:?}");
+        let taken = nav.blast((span.rung(6) + span.rung(7)) * 0.5, 3.0);
+        assert_eq!(taken.len(), 3, "{taken:?}");
         let gap = nav.gaps()[0];
         assert!(gap.length() < Squad::reach_of_a_jump(RUN_SPEED), "{} m", gap.length());
         let frame = 1.0 / 60.0;
@@ -5128,11 +5168,12 @@ mod tests {
         assert!((left_at - gap.a.x).abs() < 0.3, "it left the ground at {left_at}, the edge being at {}", gap.a.x);
         assert!(highest > 1.6, "as high as anyone jumps: {highest}");
         assert!(down_at > gap.b.x + 0.6, "down at {down_at}, the far edge being at {}", gap.b.x);
-        // Five planks gone, 6.8 m, a body at a run clears too, by less: a
-        // bot jumps no gap it has not a good deal in hand over
-        // ([`JUMP_SPARE`]), and this is not one it jumps.
+        // Four planks gone, 6.3 m, as a blast where two planks meet
+        // takes, a body at a run clears too, by less: a bot jumps no gap
+        // it has not a good deal in hand over ([`JUMP_SPARE`]), and this
+        // is not one it jumps.
         let mut wide = bridged();
-        assert_eq!(wide.blast((span.rung(6) + span.rung(7)) * 0.5, 3.0).len(), 5);
+        assert_eq!(wide.blast(span.rung(6), 3.0).len(), 4);
         let hole = wide.gaps()[0];
         assert!(hole.length() > Squad::reach_of_a_jump(RUN_SPEED) && hole.length() < RUN_SPEED * JUMP_SECS);
         let mut close = Body::standing(Vec3::new(hole.a_in.x, PLANK, hole.a_in.y), 0.0);
@@ -5147,9 +5188,9 @@ mod tests {
         }
         let down_at = down_at.expect("it clears it");
         assert!(down_at - hole.b.x < JUMP_SPARE, "it came down {} m past the far edge", down_at - hole.b.x);
-        // Six planks gone is further than a jump goes.
+        // Five planks gone is further than a jump goes.
         let mut wider = bridged();
-        assert_eq!(wider.blast(span.rung(7), 3.7).len(), 6);
+        assert_eq!(wider.blast((span.rung(7) + span.rung(8)) * 0.5, 3.7).len(), 5);
         let hole = wider.gaps()[0];
         let mut gone = Body::standing(Vec3::new(hole.a_in.x, PLANK, hole.a_in.y), 0.0);
         gone.leap = true;
@@ -5231,13 +5272,13 @@ mod tests {
         assert!(PERSONAS.iter().filter(|persona| persona.pvp <= 0.25).count() >= 4, "and some are as they all were");
     }
 
-    /// The two islands with two bridges between them, side by side, 7 m
-    /// from the middle of the one to the middle of the other: 4.3 m of
+    /// The two islands with two bridges between them, side by side, 7.8 m
+    /// from the middle of the one to the middle of the other: 4.4 m of
     /// nothing between their edges. And how far to each side of the line
     /// between the islands' middles they lie.
     fn two_bridges() -> (Nav, f32) {
         let (mut nav, _) = two_islands();
-        let aside = 3.5;
+        let aside = 3.9;
         for (chain, side) in [aside, -aside].into_iter().enumerate() {
             let span = nav.grid().span(Region::Team(1), Region::Middle, side).expect("a span to one side");
             for index in 0..=span.planks() {
@@ -5600,12 +5641,13 @@ mod tests {
     fn a_hole_blown_in_a_bridge_is_jumped_if_it_is_short_and_mended_if_it_is_not() {
         let span = two_islands().1;
         let far = Vec2::new(30.0, 0.5);
-        // Four planks gone, 5.4 m: after someone on the far land, a bot
-        // runs up to the hole and jumps it.
+        // Three planks gone, 4.7 m, as a blast on a plank's middle takes:
+        // after someone on the far land, a bot runs up to the hole and
+        // jumps it.
         let mut over = 0;
         for seed in 0..5 {
             let mut rig = Rig::hunting(bridged(), seed, "ESTJ", Vec2::new(2.0, 0.0));
-            assert_eq!(rig.nav.blast(span.rung(7), DYNAMITE_RADIUS).len(), 4);
+            assert_eq!(rig.nav.blast((span.rung(7) + span.rung(8)) * 0.5, DYNAMITE_RADIUS).len(), 3);
             let gap = rig.nav.gaps()[0];
             for _ in 0..(8.0 / Rig::FRAME) as usize {
                 rig.step(Some(far));
@@ -5618,13 +5660,14 @@ mod tests {
             assert_eq!(rig.rungs, 0, "it laid planks where it could jump");
         }
         assert_eq!(over, 5, "over the hole {over} times of five");
-        // Five planks gone, 6.8 m, is further than it jumps. With nobody
-        // it can get at, and the metres for it, it lays planks across the
-        // hole, from the end of what stands on its side to the end of what
-        // stands on the other: a few planks, not a bridge.
+        // Four planks gone, 6.3 m, as a blast where two planks meet
+        // takes, is further than it jumps. With nobody it can get at, and
+        // the metres for it, it lays planks across the hole, from the end
+        // of what stands on its side to the end of what stands on the
+        // other: a few planks, not a bridge.
         let mut rig = Rig::new(bridged(), 4, "ISTJ", Vec2::new(2.0, 0.0), 400.0);
-        let hole = (span.rung(7) + span.rung(8)) * 0.5;
-        assert_eq!(rig.nav.blast(hole, DYNAMITE_RADIUS).len(), 5);
+        let hole = span.rung(7);
+        assert_eq!(rig.nav.blast(hole, DYNAMITE_RADIUS).len(), 4);
         let gap = rig.nav.gaps()[0];
         assert!(!rig.nav.joined(Region::Team(1), Region::Middle));
         // Nothing to lay them with yet: it stays on its own side.
@@ -5672,12 +5715,12 @@ mod tests {
         let span = two_islands().1;
         let holed = || {
             let mut nav = bridged();
-            assert_eq!(nav.blast(span.rung(7), DYNAMITE_RADIUS).len(), 4);
+            assert_eq!(nav.blast((span.rung(7) + span.rung(8)) * 0.5, DYNAMITE_RADIUS).len(), 3);
             let gap = nav.gaps()[0];
             (nav, gap)
         };
         // Someone standing on the very edge of what is left past a hole
-        // of four planks. A bot after them jumps it and comes down on the
+        // of three planks. A bot after them jumps it and comes down on the
         // planks behind them, whoever it is, and never in the hole: for a
         // night the place to come down was where they stood, the edge
         // itself, the jump was over a step short of it, in the air, and

@@ -14,9 +14,19 @@
 //! ground it leaves, the island's or a plank's, and cut along it as yours
 //! are, and its end landed on the far shore as yours is ([`land_on`]); so
 //! everyone stands on it, and online every rung goes to the server as it
-//! is fixed, and the others see the bridge grow, though not the builder,
-//! who is this device's alone, as the plank in your arms is. Its metres
-//! are its own, [`BUILDER_METRES`], not yours.
+//! is fixed, and the others see the bridge grow. **And the builder with
+//! it** (since 2026-11-14, Hajun: "right now, the bridge bot is not
+//! visible to other players, just the bridge that it creates. make your
+//! bridgebot visible to other players too"): online its owner's device
+//! says where it is as it walks (`Ask::Builder`), the server sends
+//! everyone else in the game a body for it there
+//! (`roundtown_net::BuilderOf`), and each of their devices draws that as a
+//! body carrying a plank, in nobody's way ([`dress_remote`]); it is gone
+//! for them as its owner's pops. Until then it was its owner's device's
+//! alone, as the plank in your arms still is. Its metres are its own,
+//! [`BUILDER_METRES`], not yours; its pace is its team's
+//! (`roundtown_net::bridge_wars::builder_speed`: half a run, and faster as
+//! the team quickens its building at the upgrade shop).
 //!
 //! **Where it goes** ([`advance`]): straight on over the ground until the
 //! ground ends in front of it; there its bridge begins, heading the way it
@@ -28,10 +38,13 @@
 //! [`GIVES_UP`] without the ground ending, or sent off with nothing under
 //! it, it pops having built nothing.
 
-use roundtown_net::Member;
-use roundtown_net::bridge_wars::{BUILDER_METRES, BUILDER_SPEED};
+use std::sync::atomic::{AtomicU8, Ordering};
+
+use roundtown_net::bridge_wars::{BUILDER_METRES, BUILDER_SPEED, builder_speed};
+use roundtown_net::{BuilderOf, Member, Spot, TICK_HZ};
 
 use super::*;
+use crate::arena::Outfit;
 use crate::lobby;
 
 /// How far it walks over the ground without coming to the end of it
@@ -48,7 +61,10 @@ const POP_SECS: f32 = 0.22;
 /// where it turns onto its bridge's own line, the root and the way the
 /// bridge heads, until it has; which of its owner's chains it is laying,
 /// once it has begun one; where that ends, once it is laid as far as it
-/// goes; and, popping, for how much longer.
+/// goes; and, popping, for how much longer. How fast it walks, in metres a second, which is its
+/// owner's team's to quicken. And, for everyone else in a game online to
+/// see it: its owner's number for it, and how long since the server was
+/// last told where it is.
 #[derive(Component, Debug)]
 pub(crate) struct Builder {
     seat: u8,
@@ -59,7 +75,13 @@ pub(crate) struct Builder {
     chain: Option<u16>,
     end: Option<Vec2>,
     popping: Option<f32>,
+    speed: f32,
+    id: u8,
+    told: f32,
 }
+
+/// The number the next builder sent off from this device goes by.
+static NEXT: AtomicU8 = AtomicU8::new(0);
 
 impl Builder {
     fn new(seat: u8, dir: Vec2) -> Self {
@@ -72,6 +94,10 @@ impl Builder {
             chain: None,
             end: None,
             popping: None,
+            speed: BUILDER_SPEED,
+            id: NEXT.fetch_add(1, Ordering::Relaxed),
+            // Told of at once, as it sets off.
+            told: f32::INFINITY,
         }
     }
 }
@@ -110,15 +136,34 @@ pub(super) fn equip(
     }
 }
 
+/// Gives the builder someone else in the game has sent off, as the server
+/// sends it ([`BuilderOf`]: a body like any other online, in its owner's
+/// name and look, moved as its owner's device says), what makes it a
+/// builder here: it carries a plank ([`carry_for_bots`] puts one in its
+/// arms), and is only there to be seen, in nobody's way and out of every
+/// punch's reach.
+#[allow(clippy::type_complexity)]
+pub(super) fn dress_remote(
+    fresh: Query<Entity, (With<BuilderOf>, With<crate::WalkCycle>, Without<Carrying>)>,
+    mut commands: Commands,
+) {
+    for builder in &fresh {
+        commands.entity(builder).insert((crate::ForShow, Carrying));
+    }
+}
+
 /// Walks every builder on, lays its bridge ahead of it ([`advance`]), and
-/// pops it at the end; online, sends every rung it fixes. A game over, or
-/// another begun, and they are gone with the rest of it.
+/// pops it at the end; online, sends every rung it fixes, and says where
+/// the builder is as it walks, and that it is gone, for everyone else to
+/// see it. A game over, or another begun, and they are gone with the rest
+/// of it.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn walk(
     time: Res<Time>,
     fighting: Res<Fighting>,
     online: Res<Online>,
     islands: Res<Islands>,
+    outfit: Res<Outfit>,
     mut bridges: ResMut<Bridges>,
     mut builders: Query<(Entity, &mut Builder, &mut Transform)>,
     mut requests: MessageWriter<NetAsk>,
@@ -146,6 +191,8 @@ pub(super) fn walk(
         let reach = place.translation.y + LAND_STEP_UP;
         let land = |at: Vec2| island.floor_base(at, reach).is_some();
         let mut sent = Vec::new();
+        // At the pace your team builds at, as it stands now.
+        builder.speed = builder_speed(&outfit.team);
         let (at, done) = advance(&mut builder, place.translation.xz(), dt, &land, &mut bridges, &mut sent);
         // On whatever is under it now, the land or a plank; over nothing
         // for a moment, as its first plank is laid, as high as it was.
@@ -164,6 +211,22 @@ pub(super) fn walk(
             );
         }
         if online.is() && fighting.online {
+            // Where it is, for everyone else in the game to see it there:
+            // as often as your own moves are sent; and that it is gone,
+            // the moment it begins to pop.
+            builder.told += dt;
+            if done {
+                requests.write(NetAsk::Builder {
+                    id: builder.id,
+                    spot: None,
+                });
+            } else if builder.told >= (1.0 / TICK_HZ) as f32 {
+                builder.told = 0.0;
+                requests.write(NetAsk::Builder {
+                    id: builder.id,
+                    spot: Some(Spot::of(place.translation, facing)),
+                });
+            }
             for (chain, index, rung) in sent {
                 requests.write(NetAsk::Rung {
                     chain,
@@ -190,7 +253,7 @@ fn advance(
     bridges: &mut Bridges,
     sent: &mut Vec<(u16, u16, Rung)>,
 ) -> (Vec2, bool) {
-    let step = BUILDER_SPEED * dt;
+    let step = builder.speed * dt;
     // Still on the ground it set off from: where does that end?
     if builder.chain.is_none() && builder.end.is_none() {
         let begun = {
@@ -368,12 +431,16 @@ mod tests {
         assert!(done);
         let chain = &bridges.chains[0];
         let (root, last) = (chain.rungs[0], *chain.rungs.last().unwrap());
-        // A hundred metres of it in whole planks, 73 of them: what is left
-        // is less than the least a plank may be.
+        // A hundred metres of it in whole planks, and a last one of what
+        // is left, if that is as much as the least a plank may be: what is
+        // left after is less than that.
         let laid = root.p.distance(last.p);
         assert!(laid <= BUILDER_METRES && BUILDER_METRES - laid < MIN_LAND, "{laid} m");
         assert!((laid - (BUILDER_METRES - builder.metres)).abs() < 0.01 && !chain.complete);
-        assert_eq!((sent.len(), chain.rungs.len()), (74, 74));
+        let whole = (BUILDER_METRES / SPACING).floor();
+        let planks = whole as usize + usize::from(BUILDER_METRES - whole * SPACING >= MIN_LAND);
+        assert_eq!((sent.len(), chain.rungs.len()), (planks + 1, planks + 1));
+        assert!((55..=62).contains(&planks), "{planks} planks");
         // It stands at the end of its bridge, ten metres of island and its
         // bridge from where it set out, at the pace anyone builds at.
         assert!(at.distance(last.p) < 0.2 && at.distance(Vec2::new(0.0, -10.0 - laid)) < 0.2, "{at}");

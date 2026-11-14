@@ -313,9 +313,17 @@ alone; the server is `cargo build -p roundtown_server`. Never `--workspace`,
 which would build the game with the server's half of replicon in it.
 
 Android needs the `release-android` profile, a manual strip step, and Gradle
-(`versionCode` in `mobile/android/app/build.gradle` is the build number: 28
-later the same night, the stick's middle wherever the finger holding it
-first goes down, its disc going there and back to its own place as it is
+(`versionCode` in `mobile/android/app/build.gradle` is the build number: 29
+on the evening of 2026-11-14, the chat, Korean and Vietnamese in it and in
+names and messages, the Leap Potion and the builder's upgrade, a drink that
+shows, a wider bridge, the Bridge Builder seen by everyone, and the stick's
+middle kept near its own place ("Games", "The chat", "The font is Inter";
+protocol 16, the server deployed with it at 09:35 UTC that day, the binary
+before kept on the VM as `roundtown-server.prev-2026-11-14b`; built and not
+installed, APK 28 kept beside it as
+`donggeurami_town-release.prev-2026-11-14c.apk`); 28
+in the small hours of 2026-11-14, after 27, the stick's middle wherever the
+finger holding it first goes down, its disc going there and back to its own place as it is
 let go (Hajun: "wherever the user tap first should be the middle";
 `TouchControls::stick_origin`, `JoystickBase`, `stick_corner` in
 `src/lib.rs`; protocol 15 still, no server change; built and not
@@ -543,9 +551,17 @@ instead of yellow for the buttons"; dark blue, blue and gold until then).
   until then): the server checks the same list, so **it has to be deployed
   with the app**, or a profile in a new colour is thrown out whole, name and
   all, and the account keeps its generated name online.
-- **A name is 2 to 16 characters of plain ASCII** (`roundtown_net::profile`,
-  checked on both sides, the server ignoring any other): the game's font has
-  no Hangul. It need not be unique: since 2026-11-13 every account has a
+- **A name is 2 to 16 letters of English or Vietnamese, or up to 8 of
+  Korean** (`roundtown_net::profile`, `roundtown_net::text`, checked on
+  both sides; since 2026-11-14, Hajun: "i need korean text to be able to
+  work in the global chat not just english. same for username and send
+  message", "also vietnamese text as well"; plain ASCII until then, the
+  game's font having no Hangul). Its length is counted in widths, a Hangul
+  syllable two, so that a name is as long on the screen in either: "민"
+  is a name, and "동그라미타운주민" as long a one as fits. What may be
+  written, and how a letter typed in pieces is put together, is under "The
+  font is Inter", below; the page says "2-16 characters, or 8 in Korean"
+  (`words.signup.name_hint`, my wording). It need not be unique: since 2026-11-13 every account has a
   tag after its name, `#1000` to `#9999`, and no two have both the same
   ("Friends, groups and messages", below). Typing: on desktop the keys and Enter;
   on a phone the soft keyboard, asked for by the window's `ime_enabled`,
@@ -644,6 +660,166 @@ was the town itself; everything below about the map, its islands, the
 void, the punch's knockback and its range held for the town then, and
 holds for the arena now.
 
+- **Since the evening of 2026-11-14 there is a Leap Potion and a faster
+  builder to buy, a drink shows, a potion that is on leaves sparks, the
+  bridge is a quarter wider, a Bridge Builder is seen by everyone, and what
+  happens is said in the chat** (Hajun, in one message: "First implement
+  the new items in the shop listed in the bridgewarsgameevent.md (leap
+  potion and bridge speed upgrade) and the small edits i made like pressing
+  the potion button again shouldnt cancel it, only other part of screen
+  like joystick or jump or world. Also, for potions: when you drink a
+  potion, it's not very noticeable that you are drinking. There should be
+  an indicator, like a shrinking circle around you when you use the potion
+  ... and its also not noticeable when ur effect runs out - so maybe add a
+  "Invisible (##s)" text above the player while you are invisible, and for
+  speed potion maybe add a blue particle effect trail and for jump potion
+  maybe green particle effect trail. The bridge could also be a little
+  wider, maybe 1.25 times its current width"; and, while it was being
+  built, "make your bridgebot visible to other players too."). The chat,
+  asked for in the same message, has a section of its own ("The chat",
+  below), and so has Korean and Vietnamese, asked for as it was being
+  finished ("The font is Inter"). **`PROTOCOL_VERSION` 16**: a kit, a
+  team's upgrades and what is asked and told have all changed, so the
+  server and the app went out together: **the server deployed at 09:35 UTC
+  on 2026-11-14** (18:35 here; nobody had been on it for two hours; the
+  binary before kept on the VM as `roundtown-server.prev-2026-11-14b`),
+  **and APK 29 is the one that plays online**: 28 and before are told to
+  update.
+  - **The Leap Potion** (`Utility::Leap`, the seventh thing for a button;
+    `bridge_wars::LEAP`, `LEAP_SECS`, `leap_speed`; Hajun's file: "Leap
+    Potion: 1 amethyst (after drinking time 1.6s, you get 5x jump height
+    jump boost for 45 sec, similar ui as speed potions)"): 1 amethyst at
+    the item shop, drunk as the others are, and for 45 s a jump goes five
+    times as high, off the ground at the square root of five times a
+    jump's speed (`Intent::leap`): 8.2 m where a jump is 1.64 (the top
+    frame of each in the desktop build: 8.05 and 1.57 m over the ground).
+    Its seconds stand over its button as the speed potion's do
+    (`Kit::leap_until`, `Kit::lasts_until`). The camera, fixed over you,
+    goes up with you, so the island shrinks under you as you rise. At a
+    run a leap carries about 20 m across the ground, and 28 on a speed
+    potion too: not from an island to the middle, 44 m, but over any hole
+    and onto a bridge half built. The server lets it pass as it lets the
+    fountain's throw (`a_jump_on_a_leap_potion_is_a_rise_a_body_can_make`
+    in `server/src/players.rs`).
+  - **The builder's upgrade** (`Ware::BuildSpeed`,
+    `Upgrades::build_speed`, `bridge_wars::BUILD_PACE`, `build_pace`,
+    `builder_speed`; Hajun's file: half a run by default, "Advanced
+    Builder" 75%, "Master Builder" 100%, "Grand Builder" 125%, for 4, 8
+    and 16, "also applies to bridge bot"): at the upgrade shop, your whole
+    team's, three steps: how fast you walk with a plank in your arms, as a
+    share of a run, 5, 7.5, 10 and 12.5 m/s (measured so in the desktop
+    build), and a Bridge Builder's pace with it, as it is sent off. The
+    file prices it in "diamond", which the game has none of: sapphire is
+    what the upgrade shop takes, so sapphire it is.
+  - **A drink is put down by a press anywhere else, and not by its own
+    button** (`utility::pressed_elsewhere`): the stick, the jump button,
+    the world, any other button; the same potion's button pressed again
+    does nothing; another potion's button begins that one in its place.
+    Space and F on desktop put it down as those buttons do. A hit still
+    does, and dying.
+  - **A drink shows** (`utility::show_ring`, `DrinkRing`): a ring on the
+    ground round you in the potion's colour, 2.3 m out as you begin and
+    closing to 0.55 m as the 1.6 s run out, drawn as the punch's range is
+    (`range::look`), with the time left written over you as before. Yours
+    alone.
+  - **"Invisible (27s)" is written over you while you are unseen**
+    (`utility::show_unseen`, `words.arena.invisible`,
+    `colours.arena.unseen_text`), counting down, yours alone.
+  - **A potion that is on leaves sparks** (`src/trail.rs`): blue ones
+    behind whoever runs fast on a speed potion, green ones behind whoever
+    is on a leap potion, both from someone on both; twenty-two a second on
+    the move and a few a second standing, each 0.22 to 0.42 m across,
+    left round the legs (or under the feet, in the air), rising and
+    shrinking away in half a second. When they stop, the potion has run
+    out. Everyone's are drawn (`arena::Wears::fast`, `leaping`, from the
+    kits every device has), never those of an enemy who is unseen, which
+    would say where they are. Unlit, in `colours.arena.trail_speed` and
+    `trail_leap`. For their first hour they were 0.16 to 0.3 m and sixteen
+    a second: a thin line of dots from the camera over you. **The speed
+    potion's flask is blue** now, on its button and its card
+    (`colours.arena.potion_speed`), to go with its sparks, and the leap
+    potion's green.
+  - **A plank is a quarter wider, and as much longer**
+    (`nav::PLANK_HALF_WIDTH`, 1.70 m, so 3.41 m across where it was 2.73;
+    `PLANK_SPACING` with it, 1.70 m where it was 1.36): the bridge is the
+    shape it was, a quarter bigger, so that everything in `bridge` that
+    sets one length of a plank against another, how far a mitre or a slant
+    cuts into it, holds as it did; a bridge turns round in about 2.8 m
+    where it took 2.3. Metres are metres still: 25 m is fewer planks. A
+    span to the middle is 27 planks where it was 33. A stick of dynamite
+    takes three or four planks, 5.1 to 6.8 m, where it took four or five
+    of the narrower; a bot jumps a hole of three and mends one of four
+    (`bots`' tests, retuned). `arena.nav` is the map without bridges, and
+    is not baked again. Found on the way: the plank left at an L corner
+    ran 5 cm past the fork's far edge, 7 cm along the fork's own way,
+    which a step of the feeling for it landed on with the narrower planks
+    and stepped over with these, leaving the fork's far corner hanging:
+    `CORNER_ROOM` is 0.08. A hundred and twenty whole games of bots after
+    it: over at 12:36 on average, none drawn, twelve deaths by punches and
+    ten and a half by falls before 10:00, much as before.
+  - **A Bridge Builder is seen by everyone** (`Ask::Builder`, `BuilderOf`,
+    `server/src/arena.rs`; `bridge::builder_bot`, `dress_remote`): the
+    device that sent it tells the server where it walks, fifteen times a
+    second, and the server shows everyone else in the game a body there in
+    its owner's look, carrying a plank: for show, in nobody's way, no
+    punch lands on it. Gone when its bridge is done, or two seconds after
+    its device falls silent (`BUILDER_SILENT`); four to a player at the
+    most (`MOST_BUILDERS`). A bot's builder is shown the same way, by the
+    server online (`Squad::builder_at`) and by the device in a game played
+    offline (`arena::show_bot_builders`), where until now a bot's bridge
+    grew by itself.
+  - **The shops** (`market`): the item shop's rows are the bridge, the
+    Bridge Builder and the three swords; the three shields and the
+    tracker; and the six things for a button, fireball, dynamite, speed,
+    leap, invisibility and healing. The upgrade shop is one row of six
+    narrower cards, the builder's last, with a pip to each of its three
+    steps and "75% speed" and the like for its line
+    (`words.market.build_speed`, `build_speed_stat`; `leap`, `leap_stat`).
+    The tracker's line reads "Nearest foe", where "Nearest enemy" ran onto
+    a second line and pushed its price off the card's foot. **The time
+    over the second button stands a quarter of the button to the right**
+    (`hud::UTILITY_TIMER_LEAN`): straight over it, it ran into the count
+    in the corner of the button beside it, a "1" and "43s" reading as
+    "143s", which two potions at once make common.
+  - **A fireball or a stick of dynamite that hurts someone shows whoever
+    threw it**, if they were unseen, as a punch that lands does (Hajun's
+    file: "being hit or attacking another person or anchor reveals u").
+  - **The computer's players** lay their bridges at their team's pace, and
+    buy neither the leap potion nor the builder's upgrade.
+  - **Checked on 2026-11-14, scripted, in the desktop build** (a
+    throwaway `src/arena/scratch_run.rs` again, removed; kept in the
+    session's scratchpad). Offline: both windows; all four potions bought
+    onto four buttons; the ring, blue and green, at three moments of a
+    drink; a drink not put down by its own button and put down by a tap
+    on the world, by a thumb on the stick and by a jump; 14 m/s on the
+    speed potion with its sparks behind, a leap to 8 m with the island
+    small under it, both kinds of sparks from one body; "Invisible (30s)"
+    counting down, a bot leaving someone unseen alone; "+50" from the
+    healing potion; the bridge 3.4 m wide at 5, 7.5, 10 and 12.5 m/s as
+    each step was bought, and the card reading "Max" after the third; a
+    bot's builder walking the end of its growing bridge with a plank.
+    Against a server on this PC, two copies seated as teammates: one's
+    Bridge Builder seen from the other's screen at the head of its
+    bridge, one's sparks seen from the other's, the purchases the server's.
+    Unit-tested: the rules (63 in `shared`), the server's game and its
+    check on a leap (49), the game (292). **Not by hand, and not on a
+    phone**: no phone was attached, so APK 29 is built, its 85 asset files
+    checked byte for byte, its library the stripped one with its six entry
+    points, its number read back, and not installed (APK 28 is kept beside
+    it as `donggeurami_town-release.prev-2026-11-14c.apk`). The Adreno has
+    not drawn the ring or the sparks (blended and unlit, as the punch's
+    range is). On the VM after the deploy this PC's own account was let
+    in ("online as xd", the journal clean); no game was played there.
+  - **What is mine, the file and the message not saying**: sapphire for
+    "diamond"; that the upgrade is the whole team's, as everything at that
+    shop is; that a leap is five times the height by the speed it leaves
+    the ground at, with nothing changed in the air; the ring's size; the
+    sparks' size, number and life, that everyone's are seen and an unseen
+    enemy's not; the blue flask; that the plank is longer as well as
+    wider; four builders to a player and the two seconds; that only a
+    blast that hurts someone shows its thrower; the shop's rows; "Nearest
+    foe"; the time's place over the second button; and that the bots buy
+    neither new thing.
 - **Since the small hours of 2026-11-14 the dynamite's arch rises and falls
   and leans to neither side, with an X where it will land; its fuse is seen
   to be brown; the three dots are gone, and a button for a thing to use is
@@ -3948,6 +4124,21 @@ Wars, are chosen from the gamepad button (above, "Games").
   someone (below), and since 2026-11-01 the three round the jump button
   with them (`hud::hide_round_the_jump`; Hajun: "the punch, quickchat, and
   emote button is not hidden. hide those too"). Seen in the desktop build; none of it has been seen on a phone yet.
+- **The stick's middle is set where the finger first goes down, and no
+  further than half its radius from its own place** (`stick_origin`,
+  `STICK_ORIGIN_REACH` in `src/lib.rs`, since 2026-11-14; Hajun: "if I tap
+  the very bottom of the circle, the joystick's origin gets set too low, so
+  it's hard to move downward at full speed. Limit the area where the origin
+  can be set to 50% of the current radius. If the first tap lands outside
+  that radius but still inside the joystick hitbox, set the origin on the
+  edge of the 50% radius at the same angle. Movement magnitude should then
+  be measured from that origin"). A finger put down at the very bottom of
+  the disc has the middle half a radius down, and is pushing half way down
+  from the start. From the small hours of that day the middle was wherever
+  the finger went down (`versionCode` 28, "Building"). The mouse's on
+  desktop the same. Unit-tested
+  (`the_stick_s_middle_is_set_no_further_than_half_its_radius_from_its_own`);
+  not seen under a thumb, and a script cannot hold the mouse on the stick.
 - **The stick and the jump button are on Windows too** (since 2026-11-06,
   Hajun: "put on screen joystick and jump button on windows version too";
   until then they compiled for phones alone, `setup_hud` and the stick's
@@ -4240,9 +4431,10 @@ backups' rotation.
     bottom for 3.5 s ("Friend request sent.", `Outcome`, `words.friends.
     said`); what happens to your group while the panel may be shut is said
     across the lower screen (`toast`).
-- **A message** (`Act::Write`) is up to 80 characters of what the game's
-  keyboard types (`social::message`, `MESSAGE_LONGEST`), to a friend, here
-  or not; it waits in their inbox until they press OK, 30 at the most
+- **A message** (`Act::Write`) is up to 80 letters of English or
+  Vietnamese, or 40 syllables of Korean (`social::message`,
+  `MESSAGE_LONGEST`, counted in widths; plain ASCII until 2026-11-14, "The
+  font is Inter"), to a friend, here or not; it waits in their inbox until they press OK, 30 at the most
   (`LETTERS_MOST`), and is kept in the database until then. Mine: the
   sketch's gear has "Message" under it and nothing more is said of it.
   **It is the first thing one player writes that another reads**: friends
@@ -4298,7 +4490,27 @@ backups' rotation.
   group's list still has your level, as every row of it has.
 - **Not built**: blocking or reporting someone; anything said to you while
   the app is shut (a request waits for when you next open it); a group's
-  own chat; Hangul in a name (below, "The font is Inter").
+  own chat. (Hangul in a name was not, until 2026-11-14: "The font is
+  Inter", below.)
+- **Enter on a phone's keyboard looks for the name typed** (since
+  2026-11-14; Hajun: "in the friend popup's Add Friend popup, when i type
+  the name, and i press enter nothing happens - only when i press the
+  search bar"), and saves a name, and sends a message or a line of chat:
+  Android's keyboard has no Enter key to press, its action key ("Done", a
+  tick) tells the activity to do what the box is for, which nothing heard.
+  `MainActivity.onEditorAction` hands it to the game through a native
+  method the game exports (`imeAction`,
+  `Java_town_donggeurami_MainActivity_imeAction` in `signup`, counted in
+  an atomic as the keyboard's height is handed over), and
+  `signup::android_text` takes it for Enter (`NameBox::entered`, which
+  `friends`, `settings`, the sign-up and `chat` already asked), once for
+  presses within a quarter of a second of each other, a plugged-in
+  keyboard's Enter being handed over as it goes down and as it comes up.
+  The Java side catches anything that goes wrong: a missing native method
+  leaves Enter doing nothing, as before. An iPhone's Return was typed as a
+  newline all along, and a desktop's Enter is a key. Compiled and
+  packaged (APK 29, the five entry points read back off the library); not
+  pressed on a phone.
 - **Checked on 2026-11-13.** Unit-tested: the rules both sides share (56
   in `shared`), the server's `Social` and a group's seats in Bridge Wars
   (45 in `server`, nineteen of them new for this), the panel's own (276
@@ -4386,12 +4598,128 @@ backups' rotation.
   the mouse, which a script cannot hold down there, and a phone has not
   been tried.
 
-## The font is Inter
+## The chat
+
+Since 2026-11-14 (Hajun: "I think there should be a global chat in the
+Bridge Wars game, with notifications that pop up based on game events: When
+anyone dies: "Bob fell off the world." When someone kills someone: "Bob
+killed Hannah with a Stone Sword," or "Bob knocked Hannah off the world."
+Team-specific notifications, like "Bob purchased Heal Pool for your team."
+All player names in these messages should be colored with their team's
+color. The chat box can go on the left side middle of the screen, between
+the joystick and the name tag, kind of like minecraft server chatbox style.
+There should be a text input box right below the chat box with a send icon
+on the right. Pressing it lets you type a custom message, which if you
+press "ENTER" on your phone OR press the send icon sent to everyone and
+shows your name followed by the text you typed. This chat box should also
+be in the main lobby ... The total height of the chatbox shouldnt be too
+tall but scrollable, and should be semi transparent so its not too
+obstrusive"), in `src/chat.rs`, `server/src/chat.rs` and
+`roundtown_net::chat`. **`PROTOCOL_VERSION` 16**, with the rest of that
+day's work ("Games").
+
+- **Where it is** (`chat::place`): down the left of the screen, 50 shares
+  of the short side wide, a box of lines and under it a box a line is
+  typed into with a dart at its right end. In the town it begins 35.5
+  shares down and shows four lines; in a game of Bridge Wars, its waiting
+  room too, it begins 39 down, under your name, your health and the four
+  counts, and shows three, so as to end over the stick in both (57 down:
+  the stick's disc reaches up to 58 held from as high as it may be). Not
+  at home, in House Builder, under the sign-up's pages or while you talk
+  to someone. See-through black (`colours.chat.back`, `field`), the words
+  2.5 shares, whole lines only: the box is cut at the lines' own room
+  (`OverflowClipMargin::content_box`) and is a whole number of lines tall,
+  or the feet of the line scrolled off its top showed along it. The names
+  over heads are under it. Bridge Wars' shop windows lie over its right
+  end on a screen of sixteen by nine, not on a phone's.
+- **What it shows** (`chat::Log`, the last 60 lines of the room you are
+  in): what anyone in the room says, "Name: words", and, in a game, what
+  the game says (below). A name is in its team's colour in a game
+  (`colours.arena.team_*`) and in `colours.chat.name` in the town. A
+  finger dragged on the box, or the wheel over it (which does not zoom the
+  camera there), scrolls back; at its newest line it stays there as lines
+  come. Coming into another room, the town, a game, another game, begins
+  it afresh.
+- **Saying something** (`chat::act`): a press on the box, or on the speech
+  bubble among the town's buttons (`hud::ChatButton`, which did nothing
+  until now), or Enter or T on desktop, takes the keys (`signup::NameBox`)
+  and asks a phone for its keyboard, and the chat slides up over it
+  (`LiftsForKeyboard`). You stand still while it is typed into
+  (`hud::DialogUp`). Enter on either keyboard, or the dart, says it; a
+  press anywhere else lets go of it as it lands, and is the stick's or a
+  button's as well, what was typed kept for next time; Escape too.
+- **The rules** (`roundtown_net::chat`): a line is 80 widths at the most
+  of what the game writes, English, Korean and Vietnamese ("The font is
+  Inter"); four at once and one more every second and a half (`BURST`,
+  `EVERY`). The server tells it to everyone connected in the speaker's
+  room, the speaker among them (`Ask::Chat`, `Tell::Said`, with the name
+  the server has them by): a channel of the town, 16 people at the most,
+  or a game from its waiting room to its end. **Nothing is kept of it**,
+  on the server, in the database or on a device past the room, and what is
+  said is not written to the server's log. Offline a line is written on
+  your own screen and goes nowhere.
+- **What a game of Bridge Wars says** (`chat::Feed`, `Tell::Feed`,
+  `arena::feed_line`; the server's online, the device's own in a game
+  played offline, each device writing it in the file's words,
+  `words.chat`): "{name} fell off the world."; "{killer} knocked {name}
+  off the world.", for a fall within five seconds of their last hit by
+  another (`CREDIT_SECS`, Minecraft's); "{killer} killed {name}." with a
+  bare hand, and "with a Basic Sword", "a Silver Sword", "an Aura Sword",
+  "a Fireball" or "Dynamite" (Hajun's "Stone Sword" being whichever sword
+  it was); "{name} purchased {ware} for your team.", to that team alone,
+  for whatever the upgrade shop sells, by its card's name at the step
+  bought; and, mine, "{name} destroyed {team}'s anchor.". A zombie's kill
+  is said, in the zombies' colour; a zombie's own death is not.
+- **Common swear words are starred out** (`roundtown_net::text::masked`,
+  since the evening of 2026-11-14; Hajun: "add basic word filter for common
+  swear words so they turn to ****** of that word's length"): a star to
+  each letter, in a line of chat and in a message to a friend, by
+  `chat::line` and `social::message`, so the server does it to whatever it
+  passes on (deployed at 09:52 UTC, protocol 16 still, so APK 29, built
+  before it, is filtered online; the binary before kept on the VM as
+  `roundtown-server.prev-2026-11-14c`). English words whole (a stem inside
+  a word, drawn-out letters squeezed; "class" and "cockpit" left alone),
+  Korean where it stands in a run of Hangul with its shortened letters,
+  Vietnamese words as spelt with their marks. Basic: nothing spelt with
+  digits or signs, and **not names**. The lists are mine (`STEMS`,
+  `WORDS`, `HANGUL` in `shared/src/lib.rs`). Unit-tested only; no line was
+  said through the VM.
+- **It is the first thing anyone writes that strangers read**, and has no
+  block and no report (and until that evening no filter for words), as
+  the friends' messages have none: whoever is in your channel of the town, or your game, reads it.
+  Hajun asked for it as it is; the plan (`MULTIPLAYER.md`, "Only once it
+  is added") has those down as what a release to the shops wants, Apple's
+  asking them of anything users write to each other. The game is not
+  released: the server has three accounts.
+- **Checked on 2026-11-14.** Unit-tested: a line and how many may be said
+  (`shared`, `server/src/chat.rs`); what the game says, by seat, and to
+  whom (`the_chat_is_told_who_killed_whom_with_what_who_fell_and_what_a_team_bought`);
+  each line's words and colours (`arena`); the box's place and size. **In
+  the desktop build, scripted**: six lines said in the town and scrolled
+  to the newest, a line of eighty letters typed with its end in sight; in
+  a game offline, a line said in your team's colour, four purchases for
+  the team, "Hajun fell off the world." and "Mochi killed Hajun." with
+  each name in its team's colour. **Against a server on this PC, two
+  copies**, teammates: each other's lines in the town and in the game, the
+  team's purchases on both, a fall on both. **Not on a phone**: its
+  keyboard, the chat's lift over it, and how the box sits beside a thumb
+  on the stick are unseen; no line has been said on the VM.
+- **What is mine**: its size and place, three lines in a game; that it
+  begins afresh in each room; the 80, the four and the second and a half;
+  that a purchase is said to its team alone and only for upgrades; the
+  five seconds; the line about an anchor; that zombies' deaths are not
+  said; T and Enter on desktop; that the wheel over it scrolls it.
+
+## The font is Inter, with Pretendard for Hangul
 
 Since 2026-11-13 (Hajun: "I want to change the font of most things to the
 font "Inter" Regular"), every word on the screen is written in Inter
 Regular (`src/font.rs`), in place of the font Bevy comes with, FiraMono, a
-fixed-width font cut down to plain ASCII.
+fixed-width font cut down to plain ASCII. Since 2026-11-14 Korean is
+written too, in Pretendard Regular, and names, chat and messages may be in
+English, Korean or Vietnamese (Hajun: "i need korean text to be able to
+work in the global chat not just english. same for username and send
+message", and "also vietnamese text as well").
 
 - **Nothing that draws words names a font.** Each takes Bevy's default
   (`TextFont::default()`), which is whatever font sits under the default
@@ -4415,14 +4743,102 @@ fixed-width font cut down to plain ASCII.
   than an 8, where FiraMono's were all one: a clock or a count would
   shift a hair as its digits changed, the whole line with it where it is
   centred. A test keeps every text asking.
-- **No Hangul.** Inter has Latin, Greek and Cyrillic, and the signs
-  FiraMono's subset had not (an ellipsis, a middle dot, dashes, arrows).
-  Names are plain ASCII still (`roundtown_net::profile`), though Hajun's
-  sketches of the friends' panel have "동그라미<3" for a name: a font with
-  Hangul in Inter's own shapes for the rest (Pretendard is one, under the
-  same licence, several times Inter's 0.4 MB a weight) and a name's
-  rule that lets Hangul through, with a phone's keyboard composing it,
-  are what that takes. Not built; Hajun's call.
+- **Hangul is Pretendard's, as a fallback** (`font::fall_back_on_hangul`,
+  since 2026-11-14). Inter has Latin, with every letter Vietnamese has,
+  Greek and Cyrillic, and no Hangul. `assets/fonts/Pretendard-Regular.ttf`
+  (1.3.9's static Regular, `packages/pretendard/dist/public/static/alternative/`
+  of github.com/orioncactus/pretendard, 2,725,828 bytes, under the same
+  SIL Open Font License, `LICENSE-pretendard.txt` beside it) is compiled
+  in beside Inter and left out of the APK as a file: the font Korean
+  screens are mostly set in, built on Inter's Latin to go with it. **It
+  is not the game's font and draws no Latin**: Bevy 0.19 lays text out
+  with parley, which, for a letter the font asked for has no shape for,
+  asks its list of fonts (`FontCx`, the `fontique` crate) for whatever
+  that letter's script falls back on; `font` puts Pretendard in the list
+  and names it for the script Hangul. So "하준", over a head, in the chat
+  or on a plate, is Pretendard's, and the Latin on the same line Inter's:
+  every screen there was is as it was, to the pixel. `fontique` is a
+  dependency of the game for this, pinned to the version Bevy's text
+  builds (`=0.9.0`), with no more of it on than Bevy has (not `system`,
+  which would go looking through the device's own fonts). The APK's
+  library is 2.7 MB bigger. **A word in `assets/ui.ron` may be Korean
+  now** (the tests that kept its words to plain ASCII keep them to what
+  the fonts draw).
+- **What may be written** (`roundtown_net::text`, `shared/src/lib.rs`, one
+  rule for names, chat and messages, on both sides): what is on an English
+  keyboard; Latin-1's accented letters and signs; the rest of Vietnamese's
+  letters (ă, đ, ĩ, ũ, ơ, ư and every vowel with every tone, U+1EA0 to
+  U+1EF9); curly quotes, an en and an em dash and an ellipsis, which a
+  phone's keyboard writes by itself; and Hangul, all 11,172 syllables and
+  the 51 letters as they are typed alone ("ㅋㅋ"). Nothing else: no emoji,
+  no Hanja, no other script, and of Latin Extended-A only Vietnamese's
+  (a Turkish dotted I is lowered differently by Rust and by Postgres,
+  which would let two accounts have one name and tag). A test in `font`
+  has every one of them drawn by Inter or by Pretendard
+  (`every_letter_the_game_writes_is_drawn_by_inter_or_by_pretendard`).
+  **Lengths are in widths** (`text::length`): a Hangul syllable or letter
+  is two, anything else one, so that a name or a line is as long on the
+  screen either way and every plate, row and board made for 16 Latin
+  letters holds a Korean name: a name is 16, a line of chat and a message
+  80. **A letter is the same letter however it was typed**
+  (`text::clean`, Unicode's NFC, the `unicode-normalization` crate, which
+  Bevy builds already): Windows' own Vietnamese keyboard sends a vowel
+  and its tone mark as two, and some keyboards a Hangul syllable as its
+  parts; they are put together before anything is kept, sent or looked
+  for, so that "Hải" is found whichever keyboard wrote it. What the game
+  does not write is left out, a new line or a tab is a space, and the
+  spaces round it are trimmed; `profile::name`, `chat::line`,
+  `social::message` and `social::sought` all go by it, and cleaning what
+  is clean changes nothing, so the server does it again to whatever it is
+  sent. **No database change**: `players.name` and `messages.body` are
+  `TEXT`, and the VM's database is UTF-8 with `en_US.UTF-8` (looked at
+  before the deploy: `lower('ĂĐƠƯ HẢI 하준')` there is `ăđơư hải 하준`).
+- **Typing it** (`signup::NameBox`, the one box everything is typed
+  into). **On desktop** the system's input method composes Korean, and
+  Vietnamese by Telex: what it is composing is shown after what is typed
+  (`Ime::Preedit`, `NameBox::shown`) and typed once it is done
+  (`Ime::Commit`). Keys and what is composed are read from one list, in
+  the order they came (`WindowEvent`, `type_name`): a syllable is done by
+  the key typed after it, a space say, and read as two lists the space
+  went in before its syllable. A box done with by a button while a
+  syllable is still being composed takes the syllable with the rest.
+  **On Android** the keyboard writes into the activity's own text, which
+  is read every frame as before; a syllable being composed is in that
+  text as far as it has got, and the text is written back only when
+  something is taken out of it (what the game does not write, or what is
+  past the box's end), with the caret counted as Java counts, in UTF-16
+  units, where it was counted in bytes, which for ASCII were the same
+  (`java_length`). **An iPhone's** keyboard sends each letter as a key,
+  and composes by taking the last letter back and sending the next,
+  which the box does as it is told. A box takes as many widths as its
+  kind is long, so a ninth syllable of a name is not taken.
+- **Checked on 2026-11-14.** Unit-tested: the rule, the widths, the
+  putting together (63 in `shared`); a search and a message in Korean and
+  in Vietnamese however typed, two of a Korean name with different tags
+  (49 in `server`); the box, by units, with something being composed (292
+  in the game); the fonts, the fallback and that every letter is drawn.
+  **In the desktop build, scripted**, by day and by night: "안녕하세요
+  hello ㅋㅋ", a Vietnamese sentence whole and one typed in pieces, a
+  syllable shown while it is composed and then typed with its space in
+  its place, an emoji and a Hanja left out, forty syllables and no
+  forty-first, all in the chat, Hangul and Latin on one line with one
+  foot; "하준" on the plate; the sign-up's name page with "동그라미<3"
+  and with eight syllables. **Against a server on this PC, two copies**
+  named 하준 and Nguyễn Hải: both names taken by the server, over each
+  other's heads, in each other's chat in the town and in a game, and in
+  what the game says ("하준 fell off the world."). **Not with a real
+  keyboard's input method on any device**: Windows' Korean and Telex
+  keyboards, Android's and an iPhone's are all untried, the script
+  having sent what they are documented to send. Not in the friends'
+  panel by hand (its search and its message go by the same box and the
+  same rule).
+- **What is mine**: Pretendard, and as a fallback rather than in Inter's
+  place; a Hangul syllable counting two, so 8 to a name and 40 to a line;
+  that the letters alone are allowed, in names as in chat (the plan,
+  `MULTIPLAYER.md`, would keep them out of names once there is a filter
+  for bad words, which there is not); Latin-1 and the curly quotes
+  besides what was asked; that what cannot be written is left out rather
+  than refusing the whole; the name page's words.
 - Inter is proportional and a little narrower than FiraMono was at one
   size, so every line is shorter than it was; nothing was resized for it.
   Seen in the desktop build, scripted, on the screens that day's runs went

@@ -977,12 +977,14 @@ mod tests {
     }
 
     #[test]
-    fn everything_said_is_plain_ascii() {
-        // The built-in font has nothing else.
+    fn everything_said_is_of_what_the_fonts_draw() {
+        // Plain ASCII until 2026-11-14, the font having nothing else;
+        // Korean and Vietnamese besides since.
+        let drawn = |words: &str| words.chars().all(roundtown_net::text::allowed);
         for (says, back) in &ui().words.talk.small_talk {
-            assert!(says.is_ascii() && back.is_ascii(), "{says} / {back}");
+            assert!(drawn(says) && drawn(back), "{says} / {back}");
         }
-        assert!(builder::pitch(false).is_ascii());
+        assert!(drawn(&builder::pitch(false)));
         assert!(builder::pitch(false).contains("100 coins"));
     }
 

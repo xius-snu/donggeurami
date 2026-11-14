@@ -63,6 +63,13 @@ bevy_replicon_renet = { version = "=0.20.0", default-features = false, features 
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
 ring = "0.17"
 
+# The fonts Bevy's text is laid out with (`font`): to say which font draws
+# Hangul, which Bevy has no words of its own for. The very version Bevy's
+# text builds, pinned so that the two stay one crate, and with no more of it
+# turned on than Bevy turns on: not `system`, which would go looking through
+# the device's own fonts.
+fontique = { version = "=0.9.0", default-features = false, features = ["std"] }
+
 # The friends' panel copies your name and tag for you (`friends::copy`): to
 # the system's own clipboard on desktop, which Bevy reaches only with this
 # feature. Not for the phones: Bevy's clipboard has no system behind it
