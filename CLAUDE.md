@@ -11,8 +11,8 @@ bundles). It plays online against a server in Seoul (`server/`; `shared/` is
 Bridge Wars. House Builder, the build-battle game, is stalled: keep it
 working, and spend nothing on it unasked.
 
-As of 2026-11-14: `PROTOCOL_VERSION` 16, APK 31 (`versionCode`), the server
-deployed that day.
+As of 2026-11-14: `PROTOCOL_VERSION` 16, APK 32 (`versionCode`), the server
+deployed that night (14:47 UTC) with everything in `shared/`.
 
 ## This file, and where the rest is
 
@@ -28,7 +28,7 @@ heading in one of these:
 | Before touching | Read | Old sections in it |
 |---|---|---|
 | rendering, sky, lights, see-through, frame rate | `RENDERING.md`, `docs/rendering-and-frame-rate.md` | "Before touching rendering", "It aims for 120 frames a second" |
-| colours and words on the screen | `docs/ui-style.md` | "The screen's colours and words are in `assets/ui.ron`" |
+| colours and words on the screen, how a window looks | `docs/ui-style.md` | "Every window is drawn as the friends' panel is", "The screen's colours and words are in `assets/ui.ron`" |
 | building, packaging, APK numbers | `docs/building.md` | "Building" |
 | the players' models, walk and punch | `docs/models.md` | "Models" |
 | the sign-up's pages, anything typed into | `docs/signup.md` | "The first time, you sign up" |
@@ -65,9 +65,17 @@ rule or how things stand has changed, and then in a line or two. No logs here.
   copies against a server on this PC, the VM, a phone. A phone is rarely
   attached; never let "built" read as "seen on the phone".
 - "Remove" usually means turn off: keep the mechanism behind a switch
-  (`sound::PLAYING`, `hud::DOTS`, `utility::SECOND_ALWAYS`).
-- Panels and backgrounds are neutral greys, the plate's `#666666`; no blue
-  tint. Sizes and layout stay in code; colours and words in `ui.ron`.
+  (`sound::PLAYING`, `hud::DOTS`, `hud::GIFT`, `utility::SECOND_ALWAYS`).
+- **Every window looks as the friends' panel does** (Hajun, 2026-11-14: "I
+  want to use this same design style throughout the project"): friends,
+  settings, the game selector, Bridge Wars' shops and its "You're out!" are
+  made of `src/window.rs`'s pieces in `colours.window`, and a new one is
+  too: dark and see-through, nothing dimmed round it, tabs or a title
+  along the top, a bare white cross inside the corner, green for yes and
+  dark red for no. "Too dark" has meant more see-through, not greyer.
+- What stands over the world and is no window (your name's plate, the
+  time, the minimap) is the plate's grey, `#666666`; no blue tint anywhere.
+  Sizes and layout stay in code; colours and words in `ui.ron`.
 - In Bridge Wars the camera is straight overhead: judge every visual from
   there, and look at small things enlarged before calling them right.
 
@@ -264,12 +272,13 @@ to try again.
   (`src/signup.rs`); kept in `profile.json` beside `town.json`, and online
   it is the account's (`Ask::Profile`, Postgres `players`).
 - The chat (`src/chat.rs`, `server/src/chat.rs`), down the left in the
-  town and in Bridge Wars: its words alone, the newest always on the
-  lowest line, each fading over 12 s; the dark box, every line in full and
-  the box to type into come only while a line is typed (the small
-  keyboard button). A line goes to everyone in the room; nothing is kept
-  or logged. No block and no report yet, nor for friends' messages: both
-  are wanted before a release to the shops (`MULTIPLAYER.md`).
+  town and in Bridge Wars: its words alone with a thin stroke, three lines
+  in sight, each over the lowest fainter (`colours.chat.strengths`, no
+  clock), scrolled by a drag; the dark box, every line in full and the box
+  to type into come only while a line is typed (the keyboard button). A
+  line goes to everyone in the room; nothing is kept or logged. No block
+  and no report yet, nor for friends' messages: both are wanted before a
+  release to the shops (`MULTIPLAYER.md`).
 - Friends (`src/friends.rs`, `server/src/social.rs`) are the server's
   alone, none offline: a `#1000`-`#9999` tag after every name, requests,
   groups of up to four whose leader alone starts a game, messages that wait
@@ -287,10 +296,12 @@ to try again.
   functions (`spawn_player` and its kin). Names over heads (`src/tags.rs`)
   are everyone's but your own.
 - **The buttons** (`src/hud.rs`, as Hajun sketched them): top left your
-  name on a plate (with its tag online), a person button (nothing yet), the
-  gear (settings), and your balance under them; down the right edge a gift
-  (the car's gun, in the car), two people (friends, with the inbox's
-  count in gold), a gamepad (the game selector); round the jump button a
+  name on a plate (with its tag online), the gear (settings), and your
+  balance under them; down the right edge two people (friends, with the
+  inbox's count in gold) and a gamepad (the game selector). The person
+  button that stood by the gear and the gift over the two people (the
+  car's gun on a phone) are turned off since 2026-11-14, "too many lobby
+  ui buttons" (`hud::PERSON`, `hud::GIFT`). Round the jump button a
   face (in and out of the car), a speech bubble (a fan of things to say
   at a press, `src/quick.rs`, `words.chat.quick`), a small keyboard over
   it (the chat's box) and a fist (a punch; the car's reverse); the stick,
@@ -315,7 +326,9 @@ to try again.
 - The balance is the server's online (Postgres); only House Builder's fee
   and prizes change it. The music is turned off (`sound::PLAYING`).
 - Settings (`src/settings.rs`): Graphics and Controls are empty; Accounts
-  has the name, sign-in buttons that do nothing yet, and Delete account.
+  has your name on a row with a pencil (Edit name, a box over the window),
+  sign-in buttons that do nothing yet, and Delete account, which asks once
+  more in a box over the window.
 
 ## Bridge Wars, as it stands
 
@@ -338,9 +351,10 @@ and the game is as that file has it. The rules both sides play by are
   come back in 4 s; with it broken, they are out. The last team with anyone
   in play wins. At 10:00 every anchor breaks, at 15:00 zombies rise, at
   25:00 it is a draw; the generators quicken on the way (`TIMETABLE`).
-- **Dying** takes everything you hold (the four resources, your sword, what
-  is on your buttons, your metres of bridge) and leaves your shield and
-  your team's upgrades.
+- **Dying** takes all you hold (the four resources, your sword, what is on
+  your buttons, your metres of bridge) and leaves your shield and team's
+  upgrades; your sapphire and amethyst go to whoever killed you or knocked
+  you off the world (`bridge_wars::spoils`).
 - **Generators** (`bridge_wars::Mint`) make silver and gold on each team's
   pad, sapphire on the smaller islands, amethyst in the middle; you pick up
   what you walk into (`src/loot.rs`).
@@ -367,9 +381,10 @@ and the game is as that file has it. The rules both sides play by are
   (`PERSONAS`) and plays the whole game. **Hajun's rule for them: nothing
   is a definite if-then; every threshold is a spread, thrown again.** How
   hard they play is `Skill::MODERATE`. Tune by whole games: `cargo test -p
-  roundtown_server many -- --ignored --nocapture` (`RT_GAMES`, `RT_SEED`).
-  Online, tuning them is a server deploy alone; `RT_ARENA_BOTS=old` in the
-  VM's env goes back to bots that keep to their islands.
+  roundtown_server many -- --ignored --nocapture` (`RT_GAMES`, `RT_SEED`,
+  `RT_STALLS=1|2` for where one got nowhere). Online, tuning them is a
+  server deploy alone; `RT_ARENA_BOTS=old` in the VM's env goes back to
+  bots that keep to their islands.
 - **A punch** lands on whoever is in the range drawn in front of you
   (`src/range.rs`) and knocks them back, which is how people go into the
   void (`start_punch`, `Shove::knock`; the numbers are `ui.ron`'s `melee`,

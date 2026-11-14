@@ -160,13 +160,6 @@ const STAR_GAP: f32 = 2.2;
 /// How far up from the bottom of the screen the stars sit: below the stick
 /// and the jump button on a phone, and clear of both sideways.
 const STARS_UP: f32 = 5.0;
-const DIALOG_WIDTH: f32 = 90.0;
-/// Small enough for the game's name to fit across the dialog on one line.
-pub(crate) const TITLE: f32 = 6.5;
-pub(crate) const BODY: f32 = 4.2;
-pub(crate) const SMALL: f32 = 3.6;
-pub(crate) const BUTTON_WIDTH: f32 = 36.0;
-pub(crate) const BUTTON_HEIGHT: f32 = 11.0;
 /// Dialogs are over everything else on the screen.
 pub(crate) const DIALOG_LAYER: i32 = 10;
 /// The results, down the right of the screen: wide enough for a name of
@@ -1741,53 +1734,10 @@ fn vmin(windows: &Query<&Window>) -> f32 {
 
 // ---------------------------------------------------------------- dialogs
 
-/// The screen dimmed behind a panel, over everything else, and taking every
-/// press there is while it is up: every dialog in the game looks like this.
-/// The dark carries `dark`, which says whose dialog it is. Returns the panel,
-/// to be filled in.
-pub(crate) fn dimmed<'a>(commands: &'a mut Commands, dark: impl Bundle) -> EntityCommands<'a> {
-    let dark = commands
-        .spawn((
-            dark,
-            TakesPress,
-            Node {
-                position_type: PositionType::Absolute,
-                width: Val::Percent(100.0),
-                height: Val::Percent(100.0),
-                justify_content: JustifyContent::Center,
-                align_items: AlignItems::Center,
-                ..default()
-            },
-            BackgroundColor(ui().colours.dim),
-            GlobalZIndex(DIALOG_LAYER),
-        ))
-        .id();
-    commands.spawn((
-        ChildOf(dark),
-        Node {
-            width: Val::VMin(DIALOG_WIDTH),
-            flex_direction: FlexDirection::Column,
-            align_items: AlignItems::Center,
-            row_gap: Val::VMin(2.4),
-            padding: UiRect::all(Val::VMin(4.5)),
-            border_radius: BorderRadius::all(Val::VMin(4.0)),
-            ..default()
-        },
-        BackgroundColor(ui().colours.dialog),
-    ))
-}
-
-/// The row the buttons at the foot of a dialog stand in.
-pub(crate) fn choices() -> impl Bundle {
-    (
-        Node {
-            column_gap: Val::VMin(4.0),
-            margin: UiRect::top(Val::VMin(0.8)),
-            ..default()
-        },
-        Pickable::IGNORE,
-    )
-}
+// (Until 2026-11-14 every dialog in the game was made here, `dimmed`: a
+// black box in the middle of the dimmed screen, with `choices` for the row
+// of buttons at its foot. The last of them, the settings' two and the game
+// selector, are windows now, drawn as the friends' panel is: `window`.)
 
 /// Plain words, for a button or a dialog, which have a colour of their own
 /// behind them and need no shadow to read.

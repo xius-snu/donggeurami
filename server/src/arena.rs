@@ -608,7 +608,36 @@ impl Game {
             },
             None => Feed::Fell { seat: seat as u8 },
         });
+        if let Some(by) = by {
+            self.hand_spoils(seat, by);
+        }
         self.die(seat);
+    }
+
+    /// Whoever is in `killer` has killed whoever is in `victim`: what the
+    /// victim held of sapphire and amethyst is the killer's, at once, if
+    /// they are players of two teams ([`takes_spoils`], [`spoils`]; since
+    /// the night of 2026-11-14, Hajun: "if you kill an enemy in
+    /// bridgewars, you should automatically get their sapphire and
+    /// amethyst (not gold or iron) if they had any - not drop but just
+    /// auto get it in ur inven"). Before the victim dies and loses the
+    /// rest ([`Game::die`]). The room is sent both purses as it is sent
+    /// any, so a device from before this shows it too.
+    fn hand_spoils(&mut self, victim: usize, killer: usize) {
+        if !takes_spoils(killer, victim) {
+            return;
+        }
+        let Some(held) = self.purses.get_mut(victim) else {
+            return;
+        };
+        let won = spoils(held);
+        if won == Purse::default() {
+            return;
+        }
+        if let Some(purse) = self.purses.get_mut(killer) {
+            gain(purse, won);
+        }
+        info!("Bridge Wars game {}: seat {killer} took {won:?} off seat {victim}", self.id);
     }
 
     /// What the room is shown of how it is going.
@@ -864,6 +893,7 @@ impl Game {
                 by: hitter as u8,
                 with,
             });
+            self.hand_spoils(victim, hitter);
             self.die(victim);
             return false;
         }
@@ -3048,6 +3078,67 @@ mod tests {
     }
 
     #[test]
+    fn whoever_kills_someone_has_their_sapphire_and_amethyst_and_nothing_else_of_theirs() {
+        let mut game = full_game();
+        let from = Spot::of(game.at[0], Quat::IDENTITY);
+        // Seats 0 and 4 are one team, and 1 another.
+        assert!(arena_team(0) == arena_team(4) && arena_team(0) != arena_team(1));
+        // Killed with a hand: every sapphire and every amethyst the dead
+        // held is the killer's, on top of the killer's own; the silver
+        // and the gold go with the dead, as everything did.
+        game.purses[0] = [1, 2, 3, 4];
+        game.purses[1] = [30, 20, 7, 5];
+        game.health[1] = 5.0;
+        game.wound(1, 0, from, false);
+        assert!(!game.alive(1));
+        assert_eq!((game.purses[0], game.purses[1]), ([1, 2, 10, 9], [0, 0, 0, 0]));
+        // Knocked off the world: whoever hit them last has it, as the
+        // chat has it their doing.
+        game.purses[2] = [9, 9, 2, 1];
+        game.wound(2, 0, from, true);
+        game.elapsed += CREDIT_SECS - 0.5;
+        game.fall(2);
+        assert_eq!((game.purses[0], game.purses[2]), ([1, 2, 12, 10], [0, 0, 0, 0]));
+        // By a blast, a fireball's or a stick of dynamite's, as by a hand.
+        game.purses[3] = [0, 0, 1, 1];
+        game.health[3] = 5.0;
+        assert!(!game.hurt_by(3, 0, 20.0, Weapon::Dynamite));
+        assert_eq!(game.purses[0], [1, 2, 13, 11]);
+        // Fallen with nobody's hand in it: nobody has it. It is gone.
+        game.purses[5] = [4, 4, 4, 4];
+        game.fall(5);
+        assert_eq!((game.purses[0], game.purses[5]), ([1, 2, 13, 11], [0, 0, 0, 0]));
+        // A teammate caught in their own team's blast leaves nothing to
+        // whoever threw it.
+        game.purses[4] = [0, 0, 6, 6];
+        game.health[4] = 5.0;
+        assert!(!game.hurt_by(4, 0, 20.0, Weapon::Dynamite));
+        assert_eq!((game.purses[0], game.purses[4]), ([1, 2, 13, 11], [0, 0, 0, 0]));
+        // The killer dies in their turn, and whoever kills them has all
+        // of it: what they came with and what they took.
+        game.health[0] = 5.0;
+        game.wound(0, 6, from, false);
+        assert_eq!((game.purses[6], game.purses[0]), ([0, 0, 13, 11], [0, 0, 0, 0]));
+        // A zombie takes nothing off whoever it kills, and has nothing to
+        // be taken.
+        game.happen(Happening::SuddenDeath);
+        let zombie = ARENA_SEATS;
+        game.purses[7] = [0, 0, 3, 3];
+        game.health[7] = 5.0;
+        game.wound(7, zombie, from, false);
+        assert_eq!(game.purses[7], [0, 0, 0, 0]);
+        game.health[zombie + 1] = 5.0;
+        game.wound(zombie + 1, 6, from, false);
+        assert_eq!(game.purses[6], [0, 0, 13, 11]);
+        // Never more than a purse holds.
+        game.dead_for[7] = None;
+        game.health[7] = 5.0;
+        game.purses[7] = [0, 0, u16::MAX - 5, 2];
+        assert!(!game.hurt_by(7, 6, 20.0, Weapon::Fists));
+        assert_eq!(game.purses[6], [0, 0, u16::MAX, 13]);
+    }
+
+    #[test]
     fn the_zombies_sit_past_the_players_keep_to_their_ground_and_always_come_back() {
         let mut game = full_game();
         // Seated as sudden death seats them: a seat each past the
@@ -3517,6 +3608,12 @@ mod tests {
         /// took with them.
         blasts: u32,
         planks_blown: u32,
+        /// How often one of them got nowhere on a way it had, three
+        /// seconds together (`Bot::stalls`), standing its ground or
+        /// held; and how many of those times something held it
+        /// (`Bot::pinned`), which must never be.
+        stalls: u32,
+        pinned: u32,
     }
 
     impl Default for Chronicle {
@@ -3543,8 +3640,48 @@ mod tests {
                 fullest: 0,
                 blasts: 0,
                 planks_blown: 0,
+                stalls: 0,
+                pinned: 0,
             }
         }
+    }
+
+    /// The squares round `here`, a line to a row, for seeing what holds a
+    /// body there: `@` where it is and `X` where it is going, if that is
+    /// near; `.` land to walk, `o` land to walk under a plank, `=` a
+    /// bridge's deck, `-` a plank's edge, which holds a body and is not
+    /// walked, `#` land that holds a body and is not walked, and nothing
+    /// where there is nothing.
+    fn squares_round(nav: &roundtown_net::nav::Nav, here: Vec2, next: Vec2) -> String {
+        let cell = roundtown_net::nav::CELL;
+        let middle = (here / cell).floor() * cell + Vec2::splat(cell * 0.5);
+        let mut drawn = String::new();
+        for row in -7i32..=7 {
+            drawn.push_str("  |");
+            for column in -10i32..=10 {
+                let at = middle + Vec2::new(column as f32, row as f32) * cell;
+                drawn.push(if (row, column) == (0, 0) {
+                    '@'
+                } else if (next - at).abs().max_element() < cell * 0.5 {
+                    'X'
+                } else if nav.grid().clear(at) {
+                    if nav.on_plank(at) { 'o' } else { '.' }
+                } else if nav.walkable_at(at) {
+                    '='
+                } else if nav.on_plank(at) {
+                    '-'
+                } else if nav.grid().height(at).is_some() {
+                    '#'
+                } else {
+                    ' '
+                });
+            }
+            drawn.push_str(&format!("| z {:.2}
+", middle.y + row as f32 * cell));
+        }
+        let way = (next - here).normalize_or_zero();
+        drawn.push_str(&format!("  from x {:.2}, heading ({:.2}, {:.2})", middle.x - 10.0 * cell, way.x, way.y));
+        drawn
     }
 
     /// Plays a game of eight of the computer's players to its end, and
@@ -3567,6 +3704,8 @@ mod tests {
         let mut alive = [true; ARENA_SEATS];
         let mut idle = [0.0f32; ARENA_SEATS];
         let mut held = [[0u8; 6]; ARENA_SEATS];
+        let mut stalls = [0u32; ARENA_SEATS];
+        let mut pinned = [0u32; ARENA_SEATS];
         while game.playing() {
             game.step(dt);
             game.events.clear();
@@ -3623,6 +3762,36 @@ mod tests {
                 }
                 alive[seat] = standing;
                 let bot = game.squad.bot(seat).expect("the computer's");
+                // Got nowhere on its way somewhere, and whether something
+                // held it: said, with `RT_STALLS` set, for finding what
+                // did, and with `RT_STALLS=2` the squares round it too.
+                let (count, last) = bot.stalls();
+                if count > stalls[seat] {
+                    stalls[seat] = count;
+                    told.stalls += 1;
+                    let held = bot.pinned() > pinned[seat];
+                    if held {
+                        pinned[seat] = bot.pinned();
+                        told.pinned += 1;
+                    }
+                    if let (Ok(how), Some((here, next))) = (std::env::var("RT_STALLS"), last) {
+                        println!(
+                            "{} seed {seed} at {now:.0} s: {} (seat {seat}) at ({:.2}, {:.2}) for ({:.2}, {:.2}), {:?}, {:?}, on a plank {}",
+                            if held { "HELD" } else { "nowhere" },
+                            bot.persona().name,
+                            here.x,
+                            here.y,
+                            next.x,
+                            next.y,
+                            bot.goal(),
+                            game.nav.grid().region(here),
+                            game.nav.on_plank(here),
+                        );
+                        if how == "2" {
+                            println!("{}", squares_round(&game.nav, here, next));
+                        }
+                    }
+                }
                 // The one that goes out with nothing to do, while it
                 // stands, before the anchors break. The keeper's part is
                 // to stand by its anchor.
@@ -3706,6 +3875,11 @@ mod tests {
             assert!(game.upgrade.is_some_and(|at| at < 300.0), "seed {seed}: an upgrade at {:?}", game.upgrade);
             // Nobody walks off an edge, ever.
             assert_eq!(game.walked_off, 0, "seed {seed}");
+            // And nothing holds anybody fast on their way anywhere: no
+            // corner of a stand, nor the end of a bridge against the
+            // land (`RT_STALLS=2` shows where).
+            assert_eq!(game.pinned, 0, "seed {seed}: one of them was held fast");
+            assert!(game.stalls <= 1, "seed {seed}: they got nowhere {} times", game.stalls);
             // No anchor goes before anchors are fair game, and nobody is
             // out before then.
             for team in 0..ARENA_TEAMS {
@@ -3736,8 +3910,10 @@ mod tests {
         let games = told(100..100 + count);
         let mean = |pick: &dyn Fn(&Chronicle) -> f32| games.iter().map(pick).sum::<f32>() / games.len() as f32;
         println!(
-            "over at {:.0} s on average; killed early {:.1}, fell early {:.1}; killed late {:.1}, fell late {:.1}; anchors broken before ten minutes {:.1}",
+            "over at {:.0} s on average; got nowhere {:.2} times a game, held fast {:.2}; killed early {:.1}, fell early {:.1}; killed late {:.1}, fell late {:.1}; anchors broken before ten minutes {:.1}",
             mean(&|game| game.over),
+            mean(&|game| game.stalls as f32),
+            mean(&|game| game.pinned as f32),
             mean(&|game| game.killed.0 as f32),
             mean(&|game| game.fell.0 as f32),
             mean(&|game| game.killed.1 as f32),

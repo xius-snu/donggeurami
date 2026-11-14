@@ -67,6 +67,7 @@ mod talk;
 mod trail;
 mod ui;
 mod utility;
+mod window;
 mod gear;
 use island::{Island, Islands, Venue};
 #[cfg(not(any(target_os = "android", target_os = "ios")))]

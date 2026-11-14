@@ -145,6 +145,7 @@ use crate::ai::{self, Steering};
 use crate::bridge;
 use crate::builder::{self, Fill};
 use crate::chat;
+use crate::window;
 use crate::drive::Driving;
 use crate::dynamite;
 use crate::fire;
@@ -214,12 +215,13 @@ const ALERT_GAP: f32 = 1.0;
 /// ground, clear of what lies on the pad and of what is dropping onto it.
 const GENERATOR_TEXT: f32 = 3.0;
 const GENERATOR_GAP: f32 = 0.55;
+/// The panel that says you are out ([`spawn_panel`]), a window as the
+/// friends' panel is one (`window`): how wide, its headline and the line
+/// under it, and how wide its two buttons are, for "Play again" to fit.
 const PANEL_WIDTH: f32 = 58.0;
-const PANEL_TITLE: f32 = 5.6;
-const PANEL_TEXT: f32 = 3.4;
-const PANEL_BUTTON: f32 = 8.4;
+const PANEL_TITLE: f32 = 4.4;
+const PANEL_TEXT: f32 = 3.0;
 const PANEL_BUTTON_WIDTH: f32 = 22.0;
-const PANEL_BUTTON_TEXT: f32 = 3.4;
 /// How high over a body's feet its name and bar stand, in metres, how high
 /// over the ground an anchor's bar stands over its pillar (0.65 m over its
 /// top, 3.75 m up since the map of 2026-11-11; 4.6 over a top at 3.96
@@ -549,6 +551,12 @@ struct Game {
     /// what: a fall soon after is their doing ([`Game::fell`]). Online
     /// the server keeps its own.
     last_hit: HashMap<usize, (usize, f32, Weapon)>,
+    /// Offline, what you have won by killing someone and have not been
+    /// handed yet ([`Game::spoils`], [`take_spoils`]); and who killed you,
+    /// for what you held of sapphire and amethyst to go to as you lose
+    /// the rest ([`lose_on_death`]). Online the server hands them over.
+    won: Purse,
+    killed_by: Option<usize>,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -635,6 +643,9 @@ impl Game {
             return None;
         }
         self.last_hit.insert(victim, (by, self.elapsed, with));
+        if killed {
+            self.spoils(victim, by);
+        }
         (killed && victim < ARENA_SEATS).then_some(Fed(Feed::Killed {
             seat: victim as u8,
             by: by as u8,
@@ -642,10 +653,43 @@ impl Game {
         }))
     }
 
+    /// Whoever is in `by` has killed whoever is in `victim`, offline:
+    /// what the victim held of sapphire and amethyst is the killer's, if
+    /// they are players of two teams (`rules::takes_spoils`,
+    /// `rules::spoils`; since the night of 2026-11-14, Hajun: "if you
+    /// kill an enemy in bridgewars, you should automatically get their
+    /// sapphire and amethyst (not gold or iron) if they had any - not
+    /// drop but just auto get it in ur inven"). One of the computer's
+    /// players holds what it holds here, and it changes hands at once;
+    /// you hold yours in [`Resources`], so what you win waits a moment to
+    /// be handed you ([`take_spoils`]), and what you held goes to whoever
+    /// killed you as you lose the rest ([`lose_on_death`]).
+    fn spoils(&mut self, victim: usize, by: usize) {
+        if !rules::takes_spoils(by, victim) {
+            return;
+        }
+        let me = self.me;
+        if victim == me {
+            self.killed_by = Some(by);
+            return;
+        }
+        let Some(brains) = self.brains.as_deref_mut() else {
+            return;
+        };
+        let won = rules::spoils(&mut brains.purses[victim]);
+        if by == me {
+            rules::gain(&mut self.won, won);
+        } else {
+            rules::gain(&mut brains.purses[by], won);
+        }
+    }
+
     /// `seat` has fallen into the void, offline: what the chat says of
     /// it, knocked off by whoever last hit them if that was no longer ago
-    /// than [`CREDIT_SECS`], and fallen otherwise. Nothing of a zombie.
-    fn fell(&self, seat: usize) -> Option<Fed> {
+    /// than [`CREDIT_SECS`], and fallen otherwise; and whoever knocked
+    /// them off has what they held of sapphire and amethyst
+    /// ([`Game::spoils`]). Nothing of a zombie.
+    fn fell(&mut self, seat: usize) -> Option<Fed> {
         if seat >= ARENA_SEATS {
             return None;
         }
@@ -654,6 +698,9 @@ impl Game {
             .get(&seat)
             .filter(|&&(by, when, _)| by != seat && self.elapsed - when <= CREDIT_SECS)
             .map(|&(by, ..)| by);
+        if let Some(by) = by {
+            self.spoils(seat, by);
+        }
         Some(Fed(match by {
             Some(by) => Feed::Knocked {
                 seat: seat as u8,
@@ -894,7 +941,7 @@ pub(crate) fn plugin(app: &mut App) {
                     .before(crate::follow_camera),
                 (show_death, show_panel, place_tags, place_anchor_bars, float_numbers, write_over_generators)
                     .after(crate::follow_camera),
-                (paint_zombies, paint_anchors, fade_alerts, lose_on_death, trap_alerts),
+                (paint_zombies, paint_anchors, fade_alerts, (lose_on_death, take_spoils).chain(), trap_alerts),
                 // What the game has said this frame, into the chat; and the
                 // builders the computer's players have out, where they are.
                 (feed_chat, show_bot_builders).after(crate::move_bodies).after(break_anchors),
@@ -1575,6 +1622,8 @@ fn open(
         anchor_said: f32::NEG_INFINITY,
         compass: false,
         last_hit: HashMap::new(),
+        won: Purse::default(),
+        killed_by: None,
     }
 }
 
@@ -2099,15 +2148,41 @@ fn dress(
 /// server, or this device's own game, takes your sword and what was on
 /// your second button; the metres of bridge are this device's to take,
 /// here, online too; and so, offline, is what you hold, which online the
-/// server empties and says so ([`Purses`], [`follow_round`]).
-fn lose_on_death(died: Query<(), (With<Player>, Added<Dead>)>, game: Option<Res<Game>>, mut stock: ResMut<Resources>) {
+/// server empties and says so ([`Purses`], [`follow_round`]). Offline,
+/// whoever killed you has your sapphire and your amethyst first
+/// ([`Game::spoils`]).
+fn lose_on_death(died: Query<(), (With<Player>, Added<Dead>)>, mut game: Option<ResMut<Game>>, mut stock: ResMut<Resources>) {
     if died.is_empty() {
         return;
     }
-    let offline = game.is_some_and(|game| !game.online);
+    let offline = game.as_deref().is_some_and(|game| !game.online);
+    if offline
+        && let Some(game) = game.as_deref_mut()
+        && let Some(killer) = game.killed_by.take()
+        && let Some(brains) = game.brains.as_deref_mut()
+        && let Some(purse) = brains.purses.get_mut(killer)
+    {
+        rules::gain(purse, rules::spoils(&mut stock.held));
+    }
     let lost = lost_on_death(&stock, offline);
     if *stock != lost {
         *stock = lost;
+    }
+}
+
+/// Hands you what you have won by killing someone in a game played
+/// offline ([`Game::spoils`]): their sapphire and their amethyst, into
+/// what you hold, the moment after.
+fn take_spoils(game: Option<ResMut<Game>>, mut stock: ResMut<Resources>) {
+    let Some(mut game) = game else {
+        return;
+    };
+    if game.won == Purse::default() {
+        return;
+    }
+    let won = std::mem::take(&mut game.won);
+    if !game.online {
+        rules::gain(&mut stock.held, won);
     }
 }
 
@@ -3673,35 +3748,36 @@ fn show_panel(game: Option<Res<Game>>, panels: Query<Entity, With<Panel>>, mut c
 
 /// The panel saying you are out: its title, its line, and Play again and
 /// Exit, in the middle of the screen. Not a dialog: the world goes on
-/// round it, and only a press on it is its own.
+/// round it, and only a press on it is its own. Drawn as the friends'
+/// panel is, and laid out as one of that panel's questions (`window`,
+/// since 2026-11-14, when Hajun asked for that panel's style everywhere):
+/// white on the windows' dark, Exit the dark red of a no and Play again
+/// the green of a yes. (A black box with a gold headline and round-ended
+/// grey and gold buttons until then.)
 fn spawn_panel(commands: &mut Commands) {
     let ui = ui();
-    let (colours, words) = (ui.colours, &ui.words.arena);
+    let (colours, words) = (ui.colours.window, &ui.words.arena);
     commands
         .spawn((
             InArena,
             Panel,
-            TakesPress,
-            Node {
+            window::pane(Node {
                 position_type: PositionType::Absolute,
                 left: Val::Percent(50.0),
                 top: Val::Vh(26.0),
                 width: Val::VMin(PANEL_WIDTH),
-                flex_direction: FlexDirection::Column,
                 align_items: AlignItems::Center,
                 row_gap: Val::VMin(1.6),
-                padding: UiRect::all(Val::VMin(3.0)),
-                border_radius: BorderRadius::all(Val::VMin(3.5)),
+                padding: UiRect::all(Val::VMin(window::PAD)),
                 ..default()
-            },
+            }),
             // Half its own width back, so that it is centred.
             UiTransform::from_translation(Val2::new(Val::Percent(-50.0), Val::ZERO)),
-            BackgroundColor(colours.house_builder.results),
             GlobalZIndex(builder::DIALOG_LAYER - 1),
         ))
         .with_children(|panel| {
-            panel.spawn(hud::words(words.out.clone(), PANEL_TITLE, colours.gold));
-            panel.spawn(builder::label(words.anchor_gone.clone(), PANEL_TEXT, colours.text));
+            panel.spawn(builder::label(words.out.clone(), PANEL_TITLE, colours.title));
+            panel.spawn(builder::label(words.anchor_gone.clone(), PANEL_TEXT, colours.status));
             panel
                 .spawn((
                     Node {
@@ -3713,46 +3789,16 @@ fn spawn_panel(commands: &mut Commands) {
                     Pickable::IGNORE,
                 ))
                 .with_children(|choices| {
-                    choices.spawn(panel_button(
-                        Ask::Exit,
-                        words.exit.clone(),
-                        Fill {
-                            idle: colours.quiet,
-                            lit: colours.quiet_lit,
-                        },
-                        colours.text,
+                    choices.spawn((
+                        AsksFor(Ask::Exit),
+                        window::choice_wide(words.exit.clone(), window::Look::No, PANEL_BUTTON_WIDTH),
                     ));
-                    choices.spawn(panel_button(
-                        Ask::Again,
-                        words.play_again.clone(),
-                        Fill {
-                            idle: colours.gold,
-                            lit: colours.gold_lit,
-                        },
-                        colours.on_gold,
+                    choices.spawn((
+                        AsksFor(Ask::Again),
+                        window::choice_wide(words.play_again.clone(), window::Look::Yes, PANEL_BUTTON_WIDTH),
                     ));
                 });
         });
-}
-
-/// One of the panel's buttons.
-fn panel_button(ask: Ask, text: String, fill: Fill, ink: Color) -> impl Bundle {
-    (
-        AsksFor(ask),
-        TakesPress,
-        Button,
-        Node {
-            width: Val::VMin(PANEL_BUTTON_WIDTH),
-            height: Val::VMin(PANEL_BUTTON),
-            justify_content: JustifyContent::Center,
-            align_items: AlignItems::Center,
-            border_radius: BorderRadius::all(Val::VMin(PANEL_BUTTON * 0.5)),
-            ..default()
-        },
-        BackgroundColor(fill.idle),
-        fill,
-        children![builder::label(text, PANEL_BUTTON_TEXT, ink)],
-    )
 }
 
 /// A name and a health bar over the head of everyone else in the game with
@@ -4359,39 +4405,105 @@ mod tests {
         assert_eq!(bar_width(health.share()), Val::Percent(33.5));
     }
 
+    /// A game played offline, under way: you in seat 0 and the computer in
+    /// the seven others, every anchor standing.
+    fn a_game() -> Game {
+        Game {
+        id: 1,
+        seats: (0..ARENA_SEATS)
+            .map(|seat| Member {
+                id: seat as u64 + 1,
+                name: format!("Seat {seat}"),
+                look: "boy".into(),
+                ai: seat > 0,
+            })
+            .collect(),
+        bodies: Vec::new(),
+        town_seat: 0,
+        me: 0,
+        online: false,
+        cut_off: None,
+        stage: Stage::Playing { left: 100.0 },
+        view: None,
+        health: Vec::new(),
+        anchors: [120.0; ARENA_TEAMS],
+        anchor_hurt: [0.0; ARENA_TEAMS],
+        out: [false; ARENA_SEATS],
+        elapsed: 0.0,
+        said: 0.0,
+        mint: Mint::new(0.0, &mut || 0.5),
+        outfits: Outfits::default(),
+        brains: None,
+        anchor_was: 120.0,
+        anchor_said: f32::NEG_INFINITY,
+        compass: false,
+        last_hit: HashMap::new(),
+        won: Purse::default(),
+        killed_by: None,
+    }
+    }
+
+    #[test]
+    fn offline_whoever_kills_someone_has_their_sapphire_and_amethyst() {
+        let mut game = a_game();
+        game.brains = Some(Box::new(Brains::new()));
+        fn purses(game: &mut Game) -> &mut [Purse; ARENA_SEATS] {
+            &mut game.brains.as_deref_mut().expect("the computer's players").purses
+        }
+        // One of the computer's players kills another, of another team:
+        // the sapphire and the amethyst change hands at once, and the
+        // silver and the gold stay to go with the dead.
+        purses(&mut game)[1] = [9, 9, 4, 2];
+        purses(&mut game)[2] = [1, 1, 1, 1];
+        assert!(game.struck(1, 2, Weapon::Fists, true).is_some());
+        assert_eq!((purses(&mut game)[1], purses(&mut game)[2]), ([9, 9, 0, 0], [1, 1, 5, 3]));
+        // A blow that does not kill takes nothing.
+        purses(&mut game)[3] = [5, 5, 2, 6];
+        assert!(game.struck(3, 2, Weapon::Fists, false).is_none());
+        assert_eq!(purses(&mut game)[3], [5, 5, 2, 6]);
+        // You kill one (you are in seat 0): what it held waits to be
+        // handed you (`take_spoils`), and is out of its purse already.
+        assert!(game.struck(3, 0, Weapon::Sword(1), true).is_some());
+        assert_eq!((game.won, purses(&mut game)[3]), ([0, 0, 2, 6], [5, 5, 0, 0]));
+        // You knock one off the world: the same, as it falls.
+        purses(&mut game)[5] = [0, 3, 3, 0];
+        game.struck(5, 0, Weapon::Fists, false);
+        game.elapsed += CREDIT_SECS - 1.0;
+        assert_eq!(game.fell(5).map(|said| said.0), Some(Feed::Knocked { seat: 5, by: 0 }));
+        assert_eq!((game.won, purses(&mut game)[5]), ([0, 0, 5, 6], [0, 3, 0, 0]));
+        // One that falls with nobody's hand in it leaves nothing to anyone.
+        purses(&mut game)[6] = [0, 0, 8, 8];
+        assert_eq!(game.fell(6).map(|said| said.0), Some(Feed::Fell { seat: 6 }));
+        assert_eq!((game.won, purses(&mut game)[6]), ([0, 0, 5, 6], [0, 0, 8, 8]));
+        // Your teammate, in seat 4, caught in your blast: nothing of
+        // theirs is yours.
+        purses(&mut game)[4] = [0, 0, 7, 7];
+        game.struck(4, 0, Weapon::Dynamite, true);
+        assert_eq!((game.won, purses(&mut game)[4]), ([0, 0, 5, 6], [0, 0, 7, 7]));
+        // One of them kills you: who it was is kept, for what you hold to
+        // go to as you lose the rest (`lose_on_death`).
+        assert_eq!(game.killed_by, None);
+        assert!(game.struck(0, 7, Weapon::Fireball, true).is_some());
+        assert_eq!(game.killed_by, Some(7));
+        // A zombie, in a seat past the players', takes nothing and leaves
+        // nothing.
+        game.seats.push(Member {
+            id: 0,
+            name: "Zombie".into(),
+            look: "boy".into(),
+            ai: true,
+        });
+        game.killed_by = None;
+        purses(&mut game)[2] = [0, 0, 5, 3];
+        game.struck(2, ARENA_SEATS, Weapon::Fists, true);
+        assert_eq!(purses(&mut game)[2], [0, 0, 5, 3]);
+        game.struck(ARENA_SEATS, 0, Weapon::Fists, true);
+        assert_eq!(game.won, [0, 0, 5, 6]);
+    }
+
     #[test]
     fn dead_with_the_anchor_standing_comes_back_and_without_it_is_out() {
-        let mut game = Game {
-            id: 1,
-            seats: (0..ARENA_SEATS)
-                .map(|seat| Member {
-                    id: seat as u64 + 1,
-                    name: format!("Seat {seat}"),
-                    look: "boy".into(),
-                    ai: seat > 0,
-                })
-                .collect(),
-            bodies: Vec::new(),
-            town_seat: 0,
-            me: 0,
-            online: false,
-            cut_off: None,
-            stage: Stage::Playing { left: 100.0 },
-            view: None,
-            health: Vec::new(),
-            anchors: [120.0; ARENA_TEAMS],
-            anchor_hurt: [0.0; ARENA_TEAMS],
-            out: [false; ARENA_SEATS],
-            elapsed: 0.0,
-            said: 0.0,
-            mint: Mint::new(0.0, &mut || 0.5),
-            outfits: Outfits::default(),
-            brains: None,
-            anchor_was: 120.0,
-            anchor_said: f32::NEG_INFINITY,
-            compass: false,
-            last_hit: HashMap::new(),
-        };
+        let mut game = a_game();
         assert_eq!(game.my_team(), 0);
         assert_eq!(game.teams_in_play(), vec![0, 1, 2, 3]);
         // Seat 1 dies with its anchor standing: back after a while.

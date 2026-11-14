@@ -37,14 +37,20 @@ use crate::{ARENA_ISLANDS, SAPPHIRE_PADS};
 
 /// How far across a square of the grid is, in metres.
 pub const CELL: f32 = 0.5;
-/// Half of how wide a plank is, in metres: a quarter as wide again as
-/// Hajun's `bridge` object's measure (2.726 m across; since 2026-11-14,
-/// Hajun: "The bridge could also be a little wider, maybe 1.25 times its
-/// current width"), so 3.41 m across, which the game's `bridge` builds by.
-pub const PLANK_HALF_WIDTH: f32 = 1.363 * 1.25;
+/// Half of how wide a plank is, in metres: a tenth as wide again as
+/// Hajun's `bridge` object's measure (2.726 m across), so 3.00 m across,
+/// which the game's `bridge` builds by. A quarter as wide again, 3.41 m,
+/// for a few hours of 2026-11-14 (Hajun: "The bridge could also be a
+/// little wider, maybe 1.25 times its current width"), and a tenth since
+/// that night ("i think some time ago i increased the bridge width to
+/// 1.25x of that current width. i change my mind. instead of 1.25x i want
+/// 1.1x").
+pub const PLANK_HALF_WIDTH: f32 = 1.363 * PLANK_WIDER;
+/// How many times as wide a plank is as Hajun's `bridge` object was.
+const PLANK_WIDER: f32 = 1.1;
 /// How far apart a bridge's rungs are fixed, in metres: half a plank's
 /// width, the boards of a dock. A plank is as much longer as it is wider,
-/// so that a bridge is the shape it was, a quarter bigger: how sharply it
+/// so that a bridge is the shape it was, a tenth bigger: how sharply it
 /// may turn from one plank to the next, and how far a slant cuts into a
 /// plank, go by the one against the other (the game's `bridge`).
 pub const PLANK_SPACING: f32 = PLANK_HALF_WIDTH;
@@ -697,7 +703,9 @@ impl Nav {
                 if kept.gone.get(plank).copied().unwrap_or(false) {
                     holed = true;
                 } else {
-                    laid.push((last, rung));
+                    // Joined to the plank before it, if that stands.
+                    let joined = plank.checked_sub(1).is_some_and(|before| kept.stands(before));
+                    laid.push((last, rung, joined));
                 }
             }
             kept.rungs.push(rung);
@@ -706,8 +714,8 @@ impl Nav {
             self.find_gaps();
         }
         let mut any = false;
-        for (a, b) in laid {
-            any |= self.lay_deck(a, b);
+        for (a, b, joined) in laid {
+            any |= self.lay_deck(a, b, joined);
         }
         if any {
             self.version += 1;
@@ -756,6 +764,22 @@ impl Nav {
                     .map(|(_, pair)| (pair[0], pair[1]))
             })
             .filter(|(a, b)| a.distance(*b) <= MOST_PLANK)
+    }
+
+    /// Every plank that stands, with whether the bridge goes on from each
+    /// of its two rungs: whether the plank before it stands, and the one
+    /// after it.
+    fn standing(&self) -> impl Iterator<Item = (Vec2, Vec2, (bool, bool))> + '_ {
+        self.chains.iter().flat_map(|kept| {
+            kept.rungs
+                .windows(2)
+                .enumerate()
+                .filter(|(plank, pair)| kept.stands(*plank) && pair[0].distance(pair[1]) <= MOST_PLANK)
+                .map(|(plank, pair)| {
+                    let before = plank.checked_sub(1).is_some_and(|before| kept.stands(before));
+                    (pair[0], pair[1], (before, kept.stands(plank + 1)))
+                })
+        })
     }
 
     /// A blast at `at` reaching `radius` across the ground: every plank
@@ -814,7 +838,7 @@ impl Nav {
         // that still stands makes them so.
         let grid = self.grid.clone();
         let (width, height) = grid.size();
-        let standing: Vec<(Vec2, Vec2)> = self.planks().collect();
+        let standing: Vec<(Vec2, Vec2, (bool, bool))> = self.standing().collect();
         for (a, b) in fallen {
             if a.distance(b) > MOST_PLANK {
                 continue;
@@ -832,7 +856,8 @@ impl Nav {
                         continue;
                     }
                     let at = grid.centre_of(column as usize, row as usize);
-                    self.deck[index] = standing.iter().any(|&(a, b)| away_from(at, a, b) <= DECK_HALF);
+                    let ashore = grid.flags[index] & GROUND != 0;
+                    self.deck[index] = standing.iter().any(|&(a, b, joined)| on_the_plank(at, a, b, DECK_HALF, joined, ashore));
                 }
             }
         }
@@ -962,7 +987,10 @@ impl Nav {
 
     /// Marks the squares along the plank from `a` to `b` as walkable, and
     /// joins whatever pieces they lie between: whether it was a plank.
-    fn lay_deck(&mut self, a: Vec2, b: Vec2) -> bool {
+    /// `joined`, the plank before it stands, and the bridge bends, if it
+    /// bends, about the rung at `a` ([`on_the_plank`]); the rung at `b` is
+    /// the bridge's end until the next plank comes.
+    fn lay_deck(&mut self, a: Vec2, b: Vec2, joined: bool) -> bool {
         if a.distance(b) > MOST_PLANK {
             return false;
         }
@@ -980,7 +1008,8 @@ impl Nav {
             for column in first.x..=last.x {
                 let at = grid.centre_of(column as usize, row as usize);
                 let index = row as usize * width + column as usize;
-                if away_from(at, a, b) <= DECK_HALF && !self.deck[index] {
+                let ashore = grid.flags[index] & GROUND != 0;
+                if !self.deck[index] && on_the_plank(at, a, b, DECK_HALF, (joined, false), ashore) {
                     if !grid.clear_index(index) {
                         fresh.push(index);
                     }
@@ -1051,29 +1080,50 @@ impl Nav {
     }
 
     /// Whether `at` is over a plank: within its width of one's middle
-    /// line, between its rungs.
+    /// line, between its rungs, or in the corner of a bend between two
+    /// planks ([`on_the_plank`]).
     pub fn on_plank(&self, at: Vec2) -> bool {
-        self.planks().any(|(a, b)| {
-            let along = b - a;
-            let length = along.length();
-            if length < 1e-4 {
-                return false;
-            }
-            let way = along / length;
-            let off = at - a;
-            let far = off.dot(way);
-            (-0.05..=length + 0.05).contains(&far) && off.perp_dot(way).abs() <= PLANK_HALF_WIDTH
-        })
+        self.standing().any(|(a, b, joined)| on_the_plank(at, a, b, PLANK_HALF_WIDTH, joined, false))
     }
 
     /// How high the ground `at` is, if there is any: a plank's top, or the
     /// land's floor, whichever is higher. `None` over the void.
+    ///
+    /// And a plank's top where a bridge comes to the land, on whatever of
+    /// the bridge's own squares by the shore the plank does not quite
+    /// cover ([`Nav::doorstep`]): a plank is square across its end and a
+    /// shore is not, so that a bridge meeting the land at a slant leaves
+    /// a sliver of nothing between one corner of its last plank and the
+    /// land's edge, which the game's `bridge` draws the plank across.
+    /// Until 2026-11-14 a body walking that side of the bridge stopped at
+    /// the sliver, a hand from the land, with every square before it one
+    /// it was told it could walk.
     pub fn ground(&self, at: Vec2) -> Option<f32> {
         let land = self.grid.height(at);
         if self.on_plank(at) {
             return Some(land.map_or(PLANK_TOP, |land| land.max(PLANK_TOP)));
         }
-        land
+        land.or_else(|| self.doorstep(at).then_some(PLANK_TOP))
+    }
+
+    /// Whether `at` is on a bridge's doorstep: in a square of a bridge's
+    /// deck with land in one of the squares round it.
+    fn doorstep(&self, at: Vec2) -> bool {
+        let Some(index) = self.grid.index(at).filter(|&index| self.deck[index]) else {
+            return false;
+        };
+        let (width, height) = self.grid.size();
+        let (column, row) = ((index % width) as i64, (index / width) as i64);
+        (-1..=1).any(|down| {
+            (-1..=1).any(|across| {
+                let (c, r) = (column + across, row + down);
+                c >= 0
+                    && r >= 0
+                    && (c as usize) < width
+                    && (r as usize) < height
+                    && self.grid.flags[r as usize * width + c as usize] & GROUND != 0
+            })
+        })
     }
 
     /// The numbers of the squares round the one numbered `index` that a
@@ -1190,11 +1240,71 @@ impl Nav {
     }
 
     /// Whether a body can walk the straight line from `a` to `b`: every
-    /// step of it on land it can walk or along a plank.
+    /// square it crosses is land it can walk or along a plank, and where
+    /// it goes through the very corner between four squares, both of the
+    /// two beside its way are, so that no corner is cut. Square by square,
+    /// along the line (until 2026-11-14 it was looked at every 0.2 m,
+    /// which a corner cut by less than that slipped between: a way
+    /// straightened across such a corner was one a body stopped on).
     pub fn line(&self, a: Vec2, b: Vec2) -> bool {
-        let whole = a.distance(b);
-        let steps = (whole / 0.2).ceil().max(1.0) as usize;
-        (0..=steps).all(|k| self.walkable_at(a.lerp(b, k as f32 / steps as f32)))
+        let (width, height) = self.grid.size();
+        let walkable = |column: i64, row: i64| {
+            column >= 0
+                && row >= 0
+                && (column as usize) < width
+                && (row as usize) < height
+                && self.walkable(row as usize * width + column as usize)
+        };
+        // In squares, from the grid's corner: a point's square is its
+        // floor, as [`Grid::index`] has it.
+        let (from, to) = ((a - self.grid.corner) / CELL, (b - self.grid.corner) / CELL);
+        let (mut column, mut row) = (from.x.floor() as i64, from.y.floor() as i64);
+        let last = (to.x.floor() as i64, to.y.floor() as i64);
+        if !walkable(column, row) || !walkable(last.0, last.1) {
+            return false;
+        }
+        let way = to - from;
+        let (step_x, step_y) = (if way.x > 0.0 { 1 } else { -1 }, if way.y > 0.0 { 1 } else { -1 });
+        // How far along the line, from 0 at `a` to 1 at `b`, it crosses
+        // the next side of a square, across and down, and how far it is
+        // from one such side to the next.
+        let first = |at: f32, way: f32, square: i64| {
+            if way > 0.0 {
+                ((square + 1) as f32 - at) / way
+            } else if way < 0.0 {
+                (square as f32 - at) / way
+            } else {
+                f32::INFINITY
+            }
+        };
+        let (mut cross_x, mut cross_y) = (first(from.x, way.x, column), first(from.y, way.y, row));
+        let (apart_x, apart_y) = (1.0 / way.x.abs(), 1.0 / way.y.abs());
+        // No more squares than the line can cross, whatever the numbers
+        // come to.
+        for _ in 0..(last.0 - column).abs() + (last.1 - row).abs() + 4 {
+            if cross_x.min(cross_y) > 1.0 {
+                break;
+            }
+            if (cross_x - cross_y).abs() < 1e-5 {
+                if !walkable(column + step_x, row) || !walkable(column, row + step_y) {
+                    return false;
+                }
+                column += step_x;
+                row += step_y;
+                cross_x += apart_x;
+                cross_y += apart_y;
+            } else if cross_x < cross_y {
+                column += step_x;
+                cross_x += apart_x;
+            } else {
+                row += step_y;
+                cross_y += apart_y;
+            }
+            if !walkable(column, row) {
+                return false;
+            }
+        }
+        true
     }
 
     /// A way to walk from `from` to `to`, over land and planks, as the
@@ -1317,15 +1427,32 @@ impl Nav {
 /// not.
 const GREED: f32 = 2.0;
 
-/// How far `at` is from the stretch from `a` to `b`.
-fn away_from(at: Vec2, a: Vec2, b: Vec2) -> f32 {
+/// Whether `at` is on the plank from `a` to `b`, taken to reach `half`
+/// either side of its middle line: between its two rungs; or past one of
+/// them, no further than `half` from it, where the bridge goes on from
+/// that rung (`joined`, the rung at `a` and the one at `b`: the corner of
+/// a bend, which two planks square across their ends would leave open on
+/// its outer side, and the game's `bridge` mitres) or where there is land
+/// under `at` (`ashore`: a bridge's doorstep, over the land's rim).
+/// **Past a rung where the bridge ends over the void there is nothing**:
+/// until 2026-11-14 a plank was round at both ends as far as walking it
+/// went, and the ends of two bridges within two metres of each other,
+/// with nothing between them, were ground that had been joined: a bot
+/// mending a hole left its last plank unlaid and then walked at the gap.
+fn on_the_plank(at: Vec2, a: Vec2, b: Vec2, half: f32, joined: (bool, bool), ashore: bool) -> bool {
     let along = b - a;
-    let whole = along.length_squared();
-    if whole < 1e-8 {
-        return at.distance(a);
+    let length = along.length();
+    if length < 1e-4 {
+        return false;
     }
-    let share = ((at - a).dot(along) / whole).clamp(0.0, 1.0);
-    at.distance(a + along * share)
+    let way = along / length;
+    let off = at - a;
+    let far = off.dot(way);
+    if (-0.05..=length + 0.05).contains(&far) {
+        return off.perp_dot(way).abs() <= half;
+    }
+    let (rung, joined) = if far < 0.0 { (a, joined.0) } else { (b, joined.1) };
+    (joined || ashore) && at.distance(rung) <= half
 }
 
 /// A square a search has come to and not yet gone on from, and what the
@@ -1756,12 +1883,12 @@ mod tests {
         let (here, there) = (Vec2::new(-1.0, 0.5), Vec2::new(21.0, -1.0));
         assert!(nav.connected(here, there) && nav.gaps().is_empty());
         let planks = span.planks();
-        // A blast on the bridge's middle line, 3 m across: three or four
+        // A blast on the bridge's middle line, 3 m across: four or five
         // planks, one after another, each with its middle within 3 m.
         let at = span.point(0.5);
         let (version, cuts) = (nav.version, nav.cuts);
         let taken = nav.blast(at, 3.0);
-        assert!((3..=4).contains(&taken.len()), "{taken:?}");
+        assert!((4..=5).contains(&taken.len()), "{taken:?}");
         assert!(taken.iter().all(|&(seat, chain, _)| (seat, chain) == (4, 0)));
         for pair in taken.windows(2) {
             assert_eq!(pair[1].2, pair[0].2 + 1, "not one after another: {taken:?}");
@@ -1811,12 +1938,18 @@ mod tests {
         // with room, not on the edge itself.
         let (_, down) = nav.leap(gap.a_in, gap.b, 8.0).expect("a jump at someone on the edge");
         assert!(down.x > gap.b.x + 0.6 && nav.ground(down).is_some() && nav.walkable_at(down), "{down}");
-        // The squares walked along a plank reach round its end, out over
-        // the hole, where there is nothing to stand on; what someone in
-        // the air there steers back for is ground all the same, from
-        // anywhere over the hole.
-        let cap = gap.b - Vec2::X * 0.3;
-        assert!(nav.walkable_at(cap) && nav.ground(cap).is_none(), "a square round the plank's end, over the hole");
+        // The squares walked along a plank end where it does: past its
+        // end, out over the hole, there is nothing to stand on and
+        // nothing to walk. (Until 2026-11-14 they reached round its end,
+        // a metre and more out over the hole: two such ends near each
+        // other were ground that had been joined.) What someone in the
+        // air there steers back for is ground, from anywhere over the
+        // hole.
+        for out in [0.8, 1.2, 1.6] {
+            for end in [gap.b - Vec2::X * out, gap.a + Vec2::X * out] {
+                assert!(!nav.walkable_at(end) && nav.ground(end).is_none(), "{end}: past a plank's end, over the hole");
+            }
+        }
         for step in 0..=20 {
             let over = gap.a.lerp(gap.b, step as f32 / 20.0) + Vec2::Y * 0.3;
             let back = nav.nearest_walkable_within(over, 8.0).expect("ground within reach");
@@ -1835,6 +1968,181 @@ mod tests {
         }
         assert!(nav.joined(Region::Team(0), Region::Middle) && nav.path(here, there).is_some());
         assert_eq!(nav.crossing(here, there, 10.0), None);
+    }
+
+    #[test]
+    fn a_straight_walk_cuts_no_corner_however_fine() {
+        // A floor four squares by four, from the origin, all to walk but
+        // the squares named.
+        let floor = |shut: &[(usize, usize)]| {
+            let mut grid = Grid::blank(4, 4, Vec2::ZERO);
+            for row in 0..4 {
+                for column in 0..4 {
+                    grid.set(column, row, Some(0.25), !shut.contains(&(column, row)), Some(Region::Middle));
+                }
+            }
+            Nav::new(Arc::new(grid))
+        };
+        let middle = |column: usize, row: usize| Vec2::new(column as f32 + 0.5, row as f32 + 0.5) * CELL;
+        // Open floor: any walk across it.
+        let open = floor(&[]);
+        assert!(open.line(middle(0, 0), middle(3, 3)) && open.line(middle(3, 0), middle(0, 2)));
+        assert!(open.line(middle(1, 1), middle(1, 1)));
+        // Off the floor is not walked to, nor from.
+        assert!(!open.line(middle(1, 1), Vec2::new(-0.3, 0.3)) && !open.line(Vec2::new(5.0, 0.3), middle(1, 1)));
+        // Through the very corner between four squares, both of the two
+        // beside the way have to be walked: with either shut the corner
+        // is cut, and with both, the two squares only touch.
+        let (a, b) = (middle(1, 1), middle(2, 2));
+        assert!(open.line(a, b) && open.line(b, a));
+        for shut in [&[(2, 1)][..], &[(1, 2)], &[(2, 1), (1, 2)]] {
+            let nav = floor(shut);
+            assert!(!nav.line(a, b) && !nav.line(b, a), "{shut:?}");
+            // The other way across the same corner is as shut, through
+            // the square itself or past its corner.
+            assert!(!nav.line(middle(2, 1), middle(1, 2)), "{shut:?}");
+        }
+        // A corner cut by a hair is cut: five millimetres of the shut
+        // square, between two places it was looked at every 0.2 m until
+        // 2026-11-14, and found open.
+        let nav = floor(&[(2, 1)]);
+        let nearly = b + Vec2::X * 0.005;
+        assert!(nav.walkable_at(a) && nav.walkable_at(nearly) && nav.walkable_at(a.lerp(nearly, 0.5)));
+        assert!(!nav.line(a, nearly) && !nav.line(nearly, a));
+        // And one passed by a hair is not: the same walk a hair to the
+        // other side of the corner goes through the square below it,
+        // which is open.
+        assert!(nav.line(a, b + Vec2::Y * 0.005) && nav.line(b + Vec2::Y * 0.005, a));
+        // Along a wall, on the side that is walked, however near it; and
+        // from against it, not into it.
+        let wall = floor(&[(0, 2), (1, 2), (2, 2), (3, 2)]);
+        let beside = Vec2::new(0.1, 2.0 * CELL - 0.001);
+        assert!(wall.line(beside, beside + Vec2::X * 1.7));
+        assert!(!wall.line(beside, beside + Vec2::new(1.0, 0.01)));
+        // A way found is one that can be walked point to point, by this
+        // reckoning, round the wall's end.
+        let wall = floor(&[(0, 2), (1, 2), (2, 2)]);
+        let (from, to) = (middle(0, 1), middle(0, 3));
+        assert!(!wall.line(from, to));
+        let mut at = from;
+        for point in wall.path(from, to).expect("round the end of the wall") {
+            assert!(wall.line(at, point), "{at} to {point}");
+            at = point;
+        }
+        assert_eq!(at, to);
+    }
+
+    #[test]
+    fn a_deck_ends_where_its_planks_do_and_a_bend_has_ground_in_its_corner() {
+        // A bridge laid from the one island and not yet at the other: its
+        // deck ends with its last plank. Nothing is walked past that
+        // end, and nothing is stood on.
+        let grid = Arc::new(two_islands());
+        let span = grid.span(Region::Team(0), Region::Middle, 0.0).unwrap();
+        let mut nav = Nav::new(grid.clone());
+        let laid = span.planks() / 2;
+        for index in 0..=laid {
+            nav.hear(4, 0, index as u16, span.rung(index));
+        }
+        let (end, way) = (span.rung(laid), span.way());
+        assert!(nav.walkable_at(end - way * 0.6) && nav.ground(end - way * 0.6) == Some(PLANK_TOP));
+        for out in [0.6, 1.0, 1.4] {
+            assert!(!nav.walkable_at(end + way * out) && nav.ground(end + way * out).is_none(), "{out} m past the end");
+        }
+        // Another bridge from the far side, ending a metre short of the
+        // first: the two are not joined, whatever is left between them.
+        let other = Span::straight(span.to, end + way * 1.0);
+        for index in 0..=other.planks() {
+            nav.hear(5, 0, index as u16, other.rung(index));
+        }
+        assert!(nav.walkable_at(end + way * 1.6) && !nav.walkable_at(end + way * 0.5));
+        assert!(!nav.joined(Region::Team(0), Region::Middle), "joined across a metre of nothing");
+        assert!(nav.path(Vec2::ZERO, Vec2::new(20.0, 0.0)).is_none());
+        // One more plank, from the first bridge's end to inside the
+        // other's: joined, and walked.
+        nav.hear(4, 0, laid as u16 + 1, end + way * 1.4);
+        assert!(nav.joined(Region::Team(0), Region::Middle));
+        let mut at = Vec2::ZERO;
+        for point in nav.path(Vec2::ZERO, Vec2::new(20.0, 0.0)).expect("a way over both") {
+            assert!(nav.line(at, point));
+            // Ground all the way, at every step of it.
+            let steps = (at.distance(point) / 0.1).ceil() as usize;
+            for step in 0..=steps {
+                let on = at.lerp(point, step as f32 / steps.max(1) as f32);
+                assert!(nav.ground(on).is_some(), "nothing under {on}");
+            }
+            at = point;
+        }
+        // A bridge that bends: its planks are square across their ends,
+        // and on the outer side of the bend the corner between two of
+        // them is ground all the same, and walked, as the game's `bridge`
+        // draws it mitred. Past its last rung there is still nothing.
+        let mut bent = Nav::new(grid);
+        let (a, b) = (Vec2::new(3.0, 0.0), Vec2::new(4.5, 0.0));
+        let turn = Vec2::from_angle(0.6);
+        let c = b + turn * 1.5;
+        for (index, rung) in [a, b, c].into_iter().enumerate() {
+            bent.hear(4, 0, index as u16, rung);
+        }
+        // Out from the middle rung, on the outer side of the bend, half
+        // way between the two planks' own ways.
+        let outer = -Vec2::from_angle(0.3).perp();
+        for (far, half) in [(0.4, DECK_HALF), (0.9, DECK_HALF), (PLANK_HALF_WIDTH - 0.1, PLANK_HALF_WIDTH)] {
+            let at = b + outer * far;
+            assert!(bent.ground(at) == Some(PLANK_TOP), "{far} m out in the corner of the bend, of {half}");
+        }
+        assert!(bent.walkable_at(b + outer * 0.6));
+        assert!(bent.ground(b + outer * (PLANK_HALF_WIDTH + 0.3)).is_none());
+        assert!(bent.ground(c + turn * 0.5).is_none() && !bent.walkable_at(c + turn * 0.8));
+    }
+
+    #[test]
+    fn a_bridge_meeting_the_shore_at_a_slant_leaves_no_sliver_to_stop_at() {
+        // Land with a straight shore along z = 0, and the void beyond it.
+        let mut grid = Grid::blank(40, 40, Vec2::new(-10.0, -10.0));
+        for row in 0..20 {
+            for column in 0..40 {
+                // Its rim, a square deep, holds a body and is not walked.
+                grid.set(column, row, Some(0.25), row < 19, Some(Region::Middle));
+            }
+        }
+        let mut nav = Nav::new(Arc::new(grid));
+        // A bridge off it at a slant, its first rung a hand inside the
+        // shore: one corner of its first plank's end is over the land,
+        // and the other stops short of the shore.
+        let root = Vec2::new(0.0, -0.1);
+        let way = Vec2::new(0.35, 1.0).normalize();
+        for index in 0..4 {
+            nav.hear(2, 0, index, root + way * (index as f32 * PLANK_SPACING));
+        }
+        // Somewhere in that sliver: off the land, behind the plank's end,
+        // in a square of the bridge's deck.
+        let sliver = Vec2::new(-0.8, 0.1);
+        assert!(nav.grid().height(sliver).is_none() && !nav.on_plank(sliver));
+        assert!(nav.walkable_at(sliver), "a square of the deck");
+        // It holds a body, as the plank beside it does.
+        assert_eq!(nav.ground(sliver), Some(PLANK_TOP));
+        // From out on the bridge, on that side of it, to the land: every
+        // step of every straight walk the way is made of has ground under
+        // it. (A bot walking that side of its own bridge home stopped at
+        // the sliver, a hand from the land.)
+        let from = root + way * 3.0 + way.perp() * (DECK_HALF - 0.3);
+        assert!(nav.walkable_at(from) && nav.on_plank(from));
+        let to = Vec2::new(-1.2, -2.0);
+        let mut at = from;
+        for point in nav.path(from, to).expect("a way ashore") {
+            let steps = (at.distance(point) / 0.05).ceil() as usize;
+            for step in 0..=steps {
+                let on = at.lerp(point, step as f32 / steps.max(1) as f32);
+                assert!(nav.walkable_at(on) && nav.ground(on).is_some(), "nothing under {on}");
+            }
+            at = point;
+        }
+        assert_eq!(at, to);
+        // Out over the void, a bridge's end is still its end: no land by
+        // it, no doorstep.
+        let end = root + way * (3.0 * PLANK_SPACING);
+        assert!(nav.ground(end + way * 0.4).is_none());
     }
 
     #[test]

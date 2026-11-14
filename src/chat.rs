@@ -26,18 +26,52 @@
 //! rather just the text and the. Box should only appear when the when you
 //! are typing a message. And when. It's idle, um, the older line should be
 //! drawn fainter because it's partway through fading"). No box is drawn
-//! behind them, and they take no press: a finger put down on them looks
-//! round, as anywhere on the world. **The newest line is always on the same
+//! behind them. **The newest line is always on the same
 //! line**, the lowest ("instead of being like the first text starts at the
 //! top of the rectangle and makes its way downward, no, it should be like
 //! every new text starts at the same line. Even the first message stays at
 //! the same area, and it goes up and fades as new messages come"): the
 //! first thing said is written there, and each line after it moves what
-//! was said before up one. **A line fades from the moment it is said**
-//! ([`faded`]), slowly at first and then faster, and is gone [`LINE_SECS`]
-//! on: so of two lines the older is always the fainter. Four are in sight
-//! in the town at the most and three in a game, where there is less room
-//! ([`place`]).
+//! was said before up one. **The last three things said are in sight, each
+//! fainter than the one under it** ([`strength`], the file's
+//! `colours.chat.strengths`): the newest whole, the one over it somewhat
+//! faded, the one over that very faded, and whatever was said before those
+//! not drawn. **Nothing goes with time**: the last thing said stays until
+//! something else is. For the hour before, a line faded as it aged and was
+//! gone twelve seconds on, which was my reading of "partway through
+//! fading" and not what was meant (Hajun: "i dont want timed fades for the
+//! chat messages. the last message sent should be visible always
+//! including the above one, but the above ones would just look faded a bit
+//! more compared to the last one. so maybe just 3 lines visible. with the
+//! top one looking sooo faded, and the second to top one looking somewhat
+//! faded, and the last one not faded at all").
+//!
+//! **It scrolls, and its fading scrolls with it** ([`fade`], [`drag_log`];
+//! Hajun, the same night: "also test if you can scroll up on the chat.
+//! when u scroll, the "fade" of the text should be "scroll" too i guess").
+//! A finger dragged on the lines, or the mouse's wheel over them, goes
+//! back through the last [`KEPT`], as while a line is typed; and how
+//! faint a line is goes by where it is in sight, not by how new it is:
+//! whatever is on the lowest line is whole, what is on the line over it
+//! somewhat faded, what is on the third very faded, and nothing is drawn
+//! over that, with every line growing and fading as it is drawn past. So
+//! the lines do take a press after all, once there are more of them than
+//! are in sight: with three or fewer there is nothing to scroll to, and a
+//! finger put down on them looks round. Left scrolled back, it goes to
+//! its newest line again [`RETURN_SECS`] after it was last touched (mine:
+//! or what is said next is said out of sight).
+//!
+//! **Each line has a thin black stroke round its words** ([`STROKE`],
+//! `colours.chat.stroke`), which is all that sets them off from the world
+//! behind them (Hajun, the same night, of the shadow under them that it
+//! takes the place of: "i think the shadow on the text is a bit hard to
+//! see maybe it should just be a very thin black stroke of the text in the
+//! chatboxes"). Bevy 0.19 draws no stroke round words, so a line is
+//! written five times: four in the stroke's colour, a hair up and to the
+//! left, up and to the right, and so on, and its own over them
+//! ([`write`]). A line that is faded has a stroke that is more faded
+//! still: the four copies show through words that are see-through, and
+//! would make a faded line a dark one.
 //!
 //! **Saying something** ([`act`]): a press on the small keyboard over the
 //! speech bubble, bottom right (`hud::ChatButton`, in the town and in
@@ -68,9 +102,10 @@
 //! The big speech bubble says one of a few things at a press, with nothing
 //! typed (`quick`).
 //!
-//! Where it is, how big, how many lines it keeps and how long one lasts
-//! are here; its colours and words are the file's (`colours.chat`,
-//! `words.chat`). It keeps clear of the camera's hole (`safe`).
+//! Where it is, how big and how many lines it keeps are here; its
+//! colours, how faint the older lines are, and its words are the file's
+//! (`colours.chat`, `words.chat`). It keeps clear of the camera's hole
+//! (`safe`).
 
 use std::collections::VecDeque;
 
@@ -99,8 +134,24 @@ use crate::{CloseUp, Player};
 /// to 58 when it is held from as high as it may be. The words in each, the
 /// room round them, and how round the corners are.
 const TOP: f32 = 35.5;
-const WIDTH: f32 = 50.0;
 const LOG_HEIGHT: f32 = 13.1;
+/// How wide it is, in shares of the short side: 80 since the night of
+/// 2026-11-14 (Hajun: "the width of the chatbox region could be
+/// wider/longer so more text fits in each line"), where it was 50: about
+/// sixty letters to a line where there were forty, so that a name and a
+/// line as long as lines may be are two lines and not three. And no wider
+/// than [`MOST_WIDE`] parts in a hundred of the screen's width, which on
+/// a phone lying on its side is the 80, and on a screen sixteen by nine,
+/// where the middle of the screen is nearer, 71. How much wider is mine.
+const WIDTH: f32 = 80.0;
+const MOST_WIDE: f32 = 40.0;
+/// How far each of the four copies of a line's words that make its
+/// stroke is set from the words themselves, across and down, in shares
+/// of the short side: a pixel of a screen 1,080 high, under a twenty-fifth
+/// of the words' height ("a very thin black stroke"). Mine.
+const STROKE: f32 = 0.09;
+/// Where the four copies are set: the four corners.
+const CORNERS: [Vec2; 4] = [Vec2::new(-1.0, -1.0), Vec2::new(1.0, -1.0), Vec2::new(-1.0, 1.0), Vec2::new(1.0, 1.0)];
 /// The same in a game of Bridge Wars, where what is top left, your name,
 /// your health and the four things you hold, ends 38 shares down (411 of
 /// 1,080 pixels, measured): the chat begins under those, and its box of
@@ -128,17 +179,13 @@ const BLINK_SECS: f32 = 0.5;
 /// line: further than it can ever go, which the layout brings back to as
 /// far as it does go, however many lines come.
 const STUCK: f32 = 1.0e6;
-/// How long a line is there to be read with nothing being typed, in
-/// seconds, and how its fading is bent ([`faded`]): the higher, the longer
-/// it stays nearly whole before it goes. Twelve seconds and this bend
-/// leave a line three quarters there half way through, and half there
-/// with a quarter of its time to go. (Minecraft's stay whole for ten
-/// seconds and are gone in the next.) Both are mine.
-const LINE_SECS: f32 = 12.0;
-const FADE_BEND: f32 = 2.2;
-/// How many steps a line fades in: it is drawn again only as it comes to
-/// the next.
-const FADE_STEPS: u8 = 40;
+/// How long after it was last scrolled, with nothing being typed, the
+/// chat goes back to its newest line, in seconds.
+const RETURN_SECS: f32 = 5.0;
+/// How finely a line's strength is reckoned as it is scrolled: in steps
+/// of this, so that it is drawn again as it comes to the next and not at
+/// every hair it moves.
+const STRENGTH_STEP: f32 = 0.02;
 
 /// One line of the chat: its words, piece by piece, each in its colour.
 #[derive(Clone, PartialEq, Debug)]
@@ -175,6 +222,12 @@ impl Log {
     /// none.
     fn first(&self) -> u64 {
         self.lines.front().map_or(self.next, |(id, _)| *id)
+    }
+
+    /// How many lines have been said since the one numbered `id`: none
+    /// since the newest.
+    fn since(&self, id: u64) -> usize {
+        usize::try_from(self.next.saturating_sub(id.saturating_add(1))).unwrap_or(usize::MAX)
     }
 }
 
@@ -218,19 +271,48 @@ pub(crate) fn spans(template: &str, ink: Color, fills: &[(&str, &str, Color)]) -
     Line(parts)
 }
 
-/// How much of itself a line said `age` seconds ago is drawn with, with
-/// nothing being typed, in steps of [`FADE_STEPS`], which is all of it:
-/// less from the moment it is said, slowly at first and then faster, and
-/// nothing [`LINE_SECS`] on. So of two lines the older is the fainter,
-/// "because it's partway through fading".
-fn faded(age: f32) -> u8 {
-    let through = (age / LINE_SECS).clamp(0.0, 1.0);
-    ((1.0 - through.powf(FADE_BEND)) * f32::from(FADE_STEPS)).round() as u8
+/// How much of itself a line is drawn with, with nothing being typed and
+/// `since` lines said after it, from 1, all of it, to 0, none: what the
+/// file has for the newest, the one before it and the one before that
+/// (`colours.chat.strengths`), and nothing for any older. No clock comes
+/// into it. What a line is drawn with until it has been laid out, and
+/// what it is drawn with after while the chat is at its newest line and
+/// every line is one line tall ([`strength_at`]).
+fn strength(strengths: &[f32; 3], since: usize) -> f32 {
+    strengths.get(since).map_or(0.0, |share| share.clamp(0.0, 1.0))
 }
 
-/// `colour`, as much of it as `step` of [`FADE_STEPS`] leaves.
-fn thinned(colour: Color, step: u8) -> Color {
-    colour.with_alpha(colour.alpha() * f32::from(step) / f32::from(FADE_STEPS))
+/// How much of itself a line is drawn with whose foot is `up` lines over
+/// the foot of what is in sight, with nothing being typed: the file's
+/// three strengths on the lowest line, the one over it and the one over
+/// that, nothing over those, and between two lines so much of the one
+/// and so much of the other, in steps of [`STRENGTH_STEP`]; all of the
+/// lowest line's for a line scrolled past the foot. So the fading goes by
+/// where a line is in sight, and scrolls as the lines do.
+fn strength_at(strengths: &[f32; 3], up: f32) -> f32 {
+    let share = if up <= 0.0 {
+        strength(strengths, 0)
+    } else {
+        let line = up.floor();
+        let (under, over) = (strength(strengths, line as usize), strength(strengths, line as usize + 1));
+        under + (over - under) * (up - line)
+    };
+    (share / STRENGTH_STEP).round() * STRENGTH_STEP
+}
+
+/// `colour`, as much of it as `share` leaves, from 0 to 1.
+fn thinned(colour: Color, share: f32) -> Color {
+    colour.with_alpha(colour.alpha() * share)
+}
+
+/// The colour of a piece of a line drawn at `share` of its strength: of
+/// its words, that much of their own colour; of its stroke, that much of
+/// that much of the stroke's, so that a faded line's stroke is fainter
+/// than its words. The four copies that make the stroke lie under the
+/// words as well as round them, and through words that are half there
+/// they would show as half black: a line faded to grey, not to nothing.
+fn drawn_in(ink: &Ink, share: f32) -> Color {
+    thinned(ink.colour, if ink.rim { share * share } else { share })
 }
 
 /// Something to say to the room you are in, as it was typed or chosen:
@@ -256,19 +338,21 @@ struct LogBox;
 /// finger is dragged on to scroll them.
 #[derive(Component)]
 struct Backdrop;
-/// One line in it, by its number in the [`Log`]; when it was said, in the
-/// app's own seconds; and how much of itself it is drawn with now, in
-/// steps of [`FADE_STEPS`].
+/// One line in it, by its number in the [`Log`], and how much of itself
+/// it is drawn with now, from 0 to 1 ([`strength`]): what holds the five
+/// writings of it ([`write`]).
 #[derive(Component)]
 struct LineOf(u64);
 #[derive(Component)]
-struct SaidAt(f32);
+struct Strength(f32);
+/// The colour a piece of a line is in at full strength, and whether it is
+/// a piece of the line's stroke rather than of its words
+/// ([`drawn_in`]).
 #[derive(Component)]
-struct Step(u8);
-/// The colour a piece of a line is in at full strength: what it fades
-/// from.
-#[derive(Component)]
-struct Ink(Color);
+struct Ink {
+    colour: Color,
+    rim: bool,
+}
 /// The box a line is typed into, what is written in it, the caret after
 /// that, and the dart at its right end with its picture.
 #[derive(Component)]
@@ -294,6 +378,9 @@ struct Typing {
     /// ([`shut_under_a_press`]): if it was on the chat's own button, it
     /// does not take the box up again ([`act`]).
     shut: bool,
+    /// When the lines were last scrolled, in the app's own seconds
+    /// ([`RETURN_SECS`]).
+    scrolled_at: f32,
 }
 
 /// What of the chat was pressed since [`act`] last looked: the box a line
@@ -305,24 +392,12 @@ struct Pressed {
     send: bool,
 }
 
-/// Which room the lines shown were said in, which line is the next to be
-/// drawn, and when each line there is was first drawn, oldest first, by
-/// its number: what it fades from, kept here so that a line drawn again
-/// (as the file's colours change on desktop) is as old as it was.
+/// Which room the lines shown were said in, and which line is the next
+/// to be drawn.
 #[derive(Resource, Default)]
 struct Drawn {
     room: Option<(Venue, u32)>,
     next: u64,
-    said: VecDeque<(u64, f32)>,
-}
-
-impl Drawn {
-    /// When the line numbered `id` was said, if it has been drawn.
-    fn said_at(&self, id: u64) -> Option<f32> {
-        let first = self.said.front()?.0;
-        let index = usize::try_from(id.checked_sub(first)?).ok()?;
-        self.said.get(index).filter(|(numbered, _)| *numbered == id).map(|(_, at)| *at)
-    }
 }
 
 /// The box a line is typed into being let go of by a press somewhere else
@@ -372,6 +447,7 @@ fn spawn(mut commands: Commands, mut images: ResMut<Assets<Image>>, mut pictures
                 left: Val::VMin(hud::EDGE),
                 top: Val::VMin(TOP),
                 width: Val::VMin(WIDTH),
+                max_width: Val::Vw(MOST_WIDE),
                 flex_direction: FlexDirection::Column,
                 row_gap: Val::VMin(GAP),
                 ..default()
@@ -602,18 +678,16 @@ fn begin_afresh(
 
 /// Draws the lines there are in the box: each new one under the last, and
 /// those the log has let go of taken down. All of them again as the
-/// file's colours change on desktop. Each as much there as it is by now
-/// ([`faded`]), or wholly while a line is typed.
-#[allow(clippy::too_many_arguments)]
+/// file's colours change on desktop. Each as much there as its place
+/// among them makes it ([`strength`]), or wholly while a line is typed,
+/// until it is laid out and [`fade`] has it by where it is.
 fn fill(
     log: Res<Log>,
     changed: Res<UiChanged>,
-    time: Res<Time<Real>>,
     typing: Res<Typing>,
     mut drawn: ResMut<Drawn>,
     boxes: Query<Entity, With<LogBox>>,
     lines: Query<(Entity, &LineOf)>,
-    mut backs: Query<&mut BackgroundColor, With<Backdrop>>,
     mut commands: Commands,
 ) {
     let restyle = changed.is_changed() && !changed.is_added();
@@ -624,90 +698,156 @@ fn fill(
         return;
     };
     let file = ui();
-    let shadow = file.colours.chat.shadow;
-    if restyle {
-        for mut back in &mut backs {
-            back.set_if_neq(BackgroundColor(file.colours.chat.back));
-        }
-    }
+    let colours = file.colours.chat;
     let first = log.first();
     for (entity, of) in &lines {
         if restyle || of.0 < first {
             commands.entity(entity).despawn();
         }
     }
-    while drawn.said.front().is_some_and(|(id, _)| *id < first) {
-        drawn.said.pop_front();
-    }
-    let now = time.elapsed_secs();
     let from = if restyle { first } else { drawn.next.max(first) };
     for (id, line) in log.lines.iter().filter(|(id, _)| *id >= from) {
-        let Some(((words, colour), rest)) = line.0.split_first() else {
+        if line.0.is_empty() {
             continue;
-        };
-        let said = match drawn.said_at(*id) {
-            Some(said) => said,
-            None => {
-                drawn.said.push_back((*id, now));
-                now
-            }
-        };
-        let step = if typing.on { FADE_STEPS } else { faded(now - said) };
+        }
+        let share = if typing.on { 1.0 } else { strength(&colours.strengths, log.since(*id)) };
         commands
             .spawn((
-                (LineOf(*id), SaidAt(said), Step(step), Ink(*colour)),
+                LineOf(*id),
+                Strength(share),
                 ChildOf(log_box),
-                Text::new(words.clone()),
-                crate::font::sized(TEXT),
-                TextColor(thinned(*colour, step)),
-                TextShadow {
-                    offset: Vec2::new(0.0, 2.0),
-                    color: thinned(shadow, step),
-                },
-                TextLayout::new(Justify::Left, LineBreak::WordOrCharacter),
+                // Its writings one over another: the four of the stroke
+                // laid out by themselves over the same room, and its own,
+                // which is as tall as the line is.
                 Node {
+                    flex_direction: FlexDirection::Column,
                     flex_shrink: 0.0,
                     ..default()
                 },
+                // Not drawn at all, nor gone over for drawing, while none
+                // of it shows.
+                if share > 0.0 { Visibility::Inherited } else { Visibility::Hidden },
                 Pickable::IGNORE,
             ))
-            .with_children(|line| {
-                for (words, colour) in rest {
-                    line.spawn((
-                        TextSpan::new(words.clone()),
-                        crate::font::sized(TEXT),
-                        Ink(*colour),
-                        TextColor(thinned(*colour, step)),
-                    ));
+            .with_children(|writings| {
+                for corner in CORNERS {
+                    write(writings, line, Some((colours.stroke, corner)), share);
                 }
+                write(writings, line, None, share);
             });
     }
     drawn.next = log.next;
 }
 
-/// Fades each line as it grows old ([`faded`]), and draws them all in
-/// full strength while a line is typed: its words, piece by piece, and
-/// the shadow under them, written only as a line comes to its next step.
+/// Writes `line` once, under what holds its writings: its words, each
+/// piece in its own colour, where the line is laid out; or, with a colour
+/// and a corner, a copy of them all in that colour, laid out by itself
+/// over the same room and set [`STROKE`] off toward that corner, for the
+/// stroke round the words. Piece for piece as the words are written, so
+/// that every letter of a copy is where the letter it lies under is. Drawn
+/// at `share` of its strength ([`drawn_in`]).
+fn write(writings: &mut ChildSpawnerCommands, line: &Line, rim: Option<(Color, Vec2)>, share: f32) {
+    let ink = |own: Color| Ink {
+        colour: rim.map_or(own, |(stroke, _)| stroke),
+        rim: rim.is_some(),
+    };
+    let Some(((words, colour), rest)) = line.0.split_first() else {
+        return;
+    };
+    let (node, set_off) = match rim {
+        Some((_, corner)) => (
+            Node {
+                position_type: PositionType::Absolute,
+                left: Val::ZERO,
+                top: Val::ZERO,
+                width: Val::Percent(100.0),
+                ..default()
+            },
+            UiTransform::from_translation(Val2::new(Val::VMin(corner.x * STROKE), Val::VMin(corner.y * STROKE))),
+        ),
+        None => (Node::default(), UiTransform::default()),
+    };
+    let first = ink(*colour);
+    writings
+        .spawn((
+            Text::new(words.clone()),
+            crate::font::sized(TEXT),
+            TextColor(drawn_in(&first, share)),
+            first,
+            TextLayout::new(Justify::Left, LineBreak::WordOrCharacter),
+            node,
+            set_off,
+            Pickable::IGNORE,
+        ))
+        .with_children(|pieces| {
+            for (words, colour) in rest {
+                let piece = ink(*colour);
+                pieces.spawn((
+                    TextSpan::new(words.clone()),
+                    crate::font::sized(TEXT),
+                    TextColor(drawn_in(&piece, share)),
+                    piece,
+                    // A press on a piece of a line is not the piece's: it
+                    // goes through to what is behind the lines, which is
+                    // what a finger is dragged on to scroll them. (A piece
+                    // of words is picked by itself, whatever the words it
+                    // is a piece of say of themselves: for the hours that
+                    // these said nothing, a finger on a line's words
+                    // scrolled nothing.)
+                    Pickable::IGNORE,
+                ));
+            }
+        });
+}
+
+/// Keeps each line as much there as where it is in sight makes it
+/// ([`strength_at`]): whatever is on the lowest line whole, what is on
+/// the two over it fainter and fainter, and nothing over those; and all
+/// of them wholly while a line is typed. By where each was last laid out
+/// against the foot of the box, so that the fading scrolls as the lines
+/// do, and a line two lines tall pushes what is over it a line further
+/// up; a line not laid out yet, by how many have been said since
+/// ([`strength`]). A line is gone over, its five writings piece by piece,
+/// only as its strength changes: as something is said after it, as it is
+/// scrolled, and as the box is taken up and let go of.
 #[allow(clippy::type_complexity)]
 fn fade(
-    time: Res<Time<Real>>,
+    log: Res<Log>,
     typing: Res<Typing>,
-    mut lines: Query<(&SaidAt, &mut Step, &Ink, &mut TextColor, &mut TextShadow, Option<&Children>), Without<TextSpan>>,
-    mut pieces: Query<(&Ink, &mut TextColor), With<TextSpan>>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    boxes: Query<(&ComputedNode, &UiGlobalTransform), With<LogBox>>,
+    mut lines: Query<(Entity, &LineOf, &ComputedNode, &UiGlobalTransform, &mut Strength, &mut Visibility), Without<LogBox>>,
+    kin: Query<&Children>,
+    mut pieces: Query<(&Ink, &mut TextColor)>,
 ) {
-    let now = time.elapsed_secs();
-    let shadow = ui().colours.chat.shadow;
-    for (said, mut step, ink, mut colour, mut shade, children) in &mut lines {
-        let wanted = if typing.on { FADE_STEPS } else { faded(now - said.0) };
-        if step.0 == wanted {
+    let strengths = ui().colours.chat.strengths;
+    // The foot of what is in sight, down the screen, and how tall a line
+    // is, both in the screen's own pixels.
+    let sight = match (windows.single(), boxes.single()) {
+        (Ok(window), Ok((node, place))) if node.size.y > 0.0 => {
+            let line = window.width().min(window.height()) * TEXT * 1.2 / 100.0 / node.inverse_scale_factor();
+            Some((place.translation.y + node.content_box().max.y, line.max(1.0)))
+        }
+        _ => None,
+    };
+    for (line, of, node, place, mut drawn_at, mut visibility) in &mut lines {
+        let share = match sight {
+            _ if typing.on => 1.0,
+            Some((foot, tall)) if node.size.y > 0.0 => {
+                let up = (foot - (place.translation.y + node.size.y * 0.5)) / tall;
+                // (A hair of the layout's rounding is not part of a line.)
+                strength_at(&strengths, if (up - up.round()).abs() < 0.04 { up.round() } else { up })
+            }
+            _ => strength(&strengths, log.since(of.0)),
+        };
+        if drawn_at.0 == share {
             continue;
         }
-        step.0 = wanted;
-        colour.0 = thinned(ink.0, wanted);
-        shade.color = thinned(shadow, wanted);
-        for child in children.into_iter().flatten() {
-            if let Ok((ink, mut colour)) = pieces.get_mut(*child) {
-                colour.0 = thinned(ink.0, wanted);
+        drawn_at.0 = share;
+        visibility.set_if_neq(if share > 0.0 { Visibility::Inherited } else { Visibility::Hidden });
+        for piece in kin.iter_descendants(line) {
+            if let Ok((ink, mut colour)) = pieces.get_mut(piece) {
+                colour.0 = drawn_in(ink, share);
             }
         }
     }
@@ -716,18 +856,32 @@ fn fade(
 /// Dresses the chat for a line being typed, and undresses it after: the
 /// dark box behind the lines and the box the line is typed into are there
 /// only then. Let go of, the lines are back at the newest, however far
-/// back they were scrolled.
+/// back they were scrolled. With nothing typed, what is behind the lines
+/// is still there to be dragged on, with nothing of it to see, once there
+/// are more lines than are in sight; and lines left scrolled back go to
+/// the newest again [`RETURN_SECS`] after they were last scrolled.
 fn dress(
+    time: Res<Time<Real>>,
     typing: Res<Typing>,
-    mut parts: Query<&mut Visibility, Or<(With<Backdrop>, With<InputBox>)>>,
+    log: Res<Log>,
+    mut backs: Query<(&mut Visibility, &mut BackgroundColor), (With<Backdrop>, Without<InputBox>)>,
+    mut inputs: Query<&mut Visibility, (With<InputBox>, Without<Backdrop>)>,
     mut boxes: Query<&mut ScrollPosition, With<LogBox>>,
     mut was: Local<bool>,
 ) {
-    let wanted = if typing.on { Visibility::Inherited } else { Visibility::Hidden };
-    for mut visibility in &mut parts {
-        visibility.set_if_neq(wanted);
+    let colours = ui().colours.chat;
+    let more_than_in_sight = log.lines.len() > colours.strengths.len();
+    for (mut visibility, mut fill) in &mut backs {
+        let shown = typing.on || more_than_in_sight;
+        visibility.set_if_neq(if shown { Visibility::Inherited } else { Visibility::Hidden });
+        fill.set_if_neq(BackgroundColor(if typing.on { colours.back } else { Color::NONE }));
     }
-    if *was && !typing.on {
+    for mut visibility in &mut inputs {
+        visibility.set_if_neq(if typing.on { Visibility::Inherited } else { Visibility::Hidden });
+    }
+    let let_go = *was && !typing.on;
+    let left_alone = !typing.on && time.elapsed_secs() - typing.scrolled_at > RETURN_SECS;
+    if let_go || left_alone {
         for mut scroll in &mut boxes {
             if scroll.y != STUCK {
                 scroll.y = STUCK;
@@ -739,13 +893,18 @@ fn dress(
 
 /// Scrolls the box of lines `by` logical pixels down its lines, no further
 /// than they go either way; back at its newest line, it keeps to it as
-/// more come ([`STUCK`]).
+/// more come ([`STUCK`]). From where it was last put, not from where the
+/// lines were last drawn: those are a whole pixel of the screen's each
+/// time, a part of a pixel short of where they were put, and a finger
+/// dragged slowly, a pixel or less at a time, took the lines half as far
+/// again as it went one way and less far than it went the other (until
+/// 2026-11-14; seen as soon as a drag was scripted).
 fn scroll_by(node: &ComputedNode, scroll: &mut ScrollPosition, by: f32) {
     let scale = node.inverse_scale_factor();
     let most = ((node.content_size().y - node.size().y) * scale).max(0.0);
-    // Where it is drawn now, which is as far as it goes while it keeps to
-    // its newest line.
-    let now = (node.scroll_position.y * scale).min(most);
+    // Where it is now, which is as far as it goes while it keeps to its
+    // newest line.
+    let now = scroll.y.clamp(0.0, most);
     let to = (now + by).clamp(0.0, most);
     let next = if to >= most - 0.5 { STUCK } else { to };
     if scroll.y != next {
@@ -754,21 +913,32 @@ fn scroll_by(node: &ComputedNode, scroll: &mut ScrollPosition, by: f32) {
 }
 
 /// Scrolls the lines with a finger, or the mouse held down, dragged over
-/// the dark box behind them, which is there while a line is typed.
-fn drag_log(drag: On<Pointer<Drag>>, mut boxes: Query<(&ComputedNode, &mut ScrollPosition), With<LogBox>>) {
+/// what is behind them: the dark box while a line is typed, and the same
+/// with nothing of it to see while none is, once there are lines to
+/// scroll to ([`dress`]).
+fn drag_log(
+    drag: On<Pointer<Drag>>,
+    time: Res<Time<Real>>,
+    mut typing: ResMut<Typing>,
+    mut boxes: Query<(&ComputedNode, &mut ScrollPosition), With<LogBox>>,
+) {
     if let Ok((node, mut scroll)) = boxes.single_mut() {
         scroll_by(node, &mut scroll, -drag.delta.y);
+        typing.scrolled_at = time.elapsed_secs();
     }
 }
 
-/// Scrolls the lines with the mouse's wheel while the cursor is over them
-/// and a line is typed (the camera does not zoom by it there,
-/// `read_mouse_zoom`; with nothing typed the wheel is the camera's, over
-/// the lines as anywhere).
+/// Scrolls the lines with the mouse's wheel while the cursor is over what
+/// is behind them, where that is there to be dragged on (the camera does
+/// not zoom by it there, `read_mouse_zoom`; with nothing typed and no
+/// more lines than are in sight the wheel is the camera's, over the
+/// lines as anywhere).
 fn wheel(
     mut wheels: MessageReader<MouseWheel>,
-    typing: Res<Typing>,
+    time: Res<Time<Real>>,
+    mut typing: ResMut<Typing>,
     windows: Query<&Window, With<PrimaryWindow>>,
+    backs: Query<&InheritedVisibility, With<Backdrop>>,
     mut boxes: Query<(&ComputedNode, &UiGlobalTransform, &InheritedVisibility, &mut ScrollPosition), With<LogBox>>,
 ) {
     let turned: f32 = wheels
@@ -778,7 +948,7 @@ fn wheel(
             MouseScrollUnit::Pixel => event.y / MouseScrollUnit::SCROLL_UNIT_CONVERSION_FACTOR,
         })
         .sum();
-    if turned == 0.0 || !typing.on {
+    if turned == 0.0 || !backs.iter().any(|shown| shown.get()) {
         return;
     }
     let (Ok(window), Ok((node, place, shown, mut scroll))) = (windows.single(), boxes.single_mut()) else {
@@ -790,6 +960,7 @@ fn wheel(
     if over {
         let line = window.width().min(window.height()) * TEXT * 1.2 / 100.0;
         scroll_by(node, &mut scroll, -turned * WHEEL_LINES * line);
+        typing.scrolled_at = time.elapsed_secs();
     }
 }
 
@@ -1048,57 +1219,101 @@ mod tests {
     }
 
     #[test]
-    fn a_line_fades_from_the_moment_it_is_said_and_the_older_is_the_fainter() {
-        // Whole as it is said, and gone when its time is up, and after.
-        assert_eq!(faded(0.0), FADE_STEPS);
-        assert_eq!(faded(LINE_SECS), 0);
-        assert_eq!(faded(LINE_SECS * 3.0), 0);
-        assert_eq!(faded(-1.0), FADE_STEPS);
-        // Never the stronger for being older, and a line said a few
-        // seconds before another is the fainter of the two: what Hajun
-        // asked for, "the older line should be drawn fainter because it's
-        // partway through fading".
-        let mut last = FADE_STEPS;
-        for tenth in 0..=(LINE_SECS * 10.0) as u32 {
-            let step = faded(tenth as f32 / 10.0);
-            assert!(step <= last, "{tenth}: {step} after {last}");
-            last = step;
+    fn the_last_three_lines_show_each_older_one_fainter_and_no_clock_comes_into_it() {
+        // As the file has them: the newest whole, or as near it as makes
+        // no difference; the one before it fainter, and still there to be
+        // read; the one before that fainter again, and not gone; and
+        // nothing of any older ("the top one looking sooo faded, and the
+        // second to top one looking somewhat faded, and the last one not
+        // faded at all").
+        let strengths = ui().colours.chat.strengths;
+        let shares: Vec<f32> = (0..5).map(|since| strength(&strengths, since)).collect();
+        assert!(shares[0] >= 0.95, "{shares:?}");
+        assert!(shares[1] < shares[0] - 0.2 && shares[1] >= 0.4, "{shares:?}");
+        assert!(shares[2] < shares[1] - 0.15 && shares[2] >= 0.1, "{shares:?}");
+        assert_eq!((shares[3], shares[4]), (0.0, 0.0));
+        // Whatever the file says, it is a share: none of nothing, and no
+        // more than all.
+        assert_eq!(strength(&[7.0, -1.0, 0.5], 0), 1.0);
+        assert_eq!(strength(&[7.0, -1.0, 0.5], 1), 0.0);
+        assert_eq!(strength(&[7.0, -1.0, 0.5], 2), 0.5);
+        // By how many have been said since, which the log knows by their
+        // numbers: the newest has had none said since, however long ago
+        // it was said.
+        let mut log = Log::default();
+        for n in 0..4 {
+            log.push(Line(vec![(format!("line {n}"), Color::WHITE)]));
         }
-        for age in [2.0, 4.0, 6.0, 8.0] {
-            assert!(faded(age + 3.0) < faded(age), "{age}");
+        assert_eq!([3, 2, 1, 0].map(|id| log.since(id)), [0, 1, 2, 3]);
+        assert_eq!(log.since(10), 0, "one not said yet is no older than the newest");
+        // Begun afresh, the next thing said is the newest.
+        log.clear();
+        log.push(Line(vec![("hello".into(), Color::WHITE)]));
+        assert_eq!((log.since(4), log.since(3)), (0, 1));
+        // Scrolled, the fading goes by where a line is in sight: on the
+        // lowest line, the one over it and the one over that it is what
+        // it is by its place among them; half way from one line to the
+        // next, half way from the one strength to the other; over the
+        // third line, going; and over the fourth, gone. Never the fainter
+        // for being lower.
+        for line in 0..5 {
+            assert!((strength_at(&strengths, line as f32) - strength(&strengths, line)).abs() <= STRENGTH_STEP * 0.5 + 1e-6, "on line {line}");
         }
-        // It is slow at first: still nine parts in ten there a third of
-        // the way through, to be read, and more than half there with a
-        // third of its time to go.
-        assert!(faded(LINE_SECS / 3.0) >= FADE_STEPS / 10 * 9);
-        assert!(faded(LINE_SECS * 2.0 / 3.0) > FADE_STEPS / 2);
+        assert_eq!(strength_at(&strengths, -0.7), strength_at(&strengths, 0.0), "scrolled past the foot");
+        let between = strength_at(&strengths, 0.5);
+        assert!((between - (shares[0] + shares[1]) * 0.5).abs() <= STRENGTH_STEP, "{between}");
+        let going = strength_at(&strengths, 2.5);
+        assert!(going > 0.0 && going < shares[2], "{going}");
+        assert_eq!((strength_at(&strengths, 3.0), strength_at(&strengths, 7.3)), (0.0, 0.0));
+        let mut last = 1.0;
+        for tenth in 0..40 {
+            let share = strength_at(&strengths, tenth as f32 / 10.0);
+            assert!(share <= last + 1e-6, "{tenth} tenths of a line up: {share} after {last}");
+            last = share;
+        }
         // A colour thinned keeps what it is and loses its strength, by
         // what it had: a see-through one is never more than it was.
         let ink = Color::srgba(1.0, 0.5, 0.25, 0.8);
-        assert_eq!(thinned(ink, FADE_STEPS), ink);
-        assert_eq!(thinned(ink, 0).alpha(), 0.0);
-        let half = thinned(ink, FADE_STEPS / 2);
+        assert_eq!(thinned(ink, 1.0), ink);
+        assert_eq!(thinned(ink, 0.0).alpha(), 0.0);
+        let half = thinned(ink, 0.5);
         assert!((half.alpha() - 0.4).abs() < 1e-6);
         assert_eq!(half.with_alpha(0.8), ink);
+        // A line's words at a share of their strength, and its stroke at
+        // that share of that share: whole together, gone together, and in
+        // between the stroke the fainter, so that a faded line is not a
+        // dark one.
+        let (words, stroke) = (Ink { colour: Color::WHITE, rim: false }, Ink { colour: Color::BLACK, rim: true });
+        assert_eq!((drawn_in(&words, 1.0).alpha(), drawn_in(&stroke, 1.0).alpha()), (1.0, 1.0));
+        assert_eq!((drawn_in(&words, 0.0).alpha(), drawn_in(&stroke, 0.0).alpha()), (0.0, 0.0));
+        assert!((drawn_in(&words, 0.5).alpha() - 0.5).abs() < 1e-6 && (drawn_in(&stroke, 0.5).alpha() - 0.25).abs() < 1e-6);
+        // The stroke is thin: under a twentieth of the words' height each
+        // way, and its four copies are at the four corners.
+        assert!(STROKE > 0.0 && STROKE < TEXT / 20.0);
+        for corner in CORNERS {
+            assert_eq!(corner.abs(), Vec2::ONE);
+        }
+        assert_eq!(CORNERS.iter().copied().sum::<Vec2>(), Vec2::ZERO);
     }
 
     #[test]
-    fn when_each_line_was_said_is_kept_by_its_number() {
-        let mut drawn = Drawn::default();
-        assert_eq!(drawn.said_at(0), None);
-        for (id, at) in [(7, 1.0), (8, 2.5), (9, 2.5), (10, 9.0)] {
-            drawn.said.push_back((id, at));
+    fn the_chat_is_wide_enough_for_most_of_a_line_and_stops_short_of_the_middle() {
+        // Wider than it was, by half as much again and more.
+        assert!(WIDTH >= 75.0);
+        // On a screen lying on its side, from a tablet's shape to a
+        // phone's (the short side is 100): no wider than its share of the
+        // screen's width, and its right end short of the middle of the
+        // screen, where you stand.
+        for wide in [4.0 / 3.0, 16.0 / 9.0, 19.5 / 9.0] {
+            let across = 100.0 * wide;
+            let width = WIDTH.min(across * MOST_WIDE / 100.0);
+            assert!(hud::EDGE + width < across * 0.45, "{wide}: it ends {} of {across} across", hud::EDGE + width);
+            assert!(width >= 50.0, "{wide}: {width}");
         }
-        assert_eq!(drawn.said_at(7), Some(1.0));
-        assert_eq!(drawn.said_at(9), Some(2.5));
-        assert_eq!(drawn.said_at(10), Some(9.0));
-        // One from before these, and one not drawn yet.
-        assert_eq!(drawn.said_at(6), None);
-        assert_eq!(drawn.said_at(11), None);
-        // The oldest let go of, the rest are still found.
-        drawn.said.pop_front();
-        assert_eq!(drawn.said_at(7), None);
-        assert_eq!(drawn.said_at(8), Some(2.5));
+        // About sixty letters to a line: the room for words, at half
+        // their height to a letter, as Inter's are on the whole.
+        let letters = (WIDTH - 2.0 * PAD) / (TEXT * 0.5);
+        assert!(letters >= 60.0, "{letters}");
     }
 
     #[test]

@@ -173,6 +173,12 @@ pub const PROTOCOL_ID: u64 = u64::from_be_bytes(*b"DGRMTOWN");
 /// [`Ask::Chat`], [`Tell::Said`], [`Tell::Feed`]); and a plank is a quarter
 /// as wide and as long again ([`nav::PLANK_HALF_WIDTH`]), which the
 /// server's bots walk and the devices draw by the same measure.
+///
+/// Still 16 with a plank a tenth as wide again, not a quarter, since the
+/// night of 2026-11-14, and with whoever kills someone getting their
+/// sapphire and amethyst: a rung is sent as it was, its middle and its
+/// heading, and a purse as it was, so a device from before plays on, and
+/// draws every bridge a little wider than the server walks it.
 pub const PROTOCOL_VERSION: u32 = 16;
 
 /// The UDP port the game server listens on. 443, where QUIC goes, because a
@@ -1677,6 +1683,48 @@ pub mod bridge_wars {
     /// ui button is either empty or its filled by the same item u already
     /// have"); or an upgrade the team has to its last step.
     pub fn price(ware: Ware, kit: &Kit, team: &Upgrades) -> Option<(Item, u16)> {
+        priced(ware, kit, team)
+    }
+
+    /// Whether whoever is in the seat `killer` gets what whoever was in
+    /// the seat `victim` held of sapphire and amethyst for having killed
+    /// them ([`spoils`]): one of the eight killing one of another team,
+    /// with a hand, a sword, a fireball or a stick of dynamite, or by
+    /// knocking them off the world, as the chat says it ("Bob killed
+    /// Hannah", "Bob knocked Hannah off the world"). Not for a teammate
+    /// caught in their own team's blast, nor for themselves; a zombie
+    /// holds nothing and takes nothing.
+    pub fn takes_spoils(killer: usize, victim: usize) -> bool {
+        killer < ARENA_SEATS && victim < ARENA_SEATS && killer != victim && arena_team(killer) != arena_team(victim)
+    }
+
+    /// What whoever kills someone gets of what they held (since the night
+    /// of 2026-11-14; Hajun: "if you kill an enemy in bridgewars, you
+    /// should automatically get their sapphire and amethyst (not gold or
+    /// iron) if they had any - not drop but just auto get it in ur
+    /// inven"): every sapphire and every amethyst, taken out of `held`,
+    /// the purse of whoever died, and given back as a purse with nothing
+    /// else in it. Their silver and their gold go as everything went
+    /// before, with the death. As Bedwars gives a killer what the killed
+    /// had on them.
+    pub fn spoils(held: &mut Purse) -> Purse {
+        let mut won = Purse::default();
+        for item in [Item::Sapphire, Item::Amethyst] {
+            won[item.index()] = std::mem::take(&mut held[item.index()]);
+        }
+        won
+    }
+
+    /// Puts `won` into `purse`: each count as high as it goes, and no
+    /// higher.
+    pub fn gain(purse: &mut Purse, won: Purse) {
+        for (held, more) in purse.iter_mut().zip(won) {
+            *held = held.saturating_add(more);
+        }
+    }
+
+    /// [`price`], worked out.
+    fn priced(ware: Ware, kit: &Kit, team: &Upgrades) -> Option<(Item, u16)> {
         let step = |prices: &[u16], taken: u8| prices.get(usize::from(taken)).map(|cost| (Item::Sapphire, *cost));
         match ware {
             Ware::Bridge => Some((Item::Silver, 4)),
@@ -4948,5 +4996,20 @@ mod tests {
         purse[Item::Amethyst.index()] = 1;
         assert_eq!(purse, [7, 0, 0, 1]);
         assert_eq!(Item::ALL.map(Item::index), [0, 1, 2, 3]);
+        // What a killer gets of a purse is its sapphire and its amethyst,
+        // all of each, and what is left to go with the dead is the silver
+        // and the gold.
+        let mut held: Purse = [30, 20, 7, 5];
+        let won = bridge_wars::spoils(&mut held);
+        assert_eq!((won, held), ([0, 0, 7, 5], [30, 20, 0, 0]));
+        assert_eq!(bridge_wars::spoils(&mut held), Purse::default(), "nothing twice");
+        let mut killer: Purse = [1, 2, 3, u16::MAX - 2];
+        bridge_wars::gain(&mut killer, won);
+        assert_eq!(killer, [1, 2, 10, u16::MAX]);
+        // Someone of another team, of the eight: not a teammate (seats 0
+        // and 4 are a team), not themselves, and no zombie either way.
+        assert!(bridge_wars::takes_spoils(0, 1) && bridge_wars::takes_spoils(7, 4));
+        assert!(!bridge_wars::takes_spoils(0, 4) && !bridge_wars::takes_spoils(3, 3));
+        assert!(!bridge_wars::takes_spoils(ARENA_SEATS, 1) && !bridge_wars::takes_spoils(1, ARENA_SEATS + 2));
     }
 }

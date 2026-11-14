@@ -20,7 +20,7 @@
 //!
 //! Everything that draws the screen reads [`ui`] where it spawns: a global,
 //! not a resource, so that the plain functions every screen is built from
-//! (`hud::words`, `builder::label`, `builder::dimmed` and the rest) can read
+//! (`hud::words`, `builder::label`, `window::pane` and the rest) can read
 //! it without every caller threading it through. The file is compiled in
 //! ([`BUILT_IN`]), so a phone shows whatever it said when its app was
 //! built, with nothing to copy or package. On desktop it is read again
@@ -522,11 +522,7 @@ pub(crate) struct Colours {
     #[serde(deserialize_with = "colour")]
     pub warn: Color,
     #[serde(deserialize_with = "colour")]
-    pub warn_lit: Color,
-    #[serde(deserialize_with = "colour")]
     pub dim: Color,
-    #[serde(deserialize_with = "colour")]
-    pub dialog: Color,
     #[serde(deserialize_with = "colour")]
     pub panel: Color,
     #[serde(deserialize_with = "colour")]
@@ -546,21 +542,22 @@ pub(crate) struct Colours {
     pub hud: HudColours,
     pub intro: IntroColours,
     pub signup: SignupColours,
-    pub settings: SettingsColours,
     pub house_builder: HouseBuilderColours,
     pub shop: ShopColours,
     pub talk: TalkColours,
     pub edit_menu: EditMenuColours,
     pub melee: MeleeColours,
     pub arena: ArenaColours,
-    pub friends: FriendsColours,
+    pub window: WindowColours,
     pub chat: ChatColours,
 }
 
 /// The chat on the left of the screen (`chat`, since 2026-11-14): what
-/// shows behind the lines said while a line is typed, and the shadow under
-/// each line's words, which is all there is behind them the rest of the
-/// time; a line someone said, and the name before
+/// shows behind the lines said while a line is typed; the thin stroke
+/// round each line's words, which is all that sets them off from the
+/// world the rest of the time; how much of itself each of the three lines
+/// in sight is drawn with while nothing is typed, the lowest first, from
+/// 1, all of it, to 0, none; a line someone said, and the name before
 /// it where they are on no team (in Bridge Wars a name is its team's
 /// colour, `arena.team_*`); a line about what has happened in a game; the
 /// box a line is typed into, at rest and while it is typed into, the words
@@ -574,7 +571,8 @@ pub(crate) struct ChatColours {
     #[serde(deserialize_with = "colour")]
     pub back: Color,
     #[serde(deserialize_with = "colour")]
-    pub shadow: Color,
+    pub stroke: Color,
+    pub strengths: [f32; 3],
     #[serde(deserialize_with = "colour")]
     pub text: Color,
     #[serde(deserialize_with = "colour")]
@@ -599,13 +597,22 @@ pub(crate) struct ChatColours {
     pub quick_text: Color,
 }
 
-/// The friends' panel (`friends`, since 2026-11-13), in the colours of
-/// Hajun's sketches of it (`friendtabdesign1.png` to `4`): the panel, a
+/// The windows (`window`): the friends' panel (`friends`, since
+/// 2026-11-13), in the colours of Hajun's sketches of it
+/// (`friendtabdesign1.png` to `4`), and, since 2026-11-14, when Hajun
+/// asked for its style everywhere ("I want to use this same design style
+/// throughout the project"), the settings' window, the game selector and
+/// Bridge Wars' two shops, all drawn by `crate::window` (the block was
+/// `friends` until then, and the settings and the shops had a grey of
+/// their own). The window, a
 /// box that comes up over it (Add Friend, a question, a message being
-/// written) and the dark over the panel behind such a box; the line under
+/// written) and the dark over the window behind such a box; the line under
 /// the tab that is shown, and the picture of one that is not; a heading; a
 /// friend's name, here and not, and the line under it that says where they
-/// are; the disc behind someone's picture, the picture, and the dot on its
+/// are, which are every window's words, plain, faint and small; a card
+/// that is pressed to choose what is on it, lit under the pointer, and one
+/// that cannot be chosen;
+/// the disc behind someone's picture, the picture, and the dot on its
 /// corner, here and not; a round button on a row, lit under the pointer,
 /// the picture on it, and the picture on one that cannot be pressed; the
 /// box something is typed into; yes and no, each lit under the pointer,
@@ -616,7 +623,13 @@ pub(crate) struct ChatColours {
 /// pressed ("Add friend"), and those that only say ("Requested").
 #[derive(Deserialize, Clone, Copy, PartialEq, Debug)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct FriendsColours {
+pub(crate) struct WindowColours {
+    #[serde(deserialize_with = "colour")]
+    pub card: Color,
+    #[serde(deserialize_with = "colour")]
+    pub card_lit: Color,
+    #[serde(deserialize_with = "colour")]
+    pub card_off: Color,
     #[serde(deserialize_with = "colour")]
     pub panel: Color,
     #[serde(deserialize_with = "colour")]
@@ -731,17 +744,6 @@ pub(crate) struct SignupColours {
     pub ink: Color,
     #[serde(deserialize_with = "colour")]
     pub arrow: Color,
-}
-
-#[derive(Deserialize, Clone, Copy, PartialEq, Debug)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct SettingsColours {
-    #[serde(deserialize_with = "colour")]
-    pub window: Color,
-    #[serde(deserialize_with = "colour")]
-    pub blocked: Color,
-    #[serde(deserialize_with = "colour")]
-    pub blocked_text: Color,
 }
 
 #[derive(Deserialize, Clone, Copy, PartialEq, Debug)]

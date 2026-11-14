@@ -6,6 +6,13 @@
 //! quick black loading screen and then when the new map is loaded, the
 //! player is teleported"): a dialog like the settings' window, with the
 //! three games on cards across it, the third blocked out. Only in the town.
+//! It is drawn as the friends' panel is (`window`, since 2026-11-14, when
+//! Hajun asked for that panel's style everywhere): the same dark
+//! see-through window, as wide, with nothing dimmed round it, "Games" along
+//! its top from the left, the bare white cross in its corner, and its cards
+//! the dark of that panel's buttons. Until then it was a black box in the
+//! middle of the dimmed screen under a gold title, its cross a disc hung
+//! off its corner.
 //!
 //! Choosing Bridge Wars or Home Builders, the dialog goes and a black
 //! screen comes down ([`Loading`]): [`LOADING_IN`] seconds later, under it,
@@ -21,24 +28,24 @@ use bevy::prelude::*;
 use roundtown_net::rules::ENTRY;
 
 use crate::arena;
-use crate::builder::{self, DIALOG_LAYER, Fill, TITLE};
+use crate::builder::{self, DIALOG_LAYER};
 use crate::friends::Friends;
 use crate::hud::{self, DialogUp, GamesButton, TakesPress};
 use crate::island::{Islands, Venue};
 use crate::lobby::Balance;
 use crate::net::Online;
 use crate::ui::{fill, ui};
+use crate::window;
 use crate::{CloseUp, Player};
 
-/// Sizes, as shares of the short side of the screen: a game's card, the
-/// gap between the cards, the game's name on it and the line under it, and
-/// the cross on the dialog's corner.
-const CARD_WIDTH: f32 = 24.0;
-const CARD_HEIGHT: f32 = 26.0;
-const CARD_GAP: f32 = 3.0;
+/// Sizes, as shares of the short side of the screen, where they are not
+/// the windows' own (`window`): how tall a game's card is (the three share
+/// the window's width between them), the gap between the cards, and the
+/// game's name on one and the line under it.
+const CARD_HEIGHT: f32 = 30.0;
+const CARD_GAP: f32 = 2.2;
 const CARD_TEXT: f32 = 4.0;
-const NOTE_TEXT: f32 = 3.0;
-const CLOSE: f32 = 9.0;
+const NOTE_TEXT: f32 = 2.8;
 /// The black screen: how long it is down before the game is gone into
 /// under it, in seconds; how much longer at the least before it lifts, once
 /// the island you are on has loaded; how long at the most, should nothing
@@ -100,8 +107,8 @@ pub(crate) fn plugin(app: &mut App) {
 
 /// Opens the dialog from the gamepad, and goes on from there as its buttons
 /// are pressed. Only what the press landed on, not what the click passed up
-/// through on its way out, so that a tap on a card is not also a tap on the
-/// dark round it.
+/// through on its way out, so that a tap on a card is not also a tap off
+/// the window, which shuts it.
 #[allow(clippy::too_many_arguments)]
 fn choose(
     click: On<Pointer<Click>>,
@@ -110,7 +117,7 @@ fn choose(
     me: Query<(&Venue, &Balance), With<Player>>,
     close_up: Res<CloseUp>,
     loading: Option<Res<Loading>>,
-    (online, friends): (Res<Online>, Res<Friends>),
+    (online, friends, assets): (Res<Online>, Res<Friends>, Res<AssetServer>),
     dialogs: Query<Entity, With<GamesDialog>>,
     mut up: ResMut<DialogUp>,
     mut selector: ResMut<Selector>,
@@ -130,7 +137,7 @@ fn choose(
         // In a group someone else leads, its games are theirs to start
         // (`friends`): the cards are blocked out, and say so.
         let follows = online.me().is_some_and(|me| friends.follows(me.id));
-        open(&mut commands, balance.0 >= ENTRY, follows);
+        open(&mut commands, &assets, balance.0 >= ENTRY, follows);
         selector.open = true;
         up.0 = true;
         return;
@@ -164,91 +171,122 @@ fn keys(
     up.0 = false;
 }
 
-/// The dialog: the screen dimmed behind it, its title, the three games on
-/// cards across it, and the cross on its corner. Home Builders is blocked
-/// out when you cannot pay for it; and both games when you `follows`
+/// The dialog, a window as the friends' panel is one (`window`): its title
+/// along its top, the cross in its corner, and the three games on cards
+/// across it. Its root is over the whole screen, shows nothing, and shuts
+/// the dialog at a tap. Home Builders is blocked out when you cannot pay
+/// for it, and says what it needs; and both games when you `follows`
 /// someone else's group, whose leader starts its games (since 2026-11-13,
 /// Hajun: "when youre in the group with ur friend, only the leader can
-/// queue for a minigame"), with a line under the cards that says so.
-fn open(commands: &mut Commands, affordable: bool, follows: bool) {
+/// queue for a minigame"), with a line along the window's bottom that says
+/// so.
+fn open(commands: &mut Commands, assets: &AssetServer, affordable: bool, follows: bool) {
     let ui = ui();
-    let (colours, words) = (ui.colours, &ui.words.games);
+    let (colours, words) = (ui.colours.window, &ui.words.games);
     let coins = hud::money(ENTRY);
-    let mut panel = builder::dimmed(commands, (GamesDialog, Choice::Close));
-    panel.with_children(|panel| {
-        panel.spawn(builder::label(words.title.clone(), TITLE, colours.gold));
-        panel
-            .spawn((
-                Node {
-                    column_gap: Val::VMin(CARD_GAP),
-                    margin: UiRect::vertical(Val::VMin(1.0)),
-                    ..default()
+    let root = commands
+        .spawn((
+            GamesDialog,
+            Choice::Close,
+            TakesPress,
+            Node {
+                position_type: PositionType::Absolute,
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                ..default()
+            },
+            BackgroundColor(Color::NONE),
+            GlobalZIndex(DIALOG_LAYER),
+        ))
+        .id();
+    let panel = commands
+        .spawn((
+            ChildOf(root),
+            window::pane(Node {
+                width: Val::VMin(window::WIDTH),
+                // More at the bottom while there is a line to go there.
+                padding: UiRect {
+                    bottom: Val::VMin(if follows { window::PAD + window::NOTICE_TEXT + 1.4 } else { window::PAD }),
+                    ..UiRect::all(Val::VMin(window::PAD))
                 },
-                Pickable::IGNORE,
-            ))
-            .with_children(|cards| {
-                let mut wars = cards.spawn(card(words.bridge_wars.clone(), words.free.clone(), colours.text_soft, !follows));
-                if !follows {
-                    wars.insert((Choice::BridgeWars, TakesPress, Button));
-                }
-                let (note, tint) = if affordable {
-                    (fill(&ui.words.house_builder.price, &[("coins", &coins)]), colours.text_soft)
-                } else {
-                    (fill(&ui.words.house_builder.need_coins, &[("coins", &coins)]), colours.warn)
-                };
-                let able = affordable && !follows;
-                let mut home = cards.spawn(card(words.home_builders.clone(), note, tint, able));
-                if able {
-                    home.insert((Choice::HomeBuilders, TakesPress, Button));
-                }
-                cards.spawn(card(words.coming_soon.clone(), words.coming_soon_note.clone(), colours.off_text, false));
-            });
-        if follows {
-            panel.spawn(builder::label(ui.words.friends.only_leader.clone(), NOTE_TEXT, colours.warn));
-        }
-        panel.spawn(hud::close_cross(CLOSE, Choice::Close));
-    });
+                ..default()
+            }),
+        ))
+        .id();
+    commands.spawn((
+        ChildOf(panel),
+        window::header(),
+        children![window::words(words.title.clone(), window::TITLE, colours.title)],
+    ));
+    commands.spawn((ChildOf(panel), window::cross(assets.load("icons/close.png"), Choice::Close)));
+    let cards = commands
+        .spawn((
+            ChildOf(panel),
+            Node {
+                column_gap: Val::VMin(CARD_GAP),
+                margin: UiRect::top(Val::VMin(1.2)),
+                ..default()
+            },
+            Pickable::IGNORE,
+        ))
+        .id();
+    let mut wars = commands.spawn((ChildOf(cards), card(words.bridge_wars.clone(), words.free.clone(), None, !follows)));
+    if !follows {
+        wars.insert((Choice::BridgeWars, TakesPress, Button));
+    }
+    // What it costs; or, without the coins, what it needs, in the colour
+    // of a line that says why something cannot be had.
+    let (note, tint) = if affordable {
+        (fill(&ui.words.house_builder.price, &[("coins", &coins)]), None)
+    } else {
+        (fill(&ui.words.house_builder.need_coins, &[("coins", &coins)]), Some(colours.notice))
+    };
+    let able = affordable && !follows;
+    let mut home = commands.spawn((ChildOf(cards), card(words.home_builders.clone(), note, tint, able)));
+    if able {
+        home.insert((Choice::HomeBuilders, TakesPress, Button));
+    }
+    commands.spawn((ChildOf(cards), card(words.coming_soon.clone(), words.coming_soon_note.clone(), None, false)));
+    if follows {
+        commands.spawn((
+            ChildOf(panel),
+            window::words(ui.words.friends.only_leader.clone(), window::NOTICE_TEXT, colours.notice),
+            Node {
+                position_type: PositionType::Absolute,
+                left: Val::VMin(window::PAD),
+                bottom: Val::VMin(1.8),
+                ..default()
+            },
+        ));
+    }
 }
 
-/// One game's card: its name, and a line under it saying what it costs, or
-/// that it is not to be had; lit under the pointer if it can be chosen,
-/// and blocked out if not.
-fn card(name: String, note: String, note_colour: Color, choosable: bool) -> impl Bundle {
-    let colours = ui().colours;
-    let (fill, ink) = if choosable {
-        (
-            Fill {
-                idle: colours.quiet,
-                lit: colours.quiet_lit,
-            },
-            colours.text,
-        )
-    } else {
-        (
-            Fill {
-                idle: colours.off,
-                lit: colours.off,
-            },
-            colours.off_text,
-        )
-    };
+/// One game's card, a share of the window's width: its name, and a line
+/// under it saying what it costs, or that it is not to be had, in
+/// `note_colour` if that is not the card's own; lit under the pointer if it
+/// can be chosen, and blocked out if not.
+fn card(name: String, note: String, note_colour: Option<Color>, choosable: bool) -> impl Bundle {
+    let (fill, ink, soft) = window::card(choosable);
     (
         Node {
-            width: Val::VMin(CARD_WIDTH),
+            flex_grow: 1.0,
+            flex_basis: Val::ZERO,
             height: Val::VMin(CARD_HEIGHT),
             flex_direction: FlexDirection::Column,
             justify_content: JustifyContent::Center,
             align_items: AlignItems::Center,
-            row_gap: Val::VMin(1.6),
+            row_gap: Val::VMin(1.2),
             padding: UiRect::all(Val::VMin(1.5)),
-            border_radius: BorderRadius::all(Val::VMin(3.0)),
+            border_radius: BorderRadius::all(Val::VMin(window::CARD_ROUNDED)),
             ..default()
         },
         BackgroundColor(fill.idle),
         fill,
         children![
             builder::label(name, CARD_TEXT, ink),
-            builder::label(note, NOTE_TEXT, note_colour),
+            builder::label(note, NOTE_TEXT, note_colour.unwrap_or(soft)),
         ],
     )
 }

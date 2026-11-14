@@ -21,30 +21,31 @@
         text: "#ffffff",
         text_soft: "#ffffffc7",
         text_shadow: "#00000066",
-        // Gold: titles, prizes, lit stars, a chosen tab, and the gold buttons
-        // (Play again, the settings' Save), lit under the pointer; and the
-        // dark blue of words on gold.
+        // Gold: headlines ("Fight!", "You're out!"), prizes, lit stars, and
+        // the gold buttons (Play again), lit under the pointer; and the
+        // words on gold.
         gold: "#edb62a",
         gold_lit: "#ffe88c",
         on_gold: "#fafafa",
-        // A warning: Delete account, "not available yet", "Need 100 coins";
-        // and Delete lit under the pointer.
+        // A warning: "Log in is not available yet", "Pick another name.",
+        // and House Builder's "Need 100 coins".
         warn: "#ad311e",
-        warn_lit: "#d03a1c",
-        // Dialogs: the dark over the world behind one, the dialog itself, and
-        // the glass behind words that stand over the world (Bridge Wars' and
-        // House Builder's time, the hammer), lit under the pointer: the very
-        // grey of your name's plate (hud.name_plate), as the minimap's
-        // background, the shop's window and the settings' are that grey
-        // too, each as solid as its own alpha says.
+        // The dark over the world behind House Builder's shop; and the
+        // glass behind words that stand over the world (Bridge Wars' and
+        // House Builder's time, the hammer), lit under the pointer: the
+        // very grey of your name's plate (hud.name_plate), as the
+        // minimap's background is, and House Builder's shop's window, as
+        // solid as its own alpha says. (The settings, the game selector
+        // and Bridge Wars' shops are drawn as the friends' panel is, in
+        // `window`'s colours, below, with nothing dimmed behind them.)
         dim: "#00000073",
-        dialog: "#000000d9",
         panel: "#66666673",
         panel_lit: "#66666699",
-        // A quiet button (Cancel, Later, Exit, a tab not chosen), lit under
-        // the pointer; a button that cannot be pressed, and its words; and
-        // the cross on a window's corner (the same grey, solid; red until
-        // late on 2026-11-11), with its rim.
+        // A quiet button (Later, Exit), lit under the pointer; a button
+        // that cannot be pressed, and its words; and the cross on the
+        // corner of House Builder's shop (the same grey, solid; red until
+        // late on 2026-11-11), with its rim. (A window's own cross is a
+        // bare white one inside its corner: `window.button_mark`.)
         quiet: "#ffffff24",
         quiet_lit: "#ffffff42",
         off: "#ffffff12",
@@ -86,13 +87,6 @@
             ink: "#0d0d0f",
             arrow: "#ffffffd9",
         ),
-        // The settings: the window's glass, and a sign-in not to be had yet,
-        // blocked out, with its words.
-        settings: (
-            window: "#666666d1",
-            blocked: "#ffffff14",
-            blocked_text: "#ffffff66",
-        ),
         // House Builder: a star not given; the results behind their rows, a
         // row, your row, the second and third medals (the first is gold), and
         // a prize of nothing.
@@ -105,9 +99,10 @@
             bronze: "#db8f54",
             no_prize: "#ffffff73",
         ),
-        // The shop: its window, the hammer's rim and handle, a card, lit
-        // under the pointer, a card that cannot be chosen with its picture
-        // and name, and the note that says why.
+        // House Builder's shop: its window, the hammer's rim and handle, a
+        // card, lit under the pointer, a card that cannot be chosen with
+        // its picture and name, and the note that says why. (Bridge Wars'
+        // two shops are drawn in `window`'s colours, below.)
         shop: (
             window: "#666666db",
             hammer_rim: "#ffffff80",
@@ -285,44 +280,67 @@
             // generator: its level, and the count to its next thing.
             generator: "#ffffff",
         ),
-        // The friends' panel, behind the speech bubble under the gift: the
-        // panel itself; a box that comes up over it (Add Friend, a
-        // question, a message being written), and the dark over the panel
-        // behind such a box.
-        friends: (
+        // The windows: the friends' panel, behind the two people at the top
+        // of the right edge, and, since 2026-11-14, everything else drawn
+        // in its style:
+        // the settings' window, the game selector and Bridge Wars' two
+        // shops. Change a colour here and every one of them takes it. The
+        // window itself; a box that comes up over it (Add Friend, a
+        // question, a message being written, Edit name, Delete your
+        // account), and the dark over the window behind such a box.
+        window: (
             panel: "#1e1e1ee6",
             popup: "#101010f7",
             scrim: "#0000008c",
-            // The line under the tab that is shown, and the picture of the
-            // tab that is not; a heading ("Friends (2/5):").
+            // The line under the tab that is shown, and the picture or
+            // the words of a tab that is not; a heading ("Friends
+            // (2/5):") and a window's title ("Games", "Shop").
             line: "#ffffff",
             tab_off: "#ffffff70",
             title: "#ffffff",
             // A friend's name, here and not here, and the line under it
-            // that says where they are.
+            // that says where they are: every window's words, the faint
+            // ones of what cannot be had just now, and the smaller ones
+            // under a name.
             name: "#ffffff",
             name_off: "#ffffff85",
             status: "#ffffffb8",
+            // A card that is pressed to choose what is on it (a game in
+            // the selector, a thing in one of Bridge Wars' shops), lit
+            // under the pointer, and one that cannot be chosen just now.
+            // Each is as see-through as its alpha says (the last two
+            // digits: 00 is clear, ff solid): the round buttons' dark,
+            // half see-through, since solid it was "too dark" behind each
+            // item ("should be more transparent, not just become
+            // grayer").
+            card: "#12121280",
+            card_lit: "#55555580",
+            card_off: "#12121233",
             // The disc behind someone's picture and the picture on it; and
             // the dot on its corner, here and not.
             avatar: "#5c5c5c",
             avatar_mark: "#ffffff",
             online: "#27c93f",
             offline: "#6b6b6b",
-            // A round button on a row (ask into your group, the gear), lit
-            // under the pointer, the picture on it, and the picture on one
-            // that cannot be pressed just now.
+            // A round button on a row (ask into your group, the gear, the
+            // pencil by your name in the settings), lit under the pointer,
+            // the picture on it, and the picture on one that cannot be
+            // pressed just now. A button that only puts something away
+            // ("OK") is this dark too, and so is one that is blocked out
+            // ("Sign in with Google").
             button: "#121212",
             button_lit: "#333333",
             button_mark: "#ffffff",
             button_off: "#ffffff3d",
             // The box something is typed into: a name to look for, a
-            // message; and the words that stand in the search bar until
-            // something is typed ("Friend's Username").
+            // message, your own name; and the words that stand in the
+            // search bar until something is typed ("Friend's Username").
+            // On a box that has come up over a window, a button that only
+            // backs out (the Cancel beside Delete) is this grey as well.
             field: "#2b2b2b",
             hint: "#ffffff59",
-            // Yes and no (Yes, Accept, Send; Cancel, Reject), each lit
-            // under the pointer, and the words on them.
+            // Yes and no (Yes, Accept, Send, Save; Cancel, Reject, Delete
+            // account), each lit under the pointer, and the words on them.
             yes: "#1db81d",
             yes_lit: "#34d634",
             no: "#5c0d0d",
@@ -338,7 +356,9 @@
             menu_lit: "#2e2e2e",
             menu_rim: "#ffffff",
             // The line along the bottom that says what came of something
-            // ("Friend request sent.").
+            // ("Friend request sent."), and what says why something
+            // cannot be had ("Need 100 coins", "Only your group's leader
+            // can start a game.").
             notice: "#ffd98a",
             // Words that are pressed ("Add friend"), and words that only
             // say ("Requested").
@@ -348,10 +368,13 @@
         // The chat on the left of the screen, in the town and in Bridge
         // Wars: what shows behind the lines said while you type, as
         // see-through as its alpha says (the rest of the time the lines
-        // are drawn with nothing behind them); the shadow under each
-        // line's words, darker than the other words' on the screen
-        // (text_shadow), since it is all that sets them off from the
-        // world; a line someone said, and the name before it
+        // are drawn with nothing behind them); the thin stroke round each
+        // line's words, which is all that sets them off from the world;
+        // how much of itself each of the three lines in sight is drawn with
+        // while you are not typing, the lowest first, then the one over
+        // it, then the one over that: 1 is all of it and 0 none of it,
+        // and whatever is over those three is not drawn until you scroll
+        // back to it or type; a line someone said, and the name before it
         // where they are on no team (in Bridge Wars a name is its team's
         // colour, arena.team_red and the rest); a line about what has
         // happened in the game ("Bob fell off the world."); the box a
@@ -362,7 +385,8 @@
         // say, and its words.
         chat: (
             back: "#00000073",
-            shadow: "#000000b3",
+            stroke: "#000000",
+            strengths: (1.0, 0.55, 0.25),
             text: "#ffffff",
             name: "#ffe9a8",
             event: "#ffffffc7",

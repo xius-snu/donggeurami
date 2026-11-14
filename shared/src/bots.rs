@@ -81,12 +81,30 @@ const MOST_BENT: f32 = 1.05;
 /// two more as it is stepped); and how much of the ground it would cross
 /// in that while a bot keeps in hand when it jumps a gap, in metres: it
 /// comes down that far past where the ground begins again, or does not
-/// jump ([`Squad::reach_of_a_jump`]). At a run that is a gap of 5.8 m:
-/// the four planks a stick of dynamite mostly takes out of a bridge
-/// (5.45 m), and not the five it sometimes does (6.8), which a body at a
-/// run does clear, but by too little to count on.
+/// jump ([`Squad::reach_of_a_jump`]). At a run that is a gap of 6.1 m:
+/// the four planks a stick of dynamite all but always takes out of a
+/// bridge (6.0 m of planks a tenth bigger than Hajun's, since the night of
+/// 2026-11-14), and not the five it takes blown on the very middle of a
+/// plank (7.5), which nobody clears. It kept 1.2 m in hand, a gap of 5.8,
+/// while a plank was Hajun's own size and four of them 5.45 m, and while
+/// a plank was a quarter bigger and three of them 5.1: with planks a
+/// tenth bigger that left no hole a stick makes for a bot to jump, so it
+/// is 0.9, the metre a run carries it past four planks less a little.
 const JUMP_SECS: f32 = 0.7;
-const JUMP_SPARE: f32 = 1.2;
+const JUMP_SPARE: f32 = 0.9;
+/// How long a bot stands at a stand over each thing it buys there, in
+/// seconds, the least and the most, thrown again for each ([`Dice::around`]:
+/// mostly about a second), as someone with the shop's window open reads
+/// it, finds the card and presses it (the night of 2026-11-14, Hajun:
+/// "right now the ai's use the shops in like instantly. but real humans
+/// take like 0.5~1.5s ish to buy sth. make the ais take some time to use
+/// the shop and buy sth too"). Until then it bought as its foot touched
+/// the outline, and three things in three frames.
+const SHOP_SECS: (f32, f32) = (0.5, 1.5);
+/// How often a bot on its way somewhere looks along the straight walk to
+/// the next point of its way, in seconds, to find the way again if it
+/// cannot be walked from where it has got to ([`Squad::walk_to`]).
+const LOOK_EVERY: f32 = 0.25;
 /// How far ahead a bot reads where whoever it is after will be, at the
 /// most, in seconds ([`Squad::meet`]).
 const FORESEE: f32 = 1.6;
@@ -1272,6 +1290,24 @@ pub struct Bot {
     progress: (Vec2, f32),
     barred: Option<(Goal, f32)>,
     tries: u8,
+    /// What it stands at a stand to buy, and when it will have made up
+    /// its mind and bought it ([`SHOP_SECS`]).
+    browsing: Option<(Ware, f32)>,
+    /// How often it has got nowhere on a way it had and thought again
+    /// ([`Squad::walk_to`]), and where it last did, heading where: for
+    /// telling, over whole games, that nothing holds a body fast.
+    stalls: u32,
+    stalled: Option<(Vec2, Vec2)>,
+    /// How many of those times it could not take the next step of its
+    /// way at all: held by a wall, or by the lack of ground.
+    pinned: u32,
+    /// When it last looked along the straight walk to the next point of
+    /// its way ([`LOOK_EVERY`]).
+    looked_at: f32,
+    /// When it was last on its way anywhere ([`Squad::walk_to`]): after a
+    /// while of anything else, standing its ground or fighting where it
+    /// stood, it is not one that has been getting nowhere.
+    walked_at: f32,
     /// How many of each thing it would take from a pad now, and how much
     /// it matters.
     wants: Purse,
@@ -1389,8 +1425,14 @@ impl Bot {
             health_was: 1.0,
             hurt_at: f32::NEG_INFINITY,
             progress: (body.at.xz(), 0.0),
+            stalls: 0,
+            stalled: None,
+            pinned: 0,
+            looked_at: f32::MIN,
+            walked_at: f32::MIN,
             barred: None,
             tries: 0,
+            browsing: None,
             wants: [0; 4],
             urgency: 0,
             speed: 0.0,
@@ -1456,6 +1498,20 @@ impl Bot {
 
     pub fn goal(&self) -> Goal {
         self.goal
+    }
+
+    /// How often it has got nowhere on a way it had, three seconds
+    /// together, and thought again; and where it last did, and the point
+    /// it was walking to. A bot that stands its ground with somewhere to
+    /// go counts among these.
+    pub fn stalls(&self) -> (u32, Option<(Vec2, Vec2)>) {
+        (self.stalls, self.stalled)
+    }
+
+    /// How many of those times something held it: the next step of its
+    /// way could not be taken. What must never be.
+    pub fn pinned(&self) -> u32 {
+        self.pinned
     }
 
     /// Who it is.
@@ -3189,6 +3245,20 @@ impl Squad {
                     spots.upgrades
                 };
                 if here.distance(shop) <= 1.2 {
+                    // At the stand: a moment over it, as anyone takes,
+                    // and a moment of its own for each thing bought.
+                    let due = match bot.browsing {
+                        Some((wanted, due)) if wanted == ware => due,
+                        _ => {
+                            let due = now + self.dice.around(SHOP_SECS.0, SHOP_SECS.1);
+                            bot.browsing = Some((ware, due));
+                            due
+                        }
+                    };
+                    if now < due {
+                        return Vec2::ZERO;
+                    }
+                    bot.browsing = None;
                     order.buy = Some(ware);
                     bot.tries += 1;
                     // Asked for and not had: something else, for a while.
@@ -3198,6 +3268,9 @@ impl Squad {
                     bot.think_at = now;
                     return Vec2::ZERO;
                 }
+                // Not there, or gone from it: what it was making up its
+                // mind over is forgotten.
+                bot.browsing = None;
                 self.walk_to(bot, view, shop, pace, 2.0)
             }
             Goal::Fetch(pad, _) => {
@@ -3763,17 +3836,46 @@ impl Squad {
     fn walk_to(&mut self, bot: &mut Bot, view: &View, to: Vec2, pace: f32, again: f32) -> Vec2 {
         let (nav, now) = (view.nav, view.elapsed);
         let here = bot.body.at.xz();
+        // Getting nowhere is reckoned from when it set out: one that has
+        // stood its ground for a while, or fought where it stood, and
+        // only now walks on has not been getting nowhere all that time
+        // (until 2026-11-14 it had, and gave up what it was about for
+        // eight seconds as it took its first step).
+        if now - bot.walked_at > 0.5 {
+            bot.progress = (here, now);
+        }
+        bot.walked_at = now;
         if here.distance(to) <= ARRIVED {
             bot.path.clear();
             bot.progress = (here, now);
             return Vec2::ZERO;
         }
+        // A way is found from where the bot stood then, and it is walked
+        // with a weave, and fought on, and knocked off: from where the
+        // bot has got to, the next point of it may lie past the corner of
+        // a stand, or of the land's edge beside a bridge's end, and a body
+        // walked straight at that comes to rest in the corner and stays
+        // there, walking (Hajun, 2026-11-14: "sometime your ai teammate
+        // get stuck on the edge between the bridge and the island so it
+        // keeps trying to go but its stuck. it happened when the ai
+        // teammate built a bridge -> got sapphire -> came back to the
+        // island"; in whole games of bots, eight times a game on average,
+        // three seconds and more each, at the ends of bridges, the
+        // corners of the stands and the things that stand in the middle).
+        // So a few times a second it looks along the straight walk to
+        // that point, and if that cannot be walked, finds its way again
+        // from where it is.
+        let lost = now - bot.looked_at >= LOOK_EVERY && {
+            bot.looked_at = now;
+            bot.path.first().is_some_and(|&next| nav.walkable_at(here) && !nav.line(here, next))
+        };
         // A plank laid only adds to the ways there are; a blast takes
         // some away, and a way found before one may lead over a hole now.
         let stale = bot.path_to.is_none_or(|was| was.distance(to) > 1.0)
             || (bot.path.is_empty() && (bot.path_version != nav.version || now - bot.path_at > 0.5))
             || now - bot.path_at > again.max(0.5) * 4.0
-            || bot.path_cuts != nav.cuts;
+            || bot.path_cuts != nav.cuts
+            || lost;
         if stale {
             bot.cross = None;
             bot.path = match nav.path(here, to) {
@@ -3818,6 +3920,15 @@ impl Squad {
             bot.progress = (here, now);
         } else if now - bot.progress.1 > 3.0 {
             bot.progress = (here, now);
+            if let Some(&next) = bot.path.first() {
+                bot.stalls += 1;
+                bot.stalled = Some((here, next));
+                // Held fast, and not standing by choice: the very next
+                // step of the straight walk there cannot be taken.
+                if !Self::gets_on(nav, &bot.body, (next - here).normalize_or_zero() * pace) {
+                    bot.pinned += 1;
+                }
+            }
             bot.path.clear();
             bot.path_to = None;
             if !matches!(bot.goal, Goal::Idle) {
@@ -3835,10 +3946,40 @@ impl Squad {
                 let room = if out_over_the_void(nav, here) { 0.35 } else { 1.0 };
                 let swing = (bot.weave.sin() + 0.5 * (bot.weave * 2.3).sin()) * 0.16 * bot.temper.weave * room * (far / 3.0).min(1.0);
                 // No further than the point itself in a frame.
-                Vec2::from_angle(swing).rotate(off.normalize_or_zero()) * pace.min(far / (1.0 / 60.0))
+                let straight = off.normalize_or_zero() * pace.min(far / (1.0 / 60.0));
+                let woven = Vec2::from_angle(swing).rotate(straight);
+                // It does not weave into a wall: where the next step of
+                // its weave gets it nowhere, it walks straight; and where
+                // that gets it nowhere either, it looks for its way again
+                // at once.
+                if Self::gets_on(nav, &bot.body, woven) {
+                    woven
+                } else {
+                    if !Self::gets_on(nav, &bot.body, straight) {
+                        bot.looked_at = f32::MIN;
+                    }
+                    straight
+                }
             }
             None => Vec2::ZERO,
         }
+    }
+
+    /// Whether `body`, standing where one can walk, gets anywhere by
+    /// walking `walk` for a frame: whole, or along either side of a wall
+    /// it is against, onto ground no more than a step up, as
+    /// [`Body::step`] moves one. A body knocked to where none walks gets
+    /// on wherever there is ground, and one in the air is not on its
+    /// legs: neither is asked about.
+    fn gets_on(nav: &Nav, body: &Body, walk: Vec2) -> bool {
+        let here = body.at.xz();
+        if !nav.walkable_at(here) || !body.free(nav) {
+            return true;
+        }
+        let whole = here + walk * (1.0 / 30.0);
+        [whole, Vec2::new(whole.x, here.y), Vec2::new(here.x, whole.y)]
+            .into_iter()
+            .any(|to| to != here && nav.walkable_at(to) && nav.ground(to).is_some_and(|there| there - body.at.y <= STEP))
     }
 
     /// How a bridge of `chord` metres bends on its way, thrown as it is
@@ -3973,8 +4114,13 @@ impl Squad {
         }
         // Its planks, a rung at a time, kept ahead of its feet: the first
         // rung is the bridge's root, and costs nothing.
+        // The last rung goes down with the one before it: a bridge a
+        // plank short of its end is one a bot may jump from, to get at
+        // whoever it is after, and leave so (a hole mended all but its
+        // last plank, in the test of it, once the squares walked along a
+        // plank ended where the plank does).
         let mut next = laying.next;
-        while next <= planks && (next as f32 - 1.0) * step < along + LAID_AHEAD + step {
+        while next <= planks && ((next as f32 - 1.0) * step < along + LAID_AHEAD + step || next == planks) {
             let cost = if next == 0 { 0.0 } else { plank };
             if bot.metres + 1e-3 < cost {
                 break;
@@ -5130,13 +5276,13 @@ mod tests {
 
     #[test]
     fn a_body_jumping_a_gap_goes_off_the_edge_it_would_never_walk_off_and_comes_down_past_it() {
-        // A bridge with three planks blown out of it, 4.7 m of nothing: a
-        // blast on a plank's middle takes that plank and the one either
-        // side of it.
+        // A bridge with four planks blown out of it, 5.9 m of nothing: a
+        // blast where two planks meet takes the two either side of it,
+        // as one anywhere but on the very middle of a plank does.
         let mut nav = bridged();
         let span = two_islands().1;
-        let taken = nav.blast((span.rung(6) + span.rung(7)) * 0.5, 3.0);
-        assert_eq!(taken.len(), 3, "{taken:?}");
+        let taken = nav.blast(span.rung(6), 3.0);
+        assert_eq!(taken.len(), 4, "{taken:?}");
         let gap = nav.gaps()[0];
         assert!(gap.length() < Squad::reach_of_a_jump(RUN_SPEED), "{} m", gap.length());
         let frame = 1.0 / 60.0;
@@ -5167,15 +5313,18 @@ mod tests {
         let (left_at, down_at) = (left_at.expect("it jumped"), down_at.expect("it came down"));
         assert!((left_at - gap.a.x).abs() < 0.3, "it left the ground at {left_at}, the edge being at {}", gap.a.x);
         assert!(highest > 1.6, "as high as anyone jumps: {highest}");
-        assert!(down_at > gap.b.x + 0.6, "down at {down_at}, the far edge being at {}", gap.b.x);
-        // Four planks gone, 6.3 m, as a blast where two planks meet
-        // takes, a body at a run clears too, by less: a bot jumps no gap
-        // it has not a good deal in hand over ([`JUMP_SPARE`]), and this
-        // is not one it jumps.
+        // With what a bot keeps in hand ([`JUMP_SPARE`]), and not much
+        // over.
+        assert!(down_at - gap.b.x >= JUMP_SPARE, "down {} m past the far edge", down_at - gap.b.x);
+        assert!(Squad::reach_of_a_jump(RUN_SPEED) - gap.length() < 0.5);
+        // Five planks gone, 7.3 m, as a blast on the very middle of a
+        // plank takes, a body at a run clears too, by a hand: a bot jumps
+        // no gap it has not a good deal in hand over, and this is not one
+        // it jumps.
         let mut wide = bridged();
-        assert_eq!(wide.blast(span.rung(6), 3.0).len(), 4);
+        assert_eq!(wide.blast((span.rung(6) + span.rung(7)) * 0.5, 3.0).len(), 5);
         let hole = wide.gaps()[0];
-        assert!(hole.length() > Squad::reach_of_a_jump(RUN_SPEED) && hole.length() < RUN_SPEED * JUMP_SECS);
+        assert!(hole.length() > Squad::reach_of_a_jump(RUN_SPEED) + 1.0, "{} m", hole.length());
         let mut close = Body::standing(Vec3::new(hole.a_in.x, PLANK, hole.a_in.y), 0.0);
         close.leap = true;
         let mut down_at = None;
@@ -5187,10 +5336,10 @@ mod tests {
             }
         }
         let down_at = down_at.expect("it clears it");
-        assert!(down_at - hole.b.x < JUMP_SPARE, "it came down {} m past the far edge", down_at - hole.b.x);
-        // Five planks gone is further than a jump goes.
+        assert!(down_at - hole.b.x < JUMP_SPARE * 0.5, "it came down {} m past the far edge", down_at - hole.b.x);
+        // Six planks gone is further than a jump goes.
         let mut wider = bridged();
-        assert_eq!(wider.blast((span.rung(7) + span.rung(8)) * 0.5, 3.7).len(), 5);
+        assert_eq!(wider.blast(span.rung(7), 3.7).len(), 6);
         let hole = wider.gaps()[0];
         let mut gone = Body::standing(Vec3::new(hole.a_in.x, PLANK, hole.a_in.y), 0.0);
         gone.leap = true;
@@ -5637,17 +5786,219 @@ mod tests {
         assert!(soonest < 20.0 && latest > 30.0, "between {soonest} and {latest} s");
     }
 
+    /// A floor 20 m square about the origin, with a wall across it and
+    /// down it, an L whose corner is at the origin: along z = 0 from x =
+    /// -5 to 0, and along x = 0 from z = 0 to 5.
+    fn walled() -> Nav {
+        let mut grid = Grid::blank(60, 60, Vec2::new(-15.0, -15.0));
+        for row in 10..50 {
+            for column in 10..50 {
+                let wall = (row == 30 && (20..=30).contains(&column)) || (column == 30 && (30..=40).contains(&row));
+                grid.set(column, row, Some(0.25), !wall, Some(Region::Team(1)));
+            }
+        }
+        Nav::new(Arc::new(grid))
+    }
+
+    #[test]
+    fn a_bot_off_its_way_in_a_corner_finds_the_way_again_and_is_not_held_there() {
+        // In the crook of the L, against both walls, with a way it found
+        // from somewhere else: the next point of it is on the far side of
+        // the wall, up and to the right, and a body walked straight at
+        // that stays in the corner. (What held Hajun's teammate at the
+        // end of its bridge, and the computer's players eight times a
+        // game.)
+        let (corner, to) = (Vec2::new(-0.02, 0.52), Vec2::new(6.0, -6.0));
+        for (seed, who) in [(1, "ESTP"), (2, "INFP"), (3, "ISTJ"), (4, "ENFP")] {
+            let mut rig = Rig::new(walled(), seed, who, corner, 100.0);
+            let nav = rig.nav.clone();
+            assert!(nav.walkable_at(corner) && !nav.line(corner, to));
+            // A body walked straight at it, as a bot was until it looked:
+            // nowhere.
+            let mut body = Body::standing(Vec3::new(corner.x, 0.25, corner.y), 0.0);
+            for _ in 0..120 {
+                let walk = (to - body.at.xz()).normalize_or_zero() * RUN_SPEED;
+                body.step(&nav, walk, Rig::FRAME);
+            }
+            assert!(body.at.xz().distance(corner) < 0.1, "{}", body.at);
+            // The bot, with that for its way.
+            let mut bot = rig.squad.bots[rig.seat].take().expect("seated");
+            bot.path = vec![to];
+            bot.path_to = Some(to);
+            bot.path_at = rig.now;
+            bot.path_version = nav.version;
+            bot.path_cuts = nav.cuts;
+            bot.progress = (corner, rig.now);
+            let seen = vec![Seen::default(); ARENA_SEATS];
+            let purses = [[0u16; 4]; ARENA_SEATS];
+            let (mut arrived, mut furthest_back) = (None, 0.0f32);
+            for frame in 0..(8.0 / Rig::FRAME) as usize {
+                rig.now += Rig::FRAME;
+                let view = View {
+                    elapsed: rig.now,
+                    nav: &nav,
+                    seats: &seen,
+                    purses: &purses,
+                    outfits: &rig.outfits,
+                    mint: &rig.mint,
+                    anchors: [120.0; ARENA_TEAMS],
+                    sticks: &rig.sticks,
+                };
+                let walk = rig.squad.walk_to(&mut bot, &view, to, RUN_SPEED, 1.0);
+                bot.body.step(&nav, walk, Rig::FRAME);
+                let here = bot.body.at.xz();
+                assert!(nav.walkable_at(here), "{who}: it is in the wall, at {here}");
+                furthest_back = furthest_back.max(here.distance(to) - corner.distance(to));
+                // Out of the corner within the second.
+                assert!(frame as f32 * Rig::FRAME < 1.0 || here.distance(corner) > 1.0, "{who}: still in the corner");
+                if here.distance(to) <= ARRIVED + 0.05 {
+                    arrived = Some(frame as f32 * Rig::FRAME);
+                    break;
+                }
+            }
+            // Round the end of one wall or the other: 17 m or so at a
+            // run, weaving, and nothing holding it on the way.
+            let took = arrived.unwrap_or_else(|| panic!("{who}: it never got there, and is at {}", bot.body.at));
+            assert!(took < 4.5, "{who}: {took} s");
+            assert_eq!(bot.pinned, 0, "{who}");
+            assert_eq!(bot.stalls, 0, "{who}");
+            rig.squad.bots[rig.seat] = Some(bot);
+        }
+    }
+
+    #[test]
+    fn a_bot_at_a_stand_takes_a_moment_over_each_thing_it_buys() {
+        // On Hajun's map, at its own team's stand, with silver and gold
+        // for a sword and a shield and nothing in its hand: how long it
+        // stands there before each thing is asked for.
+        let seat = 5;
+        let stand = Nav::arena().grid().nearest_clear(ARENA_SHOPS[usize::from(arena_team(seat))], 4.0).expect("room at the stand");
+        let mut waits = Vec::new();
+        for seed in 0..10 {
+            let mut rig = Rig::new(Nav::arena(), seed, "ESTJ", stand, 30.0);
+            let mut purses = [[0u16; 4]; ARENA_SEATS];
+            purses[seat] = [40, 20, 0, 0];
+            let mut seen = vec![Seen::default(); ARENA_SEATS];
+            let (mut arrived, mut bought) = (rig.now, 0);
+            for _ in 0..(20.0 / Rig::FRAME) as usize {
+                rig.now += Rig::FRAME;
+                seen[seat] = Seen {
+                    at: rig.bot().body.at,
+                    alive: true,
+                    in_play: true,
+                    unseen: false,
+                    person: false,
+                    health: 1.0,
+                };
+                let order = {
+                    let view = View {
+                        elapsed: rig.now,
+                        nav: &rig.nav,
+                        seats: &seen,
+                        purses: &purses,
+                        outfits: &rig.outfits,
+                        mint: &rig.mint,
+                        anchors: [120.0; ARENA_TEAMS],
+                        sticks: &rig.sticks,
+                    };
+                    rig.squad.step(seat, &view, Rig::FRAME)
+                };
+                // Away from the stand, on its way to it or off again, no
+                // time is being taken over anything.
+                if rig.at().distance(stand) > 1.2 || !matches!(rig.bot().goal(), Goal::Shop(_)) {
+                    arrived = rig.now;
+                }
+                if let Some(ware) = order.buy {
+                    waits.push(rig.now - arrived);
+                    arrived = rig.now;
+                    // Sold, as the game would sell it.
+                    assert!(rig.outfits.buy(seat, ware, &mut purses[seat]), "seed {seed}: it asked for {ware:?} and could not have it");
+                    rig.squad.bought(seat, ware, rig.now);
+                    bought += 1;
+                    if bought == 2 {
+                        break;
+                    }
+                }
+            }
+            assert_eq!(bought, 2, "seed {seed}: it bought {bought} things in twenty seconds");
+        }
+        // Each within what anyone takes, a frame over at the most; not
+        // all alike; and about a second on the whole.
+        for wait in &waits {
+            assert!((SHOP_SECS.0..=SHOP_SECS.1 + 2.0 * Rig::FRAME).contains(wait), "{wait} s at the stand: {waits:?}");
+        }
+        let (least, most) = waits.iter().fold((f32::MAX, 0.0f32), |(least, most), &wait| (least.min(wait), most.max(wait)));
+        assert!(most - least > 0.3, "all of a length: {waits:?}");
+        let mean = waits.iter().sum::<f32>() / waits.len() as f32;
+        assert!((0.8..=1.2).contains(&mean), "{mean} s on average: {waits:?}");
+    }
+
+    #[test]
+    fn a_bot_does_not_weave_into_the_wall_it_walks_along() {
+        // Along the wall's upper side, an arm's length from it, to its
+        // far end and round it: the straight way is clear, and the weave
+        // would take it into the wall. It gets there as fast as one that
+        // walks straight, near enough, and is never against the wall
+        // getting nowhere.
+        let (from, to) = (Vec2::new(-9.0, -0.3), Vec2::new(2.0, -0.3));
+        for (seed, who) in [(5, "ENFP"), (6, "ESTP"), (7, "ISFP")] {
+            let mut rig = Rig::new(walled(), seed, who, from, 100.0);
+            let nav = rig.nav.clone();
+            assert!(nav.line(from, to));
+            let mut bot = rig.squad.bots[rig.seat].take().expect("seated");
+            // (It has stood here since the game began, a hundred seconds
+            // ago: setting out is not getting nowhere.)
+            assert_eq!(bot.progress.1, 0.0);
+            let seen = vec![Seen::default(); ARENA_SEATS];
+            let purses = [[0u16; 4]; ARENA_SEATS];
+            let (mut arrived, mut slowest) = (None, f32::MAX);
+            let mut was = from;
+            for frame in 0..(6.0 / Rig::FRAME) as usize {
+                rig.now += Rig::FRAME;
+                let view = View {
+                    elapsed: rig.now,
+                    nav: &nav,
+                    seats: &seen,
+                    purses: &purses,
+                    outfits: &rig.outfits,
+                    mint: &rig.mint,
+                    anchors: [120.0; ARENA_TEAMS],
+                    sticks: &rig.sticks,
+                };
+                let walk = rig.squad.walk_to(&mut bot, &view, to, RUN_SPEED, 1.0);
+                bot.body.step(&nav, walk, Rig::FRAME);
+                let here = bot.body.at.xz();
+                if here.distance(to) <= ARRIVED + 0.05 {
+                    arrived = Some(frame as f32 * Rig::FRAME);
+                    break;
+                }
+                // Every quarter of a second, how far it has come in it.
+                if frame % 15 == 14 {
+                    if here.distance(to) > 1.5 {
+                        slowest = slowest.min(here.distance(was) / (15.0 * Rig::FRAME));
+                    }
+                    was = here;
+                }
+            }
+            let took = arrived.unwrap_or_else(|| panic!("{who}: it never got there, and is at {}", bot.body.at));
+            assert!(took < 11.0 / RUN_SPEED + 0.6, "{who}: {took} s for 11 m");
+            assert!(slowest > RUN_SPEED * 0.6, "{who}: down to {slowest} m/s along the wall");
+            assert_eq!((bot.stalls, bot.pinned), (0, 0), "{who}");
+            rig.squad.bots[rig.seat] = Some(bot);
+        }
+    }
+
     #[test]
     fn a_hole_blown_in_a_bridge_is_jumped_if_it_is_short_and_mended_if_it_is_not() {
         let span = two_islands().1;
         let far = Vec2::new(30.0, 0.5);
-        // Three planks gone, 4.7 m, as a blast on a plank's middle takes:
-        // after someone on the far land, a bot runs up to the hole and
-        // jumps it.
+        // Four planks gone, 5.9 m, as a blast takes all but always: after
+        // someone on the far land, a bot runs up to the hole and jumps
+        // it.
         let mut over = 0;
         for seed in 0..5 {
             let mut rig = Rig::hunting(bridged(), seed, "ESTJ", Vec2::new(2.0, 0.0));
-            assert_eq!(rig.nav.blast((span.rung(7) + span.rung(8)) * 0.5, DYNAMITE_RADIUS).len(), 3);
+            assert_eq!(rig.nav.blast(span.rung(7), DYNAMITE_RADIUS).len(), 4);
             let gap = rig.nav.gaps()[0];
             for _ in 0..(8.0 / Rig::FRAME) as usize {
                 rig.step(Some(far));
@@ -5660,14 +6011,14 @@ mod tests {
             assert_eq!(rig.rungs, 0, "it laid planks where it could jump");
         }
         assert_eq!(over, 5, "over the hole {over} times of five");
-        // Four planks gone, 6.3 m, as a blast where two planks meet
-        // takes, is further than it jumps. With nobody it can get at, and
-        // the metres for it, it lays planks across the hole, from the end
-        // of what stands on its side to the end of what stands on the
-        // other: a few planks, not a bridge.
+        // Five planks gone, 7.3 m, as a blast on the very middle of a
+        // plank takes, is further than it jumps. With nobody it can get
+        // at, and the metres for it, it lays planks across the hole, from
+        // the end of what stands on its side to the end of what stands on
+        // the other: a few planks, not a bridge.
         let mut rig = Rig::new(bridged(), 4, "ISTJ", Vec2::new(2.0, 0.0), 400.0);
-        let hole = span.rung(7);
-        assert_eq!(rig.nav.blast(hole, DYNAMITE_RADIUS).len(), 4);
+        let hole = (span.rung(7) + span.rung(8)) * 0.5;
+        assert_eq!(rig.nav.blast(hole, DYNAMITE_RADIUS).len(), 5);
         let gap = rig.nav.gaps()[0];
         assert!(!rig.nav.joined(Region::Team(1), Region::Middle));
         // Nothing to lay them with yet: it stays on its own side.
@@ -5715,12 +6066,12 @@ mod tests {
         let span = two_islands().1;
         let holed = || {
             let mut nav = bridged();
-            assert_eq!(nav.blast((span.rung(7) + span.rung(8)) * 0.5, DYNAMITE_RADIUS).len(), 3);
+            assert_eq!(nav.blast(span.rung(7), DYNAMITE_RADIUS).len(), 4);
             let gap = nav.gaps()[0];
             (nav, gap)
         };
         // Someone standing on the very edge of what is left past a hole
-        // of three planks. A bot after them jumps it and comes down on the
+        // of four planks. A bot after them jumps it and comes down on the
         // planks behind them, whoever it is, and never in the hole: for a
         // night the place to come down was where they stood, the edge
         // itself, the jump was over a step short of it, in the air, and

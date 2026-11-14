@@ -2,7 +2,10 @@
 //! (`assets/UIbuttonlayout.jpg`, 2026-10-31): top left your name on a plate,
 //! with a person button and the settings' gear beside it (`settings`) and
 //! your balance under; down the right edge a gift, two people (your
-//! friends, `friends`; a speech bubble until 2026-11-14) and a gamepad;
+//! friends, `friends`; a speech bubble until 2026-11-14) and a gamepad
+//! (**the person and the gift are away since 2026-11-14**, when Hajun found
+//! the town had "too many lobby ui buttons now", and the others stand in
+//! their places: [`PERSON`], [`GIFT`]);
 //! round a phone's jump button a face, a speech bubble (things to say at a
 //! press, `quick`), a small keyboard over that (the chat, `chat`) and a
 //! fist; and headlines across the middle — the town's
@@ -93,6 +96,18 @@ pub(crate) const SMALL_BUTTON: f32 = 8.0;
 const SIDE_BUTTON: f32 = 10.5;
 const SIDE_INSET: f32 = 1.5;
 const ACTION_BUTTON: f32 = 14.0;
+/// Whether the gift is there, at the top of the right edge, and the person
+/// beside your name. Neither since 2026-11-14 (Hajun: "there is too many
+/// lobby ui buttons now. i think we can get rid of the gift icon for now,
+/// as well as the profile icon next to the setting. u can shift the other
+/// buttons in place of those"): the two people and the gamepad stand one
+/// place higher each, and the gear right beside your name. The person did
+/// nothing yet. The gift, held in the car, was its gun ([`GunButton`],
+/// `drive::shoot`): while the gift is away the gun is G on desktop and
+/// nothing on a phone. Everything of both is still here, and each of these
+/// words puts its button back.
+const GIFT: bool = false;
+const PERSON: bool = false;
 /// Bridge Wars' layout ([`Layout::Arena`]): the health bar under your name,
 /// its rim; a resource's picture and its count, in a row wide enough for
 /// the pictures to line up down the right edge; and the small buttons
@@ -1164,8 +1179,8 @@ fn spawn_town_bar(commands: &mut Commands, assets: &AssetServer, images: &mut As
             ))
             .with_children(|left| {
                 // Your name, and beside it the buttons that are about you:
-                // a person, and the settings' gear, which `settings` puts
-                // after it.
+                // a person, while there is one ([`PERSON`]), and the
+                // settings' gear, which `settings` puts after it.
                 left.spawn((
                     BarLeft,
                     Node {
@@ -1177,7 +1192,9 @@ fn spawn_town_bar(commands: &mut Commands, assets: &AssetServer, images: &mut As
                 ))
                 .with_children(|row| {
                     row.spawn(name_plate());
-                    row.spawn(round_button(icon("person"), SMALL_BUTTON, Node::default()));
+                    if PERSON {
+                        row.spawn(round_button(icon("person"), SMALL_BUTTON, Node::default()));
+                    }
                 });
                 left.spawn(balance(assets));
             });
@@ -1196,8 +1213,12 @@ fn spawn_town_bar(commands: &mut Commands, assets: &AssetServer, images: &mut As
                 // A leaderboard stood between the gift and the group until
                 // Hajun had it taken out (2026-11-01), and the group became
                 // a speech bubble the same day, and two people again on
-                // 2026-11-14 ([`ICONS`]).
+                // 2026-11-14 ([`ICONS`]). The gift is away for now
+                // ([`GIFT`]), and the other two each a place higher for it.
                 for name in ["gift", "friends", "gamepad"] {
+                    if name == "gift" && !GIFT {
+                        continue;
+                    }
                     let button = round_button(icon(name), SIDE_BUTTON, Node::default());
                     match name {
                         // In the car, held, the gun (`drive::shoot`).
@@ -1289,34 +1310,11 @@ pub(crate) fn round_button(icon: Handle<Image>, size_vmin: f32, place: Node) -> 
     )
 }
 
-/// The cross on the corner of a window or a dialog that shuts it: a red
-/// disc `size_vmin` across, hung over the top right corner of whatever it
-/// is spawned under, with two white strokes across it, carrying `marker`,
-/// which says whose it is and what a press on it does.
-pub(crate) fn close_cross(size_vmin: f32, marker: impl Bundle) -> impl Bundle {
-    let colours = ui().colours;
-    (
-        marker,
-        TakesPress,
-        Button,
-        Node {
-            position_type: PositionType::Absolute,
-            top: Val::VMin(-size_vmin * 0.35),
-            right: Val::VMin(-size_vmin * 0.35),
-            width: Val::VMin(size_vmin),
-            height: Val::VMin(size_vmin),
-            border: UiRect::all(Val::Px(2.0)),
-            border_radius: BorderRadius::all(Val::Percent(50.0)),
-            ..default()
-        },
-        BackgroundColor(colours.close),
-        BorderColor::all(colours.close_rim),
-        children![
-            (shape(22.0, 44.0, 56.0, 12.0), UiTransform::from_rotation(Rot2::degrees(45.0)),),
-            (shape(22.0, 44.0, 56.0, 12.0), UiTransform::from_rotation(Rot2::degrees(-45.0)),),
-        ],
-    )
-}
+// (The cross that shuts a window is the windows' own, a bare white one
+// inside its corner: `window::cross`. Until 2026-11-14 there was one here,
+// a grey disc hung over the corner with two white strokes across it, for
+// the settings, the game selector and Bridge Wars' shops; House Builder's
+// shop still draws its own like it, `shop::close_button`.)
 
 /// Your name on a plate: the buttons' grey, a little more solid, with its
 /// corners rounded a little.
@@ -2360,16 +2358,18 @@ mod tests {
         }
         // And of what is top right, on a screen lying on its side as wide
         // as a tablet's, a monitor's and a phone's (the short side is the
-        // height, 100 shares): the gamepad, the lowest of the town's three
-        // down the right edge, and in a game the minimap. From the top and
-        // the right of the screen, in shares of the short side.
+        // height, 100 shares): the gamepad, the lowest of the town's
+        // buttons down the right edge, under the two people and, when it is
+        // there, the gift; and in a game the minimap. From the top and the
+        // right of the screen, in shares of the short side.
         for wide in [4.0 / 3.0, 16.0 / 9.0, 19.5 / 9.0] {
             let chat = Vec2::new(
                 crate::JUMP_RIGHT_VW * wide + right + size * 0.5,
                 100.0 - crate::JUMP_BOTTOM_VH - bottom - size * 0.5,
             );
             let top = EDGE + SIDE_INSET;
-            let gamepad = Vec2::new(top + SIDE_BUTTON * 0.5, top + SIDE_BUTTON * 2.5 + 1.6 * 2.0);
+            let over_it = if GIFT { 2.0 } else { 1.0 };
+            let gamepad = Vec2::new(top + SIDE_BUTTON * 0.5, top + SIDE_BUTTON * (over_it + 0.5) + 1.6 * over_it);
             let gap = chat.distance(gamepad) - (size + SIDE_BUTTON) * 0.5;
             assert!(gap > 1.5, "{wide}: {gap} from the gamepad");
             let minimap_ends = top + MINIMAP;

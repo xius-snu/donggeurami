@@ -7,6 +7,86 @@
 > "above" or "below", or names another section in quotes, that section may be
 > in another file here: the table in `CLAUDE.md` says which.
 
+## The last three lines, fainter upward, that scroll; a stroke round the words; wider
+
+Later on the night of 2026-11-14, an hour after the entry under this one,
+in four messages from Hajun as they played ("dont rebuild apk yet just
+implement"; built into APK 32 two hours on, at "build apk and push to
+git"). `src/chat.rs`, `colours.chat` in `assets/ui.ron`.
+
+- **No clock in the fading.** "i dont want timed fades for the chat
+  messages. the last message sent should be visible always including the
+  above one, but the above ones would just look faded a bit more compared
+  to the last one. so maybe just 3 lines visible. with the top one looking
+  sooo faded, and the second to top one looking somewhat faded, and the
+  last one not faded at all." The twelve seconds of the entry below were
+  my reading of "partway through fading", and wrong. Three lines are in
+  sight: the lowest whole, the one over it at 0.55 of itself, the one over
+  that at 0.25, and nothing over those (`colours.chat.strengths`, for
+  Hajun to change; the numbers are mine). The last thing said stays until
+  something else is said.
+- **It scrolls with nothing typed, and the fading scrolls with it.** "also
+  test if you can scroll up on the chat. when u scroll, the "fade" of the
+  text should be "scroll" too i guess", and "btw u should be able to
+  scroll the chat without needing to open the chatbox input box/keyboard".
+  A finger dragged on the lines, or the wheel over them, goes back through
+  the sixty kept. How faint a line is goes by where it is in sight
+  (`chat::strength_at`, `fade`): by how many lines its foot is over the
+  foot of what is in sight, as it was last laid out, with so much of one
+  line's strength and so much of the next between two lines. So a line two
+  lines tall pushes what is over it a line further up. **The lines take a
+  press again**, once there are more than three of them (`Backdrop`,
+  shown with nothing of it to see): with three or fewer a finger on them
+  looks round. **Left scrolled back it returns to its newest line five
+  seconds after it was last touched** (`RETURN_SECS`, mine: otherwise what
+  is said next is said out of sight).
+- **Two things were wrong with scrolling, and neither had been seen.** In
+  APK 31 a finger on a line's own words scrolled nothing while a line was
+  typed: what is dragged on had become the dark box behind the lines, and
+  a piece of words (`TextSpan`) is picked by itself, whatever the words it
+  is a piece of say (`Pickable::IGNORE` on the words did not cover their
+  pieces): the pieces say it now. And since the chat was first made a slow
+  drag took the lines half as far again as the finger went one way, and
+  less far the other: each step was reckoned from where the lines were
+  last drawn, a whole pixel, short of where they had been put
+  (`scroll_by` goes by where it was put). Both found by scripting a drag.
+- **A thin black stroke round the words, in place of the shadow.** "i
+  think the shadow on the text is a bit hard to see maybe it should just
+  be a very thin black stroke of the text in the chatboxes." Bevy 0.19 has
+  no stroke for words: each line is written five times, four in
+  `colours.chat.stroke` set 0.09 shares of the short side off toward the
+  four corners (a pixel at 1,080 high), and its own over them
+  (`chat::write`, `STROKE`). **A faded line's stroke is faded twice
+  over** (`drawn_in`): the four copies lie under the words too, and through
+  words that are half there they showed as a dark line. On the chat's
+  lines only: what is typed is on its own dark box, and the fan's plates
+  on their grey.
+- **Wider.** "the width of the chatbox region could be wider/longer so
+  more text fits in each line." 80 shares of the short side where it was
+  50, about sixty letters to a line; no wider than 40 parts in a hundred
+  of the screen's width, which is 71 shares on a screen sixteen by nine and
+  the 80 on a phone. How much is mine. Typed in, its box is that wide too,
+  and on a screen sixteen by nine its right end lies under the left of a
+  Bridge Wars shop's window while that is open.
+- **Checked.** Unit tests (300 of the game's): the three strengths and
+  nothing over them, by lines said since and by where a line is, never
+  the fainter for being lower; the stroke's corners and how thin it is;
+  how wide. The desktop build, scripted, offline, in the town and in
+  Bridge Wars: one line on the lowest line; three, each fainter upward,
+  enlarged to see the stroke, even all round the newest and faint round
+  the others; a fourth putting the first out of sight; the same six
+  seconds later; a line of eighty letters on two lines; the box while
+  typing, 80 wide. A drag of one line with seven said: the three before,
+  each a line lower, the lowest whole; a drag of a line and a half more,
+  the lines between places and their strengths between; dragged past the
+  oldest, stopped there; five seconds on, at the newest again; with three
+  lines, nothing moved; while typing, two lines back and all of them
+  whole.
+- **Not checked.** A phone, any of it. How the faded lines read over a
+  bright floor (white at a quarter of itself is nearly not there, as
+  asked; `strengths` is the place). The wheel, by hand. A game's feed
+  coming fast while the lines are scrolled back.
+
 ## The chat is its words alone until you type, and a bubble of things to say
 
 Since the night of 2026-11-14, a few hours after the chat itself ("The
@@ -43,7 +123,8 @@ still, no deploy. APK 31.
   the lines have (four in the town, three in a game, where they were): a
   spacer over the lines takes whatever room they leave, so the first thing
   said is written there too, and each line after moves the others up.
-- **A line fades from the moment it is said** (`chat::faded`): by
+- (**Taken out an hour later**, as not what was meant: see the entry
+  above.) **A line fades from the moment it is said** (`chat::faded`): by
   `1 - (age / 12 s) ^ 2.2`, in 40 steps, so it is nine parts in ten there
   after 4 s, three quarters after 6, half after 9 and gone at 12, and of
   any two lines the older is the fainter, as asked. Its words, each piece
@@ -103,8 +184,9 @@ still, no deploy. APK 31.
   screen (they are 2.5 shares tall, as they were in the box), the fan
   under a thumb, and the keyboard's button beside the gamepad. Scrolling
   the lines back while typing was not run again; what it is dragged on
-  changed (the dark box, where it was the lines' own). Nothing was said
-  through the VM.
+  changed (the dark box, where it was the lines' own), **and it was
+  broken by that** on a line's own words, as scripting a drag showed an
+  hour later (the entry above). Nothing was said through the VM.
 
 ## The chat
 

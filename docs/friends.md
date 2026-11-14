@@ -9,6 +9,17 @@
 
 ## Friends, groups and messages
 
+(Since the night of 2026-11-14 the panel's look is every window's: Hajun
+asked for its style everywhere, and what draws it, its sizes and its
+colours moved, as they were, out of `friends.rs` into `src/window.rs` and
+out of `colours.friends` into `colours.window`, which the settings, the
+game selector and Bridge Wars' shops are drawn from as well. The panel is
+as it was, to the pixel. "Every window is drawn as the friends' panel is",
+in `docs/ui-style.md`. Where this section says `colours.friends`, or that
+a size is `friends.rs`'s, read those. And the button that opens the panel
+is at the top of the right edge now, the gift over it being away: "The
+gift and the person are away", in `docs/town-hud.md`.)
+
 Since 2026-11-13 (Hajun, with four sketches of the panel at the root of the
 repo, `Friendtabdesign1.png` and `friendtabdesign2.png` to `4`: "I want to
 add a friend system. First every account need a random number between

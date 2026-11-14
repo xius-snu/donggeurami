@@ -7,6 +7,37 @@
 > "above" or "below", or names another section in quotes, that section may be
 > in another file here: the table in `CLAUDE.md` says which.
 
+## The gift and the person are away; the settings are a window like the friends' panel
+
+Later on the night of 2026-11-14, with the windows' new look ("Every window
+is drawn as the friends' panel is", in `docs/ui-style.md`, which has what
+the settings' window and the game selector look like now and why). Hajun,
+as that was being looked at: "also there is too many lobby ui buttons now.
+i think we can get rid of the gift icon for now, as well as the profile
+icon next to the setting. u can shift the other buttons in place of
+those." `src/hud.rs`. The app's own; no APK built, uncommitted as this is
+written.
+
+- **Two words turn them off** (`hud::GIFT`, `hud::PERSON`, both `false`):
+  the gift is not spawned at the top of the right edge, nor the person
+  beside your name. Each stood first in a row that lays itself out, so
+  the others are in their places with nothing else changed: **the two
+  people (friends) are at the top of the right edge and the gamepad under
+  them; the gear is right beside your name.** Everything of both buttons
+  is still in the code, and each word puts its button back.
+- **The gift was the car's gun** on a phone (held in the car;
+  `hud::GunButton`, `drive::shoot`). While it is away the gun is G on
+  desktop and nothing on a phone. It hits nothing yet, and Hajun said
+  "for now". The person did nothing.
+- The test that keeps the chat's small button clear of the gamepad goes
+  by where the gamepad is now, one place higher (and two with the gift
+  back).
+- **Checked** in the desktop build, scripted: the town's buttons on
+  windows shaped sixteen by nine, as a phone and as a tablet; the gear,
+  the two people and the gamepad each opening what it opens from where it
+  is now, the friends' count in gold on the two people's corner. **Not on
+  a phone.**
+
 ## Clear of the camera's hole; two people for friends; the chat's own button
 
 Since the night of 2026-11-14. Hajun, having played on the phone: "Right

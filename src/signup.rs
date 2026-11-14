@@ -68,19 +68,6 @@ fn white_button() -> (Fill, Color) {
     )
 }
 
-/// A gold button with the dark blue of words on gold: the settings' Save, in
-/// the look of the town's dialogs.
-pub(crate) fn gold_button() -> (Fill, Color) {
-    let colours = ui().colours;
-    (
-        Fill {
-            idle: colours.gold,
-            lit: colours.gold_lit,
-        },
-        colours.on_gold,
-    )
-}
-
 /// Sizes, as shares of the short side of the screen: the town's name, a
 /// page's heading, its words, its button and the name as typed.
 const TITLE: f32 = 8.5;

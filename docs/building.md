@@ -17,7 +17,21 @@ alone; the server is `cargo build -p roundtown_server`. Never `--workspace`,
 which would build the game with the server's half of replicon in it.
 
 Android needs the `release-android` profile, a manual strip step, and Gradle
-(`versionCode` in `mobile/android/app/build.gradle` is the build number: 31
+(`versionCode` in `mobile/android/app/build.gradle` is the build number: 32
+late on the night of 2026-11-14, the work of two sessions in the one tree:
+the chat's three lines that fade upward and scroll, with a stroke round
+their words; a plank a tenth wider than the map's; a kill's sapphire and
+amethyst; the computer's players no longer held fast, and taking a moment
+at a stand ("The last three lines" in `docs/chat-and-text.md`, the first
+two entries of `docs/bridge-wars.md`); and every window drawn as the
+friends' panel is, with the gift and the person button turned off (the
+first entries of `docs/town-hud.md`, `docs/friends.md` and
+`docs/ui-style.md`). Protocol 16 still; **the server deployed with it at
+14:47 UTC**, `shared/` having changed (nobody had been connected
+since 13:37; the binary before kept on the VM as
+`roundtown-server.prev-2026-11-14e`; this PC's own account came online
+after). Built and not installed, APK 31 kept beside it as
+`donggeurami_town-release.prev-2026-11-14f.apk`); 31
 on the night of 2026-11-14, the chat its words alone until a line is typed,
 a small keyboard button that begins one, things to say fanned out of the
 big speech bubble, two people on the friends' button, and the top bar and

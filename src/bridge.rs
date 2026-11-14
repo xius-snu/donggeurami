@@ -178,21 +178,25 @@ mod builder_bot;
 pub(crate) use builder_bot::send_builder;
 
 /// Half the width of a plank, in metres: Hajun's bridges in
-/// `pvptownmap.glb` were 2.726 m wide, and a plank is a quarter wider
-/// than that since 2026-11-14, 3.41 m (Hajun: "The bridge could also be a
-/// little wider, maybe 1.25 times its current width"). The computer's
-/// players lay theirs by the same measures, which the server has too
+/// `pvptownmap.glb` were 2.726 m wide, and a plank is a tenth wider than
+/// that, 3.00 m, since the night of 2026-11-14 (Hajun: "i think some time
+/// ago i increased the bridge width to 1.25x of that current width. i
+/// change my mind. instead of 1.25x i want 1.1x"; a quarter wider, 3.41
+/// m, for the few hours before, "The bridge could also be a little
+/// wider, maybe 1.25 times its current width"). The computer's players
+/// lay theirs by the same measures, which the server has too
 /// (`roundtown_net::nav`).
 pub(crate) const HALF_WIDTH: f32 = roundtown_net::nav::PLANK_HALF_WIDTH;
 /// How thick a plank is, in metres: Hajun's bridges' 0.25.
 pub(crate) const THICKNESS: f32 = 0.25;
 /// How far one fixed rung is from the next, in metres: half as far as a
 /// plank is wide, so that the planks follow a curve closely, like the
-/// boards of a dock. A plank is as much longer as it is wider (1.70 m
-/// since 2026-11-14, 1.36 until then), so that a bridge is the shape it
-/// was, a quarter bigger: everything below that sets one length of a
-/// plank against another, how far a mitre or a slant cuts into it, holds
-/// as it did. A bridge turns round in about 2.8 m where it took 2.3.
+/// boards of a dock. A plank is as much longer as it is wider (1.50 m
+/// since the night of 2026-11-14; 1.70 for the few hours before, and 1.36
+/// until then), so that a bridge is the shape it was, a tenth bigger:
+/// everything below that sets one length of a plank against another, how
+/// far a mitre or a slant cuts into it, holds as it did. A bridge turns
+/// round in about 2.5 m where it took 2.3.
 pub(crate) const SPACING: f32 = roundtown_net::nav::PLANK_SPACING;
 /// How high the top of every plank lies, in metres: the islands' tops,
 /// 0.25 m up, less a seam, so that where a plank's root overlaps the
@@ -257,14 +261,17 @@ const ONTO_EDGE: f32 = 2.0 * SPACING;
 /// plank long, with room for the mitre at its start and its cut along the
 /// edge it lands on. And how far ahead of a chain's last rung the shore is
 /// looked for as it lands ([`LAND_REACH`]): as far as a stretched tip
-/// reaches, a fork's first plank and that.
+/// reaches, a fork's first plank and that, which is 3.3 planks (4.5 m
+/// with a plank of Hajun's size, and 4.95 with one a tenth bigger).
 const STRETCH: f32 = SPACING;
-const LAND_REACH: f32 = 5.6;
+const LAND_REACH: f32 = 3.3 * SPACING;
 /// How far an end's corner is pushed on to meet the shore, at the most, in
-/// metres: at [`MAX_END_SLANT`] on a straight shore a corner has 2.0 m to
-/// go, and on the round islands up to about 3.4 (1.6 and 2.7, and this 3.0,
-/// with the planks a quarter narrower, until 2026-11-14).
-const END_PUSH: f32 = 3.75;
+/// metres: at [`MAX_END_SLANT`] on a straight shore a corner of a plank of
+/// Hajun's size has 1.6 m to go, and on the round islands up to about 2.7,
+/// and this was 3.0, which is 2.2 planks: so it goes by the plank, as
+/// those do (3.3 m with a plank a tenth bigger; 3.75 for the few hours of
+/// 2026-11-14 that a plank was a quarter bigger).
+const END_PUSH: f32 = 2.2 * SPACING;
 /// How much of a plank's length is left when its root or its end is cut
 /// along an edge, as a share, past the mitre at its other end, so that no
 /// plank folds; and a little room on top of the cut, in metres, which the
@@ -313,9 +320,10 @@ const STRAIGHT: f32 = 0.004;
 const TUCK: f32 = 0.015;
 /// How far from a chain's root, or from its last rung, the ground is ever
 /// asked after in cutting it, in metres: as far as a corner is pushed or
-/// pulled, and across the plank; other chains' planks further off than
-/// that are left out of the asking ([`Bridges::recut`]).
-const NEAR: f32 = 7.5;
+/// pulled, and across the plank, which is 4.4 planks (6 m with a plank of
+/// Hajun's size); other chains' planks further off than that are left out
+/// of the asking ([`Bridges::recut`]).
+const NEAR: f32 = 4.4 * SPACING;
 /// How far off the first plank's line you may drift, in metres, before its
 /// rung is fixed early, shorter than [`first_length`] asks, so that the
 /// chain can turn after you: walking off a bridge nearly along its edge.
@@ -2821,37 +2829,56 @@ mod tests {
 
     #[test]
     fn after_a_sharp_turn_the_planks_settle_onto_your_line_without_swinging_past_it() {
-        // Over the void with nothing near: east 6 m, a turn of 63 degrees,
-        // and 10 m on. A plank is always under you; the rungs after the
-        // turn never head more than 10 degrees past your new heading, and
-        // the last of them are on it.
+        // Over the void with nothing near: east four planks and a bit, a
+        // turn of 63 degrees, and nine planks on. A plank is always under
+        // you; the rungs after the turn never head more than 10 degrees
+        // to either side of your new heading, and the last of them are on
+        // it. Wherever along a plank the turn is made: made just as a
+        // rung is fixed the planks swing 7 or 8 degrees past the new
+        // heading, or come up that much short of it, and are back within
+        // 3 in four planks; made half way along one, they are on it at
+        // once. (The legs were 6 m and 10 until 2026-11-14, which with a
+        // plank a tenth bigger than Hajun's is a turn at the fourth rung
+        // to the centimetre, and four planks after it.)
         let nothing = |_: Vec2| false;
-        let mut chain = Chain::new(0, 0, vec![Rung { p: Vec2::ZERO, d: Vec2::X }]);
-        let mut metres = 100.0;
-        let mut here = Vec2::ZERO;
         let turned = Vec2::from_angle(63.0f32.to_radians());
-        for frame in 0..160 {
-            let f = if frame < 60 { Vec2::X } else { turned };
-            here += f * 0.1;
-            let grown = grow(&mut chain, here, Some(f), None, &mut metres, &nothing, &nothing);
-            assert!(!grown.done);
-            let (corners, _) = corners_of(&chain.all(), true, &nothing, &nothing);
-            assert!(under(here, &corners), "frame {frame}: nothing under {here}");
+        let mut widest = 0.0f32;
+        for part in [0.0, 0.2, 0.4, 0.5, 0.6, 0.8] {
+            let mut chain = Chain::new(0, 0, vec![Rung { p: Vec2::ZERO, d: Vec2::X }]);
+            let mut metres = 100.0;
+            let mut here = Vec2::ZERO;
+            let east = ((4.0 + part) * SPACING / 0.1).round() as usize;
+            let on = (9.0 * SPACING / 0.1).round() as usize;
+            for frame in 0..east + on {
+                let f = if frame < east { Vec2::X } else { turned };
+                here += f * 0.1;
+                let grown = grow(&mut chain, here, Some(f), None, &mut metres, &nothing, &nothing);
+                assert!(!grown.done);
+                let (corners, _) = corners_of(&chain.all(), true, &nothing, &nothing);
+                assert!(under(here, &corners), "{part} of a plank, frame {frame}: nothing under {here}");
+            }
+            let after: Vec<&Rung> = chain.rungs.iter().filter(|rung| rung.p.y > 1.0).collect();
+            assert!(after.len() >= 7, "{part} of a plank: {} rungs after the turn", after.len());
+            for rung in &after {
+                let past = turned.angle_to(rung.d).abs();
+                widest = widest.max(past);
+                assert!(past < 10.0f32.to_radians(), "{part} of a plank: a rung heads {} degrees off the turn", past.to_degrees());
+            }
+            for rung in &after[4..] {
+                assert!(turned.angle_to(rung.d).abs() < 3.0f32.to_radians(), "{part} of a plank: {:?} is off the line", rung.d);
+            }
+            for rung in &after[after.len() - 3..] {
+                assert!(turned.angle_to(rung.d).abs() < 1.5f32.to_radians(), "{part} of a plank: {:?} is off the line at the end", rung.d);
+            }
+            for pair in chain.rungs.windows(2) {
+                assert!(pair[0].d.angle_to(pair[1].d).abs() <= MAX_TURN + 1e-4);
+            }
+            let (corners, _) = corners_of(&chain.rungs, false, &nothing, &nothing);
+            assert_unfolded(&corners, TOP, false);
         }
-        let after: Vec<&Rung> = chain.rungs.iter().filter(|rung| rung.p.y > 1.0).collect();
-        assert!(after.len() >= 5, "{} rungs after the turn", after.len());
-        for rung in &after {
-            let past = turned.angle_to(rung.d);
-            assert!(past < 10.0f32.to_radians(), "a rung heads {} degrees past the turn", past.to_degrees());
-        }
-        for rung in &after[after.len() - 3..] {
-            assert!(turned.angle_to(rung.d).abs() < 3.0f32.to_radians(), "{:?} is off the line", rung.d);
-        }
-        for pair in chain.rungs.windows(2) {
-            assert!(pair[0].d.angle_to(pair[1].d).abs() <= MAX_TURN + 1e-4);
-        }
-        let (corners, _) = corners_of(&chain.rungs, false, &nothing, &nothing);
-        assert_unfolded(&corners, TOP, false);
+        // And at its worst it does swing: this is not a bridge that
+        // follows you rung for rung.
+        assert!(widest > 4.0f32.to_radians(), "{} degrees at the most", widest.to_degrees());
     }
 
     #[test]

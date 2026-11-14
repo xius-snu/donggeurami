@@ -29,7 +29,16 @@
 //! button holding something else; what you cannot pay for is blocked out
 //! with its price. An upgrade that goes by steps is one card, which shows
 //! the next step, with a pip for each step taken. All of it white on
-//! grey, but for the pictures, which are tinted as the things are.
+//! the dark of a window, but for the pictures, which are tinted as the
+//! things are: **the window is drawn as the friends' panel is** (`window`,
+//! since 2026-11-14, when Hajun asked for that panel's style everywhere),
+//! dark and see-through, its title along its top from the left, the bare
+//! white cross in its corner, and its cards the dark of that panel's
+//! buttons, fainter where a thing cannot be bought. (Until then it was the
+//! grey of your name's plate, its title in its middle and its cross a disc
+//! hung off its corner.) Its margin is narrower than that panel's, and its
+//! cross a little smaller: three rows of cards have to fit between the
+//! time and the bottom of the screen, short of the buttons on the right.
 //!
 //! It is not a dialog: the fight goes on round it and you can walk, and
 //! only a press on it is its own. A tap on a card buys it, at once
@@ -51,10 +60,11 @@ use roundtown_net::bridge_wars::{self as rules, Shop, price};
 use roundtown_net::{Item, Purse, Utility, Ware};
 
 use crate::arena::{Fighting, InArena, Outfit, Resources, Want};
-use crate::builder::{self, Fill};
+use crate::builder;
 use crate::hud::{self, DialogUp, Picture, Pictures, TakesPress};
 use crate::island::{self, Land, Venue, is_material};
 use crate::ui::{fill, ui};
+use crate::window;
 use crate::{Dead, Player};
 
 /// What the outlines on the ground in front of the stands are made of in
@@ -77,14 +87,17 @@ const ON_THE_GROUND: f32 = 0.6;
 /// Sizes, as shares of the short side of the screen: how far down the
 /// screen each shop's window begins, as a share of the screen's height,
 /// the item shop's, which is three rows, higher, both under the time and
-/// the line under it; the window's title; a card, its picture, its name,
-/// the line under it, its price with the picture of what it is paid in,
-/// and a pip; the gap between cards and the window's own margin; and the
-/// cross on its corner. An upgrade's card is taller: its name is two
+/// the line under it; the row along the window's top that its title
+/// stands in, and how far in from the window's edge the title begins; a
+/// card, its picture, its name, the line under it, its price with the
+/// picture of what it is paid in, and a pip; the gap between cards and the
+/// window's own margin; and the cross in its corner, with how far in from
+/// the corner its middle is. An upgrade's card is taller: its name is two
 /// words, on two lines, and it has its pips besides.
 const TOP_ITEMS: f32 = 16.0;
 const TOP_UPGRADES: f32 = 24.0;
-const TITLE: f32 = 3.6;
+const HEADER: f32 = 6.0;
+const TITLE_IN: f32 = 1.2;
 const CARD_WIDTH: f32 = 15.5;
 /// A card in a row of six, which the things for the buttons are since the
 /// dynamite (2026-11-13): narrower, so that the row ends short of the
@@ -101,7 +114,8 @@ const PRICE_ICON: f32 = 2.9;
 const PIP: f32 = 1.1;
 const GAP: f32 = 1.1;
 const PAD: f32 = 1.8;
-const CLOSE: f32 = 6.5;
+const CLOSE: f32 = 7.0;
+const CLOSE_IN: f32 = PAD + HEADER * 0.5;
 
 /// Where the shops are, as the map has them: each the box round an
 /// outline, across the ground, as its lowest and highest corners.
@@ -272,6 +286,7 @@ fn watch(
     me: Query<(&Transform, &Venue, Has<Dead>), With<Player>>,
     windows: Query<(Entity, &ShopWindow)>,
     mut counter: ResMut<Counter>,
+    assets: Res<AssetServer>,
     mut images: ResMut<Assets<Image>>,
     mut pictures: ResMut<Pictures>,
     mut commands: Commands,
@@ -311,7 +326,7 @@ fn watch(
     if let Some((window, _)) = up {
         commands.entity(window).despawn();
     }
-    open(&mut commands, &mut images, &mut pictures, shop, &outfit, &stock.held);
+    open(&mut commands, &assets, &mut images, &mut pictures, shop, &outfit, &stock.held);
 }
 
 /// What each shop sells, a row of cards to a kind of thing.
@@ -572,10 +587,12 @@ fn row_width(cards: usize) -> f32 {
     cards as f32 * card_width(cards) + cards.saturating_sub(1) as f32 * GAP + 2.0 * PAD
 }
 
-/// A shop's window: its title, a row of cards to each of its shelves, and
-/// the cross on its corner.
+/// A shop's window, drawn as the friends' panel is (`window`): its title
+/// along its top, from the left, the cross in its corner, and a row of
+/// cards to each of its shelves.
 fn open(
     commands: &mut Commands,
+    assets: &AssetServer,
     images: &mut Assets<Image>,
     pictures: &mut Pictures,
     shop: Shop,
@@ -583,7 +600,7 @@ fn open(
     held: &Purse,
 ) {
     let file = ui();
-    let (colours, words) = (file.colours, &file.words.market);
+    let (colours, words) = (file.colours.window, &file.words.market);
     let (title, top) = match shop {
         Shop::Items => (&words.items, TOP_ITEMS),
         Shop::Upgrades => (&words.upgrades, TOP_UPGRADES),
@@ -592,37 +609,45 @@ fn open(
         .spawn((
             InArena,
             ShopWindow(shop),
-            TakesPress,
-            Node {
+            window::pane(Node {
                 position_type: PositionType::Absolute,
                 left: Val::Percent(50.0),
                 top: Val::Vh(top),
-                flex_direction: FlexDirection::Column,
                 align_items: AlignItems::Center,
                 row_gap: Val::VMin(GAP),
                 padding: UiRect::all(Val::VMin(PAD)),
-                border_radius: BorderRadius::all(Val::VMin(3.0)),
                 ..default()
-            },
+            }),
             // Half its own width back, so that it is centred.
             UiTransform::from_translation(Val2::new(Val::Percent(-50.0), Val::ZERO)),
-            BackgroundColor(colours.shop.window),
             // Under a dialog, and under the line that says what the
             // game's timetable has just done (`arena::alert`).
             GlobalZIndex(builder::DIALOG_LAYER - 2),
         ))
-        .with_children(|window| {
-            window.spawn(builder::label(title.clone(), TITLE, colours.text));
+        .with_children(|pane| {
+            // As wide as the window, whatever its rows come to, so that
+            // the title begins at its left.
+            pane.spawn((
+                Node {
+                    align_self: AlignSelf::Stretch,
+                    height: Val::VMin(HEADER),
+                    align_items: AlignItems::Center,
+                    padding: UiRect::left(Val::VMin(TITLE_IN)),
+                    flex_shrink: 0.0,
+                    ..default()
+                },
+                Pickable::IGNORE,
+                children![window::words(title.clone(), window::TITLE, colours.title)],
+            ));
             for shelf in shelves(shop) {
-                window
-                    .spawn((
-                        Node {
-                            column_gap: Val::VMin(GAP),
-                            justify_content: JustifyContent::Center,
-                            ..default()
-                        },
-                        Pickable::IGNORE,
-                    ))
+                pane.spawn((
+                    Node {
+                        column_gap: Val::VMin(GAP),
+                        justify_content: JustifyContent::Center,
+                        ..default()
+                    },
+                    Pickable::IGNORE,
+                ))
                     .with_children(|row| {
                         let height = match shop {
                             Shop::Items => CARD_HEIGHT,
@@ -634,7 +659,7 @@ fn open(
                         }
                     });
             }
-            window.spawn(hud::close_cross(CLOSE, CloseShop));
+            pane.spawn(window::cross_at(assets.load("icons/close.png"), CloseShop, CLOSE, CLOSE_IN, CLOSE_IN));
         });
 }
 
@@ -653,28 +678,16 @@ fn card(
     let file = ui();
     let (colours, words) = (file.colours, &file.words.market);
     let able = matches!(offer.state, State::Buy { able: true, .. });
-    let (look, ink, soft, tint) = if able {
-        (
-            Fill {
-                idle: colours.shop.card,
-                lit: colours.shop.card_lit,
-            },
-            colours.text,
-            colours.text_soft,
-            offer.tint,
-        )
+    // A window's card, as a game's is in the selector: dark, its words
+    // white and the line under them fainter; and blocked out, fainter
+    // altogether.
+    let (look, ink, soft) = window::card(able);
+    let tint = if able || offer.state == State::Owned {
+        // Yours already, it keeps its colour.
+        offer.tint
     } else {
-        (
-            Fill {
-                idle: colours.shop.card_off,
-                lit: colours.shop.card_off,
-            },
-            colours.shop.name_off,
-            colours.shop.name_off,
-            // Yours already, it keeps its colour; out of reach, it is
-            // blocked out with the rest.
-            if offer.state == State::Owned { offer.tint } else { offer.tint.with_alpha(offer.tint.alpha() * 0.35) },
-        )
+        // Out of reach, it is blocked out with the rest.
+        offer.tint.with_alpha(offer.tint.alpha() * 0.35)
     };
     row.spawn((
         Card(offer.ware),
@@ -687,7 +700,7 @@ fn card(
             align_items: AlignItems::Center,
             justify_content: JustifyContent::SpaceBetween,
             padding: UiRect::axes(Val::VMin(0.6), Val::VMin(1.0)),
-            border_radius: BorderRadius::all(Val::VMin(2.0)),
+            border_radius: BorderRadius::all(Val::VMin(window::CARD_ROUNDED)),
             ..default()
         },
         BackgroundColor(look.idle),
@@ -784,7 +797,7 @@ fn card(
                     ..default()
                 },
                 Pickable::IGNORE,
-                children![builder::label(format!("x{}", offer.held), STAT, colours.text)],
+                children![builder::label(format!("x{}", offer.held), STAT, colours.window.name)],
             ));
         }
     });

@@ -1336,7 +1336,7 @@ mod tests {
         // The bands are narrow and long: the fireball's as far as it
         // flies, the builder's as wide as its bridge.
         assert!(FIREBALL_BAND < 1.2 && FIREBALL_AHEAD + FIREBALL_RANGE > 10.0 * FIREBALL_BAND);
-        assert!((BUILDER_BAND - 2.726 * 1.25).abs() < 1e-3);
+        assert!((BUILDER_BAND - 2.726 * 1.1).abs() < 1e-3);
     }
 
     #[test]

@@ -12,25 +12,27 @@
 The entries of the log below, in its order (the newest dated work first,
 then the game as it was first made). Search for an entry by its first words.
 
-1. Since the evening of 2026-11-14 there is a Leap Potion and a faster builder to buy, a drink shows, a potion that is on leaves sparks, the bridge is...
-2. Since the small hours of 2026-11-14 the dynamite's arch rises and falls and leans to neither side, with an X where it will land; its fuse is seen t...
-3. Since the night of 2026-11-13 there is dynamite, which cuts bridges; the computer's players no longer fall for three easy tricks, and are not all a...
-4. Later on 2026-11-13: the compass's arrow points out, the anchors are their teams' colours, and the computer's players fill their buttons, each as i...
-5. Since 2026-11-13 there are five buttons for things to use, and you hold several kinds at once
-6. Since late on the night of 2026-11-12 each of the computer's players is someone, a knock no longer stuns them, and no two fights with them go the s...
-7. Since the night of 2026-11-12 the computer's players play the game
-8. Since the evening of 2026-11-12 every game online is 2v2v2v2, people teamed up with each other first and the computer in every seat left
-9. Later on 2026-11-12: dying loses everything you hold, what is aimed is seen over the void, and a sword is held on its edge and cut downward
-10. Since 2026-11-12 Bridge Wars has two shops, and everything in Hajun's file is in the game
-11. Since the night of 2026-11-11 Bridge Wars has generators, a shop and a timetable
-12. Since the night of 2026-11-08 Bridge Wars is the server's online, eight to a game in four teams of two, with respawn anchors and bridges you build
-13. The gamepad down the right edge opens the game selector
-14. Bridge Wars
-15. The fight
-16. Online, a game of Bridge Wars is a room of your own
-17. The camera is fixed straight down over you only in the arena
-18. In the arena the buttons are Hajun's `pvpmapbuttonui.jpg`
-19. Falling off the map
+1. Later on the night of 2026-11-14 the two shops and the panel that says you are out are drawn as the friends' panel is
+2. Since the night of 2026-11-14 a plank is a tenth wider than Hajun's and not a quarter, whoever kills someone has their sapphire and amethyst, and the comp...
+3. Since the evening of 2026-11-14 there is a Leap Potion and a faster builder to buy, a drink shows, a potion that is on leaves sparks, the bridge is...
+4. Since the small hours of 2026-11-14 the dynamite's arch rises and falls and leans to neither side, with an X where it will land; its fuse is seen t...
+5. Since the night of 2026-11-13 there is dynamite, which cuts bridges; the computer's players no longer fall for three easy tricks, and are not all a...
+6. Later on 2026-11-13: the compass's arrow points out, the anchors are their teams' colours, and the computer's players fill their buttons, each as i...
+7. Since 2026-11-13 there are five buttons for things to use, and you hold several kinds at once
+8. Since late on the night of 2026-11-12 each of the computer's players is someone, a knock no longer stuns them, and no two fights with them go the s...
+9. Since the night of 2026-11-12 the computer's players play the game
+10. Since the evening of 2026-11-12 every game online is 2v2v2v2, people teamed up with each other first and the computer in every seat left
+11. Later on 2026-11-12: dying loses everything you hold, what is aimed is seen over the void, and a sword is held on its edge and cut downward
+12. Since 2026-11-12 Bridge Wars has two shops, and everything in Hajun's file is in the game
+13. Since the night of 2026-11-11 Bridge Wars has generators, a shop and a timetable
+14. Since the night of 2026-11-08 Bridge Wars is the server's online, eight to a game in four teams of two, with respawn anchors and bridges you build
+15. The gamepad down the right edge opens the game selector
+16. Bridge Wars
+17. The fight
+18. Online, a game of Bridge Wars is a room of your own
+19. The camera is fixed straight down over you only in the arena
+20. In the arena the buttons are Hajun's `pvpmapbuttonui.jpg`
+21. Falling off the map
 
 ## Games: the gamepad opens a selector, and Bridge Wars is the PvP map
 
@@ -60,6 +62,162 @@ was the town itself; everything below about the map, its islands, the
 void, the punch's knockback and its range held for the town then, and
 holds for the arena now.
 
+- **Later on the night of 2026-11-14 the two shops and the panel that
+  says you are out are drawn as the friends' panel is** (Hajun: "I think I
+  like the ui design/color choice/ close button layout/ etc. of the friends
+  tab. I want to use this same design style throughout the project ... So
+  i guess change the settings tab, minigames tab, the shops in the bridge
+  war game"). The whole of it, with the settings and the game selector, is
+  "Every window is drawn as the friends' panel is" in `docs/ui-style.md`;
+  what is Bridge Wars' is here. `src/market.rs`, `src/arena.rs`
+  (`spawn_panel` alone), `src/window.rs`. The app's own, nothing of
+  `shared/`; **no APK** (asked not to); uncommitted as this is written.
+  - **A shop's window** is the windows' dark see-through pane
+    (`window::pane`, `colours.window.panel`; the grey of your name's plate
+    until now), its title along its top from the left where it was in the
+    middle, and its cross the bare white one inside the corner where it
+    was a grey disc hung off it (`window::cross_at`, 7 shares across, its
+    middle 4.8 in from the corner; the friends' panel's is 8, further in).
+    **Every card is where it was and as big**: the rows, the widths the
+    tests hold them to, where the window stands under the time. The
+    window's own margin is still 1.8, half the friends' panel's, and the
+    row its title stands in is 6 tall, 1.7 more than the title took, so
+    the item shop's window ends that much lower.
+  - **A card is see-through** (`colours.window.card`, `#12121280`): the
+    dark of the friends' round buttons at half strength, the island and
+    the stand showing through it; what cannot be bought is nearly clear
+    (`card_off`, `#12121233`) with its words faint (`name_off`), its
+    picture faint too unless it is yours already, as before. The first cut
+    had the cards solid; Hajun, seeing it go by: "the dark part is too
+    dark like the each items background box is bit too dark", and, when I
+    had made them grey, "i meant too dark as in should be more
+    transparent, not just become grayer". The chat's lines, which are
+    drawn under the shop's window, show through it and through the cards
+    where they run under them.
+  - **The panel that says you are out** (`arena::spawn_panel`) is laid
+    out as one of the friends' questions: "You're out!" in white where it
+    was gold with a shadow, the line under it fainter, and Exit the dark
+    red of a no and Play again the green of a yes (`window::choice_wide`),
+    where they were round-ended, grey and gold. Which is which colour is
+    mine.
+  - **Checked** in the desktop build, scripted, offline: both shops with
+    a full purse and with things bought (owned, out of reach, to be
+    bought), on windows shaped sixteen by nine, as a phone (19.5 by 9) and
+    as a tablet; the panel after a fall in a game begun at 10:05, on the
+    first two. The game's unit tests pass, the shops' among them. **Not on
+    a phone.** On a tablet's four by three the item shop's window lies
+    over the minimap and the stick, as it did before this.
+- **Since the night of 2026-11-14 a plank is a tenth wider than Hajun's
+  and not a quarter, whoever kills someone has their sapphire and
+  amethyst, and the computer's players are not held fast at the ends of
+  bridges, and take a moment at a stand** (four messages from Hajun as
+  they played, with the chat's of the same night; "dont rebuild apk yet
+  just implement"; and two hours on, "build apk and push to git"). **APK
+  32 has it, and the server since 14:47 UTC that night**
+  (`docs/building.md`). Protocol 16 still: nothing sent has changed its
+  shape.
+  - **A plank is 1.1 times Hajun's** (`nav::PLANK_WIDER`, 3.00 m across
+    and 1.50 long; Hajun: "i think some time ago i increased the bridge
+    width to 1.25x of that current width. i change my mind. instead of
+    1.25x i want 1.1x"). As long again as it is wide, as before (mine,
+    both times): the bridge is the shape it was. What in `bridge` was a
+    number of metres set for a plank a quarter bigger goes by the plank
+    now (`LAND_REACH` 3.3 planks, `END_PUSH` 2.2, `NEAR` 4.4), so the next
+    change of size is one number; `CORNER_ROOM` stays 0.08. A span to the
+    middle is 30 planks. **A stick of dynamite takes four planks, 6.0 m,
+    all but always**, and five, 7.5 m, blown on the very middle of a plank
+    (three or four of the bigger; four or five of Hajun's). A body at a
+    run clears the 6.0 by a metre and the 7.5 by a hand. **A bot kept 1.2
+    m in hand over a gap and would have jumped neither**: it keeps 0.9
+    (`JUMP_SPARE`), and jumps the four, as it jumped the usual hole
+    before. Mine. A phone on APK 30 or 31 draws every bridge a little
+    wider than the server walks it, and lays its own rungs 1.70 m apart:
+    both play together.
+  - **Whoever kills someone has their sapphire and amethyst**
+    (`bridge_wars::spoils`, `takes_spoils`, `gain`; Hajun: "if you kill
+    an enemy in bridgewars, you should automatically get their sapphire
+    and amethyst (not gold or iron) if they had any - not drop but just
+    auto get it in ur inven"). All of each, straight into what the killer
+    holds, as the death is reckoned; the silver and the gold go with the
+    dead as everything did. **Mine**: that knocking someone off the world
+    is killing them, as the chat says it and as Bedwars has it; that a
+    teammate caught in your blast leaves you nothing; that a zombie takes
+    nothing. Online it is the server's (`Game::hand_spoils`, in `fall` and
+    `hurt_by`), and a device from before shows it, being sent the purses
+    as ever. Offline the device's (`arena::Game::spoils`): the computer's
+    players' at once, yours the moment after (`take_spoils`), and what
+    you held to whoever killed you as you lose the rest
+    (`lose_on_death`). Nothing in the chat says it; the counts top left
+    go up.
+  - **The computer's players were held fast, eight times a game** (Hajun:
+    "i found a glitch where sometime your ai teammate get stuck on the
+    edge between the bridge and the island so it keeps trying to go but
+    its stuck. it happened when the ai teammate built a bridge -> got
+    sapphire -> came back to the island but on the edge of the bridge and
+    the island its stuck"). Counted over whole games of bots
+    (`Bot::stalls`, `Bot::pinned`; `RT_STALLS=1` says each, and `=2` draws
+    the squares round it): 8 times a game it got nowhere for three
+    seconds with a way to go, at the ends of bridges, the corners of the
+    stands and the things that stand in the middle, often the same one
+    in the same place again and again. Four things, all in `shared/`:
+    - **It walked at the next point of its way without looking.** A way
+      is found from where a bot stood then, and it is walked with a weave,
+      fought on and knocked off: from where it had got to, the next point
+      could lie past a corner, and a body walked straight at that stays
+      in the corner (`Body::step` slides along one axis or the other, and
+      in a corner neither). It looks along the straight walk to that
+      point four times a second and finds its way again from where it is
+      if that cannot be walked (`Squad::walk_to`, `LOOK_EVERY`); and it
+      does not weave into a wall: where the next step of its weave gets
+      it nowhere it walks straight (`gets_on`).
+    - **The straight walk was looked at every 0.2 m** (`Nav::line`), and a
+      corner cut by less slipped between: it is gone over square by
+      square, and through the very corner between four squares both
+      beside the way have to be walked.
+    - **A bridge meeting the land at a slant had a sliver of nothing** at
+      one corner of its last plank: a plank is square across its end and
+      a shore is not. Every square before a bot there was one it could
+      walk, and there was nothing under the next step. A square of a
+      bridge's deck beside land holds a body (`Nav::doorstep`, in
+      `ground`).
+    - **The squares walked along a plank reached round its end**, a metre
+      and more past it over the void: two bridges' ends within two metres
+      of each other were ground that had been joined, with nothing
+      between them. A deck ends where its planks end
+      (`nav::on_the_plank`), is round only at a bend (the corner two
+      planks square across their ends leave open, which the game draws
+      mitred, and which is ground now too) and over land. And **a bot
+      lays its last plank with the one before it** (`Squad::lay`): a
+      bridge a plank short of its end was one it jumped from to get at
+      someone, and left so.
+    - On the way: **getting nowhere is reckoned from when a bot sets
+      out** (`walked_at`). One that had stood its ground for three
+      seconds gave up what it was about for eight as it took its first
+      step.
+    After: **held fast 0.00 times a game, and getting nowhere 0.03**, over
+    sixty games; over at 12:25 on average, thirteen deaths by punches and
+    ten and a half by falls before 10:00, wins by island 13, 13, 20, 14,
+    none drawn: much as before. The whole-game test fails if anything
+    holds anybody.
+  - **A bot takes a moment at a stand** (`SHOP_SECS`, 0.5 to 1.5 s, thrown
+    again for each thing bought, mostly about a second; Hajun: "right now
+    the ai's use the shops in like instantly. but real humans take like
+    0.5~1.5s ish to buy sth. make the ais take some time to use the shop
+    and buy sth too"). It stands there the while; walked off, it begins
+    again.
+  - **Checked**: unit tests, 300 of the game's, 71 of `shared/`, 51 of the
+    server's, among them a bot put in the crook of two walls with a way
+    that leads through one, a deck's end and a bend's corner, the sliver
+    at a slanted shore on a floor made for it, the straight walk through
+    and past a corner, a kill's purses on the server and offline, the wait
+    at a stand on Hajun's map, and a turn made anywhere along a plank
+    (the old test turned at 6 m, which with these planks is the fourth
+    rung to the centimetre, the one place the planks swing widest). Sixty
+    whole games of bots, and forty at each step. The desktop build,
+    scripted, offline: a bridge laid out from the island, 1.1 wide.
+    **Not checked**: a kill's purses in a game played by hand, on desktop
+    or anywhere; anything on a phone; a game against the VM since it was
+    deployed (this PC's account came online on it, and no more).
 - **Since the evening of 2026-11-14 there is a Leap Potion and a faster
   builder to buy, a drink shows, a potion that is on leaves sparks, the
   bridge is a quarter wider, a Bridge Builder is seen by everyone, and what

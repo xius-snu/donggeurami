@@ -60,45 +60,19 @@ use crate::builder::{self, DIALOG_LAYER, Fill};
 use crate::clock::TownClock;
 use crate::hud::{self, DialogUp, FriendsButton, TakesPress};
 use crate::net::Online;
-use crate::signup::{self, LiftsForKeyboard, NameBox};
+use crate::signup::{self, NameBox};
 use crate::ui::{UiChanged, fill, ui};
+use crate::window::{
+    self, AVATAR, FIELD_HEIGHT, FIELD_TEXT, HEADING, HEIGHT, Look, NAME, NOTICE_TEXT, PAD, POPUP_TEXT, ROW, ROW_BUTTON,
+    SMALL_BUTTON, STATUS, TAB_ICON, TITLE as POPUP_TITLE, WIDTH, avatar, picture, words,
+};
 
-/// Sizes, as shares of the short side of the screen, off Hajun's sketches
-/// (874 by 402, so a share is four of their pixels): the panel and its
-/// padding; a tab, its picture and the line under it; the cross; a
-/// heading; a row of the lists, the disc with someone's picture, their
-/// name and the line under it, and the round buttons at its end; the
-/// boxes that come up over the panel and what is in them; the gear's menu;
-/// the count on a corner; and the line that says what came of something.
-const WIDTH: f32 = 112.0;
-const HEIGHT: f32 = 66.0;
-const PAD: f32 = 3.6;
-const ROUNDED: f32 = 3.0;
-const TAB_WIDTH: f32 = 19.0;
-const TAB_HEIGHT: f32 = 8.2;
-const TAB_ICON: f32 = 5.2;
-const LINE: f32 = 0.4;
-/// The cross on the panel's corner (8 since 2026-11-13, Hajun: "increase
-/// size of the close button slightly"; 7 for its first evening), and how
-/// far its middle is in from the panel's top and right, which stays where
-/// it was whatever its size.
-const CLOSE: f32 = 8.0;
-const CLOSE_DOWN: f32 = PAD + 3.1;
-const CLOSE_IN: f32 = PAD + 2.7;
-const HEADING: f32 = 3.1;
-const ROW: f32 = 10.4;
-const AVATAR: f32 = 7.6;
-const NAME: f32 = 3.3;
-const STATUS: f32 = 2.3;
-const ROW_BUTTON: f32 = 7.6;
-const SMALL_BUTTON: f32 = 5.6;
-const POPUP_TEXT: f32 = 3.2;
-const POPUP_TITLE: f32 = 3.6;
-const CHOICE_WIDTH: f32 = 18.0;
-const CHOICE_HEIGHT: f32 = 6.4;
-const CHOICE_TEXT: f32 = 3.0;
-const FIELD_HEIGHT: f32 = 7.4;
-const FIELD_TEXT: f32 = 3.0;
+// The panel's own look is every window's now (`window`, since 2026-11-14,
+// when Hajun asked for it everywhere): its size and padding, its tabs, its
+// cross, its headings and rows, its round buttons and the boxes that come
+// up over it are drawn by what is there, in sizes off Hajun's sketches of
+// this panel. What is here is this panel's alone.
+
 /// Add Friend's box: wide enough for the longest name there is with its
 /// tag after it, beside "Add friend".
 const ADD_WIDTH: f32 = 76.0;
@@ -110,12 +84,11 @@ const FOUND_SHOWN: usize = 3;
 /// what is typed begins, and past the caret.
 const HINT_IN: f32 = 4.3;
 const FOUND_AVATAR: f32 = 5.2;
-const LINK_TEXT: f32 = 2.8;
+/// The gear's menu, and the count on a corner.
 const MENU_WIDTH: f32 = 27.0;
 const MENU_ROW: f32 = 6.8;
 const MENU_TEXT: f32 = 3.0;
 const BADGE: f32 = 4.6;
-const NOTICE_TEXT: f32 = 2.8;
 /// How long the line that says what came of something stays, in seconds.
 const NOTICE_SECS: f32 = 3.5;
 /// How far a press may be dragged and still be a tap on what it began on,
@@ -835,93 +808,14 @@ fn show_hint(name_box: Res<NameBox>, mut hints: Query<&mut Visibility, With<Hint
     }
 }
 
-/// Words on the panel, which has a colour of its own behind them and needs
-/// no shadow: on one line, from the left.
-fn words(text: impl Into<String>, size: f32, colour: Color) -> impl Bundle {
-    (
-        Text::new(text),
-        crate::font::sized(size),
-        TextColor(colour),
-        TextLayout::no_wrap(),
-        Pickable::IGNORE,
-    )
-}
-
-/// A picture `size` across, in `tint`.
-fn picture(image: Handle<Image>, size: Val, tint: Color) -> impl Bundle {
-    (
-        ImageNode::new(image).with_color(tint),
-        Node {
-            width: size,
-            height: size,
-            flex_shrink: 0.0,
-            ..default()
-        },
-        Pickable::IGNORE,
-    )
-}
-
-/// The disc with someone's picture on it, `size` across, and the dot on
-/// its corner that says whether they are here.
-fn avatar(person: Handle<Image>, size: f32, here: bool) -> impl Bundle {
-    let colours = ui().colours.friends;
-    (
-        Node {
-            width: Val::VMin(size),
-            height: Val::VMin(size),
-            justify_content: JustifyContent::Center,
-            align_items: AlignItems::Center,
-            border_radius: BorderRadius::all(Val::Percent(50.0)),
-            flex_shrink: 0.0,
-            ..default()
-        },
-        BackgroundColor(colours.avatar),
-        Pickable::IGNORE,
-        children![
-            picture(person, Val::Percent(64.0), colours.avatar_mark),
-            (
-                Node {
-                    position_type: PositionType::Absolute,
-                    right: Val::VMin(-size * 0.03),
-                    bottom: Val::VMin(size * 0.02),
-                    width: Val::VMin(size * 0.31),
-                    height: Val::VMin(size * 0.31),
-                    border: UiRect::all(Val::VMin(size * 0.045)),
-                    border_radius: BorderRadius::all(Val::Percent(50.0)),
-                    ..default()
-                },
-                BackgroundColor(if here { colours.online } else { colours.offline }),
-                BorderColor::all(colours.panel.with_alpha(1.0)),
-                Pickable::IGNORE,
-            ),
-        ],
-    )
-}
+// Words, a picture and the disc with someone's picture on it are the
+// windows' own (`window::words`, `picture`, `avatar`); so is each of the
+// buttons under here, which only says what a press on it does.
 
 /// A round button with `image` on it, `size` across, that does `tap`; or,
 /// if it cannot be pressed just now, that does nothing and shows so.
 fn round(image: Handle<Image>, size: f32, tap: Tap, able: bool) -> impl Bundle {
-    let colours = ui().colours.friends;
-    (
-        if able { tap } else { Tap::Nothing },
-        TakesPress,
-        Button,
-        Node {
-            width: Val::VMin(size),
-            height: Val::VMin(size),
-            justify_content: JustifyContent::Center,
-            align_items: AlignItems::Center,
-            border_radius: BorderRadius::all(Val::Percent(50.0)),
-            flex_shrink: 0.0,
-            ..default()
-        },
-        BackgroundColor(colours.button),
-        Fill {
-            idle: colours.button,
-            lit: if able { colours.button_lit } else { colours.button },
-        },
-        children![picture(image, Val::Percent(58.0), if able { colours.button_mark } else { colours.button_off })],
-    )
+    (if able { tap } else { Tap::Nothing }, window::round(image, size, able))
 }
 
 /// A button with a picture on it and nothing behind it: the cross, the
@@ -930,93 +824,26 @@ fn round(image: Handle<Image>, size: f32, tap: Tap, able: bool) -> impl Bundle {
 /// "i dont want the circle hover/click background that appears when u press
 /// the close button ... it should just close it").
 fn bare(image: Handle<Image>, size: f32, tap: Tap, lit: bool) -> impl Bundle {
-    let colours = ui().colours.friends;
-    (
-        tap,
-        TakesPress,
-        Button,
-        Node {
-            width: Val::VMin(size),
-            height: Val::VMin(size),
-            justify_content: JustifyContent::Center,
-            align_items: AlignItems::Center,
-            border_radius: BorderRadius::all(Val::Percent(50.0)),
-            flex_shrink: 0.0,
-            ..default()
-        },
-        BackgroundColor(Color::NONE),
-        Fill {
-            idle: Color::NONE,
-            lit: if lit { colours.button_lit } else { Color::NONE },
-        },
-        children![picture(image, Val::Percent(72.0), colours.button_mark)],
-    )
+    (tap, window::bare(image, size, lit))
 }
 
-/// How a button with words on it looks: green for yes and dark red for
+/// A button with words on it, in `look`: green for yes and dark red for
 /// no, as sketched, and the dark of the round buttons for one that only
 /// puts something away.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Look {
-    Yes,
-    No,
-    Plain,
-}
-
-/// A button with words on it, in `look`.
 fn choice(text: impl Into<String>, tap: Tap, look: Look) -> impl Bundle {
-    let colours = ui().colours.friends;
-    let (idle, lit) = match look {
-        Look::Yes => (colours.yes, colours.yes_lit),
-        Look::No => (colours.no, colours.no_lit),
-        Look::Plain => (colours.button, colours.button_lit),
-    };
-    (
-        tap,
-        TakesPress,
-        Button,
-        Node {
-            width: Val::VMin(CHOICE_WIDTH),
-            height: Val::VMin(CHOICE_HEIGHT),
-            justify_content: JustifyContent::Center,
-            align_items: AlignItems::Center,
-            border_radius: BorderRadius::all(Val::VMin(0.8)),
-            flex_shrink: 0.0,
-            ..default()
-        },
-        BackgroundColor(idle),
-        Fill { idle, lit },
-        children![builder::label(text, CHOICE_TEXT, colours.on_choice)],
-    )
+    (tap, window::choice(text, look))
 }
 
 /// Words that are pressed, or, when there is nothing to press, that only
 /// say: "Add friend", "Requested".
 fn link(text: impl Into<String>, tap: Tap, able: bool) -> impl Bundle {
-    let colours = ui().colours.friends;
-    (
-        if able { tap } else { Tap::Nothing },
-        TakesPress,
-        Button,
-        Node {
-            padding: UiRect::axes(Val::VMin(1.6), Val::VMin(1.2)),
-            border_radius: BorderRadius::all(Val::VMin(1.2)),
-            flex_shrink: 0.0,
-            ..default()
-        },
-        BackgroundColor(Color::NONE),
-        Fill {
-            idle: Color::NONE,
-            lit: if able { colours.button_lit } else { Color::NONE },
-        },
-        children![builder::label(text, LINK_TEXT, if able { colours.link } else { colours.link_off })],
-    )
+    (if able { tap } else { Tap::Nothing }, window::link(text, able))
 }
 
 /// How many wait, in gold, hung off the corner of whatever it is spawned
 /// under: the envelope, the speech bubble.
 fn badge(count: usize, marker: impl Bundle) -> impl Bundle {
-    let colours = ui().colours.friends;
+    let colours = ui().colours.window;
     (
         marker,
         Node {
@@ -1044,7 +871,7 @@ fn counted(count: usize) -> String {
 
 /// A line that only says something, in a list with nothing else to show.
 fn note(commands: &mut Commands, list: Entity, text: &str) {
-    let colours = ui().colours.friends;
+    let colours = ui().colours.window;
     commands.spawn((
         ChildOf(list),
         Node {
@@ -1102,7 +929,7 @@ fn how_long(seconds: f64) -> String {
 /// press that shuts the panel is whatever else it landed on's as well; the
 /// panel itself, and whatever comes up over it, takes its own.
 fn draw(commands: &mut Commands, assets: &AssetServer, view: &View) -> Entity {
-    let colours = ui().colours.friends;
+    let colours = ui().colours.window;
     let root = commands
         .spawn((
             Root,
@@ -1126,21 +953,17 @@ fn draw(commands: &mut Commands, assets: &AssetServer, view: &View) -> Entity {
     let panel = commands
         .spawn((
             ChildOf(root),
-            TakesPress,
-            Node {
+            window::pane(Node {
                 width: Val::VMin(WIDTH),
                 height: Val::VMin(HEIGHT),
-                flex_direction: FlexDirection::Column,
                 // More at the bottom, where the line that says what came of
                 // something goes.
                 padding: UiRect {
                     bottom: Val::VMin(PAD + NOTICE_TEXT),
                     ..UiRect::all(Val::VMin(PAD))
                 },
-                border_radius: BorderRadius::all(Val::VMin(ROUNDED)),
                 ..default()
-            },
-            BackgroundColor(colours.panel),
+            }),
         ))
         .id();
     header(commands, assets, panel, view);
@@ -1175,43 +998,11 @@ fn draw(commands: &mut Commands, assets: &AssetServer, view: &View) -> Entity {
 
 /// The panel's top: its two tabs, and the cross.
 fn header(commands: &mut Commands, assets: &AssetServer, panel: Entity, view: &View) {
-    let colours = ui().colours.friends;
-    let row = commands
-        .spawn((
-            ChildOf(panel),
-            Node {
-                height: Val::VMin(TAB_HEIGHT),
-                column_gap: Val::VMin(1.0),
-                align_items: AlignItems::Center,
-                flex_shrink: 0.0,
-                // Clear of the cross on the corner.
-                padding: UiRect::right(Val::VMin(CLOSE + 1.0)),
-                ..default()
-            },
-            Pickable::IGNORE,
-        ))
-        .id();
+    // Clear of the cross on the corner.
+    let row = commands.spawn((ChildOf(panel), window::header())).id();
     for (tab, image, waiting) in [(Tab::Friends, "friends", 0), (Tab::Mail, "mail", view.friends.inbox.len())] {
         let shown = view.panel.tab == tab;
-        let button = commands
-            .spawn((
-                ChildOf(row),
-                Tap::Show(tab),
-                TakesPress,
-                Button,
-                Node {
-                    width: Val::VMin(TAB_WIDTH),
-                    height: Val::Percent(100.0),
-                    justify_content: JustifyContent::Center,
-                    align_items: AlignItems::Center,
-                    border: UiRect::bottom(Val::VMin(LINE)),
-                    flex_shrink: 0.0,
-                    ..default()
-                },
-                BackgroundColor(Color::NONE),
-                BorderColor::all(if shown { colours.line } else { Color::NONE }),
-            ))
-            .id();
+        let button = commands.spawn((ChildOf(row), Tap::Show(tab), window::tab(shown))).id();
         let mark = commands
             .spawn((
                 ChildOf(button),
@@ -1224,7 +1015,7 @@ fn header(commands: &mut Commands, assets: &AssetServer, panel: Entity, view: &V
                 children![picture(
                     assets.load(format!("icons/{image}.png")),
                     Val::Percent(100.0),
-                    if shown { colours.line } else { colours.tab_off },
+                    window::tab_ink(shown),
                 )],
             ))
             .id();
@@ -1235,17 +1026,7 @@ fn header(commands: &mut Commands, assets: &AssetServer, panel: Entity, view: &V
     // Nothing of your own beside the cross: your tag is after your name on
     // its plate, top left (`hud::YourTag`), and your own level is shown
     // nowhere for now (Hajun, 2026-11-13; both stood here for an evening).
-    commands.spawn((
-        ChildOf(panel),
-        Node {
-            position_type: PositionType::Absolute,
-            top: Val::VMin(CLOSE_DOWN - CLOSE * 0.5),
-            right: Val::VMin(CLOSE_IN - CLOSE * 0.5),
-            ..default()
-        },
-        Pickable::IGNORE,
-        children![bare(assets.load("icons/close.png"), CLOSE, Tap::Close, false)],
-    ));
+    commands.spawn((ChildOf(panel), window::cross(assets.load("icons/close.png"), Tap::Close)));
 }
 
 /// A list that scrolls, filling what is left of whatever it is spawned
@@ -1273,7 +1054,7 @@ fn list(commands: &mut Commands, parent: Entity, which: List, scrolled: f32) -> 
 /// A heading in a list, with whatever goes beside it spawned under what
 /// this gives back.
 fn heading(commands: &mut Commands, list: Entity, text: String) -> Entity {
-    let colours = ui().colours.friends;
+    let colours = ui().colours.window;
     commands
         .spawn((
             ChildOf(list),
@@ -1339,7 +1120,7 @@ fn friends_tab(commands: &mut Commands, assets: &AssetServer, panel: Entity, vie
 /// what this gives back.
 fn row(commands: &mut Commands, assets: &AssetServer, list: Entity, card: &Card, name: String, now: f64) -> Entity {
     let ui = ui();
-    let (colours, said) = (ui.colours.friends, &ui.words.friends);
+    let (colours, said) = (ui.colours.window, &ui.words.friends);
     let here = card.presence.online();
     let ink = if here { colours.name } else { colours.name_off };
     commands
@@ -1386,7 +1167,7 @@ fn row(commands: &mut Commands, assets: &AssetServer, list: Entity, card: &Card,
 /// each with its answer beside it.
 fn mail_tab(commands: &mut Commands, assets: &AssetServer, panel: Entity, view: &View) {
     let ui = ui();
-    let (colours, said) = (ui.colours.friends, &ui.words.friends);
+    let (colours, said) = (ui.colours.window, &ui.words.friends);
     let list = list(commands, panel, List::Mail, view.scrolled.mail);
     if view.me.is_none() {
         note(commands, list, &said.not_online);
@@ -1462,54 +1243,14 @@ fn mail_tab(commands: &mut Commands, assets: &AssetServer, panel: Entity, view: 
 /// back. One that is typed into slides up out from under a phone's
 /// keyboard.
 fn popup(commands: &mut Commands, panel: Entity, width: f32, typed_into: bool) -> Entity {
-    let colours = ui().colours.friends;
-    let dark = commands
-        .spawn((
-            ChildOf(panel),
-            Tap::Back,
-            TakesPress,
-            Node {
-                position_type: PositionType::Absolute,
-                left: Val::ZERO,
-                top: Val::ZERO,
-                width: Val::Percent(100.0),
-                height: Val::Percent(100.0),
-                justify_content: JustifyContent::Center,
-                align_items: AlignItems::Center,
-                border_radius: BorderRadius::all(Val::VMin(ROUNDED)),
-                ..default()
-            },
-            BackgroundColor(colours.scrim),
-        ))
-        .id();
-    // Its own presses are its own wherever it stands: slid up over a
-    // phone's keyboard, its top is past the panel's.
-    let mut within = commands.spawn((
-        ChildOf(dark),
-        TakesPress,
-        Node {
-            width: Val::VMin(width),
-            flex_direction: FlexDirection::Column,
-            row_gap: Val::VMin(2.0),
-            padding: UiRect::all(Val::VMin(3.0)),
-            border_radius: BorderRadius::all(Val::VMin(ROUNDED)),
-            ..default()
-        },
-        BackgroundColor(colours.popup),
-    ));
-    // Its top never off the top of the screen: its title and the way back
-    // out of it stay in sight, and what does not fit is under the keyboard.
-    if typed_into {
-        within.insert(LiftsForKeyboard::whole());
-    }
-    within.id()
+    window::popup(commands, panel, width, typed_into, Tap::Back)
 }
 
 /// Add Friend: a name to look for, everyone who goes by it, and your own
 /// name and tag to give to someone looking for you.
 fn add_friend(commands: &mut Commands, assets: &AssetServer, panel: Entity, view: &View) {
     let ui = ui();
-    let (colours, said) = (ui.colours.friends, &ui.words.friends);
+    let (colours, said) = (ui.colours.window, &ui.words.friends);
     let within = popup(commands, panel, ADD_WIDTH, true);
     commands.spawn((
         ChildOf(within),
@@ -1691,7 +1432,7 @@ fn name_of(view: &View, id: u64) -> String {
 /// Yes.
 fn question(commands: &mut Commands, panel: Entity, view: &View, id: u64, invite: bool) {
     let ui = ui();
-    let (colours, said) = (ui.colours.friends, &ui.words.friends);
+    let (colours, said) = (ui.colours.window, &ui.words.friends);
     let (asked, yes) = if invite { (&said.invite_ask, Tap::Invite(id)) } else { (&said.remove_ask, Tap::Remove(id)) };
     let within = popup(commands, panel, 48.0, false);
     commands.spawn((
@@ -1715,7 +1456,7 @@ fn question(commands: &mut Commands, panel: Entity, view: &View, id: u64, invite
 /// typed so far, Cancel, and Send.
 fn writing(commands: &mut Commands, panel: Entity, view: &View, id: u64) {
     let ui = ui();
-    let (colours, said) = (ui.colours.friends, &ui.words.friends);
+    let (colours, said) = (ui.colours.window, &ui.words.friends);
     let within = popup(commands, panel, 80.0, true);
     commands.spawn((
         ChildOf(within),
@@ -1755,7 +1496,7 @@ fn writing(commands: &mut Commands, panel: Entity, view: &View, id: u64) {
 /// takes it away.
 fn menu(commands: &mut Commands, root: Entity, view: &View, id: u64, at: Vec2) {
     let ui = ui();
-    let (colours, said) = (ui.colours.friends, &ui.words.friends);
+    let (colours, said) = (ui.colours.window, &ui.words.friends);
     commands.spawn((
         ChildOf(root),
         Tap::Back,
@@ -1993,14 +1734,12 @@ mod tests {
     fn the_panel_fits_a_phone_lying_on_its_side_and_a_tablet() {
         // The short side is 100 shares: a phone's long side is over 200, a
         // 4:3 tablet's 133. The panel, and the widest box over it, fit
-        // both with room round them.
+        // both with room round them. (Its rows and its cross are every
+        // window's: `window`'s own test.)
         assert!(WIDTH < 133.0 - 2.0 * hud::EDGE);
         assert!(HEIGHT < 100.0 - 2.0 * hud::EDGE);
         assert!(80.0 < WIDTH - 2.0 * PAD, "the box a message is written in");
-        // A row holds a picture, and two round buttons beside the words.
-        assert!(AVATAR < ROW && ROW_BUTTON < ROW);
-        // The cross, about its middle, is on the panel.
-        assert!(CLOSE * 0.5 <= CLOSE_IN.min(CLOSE_DOWN));
+        assert!(ADD_WIDTH < WIDTH - 2.0 * PAD, "Add Friend's box");
     }
 
     #[test]

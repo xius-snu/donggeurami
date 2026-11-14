@@ -440,7 +440,7 @@ mod tests {
         let whole = (BUILDER_METRES / SPACING).floor();
         let planks = whole as usize + usize::from(BUILDER_METRES - whole * SPACING >= MIN_LAND);
         assert_eq!((sent.len(), chain.rungs.len()), (planks + 1, planks + 1));
-        assert!((55..=62).contains(&planks), "{planks} planks");
+        assert!((64..=69).contains(&planks), "{planks} planks");
         // It stands at the end of its bridge, ten metres of island and its
         // bridge from where it set out, at the pace anyone builds at.
         assert!(at.distance(last.p) < 0.2 && at.distance(Vec2::new(0.0, -10.0 - laid)) < 0.2, "{at}");
