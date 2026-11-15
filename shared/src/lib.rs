@@ -179,7 +179,19 @@ pub const PROTOCOL_ID: u64 = u64::from_be_bytes(*b"DGRMTOWN");
 /// sapphire and amethyst: a rung is sent as it was, its middle and its
 /// heading, and a purse as it was, so a device from before plays on, and
 /// draws every bridge a little wider than the server walks it.
-pub const PROTOCOL_VERSION: u32 = 16;
+///
+/// 17 since 2026-11-15 (Hajun: "if u exit the app while ur playing and
+/// reopen, u shouldnt go to the main lobby - u should rejoin the game as
+/// long as there is atleast 1 real player in that game still", and of the
+/// dynamite, "from that point it will destroy cascadingly the entire
+/// bridge ... but it shouldnt destroy the whole bridge instantly"): a seat
+/// in a game of Bridge Wars waits for whoever's connection has gone, and
+/// they are put back in it ([`Tell::Back`], with what only their own
+/// device knew of it, which it now says as it changes, [`Ask::Metres`]);
+/// and a [`Blasted`] says when it blew, by the server's clock, and which
+/// planks of the bridge fall after the ones the blast took, each how long
+/// after ([`Blasted::later`], [`nav::Nav::cascade`]).
+pub const PROTOCOL_VERSION: u32 = 17;
 
 /// The UDP port the game server listens on. 443, where QUIC goes, because a
 /// network that lets any UDP through lets that through: school and office
@@ -1746,7 +1758,10 @@ pub mod bridge_wars {
                     Utility::Speed => (Item::Amethyst, 1),
                     Utility::Invisibility => (Item::Amethyst, 2),
                     Utility::Healing => (Item::Gold, 3),
-                    Utility::Dynamite => (Item::Amethyst, 1),
+                    // 2 since 2026-11-15, when it began to take the
+                    // whole bridge down (Hajun: "change it to cost = 2
+                    // amethyst"); 1 until then.
+                    Utility::Dynamite => (Item::Amethyst, 2),
                     Utility::Leap => (Item::Amethyst, 1),
                 })
             }
@@ -1977,6 +1992,32 @@ pub mod bridge_wars {
     /// down from you, so that whoever throws it sees where it comes down;
     /// and a fuse long enough to get out of the way of, as the three
     /// flashes are there to say.
+    /// The rest of a bridge a stick of dynamite has blown a hole in falls
+    /// after it, plank by plank from the hole outward (since 2026-11-15;
+    /// [`super::nav::Nav::cascade`]): how long after the blast the first
+    /// of them goes, in seconds, for whoever stands beside the hole to
+    /// set off; how fast the falling then runs along the bridge, in
+    /// metres a second, which is slower than anyone runs ([`RUN_SPEED`])
+    /// and faster than anyone carrying a plank walks, so that whoever is
+    /// on the bridge gets off it by running, and by nothing less; and how
+    /// much of a plank's width two planks of different bridges have to
+    /// touch along, or lie over each other by, to be one bridge, as a
+    /// share of it (Hajun: "even adjacent connected part of the bridge
+    /// that is connected by atleast a certain percentage in a way that
+    /// makes sense"): a fork off a bridge's side, a bridge landed on
+    /// another, two laid side by side with their edges together, two
+    /// crossing; not two that only meet at a corner, nor two with a gap
+    /// between them. The numbers are mine.
+    pub const CASCADE_WAIT: f32 = 0.6;
+    pub const CASCADE_SPEED: f32 = 6.0;
+    pub const CASCADE_JOIN: f32 = 0.3;
+    /// The longest after a blast any plank of its bridge falls, in
+    /// seconds: whatever is further from the hole than the falling gets
+    /// in this long goes with it then, all together. A time is sent in
+    /// thousandths of a second in a `u16` ([`super::Blasted::later`]),
+    /// which holds 65 of them; and no bridge anyone has built is as long
+    /// as this is at the falling's pace, 350 m and more.
+    pub const CASCADE_LONGEST: f32 = 60.0;
     pub const DYNAMITE_DAMAGE: f32 = 20.0;
     pub const DYNAMITE_RADIUS: f32 = 3.0;
     pub const DYNAMITE_NEAREST: f32 = 2.5;
@@ -2890,6 +2931,21 @@ pub struct Dynamite {
 /// that is gone, in whatever order the rest of the bridge reaches it.
 /// The server says which planks: a device's own word of where a bridge
 /// ends may be a rung ahead of the server's.
+///
+/// **And the rest of the bridge after them** (since 2026-11-15; Hajun:
+/// "from that point it will destroy cascadingly the entire bridge like the
+/// truly connected bridge ... but it shouldnt destroy the whole bridge
+/// instantly but rather cascadingly from that initial blast point so it
+/// gives ppl time to run away to safety"): every plank joined to the ones
+/// the blast took, through however many others, falls in its turn, the
+/// nearest first ([`nav::Nav::cascade`]). `later` is each of them as
+/// `planks` has them, with how long after the blast it falls, in
+/// thousandths of a second; `at` is when the stick blew, by the server's
+/// clock, in seconds since 1970, which every device has (the game's
+/// `clock`): so that a device shows each plank about to go and takes it
+/// at its time, and one that comes into the game later, or again, has the
+/// planks whose time has passed gone at once, with no blast drawn for a
+/// stick that blew before it was there.
 #[derive(Component, Serialize, Deserialize, Clone, PartialEq, Debug)]
 #[component(immutable)]
 pub struct Blasted {
@@ -2897,6 +2953,26 @@ pub struct Blasted {
     pub y: f32,
     pub z: f32,
     pub planks: Vec<(u8, u16, u16)>,
+    pub at: f64,
+    pub later: Vec<(u8, u16, u16, u16)>,
+}
+
+impl Blasted {
+    /// The planks that fall after the blast, as [`nav::Nav::cascade`]
+    /// has them, each with how long after, written as they are sent: in
+    /// whole thousandths of a second, and no more than a `u16` of them.
+    pub fn later_of(cascade: &[((u8, u16, u16), f32)]) -> Vec<(u8, u16, u16, u16)> {
+        cascade
+            .iter()
+            .map(|&((seat, chain, plank), secs)| (seat, chain, plank, (secs.max(0.0) * 1000.0).round().min(f32::from(u16::MAX)) as u16))
+            .collect()
+    }
+
+    /// The planks that fall after the blast, each with how many seconds
+    /// after.
+    pub fn later(&self) -> impl Iterator<Item = ((u8, u16, u16), f32)> + '_ {
+        self.later.iter().map(|&(seat, chain, plank, after)| ((seat, chain, plank), f32::from(after) / 1000.0))
+    }
 }
 
 /// The builder a Bridge Builder has sent off, walking and laying its bridge
@@ -3422,6 +3498,13 @@ pub enum Ask {
     /// number for it, as I may have several out; with no spot, it is
     /// gone. Sent while it walks, as my own moves are.
     Builder { id: u8, spot: Option<Spot> },
+    /// How many metres of bridge I have left to lay in my game of Bridge
+    /// Wars (since 2026-11-15): they are my own device's to count, bought
+    /// 25 at a time and laid a plank at a time, and the server only keeps
+    /// what it was last told, to give back to me if I come back into the
+    /// game on a device that has forgotten ([`Tell::Back`]). Said as it
+    /// changes, no oftener than once a second.
+    Metres(f32),
 }
 
 /// What the server tells you alone. In order, and never lost.
@@ -3466,6 +3549,20 @@ pub enum Tell {
     Said { who: u64, name: String, text: String },
     /// Something has happened in your game of Bridge Wars ([`chat::Feed`]).
     Feed(chat::Feed),
+    /// You are back in the game of Bridge Wars you were in when your
+    /// connection went, in the seat you had (since 2026-11-15; Hajun: "if
+    /// u exit the app while ur playing and reopen, u shouldnt go to the
+    /// main lobby - u should rejoin the game as long as there is atleast 1
+    /// real player in that game still"): the game is begun here afresh,
+    /// as [`Tell::Seated`] begins one, and everything in it comes as it
+    /// stands, your own bridges with the rest. With it, what only your
+    /// own device knew: the metres of bridge you had left to lay
+    /// ([`Ask::Metres`]) and whether you had the compass. An
+    /// [`Tell::Arrive`] follows, standing you where your body stood all
+    /// the while. A device that never left the game, its app only put
+    /// away for a moment, is told none of this: it is let in where it
+    /// stands and carries on.
+    Back { seat: u8, metres: f32, compass: bool },
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
@@ -4377,7 +4474,7 @@ mod tests {
         // The item shop: the bridge, three swords, three shields and six
         // things for the buttons.
         for (ware, cost) in [
-            (Ware::Utility(Utility::Dynamite), (Item::Amethyst, 1)),
+            (Ware::Utility(Utility::Dynamite), (Item::Amethyst, 2)),
             (Ware::Bridge, (Item::Silver, 4)),
             (Ware::Sword(1), (Item::Silver, 10)),
             (Ware::Sword(2), (Item::Gold, 7)),
@@ -4817,10 +4914,30 @@ mod tests {
             y: lob.to.y,
             z: lob.to.z,
             planks: vec![(3, 1, 4), (3, 1, 5), (3, 1, 6), (3, 1, 7), (3, 1, 8)],
+            at: 1_794_000_000.25,
+            later: Vec::new(),
         };
         let sent = postcard::to_allocvec(&blast).unwrap();
-        assert!(sent.len() <= 32, "{} bytes", sent.len());
+        assert!(sent.len() <= 41, "{} bytes", sent.len());
         assert_eq!(postcard::from_bytes::<Blasted>(&sent).unwrap(), blast);
+        // With the rest of a bridge from an island to the middle falling
+        // after them, thirty planks at a quarter of a second apart: six
+        // bytes a plank at the most, and each time as it was to the
+        // thousandth of a second.
+        let cascade: Vec<((u8, u16, u16), f32)> = (0..30u16).map(|plank| ((3, 1, 9 + plank), 0.6 + 0.25 * f32::from(plank))).collect();
+        let long = Blasted {
+            later: Blasted::later_of(&cascade),
+            ..blast.clone()
+        };
+        let sent = postcard::to_allocvec(&long).unwrap();
+        assert!(sent.len() <= 41 + 30 * 6, "{} bytes", sent.len());
+        let back = postcard::from_bytes::<Blasted>(&sent).unwrap();
+        assert_eq!(back, long);
+        for (was, is) in cascade.iter().zip(back.later()) {
+            assert!(was.0 == is.0 && (was.1 - is.1).abs() < 1e-3, "{was:?} {is:?}");
+        }
+        // A time past what can be sent is the longest that can.
+        assert_eq!(Blasted::later_of(&[((0, 0, 0), 500.0)]), vec![(0, 0, 0, u16::MAX)]);
         let used = postcard::to_allocvec(&Use::Dynamite { heading: 1.0, far: 6.0 }).unwrap();
         assert_eq!(postcard::from_bytes::<Use>(&used).unwrap(), Use::Dynamite { heading: 1.0, far: 6.0 });
     }

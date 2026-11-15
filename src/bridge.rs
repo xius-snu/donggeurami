@@ -483,6 +483,10 @@ struct Chain {
     /// has gone since it was last drawn.
     gone: Vec<bool>,
     holed: bool,
+    /// Which of its planks a blast has doomed, to fall in their turn
+    /// after the ones it took (since 2026-11-15; [`Bridges::doom`]): drawn
+    /// in the colour of one about to go, and stood on, until its time.
+    doomed: Vec<bool>,
     mesh: Entity,
     handle: Handle<Mesh>,
 }
@@ -495,6 +499,7 @@ impl Chain {
             rungs,
             gone: Vec::new(),
             holed: false,
+            doomed: Vec::new(),
             tip: None,
             built_rungs: usize::MAX,
             built_tip: None,
@@ -677,7 +682,38 @@ pub(crate) struct Bridges {
     game: u32,
     /// The meshes of chains forgotten, to be taken down ([`rebuild`]).
     orphans: Vec<Entity>,
+    /// Rungs you have fixed in a game online while its connection was
+    /// gone, each with its chain's number and its own, to send once it is
+    /// back ([`send_rungs`]).
+    unsent: Vec<(u16, u16, Rung)>,
+    /// The numbers of the bridges of your own that this device has begun
+    /// in this game ([`Bridges::number`]), kept or forgotten since: the
+    /// server's rungs of those are nothing new ([`Bridges::lay_own`]).
+    begun_here: Vec<u16>,
+    /// Every plank a blast has doomed that has yet to fall
+    /// ([`Bridges::doom`], [`crumble`]).
+    falling: Vec<Falling>,
+    /// The planks that fell this frame, each as the four corners of its
+    /// top and whose stick took its bridge down, by seat: for whoever
+    /// runs the game to say whose doing a fall with one was (`arena`).
+    pub(crate) just_fell: Vec<([Vec2; 4], u8)>,
 }
+
+/// A plank a blast has doomed: whose bridge it is part of, by seat, which
+/// of theirs, and which plank of that; when it falls, in seconds by this
+/// device's own count (`Time::elapsed_secs_f64`); and whose stick it was,
+/// by seat.
+#[derive(Clone, Copy, PartialEq, Debug)]
+struct Falling {
+    plank: (u8, u16, u16),
+    when: f64,
+    by: u8,
+}
+
+/// How long past its time a doomed plank can be and still be seen to
+/// fall, in seconds: one further past than that, as every one is that
+/// fell before this device came into the game, is simply gone.
+const SEEN_TO_FALL: f64 = 0.5;
 
 /// What became of the chain you were building, this frame ([`grow`]).
 #[derive(Default, Debug, PartialEq)]
@@ -715,6 +751,34 @@ impl Bridges {
         let kept = self.chain(seat, chain).expect("just found or made");
         take(kept, index, rung);
         self.dirty = true;
+    }
+
+    /// The number of the next bridge of your own begun on this device.
+    pub(crate) fn number(&mut self) -> u16 {
+        let id = self.next_id;
+        self.next_id = self.next_id.wrapping_add(1);
+        self.begun_here.push(id);
+        id
+    }
+
+    /// Takes in a rung of your own that the server has, the `index`th of
+    /// your bridge numbered `chain`, you being in `seat` (since
+    /// 2026-11-15). Nothing, if it is of a bridge this device began in
+    /// the game as it has it ([`Bridges::number`]): that is here already,
+    /// as you laid it, or was forgotten here on purpose. Otherwise it is
+    /// of a bridge you built before the game was begun afresh on this
+    /// device, the app closed and opened again in the middle of it
+    /// (`Tell::Back`), and is built from the server's rungs as everyone
+    /// else's are, in whatever order they come; and the next bridge you
+    /// begin is numbered past it. Until then every rung of your own was
+    /// left out, as nothing ever brought you into a game with bridges of
+    /// yours in it.
+    pub(crate) fn lay_own(&mut self, seat: u8, chain: u16, index: u16, rung: Rung) {
+        if self.begun_here.contains(&chain) {
+            return;
+        }
+        self.lay_remote(seat, chain, index, rung);
+        self.next_id = self.next_id.max(chain.saturating_add(1));
     }
 
     /// Every rung fixed so far, of every bridge: whose it is, by seat,
@@ -792,6 +856,112 @@ impl Bridges {
                 self.dirty = true;
             }
         }
+    }
+
+    /// These planks are doomed, each to fall at its time, in seconds by
+    /// this device's own count, by the doing of whoever is in the seat
+    /// `by` (since 2026-11-15): the rest of a bridge a stick of dynamite
+    /// has blown a hole in, which falls plank by plank from the hole
+    /// outward (`roundtown_net::nav::Nav::cascade`; Hajun: "it shouldnt
+    /// destroy the whole bridge instantly but rather cascadingly from that
+    /// initial blast point so it gives ppl time to run away to safety").
+    /// The server says which and when online (`roundtown_net::Blasted`),
+    /// and this device's own game offline. Each is drawn in the colour of
+    /// a plank about to go, and stood on, until [`crumble`] takes it. One
+    /// doomed already keeps whichever time is the sooner; one that is
+    /// gone already is nothing new.
+    pub(crate) fn doom(&mut self, falls: impl IntoIterator<Item = ((u8, u16, u16), f64)>, by: u8) {
+        for (name, when) in falls {
+            let (seat, id, plank) = name;
+            let plank = usize::from(plank);
+            if plank >= MOST_RUNGS {
+                continue;
+            }
+            if self.chain(seat, id).is_none() {
+                if self.chains.len() >= MOST_CHAINS {
+                    continue;
+                }
+                self.chains.push(Chain::new(seat, id, Vec::new()));
+            }
+            let chain = self.chain(seat, id).expect("just found or made");
+            if !chain.stands(plank) {
+                continue;
+            }
+            if chain.doomed.len() <= plank {
+                chain.doomed.resize(plank + 1, false);
+            }
+            if !chain.doomed[plank] {
+                chain.doomed[plank] = true;
+                chain.holed = true;
+                self.dirty = true;
+            }
+            match self.falling.iter_mut().find(|falling| falling.plank == name) {
+                Some(falling) => {
+                    if when < falling.when {
+                        falling.when = when;
+                        falling.by = by;
+                    }
+                }
+                None => self.falling.push(Falling { plank: name, when, by }),
+            }
+        }
+    }
+
+    /// Whose stick took down the bridge a plank of which fell from under
+    /// `at` this frame, by seat, if one did ([`Bridges::just_fell`]).
+    pub(crate) fn fell_under(&self, at: Vec2) -> Option<u8> {
+        self.just_fell.iter().find(|(quad, _)| inside_quad(at, *quad)).map(|(_, by)| *by)
+    }
+
+    /// The game these bridges belong to (`Fighting::game`), as of when
+    /// they were last cleared for another ([`rebuild`]).
+    pub(crate) fn game(&self) -> u32 {
+        self.game
+    }
+
+    /// Whether the plank numbered so of the bridge numbered so of whoever
+    /// is in that seat is doomed, and stands yet.
+    #[cfg(test)]
+    pub(crate) fn doomed(&self, seat: u8, id: u16, plank: u16) -> bool {
+        self.falling.iter().any(|falling| falling.plank == (seat, id, plank))
+    }
+
+    /// Takes every doomed plank whose time has come by `now`, in seconds
+    /// by this device's own count ([`Bridges::break_planks`]): the plank
+    /// you are laying with the last of its bridge it hung from. Which
+    /// they were, of those that are seen to fall ([`SEEN_TO_FALL`]): each
+    /// as the four corners of its top, and how high that was.
+    fn take_due(&mut self, now: f64) -> Vec<([Vec2; 4], f32)> {
+        let due: Vec<Falling> = self.falling.iter().copied().filter(|falling| falling.when <= now).collect();
+        if due.is_empty() {
+            return Vec::new();
+        }
+        self.falling.retain(|falling| falling.when > now);
+        let mut seen = Vec::new();
+        for falling in &due {
+            let (seat, id, plank) = falling.plank;
+            let k = usize::from(plank);
+            let Some(c) = self.chains.iter().position(|chain| chain.seat == seat && chain.id == id) else {
+                continue;
+            };
+            let chain = &self.chains[c];
+            if chain.stands(k) && k + 1 < chain.corners.len() {
+                let ((l0, r0), (l1, r1)) = (chain.corners[k], chain.corners[k + 1]);
+                let quad = [l0, r0, r1, l1];
+                self.just_fell.push((quad, falling.by));
+                if now - falling.when <= SEEN_TO_FALL {
+                    seen.push((quad, chain.top()));
+                }
+            }
+            // The plank being laid hung from the last of its bridge: with
+            // that gone it goes too.
+            if self.active == Some(c) && k + 2 == self.chains[c].rungs.len() {
+                self.abandon(c);
+            }
+        }
+        let planks: Vec<(u8, u16, u16)> = due.iter().map(|falling| falling.plank).collect();
+        self.break_planks(&planks);
+        seen
     }
 
     /// A stick of dynamite blows at `at`, reaching `radius` across the
@@ -901,8 +1071,7 @@ impl Bridges {
     /// Begins a chain of `seat`'s at `root`, a fork off another bridge if
     /// `forked`, and says which of theirs it is.
     fn begin(&mut self, seat: u8, root: Rung, forked: bool) -> u16 {
-        let id = self.next_id;
-        self.next_id = self.next_id.wrapping_add(1);
+        let id = self.number();
         let mut chain = Chain::new(seat, id, vec![root]);
         chain.forked = forked;
         self.chains.push(chain);
@@ -1022,6 +1191,32 @@ struct BotPlank(Entity);
 #[derive(Resource)]
 struct Look(Handle<StandardMaterial>);
 
+/// A plank that has fallen out of a bridge a blast took down, on its way
+/// into the void ([`crumble`], [`fall`]): how fast it is falling, in
+/// metres a second, which way it tumbles, and how long it has been.
+#[derive(Component)]
+struct FallingPlank {
+    speed: f32,
+    tumble: Vec3,
+    age: f32,
+}
+
+/// What a falling plank is drawn with: a box a metre each way, stretched
+/// to the plank's size, in the colour of a plank about to go.
+#[derive(Resource)]
+pub(crate) struct Tumble {
+    board: Handle<Mesh>,
+    burnt: Handle<StandardMaterial>,
+}
+
+/// How fast a plank that has fallen out of a bridge falls faster, in
+/// metres a second a second, as anything falls into the void; how long it
+/// is seen falling, in seconds; and how fast it tumbles at the most, in
+/// turns of a radian a second.
+const PLANK_FALL: f32 = 33.0;
+const PLANK_FALLS_FOR: f32 = 1.1;
+const PLANK_TUMBLE: f32 = 1.6;
+
 pub(crate) fn plugin(app: &mut App) {
     app.add_message::<BridgePressed>()
         .init_resource::<Bridges>()
@@ -1033,6 +1228,10 @@ pub(crate) fn plugin(app: &mut App) {
             (
                 (toggle, hear_planks).before(crate::read_player_input),
                 (rebuild, carry, carry_for_bots, light_button).after(lay),
+                // The planks a blast has doomed, each at its time, before
+                // the bridges are built again without it.
+                crumble.after(lay).before(rebuild),
+                fall,
                 // A Bridge Builder's builders, whose planks are built with
                 // the rest.
                 (builder_bot::equip, builder_bot::walk).chain().after(lay).before(rebuild),
@@ -1043,12 +1242,95 @@ pub(crate) fn plugin(app: &mut App) {
         );
 }
 
-fn setup(mut materials: ResMut<Assets<StandardMaterial>>, mut commands: Commands) {
+fn setup(mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardMaterial>>, mut commands: Commands) {
     commands.insert_resource(Look(materials.add(StandardMaterial {
         base_color: Color::WHITE,
         perceptual_roughness: 0.9,
         ..default()
     })));
+    commands.insert_resource(Tumble {
+        board: meshes.add(Cuboid::new(1.0, 1.0, 1.0)),
+        burnt: materials.add(StandardMaterial {
+            base_color: ui().colours.arena.plank_doomed,
+            perceptual_roughness: 0.9,
+            ..default()
+        }),
+    });
+}
+
+/// Takes each plank a blast has doomed as its time comes
+/// ([`Bridges::take_due`]): it is gone from its bridge, which is drawn and
+/// laid over the island again without it ([`rebuild`]), and a board its
+/// size falls from where it was, tumbling, into the void ([`fall`]). What
+/// fell this frame is kept for the frame, for whoever runs the game
+/// ([`Bridges::just_fell`]).
+pub(crate) fn crumble(
+    time: Res<Time>,
+    tumble: Res<Tumble>,
+    mut bridges: ResMut<Bridges>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut commands: Commands,
+) {
+    if !bridges.just_fell.is_empty() {
+        bridges.just_fell.clear();
+    }
+    let now = time.elapsed_secs_f64();
+    if !bridges.falling.iter().any(|falling| falling.when <= now) {
+        return;
+    }
+    let seen = bridges.take_due(now);
+    if seen.is_empty() {
+        return;
+    }
+    // In the file's colour as it is now.
+    let burnt = ui().colours.arena.plank_doomed;
+    if let Some(mut material) = materials.get_mut(&tumble.burnt)
+        && material.base_color != burnt
+    {
+        material.base_color = burnt;
+    }
+    for (index, ([l0, r0, r1, l1], top)) in seen.into_iter().enumerate() {
+        let (near, far) = ((l0 + r0) * 0.5, (l1 + r1) * 0.5);
+        let along = far - near;
+        let length = along.length().max(0.05);
+        let width = ((r0 - l0).length() + (r1 - l1).length()) * 0.5;
+        let middle = (near + far) * 0.5;
+        // Each a little its own way, by where it lay: no two fall alike.
+        let turn = |salt: f32| ((middle.x * 12.9898 + middle.y * 78.233 + salt + index as f32).sin() * 43_758.547).fract();
+        commands.spawn((
+            FallingPlank {
+                speed: 0.0,
+                tumble: Vec3::new(turn(1.0), turn(2.0) * 0.4, turn(3.0)) * PLANK_TUMBLE,
+                age: 0.0,
+            },
+            InArena,
+            Venue::Arena,
+            Name::new("A plank falling"),
+            Mesh3d(tumble.board.clone()),
+            MeshMaterial3d(tumble.burnt.clone()),
+            Transform::from_xyz(middle.x, top - THICKNESS * 0.5, middle.y)
+                .with_rotation(Quat::from_rotation_y(yaw_of(along / length)))
+                .with_scale(Vec3::new(width, THICKNESS, length)),
+            NotShadowCaster,
+        ));
+    }
+}
+
+/// Every plank that has fallen out of a bridge, on down into the void,
+/// faster and faster, tumbling, until it has fallen its while and is gone.
+fn fall(time: Res<Time>, mut planks: Query<(Entity, &mut FallingPlank, &mut Transform)>, mut commands: Commands) {
+    let dt = time.delta_secs();
+    for (entity, mut plank, mut place) in &mut planks {
+        plank.age += dt;
+        if plank.age >= PLANK_FALLS_FOR {
+            commands.entity(entity).despawn();
+            continue;
+        }
+        plank.speed += PLANK_FALL * dt;
+        place.translation.y -= plank.speed * dt;
+        let turn = plank.tumble * dt;
+        place.rotation = (place.rotation * Quat::from_euler(EulerRot::XYZ, turn.x, turn.y, turn.z)).normalize();
+    }
 }
 
 /// Turns building on and off at the plank button, or B, in a game of Bridge
@@ -1446,16 +1728,8 @@ pub(crate) fn lay(
         intent.walk = Vec3::ZERO;
         info!("building a bridge: out of metres");
     }
-    if online.is() && fighting.online {
-        for (chain, index, rung) in sent {
-            requests.write(NetAsk::Rung {
-                chain,
-                index,
-                x: rung.p.x,
-                z: rung.p.y,
-                heading: yaw_of(rung.d),
-            });
-        }
+    if fighting.online && (!sent.is_empty() || !bridges.unsent.is_empty()) {
+        send_rungs(&mut bridges, online.is(), &mut requests, sent);
     }
 }
 
@@ -2097,22 +2371,75 @@ fn strips(near: (Vec2, Vec2), near_edge: &[(f32, Vec2)], far: (Vec2, Vec2), far_
         .collect()
 }
 
-/// Takes in every rung the server says someone has laid ([`Plank`]), but
-/// your own, which are laid here as you lay them, and builds their bridges.
+/// Takes in every rung the server says someone has laid ([`Plank`]) as it
+/// comes, and builds their bridges: but your own, which are laid here as
+/// you lay them, unless they are of a bridge this device never began
+/// ([`Bridges::lay_own`]).
+///
+/// And every rung there is, over again, once the bridges have been cleared
+/// for another game ([`rebuild`], [`Bridges::game`]; since 2026-11-15):
+/// put back into a game that is under way (`Tell::Back`), its rungs come
+/// in the same frame as the word of it, or the frame before, and whichever
+/// were taken in before the game was begun here went with whatever was
+/// cleared for it.
 fn hear_planks(
     fighting: Res<Fighting>,
-    planks: Query<&Plank, (With<Remote>, Added<Plank>)>,
+    fresh: Query<&Plank, (With<Remote>, Added<Plank>)>,
+    every: Query<&Plank, With<Remote>>,
+    mut cleared_for: Local<u32>,
     mut bridges: ResMut<Bridges>,
 ) {
-    for plank in &planks {
-        if fighting.seat == Some(plank.seat) {
-            continue;
-        }
+    let again = *cleared_for != bridges.game;
+    *cleared_for = bridges.game;
+    let mut take = |plank: &Plank| {
         let rung = Rung {
             p: Vec2::new(plank.x, plank.z),
             d: heading_of(plank.heading),
         };
-        bridges.lay_remote(plank.seat, plank.chain, plank.index, rung);
+        if fighting.seat == Some(plank.seat) {
+            bridges.lay_own(plank.seat, plank.chain, plank.index, rung);
+        } else {
+            bridges.lay_remote(plank.seat, plank.chain, plank.index, rung);
+        }
+    };
+    if again {
+        every.iter().for_each(&mut take);
+    } else {
+        fresh.iter().for_each(&mut take);
+    }
+}
+
+/// Sends the server the rungs this device has just `fixed` in a game
+/// online, each with its chain's number and its own (`NetAsk::Rung`); or,
+/// not `linked`, the connection gone for the moment, keeps them, to send
+/// with the next once it is back (since 2026-11-15: until then a rung
+/// fixed in that moment was never sent, and stood on this device alone,
+/// for you to walk where everyone else saw nothing under you).
+pub(crate) fn send_rungs(
+    bridges: &mut Bridges,
+    linked: bool,
+    requests: &mut MessageWriter<NetAsk>,
+    fixed: impl IntoIterator<Item = (u16, u16, Rung)>,
+) {
+    let mut fixed = fixed.into_iter().peekable();
+    if fixed.peek().is_none() && (bridges.unsent.is_empty() || !linked) {
+        return;
+    }
+    bridges.unsent.extend(fixed);
+    if !linked {
+        // No more kept than a game's worth.
+        let over = bridges.unsent.len().saturating_sub(MOST_RUNGS);
+        bridges.unsent.drain(..over);
+        return;
+    }
+    for (chain, index, rung) in bridges.unsent.drain(..) {
+        requests.write(NetAsk::Rung {
+            chain,
+            index,
+            x: rung.p.x,
+            z: rung.p.y,
+            heading: yaw_of(rung.d),
+        });
     }
 }
 
@@ -2170,6 +2497,10 @@ fn rebuild(
         bridges.next_id = 0;
         bridges.dirty = false;
         bridges.game = fighting.game;
+        bridges.unsent.clear();
+        bridges.begun_here.clear();
+        bridges.falling.clear();
+        bridges.just_fell.clear();
         return;
     }
     // A chain is worked out and drawn again once it has itself changed, a
@@ -2203,16 +2534,19 @@ fn rebuild(
         }
         if chain.corners.len() < 2 {
             chain.triangles.clear();
-            if redraw
-                && chain.mesh != Entity::PLACEHOLDER
-                && meshes.insert(&chain.handle, Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default())).is_err()
-            {
-                warn!("a bridge has lost its mesh");
+            // Nothing of it to draw: what was drawn of it is taken down.
+            // (Never a mesh with nothing in it in its place: Bevy 0.19
+            // logs a use-after-free for one, which it did here until
+            // 2026-11-15.)
+            if chain.mesh != Entity::PLACEHOLDER {
+                commands.entity(chain.mesh).try_despawn();
+                chain.mesh = Entity::PLACEHOLDER;
+                chain.handle = Handle::default();
             }
             continue;
         }
-        if !redraw && chain.mesh != Entity::PLACEHOLDER {
-            if relay {
+        if !redraw && (chain.mesh != Entity::PLACEHOLDER || chain.triangles.is_empty()) {
+            if relay && !chain.triangles.is_empty() {
                 parts.push(chain.triangles.clone());
             }
             continue;
@@ -2223,11 +2557,24 @@ fn rebuild(
             &chain.end_edge,
             chain.complete,
             &chain.gone,
+            &chain.doomed,
             chain.top(),
             colours.plank,
+            colours.plank_doomed,
             colours.plank_side,
         );
         chain.triangles = triangles;
+        // Every plank of it gone, a blast having taken the whole bridge
+        // down: nothing to draw and nothing to stand on, and what was
+        // drawn of it is taken down, as above.
+        if chain.triangles.is_empty() {
+            if chain.mesh != Entity::PLACEHOLDER {
+                commands.entity(chain.mesh).try_despawn();
+                chain.mesh = Entity::PLACEHOLDER;
+                chain.handle = Handle::default();
+            }
+            continue;
+        }
         if relay {
             parts.push(chain.triangles.clone());
         }
@@ -2264,7 +2611,8 @@ fn rebuild(
 /// near edge follows `root` and the last one's far edge `end`, where those
 /// bend, its top and its underside in strips ([`strips`]). A plank that is
 /// `gone`, by its number, taken by a blast, is left out, and the planks
-/// either side of it are capped where they met it.
+/// either side of it are capped where they met it; one that is `doomed`,
+/// to fall after those, has its top in `doomed_top`.
 #[allow(clippy::too_many_arguments)]
 fn planks(
     corners: &[(Vec2, Vec2)],
@@ -2272,8 +2620,10 @@ fn planks(
     end: &[(f32, Vec2)],
     complete: bool,
     gone: &[bool],
+    doomed: &[bool],
     height: f32,
     top: Color,
+    doomed_top: Color,
     side: Color,
 ) -> (Mesh, Vec<[Vec3; 3]>) {
     let mut positions: Vec<[f32; 3]> = Vec::new();
@@ -2317,7 +2667,8 @@ fn planks(
         let (l1, r1) = corners[k + 1];
         let along = ((l1 + r1) - (l0 + r0)).normalize_or(Vec2::X);
         let left_out = -perp(along);
-        let top_tint = tint(top, if k % 2 == 1 { LIGHTER } else { 0.0 });
+        let about_to_go = doomed.get(k).copied().unwrap_or(false);
+        let top_tint = tint(if about_to_go { doomed_top } else { top }, if k % 2 == 1 { LIGHTER } else { 0.0 });
         let near_edge = if k == 0 { root } else { &[] };
         let far_edge = if k + 2 == corners.len() { end } else { &[] };
         for [a, b, c, d] in strips((l0, r0), near_edge, (l1, r1), far_edge) {
@@ -2560,7 +2911,7 @@ mod tests {
         }
         assert_unfolded(&built, TOP, complete);
         // An unfinished chain is capped at its tip.
-        let (open, _) = planks(&built[..3], &[], &[], false, &[], TOP, Color::WHITE, Color::BLACK);
+        let (open, _) = planks(&built[..3], &[], &[], false, &[], &[], TOP, Color::WHITE, Color::WHITE, Color::BLACK);
         assert_eq!(open.count_vertices(), 2 * 16 + 4);
     }
 
@@ -2568,7 +2919,7 @@ mod tests {
     /// at its sides, and none is folded: each plank's two edges run on the
     /// way the plank goes.
     fn assert_unfolded(corners: &[(Vec2, Vec2)], height: f32, complete: bool) {
-        let (mesh, triangles) = planks(corners, &[], &[], complete, &[], height, Color::WHITE, Color::BLACK);
+        let (mesh, triangles) = planks(corners, &[], &[], complete, &[], &[], height, Color::WHITE, Color::WHITE, Color::BLACK);
         let caps = if complete { 0 } else { 2 };
         assert_eq!(triangles.len(), (corners.len() - 1) * 8 + caps);
         assert_eq!(mesh.count_vertices(), (corners.len() - 1) * 16 + caps * 2);
@@ -3240,7 +3591,7 @@ mod tests {
                 assert!((b - a).perp_dot(d - a) > 0.0 && (c - b).perp_dot(d - c) < 0.0 || (b - a).perp_dot(d - a) < 0.0, "a strip is twisted");
             }
         }
-        let (_, triangles) = planks(&chain.corners, &chain.root_edge, &chain.end_edge, chain.complete, &chain.gone, TOP, Color::WHITE, Color::BLACK);
+        let (_, triangles) = planks(&chain.corners, &chain.root_edge, &chain.end_edge, chain.complete, &chain.gone, &chain.doomed, TOP, Color::WHITE, Color::WHITE, Color::BLACK);
         for [a, b, c] in &triangles {
             let normal = (*b - *a).cross(*c - *a);
             let middle = (*a + *b + *c) / 3.0;
@@ -3523,6 +3874,43 @@ mod tests {
         assert!((chain.rungs[2].p.x - 2.0 * SPACING).abs() < 1e-4);
     }
 
+    #[test]
+    fn your_own_rungs_are_taken_from_the_server_only_for_a_bridge_this_device_never_began() {
+        let rung = |index: u16| Rung {
+            p: Vec2::new(index as f32 * SPACING, 0.0),
+            d: Vec2::X,
+        };
+        // You, in seat 2, have begun two bridges here, numbered 0 and 1,
+        // and the second, of nothing but its root, was forgotten.
+        let mut bridges = Bridges::default();
+        assert_eq!(bridges.begin(2, rung(0), false), 0);
+        bridges.chains[0].rungs.push(rung(1));
+        assert_eq!(bridges.begin(2, rung(5), false), 1);
+        bridges.forget(1);
+        bridges.active = None;
+        // The server sends every rung back, yours with the rest: nothing
+        // comes of them, here as you laid them or forgotten on purpose.
+        for (chain, index) in [(0, 0), (0, 1), (1, 0)] {
+            bridges.lay_own(2, chain, index, rung(index));
+        }
+        assert_eq!(bridges.chains.len(), 1);
+        assert_eq!(bridges.chains[0].rungs.len(), 2);
+        // The game begun afresh on this device (`Tell::Back`): nothing of
+        // yours is here, and all of it is taken from the server, in
+        // whatever order it comes; the next bridge you begin is numbered
+        // past the last of them.
+        let mut bridges = Bridges::default();
+        for (chain, index) in [(3, 1), (0, 0), (3, 0), (0, 1), (3, 2), (0, 2)] {
+            bridges.lay_own(2, chain, index, rung(index));
+        }
+        assert_eq!(bridges.chains.len(), 2);
+        assert!(bridges.chains.iter().all(|chain| chain.seat == 2 && chain.rungs.len() == 3));
+        assert_eq!(bridges.begin(2, rung(9), false), 4);
+        // And the rungs of that one, sent back, are left as they are.
+        bridges.lay_own(2, 4, 1, rung(1));
+        assert_eq!(bridges.chain(2, 4).expect("just begun").rungs.len(), 1);
+    }
+
     /// Two islands 10 m across from their middles with eight planks'
     /// worth of void between their shores, and seat 1's bridge laid
     /// straight across it, as it comes from the server: rungs from the one
@@ -3553,7 +3941,7 @@ mod tests {
         let white = Color::WHITE;
         let whole = {
             let chain = &bridges.chains[0];
-            planks(&chain.corners, &chain.root_edge, &chain.end_edge, chain.complete, &chain.gone, chain.top(), white, white).1
+            planks(&chain.corners, &chain.root_edge, &chain.end_edge, chain.complete, &chain.gone, &chain.doomed, chain.top(), white, white, white).1
         };
         // Before it, the joint between two planks is no edge to walk off:
         // the nearest edge to a point on it is a side.
@@ -3586,7 +3974,7 @@ mod tests {
         // a cap across each of the two ends left either side of the hole
         // and nothing in between.
         let chain = &bridges.chains[0];
-        let holed = planks(&chain.corners, &chain.root_edge, &chain.end_edge, chain.complete, &chain.gone, chain.top(), white, white).1;
+        let holed = planks(&chain.corners, &chain.root_edge, &chain.end_edge, chain.complete, &chain.gone, &chain.doomed, chain.top(), white, white, white).1;
         let (from, to) = (rung_at(2), rung_at(6));
         let mut caps = 0;
         for triangle in &holed {
@@ -3619,6 +4007,75 @@ mod tests {
         assert_eq!(late.plank_under(Vec2::new(rung_at(1) + 0.5, 0.0)), None);
         assert_eq!(late.plank_under(Vec2::new(rung_at(0) + 0.5, 0.0)), Some(0));
         assert_eq!(late.plank_under(Vec2::new(rung_at(2) + 0.5, 0.0)), Some(0));
+    }
+
+    #[test]
+    fn the_rest_of_a_bridge_a_blast_has_doomed_stands_until_each_plank_s_time_and_is_gone_at_it() {
+        let (_, mut bridges) = bridged();
+        // A stick at the bridge's second rung, reaching 2 m: its first two
+        // planks, whose middles are three quarters of a plank from it.
+        let taken = bridges.blast(Vec2::new(rung_at(1), 0.0), 2.0);
+        assert_eq!(taken, vec![(1, 0, 0), (1, 0, 1)]);
+        // The other six are doomed, a quarter of a second apart from ten
+        // seconds on, by seat 6's doing: each stands, and is stood on,
+        // and nothing else of the bridge has changed.
+        let falls: Vec<((u8, u16, u16), f64)> = (2..8u16).map(|plank| ((1, 0, plank), 10.0 + 0.25 * f64::from(plank - 2))).collect();
+        (bridges.dirty, bridges.chains[0].holed) = (false, false);
+        bridges.doom(falls.iter().copied(), 6);
+        assert!(bridges.dirty && bridges.chains[0].holed, "to be drawn again, in the colour of planks about to go");
+        assert!((2..8).all(|plank| bridges.doomed(1, 0, plank)) && !bridges.doomed(1, 0, 0) && !bridges.doomed(1, 0, 1));
+        let on = |plank: usize| Vec2::new((rung_at(plank) + rung_at(plank + 1)) * 0.5, 0.3);
+        assert!((2..8).all(|plank| bridges.plank_under(on(plank)) == Some(0)));
+        assert_eq!(bridges.quads().count(), 6);
+        // Its top is drawn in that colour, and the planks not doomed in
+        // their own: of the bridge whole, none; now, every one left.
+        let (white, red) = (Color::WHITE, Color::srgb(1.0, 0.0, 0.0));
+        let reds = |bridges: &Bridges| {
+            let chain = &bridges.chains[0];
+            let (mesh, _) = planks(&chain.corners, &chain.root_edge, &chain.end_edge, chain.complete, &chain.gone, &chain.doomed, chain.top(), white, red, white);
+            let Some(bevy::mesh::VertexAttributeValues::Float32x4(colours)) = mesh.attribute(Mesh::ATTRIBUTE_COLOR) else {
+                panic!("no colours");
+            };
+            colours.iter().filter(|colour| colour[1] < 0.5).count()
+        };
+        // (A plank's top is one face of four corners, between straight
+        // edges; the last one's follows the shore it lands on.)
+        assert!(reds(&bridges) >= 6 * 4, "{}", reds(&bridges));
+        assert_eq!(reds(&bridged().1), 0);
+        // Before the first one's time nothing goes.
+        assert!(bridges.take_due(9.9).is_empty() && bridges.just_fell.is_empty());
+        assert_eq!(bridges.quads().count(), 6);
+        // At it, that one is gone from under whoever stood on it, seen to
+        // fall from where it lay, and whose doing it was is known for the
+        // frame; the rest stand.
+        let seen = bridges.take_due(10.1);
+        assert_eq!(seen.len(), 1);
+        let (quad, top) = seen[0];
+        assert!(inside_quad(on(2), quad) && (top - bridges.chains[0].top()).abs() < 1e-6);
+        assert_eq!((bridges.fell_under(on(2)), bridges.fell_under(on(3))), (Some(6), None));
+        assert_eq!(bridges.plank_under(on(2)), None);
+        assert!(bridges.plank_under(on(3)) == Some(0) && !bridges.doomed(1, 0, 2) && bridges.doomed(1, 0, 3));
+        assert_eq!(bridges.broken().count(), 3);
+        // One doomed again for sooner goes sooner, and for later no later.
+        bridges.doom([((1, 0, 5), 10.3), ((1, 0, 4), 99.0)], 2);
+        bridges.just_fell.clear();
+        let seen = bridges.take_due(10.35);
+        assert_eq!(seen.len(), 2, "the next in its turn, and the one brought forward");
+        assert_eq!((bridges.fell_under(on(3)), bridges.fell_under(on(5)), bridges.fell_under(on(4))), (Some(6), Some(2), None));
+        // Long past their time, as on a device that has just come into
+        // the game, the rest are simply gone: nothing is seen to fall.
+        bridges.just_fell.clear();
+        assert!(bridges.take_due(60.0).is_empty());
+        assert_eq!(bridges.just_fell.len(), 3);
+        assert_eq!((bridges.quads().count(), bridges.broken().count()), (0, 8));
+        assert!(bridges.falling.is_empty());
+        // And nothing of it is left to draw or to stand on.
+        let chain = &bridges.chains[0];
+        let (_, left) = planks(&chain.corners, &chain.root_edge, &chain.end_edge, chain.complete, &chain.gone, &chain.doomed, chain.top(), white, red, white);
+        assert!(left.is_empty());
+        // One that is gone is not doomed again.
+        bridges.doom([((1, 0, 3), 70.0)], 6);
+        assert!(bridges.falling.is_empty());
     }
 
     #[test]

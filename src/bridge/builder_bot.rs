@@ -227,15 +227,11 @@ pub(super) fn walk(
                     spot: Some(Spot::of(place.translation, facing)),
                 });
             }
-            for (chain, index, rung) in sent {
-                requests.write(NetAsk::Rung {
-                    chain,
-                    index,
-                    x: rung.p.x,
-                    z: rung.p.y,
-                    heading: yaw_of(rung.d),
-                });
-            }
+        }
+        // Its rungs, as your own go: now, or, the connection gone for the
+        // moment, once it is back (`send_rungs`).
+        if fighting.online && (!sent.is_empty() || !bridges.unsent.is_empty()) {
+            super::send_rungs(&mut bridges, online.is(), &mut requests, sent);
         }
     }
 }
@@ -279,8 +275,7 @@ fn advance(
                 if bridges.chains.len() >= MOST_CHAINS {
                     return (at, true);
                 }
-                let id = bridges.next_id;
-                bridges.next_id = bridges.next_id.wrapping_add(1);
+                let id = bridges.number();
                 let mut chain = Chain::new(builder.seat, id, vec![root]);
                 chain.forked = forked;
                 bridges.chains.push(chain);

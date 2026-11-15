@@ -74,6 +74,32 @@
 //! heals it on its island, and its traps blind whoever of another team
 //! steps onto it ([`Outfits::tick`]). The computer's players buy nothing,
 //! and do not go for anyone unseen.
+//!
+//! **Since 2026-11-15 a seat waits for whoever's device has gone**
+//! (Hajun, of his partner's phone in a game with him: "suddenly she
+//! disconnected and went back to the main lobby for some reason while i
+//! still stay in the bridge wars game ... if u exit the app while ur
+//! playing and reopen, u shouldnt go to the main lobby - u should rejoin
+//! the game as long as there is atleast 1 real player in that game
+//! still"). A phone closes its connection whenever its app leaves the
+//! foreground, an iPhone's for as little as a pull on the bar of
+//! notifications, and until then that was the seat given up for good: the
+//! journal has her device gone for 3.8 s, a minute into a game, and back
+//! in the town. Now the body is kept ([`Arenas::keeps`]), standing where
+//! it stood with nobody to move it, to be hit like anyone and to fall if
+//! the ground goes from under it ([`Game::fight`]); and whoever comes back
+//! as its player is put back ([`Arenas::returns`]): an app that was only
+//! put away carries on where it stands, whoever else is or is not in the
+//! game, and one that was closed and opened again is told to begin the
+//! game afresh ([`Tell::Back`]) so long as the fight is on and someone
+//! else of the people in it is connected. With nobody connected a game
+//! goes on a minute and is given up ([`ABANDONED`]). Before the fight a
+//! seat waits only until it begins, and is the computer's then ([`run`]).
+//!
+//! **And since 2026-11-15 a stick of dynamite takes the whole bridge
+//! down** ([`Game::dynamites`], [`Game::crumble`], `Nav::cascade`): the
+//! planks its blast reaches at once, as before, and every other plank
+//! joined to them after, one by one from the hole outward.
 
 use std::collections::HashMap;
 
@@ -98,7 +124,10 @@ use crate::rooms::{InRoom, NotFor, Room, Towns};
 use crate::social::Social;
 
 /// How long a game goes on with nobody connected to it, in seconds, before
-/// it is given up.
+/// it is given up: the seats of whoever's devices have gone waiting all
+/// the while ([`Arenas::keeps`]), so that someone playing alone whose app
+/// was put away for less than this finds their game as they come back to
+/// it.
 const ABANDONED: f32 = 60.0;
 /// The most rungs one seat can lay: far more than a game's worth, so that a
 /// device gone wrong cannot fill the server's memory.
@@ -130,6 +159,13 @@ const PRESS_IN: f32 = 0.7;
 /// builder is as it walks, and that it is gone.
 const MOST_BUILDERS: usize = 4;
 const BUILDER_SILENT: f64 = 2.0;
+/// How far under the ground where they stand someone whose device has
+/// gone has to be to have fallen, in metres: under the islands and the
+/// planks, on the way down into the void.
+const AWAY_UNDER: f32 = 1.5;
+/// The most metres of bridge a device can say it has left
+/// ([`Ask::Metres`]): far more than a game's worth.
+const MOST_METRES: f32 = 5000.0;
 
 pub(crate) fn plugin(app: &mut App) {
     app.init_resource::<Arenas>()
@@ -195,6 +231,11 @@ struct Game {
     /// How far into the fight it is, in seconds: what the timetable goes
     /// by ([`TIMETABLE`]), and the generators' tiers.
     elapsed: f32,
+    /// The time by this machine's clock, in seconds since 1970, as of
+    /// this frame ([`run`]): what a blast is stamped with ([`Blasted::at`]),
+    /// every device having the server's time for the town's clock. None
+    /// of the game goes by it.
+    clock: f64,
     /// The generators, and everything they have made that lies there yet,
     /// each by its number as the entity the room is sent ([`Loot`]).
     mint: Mint,
@@ -232,6 +273,19 @@ struct Game {
     /// Whose body is in the game's room to be played with, by seat: a
     /// person's while it is there; the computer's always.
     present: Vec<bool>,
+    /// Whose device has gone, by seat, their body standing in the game
+    /// where it stood with nobody to move it and their seat waiting for
+    /// them ([`Arenas::keeps`], [`sync`]; since 2026-11-15); and which of
+    /// them has died since it went, so that the device, when it is back,
+    /// is told to begin the game afresh rather than carry on with what it
+    /// held ([`Arenas::returns`]).
+    away: Vec<bool>,
+    died_away: Vec<bool>,
+    /// The metres of bridge each person has left to lay, as their device
+    /// last said ([`Ask::Metres`]): the device's own to count, and kept
+    /// here only to be given back to one that has forgotten
+    /// ([`Tell::Back`]). None once they have died, as on the device.
+    metres: Vec<f32>,
     /// What a step of the fight has done that the world is to be told or
     /// shown ([`Event`]), until it has been ([`flush`]).
     events: Vec<Event>,
@@ -453,6 +507,7 @@ impl Game {
             planks: Vec::new(),
             rungs: Vec::new(),
             elapsed: 0.0,
+            clock: 0.0,
             mint: Mint::new(0.0, &mut || dice.f32()),
             loot: HashMap::new(),
             purses: Vec::new(),
@@ -468,6 +523,9 @@ impl Game {
             at: Vec::new(),
             yaw: Vec::new(),
             present: Vec::new(),
+            away: Vec::new(),
+            died_away: Vec::new(),
+            metres: Vec::new(),
             events: Vec::new(),
             nav: Nav::arena(),
             squad: Squad::new(seed, Skill::MODERATE),
@@ -743,6 +801,19 @@ impl Game {
         Some(seats)
     }
 
+    /// Whether anyone of the people in it but whoever is in `seat` is
+    /// connected to it: in its room, with a device ([`sync`]).
+    fn watched_but(&self, seat: usize) -> bool {
+        (0..self.seats.len().min(ARENA_SEATS)).any(|other| {
+            other != seat
+                && !self.bot[other]
+                && !self.vacant[other]
+                && !self.gone[other]
+                && self.present[other]
+                && !self.away[other]
+        })
+    }
+
     /// How many people are in it: not the computer's players, nor whoever
     /// has left.
     fn people(&self) -> usize {
@@ -791,6 +862,9 @@ impl Game {
         self.at[seat] = at;
         self.yaw[seat] = yaw_of(turn);
         self.present[seat] = true;
+        self.away[seat] = false;
+        self.died_away[seat] = false;
+        self.metres[seat] = 0.0;
         if bot && seat < ARENA_SEATS {
             self.squad.seat(seat, at, yaw_of(turn));
         } else {
@@ -818,14 +892,20 @@ impl Game {
         self.rungs[seat] = 0;
         self.purses[seat] = Purse::default();
         self.present[seat] = false;
+        self.away[seat] = false;
+        self.died_away[seat] = false;
+        self.metres[seat] = 0.0;
         self.squad.unseat(seat);
         if let Some(kit) = self.outfits.kits.get_mut(seat) {
             *kit = Kit::default();
         }
     }
 
-    /// Whoever was in `seat` has left the game: gone back to the town, or
-    /// their connection has. Before the fight begins, in the waiting room
+    /// Whoever was in `seat` has left the game for good: gone back to the
+    /// town; or come back to the server from outside the game with nobody
+    /// else of its people connected to it ([`Arenas::returns`]); or, until
+    /// 2026-11-15, their connection had gone, which a seat now waits out
+    /// ([`Arenas::keeps`]). Before the fight begins, in the waiting room
     /// or through the countdown, their seat is anyone's again
     /// ([`Game::vacate`]), a person's who comes or the computer's, so
     /// that no team begins short (until 2026-11-12 it stayed theirs,
@@ -859,6 +939,9 @@ impl Game {
         self.at.push(Vec3::ZERO);
         self.yaw.push(0.0);
         self.present.push(false);
+        self.away.push(false);
+        self.died_away.push(false);
+        self.metres.push(0.0);
         self.outfits.seat(self.seats.len());
     }
 
@@ -891,6 +974,13 @@ impl Game {
         self.outfits.die(seat);
         if let Some(purse) = self.purses.get_mut(seat) {
             *purse = Purse::default();
+        }
+        // The metres of bridge they had left go too, as their device has
+        // it; and one whose device is not there to see them die is told
+        // of it when it is back ([`Arenas::returns`]).
+        self.metres[seat] = 0.0;
+        if self.away[seat] {
+            self.died_away[seat] = true;
         }
         if self.zombie(seat).is_some() {
             self.dead_for[seat] = Some(ZOMBIE_RESPAWN_SECS);
@@ -1009,6 +1099,15 @@ impl Game {
             self.squad.stand(seat, self.at[seat], self.yaw[seat], self.elapsed);
             return;
         }
+        // Where the game has them from now, though their body is put
+        // there only as the frame is carried out ([`flush`]): until
+        // 2026-11-15 they were where they had died for the rest of the
+        // frame, and someone whose device had gone, fallen into the void,
+        // was found over the void again the moment they stood, and fell
+        // a second time ([`Game::fight`]).
+        let (at, turn) = arrival(Venue::Arena, seat);
+        self.at[seat] = at;
+        self.yaw[seat] = yaw_of(turn);
         self.events.push(Event::Land(seat));
     }
 
@@ -1161,6 +1260,7 @@ impl Game {
             self.happen(event);
         }
         self.mint_step();
+        self.crumble(dt);
         self.fight(dt);
         self.fireballs(dt);
         self.dynamites(dt);
@@ -1260,6 +1360,20 @@ impl Game {
             self.since_hit[seat] += dt;
             if self.since_hit[seat] >= REGEN_AFTER && self.health[seat] < HEALTH {
                 self.health[seat] = (self.health[seat] + REGEN_PER_SEC * dt).min(HEALTH);
+            }
+        }
+        // Someone whose device has gone stands where they stood, with
+        // nobody to move them, and can be hit there like anyone. With
+        // nothing under them, the plank they stood on taken by a blast,
+        // or gone in mid-air over the void, they fall as anyone would:
+        // their own device would have said so ([`Ask::Respawn`]).
+        for seat in 0..self.seats.len().min(ARENA_SEATS) {
+            if !self.away[seat] || self.bot[seat] || !self.present[seat] || !self.alive(seat) {
+                continue;
+            }
+            let at = self.at[seat];
+            if self.nav.ground(at.xz()).is_none_or(|ground| at.y < ground - AWAY_UNDER) {
+                self.fall(seat);
             }
         }
         // The bots, each with everyone else where they stand this frame:
@@ -1403,6 +1517,36 @@ impl Game {
         }
     }
 
+    /// The bridges a blast has doomed, for one frame of the fight
+    /// ([`Nav::crumble`], since 2026-11-15): every plank whose time has
+    /// come is gone from under whoever stands on it. Nobody is told: each
+    /// device was told as the stick blew which planks would go and when
+    /// ([`Blasted::later`]), and takes them itself. Whoever of another
+    /// team than the thrower's stood on one is theirs to have knocked off
+    /// the world, should they fall ([`Game::fall`], [`CREDIT_SECS`]): a
+    /// person's own device says whether they do, the computer's players
+    /// fall here, and whoever's device has gone falls with the rest
+    /// ([`Game::fight`]).
+    fn crumble(&mut self, dt: f32) {
+        let fallen = self.nav.crumble(dt);
+        if fallen.is_empty() {
+            return;
+        }
+        self.planks_blown += fallen.len() as u32;
+        for seat in 0..self.seats.len().min(ARENA_SEATS) {
+            if !self.alive(seat) || !self.present[seat] {
+                continue;
+            }
+            let at = self.at[seat].xz();
+            let Some(by) = fallen.iter().find(|plank| plank.under(at)).map(|plank| usize::from(plank.by)) else {
+                continue;
+            };
+            if by < ARENA_SEATS && arena_team(by) != arena_team(seat) {
+                self.last_hit[seat] = Some((by, self.elapsed, Weapon::Dynamite));
+            }
+        }
+    }
+
     /// Every fireball in the air, for one frame of the fight: flown on,
     /// and burst where it meets someone of another team than its
     /// thrower's, or at the end of its range. Its blast takes its damage
@@ -1457,6 +1601,13 @@ impl Game {
     /// ([`Nav::blast`]): the computer's players fall with them, and a
     /// person's own device has them fall, told which planks went
     /// ([`Event::Blew`], [`Blasted`]). An anchor it does not touch.
+    ///
+    /// And since 2026-11-15 the rest of the bridge falls after them
+    /// ([`Nav::cascade`], [`Game::crumble`]; Hajun: "from that point it
+    /// will destroy cascadingly the entire bridge like the truly connected
+    /// bridge ... but it shouldnt destroy the whole bridge instantly"):
+    /// which planks and when is worked out as the stick blows, and said
+    /// with it.
     fn dynamites(&mut self, dt: f32) {
         let mut lying = std::mem::take(&mut self.sticks);
         lying.retain_mut(|stick| {
@@ -1489,12 +1640,18 @@ impl Game {
                 self.hurt_by(seat, stick.by, damage, Weapon::Dynamite);
             }
             let planks = self.nav.blast(at.xz(), DYNAMITE_RADIUS);
+            // And the rest of the bridge they were part of falls after
+            // them, plank by plank from the hole outward.
+            let later = self.nav.cascade(&planks);
+            self.nav.doom(&later, stick.by as u8);
             info!(
-                "Bridge Wars game {}: seat {}'s dynamite blew at {:.1}, taking {} planks",
+                "Bridge Wars game {}: seat {}'s dynamite blew at {:.1}, taking {} planks, and {} more to fall over {:.1} s",
                 self.id,
                 stick.by,
                 at.xz(),
-                planks.len()
+                planks.len(),
+                later.len(),
+                later.last().map_or(0.0, |(_, secs)| *secs)
             );
             self.blasts += 1;
             self.planks_blown += planks.len() as u32;
@@ -1505,6 +1662,8 @@ impl Game {
                     y: at.y,
                     z: at.z,
                     planks,
+                    at: self.clock,
+                    later: Blasted::later_of(&later),
                 },
             });
             false
@@ -1576,6 +1735,65 @@ impl Arenas {
         }
     }
 
+    /// Whether `body`'s seat in the game in `room` waits for it, its
+    /// device having gone (since 2026-11-15; until then a seat was given
+    /// up the moment a connection closed, and a phone closes its own
+    /// whenever its app leaves the foreground, an iPhone's for as little
+    /// as a pull on the bar of notifications: on 2026-11-13 Hajun's
+    /// partner in a game was out of it for good, and back in the town,
+    /// for under four seconds away). The body is kept, standing where it
+    /// stood, for as long as the game goes on with anyone connected to
+    /// it, and a minute more ([`ABANDONED`]); whoever comes back as its
+    /// player is put back in it ([`Arenas::returns`]). A seat that has
+    /// been left for good, back to the town, does not wait.
+    pub(crate) fn keeps(&self, room: Room, body: Entity) -> bool {
+        let Room::Arena(id) = room else {
+            return false;
+        };
+        self.games.get(&id).is_some_and(|game| {
+            !game.closing && game.seat_of(body).is_some_and(|seat| !game.bot[seat] && !game.gone[seat])
+        })
+    }
+
+    /// What becomes of whoever plays `body`, whose device is back, the
+    /// body having been kept in the game in `room` ([`Arenas::keeps`]).
+    /// `still_there`, the device says it is in a game of Bridge Wars yet:
+    /// its app was only put away, and it has the game as it left it.
+    ///
+    /// - Still there, it carries on where it stands ([`Return::Resume`]):
+    ///   unless its player has died meanwhile, which it was not there to
+    ///   see, and then it is told to begin the game afresh, as one that
+    ///   has forgotten is.
+    /// - Not there, the app closed and opened again, it is put back in
+    ///   the game ([`Return::Back`]) so long as the fight is on and
+    ///   someone else of the people in it is connected to it (Hajun: "u
+    ///   should rejoin the game as long as there is atleast 1 real player
+    ///   in that game still").
+    /// - Otherwise the seat is given up, and they are in the town
+    ///   ([`Return::GiveUp`]): the caller walks them out.
+    pub(crate) fn returns(&mut self, room: Room, body: Entity, still_there: bool) -> Return {
+        let Some((game, seat)) = self.of(room, body) else {
+            return Return::GiveUp;
+        };
+        if game.gone[seat] || game.closing {
+            return Return::GiveUp;
+        }
+        let died = std::mem::take(&mut game.died_away[seat]);
+        if still_there && (!died || !game.playing()) {
+            game.away[seat] = false;
+            return Return::Resume;
+        }
+        if !game.playing() || !(still_there || game.watched_but(seat)) {
+            return Return::GiveUp;
+        }
+        game.away[seat] = false;
+        Return::Back {
+            seat: seat as u8,
+            metres: game.metres[seat],
+            compass: game.outfits.kit(seat).compass,
+        }
+    }
+
     /// Whether the game in `room` has yet to begin its fight: in its
     /// waiting room still, or counting down. What someone's friends are
     /// told of where they are (`social`).
@@ -1587,6 +1805,19 @@ impl Arenas {
             .get(&id)
             .is_some_and(|game| matches!(game.stage, ArenaStage::Waiting | ArenaStage::Countdown))
     }
+}
+
+/// What becomes of someone whose device is back while their body was kept
+/// in a game ([`Arenas::returns`]).
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub(crate) enum Return {
+    /// The device never left the game: it carries on where it stands.
+    Resume,
+    /// It is put back in the game, in this seat, which it begins afresh
+    /// ([`Tell::Back`]), with what only the device knew of it.
+    Back { seat: u8, metres: f32, compass: bool },
+    /// The seat is given up: they are in the town.
+    GiveUp,
 }
 
 /// Seats `going`, who go in together, the first of them having asked, in
@@ -1922,6 +2153,16 @@ fn hear(
                     }
                 }
             }
+            // The metres of bridge they have left, which their device
+            // counts: kept to give back to one that has forgotten.
+            Ask::Metres(metres) if matches!(room, Room::Arena(_)) => {
+                let Some((game, seat)) = arenas.of(room, body) else {
+                    continue;
+                };
+                if game.playing() && game.alive(seat) && metres.is_finite() {
+                    game.metres[seat] = metres.clamp(0.0, MOST_METRES);
+                }
+            }
             Ask::Skip if matches!(room, Room::Arena(_)) => {
                 if let Some((game, _)) = arenas.of(room, body)
                     && config.allow_skip
@@ -1955,6 +2196,11 @@ fn run(
 ) {
     let dt = time.delta_secs();
     let now = time.elapsed_secs_f64();
+    // The time by this machine's clock, which every device has for the
+    // town's (`clock`): what a blast is stamped with.
+    let clock = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0.0, |since| since.as_secs_f64());
     let mut ended = Vec::new();
     for game in arenas.games.values_mut() {
         let room = game.room();
@@ -1978,6 +2224,7 @@ fn run(
         }
 
         sync(game, &bodies);
+        game.clock = clock;
         match game.stage {
             ArenaStage::Waiting => {
                 game.since_join += dt;
@@ -2005,6 +2252,29 @@ fn run(
             ArenaStage::Countdown => {
                 game.left -= dt;
                 if game.left <= 0.0 {
+                    // Whoever's device went while the room waited, and
+                    // is not back as the fight begins, has given their
+                    // seat up: a seat waits through a fight, not for one
+                    // that has yet to begin with nobody in it.
+                    for seat in 0..game.seats.len().min(ARENA_SEATS) {
+                        if game.bot[seat] || game.vacant[seat] {
+                            continue;
+                        }
+                        let body = game.seats[seat];
+                        let Ok((body_of, ..)) = bodies.get(body) else {
+                            continue;
+                        };
+                        if body_of.client.is_some() {
+                            continue;
+                        }
+                        info!(
+                            "Bridge Wars game {}: seat {seat}'s device is not back as the fight begins, and the seat is free again",
+                            game.id
+                        );
+                        everyone.0.remove(&body_of.who);
+                        commands.entity(body).try_despawn();
+                        game.vacate(seat);
+                    }
                     // Whoever left during the countdown has the computer
                     // in their seat, on its island from the start.
                     while game.free_seat().is_some() {
@@ -2060,7 +2330,8 @@ fn run(
             && social.first_time(Minigame::BridgeWars, game.id)
         {
             for seat in 0..game.seats.len().min(ARENA_SEATS) {
-                if game.bot[seat] || game.vacant[seat] || game.gone[seat] {
+                // (Nor whoever's device has gone, their seat waiting.)
+                if game.bot[seat] || game.vacant[seat] || game.gone[seat] || game.away[seat] {
                     continue;
                 }
                 let won = winner == Some(arena_team(seat));
@@ -2112,10 +2383,14 @@ fn sync(game: &mut Game, bodies: &Bodies) {
         match bodies.get(game.seats[seat]) {
             Ok((body, spot, ..)) => {
                 game.present[seat] = body.room == room && spot.aboard.is_none();
+                game.away[seat] = body.client.is_none();
                 game.at[seat] = spot.translation();
                 game.yaw[seat] = yaw_of(spot.rotation());
             }
-            Err(_) => game.present[seat] = false,
+            Err(_) => {
+                game.present[seat] = false;
+                game.away[seat] = false;
+            }
         }
     }
 }
@@ -2615,6 +2890,9 @@ mod tests {
         game.at.clear();
         game.yaw.clear();
         game.present.clear();
+        game.away.clear();
+        game.died_away.clear();
+        game.metres.clear();
         game.outfits = Outfits::default();
         game
     }
@@ -2893,6 +3171,186 @@ mod tests {
         game.leave(0);
         assert!((0..game.seats.len()).all(|seat| game.gone[seat] || game.bot[seat]));
         assert_eq!(game.free_seat(), Some(0));
+    }
+
+    #[test]
+    fn a_seat_waits_for_whoever_s_device_has_gone_and_they_are_put_back_in_it() {
+        // Two people on one team, in seats 0 and 4, the computer in the
+        // rest, and the fight on (Hajun, 2026-11-15, of his partner's
+        // phone: "suddenly she disconnected and went back to the main
+        // lobby for some reason while i still stay in the bridge wars
+        // game").
+        let home = |seat: usize| arrival(Venue::Arena, seat).0.with_y(ISLAND_TOP);
+        let room = Room::Arena(4);
+        let (leader, partner) = (Entity::from_bits(1), Entity::from_bits(5));
+        let mut arenas = Arenas::default();
+        arenas.games.insert(4, with_people(7, &[0, 4], home));
+        fn game(arenas: &mut Arenas) -> &mut Game {
+            arenas.games.get_mut(&4).expect("there")
+        }
+        assert_eq!(game(&mut arenas).seat_of(partner), Some(4));
+        // A person's seat waits, the computer's does not, and one left
+        // for the town is left.
+        assert!(arenas.keeps(room, partner) && arenas.keeps(room, leader));
+        assert!(!arenas.keeps(room, Entity::from_bits(101)) && !arenas.keeps(Room::Arena(9), partner));
+        // Her device goes: she stands where she stood, in play, her team
+        // with both its seats, and whatever she held still hers.
+        game(&mut arenas).away[4] = true;
+        game(&mut arenas).purses[4] = [9, 2, 1, 1];
+        game(&mut arenas).metres[4] = 37.5;
+        game(&mut arenas).outfits.kits[4].compass = true;
+        for _ in 0..90 {
+            step_with_people(game(&mut arenas), &home);
+        }
+        assert!(game(&mut arenas).alive(4) && game(&mut arenas).in_play(4) && !game(&mut arenas).gone[4]);
+        assert_eq!(game(&mut arenas).purses[4], [9, 2, 1, 1]);
+        // Back with the app only put away, it carries on.
+        assert_eq!(arenas.returns(room, partner, true), Return::Resume);
+        assert!(!game(&mut arenas).away[4]);
+        // Back with the app closed and opened again, it is put back in
+        // her seat, with the metres of bridge and the compass only her
+        // own device knew of: so long as someone else is there.
+        game(&mut arenas).away[4] = true;
+        assert_eq!(
+            arenas.returns(room, partner, false),
+            Return::Back {
+                seat: 4,
+                metres: 37.5,
+                compass: true
+            }
+        );
+        // With nobody else of the people in it connected, a game is not
+        // come back to from outside it; but an app that never left it
+        // carries on all the same.
+        game(&mut arenas).away[4] = true;
+        game(&mut arenas).away[0] = true;
+        assert_eq!(arenas.returns(room, partner, true), Return::Resume);
+        game(&mut arenas).away[4] = true;
+        assert_eq!(arenas.returns(room, partner, false), Return::GiveUp);
+        // Dead while her device was away, which it was not there to see,
+        // it begins the game afresh even if its app never left, with none
+        // of what dying loses: once, and it carries on from there.
+        game(&mut arenas).away[0] = false;
+        game(&mut arenas).away[4] = true;
+        game(&mut arenas).die(4);
+        assert_eq!(game(&mut arenas).dead_for[4], Some(RESPAWN_SECS));
+        assert_eq!(
+            arenas.returns(room, partner, true),
+            Return::Back {
+                seat: 4,
+                metres: 0.0,
+                compass: false
+            }
+        );
+        assert_eq!(arenas.returns(room, partner, true), Return::Resume);
+        // A seat left for the town is not come back to, nor a game over.
+        game(&mut arenas).leave(4);
+        assert!(!arenas.keeps(room, partner));
+        assert_eq!(arenas.returns(room, partner, true), Return::GiveUp);
+        game(&mut arenas).stage = ArenaStage::Over { winner: None };
+        game(&mut arenas).away[0] = true;
+        assert_eq!(arenas.returns(room, leader, false), Return::GiveUp);
+        assert_eq!(arenas.returns(room, leader, true), Return::Resume);
+    }
+
+    #[test]
+    fn whoever_s_device_has_gone_falls_with_the_ground_gone_from_under_them_and_stands_otherwise() {
+        let home = |seat: usize| arrival(Venue::Arena, seat).0.with_y(ISLAND_TOP);
+        // Gone in mid-air over the void, between her island and the
+        // middle: with nobody to say she fell, the game says so.
+        let mut game = with_people(7, &[0, 4], home);
+        let over_the_void = ARENA_ISLANDS[arena_island(4)] * 0.75;
+        assert!(game.nav.ground(over_the_void).is_none(), "{over_the_void} is over the void");
+        game.away[4] = true;
+        game.at[4] = Vec3::new(over_the_void.x, ISLAND_TOP, over_the_void.y);
+        game.metres[4] = 50.0;
+        game.step(1.0 / 30.0);
+        assert!(!game.alive(4) && game.dead_for[4] == Some(RESPAWN_SECS) && game.died_away[4]);
+        assert_eq!(game.metres[4], 0.0);
+        // The same of someone who is there is their own device's to say.
+        let mut game = with_people(7, &[0, 4], home);
+        game.at[4] = Vec3::new(over_the_void.x, ISLAND_TOP, over_the_void.y);
+        game.step(1.0 / 30.0);
+        assert!(game.alive(4));
+        // And under her island, on the way down.
+        let mut game = with_people(7, &[0, 4], home);
+        game.away[4] = true;
+        game.at[4] = home(4) - Vec3::Y * 6.0;
+        game.step(1.0 / 30.0);
+        assert!(!game.alive(4));
+        // She stands again on her island once, with nobody to say where
+        // she is, and stays standing: the fall was one fall.
+        said(&mut game);
+        let mut falls = 1;
+        for _ in 0..(3.0 * RESPAWN_SECS * 30.0) as usize {
+            game.step(1.0 / 30.0);
+            falls += said(&mut game).iter().filter(|feed| matches!(feed, Feed::Fell { seat: 4 } | Feed::Knocked { seat: 4, .. })).count();
+            game.events.clear();
+        }
+        assert!(game.alive(4) && game.at[4].xz().distance(home(4).xz()) < 0.1, "at {}", game.at[4]);
+        assert_eq!(falls, 1);
+    }
+
+    #[test]
+    fn whoever_falls_with_a_bridge_a_stick_has_doomed_was_knocked_off_the_world_by_its_thrower() {
+        use roundtown_net::nav::{PLANK_TOP, Region};
+        // Two people of team 0, in seats 0 and 4, far out on a bridge of
+        // seat 1's from its island to the middle, by the middle's end: one
+        // there, one whose device has gone. Seat 2, of another team, blows
+        // the island's end of it.
+        let mut game = with_people(7, &[0, 4], |_| Vec3::ZERO);
+        let span = game.nav.grid().span(Region::Team(1), Region::Middle, 0.0).expect("a span");
+        for index in 0..=span.planks() {
+            game.nav.hear(1, 0, index as u16, span.rung(index));
+        }
+        let on = |share: f32| {
+            let at = span.point(share);
+            Vec3::new(at.x, PLANK_TOP, at.y)
+        };
+        (game.at[0], game.at[4]) = (on(0.9), on(0.8));
+        game.away[4] = true;
+        game.purses[4] = [5, 1, 3, 2];
+        let stands = |seat: usize| if seat == 0 { on(0.9) } else { on(0.8) };
+        game.outfits.kits[2] = Kit::default().holding(Utility::Dynamite, 1);
+        let from = on(0.15);
+        game.at[2] = from;
+        game.squad.stand(2, from, 0.0, 0.0);
+        let aim = span.point(0.3) - from.xz();
+        assert!(game.lob(2, from, (-aim.x).atan2(-aim.y), aim.length()));
+        // Until it blows, and until the falling has reached them, they
+        // stand, and nobody has hit them.
+        let mut blown = None;
+        let mut fell_away = None;
+        for _ in 0..(40.0 * 30.0) as usize {
+            step_with_people(&mut game, &stands);
+            if game.blasts == 1 && blown.is_none() {
+                blown = Some(game.elapsed);
+                assert!(game.alive(0) && game.alive(4) && game.last_hit[0].is_none() && game.last_hit[4].is_none());
+                assert!(game.nav.falls_in(on(0.8).xz()).is_some_and(|left| left > 2.0), "her plank is doomed, and stands");
+            }
+            // Hers goes from under her: she falls, by seat 2's doing,
+            // which has her sapphire and her amethyst and nothing else.
+            if !game.alive(4) && fell_away.is_none() {
+                fell_away = Some(game.elapsed);
+                assert!(game.died_away[4]);
+                assert_eq!((game.purses[4], game.purses[2][2], game.purses[2][3]), (Purse::default(), 3, 2));
+            }
+            if game.nav.planks().count() == 0 {
+                break;
+            }
+        }
+        let (blown, fell_away) = (blown.expect("it blew"), fell_away.expect("she fell"));
+        let due = CASCADE_WAIT + (0.8 - 0.3) * span.length() / CASCADE_SPEED;
+        assert!((fell_away - blown - due).abs() < 1.0, "she fell {} s after the blast, her plank due at {due}", fell_away - blown);
+        // His went from under him too: his own device is to say he fell,
+        // and when it does, it was seat 2 that knocked him off the world.
+        assert!(game.alive(0));
+        assert!(matches!(game.last_hit[0], Some((2, _, Weapon::Dynamite))), "{:?}", game.last_hit[0]);
+        said(&mut game);
+        game.fall(0);
+        assert_eq!(said(&mut game), vec![Feed::Knocked { seat: 0, by: 2 }]);
+        // Seat 2's own teammate, standing on it, is nobody's doing.
+        assert!(game.last_hit[6].is_none());
     }
 
     #[test]
@@ -3466,6 +3924,7 @@ mod tests {
             game.squad.stand(seat, game.at[seat], 0.0, 0.0);
         }
         assert!(!game.lob(1, game.at[1], 0.0, 8.0), "with none at all");
+        game.clock = 1_794_000_000.5;
         assert!(game.lob(0, from, 0.0, 8.0));
         let [Event::Lobbed { stick: 0, shown }] = game.events.as_slice() else {
             panic!("the room is not shown it: {:?}", game.events);
@@ -3506,6 +3965,17 @@ mod tests {
         assert_eq!((game.blasts, game.planks_blown), (1, shown.planks.len() as u32));
         assert!(!game.nav.joined(Region::Team(0), Region::Middle));
         assert_eq!(game.nav.ground(down.xz()), None);
+        // And the room is told, with when it blew by the server's clock,
+        // which of the rest of the bridge is to fall after them and how
+        // long after, the nearest the hole first: every other plank of
+        // it, none of which has gone yet.
+        let (took, later) = (shown.planks.len(), shown.later.clone());
+        assert_eq!(shown.at, 1_794_000_000.5);
+        assert_eq!(took + later.len(), span.planks(), "{later:?}");
+        assert!(later.iter().all(|&(seat, chain, plank, _)| (seat, chain) == (4, 0) && !shown.planks.contains(&(seat, chain, plank))));
+        assert!(later.windows(2).all(|pair| pair[0].3 <= pair[1].3));
+        assert!((f32::from(later[0].3) / 1000.0 - (CASCADE_WAIT + span.length() / span.planks() as f32 / CASCADE_SPEED)).abs() < 0.03);
+        assert_eq!(game.nav.planks().count(), later.len());
         game.events.clear();
         // Whoever of the computer's stood on them falls with them, and is
         // dead of it soon enough.
@@ -3513,6 +3983,20 @@ mod tests {
             game.step(1.0 / 60.0);
         }
         assert!(!game.alive(1) && !game.alive(4), "they stand on nothing still: {} {}", game.at[1], game.at[4]);
+        // Two and a half seconds on, the planks whose time has come are
+        // gone, and no others; nobody is told again.
+        let due = later.iter().filter(|plank| f32::from(plank.3) / 1000.0 <= 2.5).count();
+        assert!(due >= 6 && due < later.len(), "{due} of {}", later.len());
+        assert!(game.nav.planks().count().abs_diff(later.len() - due) <= 1, "{} stand", game.nav.planks().count());
+        assert_eq!(game.planks_blown as usize, took + later.len() - game.nav.planks().count());
+        assert!(game.events.iter().all(|event| !matches!(event, Event::Blew { .. })), "{:?}", game.events);
+        // And by the last of their times nothing of the bridge is left.
+        let longest = f32::from(later[later.len() - 1].3) / 1000.0;
+        for _ in 0..((longest - 2.5 + 0.2) * 60.0) as usize {
+            game.step(1.0 / 60.0);
+        }
+        assert_eq!(game.nav.planks().count(), 0);
+        assert_eq!(game.planks_blown as usize, span.planks());
         game.events.clear();
         // One thrown where there is nothing to lie on is gone into the
         // void as it comes down, and nothing blows.
@@ -3707,6 +4191,10 @@ mod tests {
         println!("over: {:?} at {:.0} s", game.stage, game.elapsed);
     }
 
+    /// How many kinds of thing there are for one of their buttons
+    /// (`bots::KINDS`).
+    const BUTTON_KINDS: usize = roundtown_net::bots::KINDS.len();
+
     /// What happened in a game of the computer's players alone, for
     /// telling whether they play it sensibly.
     #[derive(Debug)]
@@ -3726,8 +4214,20 @@ mod tests {
         killed: (u32, u32),
         fell: (u32, u32),
         /// Whoever fell with nobody having hit them in the three seconds
-        /// before: walked off, which must never be.
+        /// before: walked off, which must never be. But for whoever fell
+        /// with a bridge that came down under them, or from one that was
+        /// coming down, before the anchors break and after
+        /// (`with_bridge`), since 2026-11-15, when a stick of dynamite
+        /// began to take the whole bridge; and whoever, left on planks
+        /// with no land to get to, stepped off them (`stepped_off`).
+        /// And how many times a bridge was brought down (`cascades`).
         walked_off: u32,
+        with_bridge: (u32, u32),
+        stepped_off: u32,
+        cascades: u32,
+        /// How many times one of them set out to cut another team's way
+        /// with a stick of dynamite (`Squad::way_to_cut`).
+        cuts: u32,
         /// The most seconds any one of them stood with nothing to do
         /// while standing, before the anchors broke.
         idlest: f32,
@@ -3742,10 +4242,11 @@ mod tests {
         /// How many of each kind of thing for a button they came by, all
         /// of them together, and how many they used (`bots::KINDS`: a
         /// fireball, a speed potion, an invisibility potion, a healing
-        /// potion, a Bridge Builder, a stick of dynamite); and the most
+        /// potion, a Bridge Builder, a stick of dynamite, a leap potion);
+        /// and the most
         /// kinds any one of them had on its buttons at once.
-        carried: [u32; 6],
-        used: [u32; 6],
+        carried: [u32; BUTTON_KINDS],
+        used: [u32; BUTTON_KINDS],
         fullest: usize,
         /// How many sticks of dynamite blew, and how many planks they
         /// took with them.
@@ -3757,6 +4258,70 @@ mod tests {
         /// (`Bot::pinned`), which must never be.
         stalls: u32,
         pinned: u32,
+        /// How they spent the game ([`Habits`]).
+        habits: Habits,
+    }
+
+    /// How the computer's players of a game spent it, all eight together
+    /// (since 2026-11-15, Hajun: "the ai seem to be just in their island
+    /// for too long of the game like idle like both of them on the
+    /// generator"): what is counted to tell whether they are out and about.
+    /// Every time is in seconds of one of them standing, before the anchors
+    /// break at ten minutes, the keeper's first and the one that goes out's
+    /// second ([`roundtown_net::bots::Role`], as it was that frame).
+    #[derive(Clone, Copy, Debug, Default)]
+    struct Habits {
+        /// Standing at all.
+        alive: [f32; 2],
+        /// On the land of its own island; within two and a half metres of
+        /// its own pad; with nothing to do (`Goal::Idle`); there for what
+        /// the pad makes (`Goal::Collect`); and on its own island, going
+        /// nowhere.
+        home: [f32; 2],
+        pad: [f32; 2],
+        idle: [f32; 2],
+        collect: [f32; 2],
+        still: [f32; 2],
+        /// On the land of another team's island; in the middle; on one of
+        /// the smaller islands; and out on a bridge.
+        enemy: [f32; 2],
+        middle: [f32; 2],
+        sapphire: [f32; 2],
+        bridge: [f32; 2],
+        /// Once its island was joined to anything: standing, and of that
+        /// on its own island.
+        bridged: [f32; 2],
+        bridged_home: [f32; 2],
+        /// At a stand's outline, going nowhere; and out looking about
+        /// (`Goal::Scout`), once there is such a thing.
+        browsing: [f32; 2],
+        scouting: [f32; 2],
+        /// A team's two, in seconds of both of them standing: so long in
+        /// all, with both by their pad, and with both on their island.
+        pair: f32,
+        pair_pad: f32,
+        pair_home: f32,
+        /// How many times one of them set off on a raid, and how many
+        /// times one stepped onto the island it was raiding; and what it
+        /// did there first: hit someone, hit the anchor, stood on the pad,
+        /// or none of them before it left or died.
+        raids: u32,
+        landings: u32,
+        first: [u32; 4],
+        /// What the anchors had lost to punches by ten minutes, all four
+        /// together, in points of health; and how many punches that was.
+        anchor_lost: f32,
+        anchor_hits: u32,
+        /// How many bridges were begun, by where from and where to: its
+        /// own island to the middle, its own island to a smaller island,
+        /// the middle to a smaller island, the middle to another team's
+        /// island, a smaller island to another team's island, its own
+        /// island straight to another team's, and anything else.
+        bridges: [u32; 7],
+        /// How far the teams had quickened their building by the end, all
+        /// four together; and how many leap potions were bought and drunk.
+        build_speed: u32,
+        leaps: (u32, u32),
     }
 
     impl Default for Chronicle {
@@ -3772,19 +4337,24 @@ mod tests {
                 killed: (0, 0),
                 fell: (0, 0),
                 walked_off: 0,
+                with_bridge: (0, 0),
+                stepped_off: 0,
+                cascades: 0,
+                cuts: 0,
                 idlest: 0.0,
                 over: 0.0,
                 winner: None,
                 who: ["-"; ARENA_SEATS],
                 openings: ['M'; ARENA_TEAMS],
                 deaths: [0; ARENA_SEATS],
-                carried: [0; 6],
-                used: [0; 6],
+                carried: [0; BUTTON_KINDS],
+                used: [0; BUTTON_KINDS],
                 fullest: 0,
                 blasts: 0,
                 planks_blown: 0,
                 stalls: 0,
                 pinned: 0,
+                habits: Habits::default(),
             }
         }
     }
@@ -3846,14 +4416,124 @@ mod tests {
         let dt = 1.0 / 30.0;
         let mut alive = [true; ARENA_SEATS];
         let mut idle = [0.0f32; ARENA_SEATS];
-        let mut held = [[0u8; 6]; ARENA_SEATS];
+        let mut held = [[0u8; BUTTON_KINDS]; ARENA_SEATS];
         let mut stalls = [0u32; ARENA_SEATS];
         let mut pinned = [0u32; ARENA_SEATS];
+        // For how they spent it ([`Habits`]): where each was a frame ago,
+        // whether it was on a raid, the island it has stepped onto on one
+        // and done nothing on yet, whether it stood on that island a frame
+        // ago, how many leap potions it held, and what the anchors had.
+        let mut was_at: [Vec2; ARENA_SEATS] = std::array::from_fn(|seat| game.at[seat].xz());
+        let mut raiding = [false; ARENA_SEATS];
+        let mut landed: [Option<usize>; ARENA_SEATS] = [None; ARENA_SEATS];
+        let mut ashore = [false; ARENA_SEATS];
+        let mut leaps_held = [0u8; ARENA_SEATS];
+        let mut anchors_were = game.anchors;
+        // For telling a fall with a bridge from walking off an edge: the
+        // plank each stood on a frame ago, out over the void, if it did;
+        // when the ground last went from under where each stood, and
+        // when each last stood on planks that were coming down; and
+        // whether any were, a frame ago.
+        let mut stood: [Option<Vec2>; ARENA_SEATS] = [None; ARENA_SEATS];
+        let mut dropped = [f32::NEG_INFINITY; ARENA_SEATS];
+        let mut crumbling = false;
+        let mut cutting = [false; ARENA_SEATS];
+        // How each anchor went, for saying so (`RT_ANCHORS`): when it was
+        // first hit, how many punches it has taken, who threw them, and
+        // how many of its own team stood on their island at each.
+        let say_anchors = std::env::var_os("RT_ANCHORS").is_some();
+        let mut first_hit = [None::<f32>; ARENA_TEAMS];
+        let mut punches = [0u32; ARENA_TEAMS];
+        let mut hitters: [Vec<usize>; ARENA_TEAMS] = Default::default();
+        let mut defended = [0u32; ARENA_TEAMS];
+        // One of them followed, for finding what it was about where it
+        // got nowhere: `RT_TRACE=<seat>,<from>,<until>`, in seconds.
+        let trace: Option<(usize, f32, f32)> = std::env::var("RT_TRACE").ok().and_then(|trace| {
+            let mut parts = trace.split(',');
+            Some((parts.next()?.parse().ok()?, parts.next()?.parse().ok()?, parts.next()?.parse().ok()?))
+        });
+        let mut traced = 0.0;
         while game.playing() {
             game.step(dt);
+            if let Some((seat, from, until)) = trace
+                && (from..until).contains(&game.elapsed)
+                && game.elapsed >= traced
+            {
+                traced = game.elapsed + 0.25;
+                let bot = game.squad.bot(seat).expect("the computer's");
+                let here = game.at[seat];
+                let others: Vec<String> = (0..ARENA_SEATS)
+                    .filter(|&other| other != seat && game.alive(other) && game.at[other].xz().distance(here.xz()) < 25.0)
+                    .map(|other| format!("{other}{}@({:.1},{:.1})", if arena_team(other) == arena_team(seat) { "m" } else { "" }, game.at[other].x, game.at[other].z))
+                    .collect();
+                println!(
+                    "  {:>6.2} s seat {seat}: ({:.2}, {:.2}, {:.2}) {:?} {:?} health {:.0} walked {} sticks {} falling {:?} getting off {} | {}",
+                    game.elapsed,
+                    here.x,
+                    here.y,
+                    here.z,
+                    bot.goal(),
+                    bot.stance(),
+                    game.health[seat],
+                    game.nav.walkable_at(here.xz()),
+                    game.sticks.len(),
+                    game.nav.falls_in(here.xz()),
+                    bot.fleeing(),
+                    others.join(" "),
+                );
+            }
             game.events.clear();
             let now = game.elapsed;
             let early = now < 600.0;
+            // What the anchors have lost to punches, before they all break.
+            let struck: Vec<usize> = (0..ARENA_TEAMS).filter(|&team| game.anchors[team] < anchors_were[team]).collect();
+            if early {
+                for &team in &struck {
+                    told.habits.anchor_lost += anchors_were[team] - game.anchors[team];
+                    told.habits.anchor_hits += 1;
+                }
+            }
+            if early && say_anchors {
+                for &team in &struck {
+                    let grid = game.nav.grid();
+                    let own = Some(Region::Team(team as u8));
+                    let home = (0..ARENA_SEATS)
+                        .filter(|&seat| usize::from(arena_team(seat)) == team && game.alive(seat))
+                        .filter(|&seat| grid.height(game.at[seat].xz()).and_then(|_| grid.region(game.at[seat].xz())) == own)
+                        .count() as u32;
+                    let hitter = (0..ARENA_SEATS)
+                        .filter(|&seat| usize::from(arena_team(seat)) != team && game.alive(seat))
+                        .min_by(|&a, &b| {
+                            let far = |seat: usize| game.at[seat].xz().distance(ARENA_ANCHORS[team]);
+                            far(a).total_cmp(&far(b))
+                        });
+                    first_hit[team].get_or_insert(now);
+                    punches[team] += 1;
+                    defended[team] += home;
+                    if let Some(hitter) = hitter
+                        && !hitters[team].contains(&hitter)
+                    {
+                        hitters[team].push(hitter);
+                    }
+                    if game.anchors[team] <= 0.0 {
+                        let who: Vec<String> = hitters[team]
+                            .iter()
+                            .map(|&seat| {
+                                let bot = game.squad.bot(seat).expect("the computer's");
+                                format!("{} {:?} zeal {:.2}", bot.persona().name, bot.role(), bot.temper().zeal)
+                            })
+                            .collect();
+                        println!(
+                            "ANCHOR seed {seed}: team {team}'s gone at {now:.0} s, first hit at {:.0} s, {} punches by {}; {:.1} of its own at home at a punch",
+                            first_hit[team].unwrap_or(now),
+                            punches[team],
+                            who.join(", "),
+                            defended[team] as f32 / punches[team].max(1) as f32,
+                        );
+                    }
+                }
+            }
+            anchors_were = game.anchors;
             for team in 0..ARENA_TEAMS {
                 if told.joined[team].is_none() && game.nav.joined(Region::Team(team as u8), Region::Middle) {
                     told.joined[team] = Some(now);
@@ -3890,6 +4570,14 @@ mod tests {
                     held[seat][kind] = now_held;
                 }
                 told.fullest = told.fullest.max(kit.slots.iter().flatten().filter(|stack| stack.count > 0).count());
+                // The planks it stood on a frame ago are gone, or are
+                // going: whatever becomes of it in the next few seconds is
+                // the bridge's doing.
+                let across = game.at[seat].xz();
+                if stood[seat].is_some_and(|plank| game.nav.ground(plank).is_none()) || game.nav.falls_in(across).is_some() {
+                    dropped[seat] = now;
+                }
+                stood[seat] = (standing && game.nav.grid().height(across).is_none() && game.nav.ground(across).is_some()).then_some(across);
                 if alive[seat] && !standing {
                     told.deaths[seat] += 1;
                     let fallen = game.at[seat].y < -5.0;
@@ -3899,12 +4587,25 @@ mod tests {
                     } else {
                         count.1 += 1;
                     }
-                    if fallen && game.since_hit[seat] > 3.0 {
+                    if fallen && now - dropped[seat] < 4.0 {
+                        let count = &mut told.with_bridge;
+                        if early {
+                            count.0 += 1;
+                        } else {
+                            count.1 += 1;
+                        }
+                    } else if fallen && game.squad.bot(seat).is_some_and(|bot| bot.stepped_off()) {
+                        told.stepped_off += 1;
+                    } else if fallen && game.since_hit[seat] > 3.0 {
                         told.walked_off += 1;
                     }
                 }
                 alive[seat] = standing;
                 let bot = game.squad.bot(seat).expect("the computer's");
+                if bot.cutting().is_some() && !cutting[seat] {
+                    told.cuts += 1;
+                }
+                cutting[seat] = bot.cutting().is_some();
                 // Got nowhere on its way somewhere, and whether something
                 // held it: said, with `RT_STALLS` set, for finding what
                 // did, and with `RT_STALLS=2` the squares round it too.
@@ -3918,8 +4619,16 @@ mod tests {
                         told.pinned += 1;
                     }
                     if let (Ok(how), Some((here, next))) = (std::env::var("RT_STALLS"), last) {
+                        // (And what else was going on there: how near
+                        // the nearest of another team stood, how it
+                        // stood to them, and whether the planks under
+                        // it were coming down.)
+                        let nearest = (0..ARENA_SEATS)
+                            .filter(|&other| game.alive(other) && arena_team(other) != arena_team(seat))
+                            .map(|other| game.at[other].xz().distance(here))
+                            .fold(f32::INFINITY, f32::min);
                         println!(
-                            "{} seed {seed} at {now:.0} s: {} (seat {seat}) at ({:.2}, {:.2}) for ({:.2}, {:.2}), {:?}, {:?}, on a plank {}",
+                            "{} seed {seed} at {now:.0} s: {} (seat {seat}) at ({:.2}, {:.2}) for ({:.2}, {:.2}), {:?}, {:?}, on a plank {}, walked there {}; the nearest of another team {nearest:.1} m off, {:?}; falling in {:?}, getting off {}",
                             if held { "HELD" } else { "nowhere" },
                             bot.persona().name,
                             here.x,
@@ -3929,6 +4638,10 @@ mod tests {
                             bot.goal(),
                             game.nav.grid().region(here),
                             game.nav.on_plank(here),
+                            game.nav.walkable_at(here),
+                            bot.stance(),
+                            game.nav.falls_in(here),
+                            bot.fleeing(),
                         );
                         if how == "2" {
                             println!("{}", squares_round(&game.nav, here, next));
@@ -3944,7 +4657,134 @@ mod tests {
                 } else {
                     idle[seat] = 0.0;
                 }
+                // How it spends the game ([`Habits`]): where it is and
+                // what it is about, before the anchors break.
+                let team = usize::from(arena_team(seat));
+                let own = Region::Team(team as u8);
+                let at = game.at[seat].xz();
+                let grid = game.nav.grid();
+                let land = grid.height(at).and_then(|_| grid.region(at));
+                let went = at.distance(was_at[seat]);
+                was_at[seat] = at;
+                let goal = bot.goal();
+                let role = usize::from(bot.role() == Role::Runner);
+                let habits = &mut told.habits;
+                if standing && early {
+                    habits.alive[role] += dt;
+                    match land {
+                        Some(region) if region == own => habits.home[role] += dt,
+                        Some(Region::Team(_)) => habits.enemy[role] += dt,
+                        Some(Region::Middle | Region::Pocket) => habits.middle[role] += dt,
+                        Some(Region::Sapphire(_)) => habits.sapphire[role] += dt,
+                        None => habits.bridge[role] += dt,
+                    }
+                    let still = went < 0.3 * dt;
+                    if at.distance(roundtown_net::ARENA_PADS[team]) < 2.5 {
+                        habits.pad[role] += dt;
+                    }
+                    if goal == Goal::Idle {
+                        habits.idle[role] += dt;
+                    }
+                    if goal == Goal::Collect {
+                        habits.collect[role] += dt;
+                    }
+                    if matches!(goal, Goal::Scout(_)) {
+                        habits.scouting[role] += dt;
+                    }
+                    if still && land == Some(own) {
+                        habits.still[role] += dt;
+                    }
+                    // (In a stand's outline, which reaches a metre and a
+                    // half from its middle.)
+                    let stands = [roundtown_net::ARENA_SHOPS[team], roundtown_net::ARENA_UPGRADE_SHOPS[team]];
+                    if still && stands.iter().any(|stand| stand.distance(at) < 1.6) {
+                        habits.browsing[role] += dt;
+                    }
+                    let bridged = game.nav.joined(own, Region::Middle) || (0..4).any(|island| game.nav.joined(own, Region::Sapphire(island)));
+                    if bridged {
+                        habits.bridged[role] += dt;
+                        if land == Some(own) {
+                            habits.bridged_home[role] += dt;
+                        }
+                    }
+                }
+                // A raid set off on, an island stepped onto on one, and
+                // what it does there first.
+                let on_raid = match goal {
+                    Goal::Raid(victim) if standing => Some(usize::from(victim)),
+                    _ => None,
+                };
+                if early && on_raid.is_some() && !raiding[seat] {
+                    habits.raids += 1;
+                }
+                raiding[seat] = on_raid.is_some();
+                let there = on_raid.filter(|&victim| land == Some(Region::Team(victim as u8)));
+                if early && there.is_some() && !ashore[seat] {
+                    habits.landings += 1;
+                    landed[seat] = there;
+                }
+                ashore[seat] = there.is_some();
+                if let Some(victim) = landed[seat] {
+                    let hit_someone = (0..ARENA_SEATS).any(|other| {
+                        usize::from(arena_team(other)) == victim
+                            && game.last_hit[other].is_some_and(|(hitter, when, _)| hitter == seat && (now - when).abs() < 1.5 * dt)
+                    });
+                    let hit_anchor = struck.contains(&victim)
+                        && at.distance(ARENA_ANCHORS[victim]) <= REACH + roundtown_net::ANCHOR_RADIUS + 0.3;
+                    let on_pad = at.distance(roundtown_net::ARENA_PADS[victim]) < 1.6;
+                    let did = if hit_someone {
+                        Some(0)
+                    } else if hit_anchor {
+                        Some(1)
+                    } else if on_pad {
+                        Some(2)
+                    } else if there.is_none() {
+                        Some(3)
+                    } else {
+                        None
+                    };
+                    if let Some(did) = did {
+                        habits.first[did] += 1;
+                        landed[seat] = None;
+                    }
+                }
+                // Leap potions: more of them is one bought, and fewer,
+                // while it stands, one drunk.
+                let leaps = kit.held(Utility::Leap);
+                if leaps > leaps_held[seat] {
+                    habits.leaps.0 += u32::from(leaps - leaps_held[seat]);
+                } else if leaps < leaps_held[seat] && standing {
+                    habits.leaps.1 += u32::from(leaps_held[seat] - leaps);
+                }
+                leaps_held[seat] = leaps;
             }
+            // A team's two together: both by their pad, both at home.
+            if early {
+                for team in 0..ARENA_TEAMS {
+                    let (one, other) = (team, team + ARENA_TEAMS);
+                    if !game.alive(one) || !game.alive(other) {
+                        continue;
+                    }
+                    let grid = game.nav.grid();
+                    let own = Some(Region::Team(team as u8));
+                    let at_home = |seat: usize| {
+                        let at = game.at[seat].xz();
+                        grid.height(at).and_then(|_| grid.region(at)) == own
+                    };
+                    let by_pad = |seat: usize| game.at[seat].xz().distance(roundtown_net::ARENA_PADS[team]) < 2.5;
+                    told.habits.pair += dt;
+                    if by_pad(one) && by_pad(other) {
+                        told.habits.pair_pad += dt;
+                    }
+                    if at_home(one) && at_home(other) {
+                        told.habits.pair_home += dt;
+                    }
+                }
+            }
+            if game.nav.crumbling() && !crumbling {
+                told.cascades += 1;
+            }
+            crumbling = game.nav.crumbling();
             assert!(game.at.iter().all(|at| at.is_finite()), "seed {seed}: somebody is nowhere at {now} s");
         }
         told.over = game.elapsed;
@@ -3954,6 +4794,21 @@ mod tests {
         };
         told.blasts = game.blasts;
         told.planks_blown = game.planks_blown;
+        // What they built, by where from and where to; and how far they
+        // quickened their building.
+        for &(from, to, times) in game.squad.begun() {
+            let kind = match (from, to) {
+                (Region::Team(_), Region::Middle) => 0,
+                (Region::Team(_), Region::Sapphire(_)) => 1,
+                (Region::Middle, Region::Sapphire(_)) => 2,
+                (Region::Middle, Region::Team(_)) => 3,
+                (Region::Sapphire(_), Region::Team(_)) => 4,
+                (Region::Team(_), Region::Team(_)) => 5,
+                _ => 6,
+            };
+            told.habits.bridges[kind] += u32::from(times);
+        }
+        told.habits.build_speed = game.outfits.teams.iter().map(|team| u32::from(team.build_speed)).sum();
         told
     }
 
@@ -4000,6 +4855,7 @@ mod tests {
     #[test]
     fn the_computer_s_players_play_whole_games_sensibly() {
         let games = told(1..9);
+        tell_habits(&games);
         let mut winners = [0u32; ARENA_TEAMS];
         for game in &games {
             let seed = game.seed;
@@ -4038,6 +4894,44 @@ mod tests {
         // And no island wins them all.
         println!("wins by team: {winners:?}");
         assert!(winners.iter().filter(|wins| **wins > 0).count() >= 3, "{winners:?}");
+        // **They are out and about** (since 2026-11-15; Hajun: "the ai
+        // seem to be just in their island for too long of the game like
+        // idle like both of them on the generator"), over the eight games
+        // together, before the anchors break. By their pad a small part
+        // of the time, a team's two all but never both there (55% of it
+        // and 36% until then); off their island more than on it once they
+        // have a way off it (on it 77%); at a stand some of the time they
+        // are home, and out looking about some of the rest.
+        let sum = |pick: &dyn Fn(&Habits) -> [f32; 2]| games.iter().map(|game| pick(&game.habits)).fold(0.0, |sum, spent| sum + spent[0] + spent[1]);
+        let alive = sum(&|habits| habits.alive);
+        let pair = games.iter().map(|game| game.habits.pair).sum::<f32>();
+        let pair_pad = games.iter().map(|game| game.habits.pair_pad).sum::<f32>();
+        assert!(sum(&|habits| habits.pad) < 0.12 * alive, "by their pads {:.0}% of the time", 100.0 * sum(&|habits| habits.pad) / alive);
+        assert!(pair_pad < 0.03 * pair, "a team's two both by their pad {:.0}% of the time", 100.0 * pair_pad / pair);
+        let (home, bridged) = (sum(&|habits| habits.bridged_home), sum(&|habits| habits.bridged));
+        assert!(home < 0.6 * bridged, "on their islands {:.0}% of the time, with a way off them", 100.0 * home / bridged);
+        assert!(sum(&|habits| habits.browsing) > 0.06 * alive, "at their stands {:.0}% of the time", 100.0 * sum(&|habits| habits.browsing) / alive);
+        assert!(sum(&|habits| habits.scouting) > 0.02 * alive, "out looking about {:.0}% of the time", 100.0 * sum(&|habits| habits.scouting) / alive);
+        // What one is on an island it raids for is not the same every
+        // time: whoever is home, their anchor, what lies on their pad.
+        // (The anchor first one time in sixteen until then, and the pad
+        // one in twenty.)
+        let count = |pick: &dyn Fn(&Habits) -> u32| games.iter().map(|game| pick(&game.habits)).sum::<u32>();
+        let landings = count(&|habits| habits.landings);
+        let [hit, anchor, pad, _] = [0, 1, 2, 3].map(|which| count(&|habits| habits.first[which]));
+        assert!(landings >= 80, "{landings} islands stepped onto");
+        assert!(5 * hit >= landings && 20 * anchor >= landings && 30 * pad >= landings, "of {landings}: someone hit {hit}, the anchor {anchor}, on the pad {pad}");
+        // Anchors go to punches before they all break, a couple a game
+        // (one game in two saw one go, until then), and not all of them
+        // in every game: [`Skill::anchor_keen`] is what to turn.
+        let broken = games.iter().map(|game| game.anchor.iter().filter(|at| at.is_some_and(|at| at < 599.0)).count()).sum::<usize>();
+        assert!((6..=26).contains(&broken), "{broken} anchors broken by punches in eight games");
+        // And they build ways nobody has to have, quicken their building,
+        // and drink the leap potions they buy.
+        let schemes = count(&|habits| habits.bridges[3] + habits.bridges[4] + habits.bridges[5]);
+        assert!(schemes >= 4, "{schemes} bridges onto other teams' islands begun");
+        assert!(count(&|habits| habits.build_speed) >= 2, "their building quickened {} steps", count(&|habits| habits.build_speed));
+        assert!(count(&|habits| habits.leaps.1) >= 4, "{} leap potions drunk", count(&|habits| habits.leaps.1));
         // The same dice, the same game.
         let (one, other) = (chronicle(5), chronicle(5));
         assert_eq!((one.over, one.winner, one.killed, one.fell), (other.over, other.winner, other.killed, other.fell));
@@ -4045,12 +4939,14 @@ mod tests {
 
     /// More of the same, for tuning by: `cargo test -p roundtown_server
     /// many -- --ignored --nocapture`, sixty games, or as many as
-    /// `RT_GAMES` says.
+    /// `RT_GAMES` says, from the seed 100, or from the one `RT_FROM`
+    /// says (one game over again: `RT_FROM=106 RT_GAMES=1`).
     #[test]
     #[ignore]
     fn many_games_of_bots() {
         let count: u64 = std::env::var("RT_GAMES").ok().and_then(|count| count.parse().ok()).unwrap_or(60);
-        let games = told(100..100 + count);
+        let from: u64 = std::env::var("RT_FROM").ok().and_then(|from| from.parse().ok()).unwrap_or(100);
+        let games = told(from..from + count);
         let mean = |pick: &dyn Fn(&Chronicle) -> f32| games.iter().map(pick).sum::<f32>() / games.len() as f32;
         println!(
             "over at {:.0} s on average; got nowhere {:.2} times a game, held fast {:.2}; killed early {:.1}, fell early {:.1}; killed late {:.1}, fell late {:.1}; anchors broken before ten minutes {:.1}",
@@ -4117,8 +5013,8 @@ mod tests {
             println!("opened {which}: {teams} teams, won {:.0}%", 100.0 * won as f32 / teams.max(1) as f32);
         }
         // What they had on their buttons, all eight together, a game.
-        let each = |pick: &dyn Fn(&Chronicle) -> [u32; 6]| {
-            let mut sum = [0.0f32; 6];
+        let each = |pick: &dyn Fn(&Chronicle) -> [u32; BUTTON_KINDS]| {
+            let mut sum = [0.0f32; BUTTON_KINDS];
             for game in &games {
                 for (kind, count) in pick(game).into_iter().enumerate() {
                     sum[kind] += count as f32 / games.len() as f32;
@@ -4127,7 +5023,7 @@ mod tests {
             sum.map(|mean| format!("{mean:.1}")).join(", ")
         };
         println!(
-            "a game, of fireballs, speed, invisibility and healing potions, Bridge Builders and sticks of dynamite: bought {}; used {}",
+            "a game, of fireballs, speed, invisibility and healing potions, Bridge Builders, sticks of dynamite and leap potions: bought {}; used {}",
             each(&|game| game.carried),
             each(&|game| game.used)
         );
@@ -4138,11 +5034,117 @@ mod tests {
             games.iter().map(|game| game.blasts).max().unwrap_or(0),
             games.iter().map(|game| game.planks_blown).max().unwrap_or(0),
         );
+        println!(
+            "a game: {:.2} times one set out to cut another team's way; {:.2} bridges brought down, at least one in {} games of {}; {:.2} of them fell with one before ten minutes and {:.2} after; {:.2} stepped off planks left in the middle of nowhere; {:.2} walked off an edge",
+            mean(&|game| game.cuts as f32),
+            mean(&|game| game.cascades as f32),
+            games.iter().filter(|game| game.cascades > 0).count(),
+            games.len(),
+            mean(&|game| game.with_bridge.0 as f32),
+            mean(&|game| game.with_bridge.1 as f32),
+            mean(&|game| game.stepped_off as f32),
+            mean(&|game| game.walked_off as f32),
+        );
         let mut fullest = [0u32; 6];
         for game in &games {
             fullest[game.fullest.min(5)] += 1;
         }
         println!("the most kinds on one of them at once, by how many games (none to five): {fullest:?}");
+        tell_habits(&games);
+    }
+
+    /// Says how the computer's players of `games` spent them
+    /// ([`Habits`]): where they were and what they were about before the
+    /// anchors broke, as shares of the time each stood, all of them
+    /// together and the keepers and those that go out apart; and what
+    /// came of it, a game.
+    fn tell_habits(games: &[Chronicle]) {
+        let sum = |pick: &dyn Fn(&Habits) -> [f32; 2]| {
+            games.iter().fold([0.0f32; 2], |sum, game| {
+                let add = pick(&game.habits);
+                [sum[0] + add[0], sum[1] + add[1]]
+            })
+        };
+        let of = |spent: [f32; 2], whole: [f32; 2]| {
+            format!(
+                "{:>3.0}% (keepers {:>3.0}%, those that go out {:>3.0}%)",
+                100.0 * (spent[0] + spent[1]) / (whole[0] + whole[1]).max(1.0),
+                100.0 * spent[0] / whole[0].max(1.0),
+                100.0 * spent[1] / whole[1].max(1.0)
+            )
+        };
+        let alive = sum(&|habits| habits.alive);
+        println!("how they spent the first ten minutes, as shares of the time each stood:");
+        for (what, spent) in [
+            ("on its own island", sum(&|habits| habits.home)),
+            ("  by its own pad", sum(&|habits| habits.pad)),
+            ("  there for the pad", sum(&|habits| habits.collect)),
+            ("  with nothing to do", sum(&|habits| habits.idle)),
+            ("  on it, standing still", sum(&|habits| habits.still)),
+            ("  still at a stand", sum(&|habits| habits.browsing)),
+            ("out looking about", sum(&|habits| habits.scouting)),
+            ("out on a bridge", sum(&|habits| habits.bridge)),
+            ("in the middle", sum(&|habits| habits.middle)),
+            ("on a smaller island", sum(&|habits| habits.sapphire)),
+            ("on another team's", sum(&|habits| habits.enemy)),
+        ] {
+            println!("  {what:<24} {}", of(spent, alive));
+        }
+        println!(
+            "  {:<24} {}",
+            "on its own island, once that was joined to anything",
+            of(sum(&|habits| habits.bridged_home), sum(&|habits| habits.bridged))
+        );
+        let pair: f32 = games.iter().map(|game| game.habits.pair).sum::<f32>().max(1.0);
+        println!(
+            "  a team's two, of the time both stood: both by their pad {:.0}%, both on their island {:.0}%",
+            100.0 * games.iter().map(|game| game.habits.pair_pad).sum::<f32>() / pair,
+            100.0 * games.iter().map(|game| game.habits.pair_home).sum::<f32>() / pair,
+        );
+        let many = games.len().max(1) as f32;
+        let mean = |pick: &dyn Fn(&Habits) -> f32| games.iter().map(|game| pick(&game.habits)).sum::<f32>() / many;
+        println!(
+            "a game, before ten minutes: {:.1} raids set off on, {:.1} islands stepped onto; first there, someone hit {:.1}, the anchor hit {:.1}, on the pad {:.1}, none of them {:.1}",
+            mean(&|habits| habits.raids as f32),
+            mean(&|habits| habits.landings as f32),
+            mean(&|habits| habits.first[0] as f32),
+            mean(&|habits| habits.first[1] as f32),
+            mean(&|habits| habits.first[2] as f32),
+            mean(&|habits| habits.first[3] as f32),
+        );
+        // When the anchors that went to punches went, and how many games
+        // saw none, one, two, three and all four go so.
+        let broken: Vec<f32> = games.iter().flat_map(|game| game.anchor.iter().flatten().copied().filter(|at| *at < 599.0)).collect();
+        let mut by_count = [0u32; ARENA_TEAMS + 1];
+        for game in games {
+            by_count[game.anchor.iter().filter(|at| at.is_some_and(|at| at < 599.0)).count()] += 1;
+        }
+        let mut sorted = broken.clone();
+        sorted.sort_by(f32::total_cmp);
+        let middle = sorted.get(sorted.len() / 2).copied().unwrap_or(0.0);
+        println!(
+            "a game: {:.2} anchors broken by punches before ten minutes (games with none to four: {by_count:?}), the first of them at {:.0} s on average and half of them all by {middle:.0} s; the anchors had lost {:.0} of {} to {:.1} punches",
+            broken.len() as f32 / many,
+            games
+                .iter()
+                .filter_map(|game| game.anchor.iter().flatten().copied().filter(|at| *at < 599.0).min_by(f32::total_cmp))
+                .sum::<f32>()
+                / by_count[1..].iter().sum::<u32>().max(1) as f32,
+            mean(&|habits| habits.anchor_lost),
+            ANCHOR_HEALTH * ARENA_TEAMS as f32,
+            mean(&|habits| habits.anchor_hits as f32),
+        );
+        let bridges: Vec<String> = (0..7).map(|kind| format!("{:.2}", mean(&|habits| habits.bridges[kind] as f32))).collect();
+        println!(
+            "a game, bridges begun: home to the middle, home to a smaller island, the middle to a smaller island, the middle to another team's, a smaller island to another team's, home to another team's, anything else: {}",
+            bridges.join(", ")
+        );
+        println!(
+            "a game: building quickened {:.2} steps, all four teams together; {:.2} leap potions bought, {:.2} drunk",
+            mean(&|habits| habits.build_speed as f32),
+            mean(&|habits| habits.leaps.0 as f32),
+            mean(&|habits| habits.leaps.1 as f32),
+        );
     }
 
     /// A game with people in `people` seats who do nothing but stand where
@@ -4212,11 +5214,18 @@ mod tests {
                     goals[seat] = bot.goal();
                 }
                 // Nobody comes for them before raids begin, and their
-                // anchor is not touched before anchors are fair game.
-                if now < 150.0 {
+                // anchor is not touched before anchors are fair game:
+                // each of the computer's has its own time for both since
+                // 2026-11-15, the earliest of them a little over a minute
+                // and a half in for a raid (the keenest kind, half a
+                // minute sooner than most, and thrown early at that) and
+                // two minutes and a half for an anchor (one as set on
+                // anchors as they come). 150 and 240 s for all of them
+                // until then.
+                if now < 100.0 {
                     assert!(first_raid_on_people.is_none(), "seed {seed}: raided at {now} s");
                 }
-                if now < 240.0 {
+                if now < 145.0 {
                     assert_eq!(game.anchors[0], ANCHOR_HEALTH, "seed {seed}: their anchor hit at {now} s");
                 }
             }

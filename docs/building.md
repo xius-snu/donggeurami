@@ -7,6 +7,29 @@
 > "above" or "below", or names another section in quotes, that section may be
 > in another file here: the table in `CLAUDE.md` says which.
 
+## APK 35, and the server with protocol 17
+
+On 2026-11-15, late (Hajun: "build apk and push to git", of the seat that
+waits in Bridge Wars, the dynamite that takes a whole bridge and the
+computer's players that go out; `docs/bridge-wars.md`, its first entry).
+
+- **The server**: `server/deploy.sh` at 13:26 UTC, protocol 17, with
+  nobody connected since 09:50; the binary before (deployed 16:42 UTC on
+  2026-11-14, protocol 16) kept on the VM as
+  `roundtown-server.prev-2026-11-15b`. After: the VM's binary the same
+  bytes as the one built here (sha1), the service active, this PC's
+  account online ("online as xd", `xd#3690 joined`), and a scripted game
+  on the VM (`docs/bridge-wars.md`).
+- **APK 35** (`versionCode` 35, 22:30 here): `cargo ndk` 1 m 21 s, the
+  library stripped from 189 MB to 101 with its seven entry points
+  (`GameActivity_onCreate` and the six `Java_town_donggeurami_MainActivity_*`),
+  Gradle 15 s; put over APK 34. 85 asset files, each the bytes of the one
+  on disk; `assets/ui.ron` and the two maps hashed before and after.
+  **Not installed**: no phone was attached.
+- **The iPhone**: type-checked on this PC (`mobile/ios/check_on_windows.sh`);
+  no tag pushed. The build it has, of `ios-1.0.2-16`, is protocol 16, and
+  is told to update until `ios-1.0.2-17` is built.
+
 ## Only the newest APK is kept, and what the folder's size was
 
 On 2026-11-15 (Hajun: "also this RoundTown foldersize is HUGE now. check

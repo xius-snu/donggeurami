@@ -24,7 +24,9 @@
 //! database (`accounts`). Without one, for trying the server out, it is the
 //! sixteen bytes the device sends of its own. A device that drops and comes
 //! back is the same player, and finds its body where it left it, if that was
-//! kept: in the middle of a game of House Builder, it waits for them.
+//! kept: in the middle of a game of House Builder, it waits for them, and
+//! so, since 2026-11-15, does their seat in a game of Bridge Wars
+//! (`Arenas::keeps`, `Arenas::returns`).
 
 use std::collections::HashMap;
 
@@ -36,7 +38,7 @@ use roundtown_net::{Ask, Member, Moved, Refusal, Spot, Tell, Venue, arrival, car
 use sha2::{Digest, Sha256};
 
 use crate::accounts::{Bank, Loaded, Record};
-use crate::arena::Arenas;
+use crate::arena::{Arenas, Return};
 use crate::builder::Games;
 use crate::rooms::{ClientRoom, InRoom, NotFor, Room, Towns};
 use crate::social::Social;
@@ -539,7 +541,7 @@ fn admit(
 
         // Back again: the body is still here.
         if let Some(&body) = everyone.0.get(&who)
-            && let Ok((mut kept, spot, venue, member)) = bodies.get_mut(body)
+            && let Ok((mut kept, mut spot, venue, member)) = bodies.get_mut(body)
         {
             // Still connected from before, as far as the server knows: that
             // connection is the one that has gone.
@@ -560,18 +562,82 @@ fn admit(
             tell(&mut tells, client, Tell::Welcome { me: member.clone() });
             tell(&mut tells, client, Tell::Balance(kept.coins));
             let in_game = matches!(kept.room, Room::Game(_) | Room::Arena(_));
-            let still_playing = match kept.room {
-                Room::Game(_) => matches!(hello.venue, Venue::Lobby | Venue::Plot(_)),
-                Room::Arena(_) => hello.venue == Venue::Arena,
-                _ => false,
-            };
+            // A game of Bridge Wars kept the body in its seat, and says
+            // what becomes of whoever is back for it (`Arenas::returns`).
+            if let Room::Arena(_) = kept.room {
+                match arenas.returns(kept.room, body, hello.venue == Venue::Arena) {
+                    // The app was only put away: it carries on, where it
+                    // says it stands if that is where the server had it or
+                    // a step from there, and otherwise where the server
+                    // has it, the body having stood again on its island
+                    // since.
+                    Return::Resume => {
+                        let near = hello.spot.aboard.is_none()
+                            && hello.spot.translation().distance(spot.translation()) <= BURST;
+                        if near {
+                            *spot = hello.spot;
+                        }
+                        kept.arrival = kept.arrival.wrapping_add(1);
+                        kept.pace = Pace::new(now);
+                        tell(
+                            &mut tells,
+                            client,
+                            Tell::Arrive {
+                                venue: Venue::Arena,
+                                seat: kept.seat,
+                                spot: Some(*spot),
+                                arrival: kept.arrival,
+                            },
+                        );
+                        if !near {
+                            tell(
+                                &mut tells,
+                                client,
+                                Tell::PutBack {
+                                    arrival: kept.arrival,
+                                    spot: *spot,
+                                },
+                            );
+                        }
+                        info!("{} is back, in {:?}, and carries on", member.name, kept.room);
+                        continue;
+                    }
+                    // The app was closed and opened again, or its player
+                    // died while it was away: the game begun afresh on
+                    // it, standing where the body stands.
+                    Return::Back { seat, metres, compass } => {
+                        tell(&mut tells, client, Tell::Back { seat, metres, compass });
+                        kept.arrival = kept.arrival.wrapping_add(1);
+                        kept.pace = Pace::new(now);
+                        tell(
+                            &mut tells,
+                            client,
+                            Tell::Arrive {
+                                venue: Venue::Arena,
+                                seat: kept.seat,
+                                spot: Some(*spot),
+                                arrival: kept.arrival,
+                            },
+                        );
+                        tell(
+                            &mut tells,
+                            client,
+                            Tell::PutBack {
+                                arrival: kept.arrival,
+                                spot: *spot,
+                            },
+                        );
+                        info!("{} is back, put back in seat {seat} of {:?}", member.name, kept.room);
+                        continue;
+                    }
+                    // Nothing to come back to: the seat is given up, below.
+                    Return::GiveUp => {}
+                }
+            }
+            let still_playing = matches!(kept.room, Room::Game(_)) && matches!(hello.venue, Venue::Lobby | Venue::Plot(_));
             if in_game && still_playing {
-                // Back into the game it was in.
-                let seated = match kept.room {
-                    Room::Arena(_) => Tell::Seated { seat: kept.seat },
-                    _ => Tell::Joined { seat: kept.seat },
-                };
-                tell(&mut tells, client, seated);
+                // Back into the game of House Builder it was in.
+                tell(&mut tells, client, Tell::Joined { seat: kept.seat });
                 kept.arrival = kept.arrival.wrapping_add(1);
                 kept.pace = Pace::new(now);
                 tell(
@@ -749,8 +815,13 @@ fn moves(
 }
 
 /// A device has gone. Its body goes with it, unless it is in the middle of a
-/// game of House Builder, which keeps its seat for it. A game of Bridge
-/// Wars goes on without it: its seat is given up (`arena`).
+/// game of House Builder, which keeps its seat for it, or in a game of
+/// Bridge Wars, which does too (`Arenas::keeps`, since 2026-11-15): the
+/// body stands in the game where it stood, to be hit like anyone, until its
+/// device is back ([`admit`]) or the game is over. Until then a game of
+/// Bridge Wars went on without it and its seat was given up for good,
+/// however short a while the device was gone; and a phone's is gone
+/// whenever its app leaves the foreground (the game's `net::lifecycle`).
 fn gone(
     remove: On<Remove, ConnectedClient>,
     clients: Query<&Plays>,
@@ -772,6 +843,9 @@ fn gone(
     }
     body.client = None;
     match body.room {
+        Room::Arena(_) if arenas.keeps(body.room, entity) => {
+            info!("{} dropped out of {:?}: their seat waits for them", member.name, body.room);
+        }
         Room::Town(_) | Room::Home(_) | Room::Arena(_) => {
             if let Room::Arena(_) = body.room {
                 arenas.walk_out(body.room, entity);

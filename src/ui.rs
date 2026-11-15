@@ -896,6 +896,10 @@ pub(crate) struct ArenaColours {
     pub plank: Color,
     #[serde(deserialize_with = "colour")]
     pub plank_side: Color,
+    /// The top of a plank a stick of dynamite has doomed, until it falls
+    /// (`bridge::Bridges::doom`), and the plank as it falls.
+    #[serde(deserialize_with = "colour")]
+    pub plank_doomed: Color,
     #[serde(deserialize_with = "colour")]
     pub map_land: Color,
     #[serde(deserialize_with = "colour")]

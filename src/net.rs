@@ -705,6 +705,7 @@ fn hear(
             // `arena`'s.
             Tell::Joined { .. }
             | Tell::Seated { .. }
+            | Tell::Back { .. }
             | Tell::Refused(_)
             | Tell::Bought(_)
             | Tell::Social(_)

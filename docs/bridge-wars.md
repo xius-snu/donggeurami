@@ -12,28 +12,29 @@
 The entries of the log below, in its order (the newest dated work first,
 then the game as it was first made). Search for an entry by its first words.
 
-1. Since the small hours of 2026-11-15 the team you begin on is thrown for each game, each team's island is lined in its colour on the minimap, and yo...
-2. Later on the night of 2026-11-14 the two shops and the panel that says you are out are drawn as the friends' panel is
-3. Since the night of 2026-11-14 a plank is a tenth wider than Hajun's and not a quarter, whoever kills someone has their sapphire and amethyst, and the comp...
-4. Since the evening of 2026-11-14 there is a Leap Potion and a faster builder to buy, a drink shows, a potion that is on leaves sparks, the bridge is...
-5. Since the small hours of 2026-11-14 the dynamite's arch rises and falls and leans to neither side, with an X where it will land; its fuse is seen t...
-6. Since the night of 2026-11-13 there is dynamite, which cuts bridges; the computer's players no longer fall for three easy tricks, and are not all a...
-7. Later on 2026-11-13: the compass's arrow points out, the anchors are their teams' colours, and the computer's players fill their buttons, each as i...
-8. Since 2026-11-13 there are five buttons for things to use, and you hold several kinds at once
-9. Since late on the night of 2026-11-12 each of the computer's players is someone, a knock no longer stuns them, and no two fights with them go the s...
-10. Since the night of 2026-11-12 the computer's players play the game
-11. Since the evening of 2026-11-12 every game online is 2v2v2v2, people teamed up with each other first and the computer in every seat left
-12. Later on 2026-11-12: dying loses everything you hold, what is aimed is seen over the void, and a sword is held on its edge and cut downward
-13. Since 2026-11-12 Bridge Wars has two shops, and everything in Hajun's file is in the game
-14. Since the night of 2026-11-11 Bridge Wars has generators, a shop and a timetable
-15. Since the night of 2026-11-08 Bridge Wars is the server's online, eight to a game in four teams of two, with respawn anchors and bridges you build
-16. The gamepad down the right edge opens the game selector
-17. Bridge Wars
-18. The fight
-19. Online, a game of Bridge Wars is a room of your own
-20. The camera is fixed straight down over you only in the arena
-21. In the arena the buttons are Hajun's `pvpmapbuttonui.jpg`
-22. Falling off the map
+1. Since the night of 2026-11-15 a seat in a game waits for whoever's connection has gone, and they are put back in it; a stick of dynamite takes the w...
+2. Since the small hours of 2026-11-15 the team you begin on is thrown for each game, each team's island is lined in its colour on the minimap, and yo...
+3. Later on the night of 2026-11-14 the two shops and the panel that says you are out are drawn as the friends' panel is
+4. Since the night of 2026-11-14 a plank is a tenth wider than Hajun's and not a quarter, whoever kills someone has their sapphire and amethyst, and the comp...
+5. Since the evening of 2026-11-14 there is a Leap Potion and a faster builder to buy, a drink shows, a potion that is on leaves sparks, the bridge is...
+6. Since the small hours of 2026-11-14 the dynamite's arch rises and falls and leans to neither side, with an X where it will land; its fuse is seen t...
+7. Since the night of 2026-11-13 there is dynamite, which cuts bridges; the computer's players no longer fall for three easy tricks, and are not all a...
+8. Later on 2026-11-13: the compass's arrow points out, the anchors are their teams' colours, and the computer's players fill their buttons, each as i...
+9. Since 2026-11-13 there are five buttons for things to use, and you hold several kinds at once
+10. Since late on the night of 2026-11-12 each of the computer's players is someone, a knock no longer stuns them, and no two fights with them go the s...
+11. Since the night of 2026-11-12 the computer's players play the game
+12. Since the evening of 2026-11-12 every game online is 2v2v2v2, people teamed up with each other first and the computer in every seat left
+13. Later on 2026-11-12: dying loses everything you hold, what is aimed is seen over the void, and a sword is held on its edge and cut downward
+14. Since 2026-11-12 Bridge Wars has two shops, and everything in Hajun's file is in the game
+15. Since the night of 2026-11-11 Bridge Wars has generators, a shop and a timetable
+16. Since the night of 2026-11-08 Bridge Wars is the server's online, eight to a game in four teams of two, with respawn anchors and bridges you build
+17. The gamepad down the right edge opens the game selector
+18. Bridge Wars
+19. The fight
+20. Online, a game of Bridge Wars is a room of your own
+21. The camera is fixed straight down over you only in the arena
+22. In the arena the buttons are Hajun's `pvpmapbuttonui.jpg`
+23. Falling off the map
 
 ## Games: the gamepad opens a selector, and Bridge Wars is the PvP map
 
@@ -63,6 +64,369 @@ was the town itself; everything below about the map, its islands, the
 void, the punch's knockback and its range held for the town then, and
 holds for the arena now.
 
+- **Since the night of 2026-11-15 a seat in a game waits for whoever's
+  connection has gone, and they are put back in it; a stick of dynamite
+  takes the whole bridge down, plank by plank, and costs 2 amethyst; and
+  the computer's players go out, go for anchors, build ways of their own
+  and get off a bridge that is coming down** (one message from Hajun, of
+  three things). `PROTOCOL_VERSION` 17. `shared/src/lib.rs`, `nav.rs` and
+  `bots.rs`; `server/src/arena.rs` and `players.rs`; `src/arena.rs`,
+  `bridge.rs`, `dynamite.rs`, `net.rs`, `clock.rs`, `market.rs`, `ui.rs`;
+  `assets/ui.ron`; `bridgewarsgameevent.md`. **The server has it since
+  13:26 UTC on 2026-11-15** (22:26 here; the binary before kept on the VM
+  as `roundtown-server.prev-2026-11-15b`), **and APK 35** (built, not
+  installed: no phone was attached). An app from before is told to
+  update and stays offline: an iPhone needs the next build, `ios-1.0.2-17`,
+  whose tag is Hajun's to ask for. Asked for as "build apk and push to
+  git", the three things done.
+  - **Checked on the VM after the deploy**, as this PC's own account: a
+    game with seven of the computer's, the app put away for 4 s and for
+    1 s and brought back; the journal has "dropped out of Arena(0): their
+    seat waits for them" and "is back, in Arena(0), and carries on" for
+    each, and the game given up a minute after the copy was closed, with
+    nobody connected. That is through the login, as a phone gets in.
+  - **A seat waits, and you are put back in the game.** "I found a error a
+    while ago where i (s26 ultra) invited my gf (iphone 16 pro) to my group,
+    then i as the leader of the group joined bridge wars game. it worked and
+    we were playing but then i think she died or sth and idk what happened
+    but suddenly she disconnected and went back to the main lobby for some
+    reason while i still stay in the bridge wars game. check for that error
+    so it dont happen again - i think if u exit the app while ur playing and
+    reopen, u shouldnt go to the main lobby - u should rejoin the game as
+    long as there is atleast 1 real player in that game still."
+    - **What it was.** The VM's journal has it, on 2026-11-13: game 2,
+      fight on at 16:33:00 UTC with two people and six of the computer's;
+      her seat fell at 16:33:09, 16:33:17 and 16:33:50; at 16:33:54.1
+      "hihihohohaha left", and at 16:33:57.9 "hihihohohaha#1642 joined, in
+      Town(0)". 3.8 s apart, with no time-out between (the login's tokens
+      give a silent connection 15 s): her app closed the connection itself
+      and opened another. It does that whenever it leaves the foreground
+      (`net::lifecycle`, on `AppLifecycle::WillSuspend`), because a phone
+      may take a sleeping app's sockets; and winit sends that on an iPhone
+      at `applicationWillResignActive`, read in its source (0.30.13,
+      `platform_impl/ios/event_loop.rs`): not only the app put away, but
+      the bar of notifications pulled down, the Control Centre, a call, a
+      system alert, the first inch of a swipe up from the bottom edge. And
+      the server gave a seat in a game up for good the moment a connection
+      closed (`players::gone`: "its seat is given up"), so the app, back a
+      moment later and saying it was in a game of Bridge Wars, was let in
+      as someone new and put in the town. Her dying had nothing to do with
+      it but the timing. **What took her app out of the foreground is not
+      known**: nothing of it is logged. The likeliest, mine: a thumb
+      sliding up off the stick or the jump button, which sit on the bottom
+      edge of an iPhone held on its side, where one swipe up goes home (the
+      window hides the home indicator and does not put system gestures off,
+      `window_settings`). The same pair of lines, "left" and "joined" a few
+      seconds apart, is in the journal for both phones in the town many
+      times over, where it costs nothing.
+    - **What it does now.** The server keeps the body of whoever's device
+      has gone in the game (`Arenas::keeps`, `players::gone`), standing
+      where it stood with nobody to move it, their seat theirs, and puts
+      whoever comes back as its player back in it (`Arenas::returns`,
+      `players::admit`):
+      - **The app only put away, it carries on** (`Return::Resume`): it
+        still has the game as it left it, says so as it comes back (its
+        `Hello` is from Bridge Wars' map), and is let in where it stands,
+        or, if the body has stood again on its island since, put there.
+        Whoever else is or is not in the game.
+      - **The app closed and opened again, it is put back in the game**
+        (`Return::Back`, `Tell::Back`) so long as the fight is on and
+        someone else of the people in it is connected: as Hajun has it.
+        The game is begun on the device afresh, in the middle, standing
+        where the body stands, with everything of the game as it is: the
+        time, everyone's health, what it holds and has bought (the
+        server's already), every bridge, **its own with the rest**, every
+        hole blown in one, and the two things only the device knew, the
+        metres of bridge it had left and the compass.
+      - **Otherwise the seat is given up** and they are in the town, as
+        before: the app opened again with nobody else of the people in the
+        game connected to it, or the game over.
+      - A game with nobody connected goes on a minute and is given up
+        (`ABANDONED`, as it was written to before any seat waited): so
+        someone playing alone whose app was put away for less than that
+        finds their game. **Mine**, and not what Hajun's sentence says of
+        opening the app again, which alone still goes to the town: it is
+        the same half second's slip of a thumb that took his partner out,
+        and playing alone it would otherwise still end the game.
+      - Before the fight, in the waiting room and through the countdown,
+        a seat waits until the fight begins and is the computer's then, if
+        its device is not back (`run`). Mine.
+      - **While they are away their body can be hit like anyone**, and
+        killed, and stands again on its island with what dying leaves; out
+        for good with the anchor gone. With nothing under it, the plank it
+        stood on blown, or gone in mid-air over the void, it falls
+        (`Game::fight`: its own device would have said so). It earns
+        nothing toward a level at the end of a game it is not there for.
+        All mine, as Bedwars has it but for the body, which there is taken
+        out of the world: here a moment's absence should cost nothing, and
+        a body kept is where they stood when they come back.
+      - A player who died while away, the app only put away, is told so
+        as it comes back (`Tell::Back` to a device that never left the
+        game): its metres of bridge and its compass are gone, as dying
+        takes them, and it stands on its island.
+    - **What had to change for it.** `PROTOCOL_VERSION` 17: `Tell::Back {
+      seat, metres, compass }`, and `Ask::Metres`, by which a device says
+      how many metres of bridge it has left as that changes, no oftener
+      than once a second (`arena::tell_metres`): they are the device's own
+      to count, and the server keeps the number only to give it back. On
+      the device: your own rungs are taken from the server for a bridge
+      this device never began (`bridge::Bridges::lay_own`; until now every
+      rung of yours the server sent back was left out, and put back in a
+      game you would have fallen through your own bridges); every rung and
+      every blast is gone over again once the bridges have been cleared for
+      another game (`bridge::hear_planks`, `dynamite::hear_blasts`: they
+      come in the same frame as the word of the game, or the frame before);
+      and rungs fixed while the connection is gone are kept and sent once
+      it is back (`bridge::send_rungs`), where they stood on that device
+      alone.
+    - **Three faults found on the way**, each of which the work would have
+      tripped over: the wait for a dropped connection (`arena::cut_off`, 15
+      s) was never begun again once it had been, so a second drop in a
+      game went on from where the first had got to; someone who fell while
+      their device was away fell a second time the instant they stood
+      again, the game having them where they died for the rest of that
+      frame (`Game::stand`; a scripted run showed two "fell" lines four
+      seconds apart); and a bridge with no plank left to draw put a mesh
+      with nothing in it into `Assets<Mesh>`, which Bevy logs as a
+      use-after-free (`bridge::rebuild`: what was drawn of it is taken
+      down instead).
+    - **Checked.** The server's tests (three new: a seat waits and they
+      are put back, by every case above; whoever's device has gone falls
+      with the ground gone and stands otherwise, once; and the one below
+      of who is knocked off the world), the game's (one new: your own
+      rungs from the server). And scripted, two copies of the desktop
+      build against a server on this PC, the app put away and brought
+      back by the same `AppLifecycle` messages a phone's sends: put away
+      for 4 s and for 1 s, with a bridge of its own, a compass and 37 m
+      left, and building on while the connection was gone (the other copy
+      saw it stand there all the while, and had every plank after); closed
+      and opened again 20 s on (back in its seat 0.9 s after it opened,
+      on the end of its own bridge, which it then walked back along; the
+      same with the app's opening on, under its cover); alone, put away
+      (it carried on) and closed and opened (the town, and the game
+      given up); its player dead while it was away, both with the app
+      still having the game and after it had given it up.
+    - **Not checked.** On a phone, either kind: that an iPhone and an
+      Android phone send what the desktop was sent is read in winit's
+      source, not seen. A connection that goes silent rather than closes
+      (a tunnel, a dead battery): the same path on the server, by the
+      login's 15 s, and not run. An app closed and opened again through
+      the login, as phones get in: the two copies on this PC said who
+      they were (`RT_UNSECURE`); only the app put away was run on the VM,
+      through the login (above).
+    - **Not done, and Hajun's to say.** Nothing takes her app out of the
+      foreground less often: putting the bottom edge's gestures off on an
+      iPhone (`Window::preferred_screen_edges_deferring_system_gestures`)
+      would have the first swipe up only show the home indicator and the
+      second go home, and iOS then shows the indicator dimmed where the
+      window now hides it: a change to how it looks. Nobody plays for
+      whoever is away: their team is one short until they are back, where
+      the computer could take the seat over and hand it back. And there is
+      still no way out of a game in the middle of it but to close the app,
+      which with someone else in the game now brings you back to it.
+  - **A stick of dynamite takes the whole bridge down, plank by plank,
+    and costs 2 amethyst.** "also i want the dynamite to be more effective
+    - change it to cost = 2 amethyst and make it so it explode the current
+    radius of the bridge like now, but from that point it will destroy
+    cascadingly the entire bridge like the truly connected bridge (even
+    adjacent connected part of the bridge that is connected by atleast a
+    certain percentage in a way that makes sense). but it shouldnt destroy
+    the whole bridge instantly but rather cascadingly from that initial
+    blast point so it gives ppl time to run away to safety if they are
+    already standing on that destroying bridge."
+    - **The rule** (`roundtown_net::nav::Nav::cascade`, one for the server
+      and for a game played offline). The planks whose middles the blast
+      reaches go at once, as before, with its 20 off whoever of another
+      team stands in it. Every other plank that stands and is joined to
+      one of those, through however many others, is doomed: it falls
+      `CASCADE_WAIT` 0.6 s after the blast and then as far along the bridge
+      from the hole as it is, at `CASCADE_SPEED` 6 m a second, a plank
+      every quarter of a second, out along each branch from where it
+      joins. Slower than anyone runs (10) and faster than anyone carrying
+      a plank walks (5): whoever is on the bridge gets off it by running,
+      and by nothing less. A bridge from an island to the middle is gone
+      in seven seconds.
+    - **What is one bridge.** A plank and the next of its own bridge; and
+      two planks of different bridges that touch along, or lie over each
+      other by, `CASCADE_JOIN` 30% of a plank's width or more
+      (`nav::planks_joined`: how much of the one's edge is on or within 12
+      cm of the other): a fork off a bridge's side, a bridge landed on
+      another, two laid side by side with their edges together, two that
+      cross. Not two that meet at a corner, nor two with a gap between
+      them; and land parts bridges, so the bridge from the middle on to
+      the next island stands. Worked out as the stick blows, over the
+      bridges as they stand then: a plank laid onto a falling bridge
+      afterwards stays, with whatever it is joined to.
+    - **What you see** (`bridge::Bridges::doom`, `bridge::crumble`): at the
+      blast every doomed plank turns the colour of a plank about to go
+      (`colours.arena.plank_doomed` in `assets/ui.ron`, a burnt orange),
+      the whole bridge at once, and stays stood on; each then drops out
+      at its time, a board its size tumbling down into the void. On every
+      device at the same moments: the server says with the blast which
+      planks and how long after (`Blasted::later`, thousandths of a
+      second), and when it blew by its own clock (`Blasted::at`), which
+      every device has for the town's. So a device that comes into the
+      game later, or back into it, has the planks whose time has passed
+      gone at once, and draws no blast for a stick that blew before it
+      was there (`dynamite::BLEW_LATELY`, 3 s).
+    - **Who is knocked off the world.** Whoever of another team than the
+      thrower's stood on a plank as it fell was hit by them (`Game::crumble`,
+      `arena::blame_falls` offline): falling within five seconds of it is
+      "knocked off the world by", with their sapphire and amethyst, as a
+      fall after a punch is. Mine.
+    - **The computer's players' map** (`Nav`): from the moment a bridge is
+      doomed it joins nothing and no way is found over it (`Nav::path`),
+      though it is walked until it falls; and there is a way off it for
+      whoever stands on it (`Nav::escape`: over planks that will still be
+      there as they come to each). What can be walked between is worked
+      out once as the bridge is doomed and not again at each plank (8 ms
+      each on this PC, a frame and more on a phone in a game played
+      offline).
+    - **In the shop**: 2 amethyst, and "Destroys bridges" where it said
+      "Cuts bridges" (`words.market.dynamite_stat`, mine). In
+      `bridgewarsgameevent.md` its line says 2 amethyst and the rest of
+      this, written on from Hajun's own sentence.
+    - **Checked.** Tests: the shared rules' (three new: the rest of a
+      bridge falls plank by plank from the hole outward, at its pace, and
+      slower than a run; what is joined falls with it and what only stands
+      near it does not, by each of the cases above; a doomed bridge is no
+      way across and there is a way off it), the server's (the room is
+      told which planks and when, and they go at their times; who is
+      knocked off the world), the game's (the doomed planks stand in
+      their colour until their time). Scripted, in the desktop build: a
+      bridge from an island to the middle blown at its island's end,
+      offline, seen whole from high over it (28 planks: 4 at once, 24 over
+      6.3 s) and from the game's own camera standing on it (the planks
+      turn, the falling comes, you fall with it and are dead); the same
+      with two copies and a server on this PC, the second standing on the
+      first's bridge with its own clock 5 s out (it turned and fell on
+      time there); and a copy opened again after the bridge had gone,
+      its clock 7 s out the other way (all 28 gone as it came in, and no
+      blast drawn).
+    - **Not checked.** On a phone. By hand.
+    - **Mine**: 0.6 s and 6 m a second; 30%; that land parts bridges; that
+      a plank laid on afterwards stays; the colour, the tumbling board;
+      whose doing a fall is.
+  - **The computer's players go out, go for anchors, build ways of their
+    own, and use what they buy.** "i noticed that the ai seem to be just in
+    their island for too long of the game like idle like both of them on
+    the generator which is not only inefficient but not humanlike. atleast
+    they should be standing in the shop so they look like theyre doing sth
+    or atleast just going around the map like just a scout. and there
+    should be some ai personality that just wanna go to other ppls island
+    and only attack their anchor too - right now sometime the ai when they
+    invade other island they just go for the generator first, but sometime
+    they should just go for the anchor first or the players first - right
+    now the rate at which they destroy the anchor is too slow and also the
+    amount of time they spend out of their island is too little even when
+    they have bridges set up and the amount of time they spend in their
+    own island just on their generator is too long, and also they rly
+    decide to only make necessary bridges rather than some creative attack
+    strategy bridges - some ai personality can be like that. and also i
+    think the ai doesnt use the most recently added items like the
+    advanced bridger upgrade or leap potion."
+    - **What they do now** (`shared/src/bots.rs`; every number of it a
+      spread, thrown again, and leaning by who each is):
+      - **The pad is visited, not stood on** (`PAD_WORTH`, `PAD_WAIT`,
+        `PAD_AGAIN`): what a pad makes lies on it until someone comes, so
+        a bot comes once enough of what it wants lies there, takes it,
+        and is off, and not back for a while. With nothing it has to do
+        it stands in the outline of one of its two stands, turned to it,
+        as someone with the shop's window open stands, or looks out from
+        the shore its bridges leave; or it goes out to look about
+        (`Goal::Scout`, `Squad::lookout`: over its team's bridges to the
+        middle, a smaller island, the end of someone else's bridge), by
+        a mood thrown every 25 to 70 s (`Bot::out`, `Persona::roams`).
+        The one of a team's two that keeps the base goes out alone too,
+        later in the game.
+      - **What a raid is for is thrown as it steps ashore** (`Aim`,
+        `Squad::take_aim`): their anchor, whoever is home, or what lies
+        on their pad. One set on anchors hits the anchor and nothing
+        else, whoever is hitting it, until the anchor is gone or it has
+        to run (`Persona::zeal`; the ENTJ most of the sixteen). Each has
+        its own time from which it raids and from which an anchor is fair
+        game (`Skill::raid_from` and the rest are spreads now), the
+        earliest a little over a minute and a half in for a raid and two
+        and a half for an anchor. `Skill::anchor_keen` turns how many
+        anchors go.
+      - **Bridges nobody has to have** (`Squad::scheme`,
+        `Persona::schemes`): a side door onto another team's island from
+        a smaller one, a second way onto it from the middle, or its own
+        island straight to theirs.
+      - **Its team's building is quickened** (`Ware::BuildSpeed`), **and
+        leap potions are carried and drunk** (a seventh kind for their
+        buttons, `KINDS`): nearing an island it raids, after someone,
+        getting away, at a hole too wide to jump, and now and then for
+        nothing.
+      - **On a bridge that is coming down** it runs for ground that is
+        staying (`Squad::mind_falling`, over `Nav::escape`), the sooner
+        the better it is in a fight, and it does not step onto one. Cut
+        off from its island, the bridge it came over having come down
+        behind it, it buys planks at whatever stand it can walk to and
+        lays a way back; with nothing it can do, it steps off after a
+        while (until then one stood there to the end of the game, and
+        the game was a draw).
+      - **A stick of dynamite is thrown** by `Squad::worth_blowing`:
+        never the bridge it or its teammate stands on; its own island's,
+        with someone coming over it, by who it is; never with a person of
+        its team away across it. One that schemes now and then goes to
+        cut another team's bridge where it leaves the middle, with nobody
+        on it (`Squad::way_to_cut`): only a team with no person on it. A
+        bridge a person is fighting on is fair.
+    - **Measured** over whole games of eight of them (`RT_GAMES=300 cargo
+      test -p roundtown_server many -- --ignored --nocapture`, seeds 100
+      to 399), their first ten minutes: 300 games of the bots as they
+      were, before the dynamite took whole bridges, against 300 as they
+      are, with it.
+      - By their own pad 55% of the time → 5%; a team's two both there
+        36% → 0%; on their own island 78% → 49% (the one that keeps the
+        base 92% → 74%, the one that goes out 64% → 24%); still at a
+        stand 3% → 17%; out looking about 6%; on a bridge 10% → 22%, in
+        the middle 9% → 22%, on another team's island 3% → 5%.
+      - Anchors broken by punches before ten minutes 0.46 a game → 1.93,
+        the first at 461 s → 393 s; of 300 games, 192 had none before,
+        25 have none now. First thing done on stepping onto an island:
+        someone hit 11.5 → 9.6 times a game, the anchor 1.1 → 3.0, onto
+        the pad 0.8 → 3.1.
+      - Bridges begun onto another team's island 1.4 a game → 2.9.
+        Building quickened 0 → 2 steps a game, the four teams together;
+        leap potions 0 → 5.4 bought and 3.6 drunk.
+      - Sticks of dynamite thrown 0.7 → 1.2 a game (at twice the price),
+        and 1.15 bridges brought down, at least one in two games of
+        three; 0.11 of them a game fall with a bridge; none walks off an
+        edge; none is held fast, and one got nowhere once in 300 games.
+        No draws. Over at 666 s on average (748).
+    - **Found on the way**: they stood still for three seconds on the
+      very edge of a plank with their way across the void, at a bridge's
+      end with someone near, and on the land's rim under a falling
+      bridge: seven times in sixty games at the worst, each fixed.
+    - **Checked**: the shared rules' tests (87, twelve of them new for
+      this) and the server's (55), whole games as above, and the game's
+      tests, which play them offline (316). In the desktop build one game
+      offline was watched from high over the map for five minutes, and
+      what each was about written down every few seconds: every island
+      bridged to the middle within two minutes, two smaller islands
+      reached, a side door laid from a smaller island onto a team's
+      island at 2:40, two out looking about, raids from 2:40 on, and
+      the three that keep to their islands at their stands, not on their
+      pads. That was with them as they were before the last two hours of
+      this (before the cutting of bridges and the three faults above).
+    - **Not checked**: by hand; against a person who fights back; on a
+      phone.
+    - **Mine** (the work was done by a second session of mine beside this
+      one, in a copy of the tree, and merged): every new number, each
+      kind's `roams`, `zeal`, `schemes` and leaning to the leap potion,
+      and every spread; that anchors go about four times as often; the
+      three kinds of way in; when a leap potion is drunk; buying at
+      another island's stand when cut off, and stepping off when
+      stranded; how often dynamite is thrown and by whom, and that no
+      bridge of a team with a person on it is cut with nobody on it.
+    - **Tried and dropped**: more anchors by a shorter time between
+      punches on one, or by leaving fewer of them alone early, neither of
+      which moved the count (how often a landing is for the anchor does);
+      fleeing a falling bridge only toward the planks that fall last,
+      kept as the last resort; setting out to cut a bridge on one throw
+      of the dice, which lost to shopping and raids two times in three.
 - **Since the small hours of 2026-11-15 the team you begin on is thrown
   for each game, each team's island is lined in its colour on the minimap,
   and your name top left is your team's colour** (two messages from

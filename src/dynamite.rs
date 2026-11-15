@@ -24,6 +24,16 @@
 //! own offline (`arena::dynamites_offline`). Either way a stick here is
 //! [`throw`]n as it sets out. One that comes down where there is nothing
 //! to lie on falls on into the void, and never blows.
+//!
+//! Since 2026-11-15 a blast takes the whole bridge down (Hajun: "from
+//! that point it will destroy cascadingly the entire bridge like the truly
+//! connected bridge ... but it shouldnt destroy the whole bridge instantly
+//! but rather cascadingly from that initial blast point so it gives ppl
+//! time to run away to safety"): the planks it reaches at once, as before,
+//! and every other plank joined to them after, one by one from the hole
+//! outward, each drawn in the colour of a plank about to go until it
+//! falls (`bridge::Bridges::doom`, `bridge::crumble`). Which planks and
+//! when is the rules' too (`roundtown_net::nav::Nav::cascade`).
 
 use std::f32::consts::{FRAC_PI_2, TAU};
 
@@ -35,6 +45,7 @@ use roundtown_net::{Blasted, Dynamite};
 
 use crate::arena::InArena;
 use crate::bridge::Bridges;
+use crate::clock::TownClock;
 use crate::fire;
 use crate::island::{Islands, Venue};
 use crate::range;
@@ -74,6 +85,14 @@ const FALLEN: f32 = 35.0;
 /// How near where the server says one blew a stick here has to be aimed to
 /// be that one, in metres.
 const SAME: f32 = 0.5;
+/// How long ago, by the server's clock, a stick can have blown and its
+/// blast still be drawn here, in seconds: one from longer ago blew before
+/// this device was in the game, or while its connection was gone.
+const BLEW_LATELY: f64 = 3.0;
+/// How long the server's word of what has blown waits for the town's
+/// clock to be the server's, in seconds, as a device comes online: the
+/// planks that fall after a blast fall by that clock.
+const CLOCK_WAIT: f32 = 3.0;
 
 /// A stick of dynamite thrown: how far through its throw and its fuse it
 /// is ([`Lob`]); who threw it, by seat; whether the server runs it, and
@@ -224,18 +243,55 @@ fn follow_server(fresh: Query<(Entity, &Dynamite), (With<Remote>, Added<Dynamite
 /// plank you are laying if the blast reached its middle, which only this
 /// device knows of; the blast is drawn where it blew; and the stick drawn
 /// here for it is taken away.
+///
+/// And the rest of the bridge is doomed, each plank to fall at the time
+/// the server says, by its clock, which is the town's
+/// (`bridge::Bridges::doom`, since 2026-11-15): one whose time has passed
+/// is gone at once. A stick that blew before this device was there, as it
+/// comes into a game under way or back into one, is no blast to draw
+/// ([`BLEW_LATELY`]). And all of them are gone over again once the
+/// bridges have been cleared for another game (`Bridges::game`), as the
+/// rungs are (`bridge::hear_planks`).
+#[allow(clippy::too_many_arguments)]
 fn hear_blasts(
-    blasts: Query<&Blasted, (With<Remote>, Added<Blasted>)>,
+    time: Res<Time>,
+    town: Res<TownClock>,
+    fresh: Query<&Blasted, (With<Remote>, Added<Blasted>)>,
+    every: Query<&Blasted, With<Remote>>,
     sticks: Query<(Entity, &Stick)>,
+    mut heard: Local<(u32, f32)>,
     mut bridges: ResMut<Bridges>,
     mut commands: Commands,
 ) {
-    for blast in &blasts {
+    let again = heard.0 != bridges.game();
+    if !again && fresh.is_empty() {
+        return;
+    }
+    // Not until the town's clock is the server's, which it is a moment
+    // after a device comes online: the times are by it.
+    if !town.is_the_servers() && heard.1 < CLOCK_WAIT {
+        *heard = (u32::MAX, heard.1 + time.delta_secs());
+        return;
+    }
+    *heard = (bridges.game(), 0.0);
+    let (now, clock) = (time.elapsed_secs_f64(), town.now());
+    let mut take = |blast: &Blasted| {
         let at = Vec3::new(blast.x, blast.y, blast.z);
         bridges.break_planks(&blast.planks);
+        // (Whose stick it was is the server's to know: it says whose doing
+        // a fall was.)
+        bridges.doom(blast.later().map(|(plank, after)| (plank, now + (blast.at + f64::from(after) - clock))), u8::MAX);
+        if clock - blast.at > BLEW_LATELY {
+            return;
+        }
         bridges.blast_tip(at.xz(), DYNAMITE_RADIUS);
         fire::burst(&mut commands, at + Vec3::Y * STICK_RADIUS);
-        info!("a stick of dynamite blew at {:.1}, taking {} planks", at.xz(), blast.planks.len());
+        info!(
+            "a stick of dynamite blew at {:.1}, taking {} planks, and {} more to fall",
+            at.xz(),
+            blast.planks.len(),
+            blast.later.len()
+        );
         if let Some((stick, _)) = sticks
             .iter()
             .filter(|(_, stick)| stick.served && stick.lob.to.distance(at) < SAME)
@@ -243,6 +299,11 @@ fn hear_blasts(
         {
             commands.entity(stick).try_despawn();
         }
+    };
+    if again {
+        every.iter().for_each(&mut take);
+    } else {
+        fresh.iter().for_each(&mut take);
     }
 }
 

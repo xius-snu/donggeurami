@@ -240,6 +240,12 @@ const FLIGHT: f32 = 3.0;
 /// Online, how long a game waits for a dropped connection to come back,
 /// in seconds, before it is given up.
 const RECONNECT_WAIT: f32 = 15.0;
+/// Online, how often at the most the server is told how many metres of
+/// bridge you have left, in seconds ([`tell_metres`]); and the most it can
+/// say you had when it puts you back in a game (`Tell::Back`): the
+/// server's own limit.
+const METRES_EVERY: f32 = 1.0;
+const MOST_METRES: f32 = 5000.0;
 /// Which triangles of the map are a broken anchor's, to be taken out of
 /// what is stood on: those within this of its middle, across the ground,
 /// in metres, and over the island's top.
@@ -953,10 +959,13 @@ pub(crate) fn plugin(app: &mut App) {
                     .before(crate::follow_camera),
                 (show_death, show_panel, place_tags, place_anchor_bars, float_numbers, write_over_generators)
                     .after(crate::follow_camera),
-                (paint_zombies, paint_anchors, fade_alerts, (lose_on_death, take_spoils).chain(), trap_alerts),
+                (paint_zombies, paint_anchors, fade_alerts, (lose_on_death, take_spoils, tell_metres).chain(), trap_alerts),
                 // What the game has said this frame, into the chat; and the
                 // builders the computer's players have out, where they are.
                 (feed_chat, show_bot_builders).after(crate::move_bodies).after(break_anchors),
+                // Whose doing a fall with a plank that has just gone is,
+                // before anyone has fallen far enough to be dead of it.
+                blame_falls.after(bridge::crumble).before(reap),
             ),
         );
 }
@@ -1069,8 +1078,10 @@ fn ask(click: On<Pointer<Click>>, buttons: Query<&AsksFor>, mut asks: MessageWri
 
 /// What the server tells this device alone about Bridge Wars, online: that
 /// it has seated you in a game ([`Tell::Seated`]), which begins it here;
-/// that you stand again on your island; and that you are back in the town,
-/// which ends it here.
+/// that it has put you back in the game you were in when your connection
+/// went ([`Tell::Back`], since 2026-11-15), which begins it here too, in
+/// the middle, unless this device never left it; that you stand again on
+/// your island; and that you are back in the town, which ends it here.
 #[allow(clippy::too_many_arguments)]
 fn hear(
     mut tells: MessageReader<Tell>,
@@ -1121,12 +1132,43 @@ fn hear(
                     info!("bought the compass");
                 }
             }
-            Tell::Seated { seat: mine } => {
+            Tell::Seated { .. } | Tell::Back { .. } => {
+                // Seated in a game, or put back in the one this device
+                // was in when its connection went (since 2026-11-15):
+                // with what only it knew of the game, as the server kept
+                // it, the metres of bridge left and the compass.
+                let (mine, back) = match tell {
+                    Tell::Back { seat, metres, compass } => (*seat, Some((*metres, *compass))),
+                    Tell::Seated { seat } => (*seat, None),
+                    _ => continue,
+                };
+                let metres = back.map(|(metres, _)| if metres.is_finite() { metres.clamp(0.0, MOST_METRES) } else { 0.0 });
+                // Put back in the game this device never left, its app
+                // only put away: your player died meanwhile, which it
+                // was not there to see, and what dying loses is gone
+                // (`lose_on_death`). The game itself carries on here.
+                if let (Some((_, compass)), Some(metres), Some(here)) = (back, metres, game.as_deref_mut())
+                    && here.online
+                    && here.me == usize::from(mine)
+                {
+                    stock.bridge_metres = metres;
+                    here.compass = compass;
+                    if let Some(kit) = here.outfits.kits.get_mut(usize::from(mine)) {
+                        kit.compass = compass;
+                    }
+                    info!("Bridge Wars: back in seat {mine}, which this device never left, with {metres:.1} m of bridge");
+                    continue;
+                }
                 // Another game straight after the last keeps the view the
-                // first fixed the camera from.
+                // first fixed the camera from, and what the last put up
+                // goes. With no game before it, nothing is taken down:
+                // whatever is up is the new game's, come in this very
+                // frame with the word of it.
                 let kept = game.as_ref().and_then(|game| game.view);
-                for thing in &in_arena {
-                    commands.entity(thing).try_despawn();
+                if game.is_some() {
+                    for thing in &in_arena {
+                        commands.entity(thing).try_despawn();
+                    }
                 }
                 if let Some(anchors) = anchors.as_deref_mut() {
                     stand_anchors_up(anchors, &mut islands, &mut visibilities);
@@ -1134,7 +1176,7 @@ fn hear(
                 let mut opened = open(
                     &mut commands,
                     you,
-                    usize::from(*mine),
+                    usize::from(mine),
                     seat.0,
                     true,
                     &mut begun,
@@ -1143,7 +1185,22 @@ fn hear(
                     &mut driving,
                 );
                 opened.view = kept.or(opened.view);
-                info!("Bridge Wars: seated online, seat {mine}");
+                match (back, metres) {
+                    (Some((_, compass)), Some(metres)) => {
+                        // After what `open` gave: nothing held but what
+                        // the server says (`follow_round`).
+                        commands.insert_resource(Resources {
+                            bridge_metres: metres,
+                            held: Purse::default(),
+                        });
+                        opened.compass = compass;
+                        if let Some(kit) = opened.outfits.kits.get_mut(usize::from(mine)) {
+                            kit.compass = compass;
+                        }
+                        info!("Bridge Wars: back in the game, in seat {mine}, with {metres:.1} m of bridge");
+                    }
+                    _ => info!("Bridge Wars: seated online, seat {mine}"),
+                }
                 commands.insert_resource(opened);
                 game = None;
             }
@@ -1368,6 +1425,13 @@ fn cut_off(
         return;
     };
     if !game.online || online.is() {
+        // Back: the next time it goes is waited out afresh. (Until
+        // 2026-11-15 the wait was never begun again, and a second drop
+        // in a game went on from where the first had got to, with no word
+        // of it, to be given up sooner each time.)
+        if game.cut_off.is_some() {
+            game.cut_off = None;
+        }
         return;
     }
     let gone = match game.cut_off {
@@ -1387,6 +1451,35 @@ fn cut_off(
     let mut anchors = anchors;
     finish(&mut commands, &game, &in_arena, you, &mut bodies, &mut orbit, anchors.as_deref_mut(), &mut islands, &mut visibilities, true);
     hud::announce(&mut commands, None, &ui().words.house_builder.lost_connection, hud::CAPTION, 3.0);
+}
+
+/// Online, says to the server how many metres of bridge you have left
+/// (`NetAsk::Metres`), as that changes and no oftener than every
+/// [`METRES_EVERY`] seconds, and once each time the connection is back:
+/// they are this device's own to count, and the server keeps what it was
+/// last told only to give back to a device that has forgotten, the app
+/// closed in the middle of a game and opened again (`Tell::Back`, since
+/// 2026-11-15).
+fn tell_metres(
+    time: Res<Time>,
+    game: Option<Res<Game>>,
+    online: Res<Online>,
+    stock: Res<Resources>,
+    mut said: Local<(Option<f32>, f32)>,
+    mut requests: MessageWriter<NetAsk>,
+) {
+    if !online.is() || !game.is_some_and(|game| game.online && game.playing()) {
+        if said.0.is_some() {
+            *said = (None, 0.0);
+        }
+        return;
+    }
+    said.1 += time.delta_secs();
+    if said.0 == Some(stock.bridge_metres) || said.1 < METRES_EVERY {
+        return;
+    }
+    requests.write(NetAsk::Metres(stock.bridge_metres));
+    *said = (Some(stock.bridge_metres), 0.0);
 }
 
 /// Takes you into a game and moves it on, offline: into the waiting room,
@@ -2110,6 +2203,7 @@ fn lobbed(islands: &Islands, feet: Vec3, heading: f32, far: f32) -> rules::Lob {
 /// laying. Online the server does all of it, and says which planks went
 /// (`dynamite::hear_blasts`).
 fn dynamites_offline(
+    time: Res<Time>,
     game: Option<ResMut<Game>>,
     sticks: Query<(Entity, &dynamite::Stick)>,
     mut bodies: Query<(Entity, &Transform, &Venue, &mut Health, &Seat), (With<WalkCycle>, Without<Dead>)>,
@@ -2145,9 +2239,58 @@ fn dynamites_offline(
             }
         }
         let taken = bridges.blast(at.xz(), rules::DYNAMITE_RADIUS);
-        info!("seat {}'s dynamite blew at {:.1}, taking {} planks", lying.seat, at.xz(), taken.len());
+        // And the rest of the bridge they were part of falls after them,
+        // plank by plank from the hole outward (`Nav::cascade`, since
+        // 2026-11-15): worked out on the map the computer's players keep,
+        // which has every bridge, as the server works it out on its own.
+        let mut later = Vec::new();
+        if let Some(brains) = game.brains.as_deref_mut() {
+            let nav = &mut brains.nav;
+            for (seat, chain, index, rung) in bridges.laid() {
+                nav.hear(seat, chain, index, rung);
+            }
+            nav.break_planks(&taken);
+            later = nav.cascade(&taken);
+            nav.doom(&later, lying.seat as u8);
+            let now = time.elapsed_secs_f64();
+            bridges.doom(later.iter().map(|&(plank, after)| (plank, now + f64::from(after))), lying.seat as u8);
+        }
+        info!(
+            "seat {}'s dynamite blew at {:.1}, taking {} planks, and {} more to fall",
+            lying.seat,
+            at.xz(),
+            taken.len(),
+            later.len()
+        );
         fire::burst(&mut commands, at + Vec3::Y * 0.3);
         commands.entity(stick).despawn();
+    }
+}
+
+/// Whoever stood on a plank as it fell out of a bridge a stick of
+/// dynamite took down, offline, was hit by whoever threw it, if they are
+/// of another team (`bridge::Bridges::fell_under`): a fall soon after is
+/// that one's doing ([`Game::fell`]), as the server has it online.
+fn blame_falls(
+    game: Option<ResMut<Game>>,
+    bridges: Res<bridge::Bridges>,
+    bodies: Query<(&Transform, &Venue, &Seat), (With<WalkCycle>, Without<Dead>)>,
+) {
+    if bridges.just_fell.is_empty() || !offline_fight(&game) {
+        return;
+    }
+    let mut game = game.expect("checked");
+    let elapsed = game.elapsed;
+    for (place, venue, seat) in &bodies {
+        if *venue != Venue::Arena || seat.0 >= ARENA_SEATS {
+            continue;
+        }
+        let Some(by) = bridges.fell_under(place.translation.xz()).map(usize::from) else {
+            continue;
+        };
+        if by < ARENA_SEATS && arena_team(by) != arena_team(seat.0) {
+            game.last_hit.insert(seat.0, (by, elapsed, Weapon::Dynamite));
+        }
     }
 }
 
@@ -2974,6 +3117,11 @@ fn drive_bots(
             nav.break_planks(&broken);
         }
     }
+    // The planks a blast has doomed, a frame nearer their time: what the
+    // computer's players go by to get off a bridge that is coming down
+    // (`dynamites_offline`). Each is gone from the bridges themselves at
+    // the same moment (`bridge::crumble`).
+    nav.crumble(time.delta_secs());
     // Everyone, by seat, as the brains see them.
     let seats = game.seats.len();
     let mut seen = vec![Seen::default(); seats];

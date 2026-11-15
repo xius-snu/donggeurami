@@ -145,6 +145,14 @@ impl TownClock {
         true
     }
 
+    /// Whether the clock is the server's: set by one of its answers, or,
+    /// asleep since, still out from this device's time of day by as much
+    /// as it was then. Until the first answer of a run it is this
+    /// device's own time of day, which may be a long way out.
+    pub(crate) fn is_the_servers(&self) -> bool {
+        self.set.is_some() || self.slept != 0.0
+    }
+
     /// The app is going to sleep, and its steady clock may stop until it
     /// wakes: from now until the server answers again, the town's clock is the
     /// time of day, put forward by as much as the server's time is ahead of it

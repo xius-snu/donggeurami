@@ -191,6 +191,10 @@
             // their sides.
             plank: "#b98a52",
             plank_side: "#8a6238",
+            // A plank of a bridge a stick of dynamite has blown a hole in,
+            // which is to fall in its turn after the ones the blast took:
+            // its top until it does, and the plank as it falls.
+            plank_doomed: "#d9562f",
             // The minimap top right: the land, what shows round it (the
             // grey of your name's plate), you (a red dot) and your teammate
             // (a green dot). The bridges on it take the planks' colour
@@ -623,7 +627,7 @@
             healing: "Heal",
             healing_stat: "+{share}% hp",
             dynamite: "Dynamite",
-            dynamite_stat: "Cuts bridges",
+            dynamite_stat: "Destroys bridges",
             leap: "Leap",
             leap_stat: "x{times} jump {seconds}s",
             // The upgrade shop. The generator's four steps, each with its

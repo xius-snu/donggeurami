@@ -11,9 +11,9 @@ bundles). It plays online against a server in Seoul (`server/`; `shared/` is
 Bridge Wars. House Builder, the build-battle game, is stalled: keep it
 working, and spend nothing on it unasked.
 
-As of 2026-11-15: `PROTOCOL_VERSION` 16, APK 34 (`versionCode`), the server
-deployed that night (16:42 UTC on 2026-11-14) with everything in `server/`
-and `shared/`.
+As of 2026-11-15, late: `PROTOCOL_VERSION` 17, APK 35 (`versionCode`), the
+server deployed that night (13:26 UTC) with everything in `server/` and
+`shared/`.
 
 ## This file, and where the rest is
 
@@ -221,6 +221,12 @@ to try again.
   compiled in (`net::SERVERS`). A new VM means a new app.
 - A game ends over two ticks on the server (`close`, then `end`): replicon
   writes a despawn only to a device the entity is still shown to.
+- A phone closes its connection whenever its app leaves the foreground
+  (`net::lifecycle`). **A seat in a game of Bridge Wars waits for it**
+  (`Arenas::keeps`, `returns`): the body stands in the game, to be hit; an
+  app only put away carries on; one closed and opened again is put back
+  (`Tell::Back`) while someone else of the people in the game is
+  connected; with nobody connected a game goes on a minute.
 - The VM allows the tap that skips waits (`RT_ALLOW_SKIP=1`): take it out
   before real players come.
 
@@ -398,11 +404,20 @@ and the game is as that file has it. The rules both sides play by are
   length in metres; mitred, cut flush where they leave and meet land or
   another bridge. **A bridge that is built stays as it was built.** Its
   geometry was hard won: read its entries in the log before touching it.
-  Planks go to the server as they are fixed (`Ask::Rung`).
+  Planks go to the server as they are fixed (`Ask::Rung`). A stick of
+  dynamite takes the planks its blast reaches at once and the rest of the
+  connected bridge plank by plank from the hole (`Nav::cascade`,
+  `bridge::crumble`, `CASCADE_*`), each drawn in
+  `colours.arena.plank_doomed` until it falls.
 - **The computer's players** (`shared/src/bots.rs`, one brain for the
   server and for offline, over a map baked from the model,
   `shared/src/nav.rs`, `arena.nav`): each is one of sixteen kinds
-  (`PERSONAS`) and plays the whole game. **Hajun's rule for them: nothing
+  (`PERSONAS`) and plays the whole game: visits its pad and does not stand
+  on it, stands at its shops or goes out to look about with nothing to do
+  (`Goal::Scout`), throws what a raid is for as it lands (`Aim`: the
+  anchor, the people, the pad), may build a way its team could do without
+  (`Squad::scheme`), and runs off a bridge that is coming down
+  (`Squad::mind_falling`). **Hajun's rule for them: nothing
   is a definite if-then; every threshold is a spread, thrown again.** How
   hard they play is `Skill::MODERATE`. Tune by whole games: `cargo test -p
   roundtown_server many -- --ignored --nocapture` (`RT_GAMES`, `RT_SEED`,

@@ -991,13 +991,16 @@ mod tests {
             let second_button = 1600.0 / 9.0 * (0.5 - 0.06) - 32.5;
             assert!(widest * 0.5 - PAD < second_button, "{widest} against {second_button}");
         }
-        // A stick of dynamite, the last of the things for the buttons: 1
-        // amethyst, three to a button, and not to be had with five other
-        // kinds on the five buttons.
+        // A stick of dynamite, the last of the things for the buttons: 2
+        // amethyst (since 2026-11-15, when it began to take the whole
+        // bridge down; 1 until then), three to a button, and not to be
+        // had with five other kinds on the five buttons.
         assert!(items[2].contains(&Ware::Utility(Utility::Dynamite)));
-        let stick = offer(Ware::Utility(Utility::Dynamite), &bare, &[0, 0, 0, 1]);
+        let stick = offer(Ware::Utility(Utility::Dynamite), &bare, &[0, 0, 0, 2]);
         assert_eq!((stick.name.as_str(), stick.picture), ("Dynamite", Picture::Dynamite));
-        assert_eq!(stick.state, State::Buy { item: Item::Amethyst, cost: 1, able: true });
+        assert_eq!(stick.state, State::Buy { item: Item::Amethyst, cost: 2, able: true });
+        let short = offer(Ware::Utility(Utility::Dynamite), &bare, &[0, 0, 0, 1]);
+        assert_eq!(short.state, State::Buy { item: Item::Amethyst, cost: 2, able: false });
         let three = Outfit {
             kit: Kit::default().holding(Utility::Dynamite, 3),
             ..bare
