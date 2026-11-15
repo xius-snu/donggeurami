@@ -7,6 +7,52 @@
 > "above" or "below", or names another section in quotes, that section may be
 > in another file here: the table in `CLAUDE.md` says which.
 
+## APK 36, and the server with protocol 18
+
+In the first minutes of 2026-11-16 here, 15:07 UTC on the 15th (Hajun:
+"build apk and push to git", of the dynamite at 1 amethyst with its
+quickening fall, what the dead drop, and the chat's three lines, which he
+had asked for an hour before with "dont rebuild apk or push yet. just
+change"; `docs/bridge-wars.md` and `docs/chat-and-text.md`, their first
+entries).
+
+- **Before the deploy**, the one thing no test had: what the dead drop,
+  over the wire. A server on this PC (`RT_ARENA_PURSE=40`) and one scripted
+  copy of the game in a game of eight on it for five and a half minutes:
+  a stick's bridge fell at the new pace (26 planks over 4.4 s), the server
+  dropped a thing as one of its players was killed in the middle, the
+  copy was sent it, drew it flying from the dead to where it lay (seen
+  from over it), and no longer had it once someone had taken it.
+- **The server**: `server/deploy.sh` at 15:07 UTC, protocol 18, with nobody
+  connected since 14:16 (a person had been in two games of Bridge Wars on
+  APK 35 from 13:52 to then); the binary before (deployed 13:26 UTC,
+  protocol 17) kept on the VM as `roundtown-server.prev-2026-11-16`.
+  After: the VM's binary the same bytes as the one built here (sha1), the
+  service active, this PC's account online ("online as xd", `xd#3690
+  joined`), and a scripted game on the VM with seven of the computer's
+  for four minutes, in which the server dropped a thing and then four as
+  two of them were killed on land, and the copy had each.
+- **And again at 15:35 UTC**, with what Hajun asked for while the first
+  was being built: a thing dropped lies 0.3 s before anyone can have it,
+  and one of the computer's players that is by as someone dies takes
+  what they dropped before it goes on. Protocol 18 still: nothing sent
+  changed. Nobody had been connected but the scripted copy; the binary
+  of 15:07 kept as `roundtown-server.prev-2026-11-16b`. After: the same
+  bytes as the one built here, the service active, and a scripted game
+  on the VM as this PC's account.
+- **APK 36** (`versionCode` 36, 00:34 here, built a second time with
+  those two; the first, of 00:03, left this PC no way): `cargo ndk` 1 m
+  23 s, the library stripped from 189 MB to 101 with its seven entry
+  points, Gradle 3 s; put over APK 35. 85 asset files, each the bytes of
+  the one on disk; `assets/ui.ron`, the two maps and
+  `bridgewarsgameevent.md` hashed before and after. **Not installed**: no
+  phone was attached. An APK from before is told to update and stays
+  offline.
+- **The iPhone**: type-checked on this PC
+  (`mobile/ios/check_on_windows.sh`); **no tag pushed**: the build it has,
+  of `ios-1.0.2-17`, is protocol 17 and is told to update until
+  `ios-1.0.2-18` is built, whose tag is Hajun's to ask for.
+
 ## APK 35, and the server with protocol 17
 
 On 2026-11-15, late (Hajun: "build apk and push to git", of the seat that
@@ -26,9 +72,13 @@ computer's players that go out; `docs/bridge-wars.md`, its first entry).
   Gradle 15 s; put over APK 34. 85 asset files, each the bytes of the one
   on disk; `assets/ui.ron` and the two maps hashed before and after.
   **Not installed**: no phone was attached.
-- **The iPhone**: type-checked on this PC (`mobile/ios/check_on_windows.sh`);
-  no tag pushed. The build it has, of `ios-1.0.2-16`, is protocol 16, and
-  is told to update until `ios-1.0.2-17` is built.
+- **The iPhone**: type-checked on this PC (`mobile/ios/check_on_windows.sh`),
+  and the tag `ios-1.0.2-17` pushed on its own at `cf9edff`, the commit of
+  all the above, a little after it, when Hajun said "push the ios tag"
+  (the tag is what starts Codemagic's build; it was held until he asked).
+  Whether it built, and how it runs on an iPhone, was not known when this
+  was written: nothing on this PC can see Codemagic. The build before, of
+  `ios-1.0.2-16`, is protocol 16 and is told to update.
 
 ## Only the newest APK is kept, and what the folder's size was
 

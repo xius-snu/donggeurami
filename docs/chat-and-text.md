@@ -7,6 +7,42 @@
 > "above" or "below", or names another section in quotes, that section may be
 > in another file here: the table in `CLAUDE.md` says which.
 
+## Three lines in sight
+
+Later on the night of 2026-11-15, Hajun, having had the two lines and a
+half of the entry under this one on the phone: "also right now the chat
+height is like 2.5lines high, i think it can be like 3". With two other
+things of that night ("dont rebuild apk or push yet. just change"; the
+first entry of `docs/bridge-wars.md`), and an hour on "build apk and push
+to git": **APK 36 has it** (`docs/building.md`). `src/chat.rs`.
+
+- **Three whole lines** (`LOG_HEIGHT` 10.1 shares of the short side, three
+  lines of 3.0 and the room round them; 8.6 until now): the newest and the
+  two over it, none cut. The dark box while a line is typed is that tall
+  too. It scrolls as it did, once there are more than three.
+- **The lowest line is where it was**, in the town (48.6 shares down) and
+  in a game (49.6): the box is taller from its top. `TOP` 38.5, `ARENA_TOP`
+  39.5.
+- **In a game that brings its top a share and a half nearer the four
+  counts top left**: 1.4 shares between the amethyst's count and the box
+  where there were 2.9, about two to the top line's words where there were
+  three and a half. Hajun had asked for more room there ("a tiny slightly
+  more gap between chatbox and the amethyst inventory number"), when it
+  was 0.9 and 1.5. **Mine, and the one thing here to look at on the
+  phone**: the foot of the chat cannot go lower in a game (the box a line
+  is typed into ends 57.6 down, and the stick's disc reaches up to 57.75),
+  so a third line there is room taken from that gap. If the gap matters
+  more than the stick's reach, `ARENA_TOP` and the test
+  `the_chat_lies_between_what_is_top_left_and_the_stick` are where.
+- The fading by place that is turned off (`colours.chat.strengths`) holds
+  its last strength a line further up (`strength_at`), past what is in
+  sight now.
+- **Checked**: the game's unit tests (316). The desktop build, scripted,
+  1,920 by 1,080, the top left cropped: two lines and three in the town,
+  five said in a game with three in sight under the four counts, and the
+  dark box three lines tall while a line is typed, in both. **Not on a
+  phone.**
+
 ## Two lines and a half, none of them faded; a little lower in a game
 
 In the small hours of 2026-11-15, an hour after APK 32, in four messages

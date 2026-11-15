@@ -39,6 +39,21 @@
 //! whoever took it, shrinking, and is gone, which is all there is to the
 //! magnet.
 //!
+//! **What someone who died on land held of sapphire and amethyst lies
+//! here too** (since the night of 2026-11-15; Hajun: "they should drop the
+//! sapphires and amethyst like small scatter explosion from their dead
+//! body location like mineraft dropping items on death, and u only get it
+//! if u pick it up"; the rules' `Mint::spill`): each flies out from the
+//! middle of whoever died, up and over in the rules' `TOSS_SECS`
+//! (`toss`), to where the rules had it come down, and bobs and turns
+//! there as the rest do, over whatever it lies on, the land or a plank,
+//! until someone walks into it; and nobody has it until it has lain a
+//! moment (the rules' `SPILL_WAIT`), so that whoever stands over the dead
+//! sees it lie before it flies to them. One that is more than one of its item,
+//! which is what someone who held more than ten of it drops, is drawn
+//! bigger ([`size`]). One that lay on a plank that has gone drops away
+//! with it.
+//!
 //! Each is one entity, the model's scene under it, carrying the arena's
 //! `Venue`, so that it is drawn only while you are there, and `InArena`,
 //! so that it goes with the game. Only those near the camera are moved: a
@@ -52,7 +67,7 @@ use std::f32::consts::TAU;
 use bevy::prelude::*;
 use bevy::world_serialization::{WorldAsset, WorldAssetRoot, WorldInstanceReady};
 use bevy_replicon::prelude::Remote;
-use roundtown_net::bridge_wars::{DROP_FROM, DROP_SECS, HOVER, MAGNET, drop_height};
+use roundtown_net::bridge_wars::{DROP_FROM, DROP_SECS, HOVER, MAGNET, TOSS_SECS, drop_height, toss};
 use roundtown_net::{Item, Loot, Member, PAD_TOP};
 
 use crate::arena::InArena;
@@ -86,6 +101,12 @@ const NEAR: f32 = 48.0;
 /// (`lamps::ANCHOR_GLOW`, which says how Bevy counts it): about as it
 /// looks by day.
 const GLOW: f32 = 0.9;
+/// The biggest a thing that is more than one of its item is drawn, as so
+/// many times its size ([`size`]).
+const BIGGEST: f32 = 1.8;
+/// How far a thing that was dropped falls away, in metres, when the plank
+/// it lay on has gone and nobody took it.
+const FALLS_AWAY: f32 = 1.6;
 
 /// The model of each item, in `assets/`.
 pub(crate) fn model(item: Item) -> &'static str {
@@ -106,9 +127,11 @@ pub(crate) enum Key {
     Server(Entity),
 }
 
-/// One thing lying on a pad: which, what it is, where it hangs at the
-/// middle of its bob, when it was made, by the game's clock, and how far
-/// through its turn it began.
+/// One thing lying on a pad, or where someone who died dropped it: which,
+/// what it is, where it hangs at the middle of its bob, when it was made,
+/// by the game's clock, and how far through its turn it began; where it
+/// was thrown from, if it was dropped; and how many times its model's
+/// size it is drawn ([`size`]).
 #[derive(Component)]
 pub(crate) struct Thing {
     pub(crate) key: Key,
@@ -116,6 +139,15 @@ pub(crate) struct Thing {
     at: Vec3,
     born: f32,
     phase: f32,
+    from: Option<Vec3>,
+    size: f32,
+}
+
+/// How many times its model's size a thing that is `worth` of its item is
+/// drawn: as it is for one, and for more than one as much bigger as holds
+/// that many, up to [`BIGGEST`].
+fn size(worth: u16) -> f32 {
+    f32::from(worth.max(1)).cbrt().min(BIGGEST)
 }
 
 /// A thing that has been taken, on its way to whoever took it, if anyone
@@ -150,12 +182,18 @@ fn load(assets: Res<AssetServer>, mut commands: Commands) {
     });
 }
 
-/// A thing of `item` made at `at` across the ground, over a pad's top:
-/// high over where it will hang, to drop there ([`animate`]), and turned
-/// out of step with whatever lies beside it, by where it lies.
-pub(crate) fn lay(commands: &mut Commands, look: &Look, now: f32, key: Key, item: Item, at: Vec2) -> Entity {
-    let place = Vec3::new(at.x, PAD_TOP + HOVER, at.y);
-    let phase = ((at.x * 12.9898 + at.y * 78.233).sin() * 43_758.547).rem_euclid(1.0) * TAU;
+/// The thing `loot` says, made now: one a generator made, over a pad's
+/// top, high over where it will hang, to drop there ([`animate`]); or one
+/// that someone who died dropped, at the middle of them, to fly out to
+/// where it lies. Turned out of step with whatever lies beside it, by
+/// where it lies.
+pub(crate) fn lay(commands: &mut Commands, look: &Look, now: f32, key: Key, loot: Loot) -> Entity {
+    let item = loot.item;
+    let ground = loot.spilt.map_or(PAD_TOP, |spilt| spilt.ground);
+    let place = Vec3::new(loot.x, ground + HOVER, loot.z);
+    let from = loot.spilt.map(|spilt| Vec3::new(spilt.from_x, spilt.from_y, spilt.from_z));
+    let size = size(loot.spilt.map_or(1, |spilt| spilt.worth));
+    let phase = ((loot.x * 12.9898 + loot.z * 78.233).sin() * 43_758.547).rem_euclid(1.0) * TAU;
     commands
         .spawn((
             Thing {
@@ -164,12 +202,16 @@ pub(crate) fn lay(commands: &mut Commands, look: &Look, now: f32, key: Key, item
                 at: place,
                 born: now,
                 phase,
+                from,
+                size,
             },
             InArena,
             Venue::Arena,
             Name::new(format!("{item:?}")),
             WorldAssetRoot(look.scenes[item.index()].clone()),
-            Transform::from_translation(place + Vec3::Y * DROP_FROM).with_rotation(Quat::from_rotation_y(phase)),
+            Transform::from_translation(from.unwrap_or(place + Vec3::Y * DROP_FROM))
+                .with_rotation(Quat::from_rotation_y(phase))
+                .with_scale(Vec3::splat(size)),
             // Shown with the island it is on (`island::show_where_i_am`).
             Visibility::Hidden,
         ))
@@ -226,7 +268,7 @@ fn follow_server(
 ) {
     let now = time.elapsed_secs();
     for (source, loot) in &fresh {
-        lay(&mut commands, &look, now, Key::Server(source), loot.item, Vec2::new(loot.x, loot.z));
+        lay(&mut commands, &look, now, Key::Server(source), *loot);
     }
     for (thing, lying) in &things {
         let Key::Server(source) = lying.key else {
@@ -264,7 +306,7 @@ fn animate(
     let eye = cameras.single().map(|camera| camera.translation.xz()).ok();
     for (entity, thing, mut transform, flying) in &mut things {
         let age = (now - thing.born).max(0.0);
-        let lift = Vec3::Y * height(age);
+        let here = place(thing.at, thing.from, age);
         let turn = Quat::from_rotation_y(thing.phase + age * SPIN);
         if let Some(mut flying) = flying {
             flying.age += dt;
@@ -273,39 +315,60 @@ fn animate(
                 commands.entity(entity).despawn();
                 continue;
             }
-            let from = thing.at + lift;
+            // To whoever took it; one that nobody did, up and gone, or,
+            // dropped and its plank gone from under it, down with that.
+            let nowhere = here + Vec3::Y * if thing.from.is_some() { -FALLS_AWAY } else { 0.5 };
             let to = flying
                 .to
                 .and_then(|taker| bodies.get(taker).ok())
-                .map_or(from + Vec3::Y * 0.5, |taker| taker.translation + Vec3::Y * FLY_TO);
+                .map_or(nowhere, |taker| taker.translation + Vec3::Y * FLY_TO);
             *transform = Transform {
-                translation: from.lerp(to, done * done),
+                translation: here.lerp(to, done * done),
                 rotation: turn,
-                scale: Vec3::splat(1.0 + (FLY_SMALL - 1.0) * done),
+                scale: Vec3::splat(thing.size * (1.0 + (FLY_SMALL - 1.0) * done)),
             };
             continue;
         }
         // Far from the camera it is left as it was, out of sight, once it
         // has landed.
-        if eye.is_some_and(|eye| eye.distance(thing.at.xz()) > NEAR) && age > DROP_SECS {
+        if eye.is_some_and(|eye| eye.distance(thing.at.xz()) > NEAR) && age > DROP_SECS.max(TOSS_SECS) {
             continue;
         }
         *transform = Transform {
-            translation: thing.at + lift,
+            translation: here,
             rotation: turn,
-            scale: Vec3::ONE,
+            scale: Vec3::splat(thing.size),
         };
     }
 }
 
-/// How far over where it hangs a thing is, `age` seconds after it was
-/// made, in metres: dropping as the rules have it (`drop_height`), and
-/// from the moment it lands bobbing about there, up first.
+/// Where a thing that hangs at `at` is, `age` seconds after it was made:
+/// one a generator made over that by its [`height`]; one that was dropped,
+/// thrown from `from`, on its way from there as the rules have it
+/// (`toss`), and from the moment it comes down bobbing about `at` as the
+/// rest do.
+fn place(at: Vec3, from: Option<Vec3>, age: f32) -> Vec3 {
+    match from {
+        Some(from) if age < TOSS_SECS => toss(from, at, age),
+        Some(_) => at + Vec3::Y * bob(age - TOSS_SECS),
+        None => at + Vec3::Y * height(age),
+    }
+}
+
+/// How far over where it hangs a thing a generator made is, `age` seconds
+/// after it was made, in metres: dropping as the rules have it
+/// (`drop_height`), and from the moment it lands bobbing about there.
 fn height(age: f32) -> f32 {
     if age < DROP_SECS {
         return drop_height(age);
     }
-    BOB * ((age - DROP_SECS) * TAU / BOB_SECS).sin()
+    bob(age - DROP_SECS)
+}
+
+/// How far over where it hangs a thing is, `since` seconds after it came
+/// down, in metres: up first.
+fn bob(since: f32) -> f32 {
+    BOB * (since * TAU / BOB_SECS).sin()
 }
 
 /// Has the things glow in their own colours from dusk to dawn, as far as

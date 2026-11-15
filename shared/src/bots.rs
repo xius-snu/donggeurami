@@ -243,10 +243,36 @@ const PAD_AGAIN: (f32, f32) = (6.0, 20.0);
 /// minds the edge as most do, more for one that minds it more and less for
 /// one that does not ([`Temper::minds`]). Each thrown again every time:
 /// the falling begins 0.6 s after the blast and comes on at 6 m a second,
-/// against a run of 10, so most make it from anywhere but beside the hole,
-/// and the slow and the careless now and then do not.
+/// against a run of 10, and faster with every second until it is going at
+/// 12 (`bridge_wars::cascade_after`, since the night of 2026-11-15; at 6
+/// all the way until then), so most make it off a bridge to the middle
+/// from anywhere but beside the hole, and the slow and the careless now
+/// and then do not; and off a much longer one, from far along it, none.
 const FALL_WAKES: (f32, f32) = (0.15, 0.9);
 const FALL_SPARE: (f32, f32) = (0.1, 0.6);
+/// How far off what someone who died has dropped may lie for a bot to go
+/// and take it, in metres, the least and the most (since the night of
+/// 2026-11-15, when the dead began to drop their sapphire and amethyst
+/// where they die on land, `bridge_wars::Mint::spill`; Hajun: "u only get
+/// it if u pick it up"): thrown again whenever nothing lies that near, so
+/// that one a little way off takes a moment to see it, and one far off
+/// may not before someone else has it.
+const SPOILS_WITHIN: (f32, f32) = (8.0, 30.0);
+/// A bot that is by as someone dies and drops what they held, as whoever
+/// killed them with a hand is, steps over and takes it before it goes on
+/// with whatever it was about ([`Squad::mind_spoils`]; Hajun, that night:
+/// "does the ai collect the loot after they kill someone? if not they
+/// should." Whoever killed someone had some of what they dropped within
+/// six seconds after half of their kills, over 300 games, a raider going
+/// on for the anchor past it, and after two in three at all). How often
+/// one does, of the times it is by; how near what was dropped has to be
+/// for it to, in metres, the least and the most; how near someone of
+/// another team may be before it sees to them first; and how long it
+/// gives it, in seconds. Each thrown again for every death.
+const GRAB_ODDS: f32 = 0.93;
+const GRAB_WITHIN: (f32, f32) = (5.0, 10.0);
+const GRAB_CLEAR: (f32, f32) = (3.5, 7.0);
+const GRAB_LASTS: (f32, f32) = (4.0, 9.0);
 const BROWSE: (f32, f32) = (3.0, 9.0);
 const LOOK_ABOUT: (f32, f32) = (2.0, 7.0);
 const SCOUT_AGAIN: (f32, f32) = (8.0, 34.0);
@@ -1373,6 +1399,19 @@ struct Track {
     turning: f32,
 }
 
+/// What a bot has made of the things someone dropped beside it as they
+/// died ([`Squad::mind_spoils`]): when they were dropped, which says whose
+/// death it was; whether it is going for them; from how near; with nobody
+/// of another team within how far; and until when.
+#[derive(Clone, Copy, PartialEq, Debug)]
+struct Grab {
+    born: f32,
+    goes: bool,
+    within: f32,
+    clear: f32,
+    until: f32,
+}
+
 /// A bot getting off a bridge that is coming down
 /// ([`Squad::mind_falling`]): when it wakes up to it; how much time it
 /// keeps in hand over each plank on its way; the way off it has found, if
@@ -1514,6 +1553,14 @@ pub struct Bot {
     drinking: Option<(f32, Utility)>,
     drank_at: f32,
     leap_near: f32,
+    /// How far it would go just now for what someone who died has
+    /// dropped ([`SPOILS_WITHIN`]): thrown as something first lies
+    /// anywhere, so that a game in which nothing has been dropped yet
+    /// rolls no dice for it.
+    spoils_within: Option<f32>,
+    /// What it has made of the things someone dropped beside it
+    /// ([`Squad::mind_spoils`]).
+    grab: Option<Grab>,
     /// What its health was a frame ago, and when it last lost any.
     health_was: f32,
     hurt_at: f32,
@@ -1726,6 +1773,8 @@ impl Bot {
             drinking: None,
             drank_at: f32::NEG_INFINITY,
             leap_near: dice.around(16.0, 40.0),
+            spoils_within: None,
+            grab: None,
             health_was: 1.0,
             hurt_at: f32::NEG_INFINITY,
             progress: (body.at.xz(), 0.0),
@@ -3002,6 +3051,76 @@ impl Squad {
             .map(|(_, at)| at)
     }
 
+    /// What the things someone has just dropped beside it make of the way
+    /// the bot was going to walk (since the night of 2026-11-15, when the
+    /// dead began to drop their sapphire and amethyst where they die on
+    /// land, and Hajun asked whether the computer's players collect it
+    /// after they kill someone: "if not they should"). With something
+    /// dropped lying, or on its way down, no further off than it goes for
+    /// such things this time ([`GRAB_WITHIN`]), on ground that is staying
+    /// and a straight walk from where it is, it walks there, and from
+    /// there to the next of them, until none is left or it has given it
+    /// long enough ([`GRAB_LASTS`]); at one that cannot be had yet, it
+    /// stands by it for the moment that takes. Not every time
+    /// ([`GRAB_ODDS`]), and not with someone of another team upon it
+    /// ([`GRAB_CLEAR`]), nor in a fight, with a plank in its arms or a
+    /// bridge to lay: those come first. What it was about is as it was:
+    /// it goes on with it after. What lies further off it goes for, or
+    /// does not, as it goes for anything ([`SPOILS_WITHIN`]).
+    fn mind_spoils(&mut self, bot: &mut Bot, view: &View, walk: Vec2, order: &Order) -> Vec2 {
+        let (nav, now) = (view.nav, view.elapsed);
+        if bot.duel.is_some() || order.carrying || bot.laying.is_some() || bot.flight.is_some() || bot.cross.is_some() {
+            return walk;
+        }
+        let here = bot.body.at.xz();
+        let nearest = view
+            .mint
+            .pieces()
+            .iter()
+            .filter(|piece| piece.dropped() && nav.stays_at(piece.at))
+            .map(|piece| (here.distance(piece.at), piece))
+            .filter(|(far, _)| *far <= GRAB_WITHIN.1)
+            .min_by(|a, b| a.0.total_cmp(&b.0));
+        let Some((far, piece)) = nearest else {
+            return walk;
+        };
+        // Thrown again for each death's things.
+        let grab = match bot.grab {
+            Some(grab) if grab.born == piece.born => grab,
+            _ => {
+                let grab = Grab {
+                    born: piece.born,
+                    goes: self.dice.roll() < GRAB_ODDS,
+                    within: self.dice.around(GRAB_WITHIN.0, GRAB_WITHIN.1),
+                    clear: self.dice.around(GRAB_CLEAR.0, GRAB_CLEAR.1),
+                    until: now + self.dice.around(GRAB_LASTS.0, GRAB_LASTS.1),
+                };
+                bot.grab = Some(grab);
+                grab
+            }
+        };
+        if !grab.goes || far > grab.within || now > grab.until {
+            return walk;
+        }
+        let team = arena_team(bot.seat);
+        let upon_it = view
+            .seats
+            .iter()
+            .enumerate()
+            .any(|(other, seen)| seen.alive && seen.in_play && !seen.unseen && arena_team(other) != team && seen.at.xz().distance(here) < grab.clear);
+        if upon_it || !nav.line(here, piece.at) {
+            return walk;
+        }
+        // (Getting somewhere, whatever its way to where it was going
+        // makes of it.)
+        bot.progress = (here, now);
+        if far <= ARRIVED {
+            return Vec2::ZERO;
+        }
+        let pace = RUN_SPEED * if view.outfits.kit(bot.seat).fast(now) { FAST } else { 1.0 };
+        (piece.at - here).normalize_or_zero() * pace
+    }
+
     /// What a stick of dynamite makes of the way the bot was going to
     /// walk ([`Stick`]). In the way of one, a plank of a bridge under it
     /// and the stick near enough to take it, or the stick another team's
@@ -3452,6 +3571,41 @@ impl Squad {
                     let score = base + 0.07 * stock.min(4) as f32 - here.distance(at) / 300.0;
                     offers.push((score, Goal::Fetch(at, Item::Sapphire)));
                 }
+            }
+        }
+
+        // What someone who died has dropped, lying where it came down on
+        // ground that is staying: the nearest of it that is no further
+        // off than it would go for it just now, and that it can get to,
+        // it goes and takes, the sooner the nearer it is and the more of
+        // it lies together; and from there the next nearest, until none
+        // is left. Under a fight, a raid's landing and its own island's
+        // defence, over its pads and its shopping.
+        let lying = |piece: &&crate::bridge_wars::Piece| piece.dropped() && piece.lying(now) && nav.stays_at(piece.at);
+        if view.mint.pieces().iter().any(|piece| lying(&piece)) {
+            let within = *bot.spoils_within.get_or_insert_with(|| self.dice.around(SPOILS_WITHIN.0, SPOILS_WITHIN.1));
+            let spilt = view
+                .mint
+                .pieces()
+                .iter()
+                .filter(lying)
+                .map(|piece| (here.distance(piece.at), piece))
+                .filter(|(far, _)| *far <= within)
+                .min_by(|a, b| a.0.total_cmp(&b.0));
+            match spilt {
+                Some((far, piece)) if reach(here, piece.at) => {
+                    let heap: u16 = view
+                        .mint
+                        .pieces()
+                        .iter()
+                        .filter(|other| other.dropped() && other.at.distance(piece.at) <= 3.0)
+                        .map(|other| other.worth)
+                        .sum();
+                    let score = 0.6 + 0.015 * f32::from(heap.min(10)) + 0.14 * (1.0 - far / within);
+                    offers.push((score, Goal::Fetch(piece.at, piece.item)));
+                }
+                Some(_) => {}
+                None => bot.spoils_within = None,
             }
         }
 
@@ -4224,6 +4378,8 @@ impl Squad {
         if bot.leaping.is_some() {
             return walk;
         }
+        // What someone has just dropped beside it, before it goes on.
+        let walk = self.mind_spoils(bot, view, walk, order);
         let walk = self.mind_sticks(bot, view, walk);
         // And a bridge coming down from under it before either.
         let walk = self.mind_falling(bot, view, walk, order);
@@ -8552,6 +8708,97 @@ mod tests {
             // of getting nowhere first.
             assert!(took < 2.6, "{who}: {took} s");
             assert_eq!(bot.stalls, 0, "{who}");
+        }
+    }
+
+    #[test]
+    fn a_bot_goes_and_takes_what_someone_who_died_dropped_near_it_and_not_off_a_bridge_that_is_coming_down() {
+        let span = two_islands().1;
+        // What someone dropped, dying with their feet at `at`: five
+        // sapphires and two amethysts, where the map has ground that is
+        // staying, as a game drops them.
+        let spill = |rig: &mut Rig, at: Vec2, seed: u64| {
+            let mut dice = Dice::new(seed + 1);
+            let mut held: Purse = [0, 0, 5, 2];
+            let nav = &rig.nav;
+            let ground = |at: Vec2| nav.stays_at(at).then(|| nav.ground(at)).flatten();
+            let dropped = rig
+                .mint
+                .spill(&mut held, Vec3::new(at.x, 0.25, at.y), rig.now, &mut || dice.roll(), &ground)
+                .expect("there is ground");
+            assert_eq!(dropped.len(), 7);
+        };
+        // Each frame it has whatever of that is within its reach, as a
+        // game gives it: how many it has had.
+        let gather = |rig: &mut Rig| {
+            let at = rig.bot().body.at;
+            rig.mint.pick_up_where(at, rig.now, &mut |piece| piece.dropped()).len()
+        };
+        // With nothing it has to do, on its island, and someone dead a few
+        // metres off: whoever it is, it is over there and has every piece
+        // within a few seconds, a piece at a time as it walks into each.
+        for who in ["ISTJ", "ENFP", "INFP", "ESTP"] {
+            for seed in 0..5 {
+                let mut rig = Rig::new(bridged(), seed, who, Vec2::new(-2.0, 1.0), 60.0);
+                spill(&mut rig, Vec2::new(2.5, -2.0), seed);
+                let (mut had, mut took) = (0, None);
+                for _ in 0..(20.0 / Rig::FRAME) as usize {
+                    rig.step(None);
+                    had += gather(&mut rig);
+                    assert!(!rig.fallen());
+                    if had == 7 {
+                        took = Some(rig.now - 60.0);
+                        break;
+                    }
+                }
+                let took = took.unwrap_or_else(|| panic!("{who}, seed {seed}: it had {had} of 7, at {}", rig.at()));
+                assert!(took > crate::bridge_wars::SPILL_WAIT && took < 14.0, "{who}, seed {seed}: {took} s");
+            }
+        }
+        // By as someone dies, and on its way after someone else far off:
+        // most times it has what they dropped first, all of it, within a
+        // few seconds of its coming down, and is then on its way again
+        // ([`Squad::mind_spoils`]).
+        let far = Vec2::new(30.0, 0.5);
+        let mut quick = 0;
+        for seed in 0..20 {
+            let mut rig = Rig::hunting(bridged(), seed, "ESTP", Vec2::new(-2.0, 0.0));
+            for _ in 0..20 {
+                rig.step(Some(far));
+            }
+            let dead = rig.at() + Vec2::new(1.0, 2.2);
+            spill(&mut rig, dead, seed);
+            let began = rig.now;
+            let mut had = 0;
+            while had < 7 && rig.now - began < 5.0 {
+                rig.step(Some(far));
+                had += gather(&mut rig);
+            }
+            if had == 7 {
+                quick += 1;
+                // And on after whoever it was after.
+                let from = rig.at();
+                for _ in 0..(1.5 / Rig::FRAME) as usize {
+                    rig.step(Some(far));
+                }
+                assert!(rig.at().x > from.x + 3.0, "seed {seed}: it stayed by where they died, at {}", rig.at());
+            }
+        }
+        println!("by as someone dies, of twenty: {quick} had all they dropped within five seconds");
+        assert!((14..=20).contains(&quick), "{quick} of twenty");
+        // Dropped out on its bridge, which is then blown at its far end:
+        // it lies on planks that are going, and the bot does not set foot
+        // on them for it. It is on land when they have gone.
+        for seed in 0..6 {
+            let mut rig = Rig::new(bridged(), seed, "ESTP", Vec2::new(2.0, 0.0), 60.0);
+            spill(&mut rig, span.rung(5), seed);
+            blown(&mut rig.nav, span.rung(14));
+            while rig.nav.crumbling() {
+                rig.step(None);
+                rig.nav.crumble(Rig::FRAME);
+                assert!(rig.nav.falls_in(rig.at()).is_none() && !rig.fallen(), "seed {seed}: on the falling planks, at {}", rig.at());
+            }
+            assert!(rig.nav.grid().height(rig.at()).is_some());
         }
     }
 }

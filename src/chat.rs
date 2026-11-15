@@ -32,12 +32,13 @@
 //! every new text starts at the same line. Even the first message stays at
 //! the same area, and it goes up and fades as new messages come"): the
 //! first thing said is written there, and each line after it moves what
-//! was said before up one. **Two lines and a half are in sight, and every
-//! one of them is whole** (since 2026-11-15; Hajun: "actually now i think
-//! about it i think no line should be transparent they should all be fully
-//! visible. just keep chat height to like 2.5 line or sth"): the newest,
-//! the one over it, and the lower half of the one over that, cut along the
-//! top of what is in sight, which says there is more above. **Nothing goes
+//! was said before up one. **Three lines are in sight, and every one of
+//! them is whole** (since 2026-11-15; Hajun: "actually now i think about
+//! it i think no line should be transparent they should all be fully
+//! visible. just keep chat height to like 2.5 line or sth", and that
+//! night, having had the two and a half: "right now the chat height is
+//! like 2.5lines high, i think it can be like 3"): the newest and the two
+//! over it, none of them cut. **Nothing goes
 //! with time**: the last thing said stays until something else is.
 //!
 //! That is the third way of it in a night. First a line faded as it aged
@@ -129,19 +130,21 @@ use crate::{CloseUp, Player};
 /// Sizes, as shares of the short side of the screen. Where the chat begins
 /// down the screen in the town, well under your name and your balance,
 /// which end 20 shares down, and how wide it is; how tall the box of lines
-/// is, two lines and a half and the room round them (a line is 3 shares
-/// from the next, 1.2 times its words; since 2026-11-15, Hajun: "just keep
-/// chat height to like 2.5 line or sth": four whole lines in the town and
-/// three in a game until then, so that none was cut along the box's top,
-/// which the half line now is on purpose), the gap under it, and how tall
+/// is, three lines and the room round them (a line is 3 shares from the
+/// next, 1.2 times its words; since the night of 2026-11-15, Hajun: "right
+/// now the chat height is like 2.5lines high, i think it can be like 3".
+/// Two lines and a half for the day before it, 8.6, the half line cut
+/// along the box's top, at "just keep chat height to like 2.5 line or
+/// sth"; four whole lines in the town and three in a game until then),
+/// the gap under it, and how tall
 /// the box a line is typed into is: together they end 57 shares down, over
 /// the stick, whose disc reaches up to 58 when it is held from as high as
 /// it may be. The words in each, the room round them, and how round the
 /// corners are. **The lowest line is where it was** in the town, 48.6
-/// shares down, the box being shorter from its top; in a game it is half
-/// a share lower than it was, 49.6 ([`ARENA_TOP`]).
-const TOP: f32 = 40.0;
-const LOG_HEIGHT: f32 = 8.6;
+/// shares down, and in a game, 49.6 ([`ARENA_TOP`]): the box is taller
+/// from its top.
+const TOP: f32 = 38.5;
+const LOG_HEIGHT: f32 = 10.1;
 /// How wide it is, in shares of the short side: 80 since the night of
 /// 2026-11-14 (Hajun: "the width of the chatbox region could be
 /// wider/longer so more text fits in each line"), where it was 50: about
@@ -161,16 +164,20 @@ const STROKE: f32 = 0.09;
 const CORNERS: [Vec2; 4] = [Vec2::new(-1.0, -1.0), Vec2::new(1.0, -1.0), Vec2::new(-1.0, 1.0), Vec2::new(1.0, 1.0)];
 /// Where it begins in a game of Bridge Wars, where what is top left, your
 /// name, your health and the four things you hold, ends 38 shares down
-/// (411 of 1,080 pixels, measured): under those, with three shares
+/// (411 of 1,080 pixels, measured): under those, with a share and a half
 /// between the last of the four counts, the amethyst, and the box, and
-/// three and a half between it and the top of the half line (Hajun,
-/// 2026-11-15: "you could move the chatbox downward a bit to have a tiny
-/// slightly more gap between chatbox and the amethyst inventory number in
-/// the bridge wars minigame"; it was one share, and one and a half to the
-/// words, while the box began 39 down and was three lines tall). How much
-/// lower is mine, and it is as low as it goes: the box a line is typed
-/// into ends 57.6 down, and the stick's disc reaches up to 57.75.
-const ARENA_TOP: f32 = 41.0;
+/// two between it and the top line's words (Hajun, 2026-11-15: "you could
+/// move the chatbox downward a bit to have a tiny slightly more gap
+/// between chatbox and the amethyst inventory number in the bridge wars
+/// minigame"; it was one share, and one and a half to the words, while
+/// the box began 39 down and was three lines tall, its foot at 49.1).
+/// With two lines and a half the box began 41 down, three shares under the
+/// count; with three again, that night, it begins a share and a half
+/// higher than that, because its foot is as low as it goes: the box a
+/// line is typed into ends 57.6 down, and the stick's disc reaches up to
+/// 57.75. So the gap is half a share more than it was when Hajun asked
+/// for more, and not the three it was for a day. Mine.
+const ARENA_TOP: f32 = 39.5;
 const GAP: f32 = 0.6;
 const INPUT_HEIGHT: f32 = 7.4;
 const TEXT: f32 = 2.5;
@@ -298,15 +305,15 @@ fn strength(strengths: &[f32; 3], since: usize) -> f32 {
 /// three strengths on the lowest line, the one over it and the one over
 /// that, and between two lines so much of the one and so much of the
 /// other, in steps of [`STRENGTH_STEP`]; all of the lowest line's for a
-/// line scrolled past the foot. The third holds for a line more, which is
-/// further than anything is in sight (two lines and a half), and over
+/// line scrolled past the foot. The third holds for two lines more, which
+/// is further than anything is in sight (three lines), and over
 /// that there is nothing: a line on its way out of sight is not seen to
 /// fade unless the file's numbers have it fade. So the fading, when there
 /// is any, goes by where a line is in sight, and scrolls as the lines do.
 fn strength_at(strengths: &[f32; 3], up: f32) -> f32 {
     let on = |line: usize| match line {
         line if line < strengths.len() => strength(strengths, line),
-        line if line == strengths.len() => strength(strengths, line - 1),
+        line if line <= strengths.len() + 1 => strength(strengths, strengths.len() - 1),
         _ => 0.0,
     };
     let share = if up <= 0.0 {
@@ -1246,18 +1253,18 @@ mod tests {
     fn no_line_in_sight_is_faded_and_the_fading_that_is_turned_off_goes_by_where_a_line_is() {
         // As the file has them now, every line in sight is whole ("no
         // line should be transparent they should all be fully visible"),
-        // wherever in sight it is, the half line at the top among them,
-        // and for half a line past the top of what is in sight, two lines
-        // and a half up; a line further out of sight than that is going,
-        // where nobody sees it go, and a line and a half out is not drawn.
+        // wherever in sight it is, the top one of the three among them,
+        // and for a line past the top of what is in sight, three lines
+        // up; a line further out of sight than that is going, where
+        // nobody sees it go, and two lines out is not drawn.
         let file = ui().colours.chat.strengths;
         assert_eq!(file, [1.0, 1.0, 1.0]);
         let in_sight = (LOG_HEIGHT - PAD) / (TEXT * 1.2);
-        for tenth in -10..=30 {
+        for tenth in -10..=40 {
             assert_eq!(strength_at(&file, tenth as f32 / 10.0), 1.0, "{tenth} tenths of a line up");
         }
-        assert!(in_sight + 0.45 < 3.0, "{in_sight} lines in sight");
-        assert_eq!(strength_at(&file, 4.0), 0.0, "out of sight, and not drawn");
+        assert!(in_sight + 0.45 < 4.0, "{in_sight} lines in sight");
+        assert_eq!(strength_at(&file, 5.0), 0.0, "out of sight, and not drawn");
         // The fading that is still here, with the numbers it had for an
         // evening: the newest whole, the one before it fainter and still
         // there to be read, the one before that fainter again, and
@@ -1290,7 +1297,7 @@ mod tests {
         // lowest line, the one over it and the one over that it is what
         // it is by its place among them; half way from one line to the
         // next, half way from the one strength to the other; the third
-        // line's strength for a line more, which is past what is in
+        // line's strength for two lines more, which is past what is in
         // sight; and over that, going, and gone. Never the fainter for
         // being lower.
         for line in 0..3 {
@@ -1299,10 +1306,10 @@ mod tests {
         assert_eq!(strength_at(&strengths, -0.7), strength_at(&strengths, 0.0), "scrolled past the foot");
         let between = strength_at(&strengths, 0.5);
         assert!((between - (shares[0] + shares[1]) * 0.5).abs() <= STRENGTH_STEP, "{between}");
-        assert!((strength_at(&strengths, 2.5) - shares[2]).abs() <= STRENGTH_STEP && (strength_at(&strengths, 3.0) - shares[2]).abs() <= STRENGTH_STEP);
-        let going = strength_at(&strengths, 3.5);
+        assert!((strength_at(&strengths, 2.5) - shares[2]).abs() <= STRENGTH_STEP && (strength_at(&strengths, 4.0) - shares[2]).abs() <= STRENGTH_STEP);
+        let going = strength_at(&strengths, 4.5);
         assert!(going > 0.0 && going < shares[2], "{going}");
-        assert_eq!((strength_at(&strengths, 4.0), strength_at(&strengths, 7.3)), (0.0, 0.0));
+        assert_eq!((strength_at(&strengths, 5.0), strength_at(&strengths, 7.3)), (0.0, 0.0));
         let mut last = 1.0;
         for tenth in 0..50 {
             let share = strength_at(&strengths, tenth as f32 / 10.0);
@@ -1370,17 +1377,17 @@ mod tests {
             assert!(top > top_left_ends + 0.5, "{here:?}: {top}");
             let ends = top + height + GAP + INPUT_HEIGHT;
             assert!(ends < stick_top, "{here:?}: {ends} against {stick_top}");
-            // Two lines and a half in sight: two whole, and the half of
-            // a third cut along the top, which says there is more.
+            // Three lines in sight, each of them whole.
             let lines = (height - PAD) / (TEXT * 1.2);
-            assert!((lines - 2.5).abs() < 0.02, "{here:?}: {lines} lines");
+            assert!((lines - 3.0).abs() < 0.02, "{here:?}: {lines} lines");
         }
-        // The lowest line is where it was while the box was taller in
-        // the town, 48.6 shares down; in a game it is half a share lower
-        // than it was, 49.6, and the box three shares under the last of
-        // the four counts top left, where it was one.
+        // The lowest line is where it was with two lines and a half, in
+        // the town 48.6 shares down and in a game 49.6, and the box in a
+        // game well over a share under the last of the four counts top
+        // left, which is more than the one it was when Hajun asked for
+        // more.
         assert!((place(Venue::Town).0 + LOG_HEIGHT - 48.6).abs() < 1e-4 && (place(Venue::Arena).0 + LOG_HEIGHT - 49.6).abs() < 1e-4);
-        assert!(place(Venue::Arena).0 - 38.1 > 2.8);
+        assert!(place(Venue::Arena).0 - 38.1 > 1.3);
         // The chat is in the town and in Bridge Wars, and nowhere else.
         assert!(shown_on(Venue::Town) && shown_on(Venue::Arena));
         assert!(!shown_on(Venue::Home) && !shown_on(Venue::Lobby) && !shown_on(Venue::Plot(3)));

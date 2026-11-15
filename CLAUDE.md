@@ -11,9 +11,10 @@ bundles). It plays online against a server in Seoul (`server/`; `shared/` is
 Bridge Wars. House Builder, the build-battle game, is stalled: keep it
 working, and spend nothing on it unasked.
 
-As of 2026-11-15, late: `PROTOCOL_VERSION` 17, APK 35 (`versionCode`), the
-server deployed that night (13:26 UTC) with everything in `server/` and
-`shared/`.
+As of the first hour of 2026-11-16: `PROTOCOL_VERSION` 18, APK 36
+(`versionCode`), the server deployed then (15:35 UTC on the 15th) with
+everything in `server/` and `shared/`. No iPhone build has protocol 18:
+the tag `ios-1.0.2-18` is Hajun's to ask for.
 
 ## This file, and where the rest is
 
@@ -294,8 +295,8 @@ to try again.
   (`src/signup.rs`); kept in `profile.json` beside `town.json`, and online
   it is the account's (`Ask::Profile`, Postgres `players`).
 - The chat (`src/chat.rs`, `server/src/chat.rs`), down the left in the
-  town and in Bridge Wars: its words alone with a thin stroke, two lines
-  and a half in sight, none faded (`colours.chat.strengths`, all 1; other
+  town and in Bridge Wars: its words alone with a thin stroke, three
+  lines in sight, none faded (`colours.chat.strengths`, all 1; other
   numbers fade them by place), scrolled by a drag; the dark box and the box
   to type into come only while a line is typed (the keyboard button). A
   line goes to everyone in the room; nothing is kept or logged. No block
@@ -383,8 +384,13 @@ and the game is as that file has it. The rules both sides play by are
   25:00 it is a draw; the generators quicken on the way (`TIMETABLE`).
 - **Dying** takes all you hold (the four resources, your sword, what is on
   your buttons, your metres of bridge) and leaves your shield and team's
-  upgrades; your sapphire and amethyst go to whoever killed you or knocked
-  you off the world (`bridge_wars::spoils`).
+  upgrades. Killed on land, your sapphire and amethyst are thrown out
+  round you, onto ground only, for whoever walks into them once they
+  have lain a moment (`bridge_wars::Mint::spill`, `SPILL_WAIT`; a bot
+  that is by takes them before it goes on, `Squad::mind_spoils`);
+  knocked off the world, or killed with no land under you or on a
+  bridge that is coming down, they go to whoever did it
+  (`bridge_wars::spoils`).
 - **Generators** (`bridge_wars::Mint`) make silver and gold on each team's
   pad, sapphire on the smaller islands, amethyst in the middle; you pick up
   what you walk into (`src/loot.rs`).
@@ -406,8 +412,9 @@ and the game is as that file has it. The rules both sides play by are
   geometry was hard won: read its entries in the log before touching it.
   Planks go to the server as they are fixed (`Ask::Rung`). A stick of
   dynamite takes the planks its blast reaches at once and the rest of the
-  connected bridge plank by plank from the hole (`Nav::cascade`,
-  `bridge::crumble`, `CASCADE_*`), each drawn in
+  connected bridge plank by plank from the hole, at 6 m a second and
+  quickening to 12, a little over a run (`Nav::cascade`,
+  `bridge_wars::cascade_after`, `bridge::crumble`, `CASCADE_*`), each drawn in
   `colours.arena.plank_doomed` until it falls.
 - **The computer's players** (`shared/src/bots.rs`, one brain for the
   server and for offline, over a map baked from the model,

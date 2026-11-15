@@ -260,6 +260,11 @@ struct Game {
     shown_sticks: HashMap<u32, Entity>,
     blasts: u32,
     planks_blown: u32,
+    /// How many deaths on land dropped anything ([`Game::drop_spoils`]),
+    /// how many sapphires and amethysts they dropped between them, how
+    /// many of those were picked up, and how many went with a plank they
+    /// lay on, for reading a game back by.
+    spilt: [u32; 4],
     /// Where everyone stands and which way they face, by seat: a
     /// person's where they last said, copied in each frame ([`sync`]); the
     /// computer's players' where the game has moved them, which is what
@@ -520,6 +525,7 @@ impl Game {
             shown_sticks: HashMap::new(),
             blasts: 0,
             planks_blown: 0,
+            spilt: [0; 4],
             at: Vec::new(),
             yaw: Vec::new(),
             present: Vec::new(),
@@ -638,9 +644,66 @@ impl Game {
         let taken = self.mint.pick_up(at, self.elapsed);
         for piece in &taken {
             let held = &mut self.purses[seat][piece.item.index()];
-            *held = held.saturating_add(1);
+            *held = held.saturating_add(piece.worth);
+            if piece.dropped() {
+                self.spilt[2] += u32::from(piece.worth);
+            }
         }
         taken
+    }
+
+    /// Whoever was in `victim` has been killed where they stand, by a
+    /// hand, a sword or a blast: what they held of sapphire and amethyst
+    /// is thrown out round them, to lie there for whoever walks into it
+    /// (`Mint::spill`, since the night of 2026-11-15; Hajun: "if its a
+    /// land-hp kill where they die on land, they should drop the
+    /// sapphires and amethyst like small scatter explosion from their
+    /// dead body location like mineraft dropping items on death, and u
+    /// only get it if u pick it up. but items shouldnt scatter to location
+    /// where they would fall off the map"). Onto ground a body can walk
+    /// that is staying: land, or a plank of a bridge no blast has doomed.
+    /// Nobody has any of it until it has come down and lain a moment
+    /// (`SPILL_WAIT`; Hajun: "make sure that there is a very small delay
+    /// before u can pick it up").
+    /// The room is sent each thing as it is sent what a generator makes
+    /// ([`Event::Made`]). Before the victim dies and loses the rest
+    /// ([`Game::die`]).
+    ///
+    /// Whether it was: not with nowhere for any of it to lie, the victim
+    /// out over the void or on a bridge that is coming down, which is no
+    /// death on land, and what they held goes as it does with a fall
+    /// ([`Game::hand_spoils`]). Nor of a zombie, which holds nothing.
+    /// Mine: that it is so whoever killed them, a zombie or their own
+    /// team's blast, and that anyone may pick it up, their own team and
+    /// they themselves among them, as in Minecraft.
+    fn drop_spoils(&mut self, victim: usize) -> bool {
+        if victim >= ARENA_SEATS {
+            return false;
+        }
+        let (nav, dice, from) = (&self.nav, &mut self.dice, self.at[victim]);
+        let Some(held) = self.purses.get_mut(victim) else {
+            return false;
+        };
+        let ground = |at: Vec2| nav.stays_at(at).then(|| nav.ground(at)).flatten();
+        let Some(dropped) = self.mint.spill(held, from, self.elapsed, &mut || dice.f32(), &ground) else {
+            return false;
+        };
+        if !dropped.is_empty() {
+            info!("Bridge Wars game {}: seat {victim} dropped {} things at {:.1}", self.id, dropped.len(), from.xz());
+            self.spilt[0] += 1;
+            self.spilt[1] += dropped.iter().map(|piece| u32::from(piece.worth)).sum::<u32>();
+        }
+        self.events.extend(dropped.into_iter().map(Event::Made));
+        true
+    }
+
+    /// What was dropped and lay on planks that have gone goes with them
+    /// (`Mint::shed`): the room is no longer sent it.
+    fn shed(&mut self) {
+        let nav = &self.nav;
+        let gone = self.mint.shed(&|at| nav.ground(at).is_some());
+        self.spilt[3] += gone.iter().map(|piece| u32::from(piece.worth)).sum::<u32>();
+        self.events.extend(gone.into_iter().map(|piece| Event::Taken(piece.id)));
     }
 
     /// Sells `ware` to whoever in `seat` stands at `at`, if the fight is
@@ -728,6 +791,10 @@ impl Game {
     /// auto get it in ur inven"). Before the victim dies and loses the
     /// rest ([`Game::die`]). The room is sent both purses as it is sent
     /// any, so a device from before this shows it too.
+    ///
+    /// Since the night of 2026-11-15 only where the victim was knocked
+    /// off the world, or died with no land under them: dead on land, they
+    /// drop it ([`Game::drop_spoils`]).
     fn hand_spoils(&mut self, victim: usize, killer: usize) {
         if !takes_spoils(killer, victim) {
             return;
@@ -1030,7 +1097,12 @@ impl Game {
                 by: hitter as u8,
                 with,
             });
-            self.hand_spoils(victim, hitter);
+            // Dead on land, what they held of sapphire and amethyst lies
+            // round them; with no land for it to lie on, it is whoever
+            // killed them's, as when they are knocked off the world.
+            if !self.drop_spoils(victim) {
+                self.hand_spoils(victim, hitter);
+            }
             self.die(victim);
             return false;
         }
@@ -1309,12 +1381,18 @@ impl Game {
             .map(|seat| (self.squad.wants(seat).1, seat))
             .collect();
         takers.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+        // (What someone who died dropped is anyone's who walks into it,
+        // whatever they were saving for: nobody leaves that lying.)
+        let dropped = self.mint.pieces().iter().any(Piece::dropped);
         for (_, seat) in takers {
             let (mut wants, _) = self.squad.wants(seat);
-            if wants == [0; 4] {
+            if wants == [0; 4] && !dropped {
                 continue;
             }
             let taken = self.mint.pick_up_where(self.at[seat], self.elapsed, &mut |piece| {
+                if piece.dropped() {
+                    return true;
+                }
                 let wanted = &mut wants[piece.item.index()];
                 let take = *wanted > 0;
                 *wanted = wanted.saturating_sub(1);
@@ -1322,7 +1400,10 @@ impl Game {
             });
             for piece in &taken {
                 let held = &mut self.purses[seat][piece.item.index()];
-                *held = held.saturating_add(1);
+                *held = held.saturating_add(piece.worth);
+                if piece.dropped() {
+                    self.spilt[2] += u32::from(piece.worth);
+                }
             }
             if !taken.is_empty() {
                 debug!("Bridge Wars game {}: seat {seat} (bot) picked up {}, and holds {:?}", self.id, taken.len(), self.purses[seat]);
@@ -1533,6 +1614,7 @@ impl Game {
             return;
         }
         self.planks_blown += fallen.len() as u32;
+        self.shed();
         for seat in 0..self.seats.len().min(ARENA_SEATS) {
             if !self.alive(seat) || !self.present[seat] {
                 continue;
@@ -1635,15 +1717,22 @@ impl Game {
             if !reached.is_empty() {
                 self.outfits.reveal(stick.by);
             }
-            for seat in reached {
-                let damage = self.outfits.through(seat, DYNAMITE_DAMAGE);
-                self.hurt_by(seat, stick.by, damage, Weapon::Dynamite);
-            }
             let planks = self.nav.blast(at.xz(), DYNAMITE_RADIUS);
             // And the rest of the bridge they were part of falls after
             // them, plank by plank from the hole outward.
             let later = self.nav.cascade(&planks);
             self.nav.doom(&later, stick.by as u8);
+            // What had been dropped on the planks it took goes with them.
+            self.shed();
+            // (The planks first, since the night of 2026-11-15: whoever
+            // it kills on the bridge it takes has died with nothing under
+            // them that is staying, and what they held is the thrower's,
+            // not dropped onto planks that are going,
+            // [`Game::drop_spoils`].)
+            for seat in reached {
+                let damage = self.outfits.through(seat, DYNAMITE_DAMAGE);
+                self.hurt_by(seat, stick.by, damage, Weapon::Dynamite);
+            }
             info!(
                 "Bridge Wars game {}: seat {}'s dynamite blew at {:.1}, taking {} planks, and {} more to fall over {:.1} s",
                 self.id,
@@ -2416,11 +2505,7 @@ fn flush(
                     .spawn((
                         Replicated,
                         InRoom(room),
-                        Loot {
-                            item: piece.item,
-                            x: piece.at.x,
-                            z: piece.at.y,
-                        },
+                        Loot::of(&piece),
                     ))
                     .id();
                 game.loot.insert(piece.id, entity);
@@ -3340,7 +3425,7 @@ mod tests {
             }
         }
         let (blown, fell_away) = (blown.expect("it blew"), fell_away.expect("she fell"));
-        let due = CASCADE_WAIT + (0.8 - 0.3) * span.length() / CASCADE_SPEED;
+        let due = cascade_after((0.8 - 0.3) * span.length());
         assert!((fell_away - blown - due).abs() < 1.0, "she fell {} s after the blast, her plank due at {due}", fell_away - blown);
         // His went from under him too: his own device is to say he fell,
         // and when it does, it was seat 2 that knocked him off the world.
@@ -3681,6 +3766,14 @@ mod tests {
     #[test]
     fn whoever_kills_someone_has_their_sapphire_and_amethyst_and_nothing_else_of_theirs() {
         let mut game = full_game();
+        // Everyone out over the void, between an island and the middle,
+        // on nothing: no death here is one on land, where what the dead
+        // held is dropped (the test after this one).
+        let void = Vec3::new(0.0, PLANK_TOP, 100.0);
+        assert!(game.nav.ground(void.xz()).is_none());
+        for at in game.at.iter_mut() {
+            *at = void;
+        }
         let from = Spot::of(game.at[0], Quat::IDENTITY);
         // Seats 0 and 4 are one team, and 1 another.
         assert!(arena_team(0) == arena_team(4) && arena_team(0) != arena_team(1));
@@ -3737,6 +3830,191 @@ mod tests {
         game.purses[7] = [0, 0, u16::MAX - 5, 2];
         assert!(!game.hurt_by(7, 6, 20.0, Weapon::Fists));
         assert_eq!(game.purses[6], [0, 0, u16::MAX, 13]);
+    }
+
+    #[test]
+    fn whoever_is_killed_on_land_drops_their_sapphire_and_amethyst_for_whoever_walks_into_them() {
+        use roundtown_net::nav::Region;
+        use roundtown_net::{Item, Loot};
+        let mut game = full_game();
+        let home = |seat: usize| {
+            let (at, _) = arrival(Venue::Arena, seat);
+            at.with_y(ISLAND_TOP)
+        };
+        for seat in 0..ARENA_SEATS {
+            game.at[seat] = home(seat);
+        }
+        let made = |game: &mut Game| -> Vec<Piece> {
+            let (made, rest): (Vec<Event>, Vec<Event>) = std::mem::take(&mut game.events).into_iter().partition(|event| matches!(event, Event::Made(_)));
+            game.events = rest;
+            made.into_iter()
+                .filter_map(|event| match event {
+                    Event::Made(piece) => Some(piece),
+                    _ => None,
+                })
+                .collect()
+        };
+        let on = |piece: &Piece| Vec3::new(piece.at.x, piece.ground, piece.at.y);
+        // Seat 0, a person, kills seat 1 with a hand where it stands on
+        // its island: nothing of what it held is the killer's. Its
+        // sapphire and its amethyst lie round it, a thing for each, on
+        // the island, and the room is sent each as one that was dropped,
+        // from the middle of the dead; its silver and its gold go with
+        // it.
+        let stood = home(1);
+        game.at[0] = stood + Vec3::new(1.2, 0.0, 0.0);
+        let from = Spot::of(game.at[0], Quat::IDENTITY);
+        game.purses[0] = [1, 2, 3, 4];
+        game.purses[1] = [30, 20, 7, 5];
+        game.health[1] = 5.0;
+        game.wound(1, 0, from, false);
+        assert!(!game.alive(1));
+        assert_eq!((game.purses[0], game.purses[1]), ([1, 2, 3, 4], [0, 0, 0, 0]));
+        assert_eq!(said(&mut game), vec![Feed::Killed { seat: 1, by: 0, with: Weapon::Fists }]);
+        let dropped = made(&mut game);
+        assert_eq!(dropped.len(), 12);
+        for piece in &dropped {
+            assert!(piece.dropped() && piece.worth == 1 && game.nav.stays_at(piece.at), "{piece:?}");
+            assert!(game.nav.grid().region(piece.at) == Some(Region::Team(arena_team(1))), "{piece:?}");
+            let far = piece.at.distance(stood.xz());
+            assert!((SPILL_NEAR - 1e-3..=SPILL_FAR + 1e-3).contains(&far), "{far} m from the dead");
+            let sent = Loot::of(piece).spilt.expect("sent as one that was dropped");
+            assert_eq!((sent.ground, sent.worth), (piece.ground, 1));
+            assert!(Vec3::new(sent.from_x, sent.from_y, sent.from_z).distance(stood + Vec3::Y * SPILL_FROM) < 1e-4);
+        }
+        // Nobody has any of it while it is in the air, nor for a moment
+        // after it has come down, so that whoever killed them, standing
+        // over it, sees it lie; after that it is whoever's walks into it,
+        // a thing at a time, and gone from the room.
+        assert!(game.gather(0, on(&dropped[0])).is_empty());
+        game.elapsed += TOSS_SECS + 0.05;
+        assert!(game.gather(0, on(&dropped[0])).is_empty(), "down, and not to be had yet");
+        game.elapsed -= TOSS_SECS + 0.05;
+        game.elapsed += SPILL_WAIT + 0.01;
+        let mut taken = 0;
+        for piece in &dropped {
+            taken += game.gather(0, on(piece)).len();
+        }
+        assert_eq!((taken, game.purses[0]), (12, [1, 2, 10, 9]));
+        assert!(game.mint.pieces().iter().all(|piece| !piece.dropped()));
+        // One of the computer's players takes what was dropped as it
+        // comes by, whatever it was saving for, and so may the dead's own
+        // teammate: seat 6 is seat 2's, killed by the person in seat 0.
+        assert_eq!(arena_team(2), arena_team(6));
+        game.at[0] = home(2) + Vec3::new(1.2, 0.0, 0.0);
+        game.purses[2] = [0, 0, 2, 0];
+        game.purses[6] = [0, 0, 0, 0];
+        game.health[2] = 5.0;
+        game.wound(2, 0, Spot::of(game.at[0], Quat::IDENTITY), false);
+        let dropped = made(&mut game);
+        assert_eq!((dropped.len(), game.purses[0]), (2, [1, 2, 10, 9]));
+        game.elapsed += SPILL_WAIT + 0.01;
+        for piece in &dropped {
+            game.at[6] = on(piece);
+            game.squad.stand(6, game.at[6], 0.0, 0.0);
+            game.mint_step();
+        }
+        assert_eq!((game.purses[6][Item::Sapphire.index()], game.purses[0]), (2, [1, 2, 10, 9]));
+        assert!(game.mint.pieces().iter().all(|piece| !piece.dropped()));
+        game.events.clear();
+        // More than ten of one: ten things, worth all of it between them.
+        game.dead_for[1] = None;
+        (game.health[1], game.hurt[1]) = (5.0, 0.0);
+        game.purses[1] = [0, 0, 25, 0];
+        game.wound(1, 0, from, false);
+        let dropped = made(&mut game);
+        assert_eq!((dropped.len(), dropped.iter().map(|piece| piece.worth).sum::<u16>()), (10, 25));
+        game.elapsed += SPILL_WAIT + 0.01;
+        for piece in &dropped {
+            game.gather(0, on(piece));
+        }
+        assert_eq!(game.purses[0], [1, 2, 35, 9]);
+        // Killed by a zombie, or by their own team's blast, they drop it
+        // all the same: it is a death on land.
+        game.happen(Happening::SuddenDeath);
+        game.events.clear();
+        game.purses[3] = [0, 0, 1, 2];
+        game.health[3] = 5.0;
+        game.wound(3, ARENA_SEATS, Spot::of(game.at[3], Quat::IDENTITY), false);
+        assert_eq!((made(&mut game).len(), game.purses[3]), (3, [0, 0, 0, 0]));
+        game.purses[4] = [0, 0, 6, 0];
+        game.health[4] = 5.0;
+        assert!(!game.hurt_by(4, 0, 20.0, Weapon::Dynamite));
+        assert_eq!((made(&mut game).len(), game.purses[4], game.purses[0]), (6, [0, 0, 0, 0], [1, 2, 35, 9]));
+        // A zombie drops nothing, holding nothing.
+        game.health[ARENA_SEATS] = 5.0;
+        game.wound(ARENA_SEATS, 0, from, false);
+        assert!(made(&mut game).is_empty());
+
+        // On a bridge: onto its planks, and nothing off its sides.
+        let span = game.nav.grid().span(Region::Team(0), Region::Middle, 0.0).expect("a span");
+        for index in 0..=span.planks() {
+            game.nav.hear(4, 0, index as u16, span.rung(index));
+        }
+        let along = |share: f32| {
+            let at = span.point(share);
+            Vec3::new(at.x, PLANK_TOP, at.y)
+        };
+        game.at[5] = along(0.5);
+        game.purses[5] = [0, 0, 9, 9];
+        game.health[5] = 5.0;
+        game.wound(5, 0, from, false);
+        let on_bridge = made(&mut game);
+        assert_eq!((on_bridge.len(), game.purses[5]), (18, [0, 0, 0, 0]));
+        assert!(on_bridge.iter().all(|piece| game.nav.on_plank(piece.at) && piece.ground == PLANK_TOP), "{on_bridge:?}");
+        // (And another further along it, toward the middle.)
+        game.at[7] = along(0.8);
+        game.purses[7] = [0, 0, 2, 0];
+        game.health[7] = 5.0;
+        game.wound(7, 0, from, false);
+        assert_eq!(made(&mut game).len(), 2);
+        // A stick of dynamite on that bridge takes the planks under it,
+        // and what lay on them goes with them at once: the room is no
+        // longer sent those. Whoever it kills on the bridge has died with
+        // nothing under them that is staying, and what they held is the
+        // thrower's, as with a fall.
+        game.dead_for[1] = None;
+        game.health[1] = 5.0;
+        game.at[1] = along(0.5) + Vec3::new(0.4, 0.0, 0.0);
+        game.present[1] = true;
+        game.purses[1] = [0, 0, 4, 1];
+        game.purses[2] = [0, 0, 0, 0];
+        game.dead_for[2] = None;
+        game.health[2] = HEALTH;
+        game.outfits.kits[2] = Kit::default().holding(Utility::Dynamite, 1);
+        game.at[2] = along(0.5) + Vec3::new(0.0, 0.0, 8.0);
+        let lying = game.mint.pieces().iter().filter(|piece| piece.dropped()).count();
+        assert!(game.lob(2, game.at[2], 0.0, 8.0));
+        game.events.clear();
+        while !game.sticks.is_empty() {
+            game.dynamites(1.0 / 60.0);
+        }
+        assert!(!game.alive(1) && game.blasts == 1);
+        assert_eq!((game.purses[1], game.purses[2]), ([0, 0, 0, 0], [0, 0, 4, 1]));
+        assert!(made(&mut game).is_empty(), "nothing is dropped onto a bridge that is coming down");
+        let went = game.events.iter().filter(|event| matches!(event, Event::Taken(_))).count();
+        let left = game.mint.pieces().iter().filter(|piece| piece.dropped()).count();
+        assert!(went > 0 && left == lying - went, "{went} of {lying} went with the planks, {left} lie");
+        assert!(game.mint.pieces().iter().filter(|piece| piece.dropped()).all(|piece| game.nav.ground(piece.at).is_some()));
+        // Killed by a hand on what is left of it, which is going: the
+        // same.
+        game.dead_for[5] = None;
+        (game.health[5], game.hurt[5]) = (5.0, 0.0);
+        game.at[5] = along(0.85);
+        assert!(game.nav.walkable_at(game.at[5].xz()) && !game.nav.stays_at(game.at[5].xz()));
+        game.purses[5] = [0, 0, 1, 1];
+        game.wound(5, 0, from, false);
+        assert_eq!((made(&mut game).len(), game.purses[0]), (0, [1, 2, 36, 10]));
+        // And the rest of what was dropped on it goes as the planks it
+        // lies on fall: by the last of them none of it is left, and
+        // whatever lies on the islands is.
+        game.events.clear();
+        while game.nav.crumbling() {
+            game.crumble(1.0 / 30.0);
+        }
+        let fell = game.events.iter().filter(|event| matches!(event, Event::Taken(_))).count();
+        assert!(fell >= 2 && fell == left - 9, "{fell} fell with the planks, of {left}");
+        assert_eq!(game.mint.pieces().iter().filter(|piece| piece.dropped()).count(), 9);
     }
 
     #[test]
@@ -3974,7 +4252,7 @@ mod tests {
         assert_eq!(took + later.len(), span.planks(), "{later:?}");
         assert!(later.iter().all(|&(seat, chain, plank, _)| (seat, chain) == (4, 0) && !shown.planks.contains(&(seat, chain, plank))));
         assert!(later.windows(2).all(|pair| pair[0].3 <= pair[1].3));
-        assert!((f32::from(later[0].3) / 1000.0 - (CASCADE_WAIT + span.length() / span.planks() as f32 / CASCADE_SPEED)).abs() < 0.03);
+        assert!((f32::from(later[0].3) / 1000.0 - cascade_after(span.length() / span.planks() as f32)).abs() < 0.03);
         assert_eq!(game.nav.planks().count(), later.len());
         game.events.clear();
         // Whoever of the computer's stood on them falls with them, and is
@@ -4252,6 +4530,10 @@ mod tests {
         /// took with them.
         blasts: u32,
         planks_blown: u32,
+        /// How many deaths on land dropped anything, how many sapphires
+        /// and amethysts between them, how many of those were picked up,
+        /// and how many went with a plank (`Game::spilt`).
+        spilt: [u32; 4],
         /// How often one of them got nowhere on a way it had, three
         /// seconds together (`Bot::stalls`), standing its ground or
         /// held; and how many of those times something held it
@@ -4352,6 +4634,7 @@ mod tests {
                 fullest: 0,
                 blasts: 0,
                 planks_blown: 0,
+                spilt: [0; 4],
                 stalls: 0,
                 pinned: 0,
                 habits: Habits::default(),
@@ -4794,6 +5077,7 @@ mod tests {
         };
         told.blasts = game.blasts;
         told.planks_blown = game.planks_blown;
+        told.spilt = game.spilt;
         // What they built, by where from and where to; and how far they
         // quickened their building.
         for &(from, to, times) in game.squad.begun() {
@@ -5033,6 +5317,13 @@ mod tests {
             mean(&|game| game.planks_blown as f32),
             games.iter().map(|game| game.blasts).max().unwrap_or(0),
             games.iter().map(|game| game.planks_blown).max().unwrap_or(0),
+        );
+        println!(
+            "a game: {:.1} deaths on land dropped {:.1} sapphires and amethysts between them, of which {:.1} were picked up and {:.1} went with a bridge",
+            mean(&|game| game.spilt[0] as f32),
+            mean(&|game| game.spilt[1] as f32),
+            mean(&|game| game.spilt[2] as f32),
+            mean(&|game| game.spilt[3] as f32),
         );
         println!(
             "a game: {:.2} times one set out to cut another team's way; {:.2} bridges brought down, at least one in {} games of {}; {:.2} of them fell with one before ten minutes and {:.2} after; {:.2} stepped off planks left in the middle of nowhere; {:.2} walked off an edge",

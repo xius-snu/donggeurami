@@ -33,7 +33,7 @@ use std::sync::{Arc, LazyLock};
 
 use bevy::math::Vec2;
 
-use crate::bridge_wars::{CASCADE_JOIN, CASCADE_LONGEST, CASCADE_SPEED, CASCADE_WAIT};
+use crate::bridge_wars::{CASCADE_JOIN, cascade_after};
 use crate::{ARENA_ISLANDS, SAPPHIRE_PADS};
 
 /// How far across a square of the grid is, in metres.
@@ -1058,12 +1058,15 @@ impl Nav {
     /// another that it touches enough of ([`planks_joined`]): the forks
     /// off a bridge go with it, and a bridge landed on it, and nothing
     /// that only stands on the same island, land being what parts one
-    /// bridge from another. The falling begins [`CASCADE_WAIT`] after
-    /// the blast and runs outward from the hole at [`CASCADE_SPEED`],
-    /// along the bridge and out along each of its branches, by how far
-    /// each plank's middle is from the one before it: slower than
-    /// anyone runs. Nothing is taken here: whoever asks dooms them
-    /// ([`Nav::doom`]) and takes each at its time ([`Nav::crumble`]).
+    /// bridge from another. The falling begins a beat after the blast
+    /// and runs outward from the hole, along the bridge and out along
+    /// each of its branches, by how far each plank's middle is from the
+    /// one before it: slower than anyone runs as it sets out, and
+    /// faster and faster until it is a little faster than they do
+    /// ([`cascade_after`], since the night of 2026-11-15; at one pace,
+    /// slower than a run, until then). Nothing is taken here: whoever
+    /// asks dooms them ([`Nav::doom`]) and takes each at its time
+    /// ([`Nav::crumble`]).
     pub fn cascade(&self, taken: &[(u8, u16, u16)]) -> Vec<((u8, u16, u16), f32)> {
         if taken.is_empty() {
             return Vec::new();
@@ -1136,7 +1139,7 @@ impl Nav {
             .filter(|(plank, far)| !plank.source && far.is_finite())
             .map(|(plank, far)| {
                 let kept = &self.chains[plank.chain];
-                ((kept.seat, kept.id, plank.plank as u16), (CASCADE_WAIT + far / CASCADE_SPEED).min(CASCADE_LONGEST))
+                ((kept.seat, kept.id, plank.plank as u16), cascade_after(*far))
             })
             .collect();
         falls.sort_by(|a, b| a.1.total_cmp(&b.1));
@@ -2471,7 +2474,7 @@ mod tests {
 
     #[test]
     fn the_rest_of_a_bridge_falls_after_a_blast_plank_by_plank_from_the_hole_outward() {
-        use crate::bridge_wars::{CASCADE_SPEED, CASCADE_WAIT, RUN_SPEED};
+        use crate::bridge_wars::{CASCADE_SPEED, CASCADE_WAIT, RUN_SPEED, cascade_after};
         let (mut nav, span) = bridged();
         let planks = span.planks();
         let each = span.length() / planks as f32;
@@ -2484,22 +2487,23 @@ mod tests {
         assert_eq!(falls.len() + taken.len(), planks, "every plank of the bridge: {falls:?}");
         assert!(falls.iter().all(|(plank, _)| !taken.contains(plank) && (plank.0, plank.1) == (4, 0)));
         // The soonest first, and that one a plank from the hole, a beat
-        // after the blast.
+        // after the blast, the falling setting out at the pace it had.
         assert!(falls.windows(2).all(|pair| pair[0].1 <= pair[1].1));
         assert!((falls[0].1 - (CASCADE_WAIT + each / CASCADE_SPEED)).abs() < 0.02, "{:?}", falls[0]);
         // Outward from the hole both ways, a plank's length further each
         // time: the far end of the bridge goes last, as long after the
-        // blast as it is from the hole at the falling's pace.
+        // blast as the falling takes to come to it from the hole.
         let (first, last) = (usize::from(taken[0].2), usize::from(taken[taken.len() - 1].2));
         for &((_, _, plank), secs) in &falls {
             let plank = usize::from(plank);
             let from_hole = if plank < first { first - plank } else { plank - last };
-            assert!((secs - (CASCADE_WAIT + from_hole as f32 * each / CASCADE_SPEED)).abs() < 0.03, "plank {plank}: {secs}");
+            assert!((secs - cascade_after(from_hole as f32 * each)).abs() < 0.03, "plank {plank}: {secs}");
         }
         let longest = falls[falls.len() - 1].1;
-        assert!((longest - (CASCADE_WAIT + (planks - 1 - last) as f32 * each / CASCADE_SPEED)).abs() < 0.03);
-        // Slower than anyone runs: whoever stands beside the hole and
-        // sets off as it blows is off the far end before it goes.
+        assert!((longest - cascade_after((planks - 1 - last) as f32 * each)).abs() < 0.03);
+        // Slower than anyone runs as it sets out: whoever stands beside
+        // the hole and sets off as it blows is off the far end of a
+        // bridge this short before it goes.
         assert!(CASCADE_SPEED < RUN_SPEED);
         let far_end = (planks - 1 - last) as f32 * each;
         assert!(far_end / RUN_SPEED + 0.3 < longest, "{far_end} m at a run against {longest} s");
@@ -2537,7 +2541,7 @@ mod tests {
 
     #[test]
     fn a_doomed_bridge_is_no_way_across_from_the_moment_it_is_doomed_and_there_is_a_way_off_it() {
-        use crate::bridge_wars::{CASCADE_SPEED, CASCADE_WAIT, RUN_SPEED};
+        use crate::bridge_wars::{CASCADE_SPEED, RUN_SPEED, cascade_after};
         let (mut nav, span) = bridged();
         let (here, there) = (Vec2::new(-1.0, 0.5), Vec2::new(21.0, -1.0));
         let each = span.length() / span.planks() as f32;
@@ -2577,7 +2581,7 @@ mod tests {
         // As it falls, what is left of it is still no part of anything,
         // and still the way off for whoever is ahead of it.
         let mut clock = 0.0;
-        while clock < CASCADE_WAIT + 3.0 * each / CASCADE_SPEED {
+        while clock < cascade_after(3.0 * each) {
             nav.crumble(0.05);
             clock += 0.05;
         }

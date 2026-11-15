@@ -191,7 +191,16 @@ pub const PROTOCOL_ID: u64 = u64::from_be_bytes(*b"DGRMTOWN");
 /// and a [`Blasted`] says when it blew, by the server's clock, and which
 /// planks of the bridge fall after the ones the blast took, each how long
 /// after ([`Blasted::later`], [`nav::Nav::cascade`]).
-pub const PROTOCOL_VERSION: u32 = 17;
+///
+/// 18 since the night of 2026-11-15 (Hajun: "if its a land-hp kill where
+/// they die on land, they should drop the sapphires and amethyst like
+/// small scatter explosion from their dead body location ... and u only
+/// get it if u pick it up"): a [`Loot`] says whether someone who died
+/// dropped it, and if so from where, onto what, and how many of its item
+/// it is ([`Spilt`]), which an app from before cannot read. (The dynamite
+/// at 1 amethyst, and its falling quickening as it goes, of the same
+/// night, changed nothing that is sent.)
+pub const PROTOCOL_VERSION: u32 = 18;
 
 /// The UDP port the game server listens on. 443, where QUIC goes, because a
 /// network that lets any UDP through lets that through: school and office
@@ -1356,10 +1365,69 @@ pub mod bridge_wars {
         DROP_FROM * (1.0 - fallen * fallen)
     }
 
-    /// One thing a generator has made, dropping onto its pad or lying on
-    /// it until someone picks it up: a number of its own, which generator
-    /// made it, what it is, where it lies across the ground, and how far
-    /// into the fight it was made, in seconds.
+    /// What someone who dies on land drops (since the night of
+    /// 2026-11-15; Hajun: "right now you just get the sapphire and amethyst
+    /// automatically into ur balance after killing, regardless of whether
+    /// it was a fall off the world kill or a land-hp kill. i think if its a
+    /// land-hp kill where they die on land, they should drop the sapphires
+    /// and amethyst like small scatter explosion from their dead body
+    /// location like mineraft dropping items on death, and u only get it if
+    /// u pick it up. but items shouldnt scatter to location where they would
+    /// fall off the map"; [`Mint::spill`]). The generator a thing that was
+    /// dropped is said to be of, which is none; how near whoever died and
+    /// how far from them a thing comes down, in metres across the ground;
+    /// how long it is in the air, in seconds, and how far over the straight
+    /// line from them to where it comes down it rises on the way
+    /// ([`toss`]); how high over their feet it leaves them; the most
+    /// things of one item that are dropped, each being more than one of it
+    /// if they held more than that many ([`Piece::worth`]); how far over
+    /// their feet the ground a thing comes down on may be, a step, and how
+    /// far under them, which is further than anyone is ever over ground
+    /// they are not falling past; and how many places are tried for each.
+    /// All of them are mine.
+    ///
+    /// And how long a thing lies where it came down before anyone can
+    /// have it, in seconds (Hajun, an hour on: "killing someone so ur
+    /// already near them so u might pick it up right away too fast for it
+    /// to be visible that they dropped sth - make sure that there is a
+    /// very small delay before u can pick it up so u can atleast see very
+    /// quickly before u pick it up rather than instantly picking it up"):
+    /// whoever stands over the dead sees what they held fly out, come
+    /// down and lie there, and then has what is within their reach,
+    /// [`SPILL_WAIT`] after the death in all. Until then a thing was
+    /// theirs the moment it came down. How long is mine.
+    pub const SPILT: u8 = u8::MAX;
+    pub const SPILL_NEAR: f32 = 0.8;
+    pub const SPILL_FAR: f32 = 2.4;
+    pub const TOSS_SECS: f32 = 0.5;
+    pub const TOSS_RISE: f32 = 1.3;
+    pub const SPILL_LIES: f32 = 0.3;
+    pub const SPILL_WAIT: f32 = TOSS_SECS + SPILL_LIES;
+    pub const SPILL_FROM: f32 = 1.0;
+    pub const SPILL_MOST: u16 = 10;
+    pub const SPILL_UP: f32 = 0.6;
+    pub const SPILL_DOWN: f32 = 12.0;
+    const SPILL_TRIES: usize = 8;
+
+    /// Where a thing thrown from `from` to hang at `to` is, `age` seconds
+    /// after it was: on its way for [`TOSS_SECS`], over the straight line
+    /// between the two by as much as [`TOSS_RISE`] half way, and at `to`
+    /// from then on. The device draws it (`loot`), and nobody has the thing
+    /// until it has come down and lain a moment ([`Piece::lying`]).
+    pub fn toss(from: Vec3, to: Vec3, age: f32) -> Vec3 {
+        let done = (age / TOSS_SECS).clamp(0.0, 1.0);
+        from.lerp(to, done) + Vec3::Y * (TOSS_RISE * 4.0 * done * (1.0 - done))
+    }
+
+    /// One thing lying in a game until someone picks it up: one a
+    /// generator has made, dropping onto its pad or lying on it, or one
+    /// that someone who died dropped ([`Mint::spill`]). A number of its
+    /// own, which generator made it ([`SPILT`] for one that was dropped),
+    /// what it is, where it lies across the ground, and how far into the
+    /// fight it was made, in seconds; how high what it lies on is, a
+    /// pad's top for a generator's; where it was thrown from, if it was
+    /// dropped; and how many of its item it is, which is one, but for a
+    /// thing dropped by someone who held more than [`SPILL_MOST`] of it.
     #[derive(Clone, Copy, PartialEq, Debug)]
     pub struct Piece {
         pub id: u32,
@@ -1367,14 +1435,42 @@ pub mod bridge_wars {
         pub item: Item,
         pub at: Vec2,
         pub born: f32,
+        pub ground: f32,
+        pub from: Option<Vec3>,
+        pub worth: u16,
     }
 
     impl Piece {
+        /// Where its middle hangs once it has come down.
+        pub fn rest(&self) -> Vec3 {
+            Vec3::new(self.at.x, self.ground + HOVER, self.at.y)
+        }
+
         /// How high its middle is, `elapsed` seconds into the fight, in
-        /// the map's own heights: over its pad's top where it hangs, and
-        /// as far over that as it has still to drop.
+        /// the map's own heights: over what it lies on where it hangs,
+        /// and as far over that as it has still to drop, or wherever it
+        /// is on its way from whoever dropped it.
         pub fn height(&self, elapsed: f32) -> f32 {
-            PAD_TOP + HOVER + drop_height(elapsed - self.born)
+            let age = elapsed - self.born;
+            match self.from {
+                None => self.ground + HOVER + drop_height(age),
+                Some(from) => toss(from, self.rest(), age).y,
+            }
+        }
+
+        /// Whether it is there to be picked up, `elapsed` seconds into
+        /// the fight: one a generator made is, in the air as it drops;
+        /// one that was dropped, once it has come down and lain a moment
+        /// ([`SPILL_WAIT`]), so that whoever stands over the dead sees
+        /// what they held fly out and lie there before any of it is
+        /// theirs.
+        pub fn lying(&self, elapsed: f32) -> bool {
+            self.from.is_none() || elapsed - self.born >= SPILL_WAIT
+        }
+
+        /// Whether someone who died dropped it.
+        pub fn dropped(&self) -> bool {
+            self.from.is_some()
         }
     }
 
@@ -1540,10 +1636,113 @@ pub mod bridge_wars {
                 item,
                 at: self.place(pad, dice),
                 born: elapsed,
+                ground: PAD_TOP,
+                from: None,
+                worth: 1,
             };
             self.next = self.next.wrapping_add(1);
             self.pieces.push(piece);
             piece
+        }
+
+        /// Whoever has died with their feet at `from`, `elapsed` seconds
+        /// into the fight, drops what they held of sapphire and amethyst
+        /// ([`spoils`]), out of `held`: thrown out from them every way,
+        /// each thing to come down [`SPILL_NEAR`] to [`SPILL_FAR`] from
+        /// them, of a few places at random the one furthest from the
+        /// rest of what they drop, and to lie there for whoever walks
+        /// into it, as what a generator makes lies on its pad. One thing
+        /// for each they held, up to [`SPILL_MOST`] of an item; of more
+        /// than that, that many things, the count shared out among them
+        /// ([`Piece::worth`]).
+        ///
+        /// **Only onto ground** ("items shouldnt scatter to location
+        /// where they would fall off the map"): `ground` says how high
+        /// what a thing may lie on is at a place, if there is anything
+        /// there that a body can walk to: land, or a plank. Nor onto
+        /// anything more than a step over their feet, a stand's roof, nor
+        /// further under them than [`SPILL_DOWN`]. A place none of the
+        /// tries finds ground at is where they died, if that is ground,
+        /// or where another of the things lies.
+        ///
+        /// What was dropped, which may be nothing, if they held none of
+        /// either; or `None` with nowhere for any of it to lie, whoever
+        /// died being out over the void, with `held` as it was: that is
+        /// no death on land, and what they held goes as it does with a
+        /// fall.
+        pub fn spill(
+            &mut self,
+            held: &mut Purse,
+            from: Vec3,
+            elapsed: f32,
+            dice: &mut dyn FnMut() -> f32,
+            ground: &dyn Fn(Vec2) -> Option<f32>,
+        ) -> Option<Vec<Piece>> {
+            let lies = |at: Vec2| ground(at).filter(|top| (-SPILL_DOWN..=SPILL_UP).contains(&(top - from.y)));
+            let feet = Vec2::new(from.x, from.z);
+            let under = lies(feet).map(|top| (feet, top));
+            // How many things, and how many of its item each is.
+            let mut things: Vec<(Item, u16)> = Vec::new();
+            for item in [Item::Sapphire, Item::Amethyst] {
+                let count = held[item.index()];
+                let pieces = count.min(SPILL_MOST);
+                for piece in 0..pieces {
+                    things.push((item, count / pieces + u16::from(piece < count % pieces)));
+                }
+            }
+            // Where each comes down.
+            let mut places: Vec<(Vec2, f32)> = Vec::new();
+            for _ in 0..things.len().max(1) {
+                let mut best: Option<(f32, Vec2, f32)> = None;
+                for _ in 0..SPILL_TRIES {
+                    let (turn, far) = (dice() * TAU, SPILL_NEAR + (SPILL_FAR - SPILL_NEAR) * dice());
+                    let at = feet + Vec2::from_angle(turn) * far;
+                    let Some(top) = lies(at) else {
+                        continue;
+                    };
+                    let room = places.iter().map(|(other, _)| other.distance_squared(at)).fold(f32::INFINITY, f32::min);
+                    if best.is_none_or(|(most, ..)| room > most) {
+                        best = Some((room, at, top));
+                    }
+                }
+                let place = best
+                    .map(|(_, at, top)| (at, top))
+                    .or(under)
+                    .or_else(|| places.get(places.len().wrapping_sub(1)).copied());
+                places.push(place?);
+            }
+            spoils(held);
+            let thrown = from + Vec3::Y * SPILL_FROM;
+            let mut dropped = Vec::with_capacity(things.len());
+            for (&(item, worth), &(at, top)) in things.iter().zip(&places) {
+                let piece = Piece {
+                    id: self.next,
+                    generator: SPILT,
+                    item,
+                    at,
+                    born: elapsed,
+                    ground: top,
+                    from: Some(thrown),
+                    worth,
+                };
+                self.next = self.next.wrapping_add(1);
+                self.pieces.push(piece);
+                dropped.push(piece);
+            }
+            Some(dropped)
+        }
+
+        /// Takes away whatever was dropped and lies where `stands` says
+        /// there is nothing under it any more, a plank it lay on having
+        /// gone: which they were. It falls with the plank, and is
+        /// nobody's.
+        pub fn shed(&mut self, stands: &dyn Fn(Vec2) -> bool) -> Vec<Piece> {
+            if !self.pieces.iter().any(Piece::dropped) {
+                return Vec::new();
+            }
+            let (gone, left): (Vec<Piece>, Vec<Piece>) = self.pieces.iter().copied().partition(|piece| piece.dropped() && !stands(piece.at));
+            self.pieces = left;
+            gone
         }
 
         /// Somewhere on the pad round `pad` for a new thing: of a few
@@ -1575,8 +1774,11 @@ pub mod bridge_wars {
         /// picks up everything within reach of them: within [`MAGNET`]
         /// across the ground, and, where the thing is now, dropping or
         /// lying ([`Piece::height`]), no further over their feet than
-        /// [`REACH_OVER`] nor under them than [`REACH_UNDER`]. What they
-        /// took, no longer there for anyone else.
+        /// [`REACH_OVER`] nor under them than [`REACH_UNDER`]; and of
+        /// what someone who died dropped, only what has come down and
+        /// lain a moment ([`Piece::lying`]). What they took, no longer there for anyone
+        /// else: each is as many of its item as it is worth
+        /// ([`Piece::worth`]).
         pub fn pick_up(&mut self, at: Vec3, elapsed: f32) -> Vec<Piece> {
             self.pick_up_where(at, elapsed, &mut |_| true)
         }
@@ -1589,7 +1791,10 @@ pub mod bridge_wars {
             let (across, reach) = (Vec2::new(at.x, at.z), MAGNET * MAGNET);
             let (taken, left): (Vec<Piece>, Vec<Piece>) = self.pieces.iter().copied().partition(|piece| {
                 let over = piece.height(elapsed) - at.y;
-                piece.at.distance_squared(across) <= reach && (-REACH_UNDER..=REACH_OVER).contains(&over) && wanted(piece)
+                piece.lying(elapsed)
+                    && piece.at.distance_squared(across) <= reach
+                    && (-REACH_UNDER..=REACH_OVER).contains(&over)
+                    && wanted(piece)
             });
             self.pieces = left;
             taken
@@ -1758,10 +1963,12 @@ pub mod bridge_wars {
                     Utility::Speed => (Item::Amethyst, 1),
                     Utility::Invisibility => (Item::Amethyst, 2),
                     Utility::Healing => (Item::Gold, 3),
-                    // 2 since 2026-11-15, when it began to take the
-                    // whole bridge down (Hajun: "change it to cost = 2
-                    // amethyst"); 1 until then.
-                    Utility::Dynamite => (Item::Amethyst, 2),
+                    // 1 again since the night of 2026-11-15 (Hajun:
+                    // "change the price of dynamite from 2 amethyst to
+                    // 1 amethyst"); 2 for the day before it, from when
+                    // it began to take the whole bridge down; 1 until
+                    // then.
+                    Utility::Dynamite => (Item::Amethyst, 1),
                     Utility::Leap => (Item::Amethyst, 1),
                 })
             }
@@ -1996,10 +2203,9 @@ pub mod bridge_wars {
     /// after it, plank by plank from the hole outward (since 2026-11-15;
     /// [`super::nav::Nav::cascade`]): how long after the blast the first
     /// of them goes, in seconds, for whoever stands beside the hole to
-    /// set off; how fast the falling then runs along the bridge, in
-    /// metres a second, which is slower than anyone runs ([`RUN_SPEED`])
-    /// and faster than anyone carrying a plank walks, so that whoever is
-    /// on the bridge gets off it by running, and by nothing less; and how
+    /// set off; how fast the falling sets out along the bridge, in metres
+    /// a second, how much faster it gets with every second, and the
+    /// fastest it gets ([`cascade_after`]); and how
     /// much of a plank's width two planks of different bridges have to
     /// touch along, or lie over each other by, to be one bridge, as a
     /// share of it (Hajun: "even adjacent connected part of the bridge
@@ -2008,16 +2214,64 @@ pub mod bridge_wars {
     /// another, two laid side by side with their edges together, two
     /// crossing; not two that only meet at a corner, nor two with a gap
     /// between them. The numbers are mine.
+    ///
+    /// The falling's pace, since the night of 2026-11-15. It was 6 m a
+    /// second all the way, which anyone at a run (10) left behind, by
+    /// three seconds at the far end of a bridge to the middle. Hajun:
+    /// "increase the speed of the dynamite's bridge explosion cascading
+    /// so that it matches player's full speed running so that u need to
+    /// run full speed to barely or even fail to escape the falling
+    /// bridge. i guess the destruction cascade can start at the current
+    /// speed but accelerate slightly (but not too much). make it so its
+    /// rare to fall off a bridge if you react right away and u start
+    /// running toward safety, but if its a very long bridge then i guess
+    /// even if u react right away and u run full speed and ur rllly far
+    /// from land then ok u will still fail to reach land". So it sets
+    /// out at the 6 it had, is at a run's pace two seconds on, 16 m from
+    /// the hole, and at its fastest, a fifth faster than a run, a second
+    /// after that, 27 m from it. Whoever stands right beside the hole
+    /// and sets off within three quarters of a second is off a bridge
+    /// from an island to the middle with the falling a few metres behind
+    /// them all the way, which is what they had beside the hole before
+    /// (the first plank goes when it did); further along the bridge
+    /// there is a second and more to set off in, where there were three.
+    /// And from 27 m on it gains two metres on a runner every second: 60
+    /// m and more from the land, beside the hole, half a second is too
+    /// long to take, and 85 m from it nobody gets there.
     pub const CASCADE_WAIT: f32 = 0.6;
     pub const CASCADE_SPEED: f32 = 6.0;
+    pub const CASCADE_QUICKENS: f32 = 2.0;
+    pub const CASCADE_TOP: f32 = 12.0;
     pub const CASCADE_JOIN: f32 = 0.3;
     /// The longest after a blast any plank of its bridge falls, in
     /// seconds: whatever is further from the hole than the falling gets
     /// in this long goes with it then, all together. A time is sent in
     /// thousandths of a second in a `u16` ([`super::Blasted::later`]),
     /// which holds 65 of them; and no bridge anyone has built is as long
-    /// as this is at the falling's pace, 350 m and more.
+    /// as this is at the falling's pace, 700 m.
     pub const CASCADE_LONGEST: f32 = 60.0;
+
+    /// How long after a blast the plank whose middle is `far` metres
+    /// along the bridge from the hole falls, in seconds
+    /// ([`super::nav::Nav::cascade`]): [`CASCADE_WAIT`], and then as long
+    /// as the falling takes to come that far, setting out at
+    /// [`CASCADE_SPEED`], faster by [`CASCADE_QUICKENS`] with every
+    /// second until it is going at [`CASCADE_TOP`], and at that from
+    /// there on. No longer than [`CASCADE_LONGEST`].
+    pub fn cascade_after(far: f32) -> f32 {
+        let far = far.max(0.0);
+        let (from, top, by) = (CASCADE_SPEED, CASCADE_TOP.max(CASCADE_SPEED), CASCADE_QUICKENS);
+        // (Not quickening at all, it is the one pace all the way.)
+        let quickening = if by > 0.0 { (top - from) / by } else { 0.0 };
+        let covered = (from + top) * 0.5 * quickening;
+        let taken = if far < covered {
+            // far = from * t + by * t * t / 2, for t.
+            ((from * from + 2.0 * by * far).sqrt() - from) / by
+        } else {
+            quickening + (far - covered) / if by > 0.0 { top } else { from }
+        };
+        (CASCADE_WAIT + taken).min(CASCADE_LONGEST)
+    }
     pub const DYNAMITE_DAMAGE: f32 = 20.0;
     pub const DYNAMITE_RADIUS: f32 = 3.0;
     pub const DYNAMITE_NEAREST: f32 = 2.5;
@@ -2863,12 +3117,47 @@ pub struct Plank {
 /// the server has someone pick it up (Hajun: "other player taking the
 /// item from the generators make it so you cant take it too"); never
 /// moved.
+///
+/// Or one that someone who died on land dropped (since the night of
+/// 2026-11-15, [`bridge_wars::Mint::spill`]), which says so ([`Spilt`]).
 #[derive(Component, Serialize, Deserialize, Clone, Copy, PartialEq, Debug)]
 #[component(immutable)]
 pub struct Loot {
     pub item: Item,
     pub x: f32,
     pub z: f32,
+    pub spilt: Option<Spilt>,
+}
+
+/// What is said of a thing that someone who died dropped, for every
+/// device to draw it flying out from them and lying where it came down:
+/// how high what it lies on is, where it was thrown from, and how many of
+/// its item it is ([`bridge_wars::Piece`]).
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Debug)]
+pub struct Spilt {
+    pub ground: f32,
+    pub from_x: f32,
+    pub from_y: f32,
+    pub from_z: f32,
+    pub worth: u16,
+}
+
+impl Loot {
+    /// What the room is sent of `piece`.
+    pub fn of(piece: &bridge_wars::Piece) -> Self {
+        Self {
+            item: piece.item,
+            x: piece.at.x,
+            z: piece.at.y,
+            spilt: piece.from.map(|from| Spilt {
+                ground: piece.ground,
+                from_x: from.x,
+                from_y: from.y,
+                from_z: from.z,
+                worth: piece.worth,
+            }),
+        }
+    }
 }
 
 /// What everyone in a game of Bridge Wars holds, by seat: how many of each
@@ -4474,7 +4763,7 @@ mod tests {
         // The item shop: the bridge, three swords, three shields and six
         // things for the buttons.
         for (ware, cost) in [
-            (Ware::Utility(Utility::Dynamite), (Item::Amethyst, 2)),
+            (Ware::Utility(Utility::Dynamite), (Item::Amethyst, 1)),
             (Ware::Bridge, (Item::Silver, 4)),
             (Ware::Sword(1), (Item::Silver, 10)),
             (Ware::Sword(2), (Item::Gold, 7)),
@@ -5103,11 +5392,27 @@ mod tests {
             item: Item::Sapphire,
             x: -88.39,
             z: 88.39,
+            spilt: None,
         };
         let bytes = postcard::to_allocvec(&loot).unwrap();
-        assert!(bytes.len() <= 9, "{} bytes", bytes.len());
+        assert!(bytes.len() <= 10, "{} bytes", bytes.len());
         let back: Loot = postcard::from_bytes(&bytes).unwrap();
         assert_eq!(back, loot);
+        // One that someone who died dropped says from where, onto what
+        // and how many it is, in a few bytes more.
+        let dropped = Loot {
+            spilt: Some(Spilt {
+                ground: 0.25,
+                from_x: -87.0,
+                from_y: 1.25,
+                from_z: 87.5,
+                worth: 3,
+            }),
+            ..loot
+        };
+        let bytes = postcard::to_allocvec(&dropped).unwrap();
+        assert!(bytes.len() <= 28, "{} bytes", bytes.len());
+        assert_eq!(postcard::from_bytes::<Loot>(&bytes).unwrap(), dropped);
         let mut purse: Purse = [0; 4];
         purse[Item::Silver.index()] = 7;
         purse[Item::Amethyst.index()] = 1;
@@ -5128,5 +5433,202 @@ mod tests {
         assert!(bridge_wars::takes_spoils(0, 1) && bridge_wars::takes_spoils(7, 4));
         assert!(!bridge_wars::takes_spoils(0, 4) && !bridge_wars::takes_spoils(3, 3));
         assert!(!bridge_wars::takes_spoils(ARENA_SEATS, 1) && !bridge_wars::takes_spoils(1, ARENA_SEATS + 2));
+    }
+
+    #[test]
+    fn a_bridge_s_falling_sets_out_slower_than_a_run_and_ends_a_little_faster_than_one() {
+        use bridge_wars::{CASCADE_LONGEST, CASCADE_QUICKENS, CASCADE_SPEED, CASCADE_TOP, CASCADE_WAIT, RUN_SPEED, build_pace, cascade_after};
+        // The bridge from an island to the middle, on Hajun's map.
+        let span = nav::Nav::arena().grid().span(nav::Region::Team(0), nav::Region::Middle, 0.0).expect("a span");
+        let (planks, each) = (span.planks(), span.length() / span.planks() as f32);
+        assert!((26..=32).contains(&planks) && (each - nav::PLANK_SPACING).abs() < 0.06, "{planks} planks of {each}");
+        // A beat, and then the first plank as soon after it as it went
+        // while the falling had one pace.
+        assert_eq!(cascade_after(0.0), CASCADE_WAIT);
+        assert!((cascade_after(each) - (CASCADE_WAIT + each / CASCADE_SPEED)).abs() < 0.02);
+        // Each plank sooner after the one before it than that one was
+        // after the one before, down to what its fastest makes it, and
+        // never sooner than that.
+        let gaps: Vec<f32> = (1..120)
+            .map(|plank| cascade_after(plank as f32 * each) - cascade_after((plank - 1) as f32 * each))
+            .collect();
+        assert!(gaps.windows(2).all(|pair| pair[1] <= pair[0] + 1e-4), "{gaps:?}");
+        assert!((gaps[0] - each / CASCADE_SPEED).abs() < 0.02 && (gaps[gaps.len() - 1] - each / CASCADE_TOP).abs() < 1e-3);
+        // Slower than a run as it sets out, and in the end faster than
+        // one, by a little ("accelerate slightly (but not too much)").
+        assert!(CASCADE_SPEED < RUN_SPEED && CASCADE_TOP > RUN_SPEED && CASCADE_TOP <= RUN_SPEED * 1.25);
+        assert!(CASCADE_QUICKENS > 0.0 && CASCADE_QUICKENS <= 3.0);
+        // How long whoever stands on the middle of the plank `stood`
+        // planks from the hole may take to set off, at `pace`, and still
+        // be off a bridge whose shore is `shore` planks from the hole:
+        // off every plank on their way before it goes. Less than
+        // nothing, and they do not get there.
+        let spare = |stood: usize, shore: usize, pace: f32| {
+            (stood..=shore)
+                .map(|plank| cascade_after(plank as f32 * each) - (plank as f32 + 0.5 - stood as f32) * each / pace)
+                .fold(f32::INFINITY, f32::min)
+        };
+        // Blown at one end, which takes four planks or five: from right
+        // beside the hole there is three quarters of a second to set off
+        // in ("its rare to fall off a bridge if you react right away and u
+        // start running toward safety"), which is what the plank they
+        // stand on gave them before; and they are at the far shore with
+        // the falling under a second behind them ("u need to run full
+        // speed to barely or even fail to escape").
+        let shore = planks - 5;
+        let beside = spare(1, shore, RUN_SPEED);
+        assert!(beside > 0.7 && beside < 0.8, "{beside} s beside the hole");
+        let ashore = cascade_after(shore as f32 * each) - (shore as f32 - 0.5) * each / RUN_SPEED;
+        assert!(ashore > 0.7 && ashore < 1.0, "{ashore} s behind them at the shore");
+        // Further along it there is more, and it is never less for being
+        // further from the hole: a second and more from the third plank
+        // on, where there were three and more.
+        let along: Vec<f32> = (1..shore).map(|stood| spare(stood, shore, RUN_SPEED)).collect();
+        assert!(along.windows(2).all(|pair| pair[1] >= pair[0] - 1e-4), "{along:?}");
+        assert!(along[1] > 0.85 && along[2] > 1.0 && along[shore / 2] > 2.0, "{along:?}");
+        // Carrying a plank, at a builder's pace, nobody beside the hole
+        // gets there: it takes a run.
+        assert!(spare(1, shore, RUN_SPEED * build_pace(&Upgrades::default())) < 0.0);
+        // And a very long bridge ("even if u react right away and u run
+        // full speed and ur rllly far from land then ok u will still fail
+        // to reach land"): beside the hole with 60 m to the shore, half a
+        // second is too long to take; with 95, no time at all is short
+        // enough.
+        let planks_in = |metres: f32| (metres / each).round() as usize;
+        let long = spare(1, planks_in(60.0), RUN_SPEED);
+        assert!(long > 0.3 && long < 0.5, "{long}");
+        assert!(spare(1, planks_in(95.0), RUN_SPEED) < 0.0);
+        // Half way along a bridge as long as that, there is still time.
+        assert!(spare(planks_in(47.0), planks_in(95.0), RUN_SPEED) > 1.0);
+        // However far, no later than a time can be sent.
+        assert_eq!(cascade_after(1.0e6), CASCADE_LONGEST);
+        assert!(CASCADE_LONGEST * 1000.0 < f32::from(u16::MAX));
+    }
+
+    #[test]
+    fn someone_who_dies_on_land_drops_their_sapphire_and_amethyst_where_there_is_ground_for_them() {
+        use bridge_wars::{
+            HOVER, MAGNET, Mint, Piece, SPILL_FAR, SPILL_FROM, SPILL_LIES, SPILL_MOST, SPILL_NEAR, SPILL_WAIT, SPILT, TOSS_RISE, TOSS_SECS, toss,
+        };
+        let mut dice = rolling();
+        let mut mint = Mint::new(0.0, &mut steady(0.5));
+        let across = |piece: &Piece, feet: Vec3| piece.at.distance(feet.xz());
+        // On open ground, a quarter of a metre up: one thing for each
+        // sapphire and each amethyst they held, thrown out round them,
+        // and their silver and gold left to go with them.
+        let flat = |_: Vec2| Some(0.25);
+        let feet = Vec3::new(10.0, 0.25, -4.0);
+        let mut held: Purse = [30, 20, 7, 3];
+        let dropped = mint.spill(&mut held, feet, 100.0, &mut dice, &flat).expect("there is ground");
+        assert_eq!(held, [30, 20, 0, 0]);
+        let of = |item: Item| dropped.iter().filter(|piece| piece.item == item).count();
+        assert_eq!((dropped.len(), of(Item::Sapphire), of(Item::Amethyst)), (10, 7, 3));
+        for piece in &dropped {
+            assert!(piece.dropped() && piece.generator == SPILT && piece.worth == 1 && piece.ground == 0.25, "{piece:?}");
+            assert_eq!(piece.from, Some(feet + Vec3::Y * SPILL_FROM));
+            let far = across(piece, feet);
+            assert!((SPILL_NEAR - 1e-3..=SPILL_FAR + 1e-3).contains(&far), "{far} m from them");
+        }
+        // Round them, and not in a heap: on every side, and no two in
+        // one place.
+        let sides = |side: fn(Vec2) -> bool| dropped.iter().any(|piece| side(piece.at - Vec2::new(10.0, -4.0)));
+        assert!(sides(|off| off.x > 0.3) && sides(|off| off.x < -0.3) && sides(|off| off.y > 0.3) && sides(|off| off.y < -0.3));
+        for (index, piece) in dropped.iter().enumerate() {
+            assert!(dropped[..index].iter().all(|other| other.at.distance(piece.at) > 0.25), "{dropped:?}");
+        }
+        // They lie with what the generators have made, and are none of
+        // any generator's.
+        assert_eq!(mint.pieces().len(), 10);
+        assert!((0..bridge_wars::GENERATORS + ARENA_TEAMS).all(|index| mint.held(index) == 0));
+        // Each flies out from them and comes down where it lies, and
+        // lies there a moment: nobody has it on the way nor as it comes
+        // down, standing right there, so that it is seen to have been
+        // dropped; whoever walks into it after that moment does, and
+        // nobody twice.
+        let piece = dropped[0];
+        assert_eq!(toss(piece.from.unwrap(), piece.rest(), 0.0), feet + Vec3::Y * SPILL_FROM);
+        assert_eq!(toss(piece.from.unwrap(), piece.rest(), TOSS_SECS), piece.rest());
+        assert!(toss(piece.from.unwrap(), piece.rest(), TOSS_SECS * 0.5).y > feet.y + SPILL_FROM * 0.5 + TOSS_RISE * 0.9);
+        assert!((piece.height(100.0 + TOSS_SECS) - (0.25 + HOVER)).abs() < 1e-5 && !piece.lying(100.0 + TOSS_SECS + 0.02));
+        assert!(SPILL_LIES >= 0.2 && SPILL_LIES <= 0.5 && SPILL_WAIT == TOSS_SECS + SPILL_LIES && SPILL_WAIT < 1.0);
+        let on = |piece: &Piece| Vec3::new(piece.at.x, 0.25, piece.at.y);
+        assert!(mint.clone().pick_up(on(&piece), 100.0 + TOSS_SECS - 0.02).is_empty(), "not in the air");
+        assert!(mint.clone().pick_up(on(&piece), 100.0 + SPILL_WAIT - 0.02).is_empty(), "nor the moment it is down");
+        assert!(!mint.clone().pick_up(on(&piece), 100.0 + SPILL_WAIT).is_empty() && piece.lying(100.0 + SPILL_WAIT));
+        let mut walked = mint.clone();
+        let mut got = [0u16; 4];
+        for piece in &dropped {
+            for taken in walked.pick_up(on(piece), 100.0 + SPILL_WAIT) {
+                assert!(taken.at.distance(piece.at) <= MAGNET + 1e-3);
+                got[taken.item.index()] += taken.worth;
+            }
+        }
+        assert_eq!((got, walked.pieces().len()), ([0, 0, 7, 3], 0));
+        // Standing where they died, only what came down within reach.
+        let near = mint.clone().pick_up(feet, 101.0);
+        assert!(near.len() < dropped.len() && near.iter().all(|taken| across(taken, feet) <= MAGNET + 1e-3));
+        assert_eq!(near.len(), dropped.iter().filter(|piece| across(piece, feet) <= MAGNET).count());
+        // More than ten of one are ten things, the count shared out among
+        // them.
+        let mut held: Purse = [0, 0, 23, 1];
+        let many = Mint::new(0.0, &mut steady(0.5)).spill(&mut held, feet, 5.0, &mut dice, &flat).expect("ground");
+        let worths: Vec<u16> = many.iter().filter(|piece| piece.item == Item::Sapphire).map(|piece| piece.worth).collect();
+        assert_eq!((many.len(), worths.len(), worths.iter().sum::<u16>()), (11, usize::from(SPILL_MOST), 23));
+        assert!(worths.iter().all(|worth| (2..=3).contains(worth)), "{worths:?}");
+        // Only onto ground. On a bridge, a plank's width of it: nothing
+        // comes down off its sides.
+        let bridge = |at: Vec2| (at.y.abs() <= 1.0).then_some(0.24);
+        let mut held: Purse = [0, 0, 9, 9];
+        let on_bridge = Mint::new(0.0, &mut steady(0.5))
+            .spill(&mut held, Vec3::new(40.0, 0.24, 0.3), 5.0, &mut dice, &bridge)
+            .expect("the bridge");
+        assert_eq!(on_bridge.len(), 18);
+        assert!(on_bridge.iter().all(|piece| piece.at.y.abs() <= 1.0 && piece.ground == 0.24), "{on_bridge:?}");
+        // At the very edge of an island: on the island.
+        let shore = |at: Vec2| (at.x <= 0.0).then_some(0.25);
+        let mut held: Purse = [0, 0, 10, 10];
+        let ashore = Mint::new(0.0, &mut steady(0.5))
+            .spill(&mut held, Vec3::new(-0.2, 0.25, 7.0), 5.0, &mut dice, &shore)
+            .expect("the island");
+        assert!(ashore.len() == 20 && ashore.iter().all(|piece| piece.at.x <= 0.0), "{ashore:?}");
+        // Beside a stand: not onto its roof, which is no step up.
+        let stand = |at: Vec2| Some(if at.x > 1.0 { 3.0 } else { 0.25 });
+        let mut held: Purse = [0, 0, 10, 0];
+        let by_stand = Mint::new(0.0, &mut steady(0.5))
+            .spill(&mut held, Vec3::new(0.5, 0.25, 0.0), 5.0, &mut dice, &stand)
+            .expect("the ground");
+        assert!(by_stand.iter().all(|piece| piece.at.x <= 1.0 && piece.ground == 0.25), "{by_stand:?}");
+        // Killed at the top of a jump, they drop onto the ground under
+        // them all the same.
+        let mut held: Purse = [0, 0, 2, 0];
+        let jumping = Mint::new(0.0, &mut steady(0.5)).spill(&mut held, feet + Vec3::Y * 1.6, 5.0, &mut dice, &flat);
+        assert!(jumping.is_some_and(|dropped| dropped.len() == 2 && dropped[0].ground == 0.25));
+        // Out over the void there is nowhere for any of it to lie:
+        // nothing is dropped, and they hold what they held, to go as it
+        // does with a fall. Nor from under an island, falling past it.
+        let mut held: Purse = [4, 4, 4, 4];
+        let mut empty = Mint::new(0.0, &mut steady(0.5));
+        assert_eq!(empty.spill(&mut held, feet, 5.0, &mut dice, &|_| None), None);
+        assert_eq!(empty.spill(&mut held, feet - Vec3::Y * 3.0, 5.0, &mut dice, &flat), None);
+        assert_eq!((held, empty.pieces().len()), ([4, 4, 4, 4], 0));
+        // Holding neither, on land: nothing dropped, and nothing to hand
+        // anyone.
+        let mut held: Purse = [9, 9, 0, 0];
+        assert_eq!(empty.spill(&mut held, feet, 5.0, &mut dice, &flat), Some(Vec::new()));
+        assert_eq!(held, [9, 9, 0, 0]);
+        // What lies on a plank goes with the plank; what lies on land
+        // stays, and so does whatever a generator made, wherever.
+        let mut both = Mint::new(0.0, &mut steady(0.5));
+        both.run(1000.0, &[0; ARENA_TEAMS], &mut steady(0.5));
+        let made = both.pieces().len();
+        assert!(made > 0);
+        let mut held: Purse = [0, 0, 6, 0];
+        let lying = both.spill(&mut held, Vec3::new(40.0, 0.24, 0.0), 1000.0, &mut dice, &bridge).expect("the bridge");
+        assert_eq!(both.shed(&|_| true), Vec::new());
+        let gone = both.shed(&|at| at.x < 40.0);
+        assert_eq!(gone.len(), lying.iter().filter(|piece| piece.at.x >= 40.0).count());
+        assert!(!gone.is_empty() && gone.len() < lying.len() && gone.iter().all(Piece::dropped));
+        assert_eq!(both.shed(&|_| false).len(), lying.len() - gone.len());
+        assert_eq!(both.pieces().len(), made);
     }
 }

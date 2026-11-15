@@ -12,29 +12,30 @@
 The entries of the log below, in its order (the newest dated work first,
 then the game as it was first made). Search for an entry by its first words.
 
-1. Since the night of 2026-11-15 a seat in a game waits for whoever's connection has gone, and they are put back in it; a stick of dynamite takes the w...
-2. Since the small hours of 2026-11-15 the team you begin on is thrown for each game, each team's island is lined in its colour on the minimap, and yo...
-3. Later on the night of 2026-11-14 the two shops and the panel that says you are out are drawn as the friends' panel is
-4. Since the night of 2026-11-14 a plank is a tenth wider than Hajun's and not a quarter, whoever kills someone has their sapphire and amethyst, and the comp...
-5. Since the evening of 2026-11-14 there is a Leap Potion and a faster builder to buy, a drink shows, a potion that is on leaves sparks, the bridge is...
-6. Since the small hours of 2026-11-14 the dynamite's arch rises and falls and leans to neither side, with an X where it will land; its fuse is seen t...
-7. Since the night of 2026-11-13 there is dynamite, which cuts bridges; the computer's players no longer fall for three easy tricks, and are not all a...
-8. Later on 2026-11-13: the compass's arrow points out, the anchors are their teams' colours, and the computer's players fill their buttons, each as i...
-9. Since 2026-11-13 there are five buttons for things to use, and you hold several kinds at once
-10. Since late on the night of 2026-11-12 each of the computer's players is someone, a knock no longer stuns them, and no two fights with them go the s...
-11. Since the night of 2026-11-12 the computer's players play the game
-12. Since the evening of 2026-11-12 every game online is 2v2v2v2, people teamed up with each other first and the computer in every seat left
-13. Later on 2026-11-12: dying loses everything you hold, what is aimed is seen over the void, and a sword is held on its edge and cut downward
-14. Since 2026-11-12 Bridge Wars has two shops, and everything in Hajun's file is in the game
-15. Since the night of 2026-11-11 Bridge Wars has generators, a shop and a timetable
-16. Since the night of 2026-11-08 Bridge Wars is the server's online, eight to a game in four teams of two, with respawn anchors and bridges you build
-17. The gamepad down the right edge opens the game selector
-18. Bridge Wars
-19. The fight
-20. Online, a game of Bridge Wars is a room of your own
-21. The camera is fixed straight down over you only in the arena
-22. In the arena the buttons are Hajun's `pvpmapbuttonui.jpg`
-23. Falling off the map
+1. Later on the night of 2026-11-15 a stick of dynamite is 1 amethyst and the falling it starts quickens to a little over a run; and whoever dies on land dr...
+2. Since the night of 2026-11-15 a seat in a game waits for whoever's connection has gone, and they are put back in it; a stick of dynamite takes the w...
+3. Since the small hours of 2026-11-15 the team you begin on is thrown for each game, each team's island is lined in its colour on the minimap, and yo...
+4. Later on the night of 2026-11-14 the two shops and the panel that says you are out are drawn as the friends' panel is
+5. Since the night of 2026-11-14 a plank is a tenth wider than Hajun's and not a quarter, whoever kills someone has their sapphire and amethyst, and the comp...
+6. Since the evening of 2026-11-14 there is a Leap Potion and a faster builder to buy, a drink shows, a potion that is on leaves sparks, the bridge is...
+7. Since the small hours of 2026-11-14 the dynamite's arch rises and falls and leans to neither side, with an X where it will land; its fuse is seen t...
+8. Since the night of 2026-11-13 there is dynamite, which cuts bridges; the computer's players no longer fall for three easy tricks, and are not all a...
+9. Later on 2026-11-13: the compass's arrow points out, the anchors are their teams' colours, and the computer's players fill their buttons, each as i...
+10. Since 2026-11-13 there are five buttons for things to use, and you hold several kinds at once
+11. Since late on the night of 2026-11-12 each of the computer's players is someone, a knock no longer stuns them, and no two fights with them go the s...
+12. Since the night of 2026-11-12 the computer's players play the game
+13. Since the evening of 2026-11-12 every game online is 2v2v2v2, people teamed up with each other first and the computer in every seat left
+14. Later on 2026-11-12: dying loses everything you hold, what is aimed is seen over the void, and a sword is held on its edge and cut downward
+15. Since 2026-11-12 Bridge Wars has two shops, and everything in Hajun's file is in the game
+16. Since the night of 2026-11-11 Bridge Wars has generators, a shop and a timetable
+17. Since the night of 2026-11-08 Bridge Wars is the server's online, eight to a game in four teams of two, with respawn anchors and bridges you build
+18. The gamepad down the right edge opens the game selector
+19. Bridge Wars
+20. The fight
+21. Online, a game of Bridge Wars is a room of your own
+22. The camera is fixed straight down over you only in the arena
+23. In the arena the buttons are Hajun's `pvpmapbuttonui.jpg`
+24. Falling off the map
 
 ## Games: the gamepad opens a selector, and Bridge Wars is the PvP map
 
@@ -64,6 +65,199 @@ was the town itself; everything below about the map, its islands, the
 void, the punch's knockback and its range held for the town then, and
 holds for the arena now.
 
+- **Later on the night of 2026-11-15 a stick of dynamite is 1 amethyst and
+  the falling it starts quickens to a little over a run; and whoever dies
+  on land drops their sapphire and amethyst, for whoever walks into them**
+  (two messages from Hajun; a third, of the chat's height, is in
+  `docs/chat-and-text.md`; "dont rebuild apk or push yet. just change",
+  and an hour on, "build apk and push to git"; and two more as that was
+  being done, of the computer's players taking what is dropped and of a
+  moment before anyone can, which are in it). **`PROTOCOL_VERSION` 18.
+  The server has all of it since 15:35 UTC on 2026-11-15** (00:35 on the
+  16th here; deployed at 15:07 without the last two; the binaries before
+  kept on the VM as `roundtown-server.prev-2026-11-16` and `16b`), **and
+  APK 36** (built, not installed: no phone was attached;
+  `docs/building.md`). An app from before is told to update and stays
+  offline: an iPhone needs the next build, `ios-1.0.2-18`, whose tag is
+  Hajun's to ask for.
+  `shared/src/lib.rs`, `nav.rs`, `bots.rs`; `server/src/arena.rs`;
+  `src/arena.rs`, `loot.rs`, `market.rs`; `bridgewarsgameevent.md`.
+  - **A stick of dynamite is 1 amethyst** ("change the price of dynamite
+    from 2 amethyst to 1 amethyst"; `bridge_wars::price`, and the line in
+    Hajun's file). It was 2 for a day.
+  - **The falling sets out at the pace it had and quickens**
+    (`bridge_wars::cascade_after`, which `Nav::cascade` asks; `CASCADE_SPEED`
+    6 m a second, faster by `CASCADE_QUICKENS` 2 with every second, up to
+    `CASCADE_TOP` 12, a fifth faster than a run; `CASCADE_WAIT` 0.6 s
+    still). "increase the speed of the dynamite's bridge explosion
+    cascading so that it matches player's full speed running so that u need
+    to run full speed to barely or even fail to escape the falling bridge.
+    i guess the destruction cascade can start at the current speed but
+    accelerate slightly (but not too much). make it so its rare to fall off
+    a bridge if you react right away and u start running toward safety, but
+    if its a very long bridge then i guess even if u react right away and u
+    run full speed and ur rllly far from land then ok u will still fail to
+    reach land." At 6 all the way, anyone at a run left it behind, by three
+    seconds at the far end of a bridge to the middle.
+    - **What it comes to**, for someone at a run (10) on a bridge from an
+      island to the middle blown at one end (a rule's test works these
+      out: how long each may take to set off and still be off every plank
+      on their way before it goes). Right beside the hole: three quarters
+      of a second, which is what the plank they stand on gave them before
+      (the first plank goes when it did), and they step ashore with the
+      falling under a second behind. Three planks along: a second. Half
+      way along: two and a half. Carrying a plank, at a builder's pace:
+      not from beside the hole. It is at a run's pace two seconds in, 16
+      m from the hole, and at its fastest a second after, 27 m from it;
+      from there it gains two metres on a runner every second. Beside the
+      hole with 60 m to the shore, half a second is too long; with 85,
+      nobody gets there. A bridge to the middle, 28 planks, is gone 4.5 s
+      after the blast where it took 6.6.
+    - **Seen in the desktop build**, scripted, offline: a bridge built to
+      the middle, you a plank from where a stick thrown back at the
+      island's end blows (it took four planks; 24 to fall), and a run for
+      the middle begun so long after the blast, 38 m. Begun 0.4 s after:
+      ashore with two planks still standing behind you. 0.7 s after:
+      ashore as the last plank goes. 1.0 s after: the first plank goes
+      from under you as you set off, you catch the next (a body steps up
+      under half a metre), and the falling has you three metres short of
+      the middle. From the camera over you the falling is off the foot of
+      the screen at first and at your heels by the end.
+    - **The computer's players** go by each plank's own time
+      (`Nav::escape`), so they run as before; they take in that the planks
+      are going as slowly as they did (`FALL_WAKES`).
+  - **Whoever dies on land drops their sapphire and amethyst**
+    (`bridge_wars::Mint::spill`; the server's `Game::drop_spoils`, and
+    `arena::Game::slain`, `arena::drop_spoils` in a game played offline).
+    "also i think right now you just get the sapphire and amethyst
+    automatically into ur balance after killing, regardless of whether it
+    was a fall off the world kill or a land-hp kill. i think if its a
+    land-hp kill where they die on land, they should drop the sapphires and
+    amethyst like small scatter explosion from their dead body location
+    like mineraft dropping items on death, and u only get it if u pick it
+    up. but items shouldnt scatter to location where they would fall off
+    the map."
+    - **The rule.** Killed where they stand, by a hand, a sword or a
+      blast, a thing for each sapphire and each amethyst they held is
+      thrown out from the middle of them, to come down 0.8 to 2.4 m off
+      (`SPILL_NEAR`, `SPILL_FAR`), of eight places at random the one
+      furthest from the rest, half a second in the air (`TOSS_SECS`,
+      `toss`), and lies there as what a generator makes lies on its pad,
+      for whoever walks within the magnet's reach of it. Their silver and
+      gold go with them as before.
+    - **Nobody has any of it until it has come down and lain 0.3 s**
+      (`SPILL_LIES`; `SPILL_WAIT` 0.8 s after the death in all,
+      `Piece::lying`). Hajun, as the first of this was being built into
+      the APK: "also killing someone so ur already near them so u might
+      pick it up right away too fast for it to be visible that they
+      dropped sth - make sure that there is a very small delay before u
+      can pick it up so u can atleast see very quickly before u pick it up
+      rather than instantly picking it up." Until then a thing was whoever
+      stood there's the moment it came down, never seen lying. Seen in
+      the desktop build, standing a step from the dead, a picture every
+      twentieth of a second: the stones out for half a second, lying for
+      three tenths, and then the four within reach to you.
+      Of more than ten of one (`SPILL_MOST`), ten things, the count shared
+      out among them (`Piece::worth`), each drawn bigger.
+    - **Only onto ground**: where a body can walk and what it would walk
+      on is staying, the land or a plank of a bridge no blast has doomed
+      (`Nav::stays_at`, `Nav::ground`), no more than a step over their
+      feet (not onto a stand's roof). At an island's edge it all comes
+      down on the island; on a bridge, on its planks.
+    - **Knocked off the world, it is the killer's as before**
+      (`Game::hand_spoils`, `spoils`); and so it is with nowhere for it to
+      lie: killed out over the void, or on a bridge that is coming down.
+      A stick of dynamite takes its planks before it hurts anyone now, on
+      the server and offline, so whoever it kills on the bridge it lands
+      on has died on nothing that is staying, and the thrower has what
+      they held.
+    - **What lay on a plank goes with the plank** (`Mint::shed`), at a
+      blast and as each doomed plank falls: nobody's.
+    - **On the wire**: a `Loot` says whether it was dropped, and then from
+      where, onto how high, and how many it is (`Loot::spilt`, `Spilt`),
+      which is the new protocol number. Nothing else is sent: the room
+      has the purses as ever.
+    - **What you see** (`src/loot.rs`): the stones fly out from where the
+      body was and settle round it in half a second, then bob and turn as
+      on a pad; taken, each flies to whoever took it; the counts top left
+      go up as you walk over them. One whose plank has gone drops away.
+    - **The computer's players** drop theirs as anyone, take whatever of
+      it they walk into, whatever they were saving for (they take from a
+      pad only what their purchases need), and go for it: the nearest of
+      it within what each would go for just now (`SPOILS_WITHIN`, 8 to 30
+      m, thrown again while something lies out of that), as
+      `Goal::Fetch`, under a fight and over their pads. Not onto a bridge
+      that is coming down.
+    - **And one that is by as someone dies takes what they dropped before
+      it goes on** (`Squad::mind_spoils`, `Grab`; Hajun: "does the ai
+      collect the loot after they kill someone? if not they should.").
+      Counted over 300 games as it was then: whoever killed someone had
+      some of what they dropped within six seconds after half of their
+      kills (918 of 1,842) and after two in three at all; the killer had
+      44% of all that was dropped, and a fifth of it lay there. A raider
+      went on for the anchor past it: a raid it is on outbids something to
+      fetch. Now, with something dropped no further off than it goes for
+      such things this time (5 to 10 m, `GRAB_WITHIN`), on ground that is
+      staying and a straight walk away, it walks to it, stands by it for
+      the moment it cannot be had, and on to the next, until none is left
+      or it has given it 4 to 9 s (`GRAB_LASTS`); and then goes on with
+      what it was about, which is as it was. Not every time (93 in a
+      hundred, `GRAB_ODDS`), not with someone of another team within 3.5
+      to 7 m (`GRAB_CLEAR`): the fight first; nor in one, with a plank in
+      its arms or a bridge to lay. Each thrown again for every death.
+      **After**: within six seconds after 79% of their kills (1,477 of
+      1,881), half of what the killer takes 0.9 s after the death and
+      nine tenths by 1.6 s; the killer has 66% of all that is dropped,
+      their teammate 13%, the dead's side 7%, another team 3%, and 12%
+      lies there.
+    - **Measured**, 300 whole games of eight of them (`RT_GAMES=300`, seeds
+      100 to 399), with all of the above: 6.3 deaths on land a game
+      dropped 22.6 sapphires and amethysts between them, of which 19.9
+      were picked up and none went with a bridge. Sticks of dynamite 1.2 a
+      game → 2.4, bridges brought down 1.15 → 2.32, at least one in 251
+      games of 300; 0.11 of them a game fell with a bridge → 0.20. Anchors
+      broken by punches before ten minutes 1.93 → 1.77; over at 666 s →
+      674; no draws; nobody held fast, nobody walked off an edge. Wins by
+      island 75, 69, 68, 88.
+    - **Seen in the desktop build**, scripted, offline, from the game's
+      own camera: one of the computer's players killed by a punch a
+      metre and a half from its island's edge with 7 and 3 on it: ten
+      stones burst out and lie round where it stood, on the island, none
+      past the edge; walking to where it died took the four and two
+      within reach, 60 and 60 top left to 64 and 62. Another with 25
+      sapphires and an amethyst: ten bigger stones and a small one; walked
+      over, 17 of the 25 with them.
+  - **Checked**: the shared rules' tests (90: three new, the falling's
+    pace and what it leaves a runner; what is dropped, where, what it is
+    not dropped onto and when it can be had; a bot going for it, from a
+    way off and from beside the dead on its way after someone else, 17
+    times of 20 with all of it inside five seconds), the server's (56: one new,
+    killed on land, on a bridge, on a falling bridge, by a zombie, by a
+    stick on its own bridge), the game's (316: the offline kill, the
+    shop's card). Whole games and the desktop build as above.
+  - **Online**, before the deploy, a server on this PC and one scripted
+    copy in a game of eight on it: a thing the server dropped was sent,
+    drawn flying from the dead to where it lay, and gone once someone had
+    it; a stick's bridge fell at the new pace. And on the VM after it, as
+    this PC's own account, a game with seven of the computer's: the same,
+    a thing and then four (`docs/building.md`).
+  - **Not checked**: on a phone; by hand; a person's own death and
+    pick-up online (the copy stood at home and held nothing to drop; the
+    server's test has both).
+  - **Mine**: 2 m a second each second, and 12 at the fastest; that any
+    death on land drops, a zombie's kill and your own team's blast among
+    them; that anyone may pick it up, the dead's team and the dead
+    themselves once they stand again; nothing dropped out over the void
+    or on a falling bridge, and the killer has it then; the planks before
+    the people at a blast; every number of the scatter; ten things of a
+    kind at the most, the bigger for being more; that it lies until
+    someone has it, however long; how far a bot goes for it; 0.3 s lying
+    before it can be had; and of a bot beside the dead, every number,
+    that it is a step aside from what it was about and not a new thing to
+    be about, and that someone of another team upon it comes first.
+  - **Known**: a stone whose plank has gone, with someone standing
+    within four metres, is drawn flying to them, as any thing that is
+    taken is; they do not have it.
 - **Since the night of 2026-11-15 a seat in a game waits for whoever's
   connection has gone, and they are put back in it; a stick of dynamite
   takes the whole bridge down, plank by plank, and costs 2 amethyst; and
@@ -77,7 +271,8 @@ holds for the arena now.
   as `roundtown-server.prev-2026-11-15b`), **and APK 35** (built, not
   installed: no phone was attached). An app from before is told to
   update and stays offline: an iPhone needs the next build, `ios-1.0.2-17`,
-  whose tag is Hajun's to ask for. Asked for as "build apk and push to
+  whose tag was pushed that night at Hajun's word ("push the ios tag");
+  whether it built is not known here. Asked for as "build apk and push to
   git", the three things done.
   - **Checked on the VM after the deploy**, as this PC's own account: a
     game with seven of the computer's, the app put away for 4 s and for
