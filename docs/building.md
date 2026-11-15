@@ -66,7 +66,15 @@ alone; the server is `cargo build -p roundtown_server`. Never `--workspace`,
 which would build the game with the server's half of replicon in it.
 
 Android needs the `release-android` profile, a manual strip step, and Gradle
-(`versionCode` in `mobile/android/app/build.gradle` is the build number: 33
+(`versionCode` in `mobile/android/app/build.gradle` is the build number: 34
+in the afternoon of 2026-11-15, nothing to see or play in it: less work for
+the same picture, for a cooler phone (Bevy's own systems with one worker,
+the lamps' cells only while a lamp is lit, no sound output while there is
+no sound, the world drawn in one pass, and on an iPhone only one of the
+render world's schedules on Bevy's executor; the first entry of
+`docs/rendering-and-frame-rate.md`). Protocol 16 still, nothing of
+`shared/` or `server/` changed, so no deploy. Built and not installed, and
+put over APK 33; 33
 in the small hours of 2026-11-15: a team thrown for each game of Bridge
 Wars, each team's island lined in its colour on the minimap, your name top
 left in your team's colour, the chat two lines and a half with none faded

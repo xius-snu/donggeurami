@@ -430,6 +430,45 @@ scripted runs (the game saving its own screenshots at a pinned
 
 ---
 
+## The world in one pass (2026-11-15)
+
+`src/pass.rs` draws the solid things and the see-through things in one
+render pass, and lets the four samples a pixel and the depth go at its end,
+where Bevy 0.19 draws them in two passes and keeps both between and after
+(`docs/rendering-and-frame-rate.md`, first entry, has why, and what was
+compared). On the desktop the picture is the same. **It has not been seen
+on the phone**, and a GPU that draws a tile at a time, a phone's, is the
+only kind it changes anything for.
+
+What to look for on the device, by day and at night, in the town and in a
+game of Bridge Wars:
+
+- the sea, the pond, the clouds, the sun's glow, the fountain's water, the
+  punch's range and a potion's sparks all there: they are the see-through
+  things, the ones the Adreno dropped once, for another reason (above);
+- no black, stale or flickering squares anywhere (a tile whose picture was
+  not kept);
+- the buttons and the chat over the world as before.
+
+If any of it is wrong, `pass::ONE_PASS = false` gives Bevy's two passes
+back: try that before blaming anything else. To see what it saves, the
+loop above ("Measuring performance on the phone"): `gpu_busy_percentage`
+by `clock_mhz` over the frame rate, with `ONE_PASS` on and off, at the same
+temperature.
+
+What comes with it:
+
+- Anything that reads the depth, or the four samples, after the world is
+  drawn has to be looked at in `pass.rs` first: a second camera on the
+  window, depth of field, Bevy's atmosphere, screen-space reflections, a
+  depth prepass read back. A material with Transmission and
+  order-independent transparency are seen to (`pass::apart`: Bevy's two
+  passes come back for a frame that has either).
+- The samples are let go only where there are samples: with MSAA off, what
+  the pass draws into is the picture itself, and it is kept.
+
+---
+
 ## Build gotchas
 
 - Use the **`release-android`** profile, not `release`. NDK + thin LTO is slow

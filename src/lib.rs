@@ -10,10 +10,12 @@
 //! both reach [`main`] through `src/main.rs`; on iOS that binary *is* the app
 //! executable, which `mobile/ios/build_rust.sh` drops into the .app bundle.
 
+use bevy::app::{PluginGroupBuilder, TaskPoolOptions, TaskPoolPlugin, TaskPoolThreadAssignmentPolicy};
+use bevy::audio::AudioPlugin;
 use bevy::gilrs::GilrsPlugin;
 use bevy::gltf::GltfPlugin;
 use bevy::gltf::convert_coordinates::GltfConvertCoordinates;
-use bevy::light::cluster::GlobalClusterSettings;
+use bevy::light::cluster::{ClusterConfig, GlobalClusterSettings};
 use bevy::log::LogPlugin;
 use bevy::prelude::*;
 use bevy::render::view::NoIndirectDrawing;
@@ -52,6 +54,7 @@ mod market;
 mod net;
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 mod pace;
+mod pass;
 mod quick;
 mod range;
 mod roads;
@@ -1301,45 +1304,16 @@ fn hud_layout(window: &Window, layout: hud::Layout) -> HudLayout {
 #[bevy_main]
 pub fn main() {
     let mut app = App::new();
-    app.add_plugins(
-        DefaultPlugins
-            .set(WindowPlugin {
-                primary_window: Some(window_settings()),
-                ..default()
-            })
-            .set(GltfPlugin {
-                // glTF calls +Z "forward"; Bevy calls -Z "forward". Without this
-                // every imported model faces the opposite way from the Transform
-                // that carries it. Turning it on means an object modelled facing
-                // -Y in Blender (Numpad 1, the standard front view) also faces
-                // `Transform::forward()` here.
-                convert_coordinates: GltfConvertCoordinates {
-                    rotate_scene_entity: true,
-                    rotate_meshes: true,
-                },
-                ..default()
-            })
-            // The town reads no gamepad. Left in, this wakes a thread every
-            // 8 ms on Windows to look for controllers. Put it back when there
-            // is a use for it.
-            .disable::<GilrsPlugin>()
-            .set(LogPlugin {
-                // An iPhone keeps its log where only a Mac can read it, so it
-                // writes one of its own as well, which the Files app shows.
-                #[cfg(target_os = "ios")]
-                custom_layer: log_file::in_documents,
-                ..default()
-            }),
-    )
-    .init_resource::<TouchControls>()
-    .init_resource::<OrbitCamera>()
-    .init_resource::<CameraAssist>()
-    .init_resource::<CloseUp>()
-    .add_message::<PunchPressed>()
-    .add_message::<Hit>()
-    .add_message::<Landed>()
-    .add_message::<Swung>()
-    .add_systems(Startup, (setup_world, cluster_lights_on_the_cpu));
+    app.add_plugins(plugins())
+        .init_resource::<TouchControls>()
+        .init_resource::<OrbitCamera>()
+        .init_resource::<CameraAssist>()
+        .init_resource::<CloseUp>()
+        .add_message::<PunchPressed>()
+        .add_message::<Hit>()
+        .add_message::<Landed>()
+        .add_message::<Swung>()
+        .add_systems(Startup, (setup_world, cluster_lights_on_the_cpu));
     // The font everything is written in, Inter, in place of Bevy's own:
     // before anything that draws a word.
     font::plugin(&mut app);
@@ -1352,6 +1326,8 @@ pub fn main() {
     sky::plugin(&mut app);
     // The street lamps, lit through the night.
     lamps::plugin(&mut app);
+    // The world in one pass on the GPU, where Bevy takes two.
+    pass::plugin(&mut app);
     island::plugin(&mut app);
     // The town's fountain, running, and its jet.
     fountain::plugin(&mut app);
@@ -1482,6 +1458,84 @@ pub fn main() {
     app.run();
 }
 
+/// Bevy's own plugins, as the game has them.
+fn plugins() -> PluginGroupBuilder {
+    let plugins = DefaultPlugins
+        .set(WindowPlugin {
+            primary_window: Some(window_settings()),
+            ..default()
+        })
+        .set(GltfPlugin {
+            // glTF calls +Z "forward"; Bevy calls -Z "forward". Without this
+            // every imported model faces the opposite way from the Transform
+            // that carries it. Turning it on means an object modelled facing
+            // -Y in Blender (Numpad 1, the standard front view) also faces
+            // `Transform::forward()` here.
+            convert_coordinates: GltfConvertCoordinates {
+                rotate_scene_entity: true,
+                rotate_meshes: true,
+            },
+            ..default()
+        })
+        // The town reads no gamepad. Left in, this wakes a thread every
+        // 8 ms on Windows to look for controllers. Put it back when there
+        // is a use for it.
+        .disable::<GilrsPlugin>()
+        .set(LogPlugin {
+            // An iPhone keeps its log where only a Mac can read it, so it
+            // writes one of its own as well, which the Files app shows.
+            #[cfg(target_os = "ios")]
+            custom_layer: log_file::in_documents,
+            ..default()
+        })
+        // One worker for the loops Bevy's own systems hand out, where it
+        // would start one for every core left over (`worker_threads`).
+        .set(TaskPoolPlugin {
+            task_pool_options: worker_threads(),
+        });
+    // With nothing to hear, Bevy's audio is left out: it opens the device's
+    // sound output as it starts and plays silence into it for as long as the
+    // app is up, which keeps a thread of the app's, and the phone's own
+    // sound hardware, awake every few milliseconds for a game that makes no
+    // sound. It comes back with the music (`sound::PLAYING`).
+    if sound::PLAYING {
+        plugins
+    } else {
+        plugins.disable::<AudioPlugin>()
+    }
+}
+
+/// How many threads Bevy starts for work handed out: one for what its own
+/// systems split up (its "compute" pool), where it would start one for every
+/// core left over, and the rest as Bevy has them (for reading files and for
+/// what runs in the background, both idle once the game has loaded).
+///
+/// Bevy's own systems hand their loops out to the compute pool a dozen and
+/// more times a frame (`par_iter`: placing transforms, finding what is in
+/// sight, handing meshes to the renderer), a few entities to a worker. This
+/// world is small, so each time several cores were woken for a few
+/// microseconds' work and put to sleep again. Measured on the laptop
+/// (2026-11-15, the town by day at 60 frames a second, an optimized build):
+/// its eight workers took 13% of all the processor's work the game was, 2.5
+/// of 19.5 million cycles a frame; the one, 0.55 of 16.8, the loops
+/// themselves costing less where they are asked for than the waking did
+/// (`docs/rendering-and-frame-rate.md` has the numbers). With one worker
+/// Bevy runs such a loop on the thread that asks. Not none: Bevy's
+/// transform system counts on there being one (it would spawn one task
+/// fewer than there are workers, and none fewer than none is not none).
+fn worker_threads() -> TaskPoolOptions {
+    TaskPoolOptions {
+        compute: TaskPoolThreadAssignmentPolicy {
+            min_threads: 1,
+            max_threads: 1,
+            percent: 1.0,
+            on_thread_spawn: None,
+            on_thread_destroy: None,
+        },
+        ..default()
+    }
+}
+
 /// Runs every schedule's systems one after another, on the thread that runs
 /// the schedule, instead of handing them out to Bevy's pool of worker threads.
 ///
@@ -1490,30 +1544,38 @@ pub fn main() {
 /// four workers took 72% of a core between them; with this the whole game
 /// took 87% of a core instead of 121% (the laptop: 46% instead of 87%), and
 /// both still made every frame. The game world and the render world still run
-/// side by side, on a thread each, and systems that split their own work
-/// across the pool (`par_iter`) still do.
+/// side by side, on a thread each. (Systems that split their own work
+/// across the pool, `par_iter`, went on doing so until 2026-11-15: see
+/// `worker_threads`.)
 fn one_thread_per_world(app: &mut App) {
-    use bevy::ecs::schedule::{Schedules, SingleThreadedExecutor};
-    fn each_schedule(world: &mut World) {
+    use bevy::ecs::schedule::{InternedScheduleLabel, ScheduleLabel, Schedules, SingleThreadedExecutor};
+    fn each_schedule(world: &mut World, but: Option<InternedScheduleLabel>) {
         for (_, schedule) in world.resource_mut::<Schedules>().iter_mut() {
-            schedule.set_executor(SingleThreadedExecutor::new());
+            if Some(schedule.label()) != but {
+                schedule.set_executor(SingleThreadedExecutor::new());
+            }
         }
     }
-    each_schedule(app.world_mut());
-    // Before `app.run()` moves the render world onto its own thread. Not on
-    // an iPhone, nor a Mac: there one of the render world's systems has to run
-    // on the main thread, the one that makes the window's surface, which
-    // touches its UIView. Bevy's own executor hands such a system back to the
-    // main thread, and one thread cannot: it ran on the render thread, which
-    // panicked on the first frame ("can only access UIView on the main
-    // thread"), Bevy asked to quit, iOS does not let an app, and 1.0.1 to
-    // 1.0.3 opened on a black screen and stayed there (2026-10-08, read off
-    // the phone's own log.txt).
-    #[cfg(not(target_vendor = "apple"))]
-    {
-        if let Some(render) = app.get_sub_app_mut(bevy::render::RenderApp) {
-            each_schedule(render.world_mut());
-        }
+    each_schedule(app.world_mut(), None);
+    // Before `app.run()` moves the render world onto its own thread. On an
+    // iPhone, and a Mac, one of the render world's schedules keeps Bevy's
+    // own executor, `Render`: one of its systems has to run on the main
+    // thread, the one that makes the window's surface, which touches its
+    // UIView (`create_surfaces`, the only system of the render world's that
+    // asks for the main thread). Bevy's own executor hands such a system
+    // back to the main thread, and one thread cannot: it ran on the render
+    // thread, which panicked on the first frame ("can only access UIView on
+    // the main thread"), Bevy asked to quit, iOS does not let an app, and
+    // 1.0.1 to 1.0.3 opened on a black screen and stayed there (2026-10-08,
+    // read off the phone's own log.txt). Until 2026-11-15 every schedule of
+    // the render world kept Bevy's executor there; the others (what is
+    // taken over from the game world each frame, which runs on the main
+    // thread, and the camera's passes, which `Render` runs from the render
+    // thread) have no such system and run on one thread as everywhere else.
+    // Not run on an iPhone yet.
+    let kept = cfg!(target_vendor = "apple").then(|| bevy::render::Render.intern());
+    if let Some(render) = app.get_sub_app_mut(bevy::render::RenderApp) {
+        each_schedule(render.world_mut(), kept);
     }
 }
 
@@ -1591,9 +1653,12 @@ fn setup_world(mut commands: Commands) {
         // told which street lamps reach it (`lamps`), so that a spot is lit
         // by the few lamps near it rather than every lamp in sight. Until the
         // lamps (2026-10-16) the world had no light to sort, and the camera
-        // had one cell, `ClusterConfig::Single`. Not `ClusterConfig::None`:
-        // Bevy 0.19 then fails to create its "clustering dummy texture" and
-        // quits on the first frame.
+        // had one cell, `ClusterConfig::Single`; since 2026-11-15 it has one
+        // again whenever no lamp is lit, and Bevy's own, as here, while any
+        // is (`lamps::light_the_lamps`, which changes this). Not
+        // `ClusterConfig::None`: Bevy 0.19 then fails to create its
+        // "clustering dummy texture" and quits on the first frame.
+        ClusterConfig::default(),
     ));
 }
 
@@ -3580,6 +3645,37 @@ fn behind_you(orbit: &OrbitCamera, player: &Transform, look_up: f32, distance: f
     camera.look_at(focus, Vec3::Y);
     camera.rotate_local_x(LOOK_UP_EXTRA_PITCH * look_up);
     camera
+}
+
+#[cfg(test)]
+mod plugin_tests {
+    use super::*;
+
+    #[test]
+    fn bevys_own_systems_have_one_worker_to_hand_their_loops_to() {
+        let threads = worker_threads();
+        // One, and not none: Bevy's transform system counts on one.
+        assert_eq!((threads.compute.min_threads, threads.compute.max_threads), (1, 1));
+        // The others as Bevy has them.
+        let bevy = TaskPoolOptions::default();
+        assert_eq!(
+            (threads.io.min_threads, threads.io.max_threads, threads.io.percent),
+            (bevy.io.min_threads, bevy.io.max_threads, bevy.io.percent)
+        );
+        assert_eq!(
+            (threads.async_compute.min_threads, threads.async_compute.max_threads, threads.async_compute.percent),
+            (bevy.async_compute.min_threads, bevy.async_compute.max_threads, bevy.async_compute.percent)
+        );
+    }
+
+    #[test]
+    fn no_sound_is_sent_to_the_device_while_there_is_none_to_hear() {
+        let plugins = plugins();
+        // Left out with the music, back with it; and no gamepad is read.
+        assert_eq!(plugins.enabled::<AudioPlugin>(), sound::PLAYING);
+        assert!(!plugins.enabled::<GilrsPlugin>());
+        assert!(plugins.enabled::<TaskPoolPlugin>());
+    }
 }
 
 #[cfg(test)]

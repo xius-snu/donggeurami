@@ -11,7 +11,7 @@ bundles). It plays online against a server in Seoul (`server/`; `shared/` is
 Bridge Wars. House Builder, the build-battle game, is stalled: keep it
 working, and spend nothing on it unasked.
 
-As of 2026-11-15: `PROTOCOL_VERSION` 16, APK 33 (`versionCode`), the server
+As of 2026-11-15: `PROTOCOL_VERSION` 16, APK 34 (`versionCode`), the server
 deployed that night (16:42 UTC on 2026-11-14) with everything in `server/`
 and `shared/`.
 
@@ -100,8 +100,15 @@ to try again.
   `range::GAIN` 2.5). `ClearColor` is not tonemapped. Bevy 0.19 does not
   apply exposure to `emissive`: a glow is so many times its colour.
 - Lights are clustered on the CPU on every platform
-  (`cluster_lights_on_the_cpu`). Shadows are off (`SUN_SHADOWS`). No real
-  mirrors: every camera gets its own shadow maps.
+  (`cluster_lights_on_the_cpu`), into one cell while no lamp is lit and
+  Bevy's own grid while any is (`lamps::cells`). Shadows are off
+  (`SUN_SHADOWS`). No real mirrors: every camera gets its own shadow maps.
+- **The world is drawn in one pass** (`src/pass.rs`, `ONE_PASS`; since
+  2026-11-15, not yet seen on a phone): the solid things, then the
+  see-through, and neither the four samples nor the depth is kept after
+  it. Anything that reads either once the world is drawn (a second camera
+  on the window, depth of field, a prepass read back) has to be looked at
+  there first.
 - A day and a night pass every 20 minutes by the town's clock (`sky.rs`;
   `RT_TIME_OF_DAY=day|sunset|night|sunrise|<seconds>` stops it). One
   directional light is sun and moon. The sky hangs from a `SkyDome` that
@@ -123,7 +130,10 @@ to try again.
   (`set_if_neq`, or compare first). Writing a `Transform` re-poses a
   skeleton; writing a UI `Node` lays the whole screen out again.
 - Every schedule runs on one thread (`one_thread_per_world`), except the
-  render world on iPhone and Mac. The gamepad plugin is off.
+  render world's `Render` schedule on iPhone and Mac; and Bevy's own
+  systems have one worker to split their loops over (`worker_threads`).
+  The gamepad plugin is off, and Bevy's audio while the music is
+  (`sound::PLAYING`): a new sound needs that turned on.
 - The phone draws at three quarters size: `RENDER_SCALE` 0.75 is in both
   `MainActivity` and `src/lib.rs`; keep the two the same.
 
@@ -329,7 +339,8 @@ to try again.
   by tapping (`src/editor.rs`), offline only. The edit menu's buttons stay
   on the object: never clamp them to the screen.
 - The balance is the server's online (Postgres); only House Builder's fee
-  and prizes change it. The music is turned off (`sound::PLAYING`).
+  and prizes change it. The music is turned off (`sound::PLAYING`), and
+  Bevy's audio with it.
 - Settings (`src/settings.rs`): Graphics and Controls are empty; Accounts
   has your name on a row with a pencil (Edit name, a box over the window),
   sign-in buttons that do nothing yet, and Delete account, which asks once

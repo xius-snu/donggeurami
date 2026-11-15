@@ -44,6 +44,7 @@
 //! light is until it has been painted, a frame or so.
 
 use bevy::gltf::GltfMaterialName;
+use bevy::light::cluster::ClusterConfig;
 use bevy::mesh::VertexAttributeValues;
 use bevy::prelude::*;
 use bevy::world_serialization::WorldInstanceReady;
@@ -266,6 +267,7 @@ fn lamps_of(bulbs: &[Vec3]) -> Vec<Vec3> {
 fn light_the_lamps(
     daylight: Res<Daylight>,
     cameras: Query<&GlobalTransform, With<ThirdPersonCamera>>,
+    mut grids: Query<&mut ClusterConfig, With<ThirdPersonCamera>>,
     mut lamps: Query<(Entity, &Lamp, &ChildOf, &GlobalTransform, &mut PointLight, &mut Visibility)>,
     drawn: Query<&InheritedVisibility>,
     bulbs: Query<(&MeshMaterial3d<StandardMaterial>, &Bulb)>,
@@ -284,6 +286,11 @@ fn light_the_lamps(
         );
         nearest.sort_unstable_by(|a, b| a.0.total_cmp(&b.0));
         nearest.truncate(MOST_LIT);
+    }
+    for mut grid in &mut grids {
+        if let Some(cells) = cells(nearest.len(), &grid) {
+            *grid = cells;
+        }
     }
     for (lamp, source, _, _, mut light, mut visibility) in &mut lamps {
         let lit = nearest.iter().any(|&(_, near)| near == lamp);
@@ -316,6 +323,28 @@ fn light_the_lamps(
     }
 }
 
+/// What the camera's cells should become with `lit` lamps lit, where they
+/// are `now`; `None` if they are right as they are.
+///
+/// The cells are what lights are sorted into, so that a spot is lit by the
+/// few lamps near it rather than every lamp in sight (`setup_world`): Bevy's
+/// own few thousand while any lamp is lit, and one while none is, by day and
+/// wherever there is no lamp. With none lit Bevy made up its few thousand
+/// every frame all the same, for no light to go in them: a twentieth of what
+/// a frame cost the processor (2026-11-15, the town by day: 0.65 to 0.9 of
+/// 17.4 million cycles a frame). The lamps are the only lights there are to
+/// sort; the sun, the moon and the fill never are. With one cell or many
+/// the picture is the same, the cells saying only which lights to look at
+/// where: compared on desktop, by day and by night, to the last pixel.
+fn cells(lit: usize, now: &ClusterConfig) -> Option<ClusterConfig> {
+    let one = matches!(now, ClusterConfig::Single);
+    match (lit == 0, one) {
+        (true, false) => Some(ClusterConfig::Single),
+        (false, true) => Some(ClusterConfig::default()),
+        _ => None,
+    }
+}
+
 /// How a bulb of `material` glows at `strength`, its own ([`Bulb::glow`])
 /// by how far the lamps are on: in its own colour, out by day.
 fn glow(material: &StandardMaterial, strength: f32) -> LinearRgba {
@@ -338,6 +367,18 @@ mod tests {
                 [5.76, 6.04].map(move |up| Vec3::new(x + across, up, z + 0.27 * across.signum()))
             })
             .collect()
+    }
+
+    #[test]
+    fn the_camera_has_one_cell_until_a_lamp_is_lit_and_bevys_own_while_any_is() {
+        let many = ClusterConfig::default();
+        assert!(!matches!(many, ClusterConfig::Single | ClusterConfig::None));
+        // By day, and wherever no lamp is lit: one, and left alone once it is.
+        assert!(matches!(cells(0, &many), Some(ClusterConfig::Single)));
+        assert!(cells(0, &ClusterConfig::Single).is_none());
+        // The first lamp lit brings Bevy's own back, the frame it is lit.
+        assert!(matches!(cells(1, &ClusterConfig::Single), Some(ClusterConfig::FixedZ { .. })));
+        assert!(cells(MOST_LIT, &many).is_none());
     }
 
     #[test]

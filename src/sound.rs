@@ -21,7 +21,7 @@ pub(crate) const MUSIC: &str = "sounds/Pelican Breeze - An Evening at the Bar.mp
 
 /// Whether the music plays at all: off for now (Hajun, 2026-11-02: "just
 /// disable the music from playing temporarily"). Flip it to have it back.
-const PLAYING: bool = false;
+pub(crate) const PLAYING: bool = false;
 
 /// How loud the music plays, of how loud it was made: -30 dBFS on average
 /// (its own is -17.9). It was 0.5 until Hajun found it too loud (2026-10-30).
@@ -32,6 +32,12 @@ const MUSIC_VOLUME: f32 = 0.25;
 struct Music;
 
 pub(crate) fn plugin(app: &mut App) {
+    // With the music off the game makes no sound at all, and Bevy's audio
+    // is left out with it (`main`, in `lib.rs`): no output is opened on the
+    // device to play silence into. Nothing here would find anything to do.
+    if !PLAYING {
+        return;
+    }
     app.add_systems(Startup, play_music)
         .add_systems(Update, (play_again, hush));
 }
