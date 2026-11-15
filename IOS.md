@@ -218,6 +218,34 @@ After that, releases are tag-driven:
 git tag ios-1.0.1 && git push origin ios-1.0.1
 ```
 
+### Before a tag: type-check it on the PC
+
+The Windows PC cannot build the app, but since 2026-11-15 it can check that
+it compiles, in a minute and a half, where a failed Codemagic build costs
+its minutes and a round trip:
+
+```bash
+bash mobile/ios/check_on_windows.sh
+```
+
+That is `cargo check --target aarch64-apple-ios` of the binary and profile
+`build_rust.sh` builds. Every line the iPhone compiles is type- and
+borrow-checked, the ones behind `target_os = "ios"` among them, which no
+other build on the PC reads. **Nothing is linked, signed, bundled or run**:
+a pass says the Rust compiles, not that the app works.
+
+Until then it was held that this could not be done, because three crates
+compile a little C for the iPhone as they are built (blake3, ring,
+tracing-oslog) and want Apple's compiler and SDK. `cargo check` never links
+what they compile, so `mobile/ios/stand_in_cc.rs` stands in for the
+compiler and the archiver and makes empty ones. A crate that read Apple's
+headers as it was built (bindgen) would end this; none does (the audio's
+bindings are objc2's, written out).
+
+It keeps its own `target` in the temporary folder (some 700 MB, safe to
+delete), so the game's own is not disturbed. First used before
+`ios-1.0.2-16`, the first iOS build in 37 commits: no errors.
+
 ---
 
 ## How the build actually works

@@ -73,7 +73,7 @@ use crate::drive::{CarPressed, Driving};
 use crate::island::{Islands, Venue};
 use crate::lobby::{Balance, STARTING_BALANCE};
 use crate::minimap::{Minimap, MinimapNode};
-use crate::safe::KeepsClear;
+use crate::safe::{KeepsClear, RightRoom, StepsIn};
 use crate::signup::Signup;
 use crate::ui::{UiChanged, ui};
 
@@ -165,6 +165,48 @@ const ARENA_DOTS: (f32, f32, f32) = (-1.5, 50.5, 8.0);
 /// the button for things to use that is nearly straight over the sword.
 /// How big and exactly where are mine.
 pub(crate) const CHAT_BUTTON: (f32, f32, f32) = (-2.0, 39.9, 9.0);
+/// The most the chat's small button steps in from the right for a safe area
+/// that reaches it (`safe::StepsIn`), in shares of the short side. It hangs
+/// 2 out of the right of the box round the jump button, half way down the
+/// screen, which is where an iPhone's island lies with the phone held the
+/// other way up: on a 16 Pro the island ends 51 points in and the button
+/// began 44 in, 7 of it under the island (drawn over a window the size of
+/// its screen, 2026-11-15). Its safe area asks for more than this, 24
+/// points, being 11 deeper than the island; this is as far as leaves the
+/// button more than 1.5 clear of the button for things to use that is
+/// nearly straight over the sword, as every button here is of every other,
+/// and it leaves it 4 points clear of that island. The dots, were they put
+/// back, hang as far out, higher up.
+pub(crate) const CHAT_STEPS_IN: f32 = 2.6;
+
+/// How far at the most the bar across the top is moved in from the right
+/// for a camera's hole (`safe::RightRoom`): as far as leaves the things to
+/// say, fanned out of the speech bubble (`quick`), a share of the short
+/// side clear of the buttons down the right edge, which stand at that end
+/// of it. The fan's plates end `quick::RIGHT_END` left of the box round the
+/// jump button, itself `JUMP_RIGHT_VW` of the width in, and the buttons
+/// reach this far in from the edge as they stand. On a phone that is 4.5
+/// shares, 18 points of an iPhone's 52 (2026-11-15: moved the whole way,
+/// the game button lay under "Bye!" and "Good game!"); on a screen as
+/// broad as a tablet's, none. In Bridge Wars the minimap is at that end
+/// and there is no fan; it is moved the same, so that the bar is one
+/// thing.
+pub(crate) fn bar_room() -> RightRoom {
+    RightRoom {
+        vw: crate::JUMP_RIGHT_VW,
+        vmin: crate::quick::RIGHT_END - (EDGE + SIDE_INSET + SIDE_BUTTON) - 1.0,
+    }
+}
+
+/// How the chat's small button keeps clear of a camera's hole on its side
+/// of the screen: from where it stands, in the box round the jump button.
+fn chat_steps_in() -> StepsIn {
+    StepsIn {
+        vw: crate::JUMP_RIGHT_VW,
+        vmin: CHAT_BUTTON.0,
+        most: CHAT_STEPS_IN,
+    }
+}
 /// The big speech bubble over the town's jump button ([`QuickChatButton`]),
 /// the same way: where it has been since 2026-10-31.
 pub(crate) const QUICK_BUTTON: (f32, f32, f32) = (1.0, 24.3, ACTION_BUTTON);
@@ -792,8 +834,10 @@ fn spawn_arena_bar(commands: &mut Commands, images: &mut Assets<Image>, minimap:
     commands
         .spawn((
             TopBar,
-            // Moved in from whichever side the camera's hole is on.
+            // Moved in from whichever side the camera's hole is on, and on
+            // the right no further than there is room.
             KeepsClear,
+            bar_room(),
             Node {
                 position_type: PositionType::Absolute,
                 top: Val::VMin(EDGE),
@@ -867,7 +911,7 @@ fn spawn_arena_bar(commands: &mut Commands, images: &mut Assets<Image>, minimap:
         round.spawn(bridge_button(images.add(plank()), beside_the_jump(right, bottom)));
         // The chat: a line to type (`chat`), where the town has it.
         let (right, bottom, size) = CHAT_BUTTON;
-        round.spawn((ChatButton, round_button(images.add(keyboard()), size, beside_the_jump(right, bottom))));
+        round.spawn((ChatButton, chat_steps_in(), round_button(images.add(keyboard()), size, beside_the_jump(right, bottom))));
         // The three dots, which showed the empty buttons, are not put up
         // ([`DOTS`]).
         if DOTS {
@@ -1168,8 +1212,10 @@ fn spawn_town_bar(commands: &mut Commands, assets: &AssetServer, images: &mut As
     commands
         .spawn((
             TopBar,
-            // Moved in from whichever side the camera's hole is on.
+            // Moved in from whichever side the camera's hole is on, and on
+            // the right no further than there is room.
             KeepsClear,
+            bar_room(),
             Node {
                 position_type: PositionType::Absolute,
                 top: Val::VMin(EDGE),
@@ -1285,7 +1331,7 @@ fn spawn_town_bar(commands: &mut Commands, assets: &AssetServer, images: &mut As
         }
         // The chat: a line to type (`chat`).
         let (right, bottom, size) = CHAT_BUTTON;
-        round.spawn((ChatButton, round_button(images.add(keyboard()), size, beside_the_jump(right, bottom))));
+        round.spawn((ChatButton, chat_steps_in(), round_button(images.add(keyboard()), size, beside_the_jump(right, bottom))));
     });
 }
 
@@ -2458,6 +2504,81 @@ mod tests {
             // On the screen, with room to its right.
             assert!(chat.x - size * 0.5 > EDGE, "{wide}: {} from the right", chat.x - size * 0.5);
         }
+    }
+
+    #[test]
+    fn the_bar_moved_in_on_the_right_is_still_clear_of_the_things_to_say() {
+        use crate::quick;
+        // On a screen lying on its side as wide as a monitor's and as a
+        // phone's (the short side is the height, 100 shares), with the bar
+        // moved in from the right as far as it ever is: the two buttons
+        // down the right edge, and the gift over them when it is there,
+        // each a disc, from the right and the top of the screen; and every
+        // plate of the fan, a box from its right end leftward as far as its
+        // words take it, say 40 shares.
+        let room = bar_room();
+        for wide in [16.0 / 9.0, 19.5 / 9.0, 874.0 / 402.0, 2.4] {
+            let moved = (crate::JUMP_RIGHT_VW * wide + room.vmin).max(0.0);
+            let side = EDGE + SIDE_INSET + moved;
+            let buttons = if GIFT { 3 } else { 2 };
+            for button in 0..buttons {
+                let middle = Vec2::new(side + SIDE_BUTTON * 0.5, EDGE + SIDE_INSET + SIDE_BUTTON * (button as f32 + 0.5) + 1.6 * button as f32);
+                for index in 0..quick::MOST {
+                    let (right, bottom) = quick::place(index);
+                    let (from, under) = (crate::JUMP_RIGHT_VW * wide + right, 100.0 - crate::JUMP_BOTTOM_VH - bottom);
+                    let nearest = Vec2::new(middle.x.clamp(from, from + 40.0), middle.y.clamp(under - quick::HEIGHT, under));
+                    let gap = nearest.distance(middle) - SIDE_BUTTON * 0.5;
+                    assert!(gap >= 1.0, "{wide}: button {button} is {gap} from plate {index}, moved in {moved}");
+                }
+            }
+        }
+        // And there is room at all on a phone, enough for a notch: on an
+        // iPhone 14, 844 by 390 points, whose notch reaches 33 points in
+        // from the side it is on and whose safe area asks for more than the
+        // room, what stands at that end of the bar ends up a share clear of
+        // the notch. (An island reaches further, 51, but lies half way
+        // down the edge, under where the buttons and the minimap end.)
+        assert!(crate::JUMP_RIGHT_VW * 19.5 / 9.0 + room.vmin > 4.0);
+        let (wide, point) = (844.0 / 390.0, 3.9);
+        let stands = (EDGE + SIDE_INSET + crate::JUMP_RIGHT_VW * wide + room.vmin) * point;
+        assert!(stands > 33.0 + point, "{stands} points in");
+        let island_begins = (100.0 - 125.0 / 4.02) * 0.5;
+        assert!(EDGE + SIDE_INSET + MINIMAP < island_begins - 1.0, "the minimap ends {} down", EDGE + SIDE_INSET + MINIMAP);
+    }
+
+    #[test]
+    fn the_chat_s_button_stepped_in_from_an_island_is_still_clear_of_every_button() {
+        let (right, bottom, size) = CHAT_BUTTON;
+        let at = |(right, bottom): (f32, f32), size: f32| Vec2::new(right + size * 0.5, bottom + size * 0.5);
+        // What is about it, as discs by their middles from the corner of
+        // the box round the jump button: in a game the sword, the jump
+        // button, the bridge button and the five buttons for things to use;
+        // in the town the bubble, the face, the fist and the jump button.
+        let (jump_right, jump_bottom, jump_size) = ARENA_JUMP;
+        let mut about = vec![
+            (at((0.0, 0.0), crate::JUMP_SIZE_VMIN), crate::JUMP_SIZE_VMIN),
+            (at((jump_right, jump_bottom), jump_size), jump_size),
+            (at(ARENA_BRIDGE, ACTION_BUTTON), ACTION_BUTTON),
+            (at((QUICK_BUTTON.0, QUICK_BUTTON.1), QUICK_BUTTON.2), QUICK_BUTTON.2),
+            (at((18.5, 18.5), ACTION_BUTTON), ACTION_BUTTON),
+            (at((24.3, 1.2), ACTION_BUTTON), ACTION_BUTTON),
+        ];
+        about.extend((0..UTILITY_SLOTS).map(|slot| (at(slot_place(slot), ACTION_BUTTON), ACTION_BUTTON)));
+        // Stepped in is further from the right: all the way, and part way.
+        for step in [0.0, CHAT_STEPS_IN * 0.5, CHAT_STEPS_IN] {
+            let chat = at((right + step, bottom), size);
+            for (other, other_size) in &about {
+                let gap = chat.distance(*other) - (size + other_size) * 0.5;
+                assert!(gap > 1.5, "stepped in {step}: {other} is {gap} from the chat's button");
+            }
+        }
+        // It is told where it stands as it is put there.
+        let steps = chat_steps_in();
+        assert_eq!((steps.vw, steps.vmin, steps.most), (crate::JUMP_RIGHT_VW, right, CHAT_STEPS_IN));
+        // And that is out past the box, which is why it has to step in at
+        // all: nothing else round the jump button is.
+        assert!(right < 0.0);
+        assert!(about.iter().all(|(other, other_size)| other.x - other_size * 0.5 >= 0.0));
     }
 
     #[test]

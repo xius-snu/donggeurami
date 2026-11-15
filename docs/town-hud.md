@@ -7,6 +7,111 @@
 > "above" or "below", or names another section in quotes, that section may be
 > in another file here: the table in `CLAUDE.md` says which.
 
+## An iPhone's island: its safe area is read too
+
+2026-11-15. Hajun, with the game on both phones: "also i noticed that for
+android the OS safe area thing is working fine, but for iphone 16 pro, the
+camera hole is not just a circle but a bar so it also covers the amethyst
+icon and the chat text as well in the brdidge wars game. check for ios".
+`src/safe.rs`, `src/hud.rs`, `src/quick.rs`, and for checking it
+`mobile/ios/check_on_windows.sh`. The app's own: no change to `shared/`.
+No APK and no iOS tag came of it (the last point says why).
+
+- **Android is seen working on the phone**, by Hajun's words above: the
+  first answer to "Not checked: anything on a phone" in the entry under
+  this one ("Clear of the camera's hole").
+- **An iPhone had never been asked** (that entry says so: "An iPhone is
+  not asked"), so nothing moved on one, whatever shape its hole. What
+  Hajun saw is what a window the size of a 16 Pro's screen shows with its
+  island drawn on: 874 by 402 points lying on its side, the island a bar
+  125 points long and 37 across, 14 in from the edge it is on (the numbers
+  I have for a 16 Pro, not measured on one), so 138 to 264 points down and
+  14 to 51 in. That lies over the amethyst's picture, the fourth of the
+  counts, and over the first letters of every line of chat, and over
+  nothing else on that side.
+- **Now its window is asked** (`safe::read_the_window`, added on iOS
+  alone; three times a second, as Android's activity says). winit 0.30
+  gives a window an "outer" position and size and an "inner" one, and on
+  iOS the outer are the whole window's and the inner its safe area's
+  (`UIWindow.safeAreaInsets` taken off its bounds: read in winit's source,
+  `platform_impl/ios/window.rs`). How far right of the one the other
+  begins is the left inset, what is left of the width the right one, kept
+  as shares of the window's width and brought to logical pixels
+  (`safe::within`), which is what `safe::SafeArea` already was. Nothing in
+  it is the iPhone's alone to compile: winit has all four on every
+  platform, and only where the system is added is behind
+  `target_os = "ios"`. What it read goes to the log to begin with and each
+  time it changes (the iPhone's `log.txt`, "the safe area begins").
+- **Both sides are moved on an iPhone.** iOS's safe area begins the same
+  way in from both short edges whichever the island is on: 62 points on a
+  16 Pro. So the name, the health, the four counts and the chat stand 68
+  points in (the 62 and the 1.5 shares everything keeps), 17 clear of an
+  island on their side, and the same with it on the other.
+- **The right end of the bar is moved in no further than it has room**
+  (`safe::RightRoom`, `hud::bar_room`). Moved the whole 52 points, the
+  game button lay under "Bye!" and "Good game!", the top two plates of the
+  things to say, when they are fanned out of the bubble. It is moved as
+  far as leaves the plates a share clear, 4.5 shares on a phone, 18
+  points: clear of a notch (33 points deep at the most, on the iPhones
+  that have one), and an island lies lower than anything at that end (the
+  minimap ends 127 points down, the island begins at 138). In Bridge Wars
+  the minimap is at that end and there is no fan; it is moved the same, so
+  that the bar is one thing.
+- **The chat's small button steps in** (`safe::StepsIn`,
+  `hud::CHAT_STEPS_IN`). It hangs 2 shares out of the right of the box
+  round the jump button, half way down the screen, and with the phone held
+  the other way up 7 points of it lay under the island. It steps in 2.6
+  shares, 10 points: 4 clear of the island, and still more than 1.5 shares
+  clear of every button about it (the nearest is the fourth for things to
+  use, nearly straight over the sword). It is pressed where it is drawn.
+  The dots, were they put back (`hud::DOTS`), hang as far out, higher up,
+  and would want the same.
+- **What does not move**, as before: the stick (61 points in on a 16 Pro,
+  where the island ends at 51) and the other buttons round the jump
+  button (52 in at the nearest, and those level with an island 56).
+- **Calls that were mine**: moving both sides on an iPhone (iOS does not
+  say which side the island is on, and asking how the phone is turned is
+  UIKit called by hand, which cannot be run here); how far the right end
+  of the bar and the chat's button go, and that both stop short of iOS's
+  own safe area there, being clear of the island itself; that the stick
+  and the jump button stay where a thumb knows them; putting the
+  iPhone's type-check in the repo (`IOS.md`, "Before a tag").
+- **Checked.** Unit tests: 314 pass, six of them new (what a window says
+  as a safe area; the bar and the chat clear of an island on both sides;
+  the bar's room on the right, and that with it the buttons down the right
+  edge stay a share clear of every plate of the fan on screens of four
+  shapes; the chat's button stepping in, and that stepped in it is clear
+  of every button about it). The desktop build, scripted, in a window the
+  size of a 16 Pro's screen in points, with the island and the screen's
+  round corners drawn onto the pictures afterwards on both sides. Before:
+  the amethyst and the chat's first letters under the island, as Hajun
+  said, and the chat's button under one on the right. After, with the safe
+  area an iPhone gives made up (62 and 62): the town (the bar, a line of
+  chat, the fan out, the friends' panel, the game selector) and a game of
+  Bridge Wars (the four counts, three lines of chat, the box typed into,
+  all five buttons for things to use filled): nothing under an island on
+  either side, nothing run into anything, and the chat's button pressed
+  where it stands now. A safe area on one side alone (62 and 0, 0 and 62)
+  moves that side alone, and none puts everything back. The reader itself
+  was run on the desktop against its own window, by a scratch line: it
+  read the window, said what it read, said so again when the window was
+  resized, and not again after. **Type-checked for the iPhone on this
+  PC**, the first change to be: no errors.
+- **Not checked: anything on an iPhone.** That winit's inner position is
+  there what its source says; the numbers iOS gives; that the island is
+  where I have it. **If something is still under the island, read the
+  phone's `log.txt` first**: nothing said, or noughts, is the reading;
+  numbers that look right (some 62 and 62 on a 16 Pro) with something
+  still covered is how far things are moved (`safe::CLEAR`,
+  `hud::bar_room`, `hud::CHAT_STEPS_IN`).
+- **No APK and no iOS tag.** As this was finished another session was
+  changing Bridge Wars in the same tree and taking the protocol to 17 that
+  night: an APK built here would have carried half of that, and an iOS
+  build of protocol 16 would be told to update the moment the server
+  moved. Android does nothing new with this unless a hole on the right is
+  deeper than a phone's round one. The next APK and the next `ios-` tag
+  carry it.
+
 ## The gift and the person are away; the settings are a window like the friends' panel
 
 Later on the night of 2026-11-14, with the windows' new look ("Every window

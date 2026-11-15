@@ -176,9 +176,11 @@ to try again.
   the APK; tests fail if that leaves out something the game loads. One APK
   is kept, the newest, `donggeurami_town-release.apk`: no `prev-` copies.
 - iOS cannot be built here: Codemagic builds it on a pushed tag
-  `ios-<version>`. Code behind `target_os = "ios"` cannot be type-checked
-  on this PC: keep it to call sites. An iPhone writes `log.txt` to its
-  Documents (`src/log_file.rs`): ask for it before guessing at a failure.
+  `ios-<version>`. It can be type-checked here, and is before every tag:
+  `bash mobile/ios/check_on_windows.sh` (`IOS.md`; nothing is linked or
+  run). Keep code behind `target_os = "ios"` to call sites all the same.
+  An iPhone writes `log.txt` to its Documents (`src/log_file.rs`): ask
+  for it before guessing at a failure.
 - Desktop testing knobs: `RT_SERVER=<addr>|off`, `RT_UNSECURE=1` (debug
   build, a server with no key), `RT_FREE_CURSOR=1`, `RT_INTRO=off`,
   `RT_SIGNUP=1`, `RT_TIME_OF_DAY`, `RT_CAR_AT`, `RT_CLOCK_OFF`,
@@ -322,8 +324,12 @@ to try again.
   it (the chat's box) and a fist (a punch; the car's reverse); the stick,
   whose middle is set where the finger first goes down, within half its
   radius. On Windows the stick and the jump button take the mouse.
-- The top bar and the chat keep clear of the camera's hole (`src/safe.rs`:
-  Android's cutout, by `MainActivity`; unseen on a phone; not on iOS).
+- The top bar and the chat keep clear of the camera's hole and an
+  iPhone's island (`src/safe.rs`: Android's cutout, by `MainActivity`,
+  seen working on Hajun's phone; an iPhone's safe area, read off its
+  window since 2026-11-15, on both sides, not yet seen on one). The
+  right end of the bar is moved no further than the fan of things to say
+  leaves room, and the chat's small button steps in from an island.
 - The gamepad opens the selector (`src/games.rs`): Bridge Wars, Home
   Builders (100 coins), and one to come.
 - You can talk to any AI (`src/talk.rs`), ride the four buses that go

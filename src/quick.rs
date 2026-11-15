@@ -46,7 +46,7 @@ pub(crate) const MOST: usize = 6;
 /// Sizes, as shares of the short side of the screen: how tall a plate is,
 /// how far each is over the one under it, how big its words are, and the
 /// room either side of them.
-const HEIGHT: f32 = 5.8;
+pub(crate) const HEIGHT: f32 = 5.8;
 const PITCH: f32 = 6.9;
 const TEXT: f32 = 2.8;
 const PAD: f32 = 2.2;
@@ -57,7 +57,7 @@ const PAD: f32 = 2.2;
 /// 7 in; and how much further left than that the first one's is, clear of
 /// the bubble, which reaches 15.
 const FIRST_BOTTOM: f32 = 34.0;
-const RIGHT_END: f32 = 8.5;
+pub(crate) const RIGHT_END: f32 = 8.5;
 const SWEEP: f32 = 8.0;
 /// How long a plate takes to come out of the bubble, how long after the
 /// one under it each sets off, in seconds, and how small it is as it
@@ -123,7 +123,7 @@ fn offered() -> Vec<String> {
 /// another from just over the face, the first's right end clear of the
 /// bubble beside it and each one's after a little further right, over the
 /// bubble, by less each time, like the sticks of a fan.
-fn place(index: usize) -> (f32, f32) {
+pub(crate) fn place(index: usize) -> (f32, f32) {
     let through = (index as f32 / (MOST - 1) as f32).min(1.0);
     (RIGHT_END + SWEEP * (1.0 - through).powi(2), FIRST_BOTTOM + index as f32 * PITCH)
 }
@@ -346,6 +346,9 @@ mod tests {
         let discs = [
             disc(quick_right, quick_bottom, quick_size),
             disc(chat_right, chat_bottom, chat_size),
+            // The chat's small button again, stepped in from an island as
+            // far as it goes (`hud::CHAT_STEPS_IN`).
+            disc(chat_right + hud::CHAT_STEPS_IN, chat_bottom, chat_size),
             // The face, up and to the left of the jump button.
             disc(18.5, 18.5, 14.0),
         ];
