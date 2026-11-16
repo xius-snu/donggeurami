@@ -7,6 +7,37 @@
 > "above" or "below", or names another section in quotes, that section may be
 > in another file here: the table in `CLAUDE.md` says which.
 
+## APK 37, and the server with the waiting room's bots
+
+On the afternoon of 2026-11-16 (Hajun: "rebuild apk and push to git after
+ur done", of the team that is drawn nowhere until the fight and the
+computer's players that come into the waiting room one at a time and go
+about it; `docs/bridge-wars.md`, its first entry). `PROTOCOL_VERSION` 18
+still: nothing sent has changed its shape, and an app from before plays
+on.
+
+- **The server**: `server/deploy.sh` at 07:23 UTC (16:23 here), with
+  nobody connected since 07:12 (Hajun's phone had been in the town for a
+  minute; nobody else that day); the binary before (deployed 15:35 UTC on
+  the 15th) kept on the VM as `roundtown-server.prev-2026-11-16c`. After:
+  the VM's binary the same bytes as the one built here (sha1), the service
+  active, UDP 443 listening, the login answering over HTTPS. **This PC's
+  account was not brought online on it** as after every deploy before:
+  Hajun, in class, had asked that no game window come up in front, and
+  the check was left to the other session in the tree, to run hidden.
+  Before the deploy the same server on this PC with one scripted copy of
+  the game through the waiting room into the fight.
+- **APK 37** (`versionCode` 37, 16:27 here): `cargo ndk` 2 m 25 s, the
+  library stripped from 189 MB to 101 with its seven entry points, Gradle
+  23 s; put over APK 36. 85 asset files, each the bytes of the one on
+  disk, and the library in it the stripped one; `assets/ui.ron`, the two
+  maps and `bridgewarsgameevent.md` hashed before and after. **Not
+  installed**: no phone was attached.
+- **The iPhone**: no tag pushed, and the type-check not run (nothing
+  behind `target_os = "ios"` was touched): the build of `ios-1.0.2-18`
+  plays online as APK 36 does, with the server's half of this and not the
+  app's. `ios-1.0.2-19` is Hajun's to ask for.
+
 ## APK 36, and the server with protocol 18
 
 In the first minutes of 2026-11-16 here, 15:07 UTC on the 15th (Hajun:
@@ -49,9 +80,12 @@ entries).
   phone was attached. An APK from before is told to update and stays
   offline.
 - **The iPhone**: type-checked on this PC
-  (`mobile/ios/check_on_windows.sh`); **no tag pushed**: the build it has,
-  of `ios-1.0.2-17`, is protocol 17 and is told to update until
-  `ios-1.0.2-18` is built, whose tag is Hajun's to ask for.
+  (`mobile/ios/check_on_windows.sh`), and the tag `ios-1.0.2-18` pushed on
+  its own at `9de4318`, the commit of all the above, a little after it,
+  when Hajun said "push the ios tag" (it was held until he asked).
+  Whether it built, and how it runs on an iPhone, was not known when this
+  was written: nothing on this PC can see Codemagic. The build before, of
+  `ios-1.0.2-17`, is protocol 17 and is told to update.
 
 ## APK 35, and the server with protocol 17
 

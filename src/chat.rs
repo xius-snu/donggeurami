@@ -669,13 +669,15 @@ fn hear(mut tells: MessageReader<Tell>, fighting: Res<Fighting>, mut log: ResMut
 }
 
 /// The colour the name of whoever has the id `who` is written in: their
-/// team's, in your game of Bridge Wars, by their seat; anyone else's, the
+/// team's, in your game of Bridge Wars, by their seat, once the fight has
+/// begun and the teams are out (`Fighting::teams_out`; in its waiting
+/// room too until 2026-11-16); anyone else's, and anyone's until then, the
 /// file's colour for a name.
 fn name_colour(fighting: &Fighting, who: u64) -> Color {
     let colours = ui().colours;
     match fighting.members.iter().position(|member| *member == who && who != 0) {
-        Some(seat) => colours.arena.team(arena_team(seat)),
-        None => colours.chat.name,
+        Some(seat) if fighting.teams_out => colours.arena.team(arena_team(seat)),
+        _ => colours.chat.name,
     }
 }
 
@@ -1131,11 +1133,11 @@ fn say(
         if online.is() {
             asks.write(Ask::Chat(text));
         } else {
-            // In a game, its waiting room too, in your team's colour, as
-            // your name is on its plate (`hud::colour_name`).
+            // In a game, once its fight has begun, in your team's colour,
+            // as your name is on its plate (`hud::colour_name`).
             let colour = match fighting.seat {
-                Some(seat) => ui().colours.arena.team(arena_team(usize::from(seat))),
-                None => ui().colours.chat.name,
+                Some(seat) if fighting.teams_out => ui().colours.arena.team(arena_team(usize::from(seat))),
+                _ => ui().colours.chat.name,
             };
             log.push(said(name.as_str(), colour, &text));
         }

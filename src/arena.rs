@@ -36,9 +36,13 @@
 //! itself (`server/src/arena.rs`). Offline the game is this device's own,
 //! as it was, with the computer in every seat but yours, and the same
 //! rules played here. Both ways: nobody joined for [`BOT_WAIT`] seconds and
-//! the computer takes the seats left; the board counts [`COUNTDOWN`] down;
+//! the computer takes the seats left, its players coming in one at a time
+//! and going about the room each as who it is (since 2026-11-16;
+//! [`mill_bots`]); the board counts [`COUNTDOWN`] down;
 //! everyone is sent to their island (`roundtown_net::arrival`), "Fight!";
-//! then [`PLAY_SECS`] run, which a tap on the board cuts short.
+//! then [`PLAY_SECS`] run, which a tap on the board cuts short. **Which
+//! team anyone is on is drawn nowhere until that "Fight!"** (since
+//! 2026-11-16; [`Game::teams_out`]).
 //!
 //! The fight (the night of 2026-11-07, Hajun: "make the ai, if there is
 //! another ai/player within its visible radius, it will go towards them
@@ -130,10 +134,11 @@ use bevy::gltf::GltfMaterialName;
 use bevy::prelude::*;
 use bevy::world_serialization::WorldInstanceReady;
 use bevy_replicon::prelude::Remote;
+use roundtown_net::bots::mingle::{Mingle, Stood};
 use roundtown_net::bots::{self, Seen, Squad};
 use roundtown_net::chat::{CREDIT_SECS, Feed, Weapon};
 use roundtown_net::bridge_wars::{
-    self as rules, BOT_WAIT, COUNTDOWN, Flight, Happening, Mint, Outfits, PLAY_SECS, RESULTS_SECS,
+    self as rules, BOT_GAP, BOT_WAIT, COUNTDOWN, Flight, Happening, Mint, Outfits, PLAY_SECS, RESULTS_SECS,
 };
 use roundtown_net::nav::Nav;
 use roundtown_net::{
@@ -352,10 +357,14 @@ struct Brained;
 /// online, with the same numbers, `Skill::MODERATE`); what each holds, by
 /// seat, as yours is in [`Resources`]; which of them were dead a frame
 /// ago, to tell a death and a standing again by; and which of the bridges
-/// they have been told of (`bridge::Bridges::version`).
+/// they have been told of (`bridge::Bridges::version`). And, before the
+/// fight, each of them in the waiting room, passing the time as who it is
+/// (`roundtown_net::bots::mingle`, [`mill_bots`]; since 2026-11-16), the
+/// server's own way of it too.
 struct Brains {
     nav: Nav,
     squad: Squad,
+    mingle: Mingle,
     purses: [Purse; ARENA_SEATS],
     dead: [bool; ARENA_SEATS],
     heard: Option<u32>,
@@ -368,6 +377,7 @@ impl Brains {
         Self {
             nav: Nav::arena(),
             squad: Squad::new(fastrand::u64(..), bots::Skill::MODERATE),
+            mingle: Mingle::new(fastrand::u64(..)),
             purses: [Purse::default(); ARENA_SEATS],
             dead: [false; ARENA_SEATS],
             heard: None,
@@ -515,6 +525,10 @@ struct Game {
     /// Online, how long the connection has been gone, if it has.
     cut_off: Option<f32>,
     stage: Stage,
+    /// Offline, the wait over, the computer has begun taking the seats
+    /// left, one of its players at a time ([`play`]; since 2026-11-16):
+    /// how long until the next comes, in seconds. None until then.
+    coming: Option<f32>,
     /// How the camera was turned and zoomed before it was fixed over you,
     /// to go back to; none if it was over you already.
     view: Option<View>,
@@ -596,6 +610,18 @@ impl Game {
 
     fn over(&self) -> bool {
         matches!(self.stage, Stage::Over { .. })
+    }
+
+    /// Whether who is on which team is out: from the moment the fight
+    /// begins, and not in the waiting room nor through the countdown
+    /// (since 2026-11-16; Hajun: "your team selection should not be
+    /// shown/determine until the game start. so when ur in the top middle
+    /// box, in waiting room, ur team color should not be displayed"). A
+    /// seat is a team from the moment it is taken, as it has to be for
+    /// friends to be seated together; nothing shows it until then
+    /// ([`Fighting::teams_out`]).
+    fn teams_out(&self) -> bool {
+        self.playing() || self.over()
     }
 
     /// Your team.
@@ -802,10 +828,16 @@ impl Game {
 /// your seat in it, whether it is the server's, and which game it is, so
 /// that another game's bridges are not this one's; and who is in it, by
 /// seat, each by their id (none out of a game), for the chat to write a
-/// name in its team's colour (`chat`).
+/// name in its team's colour (`chat`). And whether who is on which team
+/// is out yet ([`Game::teams_out`]): until it is, in the waiting room and
+/// through the countdown, nothing anywhere is drawn in a team's colour,
+/// not your name on its plate (`hud`), nor a name in the chat (`chat`),
+/// nor over a head ([`place_tags`]), nor is your teammate on the map
+/// (`minimap`).
 #[derive(bevy::prelude::Resource, Default, PartialEq)]
 pub(crate) struct Fighting {
     pub(crate) playing: bool,
+    pub(crate) teams_out: bool,
     pub(crate) seat: Option<u8>,
     pub(crate) online: bool,
     pub(crate) game: u32,
@@ -837,12 +869,10 @@ impl WaitingRoom {
         map.floor(self.centre, self.top)
     }
 
-    /// Where the player in `seat` stands in the room, its floor `floor`
-    /// up: on a ring round its middle, facing in, as the server has it
-    /// (`roundtown_net::bridge_wars::waiting_spot`).
-    fn spot(&self, floor: f32, seat: usize) -> Transform {
-        let (at, turn) = rules::waiting_spot(seat);
-        Transform::from_translation(Vec3::new(self.centre.x + at.x, floor, self.centre.y + at.z)).with_rotation(turn)
+    /// Where someone standing as `stood` in the room is in the world, its
+    /// floor `floor` up.
+    fn place(&self, floor: f32, stood: &Stood) -> Transform {
+        Transform::from_translation(stood.in_room(self.centre, floor)).with_rotation(Quat::from_rotation_y(stood.yaw))
     }
 }
 
@@ -995,7 +1025,7 @@ pub(crate) fn plugin(app: &mut App) {
         .add_systems(
             Update,
             (
-                (team_up, hunt, drive_bots)
+                (team_up, hunt, drive_bots, mill_bots)
                     .chain()
                     .after(ai::steer)
                     .after(crate::start_punch)
@@ -1101,13 +1131,29 @@ fn read_map(
     commands.insert_resource(room);
 }
 
-/// Where the player in `seat` waits for the game: in the waiting room, on
-/// its floor, or, with no room in the map, on their island, where they
-/// arrive for the game anyway.
-fn waiting_spot(room: Option<&WaitingRoom>, map: &Island, seat: usize) -> Transform {
+/// Where whoever comes into the waiting room next stands, offline: on its
+/// floor, somewhere about its middle, thrown, clear of `everyone` there
+/// (each across the floor from the room's middle, by seat), facing the
+/// middle, as the server stands whoever comes into its own
+/// (`Mingle::arrive`); and how that is in the room, for one of the
+/// computer's players to go about it from ([`mill_bots`]). By nothing of
+/// their `seat`, which is their team: until 2026-11-16 each stood at their
+/// seat's own place on a ring round the middle
+/// (`roundtown_net::bridge_wars::waiting_spot`). With no room in the map,
+/// on their island, where they arrive for the game anyway.
+fn come_in(
+    room: Option<&WaitingRoom>,
+    map: &Island,
+    mingle: &mut Mingle,
+    everyone: &[Option<Vec2>],
+    seat: usize,
+) -> (Transform, Option<Stood>) {
     match room.and_then(|room| Some((room, room.floor(map)?))) {
-        Some((room, floor)) => room.spot(floor, seat),
-        None => island::arrival(Venue::Arena, seat),
+        Some((room, floor)) => {
+            let stood = mingle.arrive(everyone);
+            (room.place(floor, &stood), Some(stood))
+        }
+        None => (island::arrival(Venue::Arena, seat), None),
     }
 }
 
@@ -1579,10 +1625,14 @@ fn play(
     let Some(mut game) = game else {
         if *asked_in && let Some(map) = islands.get(Venue::Arena) {
             *asked_in = false;
-            // Which team is yours is thrown for each game.
+            // Which team is yours is thrown for each game, and where you
+            // stand in the waiting room says nothing of it.
             let me = thrown_seat();
-            let spot = waiting_spot(room.as_ref(), map, me);
-            let game = open(&mut commands, you, me, seat.0, false, &mut begun, &lobby, &mut orbit, &mut driving);
+            let mut game = open(&mut commands, you, me, seat.0, false, &mut begun, &lobby, &mut orbit, &mut driving);
+            let spot = match game.brains.as_deref_mut() {
+                Some(brains) => come_in(room.as_ref(), map, &mut brains.mingle, &[], me).0,
+                None => island::arrival(Venue::Arena, me),
+            };
             lobby::put(&mut bodies, &mut orbit, you, Venue::Arena, spot);
             commands.insert_resource(game);
         }
@@ -1612,19 +1662,42 @@ fn play(
     match game.stage {
         Stage::Waiting { since_join } => {
             // Nobody else is coming. Once nobody has for a while, the
-            // computer takes every seat left, all at once.
+            // computer takes the seats left, its players coming in one at
+            // a time, each a thrown while after the last (`BOT_GAP`), as
+            // the server's do (since 2026-11-16; Hajun: "make them join
+            // slightly delay one by one rather than all at once"); or,
+            // the wait skipped, all at once, as they all did until then.
             let since_join = if skip { BOT_WAIT } else { since_join + dt };
             if since_join >= BOT_WAIT && !game.full() {
                 let Some(map) = islands.get(Venue::Arena) else {
                     return;
                 };
+                if game.coming.is_none() {
+                    info!("Bridge Wars: nobody joined in {BOT_WAIT} s, so the computer comes for the seats left");
+                }
+                let left = game.coming.get_or_insert(0.0);
+                *left -= dt;
+                let due = if skip {
+                    ARENA_SEATS
+                } else if *left <= 0.0 {
+                    *left = BOT_GAP.0 + (BOT_GAP.1 - BOT_GAP.0) * fastrand::f32();
+                    1
+                } else {
+                    0
+                };
                 game.seats.resize(game.seats.len().max(ARENA_SEATS), nobody());
                 game.bodies.resize(game.bodies.len().max(ARENA_SEATS), None);
                 let (me, mine) = (game.me, game.seats[game.me].id);
-                for seat in (0..ARENA_SEATS).filter(|&seat| seat != me) {
-                    if game.taken(seat) {
-                        continue;
-                    }
+                let centre = room.map_or(Vec2::ZERO, |room| room.centre);
+                let yours = bodies.get(you).ok().map(|(_, at, ..)| at.translation.xz() - centre);
+                for _ in 0..due {
+                    // Any of the seats left: which says nothing to anyone
+                    // until the fight, and you are alone here to be
+                    // teamed with.
+                    let free: Vec<usize> = (0..ARENA_SEATS).filter(|&seat| seat != me && !game.taken(seat)).collect();
+                    let Some(seat) = fastrand::choice(free) else {
+                        break;
+                    };
                     // Each as its seat's number and one, as they were
                     // while yours was the first seat of every game; and
                     // whichever of them that makes you, as the number your
@@ -1635,16 +1708,22 @@ fn play(
                     };
                     let member = lobby::ai_member(seat, id, &game.seats, &lobby.seats);
                     game.seats[seat] = member;
+                    // Where it comes in: clear of you and of the others.
+                    let (spot, stood) = match game.brains.as_deref_mut() {
+                        Some(brains) => {
+                            let mut everyone: Vec<Option<Vec2>> =
+                                (0..ARENA_SEATS).map(|other| brains.mingle.stood(other).map(|stood| stood.at)).collect();
+                            if let Some(place) = everyone.get_mut(me) {
+                                *place = yours;
+                            }
+                            come_in(room.as_ref(), map, &mut brains.mingle, &everyone, seat)
+                        }
+                        None => (island::arrival(Venue::Arena, seat), None),
+                    };
                     // A body the game's brain places, as the server's
-                    // bots are placed online ([`drive_bots`]).
-                    let body = lobby::spawn_bot_at(
-                        &mut commands,
-                        &assets,
-                        &game.seats[seat],
-                        seat,
-                        Venue::Arena,
-                        waiting_spot(room.as_ref(), map, seat),
-                    );
+                    // bots are placed online ([`mill_bots`] here, and
+                    // [`drive_bots`] in the fight).
+                    let body = lobby::spawn_bot_at(&mut commands, &assets, &game.seats[seat], seat, Venue::Arena, spot);
                     commands.entity(body).insert((
                         InArena,
                         Health::of(ui().arena.health),
@@ -1652,8 +1731,15 @@ fn play(
                         Team(arena_team(seat)),
                     ));
                     game.bodies[seat] = Some(body);
+                    // Who it is, is thrown as it comes: which is how it
+                    // passes the time here, and how it plays after.
+                    if let Some(brains) = game.brains.as_deref_mut() {
+                        brains.squad.seat(seat, spot.translation, yaw_of(spot.rotation));
+                        if let (Some(stood), Some(persona)) = (stood, brains.squad.bot(seat).map(|bot| bot.persona())) {
+                            brains.mingle.enter(seat, persona, stood);
+                        }
+                    }
                 }
-                info!("Bridge Wars: nobody joined in {BOT_WAIT} s, so the computer takes the seats left");
             }
             game.stage = if game.full() {
                 Stage::Countdown { left: COUNTDOWN }
@@ -1668,11 +1754,19 @@ fn play(
                     lobby::send(&mut bodies, &mut orbit, *body, Venue::Arena, seat);
                 }
             }
-            // The computer's players, each where its seat arrives.
+            // The computer's players, each where its seat arrives: who
+            // each is was thrown as it came into the waiting room, and it
+            // stands on its island now, as the server's do.
             if let Some(brains) = game.brains.as_deref_mut() {
+                brains.mingle.clear();
                 for seat in (0..game.seats.len().min(ARENA_SEATS)).filter(|&seat| seat != game.me) {
                     let arrival = island::arrival(Venue::Arena, seat);
-                    brains.squad.seat(seat, arrival.translation, yaw_of(arrival.rotation));
+                    let (at, turn) = (arrival.translation, yaw_of(arrival.rotation));
+                    if brains.squad.bot(seat).is_some() {
+                        brains.squad.stand(seat, at, turn, 0.0);
+                    } else {
+                        brains.squad.seat(seat, at, turn);
+                    }
                 }
             }
             let mine = your_team(game.my_team());
@@ -1781,6 +1875,7 @@ fn open(
         online,
         cut_off: None,
         stage: Stage::Waiting { since_join: 0.0 },
+        coming: None,
         view,
         health: Vec::new(),
         anchors: [if online { rules::ANCHOR_HEALTH } else { ui().arena.anchor_health }; ARENA_TEAMS],
@@ -2946,16 +3041,19 @@ fn finish(
 fn publish(game: Option<Res<Game>>, mut fighting: ResMut<Fighting>, mut offline: ResMut<OfflineArena>) {
     // (Who is in it is taken again only when that has changed, so that
     // nothing is made every frame to say the same.)
-    let (playing, seat, online, id) = match game.as_deref() {
-        Some(game) => (game.playing(), Some(game.me as u8), game.online, game.id),
-        None => (false, None, false, fighting.game),
+    let (playing, teams_out, seat, online, id) = match game.as_deref() {
+        Some(game) => (game.playing(), game.teams_out(), Some(game.me as u8), game.online, game.id),
+        None => (false, false, None, false, fighting.game),
     };
     let seats: &[Member] = game.as_deref().map_or(&[], |game| game.seats.as_slice());
     let same_members =
         fighting.members.len() == seats.len() && fighting.members.iter().zip(seats).all(|(id, member)| *id == member.id);
-    if (fighting.playing, fighting.seat, fighting.online, fighting.game) != (playing, seat, online, id) || !same_members {
+    if (fighting.playing, fighting.teams_out, fighting.seat, fighting.online, fighting.game) != (playing, teams_out, seat, online, id)
+        || !same_members
+    {
         *fighting = Fighting {
             playing,
+            teams_out,
             seat,
             online,
             game: id,
@@ -3129,6 +3227,71 @@ fn yaw_of(rotation: Quat) -> f32 {
     (-forward.x).atan2(-forward.z)
 }
 
+/// The computer's players in the waiting room of a game played offline, a
+/// frame of each, before the fight (since 2026-11-16; Hajun: "make the
+/// bots just jump around and go around in different ways according to
+/// their personality while in the waiting room, right now they are just
+/// standing still in a circle"): each goes about the room as who it is
+/// (`roundtown_net::bots::mingle`, what the server moves its own by
+/// online), and its body is put where that has it, written only as it
+/// changes. A punch that has landed on one of them here moves nobody, as
+/// none does online before the fight.
+#[allow(clippy::type_complexity)]
+fn mill_bots(
+    time: Res<Time>,
+    game: Option<ResMut<Game>>,
+    room: Option<Res<WaitingRoom>>,
+    islands: Res<Islands>,
+    me: Query<&Transform, With<Player>>,
+    mut bodies: Query<(&mut Transform, &Seat, &mut Shove, &mut PlayerJump), (With<Brained>, Without<Player>)>,
+) {
+    let Some(mut game) = game else {
+        return;
+    };
+    if game.online || !matches!(game.stage, Stage::Waiting { .. } | Stage::Countdown { .. }) {
+        return;
+    }
+    let (Some(room), Some(map)) = (room, islands.get(Venue::Arena)) else {
+        return;
+    };
+    let Some(floor) = room.floor(map) else {
+        return;
+    };
+    let soon = matches!(game.stage, Stage::Countdown { .. });
+    let mine = game.me;
+    let Some(brains) = game.brains.as_deref_mut() else {
+        return;
+    };
+    // Everyone in the room, across its floor from its middle, by seat.
+    let mut everyone: Vec<Option<Vec2>> =
+        (0..ARENA_SEATS).map(|seat| brains.mingle.stood(seat).map(|stood| stood.at)).collect();
+    if let (Ok(you), Some(place)) = (me.single(), everyone.get_mut(mine)) {
+        *place = Some(you.translation.xz() - room.centre);
+    }
+    let dt = time.delta_secs();
+    for (mut transform, seat, mut shove, mut jump) in &mut bodies {
+        if shove.across != Vec2::ZERO || shove.hurt != 0.0 {
+            *shove = Shove::default();
+        }
+        if jump.velocity_y != 0.0 {
+            jump.velocity_y = 0.0;
+        }
+        let Some(stood) = brains.mingle.step(seat.0, &everyone, soon, dt) else {
+            continue;
+        };
+        let place = room.place(floor, &stood);
+        if transform.translation != place.translation {
+            transform.translation = place.translation;
+        }
+        if transform.rotation != place.rotation {
+            transform.rotation = place.rotation;
+        }
+        if let Some(theirs) = everyone.get_mut(seat.0) {
+            *theirs = Some(stood.at);
+        }
+    }
+}
+
 /// The computer's players in a game played offline, a frame of each
 /// (since 2026-11-12; `roundtown_net::bots`, the brain the server plays
 /// its own by online, with the same numbers): each thinks and moves, its
@@ -3202,6 +3365,7 @@ fn drive_bots(
         dead,
         heard,
         rungs,
+        ..
     } = brains;
     let (dt, elapsed, me) = (time.delta_secs(), game.elapsed, game.me);
     let file = ui();
@@ -4146,9 +4310,18 @@ fn spawn_panel(commands: &mut Commands) {
 /// health (Hajun: "i think i noticed the healthbar doesnt decrease
 /// visually"). The numbers floating off a body and the deaths were right
 /// all along.
+///
+/// **Until the fight begins a tag is a name alone, in the colour of
+/// words**, as a name over a head in the town is (since 2026-11-16; Hajun:
+/// "your team selection should not be shown/determine until the game
+/// start"): no team's colour, and no bar, which was a teammate's colour or
+/// an enemy's and said who was with you. As the teams come out
+/// ([`Fighting::teams_out`]) every tag is made again as it is in the
+/// fight.
 #[allow(clippy::too_many_arguments)]
 fn place_tags(
     me: Query<(&Venue, Option<&Team>), With<Player>>,
+    (fighting, mut were_out): (Res<Fighting>, Local<bool>),
     cameras: Query<(&Camera, &Transform), With<ThirdPersonCamera>>,
     windows: Query<&Window>,
     bodies: Query<(Entity, &Transform, &Health, &Team, &Name, Has<Dead>), Without<Player>>,
@@ -4160,10 +4333,19 @@ fn place_tags(
 ) {
     let (here, my_team) = me.single().map(|(venue, team)| (Some(*venue), team.copied())).unwrap_or((None, None));
     let in_arena = here == Some(Venue::Arena);
+    // The teams out, or no longer: every tag is made again, as it is then.
+    if *were_out != fighting.teams_out {
+        *were_out = fighting.teams_out;
+        for (tag, ..) in &tags {
+            commands.entity(tag).despawn();
+        }
+        return;
+    }
     if in_arena {
         for (body, _, _, team, name, _) in &bodies {
             if !tags.iter().any(|(_, of, ..)| of.0 == body) {
-                spawn_tag(&mut commands, body, name.as_str(), team.0, Some(*team) == my_team);
+                let side = fighting.teams_out.then_some((team.0, Some(*team) == my_team));
+                spawn_tag(&mut commands, body, name.as_str(), side);
             }
         }
     }
@@ -4219,15 +4401,17 @@ fn on_screen(window: &Window, point: Vec2) -> bool {
     point.x >= 0.0 && point.y >= 0.0 && point.x <= window.width() && point.y <= window.height()
 }
 
-/// The name and the bar over `body`'s head: the name in its `team`'s
+/// The name and the bar over `body`'s head: the name in its team's
 /// colour (red, blue, green or yellow, since 2026-11-12; a teammate's
 /// green or an enemy's red until then), and the bar in a teammate's
-/// colour if `ally`, or an enemy's.
-fn spawn_tag(commands: &mut Commands, body: Entity, name: &str, team: u8, ally: bool) {
+/// colour if it is one of yours, or an enemy's, `side` being its team and
+/// whether it is yours. With no `side`, the teams not being out yet, the
+/// name alone, in the colour of words.
+fn spawn_tag(commands: &mut Commands, body: Entity, name: &str, side: Option<(u8, bool)>) {
     let colours = ui().colours;
     let arena = colours.arena;
-    let ink = arena.team(team);
-    let hp = if ally { arena.hp_ally } else { arena.hp_enemy };
+    let ink = side.map_or(colours.text, |(team, _)| arena.team(team));
+    let hp = side.map(|(_, ally)| if ally { arena.hp_ally } else { arena.hp_enemy });
     commands
         .spawn((
             InArena,
@@ -4248,6 +4432,9 @@ fn spawn_tag(commands: &mut Commands, body: Entity, name: &str, team: u8, ally: 
         ))
         .with_children(|tag| {
             tag.spawn(hud::words(name, TAG_TEXT, ink));
+            let Some(hp) = hp else {
+                return;
+            };
             tag.spawn((
                 Node {
                     width: Val::VMin(BAR_WIDTH),
@@ -4612,10 +4799,18 @@ mod tests {
 
     #[test]
     fn everyone_waits_inside_the_room_facing_its_middle() {
+        use roundtown_net::bots::mingle::HALF;
         let (room, shape) = hajuns_room();
         let floor = room.floor(&shape).unwrap();
-        for seat in 0..ARENA_SEATS * 2 {
-            let spot = waiting_spot(Some(&room), &shape, seat);
+        // Whoever comes in is stood somewhere about the middle, thrown,
+        // by nothing of their seat (since 2026-11-16), on the floor,
+        // facing the middle, and clear of everyone there already.
+        let mut mingle = Mingle::new(9);
+        let mut everyone: Vec<Option<Vec2>> = vec![None; ARENA_SEATS];
+        let mut spots = Vec::new();
+        for seat in 0..ARENA_SEATS {
+            let (spot, stood) = come_in(Some(&room), &shape, &mut mingle, &everyone, seat);
+            let stood = stood.expect("there is a room");
             let at = spot.translation;
             let off = at.xz() - room.centre;
             assert!(off.x.abs() < 12.0 && off.y.abs() < 12.0, "seat {seat} at {at}");
@@ -4623,19 +4818,38 @@ mod tests {
             let middle = Vec3::new(room.centre.x, floor, room.centre.y);
             let toward = (middle - at).normalize();
             assert!(spot.forward().dot(toward) > 0.999, "seat {seat} faces {:?}", spot.forward());
+            everyone[seat] = Some(stood.at);
+            spots.push(at);
         }
         // Apart from each other.
         for a in 0..ARENA_SEATS {
             for b in a + 1..ARENA_SEATS {
-                let apart = waiting_spot(Some(&room), &shape, a)
-                    .translation
-                    .distance(waiting_spot(Some(&room), &shape, b).translation);
+                let apart = spots[a].distance(spots[b]);
                 assert!(apart > 2.0 * crate::PLAYER_RADIUS, "{a} and {b} are {apart} m apart");
             }
         }
         // With no room in the map, everyone waits on their island.
-        let on_island = waiting_spot(None, &shape, 1);
+        let (on_island, stood) = come_in(None, &shape, &mut mingle, &everyone, 1);
         assert_eq!(on_island.translation, island::arrival(Venue::Arena, 1).translation);
+        assert!(stood.is_none());
+        // As far as the computer's players go about the room
+        // (`mingle::HALF` from its middle, along each side), there is the
+        // floor under them and no wall in them: all the way round, and
+        // across the room.
+        let band = (floor + crate::LAND_STEP_UP, floor + crate::PLAYER_HEIGHT);
+        for i in 0..=24 {
+            for j in 0..=24 {
+                let off = Vec2::new(-HALF + 2.0 * HALF * i as f32 / 24.0, -HALF + 2.0 * HALF * j as f32 / 24.0);
+                let at = room.centre + off;
+                assert!(!shape.blocked(at, band.0, band.1), "a wall at {off}");
+                let under = shape.floor(at, room.top).expect("the floor");
+                assert!((under - floor).abs() < 0.01, "the floor is {under} at {off}");
+                // And a body's width further out too, along the walls.
+                for side in [Vec2::X, Vec2::Y, Vec2::NEG_X, Vec2::NEG_Y] {
+                    assert!(!shape.blocked(at + side * crate::PLAYER_RADIUS, band.0, band.1), "a wall by {off}");
+                }
+            }
+        }
     }
 
     #[test]
@@ -4755,6 +4969,7 @@ mod tests {
         online: false,
         cut_off: None,
         stage: Stage::Playing { left: 100.0 },
+        coming: None,
         view: None,
         health: Vec::new(),
         anchors: [120.0; ARENA_TEAMS],

@@ -12,30 +12,31 @@
 The entries of the log below, in its order (the newest dated work first,
 then the game as it was first made). Search for an entry by its first words.
 
-1. Later on the night of 2026-11-15 a stick of dynamite is 1 amethyst and the falling it starts quickens to a little over a run; and whoever dies on land dr...
-2. Since the night of 2026-11-15 a seat in a game waits for whoever's connection has gone, and they are put back in it; a stick of dynamite takes the w...
-3. Since the small hours of 2026-11-15 the team you begin on is thrown for each game, each team's island is lined in its colour on the minimap, and yo...
-4. Later on the night of 2026-11-14 the two shops and the panel that says you are out are drawn as the friends' panel is
-5. Since the night of 2026-11-14 a plank is a tenth wider than Hajun's and not a quarter, whoever kills someone has their sapphire and amethyst, and the comp...
-6. Since the evening of 2026-11-14 there is a Leap Potion and a faster builder to buy, a drink shows, a potion that is on leaves sparks, the bridge is...
-7. Since the small hours of 2026-11-14 the dynamite's arch rises and falls and leans to neither side, with an X where it will land; its fuse is seen t...
-8. Since the night of 2026-11-13 there is dynamite, which cuts bridges; the computer's players no longer fall for three easy tricks, and are not all a...
-9. Later on 2026-11-13: the compass's arrow points out, the anchors are their teams' colours, and the computer's players fill their buttons, each as i...
-10. Since 2026-11-13 there are five buttons for things to use, and you hold several kinds at once
-11. Since late on the night of 2026-11-12 each of the computer's players is someone, a knock no longer stuns them, and no two fights with them go the s...
-12. Since the night of 2026-11-12 the computer's players play the game
-13. Since the evening of 2026-11-12 every game online is 2v2v2v2, people teamed up with each other first and the computer in every seat left
-14. Later on 2026-11-12: dying loses everything you hold, what is aimed is seen over the void, and a sword is held on its edge and cut downward
-15. Since 2026-11-12 Bridge Wars has two shops, and everything in Hajun's file is in the game
-16. Since the night of 2026-11-11 Bridge Wars has generators, a shop and a timetable
-17. Since the night of 2026-11-08 Bridge Wars is the server's online, eight to a game in four teams of two, with respawn anchors and bridges you build
-18. The gamepad down the right edge opens the game selector
-19. Bridge Wars
-20. The fight
-21. Online, a game of Bridge Wars is a room of your own
-22. The camera is fixed straight down over you only in the arena
-23. In the arena the buttons are Hajun's `pvpmapbuttonui.jpg`
-24. Falling off the map
+1. Since the afternoon of 2026-11-16 which team anyone is on is drawn nowhere until the fight begins, and the computer's players come into the waiting ro...
+2. Later on the night of 2026-11-15 a stick of dynamite is 1 amethyst and the falling it starts quickens to a little over a run; and whoever dies on land dr...
+3. Since the night of 2026-11-15 a seat in a game waits for whoever's connection has gone, and they are put back in it; a stick of dynamite takes the w...
+4. Since the small hours of 2026-11-15 the team you begin on is thrown for each game, each team's island is lined in its colour on the minimap, and yo...
+5. Later on the night of 2026-11-14 the two shops and the panel that says you are out are drawn as the friends' panel is
+6. Since the night of 2026-11-14 a plank is a tenth wider than Hajun's and not a quarter, whoever kills someone has their sapphire and amethyst, and the comp...
+7. Since the evening of 2026-11-14 there is a Leap Potion and a faster builder to buy, a drink shows, a potion that is on leaves sparks, the bridge is...
+8. Since the small hours of 2026-11-14 the dynamite's arch rises and falls and leans to neither side, with an X where it will land; its fuse is seen t...
+9. Since the night of 2026-11-13 there is dynamite, which cuts bridges; the computer's players no longer fall for three easy tricks, and are not all a...
+10. Later on 2026-11-13: the compass's arrow points out, the anchors are their teams' colours, and the computer's players fill their buttons, each as i...
+11. Since 2026-11-13 there are five buttons for things to use, and you hold several kinds at once
+12. Since late on the night of 2026-11-12 each of the computer's players is someone, a knock no longer stuns them, and no two fights with them go the s...
+13. Since the night of 2026-11-12 the computer's players play the game
+14. Since the evening of 2026-11-12 every game online is 2v2v2v2, people teamed up with each other first and the computer in every seat left
+15. Later on 2026-11-12: dying loses everything you hold, what is aimed is seen over the void, and a sword is held on its edge and cut downward
+16. Since 2026-11-12 Bridge Wars has two shops, and everything in Hajun's file is in the game
+17. Since the night of 2026-11-11 Bridge Wars has generators, a shop and a timetable
+18. Since the night of 2026-11-08 Bridge Wars is the server's online, eight to a game in four teams of two, with respawn anchors and bridges you build
+19. The gamepad down the right edge opens the game selector
+20. Bridge Wars
+21. The fight
+22. Online, a game of Bridge Wars is a room of your own
+23. The camera is fixed straight down over you only in the arena
+24. In the arena the buttons are Hajun's `pvpmapbuttonui.jpg`
+25. Falling off the map
 
 ## Games: the gamepad opens a selector, and Bridge Wars is the PvP map
 
@@ -65,6 +66,181 @@ was the town itself; everything below about the map, its islands, the
 void, the punch's knockback and its range held for the town then, and
 holds for the arena now.
 
+- **Since the afternoon of 2026-11-16 which team anyone is on is drawn
+  nowhere until the fight begins, and the computer's players come into the
+  waiting room one at a time and go about it, each as who it is** (one
+  message from Hajun: "in bridge wars game, your team selection should not
+  be shown/determine until the game start. so when ur in the top middle
+  box, in waiting room, ur team color should not be displayed. also make
+  the bots just jump around and go around in different ways according to
+  their personality while in the waiting room, right now they are just
+  standing still in a circle, also make them join slightly delay one by
+  one rather than all at once. rebuild apk and push to git after ur
+  done."). **`PROTOCOL_VERSION` 18 still**: nothing sent has changed its
+  shape. **The server has its half since 07:23 UTC on 2026-11-16** (16:23
+  here; the binary before kept on the VM as
+  `roundtown-server.prev-2026-11-16c`), **and APK 37 the rest** (built, not installed: no phone was attached; `docs/building.md`).
+  An app from before plays on, APK 36 and an iPhone's build of
+  `ios-1.0.2-18`: it has what is the server's, the computer's players
+  coming one at a time, going about the room, and everyone stood where
+  the throw has them; and it still draws its team in the waiting room,
+  which is the app's own to leave off. **No tag was pushed for the
+  iPhone**: `ios-1.0.2-19` is Hajun's to ask for.
+  `shared/src/bots/mingle.rs` (new), `shared/src/lib.rs`;
+  `server/src/arena.rs`; `src/arena.rs`, `hud.rs`, `chat.rs`, `minimap.rs`.
+  - **Which team anyone is on is drawn nowhere until "Fight!"**
+    (`arena::Game::teams_out`, which every device has as
+    `Fighting::teams_out`: the fight on, or over). It was drawn in five
+    places from the moment you were in the waiting room:
+    - **your name on its plate, top left**, which was your team's colour
+      (Hajun's ask of the day before, "from the waiting room on" being
+      mine then): the colour of words until the fight, with no stroke
+      (`hud::colour_name`);
+    - **the name over everyone's head**, in their team's colour, with a
+      bar under it in a teammate's colour or an enemy's, which said who
+      was with you: a name alone, in the colour of words, as a name over
+      a head in the town is, and no bar (`place_tags`, `spawn_tag`; every
+      tag is made again as the teams come out). **That the bar goes with
+      it is mine**: nobody is hurt in the waiting room, and it had no
+      colour to be that told nothing;
+    - **your teammate's dot on the minimap**, green: yours alone until
+      the fight (`minimap::place_dots`);
+    - **a name in the chat**, in its team's colour: the colour of names,
+      as in the town (`chat::name_colour`, `chat::say`). A line said in
+      the waiting room stays as it was written;
+    - **and where you stood**. Each stood at their seat's own place on a
+      ring round the middle (`bridge_wars::waiting_spot`), a seat is a
+      team, and two of a team stood across the ring from each other: so
+      the south and north places were red's, every game. Whoever comes
+      into the room now is stood somewhere about its middle, thrown, 1.5
+      to 7 m out, clear of everyone there by 1.8 m where there is the
+      room, facing the middle (`Mingle::arrive`; the server for its own
+      games, `Game::put`, and `arena::come_in` offline). **Mine**: Hajun
+      spoke of the colour; this was the other thing that told.
+    - **"shown/determine"**: a seat is still a team from the moment it is
+      taken, thrown for each game as it was since the day before
+      (`seat_order`, `thrown_seat`), because friends who go in together
+      are seated on one team as they come, and whoever comes alone beside
+      whoever is there. **Nothing of it is to be seen until the fight,
+      which I have taken to be what was meant**, and have told Hajun so:
+      dealing the seats only as the countdown ends would be the same to
+      the eye.
+    - **It comes out as it did**: "You are on Team Blue" over "Fight!",
+      as everyone lands on their island, and your name turns your team's
+      colour with it.
+    - A punch in the waiting room lands on nobody online and moves
+      nobody offline (`deal_damage` leaves it, and `mill_bots` lets go of
+      the knock): it passes your teammate by as it did, and tells
+      nothing.
+  - **The computer's players come in one at a time**
+    (`bridge_wars::BOT_GAP`, 0.25 to 1.1 s between one and the next,
+    thrown for each; the server's `Game::bots_due`, and `arena::play`
+    offline). Nobody having joined for ten seconds, as before, the first
+    comes at once and the rest after it, seven of them in about five
+    seconds, the board counting them up; the countdown begins as the last
+    is in. Until then all seven came in the one frame. **Mine**: the
+    numbers; that the ten seconds are still waited first, so a game begun
+    alone begins about five seconds later than it did; and
+    - **online they take the seats from the far end of the order**
+      (`Game::last_free_seat`), so that the seats people are given stay
+      free the longest: someone who comes while they are still coming is
+      teamed up with the person there, and two who come together have a
+      team to themselves, as they would have a moment sooner. Once the
+      computer has begun to come it goes on coming, whoever joins or
+      leaves (`Game::coming`): it does not wait another ten seconds.
+      Offline, with you alone to be teamed with, any seat left, thrown.
+    - The tap that skips the wait brings them all at once, as it did
+      (`Game::hurried`).
+  - **In the waiting room each of them passes the time as who it is**
+    (`roundtown_net::bots::mingle`, new: one piece for the server's own
+    and for a game played offline, as their brain is; the server's
+    `Game::mill`, and `arena::mill_bots` offline, where each is a body put
+    where it has it, written only as it changes). Until then each stood
+    where its seat waits from the moment it came to the moment the fight
+    began. There are twelve things to do: stand and look about, at
+    someone or away; walk somewhere; run across the room; run round it;
+    jump on the spot, once or six times; go up to someone and stand by
+    them, facing them; follow at someone's heels; run rings round them;
+    go to the glass and stand looking out over the map; turn on the spot;
+    pace up and down; dart from side to side. Whoever is in the room,
+    you among them, is someone to go up to.
+    - **Which of them, how often and for how long is read off its kind's
+      own leanings** (`Nature`, from `Persona`: how lively by `roams` and
+      `drive`, how much it jumps by `bouncy`, how readily it goes up to
+      someone by `bold`, how much it is at their heels by `shoves`, how
+      much it stands at the glass by `schemes` and `minds`, how little it
+      can stand still for by `patience`, how quick on its feet by `pvp`,
+      how far it weaves by `weave`), each thrown a little either side of
+      its kind's as it comes in, with a liking of its own for each of the
+      twelve, so that no two of a kind are alike. **Nothing is a rule**,
+      as Hajun has it for them: what it does next is thrown by those
+      odds, and so is how long it goes on. The one thing fixed is that
+      nobody stands twice running, so that the stillest of them is not
+      seen to do nothing for the few seconds it is there.
+    - **What that comes to**, over forty of each kind for a minute in a
+      room with two others (a test prints it): the free spirit goes 236
+      m a minute and leaves the floor 42 times, standing a quarter of
+      the time; the troll 245 m and 39 jumps, a quarter of its time at
+      someone's heels or round and round them; the daredevil 261 m and
+      30 jumps; the defender 156 m and under two jumps, standing two
+      fifths of the time, pacing a quarter of it and at the glass a
+      quarter; the tinkerer at the glass for two fifths of its time; the
+      sentinel and the watchman pacing. A real room has each of them for
+      five to ten seconds, which is two to five things.
+    - **Its body** jumps as anyone jumps (1.64 m), runs at a run and
+      walks at a walk of its own (3.5 to 6.6 m a second), turns as fast
+      as it turns, and keeps inside the walls (`mingle::HALF`, 12.6 m
+      from the middle along each side: the walls' inner faces are 13.5
+      out; the game's tests read the map for it). It is in nobody's way,
+      as the computer's players are in the fight. Only where it stands
+      and how it faces comes of it, which is all anyone is sent of a
+      body: so nothing new is sent, and it has its own dice, so that a
+      game played out from a seed by the tests is the game it was.
+    - In the countdown the lively ones stand less and jump more.
+    - **Mine, all of it but the ask**: the twelve things, which leaning
+      makes which, every number. To tune: `Nature::of` and `Nature::odds`
+      in `shared/src/bots/mingle.rs`, and `cargo test -p roundtown_net
+      mingle -- --nocapture` prints what each kind then does.
+    - **Not done, and offered**: a punch that knocks them about the room
+      while you wait (it lands on nobody before the fight, online or
+      off, as it did); anything of theirs but walking, turning and
+      jumping, a punch at the air say, which nobody is sent of a body.
+  - **Checked.** The rules' tests (95, five new: every kind for forty
+    minutes keeps to the room, never stands the whole time nor never
+    does, and does at least four things; the free spirit against the
+    defender, the troll and the tinkerer, as above; a seed is the same
+    room again; whoever comes in is clear of everyone; one alone goes up
+    to nobody), the server's (58, two new: nobody for ten seconds, then
+    one at a time by the gaps, the seat beside the person the last
+    taken, someone who comes meanwhile teamed with them, the skip all at
+    once; and ten seconds of the room, everyone seen to do something and
+    nobody out of it) and the game's (316, one rewritten: where people
+    come in, and no wall nor edge anywhere the computer's players go, in
+    Hajun's map). **In the desktop build, scripted, offline**, two games
+    from the selector to the fight with nothing skipped, one from the
+    game's own camera and one from 36 m over the room: alone for ten
+    seconds, then seven in over 4.1 s, the board counting 2/8 to 8/8,
+    each off about its own business within a second of coming (one
+    spinning and then round the room jumping, one pacing, two at the
+    glass, one beside another and jumping at it); your name white on its
+    plate, every name over a head white with no bar, your dot alone on
+    the minimap; and at "Fight!", "You are on Team Blue", the name blue,
+    the teammate's name blue with its green bar, its dot on the map.
+    **One copy against a server on this PC**: the same over the wire,
+    seven bodies come over 5.1 s, running, turning and jumping (to 1.7 m
+    over the floor) as the copy draws them two updates behind, the
+    countdown, and the teams out at the fight. **Not on a phone, and not
+    with two people in a room**, which is where anyone would look for
+    who is with them. **On the VM after the deploy**: the binary the
+    same bytes as the one built here, the service active, the login
+    answering. **This PC's own account was not brought online on it**,
+    as it is after every deploy: that opens the game's window, and Hajun,
+    in class, had asked meanwhile that no window come up in front ("dont
+    open it as active tab but rather background tab cuz im in class",
+    passed on by the other session at work in the tree, which has that
+    check to run once it has a way of running the game hidden). The
+    three scripted runs above were made before that word came, each a
+    window for half a minute.
 - **Later on the night of 2026-11-15 a stick of dynamite is 1 amethyst and
   the falling it starts quickens to a little over a run; and whoever dies
   on land drops their sapphire and amethyst, for whoever walks into them**
@@ -78,8 +254,9 @@ holds for the arena now.
   kept on the VM as `roundtown-server.prev-2026-11-16` and `16b`), **and
   APK 36** (built, not installed: no phone was attached;
   `docs/building.md`). An app from before is told to update and stays
-  offline: an iPhone needs the next build, `ios-1.0.2-18`, whose tag is
-  Hajun's to ask for.
+  offline: an iPhone needs the next build, `ios-1.0.2-18`, whose tag was
+  pushed that night at Hajun's word ("push the ios tag"); whether it
+  built is not known here.
   `shared/src/lib.rs`, `nav.rs`, `bots.rs`; `server/src/arena.rs`;
   `src/arena.rs`, `loot.rs`, `market.rs`; `bridgewarsgameevent.md`.
   - **A stick of dynamite is 1 amethyst** ("change the price of dynamite

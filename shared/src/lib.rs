@@ -1097,6 +1097,13 @@ pub mod bridge_wars {
     /// join (Hajun, the night of 2026-11-07: "if there is no player joining for 10sec,
     /// fill it with bots").
     pub const BOT_WAIT: f32 = 10.0;
+    /// How long after one of the computer's players has come into the
+    /// waiting room the next does, in seconds, at the least and at the
+    /// most, thrown anew for each (since 2026-11-16; Hajun: "make them
+    /// join slightly delay one by one rather than all at once"): seven of
+    /// them are all in after about five seconds. Until then they all came
+    /// in the one frame.
+    pub const BOT_GAP: (f32, f32) = (0.25, 1.1);
     /// How long a full room counts down before everyone is sent to their
     /// island, in seconds ("it will count down from 5").
     pub const COUNTDOWN: f32 = 5.0;

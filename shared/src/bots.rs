@@ -21,6 +21,10 @@
 //! * [`Order`]: what a frame of that comes to that the game has to carry
 //!   out, whoever runs it: a punch, a purchase, a rung laid.
 //! * [`Skill`]: every number of how hard they play, in one place.
+//! * [`mingle`]: what they do in the waiting room before any of that, each
+//!   as who it is.
+
+pub mod mingle;
 
 use bevy::math::{Vec2, Vec3, Vec3Swizzles};
 

@@ -15,8 +15,12 @@
 //!
 //! A game is a room of its own ([`Room::Arena`]). Whoever wants to play goes
 //! into the game filling now. After [`BOT_WAIT`] seconds with nobody joining
-//! the computer takes every seat left at once, as the game does offline, and
-//! the room counts down and goes. The computer's players are moved here
+//! the computer takes every seat left, as the game does offline, and the
+//! room counts down and goes: its players come in one at a time, a thrown
+//! while apart ([`Game::bots_due`]), and go about the waiting room each as
+//! who it is until the fight ([`Game::mill`], `roundtown_net::bots::mingle`;
+//! since 2026-11-16, when they all came in the one frame and stood on a
+//! ring). The computer's players are moved here
 //! ([`Mind`]): the server has no map, so each keeps to the disc of its
 //! island ([`ARENA_ISLAND_RADIUS`]), runs at whoever of another team comes
 //! within its sight there, punches once in reach, runs away when nearly
@@ -105,6 +109,7 @@ use std::collections::HashMap;
 
 use bevy::prelude::*;
 use bevy_replicon::prelude::*;
+use roundtown_net::bots::mingle::{Mingle, Stood};
 use roundtown_net::bots::{Seen, Skill, Squad, Stick, View};
 use roundtown_net::bridge_wars::*;
 use roundtown_net::nav::Nav;
@@ -212,6 +217,17 @@ struct Game {
     left: f32,
     /// Seconds since the last to join did, in the waiting room.
     since_join: f32,
+    /// The wait over, the computer has begun taking the seats left, one
+    /// of its players at a time ([`Game::bots_due`]; since 2026-11-16):
+    /// how long until the next comes, in seconds. None until then.
+    coming: Option<f32>,
+    /// Someone has skipped the wait ([`Ask::Skip`]): the computer takes
+    /// every seat left at once, as it did for everyone until 2026-11-16.
+    hurried: bool,
+    /// The computer's players in the waiting room, each passing the time
+    /// as who it is ([`Mingle`], [`Game::mill`]; since 2026-11-16), and
+    /// what throws where anyone who comes into the room stands.
+    mingle: Mingle,
     /// Seconds with nobody connected to it.
     unwatched: f32,
     /// Everyone's health, how long since each was last hit, how long each
@@ -501,6 +517,9 @@ impl Game {
             stage: ArenaStage::Waiting,
             left: 0.0,
             since_join: 0.0,
+            coming: None,
+            hurried: false,
+            mingle: Mingle::new(seed),
             unwatched: 0.0,
             health: Vec::new(),
             since_hit: Vec::new(),
@@ -841,6 +860,79 @@ impl Game {
             .find(|&seat| seat >= self.seats.len() || self.vacant[seat])
     }
 
+    /// The seat the computer's next player takes, coming into the waiting
+    /// room one at a time ([`Game::bots_due`]): the last, in the order this
+    /// game's seats are taken in, that nobody has sat in. So the seats
+    /// people are given stay free the longest, and whoever comes while the
+    /// computer's players are still coming is teamed up with the people
+    /// there, as they would have been a moment sooner.
+    fn last_free_seat(&self) -> Option<usize> {
+        self.order
+            .into_iter()
+            .rev()
+            .find(|&seat| seat >= self.seats.len() || self.vacant[seat])
+    }
+
+    /// How many of the computer's players come into the waiting room this
+    /// frame, `dt` seconds on: none until nobody has joined for
+    /// [`BOT_WAIT`] seconds; then one, and one more each time the gap
+    /// thrown after the last has passed ([`BOT_GAP`]; since 2026-11-16,
+    /// Hajun: "make them join slightly delay one by one rather than all at
+    /// once"), for as long as a seat is free, whoever joins or leaves
+    /// meanwhile; or, the wait skipped, every one of them at once. Until
+    /// then the computer took every seat left in the one frame.
+    fn bots_due(&mut self, dt: f32) -> usize {
+        let free = (0..ARENA_SEATS)
+            .filter(|&seat| seat >= self.seats.len() || self.vacant[seat])
+            .count();
+        if free == 0 || self.stage != ArenaStage::Waiting {
+            return 0;
+        }
+        if self.hurried {
+            return free;
+        }
+        if self.coming.is_none() && self.since_join >= BOT_WAIT {
+            self.coming = Some(0.0);
+        }
+        let Some(left) = self.coming.as_mut() else {
+            return 0;
+        };
+        *left -= dt;
+        if *left > 0.0 {
+            return 0;
+        }
+        *left = BOT_GAP.0 + (BOT_GAP.1 - BOT_GAP.0) * fastrand::f32();
+        1
+    }
+
+    /// Where everyone in the waiting room stands, across its floor from
+    /// its middle, by seat, with nobody in `but` nor in a seat nobody is
+    /// in: what the computer's players there go by ([`Mingle`]).
+    fn in_the_room(&self, but: Option<usize>) -> Vec<Option<Vec2>> {
+        (0..self.seats.len().min(ARENA_SEATS))
+            .map(|seat| (Some(seat) != but && !self.vacant[seat] && !self.gone[seat] && self.present[seat]).then(|| self.at[seat].xz()))
+            .collect()
+    }
+
+    /// A frame of the computer's players in the waiting room, `dt` seconds
+    /// on, before the fight: each goes about as who it is ([`Mingle`]), and
+    /// is where that has it, for its body to be sent as ([`flush`]).
+    /// `soon`, the room is counting down.
+    fn mill(&mut self, dt: f32, soon: bool) {
+        let mut everyone = self.in_the_room(None);
+        for seat in 0..self.seats.len().min(ARENA_SEATS) {
+            if !self.bot[seat] {
+                continue;
+            }
+            let Some(stood) = self.mingle.step(seat, &everyone, soon, dt) else {
+                continue;
+            };
+            self.at[seat] = stood.in_room(Vec2::ZERO, WAITING_FLOOR);
+            self.yaw[seat] = stood.yaw;
+            everyone[seat] = Some(stood.at);
+        }
+    }
+
     /// The seats `count` people take who go in together, in the order they
     /// take them (since 2026-11-13, a group of friends going in with its
     /// leader, `social`; Hajun: "everyone get queued at the same time in
@@ -924,16 +1016,39 @@ impl Game {
         self.since_join = 0.0;
         // In the waiting room, until the game says otherwise: where a
         // person is put as they are seated, and where the computer's
-        // waits.
-        let (at, turn) = waiting_spot(seat);
+        // comes in. Somewhere about its middle, thrown, clear of whoever
+        // is there, and by nothing of the seat (since 2026-11-16; Hajun:
+        // "your team selection should not be shown/determine until the
+        // game start"): until then each stood at their seat's own place
+        // on a ring ([`waiting_spot`]), and a seat is a team. Whoever is
+        // seated with the fight on, a zombie, is stood by whoever seats
+        // it.
+        let waits = seat < ARENA_SEATS && matches!(self.stage, ArenaStage::Waiting | ArenaStage::Countdown);
+        let stood = if waits {
+            let everyone = self.in_the_room(Some(seat));
+            self.mingle.arrive(&everyone)
+        } else {
+            let (at, turn) = waiting_spot(seat);
+            Stood {
+                at: at.xz(),
+                up: 0.0,
+                yaw: yaw_of(turn),
+            }
+        };
+        let at = stood.in_room(Vec2::ZERO, WAITING_FLOOR);
         self.at[seat] = at;
-        self.yaw[seat] = yaw_of(turn);
+        self.yaw[seat] = stood.yaw;
         self.present[seat] = true;
         self.away[seat] = false;
         self.died_away[seat] = false;
         self.metres[seat] = 0.0;
+        self.mingle.leave(seat);
         if bot && seat < ARENA_SEATS {
-            self.squad.seat(seat, at, yaw_of(turn));
+            self.squad.seat(seat, at, stood.yaw);
+            // And there it passes the time, as who it is.
+            if waits && let Some(persona) = self.squad.bot(seat).map(|bot| bot.persona()) {
+                self.mingle.enter(seat, persona, stood);
+            }
         } else {
             self.squad.unseat(seat);
         }
@@ -963,6 +1078,7 @@ impl Game {
         self.died_away[seat] = false;
         self.metres[seat] = 0.0;
         self.squad.unseat(seat);
+        self.mingle.leave(seat);
         if let Some(kit) = self.outfits.kits.get_mut(seat) {
             *kit = Kit::default();
         }
@@ -1946,7 +2062,8 @@ fn seat_together(
         if let Some(client) = body_of.client {
             tell(tells, client, Tell::Seated { seat: seat as u8 });
         }
-        let (at, turn) = waiting_spot(seat);
+        // Where the game has just stood them in the waiting room.
+        let (at, turn) = (game.at[seat], Quat::from_rotation_y(game.yaw[seat]));
         place(
             commands,
             tells,
@@ -2257,7 +2374,10 @@ fn hear(
                     && config.allow_skip
                 {
                     match game.stage {
-                        ArenaStage::Waiting => game.since_join = BOT_WAIT,
+                        ArenaStage::Waiting => {
+                            game.since_join = BOT_WAIT;
+                            game.hurried = true;
+                        }
                         _ => game.left = 0.0,
                     }
                 }
@@ -2317,22 +2437,24 @@ fn run(
         match game.stage {
             ArenaStage::Waiting => {
                 game.since_join += dt;
-                let waited = game.since_join >= BOT_WAIT && game.free_seat().is_some();
-                if waited {
-                    // The computer takes every seat left, however many
-                    // people there are: every game is two to a team on
-                    // four islands, the people teamed up with each other
-                    // first ([`Game::order`]).
-                    let people = game.people();
-                    while game.free_seat().is_some() {
-                        seat_bot(&mut commands, game, now, false);
-                    }
+                // Nobody has joined for a while: the computer takes the
+                // seats left, however many people there are (every game
+                // is two to a team on four islands, the people teamed up
+                // with each other first, [`Game::order`]), its players
+                // coming in one at a time ([`Game::bots_due`]).
+                let begun = game.coming.is_some();
+                for _ in 0..game.bots_due(dt) {
+                    seat_bot(&mut commands, game, now, false);
+                }
+                if game.coming.is_some() && !begun {
                     info!(
-                        "Bridge Wars game {}: nobody joined in {BOT_WAIT} s: {people} people, and the computer in the seats left",
-                        game.id
+                        "Bridge Wars game {}: nobody joined in {BOT_WAIT} s: {} people, and the computer comes for the seats left",
+                        game.id,
+                        game.people()
                     );
                 }
-                if waited || game.free_seat().is_none() {
+                game.mill(dt, false);
+                if game.free_seat().is_none() {
                     game.pad();
                     game.stage = ArenaStage::Countdown;
                     game.left = COUNTDOWN;
@@ -2340,6 +2462,7 @@ fn run(
             }
             ArenaStage::Countdown => {
                 game.left -= dt;
+                game.mill(dt, true);
                 if game.left <= 0.0 {
                     // Whoever's device went while the room waited, and
                     // is not back as the fight begins, has given their
@@ -2369,6 +2492,7 @@ fn run(
                     while game.free_seat().is_some() {
                         seat_bot(&mut commands, game, now, true);
                     }
+                    game.mingle.clear();
                     for seat in 0..game.seats.len() {
                         game.stand(seat);
                     }
@@ -2803,27 +2927,30 @@ fn land(
 /// side's names that nobody there has, as House Builder's are
 /// (`builder::seat_bot`).
 fn seat_bot(commands: &mut Commands, game: &mut Game, now: f64, landed: bool) {
-    let Some(seat) = game.free_seat() else {
+    // Into the waiting room, the last of the seats left, so that the
+    // people's stay free the longest ([`Game::last_free_seat`]); as the
+    // fight begins, whichever is left.
+    let free = if landed { game.free_seat() } else { game.last_free_seat() };
+    let Some(seat) = free else {
         return;
     };
     let member = game.bot_member(seat);
+    let body = commands.spawn_empty().id();
+    game.put(seat, body, member.clone(), true);
+    // Where the game has just stood it in the waiting room.
     let spot = if landed {
         game.bot_spot(seat)
     } else {
-        let (at, turn) = waiting_spot(seat);
-        Spot::of(at, turn)
+        Spot::of(game.at[seat], Quat::from_rotation_y(game.yaw[seat]))
     };
-    let body = commands
-        .spawn((
-            Replicated,
-            member.clone(),
-            spot,
-            Venue::Arena,
-            InRoom(game.room()),
-            Body::bot(game.room(), seat as u8, now),
-        ))
-        .id();
-    game.put(seat, body, member, true);
+    commands.entity(body).insert((
+        Replicated,
+        member,
+        spot,
+        Venue::Arena,
+        InRoom(game.room()),
+        Body::bot(game.room(), seat as u8, now),
+    ));
 }
 
 /// Who the computer's player in `seat` of the game numbered `game` is to
@@ -3256,6 +3383,153 @@ mod tests {
         game.leave(0);
         assert!((0..game.seats.len()).all(|seat| game.gone[seat] || game.bot[seat]));
         assert_eq!(game.free_seat(), Some(0));
+    }
+
+    /// A frame of a waiting room's wait, as [`run`] counts it, without the
+    /// entities: the computer's players that are due come in. Which seats
+    /// they took.
+    fn wait_a_frame(game: &mut Game, dt: f32) -> Vec<usize> {
+        game.since_join += dt;
+        let mut came = Vec::new();
+        for _ in 0..game.bots_due(dt) {
+            let seat = game.last_free_seat().expect("one is due only while a seat is free");
+            let member = game.bot_member(seat);
+            game.put(seat, Entity::from_bits(100 + seat as u64), member, true);
+            came.push(seat);
+        }
+        game.mill(dt, false);
+        came
+    }
+
+    #[test]
+    fn the_computer_s_players_come_in_one_at_a_time_and_the_people_s_seats_are_the_last_taken() {
+        // Hajun, 2026-11-16: "make them join slightly delay one by one
+        // rather than all at once". One person, and nobody else comes.
+        let dt = 1.0 / 60.0;
+        let mut game = empty_room();
+        game.seat(Entity::from_bits(1), person(1), false);
+        let mut clock = 0.0;
+        while clock < BOT_WAIT - 0.1 {
+            assert!(wait_a_frame(&mut game, dt).is_empty(), "one came {clock} s in");
+            clock += dt;
+        }
+        // The wait over, the first comes at once, and the rest one at a
+        // time, each a thrown while after the last, whatever seating one
+        // does to the time since the last to join.
+        let mut came: Vec<(f32, usize)> = Vec::new();
+        while game.free_seat().is_some() {
+            clock += dt;
+            let now = wait_a_frame(&mut game, dt);
+            assert!(now.len() <= 1, "{} came in one frame", now.len());
+            came.extend(now.into_iter().map(|seat| (clock, seat)));
+            assert!(clock < BOT_WAIT + 12.0, "only {} have come {clock} s in", came.len());
+        }
+        assert_eq!(came.len(), ARENA_SEATS - 1);
+        assert!(came[0].0 - BOT_WAIT < 0.2, "the first came {} s in", came[0].0);
+        for pair in came.windows(2) {
+            let gap = pair[1].0 - pair[0].0;
+            assert!(gap >= BOT_GAP.0 - 2.0 * dt && gap <= BOT_GAP.1 + 2.0 * dt, "{gap} s between two of them");
+        }
+        let all_in = came[came.len() - 1].0 - came[0].0;
+        assert!((1.5..=6.6).contains(&all_in), "all in after {all_in} s");
+        // The seat beside the person is the last the computer takes, and
+        // each of them is in the room passing the time.
+        assert_eq!(came[came.len() - 1].1, SEAT_ORDER[1]);
+        assert_eq!(game.people(), 1);
+        assert!((0..ARENA_SEATS).all(|seat| game.bot[seat] == game.mingle.has(seat)));
+
+        // Someone who comes while they are still coming is teamed up with
+        // the person there, and two who come together have a team to
+        // themselves; and the computer goes on coming without waiting
+        // again.
+        let mut game = empty_room();
+        game.seat(Entity::from_bits(1), person(1), false);
+        let mut in_now = 0;
+        while in_now < 3 {
+            in_now += wait_a_frame(&mut game, dt).len();
+        }
+        assert_eq!(game.seats_for(2), Some(vec![SEAT_ORDER[2], SEAT_ORDER[3]]));
+        assert_eq!(game.seat(Entity::from_bits(2), person(2), false), SEAT_ORDER[1]);
+        assert_eq!(arena_team(SEAT_ORDER[0]), arena_team(SEAT_ORDER[1]));
+        let mut since = 0.0;
+        while wait_a_frame(&mut game, dt).is_empty() {
+            since += dt;
+            assert!(since <= BOT_GAP.1 + 2.0 * dt, "none came for {since} s after someone joined");
+        }
+        // The wait skipped, they all come at once.
+        let mut game = empty_room();
+        game.seat(Entity::from_bits(1), person(1), false);
+        game.hurried = true;
+        assert_eq!(wait_a_frame(&mut game, dt).len(), ARENA_SEATS - 1);
+        assert_eq!(game.free_seat(), None);
+    }
+
+    #[test]
+    fn in_the_waiting_room_nobody_stands_by_their_seat_and_the_computer_s_players_go_about() {
+        use roundtown_net::bots::mingle::{ARRIVES, HALF};
+        // Where someone is stood as they come in is thrown, and says
+        // nothing of their seat, which is their team (Hajun, 2026-11-16:
+        // "your team selection should not be shown/determine until the
+        // game start"): the same seat of two games is two places, about
+        // the middle, facing it.
+        let room = |seed: u64| {
+            let mut game = empty_room();
+            game.mingle = Mingle::new(seed);
+            game
+        };
+        let mut places = Vec::new();
+        for seed in 0..12 {
+            let mut game = room(seed);
+            let seat = game.seat(Entity::from_bits(1), person(1), false);
+            assert_eq!(seat, SEAT_ORDER[0]);
+            let at = game.at[seat];
+            let out = at.xz().length();
+            assert_eq!(at.y, WAITING_FLOOR);
+            assert!(out >= ARRIVES.0 - 1e-3 && out <= ARRIVES.1 + 1e-3, "{out} m from the middle");
+            let ahead = Quat::from_rotation_y(game.yaw[seat]) * Vec3::NEG_Z;
+            assert!(ahead.xz().dot(-at.xz().normalize()) > 0.999, "facing {ahead}");
+            places.push(at.xz());
+        }
+        let ring = waiting_spot(SEAT_ORDER[0]).0.xz();
+        assert!(places.iter().filter(|place| place.distance(ring) > 1.0).count() >= 10, "{places:?}");
+        places.dedup_by(|a, b| a.distance(*b) < 0.5);
+        assert!(places.len() >= 10, "{places:?}");
+
+        // The computer's players, once in, go about the room: over ten
+        // seconds every one of them has done something to be seen (gone
+        // somewhere, left the floor, or turned round), most of them have
+        // gone a good way, none has left the room, and the person in it
+        // is where they were.
+        let dt = 1.0 / 60.0;
+        let mut game = room(5);
+        let me = game.seat(Entity::from_bits(1), person(1), false);
+        let mine = game.at[me];
+        game.hurried = true;
+        wait_a_frame(&mut game, dt);
+        let from: Vec<Vec3> = game.at.clone();
+        let (mut furthest, mut highest, mut turned) = (vec![0.0f32; ARENA_SEATS], vec![0.0f32; ARENA_SEATS], vec![0.0f32; ARENA_SEATS]);
+        let mut facing = game.yaw.clone();
+        for _ in 0..600 {
+            game.mill(dt, false);
+            for seat in (0..ARENA_SEATS).filter(|&seat| game.bot[seat]) {
+                let at = game.at[seat];
+                assert!(at.x.abs() <= HALF + 1e-3 && at.z.abs() <= HALF + 1e-3, "seat {seat} at {at}");
+                assert!(at.y >= WAITING_FLOOR && at.y <= WAITING_FLOOR + 1.9, "seat {seat} at {at}");
+                furthest[seat] = furthest[seat].max(at.xz().distance(from[seat].xz()));
+                highest[seat] = highest[seat].max(at.y - WAITING_FLOOR);
+                let turn = (game.yaw[seat] - facing[seat] + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
+                turned[seat] += turn.abs();
+                facing[seat] = game.yaw[seat];
+            }
+        }
+        let bots: Vec<usize> = (0..ARENA_SEATS).filter(|&seat| game.bot[seat]).collect();
+        assert_eq!(bots.len(), ARENA_SEATS - 1);
+        assert!(
+            bots.iter().all(|&seat| furthest[seat] > 1.0 || highest[seat] > 1.0 || turned[seat] > 3.0),
+            "{furthest:?} {highest:?} {turned:?}"
+        );
+        assert!(bots.iter().filter(|&&seat| furthest[seat] > 3.0).count() >= 4, "{furthest:?}");
+        assert_eq!(game.at[me], mine);
     }
 
     #[test]

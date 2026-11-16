@@ -36,6 +36,7 @@ use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use roundtown_net::bridge_wars::{GENERATORS, generator, steady};
 use roundtown_net::{ARENA_ISLAND_RADIUS, ARENA_ISLANDS};
 
+use crate::arena::Fighting;
 use crate::bridge::Bridges;
 use crate::hud;
 use crate::island::{Islands, Venue};
@@ -338,7 +339,11 @@ fn mark_generators(
 /// Puts a dot over the picture for you and for each teammate, where each
 /// stands, and takes it away with its body; the dead are not shown. A dot
 /// is over whatever else is on the map, the generators' marks among it.
+/// Your teammate has none until the fight begins and the teams are out
+/// (`Fighting::teams_out`, since 2026-11-16): in the waiting room it said
+/// who was with you.
 fn place_dots(
+    fighting: Res<Fighting>,
     me: Query<(Entity, &Transform, &Venue, Option<&Team>, Has<Dead>), With<Player>>,
     others: Query<(Entity, &Transform, &Team, Has<Dead>), (With<WalkCycle>, Without<Player>)>,
     nodes: Query<Entity, With<MinimapNode>>,
@@ -354,7 +359,7 @@ fn place_dots(
     let in_arena = here == Venue::Arena;
     // Everyone a dot is for, and where they stand.
     let mut bodies: Vec<(Entity, Vec2, bool, bool)> = vec![(you, at.translation.xz(), true, dead || !in_arena)];
-    if in_arena && let Some(mine) = team {
+    if in_arena && fighting.teams_out && let Some(mine) = team {
         bodies.extend(
             others
                 .iter()

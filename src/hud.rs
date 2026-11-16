@@ -1454,12 +1454,16 @@ fn show_name(
     }
 }
 
-/// Colours your name on its plate: in a game of Bridge Wars, from its
-/// waiting room on, your team's colour, as it is in the chat, and as your
-/// teammate's is over their head (since 2026-11-15; Hajun: "in the bridge
-/// wars minigame, make the color of your name that u see in the top left
-/// corner like NAME#5571 to also be the color of your team"); anywhere
-/// else, and until you have a seat, the colour of words. **In its team's
+/// Colours your name on its plate: in a game of Bridge Wars, from the
+/// moment the fight begins, your team's colour, as it is in the chat, and
+/// as your teammate's is over their head (since 2026-11-15; Hajun: "in the
+/// bridge wars minigame, make the color of your name that u see in the top
+/// left corner like NAME#5571 to also be the color of your team"); anywhere
+/// else, and in the game's waiting room and through its countdown, the
+/// colour of words (it was your team's from the waiting room on until
+/// 2026-11-16; Hajun: "your team selection should not be shown/determine
+/// until the game start. so when ur in the top middle box, in waiting
+/// room, ur team color should not be displayed"; `Fighting::teams_out`). **In its team's
 /// colour it has a thin black stroke round it**, as the chat's words have
 /// (mine): the plate is see-through, light by day with the sky behind it,
 /// and on it the blue team's name could not be read, nor the green's and
@@ -1472,7 +1476,10 @@ fn colour_name(
     mut rims: Query<&mut Visibility, With<NameRim>>,
 ) {
     let colours = ui().colours;
-    let team = fighting.seat.filter(|_| *layout == Layout::Arena).map(|seat| arena_team(usize::from(seat)));
+    let team = fighting
+        .seat
+        .filter(|_| *layout == Layout::Arena && fighting.teams_out)
+        .map(|seat| arena_team(usize::from(seat)));
     let wanted = team.map_or(colours.text, |team| colours.arena.team(team));
     for mut colour in &mut plates {
         colour.set_if_neq(TextColor(wanted));

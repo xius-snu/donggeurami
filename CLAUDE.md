@@ -11,10 +11,12 @@ bundles). It plays online against a server in Seoul (`server/`; `shared/` is
 Bridge Wars. House Builder, the build-battle game, is stalled: keep it
 working, and spend nothing on it unasked.
 
-As of the first hour of 2026-11-16: `PROTOCOL_VERSION` 18, APK 36
-(`versionCode`), the server deployed then (15:35 UTC on the 15th) with
-everything in `server/` and `shared/`. No iPhone build has protocol 18:
-the tag `ios-1.0.2-18` is Hajun's to ask for.
+As of the afternoon of 2026-11-16: `PROTOCOL_VERSION` 18, APK 37
+(`versionCode`), the server deployed then (07:23 UTC) with everything in
+`server/` and `shared/`. The iPhone's last tag, `ios-1.0.2-18`, was pushed
+in the first hour of that day (whether Codemagic built it is not known
+here): it plays online, without what is the app's own of APK 37 (the team
+drawn nowhere in the waiting room).
 
 ## This file, and where the rest is
 
@@ -367,7 +369,12 @@ and the game is as that file has it. The rules both sides play by are
 
 - **A game**: the selector, a black loading screen, a glass waiting room
   150 m over the map; ten seconds after the last person joins the computer
-  takes every seat left; a countdown; 25 minutes. **Always 2v2v2v2**: eight
+  takes the seats left, its players coming in one at a time and going
+  about the room each as who it is (`bots::mingle`, `BOT_GAP`); a
+  countdown; 25 minutes. **Which team anyone is on is drawn nowhere until
+  "Fight!"** (`Fighting::teams_out`: names in the colour of words, no bar
+  over a head, no teammate on the minimap, and where anyone stands in the
+  room thrown, not their seat's). **Always 2v2v2v2**: eight
   seats, four teams, a team to an island (seat modulo four); people are
   teamed with each other first, and a group is seated together; which team
   they begin on is thrown for each game (`seat_order` on the server,
