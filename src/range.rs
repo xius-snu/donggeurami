@@ -203,7 +203,7 @@ fn spawn(
 fn follow(
     driving: Res<drive::Driving>,
     bridging: Res<crate::bridge::Bridging>,
-    me: Query<(&Transform, &Venue, Has<Dead>, Has<crate::Drinking>), With<Player>>,
+    me: Query<(&Transform, &Venue, Has<Dead>, Has<crate::Drinking>, Has<crate::Squashed>), With<Player>>,
     mut ranges: Query<(&mut Transform, &mut Visibility), (With<HitRange>, Without<Player>)>,
 ) {
     let Ok((mut place, mut shown)) = ranges.single_mut() else {
@@ -211,11 +211,14 @@ fn follow(
     };
     // Nor while you carry a plank, there being no punch to show the range
     // of (`bridge`; Hajun, 2026-11-09: "remove the hit indicator"); nor
-    // with a potion at your mouth, for the same reason (`utility`).
+    // with a potion at your mouth, for the same reason (`utility`); nor
+    // flat on the road where a bus ran you over (`arena::squash`).
     let body = me
         .single()
         .ok()
-        .filter(|&(_, &here, dead, drinking)| here == Venue::Arena && !driving.on() && !dead && !bridging.0 && !drinking)
+        .filter(|&(_, &here, dead, drinking, squashed)| {
+            here == Venue::Arena && !driving.on() && !dead && !bridging.0 && !drinking && !squashed
+        })
         .map(|(body, ..)| body);
     shown.set_if_neq(if body.is_some() { Visibility::Inherited } else { Visibility::Hidden });
     let Some(body) = body else {

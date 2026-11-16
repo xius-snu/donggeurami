@@ -119,6 +119,11 @@
 //! device's, online the server's, seated past the players' eight seats);
 //! and at 25 it is a draw.
 //!
+//! **Since 2026-11-16 two buses drive round the middle of the map and run
+//! over whoever is in front of one** (`squash`, `car::Lapping`,
+//! `roundtown_net::bridge_wars::Bus`): flat on the road for ten seconds,
+//! with 20 off their health.
+//!
 //! Everything the game puts in the world or on the screen carries
 //! [`InArena`] and goes when the game does. Your own body is the only thing
 //! that comes back.
@@ -126,6 +131,7 @@
 
 #[cfg(test)]
 mod nav_bake;
+mod squash;
 
 use std::collections::HashMap;
 
@@ -743,6 +749,27 @@ impl Game {
         }
     }
 
+    /// A bus has killed whoever is in `victim` where they stood, their
+    /// feet at `at`, offline (`squash`, since 2026-11-16): what they held
+    /// of sapphire and amethyst is thrown out round them on the road, as
+    /// it is from anyone killed on land ([`Game::slain`]), there being
+    /// nobody whose doing it was to have it otherwise. One of the
+    /// computer's players' here; yours as you lose the rest
+    /// ([`lose_on_death`]). A zombie holds nothing.
+    fn run_down(&mut self, victim: usize, at: Vec3) {
+        if victim >= ARENA_SEATS {
+            return;
+        }
+        if victim == self.me {
+            self.died_at = Some(at);
+            self.killed_by = None;
+            return;
+        }
+        if let Some(brains) = self.brains.as_deref_mut() {
+            drop_spoils(&mut self.mint, &brains.nav, &mut brains.purses[victim], at, self.elapsed, &mut self.spilt);
+        }
+    }
+
     /// Whoever is in `by` has killed whoever is in `victim`, offline, by
     /// knocking them off the world, or with no land under them
     /// ([`Game::slain`]):
@@ -997,6 +1024,9 @@ struct Panel;
 pub(crate) struct ArenaSystems;
 
 pub(crate) fn plugin(app: &mut App) {
+    // The buses that drive round the middle of the map, and whoever they
+    // run over.
+    squash::plugin(app);
     app.add_message::<Ask>()
         .add_message::<Want>()
         .add_message::<Used>()
@@ -3131,7 +3161,7 @@ fn hunt(
         Option<&Team>,
         Has<Dead>,
     )>,
-    (wears, seats): (Query<&Wears>, Query<&Seat>),
+    (wears, seats, flat): (Query<&Wears>, Query<&Seat>, Query<(), With<crate::Squashed>>),
     mut landed: MessageWriter<Landed>,
     mut commands: Commands,
 ) {
@@ -3153,6 +3183,8 @@ fn hunt(
         .iter()
         .filter(|(_, _, venue, _, _, _, hunter, _, _, _, dead)| **venue == Venue::Arena && hunter.is_some() && !dead)
         .map(|(body, ..)| body)
+        // (One a bus has laid flat goes for nobody.)
+        .filter(|body| !flat.contains(*body))
         .collect();
     for bot in hunters {
         // What the bot does this frame, with its own body in hand; the
@@ -3331,6 +3363,7 @@ fn drive_bots(
     look: Res<fire::Look>,
     islands: Res<Islands>,
     lobbed_sticks: Query<&dynamite::Stick>,
+    (flat, buses): (Query<(), With<crate::Squashed>>, Query<&crate::car::Lapping>),
     mut landed: MessageWriter<Landed>,
     (mut fed, mut builders): (MessageWriter<Fed>, ResMut<BotBuilders>),
     mut commands: Commands,
@@ -3341,6 +3374,10 @@ fn drive_bots(
         }
         return;
     }
+    // The clock the buses stand by this frame, for the brains to mind them
+    // by the very same (`car::Lapping`); none before the buses are on the
+    // road.
+    let bus_clock = buses.iter().next().map(|bus| bus.clock).filter(|clock| *clock > 0.0);
     let mut game = game.expect("checked");
     let game = &mut *game;
     let Some(brains) = game.brains.as_deref_mut() else {
@@ -3404,6 +3441,7 @@ fn drive_bots(
             unseen: game.outfits.kit(seat.0).unseen(elapsed),
             person: seat.0 == me,
             health: health.map_or(1.0, Health::share),
+            flat: flat.contains(body),
         };
     }
     let computers = move |seat: &usize| *seat != me;
@@ -3456,6 +3494,7 @@ fn drive_bots(
                     mint: &game.mint,
                     anchors: game.anchors,
                     sticks: &sticks,
+                    clock: bus_clock,
                 };
                 squad.step(seat, &view, dt)
             };
@@ -3761,6 +3800,10 @@ fn feed_line(feed: &Feed, seats: &[Member]) -> Option<chat::Line> {
                 ink,
                 &[("name", name, colour), ("team", &whose, colours.arena.team(team))],
             )
+        }
+        Feed::RunOver { seat } => {
+            let (name, colour) = who(seat)?;
+            chat::spans(&words.run_over, ink, &[("name", name, colour)])
         }
     })
 }
@@ -4324,7 +4367,7 @@ fn place_tags(
     (fighting, mut were_out): (Res<Fighting>, Local<bool>),
     cameras: Query<(&Camera, &Transform), With<ThirdPersonCamera>>,
     windows: Query<&Window>,
-    bodies: Query<(Entity, &Transform, &Health, &Team, &Name, Has<Dead>), Without<Player>>,
+    bodies: Query<(Entity, &Transform, &Health, &Team, &Name, Has<Dead>, Has<crate::Squashed>), Without<Player>>,
     wears: Query<&Wears>,
     mut tags: Query<(Entity, &TagOf, &mut Visibility, &mut UiTransform, &ComputedNode, &Children)>,
     parts: Query<&Children>,
@@ -4342,7 +4385,7 @@ fn place_tags(
         return;
     }
     if in_arena {
-        for (body, _, _, team, name, _) in &bodies {
+        for (body, _, _, team, name, ..) in &bodies {
             if !tags.iter().any(|(_, of, ..)| of.0 == body) {
                 let side = fighting.teams_out.then_some((team.0, Some(*team) == my_team));
                 spawn_tag(&mut commands, body, name.as_str(), side);
@@ -4352,17 +4395,21 @@ fn place_tags(
     let (Ok((camera, eye)), Ok(window)) = (cameras.single(), windows.single()) else {
         return;
     };
+    let turned = eye.rotation;
     let eye = GlobalTransform::from(*eye);
     for (tag, of, mut shown, mut place, node, children) in &mut tags {
-        let Ok((_, body, health, team, _, dead)) = bodies.get(of.0) else {
+        let Ok((_, body, health, team, _, dead, squashed)) = bodies.get(of.0) else {
             commands.entity(tag).despawn();
             continue;
         };
         // Nor over anyone unseen, who is not drawn either: but one of your
         // own team, whom you see, see-through (`gear`).
         let unseen = wears.get(of.0).is_ok_and(|wears| wears.unseen) && Some(*team) != my_team;
+        // Over their head; or, lying flat where a bus ran them over,
+        // over the end of them that is furthest up the screen (`squash`).
+        let over = if squashed { squash::far_end(body, turned) } else { body.translation + Vec3::Y * TAG_OVER };
         let point = (in_arena && !dead && !unseen)
-            .then(|| camera.world_to_viewport(&eye, body.translation + Vec3::Y * TAG_OVER).ok())
+            .then(|| camera.world_to_viewport(&eye, over).ok())
             .flatten()
             .filter(|point| on_screen(window, *point));
         let Some(point) = point else {
@@ -5431,6 +5478,10 @@ mod tests {
         assert_eq!(bought(Ware::Trap, 2), "Eve purchased Blindness Trap for your team.");
         assert_eq!(colour_of(&said(Feed::Bought { by: 4, ware: Ware::HealPool, step: 1 }), "Eve"), Some(colours.arena.team(0)));
         assert!(feed_line(&Feed::Bought { by: 4, ware: Ware::Sword(2), step: 1 }, &seats).is_none(), "not the team's");
+        // Run over by a bus, which is nobody's doing.
+        let flattened = said(Feed::RunOver { seat: 3 });
+        assert_eq!(text(&flattened), "Dee was run over by a bus.");
+        assert_eq!(colour_of(&flattened, "Dee"), Some(colours.arena.team(3)));
         // An anchor broken, the team's name in the team's colour.
         let broke = said(Feed::AnchorBroken { team: 1, by: 0 });
         assert_eq!(text(&broke), "Bob destroyed Team Blue's anchor.");
@@ -5520,6 +5571,7 @@ mod tests {
                 unseen: false,
                 person: false,
                 health: 1.0,
+                flat: false,
             })
             .collect();
         let mut outfits = Outfits::default();
@@ -5551,6 +5603,7 @@ mod tests {
                         mint: &mint,
                         anchors: [120.0; ARENA_TEAMS],
                         sticks: &[],
+                        clock: None,
                     };
                     brains.squad.step(seat, &view, 1.0 / 60.0);
                 }

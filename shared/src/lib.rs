@@ -200,7 +200,20 @@ pub const PROTOCOL_ID: u64 = u64::from_be_bytes(*b"DGRMTOWN");
 /// it is ([`Spilt`]), which an app from before cannot read. (The dynamite
 /// at 1 amethyst, and its falling quickening as it goes, of the same
 /// night, changed nothing that is sent.)
-pub const PROTOCOL_VERSION: u32 = 18;
+///
+/// 19 since 2026-11-16 (Hajun: "in the bridge wars minigame map, i want 2
+/// buses to go 2x normal speed around the road. and when a person is
+/// standing in front of the moving bus, the bus 'squishes' that person, so
+/// the person is squashed on the road for 10 second"): two buses drive
+/// round the middle of Bridge Wars' map by the clock
+/// ([`bridge_wars::Bus`]), which an app from before does not draw, stand
+/// on or get out of the way of; a game says who lies flat and until when
+/// ([`Flattened`], registered after [`BuilderOf`]); a device says a bus has
+/// run its own player over ([`Ask::RunOver`]); a place on one of those
+/// buses is a place on a car numbered past the town's
+/// ([`bridge_wars::FIRST_BUS`]); and the chat is told who a bus killed
+/// ([`chat::Feed::RunOver`]).
+pub const PROTOCOL_VERSION: u32 = 19;
 
 /// The UDP port the game server listens on. 443, where QUIC goes, because a
 /// network that lets any UDP through lets that through: school and office
@@ -610,6 +623,7 @@ pub fn protocol(app: &mut App) {
         .replicate::<Dynamite>()
         .replicate::<Blasted>()
         .replicate::<BuilderOf>()
+        .replicate::<Flattened>()
         .add_client_message::<Moved>(Channel::Unreliable)
         .add_client_message::<Ask>(Channel::Ordered)
         .add_server_message::<Tell>(Channel::Ordered)
@@ -2763,6 +2777,214 @@ pub mod bridge_wars {
             }
         }
     }
+
+    // ----------------------------------------------------------- the buses
+
+    /// How many buses drive round the middle of the map (since 2026-11-16;
+    /// Hajun: "in the bridge wars minigame map, i want 2 buses to go 2x
+    /// normal speed around the road. and when a person is standing in
+    /// front of the moving bus, the bus 'squishes' that person"): the
+    /// town's own bus (the game's `car`), half a lap apart ([`Bus::at`]).
+    pub const BUSES: usize = 2;
+    /// The number the first of them goes by as a car someone is riding
+    /// ([`Spot::aboard`](super::Spot::aboard)), the next the one after:
+    /// past the town's four (the game's `car::CARS`), so that a number is
+    /// one car on every device and to the server.
+    pub const FIRST_BUS: u8 = 4;
+    /// How far out from the middle of the map the middle of a bus goes
+    /// round, in metres: the outside lane of the outer half of the ring
+    /// round the pond, which is road from 59 to 71 m out, keeping right,
+    /// anticlockwise seen from above. Where the town's own way of reading
+    /// a road puts a bus on that map (the game's `roads`, which the game's
+    /// tests hold this to): there is no other road on it.
+    pub const BUS_LANE: f32 = 67.87;
+    /// How long a bus takes round, in seconds: 14.2 m/s
+    /// ([`bus_speed`]), twice the 7 the town's buses go at
+    /// ([`cars::TOP_SPEED`](super::cars::TOP_SPEED); "2x normal speed"),
+    /// to the nearest lap that is a whole number of seconds, so that with
+    /// two of them one passes any place on the lane every fifteen. They
+    /// never slow nor stop, short of a crossing or for anyone (mine: the
+    /// town's stop short of every other crossing).
+    pub const BUS_LAP: f64 = 30.0;
+    /// Half the length and half the width of a bus, in metres, and how
+    /// high the road it drives is: Hajun's `bus.glb` is 12.5 m long and
+    /// 3.7 wide, made about the middle of its footprint, facing the
+    /// game's -Z, its wheels' bottoms at its own height 0 (the game's
+    /// tests hold these to the model, and the road's height to the map).
+    pub const BUS_HALF_LENGTH: f32 = 6.25;
+    pub const BUS_HALF_WIDTH: f32 = 1.848;
+    pub const BUS_ROAD: f32 = 0.0;
+    /// How high over the road the feet of someone a bus's front still
+    /// hits can be, in metres: its roof is 3.3 m up, and someone higher
+    /// than this comes down on it. A jump (1.64 m) is nowhere near.
+    pub const BUS_TALL: f32 = 3.0;
+    /// How long someone a bus has run over lies flat on the road, in
+    /// seconds, and what it takes off their health as it does ("the
+    /// person is squashed on the road for 10 second. they cannot move for
+    /// 10second ... and they also take an initial -20hp dmg"): through
+    /// their shield, as a fireball's 20 is.
+    pub const SQUASH_SECS: f32 = 10.0;
+    pub const SQUASH_DAMAGE: f32 = 20.0;
+    /// How far outside a bus's side the middle of a body may be and still
+    /// be run over by its front, in metres: within the bus's width and a
+    /// little, so that someone it only clips with a corner is shoved
+    /// aside, not flattened. And how far behind its front face a body may
+    /// have been a moment before, in metres, and still have been in front
+    /// of it: pressed up against its nose. Someone at its side, however
+    /// near its front, is further back than that: its front doorway is
+    /// from 4.9 to 6.1 m ahead of its middle, and a body in it no further
+    /// ahead than 5.65 ("obviously u shouldnt be squished when u are on
+    /// the side of the bus trying to go in the bus from the side, only the
+    /// front of the bus should squish").
+    pub const BUS_GRAZE: f32 = 0.15;
+    pub const BUS_NOSE: f32 = 0.25;
+
+    /// How fast a bus goes, in metres a second.
+    pub fn bus_speed() -> f32 {
+        TAU * BUS_LANE / BUS_LAP as f32
+    }
+
+    /// Where one of the buses is: the middle of its footprint, across the
+    /// ground, and which way it faces and goes, a direction across the
+    /// ground one long.
+    ///
+    /// **A closed form of the clock** ([`Bus::at`]), the town's, which is
+    /// the server's online and which every device has to a few
+    /// thousandths of a second (the game's `clock`): so that every device
+    /// and the server, which has no map to read a road off, have each bus
+    /// in the same place with nothing about them sent, as the town's
+    /// buses go by the clock for the devices alone.
+    #[derive(Clone, Copy, PartialEq, Debug)]
+    pub struct Bus {
+        pub at: Vec2,
+        pub way: Vec2,
+    }
+
+    impl Bus {
+        /// Where the bus numbered `number`, from 0, is `clock` seconds
+        /// since 1970: round the lane once every [`BUS_LAP`], each bus
+        /// its share of a lap behind the one before. East of the middle
+        /// and heading north (the game's -Z) on the lap's first second.
+        pub fn at(number: usize, clock: f64) -> Bus {
+            let behind = BUS_LAP * (number % BUSES) as f64 / BUSES as f64;
+            let round = ((clock - behind).rem_euclid(BUS_LAP) / BUS_LAP) as f32 * TAU;
+            let (sin, cos) = round.sin_cos();
+            Bus {
+                at: Vec2::new(cos, -sin) * BUS_LANE,
+                way: Vec2::new(-sin, -cos),
+            }
+        }
+
+        /// Which way its right is, across the ground: the kerb's side,
+        /// where its doorways are, which is away from the pond.
+        pub fn right(&self) -> Vec2 {
+            Vec2::new(-self.way.y, self.way.x)
+        }
+
+        /// Where `point`, across the ground, is from the bus: how far to
+        /// its right of the line down its middle, and how far ahead of
+        /// its middle.
+        pub fn local(&self, point: Vec2) -> Vec2 {
+            let off = point - self.at;
+            Vec2::new(off.dot(self.right()), off.dot(self.way))
+        }
+
+        /// Where a point that far to its right and that far ahead of its
+        /// middle is, across the ground.
+        pub fn world(&self, local: Vec2) -> Vec2 {
+            self.at + self.right() * local.x + self.way * local.y
+        }
+
+        /// The turn about the upright that has the game's -Z face the
+        /// way it goes, in radians: how its model is turned, which faces
+        /// -Z.
+        pub fn yaw(&self) -> f32 {
+            (-self.way.x).atan2(-self.way.y)
+        }
+
+        /// Where its model stands and how it is turned: its footprint's
+        /// middle on the lane, its wheels on the road. What a place on it
+        /// is a place from ([`Spot::aboard`](super::Spot::aboard),
+        /// [`Bus::carries`]).
+        pub fn stands(&self) -> (Vec3, Quat) {
+            (Vec3::new(self.at.x, BUS_ROAD, self.at.y), Quat::from_rotation_y(self.yaw()))
+        }
+
+        /// Where someone riding it at `on`, a place in its own space, is
+        /// in the world.
+        pub fn carries(&self, on: Vec3) -> Vec3 {
+            let (at, turn) = self.stands();
+            at + turn * on
+        }
+
+        /// Whether the bus, come from where it was a moment ago,
+        /// `before`, to here, has run over a body `radius` wide that had
+        /// its feet at `was` then and has them at `now`: **its front has
+        /// come to someone who was in front of it.** The body was ahead
+        /// of its front face, or pressed against it ([`BUS_NOSE`]); the
+        /// face has now reached the body; and the body's middle is within
+        /// the bus's width ([`BUS_GRAZE`]), its feet no higher than a bus
+        /// hits ([`BUS_TALL`]) nor fallen away under the road. Whoever
+        /// stands in its way, steps in front of it, or is knocked or
+        /// comes down there.
+        ///
+        /// Never someone at its side: they were not ahead of its front,
+        /// whether they walk into its flank, into one of its doorways or
+        /// alongside it, nor anyone it is carrying, inside it or on its
+        /// roof. Never by a bus standing still: it is the front coming on
+        /// that does it.
+        pub fn runs_over(&self, before: &Bus, was: Vec3, now: Vec3, radius: f32) -> bool {
+            if now.y > BUS_ROAD + BUS_TALL || now.y < BUS_ROAD - 1.0 {
+                return false;
+            }
+            let (then, here) = (before.local(Vec2::new(was.x, was.z)), self.local(Vec2::new(now.x, now.z)));
+            // How far the bus itself has come on since: a bus that has
+            // not is no more than a wall to walk into.
+            let come_on = (self.at - before.at).dot(self.way);
+            come_on > 1e-4
+                && then.y >= BUS_HALF_LENGTH - BUS_NOSE
+                && here.y <= BUS_HALF_LENGTH + radius
+                && here.x.abs() <= BUS_HALF_WIDTH + BUS_GRAZE
+        }
+
+        /// Where a body `radius` wide with its middle at `at`, which the
+        /// bus is to be solid to, is put so that none of it is in the
+        /// bus: out at the side it is nearer, level with where it was
+        /// along the bus; or nowhere, clear of it already. For the
+        /// computer's players, which have no model of the bus to bump
+        /// into (the game's own bodies bump into every triangle of it).
+        /// Not for someone its front has just come to
+        /// ([`Bus::runs_over`], asked first).
+        pub fn beside(&self, at: Vec2, radius: f32) -> Option<Vec2> {
+            let local = self.local(at);
+            let out = BUS_HALF_WIDTH + radius;
+            if local.y.abs() >= BUS_HALF_LENGTH || local.x.abs() >= out {
+                return None;
+            }
+            let side = if local.x < 0.0 { -1.0 } else { 1.0 };
+            Some(self.world(Vec2::new(side * out, local.y)))
+        }
+
+        /// In how many seconds its front comes level with `at`, going
+        /// round as it goes: by how far round the lane from its front
+        /// `at` is, wherever across the road. For someone about to cross.
+        pub fn reaches_in(&self, at: Vec2) -> f32 {
+            let front = self.world(Vec2::new(0.0, BUS_HALF_LENGTH));
+            // How far round from the bus's front `at` is, the way the
+            // bus goes: anticlockwise seen from above, which is a turn
+            // from x toward -z.
+            let angle = |point: Vec2| (-point.y).atan2(point.x);
+            let ahead = (angle(at) - angle(front)).rem_euclid(TAU);
+            ahead / TAU * BUS_LAP as f32
+        }
+
+        /// Whether `at`, across the ground, is in the band of the road a
+        /// bus sweeps, a body `radius` wide counted: where standing is
+        /// being in a bus's way.
+        pub fn sweeps(at: Vec2, radius: f32) -> bool {
+            (at.length() - BUS_LANE).abs() < BUS_HALF_WIDTH + BUS_GRAZE + radius
+        }
+    }
 }
 
 /// Where the player in `seat` stands on arriving on `venue`, and which way
@@ -3284,6 +3506,26 @@ impl Blasted {
 #[component(immutable)]
 pub struct BuilderOf(pub u8);
 
+/// Who in a game of Bridge Wars a bus has run over and lies flat on the
+/// road (since 2026-11-16, [`bridge_wars::Bus`]): each by their seat, a
+/// zombie's past the players' eight, with until when, by the server's
+/// clock, in seconds since 1970, which every device has (the game's
+/// `clock`). On the game's own entity beside its [`ArenaRound`], and sent
+/// to the room whenever it changes: someone run over, or up again, or dead
+/// where they lay. A device draws each of them flat with the seconds left
+/// over them, and stands them up as the server does; its own player it
+/// lays flat itself the moment its own bus reaches them
+/// ([`Ask::RunOver`]), and reads here only that the server has it so.
+#[derive(Component, Serialize, Deserialize, Clone, PartialEq, Debug, Default)]
+pub struct Flattened(pub Vec<(u8, f64)>);
+
+impl Flattened {
+    /// Until when whoever is in `seat` lies flat, if they do.
+    pub fn until(&self, seat: usize) -> Option<f64> {
+        self.0.iter().find(|(flat, _)| usize::from(*flat) == seat).map(|&(_, until)| until)
+    }
+}
+
 /// Using what is on one of the buttons in Bridge Wars ([`Ask::Use`]).
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Debug)]
 pub enum Use {
@@ -3693,6 +3935,10 @@ pub mod chat {
         Bought { by: u8, ware: Ware, step: u8 },
         /// `by` broke `team`'s respawn anchor.
         AnchorBroken { team: u8, by: u8 },
+        /// A bus ran them over, and what it took was the last of their
+        /// health (since 2026-11-16; last, so that the rest are sent as
+        /// they were).
+        RunOver { seat: u8 },
     }
 
     impl Feed {
@@ -3801,6 +4047,15 @@ pub enum Ask {
     /// game on a device that has forgotten ([`Tell::Back`]). Said as it
     /// changes, no oftener than once a second.
     Metres(f32),
+    /// One of the buses that drive round Bridge Wars' map has run me over
+    /// (since 2026-11-16, [`bridge_wars::Bus::runs_over`]): which, from 0.
+    /// My own device says so, as it says I have fallen ([`Ask::Respawn`]):
+    /// it is where my body and the bus are at the very moment, and has
+    /// laid me flat already. The server takes the bus's damage off me and
+    /// has me flat for everyone ([`Flattened`]), if I am standing in the
+    /// fight, not flat already, and where I last said I stood is anywhere
+    /// near that bus's front.
+    RunOver { bus: u8 },
 }
 
 /// What the server tells you alone. In order, and never lost.
@@ -5637,5 +5892,154 @@ mod tests {
         assert!(!gone.is_empty() && gone.len() < lying.len() && gone.iter().all(Piece::dropped));
         assert_eq!(both.shed(&|_| false).len(), lying.len() - gone.len());
         assert_eq!(both.pieces().len(), made);
+    }
+
+    #[test]
+    fn two_buses_go_round_the_lane_by_the_clock_half_a_lap_apart_at_twice_the_town_s_pace() {
+        use bridge_wars::{BUS_LANE, BUS_LAP, BUSES, Bus, bus_speed};
+        assert_eq!(BUSES, 2);
+        // "2x normal speed": twice the town's buses' 7, to the nearest
+        // lap that is a whole number of seconds.
+        assert!((bus_speed() - 2.0 * cars::TOP_SPEED).abs() < 0.3, "{} m/s", bus_speed());
+        assert_eq!(BUS_LAP.fract(), 0.0);
+        // Years after 1970, to the last of a second: always on the lane,
+        // facing along it, the outside on its right.
+        let clock = 1.79e9 + 0.123;
+        for number in 0..BUSES {
+            let mut round = 0.0;
+            for step in 0..3000 {
+                let bus = Bus::at(number, clock + f64::from(step) * 0.01);
+                assert!((bus.at.length() - BUS_LANE).abs() < 1e-3 && (bus.way.length() - 1.0).abs() < 1e-5);
+                assert!(bus.way.dot(bus.at).abs() < 1e-3, "along the lane");
+                assert!(bus.right().dot(bus.at) > 0.0, "the pond on its left: keeping right");
+                let next = Bus::at(number, clock + f64::from(step + 1) * 0.01);
+                // 14.2 m/s, and anticlockwise seen from above with north,
+                // the game's -Z, up: from east it heads north.
+                let went = next.at - bus.at;
+                assert!((went.length() / 0.01 - bus_speed()).abs() < 0.05, "{} m/s", went.length() / 0.01);
+                assert!(went.dot(bus.way) > 0.0);
+                round += bus.way.perp_dot(next.way);
+            }
+            assert!(round < 0.0, "anticlockwise from above: its way turns toward -Z from +X");
+        }
+        let east = Bus::at(0, 0.0);
+        assert!(east.at.distance(Vec2::new(BUS_LANE, 0.0)) < 1e-4 && east.way.distance(Vec2::NEG_Y) < 1e-5);
+        // The same place a lap later, and the other bus across the map.
+        let (now, later, other) = (Bus::at(0, clock), Bus::at(0, clock + BUS_LAP), Bus::at(1, clock));
+        assert!(now.at.distance(later.at) < 0.01);
+        assert!((now.at + other.at).length() < 0.01, "half a lap apart is the far side of the ring");
+        // Its own space and back; its model faces the game's -Z.
+        let point = Vec2::new(40.0, -31.0);
+        assert!(now.world(now.local(point)).distance(point) < 1e-3);
+        assert!(now.local(now.at + now.way * 3.0 + now.right() * 1.5).distance(Vec2::new(1.5, 3.0)) < 1e-4);
+        let (at, turn) = east.stands();
+        assert!(at.distance(Vec3::new(BUS_LANE, 0.0, 0.0)) < 1e-4);
+        assert!((turn * Vec3::NEG_Z).distance(Vec3::NEG_Z) < 1e-5 && (turn * Vec3::X).distance(Vec3::X) < 1e-5);
+        // Someone standing 2 m back from its windscreen, inside, a metre
+        // to its right: where they are in the world.
+        let rider = now.carries(Vec3::new(1.0, 0.47, -4.0));
+        assert!(now.local(Vec2::new(rider.x, rider.z)).distance(Vec2::new(1.0, 4.0)) < 1e-3 && (rider.y - 0.47).abs() < 1e-5);
+        // How long until it is level with somewhere: nothing for where its
+        // front is, a quarter of a lap for a quarter of the way round
+        // ahead of it, and nearly a lap for just behind it.
+        let front = east.world(Vec2::new(0.0, bridge_wars::BUS_HALF_LENGTH));
+        assert!(east.reaches_in(front) < 0.01 || east.reaches_in(front) > 29.99);
+        let quarter = Vec2::new(0.0, -BUS_LANE) * 0.9;
+        let lead = bridge_wars::BUS_HALF_LENGTH / bus_speed();
+        assert!((east.reaches_in(quarter) - (7.5 - lead)).abs() < 0.05, "{}", east.reaches_in(quarter));
+        assert!(east.reaches_in(Vec2::new(BUS_LANE, 30.0)) > 25.0);
+    }
+
+    #[test]
+    fn a_bus_runs_over_whoever_its_front_comes_to_and_nobody_at_its_side_in_it_or_over_it() {
+        use bridge_wars::{BUS_HALF_LENGTH, BUS_HALF_WIDTH, BUS_ROAD, BUS_TALL, Bus, bus_speed};
+        let radius = 0.45;
+        let clock = 1000.0;
+        // A step of a 120th of a second, of a 15th, and of a slow frame.
+        for dt in [1.0 / 120.0, 1.0 / 15.0, 0.25] {
+            let (before, bus) = (Bus::at(0, clock), Bus::at(0, clock + dt));
+            let came_on = f64::from(bus_speed()) * dt;
+            let on_the_road = |local: Vec2| {
+                let at = bus.world(local);
+                Vec3::new(at.x, BUS_ROAD, at.y)
+            };
+            // Standing in the middle of the lane where the front has just
+            // got to: run over, in that step and no sooner.
+            let reached = on_the_road(Vec2::new(0.0, BUS_HALF_LENGTH + radius - 0.01));
+            assert!(bus.runs_over(&before, reached, reached, radius), "dt {dt}");
+            let not_yet = on_the_road(Vec2::new(0.0, BUS_HALF_LENGTH + radius + 0.05));
+            assert!(!bus.runs_over(&before, not_yet, not_yet, radius), "dt {dt}");
+            // Anywhere across its width, and a little outside it; not
+            // someone it only clips with a corner.
+            for across in [-BUS_HALF_WIDTH, -0.9, 0.9, BUS_HALF_WIDTH + 0.1] {
+                let at = on_the_road(Vec2::new(across, BUS_HALF_LENGTH + 0.1));
+                assert!(bus.runs_over(&before, at, at, radius), "{across} m across, dt {dt}");
+            }
+            for across in [-(BUS_HALF_WIDTH + 0.3), BUS_HALF_WIDTH + 0.45] {
+                let at = on_the_road(Vec2::new(across, BUS_HALF_LENGTH + 0.1));
+                assert!(!bus.runs_over(&before, at, at, radius), "{across} m across, dt {dt}");
+            }
+            // In the air in front of it, off a jump: run over. Higher
+            // than a bus hits, coming down onto its roof: not.
+            let jumping = reached + Vec3::Y * 1.6;
+            assert!(bus.runs_over(&before, jumping, jumping, radius));
+            let leaping = reached + Vec3::Y * (BUS_TALL + 0.3);
+            assert!(!bus.runs_over(&before, leaping, leaping, radius));
+            // At its side, walking into its flank, at its front doorway
+            // (4.9 to 6.1 m ahead of its middle) or its middle one, from
+            // the kerb's side or the pond's: never, however far in.
+            for ahead in [-6.0, -3.0, 0.5, 3.0, 5.35, 5.65] {
+                for side in [-1.0, 1.0] {
+                    for inside in [0.5, 0.0, -0.6, -1.5] {
+                        let was = before.world(Vec2::new(side * (BUS_HALF_WIDTH + radius + 0.3), ahead));
+                        let now = bus.world(Vec2::new(side * (BUS_HALF_WIDTH + radius + inside - 0.5), ahead));
+                        let (was, now) = (Vec3::new(was.x, 0.0, was.y), Vec3::new(now.x, 0.0, now.y));
+                        assert!(!bus.runs_over(&before, was, now, radius), "{ahead} m ahead, side {side}, in {inside}, dt {dt}");
+                    }
+                }
+            }
+            // Riding it, standing just inside its windscreen: not.
+            let aboard = Vec2::new(0.4, BUS_HALF_LENGTH - 0.5);
+            let (was, now) = (before.world(aboard), bus.world(aboard));
+            assert!(!bus.runs_over(&before, Vec3::new(was.x, 0.47, was.y), Vec3::new(now.x, 0.47, now.y), radius));
+            // Stepping in front of it from the side at the last moment,
+            // level with its nose: run over.
+            let was = before.world(Vec2::new(BUS_HALF_WIDTH + radius + 0.2, BUS_HALF_LENGTH + came_on as f32 + 0.3));
+            let now = bus.world(Vec2::new(BUS_HALF_WIDTH - 0.3, BUS_HALF_LENGTH + 0.2));
+            assert!(bus.runs_over(&before, Vec3::new(was.x, 0.0, was.y), Vec3::new(now.x, 0.0, now.y), radius), "dt {dt}");
+            // Behind it, and fallen away under the road: not.
+            let behind = on_the_road(Vec2::new(0.0, -BUS_HALF_LENGTH - 1.0));
+            assert!(!bus.runs_over(&before, behind, behind, radius));
+            assert!(!bus.runs_over(&before, reached - Vec3::Y * 3.0, reached - Vec3::Y * 3.0, radius));
+            // A bus that has not moved runs nobody over: it is a wall.
+            let walked_into = (on_the_road(Vec2::new(0.0, BUS_HALF_LENGTH + 1.0)), on_the_road(Vec2::new(0.0, BUS_HALF_LENGTH + 0.2)));
+            assert!(!bus.runs_over(&bus, walked_into.0, walked_into.1, radius));
+        }
+        // To the computer's players it is solid at its sides: one found
+        // in it is out at the side it was nearer, level with where it
+        // was; one clear of it, or past either end, is left.
+        let bus = Bus::at(1, clock);
+        let within = bus.world(Vec2::new(0.6, 2.0));
+        let out = bus.beside(within, radius).expect("in the bus");
+        assert!(bus.local(out).distance(Vec2::new(BUS_HALF_WIDTH + radius, 2.0)) < 1e-3);
+        let out = bus.beside(bus.world(Vec2::new(-1.7, -5.0)), radius).expect("in the bus");
+        assert!(bus.local(out).distance(Vec2::new(-(BUS_HALF_WIDTH + radius), -5.0)) < 1e-3);
+        assert_eq!(bus.beside(bus.world(Vec2::new(BUS_HALF_WIDTH + radius + 0.01, 0.0)), radius), None);
+        assert_eq!(bus.beside(bus.world(Vec2::new(0.0, BUS_HALF_LENGTH + 0.2)), radius), None);
+        assert_eq!(bus.beside(bus.world(Vec2::new(0.0, -BUS_HALF_LENGTH - 0.2)), radius), None);
+        // And where one sweeps is a band of the road either side of the
+        // lane's middle.
+        assert!(Bus::sweeps(Vec2::new(0.0, bridge_wars::BUS_LANE + 2.0), radius));
+        assert!(!Bus::sweeps(Vec2::new(0.0, bridge_wars::BUS_LANE + 2.6), radius));
+        assert!(!Bus::sweeps(Vec2::new(bridge_wars::BUS_LANE - 2.6, 0.0), radius));
+    }
+
+    #[test]
+    fn who_lies_flat_is_said_by_seat_with_until_when() {
+        let flat = Flattened(vec![(3, 100.5), (9, 104.0)]);
+        assert_eq!(flat.until(3), Some(100.5));
+        assert_eq!(flat.until(9), Some(104.0));
+        assert_eq!(flat.until(0), None);
+        assert_eq!(Flattened::default().until(3), None);
     }
 }

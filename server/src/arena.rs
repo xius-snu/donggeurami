@@ -104,6 +104,26 @@
 //! down** ([`Game::dynamites`], [`Game::crumble`], `Nav::cascade`): the
 //! planks its blast reaches at once, as before, and every other plank
 //! joined to them after, one by one from the hole outward.
+//!
+//! **Since 2026-11-16 two buses drive round the middle of the map, and
+//! run over whoever is in front of one** (Hajun: "i want 2 buses to go 2x
+//! normal speed around the road. and when a person is standing in front
+//! of the moving bus, the bus 'squishes' that person, so the person is
+//! squashed on the road for 10 second ... this goes for ai too").
+//! Where each bus is is a closed form of the clock
+//! (`roundtown_net::bridge_wars::Bus`), this machine's, which every device
+//! has for the town's: nothing of them is sent. A person's own device says
+//! a bus has run its player over ([`Ask::RunOver`]), as it says they have
+//! fallen: the game looks at whoever it moves itself, the computer's
+//! players, the zombies and whoever's device has gone
+//! ([`Game::buses`]). Whoever is run over has [`SQUASH_DAMAGE`] off their
+//! health, through their shield, and lies flat for [`SQUASH_SECS`]
+//! ([`Game::run_over`]): the computer's stand where they are; anyone is
+//! hit there as ever, and knocked nowhere; no bus runs them over again
+//! until they are up; and the room is sent who lies flat and until when
+//! ([`Flattened`]). The computer's players mind the buses, or do not, and
+//! some of them go for whoever is lying there (`Squad::mind_buses`,
+//! `Squad::spot_prey`).
 
 use std::collections::HashMap;
 
@@ -115,7 +135,7 @@ use roundtown_net::bridge_wars::*;
 use roundtown_net::nav::Nav;
 use roundtown_net::chat::{CREDIT_SECS, Feed, Weapon};
 use roundtown_net::nav::PLANK_TOP;
-use roundtown_net::{Blasted, BuilderOf, Dynamite};
+use roundtown_net::{Blasted, BuilderOf, Dynamite, Flattened};
 use roundtown_net::social::{Minigame, XP_PLAYED, XP_WON};
 use roundtown_net::{
     ARENA_ANCHORS, ARENA_ISLAND_RADIUS, ARENA_ISLANDS, ARENA_SEATS, ARENA_TEAMS, ArenaRound,
@@ -171,6 +191,37 @@ const AWAY_UNDER: f32 = 1.5;
 /// The most metres of bridge a device can say it has left
 /// ([`Ask::Metres`]): far more than a game's worth.
 const MOST_METRES: f32 = 5000.0;
+/// How far from the middle of a bus's front, where it is now or was in
+/// the last moments, someone can be where they last said they stood for
+/// their device's word that it has run them over to count
+/// ([`Ask::RunOver`]), in metres: across half its width and a little, and
+/// the way they and it may have gone since.
+const RUN_OVER_SLACK: f32 = 5.5;
+
+/// The time by this machine's clock, in seconds since 1970: what every
+/// device has for the town's clock (the game's `clock`), and what the
+/// buses go by ([`Bus::at`]).
+fn wall_clock() -> f64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0.0, |since| since.as_secs_f64())
+}
+
+/// Which of Bridge Wars' buses someone whose place is `spot` is riding,
+/// from 0, if they are on one ([`Spot::aboard`], [`FIRST_BUS`]).
+fn riding(spot: &Spot) -> Option<usize> {
+    spot.aboard.and_then(|car| car.checked_sub(FIRST_BUS)).map(usize::from).filter(|bus| *bus < BUSES)
+}
+
+/// Where someone whose place is `spot` stands in the world of a game:
+/// where it says, or, riding one of the buses, where the bus has taken
+/// that place on it, by the `clock`.
+fn stands(spot: &Spot, clock: f64) -> Vec3 {
+    match riding(spot) {
+        Some(bus) => Bus::at(bus, clock).carries(spot.translation()),
+        None => spot.translation(),
+    }
+}
 
 pub(crate) fn plugin(app: &mut App) {
     app.init_resource::<Arenas>()
@@ -307,6 +358,19 @@ struct Game {
     /// here only to be given back to one that has forgotten
     /// ([`Tell::Back`]). None once they have died, as on the device.
     metres: Vec<f32>,
+    /// Whoever a bus has run over ([`Game::run_over`], since 2026-11-16):
+    /// how much longer each lies flat on the road, in seconds, by seat,
+    /// nothing for whoever stands; and until when, by the clock the buses
+    /// go by, which is what the room is sent ([`Flattened`],
+    /// [`Game::sent_flat`]). The clock the buses stand by this frame
+    /// ([`Game::step`]): this machine's, or, in a game played out with
+    /// none, as a test plays one, the fight's own time. And how many have
+    /// been run over, how many of them that killed, and how many blows
+    /// landed on someone lying there, for reading a game back by.
+    flat: Vec<f32>,
+    flat_until: Vec<f64>,
+    bus_clock: Option<f64>,
+    squashes: [u32; 3],
     /// What a step of the fight has done that the world is to be told or
     /// shown ([`Event`]), until it has been ([`flush`]).
     events: Vec<Event>,
@@ -345,6 +409,7 @@ struct Game {
     sent_purses: Vec<Purse>,
     sent_kits: Vec<Kit>,
     sent_upgrades: [Upgrades; ARENA_TEAMS],
+    sent_flat: Flattened,
     /// Its bots and planks have gone ([`close`]); everyone goes back to the
     /// town next tick ([`end`]).
     closing: bool,
@@ -551,6 +616,10 @@ impl Game {
             away: Vec::new(),
             died_away: Vec::new(),
             metres: Vec::new(),
+            flat: Vec::new(),
+            flat_until: Vec::new(),
+            bus_clock: None,
+            squashes: [0; 3],
             events: Vec::new(),
             nav: Nav::arena(),
             squad: Squad::new(seed, Skill::MODERATE),
@@ -565,6 +634,7 @@ impl Game {
             sent_purses: Vec::new(),
             sent_kits: Vec::new(),
             sent_upgrades: Default::default(),
+            sent_flat: Flattened::default(),
             closing: false,
         }
     }
@@ -761,7 +831,9 @@ impl Game {
     /// down (mine: Hajun's "when anyone dies" was said of players).
     fn say(&mut self, feed: Feed) {
         let died = match feed {
-            Feed::Fell { seat } | Feed::Knocked { seat, .. } | Feed::Killed { seat, .. } => Some(usize::from(seat)),
+            Feed::Fell { seat } | Feed::Knocked { seat, .. } | Feed::Killed { seat, .. } | Feed::RunOver { seat } => {
+                Some(usize::from(seat))
+            }
             Feed::Bought { .. } | Feed::AnchorBroken { .. } => None,
         };
         if died.is_some_and(|seat| seat >= ARENA_SEATS) {
@@ -1042,6 +1114,7 @@ impl Game {
         self.away[seat] = false;
         self.died_away[seat] = false;
         self.metres[seat] = 0.0;
+        self.flat[seat] = 0.0;
         self.mingle.leave(seat);
         if bot && seat < ARENA_SEATS {
             self.squad.seat(seat, at, stood.yaw);
@@ -1077,6 +1150,7 @@ impl Game {
         self.away[seat] = false;
         self.died_away[seat] = false;
         self.metres[seat] = 0.0;
+        self.flat[seat] = 0.0;
         self.squad.unseat(seat);
         self.mingle.leave(seat);
         if let Some(kit) = self.outfits.kits.get_mut(seat) {
@@ -1125,6 +1199,8 @@ impl Game {
         self.away.push(false);
         self.died_away.push(false);
         self.metres.push(0.0);
+        self.flat.push(0.0);
+        self.flat_until.push(0.0);
         self.outfits.seat(self.seats.len());
     }
 
@@ -1145,6 +1221,8 @@ impl Game {
         self.health[seat] = 0.0;
         self.last_hit[seat] = None;
         self.minds[seat] = Mind::default();
+        // Dead where a bus had flattened them, they lie there no longer.
+        self.flat[seat] = 0.0;
         // The metres of bridge one of the computer's players had go with
         // the rest, and the bridge it was laying is anyone's to finish.
         self.squad.died(seat, self.elapsed);
@@ -1202,6 +1280,9 @@ impl Game {
     /// hit. Whether they are still standing. What a stick of dynamite's
     /// blast does to whoever it reaches: it knocks nobody.
     fn hurt_by(&mut self, victim: usize, hitter: usize, damage: f32, with: Weapon) -> bool {
+        if self.flat[victim] > 0.0 {
+            self.squashes[2] += 1;
+        }
         self.outfits.reveal(victim);
         self.health[victim] = (self.health[victim] - damage).max(0.0);
         self.since_hit[victim] = 0.0;
@@ -1232,6 +1313,11 @@ impl Game {
     /// and a bot here. Whoever was unseen is seen again for being hit.
     fn harm(&mut self, victim: usize, hitter: usize, from: Spot, running: bool, damage: f32, with: Weapon) {
         if !self.hurt_by(victim, hitter, damage, with) {
+            return;
+        }
+        // Whoever a bus has flattened is hurt where they lie, and knocked
+        // nowhere (mine: "they cannot move for 10second").
+        if self.flat[victim] > 0.0 {
             return;
         }
         if self.brained(victim) {
@@ -1447,9 +1533,17 @@ impl Game {
         for event in due {
             self.happen(event);
         }
+        // The buses go by the clock: this machine's, which every device
+        // has for the town's; and in a game played out with none, as the
+        // tests play them, by the fight's own time.
+        let now = if self.clock > 0.0 { self.clock } else { f64::from(self.elapsed) };
+        let before = self.bus_clock.unwrap_or(now - f64::from(dt));
+        self.bus_clock = Some(now);
+        let stood = self.at.clone();
         self.mint_step();
         self.crumble(dt);
         self.fight(dt);
+        self.buses(before, now, &stood);
         self.fireballs(dt);
         self.dynamites(dt);
         self.outfit(dt);
@@ -1554,6 +1648,13 @@ impl Game {
             if self.health[seat] <= 0.0 {
                 continue;
             }
+            // Whoever a bus flattened is up again once their while is.
+            if self.flat[seat] > 0.0 {
+                self.flat[seat] = (self.flat[seat] - dt).max(0.0);
+                if self.flat[seat] <= 0.0 {
+                    debug!("Bridge Wars game {}: seat {seat} is up again", self.id);
+                }
+            }
             self.since_hit[seat] += dt;
             if self.since_hit[seat] >= REGEN_AFTER && self.health[seat] < HEALTH {
                 self.health[seat] = (self.health[seat] + REGEN_PER_SEC * dt).min(HEALTH);
@@ -1589,6 +1690,7 @@ impl Game {
                 unseen: self.outfits.kit(seat).unseen(self.elapsed),
                 person: !self.bot[seat] && !self.vacant[seat],
                 health: self.health[seat] / HEALTH,
+                flat: self.flat[seat] > 0.0,
             })
             .collect();
         for seat in 0..self.seats.len() {
@@ -1597,6 +1699,10 @@ impl Game {
             }
             if self.brained(seat) {
                 self.play_bot(seat, &mut seen, dt);
+                continue;
+            }
+            // A zombie a bus has flattened lies where it is.
+            if self.flat[seat] > 0.0 {
                 continue;
             }
             let was = Spot::of(self.at[seat], Quat::from_rotation_y(self.yaw[seat]));
@@ -1649,6 +1755,7 @@ impl Game {
             mint: &self.mint,
             anchors: self.anchors,
             sticks: &sticks,
+            clock: self.bus_clock,
         };
         let order = self.squad.step(seat, &view, dt);
         if let Some(bot) = self.squad.bot(seat) {
@@ -1712,6 +1819,86 @@ impl Game {
         if self.at[seat].y < ISLAND_TOP - FALL_TO_DIE {
             self.fall(seat);
         }
+    }
+
+    /// The buses, for one frame of the fight (since 2026-11-16): gone from
+    /// where they were by the clock a frame ago, `before`, to where they
+    /// are by it `now`, each runs over whoever its front has come to
+    /// ([`Bus::runs_over`]) of those the game moves itself, each where it
+    /// stood as the frame began, `stood`, and where it stands now: the
+    /// computer's players, the zombies, and whoever's device has gone,
+    /// who stands where they stood with nobody to move them out of its
+    /// way. A person's own device says a bus has run their player over
+    /// ([`Ask::RunOver`]). Nobody lying flat already.
+    fn buses(&mut self, before: f64, now: f64, stood: &[Vec3]) {
+        let was = [Bus::at(0, before), Bus::at(1, before)];
+        let is = [Bus::at(0, now), Bus::at(1, now)];
+        for seat in 0..self.seats.len() {
+            let ours = self.bot[seat] || self.away[seat];
+            if !ours || !self.alive(seat) || !self.present[seat] || self.flat[seat] > 0.0 {
+                continue;
+            }
+            let (then, here) = (stood.get(seat).copied().unwrap_or(self.at[seat]), self.at[seat]);
+            if (0..BUSES).any(|bus| is[bus].runs_over(&was[bus], then, here, BODY_RADIUS)) {
+                self.run_over(seat);
+            }
+        }
+    }
+
+    /// A bus has run over whoever is in `seat` (since 2026-11-16; Hajun:
+    /// "the bus 'squishes' that person, so the person is squashed on the
+    /// road for 10 second. they cannot move for 10second ... where they
+    /// can be attacked by other players too (being attacked doesnt reduce
+    /// the timer) and they also take an initial -20hp dmg"): its damage
+    /// off their health, less what their shield keeps off, as a
+    /// fireball's is; and they lie flat where they are for
+    /// [`SQUASH_SECS`], moved by nobody and nothing, hit as anyone is
+    /// ([`Game::harm`] knocks them nowhere), and run over by no bus again
+    /// until they are up ("if they are already squished, they cannot be
+    /// squished twice even if another bus come, until they get up").
+    /// Whoever was unseen is seen again, for being hit. With no health
+    /// left they are dead of it, which the chat says
+    /// ([`Feed::RunOver`]), what they held of sapphire and amethyst lying
+    /// round them on the road ([`Game::drop_spoils`]): it is nobody's
+    /// doing but the bus's.
+    fn run_over(&mut self, seat: usize) {
+        let damage = self.outfits.through(seat, SQUASH_DAMAGE);
+        self.outfits.reveal(seat);
+        self.health[seat] = (self.health[seat] - damage).max(0.0);
+        self.since_hit[seat] = 0.0;
+        self.squashes[0] += 1;
+        if self.health[seat] <= 0.0 {
+            info!("Bridge Wars game {}: a bus ran seat {seat} over, and killed them", self.id);
+            self.squashes[1] += 1;
+            self.say(Feed::RunOver { seat: seat as u8 });
+            self.drop_spoils(seat);
+            self.die(seat);
+            return;
+        }
+        info!("Bridge Wars game {}: a bus ran seat {seat} over, left with {}", self.id, self.health[seat]);
+        self.flat[seat] = SQUASH_SECS;
+        self.flat_until[seat] = self.bus_clock.unwrap_or(self.clock) + f64::from(SQUASH_SECS);
+        // One the game moves is on the road where it was, whatever was
+        // carrying it.
+        if self.bot[seat] {
+            let mind = &mut self.minds[seat];
+            mind.shove = Vec2::ZERO;
+            mind.lift = 0.0;
+            if !self.brained(seat) {
+                self.at[seat].y = self.nav.ground(self.at[seat].xz()).unwrap_or(BUS_ROAD);
+            }
+        }
+    }
+
+    /// Who lies flat, as the room is sent it ([`Flattened`]): by seat,
+    /// with until when.
+    fn flattened(&self) -> Flattened {
+        Flattened(
+            (0..self.seats.len())
+                .filter(|&seat| self.flat[seat] > 0.0 && self.alive(seat))
+                .map(|seat| (seat as u8, self.flat_until[seat]))
+                .collect(),
+        )
     }
 
     /// The bridges a blast has doomed, for one frame of the fight
@@ -2104,6 +2291,7 @@ fn hear(
     mut commands: Commands,
 ) {
     let now = time.elapsed_secs_f64();
+    let clock = wall_clock();
     for ask in asks.read() {
         let Some(client) = ask.client_id.entity() else {
             continue;
@@ -2205,14 +2393,25 @@ fn hear(
                     continue;
                 };
                 let (from, at) = (*from, *at);
-                if from.translation().xz().distance(at.translation().xz()) > PUNCH_SLACK {
+                // (Where each is in the world, whichever of them is
+                // riding a bus.)
+                let (from_at, at_at) = (stands(&from, clock), stands(&at, clock));
+                if from_at.xz().distance(at_at.xz()) > PUNCH_SLACK {
+                    continue;
+                }
+                // Whoever a bus has flattened throws no punch.
+                if game.flat[hitter] > 0.0 {
                     continue;
                 }
                 // Knocked from where they stand now, as their body says,
                 // and told so once the frame's fight is done ([`flush`]).
                 if !game.bot[victim] {
-                    game.at[victim] = at.translation();
+                    game.at[victim] = at_at;
                 }
+                // One of the computer's is knocked from where the puncher
+                // is in the world; a person's device is told the place as
+                // it was said, on a bus or off it.
+                let from = if game.bot[victim] { Spot::of(from_at, from.rotation()) } else { from };
                 game.wound(victim, hitter, from, *running);
             }
             Ask::HitAnchor { team } if matches!(room, Room::Arena(_)) => {
@@ -2222,7 +2421,10 @@ fn hear(
                 let Ok((_, from, ..)) = bodies.get(game.seats[hitter]) else {
                     continue;
                 };
-                game.strike_anchor(hitter, usize::from(*team), from.translation().xz(), PUNCH_SLACK);
+                if game.flat[hitter] > 0.0 {
+                    continue;
+                }
+                game.strike_anchor(hitter, usize::from(*team), stands(from, clock).xz(), PUNCH_SLACK);
             }
             Ask::Rung {
                 chain,
@@ -2235,7 +2437,7 @@ fn hear(
                     continue;
                 };
                 let sane = [*x, *z, *heading].iter().all(|n| n.is_finite()) && x.abs() < FURTHEST && z.abs() < FURTHEST;
-                if !game.playing() || !sane || game.rungs[seat] >= MOST_RUNGS {
+                if !game.playing() || !sane || game.rungs[seat] >= MOST_RUNGS || game.flat[seat] > 0.0 {
                     continue;
                 }
                 let plank = commands
@@ -2272,7 +2474,7 @@ fn hear(
                 let Ok((_, at, ..)) = bodies.get(game.seats[seat]) else {
                     continue;
                 };
-                if game.buy(seat, *ware, at.translation().xz()) {
+                if game.flat[seat] <= 0.0 && game.buy(seat, *ware, stands(at, clock).xz()) {
                     info!("Bridge Wars game {}: seat {seat} bought {ware:?}", game.id);
                     tell(&mut tells, client, Tell::Bought(*ware));
                 }
@@ -2281,7 +2483,8 @@ fn hear(
                 let Some((game, seat)) = arenas.of(room, body) else {
                     continue;
                 };
-                if !game.playing() || !game.alive(seat) {
+                // (Whoever a bus has flattened uses nothing.)
+                if !game.playing() || !game.alive(seat) || game.flat[seat] > 0.0 {
                     continue;
                 }
                 match used {
@@ -2289,7 +2492,7 @@ fn hear(
                         let Ok((_, at, ..)) = bodies.get(game.seats[seat]) else {
                             continue;
                         };
-                        game.throw(seat, at.translation(), *heading);
+                        game.throw(seat, stands(at, clock), *heading);
                     }
                     Use::Builder => {
                         game.outfits.spend(seat, Utility::Builder);
@@ -2298,7 +2501,7 @@ fn hear(
                         let Ok((_, at, ..)) = bodies.get(game.seats[seat]) else {
                             continue;
                         };
-                        game.lob(seat, at.translation(), *heading, *far);
+                        game.lob(seat, stands(at, clock), *heading, *far);
                     }
                     Use::Potion(potion) => {
                         let drunk = game.outfits.drink(seat, *potion, game.elapsed);
@@ -2369,6 +2572,34 @@ fn hear(
                     game.metres[seat] = metres.clamp(0.0, MOST_METRES);
                 }
             }
+            // A bus has run them over, their own device says: flat, with
+            // its damage off them, if they are standing in the fight, not
+            // flat already, not riding, and where they last said they
+            // stood is anywhere near that bus's front, as it is or was in
+            // the moments their word took to come.
+            Ask::RunOver { bus } if matches!(room, Room::Arena(_)) => {
+                let Some((game, seat)) = arenas.of(room, body) else {
+                    continue;
+                };
+                let Ok((_, spot, ..)) = bodies.get(game.seats[seat]) else {
+                    continue;
+                };
+                if !game.playing() || !game.alive(seat) || game.flat[seat] > 0.0 || spot.aboard.is_some() {
+                    continue;
+                }
+                let (at, bus) = (spot.translation().xz(), usize::from(*bus));
+                let near = bus < BUSES
+                    && (0..=4).any(|ago| {
+                        let front = Bus::at(bus, clock - f64::from(ago) * 0.2).world(Vec2::new(0.0, BUS_HALF_LENGTH));
+                        front.distance(at) < RUN_OVER_SLACK
+                    });
+                if !near {
+                    debug!("Bridge Wars game {}: seat {seat} says bus {bus} ran them over, {at:.1} being nowhere near it", game.id);
+                    continue;
+                }
+                game.bus_clock = Some(clock);
+                game.run_over(seat);
+            }
             Ask::Skip if matches!(room, Room::Arena(_)) => {
                 if let Some((game, _)) = arenas.of(room, body)
                     && config.allow_skip
@@ -2406,10 +2637,9 @@ fn run(
     let dt = time.delta_secs();
     let now = time.elapsed_secs_f64();
     // The time by this machine's clock, which every device has for the
-    // town's (`clock`): what a blast is stamped with.
-    let clock = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0.0, |since| since.as_secs_f64());
+    // town's (`clock`): what a blast is stamped with, and what the buses
+    // go by.
+    let clock = wall_clock();
     let mut ended = Vec::new();
     for game in arenas.games.values_mut() {
         let room = game.room();
@@ -2432,7 +2662,7 @@ fn run(
             continue;
         }
 
-        sync(game, &bodies);
+        sync(game, &bodies, clock);
         game.clock = clock;
         match game.stage {
             ArenaStage::Waiting => {
@@ -2574,6 +2804,11 @@ fn run(
             commands.entity(game.shown).insert(Upgraded(game.outfits.teams));
             game.sent_upgrades = game.outfits.teams;
         }
+        let flat = game.flattened();
+        if game.sent_flat != flat {
+            commands.entity(game.shown).insert(flat.clone());
+            game.sent_flat = flat;
+        }
     }
     for id in ended {
         arenas.games.remove(&id);
@@ -2587,7 +2822,7 @@ fn run(
 /// whether their body is in its room to be played with ([`Game::at`],
 /// [`Game::present`]): what a step of the fight goes by. The computer's
 /// players are where the game has them.
-fn sync(game: &mut Game, bodies: &Bodies) {
+fn sync(game: &mut Game, bodies: &Bodies, clock: f64) {
     let room = game.room();
     for seat in 0..game.seats.len() {
         if game.bot[seat] || game.vacant[seat] {
@@ -2595,10 +2830,14 @@ fn sync(game: &mut Game, bodies: &Bodies) {
         }
         match bodies.get(game.seats[seat]) {
             Ok((body, spot, ..)) => {
-                game.present[seat] = body.room == room && spot.aboard.is_none();
+                // On one of the buses, where they are is a place on it
+                // (`Spot::aboard`): in the world, where the bus has taken
+                // it, by the clock.
+                let bus = riding(spot);
+                game.present[seat] = body.room == room && (spot.aboard.is_none() || bus.is_some());
                 game.away[seat] = body.client.is_none();
-                game.at[seat] = spot.translation();
-                game.yaw[seat] = yaw_of(spot.rotation());
+                game.at[seat] = stands(spot, clock);
+                game.yaw[seat] = yaw_of(spot.rotation()) + bus.map_or(0.0, |bus| Bus::at(bus, clock).yaw());
             }
             Err(_) => {
                 game.present[seat] = false;
@@ -3105,6 +3344,8 @@ mod tests {
         game.away.clear();
         game.died_away.clear();
         game.metres.clear();
+        game.flat.clear();
+        game.flat_until.clear();
         game.outfits = Outfits::default();
         game
     }
@@ -4808,6 +5049,20 @@ mod tests {
         /// and amethysts between them, how many of those were picked up,
         /// and how many went with a plank (`Game::spilt`).
         spilt: [u32; 4],
+        /// How many a bus ran over, how many of them it killed, and how
+        /// many blows landed on someone lying flat (`Game::squashes`); and
+        /// how many of those run over were zombies, how many of the
+        /// players were in the middle of a fight, and how many times one
+        /// of the computer's set off to finish someone lying there.
+        squashes: [u32; 3],
+        squashed_zombies: u32,
+        squashed_fighting: u32,
+        preyed: u32,
+        /// How many times one of the players stepped into where a bus
+        /// sweeps, how many of those with a bus due there within a second
+        /// and a half, and how many seconds they spent in there between
+        /// them.
+        lane: (u32, u32, f32),
         /// How often one of them got nowhere on a way it had, three
         /// seconds together (`Bot::stalls`), standing its ground or
         /// held; and how many of those times something held it
@@ -4909,6 +5164,11 @@ mod tests {
                 blasts: 0,
                 planks_blown: 0,
                 spilt: [0; 4],
+                squashes: [0; 3],
+                squashed_zombies: 0,
+                squashed_fighting: 0,
+                preyed: 0,
+                lane: (0, 0, 0.0),
                 stalls: 0,
                 pinned: 0,
                 habits: Habits::default(),
@@ -5010,8 +5270,56 @@ mod tests {
             Some((parts.next()?.parse().ok()?, parts.next()?.parse().ok()?, parts.next()?.parse().ok()?))
         });
         let mut traced = 0.0;
+        let mut flat_was = [false; 32];
+        let mut prey_was = [None::<usize>; ARENA_SEATS];
+        let mut in_lane = [false; ARENA_SEATS];
         while game.playing() {
             game.step(dt);
+            for seat in 0..ARENA_SEATS {
+                let at = game.at[seat];
+                let inside = game.alive(seat) && Bus::sweeps(at.xz(), BODY_RADIUS) && at.y.abs() < 1.5;
+                if inside {
+                    told.lane.2 += dt;
+                }
+                if inside && !in_lane[seat] {
+                    told.lane.0 += 1;
+                    let clock = game.bus_clock.unwrap_or(0.0);
+                    if (0..BUSES).any(|bus| Bus::at(bus, clock).reaches_in(at.xz()) < 1.5) {
+                        told.lane.1 += 1;
+                    }
+                }
+                in_lane[seat] = inside;
+            }
+            // Whoever a bus has just run over: a zombie, or one of the
+            // players, in a fight or about its business; and whoever has
+            // just set off to finish someone lying flat.
+            for seat in 0..game.seats.len().min(32) {
+                let flat = game.flat[seat] > 0.0;
+                if flat && !flat_was[seat] {
+                    if seat >= ARENA_SEATS {
+                        told.squashed_zombies += 1;
+                    } else if game.squad.bot(seat).is_some_and(|bot| bot.stance().is_some()) {
+                        told.squashed_fighting += 1;
+                    }
+                    if std::env::var_os("RT_SAY_BUSES").is_some() {
+                        println!(
+                            "  {:>6.1} s: a bus ran seat {seat} over at ({:.1}, {:.1}), {}",
+                            game.elapsed,
+                            game.at[seat].x,
+                            game.at[seat].z,
+                            game.squad.bot(seat).map_or(String::from("a zombie"), |bot| format!("{} {:?} {:?}", bot.persona().name, bot.goal(), bot.stance()))
+                        );
+                    }
+                }
+                flat_was[seat] = flat;
+            }
+            for seat in 0..ARENA_SEATS {
+                let prey = game.squad.bot(seat).and_then(|bot| bot.prey());
+                if prey.is_some() && prey != prey_was[seat] {
+                    told.preyed += 1;
+                }
+                prey_was[seat] = prey;
+            }
             if let Some((seat, from, until)) = trace
                 && (from..until).contains(&game.elapsed)
                 && game.elapsed >= traced
@@ -5352,6 +5660,7 @@ mod tests {
         told.blasts = game.blasts;
         told.planks_blown = game.planks_blown;
         told.spilt = game.spilt;
+        told.squashes = game.squashes;
         // What they built, by where from and where to; and how far they
         // quickened their building.
         for &(from, to, times) in game.squad.begun() {
@@ -5598,6 +5907,24 @@ mod tests {
             mean(&|game| game.spilt[1] as f32),
             mean(&|game| game.spilt[2] as f32),
             mean(&|game| game.spilt[3] as f32),
+        );
+        println!(
+            "a game: a bus ran {:.2} over ({:.2} of them zombies, {:.2} of the players with a fight on), killing {:.2}; {:.2} blows landed on someone lying flat, and one of them set off to finish someone lying there {:.2} times; nobody run over in {} games of {}, the most in one game {}",
+            mean(&|game| game.squashes[0] as f32),
+            mean(&|game| game.squashed_zombies as f32),
+            mean(&|game| game.squashed_fighting as f32),
+            mean(&|game| game.squashes[1] as f32),
+            mean(&|game| game.squashes[2] as f32),
+            mean(&|game| game.preyed as f32),
+            games.iter().filter(|game| game.squashes[0] == 0).count(),
+            games.len(),
+            games.iter().map(|game| game.squashes[0]).max().unwrap_or(0),
+        );
+        println!(
+            "a game: {:.1} times one of them stepped into where a bus sweeps, {:.1} of them with a bus due within a second and a half; {:.1} s in there between them",
+            mean(&|game| game.lane.0 as f32),
+            mean(&|game| game.lane.1 as f32),
+            mean(&|game| game.lane.2),
         );
         println!(
             "a game: {:.2} times one set out to cut another team's way; {:.2} bridges brought down, at least one in {} games of {}; {:.2} of them fell with one before ten minutes and {:.2} after; {:.2} stepped off planks left in the middle of nowhere; {:.2} walked off an edge",
@@ -5906,5 +6233,131 @@ mod tests {
         assert!(went_out >= 2, "off its island for a fifth of the time in {went_out} games of three");
         assert!(fetched >= 2, "it went out for amethyst or sapphire in {fetched} games of three");
         assert!(went_raiding >= 1, "it went on a raid in {went_raiding} games of three");
+    }
+    /// Where someone stands to have bus `bus`'s front come to them `secs`
+    /// seconds after `clock`, `across` metres to the right of the line
+    /// down its middle: on the road.
+    fn in_front_of(bus: usize, clock: f64, secs: f64, across: f32) -> Vec3 {
+        let at = Bus::at(bus, clock + secs).world(Vec2::new(across, BUS_HALF_LENGTH + BODY_RADIUS + 0.05));
+        Vec3::new(at.x, BUS_ROAD, at.y)
+    }
+
+    #[test]
+    fn a_bus_runs_over_whoever_the_game_moves_and_they_lie_flat_hurt_and_unknocked_until_they_are_up() {
+        // Two people of one team who only stand where they are put: one
+        // whose device has gone, and one whose device is there to say what
+        // happens to them. Both in the lane, where a bus is on them in a
+        // fifth of a second; and one of the computer's beside them.
+        let stands = |seat: usize| in_front_of(0, 0.0, 0.2, if seat == 0 { 0.9 } else { -0.9 });
+        let mut game = with_people(31, &[0, 4], stands);
+        game.away[0] = true;
+        let bot_at = in_front_of(0, 0.0, 0.2, 0.0);
+        game.squad.stand(1, bot_at, 0.0, 0.0);
+        game.at[1] = bot_at;
+        assert_eq!(game.flattened(), Flattened::default());
+        for _ in 0..12 {
+            step_with_people(&mut game, &stands);
+        }
+        // The one the game moves and the one nobody moves are flat, with
+        // the bus's 20 off them; the one whose device is there is not the
+        // game's to run over.
+        assert!(game.flat[0] > 0.0 && game.flat[1] > 0.0, "{:?}", &game.flat[..ARENA_SEATS]);
+        assert_eq!(game.flat[4], 0.0);
+        assert_eq!((game.health[0], game.health[1], game.health[4]), (HEALTH - SQUASH_DAMAGE, HEALTH - SQUASH_DAMAGE, HEALTH));
+        assert_eq!(game.squashes, [2, 0, 0]);
+        let sent = game.flattened();
+        assert_eq!(sent.0.len(), 2);
+        let until = sent.until(1).expect("seat 1 lies flat");
+        assert!((until - (f64::from(game.elapsed) + f64::from(game.flat[1]))).abs() < 0.1, "{until} at {}", game.elapsed);
+        assert_eq!(sent.until(4), None);
+        // Flat, the computer's player lies where it was, on the road.
+        let lay = game.at[1];
+        assert!(lay.xz().distance(bot_at.xz()) < 2.0 && lay.y.abs() < 0.3, "{lay}");
+        // Hit as it lies there, on the run: the punch's damage, no knock,
+        // and no less time to lie.
+        let (health, left) = (game.health[1], game.flat[1]);
+        let from = Spot::of(lay + Vec3::X, Quat::IDENTITY);
+        game.wound(1, 4, from, true);
+        assert_eq!(game.health[1], health - DAMAGE);
+        assert_eq!(game.flat[1], left);
+        // And the person whose device has gone: hurt, and their device,
+        // were it there, told of no knock.
+        game.wound(0, 2, from, true);
+        assert_eq!(game.health[0], HEALTH - SQUASH_DAMAGE - DAMAGE);
+        assert!(!game.events.iter().any(|event| matches!(event, Event::Knocked { .. })), "{:?}", game.events);
+        assert_eq!(game.squashes[2], 2);
+        for _ in 0..60 {
+            step_with_people(&mut game, &stands);
+        }
+        assert!(game.at[1].distance(lay) < 1e-3, "moved {} m", game.at[1].distance(lay));
+        assert!((game.flat[1] - (left - 2.0)).abs() < 0.05);
+        // No bus runs over someone who is flat already: with the other
+        // bus's front on them, they lie as they lay.
+        let clock = game.bus_clock.expect("the buses have been moved");
+        let again = in_front_of(1, clock, 0.2, 0.3);
+        game.at[0] = again;
+        let stands_again = |_: usize| again;
+        let health = game.health[0];
+        for _ in 0..12 {
+            step_with_people(&mut game, &stands_again);
+        }
+        assert_eq!(game.squashes[0], 2);
+        assert!(game.flat[0] > 0.0 && game.health[0] >= health);
+        // Up again after ten seconds from when it ran them over, both.
+        while game.elapsed < 10.0 {
+            step_with_people(&mut game, &stands_again);
+        }
+        assert!(game.flat[0] > 0.0 && game.flat[1] > 0.0, "{} s in: {:?}", game.elapsed, &game.flat[..2]);
+        while game.elapsed < 10.7 {
+            step_with_people(&mut game, &stands_again);
+        }
+        assert_eq!((game.flat[0], game.flat[1]), (0.0, 0.0));
+        assert_eq!(game.flattened(), Flattened::default());
+        // And then they can be run over again: by whichever bus is next
+        // on them.
+        let clock = game.bus_clock.expect("the buses have been moved");
+        let once_more = in_front_of(0, clock, 0.2, -0.4);
+        game.at[0] = once_more;
+        let stands_once_more = |_: usize| once_more;
+        for _ in 0..12 {
+            step_with_people(&mut game, &stands_once_more);
+        }
+        assert_eq!(game.squashes[0], 3);
+        assert!(game.flat[0] > 9.0);
+        // With no more health than the bus takes, it kills them: said in
+        // the chat, and they are dead, not flat.
+        game.flat[0] = 0.0;
+        game.health[0] = 15.0;
+        game.events.clear();
+        game.run_over(0);
+        assert_eq!(said(&mut game), vec![Feed::RunOver { seat: 0 }]);
+        assert!(!game.alive(0) && game.flat[0] == 0.0 && game.dead_for[0].is_some());
+        assert_eq!(game.squashes[1], 1);
+        // A shield keeps its share of the bus off, as of anything.
+        game.outfits.kits[4].shield = 3;
+        game.health[4] = HEALTH;
+        game.run_over(4);
+        assert!((game.health[4] - (HEALTH - SQUASH_DAMAGE * (1.0 - SHIELD_SHARE[3]))).abs() < 1e-3, "{}", game.health[4]);
+    }
+
+    #[test]
+    fn someone_riding_a_bus_is_where_the_bus_has_taken_them() {
+        // A place on the first of Bridge Wars' buses, 2 m behind its
+        // windscreen on its floor: in the world, on the lane.
+        let clock = 1.79e9 + 7.5;
+        let aboard = Spot::of(Vec3::new(0.5, 0.47, -4.0), Quat::IDENTITY).aboard(Some(FIRST_BUS));
+        assert_eq!(riding(&aboard), Some(0));
+        let at = stands(&aboard, clock);
+        let bus = Bus::at(0, clock);
+        assert!(bus.local(at.xz()).distance(Vec2::new(0.5, 4.0)) < 0.02, "{at}");
+        assert!((at.xz().length() - BUS_LANE).abs() < 4.5 && (at.y - 0.47).abs() < 0.01);
+        // The second bus is the next number; one of the town's buses is
+        // none of the game's, nor is anyone on foot.
+        assert_eq!(riding(&aboard.aboard(Some(FIRST_BUS + 1))), Some(1));
+        assert_eq!(riding(&aboard.aboard(Some(0))), None);
+        assert_eq!(riding(&aboard.aboard(Some(FIRST_BUS + 2))), None);
+        let afoot = Spot::of(Vec3::new(10.0, 0.25, -3.0), Quat::IDENTITY);
+        assert_eq!(riding(&afoot), None);
+        assert!(stands(&afoot, clock).distance(Vec3::new(10.0, 0.25, -3.0)) < 0.01);
     }
 }

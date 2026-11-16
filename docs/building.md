@@ -7,6 +7,69 @@
 > "above" or "below", or names another section in quotes, that section may be
 > in another file here: the table in `CLAUDE.md` says which.
 
+## APK 38, and the server with protocol 19
+
+On the evening of 2026-11-16 (Hajun: "when ur done build apk, and push to
+git, but i may need to turn my laptop off midway. also when ur testing the
+game on my computer dont open it as active tab but rather background tab cuz
+im in class and looking at my course material", of the two buses that drive
+round Bridge Wars' map and run over whoever is in front of one;
+`docs/bridge-wars.md`, its first entry; and, as those were being finished,
+"also use loadingscreendesign.png for when u open the game - a minimalistic
+quick loading indicator", `docs/town-hud.md`, its first entry, which is the
+app's own). **`PROTOCOL_VERSION` 19**: an app from before, APK 37 and an
+iPhone's build of `ios-1.0.2-18`, is told to update and stays offline.
+
+- **No game window came up for any of it**: every run of the desktop build
+  was hidden, `RT_BACKGROUND=1` (new that day: `in_the_background`,
+  `window_settings` and `lock_cursor` in `src/lib.rs`; `CLAUDE.md`, "Build,
+  run, ship"). The window is made hidden and without the keyboard (winit
+  never activates one made so, and nothing shows in the taskbar), the mouse
+  is not taken, Bevy goes on updating and drawing with no window in sight,
+  and `Screenshot::primary_window()` gives the frame as drawn, 1920 by
+  1080 at this PC's scaling. Seen so the first time it was used: a watcher
+  asking Windows which window was in front ten times a second through a
+  run had Chrome there from start to end, and the game's own pictures had
+  the whole town and its buttons. A hidden run has to end itself (the
+  scripted module's `AppExit`, or `timeout`); posted Win32 clicks do not
+  reach it.
+- **Before the deploy**: the three crates' tests (the rules' 102, the
+  server's 60, the game's 319); 96 whole games of the computer's players
+  played out by the server's tests; the desktop build scripted offline
+  (run over, flat, up; beside a bus; one of the computer's run over); and
+  a server on this PC with two scripted copies of the game in one game on
+  it, one run over and the other watching it lie.
+- **The server**: `server/deploy.sh` at 09:32 UTC (18:32 here), protocol
+  19, with nobody connected since 07:35 (that had been this PC's own
+  account, checking the deploy before; the journal had nothing in the two
+  hours between); the binary before (deployed 07:23 UTC, protocol 18)
+  kept on the VM as `roundtown-server.prev-2026-11-16d`. After: the VM's
+  binary the same bytes as the one built here (sha1 `bb11ee76`), the
+  service active, UDP 443 listening; this PC's account online on it,
+  hidden ("connected to 141.164.62.193:443", "online as xd, a boy",
+  `xd#3690 joined, in Town(0)`); and one scripted, hidden game on the VM
+  as that account with seven of the computer's, in which a bus ran it over
+  ("a bus ran seat 2 over, left with 80" in the VM's journal), it lay ten
+  seconds and was up. The game was left with nobody connected, and given
+  up by the server a minute later.
+- **The APK**: 38 (`versionCode`), at 19:48 that evening, after the
+  deploy and with what says the town is loading in it: cargo ndk 1 m 28 s
+  for the library, stripped to 101.6 MB with its seven entry points
+  (`GameActivity_onCreate` and `MainActivity`'s six), Gradle 17 s; 118.7
+  MB, put over APK 37 with no copy kept. Before it the game's tests again
+  (320, one more for the bar). Checked: `versionCode` read back with aapt;
+  the 85 files of its `assets/` each the same bytes as the file on disk,
+  and those the same before and after Gradle; the library in it the
+  stripped one, with the words of `assets/ui.ron` as it stood ("was run
+  over by a bus", "Loading..."); no source newer than the library.
+  **Not installed: no phone was attached** (`adb devices`). Nothing of the
+  buses, of lying flat or of the bar on the cover has been seen on a
+  phone.
+- **The iPhone**: its code type-checked on this PC with all of it in
+  (`bash mobile/ios/check_on_windows.sh`: no errors); **no tag pushed**:
+  the build of `ios-1.0.2-18` is protocol 18 and is told to update until
+  `ios-1.0.2-19` is built, whose tag is Hajun's to ask for.
+
 ## APK 37, and the server with the waiting room's bots
 
 On the afternoon of 2026-11-16 (Hajun: "rebuild apk and push to git after
@@ -22,9 +85,12 @@ on.
   the 15th) kept on the VM as `roundtown-server.prev-2026-11-16c`. After:
   the VM's binary the same bytes as the one built here (sha1), the service
   active, UDP 443 listening, the login answering over HTTPS. **This PC's
-  account was not brought online on it** as after every deploy before:
-  Hajun, in class, had asked that no game window come up in front, and
-  the check was left to the other session in the tree, to run hidden.
+  account was brought online on it twelve minutes later, hidden**
+  (07:35:36 UTC: "connected to 141.164.62.193:443", "online as xd, a
+  boy", the town's clock set by the server's to within 16 ms), by the
+  other session in the tree once it had a way to run the game with no
+  window (`RT_BACKGROUND=1`, below): Hajun, in class, had asked that no
+  game window come up in front.
   Before the deploy the same server on this PC with one scripted copy of
   the game through the waiting room into the fight.
 - **APK 37** (`versionCode` 37, 16:27 here): `cargo ndk` 2 m 25 s, the

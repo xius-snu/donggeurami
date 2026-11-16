@@ -481,6 +481,40 @@ impl Drinking {
 const DRINK_LIFT: f32 = 0.2;
 const DRINK_REACH: Vec3 = Vec3::new(-0.62, 0.36, -0.7);
 
+/// A body a bus has run over, in Bridge Wars (`arena::squash`, since
+/// 2026-11-16; Hajun: "the bus 'squishes' that person, so the person is
+/// squashed on the road for 10 second. they cannot move for 10second,
+/// they are doing a 'flat on the ground with leg and arms extended outward
+/// like a starfish' 'face towards the ground' emote with a 10s timer text
+/// above the player, where they can be attacked by other players too"):
+/// for this much longer, in seconds. It lies flat on its face where it
+/// was, its arms and legs spread ([`squash_offset`], `arena::squash`),
+/// neither walking nor jumping nor moved by anything
+/// ([`read_player_input`], [`move_bodies`]), throwing no punch
+/// ([`start_punch`]) and using nothing; a blow lands on it as on anyone,
+/// and knocks it nowhere ([`Shove::pinned`]); and it is in nobody's way,
+/// as someone lying on the road is not.
+#[derive(Component, Clone, Copy, PartialEq, Debug)]
+pub(crate) struct Squashed {
+    pub(crate) left: f32,
+}
+
+/// How a body lies that a bus has run over ([`Squashed`]), seen from over
+/// it as Bridge Wars is: how far up from where they hang its arms are
+/// turned, out at its sides and on toward its head, and how far out from
+/// under it its legs, in radians, a starfish's five points with its head;
+/// how its model is squashed, across its shoulders, head to foot and front
+/// to back, a little wider and less than half as thick; how high over the
+/// ground the middle of it lies, in metres, which keeps the front of it
+/// out of the road; and how far back along the way it faced its model is
+/// put, so that its middle lies where it stood rather than its feet. All
+/// mine.
+const FLAT_ARMS: f32 = ARM_HANG_BELOW + 0.5;
+const FLAT_LEGS: f32 = 0.62;
+pub(crate) const FLAT_SQUASH: Vec3 = Vec3::new(1.12, 1.0, 0.42);
+pub(crate) const FLAT_LIFT: f32 = 0.14;
+pub(crate) const FLAT_BACK: f32 = 0.8;
+
 /// How a sword is held and swung, in Bridge Wars (`gear`, since
 /// 2026-11-12; Hajun: "you may also need to make the sword animation for
 /// the swords rather than using punch swing animation for it"), in
@@ -643,6 +677,9 @@ impl Punching {
 pub(crate) struct Shove {
     across: Vec2,
     hurt: f32,
+    /// Flat on the road, run over by a bus ([`Squashed`]): a blow that
+    /// lands takes, and moves the body nowhere.
+    pub(crate) pinned: bool,
 }
 
 impl Shove {
@@ -659,6 +696,11 @@ impl Shove {
             return false;
         }
         let melee = ui::ui().melee;
+        // Flat on the road, it is hit where it lies.
+        if self.pinned {
+            self.hurt = melee.hurt_time;
+            return true;
+        }
         let away = (at - from).normalize_or(Vec2::NEG_Y);
         let push = melee.knock_back + if running { melee.sprint_bonus } else { 0.0 };
         self.across = self.across * 0.5 + away * push;
@@ -1599,10 +1641,30 @@ fn keep_ui_size(mut windows: Query<&mut Window, With<PrimaryWindow>>) {
     }
 }
 
+/// Whether this copy of the game is to run where nobody sees it, on
+/// desktop: `RT_BACKGROUND=1` (since 2026-11-16; Hajun, in class with the
+/// game being tried out on his PC: "when ur testing the game on my computer
+/// dont open it as active tab but rather background tab"). Its window is
+/// made hidden and without the keyboard ([`window_settings`]): nothing comes
+/// up on the screen or in the taskbar, and whatever window was in front
+/// stays in front with the keys. The game runs and draws all the same (Bevy
+/// goes on updating with no window in sight, and a picture taken of the
+/// window, `Screenshot::primary_window()`, is the frame as drawn), and
+/// leaves the mouse alone ([`lock_cursor`]). For scripted runs: with nothing
+/// to see or press, a run needs a script to drive it and to end it.
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+pub(crate) fn in_the_background() -> bool {
+    std::env::var("RT_BACKGROUND").is_ok_and(|said| !matches!(said.trim(), "" | "0" | "off"))
+}
+
 fn window_settings() -> Window {
     Window {
         title: "동그라미타운".into(),
         resolution: WindowResolution::new(1280, 720),
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
+        visible: !in_the_background(),
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
+        focused: !in_the_background(),
         #[cfg(any(target_os = "android", target_os = "ios"))]
         mode: WindowMode::BorderlessFullscreen(MonitorSelection::Primary),
         #[cfg(any(target_os = "android", target_os = "ios"))]
@@ -1942,10 +2004,11 @@ fn read_touch_controls(
 /// playing online: each would otherwise take the mouse from the other. Nor
 /// is it taken with the camera fixed over you, where there is nothing to
 /// look round with ([`cursor_for_dialogs`] lets it go for as long as it
-/// is).
+/// is). Nor by a copy run where nobody sees it ([`in_the_background`]),
+/// which would take the mouse from whatever is being worked in.
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 fn lock_cursor(orbit: Res<OrbitCamera>, mut cursors: Query<&mut CursorOptions, With<PrimaryWindow>>) {
-    if std::env::var_os("RT_FREE_CURSOR").is_some() || orbit.overhead {
+    if std::env::var_os("RT_FREE_CURSOR").is_some() || in_the_background() || orbit.overhead {
         return;
     }
     let Ok(mut cursor) = cursors.single_mut() else {
@@ -2710,6 +2773,24 @@ fn landing_offset(kind: WalkBoneKind, stance: f32, landing: &Landing) -> Quat {
     }
 }
 
+/// Where a limb of a body lying flat is, run over by a bus ([`Squashed`]),
+/// in place of its walk: an arm turned up from where it hangs, out at its
+/// side and on toward its head, a thigh turned out from under the body,
+/// and a shin straight on from its thigh: the five points of a starfish,
+/// with its head ([`FLAT_ARMS`], [`FLAT_LEGS`]).
+fn squash_offset(kind: WalkBoneKind, stance: f32) -> Quat {
+    match kind {
+        // (The left of each hangs, or stands, by a turn one way about the
+        // body's front to back axis and the right by a turn the other,
+        // [`stance_from_rest`].)
+        WalkBoneKind::ArmL => stood(stance - FLAT_ARMS),
+        WalkBoneKind::ArmR => stood(stance + FLAT_ARMS),
+        WalkBoneKind::ThighL => stood(stance - FLAT_LEGS),
+        WalkBoneKind::ThighR => stood(stance + FLAT_LEGS),
+        WalkBoneKind::ShinL | WalkBoneKind::ShinR => stood(stance),
+    }
+}
+
 /// Where an arm carrying a plank is ([`Carrying`]): held out in front, a
 /// little under level, in place of its walk, as a punch is held at
 /// [`CARRY_REACH`] of its reach.
@@ -2966,14 +3047,18 @@ fn read_player_input(
     mut ran_out: ResMut<bridge::RanOut>,
     (outfit, clock): (Res<arena::Outfit>, Res<arena::FightTime>),
     cameras: Query<&Transform, (With<ThirdPersonCamera>, Without<Player>)>,
-    mut players: Query<(&Transform, &Venue, &mut Intent, &mut WalkCycle, Has<Dead>, Has<Drinking>), With<Player>>,
+    mut players: Query<
+        (&Transform, &Venue, &mut Intent, &mut WalkCycle, Has<Dead>, Has<Drinking>, Has<Squashed>),
+        With<Player>,
+    >,
 ) {
-    let Ok((transform, &venue, mut intent, mut walk, dead, drinking)) = players.single_mut() else {
+    let Ok((transform, &venue, mut intent, mut walk, dead, drinking, squashed)) = players.single_mut() else {
         return;
     };
     // A dialog is up: you stand and wait for it to be answered. Dead, you
-    // stand where you died until you are put back (`arena`).
-    if dialog.0 || dead {
+    // stand where you died until you are put back (`arena`). Run over by a
+    // bus, you lie where you are until you are up again.
+    if dialog.0 || dead || squashed {
         *intent = Intent::default();
         walk.speed = 0.0;
         return;
@@ -3074,7 +3159,9 @@ type Bodies<'w, 's> = Query<
         &'static mut Riding,
         &'static mut Shove,
         Has<StaysAshore>,
-        Has<Dead>,
+        // Dead, or lying flat where a bus ran it over ([`Squashed`]):
+        // neither moving nor in anyone's way.
+        (Has<Dead>, Has<Squashed>),
     ),
 >;
 
@@ -3103,10 +3190,10 @@ pub(crate) fn move_bodies(
         .collect();
 
     // The dead stand where they died, neither moving nor in anyone's way
-    // (`arena`).
+    // (`arena`); and so does whoever lies flat where a bus ran them over.
     let movers: Vec<(Entity, Venue)> = bodies
         .iter()
-        .filter(|(.., dead)| !dead)
+        .filter(|(.., (dead, flat))| !dead && !flat)
         .map(|(entity, _, _, venue, ..)| (entity, *venue))
         .collect();
     for (mover, venue) in movers {
@@ -3127,7 +3214,7 @@ pub(crate) fn move_bodies(
         solids.extend(
             bodies
                 .iter()
-                .filter(|(other, _, _, at, .., dead)| *other != mover && **at == venue && !dead)
+                .filter(|(other, _, _, at, .., (dead, flat))| *other != mover && **at == venue && !dead && !flat)
                 .map(|(_, other, collider, ..)| (other.translation, *collider)),
         );
         let Ok((_, mut body, _, _, intent, mut jump, mut riding, mut shove, stays_ashore, _)) = bodies.get_mut(mover)
@@ -3332,7 +3419,7 @@ fn start_punch(
     dialog: Res<hud::DialogUp>,
     driving: Res<drive::Driving>,
     bridging: Res<bridge::Bridging>,
-    me: Query<(Entity, &Transform, &Venue, &Intent, Has<Dead>, Option<&Team>, Has<Drinking>), With<Player>>,
+    me: Query<(Entity, &Transform, &Venue, &Intent, Has<Dead>, Option<&Team>, Has<Drinking>, Has<Squashed>), With<Player>>,
     others: Query<
         (Entity, &Transform, &Venue, Option<&Team>),
         (With<WalkCycle>, Without<Player>, Without<Dead>, Without<ForShow>),
@@ -3349,11 +3436,12 @@ fn start_punch(
     if !asked || dialog.0 || driving.on() || bridging.0 {
         return;
     }
-    let Ok((you, body, &venue, intent, dead, team, drinking)) = me.single() else {
+    let Ok((you, body, &venue, intent, dead, team, drinking, squashed)) = me.single() else {
         return;
     };
-    // Nor with a potion at your mouth (`utility`).
-    if dead || drinking {
+    // Nor with a potion at your mouth (`utility`), nor flat on the road
+    // under a bus's wheels (`arena::squash`).
+    if dead || drinking || squashed {
         return;
     }
     commands.entity(you).insert(Punching::next());
@@ -3431,6 +3519,7 @@ pub(crate) fn animate_walk(
         Option<&Drinking>,
         Option<&arena::Wears>,
         Option<&Landing>,
+        Has<Squashed>,
     )>,
     mut bones: Query<(&WalkBone, &mut Transform)>,
     mut commands: Commands,
@@ -3455,9 +3544,18 @@ pub(crate) fn animate_walk(
         }
     }
     for (bone, mut transform) in &mut bones {
-        let Ok((_, walk, punch, carrying, drinking, wears, landing)) = walks.get(bone.owner) else {
+        let Ok((_, walk, punch, carrying, drinking, wears, landing, squashed)) = walks.get(bone.owner) else {
             continue;
         };
+        // Flat on the road where a bus ran it over, every limb is spread
+        // (`arena::squash`).
+        if squashed {
+            let rotation = bone.turned(squash_offset(bone.kind, bone.stance));
+            if transform.rotation != rotation {
+                transform.rotation = rotation;
+            }
+            continue;
+        }
         // Coming down out of the sky as the app opens, every limb is the
         // landing's (`intro`).
         if let Some(landing) = landing {
@@ -4143,6 +4241,29 @@ mod camera_tests {
             let swung = points(arm_frame, walk_offset(arm, 1.0, 1.0, stance));
             assert!((swung.z - hung.z).abs() > 0.3, "{swung:?}");
         }
+        // Flat on the road where a bus ran it over (`arena::squash`): a
+        // starfish. Each arm out on its own side and on toward the head, a
+        // little over level; each leg out from under the body on its own
+        // side, its shin straight on from it; and none of them forward or
+        // back of the body, which lies on its front.
+        for (arm, side) in [(WalkBoneKind::ArmL, -1.0), (WalkBoneKind::ArmR, 1.0)] {
+            let arm_frame = frame(arm);
+            let spread = points(arm_frame, squash_offset(arm, stance_from_rest(arm, arm_frame)));
+            let over = spread.y.atan2(spread.x * side);
+            assert!(spread.x * side > 0.7 && (0.3..0.7).contains(&over), "{spread:?}, {over} over level");
+        }
+        for (thigh, shin, side) in [
+            (WalkBoneKind::ThighL, WalkBoneKind::ShinL, -1.0),
+            (WalkBoneKind::ThighR, WalkBoneKind::ShinR, 1.0),
+        ] {
+            let (thigh_frame, shin_frame) = (frame(thigh), frame(shin));
+            let turn = squash_offset(thigh, stance_from_rest(thigh, thigh_frame));
+            let spread = points(thigh_frame, turn);
+            let out = (spread.x * side).atan2(-spread.y);
+            assert!((out - (LEG_SPLAY + FLAT_LEGS)).abs() < 1e-3, "{spread:?}, {out} out");
+            let shin_goes = (turn * squash_offset(shin, 0.0) * shin_frame) * Vec3::Y;
+            assert!(shin_goes.x * side > 0.3 && shin_goes.y < -0.6, "{shin_goes:?}");
+        }
         // Landing as the app opens (`intro`): in the squat a thigh points
         // forward and its shin, going round with it, back, so that the
         // foot is under the hip and the body that much lower; with the arms
@@ -4529,6 +4650,7 @@ mod ground_tests {
         let mut shove = Shove {
             across: Vec2::new(melee.knock_back, 0.0),
             hurt: 0.0,
+            pinned: false,
         };
         jump.velocity_y = melee.knock_up;
         let mut rose = false;
@@ -4540,6 +4662,29 @@ mod ground_tests {
         assert_eq!(shove.across, Vec2::ZERO, "still carried after three seconds");
         let went = transform.translation.x;
         assert!(went > 1.5 && went < 6.0, "{went} m from one punch standing still");
+    }
+
+    #[test]
+    fn a_punch_on_someone_a_bus_has_laid_flat_lands_and_moves_them_nowhere() {
+        let melee = ui::ui().melee;
+        let mut jump = PlayerJump::default();
+        let mut shove = Shove {
+            pinned: true,
+            ..default()
+        };
+        // It takes, as on anyone, and carries them nowhere, up or along.
+        assert!(shove.knock(&mut jump, Vec2::ZERO, Vec2::X, true));
+        assert_eq!((shove.across, jump.velocity_y), (Vec2::ZERO, 0.0));
+        // And no oftener than on anyone: not again while they reel.
+        assert_eq!(shove.hurt, melee.hurt_time);
+        assert!(!shove.knock(&mut jump, Vec2::ZERO, Vec2::X, true));
+        shove.hurt = 0.0;
+        assert!(shove.knock(&mut jump, Vec2::ZERO, Vec2::X, false));
+        // Up again, a punch knocks them as it knocks anyone.
+        shove.pinned = false;
+        shove.hurt = 0.0;
+        assert!(shove.knock(&mut jump, Vec2::ZERO, Vec2::X, false));
+        assert!(shove.across.x > 0.0 && jump.velocity_y > 0.0);
     }
 
     #[test]

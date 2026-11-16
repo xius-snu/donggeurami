@@ -1344,12 +1344,20 @@ fn toggle(
     dialog: Res<DialogUp>,
     fighting: Res<Fighting>,
     stock: Res<Resources>,
-    me: Query<&Venue, With<Player>>,
+    me: Query<(&Venue, Has<crate::Squashed>), With<Player>>,
     mut bridging: ResMut<Bridging>,
     mut ran_out: ResMut<RanOut>,
 ) {
     let pressed = presses.read().count() > 0 || keyboard.just_pressed(KeyCode::KeyB);
-    let in_a_game = fighting.playing && me.single().is_ok_and(|&here| here == Venue::Arena);
+    let in_a_game = fighting.playing && me.single().is_ok_and(|(&here, _)| here == Venue::Arena);
+    // Flat on the road where a bus ran you over, there is no building:
+    // the plank is out of your arms, and the button does nothing until
+    // you are up (`arena::squash`).
+    let squashed = me.single().is_ok_and(|(_, squashed)| squashed);
+    if squashed {
+        bridging.set_if_neq(Bridging(false));
+        return;
+    }
     if !in_a_game {
         bridging.set_if_neq(Bridging(false));
         if ran_out.halted || ran_out.shown > 0.0 {

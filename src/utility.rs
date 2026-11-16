@@ -481,7 +481,10 @@ fn buttons(
     fighting: Res<Fighting>,
     outfit: Res<Outfit>,
     islands: Res<Islands>,
-    mut me: Query<(Entity, &mut Transform, &Venue, Has<Dead>, Has<Drinking>, Option<&Health>), With<Player>>,
+    mut me: Query<
+        (Entity, &mut Transform, &Venue, Has<Dead>, Has<Drinking>, Option<&Health>, Has<crate::Squashed>),
+        With<Player>,
+    >,
     mut hand: ResMut<Hand>,
     mut used: MessageWriter<Used>,
     mut commands: Commands,
@@ -495,10 +498,11 @@ fn buttons(
     let Some((slot, by_finger)) = by_finger.or_else(|| by_key().map(|slot| (slot, None))) else {
         return;
     };
-    let Ok((you, mut body, &venue, dead, drinking, health)) = me.single_mut() else {
+    let Ok((you, mut body, &venue, dead, drinking, health, squashed)) = me.single_mut() else {
         return;
     };
-    if !in_play(&fighting, &dialog, venue, dead) || hand.hold.is_some() {
+    // (Flat on the road where a bus ran you over, you use nothing.)
+    if !in_play(&fighting, &dialog, venue, dead || squashed) || hand.hold.is_some() {
         return;
     }
     let Some(utility) = on_slot(&outfit.kit, slot).filter(|stack| stack.count > 0).map(|stack| stack.utility) else {
@@ -583,7 +587,7 @@ fn aim(
     fighting: Res<Fighting>,
     outfit: Res<Outfit>,
     islands: Res<Islands>,
-    mut me: Query<(&mut Transform, &Venue, Has<Dead>), With<Player>>,
+    mut me: Query<(&mut Transform, &Venue, Has<Dead>, Has<crate::Squashed>), With<Player>>,
     mut hand: ResMut<Hand>,
     mut bands: Query<(&mut Transform, &mut Visibility), (With<AimBand>, Without<Player>, Without<ThirdPersonCamera>, Without<BandFor>)>,
     mut kinds: Query<(&BandFor, &mut Visibility), (Without<AimBand>, Without<Player>)>,
@@ -607,12 +611,12 @@ fn aim(
         return;
     };
     let aimed = Some(hold.utility).filter(|utility| utility.aimed() && outfit.kit.held(*utility) > 0);
-    let (Some(utility), Ok((mut body, &venue, dead)), Ok(window)) = (aimed, me.single_mut(), windows.single()) else {
+    let (Some(utility), Ok((mut body, &venue, dead, squashed)), Ok(window)) = (aimed, me.single_mut(), windows.single()) else {
         hand.hold = None;
         shown.set_if_neq(Visibility::Hidden);
         return;
     };
-    if !in_play(&fighting, &dialog, venue, dead) {
+    if !in_play(&fighting, &dialog, venue, dead || squashed) {
         hand.hold = None;
         shown.set_if_neq(Visibility::Hidden);
         return;
@@ -712,14 +716,16 @@ fn drink(
     fighting: Res<Fighting>,
     outfit: Res<Outfit>,
     (touches, mouse, keyboard): (Res<Touches>, Res<ButtonInput<MouseButton>>, Res<ButtonInput<KeyCode>>),
-    mut me: Query<(Entity, &Venue, Has<Dead>, &mut Drinking, Option<&Health>), With<Player>>,
+    mut me: Query<(Entity, &Venue, Has<Dead>, &mut Drinking, Option<&Health>, Has<crate::Squashed>), With<Player>>,
     mut hand: ResMut<Hand>,
     mut used: MessageWriter<Used>,
     mut commands: Commands,
 ) {
-    let Ok((you, &venue, dead, mut drinking, health)) = me.single_mut() else {
+    let Ok((you, &venue, dead, mut drinking, health, squashed)) = me.single_mut() else {
         return;
     };
+    // (Run over by a bus, the potion is out of your hand.)
+    let dead = dead || squashed;
     let share = health.map_or(1.0, Health::share);
     let hit = share < hand.health - 1e-4;
     let still_held = hand.potion.is_some_and(|potion| outfit.kit.held(potion) > 0);

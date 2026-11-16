@@ -11,12 +11,12 @@ bundles). It plays online against a server in Seoul (`server/`; `shared/` is
 Bridge Wars. House Builder, the build-battle game, is stalled: keep it
 working, and spend nothing on it unasked.
 
-As of the afternoon of 2026-11-16: `PROTOCOL_VERSION` 18, APK 37
-(`versionCode`), the server deployed then (07:23 UTC) with everything in
-`server/` and `shared/`. The iPhone's last tag, `ios-1.0.2-18`, was pushed
-in the first hour of that day (whether Codemagic built it is not known
-here): it plays online, without what is the app's own of APK 37 (the team
-drawn nowhere in the waiting room).
+As of the evening of 2026-11-16: `PROTOCOL_VERSION` 19, APK 38
+(`versionCode`), the server deployed then (09:32 UTC) with everything in
+`server/` and `shared/`. The iPhone's last tag, `ios-1.0.2-18`, pushed in
+the first hour of that day (whether Codemagic built it is not known here),
+is protocol 18: its build is told to update and stays offline until
+`ios-1.0.2-19` is built, whose tag is Hajun's to ask for.
 
 ## This file, and where the rest is
 
@@ -189,7 +189,8 @@ to try again.
   `RT_SIGNUP=1`, `RT_TIME_OF_DAY`, `RT_CAR_AT`, `RT_CLOCK_OFF`,
   `RT_ARENA_FROM=<seconds>`, `RT_ARENA_PURSE=<count>`,
   `RT_ARENA_TEAM=red|blue|green|yellow` (offline),
-  `RT_SAFE_AREA=<left>,<right>` (a camera's hole made up). Two copies need
+  `RT_SAFE_AREA=<left>,<right>` (a camera's hole made up),
+  `RT_BACKGROUND=1` (below). Two copies need
   their own `APPDATA`. A server on this PC: `RT_PORT=5443
   RT_ALLOW_SKIP=1 target/debug/roundtown-server.exe`, and the copies with
   `RT_SERVER=127.0.0.1:5443 RT_UNSECURE=1`.
@@ -197,6 +198,12 @@ to try again.
   throwaway module (taps as `WindowEvent::TouchInput`, which picking takes;
   `Screenshot::primary_window()` for pictures) and take it out again before
   finishing. Posted mouse clicks do not reach the world.
+- **Every such run, and the check after a deploy, is hidden:
+  `RT_BACKGROUND=1`** (Hajun, 2026-11-16, at work on this PC while the game
+  was being tried: "dont open it as active tab but rather background
+  tab"). The window is made hidden and without the keyboard, takes no
+  mouse, and the game runs, draws and takes its pictures all the same
+  (`in_the_background`, `src/lib.rs`); the run has to end itself.
 
 ## Playing online
 
@@ -312,7 +319,9 @@ to try again.
 ## The lobby, Round Town, as it stands
 
 - The app opens under a black cover that lifts once the town is loaded,
-  and you drop into it (`src/intro.rs`). No menu. Everyone arrives on the
+  and you drop into it (`src/intro.rs`). The cover says "Loading..." over
+  a bar that fills (Hajun's `loadingscreendesign.png`; its colours and
+  word `colours.intro`, `words.loading`). No menu. Everyone arrives on the
   path round the pond (`roundtown_net::arrival`), facing the fountain.
 - The town holds 32 bodies: whoever is in your channel (16 people to one)
   and this device's own AIs for the rest (`lobby.rs`, `ai.rs`). An AI is a
@@ -449,6 +458,18 @@ and the game is as that file has it. The rules both sides play by are
 - The camera is fixed straight overhead, 15.5 m up, and nothing zooms it
   (`arena.camera_height`). Top right a minimap (`src/minimap.rs`), each
   team's island lined in its colour; top left your name in your team's.
+- **Two buses** drive round the ring road in the middle of the map, the
+  town's bus, a lap every 30 s (14.2 m/s, twice the town's), half a lap
+  apart, by the clock (`bridge_wars::Bus`, which the server has too;
+  `car::Lapping`). **A bus's front runs over whoever it comes to**, never
+  anyone at its side or riding it: 20 off their health and flat on the
+  road for 10 s (`arena::squash`, `crate::Squashed`, `Game::run_over`),
+  unable to do anything, hit as anyone is but knocked nowhere, and not run
+  over again until they are up. Your own device says it of you
+  (`Ask::RunOver`), the server of the computer's players, zombies and
+  whoever's device has gone; who lies flat is sent (`Flattened`). The
+  computer's players mind the buses, or do not, and some go for whoever
+  lies flat (`Squad::mind_buses`, `spot_prey`).
 - Also: `src/gear.rs` (swords, shields, the blindfold), `src/fire.rs`,
   `src/dynamite.rs`, `src/compass.rs`, `src/range.rs` (the punch's range),
   `src/trail.rs` (sparks behind a potion), `src/bridge/builder_bot.rs`.

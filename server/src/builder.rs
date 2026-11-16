@@ -555,7 +555,8 @@ fn hear(
             | Ask::Social(_)
             | Ask::Chat(_)
             | Ask::Builder { .. }
-            | Ask::Metres(_) => {}
+            | Ask::Metres(_)
+            | Ask::RunOver { .. } => {}
         }
     }
 }

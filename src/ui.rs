@@ -714,13 +714,24 @@ pub(crate) struct HudColours {
 }
 
 /// The opening, as the app starts (`intro`): the cover the town loads
-/// under, the town's name on it, and the ring of dust that goes out from
-/// your feet as you land.
+/// under; what says so on it while it does (since 2026-11-16, Hajun's
+/// `loadingscreendesign.png`): the word, the bar along the bottom, how
+/// much of the bar is filled, and the share written on it; the town's
+/// name over the town as the cover opens; and the ring of dust that goes
+/// out from your feet as you land.
 #[derive(Deserialize, Clone, Copy, PartialEq, Debug)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct IntroColours {
     #[serde(deserialize_with = "colour")]
     pub cover: Color,
+    #[serde(deserialize_with = "colour")]
+    pub loading: Color,
+    #[serde(deserialize_with = "colour")]
+    pub bar: Color,
+    #[serde(deserialize_with = "colour")]
+    pub bar_fill: Color,
+    #[serde(deserialize_with = "colour")]
+    pub bar_text: Color,
     #[serde(deserialize_with = "colour")]
     pub title: Color,
     #[serde(deserialize_with = "colour")]
@@ -991,6 +1002,10 @@ pub(crate) struct ArenaColours {
     /// is at your mouth (`utility`).
     #[serde(deserialize_with = "colour")]
     pub drink: Color,
+    /// The seconds left on the road, written over whoever a bus has run
+    /// over (`arena::squash`).
+    #[serde(deserialize_with = "colour")]
+    pub squashed: Color,
     /// What covers the screen, all but a small circle round you, while a
     /// trap has you blinded (`gear`).
     #[serde(deserialize_with = "colour")]
@@ -1059,6 +1074,8 @@ impl ArenaColours {
 #[derive(Deserialize, PartialEq, Debug)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Words {
+    /// On the cover the app opens under, while the town loads (`intro`).
+    pub loading: String,
     pub welcome: String,
     pub signup: SignupWords,
     pub settings: SettingsWords,
@@ -1080,7 +1097,8 @@ pub(crate) struct Words {
 /// with a bare hand or with something (`{weapon}`: one of the three
 /// swords, by tier, a fireball or dynamite); someone bought something for
 /// your team (`{name}`, `{ware}`, as the upgrade shop's cards call it);
-/// and someone broke a team's anchor (`{name}`, `{team}`). And what the
+/// someone broke a team's anchor (`{name}`, `{team}`); and a bus killed
+/// someone (`{name}`). And what the
 /// big speech bubble offers to say at a press (`quick`), nearest the
 /// bubble first: the first six of them that are lines at all are offered.
 #[derive(Deserialize, PartialEq, Debug)]
@@ -1098,6 +1116,9 @@ pub(crate) struct ChatWords {
     pub dynamite: String,
     pub bought: String,
     pub anchor_broken: String,
+    /// A bus ran someone over, and it killed them (`{name}`; since
+    /// 2026-11-16).
+    pub run_over: String,
 }
 
 /// The friends' panel (`friends`): its headings, with `{online}` and `{all}`

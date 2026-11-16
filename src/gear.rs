@@ -364,14 +364,14 @@ fn arm(
 /// frame, pointing the way its bearer's pose asks, flat side up, or, held
 /// on its edge, with its flat square to its cut (the file's
 /// `arena.sword_swing`); and puts it away while they carry a plank or
-/// drink. A slash begun leaves its trail: swept flat, the arc it is about
+/// drink, or lie flat where a bus ran them over. A slash begun leaves its trail: swept flat, the arc it is about
 /// to sweep ([`Trail`]); cut on its edge, the ribbon the blade cuts, grown
 /// here as it comes down ([`Cut`]).
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn hold_swords(
     time: Res<Time>,
     trail: Res<TrailLook>,
-    mut bearers: Query<(Entity, &mut Armed, Option<&Punching>, Has<Carrying>, Has<Drinking>)>,
+    mut bearers: Query<(Entity, &mut Armed, Option<&Punching>, Has<Carrying>, Has<Drinking>, Has<crate::Squashed>)>,
     children: Query<&Children>,
     parents: Query<&ChildOf>,
     names: Query<&Name>,
@@ -386,7 +386,7 @@ fn hold_swords(
     let swing = file.arena.sword_swing;
     // A slash begun this frame is as old as the frame.
     let fresh = time.delta_secs() + 1e-5;
-    for (body, mut armed, punch, carrying, drinking) in &mut bearers {
+    for (body, mut armed, punch, carrying, drinking, squashed) in &mut bearers {
         let Ok((mut place, mut shown)) = swords.get_mut(armed.sword) else {
             continue;
         };
@@ -398,7 +398,8 @@ fn hold_swords(
                 .find(|&part| names.get(part).is_ok_and(|name| name.as_str() == HAND));
         }
         let hand = armed.hand.and_then(|hand| in_body(hand, body, &parents, &places));
-        let Some(hand) = hand.filter(|_| !carrying && !drinking) else {
+        // (Nor is it in the hand of someone a bus has laid flat.)
+        let Some(hand) = hand.filter(|_| !carrying && !drinking && !squashed) else {
             shown.set_if_neq(Visibility::Hidden);
             // Whatever cut it was in the middle of is left as it is.
             armed.cutting = None;

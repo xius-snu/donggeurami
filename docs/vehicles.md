@@ -7,6 +7,39 @@
 > "above" or "below", or names another section in quotes, that section may be
 > in another file here: the table in `CLAUDE.md` says which.
 
+## Two more of the bus drive round Bridge Wars' map, and run people over
+
+Since 2026-11-16 (Hajun: "in the bridge wars minigame map, i want 2 buses to
+go 2x normal speed around the road. and when a person is standing in front of
+the moving bus, the bus 'squishes' that person"). All of it, with what was
+and was not checked, is the first entry of `docs/bridge-wars.md`; what it is
+to the cars is this:
+
+- **They are cars like the town's** (`src/car.rs`): the same model,
+  `mybuilds/bus.glb` (`car::ARENA_BUS`), read into a `Hull` and stood on,
+  bumped into and ridden as the town's are, their wheels turned the same,
+  numbered 4 and 5 after the town's four
+  (`roundtown_net::bridge_wars::FIRST_BUS`), on `Venue::Arena`. So "Bridge
+  Wars' map has none", under "The town's buses" below, is how it was until
+  then.
+- **Where they go is not read off a road** (`car::Lapping`, `car::drive`):
+  it is a ring by the clock, `roundtown_net::bridge_wars::Bus::at`, which the
+  server has too, having no map and needing to know where a bus's front is.
+  The ring is the lane `roads` itself puts a bus on in that map (a test,
+  `bridge_wars_bus_is_as_the_rules_have_it_and_all_of_it_on_the_road_all_the_way_round`,
+  holds the two together, the rules' length and width to the model, and
+  every part of the bus to the road all the way round): the outside lane of
+  the outer half of the ring round the pond, 67.87 m out, anticlockwise.
+  14.2 m/s, a lap in 30 s, never slowing nor stopping. `RT_CAR_AT` does not
+  stop them. They are moved only while you are on that map.
+- **A place on one is a place on a car numbered 4 or 5** (`Spot::aboard`),
+  as on the town's; the server turns it into a place in the world by the
+  same clock (`Bus::carries`, `server/src/arena.rs`'s `stands`), which it
+  cannot do for the town's.
+- **Their front runs over whoever it comes to** (`arena::squash`); the
+  town's buses still scoop up whoever stands in their way, and run nobody
+  over.
+
 ## The car's gun is turned off
 
 Since 2026-11-15 (`drive::GUN`, false). The night before, the gift went

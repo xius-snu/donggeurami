@@ -3186,12 +3186,12 @@ pub(crate) mod tests {
 }
 
 #[cfg(test)]
-mod pvp_town_tests {
+pub(crate) mod pvp_town_tests {
     use super::*;
 
     /// Hajun's `pvptownmap.glb` (2026-11-07) as the game reads it: its land,
     /// its roads alone, and its paint.
-    fn pvp_town() -> (Island, Island, Vec<Vec<[Vec3; 3]>>) {
+    pub(crate) fn pvp_town() -> (Island, Island, Vec<Vec<[Vec3; 3]>>) {
         let parts = crate::island::glb::read("pvptownmap.glb");
         let made_of = |material: &str| -> Vec<Vec<[Vec3; 3]>> {
             parts

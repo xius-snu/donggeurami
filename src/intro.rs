@@ -8,10 +8,18 @@
 //! them, they chose the circle opening with the drop and the squat
 //! landing).
 //!
-//! **The cover.** From the first frame the screen is one plain colour with
-//! the town's name on it (`colours.intro` and `words.welcome` in
-//! `assets/ui.ron`), over everything but the sign-up's pages, and the
-//! town loads under it. It takes every press, and you stand still under
+//! **The cover.** From the first frame the screen is one plain colour
+//! (`colours.intro` in `assets/ui.ron`), over everything but the sign-up's
+//! pages, and the town loads under it. **It says so** (since 2026-11-16;
+//! Hajun, with a picture of it, `loadingscreendesign.png`: "use
+//! loadingscreendesign.png for when u open the game - a minimalistic quick
+//! loading indicator (before the fall from sky and circle out
+//! animation)"): "Loading..." in the middle of the screen
+//! (`words.loading`), and along the bottom a bar that fills as what the
+//! cover waits for comes ([`Loading::share`]), with how much of it has
+//! written on it, "25%" ([`Loader`], [`loaded`]). Until then the town's
+//! name stood on the cover; it comes up as the cover opens now, over the
+//! town. It takes every press, and you stand still under
 //! it, as under a dialog (`hud::DialogUp`). It stays until the town is
 //! there to be seen ([`Loading`]): the town's own shape read, every model
 //! in the world spawned, the buses' way round worked out, your body on its
@@ -30,9 +38,9 @@
 //! in from over the top of the screen with your arms up, land in a squat,
 //! with a ring of dust going out over the ground from your feet and the
 //! camera dipping a little, and spring up; and from then on you can move.
-//! The town's name stays where it was on the cover, over the town now,
-//! for a moment more, and fades: it is the welcome (`hud::welcome` leaves
-//! this one to it).
+//! The town's name comes up over the town as the cover opens, stays a
+//! moment, and fades: it is the welcome (`hud::welcome` leaves this one to
+//! it).
 //!
 //! **Nothing of the fall is your body's.** Your body stands where it
 //! arrived all along; what drops is its model, hung that much higher over
@@ -68,9 +76,10 @@ use crate::{Landing, Player, ThirdPersonCamera, WalkBone, WalkBoneKind, car, ran
 /// layer, 30): the cover, the circle that opens it, and the town's name.
 const LAYER: i32 = 25;
 
-/// How long the town's name takes to come up on the cover as the app
-/// starts, in seconds; and, once the cover has begun to open, how long
-/// the name stays and how long it takes to go.
+/// How long the town's name takes to come up as the cover begins to open,
+/// in seconds (on the cover itself as the app started, until 2026-11-16,
+/// when what says it is loading took its place there); and from then how
+/// long the name stays and how long it takes to go.
 const TITLE_IN: f32 = 0.25;
 const TITLE_STAYS: f32 = 2.2;
 const TITLE_OUT: f32 = 0.8;
@@ -84,9 +93,48 @@ const QUIET_FRAMES: u32 = 8;
 const HITCH: f32 = 0.05;
 const MOST_COVERED: f32 = 10.0;
 
-/// The most of the opening one frame plays, in seconds: a frame that hung
-/// is not that much of it skipped.
+/// The most of the opening one frame plays, in seconds, and the most the
+/// bar on the cover fills by: a frame that hung is not that much of
+/// either skipped.
 const MOST_STEP: f32 = 1.0 / 30.0;
+
+/// What says the town is loading, on the cover, as Hajun drew it
+/// (`loadingscreendesign.png`, 852 by 393, measured off the picture): how
+/// big the word is, as a share of the short side of the screen; how far
+/// in from either side of the screen the bar begins and ends, as a share
+/// of its width; how far up from the bottom it lies, how thick it is and
+/// how round its corners are (35, 37, 36 and 16 of the picture's dots), as
+/// shares of the screen's height; and how big the share written on it is.
+/// The colours and the word are the file's.
+const LOADING_TEXT: f32 = 12.0;
+const BAR_SIDE: f32 = 4.1;
+const BAR_UP: f32 = 9.4;
+const BAR_THICK: f32 = 9.2;
+const BAR_ROUND: f32 = 4.1;
+const BAR_TEXT: f32 = 5.8;
+/// How much of the bar fills in a second, at the most, while anything is
+/// still to come, and once all of it has: what the bar shows goes toward
+/// what has come no faster than this, so that a town that is there in a
+/// moment is still seen to fill, and the cover opens no more than a
+/// quarter of a second after it could have. Never back.
+const BAR_FILLS: f32 = 1.2;
+const BAR_ENDS: f32 = 4.0;
+/// Having caught up with what has come, the bar creeps on while it waits
+/// (the buses' way round is one piece of work, a second of it on a PC,
+/// and says nothing of how far along it is): toward this share of what is
+/// still to come, by all but a third of what is left of that in as many
+/// seconds, so that it is never seen to stand, and never gets there.
+const CREEP_MOST: f32 = 0.8;
+const CREEP_SECS: f32 = 1.2;
+/// How long the cover may stay up after the sign-up's pages have gone
+/// from over a town that was all there, in seconds, before it says that it
+/// is loading after all ([`Intro::unseen`]): here it opens in 0.09 s.
+const UNSEEN_SECS: f32 = 0.35;
+/// How much of the whole each thing the cover waits for is
+/// ([`Loading::share`]): the town's shape read, every model spawned, by
+/// how many of them are, the buses' way round worked out, your body on
+/// its feet, and the GPU with nothing left to compile.
+const SHARES: [f32; 5] = [0.15, 0.5, 0.15, 0.05, 0.15];
 
 /// The opening, in seconds from when the cover begins to open: when the
 /// circle has reached every corner of the screen; when you land; how long
@@ -144,6 +192,13 @@ pub(crate) struct Intro {
     /// How many times slower than it is the opening is played
     /// (`RT_INTRO_SLOW`).
     slow: f32,
+    /// How much of the bar on the cover is filled, 0 to 1 ([`loaded`]).
+    loaded: f32,
+    /// The town was all there under the sign-up's pages: as they go the
+    /// cover opens in a moment, and what says it is loading is left out,
+    /// which would be on the screen for a tenth of a second; unless the
+    /// cover does not open after all ([`UNSEEN_SECS`]).
+    unseen: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -171,6 +226,8 @@ impl Default for Intro {
             wait: Wait::default(),
             model: None,
             slow: slow.filter(|times| times.is_finite()).map_or(1.0, |times| times.max(1.0)),
+            loaded: 0.0,
+            unseen: false,
         }
     }
 }
@@ -208,6 +265,9 @@ struct Wait {
     frame: u32,
     /// When each thing waited for was first there ([`There`]), for the log.
     since: [Option<f32>; 4],
+    /// Everything has come, and the cover is only waiting for its bar to
+    /// have filled ([`loaded`]).
+    done: bool,
 }
 
 impl Wait {
@@ -272,6 +332,47 @@ impl Loading<'_, '_> {
             .is_ok_and(|me| self.limbs.iter().filter(|limb| limb.owner == me).count() >= 6);
         There([town, models, cars, body])
     }
+
+    /// How much of what the cover waits for has come, 0 to 1, for the bar
+    /// on it ([`SHARES`]): `there` being which of it is there, and `quiet`
+    /// how many frames running the GPU has had nothing to compile with
+    /// all of it there. Every model counts by how many of them are
+    /// spawned, so that the bar moves while they come.
+    fn share(&self, there: There, quiet: u32) -> f32 {
+        let (ready, all) = self.models.iter().fold((0u32, 0u32), |(ready, all), instance| {
+            let spawned = instance.is_some_and(|instance| self.spawner.instance_is_ready(**instance));
+            (ready + u32::from(spawned), all + 1)
+        });
+        let models = if all == 0 { 0.0 } else { ready as f32 / all as f32 };
+        let [town, _, cars, body] = there.0.map(|there| if there { 1.0 } else { 0.0 });
+        let compiled = if there.all() { (quiet as f32 / QUIET_FRAMES as f32).min(1.0) } else { 0.0 };
+        SHARES[0] * town + SHARES[1] * models + SHARES[2] * cars + SHARES[3] * body + SHARES[4] * compiled
+    }
+}
+
+/// How much of the bar is filled a frame of `dt` seconds on from
+/// `shown`, with `come` of what the cover waits for there, each 0 to 1:
+/// toward what has come, no faster than the bar fills ([`BAR_FILLS`];
+/// [`BAR_ENDS`] with all of it there); creeping on from there while it
+/// waits ([`CREEP_MOST`]); and never back, though more is found to wait
+/// for.
+fn loaded(shown: f32, come: f32, dt: f32) -> f32 {
+    let (shown, come, dt) = (shown.clamp(0.0, 1.0), come.clamp(0.0, 1.0), dt.max(0.0));
+    if come >= 1.0 {
+        return (shown + BAR_ENDS * dt).min(1.0);
+    }
+    let caught = (shown + BAR_FILLS * dt).min(come.max(shown));
+    let most = come + (1.0 - come) * CREEP_MOST;
+    if caught < come || caught >= most {
+        return caught;
+    }
+    caught + (most - caught) * (1.0 - (-dt / CREEP_SECS).exp())
+}
+
+/// The share written on the bar with that much of it filled: whole
+/// hundredths, "25%".
+fn percent(loaded: f32) -> u32 {
+    (loaded.clamp(0.0, 1.0) * 100.0).round() as u32
 }
 
 /// How much the GPU still has to compile, as of the frame it drew last:
@@ -297,9 +398,19 @@ struct Cover;
 #[derive(Component)]
 struct Ring;
 
-/// The town's name, on the cover and then over the town.
+/// The town's name, over the town as the cover opens.
 #[derive(Component)]
 struct Title;
+
+/// What says the town is loading, on the cover: the word, and the bar
+/// under it; the part of the bar that is filled; and the share written on
+/// it.
+#[derive(Component)]
+struct Loader;
+#[derive(Component)]
+struct LoaderFill;
+#[derive(Component)]
+struct LoaderShare;
 
 /// The ring of dust that goes out from your feet as you land.
 #[derive(Component)]
@@ -366,6 +477,72 @@ fn cover(
         BackgroundColor(colours.cover),
         GlobalZIndex(LAYER),
     ));
+    // What says it is loading, as Hajun drew it: the word in the middle of
+    // the screen, and along the bottom the bar, empty, with "0%" on it.
+    let round = BorderRadius::all(Val::Vh(BAR_ROUND));
+    commands.spawn((
+        Loader,
+        Name::new("Loading"),
+        Node {
+            position_type: PositionType::Absolute,
+            width: Val::Percent(100.0),
+            height: Val::Percent(100.0),
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            ..default()
+        },
+        GlobalZIndex(LAYER + 2),
+        Pickable::IGNORE,
+        children![
+            (
+                Text::new(file.words.loading.clone()),
+                crate::font::sized(LOADING_TEXT),
+                TextColor(colours.loading),
+                TextLayout::justify(Justify::Center),
+                Pickable::IGNORE,
+            ),
+            (
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: Val::Vw(BAR_SIDE),
+                    right: Val::Vw(BAR_SIDE),
+                    bottom: Val::Vh(BAR_UP),
+                    height: Val::Vh(BAR_THICK),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    border_radius: round,
+                    ..default()
+                },
+                BackgroundColor(colours.bar),
+                Pickable::IGNORE,
+                children![
+                    (
+                        LoaderFill,
+                        Node {
+                            position_type: PositionType::Absolute,
+                            left: Val::ZERO,
+                            top: Val::ZERO,
+                            bottom: Val::ZERO,
+                            width: Val::Percent(0.0),
+                            min_width: Val::ZERO,
+                            border_radius: round,
+                            ..default()
+                        },
+                        BackgroundColor(colours.bar_fill),
+                        Pickable::IGNORE,
+                    ),
+                    (
+                        LoaderShare,
+                        Text::new("0%"),
+                        crate::font::sized(BAR_TEXT),
+                        TextColor(colours.bar_text),
+                        TextLayout::justify(Justify::Center),
+                        Pickable::IGNORE,
+                    ),
+                ],
+            ),
+        ],
+    ));
     // Where the welcome stands (`hud::announce`): across the screen, high
     // enough to leave you, just below the middle, in sight.
     commands.spawn((
@@ -414,7 +591,7 @@ fn play(
     mut placed: Query<&mut Transform, Without<Player>>,
     dust: Query<(Entity, &MeshMaterial3d<StandardMaterial>), With<Dust>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    shown: Query<Entity, Or<(With<Cover>, With<Ring>, With<Title>, With<Dust>)>>,
+    shown: Query<Entity, Or<(With<Cover>, With<Ring>, With<Title>, With<Dust>, With<Loader>)>>,
     covers: Query<Entity, With<Cover>>,
     mut commands: Commands,
 ) {
@@ -429,17 +606,43 @@ fn play(
             if let (Some(feet), Ok((ring, _))) = (feet, dust.single()) {
                 lay_dust(&mut placed, ring, feet, 0.01);
             }
+            let there = loading.there();
+            // A frame that hung is not that much of the bar filled: the
+            // first frames are the longest, and are over before the GPU
+            // has what draws the bar, which would first be seen half full.
+            let step = dt.min(MOST_STEP);
             // The sign-up's pages stand over the cover, and the wait is
-            // theirs.
+            // theirs. The town loads under them and the bar fills as it
+            // comes, unseen, so that it is where the town is as they go.
             if signup.up() {
+                let filled = loaded(intro.loaded, loading.share(there, 0), step);
+                if intro.loaded != filled {
+                    intro.loaded = filled;
+                }
+                if intro.unseen != there.all() {
+                    intro.unseen = there.all();
+                }
                 return;
             }
             let (waiting, frame) = (
                 compiling.0.waiting.load(Ordering::Relaxed),
                 compiling.0.frames.load(Ordering::Relaxed),
             );
-            let there = loading.there();
-            if !intro.wait.step(there, waiting, frame, dt) {
+            // Everything there, the bar on the cover is filled to the end
+            // before the cover opens: a moment more, a quarter of a second
+            // at the very most ([`BAR_ENDS`]).
+            if !intro.wait.done {
+                intro.wait.done = intro.wait.step(there, waiting, frame, dt);
+            }
+            let come = if intro.wait.done { 1.0 } else { loading.share(there, intro.wait.quiet) };
+            let filled = loaded(intro.loaded, come, step);
+            if intro.loaded != filled {
+                intro.loaded = filled;
+            }
+            if intro.unseen && intro.wait.secs > UNSEEN_SECS {
+                intro.unseen = false;
+            }
+            if !intro.wait.done || (intro.loaded < 1.0 && !intro.unseen) {
                 return;
             }
             let at = |since: Option<f32>| since.map_or("never".to_string(), |secs| format!("{secs:.2} s"));
@@ -585,12 +788,12 @@ fn lay_dust(placed: &mut Query<&mut Transform, Without<Player>>, ring: Entity, f
     }
 }
 
-/// Draws the cover as it stands, once the camera is placed: the town's
-/// name coming up, staying and going; the circle opening about where you
-/// are on the screen; and the camera dipping as you land.
+/// Draws the cover as it stands, once the camera is placed: the bar on it
+/// as full as it is; the town's name coming up as it opens, staying and
+/// going; the circle opening about where you are on the screen; and the
+/// camera dipping as you land.
 #[allow(clippy::type_complexity)]
 fn show(
-    time: Res<Time>,
     intro: Res<Intro>,
     windows: Query<&Window, With<PrimaryWindow>>,
     me: Query<&Transform, With<Player>>,
@@ -599,6 +802,9 @@ fn show(
     mut rings: Query<(Entity, &mut Node, &mut UiTransform, &mut BorderColor), With<Ring>>,
     titles: Query<&Children, With<Title>>,
     mut lines: Query<(&mut TextColor, &mut TextShadow)>,
+    mut loaders: Query<(Entity, &mut Visibility), With<Loader>>,
+    mut fills: Query<&mut Node, (With<LoaderFill>, Without<Ring>)>,
+    mut shares: Query<&mut Text, With<LoaderShare>>,
     mut commands: Commands,
 ) {
     let file = ui();
@@ -609,10 +815,46 @@ fn show(
         Stage::Over => return,
     };
 
-    // The town's name.
+    // What says it is loading: the bar as full as it is, in whole
+    // hundredths, so that it is laid out again a hundred times and not
+    // every frame; and gone as the cover begins to open.
+    match age {
+        None => {
+            let share = percent(intro.loaded);
+            // Never narrower than its own round corners, which are the
+            // bar's: narrower, it would stand out of the bar's corners.
+            let (width, least) = match share {
+                0 => (Val::Percent(0.0), Val::ZERO),
+                share => (Val::Percent(share as f32), Val::Vh(2.0 * BAR_ROUND)),
+            };
+            for mut fill in &mut fills {
+                if fill.width != width || fill.min_width != least {
+                    fill.width = width;
+                    fill.min_width = least;
+                }
+            }
+            let said = format!("{share}%");
+            for mut text in &mut shares {
+                if text.0 != said {
+                    text.0.clone_from(&said);
+                }
+            }
+            let seen = if intro.unseen { Visibility::Hidden } else { Visibility::Inherited };
+            for (_, mut shown) in &mut loaders {
+                shown.set_if_neq(seen);
+            }
+        }
+        Some(_) => {
+            for (loader, _) in &loaders {
+                commands.entity(loader).despawn();
+            }
+        }
+    }
+
+    // The town's name: up as the cover opens, there a while, and gone.
     let solid = match age {
-        None => (time.elapsed_secs() / TITLE_IN).min(1.0),
-        Some(age) => (1.0 - (age - TITLE_STAYS) / TITLE_OUT).clamp(0.0, 1.0),
+        None => 0.0,
+        Some(age) => (age / TITLE_IN).clamp(0.0, 1.0) * (1.0 - (age - TITLE_STAYS) / TITLE_OUT).clamp(0.0, 1.0),
     };
     let tint = file.colours.text_shadow;
     for children in &titles {
@@ -829,6 +1071,62 @@ fn ring(centre: Vec2, open: f32, screen: Vec2) -> (f32, f32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_bar_on_the_cover_fills_toward_what_has_come_creeps_while_it_waits_and_never_goes_back() {
+        // What the cover waits for is the whole bar between them.
+        assert!((SHARES.iter().sum::<f32>() - 1.0).abs() < 1e-6);
+        // A frame at a time toward what has come, at the bar's own pace.
+        let frame = 1.0 / 60.0;
+        let first = loaded(0.0, 0.5, frame);
+        assert!((first - BAR_FILLS * frame).abs() < 1e-6, "{first}");
+        // Everything there in the first frame, it is still seen to fill,
+        // and the cover is up no more than a quarter of a second for it.
+        let (mut shown, mut frames) = (0.0, 0);
+        while shown < 1.0 {
+            shown = loaded(shown, 1.0, frame);
+            frames += 1;
+            assert!(frames < 600);
+        }
+        let took = frames as f32 * frame;
+        assert!(took > 0.2 && took <= 0.25 + frame, "{took} s");
+        // With something still to come it catches up with what has, no
+        // faster than it fills, and then creeps on for as long as the
+        // cover can be up: never standing, never back, slower and slower,
+        // and never as far as what would say that the rest had come.
+        let (mut shown, mut step) = (0.0_f32, f32::MAX);
+        for frames in 1..=(MOST_COVERED * 60.0) as u32 {
+            let next = loaded(shown, 0.7, frame);
+            let rose = next - shown;
+            assert!(rose > 0.0, "standing at {shown} after {frames} frames");
+            assert!(rose <= BAR_FILLS * frame + 1e-6, "{rose}");
+            if shown >= 0.7 {
+                assert!(rose <= step, "creeping faster: {rose} after {step}");
+                step = rose;
+            }
+            shown = next;
+            // A second on from catching up, a tenth of the bar further.
+            if frames == (0.7 / BAR_FILLS * 60.0) as u32 + 60 {
+                assert!(shown > 0.78 && shown < 0.86, "{shown}");
+            }
+        }
+        let most = 0.7 + 0.3 * CREEP_MOST;
+        assert!(shown > most - 0.01 && shown < most, "{shown}");
+        // More of it come, on from where it is; and less (a model more
+        // found to wait for), it stays where it is.
+        assert!(loaded(shown, 0.85, frame) > shown);
+        assert_eq!(loaded(0.99, 0.4, frame), 0.99);
+        assert_eq!(loaded(0.2, 0.9, -1.0), 0.2);
+        assert_eq!(loaded(0.999, 1.0, 1.0), 1.0);
+        assert_eq!(loaded(7.0, 0.5, frame), 1.0);
+        // Written in whole hundredths: "0%" to "100%".
+        assert_eq!((percent(0.0), percent(0.254), percent(0.995), percent(1.0), percent(7.0)), (0, 25, 100, 100, 100));
+        // As Hajun drew it: the bar nearly the width of the screen, low
+        // on it, a tenth of its height thick, with the word over it in
+        // the middle.
+        assert!(BAR_SIDE < 5.0 && BAR_UP + BAR_THICK < 25.0 && BAR_ROUND < BAR_THICK / 2.0);
+        assert!(BAR_TEXT < BAR_THICK * 0.7 && LOADING_TEXT > BAR_TEXT);
+    }
 
     #[test]
     fn you_fall_in_from_over_the_screen_land_squat_and_stand_as_you_stand() {

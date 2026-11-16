@@ -29,8 +29,8 @@ pub mod mingle;
 use bevy::math::{Vec2, Vec3, Vec3Swizzles};
 
 use crate::bridge_wars::{
-    AIR_DRAG, BLIND_SIGHT, BOT_PUNCH_EVERY, BRIDGE_A_BUY, BUILDER_METRES, DRINK_SECS, DRINK_SLOW,
-    DYNAMITE_FURTHEST, DYNAMITE_FUSE, DYNAMITE_NEAREST, DYNAMITE_RADIUS, FAST,
+    AIR_DRAG, BLIND_SIGHT, BOT_PUNCH_EVERY, BRIDGE_A_BUY, BUILDER_METRES, BUS_HALF_LENGTH, BUS_HALF_WIDTH, BUS_LANE, BUSES,
+    Bus, DRINK_SECS, DRINK_SLOW, DYNAMITE_FURTHEST, DYNAMITE_FUSE, DYNAMITE_NEAREST, DYNAMITE_RADIUS, FAST, bus_speed,
     FIREBALL_RANGE, FORGE_SPEED,
     GROUND_DRAG, HUNT_RADIUS, KNOCK_BACK, KNOCK_UP, Mint, Outfits, REACH, RUN_SPEED, SPRINT_BONUS, builder_speed, interval,
     leap_speed, price,
@@ -281,6 +281,30 @@ const BROWSE: (f32, f32) = (3.0, 9.0);
 const LOOK_ABOUT: (f32, f32) = (2.0, 7.0);
 const SCOUT_AGAIN: (f32, f32) = (8.0, 34.0);
 const MOOD_LASTS: (f32, f32) = (25.0, 70.0);
+/// The buses that drive round the middle of the map (since 2026-11-16,
+/// [`Bus`]; Hajun: "this goes for ai too"), as a bot minds them
+/// ([`Squad::mind_buses`]), **none of it a rule**: from how long before a
+/// bus is on it a bot sees it coming, if it sees it at all, in seconds,
+/// thrown for each bus that comes by, with how much sooner the best in a
+/// fight sees one; how long after it has seen one it does anything about
+/// it, in seconds, as anyone takes a moment to, the best in a fight half
+/// as long; how much time it wants in hand over a bus to go across
+/// in front of it, or to stay where it is in its way, in seconds, thrown
+/// with it; from how far short of where a bus sweeps it minds one, and how
+/// wide of a bus's side it keeps, in metres.
+const ROAD_SEEN: (f32, f32) = (0.35, 2.6);
+const ROAD_SEEN_SOONER: f32 = 0.5;
+const ROAD_REACTS: (f32, f32) = (0.12, 0.5);
+const ROAD_SPARE: (f32, f32) = (0.1, 0.8);
+const KERB: f32 = 3.0;
+const ROAD_CLEAR: f32 = 0.35;
+/// From how far off a bot takes in someone a bus has run over, lying flat
+/// on the road, in metres, thrown for each of them: about what a person
+/// has on their screen round them (Hajun: "when ai sees a squished person
+/// in their view, some should try to kill them"). And how hurt one has to
+/// be, as a share of its health, to leave them be whoever it is.
+const PREY_SEEN: (f32, f32) = (9.0, 19.0);
+const PREY_HALE: f32 = 0.3;
 
 /// How hard the computer's players play: every number of their pacing, in
 /// one place, to tune by.
@@ -1431,6 +1455,22 @@ struct Flight {
     asked: f32,
 }
 
+/// What a bot makes of the bus that is on it next ([`Squad::mind_buses`]):
+/// when that bus is due where the bot is, by the clock, which is how it
+/// knows the one from the next; from how long before then it sees it
+/// coming, nothing for one it never does; how long it takes to do
+/// anything about it once it has; how much time it wants in hand over
+/// it; and when it saw it, in seconds into the fight, if it has
+/// ([`ROAD_SEEN`], [`ROAD_REACTS`], [`ROAD_SPARE`]).
+#[derive(Clone, Copy, PartialEq, Debug)]
+struct Road {
+    due: f64,
+    seen_from: f32,
+    reacts: f32,
+    spare: f32,
+    seen_at: Option<f32>,
+}
+
 /// A stick of dynamite a bot can see: where it lies, or will come down;
 /// how long until it blows, in seconds, its flight and its fuse together;
 /// and whose it is, by team.
@@ -1734,6 +1774,17 @@ pub struct Bot {
     keen_until: f32,
     sting: f32,
     nerve: f32,
+    /// What it makes of the bus that is on it next ([`Road`],
+    /// [`Squad::mind_buses`]).
+    road: Option<Road>,
+    /// Whoever a bus has flattened that it has made up its mind to go
+    /// and finish off; and whom, of those lying flat now, it has made up
+    /// its mind about one way or the other, a bit to a seat; and from how
+    /// far off it takes such a one in, while anyone lies flat
+    /// ([`Squad::spot_prey`], [`PREY_SEEN`]).
+    prey: Option<usize>,
+    weighed: u32,
+    prey_sight: Option<f32>,
 }
 
 impl Bot {
@@ -1855,7 +1906,18 @@ impl Bot {
             keen_until: dice.between(KEEN_LASTS.0, KEEN_LASTS.1),
             sting: 3.0,
             nerve: dice.around(NERVE.0, NERVE.1),
+            // (Nothing thrown for these here: a game's dice go as they
+            // went until someone is near a bus.)
+            road: None,
+            prey: None,
+            weighed: 0,
+            prey_sight: None,
         }
+    }
+
+    /// Whoever a bus has flattened that it is off to finish, by seat.
+    pub fn prey(&self) -> Option<usize> {
+        self.prey
     }
 
     /// Whoever it has in mind for coming at its base, if anyone.
@@ -2079,7 +2141,9 @@ fn patience_of(persona: &Persona, dice: &mut Dice) -> u8 {
 
 /// Someone in the game, as a bot sees them: where they are, whether they
 /// are standing, in play, unseen, a person, and what share of their
-/// health they have.
+/// health they have. And whether a bus has run them over and they lie
+/// flat on the road, to be hit and unable to do a thing about it (since
+/// 2026-11-16, [`Bus`]): of a bot's own seat, it lies there itself.
 #[derive(Clone, Copy, PartialEq, Debug, Default)]
 pub struct Seen {
     pub at: Vec3,
@@ -2088,6 +2152,7 @@ pub struct Seen {
     pub unseen: bool,
     pub person: bool,
     pub health: f32,
+    pub flat: bool,
 }
 
 /// The game as the bots see it, for one frame.
@@ -2103,6 +2168,10 @@ pub struct View<'a> {
     pub anchors: [f32; ARENA_TEAMS],
     /// Every stick of dynamite thrown and not yet blown.
     pub sticks: &'a [Stick],
+    /// The clock the buses go by, in seconds since 1970 ([`Bus::at`];
+    /// since 2026-11-16): the game's own, so that the bots mind the buses
+    /// where the game has them. With none there are no buses to mind.
+    pub clock: Option<f64>,
 }
 
 /// What a frame of a bot comes to that the game is to carry out.
@@ -2536,6 +2605,30 @@ impl Squad {
             self.bots[seat] = Some(bot);
             return order;
         }
+        // Run over by a bus: flat on the road where it was, doing nothing
+        // and moved by nothing, a knock least of all, until it is up
+        // again; and then it thinks afresh.
+        if me.flat {
+            bot.body.shove = Vec2::ZERO;
+            bot.body.lift = 0.0;
+            if let Some(ground) = view.nav.ground(before) {
+                bot.body.at.y = ground;
+            }
+            bot.reel = None;
+            bot.leaping = None;
+            bot.drinking = None;
+            bot.duel = None;
+            bot.foe = None;
+            bot.prey = None;
+            bot.in_reach_since = None;
+            bot.path.clear();
+            bot.path_to = None;
+            bot.progress = (before, view.elapsed);
+            bot.think_at = view.elapsed;
+            bot.speed = 0.0;
+            self.bots[seat] = Some(bot);
+            return order;
+        }
         // What its pad makes is a person's while they are at it.
         let mate = view.seats.get(mate_of(seat)).copied().unwrap_or_default();
         let pad = ARENA_PADS[usize::from(arena_team(seat)) % ARENA_TEAMS];
@@ -2554,6 +2647,19 @@ impl Squad {
         // anyone's are.
         let walk = self.act(&mut bot, view, dt, &mut order);
         bot.body.step(view.nav, walk, dt);
+        // A bus is solid to it: walked or knocked into the side of one,
+        // it is out at that side (its front is the game's to see to,
+        // [`Bus::runs_over`]).
+        if let Some(clock) = view.clock {
+            for number in 0..BUSES {
+                if let Some(out) = Bus::at(number, clock).beside(bot.body.at.xz(), BODY)
+                    && (bot.body.at.y - crate::bridge_wars::BUS_ROAD).abs() < crate::bridge_wars::BUS_TALL
+                {
+                    bot.body.at.x = out.x;
+                    bot.body.at.z = out.y;
+                }
+            }
+        }
         if let Some(face) = bot.face.take() {
             bot.body.yaw = face;
         }
@@ -3213,6 +3319,201 @@ impl Squad {
         match best {
             Some(to) => (to - here).normalize_or_zero() * pace,
             None => (here - stick.at).normalize_or(-heading) * pace,
+        }
+    }
+
+    /// Minds the buses that drive round the middle of the map (since
+    /// 2026-11-16, [`Bus`]; Hajun: "when a person is standing in front of
+    /// the moving bus, the bus 'squishes' that person ... this goes for ai
+    /// too"): which way the bot walks, `walk` being the way it was going.
+    ///
+    /// About to step into where a bus sweeps, it waits at the edge if one
+    /// would be on it before it was across, or is going by; standing or
+    /// going along in there, it steps out to the nearer side as one comes,
+    /// and goes back to what it was at once it has passed. **Once it has
+    /// seen the bus coming**, which is thrown for each bus that comes by:
+    /// whether it sees it at all, by who it is — the more it minds being
+    /// thrown off the world the likelier, the better it is in a fight the
+    /// likelier, the bolder the less, and with a fight on its hands less
+    /// than otherwise — and from how long before the bus is on it
+    /// ([`ROAD_SEEN`]), which is now and then too late; and so is how fine
+    /// it cuts it ([`ROAD_SPARE`]). One that has not seen it walks on, or
+    /// stays where it stands, and is run over if that is where the bus's
+    /// front finds it, as anyone is; and one that sees it too late, or
+    /// takes too long over it ([`ROAD_REACTS`]), is no better off. Knocked,
+    /// it minds nothing: its legs are not its own ([`Squad::act`]).
+    fn mind_buses(&mut self, bot: &mut Bot, view: &View, walk: Vec2) -> Vec2 {
+        let Some(clock) = view.clock else {
+            return walk;
+        };
+        let here = bot.body.at.xz();
+        let out = here.length();
+        // How far out past the middle of the lane it is, and how far to
+        // either side of that a bus is in its way, a body wide and a
+        // little.
+        let off = out - BUS_LANE;
+        let half = BUS_HALF_WIDTH + BODY + ROAD_CLEAR;
+        // (On the road or in the air over it, as high as a bus hits: a
+        // jump on the way across is no way out of one's way.)
+        let up = bot.body.at.y - crate::bridge_wars::BUS_ROAD;
+        let on_the_road = (-1.0..crate::bridge_wars::BUS_TALL).contains(&up);
+        if off.abs() > half + KERB || !on_the_road || out < 1.0 {
+            bot.road = None;
+            return walk;
+        }
+        // The bus that is on it soonest: in how long its front is level
+        // with it, and its tail past; or one going by it now.
+        let speed = bus_speed();
+        let long = 2.0 * BUS_HALF_LENGTH + 2.0 * BODY;
+        let (mut front, mut gone, mut beside) = (f32::INFINITY, f32::INFINITY, false);
+        for number in 0..BUSES {
+            let bus = Bus::at(number, clock);
+            let along = bus.local(here).y;
+            if along.abs() < BUS_HALF_LENGTH + BODY {
+                beside = true;
+                front = 0.0;
+                gone = (along + BUS_HALF_LENGTH + BODY) / speed;
+                break;
+            }
+            let reaches = bus.reaches_in(here);
+            if reaches < front {
+                front = reaches;
+                gone = reaches + long / speed;
+            }
+        }
+        // What it makes of this one, thrown as it comes to be the next:
+        // whether it sees it coming, from how long before, how long it
+        // takes to do anything about it, and how fine it cuts it.
+        let now = view.elapsed;
+        let due = clock + f64::from(front);
+        let mut road = match bot.road {
+            Some(road) if (road.due - due).abs() < 5.0 => road,
+            _ => {
+                let temper = bot.temper;
+                let odds = (0.25 + 0.5 * temper.minds + 0.1 * temper.pvp - 0.15 * (temper.bold - 1.0)).clamp(0.35, 0.97);
+                let odds = if bot.duel.is_some() { odds * 0.85 } else { odds };
+                let seen_from = if self.dice.roll() < odds {
+                    self.dice.around(ROAD_SEEN.0, ROAD_SEEN.1) + ROAD_SEEN_SOONER * temper.pvp
+                } else {
+                    0.0
+                };
+                Road {
+                    due,
+                    seen_from,
+                    reacts: self.dice.around(ROAD_REACTS.0, ROAD_REACTS.1) * (1.0 - 0.5 * temper.pvp),
+                    spare: self.dice.around(ROAD_SPARE.0, ROAD_SPARE.1),
+                    seen_at: None,
+                }
+            }
+        };
+        road.due = due;
+        if road.seen_at.is_none() && road.seen_from > 0.0 && (beside || front <= road.seen_from) {
+            road.seen_at = Some(now);
+        }
+        bot.road = Some(road);
+        // Not seen yet, or never; or seen, and not yet taken in.
+        if !road.seen_at.is_some_and(|seen| now >= seen + road.reacts) {
+            return walk;
+        }
+        let spare = road.spare;
+        let outward = here / out;
+        // How fast it is going out from the middle of the map, by the way
+        // it was walking; and the pace it has to get out of the way at.
+        let going = walk.dot(outward);
+        let pace = RUN_SPEED * if bot.drinking.is_some() { DRINK_SLOW } else { 1.0 };
+        if off.abs() < half {
+            // In a bus's way. Out the side it is going to if that is
+            // soon enough, the nearer side otherwise; not before a bus is
+            // nearly on it.
+            let own_way = if going.abs() > 2.0 { Some((half - off * going.signum()) / going.abs()) } else { None };
+            if !beside && own_way.is_some_and(|out_in| out_in + spare < front) {
+                return walk;
+            }
+            let side = if off.abs() < 0.05 && going != 0.0 { going.signum() } else if off < 0.0 { -1.0 } else { 1.0 };
+            let quickest = (half - off.abs()) / pace;
+            if beside || front < quickest + spare + 0.25 {
+                bot.path.clear();
+                bot.path_to = None;
+                bot.progress = (here, now);
+                return outward * side * pace;
+            }
+            return walk;
+        }
+        // Short of it. Heading in, with a bus due before it would be
+        // across, or going by: it waits where it is.
+        let inward = -going * off.signum();
+        if inward < 0.5 {
+            return walk;
+        }
+        let reach = (off.abs() - half) / inward;
+        let across = reach + 2.0 * half / inward;
+        if reach < 0.6 && (beside || (front - spare < across && gone > reach)) {
+            bot.progress = (here, now);
+            return Vec2::ZERO;
+        }
+        walk
+    }
+
+    /// Takes in whoever a bus has run over and lies flat on the road near
+    /// the bot, and makes up its mind about each, once: **whether to go
+    /// and finish them off** (since 2026-11-16; Hajun: "when ai sees a
+    /// squished person in their view, some should try to kill them").
+    /// Someone of another team, or a zombie, that it sees
+    /// ([`PREY_SEEN`], thrown for each; a blinded bot sees no further
+    /// than it sees) and can walk to. Some do and some do not: by who it
+    /// is, the bolder, the better in a fight and the more given to
+    /// shoving people about the likelier, and less likely hurt, or with
+    /// someone else on its hands already; never one that is backing off,
+    /// drinking, or badly hurt. Having set off, it is on them before
+    /// anyone else for as long as they lie there ([`Squad::foe`]), and
+    /// minds the bus that comes round for it, or does not
+    /// ([`Squad::mind_buses`]).
+    fn spot_prey(&mut self, bot: &mut Bot, view: &View) {
+        let (seat, nav) = (bot.seat, view.nav);
+        // Whoever is up again, or dead, it has no mind about any more.
+        for (other, seen) in view.seats.iter().enumerate().take(32) {
+            if !(seen.alive && seen.flat) {
+                bot.weighed &= !(1 << other);
+                if bot.prey == Some(other) {
+                    bot.prey = None;
+                    bot.think_at = view.elapsed;
+                }
+            }
+        }
+        if !view.seats.iter().any(|seen| seen.flat) {
+            bot.prey_sight = None;
+            return;
+        }
+        let here = bot.body.at.xz();
+        let me = view.seats[seat];
+        let sight = if view.outfits.kit(seat).blind { BLIND_SIGHT } else { HUNT_RADIUS };
+        // How far it sees them from this time: thrown once for as long as
+        // anyone lies flat, not every frame.
+        let dice = &mut self.dice;
+        let seen_from = bot.prey_sight.get_or_insert_with(|| dice.around(PREY_SEEN.0, PREY_SEEN.1)).min(sight);
+        for (other, seen) in view.seats.iter().enumerate().take(32) {
+            if other == seat || !seen.alive || !seen.flat || seen.unseen || arena_team(other) == arena_team(seat) {
+                continue;
+            }
+            if bot.weighed & (1 << other) != 0 {
+                continue;
+            }
+            let there = seen.at.xz();
+            if there.distance(here) > seen_from || (seen.at.y - bot.body.at.y).abs() > 3.0 || !nav.connected(here, there) {
+                continue;
+            }
+            bot.weighed |= 1 << other;
+            let temper = bot.temper;
+            let keen = 0.15 + 0.35 * (temper.bold - 0.6) + 0.25 * temper.pvp + 0.15 * (temper.shoves - 0.8);
+            let keen = keen * if bot.foe.is_some() { 0.6 } else { 1.0 } * if me.health < 0.6 { 0.6 } else { 1.0 };
+            let goes = bot.goal != Goal::Retreat
+                && bot.drinking.is_none()
+                && me.health >= PREY_HALE
+                && bot.prey.is_none()
+                && self.dice.roll() < keen.clamp(0.08, 0.92);
+            if goes {
+                bot.prey = Some(other);
+            }
         }
     }
 
@@ -4390,6 +4691,8 @@ impl Squad {
         if bot.leaping.is_some() || bot.flight.is_some() {
             return walk;
         }
+        // And a bus, where the buses drive.
+        let walk = self.mind_buses(bot, view, walk);
         // Running somewhere, a jump now and then, as people run: the more
         // the bouncier it is. Not with a plank in its arms or a potion at
         // its mouth, nor in a fight, which has jumps of its own.
@@ -4624,6 +4927,7 @@ impl Squad {
         if bot.shun.is_some_and(|(_, until)| now >= until) {
             bot.shun = None;
         }
+        self.spot_prey(bot, view);
         bot.foe = self.foe(bot, view);
         if let Some(foe) = bot.foe.filter(|_| bot.drinking.is_none()) {
             return self.fight(bot, view, foe, pace, dt, order);
@@ -5042,6 +5346,12 @@ impl Squad {
         let Some(mut duel) = bot.duel else {
             return Vec2::ZERO;
         };
+        // Someone lying flat is neither stood off nor lain in wait for:
+        // it goes up to them.
+        if view.seats[foe].flat && matches!(duel.stance, Stance::Wait | Stance::Ambush) {
+            duel.stance = Stance::Press;
+            duel.spot = None;
+        }
         if struck {
             // In and out: back out of their reach until its next punch is
             // nearly due, to come in again on the run, where a punch
@@ -5376,6 +5686,12 @@ impl Squad {
             .and_then(|vigil| vigil.stand.map(|stand| (vigil.foe, stand.spot, stand.watch)));
         let home = Region::Team(arena_team(seat));
         let on_plank = out_over_the_void(nav, here);
+        // Whoever a bus has flattened that it has set off to finish comes
+        // before anyone else, for as long as they lie there
+        // ([`Squad::spot_prey`]).
+        if let Some(prey) = bot.prey.filter(|&prey| view.seats.get(prey).is_some_and(|seen| seen.alive && seen.flat && !seen.unseen)) {
+            return Some(prey);
+        }
         view.seats
             .iter()
             .enumerate()
@@ -6202,6 +6518,7 @@ mod tests {
             unseen: false,
             person: true,
             health: 1.0,
+            flat: false,
         };
         let mut told = Crossing {
             fell: None,
@@ -6225,6 +6542,7 @@ mod tests {
                 unseen: false,
                 person: false,
                 health: 1.0,
+                flat: false,
             };
             if body.at.y < -5.0 {
                 told.fell = Some(now - (until - secs));
@@ -6239,6 +6557,7 @@ mod tests {
                 mint: &mint,
                 anchors: [120.0; ARENA_TEAMS],
                 sticks: &[],
+                clock: None,
             };
             squad.step(seat, &view, dt);
             let bot = squad.bot(seat).expect("seated");
@@ -6674,6 +6993,7 @@ mod tests {
                 unseen: false,
                 person: false,
                 health: 1.0,
+                flat: false,
             };
         }
         let spare = |nav: &Nav, name: &str, elapsed: f32| {
@@ -6690,6 +7010,7 @@ mod tests {
                 mint: &mint,
                 anchors: [120.0; ARENA_TEAMS],
                 sticks: &[],
+                clock: None,
             };
             squad.spare_span(&bot, &view)
         };
@@ -6755,6 +7076,7 @@ mod tests {
                 unseen: false,
                 person: true,
                 health: 1.0,
+                flat: false,
             };
         }
         let dt = 1.0 / 60.0;
@@ -6768,6 +7090,7 @@ mod tests {
                 unseen: false,
                 person: false,
                 health,
+                flat: false,
             };
             let order = {
                 let view = View {
@@ -6779,6 +7102,7 @@ mod tests {
                     mint: &mint,
                     anchors: [120.0; ARENA_TEAMS],
                     sticks: &[],
+                    clock: None,
                 };
                 squad.step(seat, &view, dt)
             };
@@ -6922,6 +7246,24 @@ mod tests {
         Nav::new(Arc::new(grid))
     }
 
+    /// Round land `radius` across from its middle at the origin, its top
+    /// 0.25 m up, the middle of the map, which is nobody's: as
+    /// [`round_island`], but for whose it is.
+    fn round_middle(radius: f32) -> Nav {
+        let side = ((radius + 4.0) * 4.0) as usize;
+        let mut grid = Grid::blank(side, side, Vec2::splat(-(radius + 4.0)));
+        for row in 0..side {
+            for column in 0..side {
+                let away = grid.centre_of(column, row).length();
+                if away <= radius {
+                    grid.set(column, row, Some(0.25), away <= radius - 0.5, Some(Region::Middle));
+                }
+            }
+        }
+        grid.place_land(Region::Middle, Vec2::ZERO);
+        Nav::new(Arc::new(grid))
+    }
+
     /// One of the computer's players, in seat 5, with someone of another
     /// team in seat 0 and, if `mate` says where, one of its own in seat 1,
     /// on a map of their own, a frame at a time: where the someone is each
@@ -6937,6 +7279,10 @@ mod tests {
         sticks: Vec<Stick>,
         mate: Option<Vec2>,
         rungs: usize,
+        /// The clock the buses go by, if there are any, a frame on each
+        /// frame; and the seats of whoever lies flat.
+        clock: Option<f64>,
+        flat: Vec<usize>,
     }
 
     impl Rig {
@@ -6960,6 +7306,8 @@ mod tests {
                 sticks: Vec::new(),
                 mate: None,
                 rungs: 0,
+                clock: None,
+                flat: Vec::new(),
             }
         }
 
@@ -6992,6 +7340,7 @@ mod tests {
                 unseen: false,
                 person,
                 health: 1.0,
+                flat: false,
             };
             let mut seen = vec![Seen::default(); ARENA_SEATS];
             if let Some(at) = person {
@@ -7004,6 +7353,12 @@ mod tests {
                 at: self.bot().body.at,
                 ..standing(Vec2::ZERO, false)
             };
+            for &seat in &self.flat {
+                seen[seat].flat = true;
+            }
+            if let Some(clock) = self.clock.as_mut() {
+                *clock += f64::from(Self::FRAME);
+            }
             let purses = [[0u16; 4]; ARENA_SEATS];
             let order = {
                 let view = View {
@@ -7015,6 +7370,7 @@ mod tests {
                     mint: &self.mint,
                     anchors: [120.0; ARENA_TEAMS],
                     sticks: &self.sticks,
+                    clock: self.clock,
                 };
                 self.squad.step(self.seat, &view, Self::FRAME)
             };
@@ -7598,6 +7954,7 @@ mod tests {
                     mint: &rig.mint,
                     anchors: [120.0; ARENA_TEAMS],
                     sticks: &rig.sticks,
+                    clock: None,
                 };
                 let walk = rig.squad.walk_to(&mut bot, &view, to, RUN_SPEED, 1.0);
                 bot.body.step(&nav, walk, Rig::FRAME);
@@ -7644,6 +8001,7 @@ mod tests {
                     unseen: false,
                     person: false,
                     health: 1.0,
+                    flat: false,
                 };
                 let order = {
                     let view = View {
@@ -7655,6 +8013,7 @@ mod tests {
                         mint: &rig.mint,
                         anchors: [120.0; ARENA_TEAMS],
                         sticks: &rig.sticks,
+                        clock: None,
                     };
                     rig.squad.step(seat, &view, Rig::FRAME)
                 };
@@ -7719,6 +8078,7 @@ mod tests {
                     mint: &rig.mint,
                     anchors: [120.0; ARENA_TEAMS],
                     sticks: &rig.sticks,
+                    clock: None,
                 };
                 let walk = rig.squad.walk_to(&mut bot, &view, to, RUN_SPEED, 1.0);
                 bot.body.step(&nav, walk, Rig::FRAME);
@@ -8041,6 +8401,7 @@ mod tests {
                 unseen: false,
                 person: false,
                 health: 1.0,
+                flat: false,
             })
             .collect()
     }
@@ -8080,6 +8441,7 @@ mod tests {
                 mint: &mint,
                 anchors,
                 sticks: &[],
+                clock: None,
             };
             let mut counts = [0u32; 3];
             for _ in 0..600 {
@@ -8275,6 +8637,7 @@ mod tests {
                     mint: &mint,
                     anchors: [120.0; ARENA_TEAMS],
                     sticks: &[],
+                    clock: None,
                 };
                 if let Some(scheme) = squad.scheme(&mut bot, &view, free) {
                     // Kept to, once settled on.
@@ -8489,6 +8852,7 @@ mod tests {
             unseen: false,
             person,
             health: 1.0,
+            flat: false,
         };
         // How many of forty, five kinds eight times each, standing `at`
         // in `seat`, think a stick worth throwing to come down `down`,
@@ -8516,6 +8880,7 @@ mod tests {
                         mint: &mint,
                         anchors: [120.0; ARENA_TEAMS],
                         sticks: &[],
+                        clock: None,
                     };
                     yes += u32::from(squad.worth_blowing(&bot, &view, down, unmanned));
                 }
@@ -8601,6 +8966,7 @@ mod tests {
                     mint: &mint,
                     anchors: [120.0; ARENA_TEAMS],
                     sticks: &[],
+                    clock: None,
                 };
                 squad.step(seat, &view, dt)
             };
@@ -8698,6 +9064,7 @@ mod tests {
                     mint: &rig.mint,
                     anchors: [120.0; ARENA_TEAMS],
                     sticks: &rig.sticks,
+                    clock: None,
                 };
                 let walk = rig.squad.walk_to(&mut bot, &view, to, RUN_SPEED, 1.0);
                 bot.body.step(&nav, walk, Rig::FRAME);
@@ -8804,5 +9171,178 @@ mod tests {
             }
             assert!(rig.nav.grid().height(rig.at()).is_some());
         }
+    }
+    /// How often one of a kind, on its way to someone far across the road
+    /// the buses drive, is run over crossing it: out of so many goes at
+    /// it, with a bus due at every moment about when it would be in the
+    /// lane. And how long, at the longest, it took to be over the road.
+    fn run_over_crossing(who: &str, seeds: u64) -> (u32, u32, f32) {
+        use crate::bridge_wars::{BUS_LANE, BUSES, Bus};
+        let (mut goes, mut run_over, mut longest) = (0, 0, 0.0f32);
+        for seed in 0..seeds {
+            // The bus's front level with where it crosses from a little
+            // before it would step into the lane to a little after it
+            // would be out of it.
+            for late in [0.0, 0.2, 0.4, 0.6, 0.8, 1.0, 1.2, 1.4] {
+                let from = Vec2::new(BUS_LANE + 6.5, 0.0);
+                let mut rig = Rig::hunting(round_middle(84.0), seed, who, from);
+                rig.clock = Some(30.0 - 0.44 - late);
+                // Too far off to be fought yet: it is only on its way.
+                let person = Vec2::new(BUS_LANE - 34.0, 0.0);
+                goes += 1;
+                let mut over = None;
+                for frame in 0..(8.0 / Rig::FRAME) as usize {
+                    let clock = rig.clock.unwrap();
+                    let was = rig.bot().body.at;
+                    rig.step(Some(person));
+                    let (now, after) = (rig.bot().body.at, rig.clock.unwrap());
+                    if (0..BUSES).any(|bus| Bus::at(bus, after).runs_over(&Bus::at(bus, clock), was, now, BODY)) {
+                        run_over += 1;
+                        break;
+                    }
+                    if now.xz().length() < BUS_LANE - 4.0 {
+                        over = Some(frame as f32 * Rig::FRAME);
+                        break;
+                    }
+                }
+                if let Some(took) = over {
+                    longest = longest.max(took);
+                }
+            }
+        }
+        (goes, run_over, longest)
+    }
+
+    #[test]
+    fn a_bot_waits_for_a_bus_to_go_by_and_one_that_has_not_seen_it_walks_out_in_front_of_it() {
+        use crate::bridge_wars::BUS_LANE;
+        // With no buses there is nothing to wait for: straight over.
+        let from = Vec2::new(BUS_LANE + 6.5, 0.0);
+        let mut rig = Rig::hunting(round_middle(84.0), 3, "ISFJ", from);
+        let person = Vec2::new(BUS_LANE - 34.0, 0.0);
+        let mut took = None;
+        for frame in 0..(6.0 / Rig::FRAME) as usize {
+            rig.step(Some(person));
+            assert!(rig.bot().duel.is_none(), "not fighting yet: only on its way");
+            if rig.at().length() < BUS_LANE - 4.0 {
+                took = Some(frame as f32 * Rig::FRAME);
+                break;
+            }
+        }
+        let straight = took.expect("over the road");
+        assert!(straight < 1.8, "{straight} s to run 10.5 m");
+        // With a bus due as it comes to the lane, the careful hardly ever
+        // step out in front of it, the careless now and then, and nobody
+        // most of the time; and whoever waits is over the road within a
+        // few seconds all the same.
+        let (goes, careful, longest) = run_over_crossing("ISFJ", 40);
+        let (_, careless, careless_longest) = run_over_crossing("ESTP", 40);
+        println!("run over crossing with a bus due: ISFJ {careful} of {goes} (longest {longest:.1} s over), ESTP {careless} of {goes} (longest {careless_longest:.1} s)");
+        assert!(careful * 20 <= goes, "the careful: {careful} of {goes}");
+        assert!(careless > careful, "the careless {careless}, the careful {careful}");
+        assert!(careless * 3 < goes, "the careless: {careless} of {goes}");
+        assert!(longest > straight + 0.3 && longest < 6.0, "{longest} s");
+    }
+
+    #[test]
+    fn a_bot_standing_where_a_bus_is_coming_steps_out_of_its_way_and_back() {
+        use crate::bridge_wars::{BUS_HALF_WIDTH, BUS_LANE, BUSES, Bus};
+        // Fighting someone who stands in the middle of the lane: it is in
+        // there with them, and out of it as each bus comes by, most times.
+        let (mut passes, mut run_over) = (0, 0);
+        for seed in 0..40 {
+            let person = Vec2::new(BUS_LANE, 0.0);
+            let mut rig = Rig::hunting(round_middle(84.0), seed, "ISTJ", person + Vec2::new(3.0, 0.5));
+            rig.clock = Some(2.0);
+            let mut in_the_lane = 0;
+            let mut hit = false;
+            for _ in 0..(34.0 / Rig::FRAME) as usize {
+                let clock = rig.clock.unwrap();
+                let was = rig.bot().body.at;
+                rig.step(Some(person));
+                let (now, after) = (rig.bot().body.at, rig.clock.unwrap());
+                if (now.xz().length() - BUS_LANE).abs() < BUS_HALF_WIDTH {
+                    in_the_lane += 1;
+                }
+                if (0..BUSES).any(|bus| Bus::at(bus, after).runs_over(&Bus::at(bus, clock), was, now, BODY)) {
+                    hit = true;
+                    break;
+                }
+            }
+            passes += 1;
+            if hit {
+                run_over += 1;
+            } else {
+                assert!(in_the_lane > 120, "seed {seed}: in the lane with them for {in_the_lane} frames of 34 s");
+            }
+        }
+        println!("run over fighting in the lane through two buses: {run_over} of {passes}");
+        assert!(run_over > 0 && run_over * 5 <= passes * 2, "{run_over} of {passes}");
+    }
+
+    #[test]
+    fn some_go_for_someone_a_bus_has_flattened_and_some_leave_them_be() {
+        // Early in a game, someone of another team 9 m off in the middle
+        // of the map is left alone by most; lying flat there, the bold
+        // and the good in a fight mostly go and hit them, the mild mostly
+        // do not.
+        let went = |who: &str, flat: bool, seeds: u32| -> u32 {
+            (0..u64::from(seeds))
+                .filter(|&seed| {
+                    let mut rig = Rig::new(round_middle(30.0), seed, who, Vec2::new(-4.5, 0.0), 40.0);
+                    let person = Vec2::new(4.5, 0.0);
+                    if flat {
+                        rig.flat.push(0);
+                    }
+                    (0..(7.0 / Rig::FRAME) as usize).any(|_| rig.step(Some(person)).punch == Some(0))
+                })
+                .count() as u32
+        };
+        let seeds = 40;
+        let (bold, mild) = (went("ISTP", true, seeds), went("INFP", true, seeds));
+        let (bold_anyway, mild_anyway) = (went("ISTP", false, seeds), went("INFP", false, seeds));
+        println!("went for someone 9 m off: lying flat, ISTP {bold} and INFP {mild} of {seeds}; standing, {bold_anyway} and {mild_anyway}");
+        assert!(bold * 2 > seeds, "the bold: {bold} of {seeds}");
+        assert!(mild * 2 < seeds, "the mild: {mild} of {seeds}");
+        assert!(bold > mild + seeds / 4);
+        assert!(bold > bold_anyway && mild >= mild_anyway);
+        // And having set off, it is on them and nobody else until they
+        // are up.
+        let mut found = None;
+        for seed in 1..200 {
+            let mut rig = Rig::new(round_middle(30.0), seed, "ISTP", Vec2::new(-4.5, 0.0), 40.0);
+            rig.flat.push(0);
+            if (0..30).any(|_| {
+                rig.step(Some(Vec2::new(4.5, 0.0)));
+                rig.bot().prey() == Some(0)
+            }) {
+                found = Some(rig);
+                break;
+            }
+        }
+        let mut rig = found.expect("one that goes for them");
+        rig.flat.clear();
+        rig.step(Some(Vec2::new(4.5, 0.0)));
+        assert_eq!(rig.bot().prey(), None, "up again, they are nobody's to finish");
+    }
+
+    #[test]
+    fn a_bot_a_bus_has_flattened_lies_where_it_is_whatever_hits_it_until_it_is_up() {
+        let mut rig = Rig::hunting(round_island(30.0), 4, "ESTP", Vec2::new(-3.0, 0.0));
+        let person = Vec2::new(3.0, 0.0);
+        rig.flat.push(rig.seat);
+        let lay = rig.at();
+        for frame in 0..(3.0 / Rig::FRAME) as usize {
+            if frame % 40 == 0 {
+                rig.squad.knock(rig.seat, person, true);
+            }
+            let order = rig.step(Some(person));
+            assert_eq!(order, Order::default(), "flat, it does nothing");
+            assert!(rig.at().distance(lay) < 1e-4, "nor is it moved");
+        }
+        // Up, it is itself again: after whoever is there.
+        rig.flat.clear();
+        let punched = (0..(4.0 / Rig::FRAME) as usize).any(|_| rig.step(Some(person)).punch == Some(0));
+        assert!(punched && rig.at().distance(lay) > 0.5);
     }
 }

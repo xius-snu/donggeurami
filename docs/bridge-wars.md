@@ -12,31 +12,32 @@
 The entries of the log below, in its order (the newest dated work first,
 then the game as it was first made). Search for an entry by its first words.
 
-1. Since the afternoon of 2026-11-16 which team anyone is on is drawn nowhere until the fight begins, and the computer's players come into the waiting ro...
-2. Later on the night of 2026-11-15 a stick of dynamite is 1 amethyst and the falling it starts quickens to a little over a run; and whoever dies on land dr...
-3. Since the night of 2026-11-15 a seat in a game waits for whoever's connection has gone, and they are put back in it; a stick of dynamite takes the w...
-4. Since the small hours of 2026-11-15 the team you begin on is thrown for each game, each team's island is lined in its colour on the minimap, and yo...
-5. Later on the night of 2026-11-14 the two shops and the panel that says you are out are drawn as the friends' panel is
-6. Since the night of 2026-11-14 a plank is a tenth wider than Hajun's and not a quarter, whoever kills someone has their sapphire and amethyst, and the comp...
-7. Since the evening of 2026-11-14 there is a Leap Potion and a faster builder to buy, a drink shows, a potion that is on leaves sparks, the bridge is...
-8. Since the small hours of 2026-11-14 the dynamite's arch rises and falls and leans to neither side, with an X where it will land; its fuse is seen t...
-9. Since the night of 2026-11-13 there is dynamite, which cuts bridges; the computer's players no longer fall for three easy tricks, and are not all a...
-10. Later on 2026-11-13: the compass's arrow points out, the anchors are their teams' colours, and the computer's players fill their buttons, each as i...
-11. Since 2026-11-13 there are five buttons for things to use, and you hold several kinds at once
-12. Since late on the night of 2026-11-12 each of the computer's players is someone, a knock no longer stuns them, and no two fights with them go the s...
-13. Since the night of 2026-11-12 the computer's players play the game
-14. Since the evening of 2026-11-12 every game online is 2v2v2v2, people teamed up with each other first and the computer in every seat left
-15. Later on 2026-11-12: dying loses everything you hold, what is aimed is seen over the void, and a sword is held on its edge and cut downward
-16. Since 2026-11-12 Bridge Wars has two shops, and everything in Hajun's file is in the game
-17. Since the night of 2026-11-11 Bridge Wars has generators, a shop and a timetable
-18. Since the night of 2026-11-08 Bridge Wars is the server's online, eight to a game in four teams of two, with respawn anchors and bridges you build
-19. The gamepad down the right edge opens the game selector
-20. Bridge Wars
-21. The fight
-22. Online, a game of Bridge Wars is a room of your own
-23. The camera is fixed straight down over you only in the arena
-24. In the arena the buttons are Hajun's `pvpmapbuttonui.jpg`
-25. Falling off the map
+1. Since the evening of 2026-11-16 two buses drive round the middle of the map and run over whoever is in front of one, who lies flat on the road for t...
+2. Since the afternoon of 2026-11-16 which team anyone is on is drawn nowhere until the fight begins, and the computer's players come into the waiting ro...
+3. Later on the night of 2026-11-15 a stick of dynamite is 1 amethyst and the falling it starts quickens to a little over a run; and whoever dies on land dr...
+4. Since the night of 2026-11-15 a seat in a game waits for whoever's connection has gone, and they are put back in it; a stick of dynamite takes the w...
+5. Since the small hours of 2026-11-15 the team you begin on is thrown for each game, each team's island is lined in its colour on the minimap, and yo...
+6. Later on the night of 2026-11-14 the two shops and the panel that says you are out are drawn as the friends' panel is
+7. Since the night of 2026-11-14 a plank is a tenth wider than Hajun's and not a quarter, whoever kills someone has their sapphire and amethyst, and the comp...
+8. Since the evening of 2026-11-14 there is a Leap Potion and a faster builder to buy, a drink shows, a potion that is on leaves sparks, the bridge is...
+9. Since the small hours of 2026-11-14 the dynamite's arch rises and falls and leans to neither side, with an X where it will land; its fuse is seen t...
+10. Since the night of 2026-11-13 there is dynamite, which cuts bridges; the computer's players no longer fall for three easy tricks, and are not all a...
+11. Later on 2026-11-13: the compass's arrow points out, the anchors are their teams' colours, and the computer's players fill their buttons, each as i...
+12. Since 2026-11-13 there are five buttons for things to use, and you hold several kinds at once
+13. Since late on the night of 2026-11-12 each of the computer's players is someone, a knock no longer stuns them, and no two fights with them go the s...
+14. Since the night of 2026-11-12 the computer's players play the game
+15. Since the evening of 2026-11-12 every game online is 2v2v2v2, people teamed up with each other first and the computer in every seat left
+16. Later on 2026-11-12: dying loses everything you hold, what is aimed is seen over the void, and a sword is held on its edge and cut downward
+17. Since 2026-11-12 Bridge Wars has two shops, and everything in Hajun's file is in the game
+18. Since the night of 2026-11-11 Bridge Wars has generators, a shop and a timetable
+19. Since the night of 2026-11-08 Bridge Wars is the server's online, eight to a game in four teams of two, with respawn anchors and bridges you build
+20. The gamepad down the right edge opens the game selector
+21. Bridge Wars
+22. The fight
+23. Online, a game of Bridge Wars is a room of your own
+24. The camera is fixed straight down over you only in the arena
+25. In the arena the buttons are Hajun's `pvpmapbuttonui.jpg`
+26. Falling off the map
 
 ## Games: the gamepad opens a selector, and Bridge Wars is the PvP map
 
@@ -66,6 +67,191 @@ was the town itself; everything below about the map, its islands, the
 void, the punch's knockback and its range held for the town then, and
 holds for the arena now.
 
+- **Since the evening of 2026-11-16 two buses drive round the middle of
+  the map and run over whoever is in front of one, who lies flat on the
+  road for ten seconds** (one message from Hajun: "in the bridge wars
+  minigame map, i want 2 buses to go 2x normal speed around the road. and
+  when a person is standing in front of the moving bus, the bus 'squishes'
+  that person, so the person is squashed on the road for 10 second. they
+  cannot move for 10second, they are doing a 'flat on the ground with leg
+  and arms extended outward like a starfish' 'face towards the ground'
+  emote with a 10s timer text above the player, where they can be attacked
+  by other players too (being attacked doesnt reduce the timer) and they
+  also take an initial -20hp dmg. if they are already squished, they
+  cannot be squished twice even if another bus come, until they get up,
+  and they can be squished again. obviously u shouldnt be squished when u
+  are on the side of the bus trying to go in the bus from the side, only
+  the front of the bus should squish. this goes for ai too. and when ai
+  sees a squished person in their view, some should try to kill them.
+  when ur done build apk, and push to git"). **`PROTOCOL_VERSION` 19**:
+  an app from before is told to update and stays offline. **The server
+  has it since 09:32 UTC on 2026-11-16, 18:32 here** (the binary before kept on the VM as
+  `roundtown-server.prev-2026-11-16d`), **and APK 38** (built, not
+  installed: no phone was attached; `docs/building.md`). **No tag was
+  pushed for the iPhone**: its build of `ios-1.0.2-18` is protocol 18 and
+  is told to update until `ios-1.0.2-19` is built, which is Hajun's to ask
+  for.
+  `shared/src/lib.rs` (`bridge_wars::Bus` and the numbers by it,
+  `Flattened`, `Ask::RunOver`, `chat::Feed::RunOver`), `shared/src/bots.rs`;
+  `server/src/arena.rs`, `builder.rs`; `src/arena/squash.rs` (new),
+  `src/car.rs`, `arena.rs`, `lib.rs`, `gear.rs`, `range.rs`, `utility.rs`,
+  `bridge.rs`, `ui.rs`, `roads.rs` (a test's helper), `assets/ui.ron`.
+  - **The buses** are the town's own bus, Hajun's `mybuilds/bus.glb`, two
+    of them (`car::Lapping`, cars numbered 4 and 5 after the town's
+    four), stood on, bumped into and ridden as the town's are. **They go
+    round a ring by the clock, not a road read off the map**: the outside
+    lane of the outer half of the ring road round the pond, 67.87 m out,
+    keeping right, anticlockwise seen from above, a lap every 30 s to the
+    second, half a lap apart, so one passes any place on the lane every
+    fifteen seconds (`roundtown_net::bridge_wars::Bus::at`, `BUS_LANE`,
+    `BUS_LAP`). That is where the town's own planner puts a bus on that
+    map (it did for the day the PvP map was the town, 2026-11-07), and a
+    test holds the two together; but the place has to be the same on the
+    server, **which has no map to read a road off**, since there a bus
+    does harm: so it is a closed form of the town's clock, which is the
+    server's online and which every device has to a few thousandths of a
+    second. Nothing about the buses is sent. **Mine**: 14.2 m/s, twice
+    the town's 7 to the nearest whole lap ("2x normal speed"); that they
+    never slow nor stop short of a crossing, as the town's do at every
+    other one; which lane; and that they are moved only while you are on
+    that map.
+  - **Only a bus's front runs anyone over** (`Bus::runs_over`): someone
+    who was ahead of its front face a frame ago, or pressed against its
+    nose, and whom the face has now reached, within the bus's width and
+    15 cm, their feet no higher than 3 m over the road (its roof is 3.3 m
+    up: with a leap potion you come down on it). Standing in the lane,
+    stepping out in front of it, knocked there or coming down there off a
+    jump, all alike. **Never at its side**: walking into its flank you
+    bump into it, at a doorway you walk in, alongside it nothing happens,
+    and riding it, inside or on its roof, you are carried. Its front
+    doorway is 4.9 to 6.1 m ahead of its middle and its front face 6.25:
+    someone in the doorway is never ahead of the face. Never by a bus
+    that has not moved.
+  - **Who says so.** Your own device says it of you, online and off, as
+    it says you have fallen: it is where your body and the bus are at the
+    very moment, and you are flat before the bus's floor has scooped you
+    up, which is what a bus in the town does to whoever stands in its
+    way. Online it asks the server (`Ask::RunOver`), which takes the
+    damage off you and has you flat for everyone if you are standing in
+    the fight, not flat already, and where you last said you stood is
+    within 5.5 m of that bus's front as it is or was in the last 0.8 s.
+    The server says it of whoever it moves itself, each frame
+    (`Game::buses`): the computer's players, the zombies, and whoever's
+    device has gone, who stands where they stood with nobody to step them
+    out of the way. Offline the device says it of everyone
+    (`arena::squash::run_over`).
+  - **Flat** (`crate::Squashed`, the server's `Game::flat`): for
+    `SQUASH_SECS`, 10 s. You walk nowhere, jump, punch, build and use
+    nothing (the plank is out of your arms, a potion out of your hand,
+    the punch's range put away); you are in nobody's way; **a blow lands
+    on you as on anyone and takes nothing off the time**; no bus runs you
+    over again until you are up, and then one can. `SQUASH_DAMAGE`, 20,
+    comes off your health as it happens. **Mine**: that a blow knocks you
+    nowhere while you lie ("they cannot move for 10second";
+    `Shove::pinned`, `Game::harm`), so that whoever is on you has you
+    where you lie; that the 20 is less what your shield keeps off, as a
+    fireball's 20 is; that it can kill, with no more health than that
+    left, which the chat says ("Bob was run over by a bus.",
+    `Feed::RunOver`, `words.chat.run_over`), what you held of sapphire
+    and amethyst lying round you on the road as from any death on land;
+    and that being run over without dying says nothing in the chat.
+  - **How it looks**, from over the fight: the model turned onto its face
+    about its feet and put back by half its height, so that its middle
+    lies where you stood, a little wider and less than half as thick
+    (`arena::squash::lay_out`, `FLAT_SQUASH`), its arms out at its sides
+    and on toward its head and its legs out from under it
+    (`crate::squash_offset`): a starfish's five points with its head. The
+    whole seconds left stand over it, "10s" down to "1s", in
+    `colours.arena.squashed` (white as the file has it), over the end of
+    the body that is furthest up the screen, whichever way it lies; over
+    anyone else their name and bar stand there too, with the seconds over
+    those (`squash::count_down`, `place_tags`; over where their head was
+    when they stood, the name was off to one side of them as they lay).
+    The sword is out of the hand of whoever lies there. Everyone else is
+    drawn flat as the server says (`Flattened`, a list by seat with until
+    when by the server's clock, so that the seconds over them are right
+    to the tenth on every device); you by your own device.
+  - **The computer's players** (`shared/src/bots.rs`; Hajun's rule for
+    them, nothing a definite if-then, holds for all of it):
+    - **They are run over too**, and lie as you do: their brain does
+      nothing while they lie, and nothing moves them.
+    - **They mind the buses, or do not** (`Squad::mind_buses`). About to
+      step into where a bus sweeps, one waits at the edge if a bus would
+      be on it before it was across, or is going by; standing or
+      fighting in there, it steps out to the nearer side as one comes and
+      goes back to what it was at. **Once it has seen the bus**, which is
+      thrown for each bus that comes by: whether it sees it at all (97
+      times in 100 for the most careful kinds, about one in two for the
+      most reckless: the more it minds being thrown off the world the
+      likelier, the better in a fight the likelier, the bolder the less,
+      and less with a fight on its hands), from how long before the bus
+      is on it (0.35 to 2.6 s, sooner for the best in a fight), how long
+      it then takes to do anything about it (0.12 to 0.5 s, the best half
+      that), and how fine it cuts it (0.1 to 0.8 s in hand). A bus is
+      solid to them at its sides (`Bus::beside`): they have no model of
+      it to bump into.
+    - **Some go for whoever lies flat** (`Squad::spot_prey`; "when ai
+      sees a squished person in their view, some should try to kill
+      them"): someone of another team, or a zombie, lying there within 9
+      to 19 m of one (thrown; about what a person has on their screen)
+      that it can walk to. Each makes up its mind once about each: the
+      bold, the good in a fight and the ones given to shoving people
+      about mostly go (about two in three of the keenest kind), the mild
+      mostly do not (one in ten), less with someone else on its hands or
+      hurt, never backing off or badly hurt. Having set off it is on
+      them before anyone else for as long as they lie there, walks up to
+      them rather than standing off, and minds the next bus, or does not.
+    - **What that comes to**, over 96 games of the computer alone played
+      out by the tests: 1.1 of them run over a game (none in a third of
+      the games, four at the most in one), a third of those with a fight
+      on; they step into where a bus sweeps 157 times a game between
+      them; 1.5 blows a game land on someone lying flat; and the four
+      islands still win a quarter of the games each. **To tune**: the
+      odds in `Squad::mind_buses` and `Squad::spot_prey`, `ROAD_SEEN`,
+      `ROAD_REACTS`, `ROAD_SPARE`, `PREY_SEEN`, and `cargo test -p
+      roundtown_server many -- --ignored --nocapture` prints the line
+      (`RT_SAY_BUSES=1` says each one as it happens).
+  - **Checked.** The rules' tests (102, seven new: the buses' lap, pace,
+    place and direction by the clock; the front and nobody at the side,
+    in a doorway, riding or overhead, at a 120th of a second a frame, a
+    15th and a quarter; one of a careful kind and one of a reckless kind
+    over a road with a bus due, 320 goes each, 10 and 49 run over; one
+    fighting someone who stands in the lane; who goes for someone lying
+    flat; one lying flat moved by nothing), the server's (60, two new:
+    one of the computer's and someone whose device has gone run over,
+    someone whose device is there not, 20 off each, flat ten seconds, hit
+    and knocked nowhere and no sooner up, not run over twice, then again
+    once up, killed by it with little health, a shield's share kept off;
+    and a rider's place in the world) and the game's (319, three new: the
+    rules' bus is the model's to the centimetre, the planner's lane on
+    that map is the rules' lane, and every part of the bus is over road
+    at the road's height all the way round; the starfish on Hajun's own
+    models, limb by limb; a punch on someone flat). **In the desktop
+    build, scripted and hidden** (`RT_BACKGROUND=1`, below), offline: put
+    in front of a bus, run over as its front came, 20 off, "10s" over me
+    counting down, the forward key doing nothing, up after ten seconds;
+    beside its way as it passed, nothing; one of the computer's put in
+    front of one with a quarter of a second to spare, run over, flat with
+    its name, bar and seconds over it, up after ten; and one that was
+    fighting me stepped out of a bus's way, came back and hit me four
+    times as I lay. **Two copies against a server on this PC**: one run
+    over (its own device's word, the server's 20 off and its flat list),
+    the other, beside the road, drew it flat with its name, bar and the
+    same seconds, and up at the same moment. **Not on a phone. Not seen**:
+    someone killed by a bus in the running game (the tests have it, and
+    the chat's line); a zombie run over; riding one of these buses online
+    (the server's arithmetic for a rider's place is tested, nothing was
+    ridden). **On the VM after the deploy**, hidden: the binary the same
+    bytes as the one built here, the service active, this PC's own
+    account online on it ("online as xd, a boy", `xd#3690 joined`); and
+    one scripted game there with seven of the computer's, in which my own
+    device's bus ran me over a second after I had come to the road, the
+    server said so ("a bus ran seat 2 over, left with 80"), I lay ten
+    seconds with my health coming back, and was up.
+  - **Not done, and offered**: the buses on the minimap; a sound; a word
+    in the chat for someone run over and not killed; the two numbers (10
+    s, 20) in `assets/ui.ron` for trying offline (they are the rules',
+    one for the server and the app, in `shared/src/lib.rs`).
 - **Since the afternoon of 2026-11-16 which team anyone is on is drawn
   nowhere until the fight begins, and the computer's players come into the
   waiting room one at a time and go about it, each as who it is** (one
@@ -233,14 +419,15 @@ holds for the arena now.
     with two people in a room**, which is where anyone would look for
     who is with them. **On the VM after the deploy**: the binary the
     same bytes as the one built here, the service active, the login
-    answering. **This PC's own account was not brought online on it**,
-    as it is after every deploy: that opens the game's window, and Hajun,
-    in class, had asked meanwhile that no window come up in front ("dont
-    open it as active tab but rather background tab cuz im in class",
-    passed on by the other session at work in the tree, which has that
-    check to run once it has a way of running the game hidden). The
-    three scripted runs above were made before that word came, each a
-    window for half a minute.
+    answering. **This PC's own account was brought online on it
+    twelve minutes later, hidden** (07:35:36 UTC: "connected to
+    141.164.62.193:443", "online as xd, a boy", the town's clock set by
+    the server's to within 16 ms), by the other session at work in the
+    tree, once it had a way of running the game with no window
+    (`RT_BACKGROUND=1`): Hajun, in class, had asked meanwhile that no
+    window come up in front ("dont open it as active tab but rather
+    background tab cuz im in class"). The three scripted runs above were
+    made before that word came, each a window for half a minute.
 - **Later on the night of 2026-11-15 a stick of dynamite is 1 amethyst and
   the falling it starts quickens to a little over a run; and whoever dies
   on land drops their sapphire and amethyst, for whoever walks into them**

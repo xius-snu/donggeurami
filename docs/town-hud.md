@@ -7,6 +7,114 @@
 > "above" or "below", or names another section in quotes, that section may be
 > in another file here: the table in `CLAUDE.md` says which.
 
+## The cover says it is loading
+
+2026-11-16, with the buses of Bridge Wars (the first entry of
+`docs/bridge-wars.md`). Hajun, with a picture of it put in the repo's
+root, `loadingscreendesign.png`: "also use loadingscreendesign.png for when
+u open the game - a minimalistic quick loading indicator (before the fall
+from sky and circle out animation)". `src/intro.rs`, `src/ui.rs`,
+`assets/ui.ron`. The app's own: nothing in `shared/`, no deploy. APK 38 is
+the first with it.
+
+- **The picture**: 852 by 393, a phone's screen on its side: near black,
+  "Loading..." in white in the middle of it, and along the bottom a light
+  grey bar with round corners, nearly as wide as the screen, filled red
+  from the left, with "25%" in black in its middle.
+- **It is on the cover the app opens under** ("The app opens under a
+  cover, and you drop into the town", below), from the first frame until
+  the cover begins to open: over the cover and under the sign-up's pages
+  (`Loader`, layer 27). The word is `words.loading` and the four colours
+  are `colours.intro.loading`, `bar`, `bar_fill` and `bar_text` in
+  `assets/ui.ron`: white, `#dddddd`, `#ff4141` and black, read off the
+  picture. The sizes are measured off the picture and are shares of the
+  screen, so that it is the picture on a screen of any size
+  (`LOADING_TEXT`, `BAR_SIDE`, `BAR_UP`, `BAR_THICK`, `BAR_ROUND`,
+  `BAR_TEXT`): the bar 4.1% of the width in from either side, 9.4% of the
+  height up from the bottom, 9.2% thick, its corners 4.1% round (35, 37,
+  36 and 16 of the picture's dots); the word 12 of the short side and the
+  share on the bar 5.8.
+- **The bar is how much of what the cover waits for has come**
+  (`Loading::share`, `SHARES`): the town's shape read is 15 of the
+  hundred, every model spawned 50 (by how many of them are), the buses'
+  way round worked out 15, your body on its feet 5, and the GPU with
+  nothing left to compile 15 (by how many of its eight quiet frames have
+  passed). The share written on it is the same, in whole hundredths, and
+  the bar is laid out again only as that changes.
+- **It is always seen to move, and never goes back** (`loaded`). What it
+  shows goes toward what has come at 1.2 of the bar a second at the most
+  (`BAR_FILLS`), a frame that hung counting as a thirtieth of a second:
+  here everything but the buses' way is there in the first third of a
+  second, in two long frames, before the GPU has what draws the bar, and
+  the bar was first seen at 48%. Caught up, it creeps on while it waits,
+  toward four fifths of what is still to come and never there
+  (`CREEP_MOST`, `CREEP_SECS`): the buses' way is one piece of work, a
+  second of it here, that says nothing of how far along it is, and the bar
+  stood at 70% for that second before this. With everything there it runs
+  to the end at 4 of the bar a second (`BAR_ENDS`), and the cover opens as
+  it gets there: a quarter of a second later than it would have at the
+  very most, and some three hundredths here, by the numbers.
+- **What is seen here** (a dev build on this PC, three runs): black for a
+  third of a second, the bar first seen at 8 to 20%, 70% at 0.8 s, 77 to
+  80% at 1.4 s as the buses' way comes, the end in under a tenth of a
+  second, and the circle opening at 1.45 to 1.6 s, as soon as it did.
+- **The town's name comes up as the cover opens** now, in a quarter of a
+  second (`TITLE_IN`), over the black round the circle, and stays and goes
+  as it did. It stood on the cover while the town loaded; the picture has
+  only the one word there.
+- **The first time the app is run nothing says so.** The sign-up's pages
+  are over the cover, the town loads under them and the bar fills under
+  them, unseen. With the town all there as they go, which it is unless a
+  name is typed in under a second, the cover opens 0.09 s after Save as it
+  did, with nothing on it (`Intro::unseen`): "Loading... 96%" for a tenth
+  of a second, between the last page and the circle, is what it did before
+  that was put in. Should the cover not open within a third of a second
+  after all (`UNSEEN_SECS`), or the town not be there yet, it says that it
+  is loading as on any other start.
+- **Calls that were mine.**
+  - The background is the cover's plain black, as it was
+    (`colours.intro.cover`). The picture's goes from `#111111` at its top
+    to black at its bottom, a difference I could measure and hardly see.
+    The circle the cover opens as is one colour, so a fade would have to
+    be gone by the frame it begins; say so and it can be put in.
+  - The red is as wide as the share written on it. The picture's is 18%
+    of the bar under "25%".
+  - The font is the game's, Inter, where the picture's is another, a
+    narrower one: at the size that matches it best the word is 4% wider
+    and 3% less tall than the picture's.
+  - What each thing waited for counts for, the bar's two paces and the
+    creep; the name off the cover; nothing on the cover after the
+    sign-up's pages.
+  - The picture is not in the app, which draws it from the numbers above:
+    it is committed where Hajun put it, as the friends' panel's sketches
+    are.
+  - Bridge Wars' black screen, as a game loads, is as it was: "when u
+    open the game".
+- **Checked**, in the desktop build, hidden (`RT_BACKGROUND=1`), by a
+  throwaway that had the game save a picture every 30 to 50 ms through
+  its first seconds, taken out again: in a window of the picture's own
+  shape, the frame at 25% laid over the picture at its size: the bar to
+  the dot (rows 320 to 356, 35 to 817 across, the corners within a dot of
+  the picture's), the word 209 by 46 dots where the picture's is 201 by
+  47, the share 46 by 17 where it is 44 by 17, both in the middle; sixteen
+  by nine too; by day and by night; the bar read off every picture of
+  three runs, rising in every one; the first run from an empty `APPDATA`,
+  through the sign-up's pages by keys and a tap, with the bar in no
+  picture of it and the circle 0.09 s after Save; and `RT_INTRO=off`, with
+  no cover and no bar. Unit-tested: the bar toward what has come at its
+  pace, creeping for as long as the cover can be up, never back, the end
+  within a quarter of a second, and the share as it is written (320 pass).
+  **Type-checked for the iPhone on this PC.**
+- **Not checked: anything on a phone or an iPhone.** How long a phone is
+  covered and what the bar does through it (a phone's log says how long
+  and for what, "the opening: covered for ... s"): if the buses' way takes
+  several seconds there, the bar will be seen to slow toward 94% and wait;
+  whether its first frames are black; the word and the bar beside a
+  camera's hole or an island (by the numbers both are clear: the bar ends
+  37 points above the bottom edge of a 16 Pro and lies below its island,
+  and the word is in the middle); a change to the file's colours while
+  the cover is up is not drawn until the next start.
+
 ## An iPhone's island: its safe area is read too
 
 2026-11-15. Hajun, with the game on both phones: "also i noticed that for
