@@ -1643,7 +1643,7 @@ fn keep_ui_size(mut windows: Query<&mut Window, With<PrimaryWindow>>) {
 
 /// Whether this copy of the game is to run where nobody sees it, on
 /// desktop: `RT_BACKGROUND=1` (since 2026-11-16; Hajun, in class with the
-/// game being tried out on his PC: "when ur testing the game on my computer
+/// game being tried out on their PC: "when ur testing the game on my computer
 /// dont open it as active tab but rather background tab"). Its window is
 /// made hidden and without the keyboard ([`window_settings`]): nothing comes
 /// up on the screen or in the taskbar, and whatever window was in front
