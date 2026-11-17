@@ -107,17 +107,21 @@
 //! are drawn by `loot`, and the shop that sells bridge for silver is
 //! `market`. Over each sapphire and amethyst generator its level is
 //! written, and under it the seconds to its next thing, counting down
-//! ([`write_over_generators`]). The game lasts 25 minutes, and on the way
-//! its timetable happens ([`timetable`], `rules::TIMETABLE`), each thing
-//! said in a line across the upper half of the screen ([`alert`];
-//! "Sapphire generators have been upgraded to Lvl II.", the item's picture
-//! after its name): the sapphire and amethyst generators
-//! quicken at 2, 4, 6 and 8 minutes; at 10 every anchor left breaks; at
-//! 15, sudden death, twelve zombies rise all over the map ([`Zombie`]:
-//! the body everyone has, gone green, on nobody's team, going for whoever
-//! is nearest and back up a while after it is put down; offline this
-//! device's, online the server's, seated past the players' eight seats);
-//! and at 25 it is a draw.
+//! ([`write_over_generators`]). The game lasts 20 minutes, with no
+//! clock on the screen until its last ten seconds ([`show_board`]), and
+//! on the way its timetable happens ([`timetable`], `rules::TIMETABLE`),
+//! each thing said in a line across the upper half of the screen
+//! ([`alert`]; "Sapphire generators have been upgraded to Lvl II.", the
+//! item's picture after its name): the sapphire and amethyst generators
+//! quicken at 2, 4, 6 and 8 minutes; at 14 every anchor left breaks; from
+//! 15, sudden death, zombies rise all over the map, a few and then more,
+//! to fifty ([`Zombie`]: the body everyone has, gone green, on nobody's
+//! team, going for whoever of the players is nearest, hurt by nothing,
+//! and back up a while after the void has had it; offline this device's,
+//! [`drive_zombies`], online the server's, seated past the players' eight
+//! seats); at 19:30 the end is said to be coming; and at 20 it is a draw.
+//! (Since the night of 2026-11-16: 25 minutes with the clock up all the
+//! way, the anchors at 10 and twelve zombies at once, until then.)
 //!
 //! **Since 2026-11-16 two buses drive round the middle of the map and run
 //! over whoever is in front of one** (`squash`, `car::Lapping`,
@@ -132,6 +136,7 @@
 #[cfg(test)]
 mod nav_bake;
 mod squash;
+mod watch;
 
 use std::collections::HashMap;
 
@@ -142,6 +147,7 @@ use bevy::world_serialization::WorldInstanceReady;
 use bevy_replicon::prelude::Remote;
 use roundtown_net::bots::mingle::{Mingle, Stood};
 use roundtown_net::bots::{self, Seen, Squad};
+use roundtown_net::horde::{Horde, Prey};
 use roundtown_net::chat::{CREDIT_SECS, Feed, Weapon};
 use roundtown_net::bridge_wars::{
     self as rules, BOT_GAP, BOT_WAIT, COUNTDOWN, Flight, Happening, Mint, Outfits, PLAY_SECS, RESULTS_SECS,
@@ -152,7 +158,7 @@ use roundtown_net::{
     Member, PAD_HALF, PAD_TOP, Purse, Purses, Seats, Tell, Upgraded, Upgrades, Use, Utility, Ware, arena_team,
 };
 
-use crate::ai::{self, Steering};
+use crate::ai;
 use crate::bridge;
 use crate::builder::{self, Fill};
 use crate::chat;
@@ -243,11 +249,6 @@ const ANCHOR_BAR_OVER: f32 = 4.4;
 const NUMBER_FROM: f32 = 1.8;
 const NUMBER_RISE: f32 = 1.6;
 const NUMBER_SECS: f32 = 0.9;
-/// How near a bot presses in on whoever it is going for before it slows
-/// to a push, as a share of the punch's reach.
-const PRESS_IN: f32 = 0.3;
-/// How far ahead a bot running away looks for dry land, in metres.
-const FLIGHT: f32 = 3.0;
 /// Online, how long a game waits for a dropped connection to come back,
 /// in seconds, before it is given up.
 const RECONNECT_WAIT: f32 = 15.0;
@@ -340,16 +341,6 @@ fn bar_width(share: f32) -> Val {
     Val::Percent((share.clamp(0.0, 1.0) * 200.0).round() * 0.5)
 }
 
-/// A zombie's fighting mind in a game played offline, over its wandering
-/// ([`hunt`]): how long until it may punch again, in seconds. Online the
-/// server moves its own. Until 2026-11-12 every bot of a game played
-/// offline had one, and kept to its island; the computer's players have
-/// a brain of their own since ([`Brained`]).
-#[derive(Component, Default)]
-struct Hunter {
-    cooldown: f32,
-}
-
 /// One of the computer's players in a game played offline (since
 /// 2026-11-12): a body put where the game's brain has it each frame
 /// ([`drive_bots`], [`Brains`]), as the server's bots are online, rather
@@ -376,6 +367,12 @@ struct Brains {
     heard: Option<u32>,
     /// How many rungs each has laid ([`MOST_BOT_RUNGS`]).
     rungs: [usize; ARENA_SEATS],
+    /// The zombies of sudden death, in the order they rose, each with
+    /// the mind the server's have (`roundtown_net::horde`, [`drive_zombies`];
+    /// since the night of 2026-11-16), and which of them were in the void
+    /// a frame ago, to tell one's coming up again by.
+    horde: Horde,
+    gone: Vec<bool>,
 }
 
 impl Brains {
@@ -388,6 +385,8 @@ impl Brains {
             dead: [false; ARENA_SEATS],
             heard: None,
             rungs: [0; ARENA_SEATS],
+            horde: Horde::new(fastrand::u64(..)),
+            gone: Vec::new(),
         }
     }
 }
@@ -563,6 +562,10 @@ struct Game {
     /// The computer's players, offline ([`drive_bots`]); online they are
     /// the server's, and there are none here.
     brains: Option<Box<Brains>>,
+    /// A game the computer plays alone, to be watched (`watch`,
+    /// `RT_ARENA_WATCH` on desktop): your seat is one of its players'
+    /// too, and nothing of the game is yours ([`Game::mine`]).
+    watched: bool,
     /// What was left of your team's anchor when it was last looked at,
     /// and when it was last said to be under attack, in seconds into the
     /// fight ([`warn_of_the_anchor`]).
@@ -594,6 +597,11 @@ struct Game {
     /// dropped was last looked over for things lying on nothing
     /// ([`gather`], `Nav::version`).
     shed_at: u32,
+    /// Offline, how the buses are going (since 2026-11-17,
+    /// `roundtown_net::bridge_wars::Buses`): thrown as the game is first
+    /// looked at, and stopping for whoever is on a crossing
+    /// (`squash::steer_buses`). Online they are the server's.
+    buses: Option<roundtown_net::bridge_wars::Buses>,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -633,6 +641,13 @@ impl Game {
     /// Your team.
     fn my_team(&self) -> u8 {
         arena_team(self.me)
+    }
+
+    /// Whether `seat` is your own to play: yours, in a game that is not
+    /// the computer's alone to play (`watch`), where your seat's player
+    /// is one of its own, holding what it holds as the others do.
+    fn mine(&self, seat: usize) -> bool {
+        seat == self.me && !self.watched
     }
 
     /// Whether someone is in `seat`, offline, where everyone in the game
@@ -735,7 +750,7 @@ impl Game {
         if victim >= ARENA_SEATS {
             return;
         }
-        if victim == self.me {
+        if self.mine(victim) {
             self.died_at = Some(at);
             self.spoils(victim, by);
             return;
@@ -760,7 +775,7 @@ impl Game {
         if victim >= ARENA_SEATS {
             return;
         }
-        if victim == self.me {
+        if self.mine(victim) {
             self.died_at = Some(at);
             self.killed_by = None;
             return;
@@ -787,8 +802,8 @@ impl Game {
         if !rules::takes_spoils(by, victim) {
             return;
         }
-        let me = self.me;
-        if victim == me {
+        let (yours, your_doing) = (self.mine(victim), self.mine(by));
+        if yours {
             self.killed_by = Some(by);
             return;
         }
@@ -796,7 +811,7 @@ impl Game {
             return;
         };
         let won = rules::spoils(&mut brains.purses[victim]);
-        if by == me {
+        if your_doing {
             rules::gain(&mut self.won, won);
         } else {
             rules::gain(&mut brains.purses[by], won);
@@ -869,6 +884,9 @@ pub(crate) struct Fighting {
     pub(crate) online: bool,
     pub(crate) game: u32,
     pub(crate) members: Vec<u64>,
+    /// The computer is playing it alone, your seat too, to be watched
+    /// (`watch`): no shop opens for where your seat's player stands.
+    pub(crate) watched: bool,
 }
 
 /// A game of Bridge Wars is being played offline: nothing goes online in
@@ -1027,6 +1045,8 @@ pub(crate) fn plugin(app: &mut App) {
     // The buses that drive round the middle of the map, and whoever they
     // run over.
     squash::plugin(app);
+    // A game the computer plays alone, to be watched (`RT_ARENA_WATCH`).
+    watch::plugin(app);
     app.add_message::<Ask>()
         .add_message::<Want>()
         .add_message::<Used>()
@@ -1055,7 +1075,7 @@ pub(crate) fn plugin(app: &mut App) {
         .add_systems(
             Update,
             (
-                (team_up, hunt, drive_bots, mill_bots)
+                (team_up, drive_zombies, drive_bots, mill_bots)
                     .chain()
                     .after(ai::steer)
                     .after(crate::start_punch)
@@ -1787,9 +1807,11 @@ fn play(
             // The computer's players, each where its seat arrives: who
             // each is was thrown as it came into the waiting room, and it
             // stands on its island now, as the server's do.
+            let (yours, watched) = (game.me, game.watched);
             if let Some(brains) = game.brains.as_deref_mut() {
                 brains.mingle.clear();
-                for seat in (0..game.seats.len().min(ARENA_SEATS)).filter(|&seat| seat != game.me) {
+                // (Watched, your own seat's player is the brain's too.)
+                for seat in (0..game.seats.len().min(ARENA_SEATS)).filter(|&seat| seat != yours || watched) {
                     let arrival = island::arrival(Venue::Arena, seat);
                     let (at, turn) = (arrival.translation, yaw_of(arrival.rotation));
                     if brains.squad.bot(seat).is_some() {
@@ -1919,7 +1941,16 @@ fn open(
             outfits.seat(ARENA_SEATS);
             outfits
         },
-        brains: (!online).then(|| Box::new(Brains::new())),
+        brains: (!online).then(|| {
+            let mut brains = Box::new(Brains::new());
+            // Watched, the computer's players begin with what you would
+            // (`RT_ARENA_PURSE`): a game begun late is not begun bare.
+            if watch::on() {
+                brains.purses = [[purse_from(); 4]; ARENA_SEATS];
+            }
+            brains
+        }),
+        watched: !online && watch::on(),
         anchor_was: if online { rules::ANCHOR_HEALTH } else { ui().arena.anchor_health },
         anchor_said: f32::NEG_INFINITY,
         compass: false,
@@ -1929,6 +1960,7 @@ fn open(
         died_at: None,
         spilt: Vec::new(),
         shed_at: 0,
+        buses: None,
     }
 }
 
@@ -1999,7 +2031,6 @@ fn fight_from() -> f32 {
 #[allow(clippy::too_many_arguments)]
 fn timetable(
     game: Option<ResMut<Game>>,
-    islands: Res<Islands>,
     assets: Res<AssetServer>,
     alerts: Query<Entity, With<Alert>>,
     mut images: ResMut<Assets<Image>>,
@@ -2024,6 +2055,7 @@ fn timetable(
             Happening::Tier { item, tier } => Line::of_tier(&words.tier_up, item, words.item(item), roman(tier)),
             Happening::AnchorsBreak => Line::plain(&words.anchors_broken),
             Happening::SuddenDeath => Line::plain(&words.sudden_death),
+            Happening::DrawSoon => Line::plain(&fill(&words.draw_soon, &[("seconds", &(rules::DRAW_SOON as u32).to_string())])),
         });
         if game.online {
             continue;
@@ -2031,12 +2063,16 @@ fn timetable(
         match happening {
             Happening::Tier { .. } => {}
             Happening::AnchorsBreak => game.anchors = [0.0; ARENA_TEAMS],
-            Happening::SuddenDeath => {
-                let map = islands.get(Venue::Arena);
-                for zombie in 0..rules::ZOMBIES {
-                    raise_zombie(&mut commands, &assets, &mut game, map, zombie);
-                }
-            }
+            // The zombies come from now on, a few and then more, below.
+            Happening::SuddenDeath | Happening::DrawSoon => {}
+        }
+    }
+    // As many zombies as there are to be by now, offline: each that is
+    // due rises, one after another (`rules::zombies_at`).
+    if !game.online {
+        let due = rules::zombies_at(now);
+        while game.brains.as_deref().is_some_and(|brains| brains.horde.len() < due) {
+            raise_zombie(&mut commands, &assets, &mut game);
         }
     }
     if let Some(line) = said {
@@ -2070,25 +2106,28 @@ fn zombie_place(map: Option<&Island>, zombie: usize) -> Transform {
     Transform::from_xyz(at.x, ground, at.y).with_rotation(Quat::from_rotation_y((-toward.x).atan2(-toward.y)))
 }
 
-/// A zombie, offline, in the next seat past the players': a body like the
-/// bots', with everyone's health, on nobody's team, that goes for whoever
-/// is nearest ([`hunt`]).
-fn raise_zombie(commands: &mut Commands, assets: &AssetServer, game: &mut Game, map: Option<&Island>, zombie: usize) {
+/// The next zombie, offline, in the next seat past the players': a body
+/// put where its mind has it each frame, as the computer's players' are
+/// (`lobby::spawn_bot_at`, [`drive_zombies`]), with everyone's health,
+/// which nothing takes anything off, on nobody's team.
+fn raise_zombie(commands: &mut Commands, assets: &AssetServer, game: &mut Game) {
+    let Some(brains) = game.brains.as_deref_mut() else {
+        return;
+    };
+    let zombie = brains.horde.rise(&brains.nav);
+    brains.gone.resize(zombie + 1, false);
+    let stood = brains.horde.body(zombie).copied().unwrap_or_default();
     let seat = game.seats.len().max(ARENA_SEATS);
+    debug_assert_eq!(seat, ARENA_SEATS + zombie, "the zombies come once the players' seats are full");
     let member = Member {
         id: seat as u64 + 1,
         name: rules::ZOMBIE_NAME.into(),
         look: rules::ZOMBIE_LOOK.into(),
         ai: true,
     };
-    let body = lobby::spawn_player_at(commands, assets, &member, seat, Venue::Arena, false, zombie_place(map, zombie));
-    commands.entity(body).insert((
-        InArena,
-        Zombie,
-        Health::of(ui().arena.health),
-        Hunter::default(),
-        Team(rules::ZOMBIE_TEAM),
-    ));
+    let place = Transform::from_translation(stood.at).with_rotation(Quat::from_rotation_y(stood.yaw));
+    let body = lobby::spawn_bot_at(commands, assets, &member, seat, Venue::Arena, place);
+    commands.entity(body).insert((InArena, Zombie, Health::of(ui().arena.health), Team(rules::ZOMBIE_TEAM)));
     game.seats.resize(seat, member.clone());
     game.seats.push(member);
     game.bodies.resize(seat, None);
@@ -2118,9 +2157,11 @@ fn gather(
     // Whatever is within your reach, dropping or lying
     // (`Mint::pick_up`): standing on the pad, you see each thing come
     // down, and it is yours as it comes to half a metre over your head,
-    // sooner if you jump for it.
+    // sooner if you jump for it. (Watched, your seat's player takes what
+    // it takes as the computer's others do, [`drive_bots`].)
     if let Ok((you, at, dead)) = me.single()
         && !dead
+        && !game.watched
     {
         for piece in game.mint.pick_up(at.translation, elapsed) {
             let held = &mut stock.held[piece.item.index()];
@@ -2236,6 +2277,11 @@ fn use_things(
         used.clear();
         return;
     };
+    // Watched, what is on the buttons is the computer's to use.
+    if game.watched {
+        used.clear();
+        return;
+    }
     for used in used.read().copied() {
         if !game.playing() {
             continue;
@@ -2361,6 +2407,13 @@ fn fireballs_offline(
             if *venue != Venue::Arena || arena_team(seat.0) == team || !rules::in_blast(burst, at.translation) {
                 continue;
             }
+            // Nothing hurts a zombie: it is knocked, by the share its mind
+            // takes of a knock ([`drive_zombies`]), and no more.
+            if zombie {
+                shove.hurt = 0.0;
+                shove.knock(&mut jump, burst.xz(), at.translation.xz(), false);
+                continue;
+            }
             let damage = game.outfits.through(seat.0, rules::FIREBALL_DAMAGE);
             game.outfits.reveal(seat.0);
             health.take(damage);
@@ -2372,10 +2425,6 @@ fn fireballs_offline(
             // Knocked from where it burst, whatever they were reeling from.
             shove.hurt = 0.0;
             shove.knock(&mut jump, burst.xz(), at.translation.xz(), false);
-            if zombie {
-                shove.across *= rules::ZOMBIE_KNOCK;
-                jump.velocity_y *= rules::ZOMBIE_KNOCK;
-            }
             if health.gone() {
                 let dead = game.die(seat.0);
                 commands.entity(body).insert(dead);
@@ -2459,6 +2508,10 @@ fn dynamites_offline(
         // `Game::slain`.)
         for (body, place, venue, mut health, seat) in &mut bodies {
             if *venue != Venue::Arena || arena_team(seat.0) == team || !rules::in_dynamite(at, place.translation) {
+                continue;
+            }
+            // (Nothing hurts a zombie.)
+            if seat.0 >= ARENA_SEATS {
                 continue;
             }
             let damage = game.outfits.through(seat.0, rules::DYNAMITE_DAMAGE);
@@ -2589,7 +2642,9 @@ fn dress(
 /// whoever killed you has your sapphire and your amethyst first
 /// ([`Game::spoils`]).
 fn lose_on_death(died: Query<(), (With<Player>, Added<Dead>)>, mut game: Option<ResMut<Game>>, mut stock: ResMut<Resources>) {
-    if died.is_empty() {
+    // (Watched, your seat's player has lost what it held as the computer's
+    // others do, [`Game::slain`].)
+    if died.is_empty() || game.as_deref().is_some_and(|game| game.watched) {
         return;
     }
     let offline = game.as_deref().is_some_and(|game| !game.online);
@@ -3075,10 +3130,12 @@ fn publish(game: Option<Res<Game>>, mut fighting: ResMut<Fighting>, mut offline:
         Some(game) => (game.playing(), game.teams_out(), Some(game.me as u8), game.online, game.id),
         None => (false, false, None, false, fighting.game),
     };
+    let watched = game.as_deref().is_some_and(|game| game.watched);
     let seats: &[Member] = game.as_deref().map_or(&[], |game| game.seats.as_slice());
     let same_members =
         fighting.members.len() == seats.len() && fighting.members.iter().zip(seats).all(|(id, member)| *id == member.id);
     if (fighting.playing, fighting.teams_out, fighting.seat, fighting.online, fighting.game) != (playing, teams_out, seat, online, id)
+        || fighting.watched != watched
         || !same_members
     {
         *fighting = Fighting {
@@ -3088,6 +3145,7 @@ fn publish(game: Option<Res<Game>>, mut fighting: ResMut<Fighting>, mut offline:
             online,
             game: id,
             members: seats.iter().map(|member| member.id).collect(),
+            watched,
         };
     }
     offline.set_if_neq(OfflineArena(game.is_some_and(|game| !game.online)));
@@ -3130,124 +3188,119 @@ fn team_up(
     }
 }
 
-/// Sends each zombie ([`Hunter`]) for whoever of another team is nearest
-/// within its sight, while the game is on, offline: up to them, over
-/// whatever walk it was on, pressing in on them once there, and a punch
-/// whenever they are in its reach and it may throw one, which knocks them
-/// back as yours does ([`Shove::knock`]) and lands ([`Landed`]) for the
-/// damage to be dealt. It sees no further than the file's
-/// `arena.hunt_radius`, the dead not at all, and never a teammate; walking
-/// off its ground it is kept from, as ever (`StaysAshore`), but onto a
-/// bridge it will go. Until 2026-11-12 this was every bot's mind, which
-/// with less than the file's `arena.flee_below` of its health ran away
-/// instead ([`flight`]); the computer's players have a brain of their own
-/// since ([`drive_bots`]), and are among those a zombie goes for.
-#[allow(clippy::too_many_arguments)]
-fn hunt(
+/// Moves each zombie as its mind has it, in a game played offline: the
+/// mind the server's zombies have online (`roundtown_net::horde`, since
+/// the night of 2026-11-16). At whoever of the players is nearest that it
+/// can see, never one who is unseen, at a zombie's pace, over whatever can
+/// be walked and never off an edge; a blow at whoever is in its reach,
+/// which knocks as one thrown standing does ([`Shove::knock`]) and lands
+/// ([`Landed`]) for the damage to be dealt. A knock that has landed on its
+/// body is the mind's to carry it by, a share of it; one a bus has laid
+/// flat lies where it is; and one that has gone into the void and come up
+/// again begins again from where it came up ([`respawn`]). Until then a
+/// zombie offline had the mind every bot had before the computer's
+/// players had a brain (`hunt`), walked by `move_bodies`, and went for
+/// those too.
+#[allow(clippy::type_complexity)]
+fn drive_zombies(
     time: Res<Time>,
     game: Option<ResMut<Game>>,
-    islands: Res<Islands>,
-    mut bodies: Query<(
-        Entity,
-        &Transform,
-        &Venue,
-        // The computer's players have none, being placed, not walked.
-        Option<&mut Intent>,
-        &mut Shove,
-        &mut PlayerJump,
-        Option<&mut Hunter>,
-        Option<&mut Steering>,
-        Option<&Health>,
-        Option<&Team>,
-        Has<Dead>,
-    )>,
-    (wears, seats, flat): (Query<&Wears>, Query<&Seat>, Query<(), With<crate::Squashed>>),
+    mut bodies: Query<
+        (Entity, &mut Transform, &Venue, &Seat, &mut Shove, &mut PlayerJump, Has<Dead>, Has<Zombie>, Has<crate::Squashed>),
+        With<WalkCycle>,
+    >,
     mut landed: MessageWriter<Landed>,
     mut commands: Commands,
 ) {
     if !offline_fight(&game) {
         return;
     }
-    let file = ui();
-    let (tuning, melee) = (file.arena, file.melee);
-    let sector = Sector::of(&melee);
+    let mut game = game.expect("checked");
+    let game = &mut *game;
+    let elapsed = game.elapsed;
+    let Some(brains) = game.brains.as_deref_mut() else {
+        return;
+    };
+    if brains.horde.is_empty() {
+        return;
+    }
     let dt = time.delta_secs();
-    // Everyone a bot might go for: the living, but for whoever is unseen.
-    let alive: Vec<(Entity, Vec3, Option<Team>)> = bodies
-        .iter()
-        .filter(|(_, _, venue, .., dead)| **venue == Venue::Arena && !dead)
-        .filter(|(body, ..)| !wears.get(*body).is_ok_and(|wears| wears.unseen))
-        .map(|(body, at, _, _, _, _, _, _, _, team, _)| (body, at.translation, team.copied()))
-        .collect();
-    let hunters: Vec<Entity> = bodies
-        .iter()
-        .filter(|(_, _, venue, _, _, _, hunter, _, _, _, dead)| **venue == Venue::Arena && hunter.is_some() && !dead)
-        .map(|(body, ..)| body)
-        // (One a bus has laid flat goes for nobody.)
-        .filter(|body| !flat.contains(*body))
-        .collect();
-    for bot in hunters {
-        // What the bot does this frame, with its own body in hand; the
-        // punch is thrown once that is let go of.
-        let punch = {
-            let Ok((_, body, _, Some(mut intent), _, _, Some(mut hunter), steering, health, team, _)) =
-                bodies.get_mut(bot)
-            else {
+    // Everyone a zombie may go for: the players alive, but for whoever is
+    // unseen; and whose body each is.
+    let mut prey = Vec::new();
+    let mut body_of: Vec<Option<Entity>> = vec![None; ARENA_SEATS];
+    let mut zombies = Vec::new();
+    for (body, at, venue, seat, _, _, dead, zombie, _) in &bodies {
+        if *venue != Venue::Arena {
+            continue;
+        }
+        match seat.0.checked_sub(ARENA_SEATS) {
+            Some(index) if zombie => zombies.push((body, index)),
+            Some(_) => {}
+            None => {
+                body_of[seat.0] = Some(body);
+                if !dead && !game.outfits.kit(seat.0).unseen(elapsed) {
+                    prey.push(Prey {
+                        seat: seat.0,
+                        at: at.translation,
+                    });
+                }
+            }
+        }
+    }
+    let Brains { nav, horde, gone, .. } = brains;
+    for (entity, index) in zombies {
+        let hit = {
+            let Ok((_, mut transform, _, _, mut shove, mut jump, dead, _, flat)) = bodies.get_mut(entity) else {
                 continue;
             };
-            hunter.cooldown = (hunter.cooldown - dt).max(0.0);
-            let here = body.translation;
-            let mine = team.copied();
-            // Blinded by a trap, it sees no further than anyone blinded.
-            let blind = seats
-                .get(bot)
-                .is_ok_and(|seat| game.as_deref().is_some_and(|game| game.outfits.kit(seat.0).blind));
-            let sight = if blind { rules::BLIND_SIGHT } else { tuning.hunt_radius };
-            let Some((target, there, _)) = alive
-                .iter()
-                .filter(|&&(other, at, theirs)| {
-                    other != bot
-                        && !(mine.is_some() && theirs == mine)
-                        && at.xz().distance(here.xz()) <= sight
-                        && (at.y - here.y).abs() <= PLAYER_HEIGHT * 2.0
-                })
-                .min_by(|a, b| a.1.distance_squared(here).total_cmp(&b.1.distance_squared(here)))
-                .copied()
-            else {
+            let Some(was_gone) = gone.get_mut(index) else {
                 continue;
             };
-            if let Some(mut steering) = steering {
-                steering.stop();
-            }
-            let off = (there - here).xz();
-            let toward = Vec3::new(off.x, 0.0, off.y).normalize_or_zero();
-            // A zombie comes on slower than anyone runs, and never runs
-            // away.
-            let zombie = mine == Some(Team(rules::ZOMBIE_TEAM));
-            // Nearly beaten, it runs for it rather than fights.
-            if !zombie && health.is_some_and(|health| health.share() < tuning.flee_below) {
-                intent.walk = islands.get(Venue::Arena).map_or(-toward, |map| flight(map, here, toward));
+            if dead {
+                *was_gone = true;
                 continue;
             }
-            let pace = if zombie { (rules::ZOMBIE_SPEED / tuning.run_speed).min(1.0) } else { 1.0 };
-            intent.walk = toward * if off.length() > melee.reach { pace } else { PRESS_IN };
-            let facing = body.forward().xz().normalize_or(Vec2::NEG_Y);
-            let in_reach = (there.y - here.y).abs() <= PLAYER_HEIGHT && sector.holds(facing, off, PLAYER_RADIUS);
-            if !in_reach || hunter.cooldown > 0.0 {
-                continue;
+            // Up again out of the void: from where it came up.
+            if std::mem::take(was_gone) {
+                horde.stand(nav, index);
             }
-            hunter.cooldown = tuning.bot_punch_every;
-            // A zombie's punch knocks as one thrown standing does: it
-            // comes on at a walk.
-            let running = !zombie && intent.walk.length() >= 0.5;
-            (target, here.xz(), there.xz(), running)
+            if shove.across != Vec2::ZERO || jump.velocity_y != 0.0 {
+                horde.shoved(index, shove.across, jump.velocity_y);
+                shove.across = Vec2::ZERO;
+                jump.velocity_y = 0.0;
+            }
+            if shove.hurt > 0.0 {
+                shove.hurt = (shove.hurt - dt).max(0.0);
+            }
+            let hit = horde.step(index, nav, &prey, flat, dt);
+            let Some(stood) = horde.body(index) else {
+                continue;
+            };
+            let turn = Quat::from_rotation_y(stood.yaw);
+            if transform.translation != stood.at {
+                transform.translation = stood.at;
+            }
+            if transform.rotation != turn {
+                transform.rotation = turn;
+            }
+            hit.map(|victim| (victim, stood.at.xz()))
         };
-        let (target, from, at, running) = punch;
-        commands.entity(bot).insert(Punching::next());
-        if let Ok((_, _, _, _, mut shove, mut jump, ..)) = bodies.get_mut(target)
-            && shove.knock(&mut jump, from, at, running)
-        {
-            landed.write(Landed { by: bot, victim: target });
+        let Some((victim, from)) = hit else {
+            continue;
+        };
+        let Some(target) = body_of.get(victim).copied().flatten() else {
+            continue;
+        };
+        commands.entity(entity).insert(Punching::next());
+        if let Ok((_, there, _, _, mut shove, mut jump, ..)) = bodies.get_mut(target) {
+            let at = there.translation.xz();
+            if shove.knock(&mut jump, from, at, false) {
+                landed.write(Landed {
+                    by: entity,
+                    victim: target,
+                });
+            }
         }
     }
 }
@@ -3363,7 +3416,7 @@ fn drive_bots(
     look: Res<fire::Look>,
     islands: Res<Islands>,
     lobbed_sticks: Query<&dynamite::Stick>,
-    (flat, buses): (Query<(), With<crate::Squashed>>, Query<&crate::car::Lapping>),
+    (flat, buses, arena_buses): (Query<(), With<crate::Squashed>>, Query<&crate::car::Lapping>, Res<crate::car::ArenaBuses>),
     mut landed: MessageWriter<Landed>,
     (mut fed, mut builders): (MessageWriter<Fed>, ResMut<BotBuilders>),
     mut commands: Commands,
@@ -3378,6 +3431,7 @@ fn drive_bots(
     // by the very same (`car::Lapping`); none before the buses are on the
     // road.
     let bus_clock = buses.iter().next().map(|bus| bus.clock).filter(|clock| *clock > 0.0);
+    let traffic = bus_clock.and_then(|clock| Some(rules::Traffic { buses: arena_buses.0.now()?, clock }));
     let mut game = game.expect("checked");
     let game = &mut *game;
     let Some(brains) = game.brains.as_deref_mut() else {
@@ -3404,7 +3458,7 @@ fn drive_bots(
         rungs,
         ..
     } = brains;
-    let (dt, elapsed, me) = (time.delta_secs(), game.elapsed, game.me);
+    let (dt, elapsed, me, watched) = (time.delta_secs(), game.elapsed, game.me, game.watched);
     let file = ui();
     // Every bridge as it stands, whoever built it: a rung heard already
     // is nothing new.
@@ -3439,12 +3493,12 @@ fn drive_bots(
             alive: !fallen,
             in_play: seat.0 >= ARENA_SEATS || !game.out[seat.0],
             unseen: game.outfits.kit(seat.0).unseen(elapsed),
-            person: seat.0 == me,
+            person: seat.0 == me && !watched,
             health: health.map_or(1.0, Health::share),
             flat: flat.contains(body),
         };
     }
-    let computers = move |seat: &usize| *seat != me;
+    let computers = move |seat: &usize| *seat != me || watched;
     // Whoever of them has died since the last frame has lost what it
     // held, and whoever stands again begins again from where it stands.
     for seat in (0..seats.min(ARENA_SEATS)).filter(computers) {
@@ -3494,7 +3548,7 @@ fn drive_bots(
                     mint: &game.mint,
                     anchors: game.anchors,
                     sticks: &sticks,
-                    clock: bus_clock,
+                    traffic,
                 };
                 squad.step(seat, &view, dt)
             };
@@ -3851,21 +3905,6 @@ fn anchor_warned(playing: bool, was: f32, left: f32, since: f32) -> bool {
     playing && left < was && left > 0.0 && since >= ANCHOR_WARN_EVERY
 }
 
-/// Which way a bot at `here` on `map` runs from someone `toward` it: straight
-/// away, or failing dry land that way for [`FLIGHT`] metres, the nearest
-/// way round to it that has it, to either side and then across; with no
-/// way at all, it stands its ground. A run off the island is kept from
-/// anyway (`StaysAshore`); this keeps the bot from standing at the edge
-/// being hit.
-fn flight(map: &Island, here: Vec3, toward: Vec3) -> Vec3 {
-    let away = -toward;
-    [0.0, 0.6, -0.6, 1.2, -1.2, 1.57, -1.57]
-        .into_iter()
-        .map(|turn: f32| Quat::from_rotation_y(turn) * away)
-        .find(|&heading| ai::dry_all_the_way(map, here, heading, FLIGHT))
-        .unwrap_or(Vec3::ZERO)
-}
-
 /// Whoever has fallen far enough into the void is dead ([`void_y`]): you,
 /// or a bot knocked off its island. Online your fall is told to the server,
 /// which decides whether you come back; everyone else's is theirs.
@@ -3929,20 +3968,24 @@ fn deal_damage(
     }
     let mut game = game.expect("checked");
     for hit in hits.read() {
-        let Ok((at, mut health, seat, mut shove, mut jump, zombie)) = victims.get_mut(hit.victim) else {
+        let Ok((at, mut health, seat, _, _, zombie)) = victims.get_mut(hit.victim) else {
             continue;
         };
-        // A zombie takes a share of the knock that has just landed on it
-        // (`Shove::knock`): it keeps coming (`rules::ZOMBIE_KNOCK`).
+        let hitter = seats.get(hit.by).map_or(usize::MAX, |seat| seat.0);
+        // Nothing hurts a zombie (since the night of 2026-11-16; Hajun:
+        // "zombie should be invincible"): the knock that has landed on it
+        // is its mind's to carry it by, a share of it
+        // ([`drive_zombies`]), and whoever hit it is seen for having.
         if zombie {
-            shove.across *= rules::ZOMBIE_KNOCK;
-            jump.velocity_y *= rules::ZOMBIE_KNOCK;
+            game.outfits.reveal(hitter);
+            continue;
         }
         // More with a sword in the hitter's hand, less through the
         // victim's shield (`Outfits::punch`); a zombie, in a seat past the
-        // players', has neither.
-        let hitter = seats.get(hit.by).map_or(usize::MAX, |seat| seat.0);
-        let damage = game.outfits.punch(ui().arena.damage, hitter, seat.0);
+        // players', has neither, and its blow is a heavier one than a
+        // bare fist's (`rules::ZOMBIE_DAMAGE`).
+        let bare = if hitter >= ARENA_SEATS && hitter != usize::MAX { rules::ZOMBIE_DAMAGE } else { ui().arena.damage };
+        let damage = game.outfits.punch(bare, hitter, seat.0);
         // Whoever of the two was unseen is seen again ("being hit or
         // attacking reveals u").
         game.outfits.reveal(hitter);
@@ -4275,7 +4318,9 @@ fn died_in(left: f32) -> String {
 /// Keeps the panel in the middle of the screen while you are out for good,
 /// with Play again and Exit on it, and none otherwise.
 fn show_panel(game: Option<Res<Game>>, panels: Query<Entity, With<Panel>>, mut commands: Commands) {
-    let wanted = game.as_deref().is_some_and(|game| game.out.get(game.me).copied().unwrap_or(false));
+    // (Watched, nobody is asked anything: the view goes to someone still
+    // in it, `watch`.)
+    let wanted = game.as_deref().is_some_and(|game| !game.watched && game.out.get(game.me).copied().unwrap_or(false));
     let up = panels.single().ok();
     match (wanted, up) {
         (true, None) => spawn_panel(&mut commands),
@@ -4458,7 +4503,8 @@ fn spawn_tag(commands: &mut Commands, body: Entity, name: &str, side: Option<(u8
     let colours = ui().colours;
     let arena = colours.arena;
     let ink = side.map_or(colours.text, |(team, _)| arena.team(team));
-    let hp = side.map(|(_, ally)| if ally { arena.hp_ally } else { arena.hp_enemy });
+    // (No bar over a zombie: nothing takes anything off one.)
+    let hp = side.filter(|(team, _)| *team != rules::ZOMBIE_TEAM).map(|(_, ally)| if ally { arena.hp_ally } else { arena.hp_enemy });
     commands
         .spawn((
             InArena,
@@ -4736,12 +4782,26 @@ fn spawn_board(commands: &mut Commands) {
 /// for.
 fn show_board(
     game: Option<Res<Game>>,
+    mut boards: Query<&mut Visibility, With<Board>>,
     mut texts: Query<&mut Text, With<BoardText>>,
     mut captions: Query<&mut Text, (With<BoardCaption>, Without<BoardText>)>,
 ) {
     let Some(game) = game else {
         return;
     };
+    // In the fight there is no clock (since the night of 2026-11-16;
+    // Hajun: "i dont want the 25min timer to be displayed during game ...
+    // the timer should only appear when its 10 second left"): the board
+    // is away until the last seconds, and up again for the count at the
+    // end, which is no longer than that.
+    let shown = match game.stage {
+        Stage::Waiting { .. } | Stage::Countdown { .. } => true,
+        Stage::Playing { left } | Stage::Over { left, .. } => left <= CLOCK_FROM,
+    };
+    let seen = if shown { Visibility::Inherited } else { Visibility::Hidden };
+    for mut board in &mut boards {
+        board.set_if_neq(seen);
+    }
     let ui = ui();
     let words = &ui.words.arena;
     let players = fill(
@@ -4769,6 +4829,9 @@ fn show_board(
         }
     }
 }
+
+/// How long before the end of the fight its clock comes up, in seconds.
+const CLOCK_FROM: f32 = 10.0;
 
 /// `9:59`: seconds left, rounded up, so that the last second reads `0:01`.
 fn clock(left: f32) -> String {
@@ -5027,6 +5090,7 @@ mod tests {
         mint: Mint::new(0.0, &mut || 0.5),
         outfits: Outfits::default(),
         brains: None,
+        watched: false,
         anchor_was: 120.0,
         anchor_said: f32::NEG_INFINITY,
         compass: false,
@@ -5036,6 +5100,7 @@ mod tests {
         died_at: None,
         spilt: Vec::new(),
         shed_at: 0,
+        buses: None,
     }
     }
 
@@ -5370,36 +5435,6 @@ mod tests {
     }
 
     #[test]
-    fn a_bot_runs_away_along_dry_land() {
-        // A strip of land 20 m long and 12 m wide, someone coming at the
-        // bot from the east: in the middle of the strip it runs straight
-        // away, west; near the west end, where straight away is off the
-        // land, it runs round, along the strip; and off the land altogether
-        // it stands.
-        let v = Vec3::new;
-        let strip = Island::new(&[
-            [v(-10.0, 0.0, -6.0), v(-10.0, 0.0, 6.0), v(10.0, 0.0, 6.0)],
-            [v(-10.0, 0.0, -6.0), v(10.0, 0.0, 6.0), v(10.0, 0.0, -6.0)],
-        ]);
-        let toward = Vec3::X;
-        assert_eq!(flight(&strip, v(0.0, 0.0, 0.0), toward), -Vec3::X);
-        let near_the_end = flight(&strip, v(-8.5, 0.0, 0.0), toward);
-        assert!(near_the_end.x > -0.9 && near_the_end.z.abs() > 0.4, "{near_the_end}");
-        assert!(ai::dry_all_the_way(&strip, v(-8.5, 0.0, 0.0), near_the_end, FLIGHT));
-        assert_eq!(flight(&strip, v(30.0, 0.0, 0.0), toward), Vec3::ZERO);
-    }
-
-    #[test]
-    fn on_the_map_a_bot_beside_the_island_s_middle_runs_straight_away() {
-        // On the first island, 6 m east of its middle with you in the
-        // middle: east is 4 m of island, enough to run straight away.
-        let map = hajuns_map();
-        let here = Vec3::new(6.0, 0.25, 130.0);
-        assert!(ai::dry_all_the_way(&map, here, Vec3::X, FLIGHT), "not dry east of the middle");
-        assert_eq!(flight(&map, here, Vec3::NEG_X), Vec3::X);
-    }
-
-    #[test]
     fn the_death_count_goes_down_in_halves() {
         let seconds = |left: f32| {
             let line = died_in(left);
@@ -5603,7 +5638,7 @@ mod tests {
                         mint: &mint,
                         anchors: [120.0; ARENA_TEAMS],
                         sticks: &[],
-                        clock: None,
+                        traffic: None,
                     };
                     brains.squad.step(seat, &view, 1.0 / 60.0);
                 }

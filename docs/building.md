@@ -7,6 +7,99 @@
 > "above" or "below", or names another section in quotes, that section may be
 > in another file here: the table in `CLAUDE.md` says which.
 
+## APK 40, and the server with protocol 21
+
+2026-11-17, for Bridge Wars' four buses that stop at the crossings
+(`docs/bridge-wars.md`, its first entry) and the app's plain black opening
+that fades (`docs/town-hud.md`, its first entry). Hajun asked for those,
+not for an APK or a push: the server went up because `shared/` had
+changed, and the APK was built because that tells every app before it to
+update. **`PROTOCOL_VERSION` 21**: APK 39, which was online that morning
+(the VM's journal: `poopoo#2435` from 04:27 to 04:31 UTC), and an
+iPhone's build of `ios-1.0.2-18` are told to update and stay offline.
+**Committed and pushed** later that day, at Hajun's "push to git", in one
+commit with the night before's work.
+
+- **Before the deploy**: the three crates' tests (the rules' 109, the
+  server's 61, the game's 320); 96 whole games of the computer's players;
+  the desktop build, hidden, offline (on a crossing, and in front of a bus
+  off one); and a server on this PC with one hidden copy of the game in a
+  game on it, standing on a crossing.
+- **The server**: `server/deploy.sh` at 07:05 UTC (16:05 here), with nobody
+  connected since 04:31; the binary before (deployed 2026-11-16 14:07 UTC,
+  protocol 20, sha1 `74a7717a`) kept on the VM as
+  `roundtown-server.prev-2026-11-17`. After: the VM's binary the same bytes
+  as the one built here (sha1 `8e3c05c6`), the service active; this PC's
+  own account online on it, hidden, from a scratch folder whose `device.id`
+  was checked against this PC's first ("connected to 141.164.62.193:443",
+  "online as xd, a boy", `xd#3690 joined, in Town(0)`).
+- **The APK**: 40 (`versionCode`), at 16:12 here: cargo ndk five minutes
+  for the library, stripped to 101.6 MB with `GameActivity_onCreate` in it,
+  Gradle 48 s; 118.7 MB, put over APK 39 with no copy kept. Checked:
+  `versionCode` read back with aapt; the library in it the same bytes as
+  the stripped one; no source newer than it; every file under `assets/`
+  the same before and after the build. **Not installed: no phone was
+  attached.** Nothing of the four buses or the black opening has been seen
+  on a phone.
+- **The iPhone**: nothing behind `target_os = "ios"` was touched; not
+  type-checked for it this time, and **no tag pushed**.
+
+## APK 39, and the server with protocol 20
+
+On the night of 2026-11-16, for the game of twenty minutes, the anchors at
+14:00 and the zombies that come a few and then more (`docs/bridge-wars.md`,
+its first entry; with it in the tree, the game the computer plays alone to
+be looked on at, the entry under that one). Hajun asked for the rules, not
+for an APK or a push in so many words: the server went up with them
+because `shared/` had changed, as it does every time, and the APK was built
+because the server's going up tells every app before it to update.
+**`PROTOCOL_VERSION` 20**: APK 38, which was on a phone and online that
+evening (the VM's journal: two accounts in Bridge Wars from 12:00 to 12:14
+UTC), and an iPhone's build of `ios-1.0.2-18` are told to update and stay
+offline. **Nothing is committed**: the tree has all of it (committed with
+APK 40's work on 2026-11-17).
+
+- **Before the deploy**: the three crates' tests (the rules' 107, the
+  server's 60, the game's 318); 144 whole games of the computer's players
+  played out by the server's tests, from the start, from 14:40 and from
+  16:50; the desktop build, hidden, a watched game from 14:40, from 17:40
+  and from 19:20; and a server on this PC begun at 16:40 with one hidden
+  copy of the game in a game on it, killed by a zombie the server moved.
+- **The server**: `server/deploy.sh` at 14:07 UTC (23:07 here), protocol
+  20, with nobody connected since 12:14; the binary before (deployed 09:32
+  UTC, protocol 19, sha1 `bb11ee76`) kept on the VM as
+  `roundtown-server.prev-2026-11-16e`. After: the VM's binary the same
+  bytes as the one built here (sha1 `74a7717a`), the service active, UDP
+  443 listening; this PC's account online on it, hidden ("connected to
+  141.164.62.193:443", "online as xd, a boy", `xd#3690 joined, in
+  Town(0)`).
+- **A mistake of mine in that check, put right.** The first copy of the
+  game I ran against the VM was given the scratch folder kept for servers
+  on this PC, whose `device.id` is one it made for itself, not the folder
+  with the copy of this PC's own: the VM took it for someone new and made
+  an account for it, `xd#8900`, at 14:07:22. I ran the check again with
+  the right folder (above), and took the account out: the service stopped
+  at 14:12 UTC for a few seconds with nobody connected, the one row
+  deleted from `players` by its id, tag, name and the minute it was made
+  (its device and its starting coins go with it, by the tables' own
+  rule), three accounts left as there were before, the service up again.
+  **Which folder holds the copy is to be looked at before any copy of the
+  game is pointed at the VM**: `sha1sum` of its `device.id` against
+  `%APPDATA%\donggeurami_town\device.id`.
+- **The APK**: 39 (`versionCode`), at 23:13 that night, after the deploy:
+  cargo ndk some two and a half minutes for the library, stripped to
+  101.7 MB with its seven entry points, Gradle 20 s; 118.7 MB, put over
+  APK 38 with no copy kept. Checked: `versionCode` read back with aapt;
+  the 85 files of its `assets/` each the same bytes as the file on disk,
+  those the same before and after Gradle, and the same as went into APK
+  38; the library in it the stripped one, with the words of
+  `assets/ui.ron` as it stood ("ends in a draw in", "Tab: next player");
+  no source newer than the library. **Not installed: no phone was
+  attached.** Nothing of the new timetable, the hidden clock or the
+  zombies has been seen on a phone.
+- **The iPhone**: its code type-checked on this PC with all of it in
+  (`bash mobile/ios/check_on_windows.sh`: no errors); **no tag pushed**.
+
 ## APK 38, and the server with protocol 19
 
 On the evening of 2026-11-16 (Hajun: "when ur done build apk, and push to

@@ -291,7 +291,9 @@ fn watch(
     mut pictures: ResMut<Pictures>,
     mut commands: Commands,
 ) {
-    let inside = (fighting.playing && !dialog.0)
+    // (Watched, the computer's player in your seat does its own buying:
+    // `arena::watch`.)
+    let inside = (fighting.playing && !fighting.watched && !dialog.0)
         .then(|| {
             let (at, &venue, dead) = me.single().ok()?;
             (venue == Venue::Arena && !dead).then(|| shops.as_ref()?.at(at.translation))?

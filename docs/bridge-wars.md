@@ -12,32 +12,35 @@
 The entries of the log below, in its order (the newest dated work first,
 then the game as it was first made). Search for an entry by its first words.
 
-1. Since the evening of 2026-11-16 two buses drive round the middle of the map and run over whoever is in front of one, who lies flat on the road for t...
-2. Since the afternoon of 2026-11-16 which team anyone is on is drawn nowhere until the fight begins, and the computer's players come into the waiting ro...
-3. Later on the night of 2026-11-15 a stick of dynamite is 1 amethyst and the falling it starts quickens to a little over a run; and whoever dies on land dr...
-4. Since the night of 2026-11-15 a seat in a game waits for whoever's connection has gone, and they are put back in it; a stick of dynamite takes the w...
-5. Since the small hours of 2026-11-15 the team you begin on is thrown for each game, each team's island is lined in its colour on the minimap, and yo...
-6. Later on the night of 2026-11-14 the two shops and the panel that says you are out are drawn as the friends' panel is
-7. Since the night of 2026-11-14 a plank is a tenth wider than Hajun's and not a quarter, whoever kills someone has their sapphire and amethyst, and the comp...
-8. Since the evening of 2026-11-14 there is a Leap Potion and a faster builder to buy, a drink shows, a potion that is on leaves sparks, the bridge is...
-9. Since the small hours of 2026-11-14 the dynamite's arch rises and falls and leans to neither side, with an X where it will land; its fuse is seen t...
-10. Since the night of 2026-11-13 there is dynamite, which cuts bridges; the computer's players no longer fall for three easy tricks, and are not all a...
-11. Later on 2026-11-13: the compass's arrow points out, the anchors are their teams' colours, and the computer's players fill their buttons, each as i...
-12. Since 2026-11-13 there are five buttons for things to use, and you hold several kinds at once
-13. Since late on the night of 2026-11-12 each of the computer's players is someone, a knock no longer stuns them, and no two fights with them go the s...
-14. Since the night of 2026-11-12 the computer's players play the game
-15. Since the evening of 2026-11-12 every game online is 2v2v2v2, people teamed up with each other first and the computer in every seat left
-16. Later on 2026-11-12: dying loses everything you hold, what is aimed is seen over the void, and a sword is held on its edge and cut downward
-17. Since 2026-11-12 Bridge Wars has two shops, and everything in Hajun's file is in the game
-18. Since the night of 2026-11-11 Bridge Wars has generators, a shop and a timetable
-19. Since the night of 2026-11-08 Bridge Wars is the server's online, eight to a game in four teams of two, with respawn anchors and bridges you build
-20. The gamepad down the right edge opens the game selector
-21. Bridge Wars
-22. The fight
-23. Online, a game of Bridge Wars is a room of your own
-24. The camera is fixed straight down over you only in the arena
-25. In the arena the buttons are Hajun's `pvpmapbuttonui.jpg`
-26. Falling off the map
+1. Since 2026-11-17 four buses drive round the middle of the map, one to each lane of the ring, and every one stops short of a crossing while anyone of the players is on it
+2. Later on the night of 2026-11-16 a game is twenty minutes with no clock until its last ten seconds, the anchors break at 14:00, and from 15:00 zombies that nothing hurts come a few and then more, to fifty, which the computer's players run from
+3. Since the night of 2026-11-16 a game the computer plays alone can be looked on at, on desktop: `RT_ARENA_WATCH=1`
+4. Since the evening of 2026-11-16 two buses drive round the middle of the map and run over whoever is in front of one, who lies flat on the road for t...
+5. Since the afternoon of 2026-11-16 which team anyone is on is drawn nowhere until the fight begins, and the computer's players come into the waiting ro...
+6. Later on the night of 2026-11-15 a stick of dynamite is 1 amethyst and the falling it starts quickens to a little over a run; and whoever dies on land dr...
+7. Since the night of 2026-11-15 a seat in a game waits for whoever's connection has gone, and they are put back in it; a stick of dynamite takes the w...
+8. Since the small hours of 2026-11-15 the team you begin on is thrown for each game, each team's island is lined in its colour on the minimap, and yo...
+9. Later on the night of 2026-11-14 the two shops and the panel that says you are out are drawn as the friends' panel is
+10. Since the night of 2026-11-14 a plank is a tenth wider than Hajun's and not a quarter, whoever kills someone has their sapphire and amethyst, and the comp...
+11. Since the evening of 2026-11-14 there is a Leap Potion and a faster builder to buy, a drink shows, a potion that is on leaves sparks, the bridge is...
+12. Since the small hours of 2026-11-14 the dynamite's arch rises and falls and leans to neither side, with an X where it will land; its fuse is seen t...
+13. Since the night of 2026-11-13 there is dynamite, which cuts bridges; the computer's players no longer fall for three easy tricks, and are not all a...
+14. Later on 2026-11-13: the compass's arrow points out, the anchors are their teams' colours, and the computer's players fill their buttons, each as i...
+15. Since 2026-11-13 there are five buttons for things to use, and you hold several kinds at once
+16. Since late on the night of 2026-11-12 each of the computer's players is someone, a knock no longer stuns them, and no two fights with them go the s...
+17. Since the night of 2026-11-12 the computer's players play the game
+18. Since the evening of 2026-11-12 every game online is 2v2v2v2, people teamed up with each other first and the computer in every seat left
+19. Later on 2026-11-12: dying loses everything you hold, what is aimed is seen over the void, and a sword is held on its edge and cut downward
+20. Since 2026-11-12 Bridge Wars has two shops, and everything in Hajun's file is in the game
+21. Since the night of 2026-11-11 Bridge Wars has generators, a shop and a timetable
+22. Since the night of 2026-11-08 Bridge Wars is the server's online, eight to a game in four teams of two, with respawn anchors and bridges you build
+23. The gamepad down the right edge opens the game selector
+24. Bridge Wars
+25. The fight
+26. Online, a game of Bridge Wars is a room of your own
+27. The camera is fixed straight down over you only in the arena
+28. In the arena the buttons are Hajun's `pvpmapbuttonui.jpg`
+29. Falling off the map
 
 ## Games: the gamepad opens a selector, and Bridge Wars is the PvP map
 
@@ -66,6 +69,398 @@ deployed with it, the binary before kept on the VM as
 was the town itself; everything below about the map, its islands, the
 void, the punch's knockback and its range held for the town then, and
 holds for the arena now.
+
+- **Since 2026-11-17 four buses drive round the middle of the map, one to
+  each lane of the ring, and every one stops short of a crossing while
+  anyone of the players is on it** (one message from Hajun, with the
+  opening's black cover, `docs/town-hud.md`: "rn the bus in the bridge
+  wars minigame is just 2 buses that goes around the outmost lane, i want
+  4 bus, one in each lane (there are 4 lanes) at varying intervals, and
+  the bus will stop before the crosswalk if there is a person on the
+  crosswalk until they cross it - there are 4 crosswalks, if no player on
+  that crosswalk, just same speed pass through crosswalk. It will not stop
+  for ppl who are not on the crosswalk but rather on the road and go over
+  them like now."). **`PROTOCOL_VERSION` 21**: an app from before is told
+  to update and stays offline. **The server has it since 07:05 UTC on
+  2026-11-17** (the binary before, protocol 20, kept on the VM as
+  `roundtown-server.prev-2026-11-17`), **and APK 40** (`docs/building.md`).
+  No iOS tag. **Committed and pushed** the same day, at Hajun's "push to
+  git", in one commit with the night before's work, which had not been.
+  `shared/src/lib.rs` (`bridge_wars::LANES`, `BUS_SPEED`, `BUS_BRAKE`,
+  `BUS_GATHERS`, `BUS_STOP_SHORT`, `CROSSINGS` and the numbers by it,
+  `crossing_at`, `Leg`, `Buses`, `Traffic`, `BusLog`), `shared/src/bots.rs`;
+  `server/src/arena.rs`; `src/car.rs`, `src/arena.rs`, `src/arena/squash.rs`,
+  `src/roads.rs` (a test).
+  - **The lanes** (`LANES`): the ring round the pond is two halves, road
+    from 44 to 56 m out and from 59 to 71, a strip down the middle between
+    them and a dashed line down each, at 50 and 65 m (measured off the map
+    with the game's own road reader). Each half is two lanes, one either
+    side of its line: buses' middles 67.87, 61.88, 52.83 and 46.84 m out,
+    each a little inside the line its wheels follow, as the town's planner
+    has the outside one. **Mine: the outer half goes anticlockwise seen
+    from above and the inner half clockwise**, keeping right as Korea
+    drives, as any road with a strip down its middle does; the bus of the
+    day before went anticlockwise on the outside lane, and still does.
+    Hajun said four lanes, not which way each goes: all four one way is a
+    sign in `Lane` each.
+  - **"At varying intervals"** (my reading): every bus at the day before's
+    14.2 m/s (`BUS_SPEED`, "2x normal speed"), so that the inner lanes,
+    being shorter, come round sooner (every 21 s round the innermost, 23.5,
+    27.4, 30 round the outermost) and the four drift past each other; and
+    where each begins is thrown for every game (`Buses::new`). On top of
+    that, every stop at a crossing puts a bus out of step.
+  - **The crossings** (`CROSSINGS`, `crossing_at`): Hajun's four, one at
+    each corner of the ring (the diagonals), 57.5 m out, each 8 m along the
+    road and 24.3 m across both its halves; a test holds the rules to the
+    map's paint (`roads`, `the_crossings_bridge_wars_buses_stop_at_...`).
+    **On one** is the middle of a body on the paint or within 0.2 m of it
+    (`CROSSING_GRACE`, mine: feet on its edge), feet no higher than a bus
+    hits. **Who counts**: anyone of the players standing in the fight, a
+    person, one of the computer's, or whoever's device has gone and stands
+    there; not anyone riding a bus over it; **not a zombie** (mine:
+    "person", "player"), which a bus goes over as it goes over anyone on
+    the road.
+  - **Stopping** (`Buses::drive`, on the server for every game, in every
+    stage, and offline on the device; my numbers): a bus that has someone
+    on the next crossing ahead of it slows at 6 m/s² (`BUS_BRAKE`; 17 m
+    and 2.4 s from full speed) to stand with its front 1.5 m short of the
+    crossing (`BUS_STOP_SHORT`, the town's); for someone who steps on
+    later, harder, as hard as it takes; with its front past where it would
+    stop already, at once, where it is. **It never drives onto a crossing
+    anyone is on.** **The whole crossing holds it** (my reading of "on the
+    crosswalk"): someone on the inner half's part stops the outer half's
+    buses too, as a person on a crossing does on a real road. It stands
+    while anyone is on it, and goes on as nobody is, to full speed in 3.6
+    s (`BUS_GATHERS`, 4 m/s²). **Someone who stays on a crossing holds
+    every bus coming to it for as long as they stay** ("until they cross
+    it"); no time limit was put in.
+  - **Nobody on a crossing is run over** (the device's word for you, the
+    server's for those it moves, offline the device's for everyone;
+    `crossing_at` asked first). **Off a crossing nothing has changed**: in
+    the lane, in front of a bus, you are run over as before, and a bus
+    gathering speed again runs over whoever is in front of it.
+  - **The buses go no longer by the clock alone** (it was a closed form
+    the server and every device worked out for themselves): how each is
+    going is a `Leg` (from when, how far round, how fast, how quickly
+    speeding up or slowing), the four of them `Buses`, a component on the
+    game's entity that the server sends whenever one changes: a bus
+    beginning to slow, braking harder, or going on. Nothing is sent while
+    they drive on. Each device puts them where their legs have them by the
+    town's clock (`car::ArenaBuses`); where one was a moment ago (a rider's
+    place, someone's word that one ran them over) is kept for the last few
+    legs (`BusLog`).
+  - **Online, a moment late**: the server sees you on a crossing a
+    fifteenth of a second after you step on, and your device hears of the
+    bus braking after the trip back. Stepping on just in front of a bus,
+    your device may draw it up to a metre or two further on before the
+    server's word puts it back where it stopped. You are never run over for
+    it: your device says nothing of you on a crossing.
+  - **The computer's players** (`Squad::mind_buses`, now `mind_bus` for
+    each lane): each lane's bus minded as its own, with what each one makes
+    of it thrown for that lane (`Bot::road`, one per lane), out of the way
+    of whichever is coming at it, waiting short of any it is about to step
+    in front of; one standing at a crossing taken to go on at any moment;
+    nothing minded on a crossing. **Not done**: they do not go to a
+    crossing to cross the road.
+  - **What it comes to**, over 96 games of the computer alone played out by
+    the tests: 2.57 of them run over a game (1.1 with the two buses on one
+    lane), 0.04 killed by it; nobody in 10 games of 96, nine at the most in
+    one; they step into where a bus sweeps 542 times a game (157 before:
+    four lanes are most of the road), 18.5 of them with that lane's bus due
+    within a second and a half.
+  - **Checked.** The rules' tests (109: four lanes, two each way, at full
+    speed, the kerb on each bus's right; a leg's slowing, standing and
+    gathering speed; what is kept of how they went; every lane's bus
+    standing short of a crossing someone is on, no harder than it gently
+    brakes and never on it, staying, going on to full speed; a lap of every
+    lane with nobody on a crossing, nothing changed; someone stepping on
+    late and someone stepping on in front of a bus already at the crossing;
+    a crossing passed holding nothing; on a crossing and off one; the bands
+    a bus sweeps), the server's (61, two changed and one new: a person on a
+    crossing from the start of a fight stops all four, run over by none,
+    and off it they go on), the game's (320, one new: the rules' crossings
+    are the map's paint). **In the desktop build, hidden**, offline, by a
+    throwaway taken out again: held on the first crossing, the camera 70 m
+    up, all four slowed and stood short of it within 22 s, two each side,
+    none on its stripes (looked at close), 12 to 17 m from its middle, for
+    as long as I stood there; off it, all four went on, at full speed in
+    four seconds; in front of a bus on the road off the crossings, run over
+    as before (20 off, flat). **Against a server on this PC**, one hidden
+    copy: the same, the server stopping each as it came (the one that had
+    passed before I got there came round and stopped too), at the same
+    places, and all four on again as I left. **On the VM after the
+    deploy**: its binary the same bytes as the one built here, the service
+    active, this PC's own account online on it. **Not**: a phone; two
+    devices watching the same buses; riding a bus over a crossing; a zombie
+    run over on a crossing in a game.
+  - **Offered, not done**: the computer's players walking to a crossing to
+    cross; a most a bus waits for someone who stays on a crossing; the
+    lanes all one way; zombies stopped for; the buses on the minimap.
+- **Later on the night of 2026-11-16 a game is twenty minutes with no
+  clock until its last ten seconds, the anchors break at 14:00, and from
+  15:00 zombies that nothing hurts come a few and then more, to fifty,
+  which the computer's players run from** (Hajun, having looked on at a
+  game's fifteenth minute, the entry under this one: "huh ok i saw it. but
+  how fast are the zombies? the ai tries to attack the zombies instead of
+  running away huh?", and told that it did: "ok i dont want the 25min
+  timer to be displayed during game, and i want it to be 20min instead of
+  25min like i updted bridgewarsgaemeevent.md. and just at 19:30 just
+  notifying that the game will end in a draw in 30 seconds. and the timer
+  should only appear when its 10 second left. and at 14:00 is when the
+  spawn anchors break, and 15:00 is when the zombies spawn all over the
+  map, starting slow, and more and more spawn, exponentially until like
+  maybe max 50 zombies, and the ai should not try to attack the zombie,
+  but rather run from them or try to find other alive players and attack
+  while still running from zombie, cuz zombie should be invincible, and
+  maybe deal like 20 dmg per hit"). Hajun's file has the three lines: "14:00
+  Spawn Anchor destruction", "15:00 Sudden death: zombies spawn all over
+  the map starting slow, and more spawn, exponentially", "20:00 Game ends
+  in a draw". **`PROTOCOL_VERSION` 20**: nothing that is sent has changed
+  its shape, but the rules both sides go by have, and an app from before
+  would say the anchors broke at ten with a clock five minutes out. **The
+  server has it since 14:07 UTC on 2026-11-16, 23:07 here** (the binary
+  before kept on the VM as `roundtown-server.prev-2026-11-16e`), **and APK
+  39** (built, not installed; `docs/building.md`). **No tag was pushed for
+  the iPhone**, and nothing is committed as this is written: nobody asked
+  for either.
+  `shared/src/lib.rs` (the timetable, `zombies_at`, `zombie_spot`),
+  `shared/src/horde.rs` (new: the zombies' mind), `shared/src/bots.rs`
+  (`Squad::mind_zombies`), `server/src/arena.rs`, `src/arena.rs`
+  (`drive_zombies`, `show_board`), `src/arena/squash.rs`,
+  `src/arena/nav_bake.rs`, `src/ui.rs` and `assets/ui.ron`.
+  - **The timetable** (`bridge_wars::TIMETABLE`, `PLAY_SECS`,
+    `ANCHORS_BREAK`, `SUDDEN_DEATH`, `DRAW_SOON`): the generators' tiers
+    as they were; every anchor left breaks at 14:00, where it was 10:00;
+    sudden death begins at 15:00, as it did; at 19:30 everyone is told
+    "The game ends in a draw in 30 seconds." (`Happening::DrawSoon`,
+    `words.arena.draw_soon`), in the line the timetable's other things are
+    said in; and at 20:00 it is a draw, where it was 25:00.
+  - **No clock in the fight** (`show_board`, `CLOCK_FROM`): the board at
+    the top of the screen, the time and the game's name under it, is away
+    from "Fight!" until ten seconds are left, counts those, and is up for
+    the count at the end as it was, which is six. In the waiting room and
+    through the countdown it is as it was. (The press on it that skips a
+    wait, and in a fight ends the game, where the server allows it, goes
+    with it: it is not there to be pressed.)
+  - **The zombies come a few and then more** (`zombies_at`, `ZOMBIES`,
+    `ZOMBIES_FIRST`, `ZOMBIES_DOUBLE`; all twelve at once until now): two
+    at 15:00 and twice as many every 36 seconds, one at a time as that
+    goes up: a third at 15:21, four at 15:36, eight at 16:12, sixteen at
+    16:48, thirty two at 17:24, and all fifty by 17:47. **All over the
+    map** (`zombie_spot`): the first four in the middle, on the path
+    round the pond, the next four on the smaller islands, the next four
+    on the teams' islands, and round again, each round a little further
+    along the path or a fifth of the way round the pad or the island's
+    middle, and beginning with the next island on; so the middle has the
+    first of them and no one team's island each round's first.
+  - **One mind for the server's zombies and the device's**
+    (`roundtown_net::horde`, `Horde`), as the computer's players have one.
+    They differed until now: the server's kept each to the island it rose
+    on, having had no map when they were made, and the device's, offline,
+    had the mind every bot had before the computer's players had a brain
+    (`hunt`, walked by `move_bodies`). Now each goes for whoever of the
+    players is nearest within 24 m, never one who is unseen, straight at
+    them at 6 m/s (a run is 10), **over whatever a body can walk, a
+    bridge among it**, and never off an edge (`bots::Body::step`); stopped
+    by something, it turns to one side of straight for a moment, and then
+    the other; it keeps a little apart from the other zombies, so that
+    several come at someone side by side; with nobody in sight it shambles
+    about where it is. A blow at whoever is within its reach, no oftener
+    than every 0.8 s.
+  - **A zombie's blow is 20** (`ZOMBIE_DAMAGE`; a bare fist's 12 until
+    now), less what the victim's shield takes, as of any blow.
+  - **Nothing hurts one** (`Game::hurt_by` on the server; `deal_damage`,
+    `fireballs_offline`, `dynamites_offline`, `squash` on the device): a
+    blow, a fireball, a stick of dynamite take nothing off it, a bus lays
+    it flat for its ten seconds and no more. A blow or a blast still
+    knocks it, by three tenths of what it knocks anyone (`ZOMBIE_KNOCK`,
+    as before). **The void is the one way one is got rid of**, knocked
+    off an edge or with its bridge gone from under it, and it is up again
+    where it first rose twelve seconds later (`ZOMBIE_RESPAWN_SECS`, as
+    before). It has no bar over its head (`spawn_tag`), and a blow at one
+    puts no number up.
+  - **The computer's players leave them alone and run from them**
+    (`bots::Squad::step`, `mind_zombies`). A zombie is nobody to the rest
+    of the brain: the seats past the players' are left out of what a bot
+    is shown, so none is ever someone to fight, to stand guard against,
+    or to finish off where a bus has laid it. What a bot knows of them is
+    where they are. It goes about what it was at, a fight with someone
+    among it, until a zombie that could walk to it has come as near as it
+    lets one come **this time**: 4.5 to 10.5 m, thrown each time it has
+    got clear, nearer for the bolder and further for whoever minds being
+    put off the world, four fifths of it with a fight on its hands, and
+    6.5 m sooner for one it is going straight at (`DREAD`, `DREAD_BUSY`,
+    `DREAD_HEAD_ON`); and then not until it has seen it, 0.05 to 0.5 s
+    (`DREAD_WAKES`). Then it runs, whatever was at its mouth: of the
+    sixteen ways round, along whichever it can run straight and ends
+    furthest from every one of them with them coming on after it, rather
+    on the way it was running and the way it was going anyway, and by none
+    of them within a blow unless every way does; for 0.5 to 1.7 s at the
+    least and until it is 1.15 to 1.7 times as far off as it let them
+    come (`DREAD_RUNS`, `DREAD_CLEAR`). Whoever of the players is in its
+    reach as it runs it still hits. **And it no longer steps off the edge
+    once the zombies are about**, as one cut off from everything did after
+    a while with no anchor to come back to: out of everyone's reach is
+    then where anyone would be.
+  - **What it comes to, played out by the server's tests** (`many`, 48
+    games each; `RT_BEGIN=<seconds>` is new, a game begun late as the
+    server begins one with `RT_ARENA_FROM`):
+    - *From the start*: the computer's players alone are done at 12:13 on
+      average, 31 games of 48 before the anchors break and every one
+      before 15:00. **No game of the computer's alone came to sudden
+      death**: three anchors a game go to punches, and the teams go with
+      them. The zombies are for games that last, which is ones with
+      people in them. (It was no different with the anchors at 10:00,
+      which is why none had been seen.)
+    - *Begun at 14:40*, the eight fresh on their islands: over at 16:15
+      on average, by each other; half a player a game killed by a zombie,
+      there being eight of those at most by then.
+    - *Begun at 16:50*, sixteen zombies up at once and all fifty within a
+      minute: over at 18:22 on average, 4.6 of the eight killed by a
+      zombie and 2.1 put off the world; none drawn. Nobody got nowhere,
+      and nobody walked off an edge.
+    - One bot and one zombie on Hajun's map, half a minute, five kinds of
+      bot: in the middle never within its reach; on its own island, round
+      and round it, within its reach 39 frames of 1,800 at the most.
+  - **Calls that were mine.** The numbers of the curve, two and 36
+    seconds ("starting slow ... exponentially ... maybe max 50" is
+    Hajun's); where they rise and in what order. That they go wherever
+    they can walk, bridges too, rather than keep to the island they rose
+    on: nothing that cannot be hurt and cannot follow would be anything
+    to run from. That a blow still knocks one, the void still takes one,
+    and for twelve seconds. No bar and no number. That the board goes
+    whole, name and all, and is back for the count at the end. Every
+    number of how the computer's players run. That they do not step off
+    once zombies are about. Taking `hunt` out, with the two tests of how
+    it ran away, rather than leaving it beside what replaced it. The
+    protocol's number.
+  - **Not done, and worth knowing.** Someone standing out in the pond is
+    out of every zombie's reach, as they are out of the computer's
+    players': neither walks into water. A zombie finds no way round
+    anything but by trying each side. The computer's players do not cut
+    a bridge under zombies on purpose, and what they choose to do next
+    knows nothing of zombies: one turned back by them from where it was
+    going tries again. `arena.hunt_radius`, `bot_punch_every` and
+    `flee_below` in `assets/ui.ron` are read by nothing now (the file
+    says so beside them). Fifty-eight bodies in a game is more than the
+    town's thirty two, and what a phone makes of that is not known.
+  - **Checked.** Unit tests: the rules 107 (five new: the curve and the
+    places, the zombies' mind on the map, a bot and a zombie on the map),
+    the server 60, the game 318 (two fewer: the old runner's; the fifty
+    places tried against the map for ground, room and the shops'
+    outlines). Whole games, above. **The desktop build, hidden, by the
+    watched game of the entry under this one** and a throwaway that saved
+    pictures, taken out again: begun at 14:40, 17:40 and 19:20: no clock
+    in the fight; the zombies a few at a time, green, named, with no bar,
+    apart from each other; a blow of theirs a 20; the computer's players
+    running; "The game ends in a draw in 30 seconds."; the clock for the
+    last ten; the result's count. **Online, one hidden copy against a
+    server on this PC** begun at 16:40: a zombie the server moved came
+    for my body on its island and killed it, the chat said so, and the
+    panel that says you are out came up; no clock. After the deploy, this
+    PC's own account online on the VM (`docs/building.md` has that, and
+    a mistake of mine in it).
+  - **Not checked.** Anything on a phone. A game with people in it that
+    lasts to 15:00, let alone 20:00, on the VM. A person against zombies
+    by hand: how it is to be chased.
+
+- **Since the night of 2026-11-16 a game the computer plays alone can be
+  looked on at, on desktop: `RT_ARENA_WATCH=1`** (Hajun, asking what
+  happens at fifteen minutes and whether the zombies work, and told that
+  they do: "huh rly. run a test game on this computer. i want to not be a
+  real player, i want to just spectate a game of 8 ai bots fighting
+  against each other, and make it so it is time 14:00 so that 1min later
+  the zombie spawn i wana see from the view of an ai. like simulation").
+  `src/arena/watch.rs`, and what it hooks into in `src/arena.rs`,
+  `src/market.rs`, `src/lobby.rs`, `src/lib.rs`, `src/ui.rs` and
+  `assets/ui.ron`. The app's own, desktop only, offline only: nothing in
+  `shared/`, nothing a phone runs. **Not committed as this is written**:
+  nobody asked for a commit or an APK.
+  - **How it is run**: `RT_ARENA_WATCH=1 RT_SERVER=off RT_ARENA_FROM=840
+    cargo run` (`RT_ARENA_FROM` being how far into the timetable the fight
+    begins, in seconds, as before: 840 is 14:00). With `RT_FREE_CURSOR=1`
+    the mouse is left alone; `RT_ARENA_PURSE=<count>` gives each of the
+    eight that many of each thing to begin with.
+  - **It begins by itself** (`watch::enter`): a game is asked for a second
+    after the opening is over, the wait for others skipped, so that the
+    computer takes the seven seats left at once; the countdown is left as
+    it is. Nothing is skipped after it, a skip in the fight being the end
+    of the game (the clock's own press still is one).
+  - **Your seat is one of the computer's too.** The game is the game
+    played offline, eight seats and yours among them, so there are eight
+    of the computer's players and nobody else. As the fight begins your
+    own body is given to the brain (`watch::possess`): it is made what the
+    seven others' are (`lobby::spawn_bot_at`), placed and not walked, with
+    neither an `Intent` nor a `Collider`, its walk read off how it is moved
+    (`Brained`, `WalkFromMotion`), and its seat is seated in the squad as
+    theirs are. What the game kept of yours alone it keeps of nobody
+    (`Game::watched`, `Game::mine`): your seat's player takes what it needs
+    of what lies within its reach and holds it in the brains' purse as the
+    others do (`drive_bots`), and drops it or loses it to its killer as
+    they do (`Game::slain`, `run_down`, `spoils`); nothing is gathered for
+    you, nothing lost as you die, no button of yours uses anything, no
+    shop opens for where it stands (`Fighting::watched`, `market`), and
+    nothing says you are out. As the game goes your body is your own
+    again, and you are in the town.
+  - **The view** is your seat's player's to begin with, from straight
+    overhead as ever. **Tab is the next player's** (`watch::look`), and
+    whoever is watched and is out for good, the view goes to the next
+    still in the game by itself: the camera is put where it would be were
+    you standing where they are (`crate::Lookout`, read by
+    `follow_camera`; nothing else of yours is moved). Whose view it is is
+    written along the bottom of the screen, "Watching xd · Tab: next
+    player" (`words.arena.watching`). **What is top left stays your own
+    seat's player's**, whoever is watched: its name, its health, and what
+    it holds, which is the brain's purse shown where yours would be
+    (`watch::purse`); so do the buttons for what it has bought.
+  - **What a game begun at 14:00 is.** Everything before then on the
+    timetable happens as the fight begins, as `RT_ARENA_FROM` has always
+    had it: both generators at their third tier, and **every anchor
+    broken**. So every death is for good from the first, and the eight,
+    who each begin with the file's metres of bridge and are in the middle
+    of the map inside half a minute, are few by 15:00. Of the four games
+    played out here: one with thirty of everything each was won at 14:58,
+    two seconds before the zombies; of the three begun bare, four of the
+    eight were dead by 15:00 in two of them, and those games were over at
+    15:17 and 15:11, the zombies having killed three in twelve seconds in
+    the last, which is the one Hajun looked on at. The zombies do rise at
+    15:00, twelve of them, green, one on each team's island, one on each
+    of the smaller islands and four in the middle, "Sudden death! Zombies
+    are loose on the map." across the screen; each goes for whoever is
+    near, is killed as anyone is, and is up again twelve seconds later.
+    A game begun later (`RT_ARENA_FROM=880`, forty seconds of fighting
+    less before them) has more of the eight left for them.
+  - **A mistake of mine on the way, put right before anything was shown**:
+    the first hook left the whole of `gather` out of a watched game, and
+    `gather` is what runs the generators too, so nobody was given anything
+    and all eight purses stood at nothing for a minute; seen by writing
+    every purse to the log, which showed it was no one seat's trouble.
+    Only your own taking is left out now.
+  - **Calls that were mine**: that your seat is played by the computer,
+    rather than you standing by as a ninth nobody can see (the game has
+    eight seats, and this way everything it draws for a seat is drawn for
+    the one watched first); Tab, and the view moving on by itself; that
+    the top left stays the first one's; the words; that `RT_ARENA_PURSE`
+    is everyone's in a watched game; `RT_UNFOCUSED=1`, a window shown but
+    not made the active one (below).
+  - **Checked**, in the desktop build: five hidden runs (`RT_BACKGROUND=1`)
+    by a throwaway that saved a picture every few seconds, taken out
+    again: the game begun by itself, the view over a player that buys,
+    bridges, fights and dies; Tab and the view moving on; the label; the
+    zombies rising and fighting on a team's island; the end, and the
+    town after it with the stick your own again. And **one run in a
+    window for Hajun to look on at**, begun at 14:00: four dead by 15:00,
+    the zombies at 15:00, Team Green's at 15:11. Unit tests: the game's 320 pass with it in (none of
+    them new: what it does is in the running game). The iPhone's code
+    type-checks with it (`bash mobile/ios/check_on_windows.sh`).
+  - **Not checked**: `RT_UNFOCUSED=1` holding. The window for Hajun was
+    made with it, so that it should not take the keys from whatever was
+    being typed into (winit is told not to activate it, as it is for a
+    hidden one); five seconds after it came up it was the window in
+    front, and whether it took that or was clicked I cannot tell from
+    here. A game looked on at for its whole twenty-five minutes; the plank
+    in the arms of your seat's player as it builds (`bridge` has its own
+    say over what you carry); anything by hand.
 
 - **Since the evening of 2026-11-16 two buses drive round the middle of
   the map and run over whoever is in front of one, who lies flat on the

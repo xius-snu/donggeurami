@@ -13,10 +13,17 @@
 //! bus trying to go in the bus from the side, only the front of the bus
 //! should squish. this goes for ai too").
 //!
-//! The buses themselves are `car`'s (`car::Lapping`): the town's bus, two
-//! of them, round the ring of road round the pond in the middle of the map
-//! by the clock, where the rules have them
-//! (`roundtown_net::bridge_wars::Bus`), which the server has too.
+//! The buses themselves are `car`'s (`car::Lapping`): the town's bus, one
+//! to each of the four lanes of the ring of road round the pond in the
+//! middle of the map since 2026-11-17 (two on its outside lane the day
+//! before), going as the game has them (`roundtown_net::bridge_wars::Buses`,
+//! [`steer_buses`]): online as the server sends it, offline as this device
+//! drives them itself. **A bus stops short of a crossing while anyone of
+//! the players is on it** (Hajun: "the bus will stop before the crosswalk
+//! if there is a person on the crosswalk until they cross it ... It will
+//! not stop for ppl who are not on the crosswalk but rather on the road
+//! and go over them like now"), and none runs over anyone of the players
+//! who is on one; a zombie is not stopped for (mine).
 //!
 //! * **Who says someone has been run over** ([`run_over`]). Your own
 //!   device says it of you, online or off: it is where your body and the
@@ -45,10 +52,10 @@
 //!   (`Feed::RunOver`).
 
 use roundtown_net::Flattened;
-use roundtown_net::bridge_wars::{BUS_ROAD, SQUASH_DAMAGE, SQUASH_SECS};
+use roundtown_net::bridge_wars::{BUS_ROAD, Buses, SQUASH_DAMAGE, SQUASH_SECS, crossing_at};
 
 use super::*;
-use crate::car::Lapping;
+use crate::car::{ArenaBuses, Lapping};
 use crate::clock::TownClock;
 use crate::{Drinking, FLAT_BACK, FLAT_LIFT, FLAT_SQUASH, ForShow, Riding, Squashed, WalkBone};
 
@@ -79,6 +86,8 @@ struct Laid {
 }
 
 pub(super) fn plugin(app: &mut App) {
+    // Before the buses are put where they are going.
+    app.add_systems(PreUpdate, steer_buses.before(crate::car::drive));
     app.add_systems(
         Update,
         (
@@ -108,6 +117,45 @@ fn hurt_offline(game: &mut Game, seat: usize, at: Vec3, health: &mut Health, fed
     }
     game.run_down(seat, at);
     Some(game.die(seat))
+}
+
+/// How the buses are going in the game you are in ([`ArenaBuses`], since
+/// 2026-11-17): online, as the server last sent it; offline, as this
+/// device drives them, by the town's clock, each thrown round its lane as
+/// the game is first looked at and stopping short of the next crossing
+/// ahead of it that any of the players is on, for as long as they are
+/// (`Buses::drive`): standing, not riding a bus, nor dead. Not a zombie.
+#[allow(clippy::type_complexity)]
+fn steer_buses(
+    game: Option<ResMut<Game>>,
+    town: Res<TownClock>,
+    sent: Query<&Buses, (With<Remote>, Changed<Buses>)>,
+    bodies: Query<(&Transform, &Venue, &Seat, Option<&Riding>), (With<WalkCycle>, Without<Dead>, Without<ForShow>)>,
+    mut log: ResMut<ArenaBuses>,
+) {
+    let Some(mut game) = game else {
+        return;
+    };
+    if game.online {
+        for buses in &sent {
+            log.0.take(buses);
+        }
+        return;
+    }
+    let clock = town.now();
+    let mut crowded = [false; 4];
+    for (place, &venue, seat, riding) in &bodies {
+        if venue != Venue::Arena || seat.0 >= ARENA_SEATS || riding.is_some_and(|riding| riding.0.is_some()) {
+            continue;
+        }
+        if let Some(crossing) = crossing_at(place.translation) {
+            crowded[crossing] = true;
+        }
+    }
+    let buses = game.buses.get_or_insert_with(|| Buses::new(clock, &mut || fastrand::f32()));
+    buses.drive(clock, crowded);
+    let buses = *buses;
+    log.0.take(&buses);
 }
 
 /// Has each bus run over whoever its front has come to, of those this
@@ -163,6 +211,10 @@ fn run_over(
         if !ours || aboard {
             continue;
         }
+        // On a crossing, one of the players is stopped for, not run over.
+        if seat.0 < ARENA_SEATS && crossing_at(now).is_some() {
+            continue;
+        }
         let Some(bus) = buses.iter().find(|bus| bus.now.runs_over(&bus.then, was, now, PLAYER_RADIUS)) else {
             continue;
         };
@@ -194,7 +246,9 @@ fn run_over(
             commands.entity(body).remove::<Drinking>().insert(Squashed { left: SQUASH_SECS });
             continue;
         }
-        let dead = health.and_then(|mut health| {
+        // (Nothing hurts a zombie: one a bus runs over is laid flat, and
+        // no more.)
+        let dead = health.filter(|_| seat.0 < ARENA_SEATS).and_then(|mut health| {
             let before = health.left;
             let dead = hurt_offline(&mut game, seat.0, now, &mut health, &mut fed);
             spawn_number(&mut commands, now, before - health.left);

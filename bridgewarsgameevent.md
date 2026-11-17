@@ -10,11 +10,11 @@
 
 8:00   Amethyst III (max)
 
-10:00  Spawn Anchor destruction: all remaining spawn anchors break
+14:00  Spawn Anchor destruction: all remaining spawn anchors break
 
-15:00  Sudden death: zombies spawn all over the map
+15:00  Sudden death: zombies spawn all over the map starting slow, and more spawn, exponentially
 
-25:00  Game ends in a draw
+20:00  Game ends in a draw
 
 ##### 
 

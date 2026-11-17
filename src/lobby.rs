@@ -208,6 +208,13 @@ pub(crate) struct WalkFromMotion {
     on: Option<Entity>,
 }
 
+impl WalkFromMotion {
+    /// For a body standing `at`, on no car.
+    pub(crate) fn standing(at: Vec3) -> Self {
+        Self { last: at, on: None }
+    }
+}
+
 pub(crate) fn plugin(app: &mut App) {
     // Who you are, as you signed up (`signup`, which comes before this), if
     // you have.

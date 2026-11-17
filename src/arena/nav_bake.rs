@@ -104,9 +104,15 @@ fn bake() -> Grid {
         let at = island::arrival(Venue::Arena, seat).translation.xz();
         seeds.push((at, Region::Team(arena_team(seat))));
     }
+    // (Each of the smaller islands 4 m from its pad toward the middle of
+    // the map, and the path round the pond between the roads out: where
+    // the zombies numbered 4 to 11 came up until the night of 2026-11-16,
+    // which is what these were read off until then.)
     for island in 0..4 {
-        seeds.push((rules::zombie_spot(4 + island), Region::Sapphire(island as u8)));
-        seeds.push((rules::zombie_spot(8 + island), Region::Middle));
+        let pad = roundtown_net::SAPPHIRE_PADS[island];
+        seeds.push((pad - pad.normalize() * 4.0, Region::Sapphire(island as u8)));
+        let angle = island as f32 * std::f32::consts::TAU / 4.0 + std::f32::consts::TAU / 8.0;
+        seeds.push((Vec2::from_angle(angle) * roundtown_net::TOWN_ARRIVAL_RADIUS, Region::Middle));
     }
     seeds.push((Vec2::ZERO, Region::Pocket));
 

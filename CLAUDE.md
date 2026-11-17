@@ -11,12 +11,13 @@ bundles). It plays online against a server in Seoul (`server/`; `shared/` is
 Bridge Wars. House Builder, the build-battle game, is stalled: keep it
 working, and spend nothing on it unasked.
 
-As of the evening of 2026-11-16: `PROTOCOL_VERSION` 19, APK 38
-(`versionCode`), the server deployed then (09:32 UTC) with everything in
-`server/` and `shared/`. The iPhone's last tag, `ios-1.0.2-18`, pushed in
-the first hour of that day (whether Codemagic built it is not known here),
-is protocol 18: its build is told to update and stays offline until
-`ios-1.0.2-19` is built, whose tag is Hajun's to ask for.
+As of 2026-11-17: `PROTOCOL_VERSION` 21, APK 40 (`versionCode`), the
+server deployed then (07:05 UTC) with everything in `server/` and
+`shared/`, all of it committed and pushed. The iPhone's last
+tag, `ios-1.0.2-18`, pushed in the first hour of 2026-11-16 (whether
+Codemagic built it is not known here), is protocol 18: its build is told to
+update and stays offline until `ios-1.0.2-19` is built, whose tag is
+Hajun's to ask for.
 
 ## This file, and where the rest is
 
@@ -189,6 +190,10 @@ to try again.
   `RT_SIGNUP=1`, `RT_TIME_OF_DAY`, `RT_CAR_AT`, `RT_CLOCK_OFF`,
   `RT_ARENA_FROM=<seconds>`, `RT_ARENA_PURSE=<count>`,
   `RT_ARENA_TEAM=red|blue|green|yellow` (offline),
+  `RT_ARENA_WATCH=1` (offline: a game of Bridge Wars begun by itself and
+  played by the computer alone, your seat too, to look on at; Tab is the
+  next player's view; `src/arena/watch.rs`), `RT_UNFOCUSED=1` (the
+  window shown but not made the active one),
   `RT_SAFE_AREA=<left>,<right>` (a camera's hole made up),
   `RT_BACKGROUND=1` (below). Two copies need
   their own `APPDATA`. A server on this PC: `RT_PORT=5443
@@ -318,11 +323,11 @@ to try again.
 
 ## The lobby, Round Town, as it stands
 
-- The app opens under a black cover that lifts once the town is loaded,
-  and you drop into it (`src/intro.rs`). The cover says "Loading..." over
-  a bar that fills (Hajun's `loadingscreendesign.png`; its colours and
-  word `colours.intro`, `words.loading`). No menu. Everyone arrives on the
-  path round the pond (`roundtown_net::arrival`), facing the fountain.
+- The app opens under a plain black cover that fades once the town is
+  loaded (`src/intro.rs`, since 2026-11-17); the "Loading..." bar and the
+  drop through a circle are turned off (`SAYS_LOADING`, `DROPS_IN`). No
+  menu. Everyone arrives on the path round the pond
+  (`roundtown_net::arrival`), facing the fountain.
 - The town holds 32 bodies: whoever is in your channel (16 people to one)
   and this device's own AIs for the rest (`lobby.rs`, `ai.rs`). An AI is a
   player whose `Intent` comes from `ai::Steering`; it never steps down what
@@ -380,7 +385,8 @@ and the game is as that file has it. The rules both sides play by are
   150 m over the map; ten seconds after the last person joins the computer
   takes the seats left, its players coming in one at a time and going
   about the room each as who it is (`bots::mingle`, `BOT_GAP`); a
-  countdown; 25 minutes. **Which team anyone is on is drawn nowhere until
+  countdown; 20 minutes, with no clock on the screen until the last ten
+  seconds (`show_board`). **Which team anyone is on is drawn nowhere until
   "Fight!"** (`Fighting::teams_out`: names in the colour of words, no bar
   over a head, no teammate on the minimap, and where anyone stands in the
   room thrown, not their seat's). **Always 2v2v2v2**: eight
@@ -396,8 +402,17 @@ and the game is as that file has it. The rules both sides play by are
   the map, they are built.
 - **Winning**: each island has its team's anchor. With it standing, the dead
   come back in 4 s; with it broken, they are out. The last team with anyone
-  in play wins. At 10:00 every anchor breaks, at 15:00 zombies rise, at
-  25:00 it is a draw; the generators quicken on the way (`TIMETABLE`).
+  in play wins. At 14:00 every anchor breaks; from 15:00 zombies come, two
+  and then twice as many every 36 s, to fifty, all over the map
+  (`zombies_at`, `zombie_spot`); at 19:30 everyone is told the end is
+  coming, and at 20:00 it is a draw; the generators quicken on the way
+  (`TIMETABLE`).
+- **Zombies** (`roundtown_net::horde`, one mind for the server and for
+  offline): each goes for whoever of the players is nearest that it can
+  see, at 6 m/s, over anything that can be walked, a bridge too, and hits
+  for 20. **Nothing hurts one**: a blow or a blast only knocks it a
+  little, a bus lays it flat, and the void alone takes it, for 12 s. No
+  bar over its head.
 - **Dying** takes all you hold (the four resources, your sword, what is on
   your buttons, your metres of bridge) and leaves your shield and team's
   upgrades. Killed on land, your sapphire and amethyst are thrown out
@@ -439,8 +454,10 @@ and the game is as that file has it. The rules both sides play by are
   on it, stands at its shops or goes out to look about with nothing to do
   (`Goal::Scout`), throws what a raid is for as it lands (`Aim`: the
   anchor, the people, the pad), may build a way its team could do without
-  (`Squad::scheme`), and runs off a bridge that is coming down
-  (`Squad::mind_falling`). **Hajun's rule for them: nothing
+  (`Squad::scheme`), runs off a bridge that is coming down
+  (`Squad::mind_falling`), and never fights a zombie but runs from one
+  that comes near, hitting whoever of the players it passes
+  (`Squad::mind_zombies`). **Hajun's rule for them: nothing
   is a definite if-then; every threshold is a spread, thrown again.** How
   hard they play is `Skill::MODERATE`. Tune by whole games: `cargo test -p
   roundtown_server many -- --ignored --nocapture` (`RT_GAMES`, `RT_SEED`,
@@ -458,12 +475,16 @@ and the game is as that file has it. The rules both sides play by are
 - The camera is fixed straight overhead, 15.5 m up, and nothing zooms it
   (`arena.camera_height`). Top right a minimap (`src/minimap.rs`), each
   team's island lined in its colour; top left your name in your team's.
-- **Two buses** drive round the ring road in the middle of the map, the
-  town's bus, a lap every 30 s (14.2 m/s, twice the town's), half a lap
-  apart, by the clock (`bridge_wars::Bus`, which the server has too;
-  `car::Lapping`). **A bus's front runs over whoever it comes to**, never
-  anyone at its side or riding it: 20 off their health and flat on the
-  road for 10 s (`arena::squash`, `crate::Squashed`, `Game::run_over`),
+- **Four buses**, the town's bus, one to each lane of the ring road round
+  the pond, the outer half anticlockwise and the inner clockwise, at 14.2
+  m/s (twice the town's), each thrown round its lane every game
+  (`bridge_wars::LANES`, `Buses`). **Each stops short of a crossing while
+  anyone of the players is on it**, and goes on as nobody is (the four
+  `CROSSINGS`, `Buses::drive`); the server runs them and sends how they go
+  as that changes (`Leg`), offline the device does (`car::ArenaBuses`,
+  `squash::steer_buses`). **A bus's front runs over whoever it comes to**
+  off a crossing, never anyone at its side or riding it: 20 off their
+  health and flat on the road for 10 s (`arena::squash`, `crate::Squashed`, `Game::run_over`),
   unable to do anything, hit as anyone is but knocked nowhere, and not run
   over again until they are up. Your own device says it of you
   (`Ask::RunOver`), the server of the computer's players, zombies and

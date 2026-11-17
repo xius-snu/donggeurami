@@ -562,6 +562,10 @@
             team_green: "Green",
             team_yellow: "Yellow",
             your_team: "You are on {team}",
+            // Along the bottom of the screen, in a game the computer plays
+            // alone for looking on at (RT_ARENA_WATCH on desktop): whose
+            // view it is.
+            watching: "Watching {name} · Tab: next player",
             // The panel when you are dead with your anchor gone, and the
             // headlines as an anchor breaks, another team's and your own.
             out: "You're out!",
@@ -591,6 +595,8 @@
             tier_up: "{item} generators have been upgraded to Lvl {level}.",
             anchors_broken: "All respawn anchors have been destroyed.",
             sudden_death: "Sudden death! Zombies are loose on the map.",
+            // At 19:30, half a minute before the game's time is up.
+            draw_soon: "The game ends in a draw in {seconds} seconds.",
             draw: "The game is a draw.",
             // Over each sapphire and amethyst generator, its level
             // ({level} is 1, 2 or 3), and under it the seconds to its next
@@ -908,10 +914,10 @@
     // (one punch in hurt_time, above), gets regen_per_sec of it back a
     // second once nobody has hit them for regen_after seconds, and at none
     // is dead for respawn_secs before standing again in the middle of
-    // their island; a bot goes for whoever is within hunt_radius metres of
-    // it and punches no oftener than every bot_punch_every seconds, and
-    // runs away from whoever is nearest while it has less than flee_below
-    // of its health (a share, 0 to 1). Falling off the map is death too,
+    // their island. (hunt_radius, bot_punch_every and flee_below are read
+    // by nothing since the night of 2026-11-16: they were the zombies'
+    // offline, whose sight, blows and pace are the rules' own now, as the
+    // server's are, with a blow of 20.) Falling off the map is death too,
     // fall_to_die metres below it. Each team's respawn anchor, the purple
     // pillar on its island, starts with anchor_health: ten punches
     // (2026-11-09; twenty the day before); broken, its team's dead stay

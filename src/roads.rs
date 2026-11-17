@@ -3216,6 +3216,26 @@ pub(crate) mod pvp_town_tests {
     }
 
     #[test]
+    fn the_crossings_bridge_wars_buses_stop_at_are_the_ones_painted_on_its_map() {
+        use roundtown_net::bridge_wars::{CROSSING_ACROSS, CROSSING_ALONG, CROSSING_OUT, CROSSINGS, crossing_at};
+        // Four, one at each corner of the ring round the pond, across both
+        // its halves (Hajun: "there are 4 crosswalks"): the rules', which
+        // the server goes by with no map, to the centimetre.
+        let (_, _, markings) = pvp_town();
+        let painted = crossings_painted(&markings);
+        assert_eq!(painted.len(), 4, "{painted:?}");
+        for crossing in &painted {
+            let round = (-crossing.middle.y).atan2(crossing.middle.x).rem_euclid(TAU);
+            let near = CROSSINGS.iter().position(|&at| (at - round).abs() < 0.01).expect("a crossing the rules have");
+            assert!((crossing.middle.length() - CROSSING_OUT).abs() < 0.02, "{crossing:?}");
+            assert!((crossing.half - Vec2::new(CROSSING_ALONG, CROSSING_ACROSS)).abs().max_element() < 0.02, "{crossing:?}");
+            // Its stripes lie along the road.
+            assert!(crossing.along.dot(crossing.middle.normalize()).abs() < 0.01, "{crossing:?}");
+            assert_eq!(crossing_at(Vec3::new(crossing.middle.x, 0.02, crossing.middle.y)), Some(near));
+        }
+    }
+
+    #[test]
     fn in_the_pvp_town_the_buses_go_round_the_ring_round_the_pond_and_nowhere_else() {
         // The town's only roads are the two halves of the ring round its
         // pond, 44 to 56 m out and 59 to 71, each a ring of its own with

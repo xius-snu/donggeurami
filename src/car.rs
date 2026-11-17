@@ -29,14 +29,16 @@
 //! the rider on the car as they see it (`net`): two people riding one are
 //! seen riding it, and nobody is seen gliding along the road beside it.
 //!
-//! **And two more of the bus drive round the middle of Bridge Wars' map**
+//! **And more of the bus drive round the middle of Bridge Wars' map**
 //! (since 2026-11-16; Hajun: "in the bridge wars minigame map, i want 2
-//! buses to go 2x normal speed around the road"; [`Lapping`]): cars like
-//! the town's in everything but where they go, which is no road read off
-//! a map but a ring by the clock that the server has too
-//! (`roundtown_net::bridge_wars::Bus`), because there a bus runs over
-//! whoever is in front of it (`arena::squash`), and the server has no map
-//! to read a road off. They are numbered on from the town's
+//! buses to go 2x normal speed around the road"; four since 2026-11-17,
+//! one to each lane, which stop short of a crossing anyone is on;
+//! [`Lapping`]): cars like the town's in everything but where they go,
+//! which is no road read off a map but a lane round the ring, as the game
+//! has them going (`roundtown_net::bridge_wars::Buses`, [`ArenaBuses`]),
+//! which online is the server's, because there a bus runs over whoever is
+//! in front of it (`arena::squash`), and the server has no map to read a
+//! road off. They are numbered on from the town's
 //! (`roundtown_net::bridge_wars::FIRST_BUS`), stood on and ridden as the
 //! town's are, and stand on [`Venue::Arena`].
 
@@ -52,7 +54,7 @@ use bevy::tasks::futures::check_ready;
 use bevy::tasks::{AsyncComputeTaskPool, Task};
 use bevy::world_serialization::WorldInstanceReady;
 
-use roundtown_net::bridge_wars::{BUSES, Bus, FIRST_BUS, bus_speed};
+use roundtown_net::bridge_wars::{BUSES, Bus, BusLog, FIRST_BUS, LANES};
 
 use crate::clock::TownClock;
 use crate::island::{self, Island, Islands, Venue};
@@ -106,9 +108,18 @@ impl Car {
 /// to this file.
 pub(crate) const ARENA_BUS: &str = "mybuilds/bus.glb";
 
+/// How Bridge Wars' buses are going in the game you are in, and how they
+/// have gone the last few seconds (since 2026-11-17,
+/// `roundtown_net::bridge_wars::Buses`): online as the server sends it,
+/// offline as this device has its own game's go (`arena::squash`). What
+/// they are put where they are by ([`drive`]); nothing before a game has
+/// had any.
+#[derive(Resource, Default)]
+pub(crate) struct ArenaBuses(pub(crate) BusLog);
+
 /// One of the buses that go round the middle of Bridge Wars' map: which,
-/// from 0, and where the rules have it this frame and had it the frame
-/// before ([`Bus`]), by the same clock it is drawn by, for whoever asks
+/// from 0, and where the game has it this frame and had it the frame
+/// before ([`Bus`], [`ArenaBuses`]), by the same clock it is drawn by, for whoever asks
 /// whether its front has come to them (`arena::squash`); and that clock,
 /// in seconds since 1970, as of this frame, for whoever else is to go by
 /// the very same (the computer's players of a game played offline). On a
@@ -278,6 +289,7 @@ struct TownRoads {
 
 pub(crate) fn plugin(app: &mut App) {
     app.insert_resource(CarClock::from_env())
+        .init_resource::<ArenaBuses>()
         .add_observer(read_roads)
         .add_systems(Startup, spawn_cars)
         .add_systems(PreUpdate, drive)
@@ -430,9 +442,9 @@ fn spawn_cars(assets: Res<AssetServer>, mut commands: Commands) {
             ))
             .observe(read_car);
     }
-    // And Bridge Wars' two, numbered on from the town's.
+    // And Bridge Wars' four, numbered on from the town's.
     for bus in 0..BUSES {
-        let nowhere = Bus::at(bus, 0.0);
+        let nowhere = Bus::on(&LANES[bus], 0.0);
         commands
             .spawn((
                 Name::new("Bridge Wars bus"),
@@ -658,14 +670,15 @@ pub(crate) fn heading(way: Vec2) -> f32 {
 /// before for whoever is riding it, and on the town, the first time. Only
 /// what has changed is written.
 ///
-/// One of Bridge Wars' buses ([`Lapping`]) is put where the rules have it
-/// by the town's clock itself (`Bus::at`), whatever `RT_CAR_AT` says and
-/// whether or not the town's way round has been worked out, and on
-/// Bridge Wars' map: while you are on it, there being nobody to move them
-/// for otherwise.
-fn drive(
+/// One of Bridge Wars' buses ([`Lapping`]) is put where the game has it
+/// going ([`ArenaBuses`]) by the town's clock itself, whatever `RT_CAR_AT`
+/// says and whether or not the town's way round has been worked out, and
+/// on Bridge Wars' map: while you are on it, there being nobody to move
+/// them for otherwise, and once a game has had any.
+pub(crate) fn drive(
     clock: Res<CarClock>,
     town: Res<TownClock>,
+    buses: Res<ArenaBuses>,
     route: Option<Res<Route>>,
     me: Query<&Venue, With<crate::Player>>,
     mut cars: Query<(Entity, &Car, &Hull, &mut Transform, &mut Driven, Option<&mut Lapping>, Option<&Venue>), Without<crate::Player>>,
@@ -686,7 +699,10 @@ fn drive(
             }
             Some(mut lapping) => {
                 let seconds = town.now();
-                let now = Bus::at(lapping.bus, seconds);
+                let Some((round, _)) = buses.0.going(lapping.bus, seconds) else {
+                    continue;
+                };
+                let now = Bus::on(&LANES[lapping.bus], round);
                 let then = if driven.placed { lapping.now } else { now };
                 *lapping = Lapping {
                     bus: lapping.bus,
@@ -694,7 +710,7 @@ fn drive(
                     then,
                     clock: seconds,
                 };
-                (Lapping::place(&now), seconds * f64::from(bus_speed()), seconds, Venue::Arena)
+                (Lapping::place(&now), round, seconds, Venue::Arena)
             }
             None => {
                 let Some(route) = route.as_ref() else {
@@ -942,6 +958,7 @@ fn turn_wheels(
 pub(crate) struct Cars<'w, 's> {
     route: Option<Res<'w, Route>>,
     clock: Res<'w, CarClock>,
+    buses: Res<'w, ArenaBuses>,
     cars: Query<'w, 's, (Entity, &'static Car, &'static Hull, &'static Driven)>,
 }
 
@@ -971,9 +988,9 @@ impl Cars<'_, '_> {
             .cars
             .iter()
             .find(|(_, car, _, driven)| car.number == number && driven.placed)?;
-        // One of Bridge Wars' buses was where the rules had it then.
+        // One of Bridge Wars' buses was where the game had it then.
         if let Some(bus) = number.checked_sub(FIRST_BUS) {
-            return Some(Lapping::place(&Bus::at(usize::from(bus), driven.seconds - ago)));
+            return self.buses.0.at(usize::from(bus), driven.seconds - ago).map(|bus| Lapping::place(&bus));
         }
         let route = self.route.as_ref()?;
         Some(place_at(route, hull, number, self.clock.before(driven.seconds, ago)).0)
@@ -1144,7 +1161,7 @@ pub(crate) mod tests {
 
     #[test]
     fn bridge_wars_bus_is_as_the_rules_have_it_and_all_of_it_on_the_road_all_the_way_round() {
-        use roundtown_net::bridge_wars::{BUS_HALF_LENGTH, BUS_HALF_WIDTH, BUS_LANE, BUS_LAP, BUS_ROAD, BUS_TALL};
+        use roundtown_net::bridge_wars::{BUS_HALF_LENGTH, BUS_HALF_WIDTH, BUS_ROAD, BUS_TALL};
         // The server has no model: what it goes by is the model's own
         // size, to the centimetre, made about the middle of its footprint
         // with its wheels on its own ground and its front toward -Z.
@@ -1159,29 +1176,34 @@ pub(crate) mod tests {
         // Its floor is where its doorways are walked in at, a step up.
         let floor = hull.shape.floor(Vec2::new(0.0, 0.5), 1.5).expect("a floor");
         assert!((0.4..0.495).contains(&floor), "{floor}");
-        // The model stands where the rules say, facing the way it goes.
-        let bus = Bus::at(0, 1.79e9 + 3.0);
-        let place = Lapping::place(&bus);
-        assert!(hull.facing(&place).distance(bus.way) < 1e-4);
-        let nose = place.outward(Vec3::new(0.0, 0.0, -BUS_HALF_LENGTH));
-        assert!(nose.xz().distance(bus.world(Vec2::new(0.0, BUS_HALF_LENGTH))) < 1e-3);
-        let kerb_side = place.outward(Vec3::new(1.0, 0.0, 0.0));
-        assert!(kerb_side.xz().length() > place.at.xz().length(), "its right is away from the pond");
+        // The model stands where the rules say, facing the way it goes,
+        // its doorways on the kerb's side: away from the pond in the
+        // outer half of the ring, toward it in the inner.
+        for lane in &LANES {
+            let bus = Bus::on(lane, 123.0);
+            let place = Lapping::place(&bus);
+            assert!(hull.facing(&place).distance(bus.way) < 1e-4);
+            let nose = place.outward(Vec3::new(0.0, 0.0, -BUS_HALF_LENGTH));
+            assert!(nose.xz().distance(bus.world(Vec2::new(0.0, BUS_HALF_LENGTH))) < 1e-3);
+            let kerb_side = place.outward(Vec3::new(1.0, 0.0, 0.0));
+            assert_eq!(kerb_side.xz().length() > place.at.xz().length(), lane.anticlockwise, "{lane:?}");
+        }
         // Where the town's own way of reading a road has a bus on that
-        // map is the rules' lane: the outside lane of the outer half of
-        // the ring.
+        // map is the rules' outside lane: the outside lane of the outer
+        // half of the ring.
         let (land, road, markings) = crate::roads::pvp_town_tests::pvp_town();
         let paint = Paint { land: &land, road: &road, markings: &markings };
         let route = Route::read(&paint, &hull.footprint(), 2).expect("a way round");
         for step in 0..200 {
             let out = route.at(route.lap() * f64::from(step) / 200.0).0.xz().length();
-            assert!((out - BUS_LANE).abs() < 0.05, "{out} m out");
+            assert!((out - LANES[0].out).abs() < 0.05, "{out} m out");
         }
-        // And all the way round, every part of the bus is over the road,
-        // level with its wheels: nothing of it over a kerb, the strip of
-        // grass, a lamp or the edge of the map.
-        for step in 0..720 {
-            let bus = Bus::at(0, BUS_LAP * f64::from(step) / 720.0);
+        // And all the way round every lane, every part of its bus is over
+        // the road, level with its wheels: nothing of it over a kerb, the
+        // strip down the middle, a lamp or the edge of the map.
+        for step in 0..(720 * LANES.len()) {
+            let lane = &LANES[step % LANES.len()];
+            let bus = Bus::on(lane, f64::from(lane.length()) * (step / LANES.len()) as f64 / 720.0);
             for across in [-1.0, -0.5, 0.0, 0.5, 1.0] {
                 for along in [-1.0, -0.6, -0.2, 0.2, 0.6, 1.0] {
                     let at = bus.world(Vec2::new(across * (BUS_HALF_WIDTH + 0.1), along * (BUS_HALF_LENGTH + 0.1)));

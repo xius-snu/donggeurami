@@ -1242,6 +1242,9 @@ pub(crate) struct ArenaWords {
     pub team_green: String,
     pub team_yellow: String,
     pub your_team: String,
+    /// Whose view it is, along the bottom of the screen, in a game the
+    /// computer plays alone (`arena::watch`).
+    pub watching: String,
     pub out: String,
     pub anchor_gone: String,
     pub anchor_destroyed: String,
@@ -1264,6 +1267,9 @@ pub(crate) struct ArenaWords {
     pub tier_up: String,
     pub anchors_broken: String,
     pub sudden_death: String,
+    /// Said half a minute before a game's time is up (`rules::DRAW_SOON`):
+    /// `{seconds}` is how long is left.
+    pub draw_soon: String,
     pub draw: String,
     /// Over a sapphire or an amethyst generator, its level (`{item}`,
     /// `{level}` as 1, 2 or 3), and under it the count to its next thing

@@ -49,6 +49,17 @@
 //! `animate_walk`), and the body drawn a little taller in the air and
 //! shorter as it lands.
 //!
+//! **Since 2026-11-17 the cover is plain black and fades** (Hajun: "Remove
+//! the initial loading sceen with the black background and the red
+//! loading button. Remove the initial loading falling down/landing
+//! animation or the circular expanding hole animation. Just make it stay
+//! on a empty black screen until the map/world is loaded, and then
+//! transition."): nothing on it while the town loads under it, no circle,
+//! no drop, and once the town is there it fades away over [`FADE_SECS`],
+//! you standing where you arrived. What said it was loading and the
+//! opening with the drop are turned off, not gone ([`SAYS_LOADING`],
+//! [`DROPS_IN`]). The town's name comes up as the cover goes, as it did.
+//!
 //! `RT_INTRO_SLOW=<times>` on desktop plays the opening that many times
 //! slower, for looking at it; `RT_INTRO=off` leaves all of it out, cover
 //! and all, for a scripted run that presses or looks from its first
@@ -75,6 +86,22 @@ use crate::{Landing, Player, ThirdPersonCamera, WalkBone, WalkBoneKind, car, ran
 /// loads under among them, and under the sign-up's pages (`signup`'s
 /// layer, 30): the cover, the circle that opens it, and the town's name.
 const LAYER: i32 = 25;
+
+/// Whether the cover says the town is loading, "Loading..." over a bar
+/// that fills (since 2026-11-16, [`Loader`]); and whether it opens as a
+/// circle about you as you drop in from over the screen and land in a
+/// squat (since 2026-11-13, [`pose`], [`hole`]), rather than fading. Both
+/// off since 2026-11-17 (Hajun: "Just make it stay on a empty black
+/// screen until the map/world is loaded, and then transition"): kept, to
+/// be turned on again.
+const SAYS_LOADING: bool = false;
+const DROPS_IN: bool = false;
+
+/// How long the cover takes to fade once the town is there, in seconds,
+/// slowly away, quickly through the middle and slowly out ([`fade`]); and
+/// when you can move: once it has gone. Mine (Hajun asked for a
+/// "transition").
+const FADE_SECS: f32 = 0.5;
 
 /// How long the town's name takes to come up as the cover begins to open,
 /// in seconds (on the cover itself as the app started, until 2026-11-16,
@@ -146,6 +173,8 @@ const DOWN_SECS: f32 = 0.06;
 const RISE_SECS: f32 = 0.32;
 /// When you are up, and can move.
 const UP_AT: f32 = FALL_SECS + SQUAT_SECS + DOWN_SECS + RISE_SECS;
+/// When you can move: up from the drop, or the cover gone.
+const FREE_AT: f32 = if DROPS_IN { UP_AT } else { FADE_SECS };
 
 /// How high over where you stand you fall from, in metres: over the top
 /// of the screen, from the camera as the app opens it. And how the fall
@@ -477,72 +506,74 @@ fn cover(
         BackgroundColor(colours.cover),
         GlobalZIndex(LAYER),
     ));
-    // What says it is loading, as Hajun drew it: the word in the middle of
-    // the screen, and along the bottom the bar, empty, with "0%" on it.
-    let round = BorderRadius::all(Val::Vh(BAR_ROUND));
-    commands.spawn((
-        Loader,
-        Name::new("Loading"),
-        Node {
-            position_type: PositionType::Absolute,
-            width: Val::Percent(100.0),
-            height: Val::Percent(100.0),
-            justify_content: JustifyContent::Center,
-            align_items: AlignItems::Center,
-            ..default()
-        },
-        GlobalZIndex(LAYER + 2),
-        Pickable::IGNORE,
-        children![
-            (
-                Text::new(file.words.loading.clone()),
-                crate::font::sized(LOADING_TEXT),
-                TextColor(colours.loading),
-                TextLayout::justify(Justify::Center),
-                Pickable::IGNORE,
-            ),
-            (
-                Node {
-                    position_type: PositionType::Absolute,
-                    left: Val::Vw(BAR_SIDE),
-                    right: Val::Vw(BAR_SIDE),
-                    bottom: Val::Vh(BAR_UP),
-                    height: Val::Vh(BAR_THICK),
-                    justify_content: JustifyContent::Center,
-                    align_items: AlignItems::Center,
-                    border_radius: round,
-                    ..default()
-                },
-                BackgroundColor(colours.bar),
-                Pickable::IGNORE,
-                children![
-                    (
-                        LoaderFill,
-                        Node {
-                            position_type: PositionType::Absolute,
-                            left: Val::ZERO,
-                            top: Val::ZERO,
-                            bottom: Val::ZERO,
-                            width: Val::Percent(0.0),
-                            min_width: Val::ZERO,
-                            border_radius: round,
-                            ..default()
-                        },
-                        BackgroundColor(colours.bar_fill),
-                        Pickable::IGNORE,
-                    ),
-                    (
-                        LoaderShare,
-                        Text::new("0%"),
-                        crate::font::sized(BAR_TEXT),
-                        TextColor(colours.bar_text),
-                        TextLayout::justify(Justify::Center),
-                        Pickable::IGNORE,
-                    ),
-                ],
-            ),
-        ],
-    ));
+    if SAYS_LOADING {
+        // What says it is loading, as Hajun drew it: the word in the middle of
+        // the screen, and along the bottom the bar, empty, with "0%" on it.
+        let round = BorderRadius::all(Val::Vh(BAR_ROUND));
+        commands.spawn((
+            Loader,
+            Name::new("Loading"),
+            Node {
+                position_type: PositionType::Absolute,
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                ..default()
+            },
+            GlobalZIndex(LAYER + 2),
+            Pickable::IGNORE,
+            children![
+                (
+                    Text::new(file.words.loading.clone()),
+                    crate::font::sized(LOADING_TEXT),
+                    TextColor(colours.loading),
+                    TextLayout::justify(Justify::Center),
+                    Pickable::IGNORE,
+                ),
+                (
+                    Node {
+                        position_type: PositionType::Absolute,
+                        left: Val::Vw(BAR_SIDE),
+                        right: Val::Vw(BAR_SIDE),
+                        bottom: Val::Vh(BAR_UP),
+                        height: Val::Vh(BAR_THICK),
+                        justify_content: JustifyContent::Center,
+                        align_items: AlignItems::Center,
+                        border_radius: round,
+                        ..default()
+                    },
+                    BackgroundColor(colours.bar),
+                    Pickable::IGNORE,
+                    children![
+                        (
+                            LoaderFill,
+                            Node {
+                                position_type: PositionType::Absolute,
+                                left: Val::ZERO,
+                                top: Val::ZERO,
+                                bottom: Val::ZERO,
+                                width: Val::Percent(0.0),
+                                min_width: Val::ZERO,
+                                border_radius: round,
+                                ..default()
+                            },
+                            BackgroundColor(colours.bar_fill),
+                            Pickable::IGNORE,
+                        ),
+                        (
+                            LoaderShare,
+                            Text::new("0%"),
+                            crate::font::sized(BAR_TEXT),
+                            TextColor(colours.bar_text),
+                            TextLayout::justify(Justify::Center),
+                            Pickable::IGNORE,
+                        ),
+                    ],
+                ),
+            ],
+        ));
+    }
     // Where the welcome stands (`hud::announce`): across the screen, high
     // enough to leave you, just below the middle, in sight.
     commands.spawn((
@@ -562,15 +593,18 @@ fn cover(
         Pickable::IGNORE,
         children![hud::words(file.words.welcome.clone(), hud::HEADLINE, colours.title.with_alpha(0.0))],
     ));
-    commands.spawn((
-        Dust,
-        Name::new("Landing dust"),
-        Mesh3d(meshes.add(Annulus::new(DUST_INNER, 1.0).mesh().resolution(48))),
-        MeshMaterial3d(materials.add(range::look(colours.dust.with_alpha(0.0)))),
-        Transform::from_scale(Vec3::splat(0.01)),
-        NotShadowCaster,
-        NotShadowReceiver,
-    ));
+    // (Only for the drop, which it goes out from your feet as you land.)
+    if DROPS_IN {
+        commands.spawn((
+            Dust,
+            Name::new("Landing dust"),
+            Mesh3d(meshes.add(Annulus::new(DUST_INNER, 1.0).mesh().resolution(48))),
+            MeshMaterial3d(materials.add(range::look(colours.dust.with_alpha(0.0)))),
+            Transform::from_scale(Vec3::splat(0.01)),
+            NotShadowCaster,
+            NotShadowReceiver,
+        ));
+    }
 }
 
 /// Keeps the cover up until the town is there, then plays the opening:
@@ -642,7 +676,7 @@ fn play(
             if intro.unseen && intro.wait.secs > UNSEEN_SECS {
                 intro.unseen = false;
             }
-            if !intro.wait.done || (intro.loaded < 1.0 && !intro.unseen) {
+            if !intro.wait.done || (SAYS_LOADING && intro.loaded < 1.0 && !intro.unseen) {
                 return;
             }
             let at = |since: Option<f32>| since.map_or("never".to_string(), |secs| format!("{secs:.2} s"));
@@ -657,9 +691,9 @@ fn play(
                 at(since[3]),
                 if there.all() && waiting == 0 { "" } else { ": not all there, the wait ran out" },
             );
-            // Your model, to drop: with none yet, the cover opens on you
-            // as you are.
-            intro.model = me.single().ok().and_then(|(you, body, _)| {
+            // Your model, to drop: with none yet, or no drop, the cover
+            // opens on you as you are.
+            intro.model = me.single().ok().filter(|_| DROPS_IN).and_then(|(you, body, _)| {
                 let root = model_of(you, &limbs, &parents)?;
                 let rest = *placed.get(root).ok()?;
                 let hips: Vec<f32> = limbs
@@ -707,7 +741,7 @@ fn play(
                 }
             }
             let mut free = free;
-            if age < UP_AT {
+            if age < FREE_AT {
                 up.set_if_neq(DialogUp(true));
             } else if !free {
                 // On your feet: your limbs and your model your own again,
@@ -893,6 +927,16 @@ fn show(
         return;
     };
 
+    // Fading: less and less of the cover, and nothing else (since
+    // 2026-11-17, with no drop and no circle, [`DROPS_IN`]).
+    if !DROPS_IN {
+        let left = colours.cover.with_alpha(colours.cover.alpha() * (1.0 - fade(age)));
+        for mut fill in &mut covers {
+            fill.set_if_neq(BackgroundColor(left));
+        }
+        return;
+    }
+
     // The dip, as you land.
     let dip = dip_at(age);
     if dip > 0.0 {
@@ -1018,6 +1062,14 @@ fn pose(age: f32) -> Pose {
         tall: down + (1.0 - down) * risen + SPRING * (std::f32::consts::PI * rising).sin(),
         lean: LEAN * sunk * (1.0 - risen),
     }
+}
+
+/// How far the cover has faded `age` seconds into the opening, 0 not at
+/// all to 1 gone, over [`FADE_SECS`]: slowly away, quickly through the
+/// middle, slowly out.
+fn fade(age: f32) -> f32 {
+    let share = (age / FADE_SECS).clamp(0.0, 1.0);
+    share * share * (3.0 - 2.0 * share)
 }
 
 /// How far open the circle is `age` seconds into the opening, 0 shut to 1
@@ -1173,6 +1225,31 @@ mod tests {
         // All of it short: Hajun asked for half a second to a second.
         assert!((0.5..=1.0).contains(&UP_AT), "{UP_AT}");
         assert!(OPEN_SECS <= UP_AT);
+    }
+
+    #[test]
+    fn the_cover_is_plain_black_and_fades_once_the_town_is_there() {
+        // Nothing on it but black, and no drop or circle (Hajun: "Remove
+        // the initial loading sceen with the black background and the red
+        // loading button. Remove the initial loading falling down/landing
+        // animation or the circular expanding hole animation").
+        assert!(!SAYS_LOADING && !DROPS_IN);
+        // Whole as it begins, gone at the end, never back, and short: you
+        // move once it has gone.
+        assert_eq!(fade(0.0), 0.0);
+        assert_eq!(fade(FADE_SECS), 1.0);
+        assert_eq!(fade(FADE_SECS + 5.0), 1.0);
+        let mut last = 0.0;
+        for step in 1..=50 {
+            let now = fade(FADE_SECS * step as f32 / 50.0);
+            assert!(now > last, "{now} after {last}");
+            last = now;
+        }
+        assert_eq!(FREE_AT, FADE_SECS);
+        assert!((0.2..=1.0).contains(&FADE_SECS), "{FADE_SECS}");
+        // The town's name has come up before the cover is gone, and stays
+        // a while after.
+        assert!(TITLE_IN < FADE_SECS && TITLE_STAYS > FADE_SECS);
     }
 
     #[test]

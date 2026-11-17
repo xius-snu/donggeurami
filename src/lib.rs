@@ -1351,6 +1351,7 @@ pub fn main() {
         .init_resource::<OrbitCamera>()
         .init_resource::<CameraAssist>()
         .init_resource::<CloseUp>()
+        .init_resource::<Lookout>()
         .add_message::<PunchPressed>()
         .add_message::<Hit>()
         .add_message::<Landed>()
@@ -1657,6 +1658,22 @@ pub(crate) fn in_the_background() -> bool {
     std::env::var("RT_BACKGROUND").is_ok_and(|said| !matches!(said.trim(), "" | "0" | "off"))
 }
 
+/// Whether this copy's window is to come up without being made the one
+/// the keys go to, on desktop: hidden altogether ([`in_the_background`]),
+/// or `RT_UNFOCUSED=1`, for a game put up to be looked at while something
+/// else is being typed into (`arena::watch`).
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+fn unfocused() -> bool {
+    in_the_background() || std::env::var("RT_UNFOCUSED").is_ok_and(|said| !matches!(said.trim(), "" | "0" | "off"))
+}
+
+/// Where the camera looks on at, if not at you: someone else's feet, in a
+/// game the computer plays alone (`arena::watch`). The camera is where it
+/// would be were you standing there ([`follow_camera`]); nothing else of
+/// yours is moved.
+#[derive(Resource, Default, PartialEq, Clone, Copy)]
+pub(crate) struct Lookout(pub(crate) Option<Vec3>);
+
 fn window_settings() -> Window {
     Window {
         title: "동그라미타운".into(),
@@ -1664,7 +1681,7 @@ fn window_settings() -> Window {
         #[cfg(not(any(target_os = "android", target_os = "ios")))]
         visible: !in_the_background(),
         #[cfg(not(any(target_os = "android", target_os = "ios")))]
-        focused: !in_the_background(),
+        focused: !unfocused(),
         #[cfg(any(target_os = "android", target_os = "ios"))]
         mode: WindowMode::BorderlessFullscreen(MonitorSelection::Primary),
         #[cfg(any(target_os = "android", target_os = "ios"))]
@@ -3615,6 +3632,7 @@ pub(crate) fn follow_camera(
     islands: Res<Islands>,
     cars: Decks,
     driving: Res<drive::Driving>,
+    lookout: Res<Lookout>,
     mut players: Query<(&Transform, &Venue, &mut Visibility, Has<Dead>), With<Player>>,
     mut cameras: Query<&mut Transform, (With<ThirdPersonCamera>, Without<Player>)>,
 ) {
@@ -3624,6 +3642,10 @@ pub(crate) fn follow_camera(
     let Ok(mut eye) = cameras.single_mut() else {
         return;
     };
+    // Looking on at someone else ([`Lookout`]): the camera is where it
+    // would be were you standing where they are.
+    let stood_in = lookout.0.map(|at| Transform::from_translation(at).with_rotation(player.rotation));
+    let player = stood_in.as_ref().unwrap_or(player);
     let decks = decks_on(&cars, venue);
     let ground = islands.get(venue).map(|island| Ground {
         island,

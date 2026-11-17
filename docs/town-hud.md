@@ -7,6 +7,44 @@
 > "above" or "below", or names another section in quotes, that section may be
 > in another file here: the table in `CLAUDE.md` says which.
 
+## The cover is plain black, and fades
+
+2026-11-17, with the four buses of Bridge Wars (the first entry of
+`docs/bridge-wars.md`). Hajun: "Remove the initial loading sceen with the
+black background and the red loading button. Remove the initial loading
+falling down/landing animation or the circular expanding hole animation.
+Just make it stay on a empty black screen until the map/world is loaded,
+and then transition." `src/intro.rs` alone. The app's own: APK 40 is the
+first with it.
+
+- **The cover is black with nothing on it** from the first frame until the
+  town is there, waiting for exactly what it waited for before
+  (`Loading::there`, `Wait`: the town's shape, every model, the buses' way,
+  your body, eight quiet frames of the GPU; at most 10 s). It no longer
+  waits for a bar to fill, there being none.
+- **Then it fades**, over half a second (`FADE_SECS`, `fade`: slowly away,
+  quickly through the middle, slowly out), with you standing where you
+  arrived; you can move once it has gone (`FREE_AT`). No circle, no drop,
+  no squat, no ring of dust, no dip of the camera.
+- **Turned off, not gone** ("remove" being "turn off" here): "Loading..."
+  and its bar behind `SAYS_LOADING`, the circle and the drop behind
+  `DROPS_IN`, both `false`; every number, word and colour of them is where
+  it was (`assets/ui.ron`'s `words.loading` and `colours.intro` too).
+- **Calls that were mine**: the fade, for "transition", and its half
+  second; that the town's name still comes up as the cover goes, stays
+  2.2 s and fades, as it did after the circle (it was the welcome, not the
+  loading screen: say so and it goes too); you free once the cover has
+  gone rather than as it begins to.
+- **Checked**, in the desktop build, hidden (`RT_BACKGROUND=1`), by a
+  throwaway that had the game save a picture every 50 ms of its first 8
+  s, in a window of the phone's shape, taken out again: every picture
+  pure black (0, 0, 0) until the town was there (4.25 s that run, the
+  PC busy with 96 whole games at the time), then nine pictures through the
+  fade, the town darkened and then clear, you where you arrived, the
+  town's name over it, the buttons there. Unit-tested: no words and no
+  drop, the fade whole to gone in `FADE_SECS` and never back, you free
+  once it has gone. **Not on a phone.**
+
 ## The cover says it is loading
 
 2026-11-16, with the buses of Bridge Wars (the first entry of
