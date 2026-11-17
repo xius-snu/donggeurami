@@ -110,13 +110,22 @@
 //! Where it is, how big and how many lines it keeps are here; its
 //! colours and its words are the file's (`colours.chat`, `words.chat`).
 //! It keeps clear of the camera's hole (`safe`).
+//!
+//! **At the tables of the four games of 2026-11-18** (`table`) it is there
+//! too, each table a room of its own, begun afresh: where it is in the town
+//! for Blend In, which is played in the town, and where it is in Bridge
+//! Wars for the other three, whose bars are as Bridge Wars' is. A name is
+//! in its team's colour there once the game says its teams are out, by the
+//! team its body is on (in Bridge Wars by its seat, as ever). And a game
+//! may hush it ([`Hushed`]).
 
 use std::collections::VecDeque;
 
 use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
-use roundtown_net::{Ask, Tell, arena_team, chat as rules};
+use bevy_replicon::prelude::Remote;
+use roundtown_net::{Ask, Member, Tell, arena_team, chat as rules};
 
 use crate::arena::Fighting;
 use crate::hud::{self, ChatButton, DialogUp, Picture, Pictures, TakesPress};
@@ -124,8 +133,9 @@ use crate::island::Venue;
 use crate::net::Online;
 use crate::safe::KeepsClear;
 use crate::signup::{self, LiftsForKeyboard, NameBox, Signup};
+use crate::table::AtTable;
 use crate::ui::{UiChanged, ui};
-use crate::{CloseUp, Player};
+use crate::{CloseUp, Player, Team};
 
 /// Sizes, as shares of the short side of the screen. Where the chat begins
 /// down the screen in the town, well under your name and your balance,
@@ -347,6 +357,16 @@ fn drawn_in(ink: &Ink, share: f32) -> Color {
 #[derive(Message, Clone, Debug)]
 pub(crate) struct Say(pub(crate) String);
 
+/// The chat hushed by a game (since 2026-11-18): while it is, the box a
+/// line is typed into cannot be taken up, and nothing is said, typed or
+/// from the speech bubble's fan (`quick`); a line being typed as it is
+/// hushed is let go of, and kept for later. Blend In hushes it from the
+/// hide to the end of the seek, a line said there giving the hider away
+/// (mine). A game that hushes it says so again when it is over; a table's
+/// end lets it go anyway (`table`).
+#[derive(Resource, Default, PartialEq)]
+pub(crate) struct Hushed(pub(crate) bool);
+
 /// What someone called `name` said, as a line, their name in `colour`.
 fn said(name: &str, colour: Color, text: &str) -> Line {
     let file = ui();
@@ -437,6 +457,7 @@ pub(crate) fn plugin(app: &mut App) {
         .init_resource::<Typing>()
         .init_resource::<Pressed>()
         .init_resource::<Drawn>()
+        .init_resource::<Hushed>()
         .add_message::<Say>()
         .add_observer(press)
         .add_systems(Startup, spawn)
@@ -615,16 +636,20 @@ fn spawn(mut commands: Commands, mut images: ResMut<Assets<Image>>, mut pictures
 }
 
 /// Whether the chat is shown `here`: in the town and in a game of Bridge
-/// Wars, its waiting room too.
+/// Wars, its waiting room too; and at the tables of the four games of
+/// 2026-11-18, on each one's venue.
 pub(crate) fn shown_on(here: Venue) -> bool {
-    matches!(here, Venue::Town | Venue::Arena)
+    matches!(here, Venue::Town | Venue::Arena) || here.game().is_some()
 }
 
 /// Where the chat begins down the screen `here`, and how tall its box of
 /// lines is, in shares of the short side: under what each place has top
-/// left, and over the stick in both.
+/// left, and over the stick in both. In Blend In, played in the town, as
+/// in the town; in the other three games of 2026-11-18, whose bars are as
+/// Bridge Wars' is, or shorter, as in Bridge Wars.
 fn place(here: Venue) -> (f32, f32) {
-    (if here == Venue::Arena { ARENA_TOP } else { TOP }, LOG_HEIGHT)
+    let as_in_bridge_wars = matches!(here, Venue::Arena | Venue::KnockOff | Venue::BridgeRace | Venue::LastStand);
+    (if as_in_bridge_wars { ARENA_TOP } else { TOP }, LOG_HEIGHT)
 }
 
 /// Shows the chat in the town and in Bridge Wars, where each has room for
@@ -659,24 +684,50 @@ fn show(
 
 /// What everyone in your room says ([`Tell::Said`]), you among them: a
 /// line each, the name in its team's colour in a game of Bridge Wars, and
-/// in the file's colour for names anywhere else.
-fn hear(mut tells: MessageReader<Tell>, fighting: Res<Fighting>, mut log: ResMut<Log>) {
+/// at the tables of the four games, and in the file's colour for names
+/// anywhere else.
+#[allow(clippy::type_complexity)]
+fn hear(
+    mut tells: MessageReader<Tell>,
+    fighting: Res<Fighting>,
+    online: Res<Online>,
+    me: Query<(&Venue, Option<&Team>), With<Player>>,
+    others: Query<(&Member, &Team), With<Remote>>,
+    mut log: ResMut<Log>,
+) {
+    let (here, mine) = me.single().map_or((None, None), |(&venue, team)| (Some(venue), team.map(|team| team.0)));
     for tell in tells.read() {
         if let Tell::Said { who, name, text } = tell {
-            log.push(said(name, name_colour(&fighting, *who), text));
+            // Who is on which team: in a fight, by their seat, as its game
+            // says each seat's team (`Fighting::teams`: Bridge Wars' seat
+            // modulo four as ever, Bridge Race's two, Last Stand's none, so
+            // that a team of everyone is not all written in red); at another
+            // game's table, by the team their body is on, yours too, where
+            // its game gives one.
+            let team = if fighting.venue.is_some() && fighting.venue == here {
+                fighting.team_of_member(*who)
+            } else if here == Some(Venue::Arena) {
+                fighting.members.iter().position(|member| *member == *who && *who != 0).map(arena_team)
+            } else if online.me().is_some_and(|me| me.id == *who) {
+                mine
+            } else {
+                others.iter().find(|(member, _)| member.id == *who).map(|(_, team)| team.0)
+            };
+            log.push(said(name, name_colour(&fighting, team), text));
         }
     }
 }
 
-/// The colour the name of whoever has the id `who` is written in: their
+/// The colour the name of whoever is on `team` is written in: their
 /// team's, in your game of Bridge Wars, by their seat, once the fight has
 /// begun and the teams are out (`Fighting::teams_out`; in its waiting
-/// room too until 2026-11-16); anyone else's, and anyone's until then, the
-/// file's colour for a name.
-fn name_colour(fighting: &Fighting, who: u64) -> Color {
+/// room too until 2026-11-16), and so at the tables of the four games, as
+/// each game says (since 2026-11-18); anyone else's, and anyone's until
+/// then, the file's colour for a name.
+fn name_colour(fighting: &Fighting, team: Option<u8>) -> Color {
     let colours = ui().colours;
-    match fighting.members.iter().position(|member| *member == who && who != 0) {
-        Some(seat) if fighting.teams_out => colours.arena.team(arena_team(seat)),
+    match team {
+        Some(team) if fighting.teams_out => colours.arena.team(team),
         _ => colours.chat.name,
     }
 }
@@ -687,14 +738,17 @@ fn name_colour(fighting: &Fighting, who: u64) -> Color {
 fn begin_afresh(
     me: Query<&Venue, With<Player>>,
     fighting: Res<Fighting>,
+    at: Res<AtTable>,
     mut drawn: ResMut<Drawn>,
     mut log: ResMut<Log>,
 ) {
     let Ok(&here) = me.single() else {
         return;
     };
-    // A game by its number; the town, and anywhere else, as one room each.
-    let room = (here, if here == Venue::Arena { fighting.game } else { 0 });
+    // A game by its number, Bridge Wars' and each table's; the town, and
+    // anywhere else, as one room each.
+    let table = at.0.filter(|table| table.game.venue() == here).map(|table| table.id);
+    let room = (here, if here == Venue::Arena { fighting.game } else { table.unwrap_or(0) });
     if drawn.room == Some(room) {
         return;
     }
@@ -1068,7 +1122,7 @@ fn act(
     mut typing: ResMut<Typing>,
     mut name_box: ResMut<NameBox>,
     mut up: ResMut<DialogUp>,
-    (close_up, signup): (Res<CloseUp>, Res<Signup>),
+    (close_up, signup, hushed): (Res<CloseUp>, Res<Signup>, Res<Hushed>),
     me: Query<&Venue, With<Player>>,
     mut says: MessageWriter<Say>,
 ) {
@@ -1087,6 +1141,11 @@ fn act(
             typing.on = false;
             return;
         }
+        // Hushed by a game: let go of, what was typed kept for later.
+        if hushed.0 {
+            let_go(&mut typing, &mut name_box, &mut up);
+            return;
+        }
         if name_box.entered() || enter || send {
             says.write(Say(name_box.shown()));
             let_go(&mut typing, &mut name_box, &mut up);
@@ -1098,10 +1157,11 @@ fn act(
         }
         return;
     }
-    // Not with anything else up, nor where the chat is not shown.
+    // Not with anything else up, nor where the chat is not shown, nor
+    // while a game has it hushed.
     let here = me.single().is_ok_and(|&venue| shown_on(venue));
     let by_key = enter || keyboard.just_pressed(KeyCode::KeyT);
-    if ((button && !shut) || by_key) && here && !up.0 && !name_box.up() && !signup.up() && !close_up.busy() {
+    if ((button && !shut) || by_key) && here && !hushed.0 && !up.0 && !name_box.up() && !signup.up() && !close_up.busy() {
         name_box.open_for(&typing.draft, rules::LONGEST);
         up.0 = true;
         typing.on = true;
@@ -1112,19 +1172,23 @@ fn act(
 /// Says what there is to say ([`Say`]), each if it is a line at all
 /// (`roundtown_net::chat::line`): online it is asked of the server, which
 /// tells everyone in your room, you among them; offline there is nobody to
-/// tell, and it is written here, under your own name.
+/// tell, and it is written here, under your own name. Nothing while a game
+/// has the chat hushed ([`Hushed`]).
 fn say(
     mut says: MessageReader<Say>,
-    (online, fighting): (Res<Online>, Res<Fighting>),
-    me: Query<(&Name, &Venue), With<Player>>,
+    (online, fighting, hushed): (Res<Online>, Res<Fighting>, Res<Hushed>),
+    me: Query<(&Name, &Venue, Option<&Team>), With<Player>>,
     mut log: ResMut<Log>,
     mut asks: MessageWriter<Ask>,
 ) {
     for Say(typed) in says.read() {
+        if hushed.0 {
+            continue;
+        }
         let Some(text) = rules::line(typed) else {
             continue;
         };
-        let Ok((name, &venue)) = me.single() else {
+        let Ok((name, &venue, team)) = me.single() else {
             continue;
         };
         if !shown_on(venue) {
@@ -1134,11 +1198,9 @@ fn say(
             asks.write(Ask::Chat(text));
         } else {
             // In a game, once its fight has begun, in your team's colour,
-            // as your name is on its plate (`hud::colour_name`).
-            let colour = match fighting.seat {
-                Some(seat) if fighting.teams_out => ui().colours.arena.team(arena_team(usize::from(seat))),
-                _ => ui().colours.chat.name,
-            };
+            // as your name is on its plate (`hud::colour_name`): the team
+            // your body is on, which in Bridge Wars is your seat's.
+            let colour = name_colour(&fighting, team.map(|team| team.0));
             log.push(said(name.as_str(), colour, &text));
         }
     }
@@ -1390,8 +1452,29 @@ mod tests {
         // more.
         assert!((place(Venue::Town).0 + LOG_HEIGHT - 48.6).abs() < 1e-4 && (place(Venue::Arena).0 + LOG_HEIGHT - 49.6).abs() < 1e-4);
         assert!(place(Venue::Arena).0 - 38.1 > 1.3);
-        // The chat is in the town and in Bridge Wars, and nowhere else.
+        // The chat is in the town and in Bridge Wars, and at the four
+        // games' tables, and nowhere else: in Blend In, played in the town
+        // with the town's buttons, where it is in the town, and in the
+        // others, whose top left is Bridge Wars' or less, where it is in
+        // Bridge Wars.
         assert!(shown_on(Venue::Town) && shown_on(Venue::Arena));
         assert!(!shown_on(Venue::Home) && !shown_on(Venue::Lobby) && !shown_on(Venue::Plot(3)));
+        for game in roundtown_net::Minigame::TABLES {
+            let venue = game.venue();
+            assert!(shown_on(venue), "{game:?}");
+            let like = if venue == Venue::BlendIn { Venue::Town } else { Venue::Arena };
+            assert_eq!(place(venue), place(like), "{game:?}");
+        }
+    }
+
+    #[test]
+    fn a_name_is_in_its_team_s_colour_once_the_teams_are_out() {
+        let colours = ui().colours;
+        let mut fighting = Fighting::default();
+        assert_eq!(name_colour(&fighting, Some(1)), colours.chat.name);
+        assert_eq!(name_colour(&fighting, None), colours.chat.name);
+        fighting.teams_out = true;
+        assert_eq!(name_colour(&fighting, Some(1)), colours.arena.team(1));
+        assert_eq!(name_colour(&fighting, None), colours.chat.name);
     }
 }

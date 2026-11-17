@@ -23,7 +23,7 @@
 use bevy::light::{NotShadowCaster, NotShadowReceiver};
 use bevy::prelude::*;
 
-use crate::arena::{InArena, Wears};
+use crate::arena::{Fighting, InArena, Wears};
 use crate::island::Venue;
 use crate::range;
 use crate::ui::{UiChanged, ui};
@@ -119,11 +119,14 @@ fn every(speed: f32) -> f32 {
     if speed >= MOVING { EVERY_MOVING } else { EVERY_STANDING }
 }
 
-/// Leaves sparks behind every body on a speed potion or a leap potion.
+/// Leaves sparks behind every body on a speed potion or a leap potion, in
+/// the fight being played (since 2026-11-18, `arena::Fighting::venue`;
+/// Bridge Wars' map alone until then).
 #[allow(clippy::type_complexity)]
 fn leave(
     time: Res<Time>,
     look: Res<Look>,
+    fighting: Res<Fighting>,
     me: Query<Option<&Team>, With<Player>>,
     mut bodies: Query<(Entity, &Transform, &Wears, &Venue, Option<&Team>, Has<Dead>, Option<&mut Sparkling>)>,
     mut commands: Commands,
@@ -135,9 +138,10 @@ fn leave(
     let mine = me.single().ok().flatten().map(|team| team.0);
     for (body, at, wears, &venue, team, dead, sparkling) in &mut bodies {
         let (fast, leaping) = kinds(wears, team.map(|team| team.0), mine, dead);
+        let fought = fighting.venue == Some(venue);
         let Some(mut sparkling) = sparkling else {
             // Only a body with a potion on is given the count.
-            if (fast || leaping) && venue == Venue::Arena {
+            if (fast || leaping) && fought {
                 commands.entity(body).insert(Sparkling::default());
             }
             continue;
@@ -145,7 +149,7 @@ fn leave(
         let here = at.translation;
         let moved = sparkling.was.map_or(Vec3::ZERO, |was| here - was) / dt;
         sparkling.was = Some(here);
-        if venue != Venue::Arena || !(fast || leaping) {
+        if !fought || !(fast || leaping) {
             continue;
         }
         let (speed, rising) = (moved.xz().length(), moved.y.abs() > RISING);

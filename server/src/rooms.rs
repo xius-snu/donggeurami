@@ -2,10 +2,12 @@
 //!
 //! A room is a place where everyone in it sees everyone else: one channel of
 //! the town, [`TOWN_SEATS`] to a channel; your home, with only you in it for
-//! now; or a game of House Builder, its lobby and its plots together. A
-//! device is sent only what is in its own room. That is replicon's visibility
-//! filters, keyed by room: [`InRoom`] on whatever is sent, a player or a game,
-//! and [`ClientRoom`] on the device it may be sent to.
+//! now; a game of House Builder, its lobby and its plots together; a game of
+//! Bridge Wars; or, since 2026-11-18, a table of one of the four games
+//! (`tables`). A device is sent only what is in its own room. That is
+//! replicon's visibility filters, keyed by room: [`InRoom`] on whatever is
+//! sent, a player or a game, and [`ClientRoom`] on the device it may be sent
+//! to.
 //!
 //! A newcomer to the town goes to the fullest channel that still has room, so
 //! that the town feels busy rather than spread thin; coming back from home,
@@ -13,7 +15,7 @@
 
 use bevy::prelude::*;
 use bevy_replicon::prelude::*;
-use roundtown_net::TOWN_SEATS;
+use roundtown_net::{Minigame, TOWN_SEATS};
 
 pub(crate) fn plugin(app: &mut App) {
     app.init_resource::<Towns>()
@@ -33,6 +35,11 @@ pub(crate) enum Room {
     /// A game of Bridge Wars, counted from 0 (`arena`, since 2026-11-08):
     /// its waiting room and its islands together.
     Arena(u32),
+    /// A table of one of the four games of 2026-11-18 (`tables`; Hajun: "add
+    /// these minigames: Blend In, Knock Off, Bridge Race, Last Stand"), by
+    /// its game and its number, counted from 0 for each game: from its wait
+    /// to its results, everything of it in the one room.
+    Table(Minigame, u32),
 }
 
 /// The room something sent to devices is in: only the devices in that room

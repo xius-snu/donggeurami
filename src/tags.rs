@@ -16,13 +16,20 @@
 //! away while its body is on another island, behind the camera, off the
 //! screen, further off than [`READ_RANGE`] or under House Builder's
 //! results ([`HidesNames`]).
+//!
+//! Since 2026-11-18 a name is over every head at a table of the four games
+//! too (`table`), but where the game is fought as Bridge Wars is
+//! (`island::fights`: Bridge Wars, Bridge Race, Last Stand), whose names are
+//! drawn over their health bars by the game, as they always were in Bridge
+//! Wars; and any body marked [`Named`] has its name over it offline too, as
+//! the computer's players do in a game of Knock Off played offline.
 
 use bevy::prelude::*;
 use bevy_replicon::prelude::Remote;
 
 use crate::builder::OnlinePlot;
 use crate::hud;
-use crate::island::Venue;
+use crate::island::{self, Venue};
 use crate::lobby::Townsfolk;
 use crate::net::Online;
 use crate::ui::{UiChanged, ui};
@@ -69,6 +76,13 @@ pub(crate) struct HidesNames;
 #[derive(Component)]
 pub(crate) struct Tagged;
 
+/// A body to have its name over it whether you are online or not (since
+/// 2026-11-18): one of the computer's players at a table played offline
+/// (`table`), whose names nobody would see otherwise, as offline nobody
+/// else's are.
+#[derive(Component)]
+pub(crate) struct Named;
+
 pub(crate) fn plugin(app: &mut App) {
     app.add_systems(
         Update,
@@ -107,24 +121,25 @@ fn rename(
 }
 
 /// A name for everyone else online: those the server sent, and the town's
-/// AIs. Never for you.
+/// AIs; and online or not, for whoever is [`Named`]. Never for you.
+#[allow(clippy::type_complexity)]
 fn tag(
     online: Res<Online>,
     bodies: Query<
-        (Entity, &Name),
+        (Entity, &Name, Has<Named>),
         (
             Without<Tagged>,
             Without<Player>,
             With<WalkCycle>,
-            Or<(With<Remote>, With<Townsfolk>)>,
+            Or<(With<Remote>, With<Townsfolk>, With<Named>)>,
         ),
     >,
     mut commands: Commands,
 ) {
-    if !online.is() {
-        return;
-    }
-    for (body, name) in &bodies {
+    for (body, name, named) in &bodies {
+        if !online.is() && !named {
+            continue;
+        }
         commands.entity(body).insert(Tagged);
         commands.spawn((
             Nametag(body),
@@ -142,16 +157,18 @@ fn tag(
     }
 }
 
-/// Takes a name away with its body, and every one once you are offline.
+/// Takes a name away with its body, and every one once you are offline, but
+/// those of whoever is [`Named`].
 fn untag(
     online: Res<Online>,
     tags: Query<(Entity, &Nametag)>,
-    bodies: Query<(), With<Tagged>>,
+    bodies: Query<Has<Named>, With<Tagged>>,
     mut commands: Commands,
 ) {
     for (tag, &Nametag(body)) in &tags {
-        let gone = !bodies.contains(body);
-        if gone || !online.is() {
+        let named = bodies.get(body).ok();
+        let gone = named.is_none();
+        if gone || (!online.is() && named != Some(true)) {
             commands.entity(tag).despawn();
             if !gone {
                 commands.entity(body).remove::<Tagged>();
@@ -203,12 +220,13 @@ fn place_tags(
         .collect();
     for (tag, mut shown, mut place, node) in &mut tags {
         // In a game of Bridge Wars everyone's name is over their health
-        // bar, in their team's colour (`arena`), and not here.
+        // bar, in their team's colour (`arena`), and not here; and so in
+        // every game fought as it is (`island::fights`).
         let head = bodies
             .get(tag.0)
             .ok()
             .filter(|&(body, &venue)| {
-                venue == here && here != Venue::Arena && body.translation.distance(you.translation) <= READ_RANGE
+                venue == here && !island::fights(here) && body.translation.distance(you.translation) <= READ_RANGE
             })
             .map(|(body, _)| body.translation + Vec3::Y * OVER_HEAD);
         let point = head

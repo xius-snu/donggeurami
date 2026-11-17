@@ -150,9 +150,11 @@ use roundtown_net::{
 };
 
 use crate::Config;
-use crate::players::{Body, Everyone, Plays, Who, move_to, place, tell};
+use crate::fees::Paying;
+use crate::players::{Accounts, Body, Everyone, Plays, Who, move_to, place, tell, themselves};
 use crate::rooms::{InRoom, NotFor, Room, Towns};
 use crate::social::Social;
+use crate::tables::Tables;
 
 /// How long a game goes on with nobody connected to it, in seconds, before
 /// it is given up: the seats of whoever's devices have gone waiting all
@@ -206,8 +208,8 @@ const RUN_OVER_SLACK: f32 = 5.5;
 
 /// The time by this machine's clock, in seconds since 1970: what every
 /// device has for the town's clock (the game's `clock`), and what the
-/// buses go by ([`Leg`]).
-fn wall_clock() -> f64 {
+/// buses go by ([`Leg`]); and the four games played at tables (`tables`).
+pub(crate) fn wall_clock() -> f64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0.0, |since| since.as_secs_f64())
@@ -2319,6 +2321,19 @@ impl Arenas {
             .get(&id)
             .is_some_and(|game| matches!(game.stage, ArenaStage::Waiting | ArenaStage::Countdown))
     }
+
+    /// Whether `body` is done with the game in `room`, over or out of it,
+    /// and free to go into another game, as it is for another of Bridge
+    /// Wars ([`Ask::Arena`]): what the four games played at tables go by
+    /// (`tables`, since 2026-11-18).
+    pub(crate) fn done_with(&self, room: Room, body: Entity) -> bool {
+        let Room::Arena(id) = room else {
+            return false;
+        };
+        self.games
+            .get(&id)
+            .is_some_and(|game| game.seat_of(body).is_some_and(|seat| game.over() || game.out[seat]))
+    }
 }
 
 /// What becomes of someone whose device is back while their body was kept
@@ -2337,13 +2352,18 @@ pub(crate) enum Return {
 /// Seats `going`, who go in together, the first of them having asked, in
 /// the game filling now, or in a new one if that has not the room for them:
 /// two by two onto one team ([`Game::seats_for`]), each out of the town, or
-/// out of the game that was over for them, and into the waiting room.
+/// out of the game that was over for them (of Bridge Wars, or since
+/// 2026-11-18 at a table, `tables`, as whoever their account is, whoever
+/// that game had them pass for: `players::themselves`), and into the
+/// waiting room.
 #[allow(clippy::too_many_arguments)]
 fn seat_together(
     commands: &mut Commands,
     tells: &mut MessageWriter<ToClients<Tell>>,
     bodies: &mut Bodies,
+    accounts: &Accounts,
     arenas: &mut Arenas,
+    tables: &mut Tables,
     towns: &mut Towns,
     old_bots: bool,
     going: &[Entity],
@@ -2356,6 +2376,7 @@ fn seat_together(
         if let Some((old, seat)) = arenas.of(body_of.room, body) {
             old.leave(seat);
         }
+        tables.walk_out(body_of.room, body);
         towns.stand(body);
     }
     let game = arenas.filling(commands, old_bots, going.len());
@@ -2367,7 +2388,7 @@ fn seat_together(
         let Ok((body_of, spot, venue, member)) = bodies.get_mut(body) else {
             continue;
         };
-        game.put(seat, body, member.clone(), false);
+        game.put(seat, body, themselves(commands, body, accounts, member), false);
         if let Some(client) = body_of.client {
             tell(tells, client, Tell::Seated { seat: seat as u8 });
         }
@@ -2404,7 +2425,9 @@ fn hear(
     mut asks: MessageReader<FromClient<Ask>>,
     clients: Query<&Plays>,
     mut bodies: Bodies,
-    mut arenas: ResMut<Arenas>,
+    paying: Query<(), With<Paying>>,
+    accounts: Accounts,
+    (mut arenas, mut tables): (ResMut<Arenas>, ResMut<Tables>),
     mut towns: ResMut<Towns>,
     (everyone, mut social): (Res<Everyone>, ResMut<Social>),
     config: Res<Config>,
@@ -2435,21 +2458,27 @@ fn hear(
                     tell(&mut tells, client, Tell::Refused(Refusal::NotLeader));
                     continue;
                 };
-                // Free to: in the town, or in a game that is over for them.
+                // Free to: in the town, or in a game that is over for them,
+                // of Bridge Wars or at a table (`tables`); and not paying a
+                // fee for another (`fees::Paying`, since 2026-11-18: until
+                // then someone could be seated here with House Builder's
+                // fee on the way, and then moved there as it was taken).
                 let (mut going, mut staying) = (Vec::new(), Vec::new());
                 for id in party {
                     let entity = everyone.0.get(&Who(id)).copied();
                     let free = entity.is_some_and(|entity| {
-                        bodies.get(entity).is_ok_and(|(body_of, ..)| {
-                            body_of.client.is_some()
-                                && match body_of.room {
-                                    Room::Town(_) => true,
-                                    Room::Arena(_) => arenas
-                                        .of(body_of.room, entity)
-                                        .is_some_and(|(game, seat)| game.over() || game.out[seat]),
-                                    Room::Home(_) | Room::Game(_) => false,
-                                }
-                        })
+                        !paying.contains(entity)
+                            && bodies.get(entity).is_ok_and(|(body_of, ..)| {
+                                body_of.client.is_some()
+                                    && match body_of.room {
+                                        Room::Town(_) => true,
+                                        Room::Arena(_) => arenas
+                                            .of(body_of.room, entity)
+                                            .is_some_and(|(game, seat)| game.over() || game.out[seat]),
+                                        Room::Table(..) => tables.done_with(body_of.room, entity),
+                                        Room::Home(_) | Room::Game(_) => false,
+                                    }
+                            })
                     });
                     match entity {
                         Some(entity) if free => going.push(entity),
@@ -2469,7 +2498,9 @@ fn hear(
                     &mut commands,
                     &mut tells,
                     &mut bodies,
+                    &accounts,
                     &mut arenas,
+                    &mut tables,
                     &mut towns,
                     config.arena_old_bots,
                     &going,
