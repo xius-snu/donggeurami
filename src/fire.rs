@@ -11,14 +11,18 @@
 //! fireball is an entity it sends ([`Fireball`]) and takes away again the
 //! moment it bursts, and this device's own offline
 //! (`arena::fireballs_offline`). Either way a ball here is [`throw`]n as
-//! it sets out and [`burst`] where it ends.
+//! it sets out and [`burst`] where it ends: on the venue of the fight it
+//! is thrown in (since 2026-11-18, when more games than Bridge Wars came
+//! to play with its kit; Bridge Wars' map alone until then), which is
+//! where it is drawn (`island::show_where_i_am`). A stick of dynamite
+//! blows with the same blast (`dynamite`).
 
 use bevy::prelude::*;
 use bevy_replicon::prelude::Remote;
 use roundtown_net::Fireball;
 use roundtown_net::bridge_wars::{BLAST_RADIUS, FIREBALL_RADIUS, FIREBALL_RANGE, Flight};
 
-use crate::arena::InArena;
+use crate::arena::{Fighting, InArena, Unsettled};
 use crate::island::Venue;
 
 /// How much bigger than the ball its glow is; how long a blast takes, in
@@ -86,14 +90,14 @@ fn load(mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardM
     });
 }
 
-/// A fireball setting out on `flight`, thrown by whoever is in `seat`;
-/// online, with the server's entity for it.
-pub(crate) fn throw(commands: &mut Commands, look: &Look, flight: Flight, seat: usize, source: Option<Entity>) -> Entity {
+/// A fireball setting out on `flight`, thrown by whoever is in `seat`, on
+/// `venue`, the fight's; online, with the server's entity for it.
+pub(crate) fn throw(commands: &mut Commands, look: &Look, flight: Flight, seat: usize, source: Option<Entity>, venue: Venue) -> Entity {
     commands
         .spawn((
             Ball { flight, seat, source },
             InArena,
-            Venue::Arena,
+            venue,
             Name::new("Fireball"),
             Mesh3d(look.ball.clone()),
             MeshMaterial3d(look.fire.clone()),
@@ -109,41 +113,59 @@ pub(crate) fn throw(commands: &mut Commands, look: &Look, flight: Flight, seat: 
         .id()
 }
 
-/// A blast at `at`: a ball of fire that swells and fades ([`blasts`]).
-pub(crate) fn burst(commands: &mut Commands, at: Vec3) {
-    commands.spawn((
-        Blast { age: 0.0 },
-        InArena,
-        Venue::Arena,
-        Name::new("Blast"),
-        Transform::from_translation(at).with_scale(Vec3::splat(BLAST_FROM)),
-        Visibility::Hidden,
-    ));
+/// A blast at `at` on `venue`: a ball of fire that swells and fades
+/// ([`blasts`]), seen by whoever is there.
+pub(crate) fn burst(commands: &mut Commands, at: Vec3, venue: Venue) -> Entity {
+    commands
+        .spawn((
+            Blast { age: 0.0 },
+            InArena,
+            venue,
+            Name::new("Blast"),
+            Transform::from_translation(at).with_scale(Vec3::splat(BLAST_FROM)),
+            Visibility::Hidden,
+        ))
+        .id()
 }
 
 /// Online, the fireballs are the server's: each it sends is thrown here as
-/// it comes.
-fn follow_server(look: Res<Look>, fresh: Query<(Entity, &Fireball), (With<Remote>, Added<Fireball>)>, mut commands: Commands) {
+/// it comes, on the fight's venue (`Fighting::served_on`; one sent before
+/// this device knew where the fight was moved there as soon as it does,
+/// `arena::settle`).
+fn follow_server(
+    look: Res<Look>,
+    fresh: Query<(Entity, &Fireball), (With<Remote>, Added<Fireball>)>,
+    fighting: Res<Fighting>,
+    me: Query<&Venue, With<crate::Player>>,
+    mut commands: Commands,
+) {
+    if fresh.is_empty() {
+        return;
+    }
+    let venue = fighting.served_on(me.single().ok().copied());
     for (source, ball) in &fresh {
         let flight = Flight {
             from: Vec3::new(ball.x, ball.y, ball.z),
             heading: ball.heading,
             flown: 0.0,
         };
-        throw(&mut commands, &look, flight, usize::from(ball.seat), Some(source));
+        let thrown = throw(&mut commands, &look, flight, usize::from(ball.seat), Some(source), venue);
+        fighting.settle_later(&mut commands, thrown);
     }
 }
 
-/// Flies every ball on, and bursts the server's where they are once the
-/// server has taken them away.
+/// Flies every ball on, and bursts the server's where they are, on their
+/// own venue, once the server has taken them away: a ball still waiting
+/// to be moved onto the fight's venue (`arena::Unsettled`) has its blast
+/// moved with it.
 pub(crate) fn fly(
     time: Res<Time>,
     sources: Query<(), With<Fireball>>,
-    mut balls: Query<(Entity, &mut Ball, &mut Transform)>,
+    mut balls: Query<(Entity, &mut Ball, &Venue, &mut Transform, Has<Unsettled>)>,
     mut commands: Commands,
 ) {
     let dt = time.delta_secs();
-    for (entity, mut ball, mut transform) in &mut balls {
+    for (entity, mut ball, &venue, mut transform, unsettled) in &mut balls {
         ball.flight.fly(dt);
         transform.translation = ball.flight.at();
         let Some(source) = ball.source else {
@@ -157,7 +179,10 @@ pub(crate) fn fly(
         if FIREBALL_RANGE - ball.flight.flown < BEHIND {
             ball.flight.flown = FIREBALL_RANGE;
         }
-        burst(&mut commands, ball.flight.at());
+        let blast = burst(&mut commands, ball.flight.at(), venue);
+        if unsettled {
+            commands.entity(blast).insert(Unsettled);
+        }
         commands.entity(entity).despawn();
     }
 }
