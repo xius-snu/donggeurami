@@ -1,57 +1,260 @@
 //! Knock Off, on this device (since 2026-11-18; Hajun: "You spawn on a tiny
 //! icy circular island with 2~4 other ppl (fill with ai like bridgewars and
-//! its deathmatch so 1v1v1v1) ... Everyone is frozen in place, and before
-//! every certain time interval like 10 second, you choose the direction and
-//! intensity that you wanna slide. Then after the interval, everyone goes
-//! toward that direction and intensity and collide, some ppl will be
-//! knocked off. You keep going until last player surviving is the winner.
-//! If you are out, you can spectate or exit. Map = iceisland"): four seats
-//! on a disc of ice in the sea, the computer taking those people leave,
-//! everyone aiming at once and then sliding at once. Its rules are
-//! `roundtown_net::knock_off`'s, which the server goes by online and this
-//! device offline; its table is `table`'s. This is the device's side of it:
-//! for now a stand-in, which holds the camera over the ice and, offline,
-//! ends the game a while after it begins, until the game itself is here.
+//! its deathmatch so 1v1v1v1). Controls (left side is joystick for
+//! direction, right side is a up down arrow for controlling intensity).
+//! Everyone is frozen in place, and before every certain time interval like
+//! 10 second, you choose the direction and intensity that you wanna slide.
+//! Then after the interval, everyone goes toward that direction and
+//! intensity and collide, some ppl will be knocked off. You keep going until
+//! last player surviving is the winner. If you are out, you can spectate or
+//! exit. Map = iceisland (not sure what camera is good for this one, you
+//! choose)"): four seats on a disc of ice in the sea, everyone aiming at
+//! once in secret and then sliding at once.
+//!
+//! Its rules are `roundtown_net::knock_off`'s ([`Game`]), which the server
+//! plays online and this device offline: **the same game either way**, only
+//! what it is read from differs. Online the round comes from the server
+//! (the replicated [`KnockRound`] on its table's entity); offline from the
+//! game this device steps itself by the town's clock, which is then its own
+//! time of day. Everything else is drawn from the round alike:
+//!
+//! * **Every body is placed here** while the game is played, yours and
+//!   everyone else's (`Frozen { placed: true }`: neither the stick nor the
+//!   server's updates move one): on its spot while everyone aims, and in a
+//!   slide where this device's own play of it has it ([`Slide`], from the
+//!   round's start and launches, stepped to the town's clock less the
+//!   round's `since`, which comes out to the bit as the server's did), then
+//!   settled onto where the server says the slide left everyone.
+//! * **Your aim** is yours alone until the reveal: the stick for which way,
+//!   the up and down arrows on the right for how hard, and Ready; sent to
+//!   the server as it changes (or put into the game here, offline), and
+//!   drawn on the ice from your feet (`ice`).
+//! * **The camera** is fixed over the island from your own spot's side,
+//!   from the moment you sit down to the end (mine: Hajun left it to me).
+//!
+//! What is drawn on the ice (the arrows, the cracks, the ice breaking off,
+//! the splashes, the dust where two meet) is `ice`'s; the buttons, the plate
+//! top centre, the names over heads, the headlines, the lines in the chat
+//! and the panel for whoever is out are `screen`'s. The table round it all
+//! (the seats, the fee, the results) is `table`'s.
 
+mod ice;
+mod screen;
+
+use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
 use bevy::prelude::*;
-use roundtown_net::Minigame;
+use bevy_replicon::prelude::Remote;
+use roundtown_net::knock_off::{self as rules, Game, KnockRound, KnockStage, Loiter, Slide};
+use roundtown_net::{Ask as NetAsk, Member, Minigame, Venue};
 
-use crate::HeldCamera;
-use crate::hud;
-use crate::table::{self, AtTable, TableView};
+use crate::clock::TownClock;
+use crate::lobby::{self, Whereabouts};
+use crate::net::Online;
+use crate::table::{self, AtTable, ComputerSeat, TableView};
 use crate::ui::ui;
+use crate::{Dead, Frozen, HeldCamera, Landing, OrbitCamera, Player, ThirdPersonCamera, TouchControls};
 
 /// Something the server says to this device alone in its game of Knock Off
 /// (`roundtown_net::knock_off::Tell`), handed on by `net`.
 #[derive(Message, Clone, Debug)]
 pub(crate) struct Told(pub roundtown_net::knock_off::Tell);
 
-/// How long the stand-in's game lasts, offline, in seconds, before it says
-/// it is over.
-const STAND_IN_SECS: f32 = 20.0;
+/// How far down the camera looks at the middle of the ice, in radians: 55
+/// degrees (mine), steep enough that everyone on the ice is seen apart, and
+/// shallow enough that the ice is seen as an island in the sea, with which
+/// way is which plain from where you stand.
+const CAMERA_PITCH: f32 = 55.0 * std::f32::consts::PI / 180.0;
+/// How far round the ice the sea is kept in sight, in metres: enough to see
+/// who went in where.
+const SEA_MARGIN: f32 = 2.0;
+/// What is kept clear of the island at each edge of the screen, as a share
+/// of the screen: the top for the plate and the names over the far side's
+/// heads, the bottom and the sides a little.
+const CLEAR_TOP: f32 = 0.11;
+const CLEAR_BOTTOM: f32 = 0.03;
+const CLEAR_SIDES: f32 = 0.03;
 
-/// Where the camera is held over the ice (Hajun: "not sure what camera is
-/// good for this one, you choose"), for now: from the south, 20 m up and 14
-/// m out, looking at the middle of the island, where the whole of it is in
-/// sight (mine; the game's own will be its own).
-fn over_the_ice() -> Transform {
-    Transform::from_xyz(0.0, 20.0, 14.0).looking_at(Vec3::ZERO, Vec3::Y)
+/// How a body is posed sliding (`Landing`, the intro's own pose): knees
+/// half bent, arms out to the sides (mine: as someone keeping their
+/// balance on ice); and how fast it has to be going for it, in metres a
+/// second.
+const SLIDING_SQUAT: f32 = 0.45;
+const SLIDING_ARMS: f32 = 0.62;
+const SLIDING_FROM: f32 = 0.6;
+/// How far over its feet a body's hips are, in metres, for how far it comes
+/// down crouched (`Landing::sink`).
+const HIPS: f32 = 0.75;
+/// How long a body takes to settle onto where the server says the slide
+/// left it, if it is anywhere else, in seconds.
+const SETTLE: f32 = 0.2;
+/// How fast whoever stood on what broke off drops with it, in metres a
+/// second each second.
+const DROP: f32 = 14.0;
+
+/// How long after a power arrow is pressed it begins to repeat, held, and
+/// how often after that, in seconds.
+const REPEAT_AFTER: f32 = 0.35;
+const REPEAT_EVERY: f32 = 0.08;
+/// How often an aim being changed is sent to the server, at the most, in
+/// seconds: the last before the aim is over is the one played, and it is
+/// always sent.
+const SEND_EVERY: f32 = 0.1;
+/// The turn an aim is for that the server has said is yours as this device
+/// comes back to the game, before the round has said which turn it is: the
+/// one being aimed now.
+const THIS_TURN: u16 = u16::MAX;
+/// How far under the ice's top, or out past its edge, you have gone into
+/// the sea while the game waits, in metres, to be stood back on your spot.
+const FELL_IN: f32 = 0.3;
+
+/// Knock Off on this device, while you sit at one of its tables: your seat,
+/// whose the table is, the round as it is drawn, and everything kept
+/// between frames to draw it.
+#[derive(Resource, Default)]
+struct Knock {
+    /// Your seat, and whether the server runs the game; none away from it.
+    seat: Option<u8>,
+    online: bool,
+    /// Offline: the game this device plays, from the moment it is played,
+    /// and whether its end has been told the table.
+    game: Option<Game>,
+    finished: bool,
+    /// The computer's players standing about the ice while the table waits,
+    /// offline (the server's own online).
+    loiter: Option<Loiter>,
+    /// The round as it is drawn, and the one before it.
+    round: Option<KnockRound>,
+    /// The slide being played, if one is, or the last, until the next aim.
+    slide: Option<Played>,
+    /// Your aim this turn.
+    aim: Aim,
+    /// Per seat: which way the body faces, where it was drawn last, where it
+    /// settles from as the ice breaks, and whether it has been seen into the
+    /// sea this turn.
+    faces: Vec<f32>,
+    drawn: Vec<Option<Vec3>>,
+    settle_from: Vec<Option<Vec3>>,
+    splashed: Vec<bool>,
+    /// The stage and turn the bodies were last placed in.
+    placed_in: Option<(u16, KnockStage)>,
+    /// The bodies this has put its marks on (`Frozen`, `Dead`, `Landing`),
+    /// to take them off again.
+    marked: Vec<Entity>,
+    /// Where you came, once you are out and it is known; and whether you
+    /// have pressed Watch on the panel saying so, or Leave, offline, where
+    /// the rest of the game is played out first, for your place to be
+    /// paid, and you go as its results come.
+    place: Option<u8>,
+    watching: bool,
+    leaving: bool,
+    /// A shake of the camera, after two meet: how much longer, and how hard.
+    shake: Option<(f32, f32)>,
 }
+
+impl Knock {
+    /// Begun afresh at a table: in `seat`, the server's or this device's.
+    fn sit(seat: u8, online: bool) -> Self {
+        Self {
+            seat: Some(seat),
+            online,
+            ..default()
+        }
+    }
+
+    /// The round, once the game is played (turn 1 on).
+    fn playing(&self) -> Option<&KnockRound> {
+        self.round.as_ref().filter(|round| round.turn > 0)
+    }
+
+    /// Whether you are still on the ice.
+    fn in_play(&self) -> bool {
+        match (self.seat, self.playing()) {
+            (Some(seat), Some(round)) => round.out.get(usize::from(seat)).is_some_and(Option::is_none),
+            (Some(_), None) => true,
+            _ => false,
+        }
+    }
+
+    /// Whether you are aiming now: everyone aims, you are on the ice, and
+    /// you have not said you are ready.
+    fn aiming(&self) -> bool {
+        self.playing().is_some_and(|round| round.stage == KnockStage::Aim) && self.in_play() && !self.aim.ready
+    }
+}
+
+/// A slide as this device plays it: in which turn, when it began by the
+/// town's clock, the slide itself, and how many of its hits have been
+/// shown.
+struct Played {
+    turn: u16,
+    since: f64,
+    slide: Slide,
+    hits_shown: usize,
+}
+
+/// Your aim this turn: the turn it is for, which way (across the ground, of
+/// length one, or nothing before the stick has been touched) and how hard,
+/// whether you have said you are ready, and what the server was last sent
+/// of it and how long ago.
+#[derive(Clone, Copy, PartialEq, Debug, Default)]
+struct Aim {
+    turn: u16,
+    way: Vec2,
+    power: u8,
+    ready: bool,
+    sent: Option<(Vec2, u8)>,
+    since_sent: f32,
+}
+
+/// What the buttons on the right have been pressed for since last read
+/// (`screen`): steps of power up or down, and Ready; and the arrow held
+/// down, by which pointer, how long, and how many steps it has repeated.
+#[derive(Resource, Default)]
+struct Pressed {
+    power: i32,
+    ready: bool,
+    held: Option<Holding>,
+}
+
+/// A power arrow held down.
+#[derive(Clone, Copy, PartialEq, Debug)]
+struct Holding {
+    pointer: bevy::picking::pointer::PointerId,
+    up: bool,
+    held: f32,
+    repeated: u32,
+}
+
+/// Knock Off's systems that read the round and move the game on, before
+/// anything is drawn from it.
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct KnockSystems;
 
 pub(crate) fn plugin(app: &mut App) {
     app.add_message::<Told>()
-        .add_systems(Update, (hear, hold_the_camera, stand_in).after(table::TableSystems));
+        .init_resource::<Knock>()
+        .init_resource::<Pressed>()
+        .configure_sets(Update, KnockSystems.after(table::TableSystems).before(crate::move_bodies))
+        .add_systems(
+            Update,
+            (enter, hear, play_offline, follow, loiter_offline, fell_in, take_aim, send_aim, hold_the_camera)
+                .chain()
+                .in_set(KnockSystems)
+                .after(crate::read_player_input),
+        )
+        .add_systems(Update, place.after(crate::move_bodies).before(crate::animate_walk));
+    ice::plugin(app);
+    screen::plugin(app);
 }
 
-/// The buttons round the screen at a table of Knock Off: your name on its
-/// plate, and nothing else yet. Nobody jumps or punches on the ice.
-pub(crate) fn spawn_bar(commands: &mut Commands, _assets: &AssetServer, _images: &mut Assets<Image>) {
-    let (left, _right) = hud::game_bar(commands);
-    commands.spawn((ChildOf(left), hud::name_plate()));
+/// The buttons round the screen at a table of Knock Off (`screen`).
+pub(crate) fn spawn_bar(commands: &mut Commands, assets: &AssetServer, images: &mut Assets<Image>) {
+    screen::spawn_bar(commands, assets, images);
 }
 
 /// What its score is called among the results: the file's
-/// (`words.knock_off.score`).
+/// (`words.knock_off.score`), the turns each was still on the ice at the
+/// end of (mine: the place has a column of its own there).
 pub(crate) fn score_word() -> String {
     ui().words.knock_off.score.clone()
 }
@@ -62,46 +265,747 @@ pub(crate) fn total_words(_total: u32) -> Option<String> {
     None
 }
 
-/// What the server says to this device of its game: nothing to do with it
-/// yet.
-fn hear(mut told: MessageReader<Told>) {
-    for Told(said) in told.read() {
-        debug!("Knock Off: told {said:?}");
-    }
+/// Each seat's colour (mine: Bridge Wars' red, blue, green and yellow, as
+/// bright as they read on white ice, the file's `colours.knock_off`): on
+/// its arrow, the ring at its feet, its name over its head and in the chat.
+fn seat_colour(seat: usize) -> Color {
+    let colours = ui().colours.knock_off;
+    [colours.seat_red, colours.seat_blue, colours.seat_green, colours.seat_yellow][seat % 4]
 }
 
-/// Holds the camera over the ice while you are at a table of Knock Off
-/// ([`over_the_ice`]); the table lets it go as it ends.
-fn hold_the_camera(at: Res<AtTable>, mut held: ResMut<HeldCamera>) {
-    if at.of(Minigame::KnockOff).is_some() {
-        held.set_if_neq(HeldCamera(Some(over_the_ice())));
-    }
+/// Which way something faces that looks along `way` across the ground (x,
+/// z): its turn about the upright from -Z, as a body's. None for no way.
+fn facing(way: Vec2) -> Option<f32> {
+    (way.length_squared() > 1e-8).then(|| (-way.x).atan2(-way.y))
 }
 
-/// The stand-in's game, offline: once the table is played, [`STAND_IN_SECS`]
-/// later it is over, the first seat first and the rest in seat order, every
-/// score nothing.
-fn stand_in(
-    time: Res<Time>,
-    at: Res<AtTable>,
-    view: Res<TableView>,
-    mut played: Local<f32>,
-    mut finish: MessageWriter<table::Finish>,
+/// The camera over the ice for whoever sits in `seat` (mine: Hajun, "not
+/// sure what camera is good for this one, you choose"): over the island
+/// from their own spot's side, looking down at its middle at
+/// [`CAMERA_PITCH`], as far out as keeps the whole island and
+/// [`SEA_MARGIN`] of sea round it on a screen `aspect` times as wide as it
+/// is high, clear of what stands at its edges; their spot toward the
+/// bottom of the screen, and the stick's up away from the camera, across
+/// the ice toward the middle. The same for the whole game: waiting,
+/// aiming, sliding and looking on once out.
+fn over_the_ice(seat: u8, aspect: f32) -> Transform {
+    let side = rules::arrival(usize::from(seat)).0.xz().normalize_or(Vec2::Y);
+    let half = (crate::CAMERA_FOV * 0.5).tan();
+    let aspect = aspect.clamp(0.5, 4.0);
+    let view = |distance: f32| {
+        let (down, along) = (CAMERA_PITCH.sin(), CAMERA_PITCH.cos());
+        let eye = Vec3::new(side.x * distance * along, distance * down, side.y * distance * along);
+        Transform::from_translation(eye).looking_at(Vec3::ZERO, Vec3::Y)
+    };
+    let fits = |distance: f32| {
+        let eye = view(distance);
+        let into = eye.to_matrix().inverse();
+        (0..72).all(|k| {
+            let edge = Vec2::from_angle(k as f32 * std::f32::consts::TAU / 72.0) * (rules::RADIUS + SEA_MARGIN);
+            let seen = into.transform_point3(Vec3::new(edge.x, 0.0, edge.y));
+            let deep = -seen.z;
+            if deep <= 0.1 {
+                return false;
+            }
+            let (across, up) = (seen.x / deep / (half * aspect), seen.y / deep / half);
+            (-1.0 + 2.0 * CLEAR_BOTTOM..=1.0 - 2.0 * CLEAR_TOP).contains(&up) && across.abs() <= 1.0 - 2.0 * CLEAR_SIDES
+        })
+    };
+    let (mut near, mut far) = (8.0f32, 120.0f32);
+    for _ in 0..32 {
+        let middle = (near + far) * 0.5;
+        if fits(middle) {
+            far = middle;
+        } else {
+            near = middle;
+        }
+    }
+    view(far)
+}
+
+/// The body in each seat at the table, as this device has them: yours, and
+/// online everyone else's by who they are, offline the computer's by their
+/// seat. None for a seat with no body here.
+fn bodies_by_seat(
+    knock: &Knock,
+    view: &TableView,
+    me: Option<Entity>,
+    remotes: &Query<(Entity, &Member), With<Remote>>,
+    computers: &Query<(Entity, &ComputerSeat)>,
+) -> Vec<Option<Entity>> {
+    let seats = view.members.len().max(4);
+    (0..seats)
+        .map(|seat| {
+            if knock.seat == Some(seat as u8) {
+                return me;
+            }
+            if knock.online {
+                let id = view.members.get(seat).map_or(0, |member| member.id);
+                (id != 0).then(|| remotes.iter().find(|(_, member)| member.id == id).map(|(body, _)| body)).flatten()
+            } else {
+                computers.iter().find(|(_, of)| usize::from(of.0) == seat).map(|(body, _)| body)
+            }
+        })
+        .collect()
+}
+
+/// A table of Knock Off begun here (`table::Entered`): everything of one
+/// before is dropped and begun afresh, in the seat it says; and away from
+/// the tables (`table::Gone`), everything this put on any body is taken off
+/// again. The same table begun afresh (a device back in the game it was in,
+/// or a seat moved before play) keeps nothing either: what it needs comes
+/// with the round.
+fn enter(
+    mut entered: MessageReader<table::Entered>,
+    mut gone: MessageReader<table::Gone>,
+    mut knock: ResMut<Knock>,
+    mut pressed: ResMut<Pressed>,
+    mut commands: Commands,
 ) {
-    let offline = at.of(Minigame::KnockOff).is_some_and(|sitting| !sitting.online);
-    if !offline || !view.playing() {
-        *played = 0.0;
+    let mut begun = None;
+    let mut left = false;
+    for entered in entered.read() {
+        if entered.game == Minigame::KnockOff {
+            begun = Some(*entered);
+        } else {
+            left = true;
+        }
+    }
+    for gone in gone.read() {
+        if gone.game == Minigame::KnockOff {
+            left = true;
+            begun = None;
+        }
+    }
+    if !left && begun.is_none() {
         return;
     }
-    let was = *played;
-    *played += time.delta_secs();
-    if was < STAND_IN_SECS && *played >= STAND_IN_SECS {
-        let seats = view.members.len().max(1);
-        finish.write(table::Finish {
-            places: (0..seats as u8).collect(),
-            scores: vec![0; seats],
-            total: None,
+    for &body in &knock.marked {
+        if let Ok(mut body) = commands.get_entity(body) {
+            body.try_remove::<(Frozen, Dead, Landing)>();
+        }
+    }
+    *pressed = Pressed::default();
+    *knock = match begun {
+        Some(entered) => {
+            info!("Knock Off: in seat {}{}", entered.seat, if entered.online { ", online" } else { "" });
+            Knock::sit(entered.seat, entered.online)
+        }
+        None => Knock::default(),
+    };
+}
+
+/// What the server says to this device alone: its own aim, as the game
+/// holds it, coming back to the game while everyone aims (`Tell::Aimed`).
+fn hear(mut told: MessageReader<Told>, mut knock: ResMut<Knock>) {
+    for Told(said) in told.read() {
+        match said {
+            rules::Tell::Aimed { x, z, power } => {
+                // Told as the device comes back, before the round it is
+                // for has come: the turn being aimed now, whichever.
+                let turn = knock.playing().filter(|round| round.stage == KnockStage::Aim).map_or(THIS_TURN, |round| round.turn);
+                let way = Vec2::new(*x, *z).normalize_or_zero();
+                knock.aim = Aim {
+                    turn,
+                    way,
+                    power: (*power).min(rules::MOST_POWER),
+                    ready: false,
+                    sent: Some((way, *power)),
+                    since_sent: 0.0,
+                };
+            }
+        }
+    }
+}
+
+/// Offline, the game this device plays: begun as the table's play is (the
+/// countdown over, everyone stood on their spot), the computer in the seats
+/// it took; stepped by the town's clock, which is this device's own time of
+/// day offline, as the server steps it by its own online; its round drawn as
+/// the server's would be; and once one is left, the table told how
+/// everyone came (`table::Finish`).
+fn play_offline(
+    clock: Res<TownClock>,
+    view: Res<TableView>,
+    mut knock: ResMut<Knock>,
+    mut finish: MessageWriter<table::Finish>,
+    mut asks: MessageWriter<table::Ask>,
+) {
+    if knock.online || knock.seat.is_none() {
+        return;
+    }
+    // Out, and going: once the results the rest of the game came to are
+    // up, and your place paid, to the town.
+    if knock.leaving && view.over() {
+        knock.leaving = false;
+        asks.write(table::Ask::Leave);
+        return;
+    }
+    if knock.game.is_none() {
+        if !view.playing() {
+            return;
+        }
+        let people: Vec<bool> = view.members.iter().map(|member| member.id != 0 && !member.ai).collect();
+        let mut game = Game::new(view.members.len().max(1), &people, fastrand::u64(..));
+        game.begin(clock.now());
+        knock.loiter = None;
+        knock.game = Some(game);
+    }
+    let Knock {
+        game: Some(game),
+        seat: Some(seat),
+        aim,
+        leaving,
+        ..
+    } = &mut *knock
+    else {
+        return;
+    };
+    // Your aim, as it stands, and your word that you are ready: heard only
+    // while everyone aims, as the server hears them.
+    if game.stage() == KnockStage::Aim && game.turn() == aim.turn {
+        game.aim(usize::from(*seat), aim.way, aim.power);
+        if aim.ready {
+            game.ready(usize::from(*seat));
+        }
+    }
+    // Out, and going (offline): the rest of the game played out at once,
+    // a day on by its clock, which it passes through in one step, for how
+    // it came out.
+    let now = if *leaving && !game.in_play_at(usize::from(*seat)) { clock.now() + 86_400.0 } else { clock.now() };
+    game.step(now);
+    let round = game.round();
+    let outcome = game.outcome();
+    if knock.round.as_ref() != Some(&round) {
+        knock.round = Some(round);
+    }
+    if let Some((places, scores, total)) = outcome
+        && !knock.finished
+    {
+        knock.finished = true;
+        finish.write(table::Finish { places, scores, total });
+    }
+}
+
+/// Online, the round as the server sends it, on its table's entity.
+fn follow(view: Res<TableView>, rounds: Query<&KnockRound, With<Remote>>, mut knock: ResMut<Knock>) {
+    if !knock.online || knock.seat.is_none() {
+        return;
+    }
+    let sent = view.shown.and_then(|shown| rounds.get(shown).ok());
+    if let Some(sent) = sent
+        && knock.round.as_ref() != Some(sent)
+    {
+        knock.round = Some(sent.clone());
+    }
+}
+
+/// Offline, the computer's players standing about the ice while the table
+/// waits for its countdown to be over: each, as it comes out onto the ice,
+/// strolling now and then somewhere else on it, as the server's do online
+/// (`knock_off::Loiter`, one piece for both).
+#[allow(clippy::type_complexity)]
+fn loiter_offline(
+    time: Res<Time>,
+    view: Res<TableView>,
+    mut knock: ResMut<Knock>,
+    me: Query<&Transform, (With<Player>, Without<ComputerSeat>)>,
+    mut computers: Query<(&ComputerSeat, &mut Transform, &Venue), Without<Player>>,
+) {
+    if knock.online || knock.seat.is_none() || knock.game.is_some() || view.playing() || view.over() {
+        return;
+    }
+    let loiter = knock.loiter.get_or_insert_with(|| Loiter::new(fastrand::u64(..)));
+    let mut everyone: Vec<Option<Vec2>> = vec![None; 4];
+    if let Ok(me) = me.single() {
+        everyone[0] = Some(me.translation.xz());
+    }
+    for (seat, at, venue) in &computers {
+        if *venue == Venue::KnockOff && usize::from(seat.0) < everyone.len() {
+            everyone[usize::from(seat.0)] = Some(at.translation.xz());
+        }
+    }
+    for (seat, mut at, venue) in &mut computers {
+        let seat = usize::from(seat.0);
+        if *venue != Venue::KnockOff {
+            continue;
+        }
+        if !loiter.has(seat) {
+            loiter.enter(seat, at.translation.xz(), at.rotation.to_euler(EulerRot::YXZ).0);
+        }
+        if let Some((spot, yaw)) = loiter.step(seat, &everyone, time.delta_secs()) {
+            let to = Transform::from_xyz(spot.x, 0.0, spot.y).with_rotation(Quat::from_rotation_y(yaw));
+            at.set_if_neq(to);
+        }
+    }
+}
+
+/// Before the game, someone who has walked off the ice into the sea is
+/// stood back on their spot: nobody jumps in Knock Off, and the ice's rim is
+/// higher than a step out of the water. Offline here; online the server is
+/// asked to, as Bridge Wars' fall is (`Ask::Respawn`), once a second at the
+/// most.
+#[allow(clippy::too_many_arguments)]
+fn fell_in(
+    time: Res<Time>,
+    knock: Res<Knock>,
+    view: Res<TableView>,
+    online: Res<Online>,
+    me: Query<(Entity, Has<Frozen>), With<Player>>,
+    mut bodies: Whereabouts,
+    mut orbit: ResMut<OrbitCamera>,
+    mut asks: MessageWriter<NetAsk>,
+    mut since: Local<f32>,
+) {
+    *since += time.delta_secs();
+    let Some(seat) = knock.seat else {
+        return;
+    };
+    let Ok((you, frozen)) = me.single() else {
+        return;
+    };
+    let Ok((_, at, venue, ..)) = bodies.get(you) else {
+        return;
+    };
+    if *venue != Venue::KnockOff || frozen || knock.playing().is_some() || view.playing() || view.over() {
+        return;
+    }
+    let off = at.translation.y < -FELL_IN || at.translation.xz().length() > rules::RADIUS + FELL_IN;
+    if !off || *since < 1.0 {
+        return;
+    }
+    *since = 0.0;
+    if knock.online && online.is() {
+        asks.write(NetAsk::Respawn);
+    } else if !knock.online {
+        let (spot, turn) = rules::arrival(usize::from(seat));
+        lobby::put(&mut bodies, &mut orbit, you, Venue::KnockOff, Transform::from_translation(spot).with_rotation(turn));
+    }
+}
+
+/// How many steps a power arrow, or its key, held `held` seconds has
+/// repeated by: none for the first [`REPEAT_AFTER`], then one every
+/// [`REPEAT_EVERY`], however few frames that has been in.
+fn repeats(held: f32) -> u32 {
+    if held < REPEAT_AFTER {
+        0
+    } else {
+        ((held - REPEAT_AFTER) / REPEAT_EVERY).floor() as u32 + 1
+    }
+}
+
+/// Your aim, while you aim: which way from the stick (or, on desktop, W, A,
+/// S and D or the arrow keys, eight ways), turned as the camera looks, its
+/// up away from the camera, and kept as it was once the stick is let go;
+/// how hard from the arrows on the right (`screen`), or Q and E, Page Up and
+/// Down and the mouse's wheel; and Ready from its button, or Space. A new
+/// turn begins with no aim at all: standing still is what not aiming is.
+#[allow(clippy::too_many_arguments)]
+fn take_aim(
+    time: Res<Time>,
+    keys: Res<ButtonInput<KeyCode>>,
+    controls: Res<TouchControls>,
+    mut wheel: MessageReader<MouseWheel>,
+    typing: Res<crate::signup::NameBox>,
+    cameras: Query<&Transform, With<ThirdPersonCamera>>,
+    mut pressed: ResMut<Pressed>,
+    mut knock: ResMut<Knock>,
+    mut keys_held: Local<Option<(bool, f32, u32)>>,
+) {
+    // A line being typed into the chat has every key: none of them aims.
+    let keys = if typing.up() { &ButtonInput::<KeyCode>::default() } else { &*keys };
+    let turn = knock.playing().map(|round| (round.turn, round.stage));
+    // A new turn: no aim yet; but an aim the server has said is yours,
+    // coming back to the game, is this turn's (`hear`).
+    if let Some((turn, KnockStage::Aim)) = turn
+        && knock.aim.turn != turn
+    {
+        if knock.aim.turn == THIS_TURN {
+            knock.aim.turn = turn;
+        } else {
+            knock.aim = Aim { turn, ..default() };
+        }
+    }
+    let scrolled: f32 = wheel
+        .read()
+        .map(|scroll| match scroll.unit {
+            MouseScrollUnit::Line => scroll.y,
+            MouseScrollUnit::Pixel => scroll.y / 40.0,
+        })
+        .sum();
+    let mut steps = std::mem::take(&mut pressed.power);
+    let ready = std::mem::take(&mut pressed.ready) || keys.just_pressed(KeyCode::Space);
+    // The power arrows held down: one step as they go down (`screen`), and
+    // held, a step every so often after a moment.
+    if let Some(holding) = &mut pressed.held {
+        holding.held += time.delta_secs();
+        let due = repeats(holding.held);
+        if due > holding.repeated {
+            let more = (due - holding.repeated) as i32;
+            holding.repeated = due;
+            steps += if holding.up { more } else { -more };
+        }
+    }
+    // The keys, likewise.
+    let up = keys.pressed(KeyCode::KeyE) || keys.pressed(KeyCode::PageUp);
+    let down = keys.pressed(KeyCode::KeyQ) || keys.pressed(KeyCode::PageDown);
+    if keys.just_pressed(KeyCode::KeyE) || keys.just_pressed(KeyCode::PageUp) {
+        steps += 1;
+        *keys_held = Some((true, 0.0, 0));
+    } else if keys.just_pressed(KeyCode::KeyQ) || keys.just_pressed(KeyCode::PageDown) {
+        steps -= 1;
+        *keys_held = Some((false, 0.0, 0));
+    }
+    match keys_held.as_mut() {
+        Some((going_up, held, repeated)) if (*going_up && up) || (!*going_up && down) => {
+            *held += time.delta_secs();
+            let due = repeats(*held);
+            if due > *repeated {
+                let more = (due - *repeated) as i32;
+                *repeated = due;
+                steps += if *going_up { more } else { -more };
+            }
+        }
+        _ => *keys_held = None,
+    }
+    if scrolled.abs() >= 0.5 {
+        steps += scrolled.round() as i32;
+    }
+    if !knock.aiming() {
+        return;
+    }
+    // Which way: the stick, or the keys, as the camera looks.
+    let ahead = cameras.single().map_or(Vec3::NEG_Z, crate::camera_ahead);
+    let (forward, right) = (ahead.xz(), ahead.cross(Vec3::Y).xz());
+    let stick = controls.stick_value;
+    let mut way = if stick.length() >= crate::STICK_DEADZONE {
+        right * stick.x + forward * stick.y
+    } else {
+        Vec2::ZERO
+    };
+    if way == Vec2::ZERO {
+        for (codes, toward) in [
+            ([KeyCode::KeyW, KeyCode::ArrowUp], forward),
+            ([KeyCode::KeyS, KeyCode::ArrowDown], -forward),
+            ([KeyCode::KeyA, KeyCode::ArrowLeft], -right),
+            ([KeyCode::KeyD, KeyCode::ArrowRight], right),
+        ] {
+            if codes.iter().any(|&code| keys.pressed(code)) {
+                way += toward;
+            }
+        }
+    }
+    let mut aim = knock.aim;
+    if let Some(way) = way.try_normalize() {
+        aim.way = way;
+    }
+    let power = (i32::from(aim.power) + steps).clamp(0, i32::from(rules::MOST_POWER));
+    aim.power = power as u8;
+    // Some power and no way yet: across the ice, toward its middle.
+    if aim.power > 0 && aim.way == Vec2::ZERO {
+        let seat = knock.seat.map_or(0, usize::from);
+        let from = knock
+            .playing()
+            .and_then(|round| round.start.get(seat).copied().flatten())
+            .map_or(rules::arrival(seat).0.xz(), |(x, z)| Vec2::new(x, z));
+        aim.way = (-from).normalize_or(forward);
+    }
+    if ready {
+        aim.ready = true;
+    }
+    if aim != knock.aim {
+        knock.aim = aim;
+    }
+}
+
+/// Online, your aim to the server as it changes, no oftener than
+/// [`SEND_EVERY`] but always the last of it, and your word that you are
+/// ready after it. (Offline the game here takes it as it is, `play_offline`.)
+fn send_aim(time: Res<Time>, online: Res<Online>, mut knock: ResMut<Knock>, mut asks: MessageWriter<NetAsk>) {
+    if !knock.online || !online.is() {
+        return;
+    }
+    let Some(round) = knock.playing() else {
+        return;
+    };
+    if round.stage != KnockStage::Aim || knock.aim.turn != round.turn || !knock.in_play() {
+        return;
+    }
+    let aim = &mut knock.aim;
+    aim.since_sent += time.delta_secs();
+    let now = (aim.way, aim.power);
+    let changed = aim.sent != Some(now);
+    if changed && (aim.since_sent >= SEND_EVERY || aim.ready) {
+        asks.write(NetAsk::KnockOff(rules::Ask::Aim {
+            x: aim.way.x,
+            z: aim.way.y,
+            power: aim.power,
+        }));
+        aim.sent = Some(now);
+        aim.since_sent = 0.0;
+    }
+    if aim.ready && aim.sent == Some(now) && aim.since_sent >= 0.0 {
+        asks.write(NetAsk::KnockOff(rules::Ask::Ready));
+        // Said once: nothing more is heard from you this turn.
+        aim.since_sent = f32::NEG_INFINITY;
+    }
+}
+
+/// The camera over the ice from your spot's side ([`over_the_ice`]), held
+/// there by the game from the moment you sit down to the end, and shaken a
+/// little where two meet in a slide (mine: a few centimetres, a tenth of a
+/// second).
+fn hold_the_camera(
+    time: Res<Time>,
+    at: Res<AtTable>,
+    windows: Query<&Window>,
+    mut knock: ResMut<Knock>,
+    mut held: ResMut<HeldCamera>,
+    mut fitted: Local<Option<(u8, u32, Transform)>>,
+) {
+    let Some(sitting) = at.of(Minigame::KnockOff) else {
+        return;
+    };
+    let aspect = windows.single().map_or(16.0 / 9.0, |window| window.width() / window.height().max(1.0));
+    // Fitted again only for another seat or another shape of screen.
+    let view = match *fitted {
+        Some((seat, shape, view)) if seat == sitting.seat && shape == aspect.to_bits() => view,
+        _ => {
+            let view = over_the_ice(sitting.seat, aspect);
+            *fitted = Some((sitting.seat, aspect.to_bits(), view));
+            view
+        }
+    };
+    let mut view = view;
+    if let Some((left, strength)) = &mut knock.shake {
+        *left -= time.delta_secs();
+        if *left <= 0.0 {
+            knock.shake = None;
+        } else {
+            let wobble = (time.elapsed_secs() * 90.0).sin() * *strength * (*left / ice::SHAKE_SECS);
+            view.translation += view.right() * wobble + view.up() * wobble * 0.6;
+        }
+    }
+    held.set_if_neq(HeldCamera(Some(view)));
+}
+
+/// Where the body in `seat` is drawn, and how: on the ice, facing `yaw`,
+/// posed for sliding or not; or nowhere, gone into the sea.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Pose {
+    On { at: Vec3, yaw: f32, sliding: bool },
+    Gone,
+}
+
+/// Where the body in `seat` is drawn by `round`, `clock` by the town's
+/// clock, with the slide this device plays (`played`); facing `face` unless
+/// the stage turns it, and settling from `settle_from` onto where the
+/// server has it as the ice breaks. Everyone faces the middle while they
+/// aim (never toward their aim, which would give it away), the way they
+/// will set off once it is shown, and keeps that through the slide,
+/// knocked about or not.
+fn pose(round: &KnockRound, played: Option<&Played>, seat: usize, clock: f64, face: f32, settle_from: Option<Vec3>) -> Pose {
+    let start = round.start.get(seat).copied().flatten().map(|(x, z)| Vec2::new(x, z));
+    let out = round.out.get(seat).copied().flatten().is_some();
+    let since = (clock - round.since).max(0.0) as f32;
+    let on = |at: Vec2, yaw: f32| Pose::On { at: Vec3::new(at.x, 0.0, at.y), yaw, sliding: false };
+    match round.stage {
+        KnockStage::Aim => match start {
+            Some(at) if !out => on(at, facing(-at).unwrap_or(face)),
+            _ => Pose::Gone,
+        },
+        KnockStage::Reveal => match start {
+            Some(at) if !out => {
+                let launch = round.launches.get(seat).map_or(Vec2::ZERO, |&(x, z)| Vec2::new(x, z));
+                on(at, facing(launch).or(facing(-at)).unwrap_or(face))
+            }
+            _ => Pose::Gone,
+        },
+        KnockStage::Slide => {
+            let slid = played.filter(|played| played.turn == round.turn).and_then(|played| {
+                let at = played.slide.at(seat)?;
+                let going = played.slide.velocity(seat).unwrap_or(Vec2::ZERO).length();
+                Some((at, going))
+            });
+            match slid {
+                Some((at, _)) if at.y <= -rules::SUNK + 1e-3 => Pose::Gone,
+                Some((at, going)) => Pose::On { at, yaw: face, sliding: going > SLIDING_FROM && at.y > -0.05 },
+                None => match start {
+                    Some(at) if !out => on(at, face),
+                    _ => Pose::Gone,
+                },
+            }
+        }
+        KnockStage::Break => match start {
+            // Taken by what broke off: down with it into the sea.
+            Some(at) if out => {
+                let drop = (0.5 * DROP * since * since).min(rules::SUNK);
+                if drop >= rules::SUNK - 1e-3 {
+                    Pose::Gone
+                } else {
+                    Pose::On { at: Vec3::new(at.x, -drop, at.y), yaw: face, sliding: false }
+                }
+            }
+            // Settled where the server has the slide leave them.
+            Some(at) => {
+                let there = Vec3::new(at.x, 0.0, at.y);
+                let at = match settle_from {
+                    Some(from) if from.distance(there) > 0.01 => from.lerp(there, (since / SETTLE).clamp(0.0, 1.0)),
+                    _ => there,
+                };
+                Pose::On { at, yaw: face, sliding: false }
+            }
+            None => Pose::Gone,
+        },
+        KnockStage::Over => match start {
+            Some(at) if !out => on(at, face),
+            _ => Pose::Gone,
+        },
+    }
+}
+
+/// Every body at the table placed by the game while it is played: held
+/// where the game puts it (`Frozen`, `placed`), on its spot, in the slide
+/// this device plays from the round, settled as the ice breaks, and hidden
+/// once in the sea (`Dead`, which `island` draws nowhere); posed for
+/// sliding while it slides. Each written only when it changes. The slide is
+/// begun here as the round says it began, and stepped to the town's clock.
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+fn place(
+    clock: Res<TownClock>,
+    view: Res<TableView>,
+    mut knock: ResMut<Knock>,
+    me: Query<Entity, With<Player>>,
+    remotes: Query<(Entity, &Member), With<Remote>>,
+    computers: Query<(Entity, &ComputerSeat)>,
+    mut bodies: Query<(&mut Transform, Has<Frozen>, Option<&Landing>, Has<Dead>)>,
+    mut splashes: MessageWriter<ice::Splashed>,
+    mut met: MessageWriter<ice::Met>,
+    mut commands: Commands,
+) {
+    let Some(round) = knock.playing().cloned() else {
+        return;
+    };
+    let now = clock.now();
+    let seats = round.start.len();
+    // The slide, as the round has it begin.
+    if round.stage == KnockStage::Slide && knock.slide.as_ref().is_none_or(|played| played.turn != round.turn) {
+        let start: Vec<Option<Vec2>> = round.start.iter().map(|at| at.map(|(x, z)| Vec2::new(x, z))).collect();
+        let launches: Vec<Vec2> = round.launches.iter().map(|&(x, z)| Vec2::new(x, z)).collect();
+        knock.slide = Some(Played {
+            turn: round.turn,
+            since: round.since,
+            slide: Slide::new(&start, &launches, round.radius),
+            hits_shown: 0,
         });
+    }
+    if let Some(played) = &mut knock.slide
+        && played.turn == round.turn
+    {
+        played.slide.step_to((now - played.since) as f32);
+    }
+    if knock.faces.len() != seats {
+        knock.faces = (0..seats).map(|seat| facing(-rules::arrival(seat).0.xz()).unwrap_or(0.0)).collect();
+        knock.drawn = vec![None; seats];
+        knock.settle_from = vec![None; seats];
+        knock.splashed = vec![false; seats];
+    }
+    // A new stage: who faces which way now, and where each settles from.
+    let stage = (round.turn, round.stage);
+    if knock.placed_in != Some(stage) {
+        if round.stage == KnockStage::Aim {
+            knock.splashed = vec![false; seats];
+        }
+        for seat in 0..seats {
+            let start = round.start[seat].map(|(x, z)| Vec2::new(x, z));
+            match round.stage {
+                KnockStage::Aim => {
+                    if let Some(yaw) = start.and_then(|at| facing(-at)) {
+                        knock.faces[seat] = yaw;
+                    }
+                }
+                KnockStage::Reveal => {
+                    let launch = round.launches.get(seat).map_or(Vec2::ZERO, |&(x, z)| Vec2::new(x, z));
+                    if let Some(yaw) = facing(launch) {
+                        knock.faces[seat] = yaw;
+                    }
+                }
+                _ => {}
+            }
+            knock.settle_from[seat] = if round.stage == KnockStage::Break { knock.drawn[seat] } else { None };
+        }
+        knock.placed_in = Some(stage);
+    }
+    let by_seat = bodies_by_seat(&knock, &view, me.single().ok(), &remotes, &computers);
+    for seat in 0..seats {
+        let Some(body) = by_seat.get(seat).copied().flatten() else {
+            continue;
+        };
+        let Ok((mut transform, frozen, landing, dead)) = bodies.get_mut(body) else {
+            continue;
+        };
+        if !knock.marked.contains(&body) {
+            knock.marked.push(body);
+        }
+        if !frozen {
+            commands.entity(body).insert(Frozen { placed: true });
+        }
+        let pose = pose(&round, knock.slide.as_ref(), seat, now, knock.faces[seat], knock.settle_from[seat]);
+        match pose {
+            Pose::On { at, yaw, sliding } => {
+                let pose_wanted = sliding.then_some(Landing {
+                    squat: SLIDING_SQUAT,
+                    arms: SLIDING_ARMS,
+                });
+                if landing != pose_wanted.as_ref() {
+                    match pose_wanted {
+                        Some(wanted) => commands.entity(body).insert(wanted),
+                        None => commands.entity(body).remove::<Landing>(),
+                    };
+                }
+                let sink = pose_wanted.map_or(0.0, |pose| pose.sink(HIPS));
+                let wanted = Transform::from_translation(at - Vec3::Y * sink).with_rotation(Quat::from_rotation_y(yaw));
+                transform.set_if_neq(wanted);
+                if dead {
+                    commands.entity(body).remove::<Dead>();
+                }
+                // Into the sea, the moment it reaches the water: a splash.
+                let was = knock.drawn[seat];
+                if at.y < crate::WATER_Y && was.is_some_and(|was| was.y >= crate::WATER_Y) && !knock.splashed[seat] {
+                    knock.splashed[seat] = true;
+                    splashes.write(ice::Splashed { at: Vec3::new(at.x, crate::WATER_Y, at.z), big: true });
+                }
+                knock.drawn[seat] = Some(at);
+            }
+            Pose::Gone => {
+                if !dead {
+                    commands.entity(body).insert(Dead { left: f32::INFINITY });
+                }
+                if landing.is_some() {
+                    commands.entity(body).remove::<Landing>();
+                }
+                knock.drawn[seat] = None;
+            }
+        }
+    }
+    // Two meeting in the slide: the dust where they met, and a shake of the
+    // camera with it, by how hard they met.
+    let mut shaken = None;
+    if let Some(played) = &mut knock.slide
+        && played.turn == round.turn
+    {
+        let hits = played.slide.hits();
+        for hit in &hits[played.hits_shown.min(hits.len())..] {
+            // (Coming back in the middle of one, only those just now.)
+            if played.slide.time() - hit.time < 0.4 {
+                met.write(ice::Met { at: Vec3::new(hit.at.x, 0.0, hit.at.y) });
+                shaken = Some(shaken.unwrap_or(0.0f32).max(hit.speed));
+            }
+        }
+        played.hits_shown = hits.len();
+    }
+    if let Some(speed) = shaken {
+        knock.shake = Some((ice::SHAKE_SECS, ice::shake_for(speed)));
     }
 }
 
@@ -109,15 +1013,147 @@ fn stand_in(
 mod tests {
     use super::*;
 
+    /// A round of four seats on the spots they begin on.
+    fn round(stage: KnockStage) -> KnockRound {
+        KnockRound {
+            turn: 1,
+            stage,
+            since: 100.0,
+            until: 110.0,
+            radius: rules::RADIUS,
+            next_radius: rules::radius_after(1),
+            start: (0..4).map(|seat| Some((rules::arrival(seat).0.x, rules::arrival(seat).0.z))).collect(),
+            launches: Vec::new(),
+            ready: vec![false; 4],
+            out: vec![None; 4],
+        }
+    }
+
     #[test]
-    fn the_camera_looks_at_the_middle_of_the_ice_from_the_south() {
-        let view = over_the_ice();
-        assert_eq!(view.translation, Vec3::new(0.0, 20.0, 14.0));
-        let looking = view.forward();
-        let at_the_middle = (Vec3::ZERO - view.translation).normalize();
-        assert!(looking.dot(at_the_middle) > 0.9999);
-        // Toward the north, the top of the screen as it is over Bridge
-        // Wars' map.
-        assert!(looking.z < 0.0);
+    fn the_camera_sees_the_whole_island_from_your_own_side_your_spot_low_on_the_screen() {
+        for aspect in [16.0 / 9.0, 19.5 / 9.0, 4.0 / 3.0] {
+            for seat in 0..4u8 {
+                let view = over_the_ice(seat, aspect);
+                let side = rules::arrival(usize::from(seat)).0.xz().normalize();
+                // From your own side, looking down at the middle at 55
+                // degrees.
+                assert!(view.translation.xz().normalize().dot(side) > 0.999, "{seat}: {view:?}");
+                let looking = view.forward();
+                assert!((looking.y.asin().abs() - CAMERA_PITCH).abs() < 1e-3, "{looking}");
+                let to_middle = (Vec3::ZERO - view.translation).normalize();
+                assert!(looking.dot(to_middle) > 0.9999);
+                // The stick's up, away from the camera, is toward the middle
+                // from your spot.
+                let ahead = crate::camera_ahead(&view).xz();
+                assert!(ahead.dot(-side) > 0.999);
+                // Your spot below the middle of the screen, and the ice's
+                // far edge under the top.
+                let into = view.to_matrix().inverse();
+                let spot = into.transform_point3(rules::arrival(usize::from(seat)).0);
+                assert!(spot.y / -spot.z < 0.0, "your spot toward the bottom");
+                let half = (crate::CAMERA_FOV * 0.5).tan();
+                let far = into.transform_point3((-side * rules::RADIUS).extend(0.0).xzy());
+                assert!(far.y / -far.z / half < 1.0 - 2.0 * CLEAR_TOP + 1e-3, "{aspect} {seat}");
+                // Not far off: the island fills the screen as it fits.
+                assert!(view.translation.length() < 45.0, "{}", view.translation.length());
+            }
+        }
+    }
+
+    #[test]
+    fn a_power_arrow_held_repeats_after_a_moment_however_slow_the_frames() {
+        assert_eq!(repeats(0.0), 0);
+        assert_eq!(repeats(REPEAT_AFTER - 0.01), 0);
+        assert_eq!(repeats(REPEAT_AFTER), 1);
+        // Held a second: the press and eight or nine steps more, enough to
+        // go from nothing to all but the most.
+        assert_eq!(repeats(1.0), 9);
+        // However it is counted, a frame at a time or in one long one.
+        let mut held = 0.0;
+        let mut counted = 0;
+        for _ in 0..10 {
+            held += 0.1;
+            counted = counted.max(repeats(held));
+        }
+        assert_eq!(counted, repeats(1.0));
+    }
+
+    #[test]
+    fn everyone_faces_the_middle_while_they_aim_and_the_way_they_go_once_shown() {
+        let aiming = round(KnockStage::Aim);
+        for seat in 0..4 {
+            let Pose::On { at, yaw, sliding } = pose(&aiming, None, seat, 101.0, 0.0, None) else {
+                panic!("on the ice");
+            };
+            assert_eq!(at, rules::arrival(seat).0);
+            assert!(!sliding);
+            let ahead = Quat::from_rotation_y(yaw) * Vec3::NEG_Z;
+            assert!(ahead.xz().dot(-at.xz().normalize()) > 0.999, "seat {seat}");
+        }
+        let mut shown = round(KnockStage::Reveal);
+        shown.launches = vec![(0.0, -3.0), (2.0, 0.0), (0.0, 0.0), (0.0, 0.0)];
+        let Pose::On { yaw, .. } = pose(&shown, None, 1, 110.5, 0.0, None) else {
+            panic!("on the ice");
+        };
+        let ahead = Quat::from_rotation_y(yaw) * Vec3::NEG_Z;
+        assert!(ahead.x > 0.999, "{ahead}");
+        // Whoever is out is nowhere.
+        shown.out[3] = Some(1);
+        assert_eq!(pose(&shown, None, 3, 110.5, 0.0, None), Pose::Gone);
+    }
+
+    #[test]
+    fn a_slide_drawn_here_is_the_game_s_and_settles_onto_the_server_s_ending() {
+        // The game plays a turn out, everyone sliding at the middle.
+        let mut game = Game::new(4, &[true, true, true, true], 1);
+        game.begin(1000.0);
+        for seat in 0..4 {
+            game.aim(seat, -rules::arrival(seat).0.xz(), 6);
+            game.ready(seat);
+        }
+        game.step(1000.01);
+        game.step(1000.01 + f64::from(rules::REVEAL) + 0.001);
+        let round = game.round();
+        assert_eq!(round.stage, KnockStage::Slide);
+        let start: Vec<Option<Vec2>> = round.start.iter().map(|at| at.map(|(x, z)| Vec2::new(x, z))).collect();
+        let launches: Vec<Vec2> = round.launches.iter().map(|&(x, z)| Vec2::new(x, z)).collect();
+        let mut played = Played {
+            turn: 1,
+            since: round.since,
+            slide: Slide::new(&start, &launches, round.radius),
+            hits_shown: 0,
+        };
+        // A second in, drawn where the game has them.
+        let at = round.since + 1.0;
+        game.step(at);
+        played.slide.step_to((at - played.since) as f32);
+        for seat in 0..4 {
+            match pose(&game.round(), Some(&played), seat, at, 0.0, None) {
+                Pose::On { at: drawn, .. } => assert!(drawn.distance(game.at(seat).0) < 1e-5, "seat {seat}"),
+                Pose::Gone => assert!(game.at(seat).0.y <= -rules::SUNK + 1e-3),
+            }
+        }
+        // As the ice breaks, from where the slide left them onto where the
+        // server says, over a fifth of a second.
+        let mut breaking = round.clone();
+        breaking.stage = KnockStage::Break;
+        breaking.since = 2000.0;
+        breaking.start[0] = Some((1.0, 2.0));
+        let from = Vec3::new(1.5, 0.0, 2.0);
+        let Pose::On { at: first, .. } = pose(&breaking, None, 0, 2000.0, 0.0, Some(from)) else {
+            panic!("on the ice");
+        };
+        assert!(first.distance(from) < 1e-5);
+        let Pose::On { at: later, .. } = pose(&breaking, None, 0, 2000.0 + f64::from(SETTLE), 0.0, Some(from)) else {
+            panic!("on the ice");
+        };
+        assert!(later.distance(Vec3::new(1.0, 0.0, 2.0)) < 1e-5);
+        // Whoever the ice broke under drops with it, and is gone.
+        breaking.out[2] = Some(1);
+        let Pose::On { at: dropping, .. } = pose(&breaking, None, 2, 2000.2, 0.0, None) else {
+            panic!("dropping");
+        };
+        assert!(dropping.y < 0.0);
+        assert_eq!(pose(&breaking, None, 2, 2001.5, 0.0, None), Pose::Gone);
     }
 }

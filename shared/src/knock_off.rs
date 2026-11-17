@@ -37,6 +37,7 @@
 //! in at the very same moment sharing a place ([`table::split`] pays them).
 
 mod computer;
+mod loiter;
 mod slide;
 
 use std::f32::consts::TAU;
@@ -46,6 +47,7 @@ use bevy_replicon::prelude::*;
 use serde::{Deserialize, Serialize};
 
 pub use computer::{PERSONAS, Persona};
+pub use loiter::Loiter;
 pub use slide::{Ending, Hit, Slide};
 
 use crate::bots::Dice;

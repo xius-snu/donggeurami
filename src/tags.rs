@@ -221,12 +221,18 @@ fn place_tags(
     for (tag, mut shown, mut place, node) in &mut tags {
         // In a game of Bridge Wars everyone's name is over their health
         // bar, in their team's colour (`arena`), and not here; and so in
-        // every game fought as it is (`island::fights`).
+        // every game fought as it is (`island::fights`); and on Knock Off's
+        // ice, whose camera is too far out for a name sized by distance to
+        // be read, where each is drawn as big wherever it is, in its seat's
+        // colour (`knock_off`).
         let head = bodies
             .get(tag.0)
             .ok()
             .filter(|&(body, &venue)| {
-                venue == here && !island::fights(here) && body.translation.distance(you.translation) <= READ_RANGE
+                venue == here
+                    && !island::fights(here)
+                    && here != Venue::KnockOff
+                    && body.translation.distance(you.translation) <= READ_RANGE
             })
             .map(|(body, _)| body.translation + Vec3::Y * OVER_HEAD);
         let point = head
