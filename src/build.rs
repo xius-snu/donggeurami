@@ -2062,7 +2062,10 @@ fn finish_building(
 /// lands on it — a wall, the floor, the ceiling — and picked back up it is a
 /// ghost, no longer there to stand in or bump into. What is in there with you,
 /// and the doors, windows and hangings in its walls, still can be. It is
-/// also marked as the house you are in ([`YouAreIn`]).
+/// also marked as the house you are in ([`YouAreIn`]). A town house is the
+/// one you are in on Blend In's venue too, which is the town as it stands
+/// (`island::scenery`, since 2026-11-18), and is see-through from inside
+/// there as in the town (`see_through`).
 fn untappable_from_inside(
     me: Query<(&Transform, &Venue), With<Player>>,
     houses: Query<(
@@ -2077,9 +2080,9 @@ fn untappable_from_inside(
 ) {
     let me = me.single().ok();
     for (house, venue, place, rooms, bounds, untappable) in &houses {
-        let inside = me.is_some_and(|(me, on)| {
+        let inside = me.is_some_and(|(me, &on)| {
             let at = place.affine().inverse().transform_point3(me.translation);
-            on == venue && rooms.hold(at, bounds.high.y)
+            (on == *venue || island::scenery(on) == *venue) && rooms.hold(at, bounds.high.y)
         });
         if inside && !untappable {
             commands.entity(house).insert((Untappable, YouAreIn));
@@ -2106,17 +2109,27 @@ fn want_pointer(
 /// coming in. Anyone is everyone on its plot, AIs as well, on its storey. A
 /// door being put down stays shut. A double door's leaves swing together, and
 /// open for someone going through either of them as soon as a door of one
-/// leaf would.
+/// leaf would. A town house's open for anyone on Blend In's venue as well,
+/// which is the town as it stands (`island::scenery`, since 2026-11-18):
+/// while you are there, for those there with you, and not for the town's
+/// own people, who are not to be seen there.
 fn swing_doors(
     time: Res<Time>,
+    me: Query<&Venue, With<Player>>,
     bodies: Query<(&Transform, &Venue), With<Seat>>,
     mut doors: Query<(&mut Doorway, &GlobalTransform, &Span, &ChildOf, Has<Ghost>)>,
     venues: Query<&Venue>,
     mut leaves: Query<&mut Transform, Without<Seat>>,
 ) {
     let dt = time.delta_secs();
+    let here = me.single().ok().copied();
     for (mut door, place, span, house, ghost) in &mut doors {
-        let venue = venues.get(house.parent()).ok();
+        // Whose door it is: its house's island's, or, while you stand on a
+        // venue whose scenery that is, yours.
+        let venue = venues.get(house.parent()).ok().map(|&venue| match here {
+            Some(here) if here != venue && island::scenery(here) == venue => here,
+            _ => venue,
+        });
         // The middle of the bottom of the doorway, which way is in, and which
         // way along it.
         let (middle, inward, along) = (
@@ -2126,7 +2139,7 @@ fn swing_doors(
         );
         let hold = if door.wanted { SWING_HOLD } else { 0.0 };
         let wanted = !ghost
-            && bodies.iter().any(|(body, on)| {
+            && bodies.iter().any(|(body, &on)| {
                 let at = body.translation;
                 let nearest = nearest_leaf(at, middle, along, door.reach);
                 Some(on) == venue && opens(at, nearest, inward, span.above, hold)

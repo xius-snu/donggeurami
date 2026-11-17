@@ -45,6 +45,7 @@ use std::sync::Mutex;
 use std::sync::mpsc::{Receiver, TryRecvError, channel};
 use std::time::SystemTime;
 
+use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use bevy::window::AppLifecycle;
 use bevy_replicon::prelude::*;
@@ -62,7 +63,8 @@ use crate::car::{self, Place};
 use crate::clock::TownClock;
 use crate::lobby::{self, Balance, Seat, Whereabouts};
 use crate::signup::Profile;
-use crate::{Hit, OrbitCamera, Player, PlayerJump, Riding};
+use crate::table::AtTable;
+use crate::{Frozen, Hit, OrbitCamera, Player, PlayerJump, Riding};
 
 /// Where the server is: the Vultr VM in Seoul, over IPv6 first and then IPv4
 /// (`MULTIPLAYER.md`, phase 1). A phone on a network with only IPv6 — Apple
@@ -171,6 +173,16 @@ impl Online {
     #[allow(dead_code)]
     pub(crate) fn me(&self) -> Option<&Member> {
         self.me.as_ref()
+    }
+
+    /// Let in as `me`, as the server would have it, for the tests of what
+    /// goes otherwise online (`table`, `friends`).
+    #[cfg(test)]
+    pub(crate) fn for_tests(me: Member) -> Self {
+        Self {
+            me: Some(me),
+            ..default()
+        }
     }
 }
 
@@ -407,8 +419,7 @@ fn link(
     me: Query<(&Transform, &Venue, &Riding), With<Player>>,
     cars: car::Cars,
     remote: Query<Entity, With<Remote>>,
-    offline_game: Res<OfflineGame>,
-    offline_arena: Res<OfflineArena>,
+    (offline_game, offline_arena, at_table): (Res<OfflineGame>, Res<OfflineArena>, Res<AtTable>),
     mut online: ResMut<Online>,
     mut clock: ResMut<Clock>,
     mut asks: MessageWriter<Ask>,
@@ -435,10 +446,11 @@ fn link(
         }
         LinkState::Resting { until } => {
             // Not in the middle of a game of House Builder or Bridge Wars
-            // played offline: online, a game is the server's to run. In the
-            // middle of one played online, the connection is wanted back at
-            // once.
-            if now >= until && !offline_game.0 && !offline_arena.0 {
+            // played offline, nor at a table of one of the four games this
+            // device hosts (`table`): online, a game is the server's to run.
+            // In the middle of one played online, the connection is wanted
+            // back at once.
+            if now >= until && !offline_game.0 && !offline_arena.0 && !at_table.offline() {
                 try_address(&mut link, &mut commands, &channels, 0, now);
             }
         }
@@ -623,8 +635,24 @@ fn outdated(_: On<ProtocolMismatch>, mut link: ResMut<Link>, mut commands: Comma
 
 // -------------------------------------------------------------- your body
 
+/// What the server says to this device alone of each of the four games of
+/// 2026-11-18 (`Tell::BlendIn` and the rest), handed on to the game's own
+/// module as a message of its own (`blend_in::Told` and the rest).
+#[derive(SystemParam)]
+struct GamesTold<'w> {
+    blend_in: MessageWriter<'w, crate::blend_in::Told>,
+    knock_off: MessageWriter<'w, crate::knock_off::Told>,
+    bridge_race: MessageWriter<'w, crate::bridge_race::Told>,
+    last_stand: MessageWriter<'w, crate::last_stand::Told>,
+}
+
 /// What the server tells this device alone: who you are, and where it has put
-/// you.
+/// you. Put somewhere on the island you stand on already, you are moved
+/// there only on a game's venue at a table (`table`, since 2026-11-18),
+/// where the server stands you where its game is played: from the waiting
+/// room to where play begins, from one table to the next. Anywhere else it
+/// is where you stood as you came online, and you stay where you have got
+/// to since.
 #[allow(clippy::too_many_arguments)]
 fn hear(
     mut tells: MessageReader<Tell>,
@@ -635,6 +663,7 @@ fn hear(
     mut bodies: Whereabouts,
     mut orbit: ResMut<OrbitCamera>,
     cars: car::Cars,
+    mut games: GamesTold,
 ) {
     for tell in tells.read() {
         let Ok((you, mut seat, mut balance)) = me.single_mut() else {
@@ -664,10 +693,12 @@ fn hear(
                 // arrives.
                 seat.0 = usize::from(*arrives);
                 match spot {
-                    // Let in where you already were: nothing moves.
+                    // Let in where you already were: nothing moves. But at
+                    // a table, where the server stands you where you are to
+                    // be on the island you are on (`table`).
                     Some(spot) => {
                         let here = bodies.get(you).map(|(_, _, &on, ..)| on).ok();
-                        if here != Some(*venue) {
+                        if here != Some(*venue) || venue.game().is_some() {
                             let (at, _) = placed(spot, &cars);
                             lobby::put(&mut bodies, &mut orbit, you, *venue, at);
                         }
@@ -700,9 +731,23 @@ fn hear(
             Tell::Balance(coins) => {
                 balance.set_if_neq(Balance(*coins));
             }
+            // What each of the four games says to you alone, to its own
+            // module.
+            Tell::BlendIn(told) => {
+                games.blend_in.write(crate::blend_in::Told(told.clone()));
+            }
+            Tell::KnockOff(told) => {
+                games.knock_off.write(crate::knock_off::Told(told.clone()));
+            }
+            Tell::BridgeRace(told) => {
+                games.bridge_race.write(crate::bridge_race::Told(told.clone()));
+            }
+            Tell::LastStand(told) => {
+                games.last_stand.write(crate::last_stand::Told(told.clone()));
+            }
             // What it says of your friends is `friends`' to hear, and what
             // is said in your room, or happens in your game, `chat`'s and
-            // `arena`'s.
+            // `arena`'s; and that you are at a table, `table`'s.
             Tell::Joined { .. }
             | Tell::Seated { .. }
             | Tell::Back { .. }
@@ -711,12 +756,7 @@ fn hear(
             | Tell::Social(_)
             | Tell::Said { .. }
             | Tell::Feed(_)
-            // minigames: S2 (the device's side of the tables) handles these.
-            | Tell::Entered { .. }
-            | Tell::BlendIn(_)
-            | Tell::KnockOff(_)
-            | Tell::BridgeRace(_)
-            | Tell::LastStand(_) => {}
+            | Tell::Entered { .. } => {}
         }
     }
 }
@@ -784,19 +824,22 @@ fn placed(spot: &Spot, cars: &car::Cars) -> (Transform, Option<Entity>) {
 /// couple more times, marked still, in case the first was lost. Nothing while
 /// you stand still, and nothing while you are anywhere the server has not
 /// put you. Standing still on the car is standing still: where you are on
-/// it does not change as it drives you round.
+/// it does not change as it drives you round. Nothing either while a game
+/// the server runs puts your body where it is itself ([`Frozen`] `placed`,
+/// since 2026-11-18): where it has you is the server's.
 fn tell_where_i_am(
     time: Res<Time>,
     online: Res<Online>,
     cars: car::Cars,
-    me: Query<(&Transform, &Venue, &Riding), With<Player>>,
+    me: Query<(&Transform, &Venue, &Riding, Option<&Frozen>), With<Player>>,
     mut sent: Local<Sent>,
     mut moves: MessageWriter<Moved>,
 ) {
-    let Ok((at, &venue, riding)) = me.single() else {
+    let Ok((at, &venue, riding, frozen)) = me.single() else {
         return;
     };
-    if !online.is() || online.venue != Some(venue) {
+    let placed = frozen.is_some_and(|frozen| frozen.placed);
+    if !online.is() || online.venue != Some(venue) || placed {
         *sent = Sent::default();
         return;
     }
@@ -996,17 +1039,23 @@ fn hear_spots(
 /// car, on the car as it is now ([`drawn`]). Late updates: carried on the way
 /// they were going for a moment, then held; on the car, held where they were
 /// on it. Only what has changed is written, so that someone standing still is
-/// not taken for someone who moved.
+/// not taken for someone who moved. Not anyone a game on this device puts
+/// where they are itself ([`Frozen`] `placed`, since 2026-11-18): as each
+/// device plays a slide of Knock Off out from the same start, by the
+/// town's clock.
 fn smooth(
     time: Res<Time<Real>>,
     mut clock: ResMut<Clock>,
     cars: car::Cars,
-    mut bodies: Query<(&mut Transform, &Track, &mut Riding), With<Remote>>,
+    mut bodies: Query<(&mut Transform, &Track, &mut Riding, Option<&Frozen>), With<Remote>>,
 ) {
     let Some(server) = clock.now(time.elapsed_secs_f64()) else {
         return;
     };
-    for (mut transform, track, mut riding) in &mut bodies {
+    for (mut transform, track, mut riding, frozen) in &mut bodies {
+        if frozen.is_some_and(|frozen| frozen.placed) {
+            continue;
+        }
         let Some((pose, aboard)) = drawn(&track.updates, server, |car, ago| cars.before(car, ago)) else {
             continue;
         };

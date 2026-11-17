@@ -381,6 +381,11 @@
             // say ("Requested").
             link: "#ffffff",
             link_off: "#ffffff80",
+            // Your own row among the results at the end of a game of one
+            // of the four games (Blend In, Knock Off, Bridge Race, Last
+            // Stand), behind it, to pick it out from the rest: a
+            // see-through white, as see-through as its alpha says.
+            row_mine: "#ffffff1f",
         ),
         // The chat on the left of the screen, in the town and in Bridge
         // Wars: what shows behind the lines said while you type, as
@@ -418,6 +423,30 @@
             send_off: "#ffffff59",
             quick: "#666666cc",
             quick_text: "#ffffff",
+        ),
+
+        // The four games of 2026-11-18 (Blend In, Knock Off, Bridge Race,
+        // Last Stand), each its own block, whatever each draws of its own
+        // over the world taking its colours from it. In each, its accent:
+        // the colour that is the game's, which reads on the plate's grey
+        // by day and by night. Blend In's, a soft violet.
+        blend_in: (
+            accent: "#c9a2ff",
+        ),
+
+        // Knock Off's: its accent, the blue of ice.
+        knock_off: (
+            accent: "#8fdcff",
+        ),
+
+        // Bridge Race's: its accent, the golden island's gold.
+        bridge_race: (
+            accent: "#ffd34d",
+        ),
+
+        // Last Stand's: its accent, the orange of a fire kept going.
+        last_stand: (
+            accent: "#ff8a5c",
         ),
     ),
     // The font is Inter (since 2026-11-13; Bevy's own, plain ASCII, until
@@ -530,8 +559,8 @@
             update_to_play: "Update the app to play online",
         ),
         // The game selector, behind the gamepad button down the right edge:
-        // its title, the three games (the third not to be had yet), and
-        // what each costs.
+        // its title, the games on it, and what each costs. The card for a
+        // game to come ("???") is put away since the four games came.
         games: (
             title: "Games",
             bridge_wars: "Bridge Wars",
@@ -539,6 +568,30 @@
             coming_soon: "???",
             coming_soon_note: "Coming soon",
             free: "Free",
+            // The line under each game's name on its card: Bridge Wars and
+            // Home Builders, then the four games of 2026-11-18, each by its
+            // name and its line.
+            bridge_wars_line: "Break the other teams' anchors",
+            home_builders_line: "Build the best house",
+            blend_in: "Blend In",
+            blend_in_line: "Hide among the town's people",
+            knock_off: "Knock Off",
+            knock_off_line: "Slide them off the ice",
+            bridge_race: "Bridge Race",
+            bridge_race_line: "Build to the golden island first",
+            last_stand: "Last Stand",
+            last_stand_line: "Hold out against the waves",
+            // What one of the four costs, and what its card says when you
+            // have not got that ({coins} is how many). Home Builders' card
+            // says its own, house_builder.price and need_coins, below.
+            price: "{coins} coins",
+            needs_coins: "Needs {coins} coins",
+            // On Blend In's card offline: it needs people to play with.
+            online_only: "Online only",
+            // Across the screen when the server turns a game down: you have
+            // not got the coins, or you are in the middle of something else.
+            refused_coins: "Not enough coins",
+            refused_busy: "You're already in a game",
         ),
         // Bridge Wars: the board top centre, in the waiting room over the
         // map and in the game, and the headlines across the screen.
@@ -794,6 +847,49 @@
             // A bus ran {name} over, and that was the last of their
             // health.
             run_over: "{name} was run over by a bus.",
+        ),
+
+        // The tables the four games of 2026-11-18 are played at. Under the
+        // game's name on the board top centre while it waits: {count} of
+        // its {seats} taken; the same with the {time} to go before it
+        // begins; the {time} before the computer comes for the seats left;
+        // and how many more people it wants before it can begin, one, or
+        // {count}. Then as it counts down ({seconds}). The button under the
+        // board that leaves, and, at the end, the results' title ({game}),
+        // the line under them ({time}), their two buttons, and the places.
+        table: (
+            players: "Waiting for players {count}/{seats}",
+            players_for: "Waiting for players {count}/{seats} · {time}",
+            bots_join: "Bots join in {time}",
+            one_more: "Waiting for 1 more person",
+            more: "Waiting for {count} more people",
+            starting: "Starting in {seconds}",
+            leave: "Leave",
+            play_again: "Play again",
+            results: "{game}: results",
+            back_in: "Back to the town in {time}",
+            places: ("1st", "2nd", "3rd", "4th"),
+        ),
+
+        // The four games' own words, each its own block. Blend In's: what
+        // its score is called among the results at the end.
+        blend_in: (
+            score: "points",
+        ),
+
+        // Knock Off's: what its score is called among the results.
+        knock_off: (
+            score: "place",
+        ),
+
+        // Bridge Race's: what its score is called among the results.
+        bridge_race: (
+            score: "metres built",
+        ),
+
+        // Last Stand's: what its score is called among the results.
+        last_stand: (
+            score: "score",
         ),
     ),
     // The car you drive (the face button, or C on desktop): every number of
