@@ -36,7 +36,13 @@ const PASSES: usize = 6;
 
 /// How fast two bodies have to come together for it to count as a hit,
 /// in metres a second ([`Slide::hits`]): one that only leans on another as
-/// both come to rest is no hit to raise dust for.
+/// both come to rest is no hit to raise dust for, and one that only brushes
+/// someone already sliding into the sea on their own is not what put them
+/// there. Only a hit is anyone's to be credited with ([`Slide::hit_by`],
+/// "Mochi knocked Dubu in"): the two part a little either way however
+/// slowly they meet, but a brush slower than this changes how fast either
+/// goes by less than a third of a metre a second, which moves a body
+/// standing still a centimetre (mine).
 const FELT: f32 = 0.3;
 
 /// Where a body is in the slide.
@@ -61,7 +67,8 @@ struct Disc {
     drop: f32,
     sinking: f32,
     place: Place,
-    /// Whoever hit it last in this slide.
+    /// Whoever hit it last in this slide: by a hit that counts as one
+    /// ([`FELT`]), not a brush.
     by: Option<usize>,
 }
 
@@ -85,7 +92,8 @@ pub struct Ending {
     pub at: Vec<Option<Vec2>>,
     /// When each that went over did, in seconds into the slide.
     pub fell: Vec<Option<f32>>,
-    /// Whoever hit each last in the slide, if anyone did.
+    /// Whoever hit each last in the slide, if anyone did (a hit, not a
+    /// brush: [`Slide::hits`]).
     pub by: Vec<Option<usize>>,
     /// How long it was until everything still on the ice had stopped, in
     /// seconds: a whole number of steps, [`SLIDE_MOST`] at the most.
@@ -98,8 +106,11 @@ pub struct Ending {
 pub struct Slide {
     discs: Vec<Disc>,
     radius: f32,
+    /// How many steps it has gone, and at which of them it was over
+    /// (stepped on after that, only whatever went over moves, dropping).
     steps: u32,
     done: bool,
+    done_at: u32,
     hits: Vec<Hit>,
 }
 
@@ -127,6 +138,7 @@ impl Slide {
             radius,
             steps: 0,
             done: false,
+            done_at: 0,
             hits: Vec::new(),
         };
         slide.edge();
@@ -215,9 +227,11 @@ impl Slide {
                         a.vz -= impulse * nz;
                         b.vx += impulse * nx;
                         b.vz += impulse * nz;
-                        a.by = Some(other);
-                        b.by = Some(one);
+                        // A hit, which each is the other's to be credited
+                        // with; a brush is neither's.
                         if closing > FELT {
+                            a.by = Some(other);
+                            b.by = Some(one);
                             self.hits.push(Hit {
                                 time,
                                 seats: (one, other),
@@ -265,6 +279,7 @@ impl Slide {
             .all(|disc| disc.place != Place::On || disc.vx * disc.vx + disc.vz * disc.vz < stopped_squared);
         if still || self.steps >= MOST_STEPS {
             self.done = true;
+            self.done_at = self.steps;
             for disc in &mut self.discs {
                 if disc.place == Place::On {
                     disc.vx = 0.0;
@@ -331,19 +346,24 @@ impl Slide {
         }
     }
 
-    /// Whoever last hit the body in `seat` in this slide, if anyone has.
+    /// Whoever last hit the body in `seat` in this slide, if anyone has: by
+    /// a hit ([`Slide::hits`]), not a brush.
     pub fn hit_by(&self, seat: usize) -> Option<usize> {
         self.discs.get(seat)?.by
     }
 
-    /// Every hit so far, in the order they came.
+    /// Every hit so far, in the order they came: two bodies that came
+    /// together faster than a brush.
     pub fn hits(&self) -> &[Hit] {
         &self.hits
     }
 
     /// How it has come out so far: once it is over ([`Slide::done`]), how
-    /// it came out.
+    /// it came out, its time when it was over however long it has been
+    /// stepped on since (as a device stepping it by the clock does, for
+    /// whoever went over to be seen into the sea).
     pub fn ending(&self) -> Ending {
+        let steps = if self.done { self.done_at } else { self.steps };
         Ending {
             at: self
                 .discs
@@ -352,7 +372,7 @@ impl Slide {
                 .collect(),
             fell: (0..self.discs.len()).map(|seat| self.over_edge(seat)).collect(),
             by: self.discs.iter().map(|disc| disc.by).collect(),
-            secs: self.steps.min(MOST_STEPS) as f32 * STEP,
+            secs: steps as f32 * STEP,
         }
     }
 }
@@ -478,6 +498,45 @@ mod tests {
         assert!(hit.abs() < 0.1 * coming, "it went on at {hit}");
         assert_eq!(slide.hit_by(1), Some(0));
         assert_eq!(slide.hits()[0].seats, (0, 1));
+    }
+
+    #[test]
+    fn a_brush_is_no_hit_and_nobody_s_to_be_credited_with() {
+        // One sliding up to another standing still, from 2 m off, at a
+        // speed that brings it there at `arriving`: 0.8 m to go before the
+        // two touch.
+        let meet = |arriving: f32| {
+            let speed = (arriving * arriving + 2.0 * ICE * 0.8).sqrt();
+            let mut slide = Slide::new(&[Some(Vec2::new(-2.0, 0.0)), Some(Vec2::ZERO)], &[Vec2::new(speed, 0.0), Vec2::ZERO], RADIUS);
+            while !slide.done() {
+                slide.step();
+            }
+            slide
+        };
+        // Barely moving as they touch: the other is nudged, but nobody hit
+        // anyone.
+        let brushed = meet(0.15);
+        assert!(brushed.at(1).unwrap().x > 0.0, "it was not even nudged");
+        assert!(brushed.hits().is_empty(), "{:?}", brushed.hits());
+        assert_eq!((brushed.hit_by(0), brushed.hit_by(1)), (None, None));
+        assert_eq!(brushed.ending().by, vec![None, None]);
+        // Coming on at a run: a hit, each the other's.
+        let hit = meet(1.5);
+        assert_eq!(hit.hits().len(), 1);
+        assert_eq!((hit.hit_by(0), hit.hit_by(1)), (Some(1), Some(0)));
+    }
+
+    #[test]
+    fn a_slide_stepped_on_past_its_end_still_says_when_it_ended() {
+        // One knocked in, and the slide stepped on long after, as a device
+        // stepping it by the clock steps it while whoever went in drops.
+        let start = [Some(Vec2::new(8.0, 0.0)), Some(Vec2::new(10.5, 0.0))];
+        let launches = [launch(Vec2::X, 4), Vec2::ZERO];
+        let ending = Slide::play_out(&start, &launches, RADIUS);
+        let mut slide = Slide::new(&start, &launches, RADIUS);
+        slide.step_to(SLIDE_MOST * 2.0);
+        assert!(slide.time() > ending.secs + 1.0, "{} s, over at {} s", slide.time(), ending.secs);
+        assert_eq!(slide.ending(), ending);
     }
 
     #[test]

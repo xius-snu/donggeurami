@@ -303,9 +303,11 @@ pub struct KnockRound {
     pub turn: u16,
     pub stage: KnockStage,
     /// When this stage began and when it ends, by the server's clock in
-    /// seconds since 1970 (offline the device's own), so that every device
-    /// slides everyone at once. An aim ends early once everyone is ready;
-    /// a game that is over ends when it began.
+    /// seconds since 1970 (offline the device's own): the clock the game
+    /// is stepped by ([`Game::step`]), which every device has for the
+    /// town's, so that every device slides everyone at once. An aim ends
+    /// early once everyone is ready; a game that is over ends when it
+    /// began.
     pub since: f64,
     pub until: f64,
     /// How far the ice reaches now, in metres, and how far once this turn's
@@ -359,14 +361,17 @@ pub enum Event {
 /// A game of Knock Off: everything of it, as a plain thing stepped by
 /// whoever runs it ([`Game::step`]), the server online and the device
 /// offline, so that the two never differ. Its clock is the server's (the
-/// device's own offline), in seconds since 1970, from [`Game::begin`] on.
+/// device's own offline), in seconds since 1970, from [`Game::begin`] on:
+/// told it at every step, and going by nothing else, so that it is never
+/// behind the clock every device reads what it is sent by.
 #[derive(Clone, Debug)]
 pub struct Game {
     /// Each seat's, by seat: a person's (true) or the computer's.
     people: Vec<bool>,
     stage: KnockStage,
     turn: u16,
-    /// The clock now, and when this stage began and ends.
+    /// The clock as it was last told ([`Game::step`]), and when this stage
+    /// began and ends.
     now: f64,
     since: f64,
     until: f64,
@@ -385,7 +390,8 @@ pub struct Game {
     ready: Vec<bool>,
     /// The turn each went in, and when in it: the step of its slide they
     /// went over at, counted from 1; none, for whoever left before it; the
-    /// most there is, for whoever the ice broke under after it.
+    /// most there is but one, for whoever the ice broke under after it; the
+    /// most there is, for whoever left as it broke, after them.
     out: Vec<Option<u16>>,
     went: Vec<u32>,
     /// Everyone's launch this turn, from the reveal until the slide is over.
@@ -442,7 +448,8 @@ impl Game {
         }
     }
 
-    /// The countdown is over, `clock`: everyone stands on their spot
+    /// The countdown is over, at `clock` (by the clock every step after is
+    /// told the time by, [`Game::step`]): everyone stands on their spot
     /// ([`arrival`]), facing the middle, and the first turn's aim begins.
     pub fn begin(&mut self, clock: f64) -> Vec<Event> {
         let mut events = Vec::new();
@@ -544,9 +551,11 @@ impl Game {
     }
 
     /// The player in `seat` has left for good: they are out now, in this turn, as though they
-    /// went in the moment they left. Taken off the ice at once while everyone aims or looks at
-    /// the arrows; in the slide, theirs goes on as it began (everyone plays it so) and they are
-    /// gone once it is over.
+    /// went in the moment they left (as the ice breaks, after whoever it has begun to take).
+    /// Taken off the ice at once while everyone aims or looks at the arrows, and while
+    /// everyone aims, the computer's players who have not made up their minds think again
+    /// without them; in the slide, theirs goes on as it began (everyone plays it so) and they
+    /// are gone once it is over.
     pub fn leave(&mut self, seat: usize) {
         if seat >= self.people.len() || self.out[seat].is_some() || self.stage == KnockStage::Over {
             return;
@@ -554,7 +563,7 @@ impl Game {
         self.out[seat] = Some(self.turn);
         self.went[seat] = match self.stage {
             KnockStage::Slide => self.slide.as_ref().map_or(0, |slide| slide.steps() + 1),
-            KnockStage::Break => u32::MAX - 1,
+            KnockStage::Break => u32::MAX,
             _ => 0,
         };
         self.aims[seat] = (Vec2::ZERO, 0);
@@ -568,28 +577,47 @@ impl Game {
             }
             _ => {}
         }
+        if self.stage == KnockStage::Aim && self.turn != 0 {
+            let next = radius_after(self.turn);
+            for other in 0..self.people.len() {
+                if self.out[other].is_none()
+                    && let Some(mind) = &mut self.minds[other]
+                {
+                    mind.replan(other, &self.stand, self.radius, next, &self.habits);
+                }
+            }
+        }
         // Those left may all be ready now.
         self.aim_may_end(self.now);
     }
 
-    /// A step of play, `dt` seconds on: the computer's players think and make up their minds,
-    /// a slide goes on, and each stage gives way to the next when its time is up. Everything
-    /// that happened, for whoever runs the game to carry out.
-    pub fn step(&mut self, dt: f32) -> Vec<Event> {
+    /// A step of play, at `clock`: the time by the clock [`Game::begin`] was given, the very
+    /// one every device reads [`KnockRound::since`] and `until` by (online the server's time
+    /// of day, which every device has for the town's clock; offline the device's own, as its
+    /// town's clock is). The computer's players think and make up their minds, a slide goes
+    /// on, and each stage gives way to the next when its time is up. The game goes by this
+    /// alone, never by how long a frame took: a frame that stalls, or a phone put away and
+    /// brought back, leaves it where the clock is, not behind it for the rest of the game
+    /// (a frame's own time is held to a quarter of a second by the engine, however long it
+    /// stalled). Never back: a clock put back a little holds it where it was; one that is
+    /// not a number is not heard. Everything that happened, for whoever runs the game to
+    /// carry out.
+    pub fn step(&mut self, clock: f64) -> Vec<Event> {
         let mut events = Vec::new();
         if self.turn == 0 || self.stage == KnockStage::Over {
             return events;
         }
-        self.now += f64::from(dt.max(0.0));
-        match self.stage {
-            KnockStage::Aim => self.think(),
-            KnockStage::Slide => self.slide_on(&mut events),
-            _ => {}
+        if clock.is_finite() && clock > self.now {
+            self.now = clock;
+        }
+        if self.stage == KnockStage::Aim {
+            self.think();
         }
         // Each stage over gives way to the next, on the minute it was to:
-        // a long step passes through as many as it covers.
+        // a long step passes through as many as it covers, a whole game's
+        // at the most (four a turn).
         let mut stages = 0;
-        while self.stage != KnockStage::Over && stages < 16 {
+        while self.stage != KnockStage::Over && stages <= 4 * usize::from(LAST_TURN) {
             stages += 1;
             if matches!(self.stage, KnockStage::Aim | KnockStage::Reveal) && self.in_play() <= 1 {
                 self.since = self.now.min(self.until);
@@ -606,6 +634,11 @@ impl Game {
                 KnockStage::Break => self.broken(&mut events),
                 KnockStage::Over => {}
             }
+        }
+        // Whatever is sliding, as far as the clock has come: a slide that
+        // began in this step too.
+        if self.stage == KnockStage::Slide {
+            self.slide_on(&mut events);
         }
         events
     }
@@ -748,6 +781,10 @@ impl Game {
     /// is out, and the ice breaks; or, with one left or nobody, the game is
     /// over.
     fn slide_over(&mut self, events: &mut Vec<Event>) {
+        // The slide played on to its end by the clock, whoever went over
+        // seen into the sea where they went, however few steps it was
+        // stepped by (a frame that stalled may have gone past all of it).
+        self.slide_on(events);
         let ending = self.ending.take().unwrap_or_else(|| Slide::new(&self.stand, &[], self.radius).ending());
         // Catching up with whatever the clock did not get to.
         let fell = (0..self.people.len()).filter_map(|seat| ending.fell[seat].map(|when| (when, seat, ending.by[seat]))).collect();
@@ -783,7 +820,9 @@ impl Game {
                 && (next <= 0.0 || at.length_squared() > (next + ON_THE_LINE) * (next + ON_THE_LINE))
             {
                 self.out[seat] = Some(self.turn);
-                self.went[seat] = u32::MAX;
+                // After every fall of the slide, and before whoever leaves
+                // while it breaks ([`Game::leave`]).
+                self.went[seat] = u32::MAX - 1;
                 events.push(Event::Fell { seat, by: ending.by[seat], broke: true });
             }
         }
@@ -912,26 +951,33 @@ mod tests {
     /// since 1970, as the server's would be.
     const CLOCK: f64 = 1_795_000_000.0;
 
+    /// Steps `game` on once, `dt` seconds on by its clock from the last
+    /// time it was told it.
+    fn tick(game: &mut Game, dt: f64) -> Vec<Event> {
+        let clock = game.now + dt;
+        game.step(clock)
+    }
+
     /// Steps `game` on, `dt` at a time, until it is over or `secs` have
     /// passed; everything it came to, in order.
-    fn run(game: &mut Game, dt: f32, secs: f32) -> Vec<Event> {
+    fn run(game: &mut Game, dt: f64, secs: f64) -> Vec<Event> {
         let mut events = Vec::new();
         let mut gone = 0.0;
         while game.outcome().is_none() && gone < secs {
-            events.extend(game.step(dt));
+            events.extend(tick(game, dt));
             gone += dt;
         }
         events
     }
 
     /// Steps `game` on until it is at `stage` (or over), `dt` at a time.
-    fn run_to(game: &mut Game, stage: KnockStage, dt: f32) -> Vec<Event> {
+    fn run_to(game: &mut Game, stage: KnockStage, dt: f64) -> Vec<Event> {
         let mut events = Vec::new();
         for _ in 0..100_000 {
             if game.stage() == stage || game.outcome().is_some() {
                 break;
             }
-            events.extend(game.step(dt));
+            events.extend(tick(game, dt));
         }
         events
     }
@@ -963,7 +1009,7 @@ mod tests {
         // once, and aim nowhere.
         let mut game = Game::new(4, &[true, false, true, false], 3);
         assert_eq!(game.round().turn, 0);
-        assert_eq!(game.step(0.1), vec![]);
+        assert_eq!(game.step(CLOCK - 0.1), vec![]);
         let begun = game.begin(CLOCK);
         assert_eq!(begun, vec![Event::Aim { turn: 1 }]);
         let round = game.round();
@@ -984,7 +1030,7 @@ mod tests {
                 game.ready(2);
             }
             let last = game.round();
-            let events = game.step(1.0 / 60.0);
+            let events = tick(&mut game, 1.0 / 60.0);
             let round = game.round();
             if round.stage != last.stage || round.turn != last.turn {
                 assert_eq!(round.since, last.until, "{last:?} then {round:?}");
@@ -1074,7 +1120,7 @@ mod tests {
         // players having made up their minds then whenever they meant to.
         game.ready(2);
         let when = game.now;
-        let events = game.step(0.1);
+        let events = tick(&mut game, 0.1);
         assert!(events.contains(&Event::Reveal), "{events:?}");
         assert_eq!(game.round().since, when);
         assert!(when < CLOCK + f64::from(FIRST_AIM) - 5.0);
@@ -1168,7 +1214,7 @@ mod tests {
         game.leave(2);
         game.aim(2, Vec2::X, 3);
         assert_eq!(game.outcome().unwrap().0, vec![1, 2, 0, 3]);
-        assert_eq!(game.step(1.0), vec![]);
+        assert_eq!(tick(&mut game, 1.0), vec![]);
     }
 
     #[test]
@@ -1198,14 +1244,15 @@ mod tests {
         let mut game = Game::new(4, &[true, false, true, false], 4);
         game.begin(CLOCK);
         run(&mut game, 0.1, 0.5);
-        // Two leave; the two left play on, the computer's against a person.
+        // Two go (the game minds nobody's seat over another's); the two
+        // people left play on.
         game.leave(1);
         game.leave(3);
         let events = run(&mut game, 0.1, 0.5);
         assert!(!events.iter().any(|event| matches!(event, Event::Over { .. })));
-        // The person's opponent goes; they have won, there and then.
+        // The one's opponent goes; they have won, there and then.
         game.leave(2);
-        let events = game.step(0.1);
+        let events = tick(&mut game, 0.1);
         assert_eq!(events, vec![Event::Over { first: vec![0] }]);
         let (places, scores, _) = game.outcome().unwrap();
         assert_eq!(places, vec![0, 1, 1, 1]);
@@ -1234,6 +1281,73 @@ mod tests {
         assert_eq!(game.round().out[1], Some(1));
         run_to(&mut game, KnockStage::Break, 0.05);
         assert_eq!(game.round().start[1], None);
+    }
+
+    #[test]
+    fn leaving_as_the_ice_breaks_is_going_in_after_whoever_it_takes() {
+        // Three people: two slide out to 11.4 m, past where the ice breaks
+        // to 11 at the end of the turn, and it takes them; the third, the
+        // one left on it, leaves as it breaks. They went in last of the
+        // three, and come first.
+        let mut game = Game::new(3, &[true; 3], 7);
+        game.begin(CLOCK);
+        game.aim(0, arrival(0).0.xz(), 2);
+        game.aim(1, arrival(1).0.xz(), 2);
+        for seat in 0..3 {
+            game.ready(seat);
+        }
+        let events = run_to(&mut game, KnockStage::Break, 0.05);
+        assert!(events.contains(&Event::Fell { seat: 0, by: None, broke: true }) && events.contains(&Event::Fell { seat: 1, by: None, broke: true }), "{events:?}");
+        assert_eq!(game.stage(), KnockStage::Break);
+        game.leave(2);
+        let events = run(&mut game, 0.05, 10.0);
+        assert_eq!(events.last(), Some(&Event::Over { first: vec![2] }));
+        let (places, scores, _) = game.outcome().expect("over");
+        assert_eq!(places, vec![1, 1, 0]);
+        assert_eq!(scores, vec![0, 0, 0]);
+        let results = table::Results { places, ..default() };
+        assert_eq!(prizes(&results, &[true; 3]), vec![35, 35, 130]);
+        // With more left on the ice, whoever leaves as it breaks places
+        // below those still on it, and above whoever it took.
+        let mut game = Game::new(4, &[true; 4], 7);
+        game.begin(CLOCK);
+        game.aim(0, arrival(0).0.xz(), 2);
+        for seat in 0..4 {
+            game.ready(seat);
+        }
+        run_to(&mut game, KnockStage::Break, 0.05);
+        assert_eq!(game.round().out, vec![Some(1), None, None, None]);
+        game.leave(3);
+        run_to(&mut game, KnockStage::Aim, 0.05);
+        game.leave(1);
+        run(&mut game, 0.05, 1000.0);
+        assert_eq!(game.outcome().expect("over").0, vec![3, 1, 0, 2]);
+    }
+
+    #[test]
+    fn whoever_leaves_as_everyone_aims_is_thought_no_more_of() {
+        // A person and three of the computer's on their spots; the person
+        // leaves before any of the computer's has made up its mind.
+        for seed in 0..20 {
+            let mut game = Game::new(4, &[true, false, false, false], seed);
+            game.begin(CLOCK);
+            tick(&mut game, 0.05);
+            let when: Vec<Option<f64>> = (0..4).map(|seat| game.minds[seat].as_ref().map(|mind| mind.decides_at())).collect();
+            game.leave(0);
+            // Each thinks again on the ice as it is now, without them (no
+            // move sized to stop against them, no guess of what they will
+            // do), and makes up its mind when it meant to.
+            for (seat, meant) in when.iter().enumerate().skip(1) {
+                let mind = game.minds[seat].as_ref().expect("the computer's");
+                assert!(!mind.decided(), "seed {seed}, seat {seat}");
+                assert_eq!(mind.thinking_on().map(|stand| stand[0]), Some(None), "seed {seed}, seat {seat}");
+                assert_eq!(Some(mind.decides_at()), *meant, "seed {seed}, seat {seat}");
+            }
+            // And the aim, nobody's person left on the ice, is over once the
+            // last of them has made up its mind.
+            let last = when.iter().flatten().copied().fold(f64::MIN, f64::max);
+            assert_eq!(game.round().until, last, "seed {seed}");
+        }
     }
 
     #[test]
@@ -1283,7 +1397,7 @@ mod tests {
                     break;
                 }
                 let before = game.stage();
-                game.step(1.0 / 30.0);
+                tick(&mut game, 1.0 / 30.0);
                 if before != KnockStage::Slide && game.stage() == KnockStage::Slide {
                     // What a device is sent, and plays by the clock as its
                     // frames fall, a little behind.
@@ -1329,29 +1443,50 @@ mod tests {
         /// How long the computer took thinking, all told.
         thought: Duration,
         events: Vec<Event>,
-        /// Each turn's round as it was revealed.
+        /// Each turn's round as it was revealed (everyone's start and
+        /// launch, to the bit, and when it was), and the round once it was
+        /// over.
         reveals: Vec<KnockRound>,
+        ended: Option<KnockRound>,
     }
 
     /// A game of four of the computer's players from `seed`, stepped `dt`
     /// at a time.
-    fn told(seed: u64, dt: f32) -> Told {
+    fn told(seed: u64, dt: f64) -> Told {
+        told_by(seed, |step| CLOCK + f64::from(step) * dt)
+    }
+
+    /// A game of four of the computer's players from `seed`, stepped at
+    /// the times `clock` gives for its steps, counted from 1. After every
+    /// step, the stage it is at began by that time and ends after it: the
+    /// game is where the clock is.
+    fn told_by(seed: u64, mut clock: impl FnMut(u32) -> f64) -> Told {
         let mut game = Game::new(4, &[false; 4], seed);
         let mut events = game.begin(CLOCK);
         let mut thought = Duration::ZERO;
         let mut reveals = Vec::new();
-        for _ in 0..1_000_000 {
+        for step in 1..1_000_000 {
             if game.outcome().is_some() {
                 break;
             }
             let aiming = game.stage() == KnockStage::Aim;
+            let now = clock(step);
             let began = Instant::now();
-            let stepped = game.step(dt);
+            let stepped = game.step(now);
             if aiming {
                 thought += began.elapsed();
             }
+            let round = game.round();
+            assert!(
+                round.stage == KnockStage::Over || (round.since <= now && now < round.until),
+                "seed {seed}: at {} the round is {:?} from {} to {}",
+                now - CLOCK,
+                round.stage,
+                round.since - CLOCK,
+                round.until - CLOCK
+            );
             if stepped.contains(&Event::Reveal) {
-                reveals.push(game.round());
+                reveals.push(round);
             }
             events.extend(stepped);
         }
@@ -1377,6 +1512,7 @@ mod tests {
             thought,
             events,
             reveals,
+            ended: Some(game.round()),
         }
     }
 
@@ -1418,8 +1554,9 @@ mod tests {
         turns: Vec<u16>,
         shared_first: usize,
         /// By kind, in `PERSONAS`' order: games played, won outright, won
-        /// shared, turns aimed in, gone in by its own move alone, gone in at
-        /// all, and others it put in.
+        /// shared, turns aimed in, slid into the sea by its own move alone
+        /// (nobody hit it in that slide: a brush is no hit), gone in at all,
+        /// and others it put in.
         played: [u32; 6],
         won: [u32; 6],
         shared: [u32; 6],
@@ -1459,7 +1596,7 @@ mod tests {
                 let of = kind(game.kinds[seat]);
                 tally.gone[of] += 1;
                 tally.by_turn[usize::from(turn.clamp(1, LAST_TURN) - 1)] += 1;
-                if by.is_none() {
+                if by.is_none() && !broke {
                     tally.alone[of] += 1;
                 }
                 if let Some(by) = by {
@@ -1494,10 +1631,10 @@ mod tests {
             tally.thought.as_secs_f64() * 1000.0 / tally.aimed.iter().sum::<u32>().max(1) as f64,
         );
         println!("in the sea by turn, all games told: {:?}", tally.by_turn);
-        println!("kind     | games | won  (rate) | shared | turns | in alone (of turns) | in at all | put in");
+        println!("kind     | games | won  (rate) | shared | turns | slid in alone (of turns) | in at all | put in");
         for (of, persona) in PERSONAS.iter().enumerate() {
             println!(
-                "{:<8} | {:>5} | {:>4} ({:>3.0}%) | {:>6} | {:>5} | {:>4} ({:>4.1}%)        | {:>9} | {:>6}",
+                "{:<8} | {:>5} | {:>4} ({:>3.0}%) | {:>6} | {:>5} | {:>4} ({:>4.1}%)             | {:>9} | {:>6}",
                 persona.name,
                 tally.played[of],
                 tally.won[of],
@@ -1514,7 +1651,9 @@ mod tests {
 
     #[test]
     fn the_computer_plays_whole_games_that_end_close_and_varied() {
-        let games: Vec<Told> = (0..200).map(|seed| told(seed, 1.0 / 30.0)).collect();
+        // Four hundred games: a shared first comes about one game in a
+        // hundred, and in two hundred it may well not come at all.
+        let games: Vec<Told> = (0..400).map(|seed| told(seed, 1.0 / 30.0)).collect();
         let tally = tally(&games);
         print(&tally);
         // Every game ends, by the last turn there is.
@@ -1531,11 +1670,19 @@ mod tests {
             assert!(tally.won[of] > 0, "{} never won", persona.name);
             assert!(2 * tally.won[of] <= tally.played[of], "{} won {} of {}", persona.name, tally.won[of], tally.played[of]);
         }
-        // Going in by your own move alone, with nobody near you, is a
-        // mistake now and then, not a habit.
-        let (alone, aimed) = (tally.alone.iter().sum::<u32>(), tally.aimed.iter().sum::<u32>());
-        assert!(alone * 100 < 15 * aimed, "{alone} of {aimed} turns ended in the sea alone");
+        // Sliding into the sea by your own move alone, nobody having hit
+        // you, is a mistake now and then, not a habit: for every kind.
+        for (of, persona) in PERSONAS.iter().enumerate() {
+            assert!(
+                tally.alone[of] * 100 < 15 * tally.aimed[of],
+                "{}: {} of {} turns ended in the sea alone",
+                persona.name,
+                tally.alone[of],
+                tally.aimed[of]
+            );
+        }
         // A shared first happens, but seldom.
+        assert!(tally.shared_first > 0, "first never shared");
         assert!(tally.shared_first * 10 < tally.games, "first shared in {} of {}", tally.shared_first, tally.games);
         // Both ways in happen.
         assert!(tally.slid > 0 && tally.broke > 0, "{tally:?}");
@@ -1547,7 +1694,53 @@ mod tests {
             let (one, other, finer) = (told(seed, 1.0 / 30.0), told(seed, 1.0 / 30.0), told(seed, 1.0 / 120.0));
             assert_eq!(one.events, other.events, "seed {seed}");
             assert_eq!(one.events, finer.events, "seed {seed}, at 120 a second");
+            // Every slide from the same start and launches, to the bit, at
+            // the same moments; and the same where it ended.
+            assert!(!one.reveals.is_empty(), "seed {seed}");
+            assert_eq!(one.reveals, other.reveals, "seed {seed}");
+            assert_eq!(one.reveals, finer.reveals, "seed {seed}, at 120 a second");
+            assert_eq!(one.ended, finer.ended, "seed {seed}, at 120 a second");
         }
+    }
+
+    #[test]
+    fn a_game_stepped_through_stalls_is_where_the_clock_is_and_comes_out_the_same() {
+        // Frames that now and then stall for seconds, as a server's can, or
+        // a phone's put away and brought back: the game goes by the clock it
+        // is told, never by how long a frame was, so after every step it is
+        // at the stage the clock is in (`told_by` checks), and it comes out
+        // as it does stepped evenly.
+        for seed in [5, 41, 160] {
+            let mut dice = Dice::new(seed + 7);
+            let mut at = CLOCK;
+            let stalled = told_by(seed, |_| {
+                at += if dice.roll() < 0.03 { f64::from(dice.between(0.3, 40.0)) } else { 1.0 / 30.0 };
+                at
+            });
+            let even = told(seed, 1.0 / 30.0);
+            assert_eq!(stalled.events, even.events, "seed {seed}");
+            assert_eq!(stalled.ended, even.ended, "seed {seed}");
+        }
+        // A stall longer than a whole game: over in that one step, as it
+        // would have come out.
+        let mut game = Game::new(4, &[false; 4], 41);
+        let mut events = game.begin(CLOCK);
+        events.extend(game.step(CLOCK + 3600.0));
+        assert!(game.outcome().is_some());
+        let even = told(41, 1.0 / 30.0);
+        assert_eq!(events, even.events);
+        assert_eq!(Some(game.round()), even.ended);
+        // A clock put back a little holds the game where it was, and one
+        // that is not a number is not heard.
+        let mut game = Game::new(4, &[false; 4], 2);
+        game.begin(CLOCK);
+        game.step(CLOCK + 2.0);
+        let round = game.round();
+        game.step(CLOCK + 1.5);
+        game.step(f64::NAN);
+        game.step(f64::INFINITY);
+        assert_eq!(game.now, CLOCK + 2.0);
+        assert_eq!(game.round(), round);
     }
 
     /// More games, for tuning by: `cargo test -p roundtown_net knock_off::tests::many

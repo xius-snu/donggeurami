@@ -28,13 +28,14 @@
 //!
 //! It thinks while everyone aims, a few slides at a time
 //! ([`Mind::ponder`]), so that the device's frame is never all of it, and
-//! makes up its mind at a moment thrown for it ([`Mind::decide`]).
+//! makes up its mind at a moment thrown for it ([`Mind::decide`]); someone
+//! leaving before then, it thinks again without them ([`Mind::replan`]).
 
 use std::f32::consts::TAU;
 
 use bevy::math::Vec2;
 
-use super::{BODY, METRES_A_POWER, MOST_POWER, launch};
+use super::{BODY, METRES_A_POWER, MOST_POWER, ON_THE_LINE, launch};
 use crate::bots::Dice;
 use crate::knock_off::{Ending, Slide};
 
@@ -466,6 +467,13 @@ impl Mind {
         self.decides_at
     }
 
+    /// Where everyone stood as it laid out what it weighs this turn, while
+    /// it thinks: for the tests.
+    #[cfg(test)]
+    pub(super) fn thinking_on(&self) -> Option<&[Option<Vec2>]> {
+        self.thinking.as_ref().map(|thinking| thinking.start.as_slice())
+    }
+
     /// A turn's aim begins, `since`, `secs` long: it throws who it is this
     /// turn and when it will make up its mind ([`Mind::decides_at`]), and
     /// lays out what it will weigh, for the player in `me` with everyone
@@ -477,6 +485,27 @@ impl Mind {
         let (soonest, latest) = self.persona.decides;
         self.decides_at = since + f64::from(secs * self.dice.around(soonest, latest).clamp(0.03, 0.97));
         self.decided = false;
+        self.lay_out(me, stand, radius, next, habits);
+    }
+
+    /// Someone has left the game while it thinks ([`super::Game::leave`]): if it has not
+    /// made up its mind, it lays out what it weighs again, with everyone standing as `stand`
+    /// now has them, as who it is this turn and making up its mind when it meant to. Its
+    /// moves sized to stop against whoever left, and its guesses of what they would do, go
+    /// with them: a slide meant to end against someone who is no longer there carries on
+    /// past where they stood, toward the edge, and a way out of the way of nobody is no
+    /// way to weigh. Once it has made up its mind it keeps its aim, as a person who has
+    /// said they are ready keeps theirs.
+    pub(super) fn replan(&mut self, me: usize, stand: &[Option<Vec2>], radius: f32, next: f32, habits: &[Habits]) {
+        if self.decided {
+            return;
+        }
+        self.lay_out(me, stand, radius, next, habits);
+    }
+
+    /// Lays out what it weighs this turn, from the start: every move, and every guess at
+    /// how the turn will go, none of them played out yet.
+    fn lay_out(&mut self, me: usize, stand: &[Option<Vec2>], radius: f32, next: f32, habits: &[Habits]) {
         let moves = self.moves(me, stand, radius, habits);
         // The fewer are left, the harder it thinks: each guess is cheaper to
         // play out, and each counts for more.
@@ -606,8 +635,10 @@ impl Mind {
                 }
             }
         }
+        // For the middle from anywhere but the middle itself, where there is
+        // no way to it: how near is near enough is thrown each turn.
         let out = here.length();
-        if out > 0.4 {
+        if out > dice.around(0.2, 0.6) {
             for extra in [-1.0, 0.0, 1.0] {
                 add(-here, out / METRES_A_POWER + extra + 0.3 * dice.bell(), temper.middle);
             }
@@ -700,14 +731,15 @@ fn shaken(way: Vec2, power: u8, turned: f32, harder: f32) -> Vec2 {
 }
 
 /// Where it guesses the player in `seat`, standing `there`, will be once
-/// they have slid a while, by what they have mostly been seen to do: some
-/// way toward whoever is nearest them, or toward the middle. None if they
-/// have mostly stood still or done anything at all.
+/// they have slid a while, by one of the things they have been seen to do,
+/// thrown as likely as each has been ([`Habits::odds`], as its guesses of
+/// the whole turn are): some way toward whoever is nearest them, or toward
+/// the middle. None if the throw is standing still, getting out of the way
+/// or anything at all.
 fn lead(seat: usize, there: Vec2, stand: &[Option<Vec2>], habits: &[Habits], dice: &mut Dice) -> Option<Vec2> {
     let odds = habits[seat].odds(stand.iter().flatten().count());
-    let likeliest = (0..odds.len()).max_by(|&a, &b| odds[a].total_cmp(&odds[b]))?;
     let share = dice.around(0.2, 0.5);
-    match likeliest {
+    match pick(dice, &odds) {
         AT_NEAREST => nearest_to(seat, there, stand).map(|target| there + (target - there) * share),
         TO_MIDDLE => Some(there * (1.0 - share)),
         _ => None,
@@ -716,11 +748,13 @@ fn lead(seat: usize, there: Vec2, stand: &[Option<Vec2>], habits: &[Habits], dic
 
 /// How a slide came out for the player in `me`, as it weighs it: so much
 /// for each of the others in the sea or standing where the ice will break
-/// (it will take them), and for leaving the rest near the edge; so much off
-/// for being one of those itself, and otherwise so much for standing well
-/// inside the next turn's ice, and for being the one left.
+/// (it will take them, as the game's own break does: past the line by more
+/// than [`ON_THE_LINE`]), and for leaving the rest near the edge; so much
+/// off for being one of those itself, and otherwise so much for standing
+/// well inside the next turn's ice, and for being the one left.
 fn judge(me: usize, start: &[Option<Vec2>], ending: &Ending, next: f32, temper: &Temper) -> f32 {
-    let gone = |seat: usize| ending.at[seat].is_none_or(|at| next <= 0.0 || at.length_squared() > next * next);
+    let edge = next + ON_THE_LINE;
+    let gone = |seat: usize| ending.at[seat].is_none_or(|at| next <= 0.0 || at.length_squared() > edge * edge);
     let safety = |seat: usize| {
         let margin = ending.at[seat].map_or(0.0, |at| next - at.length());
         if margin > 0.0 { margin / (margin + temper.cushion) } else { 0.0 }
@@ -860,6 +894,39 @@ mod tests {
         }
         println!("the longest turn's thinking took {:.2} ms", most * 1000.0);
         assert!(most < 0.02, "{:.2} ms", most * 1000.0);
+    }
+
+    #[test]
+    fn thinking_again_without_someone_leaves_nothing_of_them() {
+        let stand: Vec<Option<Vec2>> = (0..4)
+            .map(|seat| {
+                let at = crate::knock_off::arrival(seat).0;
+                Some(Vec2::new(at.x, at.z))
+            })
+            .collect();
+        let habits = vec![Habits::default(); 4];
+        let mut left = stand.clone();
+        left[0] = None;
+        for kind in &PERSONAS {
+            let mut mind = Mind::new(kind, 17);
+            mind.plan(1, &stand, 12.0, 11.0, &habits, 100.0, AIM_SECS);
+            let (when, temper) = (mind.decides_at, mind.temper);
+            let mut budget = 5;
+            mind.ponder(&mut budget);
+            mind.replan(1, &left, 12.0, 11.0, &habits);
+            // Who it is this turn, and when it makes up its mind, as they were.
+            assert_eq!((mind.decides_at, mind.temper, mind.decided), (when, temper, false), "{}", kind.name);
+            let thinking = mind.thinking.as_ref().unwrap();
+            assert_eq!(thinking.start, left, "{}", kind.name);
+            assert_eq!(thinking.played, 0, "{}", kind.name);
+            assert!(thinking.scores.iter().all(|score| *score == 0.0), "{}", kind.name);
+            // Nobody guessed at for the seat that is empty.
+            assert!(thinking.guesses.iter().all(|guess| guess.launches[0] == Vec2::ZERO), "{}", kind.name);
+            // Once it has made up its mind, it keeps it.
+            mind.decide();
+            mind.replan(1, &stand, 12.0, 11.0, &habits);
+            assert!(mind.decided && mind.thinking.is_none(), "{}", kind.name);
+        }
     }
 
     #[test]
