@@ -11,10 +11,12 @@
 //! as a person's is and as nobody's but a person's is, walking from the
 //! moment the table opens (the crowd's mind, [`Crowd`]), so that people
 //! waiting see the town as it will be played and every device sees the same
-//! crowd in the same places. Each is sent where it stands as a person's
-//! device sends where they stand ([`SEND_EVERY`], [`SEND_SLACK`]), not every
-//! frame, and as standing still once it stops, so that nothing in how often
-//! a body is sent tells the crowd's from the hider's. As each round's hide
+//! crowd in the same places. Each is sent where it stands by the rule a
+//! person's device sends its own body by ([`Beat`]): on a beat of its own
+//! ([`SEND_EVERY`], [`SEND_SLACK`]), not every frame, only with something
+//! new, and as standing still once it has stood a frame, so that nothing in
+//! how often or how a body is sent tells the crowd's from the hider's. As
+//! each round's hide
 //! begins every body in the game is dressed afresh, the crowd's and the
 //! people's alike, in an order thrown each time: a new `Member`, a new id,
 //! a new name, a look; a person's as they chose, with `players::Disguised`
@@ -64,6 +66,57 @@ const LATER_WAIT: f32 = 8.0;
 const SEND_EVERY: f32 = (1.0 / TICK_HZ) as f32;
 const SEND_SLACK: f32 = 1.0 / 60.0;
 
+/// How one of the crowd's bodies is sent: by the rule a person's device
+/// sends its own body by (the game's `net::tell_where_i_am`), so that what
+/// the room is sent of the one is what it is sent of the other. On each of
+/// its beats it is sent where it stands and which way it faces, if that
+/// is anything new; marked standing still if it stood so, to the
+/// centimetre and the turn, the frame before (a device's frame there, the
+/// server's here), and so once it has stopped, which is said at the first
+/// beat after it stopped. A body turning where it stands is on the move,
+/// as a person's is, and a body standing is sent nothing. (In its first
+/// build the crowd was marked still whenever it was where it had last been
+/// sent, however it had turned since, which no device sends; and every
+/// stop came as two sendings, the place and then the stop, where a
+/// device's is mostly one.)
+#[derive(Clone, Copy, Debug, Default)]
+struct Beat {
+    /// Where the body stood the frame before, and which way it faced, as it
+    /// would be sent, never marked still.
+    was: Option<Spot>,
+    /// How long until it is next sent, in seconds.
+    next: f32,
+}
+
+impl Beat {
+    /// A beat whose first sending is `first` seconds from now.
+    fn after(first: f32) -> Self {
+        Self { was: None, next: first }
+    }
+
+    /// A frame on, `dt` seconds, the body standing at `pose` (never marked
+    /// still): what it is sent as, if this frame is one of its beats, each
+    /// one [`SEND_EVERY`] and a throw of [`SEND_SLACK`] on from when the
+    /// one before was due. Whether it is sent at all is whether that is
+    /// anything new (the body's [`Spot`] as it stands, [`Spot::same`]).
+    fn frame(&mut self, pose: Spot, dt: f32, dice: &mut fastrand::Rng) -> Option<Spot> {
+        let spot = Spot {
+            still: self.was.is_some_and(|was| was.same(&pose)),
+            ..pose
+        };
+        self.was = Some(Spot { still: false, ..pose });
+        self.next -= dt;
+        if self.next > 0.0 {
+            return None;
+        }
+        // From when it was due, not from now: the server's frames are a
+        // sixtieth of a second, so that one sending comes four of them
+        // after the last and the next five, as a device's arrive.
+        self.next = (self.next + SEND_EVERY + dice.f32() * SEND_SLACK).max(0.0);
+        Some(spot)
+    }
+}
+
 /// A seed nobody can work out, for the sealed dice (`blend_in::Sealed`):
 /// SipHash keyed from the system's own randomness (std's [`RandomState`],
 /// whose keys come from the operating system), over `salt` and the time.
@@ -86,9 +139,8 @@ pub(crate) struct BlendIn {
     game: Option<Game>,
     /// The crowd's bodies, one to each of the crowd, by its number.
     bodies: Vec<Entity>,
-    /// How long until each of them is next sent where it stands, in
-    /// seconds.
-    sends: Vec<f32>,
+    /// How each of them is sent where it stands, by the same number.
+    beats: Vec<Beat>,
     /// The dice for what is no secret: how long each waits to be sent, the
     /// order bodies are dressed in. Not the sealed ones' seed.
     dice: fastrand::Rng,
@@ -112,7 +164,7 @@ impl BlendIn {
             crowd: None,
             game: None,
             bodies: Vec::new(),
-            sends: Vec::new(),
+            beats: Vec::new(),
             dice: fastrand::Rng::with_seed(plain),
             sent: None,
         }
@@ -141,29 +193,32 @@ impl BlendIn {
             crowd.walkers().iter().map(|walker| (walker.guise.member(), walker.at, walker.yaw)).collect();
         for (member, at, yaw) in walkers {
             self.bodies.push(ctx.spawn_body(table, member, at, yaw));
-            self.sends.push(self.dice.f32() * SEND_EVERY);
+            self.beats.push(Beat::after(self.dice.f32() * SEND_EVERY));
         }
         info!("Blend In table {}: the crowd is up, {} of the town's people", table.id, self.bodies.len());
     }
 
-    /// Sends each of the crowd's bodies where it stands, when its time to
-    /// be sent has come round, `dt` seconds on: as standing still once it
-    /// has stopped (`Ctx::move_body`).
+    /// Each of the crowd's bodies a frame on, `dt` seconds: sent where it
+    /// stands as a person's device would send it ([`Beat`]), its [`Spot`]
+    /// written only with something new.
     fn send_the_crowd(&mut self, ctx: &mut Ctx, dt: f32) {
-        let walkers: Vec<(Vec3, f32)> = self.walkers().iter().map(|walker| (walker.at, walker.yaw)).collect();
-        for (index, (at, yaw)) in walkers.into_iter().enumerate() {
-            let (Some(&body), Some(send)) = (self.bodies.get(index), self.sends.get_mut(index)) else {
+        let poses: Vec<Spot> = self
+            .walkers()
+            .iter()
+            .map(|walker| Spot::of(walker.at, Quat::from_rotation_y(walker.yaw)))
+            .collect();
+        for (index, pose) in poses.into_iter().enumerate() {
+            let (Some(&body), Some(beat)) = (self.bodies.get(index), self.beats.get_mut(index)) else {
                 continue;
             };
-            *send -= dt;
-            if *send > 0.0 {
+            let Some(sent) = beat.frame(pose, dt, &mut self.dice) else {
                 continue;
+            };
+            if let Ok((_, mut spot, ..)) = ctx.bodies.get_mut(body)
+                && !sent.same(&spot)
+            {
+                *spot = sent;
             }
-            // From when it was due, not from now: the server's frames are a
-            // sixtieth of a second, so that one sending comes four of them
-            // after the last and the next five, as a device's arrive.
-            *send = (*send + SEND_EVERY + self.dice.f32() * SEND_SLACK).max(0.0);
-            ctx.move_body(body, at, yaw);
         }
     }
 
@@ -385,8 +440,9 @@ impl Rules for BlendIn {
     /// What the people seated ask of the game: a look and a name, answered
     /// with what they wear as it stands; that they have chosen; a swing
     /// that landed on a body, a strike ([`Game::strike`]); for trying the
-    /// game out, its time up now (`RT_ALLOW_SKIP`, [`Game::hurry`]); and,
-    /// fallen out of the world, to be stood back where they were.
+    /// game out, the choosing or the round shown over now (`RT_ALLOW_SKIP`,
+    /// [`Game::hurry`]: never the hide or the seek); and, fallen out of the
+    /// world, to be stood back where they were.
     fn hear(&mut self, ctx: &mut Ctx, table: &mut Table, seat: usize, ask: &Ask) {
         if self.game.is_none() {
             if let Ask::Respawn = ask {
@@ -453,6 +509,17 @@ impl Rules for BlendIn {
         }
     }
 
+    /// Nothing said in the room is passed on from the hide to the end of the
+    /// seek (the design: "The chat and the quick chat are off from the hide
+    /// to the end of the seek ... a line said would give the hider away"),
+    /// whatever a device sends: a line is said under the name its speaker's
+    /// body goes by, which from the hide is the hider's disguise, so that a
+    /// line the hider sent as the choosing ended, and heard once they were
+    /// dressed, would say who they are to everyone.
+    fn hushes(&self, _table: &Table) -> bool {
+        self.game.as_ref().is_some_and(|game| matches!(game.stage(), BlendStage::Hide | BlendStage::Seek))
+    }
+
     /// The round as everyone sees it ([`BlendRound`]), on the table's own
     /// entity, sent again only when it has changed.
     fn show(&mut self, commands: &mut Commands, table: &Table) {
@@ -475,7 +542,7 @@ impl Rules for BlendIn {
         for body in self.bodies.drain(..) {
             commands.entity(body).try_despawn();
         }
-        self.sends.clear();
+        self.beats.clear();
     }
 }
 
@@ -487,7 +554,7 @@ mod tests {
     use bevy::ecs::message::Messages;
     use bevy::ecs::system::{RunSystemOnce, SystemId, SystemParam};
     use bevy_replicon::prelude::*;
-    use roundtown_net::blend_in::{CROWD, FIRST_ID, HIDER_CLEAR, IDS, SEEK, SHOWN};
+    use roundtown_net::blend_in::{CROWD, FIRST_ID, HIDE, HIDER_CLEAR, IDS, SEEK, SHOWN};
     use roundtown_net::{Minigame, Venue};
 
     use super::*;
@@ -1017,15 +1084,241 @@ mod tests {
     }
 
     #[test]
-    fn a_tap_on_the_board_hurries_the_round_on_for_trying_it_out() {
+    fn a_tap_on_the_board_hurries_the_choosing_and_the_round_shown_and_never_the_hide_nor_the_seek() {
         let mut server = Server::new(2, 11);
         server.harness_mut().begin = true;
         server.frame();
         let hider = usize::from(server.round().hider);
-        for stage in [BlendStage::Hide, BlendStage::Seek, BlendStage::Shown] {
-            server.ask(0, Ask::Skip);
-            server.until(0.5, |server| server.stage() == stage);
+        // The choosing, as if everyone had chosen.
+        server.ask(1 - hider, Ask::Skip);
+        server.until(0.5, |server| server.stage() == BlendStage::Hide);
+        // The hide and the seek take their time whoever taps: a tap gives
+        // nobody a point and cuts nobody's time.
+        let until = server.round().until;
+        server.ask(0, Ask::Skip);
+        server.ask(1, Ask::Skip);
+        server.frames(0.5);
+        assert_eq!((server.stage(), server.round().until), (BlendStage::Hide, until));
+        server.until(HIDE + 1.0, |server| server.stage() == BlendStage::Seek);
+        let until = server.round().until;
+        server.ask(hider, Ask::Skip);
+        server.ask(1 - hider, Ask::Skip);
+        server.frames(0.5);
+        assert_eq!((server.stage(), server.round().until), (BlendStage::Seek, until));
+        assert_eq!(server.round().points, vec![0, 0], "no point for a tap");
+        // The seek run out, its time: the hider's point; and the round shown
+        // hurried on.
+        server.until(SEEK + 1.0, |server| server.stage() == BlendStage::Shown);
+        assert_eq!(server.round().points[hider], 1);
+        server.ask(hider, Ask::Skip);
+        server.until(0.5, |server| server.stage() == BlendStage::Choose);
+        assert_eq!(server.round().round, 1);
+    }
+
+    #[test]
+    fn nothing_said_is_passed_on_from_the_hide_to_the_end_of_the_seek() {
+        let mut server = Server::new(2, 13);
+        let hushed = |server: &Server| server.harness().game.hushes(&server.harness().table);
+        assert!(!hushed(&server), "while people wait");
+        server.harness_mut().begin = true;
+        server.frame();
+        assert!(!hushed(&server), "choosing");
+        server.all_ready();
+        assert!(hushed(&server), "the hide");
+        server.until(HIDE + 1.0, |server| server.stage() == BlendStage::Seek);
+        assert!(hushed(&server), "the seek");
+        server.until(SEEK + 1.0, |server| server.stage() == BlendStage::Shown);
+        assert!(!hushed(&server), "the round shown");
+        server.until(SHOWN + 1.0, |server| server.stage() == BlendStage::Choose);
+        assert!(!hushed(&server), "the next round's choosing");
+    }
+
+    #[test]
+    fn one_of_two_who_leaves_at_none_each_is_paid_nothing_and_the_other_wins() {
+        let mut server = Server::new(2, 17);
+        server.harness_mut().begin = true;
+        server.frame();
+        server.all_ready();
+        server.until(HIDE + 1.0, |server| server.stage() == BlendStage::Seek);
+        // The hider, about to be found, leaves.
+        let hider = usize::from(server.round().hider);
+        {
+            let world = &mut server.world;
+            world
+                .run_system_once(move |mut hands: Hands, config: Res<Config>, mut harness: ResMut<Harness>| {
+                    let harness = &mut *harness;
+                    let mut ctx = Ctx {
+                        commands: &mut hands.commands,
+                        tells: &mut hands.tells,
+                        bodies: &mut hands.bodies,
+                        accounts: &hands.accounts,
+                        now: harness.now,
+                        clock: harness.clock,
+                        config: &config,
+                    };
+                    harness.table.seats[hider].gone = true;
+                    harness.game.left(&mut ctx, &mut harness.table, hider, None);
+                })
+                .expect("the hider gone");
         }
-        assert_eq!(server.round().points[hider], 1, "the seek run out: the hider's point");
+        server.frame();
+        assert!(server.harness().table.over());
+        let results = server.harness().table.results.clone().expect("how it came out");
+        let (mut places, mut prizes) = (vec![0, 0], vec![0, 0]);
+        places[hider] = 1;
+        prizes[1 - hider] = 100;
+        assert_eq!((results.scores, results.places, results.prizes), (vec![0, 0], places, prizes));
+    }
+
+    /// What a person's device sends of its own body, frame by frame, by
+    /// the game's `net::tell_where_i_am`, with the one line the tables are
+    /// asked to change (the place a frame is held against never marked
+    /// still, so that standing it sends nothing more); and so what the room
+    /// is sent of the body: whatever it sends that is new
+    /// (`players::moves`).
+    #[derive(Default)]
+    struct Device {
+        since: f32,
+        last: Option<Spot>,
+        was: Option<Spot>,
+        again: u8,
+    }
+
+    impl Device {
+        fn frame(&mut self, pose: Spot, dt: f32) -> Option<Spot> {
+            let spot = Spot {
+                still: self.was.is_some_and(|was| was.same(&pose)),
+                ..pose
+            };
+            self.was = Some(Spot { still: false, ..pose });
+            self.since += dt;
+            if self.since < SEND_EVERY {
+                return None;
+            }
+            self.since = 0.0;
+            if self.last.is_none_or(|last| !last.same(&spot)) {
+                self.again = if spot.still { 2 } else { 0 };
+            } else if self.again > 0 {
+                self.again -= 1;
+            } else {
+                return None;
+            }
+            self.last = Some(spot);
+            Some(spot)
+        }
+    }
+
+    /// What the room is sent of a body standing at `poses`, one a frame
+    /// from its first, where it was put up: whatever `send` says each frame
+    /// (given what was sent last) that is anything new, by frame.
+    fn sent_of(poses: &[Spot], mut send: impl FnMut(Spot, &Spot) -> Option<Spot>) -> Vec<(usize, Spot)> {
+        let mut shown = poses[0];
+        let mut went = Vec::new();
+        for (frame, &pose) in poses.iter().enumerate().skip(1) {
+            if let Some(spot) = send(pose, &shown)
+                && !spot.same(&shown)
+            {
+                shown = spot;
+                went.push((frame, spot));
+            }
+        }
+        went
+    }
+
+    /// How what the room was sent of a body (`went`) reads against where it
+    /// stood frame by frame (`poses`): how many updates are marked still or
+    /// not otherwise than the frame before says (a device's never are);
+    /// how many say the same again of a body that has stood since (a
+    /// device's none); and its stops, each a frame like the one before
+    /// after one that was not, that were said by an update marked still:
+    /// how many, and how many came as two, the place and then the stop.
+    fn reads(poses: &[Spot], went: &[(usize, Spot)]) -> (usize, usize, usize, usize) {
+        let alike = |a: &Spot, b: &Spot| Spot { still: false, ..*a }.same(&Spot { still: false, ..*b });
+        let wrong = went
+            .iter()
+            .filter(|(frame, spot)| spot.still != alike(&poses[*frame], &poses[*frame - 1]))
+            .count();
+        let again = went.windows(2).filter(|pair| pair[0].1.still && alike(&pair[0].1, &pair[1].1)).count();
+        let (mut stops, mut doubled) = (0, 0);
+        for stop in 2..poses.len() {
+            if !alike(&poses[stop], &poses[stop - 1]) || alike(&poses[stop - 1], &poses[stop - 2]) {
+                continue;
+            }
+            let end = (stop..poses.len()).find(|&frame| !alike(&poses[frame], &poses[stop])).unwrap_or(poses.len());
+            let of_it: Vec<&Spot> = went
+                .iter()
+                .filter(|(frame, spot)| *frame + 1 >= stop && *frame < end && alike(spot, &poses[stop]))
+                .map(|(_, spot)| spot)
+                .collect();
+            if of_it.iter().any(|spot| spot.still) {
+                stops += 1;
+                doubled += usize::from(of_it.len() > 1);
+            }
+        }
+        (wrong, again, stops, doubled)
+    }
+
+    #[test]
+    fn the_crowd_is_sent_what_a_person_s_device_would_send_of_the_same_walk() {
+        // Two minutes of the crowd walking, turning where it stands and
+        // standing, frame by frame on the server.
+        let mut crowd = Crowd::new(21);
+        let frames = (120.0 / DT) as usize;
+        let mut poses: Vec<Vec<Spot>> = vec![Vec::with_capacity(frames); crowd.len()];
+        for _ in 0..frames {
+            crowd.step(DT, &[]);
+            for (index, walker) in crowd.walkers().iter().enumerate() {
+                poses[index].push(Spot::of(walker.at, Quat::from_rotation_y(walker.yaw)));
+            }
+        }
+        let mut dice = fastrand::Rng::with_seed(5);
+        let (mut ours, mut theirs, mut first) = ([0; 4], [0; 4], [0; 4]);
+        let add = |to: &mut [usize; 4], (a, b, c, d): (usize, usize, usize, usize)| {
+            *to = [to[0] + a, to[1] + b, to[2] + c, to[3] + d];
+        };
+        for poses in &poses {
+            // As the crowd is sent.
+            let mut beat = Beat::after(dice.f32() * SEND_EVERY);
+            let went = sent_of(poses, |pose, _| beat.frame(pose, DT, &mut dice));
+            add(&mut ours, reads(poses, &went));
+            // As a person's device would send it, its sendings on a beat of
+            // its own.
+            let mut device = Device {
+                since: dice.f32() * SEND_EVERY,
+                ..Default::default()
+            };
+            let went = sent_of(poses, |pose, _| device.frame(pose, DT));
+            add(&mut theirs, reads(poses, &went));
+            // As the crowd's first build sent it (`tables::Ctx::move_body`):
+            // still whenever it was where it was last sent, whichever way it
+            // faced.
+            let mut beat = Beat::after(dice.f32() * SEND_EVERY);
+            let went = sent_of(poses, |pose, shown| {
+                beat.frame(pose, DT, &mut dice).map(|_| Spot {
+                    still: (pose.x, pose.y, pose.z) == (shown.x, shown.y, shown.z),
+                    ..pose
+                })
+            });
+            add(&mut first, reads(poses, &went));
+        }
+        let share = |reads: [usize; 4]| reads[3] as f32 / reads[2].max(1) as f32;
+        println!(
+            "updates still otherwise than a frame before, said again standing, stops, stops in two: \
+             the crowd {ours:?} ({:.2}), a device {theirs:?} ({:.2}), the first build {first:?} ({:.2})",
+            share(ours),
+            share(theirs),
+            share(first)
+        );
+        // What tells a device's sendings from the server's in the first
+        // build tells nothing now: no update still while it turns, nothing
+        // said again of a body standing, and its stops in two as often as
+        // a device's are, only when a beat falls on the last step.
+        assert_eq!((ours[0], ours[1]), (0, 0));
+        assert_eq!((theirs[0], theirs[1]), (0, 0));
+        assert!(ours[2] > 300 && theirs[2] > 300, "stops enough to tell: {} and {}", ours[2], theirs[2]);
+        assert!((0.1..0.4).contains(&share(ours)) && (0.1..0.4).contains(&share(theirs)));
+        assert!((share(ours) - share(theirs)).abs() < 0.12);
+        // (The first build's: still while turning, and every stop in two.)
+        assert!(first[0] > 0 && share(first) > 0.9, "{first:?}");
     }
 }

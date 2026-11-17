@@ -34,6 +34,11 @@ const BOARD_CAPTION: f32 = 3.4;
 const NAME_TEXT: f32 = 4.2;
 const YOU_TEXT: f32 = 2.6;
 const SCORE_TEXT: f32 = 3.0;
+/// How far each of the four copies of a row's words that make its stroke
+/// is set off from them, across and down, in shares of the short side: as
+/// thin for their size as your name's on its plate is (`hud`'s, 0.036 of
+/// its size).
+const SCORE_STROKE: f32 = SCORE_TEXT * 0.036;
 const BLIND_LINE: f32 = 4.5;
 const BLIND_COUNT: f32 = 9.0;
 const WRONG_TEXT: f32 = 7.0;
@@ -163,7 +168,8 @@ fn show_plates(
 /// Writes the points top right as they change, and on a list put up
 /// afresh (the bar is, as the file changes on desktop): each person by
 /// the name they sit at the table under, the one hiding this round in the
-/// game's colour, from the first round to the end.
+/// game's colour with a thin stroke round it ([`stroked`]), from the first
+/// round to the end.
 fn show_scores(
     blend: Res<Blend>,
     view: Res<TableView>,
@@ -194,22 +200,62 @@ fn show_scores(
         }
         commands.entity(list).despawn_children().insert(Scored(scored.clone()));
         for (name, points, hides) in &scored {
-            let colour = if *hides { file.colours.blend_in.accent } else { file.colours.text };
-            commands.spawn((
-                ChildOf(list),
-                Node {
-                    justify_content: JustifyContent::SpaceBetween,
-                    column_gap: Val::VMin(3.0),
-                    ..default()
-                },
-                Pickable::IGNORE,
-                children![
-                    hud::words(name.clone(), SCORE_TEXT, colour),
-                    hud::words(points.to_string(), SCORE_TEXT, colour),
-                ],
-            ));
+            let row = commands
+                .spawn((
+                    ChildOf(list),
+                    Node {
+                        justify_content: JustifyContent::SpaceBetween,
+                        column_gap: Val::VMin(3.0),
+                        ..default()
+                    },
+                    Pickable::IGNORE,
+                ))
+                .id();
+            for words in [name.clone(), points.to_string()] {
+                if *hides {
+                    commands.spawn((ChildOf(row), stroked(words, SCORE_TEXT, file.colours.blend_in.accent)));
+                } else {
+                    commands.spawn((ChildOf(row), hud::words(words, SCORE_TEXT, file.colours.text)));
+                }
+            }
         }
     }
+}
+
+/// Words in `colour` with a thin stroke round them, as your name on its
+/// plate has in a team's colour (`hud`): four copies of them under them in
+/// the colour of the stroke round the chat's words (`colours.chat.stroke`),
+/// each set off toward a corner ([`SCORE_STROKE`]). For what is coloured on
+/// the see-through plate, which by day has the sky behind it: the hider's
+/// row in the game's violet could hardly be read there (the house's way,
+/// since 2026-11-15: stroke the words, never change Hajun's colours).
+fn stroked(text: String, size: f32, colour: Color) -> impl Bundle {
+    let rim = |corner: Vec2, text: &str| {
+        (
+            Text::new(text),
+            crate::font::sized(size),
+            TextColor(ui().colours.chat.stroke),
+            Node {
+                position_type: PositionType::Absolute,
+                left: Val::ZERO,
+                top: Val::ZERO,
+                ..default()
+            },
+            UiTransform::from_translation(Val2::new(Val::VMin(corner.x * SCORE_STROKE), Val::VMin(corner.y * SCORE_STROKE))),
+            Pickable::IGNORE,
+        )
+    };
+    (
+        Node::default(),
+        Pickable::IGNORE,
+        children![
+            rim(Vec2::new(-1.0, -1.0), &text),
+            rim(Vec2::new(1.0, -1.0), &text),
+            rim(Vec2::new(-1.0, 1.0), &text),
+            rim(Vec2::new(1.0, 1.0), &text),
+            hud::words(text, size, colour),
+        ],
+    )
 }
 
 /// Puts the speech bubble and the chat's keyboard away while the game has

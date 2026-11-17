@@ -88,13 +88,13 @@ pub(super) fn plugin(app: &mut App) {
         );
 }
 
-/// The window, while it is up, and what was last done on it.
+/// The window, while it is up, and what was last done on it. (Which round's
+/// was put away by its cross is the table's, `Blend::shut`, and goes with
+/// it.)
 #[derive(Resource, Default)]
 struct Chooser {
     /// Up, for this round.
     up: Option<u8>,
-    /// Put away by its cross in this round: not up again until the next.
-    shut: Option<u8>,
     /// The name is being typed: the box is this window's.
     typing: bool,
     /// A press on one of its buttons, to be acted on.
@@ -173,6 +173,20 @@ fn press(click: On<Pointer<Click>>, taps: Query<&ChooseTap>, mut chooser: ResMut
     }
 }
 
+/// The round the window is up for: the one being chosen for at the table
+/// you are at, unless its cross put it away (`Blend::shut`, which a table
+/// begun afresh has none of; in the first build it was the window's own,
+/// and a round its cross had shut at one table stayed shut at every table
+/// after, its window never up and Ready never pressed, everyone waiting
+/// the choosing out).
+pub(super) fn choosing(blend: &Blend) -> Option<u8> {
+    blend
+        .playing()
+        .filter(|round| round.stage == BlendStage::Choose)
+        .map(|round| round.round)
+        .filter(|round| blend.shut != Some(*round))
+}
+
 /// Puts the window up as a round's choosing begins, and away as it ends or
 /// its cross shuts it; lets the cursor go for it on desktop while it is up.
 fn put_up(
@@ -183,11 +197,7 @@ fn put_up(
     windows: Query<Entity, With<ChooseWindow>>,
     mut commands: Commands,
 ) {
-    let choosing = blend
-        .playing()
-        .filter(|round| round.stage == BlendStage::Choose)
-        .map(|round| round.round)
-        .filter(|round| chooser.shut != Some(*round));
+    let choosing = choosing(&blend);
     if chooser.up != choosing {
         if chooser.up.is_some() {
             for window in &windows {
@@ -297,7 +307,11 @@ fn act(
                     look: chosen.1.clone(),
                 },
             );
+            // Shown at once, and the next tap steps on from it: the
+            // answers to this and to any before it are counted back in
+            // (`super::hear`), the last of them what the server has.
             blend.offered = Some(chosen);
+            blend.asked += 1;
             blend.refused = false;
         }
     }
@@ -305,7 +319,7 @@ fn act(
         ask(&mut asks, rules::Ask::Ready);
     }
     if tap == ChooseTap::Shut {
-        chooser.shut = Some(round);
+        blend.shut = Some(round);
     }
 }
 

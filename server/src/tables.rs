@@ -735,6 +735,14 @@ pub(crate) trait Rules: Send + Sync + 'static {
     /// its body stands follows): tell it what only it needs.
     fn back(&mut self, _ctx: &mut Ctx, _table: &mut Table, _seat: usize) {}
 
+    /// Whether nothing said in the table's room is passed on now
+    /// ([`Tables::hushed`], which the chat asks): a game whose play has
+    /// everyone say nothing while it lasts (Blend In from its hide to the
+    /// end of its seek, since 2026-11-18). Never, by default.
+    fn hushes(&self, _table: &Table) -> bool {
+        false
+    }
+
     /// Puts the game's own components on `table.shown`, each only when it
     /// changed.
     fn show(&mut self, commands: &mut Commands, table: &Table);
@@ -997,6 +1005,19 @@ impl Tables {
         let table = self.tables.get_mut(&(game, id))?;
         let seat = table.seat_of(body)?;
         Some((table, seat))
+    }
+
+    /// Whether what is said in `room` is held back now: it is a table's
+    /// whose game hushes it ([`Rules::hushes`]). Anywhere else, never.
+    pub(crate) fn hushed(&self, room: Room) -> bool {
+        let Room::Table(game, id) = room else {
+            return false;
+        };
+        let key = (game, id);
+        self.tables
+            .get(&key)
+            .zip(self.games.get(&key))
+            .is_some_and(|(table, rules)| rules.hushes(table))
     }
 
     /// The table in `room`, and `body`'s seat at it, to be looked at.
@@ -3402,5 +3423,34 @@ mod tests {
         server.ask(b, Ask::Join(LAST_STAND));
         server.frame(0.1);
         assert_eq!(server.table(LAST_STAND, 0).board().left, 15);
+    }
+
+    #[test]
+    fn a_table_s_room_is_hushed_while_its_game_has_everyone_say_nothing() {
+        let mut server = Server::new(false);
+        let (a, _) = server.person(1, 1000);
+        let (b, _) = server.person(2, 1000);
+        server.ask(a, Ask::Join(BLEND_IN));
+        server.frame(0.1);
+        server.ask(b, Ask::Join(BLEND_IN));
+        server.frame(0.1);
+        let room = Room::Table(BLEND_IN, 0);
+        let hushed = |server: &Server, room: Room| server.world.resource::<Tables>().hushed(room);
+        assert!(!hushed(&server, room), "waiting");
+        server.ask(a, Ask::Skip);
+        server.frame(0.1);
+        server.skip_to_the_game(a, BLEND_IN, 0);
+        assert!(!hushed(&server, room), "choosing");
+        // Everyone ready: Blend In's hide, and nothing said is passed on.
+        for client in [a, b] {
+            server.ask(client, Ask::BlendIn(roundtown_net::blend_in::Ask::Ready));
+        }
+        server.frame(0.1);
+        server.frame(0.1);
+        assert!(hushed(&server, room), "the hide");
+        // Nowhere else: the town, another table, a table that is not there.
+        assert!(!hushed(&server, Room::Town(0)));
+        assert!(!hushed(&server, Room::Table(BLEND_IN, 1)));
+        assert!(!hushed(&server, Room::Table(KNOCK_OFF, 0)));
     }
 }

@@ -56,7 +56,8 @@
 //! draw if both found each other or both couldnt find each other", of
 //! two); the table pays by them ([`prizes`]). A hider who leaves, or whose
 //! device has been gone [`AWAY`], ends their round with no point (mine);
-//! with fewer than two people left the game ends, places by points so far.
+//! with fewer than two people left the game ends, places by points so far,
+//! whoever left placed after everyone who stayed (mine, [`Game::outcome`]).
 //!
 //! **Who is who** ([`Guise`]): every body in the game, the crowd's and the
 //! players', goes by an id the game gives it, thrown afresh every round
@@ -717,7 +718,9 @@ impl Game {
 
     /// `seat` has left for good: their turn to hide, if it has not come, is
     /// given up; if they were hiding, their round is, with no point; with
-    /// fewer than two people left, the game is over.
+    /// fewer than two people left, the game is over. They are placed after
+    /// everyone who stays to the end, whatever their points
+    /// ([`Game::outcome`]).
     pub fn leave(&mut self, seat: usize) {
         if !self.playing(seat) {
             return;
@@ -879,27 +882,34 @@ impl Game {
     }
 
     /// For trying the game out (the server's `RT_ALLOW_SKIP`, a tap on the
-    /// board): the part of the round under way ends now, by the server's
-    /// clock, as if its time were up, on the next step. The choosing as if
-    /// everyone had chosen, the hide, the seek as run out (the hider's
-    /// point), the round shown. Nothing before the play nor once it is over.
+    /// board): a wait of the round ends now, by the server's clock, as if
+    /// its time were up, on the next step: the choosing as if everyone had
+    /// chosen, or the round shown. Never the hide or the seek, which are
+    /// the round itself (mine): the VM allows skipping while people play
+    /// there, and a tap on the board in the seek would end it with the
+    /// hider's point, whoever tapped, or in the hide cut the hider's time
+    /// to get into place. Nothing before the play nor once it is over.
     pub fn hurry(&mut self) {
-        if self.begun && self.stage != BlendStage::Over {
+        if self.begun && matches!(self.stage, BlendStage::Choose | BlendStage::Shown) {
             self.until = self.until.min(self.clock);
         }
     }
 
-    /// Once the game is over: the place each seat came, by its points, 0
-    /// first and those with the same points tied ([`table::Results`]); the
-    /// points; and no total.
+    /// Once the game is over: the place each seat came, 0 first, and the
+    /// points; no total. Everyone who stayed to the end comes before
+    /// everyone who left for good (mine, as leaving a game of Bedwars loses
+    /// it: otherwise one of two about to be found at none each could leave,
+    /// the game over at once as a draw, and have their fee back), and among
+    /// each, by points, those with the same points tied
+    /// ([`table::Results`]).
     pub fn outcome(&self) -> Option<(Vec<u8>, Vec<u32>, Option<u32>)> {
         (self.begun && self.stage == BlendStage::Over).then(|| {
-            let points: Vec<u8> = self.seats.iter().map(|them| them.points).collect();
-            let places = points
+            let standing: Vec<(bool, u8)> = self.seats.iter().map(|them| (!them.gone, them.points)).collect();
+            let places = standing
                 .iter()
-                .map(|&mine| points.iter().filter(|&&theirs| theirs > mine).count() as u8)
+                .map(|&mine| standing.iter().filter(|&&theirs| theirs > mine).count() as u8)
                 .collect();
-            (places, points.iter().map(|&mine| u32::from(mine)).collect(), None)
+            (places, self.seats.iter().map(|them| u32::from(them.points)).collect(), None)
         })
     }
 

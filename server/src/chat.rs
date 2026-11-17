@@ -20,6 +20,7 @@ use bevy_replicon::prelude::*;
 use roundtown_net::{Ask, Member, Tell, chat};
 
 use crate::players::{Body, Plays, tell};
+use crate::tables::Tables;
 
 /// How many lines each body may still say, and when that was worked out, in
 /// the server's seconds ([`chat::lines_left`]).
@@ -45,12 +46,16 @@ fn takes_a_line(talker: Option<(f32, f64)>, now: f64) -> (bool, (f32, f64)) {
     }
 }
 
-/// Passes each line said on to everyone in its speaker's room.
+/// Passes each line said on to everyone in its speaker's room: but in a
+/// table's room whose game has everyone say nothing for now (Blend In from
+/// its hide to the end of its seek, since 2026-11-18: [`Tables::hushed`]),
+/// none, whatever a device sends.
 fn hear(
     mut asks: MessageReader<FromClient<Ask>>,
     clients: Query<&Plays>,
     bodies: Query<(&Body, &Member)>,
     time: Res<Time>,
+    tables: Option<Res<Tables>>,
     mut talkers: ResMut<Talkers>,
     mut tells: MessageWriter<ToClients<Tell>>,
 ) {
@@ -71,6 +76,10 @@ fn hear(
         let Some(text) = chat::line(text) else {
             continue;
         };
+        if tables.as_ref().is_some_and(|tables| tables.hushed(speaker.room)) {
+            debug!("{} said a line in {:?} while it is hushed: held back", member.id, speaker.room);
+            continue;
+        }
         let (may, left) = takes_a_line(talkers.0.get(&body).copied(), now);
         talkers.0.insert(body, left);
         if !may {

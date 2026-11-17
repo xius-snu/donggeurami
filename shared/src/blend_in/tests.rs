@@ -520,6 +520,43 @@ fn points_place_everyone_and_two_who_both_find_or_both_hide_draw() {
 }
 
 #[test]
+fn whoever_leaves_is_placed_after_everyone_who_stays_whatever_their_points() {
+    // Two at none each, the hider about to be found: leaving is no draw.
+    let mut game = begun(2, 16);
+    to_seek(&mut game);
+    let hider = game.hider().unwrap();
+    game.leave(hider);
+    assert_eq!(game.stage(), BlendStage::Over);
+    let (places, points, _) = game.outcome().unwrap();
+    let mut first = vec![1, 1];
+    first[1 - hider] = 0;
+    assert_eq!((places.clone(), points), (first, vec![0, 0]));
+    let results = Results { places, scores: vec![0, 0], ..Default::default() };
+    let mut paid = vec![0, 0];
+    paid[1 - hider] = 100;
+    assert_eq!(prizes(&results, &[true, true]), paid, "the one who stayed wins; the one who left has nothing back");
+    // Three, one of whom found the hider and then left: the two who stayed
+    // come first, by their points, and the one who left after them.
+    let mut game = begun(3, 17);
+    for (seat, points) in [2, 1, 0].into_iter().enumerate() {
+        game.seats[seat].points = points;
+    }
+    game.leave(0);
+    game.over();
+    let (places, ..) = game.outcome().unwrap();
+    assert_eq!(places, vec![2, 0, 1]);
+    assert_eq!(split(&[110, 40, 0], &places), vec![0, 110, 40]);
+    // Two who stayed with the same points still share their place.
+    let mut game = begun(4, 18);
+    for (seat, points) in [1, 1, 0, 3].into_iter().enumerate() {
+        game.seats[seat].points = points;
+    }
+    game.leave(3);
+    game.over();
+    assert_eq!(game.outcome().unwrap().0, vec![0, 0, 2, 3]);
+}
+
+#[test]
 fn one_who_leaves_gives_up_their_turn_and_a_hider_who_leaves_their_round() {
     // A seeker yet to hide leaves: a round fewer, the round going on.
     let mut game = begun(4, 14);
@@ -537,12 +574,16 @@ fn one_who_leaves_gives_up_their_turn_and_a_hider_who_leaves_their_round() {
     assert!(matches!(events.get(1), Some(Event::Choosing { round: 1, .. })), "{events:?}");
     assert_eq!(game.round().points, vec![0; 4]);
     assert_eq!(game.round().rounds, 3);
-    // Down to one: over at once, places by points so far.
+    // Down to one: over at once, places by points so far, the one who
+    // stayed first and the three who left after them, tied.
     let next = game.hider().unwrap();
     game.leave(next);
     assert_eq!(game.stage(), BlendStage::Over);
     assert_eq!(tick(&mut game), vec![Event::Over]);
-    assert_eq!(game.outcome().unwrap().0, vec![0; 4]);
+    let stayed = (0..4).find(|&seat| ![later, hider, next].contains(&seat)).unwrap();
+    let mut places = vec![1; 4];
+    places[stayed] = 0;
+    assert_eq!(game.outcome().unwrap().0, places);
     // A hider whose device has gone a while gives up their round; one
     // back in time does not.
     let mut game = begun(3, 15);
@@ -669,7 +710,7 @@ fn every_device_is_sent_the_seekers_bodies_from_the_hide_to_the_end_of_the_seek_
 }
 
 #[test]
-fn hurried_each_part_of_a_round_ends_on_the_next_step() {
+fn hurried_the_choosing_and_the_round_shown_end_on_the_next_step_and_never_the_hide_nor_the_seek() {
     let mut game = begun(2, 22);
     let hider = game.hider().unwrap();
     let before = game.round().until;
@@ -678,10 +719,20 @@ fn hurried_each_part_of_a_round_ends_on_the_next_step() {
     assert!(tick(&mut game).contains(&Event::Dressed));
     assert_eq!(game.stage(), BlendStage::Hide);
     assert!(game.round().until < before);
+    // The hide and the seek are the round itself: a tap on the board
+    // shortens neither, nor gives anyone a point.
+    let hide_ends = game.round().until;
     game.hurry();
-    assert!(tick(&mut game).contains(&Event::Seeking));
+    assert!(!tick(&mut game).contains(&Event::Seeking));
+    assert_eq!((game.stage(), game.round().until), (BlendStage::Hide, hide_ends));
+    run_to(&mut game, BlendStage::Seek, HIDE + 1.0);
+    let seek_ends = game.round().until;
     game.hurry();
-    assert!(tick(&mut game).contains(&Event::Hidden { hider }));
+    assert!(!tick(&mut game).contains(&Event::Hidden { hider }));
+    assert_eq!((game.stage(), game.round().until), (BlendStage::Seek, seek_ends));
+    assert_eq!(game.round().points, vec![0, 0]);
+    let events = run_to(&mut game, BlendStage::Shown, SEEK + 1.0);
+    assert!(events.contains(&Event::Hidden { hider }));
     assert_eq!(game.round().points[hider], 1, "the seek run out: the hider's point");
     game.hurry();
     tick(&mut game);

@@ -98,9 +98,14 @@ const KEPT_IN: f32 = PLAYER_RADIUS;
 
 /// How long a headline is across the screen, in seconds: as the four games'
 /// names are said (`table`), and longer for the end of a round, which the
-/// round shows for its own while ([`blend_in::SHOWN`]).
+/// round shows for its own while ([`blend_in::SHOWN`]); and the game's end,
+/// shorter, gone by the time the table's results come up over it two
+/// seconds after the end (mine: at three it showed through their
+/// see-through window), and taken down as they come all the same
+/// ([`clear_for_results`]).
 const HEADLINE_SECS: f32 = 3.0;
 const SHOWN_SECS: f32 = 4.5;
+const END_SECS: f32 = 2.0;
 
 pub(crate) fn plugin(app: &mut App) {
     app.add_message::<Told>()
@@ -113,6 +118,7 @@ pub(crate) fn plugin(app: &mut App) {
                 .before(crate::read_player_input)
                 .before(crate::island::show_where_i_am),
         )
+        .add_systems(Update, clear_for_results.after(table::TableSystems).after(follow))
         .add_systems(Update, pace.after(crate::read_player_input).before(crate::move_bodies))
         .add_systems(Update, keep_inside.after(crate::move_bodies).before(crate::animate_walk));
     choose::plugin(app);
@@ -205,6 +211,17 @@ struct Blend {
     /// Whether the sword and the seekers' team are on your body, put there
     /// by this game, to take off as it goes.
     me_armed: bool,
+    /// The round whose choosing window you put away with its cross: it is
+    /// not up again until the next round's. At this table only: a table
+    /// begun afresh (Play again, another game) has none put away.
+    shut: Option<u8>,
+    /// How many of the choices you made this choosing (`Ask::Disguise`)
+    /// the server has yet to answer, one answer to each (`Tell::Wear`):
+    /// while any is still out, an answer is to a choice made before the
+    /// last, and says what you have chosen over since. Mine: shown, it put
+    /// the window back on an older choice, and a tap made then stepped on
+    /// from that one and was lost.
+    asked: u32,
 }
 
 impl Blend {
@@ -260,7 +277,12 @@ fn begin_afresh(
     }
     let you = me.single().ok();
     match here {
-        Some((seat, true)) if blend.seat.is_some() => blend.seat = Some(seat),
+        // (Its connection made again, or its seat moved: an answer to a
+        // choice it made may have been lost on the way.)
+        Some((seat, true)) if blend.seat.is_some() => {
+            blend.seat = Some(seat);
+            blend.asked = 0;
+        }
         Some((seat, _)) => {
             let_go(&mut blend, you, &mut commands);
             blend.seat = Some(seat);
@@ -291,14 +313,18 @@ fn hear(
         match said {
             blend_in::Tell::Wear { name, look } => {
                 let wearing = (name.clone(), look.clone());
+                blend.asked = blend.asked.saturating_sub(1);
                 // Dressed as it once the hide has begun: what everyone sees
                 // you as from then.
-                let dressed = blend
-                    .round
-                    .as_ref()
-                    .is_some_and(|round| matches!(round.stage, BlendStage::Hide | BlendStage::Seek | BlendStage::Shown));
+                let dressed = blend.round.as_ref().is_some_and(|round| dressed(round.stage));
                 if dressed {
                     blend.worn = Some(wearing.clone());
+                }
+                // While choosing, the answer to a choice you have made
+                // another since: the window keeps the newer, which the
+                // answer to it will say.
+                if blend.asked > 0 && !dressed {
+                    continue;
                 }
                 if blend.offered.as_ref() != Some(&wearing) {
                     blend.offered = Some(wearing);
@@ -320,6 +346,12 @@ fn hear(
 /// as the room is told who sits where.
 fn name_of(view: &TableView, seat: usize) -> String {
     view.members.get(seat).map(|member| member.name.clone()).unwrap_or_default()
+}
+
+/// Whether everyone is dressed as they chose at `stage` of a round: from
+/// its hide to the end of its showing.
+fn dressed(stage: BlendStage) -> bool {
+    matches!(stage, BlendStage::Hide | BlendStage::Seek | BlendStage::Shown)
 }
 
 /// Something that has come about in the game, from one round the room was
@@ -378,25 +410,36 @@ fn moments(before: Option<&BlendRound>, now: &BlendRound) -> Vec<Moment> {
     came
 }
 
-/// The headline at the end: one who has the most points wins; several
-/// with the most share it; everyone with the same points, a draw.
-fn winners_words(points: &[u8], names: &[String]) -> String {
+/// The headline at the end, from the place each seat came (0 first): one
+/// who came first wins; several first share it; everyone first alike, a
+/// draw.
+fn winners_words(places: &[u8], names: &[String]) -> String {
     let file = ui();
     let words = &file.words.blend_in;
-    let most = points.iter().copied().max().unwrap_or(0);
-    let first: Vec<&str> = points
+    let first: Vec<&str> = places
         .iter()
         .zip(names)
-        .filter(|(points, _)| **points == most)
+        .filter(|(place, _)| **place == 0)
         .map(|(_, name)| name.as_str())
         .collect();
-    if first.len() == points.len() || first.is_empty() {
+    if first.len() == places.len() || first.is_empty() {
         words.draw.clone()
     } else if let [name] = first[..] {
         fill(&words.wins, &[("name", name)])
     } else {
         fill(&words.win_together, &[("names", &first.join(&words.and))])
     }
+}
+
+/// The places `points` would give, by seat, 0 first and those alike tied:
+/// what the end is said by should the table's results not be here yet
+/// (they come with it), which place whoever left after everyone who
+/// stayed (`blend_in::Game::outcome`).
+fn by_points(points: &[u8]) -> Vec<u8> {
+    points
+        .iter()
+        .map(|&mine| points.iter().filter(|&&theirs| theirs > mine).count() as u8)
+        .collect()
 }
 
 /// Follows the round as the room is sent it: what has come about said
@@ -423,6 +466,16 @@ fn follow(
     }
     let came = moments(blend.round.as_ref(), now);
     let before = blend.round.replace(now.clone());
+    // Seen first part way through a round, this device begun afresh in the
+    // game (its app closed and opened again): dressed as it was told it
+    // wears, if that came first; should it come after, it dresses you
+    // itself (`hear`).
+    if before.is_none()
+        && dressed(now.stage)
+        && let Some(offered) = blend.offered.clone()
+    {
+        blend.worn = Some(offered);
+    }
     let file = ui();
     let words = &file.words.blend_in;
     let colours = file.colours.chat;
@@ -434,9 +487,17 @@ fn follow(
         chat::spans(template, colours.event, &fills)
     };
     // Each headline of the game's in place of the one before, if that is
-    // still up: two at once would be one over the other.
+    // still up: two at once would be one over the other. None for a round
+    // seen first part way through, on a device begun afresh in the game
+    // (mine): the table says the game's name across the screen then, which
+    // the game's own would stand over, and the plate top centre says what
+    // is going on.
+    let fresh = before.is_none();
     let mut up: Vec<Entity> = headlines.iter().collect();
     let mut announce = |commands: &mut Commands, caption: Option<&str>, title: &str, size: f32, secs: f32| {
+        if fresh {
+            return;
+        }
         for old in up.drain(..) {
             commands.entity(old).try_despawn();
         }
@@ -448,10 +509,12 @@ fn follow(
             Moment::Choose => {
                 blend.refused = false;
                 blend.stunned = None;
+                blend.asked = 0;
             }
             Moment::Hide => {
                 // What you chose is what you are dressed as from now, if
                 // the word of it is here; it is told again as you are.
+                blend.asked = 0;
                 if let Some(offered) = blend.offered.clone() {
                     blend.worn = Some(offered);
                 }
@@ -489,9 +552,12 @@ fn follow(
                 log.push(said(&words.void_line, &[("name", &name)]));
             }
             Moment::Over => {
-                let headline = winners_words(&now.points, &names);
-                announce(&mut commands, None, &headline, hud::HEADLINE, HEADLINE_SECS);
-                info!("Blend In: over, points {:?}", now.points);
+                // By the places the table pays by, which put whoever left
+                // after everyone who stayed; they come with the end.
+                let places = view.results().map_or_else(|| by_points(&now.points), |results| results.places.clone());
+                let headline = winners_words(&places, &names);
+                announce(&mut commands, None, &headline, hud::HEADLINE, END_SECS);
+                info!("Blend In: over, points {:?}, places {places:?}", now.points);
             }
         }
     }
@@ -499,6 +565,22 @@ fn follow(
         && before.stage != now.stage
     {
         debug!("Blend In: {:?} to {:?}, round {}", before.stage, now.stage, now.round);
+    }
+}
+
+/// Takes down whatever the game has said across the screen as the table's
+/// results come up (`table::ResultsWindow`): the window is see-through,
+/// and the end's headline showed through it.
+fn clear_for_results(
+    results: Query<(), Added<table::ResultsWindow>>,
+    headlines: Query<Entity, With<Headline>>,
+    mut commands: Commands,
+) {
+    if results.is_empty() {
+        return;
+    }
+    for headline in &headlines {
+        commands.entity(headline).try_despawn();
     }
 }
 
@@ -712,6 +794,9 @@ fn wrapped(text: impl Into<String>, size: f32, colour: Color) -> impl Bundle {
 
 #[cfg(test)]
 mod tests {
+    use bevy::ecs::message::Messages;
+    use bevy::ecs::system::RunSystemOnce;
+
     use super::*;
 
     fn round(round: u8, stage: BlendStage) -> BlendRound {
@@ -758,15 +843,172 @@ mod tests {
     }
 
     #[test]
-    fn the_end_names_whoever_has_the_most_points_or_says_it_is_a_draw() {
+    fn the_end_names_whoever_came_first_or_says_it_is_a_draw() {
         let names: Vec<String> = ["Dubu", "Mochi", "Hodu"].iter().map(|name| name.to_string()).collect();
         let file = ui();
         let words = &file.words.blend_in;
-        assert_eq!(winners_words(&[2, 1, 0], &names), fill(&words.wins, &[("name", "Dubu")]));
-        assert_eq!(winners_words(&[1, 1, 1], &names), words.draw);
-        assert_eq!(winners_words(&[0, 0], &names[..2]), words.draw, "neither found the other");
-        let two = winners_words(&[1, 1, 0], &names);
+        assert_eq!(winners_words(&by_points(&[2, 1, 0]), &names), fill(&words.wins, &[("name", "Dubu")]));
+        assert_eq!(winners_words(&by_points(&[1, 1, 1]), &names), words.draw);
+        assert_eq!(winners_words(&by_points(&[0, 0]), &names[..2]), words.draw, "neither found the other");
+        let two = winners_words(&by_points(&[1, 1, 0]), &names);
         assert_eq!(two, fill(&words.win_together, &[("names", &format!("Dubu{}Mochi", words.and))]));
+        // At none each, the one who left placed after the one who stayed:
+        // no draw.
+        assert_eq!(by_points(&[0, 0]), vec![0, 0]);
+        assert_eq!(winners_words(&[1, 0], &names[..2]), fill(&words.wins, &[("name", "Mochi")]));
+    }
+
+    /// A device at a table of Blend In, online, in seat 0 of two, with the
+    /// game's systems that hear what it is told and follow the round.
+    fn at_the_table() -> World {
+        let mut world = World::new();
+        world.init_resource::<Blend>();
+        world.init_resource::<TableView>();
+        world.init_resource::<chat::Log>();
+        world.init_resource::<Messages<Told>>();
+        world.init_resource::<Messages<table::Entered>>();
+        world.init_resource::<Messages<table::Gone>>();
+        world.insert_resource(AtTable(Some(table::Sitting {
+            game: Minigame::BlendIn,
+            seat: 0,
+            online: true,
+            id: 3,
+        })));
+        let members = ["Dubu", "Mochi"]
+            .iter()
+            .enumerate()
+            .map(|(seat, name)| Member {
+                id: seat as u64 + 1,
+                name: (*name).into(),
+                look: "boy".into(),
+                ai: false,
+            })
+            .collect();
+        world.resource_mut::<TableView>().members = members;
+        world.resource_mut::<Blend>().seat = Some(0);
+        world
+    }
+
+    /// The room's round, as it comes to the device: `stage` of round 0, seat 1 hiding.
+    fn sent(world: &mut World, stage: BlendStage) {
+        let mut now = round(0, stage);
+        now.hider = 1;
+        let shown = world.resource::<TableView>().shown;
+        match shown {
+            Some(entity) => {
+                world.entity_mut(entity).insert(now);
+            }
+            None => {
+                let entity = world.spawn((Remote, now)).id();
+                world.resource_mut::<TableView>().shown = Some(entity);
+            }
+        }
+    }
+
+    fn told(world: &mut World, said: blend_in::Tell) {
+        world.write_message(Told(said));
+        world.run_system_once(hear).expect("heard");
+        world.resource_mut::<Messages<Told>>().clear();
+    }
+
+    fn wear(name: &str, look: &str) -> blend_in::Tell {
+        blend_in::Tell::Wear {
+            name: name.into(),
+            look: look.into(),
+        }
+    }
+
+    #[test]
+    fn a_device_opened_again_part_way_through_a_round_is_dressed_as_it_wears_whichever_word_comes_first() {
+        // What it wears told before the round comes.
+        let mut world = at_the_table();
+        told(&mut world, wear("Bori", "girl"));
+        assert_eq!(world.resource::<Blend>().worn, None, "nothing yet to say it is dressed");
+        sent(&mut world, BlendStage::Seek);
+        world.run_system_once(follow).expect("followed");
+        let blend = world.resource::<Blend>();
+        assert_eq!(blend.worn, Some(("Bori".into(), "girl".into())));
+        // And after it.
+        let mut world = at_the_table();
+        sent(&mut world, BlendStage::Shown);
+        world.run_system_once(follow).expect("followed");
+        assert_eq!(world.resource::<Blend>().worn, None);
+        told(&mut world, wear("Bori", "girl"));
+        assert_eq!(world.resource::<Blend>().worn, Some(("Bori".into(), "girl".into())));
+        // Seen first while everyone chooses, nobody is dressed yet.
+        let mut world = at_the_table();
+        told(&mut world, wear("Bori", "girl"));
+        sent(&mut world, BlendStage::Choose);
+        world.run_system_once(follow).expect("followed");
+        assert_eq!(world.resource::<Blend>().worn, None);
+    }
+
+    #[test]
+    fn an_answer_to_a_choice_made_before_the_last_is_not_shown_over_the_last() {
+        let mut world = at_the_table();
+        sent(&mut world, BlendStage::Choose);
+        world.run_system_once(follow).expect("followed");
+        told(&mut world, wear("Dubu", "boy"));
+        // Two quick taps on an arrow, each sent as made (`choose::act`).
+        {
+            let mut blend = world.resource_mut::<Blend>();
+            blend.offered = Some(("Dubu".into(), "boy_blackbrown".into()));
+            blend.asked += 1;
+            blend.offered = Some(("Dubu".into(), "boy_whiteblue".into()));
+            blend.asked += 1;
+        }
+        // The answer to the first: the second stays.
+        told(&mut world, wear("Dubu", "boy_blackbrown"));
+        assert_eq!(world.resource::<Blend>().offered, Some(("Dubu".into(), "boy_whiteblue".into())));
+        // The answer to the second, whatever it says, is what is chosen.
+        told(&mut world, wear("Dubu", "boy_whiteblue"));
+        assert_eq!(world.resource::<Blend>().offered, Some(("Dubu".into(), "boy_whiteblue".into())));
+        // A choice turned down, nothing sent since: what the server has.
+        world.resource_mut::<Blend>().offered = Some(("Mochi".into(), "boy_whiteblue".into()));
+        world.resource_mut::<Blend>().asked += 1;
+        told(&mut world, wear("Dubu", "boy_whiteblue"));
+        assert_eq!(world.resource::<Blend>().offered, Some(("Dubu".into(), "boy_whiteblue".into())));
+        // Whatever is out as the hide begins, what it is told it wears.
+        world.resource_mut::<Blend>().asked = 2;
+        sent(&mut world, BlendStage::Hide);
+        world.run_system_once(follow).expect("followed");
+        told(&mut world, wear("Kong", "boy"));
+        let blend = world.resource::<Blend>();
+        assert_eq!((blend.offered.clone(), blend.worn.clone()), (Some(("Kong".into(), "boy".into())), Some(("Kong".into(), "boy".into()))));
+    }
+
+    #[test]
+    fn a_window_put_away_by_its_cross_is_up_again_at_the_next_table() {
+        let mut world = at_the_table();
+        sent(&mut world, BlendStage::Choose);
+        world.run_system_once(follow).expect("followed");
+        assert_eq!(choose::choosing(&world.resource::<Blend>()), Some(0));
+        // Its cross, in round 1 of this table: not up again this round.
+        world.resource_mut::<Blend>().shut = Some(0);
+        assert_eq!(choose::choosing(&world.resource::<Blend>()), None);
+        // The same table begun afresh on this device: still put away.
+        world.write_message(table::Entered {
+            game: Minigame::BlendIn,
+            seat: 0,
+            online: true,
+            same_table: true,
+        });
+        world.run_system_once(begin_afresh).expect("begun");
+        assert_eq!(choose::choosing(&world.resource::<Blend>()), None);
+        world.resource_mut::<Messages<table::Entered>>().clear();
+        // Play again: a new table, its first round the window's.
+        world.write_message(table::Entered {
+            game: Minigame::BlendIn,
+            seat: 1,
+            online: true,
+            same_table: false,
+        });
+        world.run_system_once(begin_afresh).expect("begun");
+        assert_eq!(world.resource::<Blend>().shut, None);
+        let entity = world.spawn((Remote, round(0, BlendStage::Choose))).id();
+        world.resource_mut::<TableView>().shown = Some(entity);
+        world.run_system_once(follow).expect("followed");
+        assert_eq!(choose::choosing(&world.resource::<Blend>()), Some(0));
     }
 
     #[test]

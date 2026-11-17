@@ -11,7 +11,182 @@
 
 ## Contents
 
-1. Since 2026-11-18 Blend In is played online: two to four people, each hiding once among twenty-eight of the town's people while the others look for them
+1. Later on 2026-11-18, after the game was checked: the crowd is sent by the rule a person's device sends by, nothing said from the hide to the end of the seek is passed on, a tap on the board no longer decides a round, and whoever leaves comes last
+2. Since 2026-11-18 Blend In is played online: two to four people, each hiding once among twenty-eight of the town's people while the others look for them
+
+## Later on 2026-11-18, after the game was checked: the crowd is sent by the rule a person's device sends by, nothing said from the hide to the end of the seek is passed on, a tap on the board no longer decides a round, and whoever leaves comes last
+
+A check of the game as first built (the entry below), the same day and
+before anything of it was merged, found nine things wrong; each is fixed
+here, or, where the fix is not the game's to make, asked of whoever's it
+is (below). Nothing of Hajun's changed: every call in this entry is mine.
+
+- **The crowd is sent by the rule a person's device sends by**
+  (`Beat`, `server/src/blend_in.rs`). A device marks its body as
+  standing still once it has stood one frame, to the centimetre and to the
+  turn, and says so at its next beat (`net::tell_where_i_am`); the crowd
+  was marked still whenever it stood where it had last been sent, however
+  it had turned since, so that one turning where it stood was sent still
+  and facing somewhere new, which no device sends, and each of its stops
+  came as two sendings, the place and then the stop, where a device's
+  comes as one unless its beat falls on the very last step. Each of the
+  crowd's bodies now goes by the device's rule, on a beat of its own as
+  before, its `Spot` written only with something new. A test plays two
+  minutes of the crowd through the crowd's sending, through a device's
+  (its rule written out), and through the first build's: no update marked
+  still otherwise than the frame before says, nothing sent of a body
+  standing, and its stops in two sendings 0.22 of the time for the crowd
+  and 0.23 for a device; the first build sent 992 updates still while
+  turning, and 0.91 of its stops in two.
+- **Nothing said is passed on from the hide to the end of the seek,
+  whatever a device sends** (`Rules::hushes`, which the chat asks through
+  `Tables::hushed`). The device put its chat away then (the design), but
+  the server passed on any line, under the name its speaker's body goes
+  by, which from the hide is the hider's disguise: a line the hider sent
+  as the choosing ended, heard once they were dressed, would have told
+  everyone who they are; and a device made to could have talked all
+  through the seek. The server now drops such a line, and logs that it
+  held one back.
+- **A tap on the board hurries only the choosing and the round shown**
+  (`Game::hurry`). With skipping allowed, as the VM has it while people
+  play there, a tap on the board in the seek ended it with the hider's
+  point, whoever tapped, and one in the hide cut the hider's time to get
+  into place. The hide and the seek now take their time whoever taps.
+- **Whoever leaves comes after everyone who stays** (`Game::outcome`), as
+  leaving a game of Bedwars loses it. Paid by points so far, one of two
+  at none each, the hider about to be found, could leave, the game over
+  at once as a draw, and have their fee back like the one who stayed. Now
+  the one who stayed wins, 100 coins, and the one who left has nothing;
+  among those who stayed, and among those who left, by points, ties
+  sharing. The end's headline goes by the same places, the table's
+  ("Mochi wins!", not "A draw!").
+- **The window put away by its cross is up again at the next table**
+  (`Blend::shut`). Which round's window the cross had put away was kept
+  apart from the table, and never forgotten: after Play again, or in any
+  later game, the round of the same number never had its window, Ready
+  could not be pressed, and everyone waited the choosing's 30 s out.
+- **A device opened again in the middle of a seek wears its disguise on
+  its own screen** (`follow`). What it wears was told before the round had
+  come, and nothing dressed it after: its own body was drawn in the
+  account's look, and its plate said the account's name.
+- **Quick taps on the window are each kept** (`Blend::asked`). Every
+  choice is answered with what is worn as it stands; an answer to a
+  choice made before the last one put the window back on it, and a tap
+  made then stepped on from there and was lost. The answers are counted
+  in, and only the last of them is shown.
+- **The hider's row among the points has a thin stroke round it**, as your
+  name has on its plate in a team's colour (`stroked`, `screen.rs`): in
+  the game's violet it could hardly be read on the see-through plate by
+  day.
+- **The end's headline is up two seconds**, gone as the table's results
+  come up over it two seconds after the end; and it is taken down as they
+  do (it showed through their see-through window).
+
+### Asked of others: not the game's to change
+
+- **The tables' `src/net.rs`, one line**, in `tell_where_i_am`:
+  `sent.was = Some(Spot { still: false, ..spot });` in place of
+  `sent.was = Some(Spot { still: spot.still, ..spot });`. As it is, a
+  device standing still flips its body's `still` every frame, as the
+  builder found, so that a person standing is sent several times a second
+  and one of the crowd standing never is: the one tell left in how often
+  a body is sent. The crowd is sent as a device will be with this line;
+  it is not changed here because it changes what every device sends
+  everywhere, Bridge Wars too (less of it: nothing but bandwidth).
+- **The rooms, or the tables: the hider's body jumps, and is the body it
+  was.** As the hide begins the server stands the hider's body where they
+  hide (`players::place`), and every device is sent it going 25 m or more
+  from the pond at once, while the crowd's bodies walk; and it is the
+  very body the hider sat in, under their account, while everyone waited
+  and chose. A device made to read the network knows the hider from the
+  start; only the seekers' black screen keeps it from the game as it is
+  played. What would end it: every body in the room kept from the
+  seekers' devices from the hide to the seek (they see nothing then
+  anyway), and shown to them again at the seek as bodies new to them, in
+  an order thrown; a body afresh for each person alone would still jump.
+  Until then this is how it stands.
+
+### Changes outside the game's files
+
+Both additive, for the chat's hush, and nothing else of either changed:
+
+- `server/src/tables.rs`: `Rules::hushes`, false unless a game says
+  otherwise (only Blend In does), and `Tables::hushed(room)`, which asks
+  it of the table in a room, never true for any room but a table's; and a
+  test of it.
+- `server/src/chat.rs`: `hear` drops a line said in a room that
+  `Tables::hushed` says is hushed (taking the tables as `Option`, so that
+  a world without them runs as before). The town's rooms, Bridge Wars'
+  and House Builder's are never hushed.
+
+### Calls of mine besides
+
+- A round first seen part way through, on a device begun afresh in the
+  game, says nothing across the screen: the table says the game's name
+  there then, and on the reopened copy below the game's "Seek!" stood
+  over it. The plate top centre says what is going on.
+- Whoever left is placed after everyone who stayed whatever their points,
+  and the end's headline is said by those places, the table's; before
+  they come (they come with the end), by points.
+
+### What was checked, and where (this entry)
+
+- **Tests**: the rules' (`cargo test -p roundtown_net`, 153 passed,
+  3 ignored): whoever leaves placed after everyone who stays, of two at
+  none each and of three and four; a tap hurrying the choosing and the
+  round shown and never the hide nor the seek. The server's (`-p
+  roundtown_server`, 93 passed, 4 ignored): the crowd sent what a device
+  would send of the same walk (above); nothing passed on from the hide to
+  the end of the seek, at each part of a round, and `Tables::hushed` for
+  a real table of Blend In and nowhere else; the plate's tap; one of two
+  who leaves at none each paid nothing and the other 100. The game's
+  (`--lib`, 385 passed): a device opened again part way through a
+  round dressed as it wears whichever word comes first, and not while
+  everyone chooses; an answer to a choice made before the last never
+  shown over the last; the window put away by its cross staying away at
+  the same table begun afresh, and up at the next; the end's words by
+  places.
+- **Three hidden runs of two copies against a server on this PC**
+  (`RT_BACKGROUND=1`, port 5481, `RT_ALLOW_SKIP=1`, no database), scripted
+  by a throwaway taken out again (kept outside the tree,
+  `RoundTown-wt/scratch-blendin/kept/scratch_fix.rs` and
+  `fix_online.sh`). The first was stopped early, its script's taps going
+  down and up in one frame, but showed the chat as below; the second, by
+  day, and the third, at night, each played two whole games:
+  - choosing: three taps on the right arrow two frames apart took the
+    look three on, a boy's to a girl's; on this PC the answers to the
+    first two came in the same frame, so a tap between two answers was
+    seen in the test only. A line said while choosing was heard by both
+    ("said a line ... to 2" in the server's log);
+  - the cross: Ready, and the window put away for that round; at night,
+    on the copy that pressed it (never opened again), the window up for
+    the next round, and after Play again for the next game's first;
+  - the hider's lines in the hide and in the seek held back by the server
+    ("while it is hushed: held back"), heard by nobody;
+  - a seeker's tap on the plate 1.5 s into the seek: the seek went on,
+    146 s of it left, nobody's point;
+  - the hider's row among the points, stroked, by day and by night,
+    enlarged;
+  - the seeker of the second round, its app ended and opened again 3 s
+    into the seek: put back in its seat ("is back, put back in seat 0"),
+    its plate the name it went by with "(you)", its body in that look, by
+    day and by night; by day the table's "Blend In" and the game's "Seek!"
+    one over the other on it, at night (after the change above) "Blend In"
+    alone;
+  - the first game's end, "A draw!", gone as the results came up two
+    seconds later, 50 each (1,000 coins each after it);
+  - Play again; in the second game the hider left 2 s into the seek at
+    none each: "Bravo wins!", 100 and nothing (1,050 and 950).
+  - What one device was sent of each body over a seek of 7 s: each of the
+    crowd's 8 to 51 times, 3 to 6 of them marked still, one to a stop;
+    the hider's 50 times, 14 of them moving and 19 marked still while
+    standing: the flip in `net.rs` asked above.
+  - Nothing panicked or logged an error; nothing was left running.
+- The pictures are in `RoundTown-wt/scratch-blendin/shots/fix/`, the
+  runs' logs in `scratch-blendin/out_fix_first`, `out_fix_day` and
+  `out_fix_night`.
+- **Not**: a phone or an iPhone; the VM; a database; three or four people
+  since these changes; a slow network.
 
 ## Since 2026-11-18 Blend In is played online: two to four people, each hiding once among twenty-eight of the town's people while the others look for them
 
@@ -72,9 +247,10 @@ of the server's and the device's sides (*mine*).
   own odds of standing a whole turn or only turning, its walks ending
   1.0 to 1.6 m from anyone, all thrown again every round (the rules, in
   place of the design's 2 to 4.5 s, which measured a third lazier than
-  the town). Each is sent to the room exactly as a person is (`Member`
-  with `ai` false, an id from the one range every body's is thrown from, a
-  name of its side's, a look of it, its `Spot`), so that each device draws
+  the town). Each is sent to the room as a person is (`Member` with `ai`
+  false, an id from the one range every body's is thrown from, a name of
+  its side's, a look of it, its `Spot`, since the entry above by the rule
+  a person's device sends its own body by), so that each device draws
   them as it draws people: the same smoothing, the same walk read off the
   motion, a name over each head (the design).
 - **Rounds**: as many as there are people, each hiding once, in a thrown
@@ -126,7 +302,8 @@ of the server's and the device's sides (*mine*).
      swing passes another seeker by; the hider has no swing (the design).
      The chat and the quick chat are off from the hide to the end of the
      seek (the design: a line said would give the hider away, and nobody
-     can say anything while the others cannot).
+     can say anything while the others cannot); since the entry above the
+     server passes on nothing said then either.
   4. **The round over**, 6 s: a tall soft column of light over where the
      hider stands (the design), and "Found by Dubu in 1:12!" or "Mochi
      stayed hidden!", the same in the chat. A point to the finder, or to
@@ -134,7 +311,8 @@ of the server's and the device's sides (*mine*).
 - **A hider who leaves**, or whose device is gone 20 s, gives up their
   round with no point ("Mochi's round is given up"), and someone who
   leaves before their turn to hide loses that round; with fewer than two
-  people left the game ends, paid by points so far (the design).
+  people left the game ends, paid by points so far (the design), whoever
+  left placed after everyone who stayed (mine, since the entry above).
 - **The end**: "Mochi wins!", "Mochi and Dubu win!", or "A draw!"; then the
   table's results, a row to each person with their points and coins.
 - **Coins**: 50 to join. Paid by place: of two 100 and nothing, of three
@@ -173,10 +351,12 @@ hide to the end of the seek (`BlendRound::swords`, so that each device can
 put the sword in their hands), the hider's never (mine). The crowd's
 bodies are sent where they stand as a person's device sends its own body,
 at most every fifteenth of a second and a little later at a throw, four or
-five of the server's frames apart, and as standing still once they stop
-(mine, as the rules asked), never every frame: in the run below, while
-moving, a crowd body's sendings came 0.058 to 0.076 s apart on average,
-the hider's 0.074.
+five of the server's frames apart (mine, as the rules asked), never every
+frame: in the run below, while moving, a crowd body's sendings came 0.058
+to 0.076 s apart on average, the hider's 0.074. How each is marked
+standing still was not as a device marks it in this first build (still
+whenever it stood where it was last sent, however it had turned since);
+since the entry above it is.
 
 **One thing still tells**, found in the online run below and not in this
 game's files: a person's device standing still keeps sending where it
@@ -187,16 +367,20 @@ of the crowd standing not at all: over one seek of 15 s in the run, the
 hider's body was sent 88 times, 36 of them moving; each of the 28 crowd
 bodies 23 to 64 times, all but 3 to 9 of them moving. Nothing a device
 draws shows it; a device made to read the network could. The fix is one
-line in `src/net.rs`, the tables' file, asked of whoever has it: keep the
-place compared against as not still, `sent.was = Some(Spot { still: false,
-..spot });`.
+line in `src/net.rs`, the tables' file, asked of whoever has it (the
+entry above): keep the place compared against as not still,
+`sent.was = Some(Spot { still: false, ..spot });`.
 
 Also left as it is: **a person's body is the same entity from one round to
 the next**, and the same as while everyone waited at the table, when it
-went by its account. A device made to read the network could follow the
-hider's body from there. A body afresh for each person at each hide is the
-tables' to do (they own the people's bodies), and is asked of them. Nothing
-the game draws shows it.
+went by its account; and as the hide begins **every device is sent the
+hider's body going at once from the pond to where they hide** (found by
+the check in the entry above). A device made to read the network could
+follow the hider's body from there. Keeping every body from the seekers'
+devices from the hide to the seek, and showing them again as bodies new
+to them, is the rooms' or the tables' to do (they own the people's
+bodies), and is asked of them in the entry above. Nothing the game draws
+shows either.
 
 ### Calls that were mine
 
@@ -234,9 +418,10 @@ the game draws shows it.
 - A device back in the game after its connection went is told again what
   it wears and whether it is stunned.
 - For trying the game out, a tap on the plate (only where the server
-  allows skipping, `RT_ALLOW_SKIP`) ends the part of the round under way:
-  the choosing as if everyone were ready, the hide, the seek as run out
-  (the hider's point), the round shown.
+  allows skipping, `RT_ALLOW_SKIP`) ends the choosing as if everyone were
+  ready, or the round shown. (In this first build it ended the hide and
+  the seek too, the seek as run out with the hider's point, whoever
+  tapped: no longer, since the entry above.)
 - Words and colours are all in `assets/ui.ron` (`words.blend_in`,
   `colours.blend_in`): the ring `#6666668c`, the glow `#b98cff80`, the
   column `#fff1c2bf`, the black `#000000`, the tick `#34d634`.
