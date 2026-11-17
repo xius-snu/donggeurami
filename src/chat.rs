@@ -1198,9 +1198,17 @@ fn say(
             asks.write(Ask::Chat(text));
         } else {
             // In a game, once its fight has begun, in your team's colour,
-            // as your name is on its plate (`hud::colour_name`): the team
-            // your body is on, which in Bridge Wars is your seat's.
-            let colour = name_colour(&fighting, team.map(|team| team.0));
+            // as your name is on its plate (`hud::colour_name`): in a fight
+            // your seat's team as its game says (`Fighting::teams`: none in
+            // Last Stand, whose one team is everyone), as everyone else's
+            // lines are (`hear`); at another game's table the team your
+            // body is on, where its game gives one.
+            let team = if fighting.venue.is_some() && fighting.venue == Some(venue) {
+                fighting.seat.and_then(|seat| fighting.team_of(usize::from(seat)))
+            } else {
+                team.map(|team| team.0)
+            };
+            let colour = name_colour(&fighting, team);
             log.push(said(name.as_str(), colour, &text));
         }
     }
