@@ -25,6 +25,7 @@ use bevy::world_serialization::WorldInstanceReady;
 
 mod ai;
 mod arena;
+#[cfg(test)] mod blend_in_bake;
 mod bridge;
 mod build;
 mod builder;
