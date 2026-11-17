@@ -14,12 +14,14 @@
 //! is no more than a step up or down from the one it is on
 //! ([`LAND_STEP_UP`]), dry, with no water over it, where nothing reaches
 //! into a body standing there, and with ground under all of it; and never
-//! past [`RING`], where the game is played to. Beyond it nothing is kept,
-//! so that nothing out there changes the grid: Hajun's re-export of
-//! 2026-11-17, not committed when this was first baked, lays plots for
-//! houses 76 to 172 m out. The town's houses and trees from its save
-//! (`town.json`) are not in the map's file, and differ from one device to
-//! the next: they are left out (there are none in the map's middle).
+//! past [`RING`], where the game is played to. Nothing past it is ever
+//! looked at: a square is walked only if everything looked at for it is
+//! inside the ring ([`REACH`]), so that nothing out there changes the
+//! grid: Hajun's re-export of 2026-11-17, not committed when this was first
+//! baked, lays plots for houses 76 to 172 m out. The town's houses and
+//! trees from its save (`town.json`) are not in the map's file, and differ
+//! from one device to the next: they are left out (there are none in the
+//! map's middle).
 //!
 //! **After Hajun exports the town again**, `cargo test --lib` fails here
 //! until the grid is baked again: `RT_BAKE_NAV=1 cargo test --lib
@@ -52,6 +54,14 @@ const NAMED_WITHIN: f32 = 1.5;
 /// How far over a square's floor water is looked for, in metres: water
 /// anywhere over it, a body standing there would be in.
 const WATER_OVER: f32 = 3.0;
+/// How far from the middle of a square the map is looked at to say whether
+/// a body walks there, in metres: to the middle of the furthest square of
+/// the lattice a body's room reaches into ([`PLAYER_RADIUS`] and [`ROOM`],
+/// and half a square of it across), further than its footing
+/// ([`FOOTING`]). Only a square with all that inside [`RING`] is walked
+/// (the check of 2026-11-18 found squares at the ring's edge looked 0.8 m
+/// past it): 0.73 m in from it, at 69.3 m from the middle.
+const REACH: f32 = PLAYER_RADIUS + ROOM + LATTICE * std::f32::consts::FRAC_1_SQRT_2;
 
 /// The town's shape as the game has it, every mesh but the water and the
 /// skinned, and its water alone.
@@ -86,7 +96,9 @@ fn bake_parts(parts: &[glb::Part]) -> Grid {
     let side = (2.0 * HALF / CELL).round() as usize;
     let mut grid = Grid::blank(side, side, Vec2::splat(-HALF));
     let index_of = |at: Vec2| grid.index(at).expect("on the grid");
+    // A square whose middle is in the ring, and one all of whose looks are.
     let inside = |at: Vec2| at.length() <= RING;
+    let wholly = |at: Vec2| at.length() + REACH <= RING;
 
     // Whether anything in the town fills a square of the lattice bodies are
     // kept out of walls on, at a body's heights over a floor: asked once
@@ -157,7 +169,7 @@ fn bake_parts(parts: &[glb::Part]) -> Grid {
                 continue;
             }
             let at = grid.centre(next);
-            if !inside(at) {
+            if !wholly(at) {
                 continue;
             }
             // The highest dry floor a step reaches, and not down more than
@@ -173,9 +185,9 @@ fn bake_parts(parts: &[glb::Part]) -> Grid {
         }
     }
 
-    // Every square inside the ring: walked, or only a floor, which takes
-    // the name of the ground walked beside it; or nothing. Past it,
-    // nothing at all.
+    // Every square inside the ring: walked, or only a floor (its middle
+    // alone looked at), which takes the name of the ground walked beside
+    // it; or nothing. Past it, nothing at all.
     let within = (NAMED_WITHIN / CELL).ceil() as i32;
     for row in 0..side {
         for column in 0..side {
@@ -252,9 +264,12 @@ fn the_town_baked_is_the_ground_round_the_pond_out_to_the_ring() {
                 walked.push(at);
                 *floors.entry((grid.height(at).expect("a floor where a body walks") * 100.0).round() as i32).or_default() += 1;
                 assert_eq!(grid.region(at), Some(Region::Middle));
+                // Nothing looked at for it past the ring.
+                assert!(at.length() + REACH <= RING, "walked at {at}, {} m out", at.length());
             }
         }
     }
+    assert!(FOOTING < REACH);
     // The ground from the pond's rim, 25 m out, to the ring, less the room
     // a body is kept from the rim and the lamps.
     let walked_area = walked.len() as f32 * CELL * CELL;
@@ -271,7 +286,8 @@ fn the_town_baked_is_the_ground_round_the_pond_out_to_the_ring() {
         let at = island::arrival(Venue::Town, seat).translation.xz();
         assert!(grid.clear(at), "seat {seat} arrives at {at}, which is not walked");
     }
-    for out in [30.0, 40.0, 50.0, 65.0, 69.5] {
+    // (The edge: a square's width in from where the walking stops.)
+    for out in [30.0, 40.0, 50.0, 65.0, RING - REACH - CELL] {
         for angle in 0..16 {
             let at = Vec2::from_angle(angle as f32 * std::f32::consts::TAU / 16.0 + 0.1) * out;
             assert!(grid.clear(at), "{at}, {out} m out, is not walked");
@@ -321,7 +337,8 @@ fn nothing_past_the_ring_changes_the_grid() {
     let plain = bake();
     // Hajun's re-export of 2026-11-17: plots for houses, flat planes at
     // 0.27 m, from 76 m out, and whatever else may come out there, a box
-    // as tall as a house just past the ring's edge.
+    // as tall as a house a tenth of a metre past the ring's edge, which the
+    // squares at the edge looked into before the check of 2026-11-18.
     let mut parts = glb::read("roundtownmap.glb");
     let mut extra: Vec<[Vec3; 3]> = Vec::new();
     for at in [
@@ -334,7 +351,7 @@ fn nothing_past_the_ring_changes_the_grid() {
     ] {
         extra.extend(plane(at, 24.0, 0.27));
     }
-    let low = Vec3::new(-3.0, 0.0, RING + PLAYER_RADIUS + ROOM + 0.3);
+    let low = Vec3::new(-3.0, 0.0, RING + 0.1);
     let high = low + Vec3::new(6.0, 4.0, 3.0);
     let corner = |x: bool, y: bool, z: bool| {
         Vec3::new(if x { high.x } else { low.x }, if y { high.y } else { low.y }, if z { high.z } else { low.z })
@@ -529,12 +546,12 @@ fn the_crowd_walks_as_the_town_s_own_ais_do_a_little_less_regularly() {
     let soon = |paces: &Paces| paces.gaps.iter().filter(|&&gap| gap < 2.9).count() as f32 / paces.gaps.len() as f32;
     assert_eq!(soon(&ours), 0.0, "the town's think every 3 s");
     assert!(soon(&theirs) > 0.2, "{}", soon(&theirs));
-    assert!(theirs.gaps.iter().all(|&gap| gap >= blend_in::WAIT.0 - 2.0 * dt));
+    assert!(theirs.gaps.iter().all(|&gap| gap >= blend_in::SHORTEST_WAIT.0 - 2.0 * dt));
     // And nobody of the crowd ends a walk in anyone else.
     for (index, walker) in crowd.walkers().iter().enumerate() {
         for other in &crowd.walkers()[index + 1..] {
             if !matches!(walker.doing(), blend_in::Doing::Walking { .. }) && !matches!(other.doing(), blend_in::Doing::Walking { .. }) {
-                assert!(walker.at.xz().distance(other.at.xz()) >= APART - 0.01);
+                assert!(walker.at.xz().distance(other.at.xz()) >= APART.0 - 0.01);
             }
         }
     }

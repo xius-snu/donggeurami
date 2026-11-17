@@ -31,12 +31,18 @@ fn begun(people: usize, seed: u64) -> Game {
     game
 }
 
+/// A step of one frame, the server's clock a frame on.
+fn tick(game: &mut Game) -> Vec<Event> {
+    let clock = game.clock + f64::from(DT);
+    game.step(DT, clock)
+}
+
 /// Steps `game` for `secs`, and everything that happened.
 fn run(game: &mut Game, secs: f32) -> Vec<Event> {
     let mut events = Vec::new();
     let mut gone = 0.0;
     while gone < secs - 1e-4 {
-        events.extend(game.step(DT));
+        events.extend(tick(game));
         gone += DT;
     }
     events
@@ -48,7 +54,7 @@ fn run_to(game: &mut Game, stage: BlendStage, most: f32) -> Vec<Event> {
     let mut gone = 0.0;
     while game.stage() != stage {
         assert!(gone < most, "not at {stage:?} after {most} s, but at {:?}", game.stage());
-        events.extend(game.step(DT));
+        events.extend(tick(game));
         gone += DT;
     }
     events
@@ -124,7 +130,7 @@ fn a_strike_on_the_hider_in_the_seek_finds_them_a_point_to_the_finder() {
     run(&mut game, 12.3);
     let id = beside(&mut game, seeker, Who::Seat(hider));
     assert_eq!(game.strike(seeker, id), Struck::Found);
-    let events = game.step(DT);
+    let events = tick(&mut game);
     assert!(
         matches!(events.as_slice(), [Event::Found { seeker: s, hider: h, after }] if *s == seeker && *h == hider && (*after - 12.3).abs() < 0.1),
         "{events:?}"
@@ -153,12 +159,12 @@ fn a_wrong_guess_stuns_the_seeker_four_then_seven_then_ten_seconds_and_the_one_s
     let seeker = a_seeker(&game);
     for (guess, stun) in [(0, 4.0), (1, 7.0), (2, 10.0)] {
         let id = beside(&mut game, seeker, Who::Crowd(guess));
-        let now = CLOCK + game.elapsed;
+        let now = game.clock;
         assert_eq!(game.strike(seeker, id), Struck::Wrong { stun });
         assert!(matches!(game.crowd.walkers()[guess].doing(), Doing::Staggering { .. }));
         let until = game.stunned(seeker).expect("stunned");
         assert!((until - (now + f64::from(stun))).abs() < 1e-6);
-        let events = game.step(DT);
+        let events = tick(&mut game);
         assert!(events.contains(&Event::Wrong { seeker, crowd: guess, until }), "{events:?}");
         // While stunned, nothing they strike counts, the hider least of all.
         let held = game.at(seeker);
@@ -219,7 +225,7 @@ fn a_strike_comes_to_nothing_but_from_a_free_seeker_on_a_body_in_reach_in_the_se
     let them = game.seats[other].worn.id;
     assert_eq!(game.who(them), None);
     assert_eq!(game.strike(seeker, them), Struck::Nothing);
-    assert!(game.step(DT).iter().all(|event| !matches!(event, Event::Found { .. } | Event::Wrong { .. })));
+    assert!(tick(&mut game).iter().all(|event| !matches!(event, Event::Found { .. } | Event::Wrong { .. })));
     // In reach at last.
     game.sync(seeker, at + Vec3::Z * 2.0, 0.0);
     assert_eq!(game.strike(seeker, id), Struck::Found);
@@ -231,8 +237,8 @@ fn the_choosing_offers_the_hider_a_crowd_s_guise_and_each_seeker_their_own() {
         let mut game = begun(4, seed);
         let hider = game.hider().unwrap();
         // Said once, as the round began.
-        assert_eq!(game.step(DT), vec![Event::Choosing { round: 0, hider }]);
-        assert!(game.step(DT).is_empty());
+        assert_eq!(tick(&mut game), vec![Event::Choosing { round: 0, hider }]);
+        assert!(tick(&mut game).is_empty());
         let accounts = members(4);
         for seat in 0..4 {
             let (name, look) = game.choice(seat).unwrap();
@@ -246,23 +252,24 @@ fn the_choosing_offers_the_hider_a_crowd_s_guise_and_each_seeker_their_own() {
         }
     }
     let mut game = begun(3, 2);
-    game.step(DT);
+    tick(&mut game);
     let hider = game.hider().unwrap();
     let seeker = a_seeker(&game);
     let other = (0..3).find(|&seat| seat != hider && seat != seeker).unwrap();
-    // No name, a rude one, and one somebody here goes by, whatever its
+    // No name, a rude one, and one another seeker goes by, whatever its
     // capitals: refused, and said so; a look nobody wears: not even that.
     let theirs = game.choice(other).unwrap().0.to_uppercase();
     for name in ["x", "  ", "Bitch", theirs.as_str()] {
         assert!(!game.disguise(seeker, name, "girl"), "{name}");
-        assert_eq!(game.step(DT), vec![Event::Refused { seat: seeker }], "{name}");
+        assert_eq!(tick(&mut game), vec![Event::Refused { seat: seeker }], "{name}");
     }
     assert!(!game.disguise(seeker, "Haru", "zombie"));
-    assert!(game.step(DT).is_empty());
+    assert!(tick(&mut game).is_empty());
     // A name, cleaned as names are.
     assert!(game.disguise(seeker, "  Haneul ", "girl_yellowpink"));
     assert_eq!(game.choice(seeker), Some(("Haneul", "girl_yellowpink")));
-    // Now nobody else can have it.
+    // Now neither the other seeker nor the hider can have it.
+    assert!(!game.disguise(other, "HANEUL", "girl"));
     assert!(!game.disguise(hider, "haneul", "boy"));
     // Everyone ready: the hide, in the next step, and everyone in what
     // they chose.
@@ -270,14 +277,60 @@ fn the_choosing_offers_the_hider_a_crowd_s_guise_and_each_seeker_their_own() {
         assert!(game.ready(seat));
         assert!(game.round().ready[seat]);
     }
-    let events = game.step(DT);
+    let events = tick(&mut game);
     assert_eq!(game.stage(), BlendStage::Hide);
     assert!(events.contains(&Event::Dressed));
+    assert!(!events.iter().any(|event| matches!(event, Event::Renamed { .. })), "{events:?}");
     assert_eq!(game.seats[seeker].worn.name, "Haneul");
     assert_eq!(game.round().ready, vec![false; 3]);
     // Choosing is over: nothing is taken now.
     assert!(!game.disguise(seeker, "Nabi", "girl"));
     assert!(!game.ready(seeker));
+}
+
+#[test]
+fn a_seeker_is_never_refused_the_hider_s_name_and_the_hider_goes_by_another_as_the_hide_begins() {
+    for seed in 0..12 {
+        let people = 2 + seed as usize % 3;
+        let mut game = begun(people, seed);
+        tick(&mut game);
+        let hider = game.hider().unwrap();
+        let seeker = a_seeker(&game);
+        let (offered, look) = game.choice(hider).map(|(name, look)| (name.to_owned(), look.to_owned())).unwrap();
+        // Asked for in any capitals, it is the seeker's, and nothing is
+        // said: a refusal would tell them what the hider goes by.
+        assert!(game.disguise(seeker, &offered.to_uppercase(), "boy_whitejeans"), "seed {seed}");
+        assert!(tick(&mut game).is_empty(), "seed {seed}");
+        assert_eq!(game.choice(hider).unwrap().0, offered, "the hider is told nothing yet");
+        // Nor is a seeker refused a name the hider asks for after them.
+        if people > 2 {
+            let other = (0..people).find(|&seat| seat != hider && seat != seeker).unwrap();
+            assert!(game.disguise(hider, "Saebom", &look));
+            assert!(game.disguise(other, "saebom", "girl"), "seed {seed}");
+        }
+        let chosen = game.choice(hider).unwrap().0.to_owned();
+        for seat in 0..people {
+            game.ready(seat);
+        }
+        let events = tick(&mut game);
+        assert_eq!(game.stage(), BlendStage::Hide);
+        // The hider goes by another, of their look's side, thrown as the
+        // crowd's are, and is told so before everyone is dressed.
+        let renamed = events.iter().position(|event| *event == Event::Renamed { seat: hider });
+        let dressed = events.iter().position(|event| *event == Event::Dressed);
+        assert!(renamed.is_some() && renamed < dressed, "seed {seed}: {events:?}");
+        let (name, worn) = (&game.seats[hider].worn.name, &game.seats[hider].worn.look);
+        assert_ne!(name.to_lowercase(), chosen.to_lowercase(), "seed {seed}");
+        assert_eq!(worn, &look);
+        assert!(ai_names(crate::BOY_LOOKS.contains(&look.as_str())).contains(&name.as_str()), "{name} for a {look}");
+        assert_eq!(game.choice(hider), Some((name.as_str(), look.as_str())));
+        // The seeker in what they asked for, and no two bodies by one name.
+        assert_eq!(game.seats[seeker].worn.name, offered.to_uppercase());
+        let mut names: Vec<String> = game.bodies().map(|figure| figure.guise.name.to_lowercase()).collect();
+        names.sort();
+        names.dedup();
+        assert_eq!(names.len(), CROWD + people, "seed {seed}");
+    }
 }
 
 #[test]
@@ -303,7 +356,7 @@ fn nobody_ready_the_hide_comes_when_the_choosing_runs_out_in_what_each_was_offer
     for seat in (0..3).filter(|&seat| seat != away) {
         game.ready(seat);
     }
-    game.step(DT);
+    tick(&mut game);
     assert_eq!(game.stage(), BlendStage::Hide, "{hider}");
 }
 
@@ -360,7 +413,7 @@ fn the_seekers_wait_where_they_came_in_and_the_hider_far_from_them_among_the_cro
         for seat in 0..people {
             game.ready(seat);
         }
-        let events = game.step(DT);
+        let events = tick(&mut game);
         let hider = game.hider().unwrap();
         let places: HashMap<usize, Vec3> = events
             .iter()
@@ -380,7 +433,7 @@ fn the_seekers_wait_where_they_came_in_and_the_hider_far_from_them_among_the_cro
         assert!(grid.clear(hidden.xz()) && hidden.xz().length() < RING, "seed {seed}: {hidden}");
         assert_eq!(Some(hidden.y), grid.height(hidden.xz()));
         let nearest = game.crowd.walkers().iter().map(|walker| walker.at.xz().distance(hidden.xz())).fold(f32::INFINITY, f32::min);
-        assert!(nearest >= APART - 0.3 && nearest <= BESIDE.1 + 1.5, "seed {seed}: the nearest of the crowd {nearest} m off");
+        assert!(nearest >= APART.0 - 0.3 && nearest <= BESIDE.1 + 1.5, "seed {seed}: the nearest of the crowd {nearest} m off");
         // A seeker gone anywhere while they could not is put back as the
         // seek begins; one where they were is let be.
         let seeker = a_seeker(&game);
@@ -398,7 +451,7 @@ fn nobody_stays_past_the_ring() {
     to_seek(&mut game);
     let hider = game.hider().unwrap();
     game.sync(hider, Vec3::new(0.0, 0.25, RING + 5.0), 1.0);
-    let events = game.step(DT);
+    let events = tick(&mut game);
     let [Event::Place { seat, at, yaw }] = events.as_slice() else {
         panic!("{events:?}");
     };
@@ -479,7 +532,7 @@ fn one_who_leaves_gives_up_their_turn_and_a_hider_who_leaves_their_round() {
     assert!(game.bodies().all(|figure| figure.who != Who::Seat(later)));
     // The hider leaves: no point, and the next round.
     game.leave(hider);
-    let events = game.step(DT);
+    let events = tick(&mut game);
     assert_eq!(events.first(), Some(&Event::Void { hider }));
     assert!(matches!(events.get(1), Some(Event::Choosing { round: 1, .. })), "{events:?}");
     assert_eq!(game.round().points, vec![0; 4]);
@@ -488,7 +541,7 @@ fn one_who_leaves_gives_up_their_turn_and_a_hider_who_leaves_their_round() {
     let next = game.hider().unwrap();
     game.leave(next);
     assert_eq!(game.stage(), BlendStage::Over);
-    assert_eq!(game.step(DT), vec![Event::Over]);
+    assert_eq!(tick(&mut game), vec![Event::Over]);
     assert_eq!(game.outcome().unwrap().0, vec![0; 4]);
     // A hider whose device has gone a while gives up their round; one
     // back in time does not.
@@ -539,7 +592,7 @@ fn what_the_room_is_sent_is_small_and_comes_back_as_it_went() {
     // The same until something has changed.
     assert_eq!(game.round(), game.round());
     let before = game.round();
-    game.step(DT);
+    tick(&mut game);
     assert_eq!(game.round(), before, "nothing has changed in a step of choosing");
     for ask in [Ask::Ready, Ask::Disguise { name: "Mochi".into(), look: "girl".into() }] {
         let wrapped = crate::Ask::BlendIn(ask.clone());
@@ -550,6 +603,169 @@ fn what_the_room_is_sent_is_small_and_comes_back_as_it_went() {
         let wrapped = crate::Tell::BlendIn(tell.clone());
         let back: crate::Tell = postcard::from_bytes(&postcard::to_allocvec(&wrapped).unwrap()).unwrap();
         assert!(matches!(back, crate::Tell::BlendIn(back) if back == tell));
+    }
+}
+
+#[test]
+fn seekers_run_in_the_seek_and_everyone_else_walks() {
+    let mut game = begun(3, 18);
+    let hider = game.hider().unwrap();
+    let paces = |game: &Game| -> Vec<f32> { (0..3).map(|seat| game.round().pace(seat)).collect() };
+    assert_eq!(paces(&game), vec![WALK_SPEED; 3], "choosing");
+    for seat in 0..3 {
+        game.ready(seat);
+    }
+    tick(&mut game);
+    assert_eq!(paces(&game), vec![WALK_SPEED; 3], "hiding");
+    run_to(&mut game, BlendStage::Seek, HIDE + 1.0);
+    let mut seeking = vec![SEEKER_PACE; 3];
+    seeking[hider] = WALK_SPEED;
+    assert_eq!(paces(&game), seeking);
+    run_to(&mut game, BlendStage::Shown, SEEK + 1.0);
+    assert_eq!(paces(&game), vec![WALK_SPEED; 3], "shown");
+}
+
+#[test]
+fn every_part_of_a_round_ends_by_the_server_s_clock_however_the_frames_add_up() {
+    // A step of `dt` by the frame, `by` by the clock.
+    let step = |game: &mut Game, dt: f32, by: f64| {
+        let clock = game.clock + by;
+        game.step(dt, clock)
+    };
+    let mut game = begun(2, 19);
+    // A frame's time cut short, as a server's is after a stall: a quarter
+    // of a second by the frame, ten by the clock. The choosing ends by the
+    // clock, its thirty seconds up.
+    for _ in 0..2 {
+        step(&mut game, 0.25, 10.0);
+        assert_eq!(game.stage(), BlendStage::Choose);
+    }
+    step(&mut game, 0.25, 10.0);
+    assert_eq!(game.stage(), BlendStage::Hide);
+    // Every countdown told is the clock as the part began and its length,
+    // and holds still while it lasts, frames short or long.
+    let hide = game.round().until;
+    assert!((hide - (CLOCK + 30.0 + f64::from(HIDE))).abs() < 1e-6, "{}", hide - CLOCK);
+    while game.stage() == BlendStage::Hide {
+        assert_eq!(game.round().until, hide);
+        step(&mut game, DT, f64::from(DT) * 4.0);
+    }
+    assert!((game.seek_from - hide).abs() < f64::from(DT) * 4.0 + 1e-6, "{} after", game.seek_from - hide);
+    // A stun ends with its countdown, though the frames say only a part of
+    // it has gone by.
+    let seeker = 1 - game.hider().unwrap();
+    let id = beside(&mut game, seeker, Who::Crowd(4));
+    let Struck::Wrong { stun } = game.strike(seeker, id) else { panic!() };
+    let until = game.stunned(seeker).unwrap();
+    assert!((until - (game.clock + f64::from(stun))).abs() < 1e-6);
+    step(&mut game, 0.25, f64::from(stun) - 0.01);
+    assert_eq!(game.stunned(seeker), Some(until));
+    step(&mut game, 0.0, 0.02);
+    assert_eq!(game.stunned(seeker), None);
+    // And the seek with the clock, after however many frames.
+    let seek = game.round().until;
+    assert!((seek - (game.seek_from + f64::from(SEEK))).abs() < 1e-6);
+    let short = seek - game.clock - 0.01;
+    step(&mut game, 0.25, short);
+    assert_eq!(game.stage(), BlendStage::Seek);
+    let events = step(&mut game, 0.25, 0.02);
+    assert!(events.contains(&Event::Hidden { hider: 1 - seeker }), "{events:?}");
+    assert_eq!(game.stage(), BlendStage::Shown);
+    // A device gone a while is counted by the clock too.
+    let mut game = begun(3, 20);
+    for seat in 0..3 {
+        game.ready(seat);
+    }
+    step(&mut game, DT, 1.0);
+    let hider = game.hider().unwrap();
+    game.away(hider, true);
+    let events = step(&mut game, 0.25, f64::from(AWAY) - 0.5);
+    assert!(!events.iter().any(|event| matches!(event, Event::Void { .. })), "{events:?}");
+    assert!(step(&mut game, 0.25, 1.0).contains(&Event::Void { hider }));
+}
+
+/// Whether Bridge Wars' dice, a xorshift, from some state, would throw the
+/// ids `first` and then `second` as the ids were first thrown with them:
+/// each two throws, the top 24 bits of each. Every bit of the dice's state
+/// after a throw is a sum, bit by bit, of bits of its state before it; so
+/// the two ids are 96 such sums of the 64 bits of the state before the
+/// first, which, worked out as a schoolbook does a set of sums, either can
+/// all be so, giving the whole state away, or cannot.
+fn a_xorshift_throws(first: u64, second: u64) -> bool {
+    // Of which bits of the state before so many throws each bit of the state
+    // after them is the sum, for one to four throws.
+    static AFTER: std::sync::LazyLock<Vec<[u64; 64]>> = std::sync::LazyLock::new(|| {
+        (0..=4)
+            .map(|throws| {
+                let mut rows = [0u64; 64];
+                for bit in 0..64 {
+                    let mut state = 1u64 << bit;
+                    for _ in 0..throws {
+                        state ^= state << 13;
+                        state ^= state >> 7;
+                        state ^= state << 17;
+                    }
+                    for (row, sum) in rows.iter_mut().enumerate() {
+                        *sum |= ((state >> row) & 1) << bit;
+                    }
+                }
+                rows
+            })
+            .collect()
+    });
+    let mut basis: [Option<(u64, bool)>; 64] = [None; 64];
+    for (throw, id) in [(1, first), (3, second)] {
+        let bits = id.wrapping_sub(FIRST_ID);
+        for (throws, part) in [(throw, bits >> 24), (throw + 1, bits & 0xFF_FFFF)] {
+            let rows = &AFTER[throws];
+            for bit in 0..24 {
+                let (mut sum, mut value) = (rows[40 + bit], (part >> bit) & 1 == 1);
+                while sum != 0 {
+                    let top = 63 - sum.leading_zeros() as usize;
+                    match basis[top] {
+                        Some((by, by_value)) => {
+                            sum ^= by;
+                            value ^= by_value;
+                        }
+                        None => {
+                            basis[top] = Some((sum, value));
+                            break;
+                        }
+                    }
+                }
+                if sum == 0 && value {
+                    return false;
+                }
+            }
+        }
+    }
+    true
+}
+
+#[test]
+fn no_two_of_the_ids_give_away_the_dice_that_threw_them() {
+    // As the ids were first thrown, with Bridge Wars' dice: any two thrown
+    // one after the other give the dice away.
+    let mut dice = crate::bots::Dice::new(42);
+    let old: Vec<u64> = (0..6)
+        .map(|_| {
+            let high = (dice.roll() * (1u32 << 24) as f32) as u64;
+            let low = (dice.roll() * (1u32 << 24) as f32) as u64;
+            FIRST_ID + ((high << 24) | low)
+        })
+        .collect();
+    assert!(old.windows(2).all(|pair| a_xorshift_throws(pair[0], pair[1])));
+    // As they are thrown now, sealed: no two of a round's, in either order,
+    // as any xorshift would throw them.
+    for seed in 0..3 {
+        let mut game = begun(4, seed);
+        to_seek(&mut game);
+        let ids: Vec<u64> = game.bodies().map(|figure| figure.guise.id).collect();
+        for &first in &ids {
+            for &second in ids.iter().filter(|&&id| id != first) {
+                assert!(!a_xorshift_throws(first, second), "seed {seed}");
+            }
+        }
     }
 }
 
@@ -564,21 +780,29 @@ enum Hiding {
     Still,
     /// Never stopping: from one place to the next, on and on.
     Restless,
-    /// As the crowd does, until a seeker comes near; then straight away
-    /// from them, as long as they come on.
+    /// As the crowd does, until a seeker comes near ([`FLEE_FROM`]); then
+    /// straight away from them, as long as they come on.
     Fleeing,
 }
 
-/// How near a seeker comes before a fleeing stand-in goes, in metres.
-const FLEE_FROM: f32 = 8.0;
+/// How near a seeker comes before a fleeing stand-in goes, in metres:
+/// thrown about the middle of these as each seek begins and again after
+/// each flight, no stand-in keeping to one number (Hajun's rule for the
+/// computer's players, kept by the stand-ins too).
+const FLEE_FROM: (f32, f32) = (5.0, 11.0);
+/// How long, in seconds, someone has to have walked without stopping for a
+/// watchful stand-in to take them for the hider: longer than any walk of
+/// the crowd's, by a little or a while, thrown about the middle of these as
+/// each seek begins.
+const SUSPECT_AFTER: (f32, f32) = (WALK_MAX / WALK_SPEED + 0.1, WALK_MAX / WALK_SPEED + 0.9);
 
 /// How a stand-in for a seeker goes about it.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 enum Seeking {
     /// Strikes whoever is nearest, now and then.
     Nearest,
-    /// Watches for whoever walks longer than any of the crowd ever does,
-    /// and goes for them first.
+    /// Watches for whoever walks longer than any of the crowd ever does
+    /// ([`SUSPECT_AFTER`]), and goes for them first.
     Watchful,
 }
 
@@ -589,6 +813,12 @@ struct StandIn {
     mind: Mind,
     /// Where a restless hider is going.
     going: Option<Vec2>,
+    /// How near a seeker comes before a fleeing hider goes, and whether
+    /// they are going.
+    flee: f32,
+    fleeing: bool,
+    /// How long a body walks on before a watchful seeker suspects it.
+    suspicion: f32,
     /// The body a seeker is going for, and how long it waits before it
     /// strikes once there.
     target: Option<u64>,
@@ -621,7 +851,7 @@ fn play(people: usize, seed: u64, hiding: Hiding, seeking: Seeking) -> Chronicle
 fn play_at(people: usize, seed: u64, hiding: Hiding, seeking: Seeking, pace: f32) -> Chronicle {
     let mut game = begun(people, seed);
     let grid = grid();
-    let mut dice = Dice::new(seed.wrapping_mul(31).wrapping_add(7));
+    let mut dice = Sealed::new(seed, 9);
     let mut stand_ins: Vec<StandIn> = (0..people)
         .map(|seat| {
             let (at, yaw) = game.at(seat);
@@ -630,6 +860,9 @@ fn play_at(people: usize, seed: u64, hiding: Hiding, seeking: Seeking, pace: f32
                 yaw,
                 mind: Mind::new(&mut dice),
                 going: None,
+                flee: 0.0,
+                fleeing: false,
+                suspicion: 0.0,
                 target: None,
                 wait: 0.0,
                 struck: Vec::new(),
@@ -661,6 +894,9 @@ fn play_at(people: usize, seed: u64, hiding: Hiding, seeking: Seeking, pace: f32
                     stand_in.struck.clear();
                     stand_in.target = None;
                     stand_in.going = None;
+                    stand_in.fleeing = false;
+                    stand_in.flee = dice.around(FLEE_FROM.0, FLEE_FROM.1);
+                    stand_in.suspicion = dice.around(SUSPECT_AFTER.0, SUSPECT_AFTER.1);
                 }
             }
         }
@@ -676,14 +912,14 @@ fn play_at(people: usize, seed: u64, hiding: Hiding, seeking: Seeking, pace: f32
                 }
                 BlendStage::Hide | BlendStage::Seek if hider == Some(seat) => match hiding {
                     Hiding::Crowdlike => {
-                        stand_in.mind.step(&mut stand_in.at, &mut stand_in.yaw, &grid, &mut dice, DT, &|_| true);
+                        stand_in.mind.step(&mut stand_in.at, &mut stand_in.yaw, &grid, &mut dice, DT, &|_, _| true);
                     }
                     Hiding::Still => {}
                     Hiding::Restless => {
                         let here = stand_in.at.xz();
                         let to = *stand_in.going.get_or_insert_with(|| {
                             let open = game.crowd.open();
-                            open[pick(&mut dice, open.len())]
+                            open[dice.pick(open.len())]
                         });
                         let stride = WALK_SPEED * DT;
                         let there = if here.distance(to) <= stride {
@@ -700,9 +936,11 @@ fn play_at(people: usize, seed: u64, hiding: Hiding, seeking: Seeking, pace: f32
                             .filter(|&other| other != seat && game.seeking(other))
                             .map(|other| game.at(other).0.xz())
                             .min_by(|a, b| a.distance(here).total_cmp(&b.distance(here)));
-                        match chaser {
-                            Some(chaser) if game.stage() == BlendStage::Seek && chaser.distance(here) < FLEE_FROM => {
+                        let flee = stand_in.flee;
+                        match chaser.filter(|chaser| game.stage() == BlendStage::Seek && chaser.distance(here) < flee) {
+                            Some(chaser) => {
                                 // Away, or as near away as the ground goes.
+                                stand_in.fleeing = true;
                                 let away = (here - chaser).normalize_or(Vec2::X);
                                 let way = [0.0f32, 0.4, -0.4, 0.8, -0.8, 1.2, -1.2, 1.6, -1.6]
                                     .into_iter()
@@ -714,14 +952,21 @@ fn play_at(people: usize, seed: u64, hiding: Hiding, seeking: Seeking, pace: f32
                                     stand_in.yaw = yaw_of(way);
                                 }
                             }
-                            _ => {
-                                stand_in.mind.step(&mut stand_in.at, &mut stand_in.yaw, &grid, &mut dice, DT, &|_| true);
+                            None => {
+                                // Got clear: the next flight from another
+                                // distance.
+                                if stand_in.fleeing {
+                                    stand_in.fleeing = false;
+                                    stand_in.flee = dice.around(FLEE_FROM.0, FLEE_FROM.1);
+                                }
+                                stand_in.mind.step(&mut stand_in.at, &mut stand_in.yaw, &grid, &mut dice, DT, &|_, _| true);
                             }
                         }
                     }
                 },
                 BlendStage::Seek if game.stunned(seat).is_none() => {
-                    let suspects = |id: &u64| moving.get(id).is_some_and(|&(_, _, longest)| longest > WALK_MAX / WALK_SPEED + 0.3);
+                    let suspicion = stand_in.suspicion;
+                    let suspects = |id: &u64| moving.get(id).is_some_and(|&(_, _, longest)| longest > suspicion);
                     let candidates: Vec<&(u64, Who, Vec2)> = seen
                         .iter()
                         .filter(|(id, who, _)| {
@@ -759,7 +1004,7 @@ fn play_at(people: usize, seed: u64, hiding: Hiding, seeking: Seeking, pace: f32
                         if stand_in.wait <= 0.0 {
                             match game.strike(seat, id) {
                                 Struck::Nothing => {}
-                                Struck::Found => chronicle.found_after.push((game.elapsed - game.seek_from) as f32),
+                                Struck::Found => chronicle.found_after.push((game.clock - game.seek_from) as f32),
                                 Struck::Wrong { .. } => chronicle.wrong += 1,
                             }
                             stand_in.struck.push(id);
@@ -771,7 +1016,7 @@ fn play_at(people: usize, seed: u64, hiding: Hiding, seeking: Seeking, pace: f32
             }
             game.sync(seat, stand_in.at, stand_in.yaw);
         }
-        for event in game.step(DT) {
+        for event in tick(&mut game) {
             chronicle.events += 1;
             match event {
                 Event::Place { seat, at, yaw } => {

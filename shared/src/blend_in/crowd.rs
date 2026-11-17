@@ -12,28 +12,38 @@
 //! turning at once to face it ([`TURN_SPEED`]) and stopping on the spot;
 //! then standing until the next. **A little less regular** (mine, so that
 //! a person can pass for one: the town's think every 3 s exactly, which no
-//! person keeps to): the wait from one think to the next is thrown from
-//! 1.5 to 3.5 s ([`WAIT`]), one time in seven it stands where it is a whole
-//! turn ([`STAND_A_TURN`]), and one in ten it only turns to face somewhere
-//! ([`TURN_ONLY`]); so that it walks about as often as the town's do, a
-//! walk every 3.3 s on average to their 3, and is on the move a little
-//! less of the time, 24% to their 27% (the game's `blend_in_bake` measures
-//! both). Where the town's AIs ask the town's own shape whether the ground
+//! person keeps to), and each of them in its own way ([`Leanings`], mine,
+//! after the check of 2026-11-18: "nothing is a definite if-then; every
+//! threshold is a spread, thrown again", Hajun's rule for the computer's
+//! players): each waits from one think to the next a while thrown between
+//! its own shortest and longest, thrown as it is dressed, 2.4 s on average
+//! and from 2 s for the busiest to 2.9 for the laziest ([`SHORTEST_WAIT`],
+//! [`LONGEST_WAIT`]); one think in seven on average it stands where it is a
+//! whole turn ([`STAND_A_TURN`]), and one in ten it only turns to face
+//! somewhere ([`TURN_ONLY`]), each of them more or less often than that by
+//! its leanings. So that the crowd walks about as often as the town's AIs
+//! do, and is on the move about as much of the time (the game's
+//! `blend_in_bake` measures both), but no two to one beat a seeker could
+//! learn. Where the town's AIs ask the town's own shape whether the ground
 //! is dry and how high it is, the crowd asks the town's middle baked
 //! ([`grid`](super::grid)), the server having no map: dry, open and
 //! with room for a body is a square a body can walk ([`Grid::clear`]),
 //! which nothing past [`RING`](super::RING) is. Two differences come of
 //! that, both mine: a walk never goes into a wall (the town's AIs press
-//! against one until they next think), and never ends where another body
-//! stands or is going to ([`APART`]), as the town's, which bump one
-//! another aside, never stand in each other either.
+//! against one until they next think), and never ends nearer where another
+//! body stands or is going to than a body's width and a little, thrown
+//! for each walk ([`APART`]), as the town's, which bump one another aside,
+//! never stand in each other either.
 //!
 //! **Who they are** ([`Guise`](super::Guise)): each a boy or a girl by the
 //! coin, one of that side's three looks, and a name of that side's, no two
 //! alike and none a player's ([`thrown`](super::thrown)), thrown again
-//! with fresh ids every round as the hide begins ([`Crowd::redress`]), so
-//! that nothing about them a seeker could have noted in an earlier round
-//! (who wore what, how many wore it) says anything of this one.
+//! with fresh ids, and fresh leanings, every round as the hide begins
+//! ([`Crowd::redress`]), so that nothing about them a seeker could have
+//! noted in an earlier round (who wore what, how many wore it) says
+//! anything of this one. All they do is thrown by sealed dice
+//! ([`Sealed`]), so that nothing seen of them says what they will do next,
+//! nor what they will be dressed as.
 //!
 //! **Struck** by a seeker's wrong guess, one staggers back a metre from
 //! them as if punched, facing them ([`STAGGER`]), and stands a moment
@@ -44,8 +54,8 @@ use std::sync::Arc;
 
 use bevy::math::{Vec2, Vec3, Vec3Swizzles};
 
-use super::{Guise, fresh_ids, pick, thrown};
-use crate::bots::Dice;
+use super::dice::Sealed;
+use super::{CROWD_STREAM, Guise, fresh_ids, thrown};
 use crate::nav::{CELL, Grid};
 
 /// How fast one of them walks, in metres a second: the game's own walk
@@ -56,8 +66,8 @@ pub const WALK_SPEED: f32 = 7.0;
 /// person's too. Half a turn in a seventh of a second.
 pub const TURN_SPEED: f32 = 22.0;
 /// How far one walk goes, in metres: the town AIs'. Even the longest is
-/// over (in 1.3 s) before the soonest next think ([`WAIT`]), so that one
-/// always stops between two walks.
+/// over (in 1.3 s) before the soonest next think ([`SHORTEST_WAIT`]), so
+/// that one always stops between two walks.
 pub const WALK_MIN: f32 = 2.0;
 pub const WALK_MAX: f32 = 9.0;
 /// How many random walks one looks at before it stands until it next
@@ -72,20 +82,27 @@ pub const PROBE: f32 = 0.25;
 /// The most a body steps up or down without a jump, in metres: the game's
 /// `LAND_STEP_UP`, half a metre and a hair under.
 pub const STEP: f32 = 0.495;
-/// How long one waits from one think to the next, in seconds, thrown afresh
-/// each time between these (mine; the town's AIs think every 3 s exactly).
-/// From 2 to 4.5 s as the game was first designed; from 1.5 to 3.5 since
-/// that was measured beside the town's own AIs, with a think in four
-/// standing or only turning: a walk every 4.3 s on average to their 3.0,
+/// How long one waits from one think to the next, in seconds (mine; the
+/// town's AIs think every 3 s exactly): thrown afresh each time between its
+/// own shortest and longest ([`Leanings::wait`]), which are thrown evenly
+/// between these as it is dressed. The game was first designed with every
+/// wait thrown from 2 to 4.5 s, and built with 1.5 to 3.5 once the first
+/// was measured beside the town's own AIs: with a think in four standing
+/// or only turning, it walked every 4.3 s on average to their 3.0, and was
 /// on the move 18% of the time to their 27%, a crowd a third lazier than
 /// the town it is drawn from, and so less cover for a hider walking among
-/// it.
-pub const WAIT: (f32, f32) = (1.5, 3.5);
-/// How often a think is to stand where it is until the next (mine).
-pub const STAND_A_TURN: f32 = 1.0 / 7.0;
+/// it. These keep the second's average, 2.4 s, and give each its own, from
+/// 2 s for the busiest to 2.9 for the laziest: the shortest never under
+/// 1.4 s, a longest walk's time (1.3 s) and a moment's stand.
+pub const SHORTEST_WAIT: (f32, f32) = (1.4, 1.9);
+pub const LONGEST_WAIT: (f32, f32) = (2.5, 3.9);
+/// How often a think is to stand where it is until the next (mine): one in
+/// seven on average, each its own leaning, thrown evenly between these.
+pub const STAND_A_TURN: (f32, f32) = (0.06, 0.22);
 /// How often a think is only to turn where it stands, to face somewhere
-/// (mine).
-pub const TURN_ONLY: f32 = 0.1;
+/// (mine): one in ten on average, each its own leaning, as
+/// [`STAND_A_TURN`].
+pub const TURN_ONLY: (f32, f32) = (0.04, 0.16);
 /// How far one struck by a seeker staggers back from them, in metres, and
 /// over how long, in seconds: back a metre, as a punch would have it, the
 /// last of it slower.
@@ -95,8 +112,11 @@ pub const STAGGER_SECS: f32 = 0.35;
 /// again, thrown between these (mine).
 pub const DAZED: (f32, f32) = (0.8, 1.6);
 /// How near where another body stands, or is walking to, a walk may end, in
-/// metres: two bodies' widths and a little (mine).
-pub const APART: f32 = 1.2;
+/// metres (mine): thrown evenly between these for each walk, never so near
+/// that two bodies (0.9 m across) touch. Thrown, not the one number (1.2 m,
+/// as it was first built), so that two standing nearer than that are no
+/// sign that one of them is a person.
+pub const APART: (f32, f32) = (1.0, 1.6);
 /// How far apart they stand at the least as they are spread out at first,
 /// in metres.
 const SPREAD_APART: f32 = 2.0;
@@ -119,6 +139,35 @@ pub enum Doing {
     Staggering { from: Vec2, to: Vec2, share: f32, facing: f32 },
 }
 
+/// How one of the crowd goes about things, its own (mine): what each of
+/// them is thrown as it is dressed, about the crowd's middle, so that no
+/// two keep the one rhythm a seeker could learn, where the town's AIs all
+/// think every 3 s.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct Leanings {
+    /// The shortest and the longest it waits from one think to the next,
+    /// in seconds ([`SHORTEST_WAIT`], [`LONGEST_WAIT`]).
+    pub wait: (f32, f32),
+    /// How often a think is to stand where it is ([`STAND_A_TURN`]), and
+    /// how often only to turn ([`TURN_ONLY`]).
+    pub stand: f32,
+    pub turn: f32,
+}
+
+impl Leanings {
+    /// One's own, thrown.
+    pub fn thrown(dice: &mut Sealed) -> Self {
+        Self {
+            wait: (
+                dice.between(SHORTEST_WAIT.0, SHORTEST_WAIT.1),
+                dice.between(LONGEST_WAIT.0, LONGEST_WAIT.1),
+            ),
+            stand: dice.between(STAND_A_TURN.0, STAND_A_TURN.1),
+            turn: dice.between(TURN_ONLY.0, TURN_ONLY.1),
+        }
+    }
+}
+
 /// The mind of one of the town's people as the crowd has it: what its body
 /// does next, think by think. Its own body's to drive, whosever: the
 /// crowd's, or in a test a person standing in for the hider who walks as
@@ -128,15 +177,18 @@ pub struct Mind {
     /// Seconds until it next thinks.
     next: f32,
     doing: Doing,
+    leanings: Leanings,
 }
 
 impl Mind {
-    /// A mind that first thinks a thrown while from now, so that a crowd
-    /// does not all set off at once.
-    pub fn new(dice: &mut Dice) -> Self {
+    /// A mind of its own leanings, thrown, that first thinks a thrown while
+    /// from now, so that a crowd does not all set off at once.
+    pub fn new(dice: &mut Sealed) -> Self {
+        let leanings = Leanings::thrown(dice);
         Self {
-            next: dice.between(0.0, WAIT.1),
+            next: dice.between(0.0, leanings.wait.1),
             doing: Doing::Standing,
+            leanings,
         }
     }
 
@@ -144,18 +196,23 @@ impl Mind {
         self.doing
     }
 
+    pub fn leanings(&self) -> Leanings {
+        self.leanings
+    }
+
     /// Moves the body standing at `at`, facing `yaw`, on by `dt` seconds:
     /// thinking when it is time, walking a walk under way, turning,
-    /// staggering. `free` says whether a walk may end at a spot, for the
-    /// other bodies there. Whether it thought.
+    /// staggering. `free` says whether a walk may end at a spot, kept as far
+    /// as the distance it is given from the other bodies there. Whether it
+    /// thought.
     pub fn step(
         &mut self,
         at: &mut Vec3,
         yaw: &mut f32,
         grid: &Grid,
-        dice: &mut Dice,
+        dice: &mut Sealed,
         dt: f32,
-        free: &dyn Fn(Vec2) -> bool,
+        free: &dyn Fn(Vec2, f32) -> bool,
     ) -> bool {
         if let Doing::Staggering { from, to, share, facing } = &mut self.doing {
             *share = (*share + dt / STAGGER_SECS).min(1.0);
@@ -171,8 +228,9 @@ impl Mind {
         self.next -= dt;
         let thought = self.next <= 0.0;
         if thought {
-            self.next = (self.next + dice.between(WAIT.0, WAIT.1)).max(0.0);
-            self.doing = think(*at, grid, dice, free);
+            let (shortest, longest) = self.leanings.wait;
+            self.next = (self.next + dice.between(shortest, longest)).max(0.0);
+            self.doing = think(*at, grid, dice, &self.leanings, free);
         }
         match self.doing {
             Doing::Walking { to, heading } => {
@@ -200,7 +258,7 @@ impl Mind {
     /// Struck by someone standing at `from`: whatever it was doing, it
     /// staggers back a metre from them, or half that, or not at all, as the
     /// ground behind it allows, turning to face them.
-    pub fn stagger(&mut self, at: Vec3, from: Vec2, grid: &Grid, dice: &mut Dice) {
+    pub fn stagger(&mut self, at: Vec3, from: Vec2, grid: &Grid, dice: &mut Sealed) {
         let here = at.xz();
         let away = (here - from).normalize_or_zero();
         let away = if away == Vec2::ZERO { Vec2::from_angle(dice.between(0.0, TAU)) } else { away };
@@ -225,47 +283,69 @@ impl Mind {
     }
 }
 
-/// What a think comes to: stand, turn, or walk, by the throw; a walk only
-/// if one of the few tried is open all the way, else stand.
-fn think(at: Vec3, grid: &Grid, dice: &mut Dice, free: &dyn Fn(Vec2) -> bool) -> Doing {
+/// What a think comes to: stand, turn, or walk, by the throw and the
+/// leanings; a walk only if one of the few tried is open all the way and
+/// ends clear of everyone else, by a distance thrown for it ([`APART`]),
+/// else stand.
+fn think(at: Vec3, grid: &Grid, dice: &mut Sealed, leanings: &Leanings, free: &dyn Fn(Vec2, f32) -> bool) -> Doing {
     let roll = dice.roll();
-    if roll < STAND_A_TURN {
+    if roll < leanings.stand {
         return Doing::Standing;
     }
-    if roll < STAND_A_TURN + TURN_ONLY {
+    if roll < leanings.stand + leanings.turn {
         return Doing::Turning {
             yaw: dice.between(-PI, PI),
         };
     }
+    let apart = dice.between(APART.0, APART.1);
     (0..TRIES)
         .find_map(|_| {
             let heading = Vec2::from_angle(dice.between(0.0, TAU));
             let distance = dice.between(WALK_MIN, WALK_MAX);
             let to = at.xz() + heading * distance;
-            (walks(grid, at, heading, distance + SHORE_MARGIN) && free(to)).then_some(Doing::Walking { to, heading })
+            (walks(grid, at, heading, distance + SHORE_MARGIN) && free(to, apart)).then_some(Doing::Walking { to, heading })
         })
         .unwrap_or(Doing::Standing)
 }
 
 /// Whether a body at `from` can walk `distance` metres along `heading` (a
-/// unit across the ground): every step of the way on ground a body walks
-/// ([`Grid::clear`]), never down or up more than [`STEP`] from the step
-/// before. The town AIs' `dry_all_the_way`, over the baked town.
+/// unit across the ground): every square of the way on ground a body walks
+/// ([`Grid::clear`]), never down or up more than [`STEP`] from the one
+/// before. The town AIs' `dry_all_the_way`, over the baked town, looked
+/// along as finely as theirs ([`PROBE`]); and where the way crosses the
+/// corner of a square between two looks, both squares beside the corner
+/// have to be walked too, so that no walk ever clips one nobody walks (as
+/// one by a lamp did, between two looks a quarter of a metre apart).
 pub fn walks(grid: &Grid, from: Vec3, heading: Vec2, distance: f32) -> bool {
-    let steps = (distance / PROBE).ceil() as u32;
+    let (width, _) = grid.size();
+    let square = |at: Vec2| grid.index(at).map(|index| (index % width, index / width));
+    // The floor of the square at `column`, `row`, if a body walks it and
+    // can step onto it from a floor at `y`.
+    let onto = |(column, row): (usize, usize), y: f32| -> Option<f32> {
+        let at = grid.centre_of(column, row);
+        grid.height(at).filter(|&ground| grid.clear(at) && (y - ground).abs() <= STEP)
+    };
+    let Some(mut was) = square(from.xz()) else {
+        return false;
+    };
     let mut y = grid.height(from.xz()).unwrap_or(from.y);
+    let steps = (distance / PROBE).ceil() as u32;
     for step in 1..=steps {
         let spot = from.xz() + heading * (step as f32 * PROBE).min(distance);
-        if !grid.clear(spot) {
-            return false;
-        }
-        let Some(ground) = grid.height(spot) else {
+        let Some(now) = square(spot) else {
             return false;
         };
-        if (y - ground).abs() > STEP {
+        if now == was {
+            continue;
+        }
+        if now.0 != was.0 && now.1 != was.1 && [(now.0, was.1), (was.0, now.1)].into_iter().any(|beside| onto(beside, y).is_none()) {
             return false;
         }
+        let Some(ground) = onto(now, y) else {
+            return false;
+        };
         y = ground;
+        was = now;
     }
     true
 }
@@ -311,6 +391,11 @@ impl Walker {
         self.mind.doing()
     }
 
+    /// How it goes about things this round.
+    pub fn leanings(&self) -> Leanings {
+        self.mind.leanings()
+    }
+
     /// Where it will stand once what it is doing is done.
     fn end(&self) -> Vec2 {
         self.mind.end(self.at)
@@ -318,10 +403,10 @@ impl Walker {
 }
 
 /// The crowd: its people, the town's middle they walk, and the dice they
-/// go by, the same seed the same crowd.
+/// go by, sealed ([`Sealed`]), the same seed the same crowd.
 pub struct Crowd {
     grid: Arc<Grid>,
-    dice: Dice,
+    dice: Sealed,
     walkers: Vec<Walker>,
     /// The middle of every square a body can walk with room round it (the
     /// squares beside it walked too), to throw a place to stand from.
@@ -332,7 +417,8 @@ impl Crowd {
     /// [`CROWD`](super::CROWD) of the town's people, spread over the town's
     /// middle ([`grid`](super::grid)): what a table of Blend In has walking
     /// from the moment it opens, while people come to it, and hands its
-    /// game ([`Game::new`](super::Game::new)).
+    /// game ([`Game::new`](super::Game::new)). `seed` is a secret, as the
+    /// game's is: it says everything they will do.
     pub fn new(seed: u64) -> Self {
         Self::on(super::grid(), super::CROWD, seed)
     }
@@ -341,13 +427,13 @@ impl Crowd {
     /// none nearer another than two metres where there is room, each
     /// facing anywhere and first thinking a thrown while from now.
     pub fn on(grid: Arc<Grid>, count: usize, seed: u64) -> Self {
-        let mut dice = Dice::new(seed);
+        let mut dice = Sealed::new(seed, CROWD_STREAM);
         let open = open_ground(&grid);
         let mut walkers: Vec<Walker> = Vec::with_capacity(count);
         for _ in 0..count {
             let mut there = None;
             for _ in 0..SPREAD_TRIES {
-                let Some(&spot) = open.get(pick(&mut dice, open.len())) else {
+                let Some(&spot) = open.get(dice.pick(open.len())) else {
                     break;
                 };
                 there = Some(spot);
@@ -403,11 +489,11 @@ impl Crowd {
     pub fn step(&mut self, dt: f32, people: &[Vec2]) {
         let mut ends: Vec<Vec2> = self.walkers.iter().map(Walker::end).collect();
         for index in 0..self.walkers.len() {
-            let free = |spot: Vec2| {
+            let free = |spot: Vec2, apart: f32| {
                 ends.iter()
                     .enumerate()
-                    .all(|(other, end)| other == index || end.distance(spot) >= APART)
-                    && people.iter().all(|person| person.distance(spot) >= APART)
+                    .all(|(other, end)| other == index || end.distance(spot) >= apart)
+                    && people.iter().all(|person| person.distance(spot) >= apart)
             };
             let walker = &mut self.walkers[index];
             walker.mind.step(&mut walker.at, &mut walker.yaw, &self.grid, &mut self.dice, dt, &free);
@@ -426,13 +512,15 @@ impl Crowd {
     /// Dresses every one of them afresh, by the coin, as the hide begins:
     /// a side, a look of it and a name of it that none of the others has
     /// and that is not one of `taken` (the players' names, small letters),
-    /// and each the id of theirs in `ids`.
+    /// and each the id of theirs in `ids`; and each with leanings of its
+    /// own afresh, a new person to anyone watching.
     pub(super) fn redress(&mut self, taken: &[String], ids: &[u64]) {
         let mut used: Vec<String> = taken.to_vec();
         for (walker, &id) in self.walkers.iter_mut().zip(ids) {
             let (name, look) = thrown(&mut self.dice, &used);
             used.push(name.to_lowercase());
             walker.guise = Guise { id, name, look };
+            walker.mind.leanings = Leanings::thrown(&mut self.dice);
         }
     }
 }
@@ -506,6 +594,20 @@ mod tests {
         }
         assert!(!walks(&stepped, middle, Vec2::X, 6.0));
         assert!(walks(&stepped, Vec3::new(5.0, 0.85, 0.0), Vec2::X, 3.0));
+        // A square nobody walks whose corner the way clips between two
+        // looks along it: from (1.6, 0) slantwise, the looks fall at
+        // (1.95, 0.35) and (2.13, 0.53), either side of the square from
+        // (2, 0) to (2.5, 0.5), which the way crosses for 0.14 m.
+        let slant = Vec2::new(1.0, 1.0).normalize();
+        let from = Vec3::new(1.6, 0.25, 0.0);
+        assert!(walks(&grid, from, slant, 3.0));
+        let mut clipped = (*grid).clone();
+        let index = grid.index(Vec2::new(2.25, 0.25)).unwrap();
+        clipped.set(index % grid.size().0, index / grid.size().0, Some(0.25), false, None);
+        for look in 1..=3 {
+            assert_ne!(clipped.index(from.xz() + slant * PROBE * look as f32), Some(index), "look {look}");
+        }
+        assert!(!walks(&clipped, from, slant, 3.0));
     }
 
     #[test]
@@ -528,11 +630,11 @@ mod tests {
     #[test]
     fn one_struck_staggers_back_from_whoever_struck_it_and_stands_a_moment() {
         let grid = disc(10.0);
-        let mut dice = Dice::new(3);
+        let mut dice = Sealed::new(3, 0);
         let mut mind = Mind::new(&mut dice);
         let (mut at, mut yaw) = (Vec3::new(2.0, 0.25, 0.0), 0.0);
         mind.stagger(at, Vec2::new(0.5, 0.0), &grid, &mut dice);
-        let free = |_: Vec2| true;
+        let free = |_: Vec2, _: f32| true;
         let mut secs = 0.0;
         while matches!(mind.doing(), Doing::Staggering { .. }) {
             mind.step(&mut at, &mut yaw, &grid, &mut dice, 1.0 / 60.0, &free);
@@ -560,6 +662,8 @@ mod tests {
         /// length.
         waits: Vec<f32>,
         walks: Vec<f32>,
+        /// Each one's waits, by its number.
+        theirs: Vec<Vec<f32>>,
         /// Thinks that came to standing, to turning, and to walking.
         stood: u32,
         turned: u32,
@@ -570,7 +674,10 @@ mod tests {
     /// settle into its stride, checking every step that each of them stands
     /// where a body walks and inside the ring.
     fn watch(crowd: &mut Crowd, secs: f32, dt: f32) -> Watched {
-        let mut watched = Watched::default();
+        let mut watched = Watched {
+            theirs: vec![Vec::new(); crowd.len()],
+            ..Default::default()
+        };
         let mut since: Vec<Option<f32>> = vec![None; crowd.len()];
         let mut clock = 0.0;
         let settle = 15.0;
@@ -595,6 +702,7 @@ mod tests {
                     assert!(!matches!(doing[index], Doing::Walking { .. }), "{index} still walking as it next thought");
                     if let Some(last) = since[index] {
                         watched.waits.push(clock - last);
+                        watched.theirs[index].push(clock - last);
                     }
                     since[index] = Some(clock);
                     match walker.doing() {
@@ -648,28 +756,40 @@ mod tests {
             most(&watched.walks),
             mean(&watched.walks),
         );
-        // Every wait between two thinks within the throw, and spread over
-        // it, not bunched at either end.
+        // Every wait between two thinks within the one who waited's own
+        // leanings, and the crowd's within all of theirs.
         let dt = 1.0 / 60.0;
-        let middle = (WAIT.0 + WAIT.1) * 0.5;
-        assert!(least(&watched.waits) >= WAIT.0 - dt && most(&watched.waits) <= WAIT.1 + dt);
-        assert!(least(&watched.waits) < WAIT.0 + 0.1 && most(&watched.waits) > WAIT.1 - 0.1);
-        assert!((mean(&watched.waits) - middle).abs() < 0.1, "{}", mean(&watched.waits));
-        let early = watched.waits.iter().filter(|&&wait| wait < middle).count() as f32 / watched.waits.len() as f32;
-        assert!((0.45..0.55).contains(&early), "{early} of the waits in the first half");
+        for (index, waits) in watched.theirs.iter().enumerate() {
+            let (shortest, longest) = crowd.walkers[index].leanings().wait;
+            assert!(waits.iter().all(|&wait| wait >= shortest - dt && wait <= longest + dt), "{index}: {shortest} to {longest}");
+        }
+        assert!(least(&watched.waits) >= SHORTEST_WAIT.0 - dt && most(&watched.waits) <= LONGEST_WAIT.1 + dt);
+        // About the middle of what they lean to, all together: a wait of
+        // 2.4 s, as the crowd was first built with.
+        let middle = (SHORTEST_WAIT.0 + SHORTEST_WAIT.1 + LONGEST_WAIT.0 + LONGEST_WAIT.1) * 0.25;
+        assert!((mean(&watched.waits) - middle).abs() < 0.12, "{}", mean(&watched.waits));
+        // But each to a beat of its own: the busiest waits on average a
+        // good while less than the laziest, and no two wait alike.
+        let beats: Vec<f32> = watched.theirs.iter().map(|waits| mean(waits)).collect();
+        println!("each one's wait on average, {:.2} to {:.2} s", least(&beats), most(&beats));
+        assert!(most(&beats) - least(&beats) > 0.4, "{beats:?}");
+        let mut sorted = beats.clone();
+        sorted.sort_by(f32::total_cmp);
+        assert!(sorted.windows(2).all(|pair| pair[0] != pair[1]), "{sorted:?}");
         // Every walk 2 to 9 m, and spread over that.
         assert!(least(&watched.walks) >= WALK_MIN - 0.01 && most(&watched.walks) <= WALK_MAX + 0.01);
         assert!(least(&watched.walks) < WALK_MIN + 0.3 && most(&watched.walks) > WALK_MAX - 0.3);
-        // One think in seven stands, one in ten turns, and nearly all the
-        // rest walk: a walk is turned down only near an edge, or where
+        // About one think in seven stands, one in ten turns, and nearly all
+        // the rest walk: a walk is turned down only near an edge, or where
         // another stands.
-        assert!((share(watched.turned) - TURN_ONLY).abs() < 0.03, "{}", share(watched.turned));
-        assert!((share(watched.stood) - STAND_A_TURN).abs() < 0.06, "{}", share(watched.stood));
+        let half = |(low, high): (f32, f32)| (low + high) * 0.5;
+        assert!((share(watched.turned) - half(TURN_ONLY)).abs() < 0.03, "{}", share(watched.turned));
+        assert!((share(watched.stood) - half(STAND_A_TURN)).abs() < 0.06, "{}", share(watched.stood));
         // Each walks a good share of the time and stands the rest: the
         // shares as the numbers have them, a 5.5 m walk (0.79 s), three
-        // thinks in four, a think every 2.5 s: on the move 24% of the time.
-        assert!((0.19..0.29).contains(&walking), "walking {walking}");
-        assert!(thinks > 600.0 / middle * CROWD as f32 * 0.95, "{thinks} thinks");
+        // thinks in four, a think every 2.4 s: on the move 25% of the time.
+        assert!((0.2..0.31).contains(&walking), "walking {walking}");
+        assert!(thinks > 600.0 / middle * CROWD as f32 * 0.9, "{thinks} thinks");
     }
 
     #[test]
@@ -689,20 +809,57 @@ mod tests {
                 }
             }
         }
-        for index in 0..crowd.len() {
-            let share = walked[index] / (walked[index] + stood[index]);
-            assert!((0.12..0.36).contains(&share), "{index} walked {share} of the time");
+        let shares: Vec<f32> = (0..crowd.len()).map(|index| walked[index] / (walked[index] + stood[index])).collect();
+        for (index, &share) in shares.iter().enumerate() {
+            // The laziest of them, by its leanings, walks a sixth of the
+            // time; the busiest a third.
+            assert!((0.1..0.42).contains(&share), "{index} walked {share} of the time");
             // And got somewhere in five minutes.
             assert!(crowd.walkers[index].at.xz().distance(start[index]) > 0.0, "{index} never moved");
         }
+        println!(
+            "each on the move {:.0}% to {:.0}% of the time",
+            shares.iter().copied().fold(f32::INFINITY, f32::min) * 100.0,
+            shares.iter().copied().fold(0.0, f32::max) * 100.0
+        );
         // Wherever they went, no two stand in one another.
         for (index, walker) in crowd.walkers.iter().enumerate() {
             for other in &crowd.walkers[index + 1..] {
                 if !matches!(walker.doing(), Doing::Walking { .. }) && !matches!(other.doing(), Doing::Walking { .. }) {
-                    assert!(walker.at.xz().distance(other.at.xz()) >= APART - 0.01);
+                    assert!(walker.at.xz().distance(other.at.xz()) >= APART.0 - 0.01);
                 }
             }
         }
+    }
+
+    #[test]
+    fn they_end_their_walks_apart_by_a_thrown_distance_never_touching() {
+        // A crowd packed close on a small square, so that walks end near
+        // others often: some nearer than the one number it used to be,
+        // none nearer than two bodies' width and a little.
+        let mut crowd = Crowd::on(disc(7.0), 14, 3);
+        let (mut closest, mut nearer) = (f32::INFINITY, 0);
+        let mut was: Vec<bool> = vec![false; crowd.len()];
+        let dt = 1.0 / 30.0;
+        for _ in 0..(240.0 / dt) as usize {
+            crowd.step(dt, &[]);
+            let standing: Vec<bool> = crowd.walkers.iter().map(|walker| !matches!(walker.doing(), Doing::Walking { .. })).collect();
+            for index in 0..crowd.len() {
+                // Each walk that has just ended, against everyone standing.
+                if !standing[index] || was[index] {
+                    continue;
+                }
+                for other in (0..crowd.len()).filter(|&other| other != index && standing[other]) {
+                    let apart = crowd.walkers[index].at.xz().distance(crowd.walkers[other].at.xz());
+                    closest = closest.min(apart);
+                    nearer += usize::from(apart < 1.2);
+                }
+            }
+            was = standing;
+        }
+        println!("the nearest a walk ended to another standing: {closest:.2} m; {nearer} walks ended nearer than 1.2 m");
+        assert!(closest >= APART.0 - 0.01, "{closest}");
+        assert!(nearer > 0);
     }
 
     #[test]
@@ -760,17 +917,27 @@ mod tests {
         let mut crowd = Crowd::new(2);
         let taken: Vec<String> = ["Mochi", "Dubu", "Hodu", "Kong"].iter().map(|name| name.to_lowercase()).collect();
         let before: Vec<Guise> = crowd.walkers.iter().map(|walker| walker.guise.clone()).collect();
-        let mut dice = Dice::new(9);
+        let leaned: Vec<Leanings> = crowd.walkers.iter().map(Walker::leanings).collect();
+        let mut dice = Sealed::new(9, 0);
         let ids = fresh_ids(&mut dice, crowd.len(), &[]);
         crowd.redress(&taken, &ids);
         for (walker, id) in crowd.walkers.iter().zip(&ids) {
             assert_eq!(walker.guise.id, *id);
             assert!(!taken.contains(&walker.guise.name.to_lowercase()), "{}", walker.guise.name);
         }
-        // Most of them by other names, and in other looks, than before.
+        // Most of them by other names, and in other looks, than before; and
+        // every one of them of other leanings.
         let renamed = crowd.walkers.iter().zip(&before).filter(|(now, was)| now.guise.name != was.name).count();
         let changed = crowd.walkers.iter().zip(&before).filter(|(now, was)| now.guise.look != was.look).count();
         assert!(renamed > CROWD / 2 && changed > CROWD / 2, "{renamed} renamed, {changed} in another look");
+        assert!(crowd.walkers.iter().zip(&leaned).all(|(now, was)| now.leanings() != *was));
+        for walker in &crowd.walkers {
+            let Leanings { wait, stand, turn } = walker.leanings();
+            assert!((SHORTEST_WAIT.0..=SHORTEST_WAIT.1).contains(&wait.0) && (LONGEST_WAIT.0..=LONGEST_WAIT.1).contains(&wait.1));
+            assert!((STAND_A_TURN.0..=STAND_A_TURN.1).contains(&stand) && (TURN_ONLY.0..=TURN_ONLY.1).contains(&turn));
+            // The longest walk over before the soonest think after it.
+            assert!(wait.0 > WALK_MAX / WALK_SPEED + 0.1);
+        }
         // Even with every boy's name but a few taken, nobody goes by one
         // twice: the rest are girls.
         let all_but: Vec<String> = crate::BOY_NAMES[..20].iter().map(|name| name.to_lowercase()).collect();
