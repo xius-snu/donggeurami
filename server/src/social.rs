@@ -63,6 +63,7 @@ use crate::arena::Arenas;
 use crate::builder::Games;
 use crate::players::{Body, Everyone, Plays, Who, tell};
 use crate::rooms::Room;
+use crate::tables::Tables;
 
 /// How often where everyone is is looked at, in seconds.
 const TRACK_EVERY: f32 = 0.25;
@@ -892,6 +893,28 @@ impl Social {
         self.say(id, Outcome::LeftBehind);
     }
 
+    /// A group of `members`, the first of them leading it, as asking each
+    /// into it and their saying yes make one: for the games' tests, which
+    /// go into games together without being friends first.
+    #[cfg(test)]
+    pub(crate) fn band(&mut self, members: &[u64]) {
+        let Some(&leader) = members.first() else {
+            return;
+        };
+        let group = self.next_group;
+        self.next_group += 1;
+        self.groups.insert(
+            group,
+            Band {
+                leader,
+                members: members.to_vec(),
+            },
+        );
+        for &member in members {
+            self.grouped.insert(member, group);
+        }
+    }
+
     // -------------------------------------------------------------- levels
 
     /// Whether the game numbered `id` is paid out for now for the first
@@ -958,7 +981,7 @@ fn hear(
 }
 
 /// Where the body in `room` is, as its friends are told.
-fn presence_in(room: Room, games: &Games, arenas: &Arenas) -> Presence {
+fn presence_in(room: Room, games: &Games, arenas: &Arenas, tables: &Tables) -> Presence {
     match room {
         Room::Town(channel) => Presence::Town { channel },
         Room::Home(_) => Presence::Home,
@@ -969,6 +992,11 @@ fn presence_in(room: Room, games: &Games, arenas: &Arenas) -> Presence {
         Room::Arena(_) => Presence::Playing {
             game: Minigame::BridgeWars,
             queued: arenas.queued(room),
+        },
+        // At a table of one of the four games of 2026-11-18 (`tables`).
+        Room::Table(game, _) => Presence::Playing {
+            game,
+            queued: tables.queued(room),
         },
     }
 }
@@ -983,6 +1011,7 @@ fn track(
     bodies: Query<&Body>,
     games: Res<Games>,
     arenas: Res<Arenas>,
+    tables: Res<Tables>,
     mut social: ResMut<Social>,
 ) {
     *since += time.delta_secs();
@@ -1002,7 +1031,7 @@ fn track(
             continue;
         }
         here.insert(who.0);
-        social.saw(who.0, presence_in(body.room, &games, &arenas));
+        social.saw(who.0, presence_in(body.room, &games, &arenas, &tables));
     }
     let unix = unix_now();
     for id in social.here() {

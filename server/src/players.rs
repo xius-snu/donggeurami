@@ -26,7 +26,18 @@
 //! back is the same player, and finds its body where it left it, if that was
 //! kept: in the middle of a game of House Builder, it waits for them, and
 //! so, since 2026-11-15, does their seat in a game of Bridge Wars
-//! (`Arenas::keeps`, `Arenas::returns`).
+//! (`Arenas::keeps`, `Arenas::returns`), and since 2026-11-18 their seat at
+//! a table of one of the four games (`Tables::keeps`, `Tables::returns`).
+//!
+//! **Who a body is, and who it passes for.** A body is sent as its
+//! [`Member`], which is its account's own, as its owner chose it; but a
+//! game may have a body pass for someone else for a while, under another
+//! name and look (since 2026-11-18: Blend In's hider passes for one of the
+//! town's people). So every person's body also keeps its account's own
+//! member apart ([`Account`]), and one that passes for someone else is
+//! marked so ([`Disguised`]): what the account is told of itself, its name
+//! changed, and what is kept, go by the account; and every way out of a
+//! game puts the account's own back on the body ([`undisguise`]).
 
 use std::collections::HashMap;
 
@@ -42,6 +53,7 @@ use crate::arena::{Arenas, Return};
 use crate::builder::Games;
 use crate::rooms::{ClientRoom, InRoom, NotFor, Room, Towns};
 use crate::social::Social;
+use crate::tables::{self, Tables};
 
 /// How fast a body can go across the ground, in metres a second: the car
 /// anyone can drive, boosted (`cars::DRIVEN_TOP_SPEED`, since 2026-11-05,
@@ -167,6 +179,81 @@ impl Body {
             pace: Pace::new(now),
         }
     }
+
+    /// A person's body, played by the device `client`, the account `who`,
+    /// in `seat` of `room`, with `coins` to spend, just arrived.
+    pub(crate) fn person(client: Entity, who: Who, room: Room, seat: u8, town: Option<u16>, coins: u32, now: f64) -> Self {
+        Self {
+            client: Some(client),
+            who,
+            room,
+            seat,
+            arrival: 0,
+            town,
+            coins,
+            pace: Pace::new(now),
+        }
+    }
+
+    /// The server has put the body where it stands now: whatever its device
+    /// sent from before is from somewhere else, and dropped ([`moves`]), and
+    /// what it has in hand to move with is counted afresh. The arrival its
+    /// device is to send with its moves from now on.
+    pub(crate) fn arrive(&mut self, now: f64) -> u8 {
+        self.arrival = self.arrival.wrapping_add(1);
+        self.pace = Pace::new(now);
+        self.arrival
+    }
+}
+
+/// The account a person's body is, as its owner chose it, kept apart from
+/// the [`Member`] the body is sent as (since 2026-11-18): the two are one
+/// but while a game has the body pass for someone else ([`Disguised`]).
+/// Put on every person's body as it is let in ([`admit`]), and changed with
+/// the name and the look ([`Ask::Profile`]). What the account's own device
+/// is told of who it is ([`Tell::Welcome`]) and what is kept of it go by
+/// this.
+#[derive(Component, Clone, PartialEq, Debug)]
+pub(crate) struct Account(pub Member);
+
+/// The body passes for someone else, a game having put another [`Member`] on
+/// it (Blend In's hider among the town's people, and every seeker too):
+/// until the game takes it off, the account's own name and look are kept
+/// off it, chosen anew or not ([`Ask::Profile`]); and every way out of a
+/// game takes it off ([`undisguise`]).
+#[derive(Component, Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) struct Disguised;
+
+/// Puts the account's own member back on `body` ([`Account`]) if a game has
+/// it passing for someone else ([`Disguised`]), as it leaves the game,
+/// however it leaves; and nothing if not, so that nobody in its room is
+/// sent it again for nothing.
+pub(crate) fn undisguise(commands: &mut Commands, body: Entity, accounts: &Query<(&Account, Has<Disguised>)>) {
+    if let Ok((account, true)) = accounts.get(body) {
+        commands.entity(body).insert(account.0.clone()).remove::<Disguised>();
+    }
+}
+
+/// Tells `body`'s device to stand where the server has it, `spot` on
+/// `venue`, as a fresh arrival: where it is to begin a game afresh from
+/// ([`Tell::Arrive`]), and back there if it is anywhere else
+/// ([`Tell::PutBack`]).
+pub(crate) fn stand_where_it_is(tells: &mut MessageWriter<ToClients<Tell>>, body: &mut Body, spot: Spot, venue: Venue, now: f64) {
+    let arrival = body.arrive(now);
+    let Some(client) = body.client else {
+        return;
+    };
+    tell(
+        tells,
+        client,
+        Tell::Arrive {
+            venue,
+            seat: body.seat,
+            spot: Some(spot),
+            arrival,
+        },
+    );
+    tell(tells, client, Tell::PutBack { arrival, spot });
 }
 
 /// What a body has in hand to move with: it is earned as time passes, at the
@@ -272,6 +359,7 @@ fn hear(
     mut asks: MessageReader<FromClient<Ask>>,
     clients: Query<Option<&Plays>, With<ConnectedClient>>,
     mut bodies: Query<(&mut Body, &mut Spot, &mut Venue, &Member)>,
+    accounts: Query<(&Account, Has<Disguised>)>,
     mut towns: ResMut<Towns>,
     bank: Res<Bank>,
     mut social: ResMut<Social>,
@@ -298,8 +386,9 @@ fn hear(
                     continue;
                 };
                 let (room, seat) = match (to, body_of.room) {
-                    // A game of Bridge Wars is its own to leave (`arena`).
-                    (_, Room::Arena(_)) => continue,
+                    // A game of Bridge Wars is its own to leave (`arena`),
+                    // and so is a table (`tables`).
+                    (_, Room::Arena(_) | Room::Table(..)) => continue,
                     // Home: a room of your own.
                     (Venue::Home, Room::Town(_)) => {
                         towns.stand(body);
@@ -329,7 +418,9 @@ fn hear(
             }
             // Who they are, as they chose: kept with the account, and told
             // to everyone in the room by their member record being
-            // replaced, and to them again as a welcome.
+            // replaced, and to them again as a welcome. Not while a game
+            // has them passing for someone else ([`Disguised`]): then the
+            // account has it, and the body is sent it as the game ends.
             (Ask::Profile { name, look }, Some(&Plays(body))) => {
                 let (Some(name), true) = (profile::name(name), profile::look(look)) else {
                     warn!("{client:?} sent a name or a look that is no good: {name:?}, {look:?}");
@@ -338,21 +429,28 @@ fn hear(
                 let Ok((_, _, _, member)) = bodies.get(body) else {
                     continue;
                 };
+                let (account, disguised) = match accounts.get(body) {
+                    Ok((account, disguised)) => (account.0.clone(), disguised),
+                    Err(_) => (member.clone(), false),
+                };
                 // The tag that goes with the name: their own, unless
                 // someone of that name has it, and then another (`social`),
                 // so that no two accounts have both the same.
-                let Some(tag) = social.rename(member.id, &name) else {
-                    warn!("{} cannot be called {name}: every tag of that name is taken", member.id);
+                let Some(tag) = social.rename(account.id, &name) else {
+                    warn!("{} cannot be called {name}: every tag of that name is taken", account.id);
                     continue;
                 };
                 let member = Member {
                     name,
                     look: look.clone(),
-                    ..member.clone()
+                    ..account
                 };
                 info!("{} is now {}#{tag}, a {}", member.id, member.name, member.look);
                 bank.profile(member.id, &member.name, &member.look, tag);
-                commands.entity(body).insert(member.clone());
+                commands.entity(body).insert(Account(member.clone()));
+                if !disguised {
+                    commands.entity(body).insert(member.clone());
+                }
                 tell(&mut tells, client, Tell::Welcome { me: member });
             }
             // Fallen off the town into the void: back where its seat
@@ -364,8 +462,9 @@ fn hear(
                 };
                 let (room, seat) = (body_of.room, body_of.seat);
                 // In a game of Bridge Wars a fall is a death, which the
-                // game answers (`arena`).
-                if matches!(room, Room::Arena(_)) {
+                // game answers (`arena`); at a table, its game answers it
+                // as it will (`tables`).
+                if matches!(room, Room::Arena(_) | Room::Table(..)) {
                     continue;
                 }
                 if !matches!(room, Room::Town(_)) {
@@ -394,8 +493,10 @@ fn hear(
                 };
                 let (room, from, on, by) = (hitter.room, *from, *on, member.id);
                 // In a game of Bridge Wars the punch wounds as well, and
-                // the game deals it (`arena`).
-                if matches!(room, Room::Arena(_)) {
+                // the game deals it (`arena`); at a table, its game judges
+                // every punch, on people and on the computer's alike
+                // (`tables`).
+                if matches!(room, Room::Arena(_) | Room::Table(..)) {
                     continue;
                 }
                 let victim = bodies.iter().find_map(|(other, spot, venue, member)| {
@@ -488,8 +589,11 @@ pub(crate) fn place(
 
 /// The room a device that says it is on `venue` is let into, and its seat
 /// there: the town or home, where it already is. Anywhere else, the middle
-/// of a game of House Builder or Bridge Wars it was playing offline, it is
-/// brought to the town: online, a game is the server's.
+/// of a game of House Builder or Bridge Wars, or of one of the four played
+/// at tables (2026-11-18), that it was playing offline, it is brought to
+/// the town: online, a game is the server's, and whoever is back for a game
+/// of the server's finds it by their body, which the game kept for them
+/// ([`admit`]).
 fn room_for(
     venue: Venue,
     id: u64,
@@ -499,8 +603,6 @@ fn room_for(
 ) -> (Room, Venue, u8, bool) {
     match venue {
         Venue::Home => (Room::Home(id), venue, 0, true),
-        // minigames: S1 (the server's tables) handles this; until then the four
-        // games' venues go to the town, as Bridge Wars' does.
         Venue::Town
         | Venue::Lobby
         | Venue::Plot(_)
@@ -529,9 +631,9 @@ fn admit(
     mut loaded: MessageReader<Loaded>,
     mut everyone: ResMut<Everyone>,
     mut bodies: Query<(&mut Body, &mut Spot, &mut Venue, &Member)>,
+    accounts: Query<(&Account, Has<Disguised>)>,
     mut towns: ResMut<Towns>,
-    mut games: ResMut<Games>,
-    mut arenas: ResMut<Arenas>,
+    (mut games, mut arenas, mut tables): (ResMut<Games>, ResMut<Arenas>, ResMut<Tables>),
     mut social: ResMut<Social>,
     time: Res<Time>,
     mut tells: MessageWriter<ToClients<Tell>>,
@@ -568,9 +670,54 @@ fn admit(
             // account may never have been seen to leave.
             social.connected(who.0);
             let member = member.clone();
-            tell(&mut tells, client, Tell::Welcome { me: member.clone() });
+            // Who the account is, whoever a game has its body passing for
+            // ([`Account`]): told the disguise, the device would take it
+            // for a name it had not chosen, and change the account's to
+            // its own again ([`Ask::Profile`]), over the disguise.
+            let me = accounts.get(body).map_or_else(|_| member.clone(), |(account, _)| account.0.clone());
+            tell(&mut tells, client, Tell::Welcome { me });
             tell(&mut tells, client, Tell::Balance(kept.coins));
-            let in_game = matches!(kept.room, Room::Game(_) | Room::Arena(_));
+            let in_game = matches!(kept.room, Room::Game(_) | Room::Arena(_) | Room::Table(..));
+            // A table of one of the four games kept the body in its seat,
+            // and says what becomes of whoever is back for it, as Bridge
+            // Wars does (`Tables::returns`): carrying on where it stands,
+            // put back in the game, which its table begins afresh on it
+            // (`tables`, as it next runs), or given up, below.
+            if let Room::Table(game, _) = kept.room {
+                match tables.returns(kept.room, body, hello.venue == game.venue()) {
+                    // The app was only put away: it carries on, where it
+                    // says it stands if that is where the server had it or
+                    // a step from there, and otherwise where the server has
+                    // it, as in Bridge Wars.
+                    tables::Return::Resume => {
+                        let near = hello.spot.aboard.is_none()
+                            && hello.spot.translation().distance(spot.translation()) <= BURST;
+                        if near {
+                            *spot = hello.spot;
+                            let arrival = kept.arrive(now);
+                            tell(
+                                &mut tells,
+                                client,
+                                Tell::Arrive {
+                                    venue: *venue,
+                                    seat: kept.seat,
+                                    spot: Some(*spot),
+                                    arrival,
+                                },
+                            );
+                        } else {
+                            stand_where_it_is(&mut tells, &mut kept, *spot, *venue, now);
+                        }
+                        info!("{} is back, in {:?}, and carries on", member.name, kept.room);
+                        continue;
+                    }
+                    tables::Return::Back { seat } => {
+                        info!("{} is back, put back in seat {seat} of {:?}", member.name, kept.room);
+                        continue;
+                    }
+                    tables::Return::GiveUp => {}
+                }
+            }
             // A game of Bridge Wars kept the body in its seat, and says
             // what becomes of whoever is back for it (`Arenas::returns`).
             if let Room::Arena(_) = kept.room {
@@ -663,9 +810,12 @@ fn admit(
                 continue;
             }
             if in_game {
-                // It gave the game up while the connection was gone.
+                // It gave the game up while the connection was gone, and is
+                // whoever its account is again.
                 games.walk_out(kept.room, body);
                 arenas.walk_out(kept.room, body);
+                tables.walk_out(kept.room, body);
+                undisguise(&mut commands, body, &accounts);
             }
             // Let in where it says it is, as it is.
             let town = kept.town;
@@ -743,20 +893,12 @@ fn admit(
         commands.entity(body).insert((
             Replicated,
             member.clone(),
+            Account(member.clone()),
             placed,
             venue,
             InRoom(room),
             NotFor(client),
-            Body {
-                client: Some(client),
-                who,
-                room,
-                seat,
-                arrival: 0,
-                town,
-                coins: record.coins,
-                pace: Pace::new(now),
-            },
+            Body::person(client, who, room, seat, town, record.coins, now),
         ));
         commands
             .entity(client)
@@ -831,6 +973,9 @@ fn moves(
 /// Bridge Wars went on without it and its seat was given up for good,
 /// however short a while the device was gone; and a phone's is gone
 /// whenever its app leaves the foreground (the game's `net::lifecycle`).
+/// A seat at a table of one of the four games waits as Bridge Wars' does,
+/// once its game is being played (`Tables::keeps`, since 2026-11-18);
+/// before then it is given up, and its fee given back.
 fn gone(
     remove: On<Remove, ConnectedClient>,
     clients: Query<&Plays>,
@@ -838,6 +983,7 @@ fn gone(
     mut everyone: ResMut<Everyone>,
     mut towns: ResMut<Towns>,
     mut arenas: ResMut<Arenas>,
+    mut tables: ResMut<Tables>,
     mut commands: Commands,
 ) {
     let Ok(&Plays(entity)) = clients.get(remove.entity) else {
@@ -855,9 +1001,15 @@ fn gone(
         Room::Arena(_) if arenas.keeps(body.room, entity) => {
             info!("{} dropped out of {:?}: their seat waits for them", member.name, body.room);
         }
-        Room::Town(_) | Room::Home(_) | Room::Arena(_) => {
+        Room::Table(..) if tables.keeps(body.room, entity) => {
+            info!("{} dropped out of {:?}: their seat waits for them", member.name, body.room);
+        }
+        Room::Town(_) | Room::Home(_) | Room::Arena(_) | Room::Table(..) => {
             if let Room::Arena(_) = body.room {
                 arenas.walk_out(body.room, entity);
+            }
+            if let Room::Table(..) = body.room {
+                tables.walk_out(body.room, entity);
             }
             towns.stand(entity);
             everyone.0.remove(&body.who);

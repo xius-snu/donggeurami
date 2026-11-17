@@ -33,6 +33,7 @@ use std::time::Duration;
 
 use bevy::prelude::*;
 use postgres::{Client, NoTls};
+use roundtown_net::Minigame;
 use roundtown_net::rules::STARTING_BALANCE;
 use roundtown_net::social::{TAG_FIRST, TAG_LAST};
 
@@ -336,15 +337,21 @@ impl Bank {
         }
     }
 
-    /// Takes `amount` from the account `id` if it has that much, saying why;
-    /// the answer comes as [`Charged`].
-    pub(crate) fn charge(&self, id: u64, amount: u32, why: &'static str, game: Option<u32>) {
+    /// Takes `amount` from the account `id` if it has that much, saying why:
+    /// the fee for a game of `game`, to be seated in the one numbered `into`
+    /// (by that game's own count), which the line saying why is kept with.
+    /// The answer comes as [`Charged`], saying the same, so that whoever
+    /// seats the payer is the game they paid for (since 2026-11-18, when
+    /// House Builder stopped being the only game with a fee, and took every
+    /// answer for its own).
+    pub(crate) fn charge(&self, id: u64, amount: u32, why: &'static str, game: Minigame, into: Option<u32>) {
         if let Self::Database { jobs, .. } = self {
             let _ = jobs.send(Job::Charge {
                 id,
                 amount,
                 why,
                 game,
+                into,
             });
         }
     }
@@ -418,11 +425,16 @@ pub(crate) struct Loaded {
     pub record: Option<Record>,
 }
 
-/// What the account was left with, or `None` if it had not got the coins.
+/// What the account was left with, or `None` if it had not got the coins;
+/// and what the charge was for, as it was asked ([`Bank::charge`]): the fee
+/// of a game of `game`, to be seated in the one numbered `into`. Each game
+/// that takes a fee seats only those whose answers are its own.
 #[derive(Message)]
 pub(crate) struct Charged {
     pub id: u64,
     pub left: Option<u32>,
+    pub game: Minigame,
+    pub into: Option<u32>,
 }
 
 /// What the account has now, or `None` if nothing could be given it: there is
@@ -439,7 +451,8 @@ pub(crate) enum Job {
         id: u64,
         amount: u32,
         why: &'static str,
-        game: Option<u32>,
+        game: Minigame,
+        into: Option<u32>,
     },
     Credit {
         id: u64,
@@ -536,7 +549,12 @@ fn work(url: &str, jobs: &Receiver<Job>, done: &Sender<Done>) {
         if !finished {
             answer = match job {
                 Job::Load(id) => Some(Done::Loaded(Loaded { id, record: None })),
-                Job::Charge { id, .. } => Some(Done::Charged(Charged { id, left: None })),
+                Job::Charge { id, game, into, .. } => Some(Done::Charged(Charged {
+                    id,
+                    left: None,
+                    game,
+                    into,
+                })),
                 Job::Credit { id, .. } => Some(Done::Credited(Credited { id, left: None })),
                 Job::Profile { id, name, .. } => {
                     error!("could not keep {id}'s name, {name}");
@@ -598,6 +616,7 @@ fn run(db: &mut Client, job: &Job) -> Result<Option<Done>, postgres::Error> {
             amount,
             why,
             game,
+            into,
         } => {
             // The coins and the line saying why change together, or not at
             // all; and never below nothing.
@@ -607,7 +626,12 @@ fn run(db: &mut Client, job: &Job) -> Result<Option<Done>, postgres::Error> {
                 &[&(id as i64), &i64::from(amount)],
             )?;
             let Some(left) = left else {
-                return Ok(Some(Done::Charged(Charged { id, left: None })));
+                return Ok(Some(Done::Charged(Charged {
+                    id,
+                    left: None,
+                    game,
+                    into,
+                })));
             };
             transaction.execute(
                 "INSERT INTO coin_changes (player, amount, reason, game) VALUES ($1, $2, $3, $4)",
@@ -615,13 +639,15 @@ fn run(db: &mut Client, job: &Job) -> Result<Option<Done>, postgres::Error> {
                     &(id as i64),
                     &-i64::from(amount),
                     &why,
-                    &game.map(i64::from),
+                    &into.map(i64::from),
                 ],
             )?;
             transaction.commit()?;
             Ok(Some(Done::Charged(Charged {
                 id,
                 left: Some(left.get::<_, i64>(0).clamp(0, i64::from(u32::MAX)) as u32),
+                game,
+                into,
             })))
         }
         Job::Credit {

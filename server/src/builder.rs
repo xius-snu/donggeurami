@@ -23,6 +23,9 @@
 //! ([`PRIZES`]) once the game is over: in the database, each in one
 //! transaction with the line saying why (`accounts`), or without one, in
 //! memory, which every connection starts again at [`STARTING_BALANCE`].
+//! Since 2026-11-18 the four games played at tables take fees too
+//! (`tables`): every answer from the database says which game it is the fee
+//! of, and only House Builder's seat anyone here ([`paid`]).
 
 use std::collections::HashMap;
 
@@ -30,15 +33,17 @@ use bevy::prelude::*;
 use bevy_replicon::prelude::*;
 use roundtown_net::rules::*;
 use roundtown_net::{
-    Ask, At, Built, GAME_SEATS, Member, Refusal, Round, Seats, Spot, Stage, Tell, Venue, arrival,
-    standings,
+    Ask, At, Built, GAME_SEATS, Member, Minigame, Refusal, Round, Seats, Spot, Stage, Tell, Venue,
+    arrival, standings,
 };
 
 use crate::Config;
-use crate::accounts::{Bank, Charged, Credited};
+use crate::accounts::{Bank, Charged};
+use crate::fees::Paying;
 use crate::players::{Body, Everyone, Plays, Who, move_to, tell};
 use crate::rooms::{InRoom, Room, Towns};
 use crate::social::Social;
+use crate::tables::Tables;
 use roundtown_net::social::{XP_PLACED, XP_PLAYED};
 
 /// How long after building ends a piece put down still counts, in seconds: a
@@ -63,20 +68,14 @@ pub(crate) fn plugin(app: &mut App) {
                 hear.after(ServerSystems::Receive),
                 // A prize is always asked for before a fee for the next game,
                 // and the database answers in the order it was asked: read
-                // in that order, a body is left with the later of the two.
-                (credited, paid).chain().after(crate::accounts::answers),
+                // in that order, a body is left with the later of the two
+                // (`fees::credited`, House Builder's own until 2026-11-18).
+                paid.after(crate::fees::credited),
             )
                 .run_if(in_state(ServerState::Running)),
         )
         .add_systems(Update, run_games.run_if(in_state(ServerState::Running)));
 }
-
-/// A body whose fee is being taken in the database, and the game it is to be
-/// seated in once it has been: the one that was filling as it asked, which
-/// everyone of a group going in together was given alike (`social`), so
-/// that they are seated in one game whichever of their fees is taken first.
-#[derive(Component)]
-struct Paying(Option<u32>);
 
 /// Every game under way, by id, and the one filling now.
 #[derive(Resource, Default)]
@@ -229,6 +228,19 @@ impl Games {
         }
     }
 
+    /// Whether `body` is done with the game in `room`, at its results, and
+    /// free to go into another game, as it is for another of House Builder
+    /// ([`Ask::Play`]): what the four games played at tables go by
+    /// (`tables`, since 2026-11-18).
+    pub(crate) fn done_with(&self, room: Room, body: Entity) -> bool {
+        let Room::Game(id) = room else {
+            return false;
+        };
+        self.games
+            .get(&id)
+            .is_some_and(|game| game.seats.contains(&body) && matches!(game.stage, Stage::Over { .. }))
+    }
+
     /// Whether the game in `room` is still in its lobby, filling or full
     /// and about to go: what someone's friends are told of where they are
     /// (`social`).
@@ -244,10 +256,12 @@ impl Games {
 
 /// Seats `body`, paid up, in the game numbered `into`, if it still has
 /// room, and otherwise in the one filling now: out of the town, or out of
-/// the game it has just finished, for another.
+/// the game it has just finished, for another, of House Builder or, since
+/// 2026-11-18, of one of the four played at tables (`tables`).
 #[allow(clippy::too_many_arguments)]
 fn seat(
     games: &mut Games,
+    tables: &mut Tables,
     towns: &mut Towns,
     commands: &mut Commands,
     tells: &mut MessageWriter<ToClients<Tell>>,
@@ -261,6 +275,7 @@ fn seat(
     if let Some((old, seat)) = games.of(room, body) {
         old.gone[usize::from(seat)] = true;
     }
+    tables.walk_out(room, body);
     towns.stand(body);
     let game = match into.filter(|&id| games.has_room(id, 1)) {
         Some(id) => games.games.get_mut(&id).expect("it has room, so it is there"),
@@ -279,13 +294,17 @@ fn seat(
 }
 
 /// The fee taken in the database: seated, or turned away without the coins.
+/// House Builder's fees alone: the four games played at tables take theirs
+/// themselves (`tables::paid`), and until 2026-11-18, when every answer
+/// said which game it was the fee of, whoever paid one of theirs would have
+/// been seated here.
 #[allow(clippy::too_many_arguments)]
-fn paid(
+pub(crate) fn paid(
     mut charged: MessageReader<Charged>,
     everyone: Res<Everyone>,
     mut bodies: Bodies,
-    paying: Query<&Paying>,
     mut games: ResMut<Games>,
+    mut tables: ResMut<Tables>,
     mut towns: ResMut<Towns>,
     time: Res<Time>,
     mut tells: MessageWriter<ToClients<Tell>>,
@@ -293,11 +312,14 @@ fn paid(
 ) {
     let now = time.elapsed_secs_f64();
     for answer in charged.read() {
+        if answer.game != Minigame::HouseBuilder {
+            continue;
+        }
         let Some(&body) = everyone.0.get(&Who(answer.id)) else {
             continue;
         };
         // The game they were to be seated in as they asked.
-        let into = paying.get(body).ok().and_then(|paying| paying.0);
+        let into = answer.into;
         commands.entity(body).try_remove::<Paying>();
         let Ok((mut body_of, spot, venue, member)) = bodies.get_mut(body) else {
             continue;
@@ -315,6 +337,7 @@ fn paid(
         let member = member.clone();
         seat(
             &mut games,
+            &mut tables,
             &mut towns,
             &mut commands,
             &mut tells,
@@ -324,32 +347,6 @@ fn paid(
             into,
             now,
         );
-    }
-}
-
-/// A prize paid into the database: whoever it was for, if they are still
-/// here, has that much to spend now, and their device is told so.
-fn credited(
-    mut credited: MessageReader<Credited>,
-    everyone: Res<Everyone>,
-    mut bodies: Query<&mut Body>,
-    mut tells: MessageWriter<ToClients<Tell>>,
-) {
-    for answer in credited.read() {
-        let Some(left) = answer.left else {
-            continue;
-        };
-        let Some(mut body_of) = everyone
-            .0
-            .get(&Who(answer.id))
-            .and_then(|&body| bodies.get_mut(body).ok())
-        else {
-            continue;
-        };
-        body_of.coins = left;
-        if let Some(client) = body_of.client {
-            tell(&mut tells, client, Tell::Balance(left));
-        }
     }
 }
 
@@ -371,7 +368,7 @@ fn hear(
     clients: Query<&Plays>,
     mut bodies: Bodies,
     paying: Query<(), With<Paying>>,
-    mut games: ResMut<Games>,
+    (mut games, mut tables): (ResMut<Games>, ResMut<Tables>),
     mut towns: ResMut<Towns>,
     (everyone, mut social): (Res<Everyone>, ResMut<Social>),
     bank: Res<Bank>,
@@ -403,8 +400,9 @@ fn hear(
                     continue;
                 };
                 // Free to: in the town, or at the results of a game that
-                // is over, for another. And able to pay: with the fee, and
-                // not paying one already.
+                // is over, for another, of House Builder or of one of the
+                // four played at tables (`tables`). And able to pay: with
+                // the fee, and not paying one already.
                 let (mut going, mut staying) = (Vec::new(), Vec::new());
                 let mut cannot_pay = false;
                 for id in party {
@@ -417,6 +415,7 @@ fn hear(
                                 Room::Game(_) => games
                                     .of(body_of.room, entity)
                                     .is_some_and(|(game, _)| matches!(game.stage, Stage::Over { .. })),
+                                Room::Table(..) => tables.done_with(body_of.room, entity),
                                 Room::Home(_) | Room::Arena(_) => false,
                             };
                         Some((free, body_of.coins >= ENTRY && !paying.contains(entity)))
@@ -451,8 +450,17 @@ fn hear(
                     // with the line saying why, and seated once it has been
                     // ([`paid`]).
                     if bank.kept() {
-                        bank.charge(body_of.who.0, ENTRY, "House Builder entry", Some(into));
-                        commands.entity(body).insert(Paying(Some(into)));
+                        bank.charge(
+                            body_of.who.0,
+                            ENTRY,
+                            "House Builder entry",
+                            Minigame::HouseBuilder,
+                            Some(into),
+                        );
+                        commands.entity(body).insert(Paying {
+                            game: Minigame::HouseBuilder,
+                            into: Some(into),
+                        });
                         continue;
                     }
                     body_of.coins -= ENTRY;
@@ -462,6 +470,7 @@ fn hear(
                     let member = member.clone();
                     seat(
                         &mut games,
+                        &mut tables,
                         &mut towns,
                         &mut commands,
                         &mut tells,
@@ -557,7 +566,7 @@ fn hear(
             | Ask::Builder { .. }
             | Ask::Metres(_)
             | Ask::RunOver { .. }
-            // minigames: S1 (the server's tables) handles these.
+            // The four games played at tables' (`tables`).
             | Ask::Join(_)
             | Ask::BlendIn(_)
             | Ask::KnockOff(_)
@@ -780,7 +789,7 @@ fn tally(game: &mut Game, plot: u8) {
 
 /// Pays every person in `game` what their place, in `order`, is worth
 /// ([`PRIZES`]): into their account in the database, whose answer tells
-/// their device ([`credited`]), or without one, onto their body, if it is
+/// their device (`fees::credited`), or without one, onto their body, if it is
 /// still here. Wherever they are now: someone who dropped out still came
 /// where they came. The computer's players have nowhere to be paid into.
 fn pay_out(
