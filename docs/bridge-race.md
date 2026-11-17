@@ -222,16 +222,18 @@ Every word and colour is in `assets/ui.ron` (`words.bridge_race`,
 
 - **Unit tests** (all three suites green, through `rtcargo.sh race`): the
   rules' 142 (two new: the chat's lines of a fall and a blast, and time
-  called); the server's 86 (two new: a whole table of one person against
+  called; and the round's test of what is sent, with the chat's lines);
+  the server's 87 (two new: a whole table of one person against
   the computer played through the `Rules` with no network, from the
   begin to the computer holding the golden island, the table paying,
   every rung and the round sent to the room and everything taken away at
   the close; and a person's rung, punch, metres, fall and skip each
   reaching the game, with what comes back to their device); the game's
-  373 (six new: the buttons clear of each other; the fight state taken at
-  a table offline, the race begun with the game played here, a grant
-  counted once onto your metres, and all of it given back; the chat's
-  lines; the ring's arc; the arrow at the edge; the plate's words).
+  374 (five new, and the buttons kept clear of each other: the fight
+  state taken at a table offline, the race begun with the game played
+  here, a grant counted once onto your metres, and all of it given back;
+  the chat's lines; the ring's arc; the arrow at the edge; the plate's
+  words).
 - **In the desktop build, hidden** (`RT_BACKGROUND=1`), offline, by a
   throwaway taken out again, every picture looked at (the best kept in
   `RoundTown-wt/scratch-race/shots/`): a whole game in which you are given
