@@ -25,8 +25,11 @@
 //!   takes the seats left, one at a time, a throw of Bridge Wars'
 //!   [`BOT_GAP`] apart (Hajun: "fill with ai like bridgewars"); in one
 //!   without (Blend In, Last Stand), the countdown begins once it has as
-//!   many people as it begins with and nobody has joined for its wait, or
-//!   at once when it is full.
+//!   many people as it begins with and nobody has joined for its wait (as
+//!   long as its game says, [`Rules::wait_from_join`]), or at once when it
+//!   is full. Whoever sits past the seats a game settles on is moved up
+//!   into one it has, and told so by being stood there afresh in it
+//!   ([`close_ranks`]).
 //! * **The countdown**, and then the play, which the game has to itself
 //!   ([`Rules::begin`], [`Rules::step`]) until it says how everyone came
 //!   ([`Table::finish`]).
@@ -35,19 +38,21 @@
 //!   (as House Builder pays them), and those who played it to its end earn
 //!   toward their level; then everyone still there goes back to the town,
 //!   over two frames, as every game here ends ([`close`], then [`end`]). A
-//!   table nobody is left at closes too, but only once whoever left last
-//!   has been sent that it is gone from their sight
-//!   ([`Table::sent_since_empty`]).
+//!   table nobody is left at closes too. Either way it closes only once
+//!   whoever left it last has been sent that it is gone from their sight
+//!   ([`Table::sent_since_anyone_went`]).
 //!
 //! **Leaving.** Before the play a seat left is anyone's again, and its fee
 //! given back; once the play has begun it stays theirs, empty, and its game
-//! hears of it ([`Rules::left`]); after, they only go. **A device that
-//! goes** keeps its seat while the game is played, its body standing where
-//! it stood, as in Bridge Wars ([`Tables::keeps`], [`Tables::returns`]);
-//! before the play it gives the seat up, fee and all. **Who a body passes
-//! for**: a game may put someone else's name and look on a person's body
-//! (`players::Disguised`, [`Ctx::disguise`]); every way out of a table puts
-//! the account's own back.
+//! hears of it ([`Rules::left`]); after, they only go. A game may say
+//! someone is out of it before it is over ([`Seat::out`]): then it is over
+//! for them, and they may go from it into another game, as from one over.
+//! **A device that goes** keeps its seat while the game is played, its
+//! body standing where it stood, as in Bridge Wars ([`Tables::keeps`],
+//! [`Tables::returns`]); before the play it gives the seat up, fee and all.
+//! **Who a body passes for**: a game may put someone else's name and look
+//! on a person's body (`players::Disguised`, [`Ctx::disguise`]); every way
+//! out of a table puts the account's own back.
 //!
 //! Each table is sent to its room as one entity: the [`Board`] (how far it
 //! has got, the seconds left, how many people of how many seats, and at the
@@ -72,7 +77,7 @@ use crate::arena::{Arenas, wall_clock};
 use crate::builder::Games;
 use crate::fees::Paying;
 use crate::players::{
-    Account, Body, Disguised, Everyone, Plays, Who, move_to, place, stand_where_it_is, tell, undisguise,
+    Accounts, Body, Disguised, Everyone, Plays, Who, move_to, place, stand_where_it_is, tell, undisguise,
 };
 use crate::rooms::{InRoom, Room, Towns};
 use crate::social::Social;
@@ -85,6 +90,13 @@ const ABANDONED: f32 = 60.0;
 /// The most seats a table has, and room: what its computer players' ids are
 /// counted in ([`bot_id`]).
 const MOST_SEATS: u64 = 64;
+
+/// How long, at the most, a table whose countdown is over waits for whoever
+/// sat down in its last moment and is still having their fee taken, in
+/// seconds (mine): the database answers in a few thousandths of a second,
+/// and they play; past this, the game begins without them, and they sit
+/// down at another table as their fee is taken ([`paid`]).
+const HELD_MOST: f32 = 2.0;
 
 pub(crate) fn plugin(app: &mut App) {
     app.init_resource::<Tables>()
@@ -218,6 +230,14 @@ pub(crate) struct Seat {
     /// the next to come, a person or the computer. Never once the game is
     /// played: it begins with every one of its seats taken.
     pub vacant: bool,
+    /// Out of the game before it is over, as the game says, which is the
+    /// game's to set (Knock Off's in the sea: "If you are out, you can
+    /// spectate or exit"; Last Stand's dead with the anchor broken): the
+    /// game is over for whoever sits here, who may stay to watch, or go
+    /// from it into another game of any kind, a group they lead with them,
+    /// as one out of Bridge Wars may (`Arenas::done_with`); the seat stays
+    /// theirs for the results either way.
+    pub out: bool,
     /// Something was told to whoever sits here while their device was gone
     /// ([`Ctx::tell`]): back, it is told to begin the game afresh rather
     /// than carry on ([`Tables::returns`]).
@@ -235,6 +255,7 @@ impl Seat {
             away: false,
             paid: 0,
             vacant: true,
+            out: false,
             missed: false,
         }
     }
@@ -320,15 +341,18 @@ pub(crate) struct Table {
     /// those who ask together sit together whenever each of them is
     /// answered ([`paid`]).
     holds: Vec<(usize, u64)>,
-    /// Seats left for good while the game was played, for it to hear of
-    /// ([`Rules::left`]), and seats whose devices are back, for it to be
-    /// begun afresh on ([`welcome_back`]): what happened to the table from
-    /// outside it (`players`) since it last ran.
-    lefts: Vec<usize>,
+    /// Seats left for good since the game began, with the body that sat in
+    /// each, for it to hear of ([`Rules::left`]), and seats whose devices
+    /// are back, for it to be begun afresh on ([`welcome_back`]): what
+    /// happened to the table from outside it (`players`) since it last ran.
+    lefts: Vec<(usize, Entity)>,
     backs: Vec<usize>,
-    /// Since when nobody has been at it, by the server's tick, and whether
-    /// what its room is sent has gone out since ([`Table::sent_since_empty`]).
-    emptied: Option<(u32, bool)>,
+    /// Someone has gone out of its room since it last ran
+    /// ([`Tables::walk_out`]); and the server's tick as it ran after the
+    /// last of them went, with whether what its room is sent has gone out
+    /// since ([`Table::sent_since_anyone_went`]).
+    went_out: bool,
+    gone_out: Option<(u32, bool)>,
     /// What its room was last sent, to send again only what has changed.
     sent_board: Option<Board>,
     sent_seats: Option<Vec<Member>>,
@@ -364,31 +388,39 @@ impl Table {
             holds: Vec::new(),
             lefts: Vec::new(),
             backs: Vec::new(),
-            emptied: None,
+            went_out: false,
+            gone_out: None,
             sent_board: None,
             sent_seats: None,
         })
     }
 
-    /// Whether, nobody being at it, what its room is sent has gone out at
-    /// least once since the last of them left, the server's tick being
-    /// `tick` this frame: so that whoever left last has been told that
+    /// Whether what its room is sent has gone out at least once since
+    /// anyone last went out of its room (or nobody has), the server's tick
+    /// being `tick` this frame: so that whoever went has been told that
     /// everything of it is gone from their sight before any of it is
-    /// despawned. An entity despawned in the same send as someone leaves
-    /// its room is written to them neither as despawned nor as gone from
-    /// sight (replicon 0.44's `collect_despawns`; the trap Bridge Wars fell
-    /// into on 2026-11-09, there with everyone moved out as the game was
-    /// despawned), and a device keeps it until its connection goes: the
-    /// last table's board, on a device that has gone on to the next. A
-    /// send goes out in the frame the tick moves, after every game has run:
-    /// so the table may close the frame after it has been seen to move.
-    fn sent_since_empty(&mut self, tick: u32) -> bool {
-        match &mut self.emptied {
-            None => {
-                self.emptied = Some((tick, false));
-                false
+    /// despawned, which it may be only then ([`close`]). An entity
+    /// despawned in the same send as someone leaves its room is written to
+    /// them neither as despawned nor as gone from sight (replicon 0.44's
+    /// `collect_despawns`; the trap Bridge Wars fell into on 2026-11-09,
+    /// there with everyone moved out as the game was despawned), and a
+    /// device keeps it until its connection goes: the last table's board,
+    /// on a device that has gone on to the next, beside the next one's.
+    /// Whoever goes as the results run out for those still there holds the
+    /// close back as much as the last of them to go does. A send goes out
+    /// in the frame the tick moves, after every game has run: so the table
+    /// may close the frame after it has been seen to move. Asked every
+    /// frame, so that it sees the tick move.
+    fn sent_since_anyone_went(&mut self, tick: u32) -> bool {
+        if std::mem::take(&mut self.went_out) {
+            self.gone_out = Some((tick, false));
+        }
+        match &mut self.gone_out {
+            None => true,
+            Some((_, true)) => {
+                self.gone_out = None;
+                true
             }
-            Some((_, true)) => true,
             Some((at, sent)) => {
                 *sent = tick != *at;
                 false
@@ -471,13 +503,29 @@ impl Table {
             }
     }
 
-    /// Holds `seat` for the account `account`, whose fee is being taken: the
-    /// wait begins again from now, as it does when anyone sits down.
-    fn hold(&mut self, seat: usize, account: u64) {
-        self.holds.push((seat, account));
-        if let Stage::Waiting { since_join, .. } = &mut self.stage {
-            *since_join = 0.0;
-        }
+    /// Someone is coming to sit down while it waits for people (seated now,
+    /// or their seat held while their fee is taken): it waits again from
+    /// now, as long as its game says ([`Rules::wait_from_join`]), which is
+    /// told how long it had still to wait if it was waiting already (with
+    /// the computer, for it to come, which once it has begun is waited for
+    /// no more; without, for the countdown, which it is only with as many
+    /// people as the game begins with). Asked before they are counted.
+    fn rewait(&mut self, rules: &dyn Rules) {
+        let Stage::Waiting { since_join, coming } = self.stage else {
+            return;
+        };
+        let before = self.people() + self.holds.len();
+        let waiting = if self.shape.computer {
+            coming.is_none() && before > 0
+        } else {
+            before >= self.shape.fewest
+        };
+        let left = waiting.then(|| (self.shape.wait - since_join).max(0.0));
+        let wait = rules.wait_from_join(self, left).max(0.0);
+        self.stage = Stage::Waiting {
+            since_join: self.shape.wait - wait,
+            coming,
+        };
     }
 
     /// The seat held for `account`, no longer held, if it still was.
@@ -500,9 +548,9 @@ impl Table {
     /// Whoever is in `seat` leaves the table for good, however they leave.
     /// Before the play the seat is anyone's again, and a game without the
     /// computer counting down with too few people left waits again; the
-    /// account and the fee to give back, if there is one. While it is
-    /// played the seat stays theirs with no body, and the game hears of it
-    /// as the table next runs ([`Rules::left`]); after, it stays theirs.
+    /// account and the fee to give back, if there is one. Once the play has
+    /// begun the seat stays theirs with no body, and the game hears of it,
+    /// and of the body, as the table next runs ([`Rules::left`]).
     fn leave(&mut self, seat: usize) -> Option<(u64, u32)> {
         if !self.seats[seat].here() {
             return None;
@@ -520,16 +568,9 @@ impl Table {
                 }
                 (back.1 > 0).then_some(back)
             }
-            Stage::Playing { .. } => {
+            Stage::Playing { .. } | Stage::Over { .. } => {
                 let left = &mut self.seats[seat];
-                left.gone = true;
-                left.away = false;
-                left.body = Entity::PLACEHOLDER;
-                self.lefts.push(seat);
-                None
-            }
-            Stage::Over { .. } => {
-                let left = &mut self.seats[seat];
+                self.lefts.push((seat, left.body));
                 left.gone = true;
                 left.away = false;
                 left.body = Entity::PLACEHOLDER;
@@ -601,6 +642,14 @@ impl Table {
 /// own, each of the four in its own module. The table calls it as it goes
 /// ([`run`], [`hear`]); a game acts on the world only through what it is
 /// handed ([`Ctx`]), and is told everything it has to know.
+///
+/// A person's seat may change before the play: whoever sits past the seats
+/// the game settles on is moved up into one it has, as the computer begins
+/// to come, and as a game without the computer begins ([`close_ranks`]).
+/// Their device is told the new seat by being stood afresh in it
+/// (`Tell::Arrive`, its `seat`), not by `Tell::Entered` again, which a
+/// device takes for a table begun afresh. From [`Rules::begin`] on, seats
+/// do not change.
 pub(crate) trait Rules: Send + Sync + 'static {
     /// Where someone just seated in `seat` stands while the table waits, and
     /// which way they face (radians about the upright, as [`yaw_of`]).
@@ -636,6 +685,18 @@ pub(crate) trait Rules: Send + Sync + 'static {
         (seats.len() == count).then_some(seats)
     }
 
+    /// How many seconds the table waits from now, someone having just sat
+    /// down at it as it waits for people (or had their seat held while
+    /// their fee is taken), before the computer comes (with the computer)
+    /// or the countdown begins (without): `left` is how long it had still
+    /// to wait, if it was waiting already, and None if it was not (nobody
+    /// there yet, or too few people to begin). By default the game's whole
+    /// wait again (`shape.wait`), from the last person in, as Bridge Wars'
+    /// ("10second later it will fill with bots").
+    fn wait_from_join(&self, table: &Table, _left: Option<f32>) -> f32 {
+        table.shape.wait
+    }
+
     /// Each frame before play (waiting, counting down).
     fn idle(&mut self, _ctx: &mut Ctx, _table: &mut Table, _dt: f32) {}
 
@@ -645,19 +706,29 @@ pub(crate) trait Rules: Send + Sync + 'static {
     fn begin(&mut self, ctx: &mut Ctx, table: &mut Table);
 
     /// A frame of play, `dt` seconds on (`table.stage`'s `elapsed` counts
-    /// this frame already). It ends the game with [`Table::finish`].
+    /// this frame already). It ends the game with [`Table::finish`]; and it
+    /// says when someone is out of it before then ([`Seat::out`]).
     fn step(&mut self, ctx: &mut Ctx, table: &mut Table, dt: f32);
 
-    /// Something someone seated asked: any [`Ask`] but `Join`, `Leave`,
-    /// `Skip`, `Chat`, `Hello`, `Profile`, `Social` and `Travel`, which the
-    /// table and the rest of the server answer; and only while they are in
-    /// the table's room. A punch (`Ask::Punch`) and a fall into the void
-    /// (`Ask::Respawn`) at a table are their game's alone.
+    /// Something someone seated asked: any [`Ask`] but `Join` (and the two
+    /// older games' joins, `Arena` and `Play`), `Leave`, `Chat`, `Hello`,
+    /// `Profile`, `Social` and `Travel`, which the table and the rest of
+    /// the server answer; and only while they are in the table's room.
+    /// `Skip` only while it is played, and only with `RT_ALLOW_SKIP`
+    /// (`config.allow_skip`): the table skips its own waits, and the play
+    /// is the game's to skip as it will, or not. A punch (`Ask::Punch`) and
+    /// a fall into the void (`Ask::Respawn`) at a table are their game's
+    /// alone.
     fn hear(&mut self, _ctx: &mut Ctx, _table: &mut Table, _seat: usize, _ask: &Ask) {}
 
-    /// `seat` has left for good while it is played: back to the town, or
-    /// their device gone and given up.
-    fn left(&mut self, _ctx: &mut Ctx, _table: &mut Table, _seat: usize) {}
+    /// `seat` has left for good since the play began, while it is played or
+    /// with its results up (`table.over()`, when it only has to tidy up):
+    /// back to the town, into another game, or their device gone and given
+    /// up. `body` is the body that sat there, if it is still about (not if
+    /// it went with its device), wherever it is now: for the game to take
+    /// off it whatever it put on it (a sword, a glow), which it may have
+    /// carried out of the room for the frame or two before this.
+    fn left(&mut self, _ctx: &mut Ctx, _table: &mut Table, _seat: usize, _body: Option<Entity>) {}
 
     /// `seat`'s device is back after its connection went, and begins the
     /// game afresh (`Tell::Entered` has been sent; a `Tell::Arrive` where
@@ -668,10 +739,13 @@ pub(crate) trait Rules: Send + Sync + 'static {
     /// changed.
     fn show(&mut self, commands: &mut Commands, table: &Table);
 
-    /// Despawns everything the game spawned in its room: the table is
-    /// closing (its computer players' bodies and its board are the
-    /// table's).
-    fn close(&mut self, commands: &mut Commands);
+    /// The table is closing, everyone still at it in its room for one frame
+    /// more: despawns everything the game spawned in its room (its computer
+    /// players' bodies and its board are the table's), and takes off the
+    /// bodies of the people still at it whatever it put on them (each
+    /// seat's `body` where `here()`; those who left were [`Rules::left`]),
+    /// who go back to the town the frame after.
+    fn close(&mut self, commands: &mut Commands, table: &Table);
 }
 
 /// The game played at a new table of `game`, numbered as `table` is, its
@@ -699,9 +773,6 @@ pub(crate) type Bodies<'w, 's> = Query<
         &'static Member,
     ),
 >;
-
-/// Every person's account, apart from who their body passes for.
-pub(crate) type Accounts<'w, 's> = Query<'w, 's, (&'static Account, Has<Disguised>)>;
 
 /// What a table acts on the world with, in each of its systems: what is
 /// spawned and despawned, what devices are told, and every body.
@@ -941,6 +1012,9 @@ impl Tables {
     /// `body` has left the table in `room` for good: back to the town, to
     /// another game, or its device gone and given up ([`Table::leave`]),
     /// its fee given back as the tables next run if the game had not begun.
+    /// Every way out of a table's room comes here first, so that the table
+    /// does not close until whoever went has been sent that it is gone from
+    /// their sight ([`Table::sent_since_anyone_went`]).
     pub(crate) fn walk_out(&mut self, room: Room, body: Entity) {
         let Room::Table(game, id) = room else {
             return;
@@ -948,6 +1022,7 @@ impl Tables {
         let Some(table) = self.tables.get_mut(&(game, id)) else {
             return;
         };
+        table.went_out = true;
         let Some(seat) = table.seat_of(body) else {
             return;
         };
@@ -1023,11 +1098,12 @@ impl Tables {
             .is_some_and(|table| matches!(table.stage, Stage::Waiting { .. } | Stage::Countdown { .. }))
     }
 
-    /// Whether `body` is done with the table in `room`: its game is over, and
-    /// it is free to go into another game, of any kind, as one done with a
-    /// game of Bridge Wars is.
+    /// Whether `body` is done with the table in `room`: its game is over, or
+    /// it is out of it ([`Seat::out`]), and it is free to go into another
+    /// game, of any kind, as one done with a game of Bridge Wars is.
     pub(crate) fn done_with(&self, room: Room, body: Entity) -> bool {
-        self.seated(room, body).is_some_and(|(table, _)| table.over())
+        self.seated(room, body)
+            .is_some_and(|(table, seat)| table.over() || table.seats[seat].out)
     }
 
     /// How many people are at each of the four games' tables, theirs
@@ -1070,19 +1146,44 @@ impl Tables {
     /// and which seats, in their order: the one filling now, if anyone may
     /// still sit down at it and it has their seats free
     /// ([`Rules::seats_for`]); otherwise a new one, the old one left to
-    /// fill with whoever is at it (and the computer).
+    /// fill with whoever is at it (and the computer). In a game without the
+    /// computer, any of its tables anyone may still sit down at, the oldest
+    /// first, before a new one (mine): nothing else fills a table there,
+    /// and someone waiting alone for a second person at one that a group
+    /// did not fit into would otherwise wait for good, everyone after them
+    /// sat down at the group's table or at newer ones.
     fn filling(&mut self, commands: &mut Commands, game: Minigame, count: usize) -> Option<(u32, Vec<usize>)> {
-        if let Some(&id) = self.filling.get(&game)
-            && let (Some(table), Some(rules)) = (self.tables.get(&(game, id)), self.games.get(&(game, id)))
-            && table.joinable()
-            && let Some(seats) = rules.seats_for(table, count)
-        {
-            return Some((id, seats));
+        let shape = table::shape(game)?;
+        let tries: Vec<u32> = if shape.computer {
+            self.filling.get(&game).copied().into_iter().collect()
+        } else {
+            let mut ids: Vec<u32> = self.tables.keys().filter(|(of, _)| *of == game).map(|&(_, id)| id).collect();
+            ids.sort_unstable();
+            ids
+        };
+        for id in tries {
+            if let (Some(table), Some(rules)) = (self.tables.get(&(game, id)), self.games.get(&(game, id)))
+                && table.joinable()
+                && let Some(seats) = rules.seats_for(table, count)
+            {
+                return Some((id, seats));
+            }
         }
         let id = self.open_table(commands, game)?;
         let key = (game, id);
         let seats = self.games.get(&key)?.seats_for(self.tables.get(&key)?, count)?;
         Some((id, seats))
+    }
+
+    /// Holds `seat` at the table numbered `id` of `game` for the account
+    /// `account`, whose fee is being taken: the table waits again from now,
+    /// as it does when anyone sits down ([`Table::rewait`]).
+    fn hold(&mut self, (game, id): (Minigame, u32), seat: usize, account: u64) {
+        let (Some(table), Some(rules)) = (self.tables.get_mut(&(game, id)), self.games.get(&(game, id))) else {
+            return;
+        };
+        table.rewait(rules.as_ref());
+        table.holds.push((seat, account));
     }
 
     /// The seat held at the table numbered `id` of `game` for `account`,
@@ -1159,6 +1260,7 @@ fn sit(
         return;
     }
     info!("{} sits at {} table {id}, in seat {seat}", member.name, name(game));
+    table.rewait(rules.as_ref());
     table.seats[seat] = Seat {
         body,
         member,
@@ -1167,14 +1269,12 @@ fn sit(
         away: false,
         paid,
         vacant: false,
+        out: false,
         missed: false,
     };
     let (at, yaw) = rules.waiting_spot(table, seat);
     table.at[seat] = at;
     table.yaw[seat] = yaw;
-    if let Stage::Waiting { since_join, .. } = &mut table.stage {
-        *since_join = 0.0;
-    }
     let Ok((body_of, spot, venue, _)) = ctx.bodies.get_mut(body) else {
         return;
     };
@@ -1221,6 +1321,7 @@ fn seat_computer(ctx: &mut Ctx, table: &mut Table, rules: &mut dyn Rules, seat: 
         away: false,
         paid: 0,
         vacant: false,
+        out: false,
         missed: false,
     };
     table.at[seat] = at;
@@ -1233,14 +1334,15 @@ fn seat_computer(ctx: &mut Ctx, table: &mut Table, rules: &mut dyn Rules, seat: 
 /// come, so that someone left alone in Bridge Race's far seat is where one
 /// against one is played; and as a table without the computer begins, so
 /// that its people are numbered from 0 with nobody missing between. Whoever
-/// is moved is told their new seat ([`Tell::Entered`]), and, `stand`, put
-/// where the game has it wait.
+/// is moved is stood afresh in their new seat, which their device is told
+/// with it (`Tell::Arrive`, through [`Ctx::place`]): `stand`, where the
+/// game has that seat wait; otherwise where they stand. Not with
+/// `Tell::Entered`, which their device would take for a table begun afresh
+/// on it, its name said across the screen again and its board put up anew
+/// (mine).
 fn close_ranks(ctx: &mut Ctx, table: &mut Table, rules: &mut dyn Rules, size: usize, stand: bool) {
     let order = table.order();
-    loop {
-        let Some(from) = (size..table.seats.len()).find(|&seat| !table.seats[seat].vacant || table.held(seat)) else {
-            break;
-        };
+    while let Some(from) = (size..table.seats.len()).find(|&seat| !table.seats[seat].vacant || table.held(seat)) {
         let Some(to) = order.iter().copied().find(|&seat| seat < size && table.seats[seat].vacant && !table.held(seat)) else {
             break;
         };
@@ -1252,21 +1354,15 @@ fn close_ranks(ctx: &mut Ctx, table: &mut Table, rules: &mut dyn Rules, size: us
         table.at.swap(from, to);
         table.yaw.swap(from, to);
         info!("{} table {}: seat {from} moves up to seat {to}", name(table.game), table.id);
-        let body = table.seats[to].body;
         if !table.seats[to].here() {
             continue;
         }
-        if let Ok((body_of, ..)) = ctx.bodies.get(body)
-            && let Some(client) = body_of.client
-        {
-            tell(ctx.tells, client, Tell::Entered { game: table.game, seat: to as u8 });
-        }
-        if stand {
-            let (at, yaw) = rules.waiting_spot(table, to);
-            ctx.place(table, to, at, yaw);
-        } else if let Ok((mut body_of, ..)) = ctx.bodies.get_mut(body) {
-            body_of.seat = to as u8;
-        }
+        let (at, yaw) = if stand {
+            rules.waiting_spot(table, to)
+        } else {
+            (table.at[to], table.yaw[to])
+        };
+        ctx.place(table, to, at, yaw);
     }
 }
 
@@ -1335,22 +1431,39 @@ fn hear(
             }
             // For trying the games out (`RT_ALLOW_SKIP`): the wait is over
             // now, and the computer comes all at once; or the countdown is.
-            // The play is the game's, to skip as it offers.
+            // The play is the game's, to skip as it offers (`Rules::hear`).
             Ask::Skip if matches!(room, Room::Table(..)) => {
                 if !config.allow_skip {
                     continue;
                 }
-                let Some((table, _)) = tables.of(room, body) else {
+                let Room::Table(game, id) = room else {
                     continue;
                 };
-                match &mut table.stage {
+                let Tables { tables: all, games: rules, .. } = &mut *tables;
+                let (Some(table), Some(rules)) = (all.get_mut(&(game, id)), rules.get_mut(&(game, id))) else {
+                    continue;
+                };
+                let Some(seat) = table.seat_of(body).filter(|_| !table.closing) else {
+                    continue;
+                };
+                match table.stage {
                     Stage::Waiting { .. } => table.hurried = true,
-                    Stage::Countdown { left } => *left = 0.0,
-                    Stage::Playing { .. } | Stage::Over { .. } => {}
+                    Stage::Countdown { left } => table.stage = Stage::Countdown { left: left.min(0.0) },
+                    Stage::Playing { .. } => rules.hear(&mut ctx, table, seat, &ask.message),
+                    Stage::Over { .. } => {}
                 }
             }
-            // What the table and the rest of the server answer.
-            Ask::Hello { .. } | Ask::Profile { .. } | Ask::Social(_) | Ask::Chat(_) | Ask::Leave | Ask::Skip | Ask::Travel(_) => {}
+            // What the table and the rest of the server answer: the two
+            // older games' joins are theirs (`arena`, `builder`).
+            Ask::Hello { .. }
+            | Ask::Profile { .. }
+            | Ask::Social(_)
+            | Ask::Chat(_)
+            | Ask::Leave
+            | Ask::Skip
+            | Ask::Travel(_)
+            | Ask::Arena
+            | Ask::Play => {}
             // Everything else asked at a table is its game's.
             other => {
                 let Room::Table(game, id) = room else {
@@ -1445,9 +1558,7 @@ fn join(
         // line saying why, and seated in the seat held for them once it has
         // been ([`paid`]).
         if bank.kept() {
-            if let Some(table) = tables.tables.get_mut(&(game, id)) {
-                table.hold(seat, account);
-            }
+            tables.hold((game, id), seat, account);
             bank.charge(account, shape.fee, why(game, Coins::Entry), game, Some(id));
             ctx.commands.entity(entity).insert(Paying { game, into: Some(id) });
             continue;
@@ -1567,11 +1678,13 @@ fn run(
         let rules = rules.as_mut();
         let mut ctx = hands.ctx(now, clock, &config);
         // What happened to it from outside since it last ran: seats left
-        // for good while it was played, for its game to hear of, and
-        // devices back for it, to begin it afresh on.
+        // for good since the play began, for its game to hear of, with the
+        // body that sat in each if it is still about, and devices back for
+        // it, to begin it afresh on.
         if !table.closing {
-            for seat in std::mem::take(&mut table.lefts) {
-                rules.left(&mut ctx, table, seat);
+            for (seat, body) in std::mem::take(&mut table.lefts) {
+                let body = Some(body).filter(|&body| ctx.bodies.contains(body));
+                rules.left(&mut ctx, table, seat, body);
             }
             for seat in std::mem::take(&mut table.backs) {
                 welcome_back(&mut ctx, table, rules, seat);
@@ -1595,16 +1708,14 @@ fn run(
         if table.over() && social.first_time(key.0, key.1) {
             finish_up(&mut ctx, table, &everyone, &bank, &mut social);
         }
-        // Nobody left at it: closed once whoever went last has been told
-        // it is gone from their sight ([`Table::sent_since_empty`]).
-        let everyone_gone = if table.people() == 0 && table.holds.is_empty() {
-            table.sent_since_empty(tick.get())
-        } else {
-            table.emptied = None;
-            false
-        };
+        // Its results up their while, nobody left at it, or nobody watching
+        // it for a minute: closed, but only once whoever went out of its
+        // room last has been told it is gone from their sight
+        // ([`Table::sent_since_anyone_went`], asked every frame).
+        let told = table.sent_since_anyone_went(tick.get());
+        let everyone_gone = table.people() == 0 && table.holds.is_empty();
         let done = matches!(table.stage, Stage::Over { left } if left <= 0.0);
-        if done || everyone_gone || table.unwatched > ABANDONED {
+        if (done || everyone_gone || table.unwatched > ABANDONED) && told {
             close(&mut ctx, table, rules);
             continue;
         }
@@ -1619,7 +1730,10 @@ fn run(
                 let left = left - dt;
                 table.stage = Stage::Countdown { left };
                 rules.idle(&mut ctx, table, dt);
-                if left <= 0.0 {
+                // Counted down: the game begins; a moment more, though, for
+                // whoever sat down in its last moment, their fee still being
+                // taken, so that they play ([`HELD_MOST`]).
+                if left <= 0.0 && (table.holds.is_empty() || left <= -HELD_MOST) {
                     begin(&mut ctx, table, rules, &mut everyone, refunds);
                 }
             }
@@ -1732,9 +1846,11 @@ fn wait(ctx: &mut Ctx, table: &mut Table, rules: &mut dyn Rules, dt: f32) {
 /// The countdown is over: the game begins. Whoever's device went while the
 /// table waited, and is not back, has given their seat up, their fee given
 /// back; a table without the computer that has too few people for it now
-/// waits again; the computer takes every seat left in a game with it, and
-/// in one without its people are numbered from 0 ([`close_ranks`]); and
-/// the game stands everyone where it begins ([`Rules::begin`]).
+/// waits again; a seat still held for whoever's fee is being taken is held
+/// no more, and they sit down at another table as it is taken ([`paid`]);
+/// the computer takes every seat left in a game with it, and in one without
+/// its people are numbered from 0 ([`close_ranks`]); and the game stands
+/// everyone where it begins ([`Rules::begin`]).
 fn begin(ctx: &mut Ctx, table: &mut Table, rules: &mut dyn Rules, everyone: &mut Everyone, refunds: &mut Vec<Refund>) {
     for seat in 0..table.seats.len() {
         if !table.seats[seat].here() {
@@ -1770,6 +1886,14 @@ fn begin(ctx: &mut Ctx, table: &mut Table, rules: &mut dyn Rules, everyone: &mut
     if people == 0 {
         return;
     }
+    // Before anyone is moved up: a seat held for someone who is not seated
+    // yet would keep a person past the seats the game has out of the one
+    // left for them, and the game would begin without them, and a seat
+    // short.
+    if !table.holds.is_empty() {
+        info!("{} table {}: begins without whoever's fee is still being taken", name(table.game), table.id);
+        table.holds.clear();
+    }
     if table.shape.computer {
         let order = table.order();
         for seat in order {
@@ -1781,7 +1905,6 @@ fn begin(ctx: &mut Ctx, table: &mut Table, rules: &mut dyn Rules, everyone: &mut
         table.size = people;
         close_ranks(ctx, table, rules, people, false);
     }
-    table.holds.clear();
     let size = table.size.min(table.seats.len());
     table.seats.truncate(size);
     table.at.truncate(size);
@@ -1865,7 +1988,10 @@ fn welcome_back(ctx: &mut Ctx, table: &mut Table, rules: &mut dyn Rules, seat: u
 /// account in the database, whose answer tells their device
 /// (`fees::credited`), or without one, onto their body; and whoever played
 /// it to its end earns toward their level, more for coming first
-/// (`social`).
+/// (`social`): whoever is placed first, those tied there alike, but nobody
+/// when every seat is placed first, a draw (Bridge Race's; two people at
+/// Blend In who both found the other, or neither), as nobody does in a
+/// game of Bridge Wars that is drawn; and so nobody playing alone (mine).
 fn finish_up(ctx: &mut Ctx, table: &Table, everyone: &Everyone, bank: &Bank, social: &mut Social) {
     let Some(results) = &table.results else {
         return;
@@ -1892,10 +2018,12 @@ fn finish_up(ctx: &mut Ctx, table: &Table, everyone: &Everyone, bank: &Bank, soc
             tell(ctx.tells, client, Tell::Balance(body_of.coins));
         }
     }
+    let anyone_won = results.places.iter().any(|&place| place > 0);
     for (it, &place) in table.seats.iter().zip(&results.places) {
         // (Nor whoever's device has gone, their seat waiting.)
         if it.here() && !it.away {
-            social.award(it.member.id, XP_PLAYED + if place == 0 { XP_WON } else { 0 });
+            let won = anyone_won && place == 0;
+            social.award(it.member.id, XP_PLAYED + if won { XP_WON } else { 0 });
         }
     }
     info!(
@@ -1967,30 +2095,29 @@ fn close(ctx: &mut Ctx, table: &mut Table, rules: &mut dyn Rules) {
             ctx.commands.entity(it.body).try_despawn();
         }
     }
-    rules.close(ctx.commands);
+    rules.close(ctx.commands, table);
     ctx.commands.entity(table.shown).try_despawn();
     table.closing = true;
     info!("{} table {} closing", name(table.game), table.id);
 }
 
-/// The end of a table, the frame after [`close`]: everyone still at it is
-/// who their account is again and goes back to the town, or, if their
-/// device has gone, is forgotten.
-fn end(ctx: &mut Ctx, table: &mut Table, everyone: &mut Everyone, towns: &mut Towns) {
-    for seat in 0..table.seats.len() {
-        let it = &table.seats[seat];
-        if !it.here() {
-            continue;
-        }
-        let body = it.body;
+/// The end of a table, the frame after [`close`]: everyone still in its
+/// room, seated or not (nobody should be there unseated, but a body left
+/// there would otherwise be there for good), is who their account is again
+/// and goes back to the town, or, if their device has gone, is forgotten.
+fn end(ctx: &mut Ctx, table: &Table, everyone: &mut Everyone, towns: &mut Towns) {
+    let inside: Vec<(Who, Entity)> = everyone
+        .0
+        .iter()
+        .filter(|&(_, &body)| ctx.bodies.get(body).is_ok_and(|(body_of, ..)| body_of.room == table.room))
+        .map(|(&who, &body)| (who, body))
+        .collect();
+    for (who, body) in inside {
         let Ok((body_of, ..)) = ctx.bodies.get(body) else {
             continue;
         };
-        if body_of.room != table.room {
-            continue;
-        }
         if body_of.client.is_none() {
-            everyone.0.remove(&body_of.who);
+            everyone.0.remove(&who);
             ctx.commands.entity(body).try_despawn();
             continue;
         }
@@ -2017,8 +2144,8 @@ fn end(ctx: &mut Ctx, table: &mut Table, everyone: &mut Everyone, towns: &mut To
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
-    use std::sync::Mutex;
     use std::sync::mpsc::{Receiver, Sender, channel};
+    use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
     use bevy::ecs::message::Messages;
@@ -2026,6 +2153,7 @@ mod tests {
 
     use super::*;
     use crate::accounts::{Credited, Done, Job, Loaded, Snapshot};
+    use crate::players::Account;
     use crate::rooms::ClientRoom;
 
     const BLEND_IN: Minigame = Minigame::BlendIn;
@@ -2108,7 +2236,8 @@ mod tests {
         }
 
         /// Someone in the town, the account `id` with `coins` to spend: their
-        /// device and their body, as `players::admit` lets them in.
+        /// device and their body, as `players::admit` lets them in, known
+        /// to `social` by their name, with nothing earned yet.
         fn person(&mut self, id: u64, coins: u32) -> (Entity, Entity) {
             let client = self.world.spawn_empty().id();
             let body = self.world.spawn_empty().id();
@@ -2120,6 +2249,7 @@ mod tests {
                 look: "boy".into(),
                 ai: false,
             };
+            self.world.resource_mut::<Social>().enroll(id, &member.name, None, 0);
             let (at, turn) = roundtown_net::arrival(Venue::Town, usize::from(seat));
             self.world.entity_mut(body).insert((
                 Replicated,
@@ -2215,6 +2345,19 @@ mod tests {
             })
         }
 
+        /// How many times `client` was told it is at a table.
+        fn times_entered(&self, client: Entity) -> usize {
+            self.heard(client).iter().filter(|tell| matches!(tell, Tell::Entered { .. })).count()
+        }
+
+        /// The venue and the seat `client` was last stood in afresh.
+        fn arrived(&self, client: Entity) -> Option<(Venue, u8)> {
+            self.heard(client).iter().rev().find_map(|tell| match tell {
+                Tell::Arrive { venue, seat, .. } => Some((*venue, *seat)),
+                _ => None,
+            })
+        }
+
         /// What `client` was last told it has.
         fn balance(&self, client: Entity) -> Option<u32> {
             self.heard(client).iter().rev().find_map(|tell| match tell {
@@ -2223,13 +2366,18 @@ mod tests {
             })
         }
 
+        /// What the account `id` has earned toward its level.
+        fn xp(&self, id: u64) -> u32 {
+            self.world.resource::<Social>().person(id).map_or(0, |person| person.xp)
+        }
+
         /// How many of the computer's players sit at a table.
         fn computers(&self, game: Minigame, id: u32) -> usize {
             self.table(game, id).seats.iter().filter(|seat| seat.computer).count()
         }
 
         /// Through the countdown and into the game, skipping what can be.
-        fn into_the_game(&mut self, client: Entity, game: Minigame, id: u32) {
+        fn skip_to_the_game(&mut self, client: Entity, game: Minigame, id: u32) {
             self.ask(client, Ask::Skip);
             self.frame(0.1);
             self.until(10.0, |server| server.table(game, id).playing());
@@ -2421,7 +2569,9 @@ mod tests {
     fn whoever_is_left_past_the_seats_a_game_has_is_moved_up_before_it_begins() {
         // Bridge Race: two people, and the first leaves. The second, alone
         // in red's far seat, is moved to its first as the computer comes,
-        // and plays one against one.
+        // stood where that seat waits, and plays one against one; told so
+        // by being stood there, not by being told again that it is at the
+        // table, which its device would take for a table begun afresh.
         let mut server = Server::new(false);
         let (a, _) = server.person(1, 1000);
         let (b, body_b) = server.person(2, 1000);
@@ -2432,14 +2582,21 @@ mod tests {
         assert_eq!(server.entered(b), Some((BRIDGE_RACE, 2)));
         server.ask(a, Ask::Leave);
         server.frame(0.1);
+        server.until(30.0, |server| server.computers(BRIDGE_RACE, 0) > 0);
+        assert_eq!(server.arrived(b), Some((Venue::BridgeRace, 0)));
+        assert_eq!(server.body(body_b).seat, 0);
+        let spot = server.world.get::<Spot>(body_b).expect("a spot").translation();
+        assert!((spot - bridge_race::waiting_spot(0)).length() < 0.02, "{spot}");
         server.until(30.0, |server| server.table(BRIDGE_RACE, 0).playing());
-        assert_eq!(server.entered(b), Some((BRIDGE_RACE, 0)));
+        assert_eq!((server.entered(b), server.times_entered(b)), (Some((BRIDGE_RACE, 2)), 1));
         let table = server.table(BRIDGE_RACE, 0);
         assert_eq!(table.seats.len(), 2);
         assert!(table.seats[0].body == body_b && table.seats[1].computer);
         assert_eq!(server.body(body_b).seat, 0);
         // Last Stand: three people, and the second leaves. The third is
-        // numbered 1 as the game begins, with two seats.
+        // numbered 1 as the game begins, with two seats, and stood afresh
+        // where they stand in it, whether or not the game stands them
+        // anywhere as it begins (this one does not).
         let mut server = Server::new(false);
         let (a, _) = server.person(1, 1000);
         let (b, _) = server.person(2, 1000);
@@ -2451,12 +2608,23 @@ mod tests {
         server.ask(b, Ask::Leave);
         server.frame(0.1);
         assert_eq!(server.entered(c), Some((LAST_STAND, 2)));
+        server.world.resource_mut::<Tables>().games.insert((LAST_STAND, 0), Box::new(OverAsTheyGo));
+        let stood = server.world.get::<Spot>(body_c).expect("a spot").translation();
         server.until(30.0, |server| server.table(LAST_STAND, 0).playing());
-        assert_eq!(server.entered(c), Some((LAST_STAND, 1)));
+        assert_eq!((server.entered(c), server.times_entered(c)), (Some((LAST_STAND, 2)), 1));
         let table = server.table(LAST_STAND, 0);
         assert_eq!((table.size, table.seats.len()), (2, 2));
         assert_eq!(table.seats[1].body, body_c);
-        assert!(matches!(server.heard(c).last(), Some(Tell::Arrive { venue: Venue::LastStand, seat: 1, .. })));
+        assert_eq!(server.body(body_c).seat, 1);
+        match server.heard(c).last() {
+            Some(Tell::Arrive {
+                venue: Venue::LastStand,
+                seat: 1,
+                spot: Some(spot),
+                ..
+            }) => assert!((spot.translation() - stood).length() < 0.02),
+            other => panic!("not stood afresh in seat 1: {other:?}"),
+        }
     }
 
     #[test]
@@ -2546,7 +2714,7 @@ mod tests {
         server.ask(a, Ask::Skip);
         server.frame(0.1);
         assert_eq!(server.computers(KNOCK_OFF, 0), 2);
-        server.into_the_game(a, KNOCK_OFF, 0);
+        server.skip_to_the_game(a, KNOCK_OFF, 0);
         server.table_mut(KNOCK_OFF, 0).finish(vec![0, 0, 2, 3], vec![9, 9, 4, 0], None);
         server.frame(0.1);
         let results = server.table(KNOCK_OFF, 0).results.clone().expect("how it came out");
@@ -2566,7 +2734,7 @@ mod tests {
             server.frame(0.1);
             server.ask(a, Ask::Skip);
             server.frame(0.1);
-            server.into_the_game(a, LAST_STAND, 0);
+            server.skip_to_the_game(a, LAST_STAND, 0);
             assert_eq!(server.computers(LAST_STAND, 0), 0);
             server.table_mut(LAST_STAND, 0).finish(vec![0, 0], vec![310, 120], Some(waves));
             server.frame(0.1);
@@ -2661,13 +2829,13 @@ mod tests {
         }
         fn begin(&mut self, _ctx: &mut Ctx, _table: &mut Table) {}
         fn step(&mut self, _ctx: &mut Ctx, _table: &mut Table, _dt: f32) {}
-        fn left(&mut self, _ctx: &mut Ctx, table: &mut Table, _seat: usize) {
+        fn left(&mut self, _ctx: &mut Ctx, table: &mut Table, _seat: usize, _body: Option<Entity>) {
             if table.people() == 0 {
                 table.finish(vec![1, 0, 2, 3], vec![0; 4], None);
             }
         }
         fn show(&mut self, _commands: &mut Commands, _table: &Table) {}
-        fn close(&mut self, _commands: &mut Commands) {}
+        fn close(&mut self, _commands: &mut Commands, _table: &Table) {}
     }
 
     #[test]
@@ -2678,7 +2846,7 @@ mod tests {
         server.frame(0.1);
         server.ask(a, Ask::Skip);
         server.frame(0.1);
-        server.into_the_game(a, KNOCK_OFF, 0);
+        server.skip_to_the_game(a, KNOCK_OFF, 0);
         server.world.resource_mut::<Tables>().games.insert((KNOCK_OFF, 0), Box::new(OverAsTheyGo));
         server.ask(a, Ask::Leave);
         server.frame(0.1);
@@ -2699,7 +2867,7 @@ mod tests {
         server.frame(0.1);
         server.ask(a, Ask::Skip);
         server.frame(0.1);
-        server.into_the_game(a, BLEND_IN, 0);
+        server.skip_to_the_game(a, BLEND_IN, 0);
         server.table_mut(BLEND_IN, 0).finish(vec![0, 1], vec![1, 0], None);
         server.frame(0.1);
         let shown = server.table(BLEND_IN, 0).shown;
@@ -2716,7 +2884,7 @@ mod tests {
         // only after that is it despawned.
         let tick = server.world.resource::<ServerTick>().get();
         let table = server.table(BLEND_IN, 0);
-        assert_eq!((table.people(), table.closing, table.emptied), (0, false, Some((tick, false))));
+        assert_eq!((table.people(), table.closing, table.gone_out), (0, false, Some((tick, false))));
         assert!(server.world.get_entity(shown).is_ok());
         server.frame(0.1);
         assert!(!server.table(BLEND_IN, 0).closing);
@@ -2727,11 +2895,57 @@ mod tests {
         server.frame(0.1);
         assert!(!server.world.resource::<Tables>().tables.contains_key(&(BLEND_IN, 0)));
         // However many frames go by without a send, it waits: the tick has
-        // to be seen to move, and the close is the frame after.
+        // to be seen to move, and the close is the frame after; with nobody
+        // gone, nothing holds it; and whoever goes meanwhile holds it again.
         let mut table = Table::new(BLEND_IN, 9, Entity::PLACEHOLDER, 1).expect("a table");
-        assert!(!table.sent_since_empty(5) && !table.sent_since_empty(5) && !table.sent_since_empty(5));
-        assert!(!table.sent_since_empty(6));
-        assert!(table.sent_since_empty(6));
+        assert!(table.sent_since_anyone_went(5));
+        table.went_out = true;
+        assert!(!table.sent_since_anyone_went(5) && !table.sent_since_anyone_went(5) && !table.sent_since_anyone_went(5));
+        assert!(!table.sent_since_anyone_went(6));
+        assert!(table.sent_since_anyone_went(6) && table.sent_since_anyone_went(6));
+        table.went_out = true;
+        assert!(!table.sent_since_anyone_went(6) && !table.sent_since_anyone_went(7));
+        table.went_out = true;
+        assert!(!table.sent_since_anyone_went(7) && !table.sent_since_anyone_went(8));
+        assert!(table.sent_since_anyone_went(8));
+    }
+
+    #[test]
+    fn a_table_at_its_results_closes_only_once_whoever_just_left_it_has_been_sent_that_it_is_gone() {
+        let mut server = Server::new(false);
+        let (a, _) = server.person(1, 1000);
+        let (b, body_b) = server.person(2, 1000);
+        server.ask(a, Ask::Join(KNOCK_OFF));
+        server.frame(0.1);
+        server.ask(b, Ask::Join(KNOCK_OFF));
+        server.frame(0.1);
+        server.ask(a, Ask::Skip);
+        server.frame(0.1);
+        server.skip_to_the_game(a, KNOCK_OFF, 0);
+        server.table_mut(KNOCK_OFF, 0).finish(vec![0, 1, 2, 3], vec![0; 4], None);
+        server.frame(0.1);
+        let shown = server.table(KNOCK_OFF, 0).shown;
+        let computers: Vec<Entity> = server.table(KNOCK_OFF, 0).seats.iter().filter(|it| it.computer).map(|it| it.body).collect();
+        // The results' last moment, and the second goes to the town in it,
+        // the first staying: nothing of the table goes in the send that
+        // tells the second it is gone from their sight...
+        server.table_mut(KNOCK_OFF, 0).stage = Stage::Over { left: 0.0 };
+        server.ask(b, Ask::Leave);
+        server.frame(0.1);
+        assert!(matches!(server.body(body_b).room, Room::Town(_)));
+        assert!(!server.table(KNOCK_OFF, 0).closing);
+        assert!(server.world.get_entity(shown).is_ok());
+        assert!(computers.iter().all(|&body| server.world.get_entity(body).is_ok()));
+        server.frame(0.1);
+        assert!(!server.table(KNOCK_OFF, 0).closing);
+        // ...but after it, and the first goes back to the town as ever.
+        server.frame(0.1);
+        assert!(server.table(KNOCK_OFF, 0).closing);
+        assert!(server.world.get_entity(shown).is_err());
+        assert!(computers.iter().all(|&body| server.world.get_entity(body).is_err()));
+        server.frame(0.1);
+        assert!(matches!(server.heard(a).last(), Some(Tell::Arrive { venue: Venue::Town, .. })));
+        assert!(!server.world.resource::<Tables>().tables.contains_key(&(KNOCK_OFF, 0)));
     }
 
     #[test]
@@ -2748,7 +2962,7 @@ mod tests {
         assert!(!server.world.resource::<Tables>().keeps(room, body_a));
         server.ask(a, Ask::Skip);
         server.frame(0.1);
-        server.into_the_game(b, BLEND_IN, 0);
+        server.skip_to_the_game(b, BLEND_IN, 0);
         assert!(server.world.resource::<Tables>().keeps(room, body_a));
         // Its device goes (as `players::gone` has it): the body stands in its
         // seat, away; what it is told meanwhile it misses.
@@ -2790,7 +3004,7 @@ mod tests {
         server.frame(0.1);
         server.ask(a, Ask::Skip);
         server.frame(0.1);
-        server.into_the_game(a, BLEND_IN, 0);
+        server.skip_to_the_game(a, BLEND_IN, 0);
         let mochi = |id: u64| Member {
             id,
             name: "Mochi".into(),
@@ -2861,5 +3075,326 @@ mod tests {
         server.act(BLEND_IN, 0, move |ctx, _| ctx.move_body(body, Vec3::new(11.0, 0.0, 5.0), 0.0));
         let after = server.world.entity(body).get_ref::<Spot>().expect("a spot").last_changed();
         assert_eq!(before, after, "written again for nothing");
+    }
+
+    /// Blend In's first table, with the database: three people seated, the
+    /// countdown begun, the second gone from it as it counts, a fourth
+    /// asking in then, into the second's seat, held while their fee is
+    /// taken, and the countdown over before it has been. The third's device
+    /// and body, and the fourth's.
+    fn counted_down_with_a_seat_held() -> (Server, (Entity, Entity), (Entity, Entity)) {
+        let mut server = Server::new(true);
+        let (a, _) = server.person(1, 1000);
+        let (b, _) = server.person(2, 1000);
+        let third = server.person(3, 1000);
+        let fourth = server.person(4, 1000);
+        for (client, id) in [(a, 1), (b, 2), (third.0, 3)] {
+            server.ask(client, Ask::Join(BLEND_IN));
+            server.frame(0.1);
+            server.charged(Charged {
+                id,
+                left: Some(950),
+                game: BLEND_IN,
+                into: Some(0),
+            });
+            server.frame(0.1);
+        }
+        assert_eq!(server.entered(third.0), Some((BLEND_IN, 2)));
+        server.ask(a, Ask::Skip);
+        server.frame(0.1);
+        assert!(matches!(server.table(BLEND_IN, 0).stage, Stage::Countdown { .. }));
+        server.ask(b, Ask::Leave);
+        server.frame(0.1);
+        server.ask(fourth.0, Ask::Join(BLEND_IN));
+        server.frame(0.1);
+        assert!(server.table(BLEND_IN, 0).held(1));
+        server.ask(a, Ask::Skip);
+        server.frame(0.1);
+        (server, third, fourth)
+    }
+
+    #[test]
+    fn nobody_is_left_out_as_a_game_without_the_computer_begins_while_a_fee_is_being_taken() {
+        // The fee taken a moment after the countdown is over: the game waits
+        // that moment, and the fourth plays, in the seat they were given.
+        let (mut server, (_, body_c), (d, body_d)) = counted_down_with_a_seat_held();
+        server.frame(0.5);
+        assert!(matches!(server.table(BLEND_IN, 0).stage, Stage::Countdown { .. }));
+        assert_eq!(server.table(BLEND_IN, 0).board().left, 0);
+        server.charged(Charged {
+            id: 4,
+            left: Some(950),
+            game: BLEND_IN,
+            into: Some(0),
+        });
+        server.frame(0.1);
+        assert_eq!(server.entered(d), Some((BLEND_IN, 1)));
+        let table = server.table(BLEND_IN, 0);
+        assert!(table.playing());
+        assert_eq!((table.size, table.seats.len(), table.people()), (3, 3, 3));
+        assert_eq!((table.seats[1].body, table.seats[2].body), (body_d, body_c));
+        // Taken too late: the game begins without them, everyone seated
+        // still seated (the third moved up into the second's seat, and
+        // stood afresh in it), and they sit down at a table of their own
+        // as their fee is taken.
+        let (mut server, (c, body_c), (d, body_d)) = counted_down_with_a_seat_held();
+        let waited = server.until(5.0, |server| server.table(BLEND_IN, 0).playing());
+        assert!((1.7..=2.3).contains(&waited), "{waited}");
+        let table = server.table(BLEND_IN, 0);
+        assert_eq!((table.size, table.seats.len(), table.people()), (2, 2, 2));
+        assert!(table.seats.iter().all(Seat::here));
+        assert_eq!(table.seats[1].body, body_c);
+        assert_eq!(server.arrived(c), Some((Venue::BlendIn, 1)));
+        assert_eq!(server.body(body_c).room, Room::Table(BLEND_IN, 0));
+        server.charged(Charged {
+            id: 4,
+            left: Some(950),
+            game: BLEND_IN,
+            into: Some(0),
+        });
+        server.frame(0.1);
+        assert_eq!(server.body(body_d).room, Room::Table(BLEND_IN, 1));
+        assert_eq!(server.entered(d), Some((BLEND_IN, 0)));
+    }
+
+    /// What a game was told, for the tests that look at it.
+    #[derive(Clone, Debug, PartialEq)]
+    enum Heard {
+        /// Who left, by seat, and their body, if it was still about.
+        Left(usize, Option<Entity>),
+        /// The bodies of the people still at the table as it closed.
+        Closed(Vec<Entity>),
+    }
+
+    /// A game that does nothing but note what it is told.
+    struct Notes(Arc<Mutex<Vec<Heard>>>);
+
+    impl Rules for Notes {
+        fn waiting_spot(&mut self, _table: &Table, seat: usize) -> (Vec3, f32) {
+            let (at, turn) = knock_off::arrival(seat);
+            (at, yaw_of(turn))
+        }
+        fn begin(&mut self, _ctx: &mut Ctx, _table: &mut Table) {}
+        fn step(&mut self, _ctx: &mut Ctx, _table: &mut Table, _dt: f32) {}
+        fn left(&mut self, _ctx: &mut Ctx, _table: &mut Table, seat: usize, body: Option<Entity>) {
+            self.0.lock().expect("the notes").push(Heard::Left(seat, body));
+        }
+        fn show(&mut self, _commands: &mut Commands, _table: &Table) {}
+        fn close(&mut self, _commands: &mut Commands, table: &Table) {
+            let here = table.seats.iter().filter(|it| it.here()).map(|it| it.body).collect();
+            self.0.lock().expect("the notes").push(Heard::Closed(here));
+        }
+    }
+
+    #[test]
+    fn a_game_hears_whose_body_left_it_and_closes_with_the_bodies_still_at_it_in_hand() {
+        let mut server = Server::new(false);
+        let (a, body_a) = server.person(1, 1000);
+        let (b, body_b) = server.person(2, 1000);
+        let (c, body_c) = server.person(3, 1000);
+        let (d, body_d) = server.person(4, 1000);
+        for client in [a, b, c, d] {
+            server.ask(client, Ask::Join(KNOCK_OFF));
+            server.frame(0.1);
+        }
+        server.until(30.0, |server| server.table(KNOCK_OFF, 0).playing());
+        assert_eq!(server.computers(KNOCK_OFF, 0), 0);
+        let notes = Arc::new(Mutex::new(Vec::new()));
+        server.world.resource_mut::<Tables>().games.insert((KNOCK_OFF, 0), Box::new(Notes(notes.clone())));
+        // The first goes to the town: their body, for the game to take off
+        // it whatever it put on it.
+        server.ask(a, Ask::Leave);
+        server.frame(0.1);
+        // The second's device goes and the seat is given up, the body with
+        // it (as `players::gone` has it): no body to take anything off.
+        server.world.resource_mut::<Tables>().walk_out(Room::Table(KNOCK_OFF, 0), body_b);
+        server.world.despawn(body_b);
+        server.frame(0.1);
+        // Over: the third goes as the results are up, their body too.
+        server.table_mut(KNOCK_OFF, 0).finish(vec![2, 1, 0, 3], vec![0; 4], None);
+        server.frame(0.1);
+        server.ask(c, Ask::Leave);
+        server.frame(0.1);
+        // The results' while over: the fourth's body in hand as it closes.
+        server.table_mut(KNOCK_OFF, 0).stage = Stage::Over { left: 0.0 };
+        server.until(1.0, |server| server.table(KNOCK_OFF, 0).closing);
+        let heard = notes.lock().expect("the notes").clone();
+        let all = [
+            Heard::Left(0, Some(body_a)),
+            Heard::Left(1, None),
+            Heard::Left(2, Some(body_c)),
+            Heard::Closed(vec![body_d]),
+        ];
+        assert_eq!(heard, all);
+    }
+
+    #[test]
+    fn whoever_is_out_of_a_game_may_go_from_it_into_another_and_nobody_still_in_it_may() {
+        let mut server = Server::new(false);
+        let (a, body_a) = server.person(1, 1000);
+        let (b, body_b) = server.person(2, 1000);
+        server.ask(a, Ask::Join(KNOCK_OFF));
+        server.frame(0.1);
+        server.ask(b, Ask::Join(KNOCK_OFF));
+        server.frame(0.1);
+        server.skip_to_the_game(a, KNOCK_OFF, 0);
+        let notes = Arc::new(Mutex::new(Vec::new()));
+        server.world.resource_mut::<Tables>().games.insert((KNOCK_OFF, 0), Box::new(Notes(notes.clone())));
+        let room = Room::Table(KNOCK_OFF, 0);
+        // In the game: into nothing else.
+        assert!(!server.world.resource::<Tables>().done_with(room, body_a));
+        server.ask(a, Ask::Join(KNOCK_OFF));
+        server.frame(0.1);
+        assert!(matches!(server.heard(a).last(), Some(Tell::Refused(Refusal::Busy))));
+        assert_eq!(server.body(body_a).room, room);
+        // Out of it, in the sea: into the next game, at a new table, the
+        // seat they had theirs still, empty, for the results, and the game
+        // they were in told they have gone.
+        server.table_mut(KNOCK_OFF, 0).seats[0].out = true;
+        assert!(server.world.resource::<Tables>().done_with(room, body_a));
+        assert!(!server.world.resource::<Tables>().done_with(room, body_b));
+        server.ask(a, Ask::Join(KNOCK_OFF));
+        server.frame(0.1);
+        assert_eq!((server.body(body_a).room, server.entered(a)), (Room::Table(KNOCK_OFF, 1), Some((KNOCK_OFF, 0))));
+        let seat = &server.table(KNOCK_OFF, 0).seats[0];
+        assert!(seat.out && seat.gone && !seat.vacant && seat.member.id == 1);
+        assert_eq!(*notes.lock().expect("the notes"), [Heard::Left(0, Some(body_a))]);
+        // And along with the group they are in, whose leader is in the town.
+        let (leader, _) = server.person(3, 1000);
+        server.world.resource_mut::<Social>().band(&[3, 2]);
+        server.table_mut(KNOCK_OFF, 0).seats[1].out = true;
+        server.ask(leader, Ask::Join(BLEND_IN));
+        server.frame(0.1);
+        assert_eq!((server.body(body_b).room, server.entered(b)), (Room::Table(BLEND_IN, 0), Some((BLEND_IN, 1))));
+    }
+
+    #[test]
+    fn whoever_goes_from_a_game_they_are_out_of_into_house_builder_goes_as_themselves() {
+        let mut server = Server::new(true);
+        let (a, body_a) = server.person(1, 1000);
+        let (b, _) = server.person(2, 1000);
+        for (client, id) in [(a, 1), (b, 2)] {
+            server.ask(client, Ask::Join(BLEND_IN));
+            server.frame(0.1);
+            server.charged(Charged {
+                id,
+                left: Some(950),
+                game: BLEND_IN,
+                into: Some(0),
+            });
+            server.frame(0.1);
+        }
+        server.ask(a, Ask::Skip);
+        server.frame(0.1);
+        server.skip_to_the_game(a, BLEND_IN, 0);
+        let mochi = Member {
+            id: 77,
+            name: "Mochi".into(),
+            look: "girl".into(),
+            ai: false,
+        };
+        server.act(BLEND_IN, 0, move |ctx, table| ctx.disguise(table, 0, mochi.clone()));
+        server.table_mut(BLEND_IN, 0).seats[0].out = true;
+        // Out, and passing for someone else: House Builder's fee taken for
+        // them (as its own join asks it, free to as they are), and seated
+        // there as their account, wearing it again.
+        server.charged(Charged {
+            id: 1,
+            left: Some(850),
+            game: Minigame::HouseBuilder,
+            into: Some(0),
+        });
+        server.frame(0.1);
+        let room = server.body(body_a).room;
+        assert!(matches!(room, Room::Game(_)), "{room:?}");
+        assert_eq!(server.world.get::<Member>(body_a).map(|member| member.id), Some(1));
+        assert!(server.world.get::<Disguised>(body_a).is_none());
+        let seated: Vec<u64> = server.world.resource::<Games>().members(room).expect("the game").iter().map(|member| member.id).collect();
+        assert_eq!(seated, [1]);
+        let seat = &server.table(BLEND_IN, 0).seats[0];
+        assert!(seat.out && seat.gone && seat.member.id == 1);
+    }
+
+    #[test]
+    fn someone_waiting_alone_for_blend_in_sits_with_the_next_to_come_whatever_table_a_group_took() {
+        let mut server = Server::new(false);
+        let (alone, _) = server.person(1, 1000);
+        server.ask(alone, Ask::Join(BLEND_IN));
+        server.frame(0.1);
+        // A group of four, which does not fit beside them: a table of its
+        // own, full, counting down at once.
+        let (leader, body_leader) = server.person(2, 1000);
+        for id in 3..=5 {
+            server.person(id, 1000);
+        }
+        server.world.resource_mut::<Social>().band(&[2, 3, 4, 5]);
+        server.ask(leader, Ask::Join(BLEND_IN));
+        server.frame(0.1);
+        assert_eq!(server.body(body_leader).room, Room::Table(BLEND_IN, 1));
+        assert!(matches!(server.table(BLEND_IN, 1).stage, Stage::Countdown { .. }));
+        // The next to come sits with the one who has been waiting, not at a
+        // newer table of their own, and the two of them play.
+        let (next, body_next) = server.person(6, 1000);
+        server.ask(next, Ask::Join(BLEND_IN));
+        server.frame(0.1);
+        assert_eq!((server.body(body_next).room, server.entered(next)), (Room::Table(BLEND_IN, 0), Some((BLEND_IN, 1))));
+        server.until(30.0, |server| server.table(BLEND_IN, 0).playing());
+        assert_eq!(server.table(BLEND_IN, 0).people(), 2);
+    }
+
+    #[test]
+    fn whoever_comes_first_earns_the_winner_s_share_toward_their_level_but_nobody_on_a_draw() {
+        let won = XP_PLAYED + XP_WON;
+        for (places, earned) in [(vec![0, 1], (won, XP_PLAYED)), (vec![1, 0], (XP_PLAYED, won)), (vec![0, 0], (XP_PLAYED, XP_PLAYED))] {
+            let mut server = Server::new(false);
+            let (a, _) = server.person(1, 1000);
+            let (b, _) = server.person(2, 1000);
+            server.ask(a, Ask::Join(BLEND_IN));
+            server.frame(0.1);
+            server.ask(b, Ask::Join(BLEND_IN));
+            server.frame(0.1);
+            server.ask(a, Ask::Skip);
+            server.frame(0.1);
+            server.skip_to_the_game(a, BLEND_IN, 0);
+            server.table_mut(BLEND_IN, 0).finish(places.clone(), vec![0, 0], None);
+            server.frame(0.1);
+            assert_eq!((server.xp(1), server.xp(2)), earned, "{places:?}");
+        }
+    }
+
+    #[test]
+    fn blend_in_waits_its_whole_wait_from_the_second_person_and_at_least_eight_seconds_from_each_after() {
+        let mut server = Server::new(false);
+        let (a, _) = server.person(1, 1000);
+        let (b, _) = server.person(2, 1000);
+        let (c, _) = server.person(3, 1000);
+        server.ask(a, Ask::Join(BLEND_IN));
+        server.frame(0.1);
+        server.ask(b, Ask::Join(BLEND_IN));
+        server.frame(0.1);
+        assert_eq!(server.table(BLEND_IN, 0).board().left, 15);
+        for _ in 0..100 {
+            server.frame(0.1);
+        }
+        assert_eq!(server.table(BLEND_IN, 0).board().left, 5);
+        // A third with five seconds to go: eight from them, not fifteen.
+        server.ask(c, Ask::Join(BLEND_IN));
+        server.frame(0.1);
+        assert_eq!(server.table(BLEND_IN, 0).board().left, 8);
+        let waited = server.until(20.0, |server| matches!(server.table(BLEND_IN, 0).stage, Stage::Countdown { .. }));
+        assert!((7.5..=8.5).contains(&waited), "{waited}");
+        // Last Stand waits its whole wait again from each who comes.
+        let mut server = Server::new(false);
+        let (a, _) = server.person(1, 1000);
+        let (b, _) = server.person(2, 1000);
+        server.ask(a, Ask::Join(LAST_STAND));
+        server.frame(0.1);
+        assert_eq!(server.table(LAST_STAND, 0).board().left, 15);
+        for _ in 0..100 {
+            server.frame(0.1);
+        }
+        server.ask(b, Ask::Join(LAST_STAND));
+        server.frame(0.1);
+        assert_eq!(server.table(LAST_STAND, 0).board().left, 15);
     }
 }

@@ -1004,6 +1004,7 @@ fn presence_in(room: Room, games: &Games, arenas: &Arenas, tables: &Tables) -> P
 /// Looks at where everyone connected is, [`TRACK_EVERY`] seconds: whoever
 /// has come, gone, or gone somewhere else is what [`Social`] then tells
 /// their friends; and lets go of whatever has stood too long.
+#[allow(clippy::too_many_arguments)]
 fn track(
     time: Res<Time>,
     mut since: Local<f32>,

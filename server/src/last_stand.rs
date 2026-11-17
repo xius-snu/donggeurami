@@ -68,5 +68,5 @@ impl Rules for LastStand {
 
     fn show(&mut self, _commands: &mut Commands, _table: &Table) {}
 
-    fn close(&mut self, _commands: &mut Commands) {}
+    fn close(&mut self, _commands: &mut Commands, _table: &Table) {}
 }

@@ -40,7 +40,7 @@ use roundtown_net::{
 use crate::Config;
 use crate::accounts::{Bank, Charged};
 use crate::fees::Paying;
-use crate::players::{Body, Everyone, Plays, Who, move_to, tell};
+use crate::players::{Accounts, Body, Everyone, Plays, Who, move_to, tell, themselves};
 use crate::rooms::{InRoom, Room, Towns};
 use crate::social::Social;
 use crate::tables::Tables;
@@ -241,6 +241,16 @@ impl Games {
             .is_some_and(|game| game.seats.contains(&body) && matches!(game.stage, Stage::Over { .. }))
     }
 
+    /// Who the game in `room` seated, seat by seat: for the tests of the
+    /// games people come here from (`tables`).
+    #[cfg(test)]
+    pub(crate) fn members(&self, room: Room) -> Option<&[Member]> {
+        let Room::Game(id) = room else {
+            return None;
+        };
+        self.games.get(&id).map(|game| game.members.as_slice())
+    }
+
     /// Whether the game in `room` is still in its lobby, filling or full
     /// and about to go: what someone's friends are told of where they are
     /// (`social`).
@@ -257,7 +267,8 @@ impl Games {
 /// Seats `body`, paid up, in the game numbered `into`, if it still has
 /// room, and otherwise in the one filling now: out of the town, or out of
 /// the game it has just finished, for another, of House Builder or, since
-/// 2026-11-18, of one of the four played at tables (`tables`).
+/// 2026-11-18, of one of the four played at tables (`tables`), as whoever
+/// its account is (`member`, `players::themselves`).
 #[allow(clippy::too_many_arguments)]
 fn seat(
     games: &mut Games,
@@ -303,6 +314,7 @@ pub(crate) fn paid(
     mut charged: MessageReader<Charged>,
     everyone: Res<Everyone>,
     mut bodies: Bodies,
+    accounts: Accounts,
     mut games: ResMut<Games>,
     mut tables: ResMut<Tables>,
     mut towns: ResMut<Towns>,
@@ -334,7 +346,7 @@ pub(crate) fn paid(
         if let Some(client) = body_of.client {
             tell(&mut tells, client, Tell::Balance(left));
         }
-        let member = member.clone();
+        let member = themselves(&mut commands, body, &accounts, member);
         seat(
             &mut games,
             &mut tables,
@@ -368,6 +380,7 @@ fn hear(
     clients: Query<&Plays>,
     mut bodies: Bodies,
     paying: Query<(), With<Paying>>,
+    accounts: Accounts,
     (mut games, mut tables): (ResMut<Games>, ResMut<Tables>),
     mut towns: ResMut<Towns>,
     (everyone, mut social): (Res<Everyone>, ResMut<Social>),
@@ -467,7 +480,7 @@ fn hear(
                     if let Some(client) = body_of.client {
                         tell(&mut tells, client, Tell::Balance(body_of.coins));
                     }
-                    let member = member.clone();
+                    let member = themselves(&mut commands, body, &accounts, member);
                     seat(
                         &mut games,
                         &mut tables,

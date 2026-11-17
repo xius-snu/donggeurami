@@ -224,14 +224,28 @@ pub(crate) struct Account(pub Member);
 #[derive(Component, Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) struct Disguised;
 
+/// Every person's account, apart from who their body passes for.
+pub(crate) type Accounts<'w, 's> = Query<'w, 's, (&'static Account, Has<Disguised>)>;
+
 /// Puts the account's own member back on `body` ([`Account`]) if a game has
 /// it passing for someone else ([`Disguised`]), as it leaves the game,
 /// however it leaves; and nothing if not, so that nobody in its room is
 /// sent it again for nothing.
-pub(crate) fn undisguise(commands: &mut Commands, body: Entity, accounts: &Query<(&Account, Has<Disguised>)>) {
+pub(crate) fn undisguise(commands: &mut Commands, body: Entity, accounts: &Accounts) {
     if let Ok((account, true)) = accounts.get(body) {
         commands.entity(body).insert(account.0.clone()).remove::<Disguised>();
     }
+}
+
+/// Who `body`, which wears `worn`, is by its account, going into another
+/// game: the account's own member, put back on the body if a game had it
+/// passing for someone else ([`undisguise`]), for the game it goes into to
+/// seat it as. Someone out of a game of the four before it is over may go
+/// straight from it into Bridge Wars or House Builder (`tables::Seat::out`,
+/// since 2026-11-18), in whatever it had them wear.
+pub(crate) fn themselves(commands: &mut Commands, body: Entity, accounts: &Accounts, worn: &Member) -> Member {
+    undisguise(commands, body, accounts);
+    accounts.get(body).map_or_else(|_| worn.clone(), |(account, _)| account.0.clone())
 }
 
 /// Tells `body`'s device to stand where the server has it, `spot` on
@@ -359,7 +373,7 @@ fn hear(
     mut asks: MessageReader<FromClient<Ask>>,
     clients: Query<Option<&Plays>, With<ConnectedClient>>,
     mut bodies: Query<(&mut Body, &mut Spot, &mut Venue, &Member)>,
-    accounts: Query<(&Account, Has<Disguised>)>,
+    accounts: Accounts,
     mut towns: ResMut<Towns>,
     bank: Res<Bank>,
     mut social: ResMut<Social>,
@@ -631,9 +645,11 @@ fn admit(
     mut loaded: MessageReader<Loaded>,
     mut everyone: ResMut<Everyone>,
     mut bodies: Query<(&mut Body, &mut Spot, &mut Venue, &Member)>,
-    accounts: Query<(&Account, Has<Disguised>)>,
+    accounts: Accounts,
     mut towns: ResMut<Towns>,
-    (mut games, mut arenas, mut tables): (ResMut<Games>, ResMut<Arenas>, ResMut<Tables>),
+    mut games: ResMut<Games>,
+    mut arenas: ResMut<Arenas>,
+    mut tables: ResMut<Tables>,
     mut social: ResMut<Social>,
     time: Res<Time>,
     mut tells: MessageWriter<ToClients<Tell>>,
@@ -976,6 +992,7 @@ fn moves(
 /// A seat at a table of one of the four games waits as Bridge Wars' does,
 /// once its game is being played (`Tables::keeps`, since 2026-11-18);
 /// before then it is given up, and its fee given back.
+#[allow(clippy::too_many_arguments)]
 fn gone(
     remove: On<Remove, ConnectedClient>,
     clients: Query<&Plays>,

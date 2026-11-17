@@ -4,11 +4,13 @@
 //! sword"): what a table of it plays (`tables::Rules`), on the town's own
 //! map with nobody of the town's in it.
 //!
-//! For now a stand-in, so that a table can be played from the join to the
-//! town again: everyone waits and plays where they would arrive in the
-//! town, on the path round its pond, and after [`STAND_IN`] seconds the
-//! game is over, seat 0 first and the rest in seat order. The game's own
-//! rules (`roundtown_net::blend_in`) take its place, in this file.
+//! How long its table waits for people is its own already
+//! ([`BlendIn::wait_from_join`]): the rest is for now a stand-in, so that a
+//! table can be played from the join to the town again: everyone waits and
+//! plays where they would arrive in the town, on the path round its pond,
+//! and after [`STAND_IN`] seconds the game is over, seat 0 first and the
+//! rest in seat order. The game's own rules (`roundtown_net::blend_in`)
+//! take its place, in this file.
 
 use bevy::prelude::*;
 use roundtown_net::{Ask, Venue, arrival, blend_in};
@@ -17,6 +19,14 @@ use crate::tables::{Ctx, Rules, Table, yaw_of};
 
 /// How long the stand-in's game lasts, in seconds.
 const STAND_IN: f32 = 20.0;
+
+/// The least a table waits from someone sitting down at it after the
+/// second person, in seconds (mine, in the games' design: "The game starts
+/// 15 s after the second person joins (each later join resets that to at
+/// least 8 s), or at once with four"): a third does not have the two
+/// already there wait the whole of it again, nor come too late to look
+/// about them; a fourth fills the table, which counts down at once.
+const LATER_WAIT: f32 = 8.0;
 
 /// A game of Blend In at its table.
 pub(crate) struct BlendIn;
@@ -33,6 +43,13 @@ impl Rules for BlendIn {
     fn waiting_spot(&mut self, _table: &Table, seat: usize) -> (Vec3, f32) {
         let (at, turn) = blend_in::arrival(seat);
         (at, yaw_of(turn))
+    }
+
+    /// The whole wait (15 s) from the second person, with whom the game can
+    /// begin; from each after them, what was left of it, but never under
+    /// [`LATER_WAIT`].
+    fn wait_from_join(&self, table: &Table, left: Option<f32>) -> f32 {
+        left.map_or(table.shape.wait, |left| left.max(LATER_WAIT))
     }
 
     fn begin(&mut self, ctx: &mut Ctx, table: &mut Table) {
@@ -65,5 +82,5 @@ impl Rules for BlendIn {
 
     fn show(&mut self, _commands: &mut Commands, _table: &Table) {}
 
-    fn close(&mut self, _commands: &mut Commands) {}
+    fn close(&mut self, _commands: &mut Commands, _table: &Table) {}
 }

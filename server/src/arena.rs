@@ -151,7 +151,7 @@ use roundtown_net::{
 
 use crate::Config;
 use crate::fees::Paying;
-use crate::players::{Body, Everyone, Plays, Who, move_to, place, tell};
+use crate::players::{Accounts, Body, Everyone, Plays, Who, move_to, place, tell, themselves};
 use crate::rooms::{InRoom, NotFor, Room, Towns};
 use crate::social::Social;
 use crate::tables::Tables;
@@ -2353,12 +2353,15 @@ pub(crate) enum Return {
 /// the game filling now, or in a new one if that has not the room for them:
 /// two by two onto one team ([`Game::seats_for`]), each out of the town, or
 /// out of the game that was over for them (of Bridge Wars, or since
-/// 2026-11-18 at a table, `tables`), and into the waiting room.
+/// 2026-11-18 at a table, `tables`, as whoever their account is, whoever
+/// that game had them pass for: `players::themselves`), and into the
+/// waiting room.
 #[allow(clippy::too_many_arguments)]
 fn seat_together(
     commands: &mut Commands,
     tells: &mut MessageWriter<ToClients<Tell>>,
     bodies: &mut Bodies,
+    accounts: &Accounts,
     arenas: &mut Arenas,
     tables: &mut Tables,
     towns: &mut Towns,
@@ -2385,7 +2388,7 @@ fn seat_together(
         let Ok((body_of, spot, venue, member)) = bodies.get_mut(body) else {
             continue;
         };
-        game.put(seat, body, member.clone(), false);
+        game.put(seat, body, themselves(commands, body, accounts, member), false);
         if let Some(client) = body_of.client {
             tell(tells, client, Tell::Seated { seat: seat as u8 });
         }
@@ -2423,6 +2426,7 @@ fn hear(
     clients: Query<&Plays>,
     mut bodies: Bodies,
     paying: Query<(), With<Paying>>,
+    accounts: Accounts,
     (mut arenas, mut tables): (ResMut<Arenas>, ResMut<Tables>),
     mut towns: ResMut<Towns>,
     (everyone, mut social): (Res<Everyone>, ResMut<Social>),
@@ -2494,6 +2498,7 @@ fn hear(
                     &mut commands,
                     &mut tells,
                     &mut bodies,
+                    &accounts,
                     &mut arenas,
                     &mut tables,
                     &mut towns,
