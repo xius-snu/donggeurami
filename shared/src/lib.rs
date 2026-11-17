@@ -7041,7 +7041,7 @@ mod tests {
             Ask::BlendIn(blend_in::Ask::Nothing),
             Ask::KnockOff(knock_off::Ask::Nothing),
             Ask::BridgeRace(bridge_race::Ask::Nothing),
-            Ask::LastStand(last_stand::Ask::Buy(last_stand::Ware::Sharpness)),
+            Ask::LastStand(last_stand::Ask::Nothing),
         ];
         for ask in asks {
             let bytes = postcard::to_allocvec(&ask).unwrap();
@@ -7053,7 +7053,7 @@ mod tests {
             Tell::BlendIn(blend_in::Tell::Nothing),
             Tell::KnockOff(knock_off::Tell::Nothing),
             Tell::BridgeRace(bridge_race::Tell::Nothing),
-            Tell::LastStand(last_stand::Tell::Upgraded { by: 1, ware: last_stand::Ware::Beam, level: 3 }),
+            Tell::LastStand(last_stand::Tell::Nothing),
         ];
         for tell in tells {
             let bytes = postcard::to_allocvec(&tell).unwrap();

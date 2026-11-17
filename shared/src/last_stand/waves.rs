@@ -82,21 +82,35 @@ impl Kind {
 
     /// Its health, its blow's damage and its pace, in metres a second, in
     /// the first wave of all ([`strength`] for later ones). A spitter's blow
-    /// is its ball's. The healths and paces are the design's but the
-    /// brute's and the giant's healths (160 and 1200 there); the blows are
-    /// the design's three quarters (8, 6, 22, 12, 14 and 40 there), growing
-    /// faster ([`DAMAGE_GROWS`]) to as hard as the design's by the ninth
-    /// wave. Mine, all of them: with the design's, a person alone met the
-    /// first brutes with a sword two waves too weak, and went down two to
-    /// four times in each of the first waves, a new player's first game.
+    /// is its ball's. The paces are the design's; the rest is mine:
+    ///
+    /// * the healths half the design's or less (40, 25, 160, 35, 50 and
+    ///   1200 there: the brute's under a third, the giant's three eighths),
+    ///   growing faster ([`HEALTH_GROWS`]), so that a spitter's comes to the
+    ///   design's in the ninth wave, a walker's, a runner's and a leaper's in
+    ///   the tenth, a giant's in the thirteenth (the fifteenth's giants are
+    ///   the first past it) and a brute's in the sixteenth, and each outgrows
+    ///   it after;
+    /// * the blows lighter than the design's at first (8, 6, 22, 12, 14 and
+    ///   40 there: three quarters of a walker's, five sixths of a runner's
+    ///   and a spitter's, six sevenths of a leaper's, seven tenths of a
+    ///   giant's and under two thirds of a brute's), growing faster
+    ///   ([`DAMAGE_GROWS`]), so that a leaper's comes to the design's in the
+    ///   tenth wave, a runner's and a spitter's in the eleventh, a walker's in
+    ///   the seventeenth, a giant's in the twenty-first and a brute's in the
+    ///   twenty-sixth.
+    ///
+    /// Tuned by the plain players of the module's tests, who land a blow a
+    /// second (the waves each clears are in [`HEALTH_GROWS`]); a test holds
+    /// these waves to the numbers.
     const fn base(self) -> (f32, f32, f32) {
         match self {
-            Kind::Walker => (40.0, 6.0, 3.2),
-            Kind::Runner => (25.0, 5.0, 6.0),
-            Kind::Brute => (120.0, 16.0, 2.4),
-            Kind::Spitter => (35.0, 10.0, 3.0),
-            Kind::Leaper => (50.0, 12.0, 4.0),
-            Kind::Giant => (900.0, 28.0, 2.0),
+            Kind::Walker => (20.0, 6.0, 3.2),
+            Kind::Runner => (12.0, 5.0, 6.0),
+            Kind::Brute => (48.0, 14.0, 2.4),
+            Kind::Spitter => (18.0, 10.0, 3.0),
+            Kind::Leaper => (25.0, 12.0, 4.0),
+            Kind::Giant => (450.0, 28.0, 2.0),
         }
     }
 
@@ -140,14 +154,18 @@ impl Kind {
 }
 
 /// How much stronger every zombie is for each wave past the first: its
-/// health, its blow's damage and its pace, the last to at most a third more
-/// than it began ("endless waves of endlessly stronger and stronger
+/// health, its blow's damage and its pace, the last to at most three tenths
+/// more than it began ("endless waves of endlessly stronger and stronger
 /// enemies"). The pace's are the design's; the health's and the blow's are
-/// mine (1.12 and 1.07 there): with the design's, a team that got to the
-/// ninth wave went on easily to the fifteenth, and the fifteenth's three
-/// giants ended every one of them; and the blows begin lighter
-/// ([`Kind::base`]).
-pub const HEALTH_GROWS: f32 = 1.17;
+/// mine (1.12 and 1.07 there), from lighter first waves ([`Kind::base`]):
+/// the zombies outgrow every team in the end, a plain player alone (a blow
+/// a second, the module's tests) mostly in the fifth to the tenth wave, six
+/// or seven waves cleared in the middle of their games, and four plain
+/// players together in the eleventh to the thirteenth, most in the twelfth.
+/// As the game was first tuned, by a stand-in that landed two blows a
+/// second, with 1.17 a wave and heavier first waves, a plain player alone
+/// cleared three.
+pub const HEALTH_GROWS: f32 = 1.22;
 pub const DAMAGE_GROWS: f32 = 1.09;
 pub const PACE_GROWS: f32 = 0.01;
 pub const PACE_MOST: f32 = 1.3;
@@ -188,12 +206,14 @@ pub fn count(wave: u16, players: usize) -> u16 {
 }
 
 /// How many of wave `wave` come over the rim a second, all its places
-/// together, with `players` people in the game: as many as one person kills
-/// with a sword at first, more for more people and a little more every wave
-/// (mine). A wave comes as a stream to be met, not a heap at once; the rest
-/// waits below the rim.
+/// together, with `players` people in the game: 0.22 and a tenth for each
+/// person in the first wave (0.32 for one, 0.62 for four), and 12% of that
+/// more for every wave after (mine). A wave comes as a stream to be met,
+/// not a heap at once; the rest waits below the rim. The later waves come
+/// on faster than the first so that a game of four, which goes on longest,
+/// is over within twenty minutes: at 7% a wave it took twenty and more.
 pub fn rising(wave: u16, players: usize) -> f32 {
-    (0.28 + 0.1 * players.clamp(1, 4) as f32) * (1.0 + 0.07 * f32::from(wave.saturating_sub(1).min(100)))
+    (0.22 + 0.1 * players.clamp(1, 4) as f32) * (1.0 + 0.12 * f32::from(wave.saturating_sub(1).min(100)))
 }
 
 /// How many giants wave `wave` has: every fifth wave, one in the fifth and
@@ -415,6 +435,28 @@ mod tests {
         assert_eq!(kill_score(Kind::Walker, 1), 11);
         assert_eq!(kill_score(Kind::Giant, 10), 500);
         assert!(kill_score(Kind::Brute, 9) > kill_score(Kind::Brute, 8));
+    }
+
+    #[test]
+    fn each_kind_comes_to_the_design_s_health_and_blow_in_the_waves_its_doc_says() {
+        // The design's first wave of each kind, health and blow, growing
+        // 1.12 and 1.07 a wave; and the first wave each of ours is as much
+        // or more ([`Kind::base`] says which).
+        let design = [
+            (Kind::Walker, 40.0, 8.0),
+            (Kind::Runner, 25.0, 6.0),
+            (Kind::Brute, 160.0, 22.0),
+            (Kind::Spitter, 35.0, 12.0),
+            (Kind::Leaper, 50.0, 14.0),
+            (Kind::Giant, 1200.0, 40.0),
+        ];
+        let reaches = |kind: Kind, ours: fn((f32, f32, f32)) -> f32, first: f32, grows: f32| {
+            (1..100u16).find(|wave| ours(strength(kind, *wave)) >= first * grows.powi(i32::from(*wave) - 1)).expect("in time")
+        };
+        let health: Vec<u16> = design.iter().map(|(kind, health, _)| reaches(*kind, |numbers| numbers.0, *health, 1.12)).collect();
+        let blow: Vec<u16> = design.iter().map(|(kind, _, blow)| reaches(*kind, |numbers| numbers.1, *blow, 1.07)).collect();
+        assert_eq!(health, [10, 10, 16, 9, 10, 13]);
+        assert_eq!(blow, [17, 11, 26, 11, 10, 21]);
     }
 
     const LUCKY: u8 = super::super::LUCKY_MOST;

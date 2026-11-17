@@ -9,9 +9,10 @@
 //!   knocked off;
 //! * **goes for the anchor or for someone**, which is thrown as it rises
 //!   (most for the anchor at first, fewer as the waves go on); turns on
-//!   whoever hits it, or comes within a thrown few metres of it; gives them
-//!   up again past a thrown distance, or when they are unseen; and some
-//!   come round the side, on an arc of their own, rather than straight on;
+//!   whoever hits it, or comes within a thrown few metres of it (at the
+//!   crystal, only now and then, by a chance of its own); gives them up
+//!   again past a thrown distance, or when they are unseen; and some come
+//!   round the side, on an arc of their own, rather than straight on;
 //! * **walks there** over the stone and the sand, round the stands, the
 //!   palms and the crystal (seeking, keeping a little apart from the others,
 //!   sliding round what is in its way, trying the other way round when
@@ -208,8 +209,11 @@ const HURRY_SPIT: f32 = 3.0;
 #[derive(Clone, Copy, Debug)]
 pub(super) enum Act {
     /// A blow on whoever is in `seat`, knocking them so hard
-    /// ([`Kind::knocks`]; a leaper landing, hard).
-    Hit { seat: usize, knock: Knock },
+    /// ([`Kind::knocks`]; a leaper landing, hard), away from `from`: the
+    /// zombie's middle, or, for a leaper landing on them, where it leapt
+    /// from, so that they are knocked on the way it came (where it comes
+    /// down is where they stood as it leapt, no way from them at all).
+    Hit { seat: usize, knock: Knock, from: Vec3 },
     /// A blow on the anchor.
     HitAnchor,
     /// A ball spat.
@@ -246,6 +250,15 @@ pub(super) struct Zombie {
     /// they have to get for it to give them up, in metres: its own.
     pub aggro: f32,
     pub gives_up: f32,
+    /// Going for the anchor, how near the crystal it holds to it, in
+    /// metres past its reach (two to four), and how likely it is there,
+    /// each time it looks round, to turn on someone within its `aggro` all
+    /// the same (none to six in a hundred): its own, thrown as it rises
+    /// (mine: were every one to turn, whoever held the anchor would draw
+    /// the whole heap off it onto themselves; were none to, standing by the
+    /// crystal would be safe from all that came for it).
+    pub holds: f32,
+    pub strays: f32,
     /// The arc it comes on by, in radians off straight at them (none for
     /// most), and which way round it goes round things.
     pub swing: f32,
@@ -320,6 +333,8 @@ impl Zombie {
             hunter,
             aggro: dice.around(2.0, 4.5) * size.sqrt(),
             gives_up: dice.around(11.0, 22.0),
+            holds: dice.around(2.0, 4.0),
+            strays: dice.around(0.0, 0.06),
             swing: if flanks { side * dice.around(0.35, 0.9) } else { 0.0 },
             side,
             keep_off: dice.around(7.0, 9.0),
@@ -353,6 +368,14 @@ impl Zombie {
     /// Whether it is climbing over the rim.
     pub fn climbing(&self) -> bool {
         self.climb.is_some()
+    }
+
+    /// Where what it drops is thrown out from: its feet, or, while it is
+    /// still climbing, where its climb comes up onto the sand, so that one
+    /// killed on the side of the rim, its feet down in the void, drops what
+    /// it would have on the sand above it, and not nothing.
+    pub fn drops_from(&self) -> Vec3 {
+        self.climb.map_or(self.at, |climb| climb.to)
     }
 
     /// How fast it walks now: its pace, and [`HURRY`] times that once it is
@@ -424,11 +447,11 @@ impl Zombie {
             if leap.age < leap.secs {
                 return None;
             }
-            let seat = leap.seat;
+            let (seat, from) = (leap.seat, leap.from);
             self.leap = None;
             self.cooldown = dice.around(0.8, 1.2);
             let seen = view.people.get(seat)?;
-            return (seen.standing && self.reaches(seen.at)).then_some(Act::Hit { seat, knock: Knock::Heavy });
+            return (seen.standing && self.reaches(seen.at)).then_some(Act::Hit { seat, knock: Knock::Heavy, from });
         }
         if self.carry(dt) {
             return (self.at.y < SAND_TOP - FALL_DEAD).then_some(Act::Fell);
@@ -437,7 +460,7 @@ impl Zombie {
         self.think -= dt;
         if self.think <= 0.0 {
             self.think = dice.around(0.4, 1.0);
-            self.choose(view);
+            self.choose(view, dice);
         }
         let here = self.at.xz();
         let Some((target, stop)) = self.aim(view) else {
@@ -476,12 +499,13 @@ impl Zombie {
     /// gone for and near enough; the anchor, or whoever is nearest of those
     /// to be gone for, as it rose, once it gives them up; or, going for the
     /// anchor, whoever comes within its reach of turning on them on its way
-    /// there (at the crystal, only a blow turns it: mine, or everyone at the
-    /// anchor would leave it for whoever stands by it), and anyone, the
-    /// anchor broken.
-    fn choose(&mut self, view: &View) {
+    /// there, but at the crystal (within its own `holds` of it) only by its
+    /// own chance of straying, thrown at every look round, and otherwise
+    /// only for a blow ([`Zombie::turn_on`]); and anyone, the anchor
+    /// broken.
+    fn choose(&mut self, view: &View, dice: &mut Dice) {
         let here = self.at.xz();
-        let at_the_anchor = view.anchor && here.distance(ANCHOR) <= CRYSTAL_RADIUS + self.reach() + 1.0;
+        let at_the_anchor = view.anchor && here.distance(ANCHOR) <= CRYSTAL_RADIUS + self.reach() + self.holds;
         let nearest = view
             .people
             .iter()
@@ -502,15 +526,17 @@ impl Zombie {
                 if keep { Goal::Seat(seat) } else { fallback }
             }
             Goal::Anchor => match nearest {
-                Some((seat, far)) if (far <= self.aggro && !at_the_anchor) || !view.anchor || self.hunter => Goal::Seat(seat),
+                Some((seat, _)) if !view.anchor || self.hunter => Goal::Seat(seat),
+                Some((seat, far)) if far <= self.aggro && (!at_the_anchor || dice.roll() < self.strays) => Goal::Seat(seat),
                 _ => Goal::Anchor,
             },
         };
     }
 
     /// Where it is making for, and how near it stops: the anchor's crystal,
-    /// or whoever it goes for. None for someone it cannot see now (it waits
-    /// for its next look round).
+    /// or whoever it goes for. None for someone it cannot see now, gone
+    /// unseen or just back beside the anchor (it waits for its next look
+    /// round, and goes for someone else, or the anchor).
     fn aim(&self, view: &View) -> Option<(Vec2, f32)> {
         match self.goal {
             Goal::Anchor if view.anchor => Some((ANCHOR, CRYSTAL_RADIUS + self.reach() * 0.55)),
@@ -518,7 +544,7 @@ impl Zombie {
             Goal::Anchor => Some((ANCHOR, CRYSTAL_RADIUS + 3.0)),
             Goal::Seat(seat) => {
                 let seen = view.people.get(seat)?;
-                seen.standing.then(|| (seen.at.xz(), self.reach() * PRESS_IN))
+                (seen.standing && seen.open).then(|| (seen.at.xz(), self.reach() * PRESS_IN))
             }
         }
     }
@@ -669,7 +695,7 @@ impl Zombie {
             && self.kind == Kind::Leaper
             && self.leap_wait <= 0.0
             && (self.leaps.0..=self.leaps.1).contains(&far)
-            && view.people.get(seat).is_some_and(|seen| seen.standing)
+            && view.people.get(seat).is_some_and(|seen| seen.standing && seen.open)
         {
             let to = target.clamp_length_max(WALK_EDGE);
             let to = Vec3::new(to.x, ground(to).unwrap_or(self.at.y), to.y);
@@ -690,8 +716,10 @@ impl Zombie {
         let mouth = self.at + Vec3::Y * 1.4 * self.kind.size();
         match self.goal {
             Goal::Seat(seat) => {
+                // Nobody it cannot see is hit, even one it was hitting a
+                // moment ago who has just drunk the invisibility.
                 let seen = *view.people.get(seat)?;
-                if !seen.standing {
+                if !seen.standing || !seen.open {
                     return None;
                 }
                 match self.kind {
@@ -705,6 +733,7 @@ impl Zombie {
                         Some(Act::Hit {
                             seat,
                             knock: self.kind.knocks(),
+                            from: self.at,
                         })
                     }
                     _ => None,
@@ -810,7 +839,8 @@ mod tests {
         let near = [Seen { at: zombie.at + Vec3::new(1.2, 0.0, 0.0), standing: true, open: true }];
         let mut hit = false;
         for _ in 0..90 {
-            if let Some(Act::Hit { seat: 0, knock: Knock::None }) = zombie.step(&view(&near, &[(zombie.at, 1.0)], true), &mut dice, dt) {
+            if let Some(Act::Hit { seat: 0, knock: Knock::None, from }) = zombie.step(&view(&near, &[(zombie.at, 1.0)], true), &mut dice, dt) {
+                assert_eq!(from, zombie.at);
                 hit = true;
             }
         }
@@ -942,16 +972,49 @@ mod tests {
         leaper.leap_wait = 0.0;
         let them = [Seen { at: Vec3::new(9.0, STONE_TOP, 0.0), standing: true, open: true }];
         let dt = 1.0 / 30.0;
-        let (mut leapt, mut landed) = (false, false);
+        let (mut leapt, mut landed) = (None, None);
         for _ in 0..(30 * 4) {
             let act = leaper.step(&view(&them, &[(leaper.at, 1.0)], true), &mut dice, dt);
-            leapt |= leaper.leap.is_some();
-            if let Some(Act::Hit { seat: 0, knock: Knock::Heavy }) = act {
-                landed = true;
+            if let Some(leap) = leaper.leap {
+                leapt.get_or_insert(leap.from);
+            }
+            if let Some(Act::Hit { seat: 0, knock: Knock::Heavy, from }) = act {
+                landed = Some(from);
                 break;
             }
         }
-        assert!(leapt && landed, "leapt {leapt}, landed {landed}");
+        let (Some(leapt), Some(from)) = (leapt, landed) else {
+            panic!("leapt {leapt:?}, landed {landed:?}");
+        };
+        // Down on them, and knocking them on the way it came: from where
+        // it leapt, not from where it came down, which is where they stand.
         assert!(leaper.at.xz().distance(them[0].at.xz()) < 1.0);
+        assert_eq!(from, leapt);
+        let away = (them[0].at.xz() - from.xz()).normalize();
+        assert!(away.dot(Vec2::NEG_X) > 0.95, "knocked {away}");
+    }
+
+    #[test]
+    fn a_zombie_at_the_crystal_holds_to_it_but_now_and_then_one_strays_onto_whoever_stands_by() {
+        // Many zombies, each its own throw, at the crystal, with someone
+        // standing a step from each: some turn on them in a few seconds,
+        // most keep at the crystal; and a blow turns every one.
+        let mut dice = Dice::new(9);
+        let dt = 1.0 / 30.0;
+        let mut strayed = 0;
+        for _ in 0..200 {
+            let mut zombie = walker(&mut dice, 0.0, false);
+            zombie.climb = None;
+            let side = ANCHOR + Vec2::new(CRYSTAL_RADIUS + zombie.reach() * 0.55, 0.0);
+            zombie.at = Vec3::new(side.x, ground(side).expect("by the crystal"), side.y);
+            let by = [Seen { at: zombie.at + Vec3::new(0.0, 0.0, 1.4), standing: true, open: true }];
+            for _ in 0..(30 * 3) {
+                zombie.step(&view(&by, &[(zombie.at, 1.0)], true), &mut dice, dt);
+            }
+            strayed += usize::from(zombie.goal == Goal::Seat(0));
+            zombie.turn_on(0);
+            assert_eq!(zombie.goal, Goal::Seat(0));
+        }
+        assert!((10..=120).contains(&strayed), "{strayed} of 200 strayed");
     }
 }

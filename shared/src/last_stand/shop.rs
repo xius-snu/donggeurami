@@ -98,11 +98,14 @@ pub const SWORD_DAMAGE: [f32; 4] = [6.0, 14.0, 22.0, 34.0];
 /// What share of a zombie's blow each tier of shield keeps off.
 pub const SHIELD_SHARE: [f32; 4] = [0.0, 0.10, 0.20, 0.30];
 /// How many times as hard each step of Sharpness makes every blow of the
-/// team's, on top of the steps before: as much again as the zombies' health
-/// grows in a wave ([`HEALTH_GROWS`](super::waves::HEALTH_GROWS)), so that
-/// a step a wave keeps a sword where it was. The design had it for swords and
-/// fists alone; mine, the fireball and the stick too, which would be spent
-/// by the fifteenth wave otherwise.
+/// team's, on top of the steps before (the design's +12%). The zombies'
+/// health grows faster than that, 1.22 times a wave
+/// ([`HEALTH_GROWS`](super::waves::HEALTH_GROWS)): a step a wave still
+/// leaves a sword about 8% weaker against them each wave, and keeping up
+/// takes about a step and three quarters a wave, each dearer than the last,
+/// which no team does for long ("endlessly stronger and stronger enemies").
+/// The design had it for swords and fists alone; mine, the fireball and the
+/// stick too, which would be spent by the fifteenth wave otherwise.
 pub const SHARPNESS: f32 = 1.12;
 /// What share of a zombie's blow each step of Protection keeps off, after
 /// the shield, and how many steps there are.
@@ -110,17 +113,39 @@ pub const PROTECTION: f32 = 0.08;
 pub const PROTECTION_MOST: u8 = 5;
 /// How much more health a Fortify gives the anchor, all of it back with it.
 pub const FORTIFY: f32 = 250.0;
-/// What the anchor's beam takes off a zombie for each step of it.
-pub const BEAM_DAMAGE: f32 = 20.0;
+/// What the anchor's beam takes off a zombie for each step of it: mine, 12
+/// where the design had 20. In the tuning's games with 20, a plain player
+/// alone who got past the first giant was carried by the beam as far as a
+/// team of four went, to the eleventh wave; with 12, to the ninth.
+pub const BEAM_DAMAGE: f32 = 12.0;
 /// How many steps of Lucky Loot there are.
 pub const LUCKY_MOST: u8 = 5;
 
-/// The price of step `step` of an upgrade line priced in `item`, `first` of
-/// it and `grows` times as many a step, rounded, never more than a count
-/// holds.
-fn in_one(item: Item, first: f32, grows: f32, step: u16) -> (Item, u16) {
-    let count = (first * grows.powf(f32::from(step.min(400)))).round();
-    (item, if count.is_finite() { count.min(f32::from(u16::MAX)) as u16 } else { u16::MAX })
+/// The price of step `step` of an upgrade line priced in `item`: `first` of
+/// it, and `grows` hundredths as many again for every step (150 is half as
+/// much again), rounded to the nearest, a half up, and never more than a
+/// count holds. Worked out in whole numbers, a step at a time (in
+/// millionths, exactly for the first steps, where a price is small and a
+/// part matters), never with a float's `powf`: the server works out what
+/// it takes and every device what it shows on the card, and `powf` is not
+/// the same on every machine, where two of these steps come out at a half
+/// exactly (the beam's third, 2 x 1.5 x 1.5, and the generator's seventh,
+/// 4 x 1.5 x 1.5 x 1.5), which one machine could round up and another
+/// down.
+fn in_one(item: Item, first: u16, grows: u64, step: u16) -> (Item, u16) {
+    /// What one is worked out in: millionths.
+    const WHOLE: u64 = 1_000_000;
+    let most = u64::from(u16::MAX) * WHOLE;
+    let mut count = u64::from(first) * WHOLE;
+    // (Every line grows, so the count passes the most a count holds in a
+    // few dozen steps at the most, and the loop with it.)
+    for _ in 0..step {
+        count = count * grows.max(101) / 100;
+        if count >= most {
+            return (item, u16::MAX);
+        }
+    }
+    (item, ((count + WHOLE / 2) / WHOLE) as u16)
 }
 
 /// What `ware` costs someone with `kit` on a team with `team`: so many of an
@@ -160,13 +185,17 @@ pub fn price(ware: Ware, kit: &Kit, team: &StandUpgrades) -> Option<(Item, u16)>
             0 => (Item::Silver, 24),
             1 => (Item::Gold, 12),
             2 => (Item::Sapphire, 8),
-            step => in_one(Item::Amethyst, 4.0, 1.5, step - 3),
+            step => in_one(Item::Amethyst, 4, 150, step - 3),
         }),
-        Ware::Sharpness => Some(in_one(Item::Gold, 6.0, 1.45, team.sharpness)),
-        Ware::Protection if team.protection < PROTECTION_MOST => Some(in_one(Item::Silver, 20.0, 1.6, u16::from(team.protection))),
-        Ware::Fortify => Some(in_one(Item::Silver, 24.0, 1.35, team.fortify)),
-        Ware::Beam => Some(in_one(Item::Sapphire, 2.0, 1.5, team.beam)),
-        Ware::Lucky if team.lucky < LUCKY_MOST => Some(in_one(Item::Gold, 5.0, 1.6, u16::from(team.lucky))),
+        Ware::Sharpness => Some(in_one(Item::Gold, 6, 145, team.sharpness)),
+        Ware::Protection if team.protection < PROTECTION_MOST => Some(in_one(Item::Silver, 20, 160, u16::from(team.protection))),
+        // Mine: 1.6 times a step, where it was 1.35. A Fortify mends the
+        // whole anchor, and at 1.35 a plain player alone, whose anchor is
+        // hit hardest, bought one after about every wave, the anchor whole
+        // again each time; at 1.6, after about two waves in three.
+        Ware::Fortify => Some(in_one(Item::Silver, 24, 160, team.fortify)),
+        Ware::Beam => Some(in_one(Item::Sapphire, 2, 150, team.beam)),
+        Ware::Lucky if team.lucky < LUCKY_MOST => Some(in_one(Item::Gold, 5, 160, u16::from(team.lucky))),
         _ => None,
     }
 }
@@ -338,6 +367,33 @@ mod tests {
 
     fn default<T: Default>() -> T {
         T::default()
+    }
+
+    #[test]
+    fn prices_are_worked_out_in_whole_numbers_to_the_same_coin_everywhere() {
+        // Each line's first ten steps, as worked out in exact fractions
+        // (first x grows^step, rounded half up) outside the game: the
+        // server's and every device's.
+        let steps = |ware: Ware, team: &dyn Fn(u16) -> StandUpgrades| -> Vec<u16> {
+            (0..10).map(|step| price(ware, &Kit::default(), &team(step)).map_or(0, |(_, cost)| cost)).collect()
+        };
+        assert_eq!(steps(Ware::Beam, &|beam| StandUpgrades { beam, ..default() }), [2, 3, 5, 7, 10, 15, 23, 34, 51, 77]);
+        assert_eq!(steps(Ware::Sharpness, &|sharpness| StandUpgrades { sharpness, ..default() }), [6, 9, 13, 18, 27, 38, 56, 81, 117, 170]);
+        assert_eq!(steps(Ware::Fortify, &|fortify| StandUpgrades { fortify, ..default() }), [24, 38, 61, 98, 157, 252, 403, 644, 1031, 1649]);
+        assert_eq!(
+            steps(Ware::Generator, &|step| StandUpgrades { generator: step + 3, ..default() }),
+            [4, 6, 9, 14, 20, 30, 46, 68, 103, 154]
+        );
+        let capped = |ware: Ware, team: &dyn Fn(u8) -> StandUpgrades| -> Vec<u16> {
+            (0..5).map(|step| price(ware, &Kit::default(), &team(step)).map_or(0, |(_, cost)| cost)).collect()
+        };
+        assert_eq!(capped(Ware::Protection, &|protection| StandUpgrades { protection, ..default() }), [20, 32, 51, 82, 131]);
+        assert_eq!(capped(Ware::Lucky, &|lucky| StandUpgrades { lucky, ..default() }), [5, 8, 13, 20, 33]);
+        // The two that come out at a half exactly, rounded up: the beam's
+        // third step (2 x 1.5 x 1.5) and the generator's seventh
+        // (4 x 1.5 x 1.5 x 1.5).
+        assert_eq!(price(Ware::Beam, &Kit::default(), &StandUpgrades { beam: 2, ..default() }), Some((Item::Sapphire, 5)));
+        assert_eq!(price(Ware::Generator, &Kit::default(), &StandUpgrades { generator: 6, ..default() }), Some((Item::Amethyst, 14)));
     }
 
     #[test]

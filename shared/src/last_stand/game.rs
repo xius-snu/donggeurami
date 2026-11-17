@@ -108,12 +108,19 @@ pub enum Event {
     /// A zombie is dead, killed by the person in seat `by`, if anyone (the
     /// last blow; into the void, whoever knocked it there just before), at
     /// `at`: into the void, or where it fell, and what it drops comes as
-    /// [`Event::Made`]s after this. Its body is to go.
+    /// [`Event::Made`]s after this. Its body is to go. One that falls into
+    /// the void drops nothing, nor does one killed out over it once it has
+    /// fallen more than a step under the sand (what it drops comes down only
+    /// on ground no higher over its feet than that,
+    /// [`Pile::scatter`](crate::bridge_wars::Pile::scatter)); one killed
+    /// climbing up the rim's side drops on the sand over it, from where its
+    /// climb comes up.
     Killed { zombie: u32, kind: Kind, by: Option<usize>, at: Vec3, void: bool },
     /// A zombie's blow, or a spitter's ball, has landed on the person in
     /// `seat`: how much it took, after their shield and the team's
-    /// protection, from where, and how hard it knocks them, their own
-    /// device's to do.
+    /// protection, and how hard it knocks them, away from `from`, their own
+    /// device's to do: a zombie's middle, where a leaper leapt from as it
+    /// lands on them (its way on), and where a ball came down.
     Struck { seat: usize, damage: f32, from: Vec3, knock: Knock },
     /// The person in `seat` died where they stood, `at`; `out`, for good,
     /// the anchor being broken.
@@ -449,23 +456,15 @@ impl Game {
     }
 
     /// The person in `seat` is ready for the next wave: once everyone
-    /// standing is, it comes in [`READY_SECS`], if not sooner.
+    /// standing is, it comes in [`READY_SECS`], if not sooner. Looked at
+    /// again at every step too, so that whoever was not ready leaving, or
+    /// dying, leaves the rest no longer waiting for them.
     pub fn ready(&mut self, seat: usize) {
-        let Stage::Break { ends, .. } = self.stage else {
-            return;
-        };
-        if !self.alive(seat) {
+        if !matches!(self.stage, Stage::Break { .. }) || !self.alive(seat) {
             return;
         }
         self.players[seat].ready = true;
-        let all = (0..self.players.len()).filter(|&seat| self.alive(seat)).all(|seat| self.players[seat].ready);
-        let soon = self.elapsed + READY_SECS;
-        if all && soon < ends {
-            self.stage = Stage::Break {
-                ends: soon,
-                until: self.on_clock(READY_SECS),
-            };
-        }
+        self.hurry();
     }
 
     /// The person in `seat` has fallen into the void, as their device says:
@@ -497,6 +496,7 @@ impl Game {
         let dt = dt.clamp(0.0, LONGEST_STEP);
         self.elapsed += dt;
         self.stand_again(dt);
+        self.hurry();
         self.come(dt);
         self.shamble(dt);
         self.splash(dt);
@@ -691,6 +691,26 @@ impl Game {
         if self.clock > 0.0 { self.clock + f64::from(after) } else { f64::from(self.elapsed + after) }
     }
 
+    /// Between waves, with someone standing and everyone standing ready
+    /// ([`Game::ready`]): the next wave comes in [`READY_SECS`], if it was
+    /// not coming sooner.
+    fn hurry(&mut self) {
+        let Stage::Break { ends, .. } = self.stage else {
+            return;
+        };
+        let mut standing = (0..self.players.len()).filter(|&seat| self.alive(seat)).peekable();
+        if standing.peek().is_none() || !standing.all(|seat| self.players[seat].ready) {
+            return;
+        }
+        let soon = self.elapsed + READY_SECS;
+        if soon < ends {
+            self.stage = Stage::Break {
+                ends: soon,
+                until: self.on_clock(READY_SECS),
+            };
+        }
+    }
+
     /// The person in `seat` has attacked: seen again if they were unseen,
     /// and no longer just back.
     fn reveal(&mut self, seat: usize) {
@@ -880,9 +900,9 @@ impl Game {
             }
         }
         for (index, act) in acts {
-            let (from, damage, kind) = (self.zombies[index].at, self.zombies[index].damage, self.zombies[index].kind);
+            let (damage, kind) = (self.zombies[index].damage, self.zombies[index].kind);
             match act {
-                Act::Hit { seat, knock } => {
+                Act::Hit { seat, knock, from } => {
                     if self.alive(seat) {
                         let damage = through(damage, &self.kits[seat], &self.upgrades);
                         self.strike(seat, damage, from, knock);
@@ -1178,8 +1198,9 @@ impl Game {
     }
 
     /// The zombies that died this frame: what each was worth to whoever
-    /// killed it, what it drops where it fell (not into the void, which had
-    /// it), and gone.
+    /// killed it, what it drops where it fell (on the sand over the rim's
+    /// side, for one killed climbing; not into the void, which had it), and
+    /// gone.
     fn bury(&mut self) {
         if !self.zombies.iter().any(|zombie| zombie.dead) {
             return;
@@ -1205,7 +1226,7 @@ impl Game {
                 continue;
             }
             let dice = &mut self.dice;
-            if let Some(dropped) = self.forges.pile_mut().scatter(&things, zombie.at, self.elapsed, &mut || dice.roll(), &lies_on) {
+            if let Some(dropped) = self.forges.pile_mut().scatter(&things, zombie.drops_from(), self.elapsed, &mut || dice.roll(), &lies_on) {
                 self.events.extend(dropped.into_iter().map(Event::Made));
             }
         }

@@ -1,17 +1,21 @@
 //! Whole games of Last Stand played by stand-ins for people, by numbers, to
-//! hold the game to what it is for and to tune it by: one alone should
-//! clear five to nine waves, six or seven most often, so that a decent player
-//! has the fee back at five and a good one does well (Hajun: "Generally
-//! should be above 50% to win net positive coin"); four, nine to fifteen; and
-//! a game should take eight to twenty minutes. `cargo test -p roundtown_net
-//! stand_many -- --ignored --nocapture` prints a table of many
-//! (`RT_GAMES` games for each number of people, from the seed `RT_FROM`).
+//! hold the game to what it is for and to tune it by. The game is tuned by
+//! a plain stand-in ([`Play::Plain`]), the brief's "decent player": one
+//! alone should clear five to nine waves, six or seven most often, so that
+//! such a player has the fee back at five more often than not and a good
+//! one does well (Hajun: "Generally should be above 50% to win net positive
+//! coin"); four together, nine to fifteen; and a game should take eight to
+//! twenty minutes in the middle. A good player ([`Play::Good`]) is played
+//! beside it, to see how much further one goes. `cargo test -p
+//! roundtown_net stand_many -- --ignored --nocapture` prints a table of
+//! many (`RT_GAMES` games for each number of people and each way of
+//! playing, from the seed `RT_FROM`).
 
 use bevy::math::{Vec2, Vec3, Vec3Swizzles};
 
 use super::*;
 use crate::bots::Dice;
-use crate::bridge_wars::{AIR_DRAG, FAST, GROUND_DRAG, KNOCK_BACK, KNOCK_UP, RUN_SPEED, SPRINT_BONUS, Shop};
+use crate::bridge_wars::{AIR_DRAG, FAST, GROUND_DRAG, KNOCK_BACK, KNOCK_UP, REACH, RUN_SPEED, SPRINT_BONUS, Shop};
 use crate::nav::BODY;
 use crate::{Item, Kit, Use, Utility};
 
@@ -19,6 +23,40 @@ use crate::{Item, Kit, Use, Utility};
 const DT: f32 = 1.0 / 20.0;
 /// The longest a whole game is played before the test gives it up.
 const LONGEST: f32 = 60.0 * 60.0;
+/// How far round from the way a stand-in faces something may be and still
+/// be in front of it, for its blow to land on: the cosine of the angle, 60
+/// degrees to either side (about the punch's range as the device draws it,
+/// which opens out from a band as wide as a body in front of you).
+const FRONT: f32 = 0.5;
+
+/// How a stand-in plays.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Play {
+    /// The plain player the game is tuned by, as its brief has it: it
+    /// "stands near the anchor, goes for the nearest zombie in reach at a
+    /// fist's or sword's damage a second, picks things up near it, buys by
+    /// a simple greedy list between waves". One blow about a second while
+    /// anything is in its reach in front of it (the zombie it goes for,
+    /// which it faces, or the nearest other in front of it), every one
+    /// landing; and it buys swords, shields and the team's upgrades, and
+    /// nothing to use: it drinks nothing, throws nothing, and never steps
+    /// out of a ball's way. A little slower than Bridge Wars' moderate
+    /// computer players, who punch every 0.8 s
+    /// ([`BOT_PUNCH_EVERY`](crate::bridge_wars::BOT_PUNCH_EVERY)).
+    Plain,
+    /// A good player, played to see how much further one goes than the
+    /// plain one (much the stand-in the game was first tuned by, which
+    /// went for the zombie nearest itself and picked up before it shopped,
+    /// where both now keep to their own side and shop first): it presses
+    /// three times a second or so, most of the presses landing, each on the
+    /// nearest zombie in its reach, whichever way, that the last did not
+    /// just send flying, which in a crowd is two blows a second and more,
+    /// past what Bridge Wars' best computer players manage (every 0.53 s
+    /// and a little); and it drinks a healing potion when it is low, steps
+    /// out of the way of a ball about to come down on it, and throws
+    /// fireballs and sticks of dynamite into crowds now and then.
+    Good,
+}
 
 /// What a stand-in is doing between waves.
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -31,27 +69,28 @@ enum Errand {
     Home,
 }
 
-/// A stand-in for a person, played by numbers: it keeps by the anchor and
-/// goes for the zombie nearest it of those at the anchor or at itself, a
-/// spitter spitting at the anchor, and anything once the anchor is broken or
-/// a wave's last few are left; presses a few times a second, as a person
-/// does, each press landing, most of the time, on whichever zombie in reach
-/// is nearest and not just sent flying; steps out of a spitter's ball; picks
-/// up what lies near it; drinks a healing potion when it is low; throws a
-/// fireball or a stick into a crowd now and then; goes round what holds it
-/// up, the way it took; and between waves takes what the pads have made,
-/// buys by a greedy list, saving for what it wants most, and presses Ready
-/// near a break's end once it has no sword, shield or generator step to save
-/// for. Knocked, it is carried as a body is; over the rim, it falls. Not a
-/// good player: a plain one, which a person who minds their health, kites
-/// and picks what to hit does better than.
+/// A stand-in for a person, played by numbers ([`Play`]): it keeps by the
+/// anchor, on its own side of it, and goes for the zombie nearest that side
+/// of those at the anchor or at itself, a spitter spitting at the anchor,
+/// and anything once the anchor is broken or a wave's last few are left,
+/// hitting as its play has it; picks up what lies near it; goes round what
+/// holds it up, the way it took; and between waves buys what it can by a
+/// greedy list, first, saving for what it wants most, then takes what lies
+/// about and what the pads have made, and presses Ready near a break's end
+/// once it has no sword, shield or generator step to save for. Knocked, it
+/// is carried as a body is; over the rim, it falls.
 struct StandIn {
     seat: usize,
+    play: Play,
     at: Vec3,
+    /// Which way it faces, across the ground: toward the zombie it goes
+    /// for, or the way it last walked.
+    facing: Vec2,
     shove: Vec2,
     lift: f32,
     dead: bool,
-    /// Until it may swing again, and what share of its swings land.
+    /// Until it may swing again, and, a good player, what share of its
+    /// presses land.
     swing: f32,
     knack: f32,
     errand: Errand,
@@ -62,12 +101,14 @@ struct StandIn {
 }
 
 impl StandIn {
-    fn new(seat: usize, seed: u64, at: Vec3) -> Self {
+    fn new(seat: usize, seed: u64, at: Vec3, play: Play) -> Self {
         let mut dice = Dice::new(seed.wrapping_mul(31).wrapping_add(seat as u64 + 7));
         let knack = dice.around(0.75, 0.95);
         Self {
             seat,
+            play,
             at,
+            facing: (at.xz() - ANCHOR).normalize_or(Vec2::Y),
             shove: Vec2::ZERO,
             lift: 0.0,
             dead: false,
@@ -84,7 +125,7 @@ impl StandIn {
         for event in events {
             match *event {
                 Event::Struck { seat, from, knock, .. } if seat == self.seat => {
-                    let away = (self.at.xz() - from.xz()).normalize_or(Vec2::X);
+                    let away = (self.at.xz() - from.xz()).normalize_or(Vec2::NEG_Y);
                     let push = match knock {
                         Knock::None => continue,
                         Knock::Light => KNOCK_BACK,
@@ -153,22 +194,24 @@ impl StandIn {
         let kit = game.kits()[self.seat];
         let elapsed = game.elapsed();
         let pace = RUN_SPEED * if kit.fast(elapsed) { FAST } else { 1.0 };
-        // Low, it drinks.
-        if game.health(self.seat) < self.dice.around(25.0, 45.0) && kit.held(Utility::Healing) > 0 {
+        // Low, a good player drinks.
+        if self.play == Play::Good && game.health(self.seat) < self.dice.around(25.0, 45.0) && kit.held(Utility::Healing) > 0 {
             game.use_item(self.seat, Use::Potion(Utility::Healing));
         }
         let round = game.round();
-        let to = match round.stage {
+        let mut to = match round.stage {
             StandStage::Wave => self.fight(game, &kit),
-            _ => self.errands(game, &kit),
+            _ => self.errands(game),
         };
-        // Out of the way of a ball about to come down on it.
-        let mut to = to;
-        for (_, spit) in game.spits() {
-            let left = spit.secs() - spit.age;
-            if left < 0.7 && spit.to.xz().distance(self.at.xz()) < SPIT_RADIUS + BODY + 0.3 {
-                let away = (self.at.xz() - spit.to.xz()).normalize_or(Vec2::X);
-                to = self.at.xz() + away * 3.0;
+        // A good player gets out of the way of a ball about to come down on
+        // it.
+        if self.play == Play::Good {
+            for (_, spit) in game.spits() {
+                let left = spit.secs() - spit.age;
+                if left < 0.7 && spit.to.xz().distance(self.at.xz()) < SPIT_RADIUS + BODY + 0.3 {
+                    let away = (self.at.xz() - spit.to.xz()).normalize_or(Vec2::X);
+                    to = self.at.xz() + away * 3.0;
+                }
             }
         }
         self.walk(to, pace, dt);
@@ -178,8 +221,7 @@ impl StandIn {
     /// Where it goes in a wave, and what it hits: it guards the anchor,
     /// going for the zombie nearest it of those at the anchor, or of those
     /// at itself, and never further from the anchor than a few metres; and
-    /// swings at whatever is in its reach, a press every so often, most of
-    /// them landing; a fireball or a stick into a crowd now and then.
+    /// hits as its play has it ([`Play`]).
     fn fight(&mut self, game: &mut Game, kit: &Kit) -> Vec2 {
         let me = self.at.xz();
         let home = arrival(self.seat).0.xz();
@@ -190,6 +232,12 @@ impl StandIn {
         let few = usize::from(game.round().left) == zombies.len() && zombies.len() <= 5;
         let broken = game.anchor().0 <= 0.0 || few;
         let guards = |at: Vec2| broken || at.distance(ANCHOR) < 7.0;
+        let nearer = |a: &&(u32, Kind, Vec3), b: &&(u32, Kind, Vec3)| a.2.xz().distance(me).total_cmp(&b.2.xz().distance(me));
+        // Each keeps to its own side of the anchor: of what it would go
+        // for, the nearest its own place by it, and to itself (with
+        // the nearest to itself alone, four of them went for the one
+        // zombie as one, and stood as one).
+        let guarded = |at: Vec3| at.xz().distance(home) + 0.5 * at.xz().distance(me);
         let target = zombies
             .iter()
             .filter(|(id, kind, at)| {
@@ -200,33 +248,60 @@ impl StandIn {
                         || (*kind == Kind::Spitter && at.distance(ANCHOR) < 14.0)
                         || (at.distance(me) < 4.0 && guards(at)))
             })
-            .min_by(|a, b| a.2.xz().distance(me).total_cmp(&b.2.xz().distance(me)));
-        // A crowd within a throw: a fireball, or a stick if it is a big one.
-        let crowd = |around: Vec2| zombies.iter().filter(|(_, _, at)| at.xz().distance(around) < 3.0).count();
-        if let Some((_, _, at)) = zombies.iter().find(|(_, _, at)| {
-            let far = at.xz().distance(me);
-            (4.0..9.0).contains(&far) && crowd(at.xz()) >= 3
-        }) {
-            let way = at.xz() - me;
-            let heading = (-way.x).atan2(-way.y);
-            if kit.held(Utility::Dynamite) > 0 && crowd(at.xz()) >= 4 && self.dice.roll() < 0.05 {
-                game.use_item(self.seat, Use::Dynamite { heading, far: way.length() });
-            } else if kit.held(Utility::Fireball) > 0 && self.dice.roll() < 0.05 {
-                game.use_item(self.seat, Use::Fireball { heading });
-            }
+            .min_by(|a, b| guarded(a.2).total_cmp(&guarded(b.2)));
+        if let Some((_, _, at)) = target
+            && let Some(way) = (at.xz() - me).try_normalize()
+        {
+            self.facing = way;
         }
-        // A press every so often, as a person presses: it lands on the
-        // nearest in reach that the last press did not just send flying
-        // (the game says so, by not counting it), most of the time.
-        if self.swing <= 0.0 {
-            self.swing = self.dice.around(0.25, 0.4);
-            if self.dice.roll() < self.knack {
-                let mut near: Vec<&(u32, Kind, Vec3)> =
-                    zombies.iter().filter(|(_, kind, at)| at.xz().distance(me) <= 2.0 + BODY * kind.size()).collect();
-                near.sort_by(|a, b| a.2.xz().distance(me).total_cmp(&b.2.xz().distance(me)));
-                for (id, ..) in near {
-                    if game.punch(self.seat, *id, false) {
-                        break;
+        let in_reach = |kind: Kind, at: Vec3| at.xz().distance(me) <= REACH + BODY * kind.size();
+        match self.play {
+            Play::Plain => {
+                // A blow about once a second, while anything is in its
+                // reach in front of it: the one it goes for, or the
+                // nearest other.
+                if self.swing <= 0.0 {
+                    let front = |at: Vec3| (at.xz() - me).normalize_or(self.facing).dot(self.facing) >= FRONT;
+                    let aimed = target
+                        .filter(|(_, kind, at)| in_reach(*kind, *at))
+                        .or_else(|| zombies.iter().filter(|(_, kind, at)| in_reach(*kind, *at) && front(*at)).min_by(nearer))
+                        .map(|(id, ..)| *id);
+                    if let Some(id) = aimed
+                        && game.punch(self.seat, id, false)
+                    {
+                        self.swing = self.dice.around(0.85, 1.15);
+                    }
+                }
+            }
+            Play::Good => {
+                // A crowd within a throw: a fireball, or a stick if it is
+                // a big one.
+                let crowd = |around: Vec2| zombies.iter().filter(|(_, _, at)| at.xz().distance(around) < 3.0).count();
+                if let Some((_, _, at)) = zombies.iter().find(|(_, _, at)| {
+                    let far = at.xz().distance(me);
+                    (4.0..9.0).contains(&far) && crowd(at.xz()) >= 3
+                }) {
+                    let way = at.xz() - me;
+                    let heading = (-way.x).atan2(-way.y);
+                    if kit.held(Utility::Dynamite) > 0 && crowd(at.xz()) >= 4 && self.dice.roll() < 0.05 {
+                        game.use_item(self.seat, Use::Dynamite { heading, far: way.length() });
+                    } else if kit.held(Utility::Fireball) > 0 && self.dice.roll() < 0.05 {
+                        game.use_item(self.seat, Use::Fireball { heading });
+                    }
+                }
+                // A press every so often: it lands on the nearest in
+                // reach that the last press did not just send flying (the
+                // game says so, by not counting it), most of the time.
+                if self.swing <= 0.0 {
+                    self.swing = self.dice.around(0.25, 0.4);
+                    if self.dice.roll() < self.knack {
+                        let mut near: Vec<&(u32, Kind, Vec3)> = zombies.iter().filter(|(_, kind, at)| in_reach(*kind, *at)).collect();
+                        near.sort_by(nearer);
+                        for (id, ..) in near {
+                            if game.punch(self.seat, *id, false) {
+                                break;
+                            }
+                        }
                     }
                 }
             }
@@ -235,7 +310,7 @@ impl StandIn {
             return self.pick_up_near(game, home, 8.0);
         };
         let far = at.xz().distance(me);
-        let reach = 2.0 + BODY * kind.size();
+        let reach = REACH + BODY * kind.size();
         if far > reach * 0.8 { at.xz() } else { me }
     }
 
@@ -251,9 +326,10 @@ impl StandIn {
 
     /// What it would buy now, in the order it wants it, out of what it holds:
     /// a better sword, a better shield, the generators to amethyst, the
-    /// anchor fortified when it is low, two healing potions, then the
-    /// cheapest of the upgrades, and fireballs with silver to spare.
-    fn wants(game: &Game, seat: usize) -> Option<Ware> {
+    /// anchor fortified when it is low, then the cheapest of the upgrades;
+    /// and a good player two healing potions after the anchor, and
+    /// fireballs and sticks of dynamite with plenty to spare.
+    fn wants(game: &Game, seat: usize, play: Play) -> Option<Ware> {
         let (kit, purse, team) = (game.kits()[seat], game.purses()[seat], game.upgrades());
         let (anchor, most) = game.anchor();
         let mut list: Vec<Ware> = Vec::new();
@@ -265,7 +341,7 @@ impl StandIn {
         if anchor < most * 0.7 {
             list.push(Ware::Fortify);
         }
-        if kit.held(Utility::Healing) < 2 {
+        if play == Play::Good && kit.held(Utility::Healing) < 2 {
             list.push(Ware::Utility(Utility::Healing));
         }
         // The cheapest of the rest, by what it costs in silver's worth.
@@ -276,10 +352,10 @@ impl StandIn {
             .collect();
         upgrades.sort_by(|a, b| a.0.total_cmp(&b.0));
         list.extend(upgrades.into_iter().map(|(_, ware)| ware));
-        if purse[Item::Silver.index()] > 60 {
+        if play == Play::Good && purse[Item::Silver.index()] > 60 {
             list.push(Ware::Utility(Utility::Fireball));
         }
-        if purse[Item::Amethyst.index()] > 2 {
+        if play == Play::Good && purse[Item::Amethyst.index()] > 2 {
             list.push(Ware::Utility(Utility::Dynamite));
         }
         // The first it can have; what it cannot have yet it saves for, and
@@ -299,11 +375,11 @@ impl StandIn {
 
     /// Where it goes between waves: what lies near the anchor, the pads,
     /// the stand that sells what it wants, and back.
-    fn errands(&mut self, game: &mut Game, _kit: &Kit) -> Vec2 {
+    fn errands(&mut self, game: &mut Game) -> Vec2 {
         let me = self.at.xz();
         let home = arrival(self.seat).0.xz();
         // Buy what it can where it stands.
-        if let Some(ware) = Self::wants(game, self.seat)
+        if let Some(ware) = Self::wants(game, self.seat, self.play)
             && at_a_stand(me, sold_at(ware))
             && me.distance(match sold_at(ware) {
                 Shop::Items => ITEM_SHOP,
@@ -312,23 +388,25 @@ impl StandIn {
         {
             game.buy(self.seat, ware, me);
         }
-        let near = self.pick_up_near(game, home, 6.0);
-        if near != home {
-            return near;
-        }
-        // Each errand until it is done.
+        // What it can have now, it goes to buy, first; then whatever lies
+        // near; then the pads, one at a time, until it has what lay there.
         let lying = |pad: usize| game.pieces().iter().filter(|piece| !piece.dropped() && piece.at.distance(PADS[pad]) < 1.5).count();
-        self.errand = match self.errand {
-            Errand::Shop(shop) if Self::wants(game, self.seat).is_some_and(|ware| sold_at(ware) == shop) => Errand::Shop(shop),
-            Errand::Pad(pad) if lying(pad) > 0 => Errand::Pad(pad),
-            _ => match Self::wants(game, self.seat) {
-                Some(ware) => Errand::Shop(sold_at(ware)),
-                None => match (0..PADS.len()).max_by_key(|pad| lying(*pad)) {
+        let wanted = Self::wants(game, self.seat, self.play);
+        if let Some(ware) = wanted {
+            self.errand = Errand::Shop(sold_at(ware));
+        } else {
+            let near = self.pick_up_near(game, home, 6.0);
+            if near != home {
+                return near;
+            }
+            self.errand = match self.errand {
+                Errand::Pad(pad) if lying(pad) > 0 => Errand::Pad(pad),
+                _ => match (0..PADS.len()).max_by_key(|pad| lying(*pad)) {
                     Some(pad) if lying(pad) > 2 => Errand::Pad(pad),
                     _ => Errand::Home,
                 },
-            },
-        };
+            };
+        }
         match self.errand {
             Errand::Shop(Shop::Items) => ITEM_SHOP,
             Errand::Shop(Shop::Upgrades) => UPGRADE_SHOP,
@@ -394,6 +472,9 @@ impl StandIn {
         } else {
             self.side = 0.0;
         }
+        if let Some(way) = (next - me).try_normalize() {
+            self.facing = way;
+        }
         let floor = ground(next).unwrap_or(self.at.y);
         self.at = Vec3::new(next.x, floor, next.y);
     }
@@ -434,11 +515,11 @@ struct Told {
     over: bool,
 }
 
-/// A whole game of `people` stand-ins from `seed`.
-fn played(people: usize, seed: u64) -> Told {
+/// A whole game of `people` stand-ins playing as `play` from `seed`.
+fn played(people: usize, seed: u64, play: Play) -> Told {
     let mut game = Game::new(people, &vec![true; people], seed);
     game.begin();
-    let mut stand_ins: Vec<StandIn> = (0..people).map(|seat| StandIn::new(seat, seed, game.at(seat).0)).collect();
+    let mut stand_ins: Vec<StandIn> = (0..people).map(|seat| StandIn::new(seat, seed, game.at(seat).0, play)).collect();
     let mut told = Told {
         seed,
         people,
@@ -493,10 +574,13 @@ fn played(people: usize, seed: u64) -> Told {
     told
 }
 
-/// The games of `seeds` with `people` stand-ins each, a line each.
-fn told(people: usize, seeds: std::ops::Range<u64>) -> Vec<Told> {
-    let games: Vec<Told> = seeds.map(|seed| played(people, seed)).collect();
-    println!("{people} | seed | waves | min  | walk run brute giant spit leap | void | died | broke | sw sh it | gen shp pro for bm lk | spat zaps drops | score | left");
+/// The games of `seeds` with `people` stand-ins each playing as `play`, a
+/// line each.
+fn told(people: usize, seeds: std::ops::Range<u64>, play: Play) -> Vec<Told> {
+    let games: Vec<Told> = seeds.map(|seed| played(people, seed, play)).collect();
+    println!(
+        "{people} {play:?} | seed | waves | min  | walk run brute giant spit leap | void | died | broke | sw sh it | gen shp pro for bm lk | spat zaps drops | score | left"
+    );
     for game in &games {
         let [walk, run, brute, giant, spit, leap] = game.kills;
         let [generator, sharp, protect, fortify, beam, lucky] = game.upgrades;
@@ -531,32 +615,76 @@ fn median(mut values: Vec<f32>) -> f32 {
     values.get(values.len() / 2).copied().unwrap_or(0.0)
 }
 
-#[test]
-fn whole_games_end_at_a_wave_that_fits_the_team_and_nothing_absurd_happens() {
-    let alone = told(1, 1..7);
-    let four = told(4, 1..4);
-    for game in alone.iter().chain(&four) {
-        let seed = game.seed;
-        assert!(game.over, "seed {seed}, {} people: not over after {} minutes", game.people, game.minutes);
-        // Never a zombie off the rim of its own accord.
-        assert_eq!(game.walked_off, 0, "seed {seed}");
-        // The anchor broke before the end, which is how a game ends.
-        assert!(game.broke.is_some(), "seed {seed}");
-        // Something was bought, of each shop.
-        assert!(game.swords >= 1 && game.upgrades.iter().sum::<u32>() >= 1, "seed {seed}");
-        // The endless upgrades never run out.
-        assert!(game.endless, "seed {seed}");
-        // Over in a sensible time.
-        assert!(game.minutes > 2.0 && game.minutes < 45.0, "seed {seed}: {} minutes", game.minutes);
+/// The waves cleared in the middle of `games`, and the minutes.
+fn middles(games: &[Told]) -> (f32, f32) {
+    (median(games.iter().map(|game| f32::from(game.waves)).collect()), median(games.iter().map(|game| game.minutes).collect()))
+}
+
+/// How many games of each number of people the tests hold the tuning to,
+/// played by plain stand-ins (each takes about a twentieth of a second),
+/// and from which seed: seeds the tuning table ([`stand_many`]) does not
+/// play, so that the numbers are not tuned to these games alone.
+const HELD: u64 = 20;
+const HELD_FROM: u64 = 1;
+
+/// Whatever the people and however they play, a game never goes on with
+/// nothing to show for it: over within the hour, never a zombie off the
+/// rim of its own accord, the anchor broken before the end, something
+/// bought at each shop, the endless lines still selling, and not over too
+/// soon nor too late.
+fn nothing_absurd(games: &[Told]) {
+    for game in games {
+        let (seed, people) = (game.seed, game.people);
+        assert!(game.over, "seed {seed}, {people} people: not over after {} minutes", game.minutes);
+        assert_eq!(game.walked_off, 0, "seed {seed}, {people} people");
+        assert!(game.broke.is_some(), "seed {seed}, {people} people");
+        assert!(game.swords >= 1 && game.upgrades.iter().sum::<u32>() >= 1, "seed {seed}, {people} people");
+        assert!(game.endless, "seed {seed}, {people} people");
+        assert!(game.minutes > 2.0 && game.minutes < 45.0, "seed {seed}, {people} people: {} minutes", game.minutes);
     }
-    // Alone, a few waves and not many; four together, more.
-    let waves = |games: &[Told]| median(games.iter().map(|game| f32::from(game.waves)).collect());
-    let (one, many) = (waves(&alone), waves(&four));
-    assert!((3.0..=11.0).contains(&one), "alone: a median of {one} waves");
-    assert!(many > one, "four together {many}, alone {one}");
+}
+
+#[test]
+fn plain_players_clear_as_many_waves_as_the_game_is_tuned_for_in_the_time_it_is_tuned_for() {
+    // The brief's aims for the plain player, by the waves cleared in the
+    // middle of the games of each number of people: one alone five to
+    // nine; four together nine to fifteen; and a game eight to twenty
+    // minutes long in the middle, whoever plays. Twenty games of each.
+    let mut middle = Vec::new();
+    for people in 1..=4 {
+        let games = told(people, HELD_FROM..HELD_FROM + HELD, Play::Plain);
+        nothing_absurd(&games);
+        let (waves, minutes) = middles(&games);
+        assert!((8.0..=20.0).contains(&minutes), "{people} people: {minutes} minutes in the middle");
+        if people == 1 {
+            assert!((5.0..=9.0).contains(&waves), "alone: {waves} waves in the middle");
+            // Alone, the fee back (five waves) more often than not.
+            let paid = games.iter().filter(|game| game.waves >= 5).count();
+            assert!(paid * 2 > games.len(), "alone: the fee back in {paid} of {}", games.len());
+        }
+        if people == 4 {
+            assert!((9.0..=15.0).contains(&waves), "four: {waves} waves in the middle");
+        }
+        middle.push(waves);
+    }
+    // More people, further, or as far.
+    assert!(middle.windows(2).all(|pair| pair[1] >= pair[0]), "{middle:?}");
     // The same dice, the same game.
-    let (a, b) = (played(2, 11), played(2, 11));
+    let (a, b) = (played(2, 11, Play::Plain), played(2, 11, Play::Plain));
     assert_eq!((a.waves, a.kills, a.deaths, a.score), (b.waves, b.kills, b.deaths, b.score));
+}
+
+#[test]
+fn good_players_go_further_than_plain_ones_and_their_games_still_end() {
+    // Alone and four together, six games each: further in the middle than
+    // the plain player, and over all the same.
+    for people in [1, 4] {
+        let good = told(people, HELD_FROM..HELD_FROM + 6, Play::Good);
+        let plain = told(people, HELD_FROM..HELD_FROM + 6, Play::Plain);
+        nothing_absurd(&good);
+        let ((good, _), (plain, _)) = (middles(&good), middles(&plain));
+        assert!(good > plain, "{people} people: good players {good} waves in the middle, plain ones {plain}");
+    }
 }
 
 #[test]
@@ -565,7 +693,7 @@ fn every_kind_of_zombie_comes_and_does_its_thing_in_a_long_game() {
     // along: from wave twelve, every kind comes, and each does what it does.
     let mut game = Game::new(4, &[true; 4], 77);
     game.begin();
-    let mut stand_ins: Vec<StandIn> = (0..4).map(|seat| StandIn::new(seat, 77, game.at(seat).0)).collect();
+    let mut stand_ins: Vec<StandIn> = (0..4).map(|seat| StandIn::new(seat, 77, game.at(seat).0, Play::Plain)).collect();
     let (mut kinds, mut spat, mut struck, mut knocked) = ([false; 6], 0, 0, 0);
     let mut events: Vec<Event> = Vec::new();
     // Skip to wave 12, as a team that has done well: the stand-ins armed.
@@ -660,6 +788,98 @@ fn a_broken_anchor_stops_anyone_standing_again() {
     let events = game.step(DT);
     assert!(events.contains(&Event::Out { seat: 0 }) || game.round().back_at[0].is_infinite(), "{events:?}");
     assert!(game.over());
+}
+
+#[test]
+fn the_next_wave_comes_soon_once_everyone_still_standing_is_ready() {
+    // With no clock said, the room's clock is the game's own time.
+    let until = |game: &Game| match game.round().stage {
+        StandStage::Break { until } => until,
+        stage => panic!("{stage:?}"),
+    };
+    let soon = |game: &Game| f64::from(game.elapsed() + READY_SECS);
+    let begun = || {
+        let mut game = Game::new(3, &[true, true, true], 4);
+        game.begin();
+        game.step(DT);
+        game
+    };
+    // One ready and two not: the break runs on.
+    let mut game = begun();
+    game.ready(0);
+    game.step(DT);
+    assert!((until(&game) - f64::from(FIRST_WAVE)).abs() < 1e-3, "{}", until(&game));
+    // Everyone standing ready: soon.
+    game.ready(1);
+    game.ready(2);
+    assert!((until(&game) - soon(&game)).abs() < 1e-3);
+    // Whoever was not ready leaving, or dying, leaves the rest no longer
+    // waiting for them.
+    let mut game = begun();
+    game.ready(0);
+    game.ready(1);
+    game.leave(2);
+    game.step(DT);
+    assert!((until(&game) - soon(&game)).abs() < DT as f64 + 1e-3, "{} at {}", until(&game), game.elapsed());
+    let mut game = begun();
+    game.ready(1);
+    game.ready(2);
+    game.fell(0);
+    game.step(DT);
+    assert!((until(&game) - soon(&game)).abs() < DT as f64 + 1e-3, "{} at {}", until(&game), game.elapsed());
+    // Nobody standing is nobody ready: with everyone dead, the break runs on
+    // (and whoever stands again is not ready, until they say so).
+    let mut game = begun();
+    game.ready(0);
+    for seat in 0..3 {
+        game.fell(seat);
+    }
+    game.step(DT);
+    assert!((until(&game) - f64::from(FIRST_WAVE)).abs() < 1e-3, "{}", until(&game));
+}
+
+#[test]
+fn a_brute_killed_as_it_climbs_the_rim_drops_its_things_on_the_sand_over_it() {
+    // A game at the fourth wave, the first with a brute, with a sword that
+    // kills anything at a blow: every zombie struck the moment it begins to
+    // climb, its feet still far down the rim's side.
+    let mut game = Game::new(1, &[true], 12);
+    game.wave = 3;
+    game.upgrades.sharpness = 40;
+    game.kits[0].sword = 3;
+    game.begin();
+    let mut brute = None;
+    let mut dropped: Option<Vec<Vec2>> = None;
+    for _ in 0..(150.0 / DT) as usize {
+        let events = game.step(DT);
+        if let Some(brute) = brute {
+            // What came of it: the things made after it was killed, before
+            // the next killed.
+            let mut after = events.iter().skip_while(|event| !matches!(event, Event::Killed { zombie, void: false, .. } if *zombie == brute));
+            if after.next().is_some() {
+                let made = after.take_while(|event| !matches!(event, Event::Killed { .. }));
+                dropped = Some(made.filter_map(|event| if let Event::Made(piece) = event { Some(piece.at) } else { None }).collect());
+                break;
+            }
+        }
+        for event in events {
+            if let Event::Risen { zombie, kind, at, .. } = event {
+                assert!(game.climbing(zombie) && at.y < SAND_TOP - 1.0, "{at}");
+                let inside = at.xz() * ((RIM - 1.5) / at.xz().length());
+                game.sync(0, Vec3::new(inside.x, SAND_TOP, inside.y), 0.0);
+                assert!(game.punch(0, zombie, false), "zombie {zombie}, {kind:?}");
+                if kind == Kind::Brute && brute.is_none() {
+                    brute = Some(zombie);
+                }
+            }
+        }
+    }
+    // Two or three things, each lying on the sand within the rim.
+    let dropped = dropped.expect("the fourth wave's brute, killed");
+    assert!((2..=3).contains(&dropped.len()), "{dropped:?}");
+    for at in dropped {
+        assert!(at.length() < RIM && ground(at) == Some(SAND_TOP), "{at}");
+    }
 }
 
 #[test]
@@ -770,19 +990,21 @@ fn nothing_is_believed_that_could_not_be() {
 }
 
 /// One game, second by second, to see what goes on in it: `cargo test -p
-/// roundtown_net stand_watch -- --ignored --nocapture`, with `RT_SEED` (1)
-/// and `RT_PEOPLE` (1). Each line: the time, the wave and how many of it
-/// are left, the anchor's health, each stand-in's health, where it stands
-/// and what it is doing, how many zombies are within 4 m of it and of the
-/// anchor, and the blows that landed, on zombies and on people, that second.
+/// roundtown_net stand_watch -- --ignored --nocapture`, with `RT_SEED` (1),
+/// `RT_PEOPLE` (1) and `RT_PLAY` (`plain`, or `good`). Each line: the time,
+/// the wave and how many of it are left, the anchor's health, each
+/// stand-in's health, where it stands and what it is doing, how many
+/// zombies are within 4 m of it and of the anchor, and the blows that
+/// landed, on zombies and on people, that second.
 #[test]
 #[ignore]
 fn stand_watch() {
     let seed: u64 = std::env::var("RT_SEED").ok().and_then(|seed| seed.parse().ok()).unwrap_or(1);
     let people: usize = std::env::var("RT_PEOPLE").ok().and_then(|people| people.parse().ok()).unwrap_or(1);
+    let play = if std::env::var("RT_PLAY").is_ok_and(|play| play == "good") { Play::Good } else { Play::Plain };
     let mut game = Game::new(people, &vec![true; people], seed);
     game.begin();
-    let mut stand_ins: Vec<StandIn> = (0..people).map(|seat| StandIn::new(seat, seed, game.at(seat).0)).collect();
+    let mut stand_ins: Vec<StandIn> = (0..people).map(|seat| StandIn::new(seat, seed, game.at(seat).0, play)).collect();
     let mut events: Vec<Event> = Vec::new();
     let (mut landed, mut struck, mut anchor_hits) = (0, 0, 0);
     let mut second = 0;
@@ -821,9 +1043,10 @@ fn stand_watch() {
                     )
                 })
                 .collect();
-            // The last few of a wave, where they are and how they are.
-            if round.left > 0 && round.left <= 2 && second % 10 == 0 {
-                for (id, kind, at, yaw, health, _) in game.zombies() {
+            // The last few of a wave, and every giant, where they are and
+            // how they are.
+            for (id, kind, at, yaw, health, _) in game.zombies() {
+                if (round.left > 0 && round.left <= 2 && second % 10 == 0) || kind == Kind::Giant {
                     println!("      zombie {id} {kind:?} at {at:.2} facing {yaw:.2}, {health} health, climbing {}", game.climbing(id));
                 }
             }
@@ -842,19 +1065,78 @@ fn stand_watch() {
     println!("over: {} waves cleared, team score {}", game.cleared(), game.team_score());
 }
 
-/// The table to tune by: `RT_GAMES` games (100) for each number of people,
-/// from the seed `RT_FROM` (100): how far each came, how long it took,
-/// what it killed and bought; and for each number of people, the waves
-/// cleared at the least, the most and in the middle, how many cleared
-/// each, the minutes, and what a game killed and bought on the whole.
+/// Where the pressure falls, wave by wave: `cargo test -p roundtown_net
+/// stand_waves -- --ignored --nocapture`, `RT_GAMES` games (40) of each
+/// number of people from `RT_FROM` (100), plain players (`RT_PLAY=good`
+/// for good ones). For each wave, of the games that played it: how many
+/// did, how long it took, what the anchor lost in it, how many times the
+/// people died in it, and how many zombies stood at once at the most.
+#[test]
+#[ignore]
+fn stand_waves() {
+    let count: u64 = std::env::var("RT_GAMES").ok().and_then(|count| count.parse().ok()).unwrap_or(40);
+    let from: u64 = std::env::var("RT_FROM").ok().and_then(|from| from.parse().ok()).unwrap_or(100);
+    let play = if std::env::var("RT_PLAY").is_ok_and(|play| play == "good") { Play::Good } else { Play::Plain };
+    for people in 1..=4 {
+        // By wave: games, seconds, anchor lost, deaths, most standing.
+        let mut waves = vec![[0.0f32; 5]; 40];
+        for seed in from..from + count {
+            let mut game = Game::new(people, &vec![true; people], seed);
+            game.begin();
+            let mut stand_ins: Vec<StandIn> = (0..people).map(|seat| StandIn::new(seat, seed, game.at(seat).0, play)).collect();
+            let mut events: Vec<Event> = Vec::new();
+            let mut began = 0.0;
+            while !game.over() && game.elapsed() < LONGEST {
+                for stand_in in &mut stand_ins {
+                    stand_in.hear(&events);
+                    stand_in.play(&mut game, DT);
+                }
+                events = game.step(DT);
+                let wave = usize::from(game.wave()).min(39);
+                for event in &events {
+                    match *event {
+                        Event::Wave { .. } => {
+                            began = game.elapsed();
+                            waves[wave][0] += 1.0;
+                        }
+                        Event::Cleared { .. } | Event::Over { .. } => waves[wave][1] += game.elapsed() - began,
+                        Event::AnchorHurt { damage } => waves[wave][2] += damage,
+                        Event::Died { .. } => waves[wave][3] += 1.0,
+                        _ => {}
+                    }
+                }
+                let standing = game.zombies().count() as f32;
+                waves[wave][4] = waves[wave][4].max(standing);
+            }
+        }
+        println!("{people} people, {play:?}: wave | games | secs | anchor lost | deaths | most standing");
+        for (wave, [games, secs, lost, deaths, most]) in waves.iter().enumerate().skip(1) {
+            if *games > 0.0 {
+                println!("  {wave:>2} | {games:>3} | {:>5.0} | {:>6.0} | {:>5.1} | {most:>3}", secs / games, lost / games, deaths / games);
+            }
+        }
+    }
+}
+
+/// The table to tune by: `RT_GAMES` games (100) for each number of people
+/// and each way of playing ([`Play`]; only one with `RT_PLAY`, `plain` or
+/// `good`), from the seed `RT_FROM` (100): how far each came, how long it
+/// took, what it killed and bought; and for each, the waves cleared at the
+/// least, the most and in the middle, how many cleared each, the minutes,
+/// and what a game killed and bought on the whole.
 #[test]
 #[ignore]
 fn stand_many() {
     let count: u64 = std::env::var("RT_GAMES").ok().and_then(|count| count.parse().ok()).unwrap_or(100);
     let from: u64 = std::env::var("RT_FROM").ok().and_then(|from| from.parse().ok()).unwrap_or(100);
+    let plays = match std::env::var("RT_PLAY").as_deref() {
+        Ok("plain") => vec![Play::Plain],
+        Ok("good") => vec![Play::Good],
+        _ => vec![Play::Plain, Play::Good],
+    };
     let mut summary = Vec::new();
-    for people in 1..=4 {
-        let games = told(people, from..from + count);
+    for (play, people) in plays.into_iter().flat_map(|play| (1..=4).map(move |people| (play, people))) {
+        let games = told(people, from..from + count, play);
         let waves: Vec<f32> = games.iter().map(|game| f32::from(game.waves)).collect();
         let minutes: Vec<f32> = games.iter().map(|game| game.minutes).collect();
         let low = waves.iter().copied().fold(f32::INFINITY, f32::min);
@@ -875,7 +1157,7 @@ fn stand_many() {
             .map(|(index, ware)| format!("{ware:?} {:.1}", mean(&|game| game.upgrades[index] as f32)))
             .collect();
         summary.push(format!(
-            "{people} people: waves cleared {low:.0} to {high:.0}, {:.1} in the middle, {paid_back} of {count} with the fee back; {:.1} minutes in the middle\n   cleared ({})\n   a game kills {} (into the void {:.1}), and the people die {:.1} times\n   a game buys {:.1} swords, {:.1} shields, {:.1} things to use, and of the upgrades {}",
+            "{people} people, {play:?}: waves cleared {low:.0} to {high:.0}, {:.1} in the middle, {paid_back} of {count} with the fee back; {:.1} minutes in the middle\n   cleared ({})\n   a game kills {} (into the void {:.1}), and the people die {:.1} times\n   a game buys {:.1} swords, {:.1} shields, {:.1} things to use, and of the upgrades {}",
             median(waves.clone()),
             median(minutes),
             spread.join(", "),
