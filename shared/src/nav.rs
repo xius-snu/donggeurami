@@ -1918,8 +1918,7 @@ impl Nav {
             let (dx, dy) = ((x - gx).abs(), (y - gy).abs());
             (dx.max(dy) + (std::f32::consts::SQRT_2 - 1.0) * dx.min(dy)) * CELL * greed
         };
-        let cells = SCRATCH.with_borrow_mut(|scratch| {
-            scratch.begin(self.grid.squares());
+        let cells = with_scratch(self.grid.squares(), |scratch| {
             let mut open = BinaryHeap::new();
             scratch.reach(start, 0.0, start as u32);
             open.push(Open {
@@ -2091,6 +2090,8 @@ impl Scratch {
             self.cost = vec![0.0; squares];
             self.from = vec![0; squares];
             self.round = 0;
+            #[cfg(test)]
+            MADE.with(|made| made.set(made.get() + 1));
         }
         self.round += 1;
     }
@@ -2123,8 +2124,49 @@ impl Scratch {
     }
 }
 
+/// How many sizes of grid a thread keeps a search's scratch for at once
+/// ([`with_scratch`]): one to each map a server plays its games on, Bridge
+/// Wars' and Bridge Race's and room to spare.
+const GRIDS_KEPT: usize = 4;
+
 thread_local! {
-    static SCRATCH: RefCell<Scratch> = RefCell::new(Scratch::default());
+    /// What the searches on this thread keep, one to each size of grid they
+    /// have been made on, the one used last first. Kept by the grid's size
+    /// since 2026-11-18, when Bridge Race came to have a map of its own
+    /// (`bridge_race::grid`): with one kept for whatever grid was searched
+    /// last, a server playing a game of Bridge Wars and one of Bridge Race
+    /// on the one thread made the whole of it again, megabytes, every time
+    /// a search went from the one map to the other, several times a frame.
+    static SCRATCH: RefCell<Vec<Scratch>> = const { RefCell::new(Vec::new()) };
+}
+
+#[cfg(test)]
+thread_local! {
+    /// How many times a search's scratch has been made afresh on this
+    /// thread: for a test that it is not, going from one map to another.
+    static MADE: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+/// Runs `search` with the scratch kept for a grid of `squares` squares on
+/// this thread, begun afresh for it ([`Scratch::begin`]): the one it had,
+/// or a new one, which takes the place of the one used longest ago once
+/// there are [`GRIDS_KEPT`]. Grids of the same size share one, which a
+/// search begun on it does not mind: what it reads of a square it has
+/// written in that same search.
+fn with_scratch<T>(squares: usize, search: impl FnOnce(&mut Scratch) -> T) -> T {
+    SCRATCH.with_borrow_mut(|kept| {
+        let mut scratch = match kept.iter().position(|scratch| scratch.stamp.len() == squares) {
+            Some(found) => kept.remove(found),
+            None => {
+                kept.truncate(GRIDS_KEPT - 1);
+                Scratch::default()
+            }
+        };
+        scratch.begin(squares);
+        let found = search(&mut scratch);
+        kept.insert(0, scratch);
+        found
+    })
 }
 
 #[cfg(test)]
@@ -2212,6 +2254,30 @@ mod tests {
             nav.hear(6, 0, index as u16, span.rung(index));
         }
         nav.heart(Region::Team(2))
+    }
+
+    #[test]
+    fn a_search_keeps_its_scratch_for_each_map_it_goes_between() {
+        // Bridge Wars' map and a small one, searched by turns on the one
+        // thread, as a server playing a game on each searches them: the
+        // same ways as each found alone, and nothing made again for going
+        // from the one to the other.
+        let arena = Nav::arena();
+        let small = Nav::new(Arc::new(two_islands()));
+        // Round the pond, from one side of the middle of the map to the
+        // other.
+        let from = arena.heart(Region::Middle);
+        let to = -from;
+        let (near, far) = (Vec2::new(-2.0, 0.3), Vec2::new(1.8, -0.6));
+        let alone = arena.path(from, to);
+        let small_alone = small.path(near, far);
+        assert!(alone.is_some() && small_alone.is_some());
+        let made = MADE.with(std::cell::Cell::get);
+        for _ in 0..10 {
+            assert_eq!(arena.path(from, to), alone);
+            assert_eq!(small.path(near, far), small_alone);
+        }
+        assert_eq!(MADE.with(std::cell::Cell::get), made, "a scratch made again going between the two maps");
     }
 
     #[test]

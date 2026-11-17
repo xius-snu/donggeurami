@@ -72,6 +72,7 @@ mod ui;
 mod utility;
 mod window;
 mod gear;
+#[cfg(test)] mod race_bake;
 use island::{Island, Islands, Venue};
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 use bevy::input::mouse::{MouseMotion, MouseScrollUnit, MouseWheel};
