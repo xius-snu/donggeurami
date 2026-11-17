@@ -34,6 +34,12 @@
 //! outward, each drawn in the colour of a plank about to go until it
 //! falls (`bridge::Bridges::doom`, `bridge::crumble`). Which planks and
 //! when is the rules' too (`roundtown_net::nav::Nav::cascade`).
+//!
+//! **In any fight** (since 2026-11-18, when Bridge Race came, whose
+//! players are given sticks as they go): a stick is thrown on its fight's
+//! venue ([`throw`], [`lobbed`]), comes down on that venue's ground
+//! ([`fly`]), and is blown by whichever game it is ([`blow`], what Bridge
+//! Wars' own blowing is made of, its damage and its credit its own).
 
 use std::f32::consts::{FRAC_PI_2, TAU};
 
@@ -41,9 +47,10 @@ use bevy::light::{NotShadowCaster, NotShadowReceiver};
 use bevy::prelude::*;
 use bevy_replicon::prelude::Remote;
 use roundtown_net::bridge_wars::{DYNAMITE_RADIUS, Lob, caught};
+use roundtown_net::nav::Nav;
 use roundtown_net::{Blasted, Dynamite};
 
-use crate::arena::InArena;
+use crate::arena::{Fighting, InArena};
 use crate::bridge::Bridges;
 use crate::clock::TownClock;
 use crate::fire;
@@ -187,9 +194,11 @@ fn load(mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardM
 }
 
 /// A stick of dynamite setting out on `lob`, thrown by whoever is in
-/// `seat`; online, with the server's entity for it. What it looks like is
-/// put on it a frame later ([`fit_out`]).
-pub(crate) fn throw(commands: &mut Commands, lob: Lob, seat: usize, source: Option<Entity>) -> Entity {
+/// `seat`, on `venue`, the fight's, whose ground it comes down on
+/// ([`fly`]); online, with the server's entity for it. What it looks like
+/// is put on it a frame later ([`fit_out`]). [`InArena`], to go with the
+/// game.
+pub(crate) fn throw(commands: &mut Commands, lob: Lob, seat: usize, source: Option<Entity>, venue: Venue) -> Entity {
     let along = lob.to - lob.from;
     commands
         .spawn((
@@ -202,13 +211,71 @@ pub(crate) fn throw(commands: &mut Commands, lob: Lob, seat: usize, source: Opti
                 yaw: (-along.x).atan2(-along.z),
             },
             InArena,
-            Venue::Arena,
+            venue,
             Name::new("Dynamite"),
             Transform::from_translation(place(&lob)),
             // Shown with the island it is on (`island::show_where_i_am`).
             Visibility::Hidden,
         ))
         .id()
+}
+
+/// A stick of dynamite thrown by someone whose feet are at `feet` on
+/// `venue`, the way `heading` says, to come down `far` from them, in a
+/// game this device runs: at the ground where it is to come down, as high
+/// as that is now, or, with none there, as high as the ground they stand
+/// on, as the server throws one online (its `Game::lob`). (Bridge Wars'
+/// own until 2026-11-18, `arena::lobbed`, on its map alone.)
+pub(crate) fn lobbed(islands: &Islands, venue: Venue, feet: Vec3, heading: f32, far: f32) -> Lob {
+    let aimed = Lob::thrown(feet, heading, far, feet.y);
+    let island = islands.get(venue);
+    let ground = |at: Vec2, reach: f32| island.and_then(|island| island.floor(at, reach));
+    let floor = ground(aimed.to.xz(), feet.y + 2.0)
+        .or(ground(feet.xz(), feet.y + crate::LAND_STEP_UP))
+        .unwrap_or(feet.y);
+    Lob::thrown(feet, heading, far, floor)
+}
+
+/// What a stick of dynamite did to the bridges as it blew ([`blow`]): the
+/// planks it took at once, each whose it was by seat, which of theirs and
+/// which plank of that; and those of the rest of their bridges doomed to
+/// fall after them, each with how many seconds after.
+#[derive(Default, Debug)]
+pub(crate) struct Blown {
+    pub(crate) taken: Vec<(u8, u16, u16)>,
+    pub(crate) later: Vec<((u8, u16, u16), f32)>,
+}
+
+/// Blows a stick of dynamite at `at`, across the ground, thrown by whoever
+/// is in seat `by`, in a game this device runs, whatever the game, its
+/// teams and its venue: every plank whose middle the blast reaches is
+/// gone, whoever laid it, and the plank you are laying if its middle is
+/// (`Bridges::blast`). With a map of the bridges to keep, `nav`, the one
+/// the computer's players go by, every bridge is told to it as it stands
+/// and the holes with them; and, `falls`, the rest of each bridge a hole
+/// is in is doomed to fall after, plank by plank from the hole outward
+/// (`Nav::cascade`, since 2026-11-15), each `now` and so many seconds on,
+/// by this device's clock (`Time::elapsed_secs_f64`), drawn about to go
+/// until it does (`Bridges::doom`, `bridge::crumble`); without `falls`, a
+/// hole to build over (Bridge Race's rule, 2026-11-18). Without a map, the
+/// blast's own planks alone. Whom the blast hurts, and whose doing a fall
+/// from what follows is, is each game's own to say, by its own teams, as
+/// Bridge Wars' does (`arena::dynamites_offline`, which is made of this).
+pub(crate) fn blow(bridges: &mut Bridges, nav: Option<&mut Nav>, falls: bool, at: Vec2, by: u8, now: f64) -> Blown {
+    let taken = bridges.blast(at, DYNAMITE_RADIUS);
+    let mut later = Vec::new();
+    if let Some(nav) = nav {
+        for (seat, chain, index, rung) in bridges.laid() {
+            nav.hear(seat, chain, index, rung);
+        }
+        nav.break_planks(&taken);
+        if falls {
+            later = nav.cascade(&taken);
+            nav.doom(&later, by);
+            bridges.doom(later.iter().map(|&(plank, after)| (plank, now + f64::from(after))), by);
+        }
+    }
+    Blown { taken, later }
 }
 
 /// Where a stick on `lob` is drawn: where it is, and as high over that as
@@ -226,15 +293,27 @@ fn shining(red: Color, shine: f32) -> LinearRgba {
 }
 
 /// Online, the sticks are the server's: each it sends is thrown here as
-/// it comes.
-fn follow_server(fresh: Query<(Entity, &Dynamite), (With<Remote>, Added<Dynamite>)>, mut commands: Commands) {
+/// it comes, on the fight's venue (`Fighting::served_on`; one sent before
+/// this device knew where the fight was moved there as soon as it does,
+/// `arena::settle`).
+fn follow_server(
+    fresh: Query<(Entity, &Dynamite), (With<Remote>, Added<Dynamite>)>,
+    fighting: Res<Fighting>,
+    me: Query<&Venue, With<crate::Player>>,
+    mut commands: Commands,
+) {
+    if fresh.is_empty() {
+        return;
+    }
+    let venue = fighting.served_on(me.single().ok().copied());
     for (source, stick) in &fresh {
         let lob = Lob {
             from: Vec3::new(stick.x, stick.y, stick.z),
             to: Vec3::new(stick.to_x, stick.to_y, stick.to_z),
             age: 0.0,
         };
-        throw(&mut commands, lob, usize::from(stick.seat), Some(source));
+        let thrown = throw(&mut commands, lob, usize::from(stick.seat), Some(source), venue);
+        fighting.settle_later(&mut commands, thrown);
     }
 }
 
@@ -259,6 +338,7 @@ fn hear_blasts(
     fresh: Query<&Blasted, (With<Remote>, Added<Blasted>)>,
     every: Query<&Blasted, With<Remote>>,
     sticks: Query<(Entity, &Stick)>,
+    (fighting, me): (Res<Fighting>, Query<&Venue, With<crate::Player>>),
     mut heard: Local<(u32, f32)>,
     mut bridges: ResMut<Bridges>,
     mut commands: Commands,
@@ -275,6 +355,7 @@ fn hear_blasts(
     }
     *heard = (bridges.game(), 0.0);
     let (now, clock) = (time.elapsed_secs_f64(), town.now());
+    let venue = fighting.served_on(me.single().ok().copied());
     let mut take = |blast: &Blasted| {
         let at = Vec3::new(blast.x, blast.y, blast.z);
         bridges.break_planks(&blast.planks);
@@ -285,7 +366,8 @@ fn hear_blasts(
             return;
         }
         bridges.blast_tip(at.xz(), DYNAMITE_RADIUS);
-        fire::burst(&mut commands, at + Vec3::Y * STICK_RADIUS);
+        let burst = fire::burst(&mut commands, at + Vec3::Y * STICK_RADIUS, venue);
+        fighting.settle_later(&mut commands, burst);
         info!(
             "a stick of dynamite blew at {:.1}, taking {} planks, and {} more to fall",
             at.xz(),
@@ -383,18 +465,19 @@ fn fit_out(
 }
 
 /// Moves every stick on: along its arch, tumbling; as it comes down, onto
-/// the ground if there is any for it to lie on ([`caught`]), with the ring
-/// of its blast's reach round it, and on down into the void if there is
-/// not; shining as its fuse burns ([`Lob::shine`]). One of the server's
-/// that the server has taken away without a blast ([`hear_blasts`] takes
-/// those) has fallen into the void there: here it falls on from where it
-/// is, or, if this device had it lying on something, is gone.
+/// the ground of its own venue if there is any for it to lie on
+/// ([`caught`]), with the ring of its blast's reach round it, and on down
+/// into the void if there is not; shining as its fuse burns
+/// ([`Lob::shine`]). One of the server's that the server has taken away
+/// without a blast ([`hear_blasts`] takes those) has fallen into the void
+/// there: here it falls on from where it is, or, if this device had it
+/// lying on something, is gone.
 #[allow(clippy::type_complexity)]
 fn fly(
     time: Res<Time>,
     islands: Res<Islands>,
     sources: Query<(), With<Dynamite>>,
-    mut sticks: Query<(Entity, &mut Stick, &mut Transform, Option<&Shining>, Option<&Children>)>,
+    mut sticks: Query<(Entity, &mut Stick, &Venue, &mut Transform, Option<&Shining>, Option<&Children>)>,
     mut tumbling: Query<&mut Transform, (With<Tumbling>, Without<Stick>, Without<Glow>)>,
     mut glows: Query<(&mut Transform, &mut Visibility), (With<Glow>, Without<Stick>, Without<Tumbling>, Without<Reach>)>,
     mut rings: Query<&mut Visibility, (With<Reach>, Without<Glow>)>,
@@ -403,8 +486,8 @@ fn fly(
 ) {
     let dt = time.delta_secs();
     let colours = ui().colours.arena;
-    let island = islands.get(Venue::Arena);
-    for (entity, mut stick, mut transform, looks, children) in &mut sticks {
+    for (entity, mut stick, &venue, mut transform, looks, children) in &mut sticks {
+        let island = islands.get(venue);
         // Taken away by the server with no blast: it found nothing to lie
         // on there.
         if stick.served && stick.source.is_some_and(|source| !sources.contains(source)) {
@@ -553,5 +636,94 @@ mod tests {
         assert!(!stick.blows() && !stick.live());
         stick.lies = Lies::Flying;
         assert!(!stick.blows() && stick.live());
+    }
+
+    /// A disc of land `radius` round `centre`, its top `top` up: a map
+    /// read from no model.
+    fn disc(centre: Vec2, radius: f32, top: f32) -> Vec<[Vec3; 3]> {
+        let at = |angle: f32| Vec3::new(centre.x + angle.cos() * radius, top, centre.y + angle.sin() * radius);
+        let middle = Vec3::new(centre.x, top, centre.y);
+        (0..64)
+            .map(|k| {
+                let (a, b) = (k as f32 * TAU / 64.0, (k + 1) as f32 * TAU / 64.0);
+                [middle, at(b), at(a)]
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_stick_thrown_on_another_venue_comes_down_on_that_venue_s_ground() {
+        use bevy::ecs::system::RunSystemOnce;
+        use std::time::Duration;
+        // Last Stand's stone as a disc 25 m round its middle, its top a
+        // quarter of a metre up as it stands lifted; and Bridge Wars' map
+        // far off, nothing of it here.
+        let mut islands = Islands::default();
+        islands.reshape(Venue::LastStand, disc(Vec2::ZERO, 25.0, 0.25), &[]);
+        islands.reshape(Venue::Arena, disc(Vec2::splat(300.0), 10.0, 0.25), &[]);
+        // Thrown 8 m on from 2 m off the middle, the way a plank heads at
+        // no turn: lobbed onto Last Stand's ground there.
+        let feet = Vec3::new(0.0, 0.25, 2.0);
+        let lob = lobbed(&islands, Venue::LastStand, feet, 0.0, 8.0);
+        assert!((lob.to.y - 0.25).abs() < 1e-4 && lob.to.xz().distance(Vec2::new(0.0, -6.0)) < 1e-3, "{}", lob.to);
+        let mut world = World::new();
+        world.insert_resource(islands);
+        world.insert_resource(Time::<()>::default());
+        world.init_resource::<Assets<StandardMaterial>>();
+        let (mine, theirs) = {
+            let mut commands = world.commands();
+            (throw(&mut commands, lob, 0, None, Venue::LastStand), throw(&mut commands, lob, 0, None, Venue::Arena))
+        };
+        world.flush();
+        for _ in 0..240 {
+            world.resource_mut::<Time>().advance_by(Duration::from_secs_f32(1.0 / 60.0));
+            world.run_system_once(fly).expect("it flies");
+        }
+        // On its own venue's ground it lies, its fuse burning, for its game
+        // to blow; the very same throw on Bridge Wars' map has nothing to
+        // lie on there, and falls on into the void.
+        assert_eq!(world.get::<Venue>(mine), Some(&Venue::LastStand));
+        assert_eq!(world.get::<Stick>(mine).map(|stick| stick.lies), Some(Lies::Lying));
+        assert!(world.get::<Stick>(mine).is_some_and(Stick::blows));
+        assert!(world.get::<Stick>(theirs).is_none_or(|stick| matches!(stick.lies, Lies::Falling(_))));
+    }
+
+    #[test]
+    fn a_blast_takes_the_planks_it_reaches_and_the_rest_of_the_bridge_only_where_bridges_fall() {
+        use roundtown_net::nav::Region;
+        use crate::bridge::Rung;
+        // A bridge from the south island to the middle of Bridge Wars' map,
+        // a span of the map the computer's players keep, laid as one of
+        // theirs is, rung by rung.
+        let build = || {
+            let mut nav = Nav::arena();
+            let span = nav.grid().span(Region::Team(0), Region::Middle, 0.0).expect("a span");
+            let mut bridges = Bridges::default();
+            for index in 0..=span.planks() {
+                let here = span.rung(index);
+                let along = if index < span.planks() { span.rung(index + 1) - here } else { here - span.rung(index - 1) };
+                let d = along.normalize_or(Vec2::NEG_Y);
+                bridges.lay_remote(4, 0, index as u16, Rung { p: here, d });
+                nav.hear(4, 0, index as u16, here);
+            }
+            (nav, bridges, span.point(0.3))
+        };
+        // Blown with the map, its bridge falling (Bridge Wars' rule since
+        // 2026-11-15): a hole at once, and the rest doomed after it.
+        let (mut nav, mut bridges, at) = build();
+        let blown = blow(&mut bridges, Some(&mut nav), true, at, 2, 10.0);
+        assert!(!blown.taken.is_empty() && blown.later.len() > blown.taken.len(), "{blown:?}");
+        assert_eq!(bridges.broken().count(), blown.taken.len());
+        let ((seat, chain, plank), _) = blown.later[0];
+        assert!(bridges.doomed(seat, chain, plank));
+        // With no falling (Bridge Race's rule, 2026-11-18), or no map: the
+        // hole alone, to be built over.
+        for keep in [true, false] {
+            let (mut nav, mut bridges, at) = build();
+            let blown = blow(&mut bridges, keep.then_some(&mut nav), false, at, 2, 10.0);
+            assert!(!blown.taken.is_empty() && blown.later.is_empty(), "{blown:?}");
+            assert_eq!(bridges.broken().count(), blown.taken.len());
+            assert!(bridges.laid().all(|(seat, chain, index, _)| !bridges.doomed(seat, chain, index)));
+        }
     }
 }

@@ -70,7 +70,7 @@ use bevy::prelude::*;
 use bevy::world_serialization::WorldAssetRoot;
 use roundtown_net::bridge_wars::BLIND_SIGHT;
 
-use crate::arena::{ArenaSystems, InArena, Outfit, Wears};
+use crate::arena::{ArenaSystems, Fighting, InArena, Outfit, Wears};
 use crate::island::Venue;
 use crate::ui::{SwordSwing, UiChanged, ui};
 use crate::{Carrying, Dead, Drinking, Player, Punching, Team, ThirdPersonCamera, WalkCycle};
@@ -752,10 +752,13 @@ fn ghost(
 /// a circle round you as far as a blinded player sees: one node with a
 /// round hole, the hole kept over you as the camera has you this frame.
 /// Under the buttons and the minimap, over the world and what is written
-/// over it.
+/// over it. In whichever fight blinds you (since 2026-11-18, standing on
+/// its venue, `arena::Fighting::venue`; Bridge Wars' map alone until
+/// then): Blend In's wrong guess blinds a seeker so.
 #[allow(clippy::type_complexity)]
 fn blindfold(
     outfit: Res<Outfit>,
+    fighting: Res<Fighting>,
     windows: Query<&Window>,
     cameras: Query<(&Camera, &Transform), With<ThirdPersonCamera>>,
     me: Query<(&Transform, &Venue, Has<Dead>), With<Player>>,
@@ -766,7 +769,7 @@ fn blindfold(
         let (body, &venue, dead) = me.single().ok()?;
         let (camera, eye) = cameras.single().ok()?;
         let window = windows.single().ok()?;
-        if venue != Venue::Arena || dead {
+        if fighting.venue != Some(venue) || dead {
             return None;
         }
         // Where you are on the screen, and how far across it a blinded

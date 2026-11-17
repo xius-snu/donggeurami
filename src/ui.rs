@@ -550,6 +550,45 @@ pub(crate) struct Colours {
     pub arena: ArenaColours,
     pub window: WindowColours,
     pub chat: ChatColours,
+    pub blend_in: BlendInColours,
+    pub knock_off: KnockOffColours,
+    pub bridge_race: BridgeRaceColours,
+    pub last_stand: LastStandColours,
+}
+
+/// Blend In's own colours (`blend_in`, since 2026-11-18), each game's in a
+/// block of its own so that the four games' own work never meets in this
+/// file: the colour that is the game's, on what is drawn over the world
+/// for it (the plate's grey under it, by day and by night).
+#[derive(Deserialize, Clone, Copy, PartialEq, Debug)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct BlendInColours {
+    #[serde(deserialize_with = "colour")]
+    pub accent: Color,
+}
+
+/// Knock Off's own colours (`knock_off`), as Blend In's are.
+#[derive(Deserialize, Clone, Copy, PartialEq, Debug)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct KnockOffColours {
+    #[serde(deserialize_with = "colour")]
+    pub accent: Color,
+}
+
+/// Bridge Race's own colours (`bridge_race`), as Blend In's are.
+#[derive(Deserialize, Clone, Copy, PartialEq, Debug)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct BridgeRaceColours {
+    #[serde(deserialize_with = "colour")]
+    pub accent: Color,
+}
+
+/// Last Stand's own colours (`last_stand`), as Blend In's are.
+#[derive(Deserialize, Clone, Copy, PartialEq, Debug)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct LastStandColours {
+    #[serde(deserialize_with = "colour")]
+    pub accent: Color,
 }
 
 /// The chat on the left of the screen (`chat`, since 2026-11-14): what
@@ -622,7 +661,9 @@ pub(crate) struct ChatColours {
 /// speech bubble's corner and the envelope's, and the number in it; the
 /// gear's menu, an entry lit under the pointer, and its outline; the line
 /// that says what the server made of something; and the words that are
-/// pressed ("Add friend"), and those that only say ("Requested").
+/// pressed ("Add friend"), and those that only say ("Requested"). And,
+/// since 2026-11-18, your own row among the results of a game of one of
+/// the four (`table`), behind it, picked out from the rest (mine).
 #[derive(Deserialize, Clone, Copy, PartialEq, Debug)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct WindowColours {
@@ -696,6 +737,8 @@ pub(crate) struct WindowColours {
     pub link: Color,
     #[serde(deserialize_with = "colour")]
     pub link_off: Color,
+    #[serde(deserialize_with = "colour")]
+    pub row_mine: Color,
 }
 
 #[derive(Deserialize, Clone, Copy, PartialEq, Debug)]
@@ -1088,6 +1131,65 @@ pub(crate) struct Words {
     pub market: MarketWords,
     pub friends: FriendsWords,
     pub chat: ChatWords,
+    pub table: TableWords,
+    pub blend_in: BlendInWords,
+    pub knock_off: KnockOffWords,
+    pub bridge_race: BridgeRaceWords,
+    pub last_stand: LastStandWords,
+}
+
+/// The tables the four games of 2026-11-18 are played at (`table`): what
+/// the board top centre says under the game's name while the table fills,
+/// `{count}` of its `{seats}` taken, with `{time}` to go before it begins,
+/// before the computer comes for the seats left, and how many people more
+/// it wants before it can begin, one or `{count}`; what it says as it
+/// counts down (`{seconds}`); the button under it that leaves, and the
+/// results' two; the results' title (`{game}`), the line under them
+/// (`{time}`), and the places, first to fourth.
+#[derive(Deserialize, PartialEq, Debug)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct TableWords {
+    pub players: String,
+    pub players_for: String,
+    pub bots_join: String,
+    pub one_more: String,
+    pub more: String,
+    pub starting: String,
+    pub leave: String,
+    pub play_again: String,
+    pub results: String,
+    pub back_in: String,
+    pub places: [String; 4],
+}
+
+/// Blend In's own words (`blend_in`, since 2026-11-18), each game's in a
+/// block of its own so that the four games' own work never meets in this
+/// file: what its score is called among the results (`table`).
+#[derive(Deserialize, PartialEq, Debug)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct BlendInWords {
+    pub score: String,
+}
+
+/// Knock Off's own words (`knock_off`), as Blend In's are.
+#[derive(Deserialize, PartialEq, Debug)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct KnockOffWords {
+    pub score: String,
+}
+
+/// Bridge Race's own words (`bridge_race`), as Blend In's are.
+#[derive(Deserialize, PartialEq, Debug)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct BridgeRaceWords {
+    pub score: String,
+}
+
+/// Last Stand's own words (`last_stand`), as Blend In's are.
+#[derive(Deserialize, PartialEq, Debug)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct LastStandWords {
+    pub score: String,
 }
 
 /// The chat box (`chat`): what stands in the box a line is typed into
@@ -1211,8 +1313,16 @@ pub(crate) struct SaidWords {
     pub left_behind: String,
 }
 
-/// The game selector (`games`): its title, the three games, and what each
-/// costs.
+/// The game selector (`games`): its title, and the games on it, each by its
+/// name and the line under it: Bridge Wars and Home Builders, the card for
+/// a game to come (put away since 2026-11-18, when the four games came,
+/// `games::COMING_SOON`), and the four of 2026-11-18. What Bridge Wars
+/// costs, what one of the four does and what one says that you cannot pay
+/// for (`{coins}`; Home Builders' card says its own in House Builder's
+/// words); what Blend In says offline, where it is not to be had; and what
+/// is said across the screen as the server turns a game down, for want of
+/// coins, or for your being in the middle of something else. (That only a
+/// group's leader starts a game is said by `friends`, for every game.)
 #[derive(Deserialize, PartialEq, Debug)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct GamesWords {
@@ -1222,6 +1332,21 @@ pub(crate) struct GamesWords {
     pub coming_soon: String,
     pub coming_soon_note: String,
     pub free: String,
+    pub bridge_wars_line: String,
+    pub home_builders_line: String,
+    pub blend_in: String,
+    pub blend_in_line: String,
+    pub knock_off: String,
+    pub knock_off_line: String,
+    pub bridge_race: String,
+    pub bridge_race_line: String,
+    pub last_stand: String,
+    pub last_stand_line: String,
+    pub price: String,
+    pub needs_coins: String,
+    pub online_only: String,
+    pub refused_coins: String,
+    pub refused_busy: String,
 }
 
 /// Bridge Wars' board, headlines and panels (`arena`).
@@ -1580,6 +1705,59 @@ mod tests {
                 Some(field) => assert!(arena.check().unwrap_err().contains(field), "{forward} and {side}"),
             }
         }
+    }
+
+    #[test]
+    fn every_word_of_the_four_games_tables_is_one_the_fonts_draw() {
+        // The words of 2026-11-18: the selector's, the tables', and each
+        // game's own, every one of them drawn by Inter or Pretendard
+        // (`roundtown_net::text::allowed`), and none of them empty.
+        let ui = Ui::built_in();
+        let (games, table) = (&ui.words.games, &ui.words.table);
+        let mut words: Vec<&str> = vec![
+            &games.bridge_wars_line,
+            &games.home_builders_line,
+            &games.blend_in,
+            &games.blend_in_line,
+            &games.knock_off,
+            &games.knock_off_line,
+            &games.bridge_race,
+            &games.bridge_race_line,
+            &games.last_stand,
+            &games.last_stand_line,
+            &games.price,
+            &games.needs_coins,
+            &games.online_only,
+            &games.refused_coins,
+            &games.refused_busy,
+            &table.players,
+            &table.players_for,
+            &table.bots_join,
+            &table.one_more,
+            &table.more,
+            &table.starting,
+            &table.leave,
+            &table.play_again,
+            &table.results,
+            &table.back_in,
+            &ui.words.blend_in.score,
+            &ui.words.knock_off.score,
+            &ui.words.bridge_race.score,
+            &ui.words.last_stand.score,
+        ];
+        words.extend(table.places.iter().map(String::as_str));
+        for said in words {
+            assert!(!said.trim().is_empty(), "an empty word");
+            assert!(said.chars().all(roundtown_net::text::allowed), "{said:?} has a letter the fonts do not draw");
+        }
+        // What is filled in is there to be filled.
+        assert!(games.price.contains("{coins}") && games.needs_coins.contains("{coins}"));
+        assert!(table.results.contains("{game}") && table.back_in.contains("{time}"));
+        assert!(table.bots_join.contains("{time}") && table.starting.contains("{seconds}"));
+        assert!(table.players.contains("{count}") && table.players.contains("{seats}"));
+        // Your own row of the results is picked out, and only a little.
+        let mine = ui.colours.window.row_mine;
+        assert!(mine.alpha() > 0.0 && mine.alpha() < 0.5, "{mine:?}");
     }
 
     #[test]

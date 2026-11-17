@@ -199,13 +199,15 @@ fn point(
     let (Ok((you, venue, team, dead)), Ok((camera, eye)), Ok(window)) = (me.single(), cameras.single(), windows.single()) else {
         return put_away();
     };
-    if *venue != Venue::Arena || dead {
+    // Where the fight is, whichever game it is (since 2026-11-18; Bridge
+    // Wars' map alone until then), and of those there.
+    if fighting.venue != Some(*venue) || dead {
         return put_away();
     }
     let here = you.translation;
     let seen: Vec<(Vec3, Team, bool, &Name)> = others
         .iter()
-        .filter(|(_, venue, ..)| **venue == Venue::Arena)
+        .filter(|(_, theirs, ..)| *theirs == venue)
         .map(|(at, _, team, name, dead, zombie, wears)| {
             let tracked = !dead && !zombie && !wears.is_some_and(|wears| wears.unseen);
             (at.translation, *team, tracked, name)

@@ -102,9 +102,9 @@ impl Builder {
     }
 }
 
-/// Sends a builder off from `from`, where its owner stands, heading
-/// `heading` as a plank heads: a body in `member`'s look, for the owner in
-/// `seat`.
+/// Sends a builder off from `from`, where its owner stands on `venue`, the
+/// fight's, heading `heading` as a plank heads: a body in `member`'s look,
+/// for the owner in `seat`, which walks that venue's island ([`walk`]).
 pub(crate) fn send_builder(
     commands: &mut Commands,
     assets: &AssetServer,
@@ -112,10 +112,11 @@ pub(crate) fn send_builder(
     seat: u8,
     from: Vec3,
     heading: f32,
+    venue: Venue,
 ) -> Entity {
     let dir = heading_of(heading);
     let place = Transform::from_translation(from).with_rotation(Quat::from_rotation_y(heading));
-    let builder = lobby::puppet(commands, assets, member, Venue::Arena, place);
+    let builder = lobby::puppet(commands, assets, member, venue, place);
     commands
         .entity(builder)
         .insert((Builder::new(seat, dir), InArena, Carrying, Name::new("Bridge builder")));
@@ -152,11 +153,11 @@ pub(super) fn dress_remote(
     }
 }
 
-/// Walks every builder on, lays its bridge ahead of it ([`advance`]), and
-/// pops it at the end; online, sends every rung it fixes, and says where
-/// the builder is as it walks, and that it is gone, for everyone else to
-/// see it. A game over, or another begun, and they are gone with the rest
-/// of it.
+/// Walks every builder on, over the island of its own venue, lays its
+/// bridge ahead of it ([`advance`]), and pops it at the end; online, sends
+/// every rung it fixes, and says where the builder is as it walks, and
+/// that it is gone, for everyone else to see it. A game over, or another
+/// begun, and they are gone with the rest of it.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn walk(
     time: Res<Time>,
@@ -165,7 +166,7 @@ pub(super) fn walk(
     islands: Res<Islands>,
     outfit: Res<Outfit>,
     mut bridges: ResMut<Bridges>,
-    mut builders: Query<(Entity, &mut Builder, &mut Transform)>,
+    mut builders: Query<(Entity, &mut Builder, &Venue, &mut Transform)>,
     mut requests: MessageWriter<NetAsk>,
     mut commands: Commands,
 ) {
@@ -173,8 +174,8 @@ pub(super) fn walk(
         return;
     }
     let dt = time.delta_secs();
-    let island = islands.get(Venue::Arena);
-    for (entity, mut builder, mut place) in &mut builders {
+    for (entity, mut builder, &venue, mut place) in &mut builders {
+        let island = islands.get(venue);
         if let Some(left) = builder.popping.as_mut() {
             *left -= dt;
             if *left <= 0.0 {

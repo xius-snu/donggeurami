@@ -61,6 +61,7 @@ use crate::clock::TownClock;
 use crate::hud::{self, DialogUp, FriendsButton, TakesPress};
 use crate::net::Online;
 use crate::signup::{self, NameBox};
+use crate::table;
 use crate::ui::{UiChanged, fill, ui};
 use crate::window::{
     self, AVATAR, FIELD_HEIGHT, FIELD_TEXT, HEADING, HEIGHT, Look, NAME, NOTICE_TEXT, PAD, POPUP_TEXT, ROW, ROW_BUTTON,
@@ -300,10 +301,14 @@ pub(crate) fn plugin(app: &mut App) {
 /// What the server says about your friends, into [`Friends`]; what came of
 /// something asked, onto the panel's bottom line; and, taken into a game by
 /// your group's leader, the panel put away and the game named across the
-/// screen.
+/// screen: Bridge Wars or House Builder as the server seats you, and one of
+/// the four games' tables as the table begins here (`table::Entered`), once
+/// for each table, and not again as the table you are at is begun afresh
+/// (your seat at it moved before play, or this device put back in it).
 #[allow(clippy::too_many_arguments)]
 fn hear(
     mut tells: MessageReader<Tell>,
+    mut tables: MessageReader<table::Entered>,
     mut friends: ResMut<Friends>,
     mut panel: ResMut<Panel>,
     mut notice: ResMut<Notice>,
@@ -312,6 +317,19 @@ fn hear(
     online: Res<Online>,
     mut commands: Commands,
 ) {
+    let follows = online.me().is_some_and(|me| friends.follows(me.id));
+    for entered in tables.read() {
+        if !entered.online || entered.same_table {
+            continue;
+        }
+        if follows {
+            let ui = ui();
+            toast(&mut commands, &fill(&ui.words.friends.summoned, &[("game", &crate::games::name_of(entered.game))]));
+        }
+        if panel.open {
+            shut(&mut panel, &mut up, &mut name_box);
+        }
+    }
     for tell in tells.read() {
         let ui = ui();
         let words = &ui.words.friends;
@@ -333,15 +351,17 @@ fn hear(
                 News::Said(said) => notice.0 = Some((said_in_words(*said), 0.0)),
             },
             // Seated in a game without having asked: the leader of your
-            // group did.
+            // group did. Each game by its own name, Bridge Wars and House
+            // Builder's here; and since 2026-11-18 whichever of the four sat
+            // you at its table, above, as its table begins.
             Tell::Seated { .. } | Tell::Joined { .. } => {
                 let follows = online.me().is_some_and(|me| friends.follows(me.id));
                 if follows {
                     let game = match tell {
-                        Tell::Seated { .. } => &ui.words.games.bridge_wars,
-                        _ => &ui.words.games.home_builders,
+                        Tell::Seated { .. } => crate::games::name_of(Minigame::BridgeWars),
+                        _ => crate::games::name_of(Minigame::HouseBuilder),
                     };
-                    toast(&mut commands, &fill(&words.summoned, &[("game", game)]));
+                    toast(&mut commands, &fill(&words.summoned, &[("game", &game)]));
                 }
                 if panel.open {
                     shut(&mut panel, &mut up, &mut name_box);
@@ -888,17 +908,13 @@ fn note(commands: &mut Commands, list: Entity, text: &str) {
 fn whereabouts(presence: &Presence, now: f64) -> String {
     let ui = ui();
     let words = &ui.words.friends;
-    let game = |game: &Minigame| match game {
-        Minigame::BridgeWars => &ui.words.games.bridge_wars,
-        Minigame::HouseBuilder => &ui.words.games.home_builders,
-        // minigames: S2 (the device's side of the tables) gives these words of their own.
-        Minigame::BlendIn | Minigame::KnockOff | Minigame::BridgeRace | Minigame::LastStand => &ui.words.games.bridge_wars,
-    };
+    // Each game by its own name on the selector's card (`games`).
+    let game = |game: &Minigame| crate::games::name_of(*game);
     match presence {
         Presence::Town { channel } => fill(&words.in_town, &[("channel", &(u32::from(*channel) + 1).to_string())]),
         Presence::Home => words.at_home.clone(),
-        Presence::Playing { game: which, queued: true } => fill(&words.in_queue, &[("game", game(which))]),
-        Presence::Playing { game: which, queued: false } => fill(&words.in_game, &[("game", game(which))]),
+        Presence::Playing { game: which, queued: true } => fill(&words.in_queue, &[("game", &game(which))]),
+        Presence::Playing { game: which, queued: false } => fill(&words.in_game, &[("game", &game(which))]),
         Presence::Offline { since: 0 } => words.offline.clone(),
         Presence::Offline { since } => {
             let gone = (now - *since as f64).max(0.0);
@@ -1689,6 +1705,25 @@ mod tests {
             queued: false,
         };
         assert_eq!(whereabouts(&game, 0.0), "Home Builders: In Game");
+        // Each of the four games of 2026-11-18 by its own name, whatever
+        // the file calls it.
+        let file = ui();
+        let race = Presence::Playing {
+            game: Minigame::BridgeRace,
+            queued: true,
+        };
+        let queued = fill(&file.words.friends.in_queue, &[("game", &file.words.games.bridge_race)]);
+        assert_eq!(whereabouts(&race, 0.0), queued);
+        let stand = Presence::Playing {
+            game: Minigame::LastStand,
+            queued: false,
+        };
+        let playing = fill(&file.words.friends.in_game, &[("game", &file.words.games.last_stand)]);
+        assert_eq!(whereabouts(&stand, 0.0), playing);
+        for game in Minigame::TABLES {
+            let presence = Presence::Playing { game, queued: false };
+            assert_ne!(whereabouts(&presence, 0.0), whereabouts(&Presence::Playing { game: Minigame::HouseBuilder, queued: false }, 0.0));
+        }
         // Gone: for how long, in whole minutes, hours and days, one of
         // each said as one; and with no word of when, only that they are.
         let since = 1_700_000_000u64;
@@ -1776,6 +1811,55 @@ mod tests {
         world.insert_resource(DialogUp(true));
         world.run_system_once(shut_under_a_press).expect("looked");
         assert!(world.resource::<DialogUp>().0, "another dialog is not its to put away");
+    }
+
+    #[test]
+    fn a_follower_is_told_once_of_a_table_its_leader_sits_it_at_and_not_as_the_table_is_begun_afresh() {
+        use bevy::ecs::system::RunSystemOnce;
+        let mut world = World::new();
+        world.init_resource::<Messages<Tell>>();
+        world.init_resource::<Messages<table::Entered>>();
+        world.init_resource::<Friends>();
+        world.init_resource::<Notice>();
+        world.init_resource::<NameBox>();
+        world.insert_resource(Panel { open: true, ..default() });
+        world.insert_resource(DialogUp(true));
+        let me = roundtown_net::Member {
+            id: 7,
+            name: "Dubu".into(),
+            look: "boy".into(),
+            ai: false,
+        };
+        world.insert_resource(Online::for_tests(me));
+        // In a group someone else leads.
+        world.resource_mut::<Friends>().group = Some(Group {
+            leader: 9,
+            members: Vec::new(),
+        });
+        let toasts = |world: &mut World| world.query::<&Toast>().iter(world).count();
+        let heard = |world: &mut World, online: bool, same_table: bool| {
+            world.resource_mut::<Messages<table::Entered>>().write(table::Entered {
+                game: Minigame::KnockOff,
+                seat: 1,
+                online,
+                same_table,
+            });
+            world.run_system_once(hear).expect("heard");
+            world.resource_mut::<Messages<table::Entered>>().drain().for_each(drop);
+        };
+        // Sat at a table by the leader: told so, and the panel put away.
+        heard(&mut world, true, false);
+        assert_eq!(toasts(&mut world), 1);
+        assert!(!world.resource::<Panel>().open && !world.resource::<DialogUp>().0);
+        // The same table begun afresh, a seat moved or the device put back
+        // in it: nothing more said, and the panel left as it is.
+        world.insert_resource(Panel { open: true, ..default() });
+        heard(&mut world, true, true);
+        assert_eq!(toasts(&mut world), 1);
+        assert!(world.resource::<Panel>().open);
+        // A table this device hosts, offline: nobody's but yours.
+        heard(&mut world, false, false);
+        assert_eq!(toasts(&mut world), 1);
     }
 
     #[test]

@@ -72,6 +72,13 @@ mod ui;
 mod utility;
 mod window;
 mod gear;
+// The four games of 2026-11-18: the tables they are played at, and each
+// game on this device.
+mod table;
+mod blend_in;
+mod knock_off;
+mod bridge_race;
+mod last_stand;
 #[cfg(test)] mod race_bake;
 use island::{Island, Islands, Venue};
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
@@ -374,6 +381,31 @@ impl Default for Intent {
 pub(crate) struct Dead {
     pub(crate) left: f32,
 }
+
+/// A body held where it stands by a game of one of the four (`table`, since
+/// 2026-11-18): on yours, the stick, the keys, the jump and the punch do
+/// nothing ([`read_player_input`], [`start_punch`]), as for Knock Off's
+/// turns, where everyone stands frozen while they aim (Hajun: "Everyone is
+/// frozen in place"), and Blend In's seekers while the hider hides and
+/// while a wrong guess has them stunned. `placed`, the game puts the body
+/// where it is itself, and nothing else moves it: [`move_bodies`] leaves
+/// it alone (it still stands in others' way), `net::smooth` leaves someone
+/// online's alone, and `net::tell_where_i_am` says nothing of yours to
+/// the server, which places it. Without `placed` it falls and lands as
+/// any body does, standing still.
+#[derive(Component, Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) struct Frozen {
+    pub(crate) placed: bool,
+}
+
+/// The camera held by a game where the game says (`table`, since
+/// 2026-11-18; Knock Off's fixed view of its island): while it is, the
+/// camera is there ([`follow_camera`]), nothing turns it or zooms it
+/// ([`hold_the_orbit`]), and on desktop the cursor is free, there being
+/// nothing to look round with ([`cursor_for_dialogs`]). Let go of, the
+/// camera is as it was before.
+#[derive(Resource, Default, Clone, Copy, PartialEq, Debug)]
+pub(crate) struct HeldCamera(pub(crate) Option<Transform>);
 
 /// A punch of this device's that landed on a body it moves and took
 /// ([`Shove::knock`]): who threw it and whom it landed on. Bridge Wars
@@ -1012,7 +1044,7 @@ struct OrbitCamera {
 
 /// How the camera was turned and zoomed, to go back to
 /// ([`OrbitCamera::back_to`]).
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 pub(crate) struct View {
     yaw: f32,
     pitch: f32,
@@ -1089,6 +1121,25 @@ impl OrbitCamera {
         self.past = 1.0;
         self.overhead = true;
         was
+    }
+
+    /// How it is turned and zoomed now.
+    fn view(&self) -> View {
+        View {
+            yaw: self.yaw,
+            pitch: self.pitch,
+            distance: self.distance,
+            past: self.past,
+        }
+    }
+
+    /// Turned and zoomed as `view` has it again, fixed over you or not as
+    /// it is ([`hold_the_orbit`]).
+    fn turn_to(&mut self, view: View) {
+        self.yaw = view.yaw;
+        self.pitch = view.pitch;
+        self.distance = view.distance;
+        self.past = view.past;
     }
 
     /// Back to `view`, as it was turned and zoomed before it was fixed over
@@ -1308,7 +1359,10 @@ struct HudLayout {
 /// Where the stick and the jump button are on the screen, in logical
 /// pixels: the jump button in its own place, or, in a game of Bridge Wars,
 /// where the sword stands there, the smaller one beside the sword
-/// (`hud::ARENA_JUMP`, `hud::Layout::Arena`).
+/// (`hud::ARENA_JUMP`, `hud::Layout::Arena`). Since 2026-11-18 Blend In
+/// has the town's, Bridge Race and Last Stand Bridge Wars' (Hajun:
+/// "similar controls and cam with bridge wars"), and Knock Off none at
+/// all, where nobody jumps: a button of no size, which no press is on.
 fn hud_layout(window: &Window, layout: hud::Layout) -> HudLayout {
     let width = window.width();
     let height = window.height();
@@ -1320,11 +1374,12 @@ fn hud_layout(window: &Window, layout: hud::Layout) -> HudLayout {
         height - height * (JUMP_BOTTOM_VH / 100.0),
     );
     let (jump_center, jump_radius) = match layout {
-        hud::Layout::Town => {
+        hud::Layout::Town | hud::Layout::BlendIn => {
             let jump_radius = vmin * (JUMP_SIZE_VMIN / 100.0) * 0.5;
             (corner - Vec2::splat(jump_radius), jump_radius)
         }
-        hud::Layout::Arena => {
+        hud::Layout::KnockOff => (corner, 0.0),
+        hud::Layout::Arena | hud::Layout::BridgeRace | hud::Layout::LastStand => {
             let (right, bottom, size) = hud::ARENA_JUMP;
             let jump_radius = vmin * (size / 100.0) * 0.5;
             (
@@ -1353,6 +1408,7 @@ pub fn main() {
         .init_resource::<CameraAssist>()
         .init_resource::<CloseUp>()
         .init_resource::<Lookout>()
+        .init_resource::<HeldCamera>()
         .add_message::<PunchPressed>()
         .add_message::<Hit>()
         .add_message::<Landed>()
@@ -1424,6 +1480,13 @@ pub fn main() {
     bridge::plugin(&mut app);
     minimap::plugin(&mut app);
     games::plugin(&mut app);
+    // The four games of 2026-11-18, on the selector too: the tables they
+    // are played at, one way in and out for all four, and each game.
+    table::plugin(&mut app);
+    blend_in::plugin(&mut app);
+    knock_off::plugin(&mut app);
+    bridge_race::plugin(&mut app);
+    last_stand::plugin(&mut app);
     // Friends, behind the speech bubble under the gift: who they are,
     // where they are, your inbox and your group.
     friends::plugin(&mut app);
@@ -1493,6 +1556,9 @@ pub fn main() {
             drive::place,
             animate_walk,
             assist_camera,
+            // A game holding the camera where it says: whatever turned
+            // it meanwhile is undone.
+            hold_the_orbit,
             follow_camera,
         )
             .chain(),
@@ -2066,18 +2132,23 @@ fn grab_cursor(
 /// clicked, or while a piece is being put down in House Builder, so that it
 /// can be dragged, or while the camera is fixed over you, in the car or in
 /// a game of Bridge Wars (`arena`), where there is nothing to look round
-/// with and the stick and the buttons want the mouse; and takes it back
+/// with and the stick and the buttons want the mouse, or held where a game
+/// says ([`HeldCamera`]), or while the results of a game of one of the four
+/// are up, to be left or played again from (`table`); and takes it back
 /// once none of them is, if it was taken before.
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
+#[allow(clippy::too_many_arguments)]
 fn cursor_for_dialogs(
     dialog: Res<hud::DialogUp>,
     wants: Res<hud::WantsPointer>,
     orbit: Res<OrbitCamera>,
+    held: Res<HeldCamera>,
+    results: Query<(), With<table::ResultsWindow>>,
     mut cursors: Query<&mut CursorOptions, With<PrimaryWindow>>,
     mut was_taken: Local<bool>,
     mut let_go: Local<bool>,
 ) {
-    let free = dialog.0 || wants.0 || orbit.overhead;
+    let free = dialog.0 || wants.0 || orbit.overhead || held.0.is_some() || !results.is_empty();
     if free == *let_go {
         return;
     }
@@ -2302,14 +2373,16 @@ fn update_jump_visual(
 /// Puts the stick and the jump button away while the camera is on someone
 /// you talk to (`talk`): what they say is along the bottom of the screen.
 /// And the jump button alone in a game of Bridge Wars, where the sword
-/// stands in its place (`hud::Layout::Arena`).
+/// stands in its place (`hud::Layout::Arena`), and as there in Bridge Race
+/// and Last Stand; and in Knock Off, where nobody jumps.
 fn hide_touch_hud(
     close_up: Res<CloseUp>,
     layout: Res<hud::Layout>,
     mut huds: Query<(&mut Visibility, Has<JumpButtonVisual>), With<TouchHud>>,
 ) {
+    let own_jump = matches!(*layout, hud::Layout::Town | hud::Layout::BlendIn);
     for (mut visibility, jump) in &mut huds {
-        let hidden = close_up.on.is_some() || (jump && *layout == hud::Layout::Arena);
+        let hidden = close_up.on.is_some() || (jump && !own_jump);
         visibility.set_if_neq(if hidden { Visibility::Hidden } else { Visibility::Inherited });
     }
 }
@@ -3066,27 +3139,30 @@ fn read_player_input(
     (outfit, clock): (Res<arena::Outfit>, Res<arena::FightTime>),
     cameras: Query<&Transform, (With<ThirdPersonCamera>, Without<Player>)>,
     mut players: Query<
-        (&Transform, &Venue, &mut Intent, &mut WalkCycle, Has<Dead>, Has<Drinking>, Has<Squashed>),
+        (&Transform, &Venue, &mut Intent, &mut WalkCycle, Has<Dead>, Has<Drinking>, Has<Squashed>, Has<Frozen>),
         With<Player>,
     >,
 ) {
-    let Ok((transform, &venue, mut intent, mut walk, dead, drinking, squashed)) = players.single_mut() else {
+    let Ok((transform, &venue, mut intent, mut walk, dead, drinking, squashed, frozen)) = players.single_mut() else {
         return;
     };
     // A dialog is up: you stand and wait for it to be answered. Dead, you
     // stand where you died until you are put back (`arena`). Run over by a
-    // bus, you lie where you are until you are up again.
-    if dialog.0 || dead || squashed {
+    // bus, you lie where you are until you are up again. Held by a game
+    // where you stand ([`Frozen`]), you stand.
+    if dialog.0 || dead || squashed || frozen {
         *intent = Intent::default();
         walk.speed = 0.0;
         return;
     }
-    // In a game of Bridge Wars everyone runs (`arena`); carrying a plank,
-    // at half the pace (`bridge`; Hajun, 2026-11-09: "when bride mode is
-    // toggled, decrease player speed to 1/2"), or as much of it as your
-    // team has quickened its building to at the upgrade shop (since
-    // 2026-11-14: three quarters, all of it, and a quarter over).
-    let sprint = if venue == Venue::Arena { ui::ui().arena.run_speed / MOVE_SPEED } else { 1.0 };
+    // In a game of Bridge Wars everyone runs (`arena`), and in every game
+    // played as it is, Bridge Race and Last Stand (`island::fights`, since
+    // 2026-11-18); carrying a plank, at half the pace (`bridge`; Hajun,
+    // 2026-11-09: "when bride mode is toggled, decrease player speed to
+    // 1/2"), or as much of it as your team has quickened its building to
+    // at the upgrade shop (since 2026-11-14: three quarters, all of it, and
+    // a quarter over).
+    let sprint = if island::fights(venue) { ui::ui().arena.run_speed / MOVE_SPEED } else { 1.0 };
     let sprint = if bridging.0 { sprint * roundtown_net::bridge_wars::build_pace(&outfit.team) } else { sprint };
     // The speed potion, while it lasts; and drinking any potion, at half
     // the pace (`utility`, `arena::Outfit`).
@@ -3178,8 +3254,9 @@ type Bodies<'w, 's> = Query<
         &'static mut Shove,
         Has<StaysAshore>,
         // Dead, or lying flat where a bus ran it over ([`Squashed`]):
-        // neither moving nor in anyone's way.
-        (Has<Dead>, Has<Squashed>),
+        // neither moving nor in anyone's way. Held where a game puts it
+        // ([`Frozen`]), not moved here.
+        (Has<Dead>, Has<Squashed>, Option<&'static Frozen>),
     ),
 >;
 
@@ -3208,10 +3285,12 @@ pub(crate) fn move_bodies(
         .collect();
 
     // The dead stand where they died, neither moving nor in anyone's way
-    // (`arena`); and so does whoever lies flat where a bus ran them over.
+    // (`arena`); and so does whoever lies flat where a bus ran them over. A
+    // body a game puts where it is itself ([`Frozen`] `placed`) is not
+    // moved, but stands in the way.
     let movers: Vec<(Entity, Venue)> = bodies
         .iter()
-        .filter(|(.., (dead, flat))| !dead && !flat)
+        .filter(|(.., (dead, flat, frozen))| !dead && !flat && !frozen.is_some_and(|frozen| frozen.placed))
         .map(|(entity, _, _, venue, ..)| (entity, *venue))
         .collect();
     for (mover, venue) in movers {
@@ -3232,7 +3311,7 @@ pub(crate) fn move_bodies(
         solids.extend(
             bodies
                 .iter()
-                .filter(|(other, _, _, at, .., (dead, flat))| *other != mover && **at == venue && !dead && !flat)
+                .filter(|(other, _, _, at, .., (dead, flat, _))| *other != mover && **at == venue && !dead && !flat)
                 .map(|(_, other, collider, ..)| (other.translation, *collider)),
         );
         let Ok((_, mut body, _, _, intent, mut jump, mut riding, mut shove, stays_ashore, _)) = bodies.get_mut(mover)
@@ -3437,7 +3516,10 @@ fn start_punch(
     dialog: Res<hud::DialogUp>,
     driving: Res<drive::Driving>,
     bridging: Res<bridge::Bridging>,
-    me: Query<(Entity, &Transform, &Venue, &Intent, Has<Dead>, Option<&Team>, Has<Drinking>, Has<Squashed>), With<Player>>,
+    me: Query<
+        (Entity, &Transform, &Venue, &Intent, Has<Dead>, Option<&Team>, Has<Drinking>, (Has<Squashed>, Has<Frozen>)),
+        With<Player>,
+    >,
     others: Query<
         (Entity, &Transform, &Venue, Option<&Team>),
         (With<WalkCycle>, Without<Player>, Without<Dead>, Without<ForShow>),
@@ -3454,12 +3536,13 @@ fn start_punch(
     if !asked || dialog.0 || driving.on() || bridging.0 {
         return;
     }
-    let Ok((you, body, &venue, intent, dead, team, drinking, squashed)) = me.single() else {
+    let Ok((you, body, &venue, intent, dead, team, drinking, (squashed, frozen))) = me.single() else {
         return;
     };
     // Nor with a potion at your mouth (`utility`), nor flat on the road
-    // under a bus's wheels (`arena::squash`).
-    if dead || drinking || squashed {
+    // under a bus's wheels (`arena::squash`), nor held where you stand by
+    // a game ([`Frozen`]).
+    if dead || drinking || squashed || frozen {
         return;
     }
     commands.entity(you).insert(Punching::next());
@@ -3612,6 +3695,23 @@ pub(crate) fn animate_walk(
     }
 }
 
+/// Keeps the camera turned and zoomed as it was while a game holds it
+/// where it says ([`HeldCamera`]): whatever turned or zoomed it meanwhile, a
+/// finger, the mouse's wheel, the stick bringing it round behind you on a
+/// phone, is undone here, so that let go of, it is as it was. Written only
+/// when something did.
+fn hold_the_orbit(held: Res<HeldCamera>, mut orbit: ResMut<OrbitCamera>, mut kept: Local<Option<View>>) {
+    if held.0.is_none() {
+        *kept = None;
+        return;
+    }
+    let now = orbit.view();
+    match *kept {
+        None => *kept = Some(now),
+        Some(was) if was != now => orbit.turn_to(was),
+        Some(_) => {}
+    }
+}
 
 /// Puts the camera where you turned and zoomed it, whatever is in the way:
 /// nothing ever brings it in nearer you. Standing in a house in House
@@ -3626,6 +3726,10 @@ pub(crate) fn animate_walk(
 ///
 /// While you talk to someone it comes in to their face from your eyes
 /// ([`close_up_view`]), and after, goes back out to where it was.
+///
+/// Held by a game where it says ([`HeldCamera`], Knock Off's view of its
+/// island), it is there and nowhere else.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn follow_camera(
     time: Res<Time>,
     orbit: Res<OrbitCamera>,
@@ -3633,7 +3737,7 @@ pub(crate) fn follow_camera(
     islands: Res<Islands>,
     cars: Decks,
     driving: Res<drive::Driving>,
-    lookout: Res<Lookout>,
+    (lookout, held): (Res<Lookout>, Res<HeldCamera>),
     mut players: Query<(&Transform, &Venue, &mut Visibility, Has<Dead>), With<Player>>,
     mut cameras: Query<&mut Transform, (With<ThirdPersonCamera>, Without<Player>)>,
 ) {
@@ -3660,6 +3764,9 @@ pub(crate) fn follow_camera(
         let eased = blend * blend * (3.0 - 2.0 * blend);
         view = Transform::from_translation(view.translation.lerp(near.translation, eased))
             .with_rotation(view.rotation.slerp(near.rotation, eased));
+    }
+    if let Some(there) = held.0 {
+        view = there;
     }
     // Both only written when they change, so that a camera at rest is not
     // taken for one that moved. In the car, you are the car (`drive`);

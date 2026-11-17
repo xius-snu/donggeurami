@@ -64,10 +64,10 @@ use bevy::picking::pointer::PointerId;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 
-use roundtown_net::{Item, UTILITY_SLOTS, arena_team};
+use roundtown_net::{Item, UTILITY_SLOTS};
 
-use crate::Player;
 use crate::arena::{Fighting, Health, Resources};
+use crate::{Player, Team};
 use crate::bridge::BridgePressed;
 use crate::drive::{CarPressed, Driving};
 use crate::island::{Islands, Venue};
@@ -100,7 +100,7 @@ pub(crate) const SMALL_BUTTON: f32 = 8.0;
 /// and the right than the name is ([`EDGE`]), "very slightly" more margin.
 const SIDE_BUTTON: f32 = 10.5;
 const SIDE_INSET: f32 = 1.5;
-const ACTION_BUTTON: f32 = 14.0;
+pub(crate) const ACTION_BUTTON: f32 = 14.0;
 /// Whether the gift is there, at the top of the right edge, and the person
 /// beside your name. Neither since 2026-11-14 (Hajun: "there is too many
 /// lobby ui buttons now. i think we can get rid of the gift icon for now,
@@ -145,7 +145,7 @@ pub(crate) const ARENA_JUMP: (f32, f32, f32) = (24.5, 4.0, ACTION_BUTTON);
 /// button above the sword icon) and it is a toggle button that enables
 /// bridging mode vs normal mode"; an empty slot until then).
 const ARENA_SLOT: (f32, f32) = (18.5, 18.5);
-const ARENA_BRIDGE: (f32, f32) = (4.0, 24.5);
+pub(crate) const ARENA_BRIDGE: (f32, f32) = (4.0, 24.5);
 /// (Over the bridge button, at 0 and 42, until 2026-11-14: the chat's
 /// button stands there now, [`CHAT_BUTTON`], and the dots, were they put
 /// back, over that.)
@@ -237,7 +237,7 @@ const MORE_ANGLES: [f32; UTILITY_SLOTS - 1] = [53.3, 26.7, 80.0, 0.0];
 /// Where the button for things to use numbered `slot` is, as its right and
 /// bottom offsets in the box round the jump button: the second button for
 /// the first, and the four more on their ring.
-fn slot_place(slot: usize) -> (f32, f32) {
+pub(crate) fn slot_place(slot: usize) -> (f32, f32) {
     let Some(angle) = slot.checked_sub(1).and_then(|more| MORE_ANGLES.get(more)) else {
         return ARENA_SLOT;
     };
@@ -344,13 +344,39 @@ pub(crate) struct YourTag(pub Option<u16>);
 /// Which buttons are round the screen: the town's, everywhere but in a game
 /// of Bridge Wars, where they are the game's own (`arena`; Hajun,
 /// the night of 2026-11-07: "in the pvpmap game ... the button ui should change to
-/// pvpmapbuttonui.jpg layout"). It follows the island you are on
-/// ([`relayout`]).
+/// pvpmapbuttonui.jpg layout"), and, since 2026-11-18, in a game of one of
+/// the four played at tables (`table`), where each is its game's own, put
+/// up by the game's own module (`blend_in::spawn_bar` and the rest). It
+/// follows the island you are on ([`relayout`]).
 #[derive(Resource, Default, Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Layout {
     #[default]
     Town,
     Arena,
+    BlendIn,
+    KnockOff,
+    BridgeRace,
+    LastStand,
+}
+
+impl Layout {
+    /// The buttons of wherever `venue` is.
+    pub(crate) fn of(venue: Venue) -> Self {
+        match venue {
+            Venue::Arena => Layout::Arena,
+            Venue::BlendIn => Layout::BlendIn,
+            Venue::KnockOff => Layout::KnockOff,
+            Venue::BridgeRace => Layout::BridgeRace,
+            Venue::LastStand => Layout::LastStand,
+            Venue::Town | Venue::Home | Venue::Lobby | Venue::Plot(_) => Layout::Town,
+        }
+    }
+
+    /// Whether these are a fight's buttons, laid out as Bridge Wars' are, the
+    /// sword or the fist in the jump button's place (`island::fights`).
+    pub(crate) fn fights(self) -> bool {
+        matches!(self, Layout::Arena | Layout::BridgeRace | Layout::LastStand)
+    }
 }
 
 /// The gamepad, down the right edge, which opens the game selector
@@ -365,7 +391,8 @@ pub(crate) struct GamesButton;
 #[derive(Component)]
 pub(crate) struct FriendsButton;
 
-/// The fill of your health bar in Bridge Wars, as wide as your health.
+/// The fill of your health bar in Bridge Wars, as wide as your health (and
+/// in any game whose bar has one, [`health_bar`]).
 #[derive(Component)]
 struct HealthFill;
 
@@ -467,6 +494,7 @@ pub(crate) fn plugin(app: &mut App) {
                 show_health.after(restyle),
                 show_resources.after(restyle),
                 hide_round_the_jump,
+                show_car_button.after(restyle),
                 release_held,
                 repicture.after(restyle),
                 repaint,
@@ -475,9 +503,11 @@ pub(crate) fn plugin(app: &mut App) {
         );
 }
 
-/// The bar across the top: your name, the buttons and your balance.
+/// The bar across the top: your name, the buttons and your balance; in a
+/// game, the game's own ([`game_bar`]). What hangs anything of its own on a
+/// bar put up afresh hangs it on `Added<TopBar>`.
 #[derive(Component)]
-struct TopBar;
+pub(crate) struct TopBar;
 
 /// The box round a phone's jump button, with the buttons about it, and
 /// what the big speech bubble fans out from among them (`quick`).
@@ -487,9 +517,10 @@ pub(crate) struct RoundTheJump;
 /// The fist among them, or in Bridge Wars the sword in the jump button's
 /// place, which throws a punch (`start_punch` in `src/lib.rs`) and, in the
 /// car, held, is the reverse (`drive`): its pictures, its own, and in the
-/// car the jump button's arrow turned down.
+/// car the jump button's arrow turned down. A game puts one up with
+/// [`punch_button`].
 #[derive(Component)]
-struct PunchButton {
+pub(crate) struct PunchButton {
     picture: Handle<Image>,
     reverse: Handle<Image>,
 }
@@ -658,6 +689,25 @@ fn hide_round_the_jump(
     }
 }
 
+/// Shows the face, which puts you in the car, only where the car is to be
+/// had (`drive::drivable`: the town alone, since 2026-11-18). The town's
+/// buttons are up at home and in House Builder's lobby and plots too,
+/// where the face would be a button that does nothing: there it is put
+/// away, and the others stay where they are. Written only as it changes.
+fn show_car_button(me: Query<&Venue, With<Player>>, mut faces: Query<&mut Visibility, With<CarButton>>) {
+    let Ok(&here) = me.single() else {
+        return;
+    };
+    let shown = if crate::drive::drivable(here) {
+        Visibility::Inherited
+    } else {
+        Visibility::Hidden
+    };
+    for mut face in &mut faces {
+        face.set_if_neq(shown);
+    }
+}
+
 /// How far under its words every text's shadow falls, as a share of the
 /// letters' size ([`shade`]): what 3 logical pixels was under the bar's
 /// words on this PC.
@@ -726,8 +776,9 @@ pub(crate) fn show_top_bar(
 }
 
 /// Puts up the buttons of wherever you are ([`Layout`]) as you arrive
-/// there: Bridge Wars' own in a game of it, and the town's everywhere else;
-/// taken down and put up afresh, as [`restyle`] does.
+/// there: Bridge Wars' own in a game of it, each of the four games' own at
+/// its table, and the town's everywhere else; taken down and put up
+/// afresh, as [`restyle`] does.
 fn relayout(
     me: Query<&Venue, (With<Player>, Changed<Venue>)>,
     mut layout: ResMut<Layout>,
@@ -740,7 +791,7 @@ fn relayout(
     let Ok(&here) = me.single() else {
         return;
     };
-    let wanted = if here == Venue::Arena { Layout::Arena } else { Layout::Town };
+    let wanted = Layout::of(here);
     if *layout == wanted {
         return;
     }
@@ -774,18 +825,101 @@ fn restyle(
 }
 
 /// The bar across the top, and the box round the jump button, as `layout`
-/// has them.
+/// has them: the four games' each by its own module, which builds it of
+/// the pieces here ([`game_bar`], [`name_plate`], [`round_the_jump`] and
+/// the rest).
 fn spawn_bar(commands: &mut Commands, assets: &AssetServer, images: &mut Assets<Image>, layout: Layout, minimap: &Minimap) {
     match layout {
         Layout::Town => spawn_town_bar(commands, assets, images),
         Layout::Arena => spawn_arena_bar(commands, images, minimap),
+        Layout::BlendIn => crate::blend_in::spawn_bar(commands, assets, images),
+        Layout::KnockOff => crate::knock_off::spawn_bar(commands, assets, images),
+        Layout::BridgeRace => crate::bridge_race::spawn_bar(commands, assets, images),
+        Layout::LastStand => crate::last_stand::spawn_bar(commands, assets, images),
     }
+}
+
+/// The bar across the top in a game of one of the four (`table`), as Bridge
+/// Wars' is ([`spawn_arena_bar`]): moved in from whichever side the
+/// camera's hole is on, and on the right no further than there is room,
+/// with a column down its left for your name and what goes under it, and
+/// one down its right. Each game's own `spawn_bar` puts what it has in
+/// them (`ChildOf`): the left one first, then the right.
+pub(crate) fn game_bar(commands: &mut Commands) -> (Entity, Entity) {
+    let bar = commands
+        .spawn((
+            TopBar,
+            KeepsClear,
+            bar_room(),
+            Node {
+                position_type: PositionType::Absolute,
+                top: Val::VMin(EDGE),
+                left: Val::VMin(EDGE),
+                right: Val::VMin(EDGE),
+                justify_content: JustifyContent::SpaceBetween,
+                align_items: AlignItems::FlexStart,
+                ..default()
+            },
+            Pickable::IGNORE,
+        ))
+        .id();
+    let left = commands
+        .spawn((
+            ChildOf(bar),
+            Node {
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::FlexStart,
+                row_gap: Val::VMin(1.4),
+                ..default()
+            },
+            Pickable::IGNORE,
+        ))
+        .id();
+    let right = commands
+        .spawn((
+            ChildOf(bar),
+            Node {
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::FlexEnd,
+                row_gap: Val::VMin(1.6),
+                // A little further in from the corner than the name is, as
+                // the town's buttons down the right edge are.
+                margin: UiRect::new(Val::ZERO, Val::VMin(SIDE_INSET), Val::VMin(SIDE_INSET), Val::ZERO),
+                ..default()
+            },
+            Pickable::IGNORE,
+        ))
+        .id();
+    (left, right)
+}
+
+/// The button that throws a punch, with `picture` on it (the fist, or a
+/// sword), `size` across, where `place` puts it; in the car, were you in
+/// it, the reverse, with `reverse` on it (the jump button's arrow, which
+/// is turned down for it: [`PunchButton`]).
+pub(crate) fn punch_button(picture: Handle<Image>, reverse: Handle<Image>, size: f32, place: Node) -> impl Bundle {
+    (
+        PunchButton {
+            picture: picture.clone(),
+            reverse,
+        },
+        round_button(picture, size, place),
+    )
+}
+
+/// The small keyboard that takes up the chat's box to type a line into
+/// ([`ChatButton`]), where the town and Bridge Wars have it
+/// ([`CHAT_BUTTON`]), stepping in from an iPhone's island: for the box
+/// round the jump button.
+pub(crate) fn chat_button(images: &mut Assets<Image>) -> impl Bundle {
+    let (right, bottom, size) = CHAT_BUTTON;
+    (ChatButton, chat_steps_in(), round_button(images.add(keyboard()), size, beside_the_jump(right, bottom)))
 }
 
 /// The box round the jump button, in the bottom right corner where the
 /// jump button is: the buttons about it are placed from its corner, in
 /// shares of the short side.
-fn round_the_jump() -> impl Bundle {
+pub(crate) fn round_the_jump() -> impl Bundle {
     (
         RoundTheJump,
         Node {
@@ -802,7 +936,7 @@ fn round_the_jump() -> impl Bundle {
 
 /// Where a button sits in the box round the jump button, in shares of the
 /// short side from its right and its bottom.
-fn beside_the_jump(right: f32, bottom: f32) -> Node {
+pub(crate) fn beside_the_jump(right: f32, bottom: f32) -> Node {
     Node {
         position_type: PositionType::Absolute,
         right: Val::VMin(right),
@@ -927,7 +1061,7 @@ fn spawn_arena_bar(commands: &mut Commands, images: &mut Assets<Image>, minimap:
 /// you have, small and white ([`BridgeCount`], written by
 /// [`show_resources`]: "25m", as in front of you while you build). A
 /// press anywhere on it is the button's.
-fn bridge_button(plank: Handle<Image>, place: Node) -> impl Bundle {
+pub(crate) fn bridge_button(plank: Handle<Image>, place: Node) -> impl Bundle {
     let colours = ui().colours;
     (
         BridgeButton,
@@ -973,7 +1107,7 @@ fn bridge_button(plank: Handle<Image>, place: Node) -> impl Bundle {
 /// in its own place looks (`setup_hud` in `src/lib.rs`): the buttons' disc
 /// with the arrow on it, lit while it is held (`update_jump_visual`). It
 /// takes no press for itself: the touch controls know where it is.
-fn jump_button(arrow: Handle<Image>, size_vmin: f32, place: Node) -> impl Bundle {
+pub(crate) fn jump_button(arrow: Handle<Image>, size_vmin: f32, place: Node) -> impl Bundle {
     let colours = ui().colours.hud;
     (
         crate::JumpButtonVisual,
@@ -1001,7 +1135,7 @@ fn jump_button(arrow: Handle<Image>, size_vmin: f32, place: Node) -> impl Bundle
 
 /// Your health bar in Bridge Wars, under your name: a bar with a rim,
 /// filled red as far as your health goes ([`show_health`]).
-fn health_bar() -> impl Bundle {
+pub(crate) fn health_bar() -> impl Bundle {
     let colours = ui().colours.arena;
     (
         Node {
@@ -1055,7 +1189,7 @@ fn show_health(
 /// One of the things you hold in Bridge Wars, under your health bar: its
 /// picture, and its count beside it ([`show_resources`]), in a row wide
 /// enough that the pictures line up under each other.
-fn resource_row(kind: Item, picture: Handle<Image>, tint: Color) -> impl Bundle {
+pub(crate) fn resource_row(kind: Item, picture: Handle<Image>, tint: Color) -> impl Bundle {
     (
         Node {
             width: Val::VMin(RESOURCE_ROW),
@@ -1118,7 +1252,7 @@ fn show_resources(
 /// over it, while a potion lasts, how long it still does. `utility` fills
 /// it in, shows it and takes its presses: a press for a potion, a hold
 /// and a drag for what is aimed.
-fn utility_slot(slot: usize, place: Node) -> impl Bundle {
+pub(crate) fn utility_slot(slot: usize, place: Node) -> impl Bundle {
     let colours = ui().colours;
     // The time over the second button stands a quarter of the button to
     // the right of its middle: straight over it, it ran into the count in
@@ -1380,7 +1514,7 @@ pub(crate) fn round_button(icon: Handle<Image>, size_vmin: f32, place: Node) -> 
 /// corners rounded a little. Under the name, laid out by themselves over
 /// the same room, the four copies of it that are its stroke, put away
 /// until the name is in your team's colour ([`colour_name`]).
-fn name_plate() -> impl Bundle {
+pub(crate) fn name_plate() -> impl Bundle {
     let colours = ui().colours;
     (
         Node {
@@ -1469,17 +1603,26 @@ fn show_name(
 /// and on it the blue team's name could not be read, nor the green's and
 /// the red's easily (seen in the desktop build, by day). Written only as
 /// it changes.
+///
+/// The team is the one on your body ([`Team`]), and since 2026-11-18 it is
+/// so in any game laid out as Bridge Wars is ([`Layout::fights`]: Bridge
+/// Race, Last Stand) once its teams are out, which each says as Bridge
+/// Wars does (`Fighting::teams_out`); in Bridge Wars your body's team is
+/// your seat's (`arena_team`), as it was read here until then.
 fn colour_name(
     layout: Res<Layout>,
     fighting: Res<Fighting>,
+    me: Query<Option<&Team>, With<Player>>,
     mut plates: Query<&mut TextColor, With<NamePlate>>,
     mut rims: Query<&mut Visibility, With<NameRim>>,
 ) {
     let colours = ui().colours;
-    let team = fighting
-        .seat
-        .filter(|_| *layout == Layout::Arena && fighting.teams_out)
-        .map(|seat| arena_team(usize::from(seat)));
+    let team = me
+        .single()
+        .ok()
+        .flatten()
+        .filter(|_| layout.fights() && fighting.teams_out)
+        .map(|team| team.0);
     let wanted = team.map_or(colours.text, |team| colours.arena.team(team));
     for mut colour in &mut plates {
         colour.set_if_neq(TextColor(wanted));
@@ -2413,9 +2556,47 @@ fn box_distance(at: Vec2, reach: Vec2) -> f32 {
     d.max(Vec2::ZERO).length() + d.x.max(d.y).min(0.0)
 }
 
+/// Whether every two of `buttons` round the jump button are more than a
+/// share and a half of the short side apart, as every button there is of
+/// every other: each a disc, by its right and bottom offsets in the box
+/// round the jump button ([`beside_the_jump`]) and how big it is; or which
+/// two are not. For the tests of each game's own buttons.
+#[cfg(test)]
+pub(crate) fn clear_of_each_other(buttons: &[((f32, f32), f32)]) -> Result<(), String> {
+    let middle = |((right, bottom), size): ((f32, f32), f32)| Vec2::new(right + size * 0.5, bottom + size * 0.5);
+    for (index, &one) in buttons.iter().enumerate() {
+        for &other in &buttons[..index] {
+            let gap = middle(one).distance(middle(other)) - (one.1 + other.1) * 0.5;
+            if gap <= 1.5 {
+                return Err(format!("{one:?} and {other:?} are {gap} apart"));
+            }
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_face_is_up_only_where_the_car_is_to_be_had() {
+        use bevy::ecs::system::RunSystemOnce;
+        let mut world = World::new();
+        let you = world.spawn((Player, Venue::Home)).id();
+        let face = world.spawn((CarButton, Visibility::Inherited)).id();
+        // At home, as in House Builder's lobby and plots, under the town's
+        // buttons: away.
+        for venue in [Venue::Home, Venue::Lobby, Venue::Plot(3)] {
+            *world.get_mut::<Venue>(you).expect("a venue") = venue;
+            world.run_system_once(show_car_button).expect("shown");
+            assert_eq!(world.get::<Visibility>(face), Some(&Visibility::Hidden), "{venue:?}");
+        }
+        // In the town: up, as the box round the jump button is.
+        *world.get_mut::<Venue>(you).expect("a venue") = Venue::Town;
+        world.run_system_once(show_car_button).expect("shown");
+        assert_eq!(world.get::<Visibility>(face), Some(&Visibility::Inherited));
+    }
 
     #[test]
     fn the_four_more_buttons_lie_on_a_ring_round_the_sword_clear_of_every_other_button() {
@@ -2586,6 +2767,29 @@ mod tests {
         // all: nothing else round the jump button is.
         assert!(right < 0.0);
         assert!(about.iter().all(|(other, other_size)| other.x - other_size * 0.5 >= 0.0));
+    }
+
+    #[test]
+    fn each_of_the_four_games_has_its_own_buttons_and_the_fights_bridge_wars_own() {
+        // Every venue its buttons: the town's wherever there is no game of
+        // its own, Bridge Wars' on its map, and each of the four's on its.
+        assert_eq!(Layout::of(Venue::Town), Layout::Town);
+        for venue in [Venue::Home, Venue::Lobby, Venue::Plot(2)] {
+            assert_eq!(Layout::of(venue), Layout::Town, "{venue:?}");
+        }
+        assert_eq!(Layout::of(Venue::Arena), Layout::Arena);
+        assert_eq!(Layout::of(Venue::BlendIn), Layout::BlendIn);
+        assert_eq!(Layout::of(Venue::KnockOff), Layout::KnockOff);
+        assert_eq!(Layout::of(Venue::BridgeRace), Layout::BridgeRace);
+        assert_eq!(Layout::of(Venue::LastStand), Layout::LastStand);
+        // Laid out as Bridge Wars is exactly where it is fought as Bridge
+        // Wars is.
+        for venue in [Venue::Town, Venue::Arena, Venue::BlendIn, Venue::KnockOff, Venue::BridgeRace, Venue::LastStand] {
+            assert_eq!(Layout::of(venue).fights(), crate::island::fights(venue), "{venue:?}");
+        }
+        // Clear of each other is what it says, either way.
+        assert!(clear_of_each_other(&[((0.0, 0.0), 14.0), ((0.0, 16.0), 14.0)]).is_ok());
+        assert!(clear_of_each_other(&[((0.0, 0.0), 14.0), ((0.0, 15.0), 14.0)]).is_err());
     }
 
     #[test]
