@@ -563,14 +563,22 @@ fn read_my_car(
     car::hang_wheels(&mut commands, car, turning, &wheels, axle, |wheel| wheel.middle.xz().dot(front) > mid);
 }
 
+/// Whether the car is to be had on `venue`: in the town alone, since
+/// 2026-11-18, when four games came whose venues are none of the car's
+/// (until then C on desktop got you into it anywhere, a game of Bridge
+/// Wars too, and the face button wherever the town's buttons were, at
+/// home and in House Builder's lobby and plots). Where it is not, the face
+/// is put away (`hud`).
+pub(crate) fn drivable(venue: Venue) -> bool {
+    venue == Venue::Town
+}
+
 /// Into the car, at the press of the face button or C, where you stand and
 /// facing the way you face, with the camera fixed over you; or out of it,
 /// standing where the car is, with the camera back as you had it. Not
 /// while a dialog is up or the camera is on someone you talk to; and out
 /// of it, whatever is pressed, once you are sent to another island. Into
-/// it only in the town (since 2026-11-18, when four games came whose
-/// venues are none of the car's: C on desktop got you into it anywhere,
-/// a game of Bridge Wars too).
+/// it only where it is to be had ([`drivable`]).
 #[allow(clippy::too_many_arguments)]
 fn toggle(
     mut pressed: MessageReader<CarPressed>,
@@ -590,7 +598,7 @@ fn toggle(
     if !sent && !(asked && !dialog.0 && !close_up.busy()) {
         return;
     }
-    if !sent && driving.0.is_none() && venue != Venue::Town {
+    if !sent && driving.0.is_none() && !drivable(venue) {
         return;
     }
     let shown = match driving.0.take() {

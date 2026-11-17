@@ -33,9 +33,11 @@
 //! did), or a table of one of the four (`table::Ask::Join`) — and once you
 //! stand on the game's island and it has loaded, and a moment more has
 //! passed, it lifts. Should nothing come of the choice, it lifts after
-//! [`LOADING_MOST`] seconds all the same; should the server turn it down
-//! (`Tell::Refused`), at once, with the reason across the screen. While it
-//! is down you stand still, as under a dialog (`hud::DialogUp`).
+//! [`LOADING_MOST`] seconds all the same; should the server turn down a
+//! seat at one of the four's tables (`Tell::Refused`), at once, the table
+//! saying why across the screen (`table`). Bridge Wars' and House
+//! Builder's refusals wait out the black screen as they always have. While
+//! it is down you stand still, as under a dialog (`hud::DialogUp`).
 
 use bevy::prelude::*;
 use roundtown_net::rules::ENTRY;
@@ -432,9 +434,10 @@ fn landed(pick: Minigame, here: Venue, islands: &Islands) -> bool {
 /// Goes into the game chosen once the black screen has been down a moment,
 /// and lifts the screen once you have got there and a moment more has
 /// passed, or once it has been down long enough that nothing is coming of
-/// the choice, or at once if the server has turned it down, saying why: a
-/// table says why for itself (`table`), and for Bridge Wars and House
-/// Builder it is said here.
+/// the choice, or, for a seat at one of the four's tables, at once if the
+/// server has turned it down, the table saying why (`table`). Bridge Wars
+/// and House Builder say nothing of a refusal across the screen, and their
+/// black screen waits as it did before the four came: left as they were.
 #[allow(clippy::too_many_arguments)]
 fn load(
     time: Res<Time>,
@@ -471,27 +474,17 @@ fn load(
             }
         }
     }
-    let refused = tells
-        .read()
-        .filter_map(|tell| match tell {
-            Tell::Refused(refusal) => Some(*refusal),
-            _ => None,
-        })
-        .last()
-        .filter(|_| loading.fired);
+    // Every word read, whatever it is, so that none is read a frame late.
+    let refused = tells.read().filter(|tell| matches!(tell, Tell::Refused(_))).count() > 0;
+    let turned_down = refused && loading.fired && loading.pick.at_a_table();
     let lifted = match loading.lifting {
         Some(lifted) => lifted + dt,
         None => {
             let settled = loading.fired
                 && loading.age >= LOADING_IN + LOADING_HOLD
                 && me.single().is_ok_and(|&here| landed(loading.pick, here, &islands));
-            if !settled && loading.age < LOADING_MOST && refused.is_none() {
+            if !settled && loading.age < LOADING_MOST && !turned_down {
                 return;
-            }
-            if let Some(refusal) = refused
-                && !loading.pick.at_a_table()
-            {
-                table::say_refused(&mut commands, refusal);
             }
             up.0 = false;
             0.0
@@ -603,5 +596,39 @@ mod tests {
         assert!(!landed(Minigame::BlendIn, Venue::Town, &islands));
         // Home Builders anywhere loaded, as ever.
         assert!(landed(Minigame::HouseBuilder, Venue::Town, &islands));
+    }
+
+    #[test]
+    fn a_refusal_lifts_the_black_screen_at_once_for_a_table_alone() {
+        use bevy::ecs::system::RunSystemOnce;
+        use roundtown_net::Refusal;
+        for (pick, at_once) in [
+            (Minigame::KnockOff, true),
+            (Minigame::BlendIn, true),
+            (Minigame::BridgeWars, false),
+            (Minigame::HouseBuilder, false),
+        ] {
+            let mut world = World::new();
+            world.init_resource::<Time>();
+            world.init_resource::<Islands>();
+            world.init_resource::<DialogUp>();
+            world.init_resource::<Messages<Tell>>();
+            world.init_resource::<Messages<arena::Ask>>();
+            world.init_resource::<Messages<builder::Ask>>();
+            world.init_resource::<Messages<table::Ask>>();
+            world.spawn((Player, Venue::Town));
+            // Down a moment, the game asked for, and nowhere yet.
+            world.insert_resource(Loading {
+                pick,
+                age: LOADING_IN + 0.1,
+                fired: true,
+                lifting: None,
+            });
+            world.resource_mut::<Messages<Tell>>().write(Tell::Refused(Refusal::Busy));
+            world.run_system_once(load).expect("loaded");
+            assert_eq!(world.resource::<Loading>().lifting.is_some(), at_once, "{pick:?}");
+            // Nothing across the screen from here: a table says why itself.
+            assert_eq!(world.query::<&Text>().iter(&world).count(), 0, "{pick:?}");
+        }
     }
 }

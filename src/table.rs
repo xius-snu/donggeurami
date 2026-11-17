@@ -37,10 +37,13 @@
 //! this device does. A connection gone for a while in the middle gives the
 //! table up, back to the town offline, as in Bridge Wars.
 //!
-//! **The games' own modules** are told a table has begun with [`Entered`]
-//! (and begin afresh on one that comes while another is up: one table
-//! straight after another, "Play again", or a device put back in the game
-//! it was in), and that you have left the tables with [`Gone`]. Offline,
+//! **The games' own modules** are told a table has begun with [`Entered`],
+//! and begin afresh on every one, which can come while a table is up: one
+//! table straight after another ("Play again", or your group's leader's,
+//! once the one before is over), or the table you are at begun afresh
+//! (`same_table`: a device put back in the game it was in, or your seat at
+//! it moved by the server before play); and that you have left the tables
+//! with [`Gone`]. Offline,
 //! the computer's players' bodies are put up here as they come (lobby's
 //! `spawn_bot_at`, marked [`ComputerSeat`] and `tags::Named`), standing
 //! where each waits, and everyone, you too, is stood where their seat
@@ -80,6 +83,11 @@ const NAME_SECS: f32 = 3.0;
 /// How long a connection may be gone in the middle of a game played
 /// online before the game is given up, in seconds: Bridge Wars' own.
 const RECONNECT_WAIT: f32 = 15.0;
+/// How long a seat asked of the server is waited on for its answer, in
+/// seconds, for a refusal to be said of it: the server answers in a
+/// moment, its database's fee too, and past this whatever is turned down
+/// is something else (mine).
+const ANSWER_MOST: f32 = 10.0;
 /// How long the results wait to come up after the game is over, in
 /// seconds: for the game's own word on how it ended to be read across the
 /// screen first ("Mochi wins!"), which the window would stand over (mine).
@@ -146,14 +154,24 @@ pub(crate) enum Ask {
 
 /// A table of `game` has begun on this device, you in `seat` at it, the
 /// server's (`online`) or this device's own: for the game's own module to
-/// begin afresh, dropping whatever it had of a table before (one can come
-/// while another is up, one table straight after another, or a device put
-/// back in the game it was in, with no [`Gone`] between).
+/// begin afresh, dropping whatever it had of a table before (everything
+/// [`InTable`] has gone already, and the board is up again). One can come
+/// while a table is up, with no [`Gone`] between: one table straight after
+/// another ("Play again", or your group's leader's, once the one before is
+/// over), or, `same_table`, the table you are at begun afresh: a device put
+/// back in the game it was in (the server's `Rules::back`, whose own words
+/// come straight after), or your seat at it moved by the server before
+/// play, as the computer begins to come in Bridge Race or as a game of
+/// people alone begins with a seat before yours left (whoever sits past
+/// the seats a table settles on moves up into one it has). The game's
+/// name is said across the screen only for a table you were not at, and a
+/// group's follower told only of that (`friends`).
 #[derive(Message, Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) struct Entered {
     pub(crate) game: Minigame,
     pub(crate) seat: u8,
     pub(crate) online: bool,
+    pub(crate) same_table: bool,
 }
 
 /// You have left the tables, back to the town, from one of `game`: for its
@@ -242,8 +260,11 @@ pub(crate) struct ResultsWindow;
 
 /// The tables' systems, in order: what the server says, what is asked, the
 /// table this device hosts, the connection, the sweep, the mirror, the
-/// board and the results. Before you are moved, as Bridge Wars' are. A
-/// game's own systems that read what these say go after them.
+/// board and the results. Before you are moved, as Bridge Wars' are, and
+/// before Bridge Wars' and House Builder's own: a table you are taken from
+/// into one of theirs, by your group's leader, has given back the camera
+/// and your body before their game takes them. A game's own systems that
+/// read what these say go after them.
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct TableSystems;
 
@@ -271,15 +292,16 @@ struct BackIn;
 /// What a table keeps to give back as it ends, whichever runs it: the
 /// camera as you had it, your seat in the town, and how long the
 /// connection has been gone; a seat asked of the server and not yet
-/// answered, for a refusal to be said of; the table you were at before
-/// this one, whose board may come a moment after this one's begins, and is
-/// not this one's; and the number the next table this device hosts takes.
+/// answered, and for how long, for a refusal to be said of
+/// ([`ANSWER_MOST`]); the table you were at before this one, over, whose
+/// board may come a moment after this one's begins, and is not this one's;
+/// and the number the next table this device hosts takes.
 #[derive(Resource, Default)]
 struct Kept {
     view: Option<View>,
     town_seat: usize,
     cut_off: Option<f32>,
-    asked: Option<Minigame>,
+    asked: Option<(Minigame, f32)>,
     passed: Option<(Minigame, u32)>,
     next: u32,
 }
@@ -324,7 +346,9 @@ pub(crate) fn plugin(app: &mut App) {
                 .chain()
                 .in_set(TableSystems)
                 .before(crate::read_player_input)
-                .before(island::show_where_i_am),
+                .before(island::show_where_i_am)
+                .before(crate::arena::ArenaSystems)
+                .before(crate::builder::GameSystems),
         );
 }
 
@@ -415,7 +439,8 @@ impl Host {
     /// Moves it on by `dt` seconds, or past its wait or count at once if
     /// `skip`: once nobody has come for [`ALONE_WAIT`], the computer's
     /// players into the seats left, one each `gap()` seconds (all at once
-    /// on a skip), each as `who(seat, seats)` says, and with every seat
+    /// on a skip), the last of them first, as the server seats them
+    /// ([`order`]), each as `who(seat, seats)` says, and with every seat
     /// taken and as many people as the game begins with, the countdown;
     /// then play; and at the end of the results, back to the town.
     fn step(
@@ -445,7 +470,8 @@ impl Host {
                         0
                     };
                     for _ in 0..due {
-                        let Some(seat) = self.seats.iter().position(|member| member.id == 0) else {
+                        let free = order(self.game, self.seats.len()).into_iter().rev().find(|&seat| self.seats[seat].id == 0);
+                        let Some(seat) = free else {
                             break;
                         };
                         let member = who(seat, &self.seats);
@@ -520,6 +546,17 @@ impl Host {
             people: self.people() as u8,
             seats: self.seats.len() as u8,
         }
+    }
+}
+
+/// The order the `seats` seats at a table of `game` are taken in, as the
+/// server takes them (its `Table::order`): people the first of them free,
+/// and the computer the last. Seat by seat, but in Bridge Race, whose first
+/// two people are one team (`bridge_race::PEOPLE_FIRST`).
+fn order(game: Minigame, seats: usize) -> Vec<usize> {
+    match game {
+        Minigame::BridgeRace => bridge_race::PEOPLE_FIRST.iter().copied().filter(|&seat| seat < seats).collect(),
+        _ => (0..seats).collect(),
     }
 }
 
@@ -612,11 +649,12 @@ pub(crate) fn clock(seconds: f32) -> String {
     format!("{}:{:02}", seconds / 60, seconds % 60)
 }
 
-/// Says across the screen why the server turned a seat down: for want of
-/// coins, or for your being in the middle of something else. That only a
-/// group's leader starts a game is said by `friends`, for every game, and
-/// is not said again here.
-pub(crate) fn say_refused(commands: &mut Commands, refusal: Refusal) {
+/// Says across the screen why a seat at a table was turned down: for want
+/// of coins, or for your being in the middle of something else. That only
+/// a group's leader starts a game is said by `friends`, for every game, and
+/// is not said again here. (Bridge Wars' and House Builder's refusals are
+/// their own, and say nothing across the screen, as before the tables.)
+fn say_refused(commands: &mut Commands, refusal: Refusal) {
     let ui = ui();
     let words = &ui.words.games;
     let said = match refusal {
@@ -625,6 +663,17 @@ pub(crate) fn say_refused(commands: &mut Commands, refusal: Refusal) {
         Refusal::NotLeader => return,
     };
     hud::announce(commands, None, said, hud::CAPTION, 3.0);
+}
+
+/// Whether a table of `game` you are told you are at, the server's
+/// (`online`), is the one you sit at already, `before`, whose game is not
+/// over (`over`): the server tells a device it is at its table again as it
+/// puts the device back in the game it was in, and as it moves the
+/// device's seat before play; and sits it at another only once the one it
+/// is at is over ("Play again", or a group's leader taking their group on
+/// from it). Offline every table this device opens is another.
+fn same_table(before: Sitting, game: Minigame, online: bool, over: bool) -> bool {
+    before.online && online && before.game == game && !over
 }
 
 // ------------------------------------------------------------ in and out
@@ -654,13 +703,25 @@ impl Seating<'_, '_> {
     /// as it was before kept to go back to (and getting there gets you out
     /// of the car, `drive::toggle`, whose own view is the one kept); the
     /// board is up, the game's name across the screen, and the game told.
+    /// Told again of the table you are at ([`same_table`]), it is begun
+    /// afresh as it stands: under the number it has, its board as it was
+    /// mirrored, and its name not said again.
     fn open(&mut self, game: Minigame, seat: u8, online: bool, id: u32) {
+        let before = self.at.0;
+        let same = before.is_some_and(|before| same_table(before, game, online, self.view.over()));
         for thing in &self.things {
             self.commands.entity(thing).try_despawn();
         }
-        if let Some(before) = self.at.0 {
+        // The table you were at, over, which this one comes straight after:
+        // its board may still be here a moment after this one's begins, and
+        // is never this one's ([`mirror`]).
+        if !same && let Some(before) = before.filter(|before| before.online && self.view.over()) {
             self.kept.passed = Some((before.game, before.id));
         }
+        let id = match before {
+            Some(before) if same => before.id,
+            _ => id,
+        };
         if island::fights(game.venue()) {
             let before_the_car = self.driving.take_view();
             let fixed = self.orbit.top_down();
@@ -677,15 +738,26 @@ impl Seating<'_, '_> {
         }
         self.held.set_if_neq(HeldCamera(None));
         // Nothing of a table before is drawn while this one's board comes.
-        if *self.view != TableView::default() {
+        if !same && *self.view != TableView::default() {
             *self.view = TableView::default();
         }
         spawn_board(&mut self.commands);
-        hud::announce(&mut self.commands, None, &games::name_of(game), hud::HEADLINE, NAME_SECS).insert(InTable);
+        if !same {
+            hud::announce(&mut self.commands, None, &games::name_of(game), hud::HEADLINE, NAME_SECS).insert(InTable);
+        }
         self.at.0 = Some(Sitting { game, seat, online, id });
         self.kept.cut_off = None;
-        info!("{game:?}: at table {id}, in seat {seat}{}", if online { " (online)" } else { "" });
-        self.entered.write(Entered { game, seat, online });
+        info!(
+            "{game:?}: at table {id}, in seat {seat}{}{}",
+            if online { " (online)" } else { "" },
+            if same { ", the same table begun afresh" } else { "" }
+        );
+        self.entered.write(Entered {
+            game,
+            seat,
+            online,
+            same_table: same,
+        });
     }
 
     /// The table is over for you: everything it put up goes; nothing of a
@@ -793,10 +865,14 @@ enum Hosting {
     No,
 }
 
-/// What the server says of the tables: that you are at one (`Tell::Entered`,
-/// as you are seated, and again as a device is put back in a game it was
-/// in), that you are back in the town, which ends it here, and that it has
-/// turned a seat down.
+/// What the server says of the tables: that you are at one
+/// (`Tell::Entered`: as you are seated, again as a device is put back in
+/// the game it was in, and as your seat at it is moved before play); where
+/// it stands you while you are at one (`Tell::Arrive`): in another of its
+/// seats, which is yours from then, or on any venue but its own, in the
+/// town as everyone is sent at its end, or into another game, as your
+/// group's leader takes you on from a table over for you, either of which
+/// ends it here; and that it has turned a seat down.
 fn hear(mut tells: MessageReader<Tell>, mut seating: Seating) {
     for tell in tells.read() {
         match tell {
@@ -807,12 +883,20 @@ fn hear(mut tells: MessageReader<Tell>, mut seating: Seating) {
                 seating.kept.asked = None;
                 seating.open(*game, *seat, true, 0);
             }
-            Tell::Arrive {
-                venue: Venue::Town | Venue::Home,
-                ..
-            } => {
-                if seating.at.0.is_some_and(|sitting| sitting.online) {
+            Tell::Arrive { venue, seat, .. } => {
+                let Some(sitting) = seating.at.0.filter(|sitting| sitting.online) else {
+                    continue;
+                };
+                if *venue != sitting.game.venue() {
                     seating.end(false);
+                } else if *seat != sitting.seat && !seating.view.over() {
+                    // Stood where another of its seats waits or begins: the
+                    // server has moved you up into it, which it says with
+                    // `Tell::Entered` too, as it is sent now; and should it
+                    // say it only by standing you there, it is the same.
+                    // (Seats move only before the play and as it begins;
+                    // over, the next table comes with its own word.)
+                    seating.open(sitting.game, *seat, true, sitting.id);
                 }
             }
             Tell::Refused(refusal) => {
@@ -827,9 +911,13 @@ fn hear(mut tells: MessageReader<Tell>, mut seating: Seating) {
 }
 
 /// What is asked of the tables ([`Ask`]): online, asked of the server, the
-/// table being its; offline, done here.
+/// table being its; offline, done here. A seat asked of the server and not
+/// answered is given up on with the connection, which takes its answer
+/// with it, or after [`ANSWER_MOST`]: whatever is turned down after that is
+/// not it, and not said as if it were.
 #[allow(clippy::too_many_arguments)]
 fn ask(
+    time: Res<Time>,
     mut asks: MessageReader<Ask>,
     online: Res<Online>,
     mut requests: MessageWriter<NetAsk>,
@@ -839,6 +927,13 @@ fn ask(
     lobby: Res<Lobby>,
     mut waiting: Local<Option<Minigame>>,
 ) {
+    if let Some((game, waited)) = seating.kept.asked {
+        let waited = waited + time.delta_secs();
+        seating.kept.asked = (online.is() && waited < ANSWER_MOST).then_some((game, waited));
+        if seating.kept.asked.is_none() {
+            info!("{game:?}: no answer to the seat asked of the server");
+        }
+    }
     let mut hosted = hosted;
     for &ask in asks.read() {
         let sitting = seating.at.0;
@@ -850,7 +945,7 @@ fn ask(
                 }
                 if online.is() {
                     requests.write(NetAsk::Join(game));
-                    seating.kept.asked = Some(game);
+                    seating.kept.asked = Some((game, 0.0));
                     if let Ok((_, seat, _)) = seating.me.single() {
                         seating.kept.town_seat = seat.0;
                     }
@@ -867,7 +962,7 @@ fn ask(
                     *waiting = Some(sitting.game);
                 } else if online.is() {
                     requests.write(NetAsk::Join(sitting.game));
-                    seating.kept.asked = Some(sitting.game);
+                    seating.kept.asked = Some((sitting.game, 0.0));
                 }
             }
             Ask::Leave => {
@@ -1022,9 +1117,10 @@ fn cut_off(time: Res<Time>, online: Res<Online>, mut seating: Seating) {
 }
 
 /// Keeps [`TableView`] as the table you are at stands: online the server's
-/// entity of your game (the newest, and never the table you have just left,
-/// whose board may still be here a moment), and its number into
-/// [`AtTable`]; offline this device's own. Written only when it changes.
+/// entity of your game (the newest, and never the table over that you have
+/// just gone on from, whose board may still be here a moment: `passed`),
+/// and its number into [`AtTable`]; offline this device's own. Written only
+/// when it changes.
 fn mirror(
     mut at: ResMut<AtTable>,
     kept: Res<Kept>,
@@ -1548,13 +1644,14 @@ mod tests {
         let (host, happened) = played(Minigame::KnockOff, 20.0);
         let what: Vec<Happened> = happened.iter().map(|(_, what)| *what).collect();
         // Three of the computer's players into the three seats left, one
-        // at a time, then the countdown, play and back to the town.
+        // at a time, the last seat first as the server seats them, then
+        // the countdown, play and back to the town.
         assert_eq!(
             what,
             [
-                Happened::Came(1),
-                Happened::Came(2),
                 Happened::Came(3),
+                Happened::Came(2),
+                Happened::Came(1),
                 Happened::Counting,
                 Happened::Begun,
                 Happened::Done,
@@ -1564,12 +1661,12 @@ mod tests {
         // Nobody before the wait is out, then one each half second (to a
         // step or two of the 0.05 s ones taken).
         let near = 0.11;
-        assert!((at(Happened::Came(1)) - ALONE_WAIT).abs() < near, "{}", at(Happened::Came(1)));
-        assert!((at(Happened::Came(2)) - at(Happened::Came(1)) - 0.5).abs() < near);
-        assert!((at(Happened::Came(3)) - at(Happened::Came(2)) - 0.5).abs() < near);
+        assert!((at(Happened::Came(3)) - ALONE_WAIT).abs() < near, "{}", at(Happened::Came(3)));
+        assert!((at(Happened::Came(2)) - at(Happened::Came(3)) - 0.5).abs() < near);
+        assert!((at(Happened::Came(1)) - at(Happened::Came(2)) - 0.5).abs() < near);
         // The countdown as the last comes, as long as the game's.
         let shape = knock_off::SHAPE;
-        assert!((at(Happened::Counting) - at(Happened::Came(3))).abs() < 1e-3);
+        assert!((at(Happened::Counting) - at(Happened::Came(1))).abs() < 1e-3);
         assert!((at(Happened::Begun) - at(Happened::Counting) - shape.countdown).abs() < near);
         // The results as long as the game has them up after it is over.
         assert!((at(Happened::Done) - at(Happened::Begun) - 20.0 - shape.results).abs() < 2.0 * near);
@@ -1613,7 +1710,7 @@ mod tests {
         let mut gap = || 0.5;
         let mut who = |seat: usize, _: &[Member]| member(seat as u64 + 1, "Bot", true);
         let happened = host.step(0.016, true, &mut gap, &mut who);
-        assert_eq!(happened, [Happened::Came(1), Happened::Came(2), Happened::Came(3), Happened::Counting]);
+        assert_eq!(happened, [Happened::Came(3), Happened::Came(2), Happened::Came(1), Happened::Counting]);
         assert_eq!(host.step(0.016, true, &mut gap, &mut who), [Happened::Begun]);
         // Play is the game's: a skip does nothing to it.
         assert!(host.step(0.016, true, &mut gap, &mut who).is_empty());
@@ -1622,6 +1719,12 @@ mod tests {
         assert_eq!(host.step(0.016, true, &mut gap, &mut who), [Happened::Done]);
         // A finish that comes when nothing is played is nothing.
         assert!(host.clone().finish(&Finish { places: vec![], scores: vec![], total: None }).is_none());
+        // The seats in the order the server takes them, the computer from
+        // the far end: seat by seat, and Bridge Race's two people first one
+        // team (so the computer takes 3 and then 1 beside two people).
+        assert_eq!(order(Minigame::KnockOff, 4), [0, 1, 2, 3]);
+        assert_eq!(order(Minigame::BridgeRace, 4), [0, 2, 1, 3]);
+        assert_eq!(order(Minigame::BridgeRace, 2), [0, 1]);
     }
 
     #[test]
@@ -1751,7 +1854,15 @@ mod tests {
         };
         assert_eq!(world.resource::<AtTable>().0, Some(sitting));
         let entered: Vec<Entered> = world.resource_mut::<Messages<Entered>>().drain().collect();
-        assert_eq!(entered, [Entered { game: Minigame::BridgeRace, seat: 2, online: true }]);
+        assert_eq!(
+            entered,
+            [Entered {
+                game: Minigame::BridgeRace,
+                seat: 2,
+                online: true,
+                same_table: false
+            }]
+        );
         assert!(world.resource::<OrbitCamera>().locked);
         assert!(world.resource::<Kept>().view.is_some(), "the view before kept to go back to");
         let things = world.query_filtered::<(), With<InTable>>().iter(&world).count();
@@ -1824,6 +1935,170 @@ mod tests {
         world.resource_mut::<AtTable>().0 = None;
         world.run_system_once(mirror).expect("mirrored");
         assert_eq!(*world.resource::<TableView>(), TableView::default());
+    }
+
+    #[test]
+    fn online_the_table_you_are_at_told_again_is_begun_afresh_and_keeps_its_board() {
+        use bevy::ecs::system::RunSystemOnce;
+        let mut world = a_world();
+        let board = |id: u32, stage: Stage| Board {
+            game: Minigame::BridgeRace,
+            id,
+            stage,
+            left: 0,
+            people: 1,
+            seats: 2,
+        };
+        let seats = Seats(vec![member(7, "Mochi", false), member(0, "", true)]);
+        let table = world.spawn((Remote, board(4, Stage::Waiting), seats.clone())).id();
+        let things = |world: &mut World| world.query_filtered::<(), With<InTable>>().iter(world).count();
+        let entered = |world: &mut World| world.resource_mut::<Messages<Entered>>().drain().collect::<Vec<_>>();
+        let told_again = |seat: u8| Entered {
+            game: Minigame::BridgeRace,
+            seat,
+            online: true,
+            same_table: true,
+        };
+        // Seated in Bridge Race's far seat, its board mirrored.
+        told(&mut world, Tell::Entered { game: Minigame::BridgeRace, seat: 2 });
+        world.run_system_once(mirror).expect("mirrored");
+        assert_eq!(world.resource::<TableView>().shown, Some(table));
+        assert_eq!(things(&mut world), 2, "the board and the game's name");
+        entered(&mut world);
+        // Moved up into the first seat as the computer begins to come (the
+        // server's `close_ranks`): the same table, begun afresh in its new
+        // seat under its own number, its board still the one shown, and
+        // its name not said again.
+        told(&mut world, Tell::Entered { game: Minigame::BridgeRace, seat: 0 });
+        let sitting = Sitting {
+            game: Minigame::BridgeRace,
+            seat: 0,
+            online: true,
+            id: 4,
+        };
+        assert_eq!(world.resource::<AtTable>().0, Some(sitting));
+        assert_eq!(entered(&mut world), [told_again(0)]);
+        assert_eq!(world.resource::<Kept>().passed, None);
+        assert_eq!(things(&mut world), 1, "the board again, and no name across the screen");
+        world.run_system_once(mirror).expect("mirrored");
+        assert_eq!(world.resource::<TableView>().shown, Some(table));
+        assert_eq!(world.resource::<TableView>().board, Some(board(4, Stage::Waiting)));
+        // Moved by being stood in another of its seats alone: the same.
+        told(&mut world, Tell::Arrive { venue: Venue::BridgeRace, seat: 1, spot: None, arrival: 4 });
+        assert_eq!(world.resource::<AtTable>().0, Some(Sitting { seat: 1, ..sitting }));
+        assert_eq!(entered(&mut world), [told_again(1)]);
+        // Stood where it has you already: nothing.
+        told(&mut world, Tell::Arrive { venue: Venue::BridgeRace, seat: 1, spot: None, arrival: 5 });
+        assert!(entered(&mut world).is_empty());
+        // Played, and this device put back in it, its app having been put
+        // away while something was said to it: still its board, played.
+        *world.get_mut::<Board>(table).expect("a board") = board(4, Stage::Playing);
+        world.run_system_once(mirror).expect("mirrored");
+        told(&mut world, Tell::Entered { game: Minigame::BridgeRace, seat: 1 });
+        assert_eq!(entered(&mut world), [told_again(1)]);
+        world.run_system_once(mirror).expect("mirrored");
+        assert!(world.resource::<TableView>().playing());
+        assert_eq!(world.resource::<AtTable>().0, Some(Sitting { seat: 1, ..sitting }));
+        // Over, and played again: another table, its name said, and the
+        // one over never shown for it, though its board is here a moment.
+        *world.get_mut::<Board>(table).expect("a board") = board(4, Stage::Over(Results::default()));
+        world.run_system_once(mirror).expect("mirrored");
+        assert!(world.resource::<TableView>().over());
+        // (Stood elsewhere on its venue while it is over: no seat moved.)
+        told(&mut world, Tell::Arrive { venue: Venue::BridgeRace, seat: 3, spot: None, arrival: 6 });
+        assert_eq!(world.resource::<AtTable>().0, Some(Sitting { seat: 1, ..sitting }));
+        assert!(entered(&mut world).is_empty());
+        told(&mut world, Tell::Entered { game: Minigame::BridgeRace, seat: 0 });
+        let another = Entered {
+            same_table: false,
+            ..told_again(0)
+        };
+        assert_eq!(entered(&mut world), [another]);
+        assert_eq!(world.resource::<Kept>().passed, Some((Minigame::BridgeRace, 4)));
+        assert_eq!(things(&mut world), 2, "the board and the game's name");
+        world.run_system_once(mirror).expect("mirrored");
+        assert_eq!(*world.resource::<TableView>(), TableView::default());
+        let next = world.spawn((Remote, board(5, Stage::Waiting), seats)).id();
+        world.run_system_once(mirror).expect("mirrored");
+        assert_eq!(world.resource::<TableView>().shown, Some(next));
+        assert_eq!(world.resource::<AtTable>().0.map(|sitting| sitting.id), Some(5));
+    }
+
+    #[test]
+    fn online_a_table_is_over_here_once_the_server_stands_you_anywhere_but_on_its_venue() {
+        // Taken into Bridge Wars from a table of Last Stand over for you, as
+        // your group's leader starts one: the table is over here, as in the
+        // town, and the camera is given back for Bridge Wars to take.
+        let mut world = a_world();
+        told(&mut world, Tell::Entered { game: Minigame::LastStand, seat: 1 });
+        assert!(world.resource::<OrbitCamera>().locked);
+        told(&mut world, Tell::Arrive { venue: Venue::Arena, seat: 6, spot: None, arrival: 2 });
+        assert_eq!(world.resource::<AtTable>().0, None);
+        let gone: Vec<Gone> = world.resource_mut::<Messages<Gone>>().drain().collect();
+        assert_eq!(gone, [Gone { game: Minigame::LastStand }]);
+        assert_eq!(world.query_filtered::<(), With<InTable>>().iter(&world).count(), 0);
+        assert!(!world.resource::<OrbitCamera>().locked);
+        // Offline, nothing the server says ends a table this device hosts.
+        world.resource_mut::<AtTable>().0 = Some(Sitting {
+            game: Minigame::KnockOff,
+            seat: 0,
+            online: false,
+            id: 3,
+        });
+        told(&mut world, Tell::Arrive { venue: Venue::Town, seat: 5, spot: None, arrival: 3 });
+        assert!(world.resource::<AtTable>().0.is_some());
+    }
+
+    #[test]
+    fn a_seat_asked_of_the_server_is_waited_on_while_connected_and_only_for_a_while() {
+        use bevy::ecs::system::RunSystemOnce;
+        use std::time::Duration;
+        let mut world = a_world();
+        world.init_resource::<Messages<Ask>>();
+        world.init_resource::<Messages<NetAsk>>();
+        world.init_resource::<Islands>();
+        world.init_resource::<Time>();
+        world.insert_resource(Lobby {
+            seats: Vec::new(),
+            me: 1,
+        });
+        world.insert_resource(Online::for_tests(member(1, "You", false)));
+        let asked = |world: &World| world.resource::<Kept>().asked.map(|(game, _)| game);
+        // Each step a frame `secs` long, with whatever is asked in it.
+        let step = |world: &mut World, secs: f32, asks: &[Ask]| {
+            for &ask in asks {
+                world.resource_mut::<Messages<Ask>>().write(ask);
+            }
+            world.resource_mut::<Time>().advance_by(Duration::from_secs_f32(secs));
+            world.run_system_once(super::ask).expect("asked");
+            world.resource_mut::<Messages<Ask>>().drain().for_each(drop);
+        };
+        // Asked of the server, and waited on.
+        step(&mut world, 0.0, &[Ask::Join(Minigame::KnockOff)]);
+        let sent: Vec<NetAsk> = world.resource_mut::<Messages<NetAsk>>().drain().collect();
+        assert!(matches!(sent[..], [NetAsk::Join(Minigame::KnockOff)]), "{sent:?}");
+        assert_eq!(asked(&world), Some(Minigame::KnockOff));
+        step(&mut world, ANSWER_MOST * 0.6, &[]);
+        assert_eq!(asked(&world), Some(Minigame::KnockOff));
+        // Unanswered past the while: given up on, and what is turned down
+        // next is not said as if it were the seat.
+        step(&mut world, ANSWER_MOST * 0.6, &[]);
+        assert_eq!(asked(&world), None);
+        told(&mut world, Tell::Refused(Refusal::Coins));
+        assert_eq!(world.query::<&Text>().iter(&world).count(), 0, "nothing said");
+        // Asked again, and the connection gone: given up on at once.
+        step(&mut world, 0.0, &[Ask::Join(Minigame::LastStand)]);
+        assert_eq!(asked(&world), Some(Minigame::LastStand));
+        world.insert_resource(Online::default());
+        step(&mut world, 0.02, &[]);
+        assert_eq!(asked(&world), None);
+        // And answered, said once.
+        world.insert_resource(Online::for_tests(member(1, "You", false)));
+        step(&mut world, 0.0, &[Ask::Join(Minigame::BridgeRace)]);
+        told(&mut world, Tell::Refused(Refusal::Coins));
+        assert_eq!(asked(&world), None);
+        let said: Vec<String> = world.query::<&Text>().iter(&world).map(|text| text.0.clone()).collect();
+        assert_eq!(said, [ui().words.games.refused_coins.clone()]);
     }
 
     #[test]

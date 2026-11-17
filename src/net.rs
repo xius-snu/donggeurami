@@ -174,6 +174,16 @@ impl Online {
     pub(crate) fn me(&self) -> Option<&Member> {
         self.me.as_ref()
     }
+
+    /// Let in as `me`, as the server would have it, for the tests of what
+    /// goes otherwise online (`table`, `friends`).
+    #[cfg(test)]
+    pub(crate) fn for_tests(me: Member) -> Self {
+        Self {
+            me: Some(me),
+            ..default()
+        }
+    }
 }
 
 /// The connection to the server, and what it is doing.

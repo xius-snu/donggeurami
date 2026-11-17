@@ -494,6 +494,7 @@ pub(crate) fn plugin(app: &mut App) {
                 show_health.after(restyle),
                 show_resources.after(restyle),
                 hide_round_the_jump,
+                show_car_button.after(restyle),
                 release_held,
                 repicture.after(restyle),
                 repaint,
@@ -685,6 +686,25 @@ fn hide_round_the_jump(
     };
     for mut visibility in &mut boxes {
         visibility.set_if_neq(shown);
+    }
+}
+
+/// Shows the face, which puts you in the car, only where the car is to be
+/// had (`drive::drivable`: the town alone, since 2026-11-18). The town's
+/// buttons are up at home and in House Builder's lobby and plots too,
+/// where the face would be a button that does nothing: there it is put
+/// away, and the others stay where they are. Written only as it changes.
+fn show_car_button(me: Query<&Venue, With<Player>>, mut faces: Query<&mut Visibility, With<CarButton>>) {
+    let Ok(&here) = me.single() else {
+        return;
+    };
+    let shown = if crate::drive::drivable(here) {
+        Visibility::Inherited
+    } else {
+        Visibility::Hidden
+    };
+    for mut face in &mut faces {
+        face.set_if_neq(shown);
     }
 }
 
@@ -2558,6 +2578,25 @@ pub(crate) fn clear_of_each_other(buttons: &[((f32, f32), f32)]) -> Result<(), S
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_face_is_up_only_where_the_car_is_to_be_had() {
+        use bevy::ecs::system::RunSystemOnce;
+        let mut world = World::new();
+        let you = world.spawn((Player, Venue::Home)).id();
+        let face = world.spawn((CarButton, Visibility::Inherited)).id();
+        // At home, as in House Builder's lobby and plots, under the town's
+        // buttons: away.
+        for venue in [Venue::Home, Venue::Lobby, Venue::Plot(3)] {
+            *world.get_mut::<Venue>(you).expect("a venue") = venue;
+            world.run_system_once(show_car_button).expect("shown");
+            assert_eq!(world.get::<Visibility>(face), Some(&Visibility::Hidden), "{venue:?}");
+        }
+        // In the town: up, as the box round the jump button is.
+        *world.get_mut::<Venue>(you).expect("a venue") = Venue::Town;
+        world.run_system_once(show_car_button).expect("shown");
+        assert_eq!(world.get::<Visibility>(face), Some(&Visibility::Inherited));
+    }
 
     #[test]
     fn the_four_more_buttons_lie_on_a_ring_round_the_sword_clear_of_every_other_button() {
