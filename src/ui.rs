@@ -577,9 +577,10 @@ pub(crate) struct KnockOffColours {
 
 /// Bridge Race's own colours (`bridge_race`), as Blend In's are: its
 /// accent, the golden island's gold, in which the arrow at the edge of the
-/// screen points the way to it and says how far; and the dark under each
+/// screen points the way to it and says how far; the dark under each
 /// team's bar on the plate top centre, which fills in the team's colour
-/// (`colours.arena.team_red` and `team_blue`) as its bridge gets across.
+/// (`colours.arena.team_red` and `team_blue`) as its bridge gets across;
+/// and "+3m" rising off you as a grant of bridge comes.
 #[derive(Deserialize, Clone, Copy, PartialEq, Debug)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct BridgeRaceColours {
@@ -587,6 +588,8 @@ pub(crate) struct BridgeRaceColours {
     pub accent: Color,
     #[serde(deserialize_with = "colour")]
     pub bar_back: Color,
+    #[serde(deserialize_with = "colour")]
+    pub granted: Color,
 }
 
 /// Last Stand's own colours (`last_stand`), as Blend In's are.

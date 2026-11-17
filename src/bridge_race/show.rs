@@ -19,10 +19,13 @@
 //!   to hold it ([`hold_words`]).
 //! * **The way to the golden island** ([`point`]): while it is off the
 //!   screen, an arrow at the edge of the screen pointing to it, in its
-//!   gold, with how far it is from you to its shore ("63m") just inside it
-//!   (the compass's idea, `compass`).
-//! * **A grant**: "+3m" rising off you in the planks' colour ([`rising`],
-//!   [`rise`]), as a number rises off a body hit in Bridge Wars.
+//!   gold, with how far it is from you to its shore ("63m") by it, up the
+//!   screen from it on a side's edge (the compass's idea, `compass`).
+//! * **A grant**: "+3m" rising off you, up the screen ([`rising`],
+//!   [`rise`]), as a number rises off a body hit in Bridge Wars: white, as
+//!   the metres left are written in front of you while you build (mine:
+//!   the planks' own colour, as first written, was lost on the planks you
+//!   stand on as you build, seen in a scripted run).
 //! * **What has happened**, a line across the upper half for a few
 //!   seconds, Bridge Wars' own look (`arena::alert`), with a picture after
 //!   it where it is about one: "Dynamite!" as a stick comes to your
@@ -60,20 +63,24 @@ const SIDES_APART: f32 = 3.2;
 
 /// The ring round the golden island, in metres: from and to how far out
 /// from the island's middle it is drawn, a little wider than the map's own
-/// band (5.5 to 6 m out, `race_bake`) either way, so that it covers it;
+/// band (5.4 to 6 m out as seen from over it) either way, so that it covers
+/// it;
 /// how high its top lies over the island's, just over that band's (0.2 m
 /// up), clear of it; and how finely its arc is drawn, in pieces of the
 /// whole way round.
-const RING_IN: f32 = 5.15;
-const RING_OUT: f32 = 6.45;
+const RING_IN: f32 = 5.25;
+const RING_OUT: f32 = 6.25;
 const RING_OVER: f32 = 0.23;
 const RING_PIECES: usize = 96;
 
-/// "Hold! 2": how big, a little over a headline's caption; and how far
-/// over the golden island's middle the point it is written at is, in
-/// metres.
+/// "Hold! 2": how big, a little over a headline's caption; and where it is
+/// written, in metres from the golden island's middle: a little up the
+/// screen from it (the map's -Z), inside the ring, clear of whoever stands
+/// at the middle, where it sat on your own head at first, and of the line
+/// across the upper half, which it met 3.4 m up (both seen in scripted
+/// runs).
 const HOLD_TEXT: f32 = 5.6;
-const HOLD_OVER: f32 = 1.5;
+const HOLD_AT: Vec3 = Vec3::new(0.0, 1.0, -2.2);
 
 /// The arrow toward the golden island: how big, as the compass's is a
 /// share of the short side; how far in from the edge of the screen its
@@ -84,12 +91,14 @@ const NEEDLE_IN: f32 = 6.0;
 const NEEDLE_TEXT: f32 = 3.0;
 const NEEDLE_GAP: f32 = 1.2;
 
-/// "+3m": how big, as a number rising off a body hit is; from how high
-/// over your feet it rises and how far, in metres; and for how long, in
-/// seconds: a little longer than a number does, there being more to read.
+/// "+3m": how big, as a number rising off a body hit is; where it begins,
+/// in metres from your feet, and how far it goes, up the screen (the map's
+/// -Z: from the camera over you a rise straight up is no rise at all); and
+/// for how long, in seconds: a little longer than a number does, there
+/// being more to read.
 const RISE_TEXT: f32 = 3.8;
-const RISE_FROM: f32 = 1.8;
-const RISE_BY: f32 = 1.8;
+const RISE_FROM: Vec3 = Vec3::new(0.0, 1.8, -1.2);
+const RISE_BY: f32 = 2.2;
 const RISE_SECS: f32 = 1.3;
 
 /// A line across the upper half (Bridge Wars' own, `arena::alert`): how far
@@ -234,7 +243,11 @@ pub(super) fn spawn(commands: &mut Commands, images: &mut Assets<Image>, picture
                                                     Pickable::IGNORE,
                                                 ));
                                             });
-                                        column.spawn((ProgressWords(side), hud::words("", PROGRESS_TEXT, ink.with_alpha(1.0))));
+                                        // In white, over the team's bar: a team's colour on
+                                        // the plate's see-through grey went all but unread
+                                        // over the islands' grey by day (seen in a scripted
+                                        // run), and the bar says whose it is.
+                                        column.spawn((ProgressWords(side), hud::words("", PROGRESS_TEXT, colours.text)));
                                     });
                             }
                         });
@@ -398,7 +411,7 @@ fn arc_mesh(share: f32, backward: bool) -> Mesh {
 /// mesh, made full and put away; and each arc as long as its team's hold
 /// has gone ([`roundtown_net::bridge_race::RaceRound::hold`], in tenths of
 /// [`HOLD`]), made again only as that comes to another tenth, and put
-/// away with none. A mesh is never made with nothing in it: an arc is put
+/// away with none; full, once a team has won by holding, to the end. A mesh is never made with nothing in it: an arc is put
 /// away rather than made empty.
 #[allow(clippy::type_complexity)]
 pub(super) fn ring(
@@ -445,7 +458,9 @@ pub(super) fn ring(
             });
         return;
     }
-    let hold = race.round.as_ref().filter(|round| race.begun && !round.over).map_or([0; 2], |round| round.hold);
+    // Over, each arc stays as its hold ended: full round the island in the
+    // colour of a team that won by holding it.
+    let hold = race.round.as_ref().filter(|_| race.begun).map_or([0; 2], |round| round.hold);
     for (arc, mut shown) in &mut arcs {
         let side = usize::from(arc.team);
         let tenths = hold[side].min(10);
@@ -486,7 +501,7 @@ pub(super) fn hold_words(
     };
     let holding = racing.0.as_ref().and_then(|race| race.round.as_ref().filter(|round| race.begun && !round.over));
     let held = holding.and_then(|round| (0..2u8).filter(|&side| round.hold[usize::from(side)] > 0).max_by_key(|&side| round.hold[usize::from(side)]).map(|side| (side, round.hold[usize::from(side)])));
-    let point = held.and_then(|_| on_the_screen(&cameras, Vec3::new(GOLDEN.x, LIFT + HOLD_OVER, GOLDEN.y)));
+    let point = held.and_then(|_| on_the_screen(&cameras, Vec3::new(GOLDEN.x, LIFT, GOLDEN.y) + HOLD_AT));
     let (Some((side, tenths)), Some(point), Ok(window)) = (held, point, windows.single()) else {
         shown.set_if_neq(Visibility::Hidden);
         return;
@@ -567,10 +582,13 @@ pub(super) fn point(
     if text.0 != said {
         text.0 = said;
     }
-    // Inside the arrow, toward the middle of the screen, clear of it.
+    // Up the screen from the arrow on either side's edge, where the
+    // buttons are not (inward, toward the middle, they ran into the fist,
+    // seen in a scripted run); inward from it on the top or the bottom.
     let words_size = words_node.size() * words_node.inverse_scale_factor();
-    let past = 0.5 * (way.x.abs() * words_size.x + way.y.abs() * words_size.y);
-    let middle = edge - way * ((NEEDLE * 0.5 + NEEDLE_GAP) * vmin + past);
+    let off = if way.x.abs() >= way.y.abs() { Vec2::NEG_Y } else { -way };
+    let past = 0.5 * (off.x.abs() * words_size.x + off.y.abs() * words_size.y);
+    let middle = edge + off * ((NEEDLE * 0.5 + NEEDLE_GAP) * vmin + past);
     words_at.set_if_neq(UiTransform {
         translation: Val2::px(middle.x - words_size.x * 0.5, middle.y - words_size.y * 0.5),
         scale: Vec2::ONE,
@@ -579,13 +597,13 @@ pub(super) fn point(
     words_shown.set_if_neq(Visibility::Inherited);
 }
 
-/// `words` rising off whoever stands with their feet `at`, in the planks'
-/// colour: "+3m" as a grant of bridge comes.
+/// `words` rising off whoever stands with their feet `at`, in the file's
+/// colour for them: "+3m" as a grant of bridge comes.
 pub(super) fn rising(commands: &mut Commands, at: Vec3, words: &str) {
     commands.spawn((
         InArena,
         Rising { at, age: 0.0 },
-        hud::words(words, RISE_TEXT, ui().colours.arena.plank),
+        hud::words(words, RISE_TEXT, ui().colours.bridge_race.granted),
         Node {
             position_type: PositionType::Absolute,
             left: Val::ZERO,
@@ -611,7 +629,7 @@ pub(super) fn rise(
         return;
     }
     let colours = ui().colours;
-    let (ink, shadow) = (colours.arena.plank, colours.text_shadow);
+    let (ink, shadow) = (colours.bridge_race.granted, colours.text_shadow);
     let window = windows.single().ok();
     for (thing, mut rising, mut shown, mut place, node, mut colour, mut under) in &mut risings {
         rising.age += time.delta_secs();
@@ -620,7 +638,7 @@ pub(super) fn rise(
             commands.entity(thing).despawn();
             continue;
         }
-        let at = rising.at + Vec3::Y * (RISE_FROM + RISE_BY * done);
+        let at = rising.at + RISE_FROM + Vec3::NEG_Z * (RISE_BY * done);
         let point = on_the_screen(&cameras, at).filter(|point| window.is_some_and(|window| on_screen(window, *point)));
         let Some(point) = point else {
             shown.set_if_neq(Visibility::Hidden);
@@ -644,13 +662,11 @@ pub(super) fn rise(
 /// to your button): up for a few seconds, one at a time, any line up
 /// before it, this game's or Bridge Wars' own, taken down first.
 pub(super) fn notice(commands: &mut Commands, say: &mut Say, words: &str, picture: Option<Picture>) {
-    for old in &say.notices {
-        commands.entity(old).try_despawn();
-    }
+    clear_notices(commands, say);
     let image = picture.map(|picture| say.pictures.of(&mut say.images, picture));
     // Put up clear, to be brought up.
     let ink = ui().colours.arena.alert.with_alpha(0.0);
-    commands
+    let posted = commands
         .spawn((
             InArena,
             Notice { age: 0.0 },
@@ -682,7 +698,18 @@ pub(super) fn notice(commands: &mut Commands, say: &mut Say, words: &str, pictur
                     Pickable::IGNORE,
                 ));
             }
-        });
+        })
+        .id();
+    *say.posted = Some(posted);
+}
+
+/// Takes down every line across the upper half: those up, and one put up
+/// this very frame, which the world has yet to be told of (two said in one
+/// frame were drawn over each other, seen in a scripted run).
+pub(super) fn clear_notices(commands: &mut Commands, say: &mut Say) {
+    for old in say.notices.iter().chain(say.posted.take()) {
+        commands.entity(old).try_despawn();
+    }
 }
 
 /// Brings each line up, holds it, and takes it away again, its picture

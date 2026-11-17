@@ -142,13 +142,15 @@ struct Fight<'w> {
 }
 
 /// What a line said in the game goes on: the chat, the line across the
-/// upper half, and the pictures it may have.
+/// upper half (every one up, and the one put up this very frame, which the
+/// world has yet to be told of), and the pictures it may have.
 #[derive(SystemParam)]
 struct Say<'w, 's> {
     log: ResMut<'w, chat::Log>,
     images: ResMut<'w, Assets<Image>>,
     pictures: ResMut<'w, hud::Pictures>,
     notices: Query<'w, 's, Entity, Or<(With<show::Notice>, With<crate::arena::Alert>)>>,
+    posted: Local<'s, Option<Entity>>,
 }
 
 pub(crate) fn plugin(app: &mut App) {
@@ -434,9 +436,12 @@ fn follow(
         }
         info!("Bridge Race: the race is on, {} seats, your team {}", seats, race.team());
     }
-    let (round, kits) = match (&race.played, view.shown.and_then(|shown| rounds.get(shown).ok())) {
-        (Some(played), _) => (Some(played.game.round()), Some(played.game.kits().to_vec())),
-        (None, Some((round, kits))) => (Some(round.clone()), kits.map(|kits| kits.0.clone())),
+    // The round, and your own kit, as they stand: offline this device's
+    // game's, online as the server sends them to the table's entity.
+    let seat = race.seat;
+    let (round, kit) = match (&race.played, view.shown.and_then(|shown| rounds.get(shown).ok())) {
+        (Some(played), _) => (Some(played.game.round()), played.game.kits().get(seat).copied()),
+        (None, Some((round, kits))) => (Some(round.clone()), kits.and_then(|kits| kits.0.get(seat).copied())),
         (None, None) => (None, None),
     };
     if let Some(round) = round
@@ -445,7 +450,7 @@ fn follow(
         let (feet, dead) = me.single().map_or((Vec3::ZERO, true), |(body, dead)| (body.translation, dead));
         take_round(race, round, feet, dead, &mut fight, &mut finish, &mut say, &mut commands);
     }
-    if let Some(kit) = kits.and_then(|kits| kits.get(race.seat).copied()) {
+    if let Some(kit) = kit {
         let sticks = kit.held(Utility::Dynamite);
         if sticks > race.sticks && race.on() {
             let file = ui();
@@ -528,6 +533,8 @@ fn take_round(
     }
     if round.over && !race.over {
         race.over = true;
+        // The end said on its own: whatever line is up goes.
+        show::clear_notices(commands, say);
         let title = match round.winner {
             Some(side) => fill(&words.wins, &[("team", &team_name(side))]),
             None => words.draw.clone(),

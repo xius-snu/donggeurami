@@ -444,10 +444,12 @@
         // island while it is off the screen, with how far it is. And the
         // dark under each team's bar on the plate top centre, which fills
         // in the team's colour (arena.team_red and team_blue, above) as
-        // its bridge gets across.
+        // its bridge gets across. And "+3m" rising off you as each grant
+        // of bridge comes, white as the metres left in front of you are.
         bridge_race: (
             accent: "#ffd34d",
             bar_back: "#00000059",
+            granted: "#ffffff",
         ),
 
         // Last Stand's: its accent, the orange of a fire kept going.
