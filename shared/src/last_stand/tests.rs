@@ -895,18 +895,22 @@ fn what_is_sent_is_small() {
         back_at: vec![1.8e9, 0.0, f64::INFINITY, 0.0],
         scores: vec![u32::MAX; 4],
         ready: 0b1111,
+        began: 1.8e9,
     };
     let bytes = postcard::to_allocvec(&round).unwrap();
-    assert!(bytes.len() < 120, "{} bytes", bytes.len());
+    assert!(bytes.len() < 128, "{} bytes", bytes.len());
     assert_eq!(postcard::from_bytes::<StandRound>(&bytes).unwrap(), round);
-    // As it is in a game.
+    // As it is in a game: under seventy bytes (sixty until the time it
+    // began came into it, eight bytes, on 2026-11-18).
     let mut game = Game::new(4, &[true; 4], 1);
+    game.clock(1.8e9);
     game.begin();
     for _ in 0..(40.0 / DT) as usize {
+        game.clock(1.8e9 + f64::from(game.elapsed()));
         game.step(DT);
     }
     let bytes = postcard::to_allocvec(&game.round()).unwrap();
-    assert!(bytes.len() < 60, "{} bytes", bytes.len());
+    assert!(bytes.len() < 70, "{} bytes", bytes.len());
     let shambler = Shambler {
         kind: Kind::Giant,
         health: u16::MAX,
@@ -943,10 +947,54 @@ fn what_is_sent_is_small() {
             level: 12,
         },
         Tell::Zap { x: 1.0, y: 0.25, z: -3.0 },
+        Tell::Slain { by: 2, kind: Kind::Giant },
     ] {
         let bytes = postcard::to_allocvec(&tell).unwrap();
         assert_eq!(postcard::from_bytes::<Tell>(&bytes).unwrap(), tell);
     }
+}
+
+#[test]
+fn the_round_says_when_the_fight_began_by_the_room_s_clock() {
+    let mut game = Game::new(2, &[true, true], 5);
+    game.clock(1.7e9);
+    game.begin();
+    let round = game.round();
+    assert_eq!(round.began, 1.7e9);
+    // And the first wave by the same clock, twenty seconds on.
+    assert_eq!(round.stage, StandStage::Break { until: 1.7e9 + f64::from(FIRST_WAVE) });
+    for _ in 0..(5.0 / DT) as usize {
+        game.clock(1.7e9 + f64::from(game.elapsed()));
+        game.step(DT);
+    }
+    assert_eq!(game.round().began, 1.7e9, "never moved");
+    // Never told the clock, as in the tests, the game's own time.
+    let mut game = Game::new(1, &[true], 5);
+    game.begin();
+    assert_eq!(game.round().began, 0.0);
+}
+
+#[test]
+fn a_game_tried_out_begins_at_a_later_wave_with_a_full_purse() {
+    let mut game = Game::new(2, &[true, true], 9);
+    game.from_wave(8);
+    game.fill_purses(500);
+    game.begin();
+    assert_eq!((game.wave(), game.cleared()), (7, 7));
+    assert_eq!(game.purses(), &[[500; 4], [500; 4]]);
+    // The next wave is the eighth, its spitters new in it.
+    let mut began = None;
+    for _ in 0..(FIRST_WAVE / DT) as usize + 10 {
+        for event in game.step(DT) {
+            if let Event::Wave { wave, new, .. } = event {
+                began = Some((wave, new));
+            }
+        }
+    }
+    assert_eq!(began, Some((8, vec![Kind::Spitter])));
+    // Not in the middle of a wave.
+    game.from_wave(20);
+    assert_eq!(game.wave(), 8);
 }
 
 #[test]

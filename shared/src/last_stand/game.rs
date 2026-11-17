@@ -228,6 +228,8 @@ pub struct Game {
     dice: Dice,
     elapsed: f32,
     clock: f64,
+    /// When the fight began, by the room's clock ([`StandRound::began`]).
+    began: f64,
     stage: Stage,
     players: Vec<Player>,
     // (These few are the module's, for its tests to set a game up far on.)
@@ -282,6 +284,7 @@ impl Game {
             dice: Dice::new(seed),
             elapsed: 0.0,
             clock: 0.0,
+            began: 0.0,
             stage: Stage::Before,
             players,
             purses: vec![Purse::default(); seats],
@@ -322,6 +325,7 @@ impl Game {
             return;
         }
         self.elapsed = 0.0;
+        self.began = self.on_clock(0.0);
         for (seat, player) in self.players.iter_mut().enumerate() {
             let (at, turn) = arrival(seat);
             player.at = at;
@@ -331,6 +335,29 @@ impl Game {
             ends: FIRST_WAVE,
             until: self.on_clock(FIRST_WAVE),
         };
+    }
+
+    /// For trying the game out (the server's and the game's `RT_STAND_WAVE`,
+    /// never on a server real players use): the next wave to come is
+    /// `wave`, as if the team had cleared every one before it, which it is
+    /// paid for and scores as if it had. Before [`Game::begin`], or in a
+    /// break; nothing otherwise.
+    pub fn from_wave(&mut self, wave: u16) {
+        if !matches!(self.stage, Stage::Before | Stage::Break { .. }) {
+            return;
+        }
+        let before = wave.max(1) - 1;
+        self.wave = before;
+        self.cleared = before;
+    }
+
+    /// For trying the game out (`RT_STAND_PURSE`, as Bridge Wars'
+    /// `RT_ARENA_PURSE`): everyone holds `count` of each of the four
+    /// things, whatever they held.
+    pub fn fill_purses(&mut self, count: u16) {
+        for purse in &mut self.purses {
+            *purse = [count; 4];
+        }
     }
 
     /// Where the person in `seat` is now, as their device last said.
@@ -650,6 +677,7 @@ impl Game {
                 .enumerate()
                 .filter(|(_, player)| player.ready)
                 .fold(0u8, |bits, (seat, _)| bits | (1 << seat)),
+            began: self.began,
         }
     }
 

@@ -179,6 +179,12 @@ pub enum Tell {
     /// crystal to it. What it took shows as the zombie's own health
     /// ([`Shambler`]) goes down.
     Zap { x: f32, y: f32, z: f32 },
+    /// Someone of the team, by seat, has killed a zombie of this kind
+    /// ([`Event::Killed`]): told to everyone, for a line in the chat
+    /// ("Mochi brought down a giant"). Sent for a giant alone (mine: a
+    /// line for every walker would bury the chat), which a device cannot
+    /// tell from the body going, a fall into the void taking one as well.
+    Slain { by: u8, kind: Kind },
 }
 
 /// The four games' shared base has a test of what is sent
@@ -276,6 +282,13 @@ pub struct StandRound {
     /// Who is ready for the next wave ([`Ask::Ready`]), a bit to a seat:
     /// during a break only.
     pub ready: u8,
+    /// When the fight began, by the room's clock ([`Game::clock`]): what
+    /// every device counts the fight's own time from (the game's
+    /// `FightTime`, which a potion's time left is by, [`Kit::fast`](crate::Kit::fast)),
+    /// a device that comes back into a game under way too. Sent once, as
+    /// it begins (since 2026-11-18, mine: eight bytes more, for a count
+    /// that is right from the first frame of a game come back to).
+    pub began: f64,
 }
 
 impl StandRound {
