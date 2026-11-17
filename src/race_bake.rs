@@ -32,10 +32,16 @@ use crate::island::{self, Island, LATTICE, Venue, WATER_MATERIAL, glb, is_materi
 use crate::{LAND_STEP_UP, PLAYER_HEIGHT, PLAYER_RADIUS};
 
 /// The corners of the box the grid covers across the ground, in metres: the
-/// three islands, which reach from x -90 to 10 and z -31 to 31, and two
-/// metres round them.
-const LOW: Vec2 = Vec2::new(-92.0, -34.0);
-const HIGH: Vec2 = Vec2::new(12.0, 34.0);
+/// three islands, which reach from x -90 to 10 and z -31 to 31, and
+/// [`MARGIN`] round them, over the void. A bridge is ground the game knows
+/// only where the grid is (`Nav::ground`): as first baked, with two metres
+/// round the islands, a bridge laid out wide of them was nothing to the
+/// game, a stick thrown onto it falling through it, and the computer's
+/// players too. 57,120 squares, a fifth of Bridge Wars' map's, and the
+/// void costs nothing baked.
+const MARGIN: f32 = 20.0;
+const LOW: Vec2 = Vec2::new(-90.0 - MARGIN, -31.0 - MARGIN);
+const HIGH: Vec2 = Vec2::new(10.0 + MARGIN, 31.0 + MARGIN);
 /// How much room a body is left beyond its own width, in metres, by what
 /// stands on the map; how far each way from a body's middle there has to be
 /// ground under it; and how far from land a body walks a floor still takes
@@ -298,6 +304,24 @@ fn the_race_map_baked_is_three_lands_a_body_walks_and_the_way_across_is_63_metre
         at = point;
     }
     assert!((82.0..90.0).contains(&walked), "{walked} m to the golden island's middle");
+    // The grid reaches far out over the void all round each island, and a
+    // bridge laid out there, wide of everything, is ground a body stands
+    // on and walks to from the island.
+    for middle in [ISLANDS[0], ISLANDS[1], GOLDEN] {
+        for spoke in 0..16 {
+            let out = middle + Vec2::from_angle(spoke as f32 * std::f32::consts::TAU / 16.0) * (bridge_race::ISLAND_RADIUS + MARGIN - 1.0);
+            assert!(grid.index(out).is_some(), "{out}, out from {middle}, is off the grid");
+        }
+    }
+    let mut wide = nav.clone();
+    let (shore, out) = (ISLANDS[0] - Vec2::X * (bridge_race::ISLAND_RADIUS - 0.5), ISLANDS[0] - Vec2::X * (bridge_race::ISLAND_RADIUS + MARGIN - 2.0));
+    let planks = (shore.distance(out) / 1.4).ceil() as usize;
+    for index in 0..=planks {
+        wide.hear(0, 0, index as u16, shore.lerp(out, index as f32 / planks as f32));
+    }
+    let far = out + Vec2::X * 1.0;
+    assert!(wide.ground(far).is_some() && wide.walkable_at(far), "a plank {} m out is not ground", far.distance(ISLANDS[0]) - bridge_race::ISLAND_RADIUS);
+    assert!(wide.connected(ISLANDS[0], far));
     println!(
         "the race grid: {} bytes baked, {}x{} squares; the teams' islands {:.0} and {:.0} m2 walked, the golden {:.0}; a way across {:.1} m, {} planks",
         grid.encode().len(),

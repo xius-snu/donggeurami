@@ -32,7 +32,25 @@ struct Story {
     stuck_by: (usize, f32),
     /// Where each that got nowhere last did, and heading where.
     stalled: Vec<(usize, Vec2, Vec2)>,
+    /// How far short of the golden island each team's bridge was, in
+    /// metres, as the last of them to come onto it before the team first
+    /// stood on it all together came onto it, the one the team waited for
+    /// (a stick blowing the end off it after is nothing to how they went
+    /// over): none, gone over by its bridge; a step's worth, the last plank
+    /// hopped; more, the void jumped, or a knock that carried them over.
+    short: [Option<f32>; 2],
+    /// How many short ways of their own onto the golden island the
+    /// computer's players began, off their team's way; and how many of
+    /// those from a bridge of the other team's: never.
+    short_ways: u32,
+    from_theirs: u32,
 }
+
+/// How far short of the golden island a bridge can be for a team that
+/// stands on it to have gone over by its bridge, in metres: a step, the
+/// last plank of the way, hopped (a gap of a metre or so; two planks short
+/// is two and a half).
+const A_STEP: f32 = 1.6;
 
 /// Plays a whole game of `seats` seats, the computer in every one, from
 /// `seed`, to its end.
@@ -44,12 +62,54 @@ fn play(seed: u64, seats: usize) -> Story {
     let mut still = vec![(Vec3::ZERO, 0.0f32); seats];
     let mut stuck: f32 = 0.0;
     let mut stuck_by = (0, 0.0);
+    let mut short = [None; 2];
+    // How far short each one's team's bridge was as they last came onto
+    // the golden island, and when.
+    let mut came = vec![None::<(f32, f32)>; seats];
+    let ways = [game.crew().way(0).expect("red's way"), game.crew().way(1).expect("blue's way")];
+    let (mut short_ways, mut from_theirs) = (0, 0);
     while game.playing() {
         for event in game.step(FRAME) {
             match event {
                 Event::Fell { by: None, .. } => unforced += 1,
                 Event::Knocked { victim, by, .. } if team(victim) == team(by) => teammates += 1,
+                // The first rung of a bridge off its team's way: a short way
+                // of its own, and from whose bridge.
+                Event::Plank(plank) if plank.index == 0 => {
+                    let (at, side) = (Vec2::new(plank.x, plank.z), usize::from(team(usize::from(plank.seat))));
+                    let way = ways[side];
+                    if !(0..=way.planks()).any(|rung| way.rung(rung).distance(at) < 0.05) {
+                        short_ways += 1;
+                        let theirs = game.chains.iter().filter(|(seat, _)| usize::from(team(usize::from(*seat))) != side).any(|&(seat, chain)| {
+                            game.nav().rungs(seat, chain).windows(2).enumerate().any(|(plank, pair)| !game.nav().broken(seat, chain, plank as u16) && over_plank(at, pair[0], pair[1]))
+                        });
+                        from_theirs += u32::from(theirs && game.nav().grid().height(at).is_none());
+                    }
+                }
                 _ => {}
+            }
+        }
+        for seat in 0..seats {
+            let side = team(seat);
+            // Over its land, on it or in the air over it a moment, knocked
+            // or jumping: a body comes onto it from off it.
+            let over = game.standing(seat) && game.nav().grid().region(game.at(seat).0.xz()) == Some(Region::Middle);
+            match (over, came[seat]) {
+                (true, None) => {
+                    let short = (1.0 - f32::from(game.round().across[usize::from(side)]) / 100.0) * the_way_across(side);
+                    came[seat] = Some((short, game.elapsed()));
+                }
+                (false, Some(_)) => came[seat] = None,
+                _ => {}
+            }
+        }
+        // The team stands there all together for the first time, its ring
+        // beginning to fill: how short its bridge was as the last of them
+        // came.
+        for side in 0..2u8 {
+            if short[usize::from(side)].is_none() && game.tally().first_hold[usize::from(side)].is_some() {
+                let last = (0..seats).filter(|&seat| team(seat) == side).filter_map(|seat| came[seat]).max_by(|a, b| a.1.total_cmp(&b.1));
+                short[usize::from(side)] = Some(last.map_or(0.0, |(short, _)| short));
             }
         }
         // Standing in one place a long while with somewhere to walk to:
@@ -89,6 +149,9 @@ fn play(seed: u64, seats: usize) -> Story {
         stuck,
         stuck_by,
         stalled,
+        short,
+        short_ways,
+        from_theirs,
     }
 }
 
@@ -147,6 +210,40 @@ fn told(seeds: std::ops::Range<u64>, seats: usize) -> Vec<Story> {
     stories
 }
 
+/// Whether the team that won a game had its bridge onto the golden island,
+/// or a step short of it ([`A_STEP`]), as the last of them came onto it
+/// before it first stood there all together: whether it went over by its
+/// bridge, rather than jumping the last of the void.
+fn bridged_over(story: &Story) -> bool {
+    story.winner.is_some_and(|won| story.short[usize::from(won)].is_some_and(|short| short <= A_STEP))
+}
+
+/// Whether the first team to stand on the golden island all together had
+/// its bridge onto it, or a step short of it, as the last of them came
+/// onto it: whether the race was to lay the way, not to jump it.
+fn first_bridged_over(story: &Story) -> bool {
+    let first = match story.tally.first_hold {
+        [Some(red), Some(blue)] => usize::from(blue < red),
+        [Some(_), None] => 0,
+        [None, Some(_)] => 1,
+        [None, None] => return false,
+    };
+    story.short[first].is_some_and(|short| short <= A_STEP)
+}
+
+/// Whether the team that won a game had its bridge all the way onto the
+/// golden island by the time it first stood there all together, not even
+/// the last step hopped.
+fn bridged_all_the_way(story: &Story) -> bool {
+    let Some(won) = story.winner.map(usize::from) else {
+        return false;
+    };
+    match (story.tally.joined[won], story.tally.first_hold[won]) {
+        (Some(joined), Some(held)) => joined <= held,
+        _ => false,
+    }
+}
+
 /// What a set of games came to, in a few lines.
 fn summarise(stories: &[Story]) {
     let n = stories.len().max(1) as f32;
@@ -196,6 +293,32 @@ fn summarise(stories: &[Story]) {
         first(0),
         first(1),
         100.0 * ahead as f32 / n
+    );
+    // How the first there and the winners got there, how much fighting
+    // there was, and how many laid a short way of their own.
+    let first = stories.iter().filter(|story| first_bridged_over(story)).count();
+    let bridged = stories.iter().filter(|story| bridged_over(story)).count();
+    let all_the_way = stories.iter().filter(|story| bridged_all_the_way(story)).count();
+    let knocked = stories.iter().filter(|story| story.tally.knocks > 0).count();
+    let off = stories.iter().filter(|story| story.tally.knocked_off > 0).count();
+    // How far short the winners' bridges were, in the games they were
+    // short by more than a step: by a jump's worth, or more, carried over.
+    let shorts: Vec<f32> = stories
+        .iter()
+        .filter_map(|story| story.winner.and_then(|won| story.short[usize::from(won)]))
+        .filter(|short| *short > A_STEP)
+        .collect();
+    let jumped = shorts.iter().filter(|short| **short <= 6.5).count();
+    println!(
+        "over by their bridge, or a step short: the first there all together {:.0}%, the winners {:.0}% (all the way {:.0}%), and the rest of the winners {jumped} a jump short, {} more; a knock in {:.0}% of games, someone knocked off in {:.0}%; short ways of their own {}, {} from the other team's bridge",
+        100.0 * first as f32 / n,
+        100.0 * bridged as f32 / n,
+        100.0 * all_the_way as f32 / n,
+        shorts.len() - jumped,
+        100.0 * knocked as f32 / n,
+        100.0 * off as f32 / n,
+        stories.iter().map(|story| story.short_ways).sum::<u32>(),
+        stories.iter().map(|story| story.from_theirs).sum::<u32>()
     );
     // How each kind's team did.
     let mut kinds: Vec<(&str, u32, u32)> = Vec::new();
@@ -337,6 +460,30 @@ fn the_computer_plays_whole_races_close_varied_and_not_too_long() {
         let took = stories.iter().filter(|story| story.tally.planks_blown > 0).count();
         assert!(thrown * 2 > stories.len(), "{seats} seats: a stick thrown in {thrown} of {n}");
         assert!(took * 3 > thrown * 2, "{seats} seats: planks taken in {took} of the {thrown} with a stick thrown");
+        // It is a race to lay the way: the first team there all together,
+        // and the winners, went over by their bridge, or hopped the last
+        // step of it, nearly always; the rest the void jumped, by the team
+        // behind once the other stood there, or a knock that carried them
+        // over. (Until 2026-11-18 the computer's players jumped the last
+        // six metres in nine games of ten, a grant ahead of anyone who laid
+        // the whole way.)
+        let first = stories.iter().filter(|story| first_bridged_over(story)).count() as f32;
+        let bridged = stories.iter().filter(|story| bridged_over(story)).count() as f32;
+        assert!(first >= 0.8 * n, "{seats} seats: the first there went over by their bridge in {first} of {n}");
+        assert!(bridged >= 0.75 * n, "{seats} seats: the winners went over by their bridge in {bridged} of {n}");
+        // There is fighting: a knock in most games, someone knocked off in
+        // many; more two against two, with twice as many to fight.
+        let knocked = stories.iter().filter(|story| story.tally.knocks > 0).count() as f32;
+        let off = stories.iter().filter(|story| story.tally.knocked_off > 0).count() as f32;
+        let (most, many) = if seats == 4 { (0.8, 0.5) } else { (0.5, 0.2) };
+        assert!(knocked >= most * n, "{seats} seats: a knock in {knocked} of {n}");
+        assert!(off >= many * n, "{seats} seats: someone knocked off in {off} of {n}");
+        // Nobody lays a plank of the other team's bridge for them, and a
+        // short way of one's own off the team's way is now and then.
+        let from_theirs: u32 = stories.iter().map(|story| story.from_theirs).sum();
+        let short_ways: u32 = stories.iter().map(|story| story.short_ways).sum();
+        assert_eq!(from_theirs, 0, "{seats} seats: a short way laid from the other team's bridge");
+        assert!(short_ways as f32 <= 0.25 * n, "{seats} seats: {short_ways} short ways of their own in {n} games");
         // Nobody held fast: nobody gets nowhere on a way for long, nor
         // stands with a way before it and does not walk it.
         for story in &stories {
@@ -688,6 +835,152 @@ fn a_team_wins_with_every_one_of_it_on_the_golden_island_together_for_three_seco
     assert_eq!(game.outcome().expect("over").0, [0, 0]);
 }
 
+/// Stands the computer's player in `seat` `at`, there and then.
+fn put(game: &mut Game, seat: usize, at: Vec3) {
+    let now = game.elapsed();
+    game.crew.stand(seat, at, 0.0, now);
+    game.at[seat] = at;
+}
+
+#[test]
+fn the_ring_empties_when_one_of_a_team_is_knocked_by_a_punch_or_by_a_blast() {
+    // Blue the computer's, both stood on the golden island, holding it;
+    // red people, one of them there too, the other at home, so that red
+    // does not.
+    let mut game = Game::new(4, &[true, false, true, false], 12);
+    game.begin();
+    put(&mut game, 1, Vec3::new(-2.0, LAND_TOP, 1.0));
+    put(&mut game, 3, Vec3::new(2.0, LAND_TOP, -1.0));
+    let events = run(&mut game, 1.2);
+    assert!(events.contains(&Event::Holding { team: 1, holding: true }), "{:?}", game.round());
+    assert!(game.round().hold[1] > 0);
+    // A punch on one of them knocks it up off its feet: empty.
+    let (bot, _) = game.at(1);
+    game.sync(0, bot - Vec3::X, 0.0);
+    assert!(game.punch(0, 1, true));
+    let events = run(&mut game, FRAME);
+    assert!(events.contains(&Event::Holding { team: 1, holding: false }));
+    assert_eq!(game.round().hold[1], 0);
+    // Down on the island again, and holding again.
+    let events = run(&mut game, 1.5);
+    assert!(events.contains(&Event::Holding { team: 1, holding: true }), "{:?}", game.round());
+    // A stick of red's blowing at the other's feet: empty again, both of
+    // them it reaches knocked, neither hurt.
+    let (feet, _) = game.at(3);
+    let mut lob = Lob::thrown(feet + Vec3::X * 3.0, std::f32::consts::FRAC_PI_2, 3.0, feet.y);
+    lob.to = feet;
+    lob.age = lob.secs() + crate::bridge_wars::DYNAMITE_FUSE - 0.01;
+    game.sticks.push(Lobbed { id: 7, lob, by: 0, lies: true });
+    let events = run(&mut game, FRAME);
+    assert!(events.iter().any(|event| matches!(event, Event::Blew { stick: 7, .. })));
+    assert!(events.contains(&Event::Knocked { victim: 3, by: 0, from: feet, running: true }));
+    assert!(events.contains(&Event::Holding { team: 1, holding: false }));
+    assert_eq!(game.round().hold[1], 0);
+    assert!(game.playing());
+}
+
+#[test]
+fn whoever_is_left_of_a_team_is_given_the_whole_of_its_grant() {
+    // Two against two of people: blue's second leaves for good after the
+    // first grant.
+    let mut game = people(4, 13);
+    run(&mut game, GRANT_EVERY + 0.5);
+    assert_eq!((game.round().grants, game.round().share), (1, [30, 30]));
+    game.leave(3);
+    assert_eq!(game.round().share, [30, 30], "what the last grant gave");
+    run(&mut game, GRANT_EVERY);
+    let round = game.round();
+    assert_eq!((round.grants, round.share), (2, [30, 60]));
+    assert_eq!((round.share_of(0), round.share_of(1)), (grant_metres(4), TEAM_GRANT));
+    // Back on a device that has forgotten, each is given every grant as it
+    // came, and is believed no further than that.
+    assert_eq!(game.kept(1), (START_METRES + 3.0 + 6.0, 2));
+    assert_eq!(game.kept(0), (START_METRES + 3.0 + 3.0, 2));
+    game.said(1, 999.0, 2);
+    assert_eq!(game.kept(1).0, START_METRES + 9.0);
+    game.said(1, 2.0, 1);
+    assert_eq!(game.kept(1), (2.0 + 6.0, 2));
+    // The computer's too: a person and the computer's against two of the
+    // computer's, the person gone before the first grant.
+    let mut game = Game::new(4, &[true, false, false, false], 13);
+    game.begin();
+    game.leave(0);
+    run(&mut game, 3.0 * GRANT_EVERY + 0.5);
+    let given = |game: &Game, seat: usize| game.laid()[seat] + game.metres(seat);
+    assert!((given(&game, 2) - (START_METRES + 3.0 * TEAM_GRANT)).abs() < 0.01, "red's: {}", given(&game, 2));
+    for seat in [1, 3] {
+        assert!((given(&game, seat) - (START_METRES + 3.0 * grant_metres(4))).abs() < 0.01, "blue's {seat}: {}", given(&game, seat));
+    }
+}
+
+#[test]
+fn a_bridge_laid_out_wide_of_the_islands_is_ground_the_game_knows() {
+    // Red's laid out west from its island, away from everything, fifteen
+    // metres over the void: a stick of blue's thrown onto its end lies on
+    // it, and blows, and takes planks.
+    let mut game = people(2, 14);
+    let heading = std::f32::consts::FRAC_PI_2;
+    let shore = ISLANDS[0] - Vec2::X * (ISLAND_RADIUS - 0.5);
+    let out = ISLANDS[0] - Vec2::X * (ISLAND_RADIUS + 15.0);
+    let planks = 11;
+    for index in 0..=planks {
+        let at = shore.lerp(out, index as f32 / planks as f32);
+        game.sync(0, Vec3::new(at.x, LAND_TOP, at.y), heading);
+        assert!(game.rung(0, 0, index as u16, at, heading), "rung {index}");
+    }
+    let end = out + Vec2::X * 1.0;
+    assert!(game.nav().ground(end).is_some() && game.nav().walkable_at(end), "{end} is no ground");
+    game.kits[1] = with_sticks(game.kits[1], 1);
+    let from = out + Vec2::X * 7.0;
+    game.sync(1, Vec3::new(from.x, LAND_TOP, from.y), heading);
+    let off = end - from;
+    assert!(game.throw(1, (-off.x).atan2(-off.y), off.length()));
+    let events = run(&mut game, 3.0);
+    assert!(!events.iter().any(|event| matches!(event, Event::Lost { .. })), "fell through it");
+    assert!(events.iter().any(|event| matches!(event, Event::Blew { planks, .. } if !planks.is_empty())));
+}
+
+#[test]
+fn one_of_the_computer_s_left_on_the_other_team_s_bridge_lays_none_of_it_and_jumps_from_it() {
+    // Red a person, whose bridge is laid straight toward the golden island
+    // to some nine metres short of it; blue's player the computer's, stood
+    // on red's bridge near its end with metres to lay, and cut off from
+    // its own team's way, which nobody has laid.
+    let mut game = Game::new(2, &[true, false], 15);
+    game.begin();
+    let span = game.nav().grid().span(Region::Team(0), Region::Middle, 0.0).expect("red's way");
+    let short_of = |rung: usize| span.rung(rung).distance(GOLDEN) - ISLAND_RADIUS;
+    let last = (0..=span.planks()).take_while(|&rung| short_of(rung) >= 9.0).last().expect("rungs");
+    for index in 0..=last {
+        let at = span.rung(index);
+        game.sync(0, Vec3::new(at.x, LAND_TOP, at.y), span.heading());
+        assert!(game.rung(0, 0, index as u16, at, span.heading_at(index)));
+    }
+    game.sync(0, Vec3::new(ISLANDS[0].x, LAND_TOP, ISLANDS[0].y), 0.0);
+    let stood = (span.rung(last - 3) + span.rung(last - 2)) * 0.5;
+    put(&mut game, 1, Vec3::new(stood.x, crate::nav::PLANK_TOP, stood.y));
+    let now = game.elapsed();
+    game.crew.grant(1, 20.0, now);
+    // It lays nothing: not on from the end of red's bridge for them, and
+    // its own way it cannot get to. It stands on red's bridge, in their
+    // way.
+    let laid = |events: &[Event]| events.iter().any(|event| matches!(event, Event::Plank(plank) if plank.seat == 1));
+    let events = run(&mut game, 20.0);
+    assert!(!laid(&events), "it laid from red's bridge");
+    assert!(game.standing(1) && game.nav().on_plank(game.at(1).0.xz()), "at {}", game.at(1).0);
+    // Red laid on to a jump short of the golden island: it jumps for it
+    // from there, and stands on it.
+    for index in last + 1..=span.planks() - 3 {
+        let at = span.rung(index);
+        game.sync(0, Vec3::new(at.x, LAND_TOP, at.y), span.heading());
+        assert!(game.rung(0, 0, index as u16, at, span.heading_at(index)));
+    }
+    game.sync(0, Vec3::new(ISLANDS[0].x, LAND_TOP, ISLANDS[0].y), 0.0);
+    let events = run(&mut game, 15.0);
+    assert!(!laid(&events), "it laid from red's bridge");
+    assert!(game.nav().grid().region(game.at(1).0.xz()) == Some(Region::Middle), "at {}", game.at(1).0);
+}
+
 #[test]
 fn at_the_time_limit_more_on_the_golden_island_wins_or_the_bridge_further_across_or_it_is_a_draw() {
     // More of one team on the island: one of blue, and the other at home,
@@ -827,10 +1120,13 @@ fn the_round_goes_small_and_whole() {
     let round = game.round();
     assert_eq!(round.left, PLAY_SECS as u16);
     assert_eq!((round.grants, round.hold, round.on_gold, round.winner, round.over, round.across), (0, [0, 0], [0, 0], None, false, [0, 0]));
+    assert_eq!(round.share, [30, 30], "3 m each, two against two");
+    assert_eq!(round.share_of(1), grant_metres(4));
     // As long as it ever is.
     let longest = RaceRound {
         left: u16::MAX,
         grants: u16::MAX,
+        share: [255, 255],
         hold: [10, 10],
         on_gold: [2, 2],
         winner: Some(1),
@@ -838,11 +1134,25 @@ fn the_round_goes_small_and_whole() {
         across: [100, 100],
     };
     let bytes = postcard::to_allocvec(&longest).unwrap();
-    assert!(bytes.len() <= 16, "{} bytes", bytes.len());
+    assert!(bytes.len() <= 18, "{} bytes", bytes.len());
     assert_eq!(postcard::from_bytes::<RaceRound>(&bytes).unwrap(), longest);
+    // As long as it is in a game, won, the clock at its longest.
+    let won = RaceRound {
+        left: PLAY_SECS as u16,
+        grants: grants_by(PLAY_SECS),
+        share: [60, 60],
+        hold: [10, 10],
+        on_gold: [2, 2],
+        winner: Some(1),
+        over: true,
+        across: [100, 100],
+    };
+    let most = postcard::to_allocvec(&won).unwrap().len();
+    assert!(most <= 15, "{most} bytes");
     // And as it most often is.
     let bytes = postcard::to_allocvec(&round).unwrap();
-    assert!(bytes.len() <= 12, "{} bytes", bytes.len());
+    assert!(bytes.len() <= 14, "{} bytes", bytes.len());
+    println!("the round: {} bytes as it begins, {most} at the most in a game, {} at the most it could be", bytes.len(), postcard::to_allocvec(&longest).unwrap().len());
     // What a device says and is told, too.
     for ask in [Ask::Nothing, Ask::Metres { metres: 12.5, grants: 3 }] {
         let bytes = postcard::to_allocvec(&ask).unwrap();

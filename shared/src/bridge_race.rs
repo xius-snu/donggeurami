@@ -21,11 +21,12 @@
 //!
 //! * **Metres**: everyone begins with [`START_METRES`] of bridge, and every
 //!   [`GRANT_EVERY`] seconds each team is given [`TEAM_GRANT`] more, shared
-//!   between its players ([`grant_metres`]; "Every interval you are given
-//!   more bridge meters"). A person's are counted on their own device, as in
-//!   Bridge Wars, which lays their bridge and pays for it; the room is told
-//!   how many grants there have been ([`RaceRound::grants`]). The
-//!   computer's the game counts itself.
+//!   between those of its players still in the game ([`team_share`];
+//!   "Every interval you are given more bridge meters"). A person's are
+//!   counted on their own device, as in Bridge Wars, which lays their bridge
+//!   and pays for it; the room is told how many grants there have been and
+//!   what the last gave each team's players ([`RaceRound::grants`],
+//!   [`RaceRound::share`]). The computer's the game counts itself.
 //! * **Dynamite**, now and then ("sometimes u get dynamite as well,
 //!   randomly"): with each grant one chance in five of a stick for each
 //!   player, two at the most, on their button. Thrown as in Bridge Wars, and
@@ -200,25 +201,36 @@ pub const SHAPE: table::Shape = table::Shape {
 // ---------------------------------------------------------------- the rules
 
 /// How many metres of bridge everyone begins with, how many more each team
-/// is given every so often, shared evenly between its players, and how
-/// often, in seconds of play ("Every interval you are given more bridge
-/// meters"; the numbers are ours, tuned by whole games, `many_races`). A
-/// team's bridge comes on as fast with one of a side as with two
-/// ([`grant_metres`]), and a game is two and a quarter to two and a half
-/// minutes at the median either way: with each player given 5 m every 10 s
-/// whatever their team, as first written, two against two was over in under
-/// a minute, and one against one in under two.
+/// is given every so often, shared evenly between those of its players
+/// still in the game, and how often, in seconds of play ("Every interval
+/// you are given more bridge meters"; the numbers are ours, tuned by whole
+/// games, `many_races`). A team's bridge comes on as fast with one of a
+/// side as with two ([`team_share`]), and with one left of two, and a game
+/// is about two and a half minutes at the median either way, the computer
+/// laying its way all the way over: with each player given 5 m every 10 s
+/// whatever their team, as first written, two against two was over in
+/// under a minute, and one against one in under two.
 pub const START_METRES: f32 = 10.0;
 pub const TEAM_GRANT: f32 = 6.0;
 pub const GRANT_EVERY: f32 = 16.0;
 
+/// How many metres of bridge each of a team of `players` still in the game
+/// is given with every grant ([`GRANT_EVERY`]): the team's [`TEAM_GRANT`]
+/// shared between them, 6 m for one alone and 3 m each for two. Whoever
+/// has left for good ([`Game::leave`]) leaves their share to whoever of
+/// their team is left (mine: a team does not race at half pace for having
+/// lost someone).
+pub fn team_share(players: usize) -> f32 {
+    TEAM_GRANT / players.max(1) as f32
+}
+
 /// How many metres of bridge each player of a table of `seats` seats is
-/// given with every grant ([`GRANT_EVERY`]): their team's [`TEAM_GRANT`],
-/// shared between however many each team has, 6 m each one against one
-/// and 3 m each two against two. What a person's device adds for each
-/// grant it has not counted yet ([`RaceRound::grants`]).
+/// given with every grant while everyone is still in the game: their
+/// team's [`TEAM_GRANT`] shared between however many each team has, 6 m
+/// each one against one and 3 m each two against two ([`team_share`]).
+/// What each grant gives is in the round as it comes ([`RaceRound::share`]).
 pub fn grant_metres(seats: usize) -> f32 {
-    TEAM_GRANT / (seats / TEAMS).max(1) as f32
+    team_share(seats / TEAMS)
 }
 
 /// How likely each player is to be given a stick of dynamite with each
@@ -299,9 +311,14 @@ pub struct RaceRound {
     /// Whole seconds of play left, rounded up.
     pub left: u16,
     /// How many grants of metres have come ([`GRANT_EVERY`]): a person's
-    /// device adds [`grant_metres`] of its table to what it has for each
-    /// it has not counted yet.
+    /// device adds what each gives its team's players ([`RaceRound::share`])
+    /// to what it has, for each it has not counted yet.
     pub grants: u16,
+    /// What the last grant gave each of each team's players, by team, in
+    /// tenths of a metre ([`team_share`]: 30 two against two, 60 one against
+    /// one or for one left of two); before the first, what it will give.
+    /// [`RaceRound::share_of`] has it in metres.
+    pub share: [u8; 2],
     /// Each team's ring round the golden island, in tenths of [`HOLD`],
     /// from 0 to 10: full is won.
     pub hold: [u8; 2],
@@ -320,6 +337,15 @@ pub struct RaceRound {
     pub across: [u8; 2],
 }
 
+impl RaceRound {
+    /// What the last grant gave each player of `team`, in metres
+    /// ([`RaceRound::share`]): what a person's device adds for each grant
+    /// it has not yet counted.
+    pub fn share_of(&self, team: u8) -> f32 {
+        f32::from(self.share[usize::from(team) % TEAMS]) / 10.0
+    }
+}
+
 /// Something asked in a game of Bridge Race ([`Ask::BridgeRace`](crate::Ask::BridgeRace)).
 /// A punch, a rung, a stick thrown and a fall go as they do in Bridge Wars
 /// ([`crate::Ask::Punch`], [`crate::Ask::Rung`], [`crate::Ask::Use`],
@@ -333,10 +359,10 @@ pub enum Ask {
     /// How many metres of bridge I have left to lay, and how many of the
     /// game's grants ([`RaceRound::grants`]) they count: my own device
     /// counts them, as Bridge Wars' does, laying my bridge a plank at a
-    /// time and adding each grant as it comes. Said as they change, no
-    /// oftener than once a second. The game keeps it to give back to me if
-    /// I come back into the game on a device that has forgotten
-    /// ([`Tell::Metres`]); nothing else goes by it.
+    /// time and adding each grant as it comes ([`RaceRound::share_of`] my
+    /// team). Said as they change, no oftener than once a second. The game
+    /// keeps it to give back to me if I come back into the game on a device
+    /// that has forgotten ([`Tell::Metres`]); nothing else goes by it.
     Metres { metres: f32, grants: u16 },
 }
 
@@ -486,9 +512,15 @@ pub struct Game {
     laid: Vec<f32>,
     /// How many rungs each has had taken.
     rungs: Vec<usize>,
-    /// Every bridge heard of, as whose, which of theirs, and how many of
-    /// its planks have been counted in [`Game::laid`].
-    chains: Vec<(u8, u16, usize)>,
+    /// Every bridge heard of, as whose, by seat, and which of theirs; and
+    /// for each, how many of its planks have been counted in
+    /// [`Game::laid`].
+    chains: Vec<(u8, u16)>,
+    counted: Vec<usize>,
+    /// What each grant so far gave each of each team's players, by grant
+    /// and by team ([`team_share`]): what a person's metres are reckoned
+    /// by, coming back ([`Game::kept`]).
+    shares: Vec<[f32; TEAMS]>,
     /// Whether each of the computer's players carried a plank, the frame
     /// before.
     carrying: Vec<bool>,
@@ -546,6 +578,8 @@ impl Game {
             laid: vec![0.0; seats],
             rungs: vec![0; seats],
             chains: Vec::new(),
+            counted: Vec::new(),
+            shares: Vec::new(),
             carrying: vec![false; seats],
             people,
             nav,
@@ -662,15 +696,16 @@ impl Game {
         }));
         // What it adds to their bridge, counted once: the planks it has
         // brought in, with any that waited for it.
-        let found = match self.chains.iter().position(|&(of, number, _)| usize::from(of) == seat && number == chain) {
+        let found = match self.chains.iter().position(|&(of, number)| usize::from(of) == seat && number == chain) {
             Some(found) => found,
             None => {
-                self.chains.push((seat as u8, chain, 0));
+                self.chains.push((seat as u8, chain));
+                self.counted.push(0);
                 self.chains.len() - 1
             }
         };
         let rungs = self.nav.rungs(seat as u8, chain);
-        let counted = self.chains[found].2;
+        let counted = self.counted[found];
         let planks = rungs.len().saturating_sub(1);
         for plank in counted..planks {
             let length = rungs[plank].distance(rungs[plank + 1]);
@@ -678,7 +713,7 @@ impl Game {
                 self.laid[seat] += length;
             }
         }
-        self.chains[found].2 = planks.max(counted);
+        self.counted[found] = planks.max(counted);
     }
 
     /// A punch by the person in `hitter` landed on whoever is in `victim`,
@@ -806,7 +841,7 @@ impl Game {
         if seat >= self.seats() || !self.people[seat] || !metres.is_finite() || grants > self.grants {
             return;
         }
-        let most = START_METRES + grant_metres(self.seats()) * f32::from(grants);
+        let most = START_METRES + self.granted(seat, 0, grants);
         self.said[seat] = (metres.clamp(0.0, most), grants);
     }
 
@@ -815,11 +850,29 @@ impl Game {
     /// every grant since, and how many grants that counts.
     pub fn kept(&self, seat: usize) -> (f32, u16) {
         let (metres, counted) = self.said.get(seat).copied().unwrap_or((START_METRES, 0));
-        (metres + grant_metres(self.seats()) * f32::from(self.grants.saturating_sub(counted)), self.grants)
+        (metres + self.granted(seat, counted, self.grants), self.grants)
+    }
+
+    /// How many metres the grants after the `after`th, up to the
+    /// `until`th, gave whoever is in `seat`: what each gave their team's
+    /// players as it came ([`Game::shares`]).
+    fn granted(&self, seat: usize, after: u16, until: u16) -> f32 {
+        let side = usize::from(team(seat));
+        let (after, until) = (usize::from(after), usize::from(until).min(self.shares.len()));
+        self.shares.get(after..until).map_or(0.0, |shares| shares.iter().map(|share| share[side]).sum())
+    }
+
+    /// What a grant now gives each of `side`'s players still in the game:
+    /// the team's grant, shared between them ([`team_share`]).
+    fn share(&self, side: usize) -> f32 {
+        let players = (0..self.seats()).filter(|&seat| usize::from(team(seat)) == side && !self.gone[seat]).count();
+        team_share(players)
     }
 
     /// Whoever is in `seat` has left for good: they no longer count for
-    /// their team on the golden island. A team with nobody left loses.
+    /// their team on the golden island, and the grants from now on are
+    /// shared between whoever of their team is left. A team with nobody
+    /// left loses.
     pub fn leave(&mut self, seat: usize) {
         if seat < self.seats() {
             self.gone[seat] = true;
@@ -864,18 +917,21 @@ impl Game {
         std::mem::take(&mut self.events)
     }
 
-    /// A grant comes: metres for everyone (the computer's counted here, a
+    /// A grant comes: metres for everyone, each team's shared between
+    /// those of it still in the game (the computer's counted here, a
     /// person's by their device), and for each, by a throw of the dice, a
     /// stick of dynamite, if they have room for it.
     fn grant(&mut self) {
         self.grants += 1;
+        let share = [self.share(0), self.share(1)];
+        self.shares.push(share);
         let mut given = Vec::new();
         for seat in 0..self.seats() {
             if self.gone[seat] {
                 continue;
             }
             if !self.people[seat] {
-                self.crew.grant(seat, grant_metres(self.seats()), self.elapsed);
+                self.crew.grant(seat, share[usize::from(team(seat))], self.elapsed);
             }
             if self.dice.roll() < DYNAMITE_ODDS {
                 let held = self.kits[seat].held(Utility::Dynamite);
@@ -944,7 +1000,10 @@ impl Game {
                 seats: &seen,
                 kits: &self.kits,
                 sticks: &sticks,
+                bridges: &self.chains,
                 across: self.across.map(|across| f32::from(across) / 100.0),
+                holding: self.hold.map(|held| (held / HOLD).clamp(0.0, 1.0)),
+                on_gold: self.on_gold,
             };
             let order = self.crew.step(seat, &view, dt);
             if let Some(body) = self.crew.body(seat) {
@@ -1053,7 +1112,7 @@ impl Game {
             } else {
                 let way = the_way_across(side);
                 let mut best: f32 = 0.0;
-                for &(seat, chain, _) in self.chains.iter().filter(|(seat, ..)| team(usize::from(*seat)) == side) {
+                for &(seat, chain) in self.chains.iter().filter(|(seat, _)| team(usize::from(*seat)) == side) {
                     let rungs = self.nav.rungs(seat, chain);
                     for (plank, pair) in rungs.windows(2).enumerate() {
                         if self.nav.broken(seat, chain, plank as u16) || pair[0].distance(pair[1]) > LONGEST_PLANK {
@@ -1216,9 +1275,11 @@ impl Game {
 
     /// What the room is sent of it ([`RaceRound`]), cheap to compare.
     pub fn round(&self) -> RaceRound {
+        let share = self.shares.last().copied().unwrap_or_else(|| [self.share(0), self.share(1)]);
         RaceRound {
             left: (PLAY_SECS - self.elapsed).max(0.0).ceil() as u16,
             grants: self.grants,
+            share: share.map(|metres| (metres * 10.0).round().clamp(0.0, 255.0) as u8),
             hold: self.hold.map(|held| ((held / HOLD) * 10.0).floor().clamp(0.0, 10.0) as u8),
             on_gold: self.on_gold,
             winner: self.over.and_then(|(winner, ..)| winner),

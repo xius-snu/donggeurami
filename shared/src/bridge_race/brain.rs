@@ -17,15 +17,19 @@
 //!   to the golden one, thrown for the game, straight or bent, and shared by
 //!   both of a team. Whoever of the team has metres goes to the end of it
 //!   and lays on, a plank at a time, the first gap in it it can get to: the
-//!   end, or a hole a stick has blown behind it. With none left it waits at
-//!   the end for the next grant, or goes back to keep where its bridge
-//!   begins, by who it is.
-//! * **The golden island**, once it can get there: over, to somewhere on
-//!   it, to stand; and to knock off whoever of the other team comes. A bold
-//!   one a jump short of it jumps. One cut off from its team's way, left
-//!   on the other team's bridge by a fight or across a hole it cannot jump,
-//!   lays a short way of its own onto the golden island from the end of
-//!   whatever bridge it can get to near it, or jumps from there.
+//!   end, or a hole a stick has blown behind it; one at a time, the other
+//!   waiting behind whoever is laying. With none left it waits at the end
+//!   for the next grant, or goes back to keep where its bridge begins, by
+//!   who it is.
+//! * **The golden island**, once its team's way is laid onto it: over, to
+//!   somewhere on it, to stand; and to knock off whoever of the other team
+//!   comes. A jump short of it, it waits for the metres to lay the rest, as
+//!   a team that has laid its way all the way goes over by it; it jumps
+//!   only now and then: over a gap of a step or so, cut off from its team's
+//!   way, or with the other team about to win it. One cut off from its
+//!   team's way, left on the other team's bridge by a fight, never lays a
+//!   plank of that bridge's for them: it stands at its end, in their way,
+//!   and jumps from there onto the golden island once that is a jump away.
 //! * **Whoever of the other team comes near** it punches, standing where its
 //!   punch throws them off the land, as Bridge Wars' do; and some go out to
 //!   meet them, on its bridge or across onto theirs.
@@ -50,7 +54,7 @@ use crate::bridge_wars::{
 use crate::nav::{BODY, Gap, Grid, Nav, PLANK_HALF_WIDTH, Region, Span};
 use crate::{Kit, Upgrades, Utility};
 
-use super::{GOLDEN, ISLANDS, TEAMS, team};
+use super::{GOLDEN, ISLANDS, LONGEST_PLANK, TEAMS, team};
 
 /// How high a rise a body walks up, in metres (Bridge Wars' brain's).
 const STEP: f32 = 0.51;
@@ -102,9 +106,18 @@ const GRIP: (f32, f32) = (0.5, 1.0);
 /// How near someone of the other team has to come for a bot minding its
 /// own business to go for them, in metres, for a bot of a fighting kind
 /// as most are; and how near on top of it they have to be for one laying
-/// its bridge, or one out for something else, to turn on them.
+/// its bridge, or one out for something else, to turn on them, for one as
+/// ready to fight as most: each so many times as near as it lets people
+/// come just now ([`KEEN`]), and the latter a little more or less by how
+/// ready it is to fight ([`Crew::on_top_of_it`]).
 const AGGRO: f32 = 6.5;
 const ON_TOP_OF_IT: f32 = 2.8;
+/// How far a bot goes out to meet someone of the other team on its own
+/// team's bridge or on the golden island, in metres: so much, and so much
+/// more by how keen it is to go out ([`Kind::meets`]), as far as it lets
+/// people come just now ([`KEEN`]). After one it is hunting, it keeps on
+/// [`KEEPS_ON`] times as far.
+const MEETS: (f32, f32) = (12.0, 22.0);
 /// How much further off than it would go for someone a bot keeps after one
 /// it is on already, as so many times as far.
 const KEEPS_ON: f32 = 1.35;
@@ -135,6 +148,10 @@ const SIGHTED: (f32, f32) = (0.3, 1.8);
 /// and one only knocked by it: so many planks' worth.
 const WORTH_FALL: f32 = 5.0;
 const WORTH_KNOCK: f32 = 1.0;
+/// How far over the void a blast's knock carries a body before it is down
+/// to the land's height, in metres: a punch on the run's knock, and the
+/// way it slows in the air ([`crate::bridge_wars::KNOCK_BACK`]).
+const BLAST_CARRY: f32 = 7.0;
 /// How far back from the end of its team's way a bot waits for metres, in
 /// planks, and how far in from where its bridge leaves its island one
 /// keeping it stands, in metres, and to the side: between these, thrown
@@ -155,10 +172,23 @@ const GUARD_WALK: f32 = 0.012;
 /// would.
 const HOLD_OUT: (f32, f32) = (0.5, 4.8);
 const HOLD_STAYS: (f32, f32) = (3.0, 10.0);
-/// How far from the end of its team's way, or from where it stands, the
-/// golden island has to be for a bot to jump for it, in metres: a run at
-/// the edge, and a jump.
+/// How far from the golden island's rim the end of a bridge can be for a
+/// bot to look at jumping from it, in metres: a run at the edge, and a
+/// jump.
 const RUN_UP: f32 = 8.0;
+/// How near the edge it jumps from a bot runs at it from, in metres: when
+/// it is no further than this from it, it goes, thrown each time it
+/// thinks.
+const RUN_FROM: (f32, f32) = (2.5, 4.5);
+/// How wide a gap onto the golden island is a step, in metres, and how wide
+/// is no longer one: out of metres, a bot steps a gap of the first or less
+/// as readily as it would lay the plank (the last plank missing, a metre or
+/// so across: anyone steps it), a wider one less readily, and one of the
+/// second or more only for what any jump is made for ([`Crew::think`]).
+const HOP: (f32, f32) = (0.6, 2.6);
+/// How far in from where the ground begins again a jump found by
+/// [`Nav::leap`] comes down, in metres (its own `ROOM`).
+const LEAP_ROOM: f32 = 0.9;
 
 /// One way of playing the race (mine): what each of the computer's players
 /// is like, each a little more or less so ([`Leanings`]). Every number is a
@@ -192,7 +222,9 @@ pub struct Kind {
     pub weave: f32,
     pub bouncy: f32,
     /// How ready it is to jump the last of the void onto the golden island,
-    /// or across to another bridge, rather than lay the planks.
+    /// or across to another bridge, rather than lay the planks: a little,
+    /// next to how much a short gap, being cut off from its team's way, or
+    /// the other team about to win counts with it.
     pub leaps: f32,
 }
 
@@ -485,10 +517,19 @@ pub struct View<'a> {
     pub kits: &'a [Kit],
     /// Every stick of dynamite in the air or lying, not yet blown.
     pub sticks: &'a [Stick],
+    /// Every bridge laid, as whose, by seat, and which of theirs: what
+    /// tells a bot whose bridge it is on.
+    pub bridges: &'a [(u8, u16)],
     /// How far each team's bridge has got toward the golden island, as a
     /// share of the way across ([`super::RaceRound::across`]): what tells a
     /// team that it is behind.
     pub across: [f32; TEAMS],
+    /// How full each team's ring round the golden island is, from 0 to 1,
+    /// and how many of each team stand on it ([`super::RaceRound::hold`],
+    /// [`super::RaceRound::on_gold`]): what tells a team that the other is
+    /// about to win.
+    pub holding: [f32; TEAMS],
+    pub on_gold: [u8; TEAMS],
 }
 
 /// One of the computer's players.
@@ -562,6 +603,9 @@ pub struct Racer {
     wait_back: f32,
     guard_at: Option<Vec2>,
     hold_at: Option<(Vec2, f32)>,
+    /// How near the edge it jumps from, to jump onto the golden island,
+    /// it runs at it from ([`RUN_FROM`]), thrown each time it thinks.
+    run_up: f32,
     /// When it next jumps for nothing, running; which way it faces this
     /// frame, if it means to; and how fast it went the frame before.
     hop_at: f32,
@@ -614,6 +658,7 @@ impl Racer {
             wait_back: 1.0,
             guard_at: None,
             hold_at: None,
+            run_up: 3.5,
             hop_at: dice.between(1.0, 4.0),
             face: None,
             speed: 0.0,
@@ -902,6 +947,7 @@ impl Crew {
     fn think(&mut self, racer: &mut Racer, view: &View) {
         let (nav, now) = (view.nav, view.elapsed);
         racer.think_at = now + self.dice.around(THINK_EVERY.0, THINK_EVERY.1);
+        racer.run_up = self.dice.around(RUN_FROM.0, RUN_FROM.1);
         let here = racer.body.at.xz();
         let lean = racer.lean;
         let mut offers: Vec<(f32, Goal)> = Vec::new();
@@ -910,18 +956,33 @@ impl Crew {
             // Every one of the team has to be there: whatever else, over.
             offers.push((1.3 + 0.05 * self.dice.bell(), Goal::Hold));
         } else {
-            if let Some((span, ..)) = self.next_lay(racer, nav)
-                && racer.metres + 1e-3 >= span.length() / span.planks() as f32
-            {
+            let can_lay = self
+                .next_lay(racer, view)
+                .is_some_and(|(span, ..)| racer.metres + 1e-3 >= span.length() / span.planks() as f32);
+            if can_lay {
                 offers.push((0.8 + 0.35 * lean.lays + 0.08 * self.dice.bell(), Goal::Lay));
             }
             offers.push((0.55 + 0.3 * lean.waits + 0.08 * self.dice.bell(), Goal::Wait));
             let home = here.distance(self.root(racer.side, nav, 1.5));
             let walk = GUARD_WALK * (home - GUARD_NEAR).max(0.0);
             offers.push((0.5 + 0.3 * (1.0 - lean.waits) - walk + 0.08 * self.dice.bell(), Goal::Guard));
-            // A jump short of the golden island, the bold jump.
-            if self.gold_leap(racer, nav).is_some() {
-                let keen = 0.55 + 0.6 * lean.leaps * lean.bold.min(1.3) + 0.1 * self.dice.bell();
+            // A jump short of the golden island. The race to it is laid,
+            // and a team whose way is laid onto it goes over by it (mine:
+            // so the computer's players get there when a person who lays
+            // the whole way does, and not a grant ahead of them; until
+            // 2026-11-18 the bold of them jumped the last six metres in nine
+            // races of ten). So with a jump's worth of the void still to lay
+            // it waits for the metres, and jumps only now and then, the
+            // bolder the likelier; and readily over a gap of a step or so,
+            // the last plank, as anyone steps it, unless it has the metres
+            // to lay it; cut off from its team's way, with no other way on;
+            // and with the other team about to win it, to stop them
+            // ([`pressed`]).
+            if let Some((.., gap)) = self.gold_leap(racer, view) {
+                let hop = ((HOP.1 - gap) / (HOP.1 - HOP.0)).clamp(0.0, 1.0) * if can_lay { 0.3 } else { 1.0 };
+                let cut_off = if self.first_run(racer, nav, false).is_none() { 0.55 } else { 0.0 };
+                let bold = 0.3 * lean.leaps * lean.bold.min(1.3);
+                let keen = 0.15 + bold + 0.75 * hop + cut_off + 0.8 * pressed(racer, view) + 0.1 * self.dice.bell();
                 offers.push((keen, Goal::Hold));
             }
         }
@@ -1002,17 +1063,28 @@ impl Crew {
     }
 
     /// What the racer would lay next, as a span and the run of its rungs:
-    /// the first gap in its team's way it can get to ([`Crew::next_run`]);
-    /// or, cut off from all of that, as one left on the other team's bridge
-    /// by a fight is, a short way of its own straight onto the golden
-    /// island from the end of whatever bridge it can get to near it
-    /// ([`Crew::near_end`]).
-    fn next_lay(&self, racer: &Racer, nav: &Nav) -> Option<(Span, usize, usize)> {
+    /// the first gap in its team's way it can get to that no teammate is
+    /// laying ([`Crew::next_run`]); nothing, if a teammate is laying the
+    /// only one it can get to, behind whom it waits (one lays at a time:
+    /// until this was so, one whose teammate was laying the end of the
+    /// way laid a short way of its own onto the golden island beside
+    /// theirs); or, cut off from all of its team's way, a short way of its
+    /// own straight onto the golden island from the end of one of its own
+    /// team's bridges it can get to near it ([`Crew::near_end`]). Never
+    /// from the other team's: one left on their bridge by a fight jumps
+    /// from it, or stands in their way, and lays nothing of it for them
+    /// (until 2026-11-18 it did, and laid the rest of the way onto the
+    /// golden island for the team it was racing).
+    fn next_lay(&self, racer: &Racer, view: &View) -> Option<(Span, usize, usize)> {
+        let nav = view.nav;
         if let Some(run) = self.next_run(racer, nav) {
             let way = self.ways[usize::from(racer.side)].as_ref()?;
             return Some((way.span, run.from, run.to));
         }
-        let (end, _) = self.near_end(racer, nav)?;
+        if self.first_run(racer, nav, false).is_some() {
+            return None;
+        }
+        let (end, _) = self.near_end(racer, view, true)?;
         let shore = GOLDEN + (end - GOLDEN).normalize_or_zero() * (super::ISLAND_RADIUS - 0.5);
         if end.distance(shore) < 0.5 {
             return None;
@@ -1021,29 +1093,41 @@ impl Crew {
         Some((span, 0, span.planks()))
     }
 
-    /// The end of a bridge, any team's, out over the void a little way off
-    /// the golden island and heading for it, that the racer can get to:
-    /// the one nearest the island, as its last rung and the rung before it.
-    /// Where it jumps from, or lays a short way from, cut off from its own
-    /// team's way.
-    fn near_end(&self, racer: &Racer, nav: &Nav) -> Option<(Vec2, Vec2)> {
+    /// The end of a bridge out over the void a little way off the golden
+    /// island and heading for it, that the racer can get to: the one
+    /// nearest the island, as its last rung and the rung before it; of its
+    /// own team's bridges alone, `ours`, and otherwise of anyone's. Where
+    /// it jumps from, and, cut off from its own team's way, waits, or lays
+    /// a short way from.
+    fn near_end(&self, racer: &Racer, view: &View, ours: bool) -> Option<(Vec2, Vec2)> {
+        let nav = view.nav;
         let here = racer.body.at.xz();
         let grid = nav.grid();
         let mut best: Option<(f32, Vec2, Vec2)> = None;
-        for (a, b) in nav.planks() {
-            for (end, back) in [(b, a), (a, b)] {
-                let off = end.distance(GOLDEN) - super::ISLAND_RADIUS;
-                if !(0.0..=RUN_UP + 2.0).contains(&off) || grid.height(end).is_some() {
+        for &(seat, chain) in view.bridges {
+            if ours && team(usize::from(seat)) != racer.side {
+                continue;
+            }
+            let rungs = nav.rungs(seat, chain);
+            for (plank, pair) in rungs.windows(2).enumerate() {
+                let (a, b) = (pair[0], pair[1]);
+                if nav.broken(seat, chain, plank as u16) || a.distance(b) > LONGEST_PLANK {
                     continue;
                 }
-                let ahead = (end - back).normalize_or_zero();
-                if ahead.dot((GOLDEN - end).normalize_or_zero()) < 0.3 || nav.on_plank(end + ahead * 0.6) {
-                    continue;
+                for (end, back) in [(b, a), (a, b)] {
+                    let off = end.distance(GOLDEN) - super::ISLAND_RADIUS;
+                    if !(0.0..=RUN_UP + 2.0).contains(&off) || grid.height(end).is_some() {
+                        continue;
+                    }
+                    let ahead = (end - back).normalize_or_zero();
+                    if ahead.dot((GOLDEN - end).normalize_or_zero()) < 0.3 || nav.on_plank(end + ahead * 0.6) {
+                        continue;
+                    }
+                    if best.is_some_and(|(least, ..)| off >= least) || !nav.connected(here, (a + b) * 0.5) {
+                        continue;
+                    }
+                    best = Some((off, end, back));
                 }
-                if best.is_some_and(|(least, ..)| off >= least) || !nav.connected(here, (a + b) * 0.5) {
-                    continue;
-                }
-                best = Some((off, end, back));
             }
         }
         best.map(|(_, end, back)| (end, back))
@@ -1072,13 +1156,18 @@ impl Crew {
     }
 
     /// A jump onto the golden island from the end of a bridge the racer can
-    /// get to near it ([`Crew::near_end`]), if that is a jump short of it:
-    /// where the ground ends and where it comes down.
-    fn gold_leap(&self, racer: &Racer, nav: &Nav) -> Option<(Vec2, Vec2)> {
-        let (end, back) = self.near_end(racer, nav)?;
+    /// get to near it, anyone's ([`Crew::near_end`]), if that is a jump
+    /// short of it: where the ground ends, where it comes down, and how far
+    /// across the void between is, in metres.
+    fn gold_leap(&self, racer: &Racer, view: &View) -> Option<(Vec2, Vec2, f32)> {
+        let nav = view.nav;
+        let (end, back) = self.near_end(racer, view, false)?;
         let from = (end + back) * 0.5;
         let aim = GOLDEN + (end - GOLDEN).normalize_or_zero() * (super::ISLAND_RADIUS - 2.5);
-        nav.leap(from, aim, Self::reach_of_a_jump(RUN_SPEED))
+        let (edge, down) = nav.leap(from, aim, Self::reach_of_a_jump(RUN_SPEED))?;
+        // `down` is a body's room in from where the ground begins again
+        // ([`Nav::leap`]).
+        Some((edge, down, (edge.distance(down) - LEAP_ROOM).max(0.0)))
     }
 
     /// Whoever of the other team the racer would go out to meet: someone
@@ -1088,9 +1177,7 @@ impl Crew {
         let nav = view.nav;
         let here = racer.body.at.xz();
         let way = self.ways[usize::from(racer.side)].as_ref()?;
-        // How far it goes out to meet them, by who it is, and by how keen
-        // it is just now ([`KEEN`]).
-        let within = (12.0 + 22.0 * racer.lean.meets) * racer.keen;
+        let within = Self::meets_within(racer);
         view.seats
             .iter()
             .enumerate()
@@ -1105,6 +1192,21 @@ impl Crew {
             })
             .min_by(|a, b| a.1.at.xz().distance(here).total_cmp(&b.1.at.xz().distance(here)))
             .map(|(seat, _)| seat)
+    }
+
+    /// How far the racer goes out to meet someone of the other team, in
+    /// metres ([`MEETS`]): by who it is, and by how near it lets people
+    /// come just now ([`KEEN`]).
+    fn meets_within(racer: &Racer) -> f32 {
+        (MEETS.0 + MEETS.1 * racer.lean.meets) * racer.keen
+    }
+
+    /// How near someone of the other team has to be on top of the racer
+    /// for it to turn on them, laying its bridge or out to throw a stick
+    /// ([`ON_TOP_OF_IT`]): a little nearer or further by how ready it is to
+    /// fight, and by how near it lets people come just now ([`KEEN`]).
+    fn on_top_of_it(racer: &Racer) -> f32 {
+        ON_TOP_OF_IT * (0.7 + 0.3 * racer.lean.fights) * racer.keen
     }
 
     /// Where the racer, with a stick, might throw it from and at, and what
@@ -1148,9 +1250,10 @@ impl Crew {
 
     /// What a stick of the racer's coming down `at` is worth to it, in
     /// planks of the other team's taken, more for each of them it would
-    /// send into the void and for each it would knock; none if it takes a
+    /// send into the void and for each it would knock, and less for each
+    /// its blast would throw onto the golden island; none if it takes a
     /// plank of its own team's, or the ground from under one of its own,
-    /// itself among them.
+    /// itself among them, or if it comes to nothing ([`carried_onto_gold`]).
     fn worth(&self, racer: &Racer, view: &View, at: Vec2) -> Option<f32> {
         let nav = view.nav;
         let taken = nav.would_blast(at, DYNAMITE_RADIUS);
@@ -1177,13 +1280,16 @@ impl Crew {
                 }
                 continue;
             }
-            if falls(there) {
+            let knocked = there.distance(at) <= DYNAMITE_RADIUS + BODY;
+            if knocked && thrown_onto_gold(at, there) {
+                worth -= WORTH_FALL;
+            } else if falls(there) {
                 worth += WORTH_FALL;
-            } else if there.distance(at) <= DYNAMITE_RADIUS + BODY {
+            } else if knocked {
                 worth += WORTH_KNOCK;
             }
         }
-        Some(worth)
+        (worth > 0.0).then_some(worth)
     }
 
     // ------------------------------------------------------------- acting
@@ -1264,7 +1370,7 @@ impl Crew {
         racer.foe = foe;
         if let Some(foe) = foe {
             // Laying, with nobody right on top of it, it lays on.
-            let laying = racer.goal == Goal::Lay && racer.laying.is_some() && view.seats[foe].at.xz().distance(here) > ON_TOP_OF_IT;
+            let laying = racer.goal == Goal::Lay && racer.laying.is_some() && view.seats[foe].at.xz().distance(here) > Self::on_top_of_it(racer);
             if !laying {
                 return self.fight(racer, view, foe, RUN_SPEED, dt, order);
             }
@@ -1274,7 +1380,7 @@ impl Crew {
         match racer.goal {
             Goal::Lay => self.lay(racer, view, dt, order),
             Goal::Wait => {
-                let to = self.wait_spot(racer, nav);
+                let to = self.wait_spot(racer, view);
                 self.walk_to(racer, view, to, RUN_SPEED, 1.0)
             }
             Goal::Guard => {
@@ -1325,7 +1431,8 @@ impl Crew {
     /// whose teammate was laying the end of the way went back to its
     /// island to wait, and out again once they were done); or, with
     /// nothing laid there yet, by where it leaves its island.
-    fn wait_spot(&self, racer: &Racer, nav: &Nav) -> Vec2 {
+    fn wait_spot(&self, racer: &Racer, view: &View) -> Vec2 {
+        let nav = view.nav;
         let Some(way) = self.ways[usize::from(racer.side)].as_ref() else {
             return nav.heart(Region::Team(racer.side));
         };
@@ -1336,9 +1443,10 @@ impl Crew {
             }
             Some(_) => self.root(racer.side, nav, 1.5),
             // Cut off from its team's way: at the end of the bridge it is
-            // on near the golden island, if it is on one, for the metres to
-            // lay the rest; or where it is.
-            None => match self.near_end(racer, nav) {
+            // on near the golden island, if it is on one: its own team's,
+            // for the metres to lay the rest; the other team's, in their
+            // way; or where it is.
+            None => match self.near_end(racer, view, false) {
                 Some((end, back)) => nav.nearest_walkable((end + back) * 0.5).unwrap_or(end),
                 None if nav.connected(racer.body.at.xz(), nav.heart(Region::Team(racer.side))) => self.root(racer.side, nav, 1.5),
                 None => racer.body.at.xz(),
@@ -1379,13 +1487,15 @@ impl Crew {
         let here = racer.body.at.xz();
         let gold = nav.heart(Region::Middle);
         if !Self::reachable(nav, here, gold) {
-            let Some((edge, down)) = self.gold_leap(racer, nav) else {
+            let Some((edge, down, _)) = self.gold_leap(racer, view) else {
                 racer.think_at = racer.think_at.min(now + 0.2);
                 return Vec2::ZERO;
             };
-            // To the edge's run-up, and off it at a run.
-            let run_from = edge + (edge - down).normalize_or_zero() * 3.0;
-            let ready = here.distance(edge) <= 3.5 && (down - here).normalize_or_zero().dot((down - edge).normalize_or_zero()) > 0.9;
+            // To the edge's run-up, as near it as it goes this time, and off
+            // it at a run, from wherever the straight run at where it comes
+            // down jumps no more than one gap, a jump across.
+            let run_from = edge + (edge - down).normalize_or_zero() * racer.run_up * 0.8;
+            let ready = here.distance(edge) <= racer.run_up && nav.leap(here, down, Self::reach_of_a_jump(RUN_SPEED)).is_some();
             if ready && racer.body.free(nav) {
                 racer.leaping = Some(Leap {
                     to: down,
@@ -1414,7 +1524,11 @@ impl Crew {
                 at
             }
         };
+        // There: it stands, with nowhere to walk (until 2026-11-18 it kept
+        // the way it had walked there by, and was told as walking).
         if here.distance(spot) <= ARRIVED {
+            racer.path.clear();
+            racer.path_to = None;
             return Vec2::ZERO;
         }
         if nav.line(here, spot) {
@@ -1460,7 +1574,7 @@ impl Crew {
         let laying = match racer.laying {
             Some(laying) => laying,
             None => {
-                let Some((span, from, to)) = self.next_lay(racer, nav) else {
+                let Some((span, from, to)) = self.next_lay(racer, view) else {
                     racer.think_at = now;
                     return Vec2::ZERO;
                 };
@@ -1576,7 +1690,7 @@ impl Crew {
         let reach = match racer.goal {
             Goal::Hold if on_gold(here) => 11.0 * racer.keen,
             Goal::Hunt(_) => aggro * 1.4,
-            Goal::Lay | Goal::Sabotage => ON_TOP_OF_IT,
+            Goal::Lay | Goal::Sabotage => Self::on_top_of_it(racer),
             Goal::Hold | Goal::Wait | Goal::Guard => aggro,
         };
         let jump = Self::reach_of_a_jump(RUN_SPEED);
@@ -1588,8 +1702,10 @@ impl Crew {
                 let there = seen.at.xz();
                 let away = there.distance(here);
                 let mut reach = if racer.foe == Some(seat) { reach * KEEPS_ON } else { reach };
+                // Whoever it went out to meet, as far as it went out for
+                // them, and a little further.
                 if racer.goal == Goal::Hunt(seat) {
-                    reach = reach.max(40.0);
+                    reach = reach.max(Self::meets_within(racer) * KEEPS_ON);
                 }
                 // Holding the golden island, whoever is on it.
                 if racer.goal == Goal::Hold && on_gold(here) && on_gold(there) {
@@ -1757,6 +1873,10 @@ impl Crew {
             let mut score = -0.09 * here.distance(at) + shoves * flung(nav, at, there) - 1.1 * minds * flung(nav, there, at);
             if !nav.line(here, at) {
                 score -= 0.5;
+            }
+            // Not from where its punch throws them onto the golden island.
+            if carried_onto_gold(at, there, CARRY[1]) {
+                score -= 1.2 * shoves;
             }
             score += 0.18 * self.dice.bell();
             if best.is_none_or(|(most, _)| score > most) {
@@ -2082,6 +2202,52 @@ fn urgency(racer: &Racer, view: &View) -> f32 {
     let behind = ((theirs - mine) / 0.15).clamp(0.0, 1.0);
     let close = ((theirs - 0.6) / 0.3).clamp(0.0, 1.0);
     1.0 + 0.6 * behind + 0.4 * close
+}
+
+/// Whether a blast at `at` would throw whoever stands `there` onto the
+/// golden island, or near enough it to steer onto it in the air: knocked
+/// away from it as a punch on the run knocks, which carries a body some
+/// seven metres over the void before it is down to the land's height
+/// ([`BLAST_CARRY`]).
+fn thrown_onto_gold(at: Vec2, there: Vec2) -> bool {
+    carried_onto_gold(at, there, BLAST_CARRY)
+}
+
+/// Whether a knock from `from` would carry whoever stands `there`, off the
+/// golden island, `carry` metres on and onto it, or near enough it to
+/// steer onto it in the air, as anyone knocked off an edge steers for the
+/// nearest ground: what a bot minds, choosing where to punch someone from
+/// and where to throw a stick, as anyone racing would (until 2026-11-18 it
+/// did not, and a knock at the end of a bridge a few metres off the island,
+/// a stick's above all, now and then threw one of the other team onto it,
+/// who held it and won).
+fn carried_onto_gold(from: Vec2, there: Vec2, carry: f32) -> bool {
+    let away = (there - from).normalize_or_zero();
+    there.distance(GOLDEN) > super::ISLAND_RADIUS && (there + away * carry).distance(GOLDEN) <= super::ISLAND_RADIUS + 3.0
+}
+
+/// How near the other team is to winning, as the racer's team sees it, from
+/// 0 to 1: its ring round the golden island filling, most of all; as many
+/// of it on the island as there are; and a little, its bridge onto it, or
+/// nearly, with the racer's team's still short of it. What has one a jump
+/// short of the golden island jump for it, to knock them off (mine: once
+/// they are there, not as soon as their bridge is, which had the team
+/// behind jump on the moment the other's way was laid, and stand there
+/// first, every race the bridges came near together).
+fn pressed(racer: &Racer, view: &View) -> f32 {
+    let side = usize::from(racer.side) % TEAMS;
+    let theirs = 1 - side;
+    let players = view
+        .seats
+        .iter()
+        .enumerate()
+        .filter(|&(seat, seen)| usize::from(team(seat)) == theirs && seen.in_play)
+        .count()
+        .max(1);
+    let there = f32::from(view.on_gold[theirs]) / players as f32;
+    let ahead = ((view.across[theirs] - view.across[side]) / 0.08).clamp(0.0, 1.0);
+    let close = ((view.across[theirs] - 0.85) / 0.15).clamp(0.0, 1.0);
+    (2.0 * view.holding[theirs] + 0.6 * there + 0.25 * ahead * close).min(1.0)
 }
 
 /// Whether `at` is over the plank between the rungs `a` and `b`: within its
