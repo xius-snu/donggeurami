@@ -6,7 +6,130 @@
 
 ## Contents
 
-1. Since 2026-11-18 Knock Off is a game people play, online and offline: four on a disc of ice in the sea, everyone aiming at once in secret and sliding at once, the ice breaking a metre a turn
+1. Later on 2026-11-18, after a check of it: the last person to leave is paid for their place online too, where you came is the game's own word for it, a device that comes back is held ready if it was, and every slide begins on every device the moment it begins
+2. Since 2026-11-18 Knock Off is a game people play, online and offline: four on a disc of ice in the sea, everyone aiming at once in secret and sliding at once, the ice breaking a metre a turn
+
+## Later on 2026-11-18, after a check of it: the last person to leave is paid for their place online too, and eight smaller things
+
+A check of the game as first built (the entry below) found nine things;
+all are mended, the first of them a loss of coins. Every call here is mine
+(the session that mended them) but where Hajun's words are quoted. The
+entry below is corrected where it said otherwise.
+
+- **The last person to leave a table is paid for their place, online
+  too.** Out third with two of the computer's players still on the ice,
+  Leave (or another game, or a device given up) left the table with
+  nobody at it, and the tables close such a table as it is, paying nobody:
+  the panel's "Your place is kept" was untrue online (offline, Leave
+  played the rest out first and paid). Now, as the last person goes, the
+  computer's players play the rest at once (`KnockOff::play_out`: the
+  rules step a day on by the clock, which they pass through in one step
+  to the end of any game, as the device does offline), and the table is
+  told how everyone came before it closes, and pays. **Mine, found while
+  mending it**: the same loss came another way, an app put away once you
+  are in the sea (a phone closes its connection as its app leaves the
+  foreground): the tables give up a table nobody has been connected to for
+  a minute, unpaid. With every person at the table in the sea and nobody
+  connected for 10 s (`UNWATCHED_PLAY_OUT`), the rest is played at once
+  too. With a person still on the ice it plays on as before (they may be
+  back, and the minute is theirs).
+- **Where you came is the game's own word for it.** "You're out! 3rd" and
+  the plate's place were worked out on each device by a rule of its own,
+  which could differ from the results' (someone leaving in the slide you
+  went in by; a device back in the middle of a game, which has none of the
+  slide that put anyone in). The round now carries each seat's place
+  (`KnockRound::places`, from `Game::places`, the results' own rule) from
+  the moment they go in, and the device shows it once the slide they went
+  in by is over (until then, whoever goes in at the very same moment of it
+  would share it). The round is 120 bytes at the most now, 80 while
+  everyone aims (110 and 76 before); protocol 22 is not out yet, so no bump.
+- **A device that comes back while everyone aims is held ready if you had
+  pressed Ready** (the round says so; the game hears no more of your aim
+  that turn): it had shown "Aim!", a live arrow and a live Ready under a
+  tick, and the aims it sent were never played. Begun afresh at the same
+  table once out, Watch stays pressed; and a turn's headline is said only
+  while it is news, within its own seconds of the turn's beginning, not to
+  a device that comes back in the middle of an aim.
+- **Every slide begins on every device the moment it begins.** The device
+  began it only when the slide's own round came, a server's tick and the
+  network after the reveal was over, and everyone jumped forward as it
+  began (as far as a metre at the hardest). The reveal's round already
+  says all a slide begins from (where everyone stands, how each sets off)
+  and when (its end): the slide is begun from it as the town's clock comes
+  to that, and the slide's round, once here, is only checked against it
+  (begun again only if it says otherwise: someone who left in the
+  reveal's last moment).
+- **The computer's bodies are not sent while everyone slides.** The server
+  wrote them where the game had them every frame of every slide, sent to
+  every device, which places every body itself then (`Frozen`) and threw it
+  away. Now they are sent where each stands as a turn begins, turns to the
+  way it will go, and comes to rest as the ice breaks.
+- **A skip in play does nothing** (`RT_ALLOW_SKIP`, the VM's): it had
+  every person ready, so that a tap on the board meant to skip the
+  countdown that landed as play began ended everyone's first aim. The
+  table's skips (the wait, the countdown) are as they were; in play,
+  Ready is the game's own skip.
+- **A sliding body turns to face the way it slides** (the spec's "turned
+  to face the way it slides"): it kept the way it set off, so that one
+  knocked sideways or back slid on facing elsewhere. It swings round to
+  its way at 12 radians a second (half round in a quarter of a second),
+  and keeps facing so as it slows.
+- **Words and a colour into the file**: "Mochi & Dubu wins!" for a shared
+  first is "Mochi & Dubu win!" (`win_together`, and `won_together` for the
+  chat's one line, every name in its colour; `and`, " & ", what joins the
+  names), and the slabs' colour until the island's own ice is found
+  (`colours.knock_off.slab`, `#d9edff`, as it was in code).
+- **"Get ready" is gone**: it was never shown (the plate comes up with the
+  first turn's round, which comes with the play's first moment), and over
+  the countdown the table's board says "Starting in 3" in the same place.
+  **The computer's strolls while a table waits** went by two lines drawn
+  on the ice (how far in a stroll may end, 8.5 m; how clear of everyone,
+  1.6 m and three quarters of it); each is now thrown for every stroll (7
+  to 9.5 m in; 1.2 to 2.2 m clear, settling for 55 to 95% of that), as
+  Hajun's rule for the computer's players has it: "if some thing becomes a
+  definite if-then, then its not a real human, but a program".
+- **Checked**: the rules' tests, 156 and 3 ignored (new: whole games of
+  two people and the computer, the people aiming anywhere and leaving at
+  any moment, in which a seat's place in the round, once the slide it went
+  in by is over, never changes and is the one the game ends with); the
+  server's, 92 and 4 ignored (new: out third with two of the computer's
+  players on the ice, the last person to leave has the rest played at once
+  and is paid 10; every person in the sea and nobody connected 10 s, the
+  same, but not with a person still on the ice; a skip in play ends
+  nobody's aim; the computer's bodies stay put while everyone slides); the
+  game's, 381 (new: the slide begun by the reveal's round and kept by its
+  own, a body facing the way it slides and swung round to it the short
+  way, Ready held from the round, Watch kept at the same table, the place
+  from the round, who won as one or several, every Knock Off word one the
+  fonts draw with what it is filled with). **In the desktop build,
+  hidden** (`RT_BACKGROUND=1`, by day), by a throwaway taken out again:
+  offline, a whole game from the join to the town, out on purpose in the
+  second turn: the panel and the plate said 4th, and so did the results; a
+  body knocked by the person's slide faced the way it slid (0 degrees off,
+  measured 0.3 s after the hit; the picture enlarged). **Against a server
+  on this PC, two hidden copies** (port 5482, `RT_ALLOW_SKIP`): a skip
+  sent as the first aim began left it on, nobody ready; one copy pressed
+  Ready in the first turn and quit, and, opened again, was put back in its
+  seat half a second after it started, held ready ("Ready · 6", Ready
+  green, the arrows on the right faint, its arrow where it left it, no
+  "Go!" said again); on both copies every slide had begun from the
+  reveal's round, one to three steps in, before its own round came (42 to
+  66 ms into the slide on this PC's network), and was found the same
+  slide; after a head-on hit at 18.6 m/s each body sliding faced its own
+  way, one knocked back toward its edge (0 degrees off); both went into
+  the sea on purpose in the second turn, the panels said 3rd and 4th as
+  the server's results did; both pressed Leave, and as the second went,
+  two of the computer's players still on the ice, the server played the
+  rest at once ("nobody is left to play it for", six turns in a step) and
+  paid 10 for third: the first copy's coins went from 950 to 960 in the
+  town. Pictures: `RoundTown-wt/scratch-knockoff/shots/fix_*.png`.
+- **Not checked**: anything on a phone; the VM; a database (the coins
+  were the server's own, in memory); a device begun afresh in the same app
+  (rather than opened again), where Watch is kept (unit test only); a
+  first shared at the end on the screen (the words by a unit test); the
+  play-out of a table nobody is connected to, in a run (unit tests only);
+  by night (no colour drawn changed but the slabs' before the island's own
+  ice is found, which is at once).
 
 ## Since 2026-11-18 Knock Off is a game people play, online and offline
 
@@ -58,11 +181,13 @@ countdown, results, prizes) is `server/src/tables.rs` and `src/table.rs`
   onto the ice, stand about on it and now and then stroll a few metres
   somewhere else, well in from the edge and clear of everyone
   (`knock_off::Loiter`, mine, the server's online and the device's
-  offline: a stroll ends within 8.5 m of the middle, 1.2 to 5 m off, at
-  1.4 to 2.8 m/s; it stands 1 to 4.5 s first; then strolls, looks round at
-  someone or at the middle, or stands on, each thrown afresh, as Hajun's
-  rule for the computer's players has it: "if some thing becomes a definite
-  if-then, then its not a real human, but a program"). **At "Go!"**
+  offline: a stroll ends 7 to 9.5 m of the middle at the furthest, 1.2 to
+  5 m off, at 1.4 to 2.8 m/s; it stands 1 to 4.5 s first; then strolls,
+  looks round at someone or at the middle, or stands on, each thrown
+  afresh, as Hajun's rule for the computer's players has it: "if some
+  thing becomes a definite if-then, then its not a real human, but a
+  program"; how far in and how clear were fixed until the entry above).
+  **At "Go!"**
   everyone is stood on four spots 7 m out on the diagonals, facing the
   middle (`START_RING`).
 - **A turn** (the rules' module has every number; the G1 report of
@@ -162,7 +287,8 @@ countdown, results, prizes) is `server/src/tables.rs` and `src/table.rs`
     edge, drops in, and is gone once under (`Dead`, drawn nowhere).
   - **A puff of ice dust** where two meet hard enough to count as a hit.
   - **Sliding, a body is posed for it**: knees half bent, arms out to the
-    sides (the intro's landing pose, `Landing`), turned the way it set off;
+    sides (the intro's landing pose, `Landing`), turned to face the way it
+    slides (since the entry above; it kept the way it set off before);
     and settled onto where the server says the slide left it over 0.2 s,
     if it is anywhere else (it has not been, in every slide checked).
   - **Each seat's colour** is its own in the file (`colours.knock_off`,
@@ -173,8 +299,8 @@ countdown, results, prizes) is `server/src/tables.rs` and `src/table.rs`
 - **Over the world** (`screen.rs`):
   - **The plate top centre**, the table's board's look: "Turn 3" over
     "Aim! 7" (whole seconds), "Ready · 7" once you are, "Slide!", "The ice
-    breaks"; "Last turn" on the last; "Get ready" before the first; out,
-    "You're out · 3rd".
+    breaks"; "Last turn" on the last; out, "You're out · 3rd". (Over the
+    countdown the table's board is there, "Starting in 3".)
   - **Names over heads**, each in its seat's colour with a dark stroke,
     **as big wherever they are**, as Bridge Wars' are, and a green tick over
     whoever is ready; never your name over you (Hajun, 2026-10-31), but
@@ -187,35 +313,38 @@ countdown, results, prizes) is `server/src/tables.rs` and `src/table.rs`
   - **Headlines**: "Go!" as the first turn begins, with "Aim with the
     stick, set how hard, then Ready" over it; each turn after, "Turn 4",
     and "Last turn!", to whoever is still on the ice; at the end, "Mochi
-    wins!", "Mochi & Dubu wins!" for a shared first, or "You win!".
+    wins!", "Mochi & Dubu win!" for a shared first, or "You win!".
   - **The chat**: a line for each who goes into the sea, as they do, names
     in their colours: "Mochi slid into the sea", "Dubu knocked Mochi into
     the sea" (whoever last hit them, which every device's own play of the
     slide says), "The ice broke under Mochi", "Mochi left the game", and
-    "Mochi wins!".
-  - **Out**: once your turn's slide is over and where you came is known, a
-    panel as Bridge Wars' "You're out!" is: "You're out! 3rd", "Stay and
-    watch, or go back to the town. Your place is kept.", **Leave** (to the
-    town, your place kept and paid: online the server pays it at the end;
-    offline, mine, the rest of the game is played out at once, a day on by
-    its clock, which the rules pass through in one step, the place paid,
-    and then the town) and **Watch** (it goes, the camera as it is). Not
-    once the game is over: its results say it.
+    "Mochi wins!" (or "Mochi & Dubu win!").
+  - **Out**: once your turn's slide is over, a panel as Bridge Wars'
+    "You're out!" is: "You're out! 3rd" (the place the server sends,
+    `KnockRound::places`, the results' own), "Stay and watch, or go back
+    to the town. Your place is kept.", **Leave** (to the town, your place
+    kept and paid: offline, mine, the rest of the game is played out at
+    once, a day on by its clock, which the rules pass through in one step,
+    the place paid, and then the town; online the server plays on, and
+    pays at the end, or, as the last person goes, plays the rest at once
+    and pays) and **Watch** (it goes, the camera as it is). Not once the
+    game is over: its results say it.
   - **The results**: the table's window, "turns survived" by each score.
 - **Online and offline it is the same game**: online the server steps it
   by its clock (`server/src/knock_off.rs`), which every device has for the
   town's, and sends the room the round whenever any of it changes (at most
-  110 bytes); offline the device steps the very same game by its own time
+  120 bytes); offline the device steps the very same game by its own time
   of day. **Every body is placed by the device itself** while the game is
   played, people's too (`Frozen { placed: true }`: neither the stick nor the
   server's updates move one), from the round and its own play of the
-  slide, so that nothing of where anyone is goes over the network between
-  the reveal and the next turn. A device that comes back to the game while
-  everyone aims is told its own aim (`Tell::Aimed`) and draws it where it
-  left it. Whoever leaves while it is played is out in the turn they leave
-  in. With `RT_ALLOW_SKIP`, a skip during play has everyone still on the
-  ice ready: the aim is over at once (for trying it out; the board's own
-  skips the wait and the countdown).
+  slide, begun the moment the reveal is over, so that nothing of where
+  anyone is goes over the network while everyone slides (the computer's
+  bodies are sent where each stands between slides). A device that comes
+  back to the game while everyone aims is told its own aim (`Tell::Aimed`)
+  and draws it where it left it, held ready if you had said so. Whoever
+  leaves while it is played is out in the turn they leave in. With
+  `RT_ALLOW_SKIP` the board's skip skips the wait and the countdown; in
+  play a skip does nothing (Ready is the game's own).
 - **Outside this game's files**, two changes, each to be looked at at the
   merge:
   - `src/tags.rs`, `place_tags`: the town's names are not shown on Knock

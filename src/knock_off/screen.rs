@@ -443,8 +443,12 @@ fn put_up(
 
 /// The plate top centre while the game is played: the turn, and under it
 /// what to do now and the seconds left of it, or how it is going; out,
-/// where you came. Up from the first moment of play to its end, its words
-/// written only as they change.
+/// where you came. Up from the first turn's round to the end of play, its
+/// words written only as they change. Before it, the table's board says
+/// the countdown in the same place ("Starting in 3"), and the first turn's
+/// round comes with the play's first moment: the plate has nothing before
+/// it to say (it had a "Get ready" there, which a check of the game found
+/// never shown).
 #[allow(clippy::type_complexity)]
 fn plate(
     clock: Res<TownClock>,
@@ -454,39 +458,33 @@ fn plate(
     mut titles: Query<&mut Text, (With<PlateTitle>, Without<PlateCaption>)>,
     mut captions: Query<&mut Text, (With<PlateCaption>, Without<PlateTitle>)>,
 ) {
-    let shown = knock.seat.is_some() && view.playing() && knock.round.as_ref().is_none_or(|round| round.stage != KnockStage::Over);
+    let round = knock.playing().filter(|round| knock.seat.is_some() && view.playing() && round.stage != KnockStage::Over);
     for mut plate in &mut plates {
-        plate.set_if_neq(if shown { Visibility::Inherited } else { Visibility::Hidden });
+        plate.set_if_neq(if round.is_some() { Visibility::Inherited } else { Visibility::Hidden });
     }
-    if !shown {
+    let Some(round) = round else {
         return;
-    }
+    };
     let ui = ui();
     let words = &ui.words.knock_off;
-    let (title, caption) = match knock.playing() {
-        None => (words.get_ready.clone(), String::new()),
-        Some(round) => {
-            let title = if round.next_radius <= 0.0 && round.stage != KnockStage::Over {
-                words.last_turn.clone()
-            } else {
-                fill(&words.turn, &[("turn", &round.turn.to_string())])
-            };
-            let seconds = ((round.until - clock.now()).max(0.0).ceil() as u32).to_string();
-            let caption = if !knock.in_play() {
-                match knock.place {
-                    Some(place) => fill(&words.watching, &[("place", &place_word(place))]),
-                    None => words.went_in.clone(),
-                }
-            } else {
-                match round.stage {
-                    KnockStage::Aim if knock.aim.ready && knock.aim.turn == round.turn => fill(&words.ready, &[("seconds", &seconds)]),
-                    KnockStage::Aim => fill(&words.aim, &[("seconds", &seconds)]),
-                    KnockStage::Reveal | KnockStage::Slide => words.sliding.clone(),
-                    KnockStage::Break => words.breaks.clone(),
-                    KnockStage::Over => String::new(),
-                }
-            };
-            (title, caption)
+    let title = if round.next_radius <= 0.0 {
+        words.last_turn.clone()
+    } else {
+        fill(&words.turn, &[("turn", &round.turn.to_string())])
+    };
+    let seconds = ((round.until - clock.now()).max(0.0).ceil() as u32).to_string();
+    let caption = if !knock.in_play() {
+        match knock.place {
+            Some(place) => fill(&words.watching, &[("place", &place_word(place))]),
+            None => words.went_in.clone(),
+        }
+    } else {
+        match round.stage {
+            KnockStage::Aim if knock.aim.ready && knock.aim.turn == round.turn => fill(&words.ready, &[("seconds", &seconds)]),
+            KnockStage::Aim => fill(&words.aim, &[("seconds", &seconds)]),
+            KnockStage::Reveal | KnockStage::Slide => words.sliding.clone(),
+            KnockStage::Break => words.breaks.clone(),
+            KnockStage::Over => String::new(),
         }
     };
     for mut text in &mut titles {
@@ -501,49 +499,29 @@ fn plate(
     }
 }
 
-/// Where the player in `seat`, gone into the sea, came, from the first, as
-/// far as it is known: by the turn each went in, and in a turn by the
-/// moment, as the game places them (whoever is still on the ice before
-/// everyone, and in the slide whoever went over later before whoever went
-/// over earlier, this device's own play of it saying when; those the ice
-/// broke under after the slide's; whoever left before it, last). None
-/// while they are on the ice, or until their turn's slide is over.
-fn place_of(round: &KnockRound, played: Option<&super::Played>, seat: usize) -> Option<u8> {
+/// Where the player in `seat`, gone into the sea, came, 0 first: the game's
+/// own word for it, as the server sends it (`KnockRound::places`, the rule
+/// the results go by, and nothing worked out here), once the slide of the
+/// turn they went in is over: until then, whoever else goes in at the very
+/// same moment of it would share it, and the panel saying it waits for the
+/// slide anyway, for them to be seen into the sea first. None while they
+/// are on the ice.
+fn place_of(round: &KnockRound, seat: usize) -> Option<u8> {
     let went = round.out.get(seat).copied().flatten()?;
-    if went == round.turn && matches!(round.stage, KnockStage::Aim | KnockStage::Reveal | KnockStage::Slide) && played.is_some_and(|played| played.turn == went) {
+    if went == round.turn && matches!(round.stage, KnockStage::Aim | KnockStage::Reveal | KnockStage::Slide) {
         return None;
     }
-    let slide = played.filter(|played| played.turn == went).map(|played| &played.slide);
-    let within = |other: usize| -> f32 {
-        match slide.and_then(|slide| slide.over_edge(other)) {
-            Some(when) => when,
-            None if round.start.get(other).copied().flatten().is_some() => f32::MAX / 2.0,
-            None => -1.0,
-        }
-    };
-    let lasted = |other: usize| -> (u16, f32) {
-        match round.out.get(other).copied().flatten() {
-            None => (u16::MAX, f32::MAX),
-            Some(turn) if turn == went => (turn, within(other)),
-            Some(turn) => (turn, 0.0),
-        }
-    };
-    let mine = lasted(seat);
-    let before = (0..round.out.len()).filter(|&other| other != seat && lasted(other) > mine).count();
-    Some(before as u8)
+    round.places.get(seat).copied().flatten()
 }
 
-/// Where you came, once you are out and it is known ([`place_of`]): kept
-/// from then, the round after it saying less of it.
+/// Where you came, once you are out and it is known ([`place_of`]).
 fn know_the_place(mut knock: ResMut<Knock>) {
-    if knock.place.is_some() {
-        return;
-    }
     let (Some(seat), Some(round)) = (knock.seat, knock.playing()) else {
         return;
     };
-    if let Some(place) = place_of(round, knock.slide.as_ref(), usize::from(seat)) {
-        knock.place = Some(place);
+    let place = place_of(round, usize::from(seat));
+    if place.is_some() && place != knock.place {
+        knock.place = place;
     }
 }
 
@@ -560,8 +538,12 @@ fn place_word(place: u8) -> String {
 
 /// The headlines: "Go!" as the first turn begins, with how to play; each
 /// turn after, and the last turn as it is; and once it is over, who won.
+/// A turn's only while it is news, within its own seconds of the turn
+/// beginning by the town's clock: not to a device that has come back to the
+/// game in the middle of an aim, for which it is old.
 #[allow(clippy::too_many_arguments)]
 fn headlines(
+    clock: Res<TownClock>,
     knock: Res<Knock>,
     view: Res<TableView>,
     mut said: Local<Option<(u16, KnockStage)>>,
@@ -577,10 +559,11 @@ fn headlines(
     let words = &ui.words.knock_off;
     if let Some(round) = knock.playing() {
         let now = (round.turn, round.stage);
+        let news = |secs: f32| clock.now() - round.since < f64::from(secs);
         if *said != Some(now) && round.stage == KnockStage::Aim {
-            if round.turn == 1 {
+            if round.turn == 1 && news(GO_SECS) {
                 hud::announce(&mut commands, Some(&words.how), &words.go, hud::HEADLINE, GO_SECS).insert(InTable);
-            } else if knock.in_play() {
+            } else if round.turn > 1 && knock.in_play() && news(TURN_SECS) {
                 let title = if round.next_radius <= 0.0 {
                     words.last_turn_headline.clone()
                 } else {
@@ -605,12 +588,24 @@ fn headlines(
                 .filter_map(|&seat| view.members.get(seat))
                 .map(|member| member.name.clone())
                 .collect();
-            fill(&words.wins, &[("name", &names.join(" & "))])
+            winners(&names)
         };
         hud::announce(&mut commands, None, &title, hud::HEADLINE, WON_SECS).insert(InTable);
     }
     if view.results().is_none() {
         *won = false;
+    }
+}
+
+/// Who won, in the file's words: "Mochi wins!", or for a first shared,
+/// "Mochi & Dubu win!", the names joined as the file joins them
+/// (`words.knock_off.wins`, `win_together`, `and`).
+fn winners(names: &[String]) -> String {
+    let ui = ui();
+    let words = &ui.words.knock_off;
+    match names {
+        [one] => fill(&words.wins, &[("name", one)]),
+        _ => fill(&words.win_together, &[("names", &names.join(&words.and))]),
     }
 }
 
@@ -661,8 +656,21 @@ fn chat_lines(knock: Res<Knock>, view: Res<TableView>, mut log: ResMut<Log>, mut
         && !said.1
     {
         said.1 = true;
-        for seat in (0..results.places.len()).filter(|&seat| results.places[seat] == 0) {
-            log.push(chat::spans(&words.won, ink, &[("name", &name(seat), seat_colour(seat))]));
+        let first: Vec<usize> = (0..results.places.len()).filter(|&seat| results.places[seat] == 0).collect();
+        if let [one] = first[..] {
+            log.push(chat::spans(&words.won, ink, &[("name", &name(one), seat_colour(one))]));
+        } else if !first.is_empty() {
+            // A first shared: one line, every name in its own colour.
+            let keys: Vec<String> = (0..first.len()).map(|k| format!("name{k}")).collect();
+            let names: Vec<String> = first.iter().map(|&seat| name(seat)).collect();
+            let joined = keys.iter().map(|key| format!("{{{key}}}")).collect::<Vec<_>>().join(&words.and);
+            let template = fill(&words.won_together, &[("names", &joined)]);
+            let fills: Vec<(&str, &str, Color)> = first
+                .iter()
+                .enumerate()
+                .map(|(k, &seat)| (keys[k].as_str(), names[k].as_str(), seat_colour(seat)))
+                .collect();
+            log.push(chat::spans(&template, ink, &fills));
         }
     }
 }
@@ -878,8 +886,6 @@ fn segment_distance(at: Vec2, a: Vec2, b: Vec2) -> f32 {
 
 #[cfg(test)]
 mod tests {
-    use roundtown_net::knock_off as rules;
-
     use super::*;
 
     #[test]
@@ -891,7 +897,10 @@ mod tests {
     }
 
     #[test]
-    fn where_each_came_goes_by_the_turn_and_in_the_slide_by_the_moment() {
+    fn where_you_came_is_the_game_s_word_for_it_once_your_slide_is_over() {
+        // Seat 0 went in a turn before, seat 2 in this turn's slide and seat
+        // 3 with the ice after it, as the server places them; seat 1 is on
+        // the ice.
         let mut round = KnockRound {
             turn: 2,
             stage: KnockStage::Break,
@@ -903,29 +912,74 @@ mod tests {
             launches: Vec::new(),
             ready: vec![false; 4],
             out: vec![Some(1), None, Some(2), Some(2)],
+            places: vec![Some(3), None, Some(2), Some(1)],
         };
-        // Seat 2 went over in this turn's slide, seat 3 with the ice after
-        // it, seat 0 a turn before, seat 1 is on the ice.
-        let start = vec![Some(Vec2::new(-5.0, 0.0)), Some(Vec2::new(1.0, 1.0)), Some(Vec2::new(11.5, 0.0)), Some(Vec2::new(10.8, 0.0))];
-        let launches = vec![Vec2::ZERO, Vec2::ZERO, Vec2::new(4.0, 0.0), Vec2::ZERO];
-        let mut slide = rules::Slide::new(&start, &launches, 12.0);
-        slide.step_to(3.0);
-        assert!(slide.over_edge(2).is_some());
-        let played = super::super::Played {
-            turn: 2,
-            since: 0.0,
-            slide,
-            hits_shown: 0,
-        };
-        assert_eq!(place_of(&round, Some(&played), 1), None, "still on the ice");
-        assert_eq!(place_of(&round, Some(&played), 3), Some(1));
-        assert_eq!(place_of(&round, Some(&played), 2), Some(2));
-        assert_eq!(place_of(&round, Some(&played), 0), Some(3));
-        // Until the slide is over, where someone who went over in it came is
-        // not known yet.
+        assert_eq!(place_of(&round, 1), None, "still on the ice");
+        assert_eq!(place_of(&round, 3), Some(1));
+        assert_eq!(place_of(&round, 2), Some(2));
+        assert_eq!(place_of(&round, 0), Some(3));
+        // Until this turn's slide is over, not said of whoever went in in it
+        // (whoever goes in at the very same moment would share it); of a
+        // turn before, as it is.
         round.stage = KnockStage::Slide;
         round.out[3] = None;
-        assert_eq!(place_of(&round, Some(&played), 2), None);
+        round.places[3] = None;
+        assert_eq!(place_of(&round, 2), None);
+        assert_eq!(place_of(&round, 0), Some(3));
+        // And whatever this device would have made of it, the game's: a
+        // device back in the middle of the game, with none of the slide that
+        // put anyone in, has it all the same.
+        round.stage = KnockStage::Aim;
+        round.turn = 3;
+        assert_eq!(place_of(&round, 2), Some(2));
+    }
+
+    #[test]
+    fn who_won_is_said_of_one_or_of_several_together() {
+        let ui = ui();
+        let words = &ui.words.knock_off;
+        let one = winners(&["Mochi".to_string()]);
+        assert_eq!(one, fill(&words.wins, &[("name", "Mochi")]));
+        let two = winners(&["Mochi".to_string(), "Dubu".to_string()]);
+        assert_eq!(two, fill(&words.win_together, &[("names", &format!("Mochi{}Dubu", words.and))]));
+        assert!(!two.contains('{') && two.contains("Mochi") && two.contains("Dubu"), "{two}");
+        // Every word the game says is one the fonts draw, none empty, and
+        // has in it what is filled in.
+        let all: &[(&String, &[&str])] = &[
+            (&words.score, &[]),
+            (&words.turn, &["{turn}"]),
+            (&words.last_turn, &[]),
+            (&words.aim, &["{seconds}"]),
+            (&words.ready, &["{seconds}"]),
+            (&words.sliding, &[]),
+            (&words.breaks, &[]),
+            (&words.watching, &["{place}"]),
+            (&words.went_in, &[]),
+            (&words.go, &[]),
+            (&words.how, &[]),
+            (&words.last_turn_headline, &[]),
+            (&words.wins, &["{name}"]),
+            (&words.win_together, &["{names}"]),
+            (&words.you_win, &[]),
+            (&words.slid_in, &["{name}"]),
+            (&words.knocked_in, &["{by}", "{name}"]),
+            (&words.broke_under, &["{name}"]),
+            (&words.left, &["{name}"]),
+            (&words.won, &["{name}"]),
+            (&words.won_together, &["{names}"]),
+            (&words.out, &["{place}"]),
+            (&words.out_line, &[]),
+            (&words.watch, &[]),
+            (&words.leave, &[]),
+        ];
+        for &(said, fills) in all {
+            assert!(!said.trim().is_empty(), "an empty word");
+            assert!(said.chars().all(roundtown_net::text::allowed), "{said:?} has a letter the fonts do not draw");
+            for key in fills {
+                assert!(said.contains(key), "{said:?} has no {key}");
+            }
+        }
+        assert!(!words.and.is_empty() && words.and.chars().all(roundtown_net::text::allowed));
     }
 
     #[test]

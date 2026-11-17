@@ -185,8 +185,8 @@ struct Puff {
 
 /// What everything on the ice is made of: each seat's colour, the dark rim,
 /// the cracks, the dust, the water's white, and, until the ice's own is
-/// found on its model, a pale ice for the slabs; and the shapes shared by
-/// many: a ball, a box and a flat ring.
+/// found on its model, a pale ice for the slabs (the file's `slab`); and
+/// the shapes shared by many: a ball, a box and a flat ring.
 #[derive(Resource)]
 struct IceLook {
     seats: [Handle<StandardMaterial>; 4],
@@ -213,7 +213,7 @@ impl FromWorld for IceLook {
         let dust = materials.add(flat(colours.dust));
         let white = materials.add(flat(colours.splash));
         let ice = materials.add(StandardMaterial {
-            base_color: Color::srgb(0.85, 0.93, 1.0),
+            base_color: colours.slab,
             perceptual_roughness: 0.3,
             ..default()
         });
@@ -384,28 +384,38 @@ fn recolour(changed: Res<UiChanged>, look: Res<IceLook>, mut materials: ResMut<A
     paint(&look.cracks, colours.cracks);
     paint(&look.dust, colours.dust);
     paint(&look.white, colours.splash);
+    // The slabs' own ice, lit as the island is, until the island's is
+    // found (then theirs is the model's, which is not the file's to paint).
+    if !look.found_ice
+        && let Some(mut material) = materials.get_mut(&look.ice)
+    {
+        material.base_color = colours.slab;
+    }
 }
 
 /// Your arrow while you aim, and everyone's while they are shown: from the
 /// feet, as long as the slide would go on an empty island, the ring where
-/// it would stop. Each built again only as its length changes.
+/// it would stop; put away as everyone sets off. Each built again only as
+/// its length changes.
 fn arrows(
     knock: Res<Knock>,
     mut arrows: Query<(&mut Arrow, &mut Transform, &mut Visibility)>,
     mut meshes: ResMut<Assets<Mesh>>,
 ) {
     let round = knock.playing();
+    let sliding = knock.sliding();
     for (mut arrow, mut place, mut shown) in &mut arrows {
         let seat = arrow.seat;
         let start = round.and_then(|round| round.start.get(seat).copied().flatten()).map(|(x, z)| Vec2::new(x, z));
         let in_play = round.is_some_and(|round| round.out.get(seat).is_some_and(Option::is_none));
-        // Which way and how far: yours while you aim; anyone's once shown.
+        // Which way and how far: yours while you aim; anyone's once shown,
+        // until the slide has begun here (`place`).
         let wanted = match (round, start) {
             (Some(round), Some(at)) if in_play => match round.stage {
                 KnockStage::Aim if knock.seat == Some(seat as u8) && knock.aim.turn == round.turn => {
                     (knock.aim.power > 0 && knock.aim.way != Vec2::ZERO).then(|| (at, knock.aim.way, rules::reach(knock.aim.power)))
                 }
-                KnockStage::Reveal => {
+                KnockStage::Reveal if !sliding => {
                     let launch = round.launches.get(seat).map_or(Vec2::ZERO, |&(x, z)| Vec2::new(x, z));
                     let speed = launch.length();
                     (speed > 1e-3).then(|| (at, launch / speed, speed * speed / (2.0 * rules::ICE)))

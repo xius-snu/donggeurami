@@ -292,7 +292,7 @@ pub enum KnockStage {
 /// A game of Knock Off as everyone in it sees it: on the entity its table's
 /// room is sent, beside the board ([`table::Board`]), and sent to the room
 /// whenever any of it changes (each stage, each tick of someone ready, each
-/// body going in): a hundred bytes at the most, with four seats.
+/// body going in): 120 bytes at the most, with four seats.
 ///
 /// A device plays each slide itself: from `start` and `launches`, from
 /// `since` by the town's clock (the [`Slide`] stepped to the clock less
@@ -334,6 +334,20 @@ pub struct KnockRound {
     /// when every device playing it sees them go; under the ice that breaks,
     /// as it begins to.
     pub out: Vec<Option<u16>>,
+    /// Each seat's place, 0 first, as the game places everyone at the end
+    /// ([`Game::outcome`], the one rule for it): whoever is out has theirs
+    /// from the moment they go in, and everyone has theirs once it is over;
+    /// None while they are on the ice. Whoever goes in later can only come
+    /// above them, but whoever goes in at the very same moment of the same
+    /// slide (someone leaving in it) shares it with them: so a place is
+    /// final once the slide it was lost in is over. Sent, not worked out on
+    /// each device, so that "You're out! 3rd" is what the results will say,
+    /// on a device that has come back in the middle of a game too, which has
+    /// none of the slide that put it in, and whatever the moment someone
+    /// left in, which only the server knows to the step (since 2026-11-18,
+    /// a check of the game having found a device's own reckoning could say
+    /// otherwise).
+    pub places: Vec<Option<u8>>,
 }
 
 /// What a step of a game of Knock Off came to that whoever runs it carries
@@ -898,6 +912,8 @@ impl Game {
     /// the reveal. Cheap to make and to compare: whoever sends it sends it when it changes.
     pub fn round(&self) -> KnockRound {
         let shown = matches!(self.stage, KnockStage::Reveal | KnockStage::Slide);
+        let over = self.stage == KnockStage::Over;
+        let (places, _) = self.places();
         KnockRound {
             turn: self.turn,
             stage: self.stage,
@@ -909,6 +925,7 @@ impl Game {
             launches: if shown { self.launches.iter().map(|launch| (launch.x, launch.y)).collect() } else { Vec::new() },
             ready: if self.stage == KnockStage::Aim { self.ready.clone() } else { vec![false; self.ready.len()] },
             out: self.out.clone(),
+            places: (0..self.out.len()).map(|seat| (over || self.out[seat].is_some()).then_some(places[seat])).collect(),
         }
     }
 
@@ -1366,15 +1383,16 @@ mod tests {
             launches: vec![(-12.3, 4.5); 4],
             ready: vec![true; 4],
             out: vec![Some(LAST_TURN); 4],
+            places: vec![Some(3); 4],
         };
         let bytes = postcard::to_allocvec(&round).unwrap();
-        assert!(bytes.len() <= 110, "{} bytes", bytes.len());
+        assert!(bytes.len() <= 120, "{} bytes", bytes.len());
         assert_eq!(postcard::from_bytes::<KnockRound>(&bytes).unwrap(), round);
-        // And as everyone aims, less: nobody's launch.
+        // And as everyone aims, less: nobody's launch, nobody's place.
         let mut game = Game::new(4, &[true, false, false, false], 1);
         game.begin(CLOCK);
         let bytes = postcard::to_allocvec(&game.round()).unwrap();
-        assert!(bytes.len() <= 76, "{} bytes", bytes.len());
+        assert!(bytes.len() <= 80, "{} bytes", bytes.len());
         // What is asked and told, as small.
         for ask in [Ask::Aim { x: -0.6, z: 0.8, power: 10 }, Ask::Ready] {
             let bytes = postcard::to_allocvec(&crate::Ask::KnockOff(ask.clone())).unwrap();
@@ -1386,6 +1404,72 @@ mod tests {
         let bytes = postcard::to_allocvec(&crate::Tell::KnockOff(told.clone())).unwrap();
         let crate::Tell::KnockOff(back) = postcard::from_bytes::<crate::Tell>(&bytes).unwrap() else { panic!("not Knock Off's") };
         assert_eq!(back, told);
+    }
+
+    #[test]
+    fn where_each_came_is_sent_as_the_results_will_have_it_once_their_slide_is_over() {
+        // Whole games of two people and two of the computer's, the people
+        // aiming anywhere as hard as they like, and now and then leaving at
+        // whatever moment it is (aiming, looking at the arrows, sliding, as
+        // the ice breaks): whoever is in the sea has a place in the round
+        // from then; once the slide they went in by is over it is the very
+        // one the game ends with, and never another; and at the end
+        // everyone's is the outcome's. One rule, the game's, for the panel
+        // that says where you came and for the results.
+        for seed in 0..80 {
+            let mut game = Game::new(4, &[true, false, true, false], seed);
+            let mut dice = Dice::new(seed ^ 0x5EED);
+            game.begin(CLOCK);
+            let mut left = [false; 4];
+            let mut aimed = 0;
+            let mut said: Vec<Option<u8>> = vec![None; 4];
+            for _ in 0..200_000 {
+                if game.outcome().is_some() {
+                    break;
+                }
+                if game.stage() == KnockStage::Aim && aimed != game.turn() {
+                    aimed = game.turn();
+                    for seat in [0, 2] {
+                        game.aim(seat, Vec2::from_angle(dice.between(0.0, TAU)), (dice.roll() * 11.0) as u8);
+                        if dice.roll() < 0.7 {
+                            game.ready(seat);
+                        }
+                    }
+                }
+                for seat in [0, 2] {
+                    if !left[seat] && game.in_play_at(seat) && dice.roll() < 0.004 {
+                        left[seat] = true;
+                        game.leave(seat);
+                    }
+                }
+                tick(&mut game, 1.0 / 30.0);
+                let round = game.round();
+                for seat in 0..4 {
+                    let Some(went) = round.out[seat] else {
+                        // On the ice, with no place yet; but the winner's,
+                        // once it is over.
+                        let over = round.stage == KnockStage::Over;
+                        assert_eq!(round.places[seat].is_some(), over, "seed {seed}: seat {seat} is on the ice");
+                        continue;
+                    };
+                    assert!(round.places[seat].is_some(), "seed {seed}: seat {seat} is in the sea with no place");
+                    let slid = went < round.turn || matches!(round.stage, KnockStage::Break | KnockStage::Over);
+                    if slid && !left[seat] {
+                        match said[seat] {
+                            None => said[seat] = round.places[seat],
+                            Some(place) => assert_eq!(round.places[seat], Some(place), "seed {seed}: seat {seat}'s place changed"),
+                        }
+                    }
+                }
+            }
+            let (places, ..) = game.outcome().expect("over");
+            assert_eq!(game.round().places, places.iter().map(|&place| Some(place)).collect::<Vec<_>>(), "seed {seed}");
+            for seat in 0..4 {
+                if let Some(place) = said[seat] {
+                    assert_eq!(place, places[seat], "seed {seed}: seat {seat} was told {place} and came {}", places[seat]);
+                }
+            }
+        }
     }
 
     #[test]

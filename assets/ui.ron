@@ -462,6 +462,10 @@
             // where anything goes into the sea.
             dust: "#e3f3ff",
             splash: "#ffffff",
+            // The slabs the ice's edge breaks into as they tip into the
+            // sea, lit as the island is: only until the island's own ice is
+            // there to take its look from, which it is in a moment.
+            slab: "#d9edff",
         ),
 
         // Bridge Race's: its accent, the golden island's gold.
@@ -906,12 +910,10 @@
         // turns each was still on the ice at the end of.
         knock_off: (
             score: "turns survived",
-            // The plate top centre: before the first turn; each turn
-            // ({turn}); the last; and under it what to do now, with the
-            // seconds left of it ({seconds}), or how it is going; and, out,
-            // where you came ({place}: 1st, 2nd...), or that you went in
-            // while it is not known yet.
-            get_ready: "Get ready",
+            // The plate top centre: each turn ({turn}); the last; and under
+            // it what to do now, with the seconds left of it ({seconds}), or
+            // how it is going; and, out, where you came ({place}: 1st,
+            // 2nd...), or that you went in while it is not known yet.
             turn: "Turn {turn}",
             last_turn: "Last turn",
             aim: "Aim! {seconds}",
@@ -921,21 +923,27 @@
             watching: "You're out · {place}",
             went_in: "You went in",
             // Across the screen as the first turn begins, and how to play
-            // under it; as the last turn begins; and who won ({name}, or
-            // several, "Mochi & Dubu"), or you.
+            // under it; as the last turn begins; and who won ({name}), or
+            // who shared first ({names}: "Mochi & Dubu"), or you.
             go: "Go!",
             how: "Aim with the stick, set how hard, then Ready",
             last_turn_headline: "Last turn!",
             wins: "{name} wins!",
+            win_together: "{names} win!",
             you_win: "You win!",
             // In the chat: someone slid into the sea on their own
             // ({name}), was knocked in ({by}, {name}), went in with the ice
-            // that broke under them, or left the game; and who won.
+            // that broke under them, or left the game; and who won, or who
+            // shared first ({names}).
             slid_in: "{name} slid into the sea",
             knocked_in: "{by} knocked {name} into the sea",
             broke_under: "The ice broke under {name}",
             left: "{name} left the game",
             won: "{name} wins!",
+            won_together: "{names} win!",
+            // What goes between the names of those who shared first, on
+            // the screen and in the chat.
+            and: " & ",
             // The panel for whoever is out: its title ({place}), its line,
             // and its two buttons.
             out: "You're out! {place}",

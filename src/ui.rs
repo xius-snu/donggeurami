@@ -571,7 +571,8 @@ pub(crate) struct BlendInColours {
 /// each seat's colour, on its arrow, the ring at its feet and its name; the
 /// dark rim round what lies on the ice; the power bar's steps filled and
 /// not; Ready pressed, and the tick over whoever is ready; the cracks where
-/// the ice will break; the puff of ice where two meet, and the splash.
+/// the ice will break; the puff of ice where two meet, and the splash; and
+/// the slabs the edge breaks into, until the island's own ice is there.
 #[derive(Deserialize, Clone, Copy, PartialEq, Debug)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct KnockOffColours {
@@ -599,6 +600,8 @@ pub(crate) struct KnockOffColours {
     pub dust: Color,
     #[serde(deserialize_with = "colour")]
     pub splash: Color,
+    #[serde(deserialize_with = "colour")]
+    pub slab: Color,
 }
 
 /// Bridge Race's own colours (`bridge_race`), as Blend In's are.
@@ -1199,13 +1202,12 @@ pub(crate) struct BlendInWords {
 
 /// Knock Off's own words (`knock_off`), as Blend In's are: what its score
 /// is called among the results; the plate top centre's; the headlines';
-/// the chat's, as each goes into the sea; and the panel's for whoever is
-/// out.
+/// the chat's, as each goes into the sea; who won, or who shared first, and
+/// what joins their names; and the panel's for whoever is out.
 #[derive(Deserialize, PartialEq, Debug)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct KnockOffWords {
     pub score: String,
-    pub get_ready: String,
     pub turn: String,
     pub last_turn: String,
     pub aim: String,
@@ -1218,12 +1220,15 @@ pub(crate) struct KnockOffWords {
     pub how: String,
     pub last_turn_headline: String,
     pub wins: String,
+    pub win_together: String,
     pub you_win: String,
     pub slid_in: String,
     pub knocked_in: String,
     pub broke_under: String,
     pub left: String,
     pub won: String,
+    pub won_together: String,
+    pub and: String,
     pub out: String,
     pub out_line: String,
     pub watch: String,

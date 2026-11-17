@@ -23,8 +23,13 @@
 //!   server's updates move one): on its spot while everyone aims, and in a
 //!   slide where this device's own play of it has it ([`Slide`], from the
 //!   round's start and launches, stepped to the town's clock less the
-//!   round's `since`, which comes out to the bit as the server's did), then
-//!   settled onto where the server says the slide left everyone.
+//!   moment it begins, which comes out to the bit as the server's did),
+//!   then settled onto where the server says the slide left everyone. The
+//!   slide is begun the moment the reveal's time is up, by the reveal's own
+//!   round, which already says everything it begins from, not when the
+//!   slide's round comes a little after: so that nobody jumps forward as it
+//!   begins (a check of the game found everyone did, by as far as a metre
+//!   at the hardest).
 //! * **Your aim** is yours alone until the reveal: the stick for which way,
 //!   the up and down arrows on the right for how hard, and Ready; sent to
 //!   the server as it changes (or put into the game here, offline), and
@@ -81,6 +86,10 @@ const CLEAR_SIDES: f32 = 0.03;
 const SLIDING_SQUAT: f32 = 0.45;
 const SLIDING_ARMS: f32 = 0.62;
 const SLIDING_FROM: f32 = 0.6;
+/// How fast a sliding body turns to face the way it slides, in radians a
+/// second (mine): half round in a quarter of a second, so that one knocked
+/// sideways or back is seen to swing round, not to jump.
+const SLIDING_TURN: f32 = 12.0;
 /// How far over its feet a body's hips are, in metres, for how far it comes
 /// down crouched (`Landing::sink`).
 const HIPS: f32 = 0.75;
@@ -180,16 +189,65 @@ impl Knock {
     fn aiming(&self) -> bool {
         self.playing().is_some_and(|round| round.stage == KnockStage::Aim) && self.in_play() && !self.aim.ready
     }
+
+    /// Whether this turn's slide is being played here: its round says so,
+    /// or the reveal's time is up and it has begun here as the reveal's
+    /// round said it would ([`place`]), its own round not here yet.
+    fn sliding(&self) -> bool {
+        self.playing().is_some_and(|round| match round.stage {
+            KnockStage::Slide => true,
+            KnockStage::Reveal => self.slide.as_ref().is_some_and(|played| played.turn == round.turn),
+            _ => false,
+        })
+    }
 }
 
 /// A slide as this device plays it: in which turn, when it began by the
-/// town's clock, the slide itself, and how many of its hits have been
-/// shown.
+/// town's clock, what it began from as the round said it (where everyone
+/// stood, how each set off, how far the ice reached), the slide itself,
+/// and how many of its hits have been shown.
 struct Played {
     turn: u16,
     since: f64,
+    start: Vec<Option<(f32, f32)>>,
+    launches: Vec<(f32, f32)>,
+    radius: f32,
     slide: Slide,
     hits_shown: usize,
+}
+
+impl Played {
+    /// The slide `round` says (the reveal's, or the slide's own), begun at
+    /// `since` by the town's clock.
+    fn of(round: &KnockRound, since: f64) -> Self {
+        let start: Vec<Option<Vec2>> = round.start.iter().map(|at| at.map(|(x, z)| Vec2::new(x, z))).collect();
+        let launches: Vec<Vec2> = round.launches.iter().map(|&(x, z)| Vec2::new(x, z)).collect();
+        Self {
+            turn: round.turn,
+            since,
+            start: round.start.clone(),
+            launches: round.launches.clone(),
+            radius: round.radius,
+            slide: Slide::new(&start, &launches, round.radius),
+            hits_shown: 0,
+        }
+    }
+
+    /// Whether it is the very slide `round` says, begun at `since`: the one
+    /// the reveal's round began here is, once the slide's own comes, unless
+    /// something changed in the reveal's last moment (someone left in it,
+    /// standing nowhere and setting off nowhere), which the slide's round
+    /// is then begun again from.
+    fn is(&self, round: &KnockRound, since: f64) -> bool {
+        self.turn == round.turn && self.since == since && self.radius == round.radius && self.start == round.start && self.launches == round.launches
+    }
+}
+
+/// `from` turned toward `to` by no more than `most`, the short way round,
+/// in radians about the upright.
+fn turned(from: f32, to: f32, most: f32) -> f32 {
+    let off = (to - from + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
+    from + off.clamp(-most, most)
 }
 
 /// Your aim this turn: the turn it is for, which way (across the ground, of
@@ -353,8 +411,9 @@ fn bodies_by_seat(
 /// before is dropped and begun afresh, in the seat it says; and away from
 /// the tables (`table::Gone`), everything this put on any body is taken off
 /// again. The same table begun afresh (a device back in the game it was in,
-/// or a seat moved before play) keeps nothing either: what it needs comes
-/// with the round.
+/// or a seat moved before play) keeps nothing either, what it needs coming
+/// with the round, but that you have pressed Watch, out: the panel does not
+/// come back to ask again.
 fn enter(
     mut entered: MessageReader<table::Entered>,
     mut gone: MessageReader<table::Gone>,
@@ -386,17 +445,23 @@ fn enter(
         }
     }
     *pressed = Pressed::default();
+    let watching = knock.watching && begun.is_some_and(|entered| entered.same_table && knock.seat == Some(entered.seat));
     *knock = match begun {
         Some(entered) => {
             info!("Knock Off: in seat {}{}", entered.seat, if entered.online { ", online" } else { "" });
-            Knock::sit(entered.seat, entered.online)
+            Knock {
+                watching,
+                ..Knock::sit(entered.seat, entered.online)
+            }
         }
         None => Knock::default(),
     };
 }
 
 /// What the server says to this device alone: its own aim, as the game
-/// holds it, coming back to the game while everyone aims (`Tell::Aimed`).
+/// holds it, coming back to the game while everyone aims (`Tell::Aimed`);
+/// and whether you had said you were ready by then, the round says
+/// (`take_aim`).
 fn hear(mut told: MessageReader<Told>, mut knock: ResMut<Knock>) {
     for Told(said) in told.read() {
         match said {
@@ -626,6 +691,7 @@ fn take_aim(
             knock.aim = Aim { turn, ..default() };
         }
     }
+    ready_as_held(&mut knock);
     let scrolled: f32 = wheel
         .read()
         .map(|scroll| match scroll.unit {
@@ -718,6 +784,25 @@ fn take_aim(
     }
 }
 
+/// Ready as the game holds you to it: said on this device before it came
+/// back to the game, or before the game was begun afresh here, the round
+/// says you are, and the game hears no more of your aim this turn (it
+/// keeps what it had, which it has told this device, `Tell::Aimed`): so
+/// nothing more is sent, and the arrow, the arrows on the right and Ready
+/// are as they are once you have pressed it, not live under a tick that
+/// says otherwise.
+fn ready_as_held(knock: &mut Knock) {
+    let held = knock.seat.zip(knock.playing()).is_some_and(|(seat, round)| {
+        round.stage == KnockStage::Aim && round.turn == knock.aim.turn && round.ready.get(usize::from(seat)).copied().unwrap_or(false)
+    });
+    if held && !knock.aim.ready {
+        let aim = &mut knock.aim;
+        aim.ready = true;
+        aim.sent = Some((aim.way, aim.power));
+        aim.since_sent = f32::NEG_INFINITY;
+    }
+}
+
 /// Online, your aim to the server as it changes, no oftener than
 /// [`SEND_EVERY`] but always the last of it, and your word that you are
 /// ready after it. (Offline the game here takes it as it is, `play_offline`.)
@@ -789,6 +874,20 @@ fn hold_the_camera(
     held.set_if_neq(HeldCamera(Some(view)));
 }
 
+/// When the slide `round` is for begins by the town's clock, once the clock
+/// `now` has come to it: as its own round says; or, its own not here yet,
+/// as the reveal's says, whose end it begins at (`until`), from what the
+/// reveal already shows everyone (where each stands, how each sets off).
+/// The slide's round comes a server's tick and the network after that, and
+/// a slide begun only then had everyone jump forward as it began.
+fn slide_begins(round: &KnockRound, now: f64) -> Option<f64> {
+    match round.stage {
+        KnockStage::Reveal if now >= round.until && !round.launches.is_empty() => Some(round.until),
+        KnockStage::Slide => Some(round.since),
+        _ => None,
+    }
+}
+
 /// Where the body in `seat` is drawn, and how: on the ice, facing `yaw`,
 /// posed for sliding or not; or nowhere, gone into the sea.
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -801,15 +900,23 @@ enum Pose {
 /// clock, with the slide this device plays (`played`); facing `face` unless
 /// the stage turns it, and settling from `settle_from` onto where the
 /// server has it as the ice breaks. Everyone faces the middle while they
-/// aim (never toward their aim, which would give it away), the way they
-/// will set off once it is shown, and keeps that through the slide,
-/// knocked about or not.
+/// aim (never toward their aim, which would give it away), and the way
+/// they will set off once it is shown; sliding, the way they slide (the
+/// spec: "turned to face the way it slides"), which a hit may turn
+/// (`place` swings them round to it), and once they slow, as they last
+/// faced. The reveal's round with its slide begun here is drawn as the
+/// slide.
 fn pose(round: &KnockRound, played: Option<&Played>, seat: usize, clock: f64, face: f32, settle_from: Option<Vec3>) -> Pose {
     let start = round.start.get(seat).copied().flatten().map(|(x, z)| Vec2::new(x, z));
     let out = round.out.get(seat).copied().flatten().is_some();
     let since = (clock - round.since).max(0.0) as f32;
     let on = |at: Vec2, yaw: f32| Pose::On { at: Vec3::new(at.x, 0.0, at.y), yaw, sliding: false };
-    match round.stage {
+    let played = played.filter(|played| played.turn == round.turn);
+    let stage = match round.stage {
+        KnockStage::Reveal if played.is_some() => KnockStage::Slide,
+        stage => stage,
+    };
+    match stage {
         KnockStage::Aim => match start {
             Some(at) if !out => on(at, facing(-at).unwrap_or(face)),
             _ => Pose::Gone,
@@ -822,14 +929,14 @@ fn pose(round: &KnockRound, played: Option<&Played>, seat: usize, clock: f64, fa
             _ => Pose::Gone,
         },
         KnockStage::Slide => {
-            let slid = played.filter(|played| played.turn == round.turn).and_then(|played| {
-                let at = played.slide.at(seat)?;
-                let going = played.slide.velocity(seat).unwrap_or(Vec2::ZERO).length();
-                Some((at, going))
-            });
+            let slid = played.and_then(|played| Some((played.slide.at(seat)?, played.slide.velocity(seat).unwrap_or(Vec2::ZERO))));
             match slid {
                 Some((at, _)) if at.y <= -rules::SUNK + 1e-3 => Pose::Gone,
-                Some((at, going)) => Pose::On { at, yaw: face, sliding: going > SLIDING_FROM && at.y > -0.05 },
+                Some((at, going)) => {
+                    let sliding = going.length() > SLIDING_FROM && at.y > -0.05;
+                    let yaw = if sliding { facing(going).unwrap_or(face) } else { face };
+                    Pose::On { at, yaw, sliding }
+                }
                 None => match start {
                     Some(at) if !out => on(at, face),
                     _ => Pose::Gone,
@@ -868,10 +975,12 @@ fn pose(round: &KnockRound, played: Option<&Played>, seat: usize, clock: f64, fa
 /// where the game puts it (`Frozen`, `placed`), on its spot, in the slide
 /// this device plays from the round, settled as the ice breaks, and hidden
 /// once in the sea (`Dead`, which `island` draws nowhere); posed for
-/// sliding while it slides. Each written only when it changes. The slide is
-/// begun here as the round says it began, and stepped to the town's clock.
+/// sliding while it slides, swung round to the way it slides. Each written
+/// only when it changes. The slide is begun here the moment it begins by
+/// the town's clock ([`slide_begins`]), and stepped to it.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn place(
+    time: Res<Time>,
     clock: Res<TownClock>,
     view: Res<TableView>,
     mut knock: ResMut<Knock>,
@@ -888,16 +997,10 @@ fn place(
     };
     let now = clock.now();
     let seats = round.start.len();
-    // The slide, as the round has it begin.
-    if round.stage == KnockStage::Slide && knock.slide.as_ref().is_none_or(|played| played.turn != round.turn) {
-        let start: Vec<Option<Vec2>> = round.start.iter().map(|at| at.map(|(x, z)| Vec2::new(x, z))).collect();
-        let launches: Vec<Vec2> = round.launches.iter().map(|&(x, z)| Vec2::new(x, z)).collect();
-        knock.slide = Some(Played {
-            turn: round.turn,
-            since: round.since,
-            slide: Slide::new(&start, &launches, round.radius),
-            hits_shown: 0,
-        });
+    if let Some(since) = slide_begins(&round, now)
+        && knock.slide.as_ref().is_none_or(|played| !played.is(&round, since))
+    {
+        knock.slide = Some(Played::of(&round, since));
     }
     if let Some(played) = &mut knock.slide
         && played.turn == round.turn
@@ -953,6 +1056,15 @@ fn place(
         let pose = pose(&round, knock.slide.as_ref(), seat, now, knock.faces[seat], knock.settle_from[seat]);
         match pose {
             Pose::On { at, yaw, sliding } => {
+                // Sliding, swung round to the way it goes, not snapped, and
+                // facing so as it slows.
+                let yaw = if sliding {
+                    let swung = turned(knock.faces[seat], yaw, SLIDING_TURN * time.delta_secs());
+                    knock.faces[seat] = swung;
+                    swung
+                } else {
+                    yaw
+                };
                 let pose_wanted = sliding.then_some(Landing {
                     squat: SLIDING_SQUAT,
                     arms: SLIDING_ARMS,
@@ -1026,6 +1138,7 @@ mod tests {
             launches: Vec::new(),
             ready: vec![false; 4],
             out: vec![None; 4],
+            places: vec![None; 4],
         }
     }
 
@@ -1115,14 +1228,7 @@ mod tests {
         game.step(1000.01 + f64::from(rules::REVEAL) + 0.001);
         let round = game.round();
         assert_eq!(round.stage, KnockStage::Slide);
-        let start: Vec<Option<Vec2>> = round.start.iter().map(|at| at.map(|(x, z)| Vec2::new(x, z))).collect();
-        let launches: Vec<Vec2> = round.launches.iter().map(|&(x, z)| Vec2::new(x, z)).collect();
-        let mut played = Played {
-            turn: 1,
-            since: round.since,
-            slide: Slide::new(&start, &launches, round.radius),
-            hits_shown: 0,
-        };
+        let mut played = Played::of(&round, round.since);
         // A second in, drawn where the game has them.
         let at = round.since + 1.0;
         game.step(at);
@@ -1155,5 +1261,122 @@ mod tests {
         };
         assert!(dropping.y < 0.0);
         assert_eq!(pose(&breaking, None, 2, 2001.5, 0.0, None), Pose::Gone);
+    }
+
+    #[test]
+    fn the_slide_begins_as_the_reveal_s_time_is_up_and_its_own_round_goes_on_with_it() {
+        // Four people sliding at the middle, as the game reveals it.
+        let mut game = Game::new(4, &[true; 4], 1);
+        game.begin(1000.0);
+        for seat in 0..4 {
+            game.aim(seat, -rules::arrival(seat).0.xz(), 6);
+            game.ready(seat);
+        }
+        game.step(1000.01);
+        let reveal = game.round();
+        assert_eq!(reveal.stage, KnockStage::Reveal);
+        // Not before its time is up; then, by the reveal's own round, from
+        // the moment it was up.
+        assert_eq!(slide_begins(&reveal, reveal.until - 0.01), None);
+        assert_eq!(slide_begins(&reveal, reveal.until + 0.05), Some(reveal.until));
+        let mut early = Played::of(&reveal, reveal.until);
+        // Drawn as the slide at once, where the game has everyone then.
+        let at = reveal.until + 0.15;
+        game.step(at);
+        early.slide.step_to((at - early.since) as f32);
+        for seat in 0..4 {
+            let Pose::On { at: drawn, sliding, .. } = pose(&reveal, Some(&early), seat, at, 0.0, None) else {
+                panic!("on the ice");
+            };
+            assert!(drawn.distance(game.at(seat).0) < 1e-5, "seat {seat}: {drawn} and {}", game.at(seat).0);
+            assert!(sliding, "seat {seat}");
+        }
+        // The slide's own round, a little after, is that very slide: it goes
+        // on, not begun again.
+        let slide = game.round();
+        assert_eq!(slide.stage, KnockStage::Slide);
+        assert_eq!(slide_begins(&slide, at), Some(slide.since));
+        assert!(early.is(&slide, slide.since));
+        // Unless someone left in the reveal's last moment: then it says
+        // other than the reveal did, and is begun from.
+        let mut changed = slide.clone();
+        changed.start[2] = None;
+        changed.launches[2] = (0.0, 0.0);
+        assert!(!early.is(&changed, changed.since));
+    }
+
+    #[test]
+    fn a_body_slides_facing_the_way_it_goes_and_swings_round_to_it() {
+        // Seat 0 set off sideways, across the way it faced; seat 2 stands.
+        let mut sliding = round(KnockStage::Slide);
+        sliding.launches = vec![(9.0, 0.0), (0.0, 0.0), (0.0, 0.0), (0.0, 0.0)];
+        let mut played = Played::of(&sliding, sliding.since);
+        played.slide.step_to(0.2);
+        let Pose::On { yaw, sliding: posed, .. } = pose(&sliding, Some(&played), 0, sliding.since + 0.2, 0.0, None) else {
+            panic!("on the ice");
+        };
+        assert!(posed);
+        let ahead = Quat::from_rotation_y(yaw) * Vec3::NEG_Z;
+        assert!(ahead.x > 0.999, "{ahead}");
+        // Standing, as it was.
+        let Pose::On { yaw, sliding: posed, .. } = pose(&sliding, Some(&played), 2, sliding.since + 0.2, 0.7, None) else {
+            panic!("on the ice");
+        };
+        assert!(!posed);
+        assert_eq!(yaw, 0.7);
+        // Swung round the short way (from 3 radians to -3 is on past a half
+        // turn, not back through none), no faster than it turns.
+        assert_eq!(turned(0.0, 2.5, 1.0), 1.0);
+        assert!((turned(3.0, -3.0, 10.0) - (std::f32::consts::TAU - 3.0)).abs() < 1e-5);
+        assert!((turned(1.0, 1.2, 1.0) - 1.2).abs() < 1e-6);
+    }
+
+    #[test]
+    fn ready_said_before_coming_back_is_ready_still() {
+        let mut knock = Knock::sit(1, true);
+        let mut aiming = round(KnockStage::Aim);
+        knock.round = Some(aiming.clone());
+        knock.aim = Aim {
+            turn: 1,
+            way: Vec2::X,
+            power: 7,
+            ..default()
+        };
+        ready_as_held(&mut knock);
+        assert!(!knock.aim.ready && knock.aiming());
+        // The round says you were: you are, with nothing more to send.
+        aiming.ready[1] = true;
+        knock.round = Some(aiming);
+        ready_as_held(&mut knock);
+        assert!(knock.aim.ready && !knock.aiming());
+        assert_eq!(knock.aim.sent, Some((Vec2::X, 7)));
+        assert_eq!(knock.aim.since_sent, f32::NEG_INFINITY);
+    }
+
+    #[test]
+    fn begun_afresh_at_the_same_table_out_and_watching_the_panel_stays_away() {
+        use bevy::ecs::system::RunSystemOnce;
+        let mut world = World::new();
+        world.init_resource::<Messages<table::Entered>>();
+        world.init_resource::<Messages<table::Gone>>();
+        world.init_resource::<Pressed>();
+        world.insert_resource(Knock {
+            watching: true,
+            ..Knock::sit(2, true)
+        });
+        let entered = |same_table: bool| table::Entered {
+            game: Minigame::KnockOff,
+            seat: 2,
+            online: true,
+            same_table,
+        };
+        world.write_message(entered(true));
+        world.run_system_once(enter).expect("entered");
+        assert!(world.resource::<Knock>().watching);
+        // Another table: begun afresh, its panel its own.
+        world.resource_mut::<Messages<table::Entered>>().clear();
+        world.write_message(entered(false));
+        world.run_system_once(enter).expect("entered");
+        assert!(!world.resource::<Knock>().watching);
     }
 }

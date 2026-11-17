@@ -10,7 +10,8 @@
 //! **Nothing here is a rule** (Hajun: "if some thing becomes a definite
 //! if-then, then its not a real human, but a program"): how long one
 //! stands, whether it then strolls, looks round or stands on, how far it
-//! goes and how fast, are each thrown afresh every time.
+//! goes and how fast, and how far in from the edge and how clear of
+//! everyone it wants to end up, are each thrown afresh every time.
 //!
 //! Only where each stands and which way it faces comes of it, which is all
 //! anyone is sent of a body.
@@ -21,14 +22,17 @@ use bevy::math::Vec2;
 
 use crate::bots::Dice;
 
-/// How far from the middle of the ice a stroll ends, in metres, at the
-/// most: well in from the edge, 12 out, so that nobody watching wonders
-/// whether it will walk off.
-const STROLL_WITHIN: f32 = 8.5;
+/// How far from the middle of the ice a stroll may end, in metres, thrown
+/// for each stroll from between these: well in from the edge, 12 out, so
+/// that nobody watching wonders whether it will walk off.
+const STROLL_WITHIN: (f32, f32) = (7.0, 9.5);
 /// How far a stroll goes, in metres, at the least and at the most.
 const STROLL: (f32, f32) = (1.2, 5.0);
-/// How far from everyone else a stroll ends, in metres, if there is room.
-const CLEAR: f32 = 1.6;
+/// How much room from everyone else a stroll looks for where it ends, in
+/// metres, thrown for each stroll from between these; and how little of
+/// that it settles for, rather than stand on, a share of it thrown too.
+const CLEAR: (f32, f32) = (1.2, 2.2);
+const SETTLES_FOR: (f32, f32) = (0.55, 0.95);
 /// How fast it strolls, in metres a second, at the least and at the most:
 /// a walk, a good deal slower than a run, so that the legs are seen to
 /// stroll.
@@ -176,14 +180,20 @@ impl Loiter {
 
     /// Somewhere a stroll from `from` ends: a few metres off, well in from
     /// the edge and clear of everyone; the best of a few thrown, or none
-    /// with nowhere near enough clear.
+    /// with nowhere near enough clear. How far in, how clear and how near
+    /// enough are each thrown afresh for every stroll (Hajun's rule for the
+    /// computer's players), so that whether one strolls, and where to, is
+    /// never one line drawn on the ice.
     fn somewhere(&mut self, seat: usize, from: Vec2, everyone: &[Option<Vec2>]) -> Option<Vec2> {
+        let within = self.dice.around(STROLL_WITHIN.0, STROLL_WITHIN.1);
+        let clear = self.dice.around(CLEAR.0, CLEAR.1);
+        let enough = clear * self.dice.around(SETTLES_FOR.0, SETTLES_FOR.1);
         let mut best: Option<(f32, Vec2)> = None;
         for _ in 0..8 {
             let angle = self.dice.between(0.0, TAU);
             let far = self.dice.between(STROLL.0, STROLL.1);
             let to = from + Vec2::from_angle(angle) * far;
-            if to.length() > STROLL_WITHIN {
+            if to.length() > within {
                 continue;
             }
             let room = everyone
@@ -196,11 +206,11 @@ impl Loiter {
             if best.is_none_or(|(most, _)| room > most) {
                 best = Some((room, to));
             }
-            if room >= CLEAR {
+            if room >= clear {
                 break;
             }
         }
-        best.filter(|(room, _)| *room >= CLEAR * 0.75).map(|(_, to)| to)
+        best.filter(|(room, _)| *room >= enough).map(|(_, to)| to)
     }
 }
 
@@ -234,9 +244,10 @@ mod tests {
                 for seat in 1..4 {
                     let (at, yaw) = loiter.step(seat, &everyone, 1.0 / 60.0).expect("on the ice");
                     assert!(yaw.is_finite());
-                    // Never past where a stroll may end, but from where it
-                    // stood on its spot, which is in from that.
-                    assert!(at.length() <= STROLL_WITHIN.max(7.0) + 1e-3, "seed {seed} seat {seat} at {at}");
+                    // Never past where a stroll may end at the furthest,
+                    // but from where it stood on its spot, which is in
+                    // from that.
+                    assert!(at.length() <= STROLL_WITHIN.1.max(7.0) + 1e-3, "seed {seed} seat {seat} at {at}");
                     let was = everyone[seat].expect("there");
                     if at.distance(was) > 1e-4 {
                         walked[seat] += at.distance(was);

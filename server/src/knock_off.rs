@@ -11,14 +11,17 @@
 //! that whatever it stamps a stage with ([`KnockRound`]: when an aim ends,
 //! when a slide begins) is the moment every device shows it at; it hears
 //! each person's aim and their word that they are ready; it moves the
-//! computer's players' bodies where the game has them; and it says who is
-//! out (`Seat::out`), and how everyone came, once one is left. What it
-//! sends the room is the round alone, whenever any of it changes: nobody's
-//! aim is in it before the reveal, and each device plays every slide out
-//! itself from the round's start and launches, to the bit as this did, and
-//! places every body itself, people's too, while the game is played (the
-//! device's `Frozen`), so that nothing of where anyone is goes over the
-//! network between the reveal and the next turn.
+//! computer's players' bodies where the game has them between slides; and
+//! it says who is out (`Seat::out`), and how everyone came, once one is
+//! left, or once nobody is left to play it for. What it sends the room is
+//! the round, whenever any of it changes: nobody's aim is in it before the
+//! reveal, and each device plays every slide out itself from the round's
+//! start and launches, to the bit as this did, and places every body
+//! itself, people's too, while the game is played (the device's `Frozen`),
+//! so that nothing of where anyone is goes over the network while everyone
+//! slides: the computer's bodies are sent where each stands as a turn
+//! begins, turns to the way it will go, and comes to rest, and nobody's
+//! between.
 //!
 //! While the table waits the computer's players come out onto the ice one
 //! at a time, as Bridge Wars' come into its waiting room, and stand about
@@ -27,10 +30,25 @@
 //! everyone on their spot.
 
 use bevy::prelude::*;
-use roundtown_net::knock_off::{self, Event, Game, KnockRound, Loiter};
+use roundtown_net::knock_off::{self, Event, Game, KnockRound, KnockStage, Loiter};
 use roundtown_net::{Ask, Tell};
 
 use crate::tables::{Ctx, Rules, Table, name, yaw_of};
+
+/// How far on by the clock the rest of a game is played at once, nobody
+/// being left to play it for, in seconds: a day, which the rules pass
+/// through in one step to the end of any game (`Game::step`), as a device
+/// offline does when you leave once you are out.
+const PLAYED_OUT: f64 = 86_400.0;
+
+/// How long a table goes on with nobody connected to it while every person
+/// at it is in the sea, their places settled, before the rest of its game
+/// is played at once and everyone paid, in seconds (mine). The tables give
+/// up a table nobody has been connected to for a minute, paying nobody
+/// (`tables::ABANDONED`): an app put away once you are out, the computer's
+/// players playing on without you, would lose your place's coins with it.
+/// A few seconds first, for a connection that is only lost a moment.
+const UNWATCHED_PLAY_OUT: f32 = 10.0;
 
 /// A game of Knock Off at its table: the game, once it has begun; the
 /// computer's players strolling about the ice until then; and the round as
@@ -86,6 +104,27 @@ impl KnockOff {
                 }
                 Event::Reveal | Event::Slide | Event::Breaks { .. } => {}
             }
+        }
+    }
+
+    /// The rest of the game played at once, nobody being left to play it
+    /// for, and the table told how everyone came (`Table::finish`), so that
+    /// whoever is in the sea is paid for where they came: whoever left in
+    /// this frame too out as they went, and the computer's players, alone
+    /// on the ice, playing on to the end in a step, as the rules do a stall
+    /// of any length (the same as a device offline does when you leave once
+    /// you are out).
+    fn play_out(game: &mut Game, ctx: &Ctx, table: &mut Table) {
+        for seat in 0..table.seats.len() {
+            if table.seats[seat].person() && table.seats[seat].gone {
+                game.leave(seat);
+            }
+        }
+        let events = game.step(ctx.clock + PLAYED_OUT);
+        Self::carry_out(table, events);
+        if let Some((places, scores, total)) = game.outcome() {
+            info!("{} table {}: nobody is left to play it for, and it is played out at once", name(table.game), table.id);
+            table.finish(places, scores, total);
         }
     }
 
@@ -153,41 +192,53 @@ impl Rules for KnockOff {
 
     /// The game on, to the clock: the computer's players' bodies where it
     /// has them, what it came to carried out, and once one is left, or
-    /// nobody, the table told how everyone came.
+    /// nobody, the table told how everyone came. Every person in the sea
+    /// and none of them connected a while ([`UNWATCHED_PLAY_OUT`]), there
+    /// is nobody to show the rest to, and it is played at once.
     fn step(&mut self, ctx: &mut Ctx, table: &mut Table, _dt: f32) {
         let Some(game) = &mut self.game else {
             return;
         };
         let events = game.step(ctx.clock);
-        for seat in 0..table.seats.len() {
-            if table.seats[seat].computer {
-                let (at, yaw) = game.at(seat);
-                table.at[seat] = at;
-                table.yaw[seat] = yaw;
+        // The computer's bodies where the game has them, but while everyone
+        // slides: each device plays the slide out itself and places every
+        // body (`Frozen`), so where they are as they go would be sent to
+        // nobody who looks; they are sent where it left them as the ice
+        // breaks.
+        if game.stage() != KnockStage::Slide {
+            for seat in 0..table.seats.len() {
+                if table.seats[seat].computer {
+                    let (at, yaw) = game.at(seat);
+                    table.at[seat] = at;
+                    table.yaw[seat] = yaw;
+                }
             }
         }
         Self::carry_out(table, events);
         if let Some((places, scores, total)) = game.outcome() {
             table.finish(places, scores, total);
+            return;
+        }
+        let in_the_sea = (0..table.seats.len()).all(|seat| !table.seats[seat].person() || !game.in_play_at(seat));
+        if in_the_sea && table.unwatched >= UNWATCHED_PLAY_OUT {
+            Self::play_out(game, ctx, table);
         }
     }
 
     /// Each person's aim as it changes, and their word that they are ready;
-    /// for trying the game out (`RT_ALLOW_SKIP`), a skip, which has everyone
-    /// still on the ice ready, so that the aim is over at once; and before
-    /// the game, someone who has gone into the sea stood back on their spot
-    /// (they wade there, with no jump to climb out by: Knock Off has none).
+    /// and before the game, someone who has gone into the sea stood back on
+    /// their spot (they wade there, with no jump to climb out by: Knock Off
+    /// has none). A skip (`RT_ALLOW_SKIP`) is the table's alone, for its
+    /// wait and its countdown (mine): in play Ready is the game's own skip,
+    /// and a tap on the board meant for the countdown that lands as play
+    /// begins is to end nobody's aim, as it ended everyone's when a skip in
+    /// play had everyone ready.
     fn hear(&mut self, ctx: &mut Ctx, table: &mut Table, seat: usize, ask: &Ask) {
         match (ask, &mut self.game) {
             (Ask::KnockOff(knock_off::Ask::Aim { x, z, power }), Some(game)) => {
                 game.aim(seat, Vec2::new(*x, *z), *power);
             }
             (Ask::KnockOff(knock_off::Ask::Ready), Some(game)) => game.ready(seat),
-            (Ask::Skip, Some(game)) => {
-                for anyone in 0..table.seats.len() {
-                    game.ready(anyone);
-                }
-            }
             (Ask::Respawn, None) => {
                 let (at, yaw) = self.waiting_spot(table, seat);
                 ctx.place(table, seat, at, yaw);
@@ -197,11 +248,19 @@ impl Rules for KnockOff {
     }
 
     /// Whoever has left for good is out of the game as they go, in the turn
-    /// they go in (`Game::leave`): their place is kept and paid.
-    fn left(&mut self, _ctx: &mut Ctx, table: &mut Table, seat: usize, _body: Option<Entity>) {
+    /// they go in (`Game::leave`): their place is kept and paid. Once the
+    /// last person has gone, the computer's players play the rest of it at
+    /// once and everyone is paid as they came ([`KnockOff::play_out`]):
+    /// otherwise the table, with nobody at it, would close as it is, paying
+    /// nobody (Hajun: "If you are out, you can spectate or exit"; the panel
+    /// says "Your place is kept").
+    fn left(&mut self, ctx: &mut Ctx, table: &mut Table, seat: usize, _body: Option<Entity>) {
         if let Some(game) = &mut self.game {
             game.leave(seat);
             info!("{} table {}: seat {seat} left the game", name(table.game), table.id);
+            if table.playing() && table.people() == 0 {
+                Self::play_out(game, ctx, table);
+            }
         }
     }
 
@@ -414,6 +473,8 @@ mod tests {
         // everyone came.
         let mut stages = vec![(first.turn, first.stage)];
         let mut seconds = 0.0;
+        let mut before_the_slide = Vec::new();
+        let mut slid = 0;
         while !world.resource::<Played>().table.over() {
             assert!(seconds < 400.0, "never over: {stages:?}");
             frame(&mut world, 1.0 / 30.0);
@@ -423,16 +484,29 @@ mod tests {
                 stages.push((round.turn, round.stage));
             }
             let played = world.resource::<Played>();
+            let game = played.rules.game.as_ref().expect("a game");
             for seat in 0..4 {
                 if round.out[seat].is_some() {
                     assert!(played.table.seats[seat].out, "seat {seat} went in and is out: {round:?}");
                 }
-                // The computer's bodies where the game has them.
-                if played.table.seats[seat].computer {
-                    assert_eq!(played.table.at[seat], played.rules.game.as_ref().expect("a game").at(seat).0);
+            }
+            // The computer's bodies where the game has them, but while
+            // everyone slides: then where they stood as it began, sent
+            // nobody as they go, every device placing them itself.
+            if game.stage() == KnockStage::Slide {
+                if before_the_slide.is_empty() {
+                    before_the_slide = played.table.at.clone();
+                    slid += 1;
+                }
+                assert_eq!(played.table.at, before_the_slide, "{round:?}");
+            } else {
+                before_the_slide.clear();
+                for seat in (0..4).filter(|&seat| played.table.seats[seat].computer) {
+                    assert_eq!(played.table.at[seat], game.at(seat).0, "seat {seat}");
                 }
             }
         }
+        assert!(slid > 0, "{stages:?}");
         assert_eq!(stages[1].1, KnockStage::Reveal, "{stages:?}");
         assert_eq!(stages.last().map(|stage| stage.1), Some(KnockStage::Over));
         let played = world.resource::<Played>();
@@ -497,8 +571,8 @@ mod tests {
     }
 
     #[test]
-    fn a_skip_ends_the_aim_at_once_and_a_fall_before_the_game_is_put_back() {
-        let (mut world, clients) = table(1, 3);
+    fn a_skip_in_play_ends_nobody_s_aim_and_a_fall_before_the_game_is_put_back() {
+        let (mut world, clients) = table(2, 3);
         // Before the game: into the sea, and back on the spot.
         act(&mut world, |rules, ctx, table| {
             table.stage = Stage::Waiting { since_join: 0.0, coming: None };
@@ -512,9 +586,155 @@ mod tests {
         });
         frame(&mut world, 1.0);
         assert_eq!(sent_round(&world).expect("the round").stage, KnockStage::Aim);
+        // A skip as play begins (a tap on the board meant for the
+        // countdown): nobody's aim is over, and nobody is ready by it.
         act(&mut world, |rules, ctx, table| rules.hear(ctx, table, 0, &Ask::Skip));
         frame(&mut world, 1.0 / 60.0);
+        let round = sent_round(&world).expect("the round");
+        assert_eq!(round.stage, KnockStage::Aim);
+        assert!(!round.ready[0] && !round.ready[1], "{round:?}");
+        // Ready, the game's own, from both: over at once.
+        act(&mut world, |rules, ctx, table| {
+            rules.hear(ctx, table, 0, &Ask::KnockOff(knock_off::Ask::Ready));
+            rules.hear(ctx, table, 1, &Ask::KnockOff(knock_off::Ask::Ready));
+        });
+        frame(&mut world, 1.0 / 60.0);
         assert_eq!(sent_round(&world).expect("the round").stage, KnockStage::Reveal);
+    }
+
+    /// Plays the table on, a tenth of a second a frame, until the person in
+    /// seat 0 is aiming again, or in the sea, or it is over: the round then.
+    fn to_the_next_aim(world: &mut World) -> KnockRound {
+        let mut seconds = 0.0;
+        loop {
+            frame(world, 0.1);
+            seconds += 0.1;
+            let round = sent_round(world).expect("the round");
+            let over = world.resource::<Played>().table.over();
+            if over || round.out[0].is_some() || (round.stage == KnockStage::Aim && round.ready.first() == Some(&false)) {
+                return round;
+            }
+            assert!(seconds < 60.0, "{round:?}");
+        }
+    }
+
+    /// A table of one person and the computer, played until the person, who
+    /// stands still while the computer's players knock each other about, has
+    /// slid into the sea on purpose with one of them gone in before them and
+    /// two still on the ice: third. From the first of the seeds from `from`
+    /// to play out so; and the round as the person went in.
+    fn third_with_two_on_the_ice(from: u64) -> (World, KnockRound) {
+        for seed in from..from + 200 {
+            let (mut world, _) = table(1, seed);
+            act(&mut world, |rules, ctx, table| rules.begin(ctx, table));
+            loop {
+                let round = to_the_next_aim(&mut world);
+                if world.resource::<Played>().table.over() || round.out[0].is_some() {
+                    break;
+                }
+                match round.out[1..].iter().filter(|out| out.is_some()).count() {
+                    // Standing still, until one of them has gone in.
+                    0 => act(&mut world, |rules, ctx, table| rules.hear(ctx, table, 0, &Ask::KnockOff(knock_off::Ask::Ready))),
+                    // Then off the ice, straight out from the middle, as
+                    // hard as there is.
+                    1 => {
+                        act(&mut world, |rules, ctx, table| {
+                            let out = rules.game.as_ref().expect("a game").at(0).0;
+                            rules.hear(ctx, table, 0, &Ask::KnockOff(knock_off::Ask::Aim { x: out.x, z: out.z, power: knock_off::MOST_POWER }));
+                            rules.hear(ctx, table, 0, &Ask::KnockOff(knock_off::Ask::Ready));
+                        });
+                        // Until the slide is over: the ice about to break,
+                        // or the game over.
+                        let mut round = sent_round(&world).expect("the round");
+                        while round.stage != KnockStage::Break && !world.resource::<Played>().table.over() {
+                            frame(&mut world, 0.1);
+                            round = sent_round(&world).expect("the round");
+                        }
+                        let third = round.places[0] == Some(2) && round.places.iter().filter(|&&place| place == Some(2)).count() == 1;
+                        let on_the_ice = round.out[1..].iter().filter(|out| out.is_none()).count();
+                        if third && on_the_ice == 2 && !world.resource::<Played>().table.over() {
+                            return (world, round);
+                        }
+                        break;
+                    }
+                    _ => break,
+                }
+            }
+        }
+        panic!("no seed from {from} put the person in third, two on the ice");
+    }
+
+    #[test]
+    fn the_last_person_to_go_has_the_rest_played_at_once_and_is_paid_for_their_place() {
+        // Third, two of the computer's still on the ice, and they leave (the
+        // panel's Leave, another game, or their device given up): the table
+        // has nobody at it, and the computer's players play the rest at
+        // once, so that it is over, the person paid as they came, before
+        // the table closes as it does with nobody at it ("your place kept
+        // and paid", which the tables pay, `tables::run`).
+        let (mut world, round) = third_with_two_on_the_ice(0);
+        assert_eq!(round.stage, KnockStage::Break, "{round:?}");
+        act(&mut world, |rules, ctx, table| {
+            let it = &mut table.seats[0];
+            it.gone = true;
+            it.away = false;
+            it.body = Entity::PLACEHOLDER;
+            assert_eq!(table.people(), 0);
+            rules.left(ctx, table, 0, None);
+        });
+        let played = world.resource::<Played>();
+        assert!(played.table.over(), "played out and over");
+        let results = played.table.results.clone().expect("how it came out");
+        let (places, scores, _) = played.rules.game.as_ref().expect("the game").outcome().expect("over");
+        assert_eq!((results.places.clone(), results.scores.clone()), (places, scores));
+        assert_eq!(results.places[0], 2, "{results:?}");
+        assert_eq!(results.prizes, vec![10, 0, 0, 0], "{results:?}");
+        assert!(played.table.seats[1..].iter().filter(|it| it.out).count() >= 2, "the computer played on to the end");
+    }
+
+    #[test]
+    fn every_person_in_the_sea_and_nobody_connected_a_while_has_the_rest_played_at_once() {
+        // Third, two of the computer's still on the ice, the person's app
+        // put away: while it is a moment, the computer's players play on at
+        // their own pace (whoever comes back sees the rest); once nobody has
+        // been connected a while, the rest is played at once, and the
+        // person paid as they came, not lost with the table the tables give
+        // up after a minute with nobody connected.
+        let (mut world, round) = third_with_two_on_the_ice(0);
+        let turn = round.turn;
+        act(&mut world, |_, _, table| {
+            table.seats[0].away = true;
+            table.unwatched = UNWATCHED_PLAY_OUT * 0.5;
+        });
+        frame(&mut world, 0.1);
+        assert!(!world.resource::<Played>().table.over());
+        // Someone back: not, however long it has been.
+        act(&mut world, |_, _, table| {
+            table.seats[0].away = false;
+            table.unwatched = 0.0;
+        });
+        frame(&mut world, 0.1);
+        assert!(!world.resource::<Played>().table.over());
+        assert_eq!(world.resource::<Played>().rules.game.as_ref().expect("a game").turn(), turn);
+        act(&mut world, |_, _, table| {
+            table.seats[0].away = true;
+            table.unwatched = UNWATCHED_PLAY_OUT;
+        });
+        frame(&mut world, 0.1);
+        let played = world.resource::<Played>();
+        assert!(played.table.over(), "played out and over");
+        let results = played.table.results.clone().expect("how it came out");
+        assert_eq!((results.places[0], results.prizes[0]), (2, 10), "{results:?}");
+        // With a person still on the ice, their device gone a while, it
+        // plays on: they may be back, and the table's minute is theirs.
+        let (mut world, _) = table(1, 4);
+        act(&mut world, |rules, ctx, table| rules.begin(ctx, table));
+        act(&mut world, |_, _, table| {
+            table.seats[0].away = true;
+            table.unwatched = UNWATCHED_PLAY_OUT * 3.0;
+        });
+        frame(&mut world, 0.1);
+        assert!(!world.resource::<Played>().table.over());
     }
 
     #[test]
