@@ -131,6 +131,24 @@
 //! Everything the game puts in the world or on the screen carries
 //! [`InArena`] and goes when the game does. Your own body is the only thing
 //! that comes back.
+//!
+//! **Since 2026-11-18 its kit is any fight's** (Hajun: "add these
+//! minigames: Blend In, Knock Off, Bridge Race, Last Stand"; Bridge Race and
+//! Last Stand play "with similar controls and cam with bridge wars"): the
+//! bridges, the dynamite and the fireballs, the buttons for things to use,
+//! the shops, what lies about, the swords and shields, the punch's range,
+//! the names and bars over heads, the numbers off bodies and the lines
+//! across the screen go by the fight being played, whichever game it is,
+//! and where it is ([`Fighting::venue`]), not by this game alone. One
+//! fight owns the state they go by at a time ([`Fighting`],
+//! [`OfflineArena`], [`Outfit`], [`FightTime`], [`Resources`], [`Wears`]):
+//! this game while it is here, writing what it has as it changes and, the
+//! frame it goes, that none is, once ([`publish`], [`dress`]); and another
+//! game while it is played, the same way, this one touching none of it
+//! meanwhile. Each game's number comes from the one count ([`Begun`]). What
+//! another game calls here is [`Health`], [`spawn_number`],
+//! [`spawn_healed`], [`alert`] and [`Line`], [`DeathWords`], [`NoBar`],
+//! [`clock`], [`bar_width`], [`on_screen`] and [`feed_line_by`].
 
 
 #[cfg(test)]
@@ -263,7 +281,17 @@ const MOST_METRES: f32 = 5000.0;
 /// in metres, and over the island's top.
 const ANCHOR_REACH: f32 = 1.3;
 
-/// Everything a game has put in the world or on the screen, to go with it.
+/// Everything a fight has put in the world or on the screen, to go with it:
+/// **every fight game's end despawns it**, Bridge Wars' ([`finish`]) and
+/// any other's played with this kit (since 2026-11-18, Hajun: "add these
+/// minigames: Blend In, Knock Off, Bridge Race, Last Stand"), which puts
+/// it on what it spawns itself and finds it on what the kit spawns for it:
+/// the bridges' falling planks (`bridge`), a stick of dynamite and its
+/// blast (`dynamite`, `fire`), what lies about (`loot`), a shop's window
+/// (`market`), the count of a drink and of being unseen (`utility`), the
+/// blindfold (`gear`), the sparks of a potion (`trail`), and from here the
+/// names over heads, the numbers off bodies, the lines across the screen
+/// and the words while you are dead.
 #[derive(Component)]
 pub(crate) struct InArena;
 
@@ -285,11 +313,15 @@ pub(crate) enum Ask {
 #[derive(Component, Clone, Copy)]
 struct AsksFor(Ask);
 
-/// A body's health in a game of Bridge Wars: how much is left of what it
-/// started with, and how long since it was last hit, after which it comes
-/// back ([`regen`]). Yours is the bar under your name (`hud`), everyone
-/// else's the bar over their head ([`TagOf`]). Online it is the server's
-/// ([`follow_round`]).
+/// A body's health in a fight: how much is left of what it started with,
+/// and how long since it was last hit, after which it comes back
+/// ([`regen`], [`Health::recover`]). Yours is the bar under your name
+/// (`hud`), everyone else's the bar over their head ([`TagOf`]), and a
+/// number floats off whoever loses or is given some ([`spawn_number`],
+/// [`spawn_healed`]). In Bridge Wars online it is the server's
+/// ([`follow_round`]); offline this device's. Any fight's bodies may carry
+/// one (since 2026-11-18): Last Stand's people and zombies, whose game
+/// takes and gives it by these same few ways.
 #[derive(Component, Debug)]
 pub(crate) struct Health {
     left: f32,
@@ -300,9 +332,19 @@ pub(crate) struct Health {
 impl Health {
     /// All of it, as a body starts and stands again: the file's
     /// `arena.health` offline, the server's online.
-    fn of(full: f32) -> Self {
+    pub(crate) fn of(full: f32) -> Self {
         Self {
             left: full,
+            full,
+            since_hit: 0.0,
+        }
+    }
+
+    /// `left` of `full`, as the server says a body has, online: to put on a
+    /// body that had none ([`follow_round`] does this for Bridge Wars).
+    pub(crate) fn at(left: f32, full: f32) -> Self {
+        Self {
+            left,
             full,
             since_hit: 0.0,
         }
@@ -313,14 +355,27 @@ impl Health {
         (self.left / self.full).clamp(0.0, 1.0)
     }
 
+    /// How much is left, and how much there is when it is all there: for
+    /// another fight's game to compare the server's word with before it
+    /// writes it (writing a `Mut` marks it changed).
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn left(&self) -> f32 {
+        self.left
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn full(&self) -> f32 {
+        self.full
+    }
+
     /// Takes `damage` off it, to nothing at the least.
-    fn take(&mut self, damage: f32) {
+    pub(crate) fn take(&mut self, damage: f32) {
         self.left = (self.left - damage).max(0.0);
         self.since_hit = 0.0;
     }
 
     /// Gives `amount` back, up to full: whether there was any to give.
-    fn mend(&mut self, amount: f32) -> bool {
+    pub(crate) fn mend(&mut self, amount: f32) -> bool {
         if self.left >= self.full {
             return false;
         }
@@ -329,15 +384,28 @@ impl Health {
     }
 
     /// None left: dead.
-    fn gone(&self) -> bool {
+    pub(crate) fn gone(&self) -> bool {
         self.left <= 0.0
+    }
+
+    /// Gives back `per_sec` a second of it, `dt` seconds' worth, once
+    /// nobody has hit the body for `after` seconds: the while counted
+    /// without marking the health changed, so that a bar at rest is left
+    /// alone, and only health given back marks it ([`regen`] goes by the
+    /// file's `arena.regen_after` and `regen_per_sec`).
+    pub(crate) fn recover(health: &mut Mut<Health>, dt: f32, after: f32, per_sec: f32) {
+        let timer = health.bypass_change_detection();
+        timer.since_hit += dt;
+        if timer.since_hit >= after && timer.left < timer.full {
+            health.mend(per_sec * dt);
+        }
     }
 }
 
 /// How full a health bar is drawn, in steps of half a percent, so that
 /// health coming back a little every frame does not have the screen laid
-/// out again every frame.
-fn bar_width(share: f32) -> Val {
+/// out again every frame: for any fight's bars.
+pub(crate) fn bar_width(share: f32) -> Val {
     Val::Percent((share.clamp(0.0, 1.0) * 200.0).round() * 0.5)
 }
 
@@ -402,6 +470,15 @@ const MOST_BOT_RUNGS: usize = 600;
 /// you hold of each thing the generators make, counted top left (`hud`):
 /// offline what you have picked up ([`gather`]), online what the server
 /// says you hold ([`Purses`]). Dying loses all of it ([`lose_on_death`]).
+///
+/// **Any fight may own it** (since 2026-11-18): Bridge Wars while its game
+/// is here, and another game while it is played (Bridge Race its metres,
+/// granted as it goes; Last Stand its purse), each setting it as its game
+/// begins and writing it only as it changes; the bridges spend whatever
+/// metres it holds (`bridge::lay`), and `hud` and `market` show it. Bridge
+/// Wars touches it only while its own game is here, so another game's is
+/// never undone; a game that ends leaves it as it was, the next to begin
+/// setting it afresh.
 #[derive(bevy::prelude::Resource, Default, Clone, Copy, PartialEq, Debug)]
 pub(crate) struct Resources {
     pub bridge_metres: f32,
@@ -423,10 +500,21 @@ impl Resources {
 
 /// A zombie of sudden death (`rules::ZOMBIES`): a body on nobody's team
 /// (`rules::ZOMBIE_TEAM`), in a seat past the players', drawn green
-/// ([`paint_zombies`]). Offline this device moves it, as it does the
-/// bots; online the server does.
+/// ([`paint_zombies`]), with no bar over its head ([`NoBar`]: nothing hurts
+/// one). Offline this device moves it, as it does the bots; online the
+/// server does. Any body marked so is painted green, whichever fight it is
+/// in.
 #[derive(Component)]
 pub(crate) struct Zombie;
+
+/// A body in a fight with its name over its head and no bar under it
+/// ([`place_tags`]): Bridge Wars' zombies, which nothing hurts (until
+/// 2026-11-18 told by their team, `rules::ZOMBIE_TEAM`); and whatever
+/// body of another fight its game marks so, with or without [`Health`],
+/// such as Bridge Race's, where nobody has any (mine: a name over a head
+/// wants no health to go with it).
+#[derive(Component, Default)]
+pub(crate) struct NoBar;
 
 /// What a body in a game of Bridge Wars has on it that is to be seen
 /// (since 2026-11-12, `gear`): the sword in its hand and the shield round
@@ -436,6 +524,13 @@ pub(crate) struct Zombie;
 /// potion, each of which leaves sparks behind it (`trail`). On every body
 /// in a game that is on ([`dress`]), from the game's kits: this device's
 /// offline, the server's online.
+///
+/// **Any fight may put it on bodies** (since 2026-11-18): Bridge Wars
+/// while its own game is here, taking every one off once as that goes and
+/// never touching it while another game is played; Blend In's seekers'
+/// aura sword, Last Stand's swords and shields. Whoever puts it on inserts
+/// it only as it changes (an insert re-poses nothing, but `gear` arms the
+/// body again), and takes it off as its game ends.
 #[derive(Component, Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub(crate) struct Wears {
     pub(crate) sword: u8,
@@ -446,7 +541,17 @@ pub(crate) struct Wears {
 }
 
 /// What you have yourself, and what your team has bought, for the shops
-/// (`market`) and the second button (`utility`): nothing out of a game.
+/// (`market`) and the buttons for things to use (`utility`), your pace on
+/// a potion (`read_player_input`) and the blindfold (`gear`): nothing out
+/// of a game.
+///
+/// **Any fight may own it** (since 2026-11-18): Bridge Wars while its game
+/// is here ([`dress`]), and another game while it is played, its own kit
+/// in it (Bridge Race's sticks of dynamite on a button, Last Stand's
+/// swords, shields and potions), written only as it changes
+/// (`set_if_neq`: the shop's window is put up again on any change). Each
+/// writes the "no game" state, `Outfit::default()`, once, as its game
+/// goes; Bridge Wars writes nothing while another game is played.
 #[derive(bevy::prelude::Resource, Clone, Copy, PartialEq, Debug, Default)]
 pub(crate) struct Outfit {
     pub(crate) kit: Kit,
@@ -454,13 +559,17 @@ pub(crate) struct Outfit {
 }
 
 /// How far into the fight it is, in seconds: what a potion's time left is
-/// counted from. Online it is the server's, to the second.
+/// counted from. Online it is the server's, to the second. Any fight may
+/// own it, as it does [`Outfit`]: written only as it changes, and set to
+/// nothing once as its game goes.
 #[derive(bevy::prelude::Resource, Default)]
 pub(crate) struct FightTime(pub(crate) f32);
 
 /// You want to buy this, standing at a shop (`market`): out of what you
-/// hold here, offline, or asked of the server.
-#[derive(Message, Clone, Copy)]
+/// hold here, offline, or asked of the server. Written by a card of Bridge
+/// Wars' wares, wherever it is pressed (`market::Pick::Ware`); another
+/// game's own wares are asked for as `market::Picked`.
+#[derive(Message, Clone, Copy, PartialEq, Debug)]
 pub(crate) struct Want(pub(crate) Ware);
 
 /// You have used what is on one of your buttons (`utility`): a fireball
@@ -876,6 +985,18 @@ impl Game {
 /// not your name on its plate (`hud`), nor a name in the chat (`chat`),
 /// nor over a head ([`place_tags`]), nor is your teammate on the map
 /// (`minimap`).
+///
+/// **One fight owns it at a time** (since 2026-11-18, when the four games
+/// came that play with Bridge Wars' kit): Bridge Wars while its game is
+/// here ([`publish`]), or another game while it is played, which says the
+/// same of itself and its own venue ([`Fighting::venue`]). The kit goes by
+/// it wherever it is (`bridge`, `dynamite`, `utility`, `market`, `loot`,
+/// `gear`, `compass`, `trail`). Whoever owns it writes it only as it
+/// changes, and once more as its game goes, the "no game" state, which
+/// keeps the number of the last game (`Fighting { game, ..default() }`,
+/// so that what was that game's is not taken for the next one's); and
+/// Bridge Wars writes nothing while another game is played. Every game's
+/// number comes from the one count ([`Begun::next`]).
 #[derive(bevy::prelude::Resource, Default, PartialEq)]
 pub(crate) struct Fighting {
     pub(crate) playing: bool,
@@ -887,16 +1008,126 @@ pub(crate) struct Fighting {
     /// The computer is playing it alone, your seat too, to be watched
     /// (`watch`): no shop opens for where your seat's player stands.
     pub(crate) watched: bool,
+    /// Where the fight is: the venue of the game being played, whichever
+    /// game it is, from its waiting room to its end (Bridge Wars'
+    /// [`Venue::Arena`]); none out of a game. What the kit asks where it
+    /// once asked for `Venue::Arena`: a plank is laid, a shop opens, a
+    /// button is used, only by someone standing on it.
+    pub(crate) venue: Option<Venue>,
+    /// The team each seat is on, by seat, as `members` is: what a name in
+    /// the chat is written in the colour of once the teams are out
+    /// (`chat`, [`Fighting::team_of_member`]). Bridge Wars' seat modulo
+    /// four ([`publish`], `arena_team`); another game's by its own rule,
+    /// Bridge Race's seat modulo two, Last Stand's one team; and empty
+    /// where a game's seats have no teams to colour, whose names are then
+    /// written in the colour of names (since 2026-11-18; until then every
+    /// name was coloured by Bridge Wars' rule, which would have put Bridge
+    /// Race's third and fourth seats in green and yellow).
+    pub(crate) teams: Vec<u8>,
 }
 
-/// A game of Bridge Wars is being played offline: nothing goes online in
-/// the middle of it (`net`).
+impl Fighting {
+    /// The fight's state as its game goes, and out of a game: nothing on,
+    /// nowhere, the number of the last game kept (`bridge` clears that
+    /// game's bridges by it).
+    pub(crate) fn none(game: u32) -> Self {
+        Fighting { game, ..default() }
+    }
+
+    /// The team the seat `seat` is on, if its game says ([`Fighting::teams`]).
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn team_of(&self, seat: usize) -> Option<u8> {
+        self.teams.get(seat).copied()
+    }
+
+    /// The team of whoever has the id `who` in the fight, by their seat
+    /// among its members, if they are in it and its game says
+    /// ([`Fighting::teams`]): for the chat to write their name in its
+    /// colour once the teams are out.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn team_of_member(&self, who: u64) -> Option<u8> {
+        let seat = self.members.iter().position(|member| *member == who && who != 0)?;
+        self.team_of(seat)
+    }
+
+    /// Where something the server sends of the fight is put, online (a
+    /// stick of dynamite, a fireball, its blast, a thing lying about): on
+    /// the fight's venue. In the frame or two before that has been said,
+    /// which is when a device put back into a game under way is sent what
+    /// is in it (`Tell::Back`, a table's `Tell::Entered`: replicon brings
+    /// what is in a room no later than the word of it, and maybe sooner),
+    /// on the venue you stand on if a fight is played there, and otherwise
+    /// on Bridge Wars' map, where everything the server sent of a fight was
+    /// put until 2026-11-18; never where no fight is, the town, where it
+    /// would be drawn among its people. Whatever is put there on that guess
+    /// is moved onto the fight's venue as soon as it is said
+    /// ([`Fighting::settle_later`], [`settle`]).
+    pub(crate) fn served_on(&self, here: Option<Venue>) -> Venue {
+        self.venue.or(here.filter(|&here| island::fights(here))).unwrap_or(Venue::Arena)
+    }
+
+    /// Marks `thing`, made just now from the server's word of the fight
+    /// where [`Fighting::served_on`] put it, to be moved onto the fight's
+    /// venue once that is said ([`Unsettled`]), if it has not been yet.
+    pub(crate) fn settle_later(&self, commands: &mut Commands, thing: Entity) {
+        if self.venue.is_none() {
+            commands.entity(thing).insert(Unsettled);
+        }
+    }
+}
+
+/// Something made from the server's word of a fight before this device
+/// knew where the fight was, put where [`Fighting::served_on`] guessed
+/// (since 2026-11-18): moved onto the fight's venue as soon as that is
+/// said ([`settle`]). Bridge Wars' guess is its own map, which is where
+/// all of it always went; another game's is set right a frame or two
+/// later.
+#[derive(Component)]
+pub(crate) struct Unsettled;
+
+/// Moves whatever was made from the server's word of a fight before this
+/// device knew where the fight was ([`Unsettled`]) onto the fight's venue,
+/// as soon as that is said, its venue written only if it was another.
+/// Nothing is marked so but in the frame or two after a device is put
+/// back into a game under way, so that this finds nothing on any other.
+fn settle(fighting: Res<Fighting>, unsettled: Query<(Entity, &Venue), With<Unsettled>>, mut commands: Commands) {
+    let Some(venue) = fighting.venue else {
+        return;
+    };
+    for (thing, &was) in &unsettled {
+        let mut thing = commands.entity(thing);
+        thing.try_remove::<Unsettled>();
+        if was != venue {
+            thing.try_insert(venue);
+        }
+    }
+}
+
+/// A game is being played offline: nothing goes online in the middle of
+/// it (`net`). Bridge Wars' since 2026-11-08, and **any fight's** since
+/// 2026-11-18: whichever game plays offline sets it as it begins and takes
+/// it off once as it ends, writing only what changed; Bridge Wars touches
+/// it only while its own game is here.
 #[derive(bevy::prelude::Resource, Default, PartialEq)]
 pub(crate) struct OfflineArena(pub bool);
 
-/// How many games have been begun on this device.
+/// How many games have been begun on this device: of any fight, the one
+/// count every game's number comes from ([`Fighting::game`]), so that two
+/// games, of whatever kind, never share a number (since 2026-11-18; until
+/// then Bridge Wars' own). What is kept by a game's number, its bridges
+/// (`bridge::Bridges::game`) and what the server sent for it
+/// (`bridge::hear_planks`, `dynamite::hear_blasts`), is never taken for
+/// another's.
 #[derive(bevy::prelude::Resource, Default)]
-struct Begun(u32);
+pub(crate) struct Begun(u32);
+
+impl Begun {
+    /// The number of a game begun now: one more than the last.
+    pub(crate) fn next(&mut self) -> u32 {
+        self.0 += 1;
+        self.0
+    }
+}
 
 /// The waiting room, as the map has it: the middle of the box across the
 /// ground, and the top of it, under which its floor is found
@@ -941,9 +1172,11 @@ struct BoardText;
 struct BoardCaption;
 
 /// A line saying what the timetable has just done ([`alert`]), and how
-/// long it has been up.
+/// long it has been up. Any fight's line says what its game has just done
+/// the same way: a game takes down the lines up ([`Alert`]) before it puts
+/// up its own, as Bridge Wars does, one at a time.
 #[derive(Component)]
-struct Alert {
+pub(crate) struct Alert {
     age: f32,
 }
 /// The picture in such a line, of the item it is about.
@@ -955,14 +1188,15 @@ struct AlertPicture(Item);
 /// words after it (Hajun, late on 2026-11-11: "add the item icon after that item
 /// name in that game event text", the picture its count has top left).
 #[derive(Clone, PartialEq, Debug)]
-struct Line {
+pub(crate) struct Line {
     before: String,
     picture: Option<Item>,
     after: String,
 }
 
 impl Line {
-    fn plain(words: &str) -> Self {
+    /// Words alone, with no picture.
+    pub(crate) fn plain(words: &str) -> Self {
         Self {
             before: words.to_string(),
             picture: None,
@@ -974,7 +1208,7 @@ impl Line {
     /// item's `name` and its `level` filled in, cut after the name for the
     /// picture of `item` to stand there. A line that does not name the
     /// item has no picture.
-    fn of_tier(template: &str, item: Item, name: &str, level: &str) -> Self {
+    pub(crate) fn of_tier(template: &str, item: Item, name: &str, level: &str) -> Self {
         let fills = [("item", name), ("level", level)];
         match template.split_once("{item}") {
             Some((before, after)) => Self {
@@ -1001,9 +1235,71 @@ struct GeneratorWords {
 
 /// The words across the screen while you are dead, and the line of them.
 #[derive(Component)]
-struct DeathText;
+pub(crate) struct DeathText;
 #[derive(Component)]
-struct DeathLine;
+pub(crate) struct DeathLine;
+
+/// What is needed to keep "You died. Respawning in 4..." across the screen
+/// ([`DeathWords::say`]): Bridge Wars' while its own game is here
+/// ([`show_death`]), and any other fight's, in its own words, whose game
+/// says how long until you stand again in its own system with this among
+/// what it asks for (since 2026-11-18; Bridge Race's "Back on your island
+/// in 2", Last Stand's "Back in 6").
+#[derive(bevy::ecs::system::SystemParam)]
+pub(crate) struct DeathWords<'w, 's> {
+    texts: Query<'w, 's, Entity, With<DeathText>>,
+    lines: Query<'w, 's, &'static mut Text, With<DeathLine>>,
+}
+
+impl DeathWords<'_, '_> {
+    /// Whether the words are up.
+    pub(crate) fn up(&self) -> bool {
+        self.texts.single().is_ok()
+    }
+
+    /// Says you will stand again in `left` seconds, in `words`, the file's
+    /// for whichever game it is, its `{seconds}` filled in counting down in
+    /// halves (Bridge Wars' `words.arena.died`, "You died. Respawning in
+    /// {seconds}..."; until 2026-11-18 those were the only words it had):
+    /// put up the first time ([`InArena`], for the game's end to take with
+    /// the rest) and changed only as the count, or the words, do; or, with
+    /// none, taken away. None for someone out for good, whose wait never
+    /// ends (`Dead { left: f32::INFINITY }`): a game says that its own way,
+    /// as Bridge Wars' panel does.
+    pub(crate) fn say(&mut self, commands: &mut Commands, words: &str, left: Option<f32>) {
+        let up = self.texts.single().ok();
+        match (left.filter(|left| left.is_finite()), up) {
+            (Some(left), Some(_)) => {
+                let line = died_in(words, left);
+                for mut text in &mut self.lines {
+                    if text.0 != line {
+                        text.0.clone_from(&line);
+                    }
+                }
+            }
+            (Some(left), None) => {
+                commands.spawn((
+                    InArena,
+                    DeathText,
+                    Node {
+                        position_type: PositionType::Absolute,
+                        top: Val::Vh(DEATH_DOWN),
+                        left: Val::ZERO,
+                        right: Val::ZERO,
+                        justify_content: JustifyContent::Center,
+                        ..default()
+                    },
+                    Pickable::IGNORE,
+                    children![(DeathLine, hud::words(died_in(words, left), DEATH_TEXT, ui().colours.text))],
+                ));
+            }
+            (None, Some(text)) => {
+                commands.entity(text).try_despawn();
+            }
+            (None, None) => {}
+        }
+    }
+}
 
 /// Someone else's name and health bar over their head: whose, and the
 /// bar's fill.
@@ -1020,9 +1316,11 @@ struct AnchorFill;
 
 /// A number floating up off a body a punch landed on: where the body stood,
 /// and how long ago; or off one that has been healed, by a potion or its
-/// team's heal pool, in another colour.
+/// team's heal pool, in another colour. Put up by [`spawn_number`] and
+/// [`spawn_healed`], for any fight's hits, and floated wherever it is
+/// ([`float_numbers`], which runs whatever game is played).
 #[derive(Component)]
-struct DamageNumber {
+pub(crate) struct DamageNumber {
     at: Vec3,
     age: f32,
     healed: bool,
@@ -1060,6 +1358,9 @@ pub(crate) fn plugin(app: &mut App) {
         .init_resource::<Begun>()
         .add_observer(ask)
         .add_observer(read_map)
+        // What the server sent of a fight before this device knew where it
+        // was, onto the fight's venue once that is said.
+        .add_systems(Update, settle)
         .add_systems(
             Update,
             (hear, follow_round, cut_off, play, timetable, warn_of_the_anchor, gather, sell, use_things, publish, dress, show_board)
@@ -1521,9 +1822,7 @@ fn follow_round(
                 }
             }
             None => {
-                let mut theirs = Health::of(rules::HEALTH);
-                theirs.left = left;
-                commands.entity(body).insert(theirs);
+                commands.entity(body).insert(Health::at(left, rules::HEALTH));
             }
         }
         if left < before {
@@ -1906,7 +2205,7 @@ fn open(
     spawn_board(commands);
     spawn_anchor_bars(commands, arena_team(me));
     hud::announce(commands, None, &ui().words.arena.name, hud::HEADLINE, NAME_SECS).insert(InArena);
-    begun.0 += 1;
+    let id = begun.next();
     info!("Bridge Wars: into the waiting room, in seat {me}{}", if online { " (online)" } else { "" });
     let mut bodies = vec![None; ARENA_SEATS.max(me + 1)];
     bodies[me] = Some(you);
@@ -1919,7 +2218,7 @@ fn open(
         seats[me] = lobby.mine();
     }
     Game {
-        id: begun.0,
+        id,
         seats,
         bodies,
         town_seat,
@@ -2127,7 +2426,9 @@ fn raise_zombie(commands: &mut Commands, assets: &AssetServer, game: &mut Game) 
     };
     let place = Transform::from_translation(stood.at).with_rotation(Quat::from_rotation_y(stood.yaw));
     let body = lobby::spawn_bot_at(commands, assets, &member, seat, Venue::Arena, place);
-    commands.entity(body).insert((InArena, Zombie, Health::of(ui().arena.health), Team(rules::ZOMBIE_TEAM)));
+    commands
+        .entity(body)
+        .insert((InArena, Zombie, NoBar, Health::of(ui().arena.health), Team(rules::ZOMBIE_TEAM)));
     game.seats.resize(seat, member.clone());
     game.seats.push(member);
     game.bodies.resize(seat, None);
@@ -2174,13 +2475,16 @@ fn gather(
     // Each team's own generator as fast as the team has raised it at the
     // upgrade shop: yours, offline, the computer buying nothing.
     let forge = game.outfits.teams.map(|team| team.forge);
+    let now = time.elapsed_secs();
     for piece in game.mint.run(elapsed, &forge, &mut || fastrand::f32()) {
-        loot::lay(&mut commands, &look, time.elapsed_secs(), loot::Key::Own(piece.id), roundtown_net::Loot::of(&piece));
+        let loot = roundtown_net::Loot::of(&piece);
+        loot::lay(&mut commands, &look, now, loot::Key::Own(piece.id), loot, Venue::Arena, PAD_TOP);
     }
     // What the dead have dropped since the last frame flies out from
     // them ([`Game::slain`], [`lose_on_death`]).
     for piece in std::mem::take(&mut game.spilt) {
-        loot::lay(&mut commands, &look, time.elapsed_secs(), loot::Key::Own(piece.id), roundtown_net::Loot::of(&piece));
+        let loot = roundtown_net::Loot::of(&piece);
+        loot::lay(&mut commands, &look, now, loot::Key::Own(piece.id), loot, Venue::Arena, PAD_TOP);
     }
     // And what was dropped onto planks that have gone since goes with
     // them, nobody's (`Mint::shed`): looked over when a plank has been
@@ -2299,7 +2603,7 @@ fn use_things(
             if let Used::Builder { heading } = used
                 && let (Ok((at, _)), Some(member)) = (me.single(), game.seats.get(seat))
             {
-                bridge::send_builder(&mut commands, &assets, member, seat as u8, at.translation, heading);
+                bridge::send_builder(&mut commands, &assets, member, seat as u8, at.translation, heading, Venue::Arena);
             }
             continue;
         }
@@ -2308,14 +2612,14 @@ fn use_things(
                 if game.outfits.spend(seat, Utility::Fireball)
                     && let Ok((at, _)) = me.single()
                 {
-                    fire::throw(&mut commands, &look, Flight::thrown(at.translation, heading), seat, None);
+                    fire::throw(&mut commands, &look, Flight::thrown(at.translation, heading), seat, None, Venue::Arena);
                 }
             }
             Used::Builder { heading } => {
                 if game.outfits.spend(seat, Utility::Builder)
                     && let (Ok((at, _)), Some(member)) = (me.single(), game.seats.get(seat))
                 {
-                    bridge::send_builder(&mut commands, &assets, member, seat as u8, at.translation, heading);
+                    bridge::send_builder(&mut commands, &assets, member, seat as u8, at.translation, heading, Venue::Arena);
                 }
             }
             // A stick of dynamite, offline: `dynamite` lobs it on, and
@@ -2324,7 +2628,8 @@ fn use_things(
                 if game.outfits.spend(seat, Utility::Dynamite)
                     && let Ok((at, _)) = me.single()
                 {
-                    dynamite::throw(&mut commands, lobbed(&islands, at.translation, heading, far), seat, None);
+                    let lob = dynamite::lobbed(&islands, Venue::Arena, at.translation, heading, far);
+                    dynamite::throw(&mut commands, lob, seat, None, Venue::Arena);
                 }
             }
             Used::Potion(potion) => {
@@ -2435,24 +2740,9 @@ fn fireballs_offline(
         if hurt {
             game.outfits.reveal(flying.seat);
         }
-        fire::burst(&mut commands, burst);
+        fire::burst(&mut commands, burst, Venue::Arena);
         commands.entity(ball).despawn();
     }
-}
-
-/// A stick of dynamite thrown by someone whose feet are at `feet`, the way
-/// `heading` says, to come down `far` from them, in a game this device
-/// runs: at the ground where it is to come down, as high as that is now,
-/// or, with none there, as high as the ground they stand on, as the
-/// server throws one online (its `Game::lob`).
-fn lobbed(islands: &Islands, feet: Vec3, heading: f32, far: f32) -> rules::Lob {
-    let aimed = rules::Lob::thrown(feet, heading, far, feet.y);
-    let island = islands.get(Venue::Arena);
-    let ground = |at: Vec2, reach: f32| island.and_then(|island| island.floor(at, reach));
-    let floor = ground(aimed.to.xz(), feet.y + 2.0)
-        .or(ground(feet.xz(), feet.y + crate::LAND_STEP_UP))
-        .unwrap_or(feet.y);
-    rules::Lob::thrown(feet, heading, far, floor)
 }
 
 /// Blows this device's own sticks of dynamite, offline, once each has
@@ -2461,9 +2751,10 @@ fn lobbed(islands: &Islands, feet: Vec3, heading: f32, far: f32) -> rules::Lob {
 /// everyone of another team than the thrower's that it reaches
 /// (`rules::in_dynamite`), less what their shields keep off, with a
 /// number off each and no knock; and every plank whose middle it reaches
-/// gone, whoever laid it, from under whoever stands on it
-/// (`bridge::Bridges::blast`), yours among them, and the one you are
-/// laying. Online the server does all of it, and says which planks went
+/// gone, whoever laid it, from under whoever stands on it, yours among
+/// them, and the one you are laying, and the rest of its bridge after
+/// them (`dynamite::blow`, which any fight blows its sticks by). Online
+/// the server does all of it, and says which planks went
 /// (`dynamite::hear_blasts`).
 fn dynamites_offline(
     time: Res<Time>,
@@ -2484,23 +2775,13 @@ fn dynamites_offline(
         }
         let at = lying.lob.to;
         let team = arena_team(lying.seat);
-        let taken = bridges.blast(at.xz(), rules::DYNAMITE_RADIUS);
-        // And the rest of the bridge they were part of falls after them,
-        // plank by plank from the hole outward (`Nav::cascade`, since
-        // 2026-11-15): worked out on the map the computer's players keep,
-        // which has every bridge, as the server works it out on its own.
-        let mut later = Vec::new();
-        if let Some(brains) = game.brains.as_deref_mut() {
-            let nav = &mut brains.nav;
-            for (seat, chain, index, rung) in bridges.laid() {
-                nav.hear(seat, chain, index, rung);
-            }
-            nav.break_planks(&taken);
-            later = nav.cascade(&taken);
-            nav.doom(&later, lying.seat as u8);
-            let now = time.elapsed_secs_f64();
-            bridges.doom(later.iter().map(|&(plank, after)| (plank, now + f64::from(after))), lying.seat as u8);
-        }
+        // The planks it reaches, and the rest of the bridge they were part
+        // of after them, plank by plank from the hole outward
+        // (`Nav::cascade`, since 2026-11-15): worked out on the map the
+        // computer's players keep, which has every bridge, as the server
+        // works it out on its own.
+        let nav = game.brains.as_deref_mut().map(|brains| &mut brains.nav);
+        let blown = dynamite::blow(&mut bridges, nav, true, at.xz(), lying.seat as u8, time.elapsed_secs_f64());
         // (The planks before the people, since the night of 2026-11-15:
         // whoever it kills on the bridge it takes has died with nothing
         // under them that is staying, and what they held is the
@@ -2531,10 +2812,10 @@ fn dynamites_offline(
             "seat {}'s dynamite blew at {:.1}, taking {} planks, and {} more to fall",
             lying.seat,
             at.xz(),
-            taken.len(),
-            later.len()
+            blown.taken.len(),
+            blown.later.len()
         );
-        fire::burst(&mut commands, at + Vec3::Y * 0.3);
+        fire::burst(&mut commands, at + Vec3::Y * 0.3, Venue::Arena);
         commands.entity(stick).despawn();
     }
 }
@@ -2568,11 +2849,19 @@ fn blame_falls(
 
 /// Puts on every body in a game that is on what it has that is to be seen
 /// ([`Wears`]), by its seat, and says what you have yourself ([`Outfit`])
-/// and how far into the fight it is ([`FightTime`]); out of a game, nobody
-/// wears anything.
-#[allow(clippy::type_complexity)]
+/// and how far into the fight it is ([`FightTime`]); in the waiting room
+/// and once it is over, nobody wears anything.
+///
+/// **Only while Bridge Wars' own game is here** (since 2026-11-18): as it
+/// goes, everyone is undressed once, and from then on another game's
+/// [`Wears`], [`Outfit`] and [`FightTime`] are its own. Until then this
+/// undressed everyone and emptied both every frame out of a game, which
+/// would have taken Blend In's seekers' swords off them as they were put
+/// on.
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn dress(
     game: Option<Res<Game>>,
+    mut had: Local<bool>,
     mut outfit: ResMut<Outfit>,
     mut clock: ResMut<FightTime>,
     me: Query<(Entity, Option<&Wears>), With<Player>>,
@@ -2581,7 +2870,7 @@ fn dress(
     worn: Query<Entity, With<Wears>>,
     mut commands: Commands,
 ) {
-    let Some(game) = game.filter(|game| game.playing()) else {
+    let mut undress = |outfit: &mut ResMut<Outfit>, clock: &mut ResMut<FightTime>| {
         for body in &worn {
             commands.entity(body).remove::<Wears>();
         }
@@ -2589,8 +2878,18 @@ fn dress(
         if clock.0 != 0.0 {
             clock.0 = 0.0;
         }
+    };
+    let Some(game) = game else {
+        if std::mem::take(&mut *had) {
+            undress(&mut outfit, &mut clock);
+        }
         return;
     };
+    *had = true;
+    if !game.playing() {
+        undress(&mut outfit, &mut clock);
+        return;
+    }
     let elapsed = game.elapsed;
     if clock.0 != elapsed {
         clock.0 = elapsed;
@@ -2641,14 +2940,22 @@ fn dress(
 /// server empties and says so ([`Purses`], [`follow_round`]). Offline,
 /// whoever killed you has your sapphire and your amethyst first
 /// ([`Game::spoils`]).
+///
+/// Only in a game of Bridge Wars (since 2026-11-18): another fight's
+/// deaths are its own game's to count, and what dying loses there is that
+/// game's rule (Bridge Race keeps your metres). Until then any death of
+/// yours, in any game, took your metres of bridge.
 fn lose_on_death(died: Query<(), (With<Player>, Added<Dead>)>, mut game: Option<ResMut<Game>>, mut stock: ResMut<Resources>) {
+    let Some(game) = game.as_deref_mut() else {
+        return;
+    };
     // (Watched, your seat's player has lost what it held as the computer's
     // others do, [`Game::slain`].)
-    if died.is_empty() || game.as_deref().is_some_and(|game| game.watched) {
+    if died.is_empty() || game.watched {
         return;
     }
-    let offline = game.as_deref().is_some_and(|game| !game.online);
-    if offline && let Some(game) = game.as_deref_mut() {
+    let offline = !game.online;
+    if offline {
         let game = &mut *game;
         // Killed where you stood, with land there: what you held of the
         // two lies round where you died. Otherwise whoever killed you,
@@ -2734,7 +3041,10 @@ fn trap_alerts(
 /// generators have been upgraded to Lvl II.'").
 /// A line about an item has that item's picture after its name, the one
 /// its count has top left, in the item's colour (since late on 2026-11-11).
-fn alert(commands: &mut Commands, images: &mut Assets<Image>, line: &Line) {
+/// Any fight's game says what has just happened in it so (since
+/// 2026-11-18), taking down the lines up first ([`Alert`]); the line is
+/// [`InArena`], and goes with the game if it is still up.
+pub(crate) fn alert(commands: &mut Commands, images: &mut Assets<Image>, line: &Line) {
     // Put up clear, to be brought up.
     let colours = ui().colours.arena;
     let ink = colours.alert.with_alpha(0.0);
@@ -3121,22 +3431,39 @@ fn finish(
     }
 }
 
-/// Says how the fight stands, for the bridges (`bridge`) and the network
-/// (`net`).
-fn publish(game: Option<Res<Game>>, mut fighting: ResMut<Fighting>, mut offline: ResMut<OfflineArena>) {
+/// Says how the fight stands, for the bridges (`bridge`), the rest of the
+/// kit and the network (`net`), while a game of Bridge Wars is here; and,
+/// the frame it goes, that none is, once ([`Fighting::none`], and nothing
+/// played offline). Since 2026-11-18 that is all: until then, with no game
+/// of Bridge Wars here, it wrote that none was on every frame it was not
+/// so already, and a game of another kind saying that it was on would have
+/// been told otherwise the next frame. Both are any fight's to own
+/// ([`Fighting`], [`OfflineArena`]). Each seat's team is its seat modulo
+/// four (`arena_team`), said for the chat's names ([`Fighting::teams`]),
+/// which went by that rule itself until 2026-11-18.
+fn publish(game: Option<Res<Game>>, mut had: Local<bool>, mut fighting: ResMut<Fighting>, mut offline: ResMut<OfflineArena>) {
+    let Some(game) = game.as_deref() else {
+        if std::mem::take(&mut *had) {
+            let none = Fighting::none(fighting.game);
+            fighting.set_if_neq(none);
+            offline.set_if_neq(OfflineArena(false));
+        }
+        return;
+    };
+    *had = true;
     // (Who is in it is taken again only when that has changed, so that
     // nothing is made every frame to say the same.)
-    let (playing, teams_out, seat, online, id) = match game.as_deref() {
-        Some(game) => (game.playing(), game.teams_out(), Some(game.me as u8), game.online, game.id),
-        None => (false, false, None, false, fighting.game),
-    };
-    let watched = game.as_deref().is_some_and(|game| game.watched);
-    let seats: &[Member] = game.as_deref().map_or(&[], |game| game.seats.as_slice());
+    let (playing, teams_out, seat, online, id) = (game.playing(), game.teams_out(), Some(game.me as u8), game.online, game.id);
+    let (watched, venue) = (game.watched, Some(Venue::Arena));
+    let seats = game.seats.as_slice();
     let same_members =
         fighting.members.len() == seats.len() && fighting.members.iter().zip(seats).all(|(id, member)| *id == member.id);
+    let same_teams = fighting.teams.len() == seats.len() && fighting.teams.iter().enumerate().all(|(seat, &team)| team == arena_team(seat));
     if (fighting.playing, fighting.teams_out, fighting.seat, fighting.online, fighting.game) != (playing, teams_out, seat, online, id)
         || fighting.watched != watched
+        || fighting.venue != venue
         || !same_members
+        || !same_teams
     {
         *fighting = Fighting {
             playing,
@@ -3146,9 +3473,11 @@ fn publish(game: Option<Res<Game>>, mut fighting: ResMut<Fighting>, mut offline:
             game: id,
             members: seats.iter().map(|member| member.id).collect(),
             watched,
+            venue,
+            teams: (0..seats.len()).map(arena_team).collect(),
         };
     }
-    offline.set_if_neq(OfflineArena(game.is_some_and(|game| !game.online)));
+    offline.set_if_neq(OfflineArena(!game.online));
 }
 
 // --------------------------------------------------------------- the fight
@@ -3181,9 +3510,9 @@ fn team_up(
         if team != Some(&theirs) {
             commands.entity(body).insert(theirs);
         }
-        // The server's zombies, to be turned green.
+        // The server's zombies, to be turned green, with no bar over them.
         if theirs.0 == rules::ZOMBIE_TEAM && !zombies.contains(body) {
-            commands.entity(body).insert(Zombie);
+            commands.entity(body).insert((Zombie, NoBar));
         }
     }
 }
@@ -3640,12 +3969,13 @@ fn drive_bots(
             if let Some(heading) = order.throw
                 && game.outfits.spend(seat, Utility::Fireball)
             {
-                fire::throw(&mut commands, &look, Flight::thrown(at, heading), seat, None);
+                fire::throw(&mut commands, &look, Flight::thrown(at, heading), seat, None, Venue::Arena);
             }
             if let Some((heading, far)) = order.blast
                 && game.outfits.spend(seat, Utility::Dynamite)
             {
-                dynamite::throw(&mut commands, lobbed(&islands, at, heading, far), seat, None);
+                let lob = dynamite::lobbed(&islands, Venue::Arena, at, heading, far);
+                dynamite::throw(&mut commands, lob, seat, None, Venue::Arena);
                 debug!("seat {seat} threw a stick of dynamite");
             }
             if let Some(potion) = order.drink
@@ -3778,7 +4108,10 @@ fn show_bot_builders(
 /// Writes what the game has said this frame ([`Fed`]) into the chat
 /// (`chat::Log`), in the file's words, every name in its team's colour:
 /// what is for one team alone, a purchase for it, only if that team is
-/// yours.
+/// yours. Only while Bridge Wars' own game is here, whose seats and teams
+/// the names and colours are: out of it, what is written is let go
+/// unsaid. Another fight writes its own lines to the chat (`chat::Log`),
+/// which [`feed_line`] can make for it with its own teams' colours.
 fn feed_chat(mut fed: MessageReader<Fed>, game: Option<Res<Game>>, mut log: ResMut<chat::Log>) {
     let Some(game) = game else {
         fed.clear();
@@ -3798,12 +4131,21 @@ fn feed_chat(mut fed: MessageReader<Fed>, game: Option<Res<Game>>, mut log: ResM
 /// file's words (`words.chat`), each name in its team's colour, a zombie's
 /// in its own; nothing of a seat nobody is in.
 fn feed_line(feed: &Feed, seats: &[Member]) -> Option<chat::Line> {
+    feed_line_by(feed, seats, &arena_team)
+}
+
+/// What the chat says of `feed` in any fight (since 2026-11-18), each name
+/// in the colour of the team `team_of` says its seat is on, as
+/// [`feed_line`] has it for Bridge Wars: Bridge Race's two teams, say, red
+/// and blue, by its own rule. For the fight's game to push to the chat
+/// itself (`chat::Log`).
+pub(crate) fn feed_line_by(feed: &Feed, seats: &[Member], team_of: &dyn Fn(usize) -> u8) -> Option<chat::Line> {
     let file = ui();
     let (words, colours) = (&file.words.chat, file.colours);
     let ink = colours.chat.event;
     let who = |seat: u8| {
         let member = seats.get(usize::from(seat)).filter(|member| !member.name.is_empty())?;
-        Some((member.name.as_str(), colours.arena.team(arena_team(usize::from(seat)))))
+        Some((member.name.as_str(), colours.arena.team(team_of(usize::from(seat)))))
     };
     Some(match *feed {
         Feed::Fell { seat } => {
@@ -4078,11 +4420,7 @@ fn regen(time: Res<Time>, game: Option<ResMut<Game>>, mut bodies: Query<&mut Hea
     let tuning = ui().arena;
     let dt = time.delta_secs();
     for mut health in &mut bodies {
-        let timer = health.bypass_change_detection();
-        timer.since_hit += dt;
-        if timer.since_hit >= tuning.regen_after && timer.left < timer.full {
-            health.mend(tuning.regen_per_sec * dt);
-        }
+        Health::recover(&mut health, dt, tuning.regen_after, tuning.regen_per_sec);
     }
 }
 
@@ -4257,62 +4595,52 @@ fn your_team(team: u8) -> String {
 
 /// Puts "You died. Respawning in 4..." across the screen while you are
 /// dead and coming back, counting down in halves, and takes it away as you
-/// stand again. Out for good, the panel says so instead ([`show_panel`]).
+/// stand again ([`DeathWords`]). Out for good, the panel says so instead
+/// ([`show_panel`]).
+///
+/// Only in a game of Bridge Wars (since 2026-11-18), the words taken away
+/// once as it goes: until then they were put up over anyone dead with a
+/// while to wait, in whatever game. Another fight says it the same way,
+/// by [`DeathWords`] in a system of its own.
 fn show_death(
     time: Res<Time>,
     game: Option<Res<Game>>,
+    mut had: Local<bool>,
     mut me: Query<&mut Dead, With<Player>>,
-    texts: Query<Entity, With<DeathText>>,
-    mut lines: Query<&mut Text, With<DeathLine>>,
+    mut words: DeathWords,
     mut commands: Commands,
 ) {
-    let dead = me.single_mut().ok();
-    let text = texts.single().ok();
-    let waiting = dead.filter(|dead| dead.left.is_finite());
-    match (waiting, text) {
-        (Some(mut dead), Some(_)) => {
-            // Online the server stands you up; the count is for the eye.
-            if game.is_some_and(|game| game.online) {
-                dead.left = (dead.left - time.delta_secs()).max(0.0);
-            }
-            let line = died_in(dead.left);
-            for mut text in &mut lines {
-                if text.0 != line {
-                    text.0.clone_from(&line);
-                }
-            }
+    let file = ui();
+    let died = &file.words.arena.died;
+    let Some(game) = game.as_deref() else {
+        if std::mem::take(&mut *had) {
+            words.say(&mut commands, died, None);
         }
-        (Some(dead), None) => {
-            commands.spawn((
-                InArena,
-                DeathText,
-                Node {
-                    position_type: PositionType::Absolute,
-                    top: Val::Vh(DEATH_DOWN),
-                    left: Val::ZERO,
-                    right: Val::ZERO,
-                    justify_content: JustifyContent::Center,
-                    ..default()
-                },
-                Pickable::IGNORE,
-                children![(DeathLine, hud::words(died_in(dead.left), DEATH_TEXT, ui().colours.text))],
-            ));
-        }
-        (None, Some(text)) => commands.entity(text).despawn(),
-        (None, None) => {}
+        return;
+    };
+    *had = true;
+    let mut waiting = me.single_mut().ok().filter(|dead| dead.left.is_finite());
+    // Online the server stands you up; the count is for the eye, from the
+    // frame the words are up.
+    if game.online
+        && words.up()
+        && let Some(dead) = waiting.as_mut()
+    {
+        dead.left = (dead.left - time.delta_secs()).max(0.0);
     }
+    words.say(&mut commands, died, waiting.map(|dead| dead.left));
 }
 
-/// "You died. Respawning in 3.5...": `left` seconds, rounded up to the
-/// half: "4", "3.5", down to "0.5".
-fn died_in(left: f32) -> String {
+/// "You died. Respawning in 3.5...": `words` with `left` seconds filled in
+/// for its `{seconds}`, rounded up to the half: "4", "3.5", down to "0.5".
+fn died_in(words: &str, left: f32) -> String {
     let halves = (left.max(0.0) * 2.0).ceil();
     let seconds = if halves % 2.0 == 0.0 {
         format!("{}", halves / 2.0)
     } else {
         format!("{:.1}", halves / 2.0)
     };
-    fill(&ui().words.arena.died, &[("seconds", &seconds)])
+    fill(words, &[("seconds", &seconds)])
 }
 
 /// Keeps the panel in the middle of the screen while you are out for good,
@@ -4406,13 +4734,22 @@ fn spawn_panel(commands: &mut Commands) {
 /// an enemy's and said who was with you. As the teams come out
 /// ([`Fighting::teams_out`]) every tag is made again as it is in the
 /// fight.
-#[allow(clippy::too_many_arguments)]
+///
+/// **In any fight** (since 2026-11-18): wherever fights are played
+/// (`island::fights`: Bridge Wars' map, Bridge Race's and Last Stand's),
+/// over every body with a team and a name that has health, its bar under
+/// its name; and over one marked [`NoBar`], its name alone, health or
+/// none (Bridge Wars' zombies, told by their team until then).
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn place_tags(
     me: Query<(&Venue, Option<&Team>), With<Player>>,
     (fighting, mut were_out): (Res<Fighting>, Local<bool>),
     cameras: Query<(&Camera, &Transform), With<ThirdPersonCamera>>,
     windows: Query<&Window>,
-    bodies: Query<(Entity, &Transform, &Health, &Team, &Name, Has<Dead>, Has<crate::Squashed>), Without<Player>>,
+    bodies: Query<
+        (Entity, &Transform, Option<&Health>, &Team, &Name, Has<Dead>, Has<crate::Squashed>, Has<NoBar>),
+        Without<Player>,
+    >,
     wears: Query<&Wears>,
     mut tags: Query<(Entity, &TagOf, &mut Visibility, &mut UiTransform, &ComputedNode, &Children)>,
     parts: Query<&Children>,
@@ -4420,7 +4757,7 @@ fn place_tags(
     mut commands: Commands,
 ) {
     let (here, my_team) = me.single().map(|(venue, team)| (Some(*venue), team.copied())).unwrap_or((None, None));
-    let in_arena = here == Some(Venue::Arena);
+    let in_a_fight = here.is_some_and(island::fights);
     // The teams out, or no longer: every tag is made again, as it is then.
     if *were_out != fighting.teams_out {
         *were_out = fighting.teams_out;
@@ -4429,11 +4766,11 @@ fn place_tags(
         }
         return;
     }
-    if in_arena {
-        for (body, _, _, team, name, ..) in &bodies {
-            if !tags.iter().any(|(_, of, ..)| of.0 == body) {
+    if in_a_fight {
+        for (body, _, health, team, name, _, _, no_bar) in &bodies {
+            if (health.is_some() || no_bar) && !tags.iter().any(|(_, of, ..)| of.0 == body) {
                 let side = fighting.teams_out.then_some((team.0, Some(*team) == my_team));
-                spawn_tag(&mut commands, body, name.as_str(), side);
+                spawn_tag(&mut commands, body, name.as_str(), side, !no_bar);
             }
         }
     }
@@ -4443,17 +4780,23 @@ fn place_tags(
     let turned = eye.rotation;
     let eye = GlobalTransform::from(*eye);
     for (tag, of, mut shown, mut place, node, children) in &mut tags {
-        let Ok((_, body, health, team, _, dead, squashed)) = bodies.get(of.0) else {
+        let Ok((_, body, health, team, _, dead, squashed, no_bar)) = bodies.get(of.0) else {
             commands.entity(tag).despawn();
             continue;
         };
+        // (Its health gone and with no word of having none: as a body
+        // with no health of its own was never tagged.)
+        if health.is_none() && !no_bar {
+            commands.entity(tag).despawn();
+            continue;
+        }
         // Nor over anyone unseen, who is not drawn either: but one of your
         // own team, whom you see, see-through (`gear`).
         let unseen = wears.get(of.0).is_ok_and(|wears| wears.unseen) && Some(*team) != my_team;
         // Over their head; or, lying flat where a bus ran them over,
         // over the end of them that is furthest up the screen (`squash`).
         let over = if squashed { squash::far_end(body, turned) } else { body.translation + Vec3::Y * TAG_OVER };
-        let point = (in_arena && !dead && !unseen)
+        let point = (in_a_fight && !dead && !unseen)
             .then(|| camera.world_to_viewport(&eye, over).ok())
             .flatten()
             .filter(|point| on_screen(window, *point));
@@ -4468,6 +4811,9 @@ fn place_tags(
             rotation: Rot2::IDENTITY,
         });
         shown.set_if_neq(Visibility::Inherited);
+        let Some(health) = health else {
+            continue;
+        };
         let width = bar_width(health.share());
         for fill in fills_of(children, &parts) {
             if let Ok(mut fill) = fills.get_mut(fill)
@@ -4488,8 +4834,9 @@ fn fills_of(tag: &Children, parts: &Query<&Children>) -> Vec<Entity> {
         .collect()
 }
 
-/// Whether `point`, in the window's logical pixels, is on the screen.
-fn on_screen(window: &Window, point: Vec2) -> bool {
+/// Whether `point`, in the window's logical pixels, is on the screen: for
+/// anything of any fight's written over the world.
+pub(crate) fn on_screen(window: &Window, point: Vec2) -> bool {
     point.x >= 0.0 && point.y >= 0.0 && point.x <= window.width() && point.y <= window.height()
 }
 
@@ -4498,13 +4845,14 @@ fn on_screen(window: &Window, point: Vec2) -> bool {
 /// green or an enemy's red until then), and the bar in a teammate's
 /// colour if it is one of yours, or an enemy's, `side` being its team and
 /// whether it is yours. With no `side`, the teams not being out yet, the
-/// name alone, in the colour of words.
-fn spawn_tag(commands: &mut Commands, body: Entity, name: &str, side: Option<(u8, bool)>) {
+/// name alone, in the colour of words; and with no `bar`, the name alone
+/// too ([`NoBar`]).
+fn spawn_tag(commands: &mut Commands, body: Entity, name: &str, side: Option<(u8, bool)>, bar: bool) {
     let colours = ui().colours;
     let arena = colours.arena;
     let ink = side.map_or(colours.text, |(team, _)| arena.team(team));
     // (No bar over a zombie: nothing takes anything off one.)
-    let hp = side.filter(|(team, _)| *team != rules::ZOMBIE_TEAM).map(|(_, ally)| if ally { arena.hp_ally } else { arena.hp_enemy });
+    let hp = side.filter(|_| bar).map(|(_, ally)| if ally { arena.hp_ally } else { arena.hp_enemy });
     commands
         .spawn((
             InArena,
@@ -4640,8 +4988,8 @@ fn place_anchor_bars(
 }
 
 /// A number floating up off the body at `at`, for health given back to
-/// it: "+5", in the heal pool's colour.
-fn spawn_healed(commands: &mut Commands, at: Vec3, health: f32) {
+/// it: "+5", in the heal pool's colour. For any fight's healing.
+pub(crate) fn spawn_healed(commands: &mut Commands, at: Vec3, health: f32) {
     commands.spawn((
         InArena,
         DamageNumber {
@@ -4661,8 +5009,9 @@ fn spawn_healed(commands: &mut Commands, at: Vec3, health: f32) {
     ));
 }
 
-/// A number floating up off the body at `at`, for `damage` taken.
-fn spawn_number(commands: &mut Commands, at: Vec3, damage: f32) {
+/// A number floating up off the body at `at`, for `damage` taken: for any
+/// fight's hits.
+pub(crate) fn spawn_number(commands: &mut Commands, at: Vec3, damage: f32) {
     commands.spawn((
         InArena,
         DamageNumber {
@@ -4834,7 +5183,8 @@ fn show_board(
 const CLOCK_FROM: f32 = 10.0;
 
 /// `9:59`: seconds left, rounded up, so that the last second reads `0:01`.
-fn clock(left: f32) -> String {
+/// Any fight's clock is written so.
+pub(crate) fn clock(left: f32) -> String {
     let seconds = left.max(0.0).ceil() as u32;
     format!("{}:{:02}", seconds / 60, seconds % 60)
 }
@@ -5437,7 +5787,7 @@ mod tests {
     #[test]
     fn the_death_count_goes_down_in_halves() {
         let seconds = |left: f32| {
-            let line = died_in(left);
+            let line = died_in(&ui().words.arena.died, left);
             line.trim_start_matches("You died. Respawning in ").trim_end_matches("...").to_string()
         };
         assert_eq!(seconds(4.0), "4");
@@ -5524,6 +5874,234 @@ mod tests {
         // Of a seat nobody is in, nothing.
         assert!(feed_line(&Feed::Fell { seat: 30 }, &seats).is_none());
         assert!(feed_line(&Feed::Knocked { seat: 0, by: 30 }, &seats).is_none());
+    }
+
+    #[test]
+    fn bridge_wars_leaves_another_fight_s_state_alone_and_says_once_that_its_own_game_has_gone() {
+        // Since 2026-11-18 any fight owns `Fighting`, `OfflineArena`,
+        // `Outfit`, `FightTime`, `Resources` and `Wears` while its game is
+        // played; until then Bridge Wars wrote "no game" over them every
+        // frame its own was not on, and took your metres at any death.
+        let mut world = World::new();
+        let another = |game: u32, venue: Venue| Fighting {
+            playing: true,
+            seat: Some(2),
+            game,
+            venue: Some(venue),
+            teams: vec![0, 1, 0, 1],
+            ..default()
+        };
+        world.insert_resource(another(7, Venue::LastStand));
+        world.insert_resource(OfflineArena(true));
+        world.insert_resource(Outfit {
+            kit: Kit {
+                sword: 2,
+                ..Kit::default()
+            },
+            ..default()
+        });
+        world.insert_resource(FightTime(12.0));
+        world.insert_resource(Resources {
+            bridge_metres: 30.0,
+            held: [1, 2, 3, 4],
+        });
+        let armed = Wears {
+            sword: 3,
+            ..default()
+        };
+        let you = world.spawn((Player, armed)).id();
+        let (publish, dress, lose) = (world.register_system(publish), world.register_system(dress), world.register_system(lose_on_death));
+        let frame = |world: &mut World| {
+            for system in [publish, dress, lose] {
+                world.run_system(system).expect("it runs");
+            }
+        };
+        // Another game's, being played: nothing of Bridge Wars' touches
+        // it, frame after frame, nor does a death in it take your metres.
+        for step in 0..3 {
+            if step == 1 {
+                world.entity_mut(you).insert(Dead { left: 2.0 });
+            }
+            frame(&mut world);
+        }
+        assert!(*world.resource::<Fighting>() == another(7, Venue::LastStand));
+        assert!(world.resource::<OfflineArena>().0);
+        assert_eq!((world.resource::<Outfit>().kit.sword, world.resource::<FightTime>().0), (2, 12.0));
+        assert_eq!(world.get::<Wears>(you), Some(&armed));
+        assert_eq!(*world.resource::<Resources>(), Resources { bridge_metres: 30.0, held: [1, 2, 3, 4] });
+        // A game of Bridge Wars begun: its own, from then on, on its map.
+        world.entity_mut(you).remove::<Dead>();
+        world.insert_resource(a_game());
+        frame(&mut world);
+        let fighting = world.resource::<Fighting>();
+        assert_eq!((fighting.playing, fighting.game, fighting.seat, fighting.venue), (true, 1, Some(0), Some(Venue::Arena)));
+        assert_eq!(fighting.members.len(), ARENA_SEATS);
+        // Each seat's team its seat modulo four, as the chat's names went
+        // by until 2026-11-18: whoever is in seat 5 is blue.
+        assert_eq!(fighting.teams, (0..ARENA_SEATS).map(arena_team).collect::<Vec<_>>());
+        assert_eq!(fighting.team_of_member(fighting.members[5]), Some(1));
+        assert_eq!(fighting.team_of_member(0), None);
+        assert!(world.resource::<OfflineArena>().0);
+        assert_eq!((world.resource::<Outfit>().kit.sword, world.resource::<FightTime>().0), (0, 0.0));
+        assert_eq!(world.get::<Wears>(you), Some(&Wears::default()));
+        // As it goes, once: no game, played nowhere, the last number kept,
+        // nothing held to use and nothing worn.
+        world.remove_resource::<Game>();
+        frame(&mut world);
+        assert!(*world.resource::<Fighting>() == Fighting::none(1));
+        assert!(!world.resource::<OfflineArena>().0);
+        assert_eq!(*world.resource::<Outfit>(), Outfit::default());
+        assert_eq!(world.get::<Wears>(you), None);
+        // And the next game of another kind is its own again.
+        world.insert_resource(another(2, Venue::BridgeRace));
+        world.insert_resource(OfflineArena(true));
+        world.entity_mut(you).insert(armed);
+        frame(&mut world);
+        frame(&mut world);
+        assert!(*world.resource::<Fighting>() == another(2, Venue::BridgeRace));
+        assert!(world.resource::<OfflineArena>().0);
+        assert_eq!(world.get::<Wears>(you), Some(&armed));
+        // Every game's number from the one count, whichever game it is.
+        let mut begun = Begun::default();
+        assert_eq!((begun.next(), begun.next(), begun.next()), (1, 2, 3));
+    }
+
+    #[test]
+    fn health_is_put_on_as_the_server_says_and_comes_back_after_a_while_unhit() {
+        use bevy::ecs::system::RunSystemOnce;
+        let health = Health::at(40.0, 100.0);
+        assert_eq!((health.left(), health.full(), health.share()), (40.0, 100.0, 0.4));
+        // A while unhit, a little a second: with its own numbers.
+        let mut world = World::new();
+        let body = world.spawn(Health::of(100.0)).id();
+        world.get_mut::<Health>(body).expect("health").take(30.0);
+        let recover = |world: &mut World, dt: f32| {
+            world
+                .run_system_once(move |mut bodies: Query<&mut Health>| {
+                    for mut health in &mut bodies {
+                        Health::recover(&mut health, dt, 2.0, 10.0);
+                    }
+                })
+                .expect("it runs");
+        };
+        recover(&mut world, 1.0);
+        assert_eq!(world.get::<Health>(body).expect("health").left(), 70.0, "not yet");
+        recover(&mut world, 1.5);
+        assert_eq!(world.get::<Health>(body).expect("health").left(), 85.0);
+        recover(&mut world, 5.0);
+        assert_eq!(world.get::<Health>(body).expect("health").left(), 100.0, "never over full");
+    }
+
+    #[test]
+    fn names_are_over_heads_in_any_fight_and_one_marked_so_has_no_bar() {
+        // Over everyone with a team and a name, and health or the mark of
+        // none, wherever a fight is played: Bridge Race's map here. Health,
+        // the name and a bar under it; marked, the name alone.
+        let tags_over = |here: Venue| {
+            let mut world = World::new();
+            world.insert_resource(Fighting {
+                playing: true,
+                teams_out: true,
+                venue: Some(here),
+                ..default()
+            });
+            world.spawn((Player, here, Team(0)));
+            let healthy = world.spawn((Transform::default(), Health::of(100.0), Team(1), Name::new("Hale"))).id();
+            let marked = world.spawn((Transform::default(), NoBar, Team(1), Name::new("Bare"))).id();
+            let neither = world.spawn((Transform::default(), Team(1), Name::new("Nobody"))).id();
+            let place = world.register_system(place_tags);
+            // (The first frame sees the teams come out, and makes none.)
+            world.run_system(place).expect("it runs");
+            world.run_system(place).expect("it runs");
+            let mut made = world.query::<(&TagOf, &Children)>();
+            let mut parts = |body: Entity| made.iter(&world).find(|(of, _)| of.0 == body).map(|(_, parts)| parts.len());
+            [parts(healthy), parts(marked), parts(neither)]
+        };
+        assert_eq!(tags_over(Venue::BridgeRace), [Some(2), Some(1), None]);
+        assert_eq!(tags_over(Venue::Arena), [Some(2), Some(1), None]);
+        // Where no fight is played, none: Blend In's town, the town.
+        assert_eq!(tags_over(Venue::BlendIn), [None, None, None]);
+        assert_eq!(tags_over(Venue::Town), [None, None, None]);
+    }
+
+    #[test]
+    fn what_the_server_sends_before_the_fight_s_venue_is_said_is_never_put_in_the_town_and_is_moved_once_it_is() {
+        // Put back into a game under way (`Tell::Back`), a device may be
+        // sent what is in it before the word of it, in the town still:
+        // what comes then is put on Bridge Wars' map, where all of it went
+        // until 2026-11-18, or on the venue you stand on if a fight is
+        // played there; never in the town, nor on Blend In's town.
+        let unsaid = Fighting::default();
+        for here in [None, Some(Venue::Town), Some(Venue::BlendIn), Some(Venue::KnockOff), Some(Venue::Arena)] {
+            assert_eq!(unsaid.served_on(here), Venue::Arena, "{here:?}");
+        }
+        assert_eq!(unsaid.served_on(Some(Venue::LastStand)), Venue::LastStand);
+        // Once said, on the fight's venue, wherever you stand.
+        let said = |venue: Venue| Fighting {
+            venue: Some(venue),
+            ..default()
+        };
+        assert_eq!(said(Venue::BridgeRace).served_on(Some(Venue::Town)), Venue::BridgeRace);
+        // What was put on a guess is marked so, and moved onto the fight's
+        // venue as soon as it is said; what was put there knowing is left
+        // as it is.
+        let mut world = World::new();
+        world.insert_resource(unsaid);
+        let put = |world: &mut World, fighting: &Fighting| {
+            let thing = world.spawn(Venue::Arena).id();
+            {
+                let mut commands = world.commands();
+                fighting.settle_later(&mut commands, thing);
+            }
+            world.flush();
+            thing
+        };
+        let guessed = put(&mut world, &Fighting::default());
+        let known = put(&mut world, &said(Venue::Arena));
+        assert!(world.get::<Unsettled>(guessed).is_some() && world.get::<Unsettled>(known).is_none());
+        let settle = world.register_system(settle);
+        world.run_system(settle).expect("it runs");
+        assert!(world.get::<Unsettled>(guessed).is_some(), "nothing is said yet");
+        world.insert_resource(said(Venue::LastStand));
+        world.run_system(settle).expect("it runs");
+        assert_eq!(world.get::<Venue>(guessed), Some(&Venue::LastStand));
+        assert!(world.get::<Unsettled>(guessed).is_none());
+        assert_eq!(world.get::<Venue>(known), Some(&Venue::Arena));
+        // Bridge Wars' own, guessed on its map: left there, as ever.
+        world.insert_resource(Fighting::default());
+        let bridge_wars = put(&mut world, &Fighting::default());
+        world.insert_resource(said(Venue::Arena));
+        world.run_system(settle).expect("it runs");
+        assert_eq!(world.get::<Venue>(bridge_wars), Some(&Venue::Arena));
+        assert!(world.get::<Unsettled>(bridge_wars).is_none());
+    }
+
+    #[test]
+    fn the_words_while_you_are_dead_are_the_game_s_own_counting_down_in_halves() {
+        use bevy::ecs::system::RunSystemOnce;
+        // Another fight's words (Last Stand's "Back in 6", say), put up
+        // once, changed as the count goes, and taken away as you stand.
+        let mut world = World::new();
+        let say = |world: &mut World, left: Option<f32>| {
+            world
+                .run_system_once(move |mut words: DeathWords, mut commands: Commands| words.say(&mut commands, "Back in {seconds}", left))
+                .expect("it runs");
+        };
+        let lines = |world: &mut World| {
+            let mut lines = world.query_filtered::<&Text, With<DeathLine>>();
+            lines.iter(world).map(|text| text.0.clone()).collect::<Vec<_>>()
+        };
+        say(&mut world, Some(5.6));
+        assert_eq!(lines(&mut world), ["Back in 6"]);
+        say(&mut world, Some(2.2));
+        assert_eq!(lines(&mut world), ["Back in 2.5"]);
+        // Out for good, nothing counts down: a game says that its own way.
+        say(&mut world, Some(f32::INFINITY));
+        assert!(lines(&mut world).is_empty());
+        say(&mut world, Some(1.0));
+        say(&mut world, None);
+        assert!(lines(&mut world).is_empty());
+        assert_eq!(world.query_filtered::<(), With<DeathText>>().iter(&world).count(), 0);
     }
 
     #[test]

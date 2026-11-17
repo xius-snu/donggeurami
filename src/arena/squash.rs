@@ -323,10 +323,16 @@ fn follow_flat(
 /// Nothing a blow would have carried them by is kept for when they are up,
 /// and how long they reel from one is counted here, nobody else counting
 /// it while they lie. And nobody lies flat out of a fight, or dead.
+///
+/// Only while Bridge Wars' own game is here (since 2026-11-18), and as it
+/// goes, once, everyone stands up: until then whoever lay flat anywhere
+/// out of its fight was stood up every frame, which would have undone
+/// another game's own use of [`Squashed`].
 #[allow(clippy::type_complexity)]
 fn lie(
     time: Res<Time>,
     game: Option<Res<Game>>,
+    mut had: Local<bool>,
     mut bodies: Query<(
         Entity,
         &mut Squashed,
@@ -340,7 +346,15 @@ fn lie(
     mut commands: Commands,
 ) {
     let dt = time.delta_secs();
-    let playing = game.is_some_and(|game| game.playing());
+    let playing = match game.as_deref() {
+        Some(game) => {
+            *had = true;
+            game.playing()
+        }
+        // The frame it goes, everyone up, once.
+        None if std::mem::take(&mut *had) => false,
+        None => return,
+    };
     for (body, mut squashed, &venue, shove, jump, dead, remote, walked) in &mut bodies {
         let mut up = !playing || venue != Venue::Arena || dead;
         if !remote {
