@@ -134,6 +134,7 @@ use std::collections::HashMap;
 
 use bevy::prelude::*;
 use bevy_replicon::prelude::*;
+use bevy_replicon::server::server_tick::ServerTick;
 use roundtown_net::bots::mingle::{Mingle, Stood};
 use roundtown_net::bots::{Seen, Skill, Squad, Stick, View};
 use roundtown_net::bridge_wars::*;
@@ -437,6 +438,12 @@ struct Game {
     /// Its bots and planks have gone ([`close`]); everyone goes back to the
     /// town next tick ([`end`]).
     closing: bool,
+    /// Someone has gone out of its room since it last ran ([`Game::leave`]);
+    /// and the server's tick as it ran after the last of them went, with
+    /// whether what its room is sent has gone out since
+    /// ([`Game::sent_since_anyone_went`]).
+    went_out: bool,
+    gone_out: Option<(u32, bool)>,
 }
 
 /// The order a game's seats are taken in as people join (since 2026-11-12,
@@ -665,11 +672,47 @@ impl Game {
             sent_flat: Flattened::default(),
             sent_buses: None,
             closing: false,
+            went_out: false,
+            gone_out: None,
         }
     }
 
     fn room(&self) -> Room {
         Room::Arena(self.id)
+    }
+
+    /// Whether what its room is sent has gone out at least once since
+    /// anyone last went out of its room (or nobody has), the server's tick
+    /// being `tick` this frame: so that whoever went has been told that
+    /// everything of it is gone from their sight before any of it is
+    /// despawned, which it may be only then ([`close`]). A game its last
+    /// person leaves (to the town from the result, say, both of a pair
+    /// together) was closed in that very frame, and its bots, what lay
+    /// about on it and its board were written to them neither as despawned
+    /// nor as gone from sight (replicon 0.44's `collect_despawns`): each
+    /// device kept them, hidden in the town, to stand in the next game it
+    /// went into (seen 2026-11-18, two copies against a server on this PC:
+    /// the six bots and five things more on each). As a
+    /// table of the four games closes (`tables::Table::
+    /// sent_since_anyone_went`): a send goes out in the frame the tick
+    /// moves, after every game has run, so the game may close the frame
+    /// after it has been seen to move. Asked every frame, so that it sees
+    /// the tick move.
+    fn sent_since_anyone_went(&mut self, tick: u32) -> bool {
+        if std::mem::take(&mut self.went_out) {
+            self.gone_out = Some((tick, false));
+        }
+        match &mut self.gone_out {
+            None => true,
+            Some((_, true)) => {
+                self.gone_out = None;
+                true
+            }
+            Some((at, sent)) => {
+                *sent = tick != *at;
+                false
+            }
+        }
     }
 
     fn seat_of(&self, body: Entity) -> Option<usize> {
@@ -1196,6 +1239,7 @@ impl Game {
     /// empty, a hole in a team for the whole game); once it has begun, it
     /// stays theirs and empty.
     fn leave(&mut self, seat: usize) {
+        self.went_out = true;
         if seat < ARENA_SEATS && matches!(self.stage, ArenaStage::Waiting | ArenaStage::Countdown) {
             info!("Bridge Wars game {}: seat {seat} left before the fight, and is free again", self.id);
             self.vacate(seat);
@@ -2779,6 +2823,7 @@ fn hear(
 #[allow(clippy::too_many_arguments)]
 fn run(
     time: Res<Time>,
+    tick: Res<ServerTick>,
     config: Res<Config>,
     mut arenas: ResMut<Arenas>,
     mut bodies: Bodies,
@@ -2811,7 +2856,11 @@ fn run(
             ended.push(game.id);
             continue;
         }
-        if (game.over() && game.left <= 0.0) || everyone_gone || game.unwatched > ABANDONED {
+        // Closed only once whoever went out of its room last has been told
+        // it is gone from their sight ([`Game::sent_since_anyone_went`],
+        // asked every frame).
+        let told = game.sent_since_anyone_went(tick.get());
+        if ((game.over() && game.left <= 0.0) || everyone_gone || game.unwatched > ABANDONED) && told {
             close(&mut commands, game);
             continue;
         }
@@ -3800,6 +3849,30 @@ mod tests {
         game.leave(0);
         assert!((0..game.seats.len()).all(|seat| game.gone[seat] || game.bot[seat]));
         assert_eq!(game.free_seat(), Some(0));
+    }
+
+    #[test]
+    fn a_game_closes_only_once_whoever_left_it_last_has_been_sent_that_it_is_gone() {
+        let mut game = full_game();
+        game.stage = ArenaStage::Over { winner: None };
+        // Nobody has gone: nothing holds it back.
+        assert!(game.sent_since_anyone_went(10));
+        // Both people go back to the town from the result in the frame of
+        // tick 10: not while the tick stands, nor in the frame it is first
+        // seen to have moved (that tick's send went out after every game
+        // had run, the frame before), but the frame after.
+        game.leave(0);
+        game.leave(4);
+        assert!(!game.sent_since_anyone_went(10));
+        assert!(!game.sent_since_anyone_went(10));
+        assert!(!game.sent_since_anyone_went(11));
+        assert!(game.sent_since_anyone_went(11));
+        assert!(game.sent_since_anyone_went(12));
+        // Another going holds it back again, from its own tick.
+        game.leave(2);
+        assert!(!game.sent_since_anyone_went(12));
+        assert!(!game.sent_since_anyone_went(13));
+        assert!(game.sent_since_anyone_went(13));
     }
 
     /// A frame of a waiting room's wait, as [`run`] counts it, without the

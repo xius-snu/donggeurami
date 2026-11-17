@@ -305,6 +305,13 @@ pub(crate) fn plugin(app: &mut App) {
 /// the four games' tables as the table begins here (`table::Entered`), once
 /// for each table, and not again as the table you are at is begun afresh
 /// (your seat at it moved before play, or this device put back in it).
+///
+/// One line across the screen at a time ([`toast`]): the newest, whatever
+/// was up taken down for it. Two at once were drawn over each other where
+/// they stand, unreadable: as at the end of a game at a table, where both of
+/// a group press "Play again", the follower is told only its leader starts a
+/// game, and a moment later that the group is playing the next (seen
+/// 2026-11-18, two copies against a server on this PC; mine).
 #[allow(clippy::too_many_arguments)]
 fn hear(
     mut tells: MessageReader<Tell>,
@@ -315,21 +322,12 @@ fn hear(
     mut up: ResMut<DialogUp>,
     mut name_box: ResMut<NameBox>,
     online: Res<Online>,
+    toasts: Query<Entity, With<Toast>>,
     mut commands: Commands,
 ) {
-    let follows = online.me().is_some_and(|me| friends.follows(me.id));
-    for entered in tables.read() {
-        if !entered.online || entered.same_table {
-            continue;
-        }
-        if follows {
-            let ui = ui();
-            toast(&mut commands, &fill(&ui.words.friends.summoned, &[("game", &crate::games::name_of(entered.game))]));
-        }
-        if panel.open {
-            shut(&mut panel, &mut up, &mut name_box);
-        }
-    }
+    // The line to put across the screen, the last of this frame's: a table
+    // begun last of all, over a refusal it has made stale.
+    let mut said = None;
     for tell in tells.read() {
         let ui = ui();
         let words = &ui.words.friends;
@@ -347,8 +345,8 @@ fn hear(
                 News::Found { sought, people } => friends.found = Some((sought.clone(), people.clone())),
                 // Left behind, the panel is as likely shut: said across the
                 // screen.
-                News::Said(Outcome::LeftBehind) => toast(&mut commands, &words.said.left_behind),
-                News::Said(said) => notice.0 = Some((said_in_words(*said), 0.0)),
+                News::Said(Outcome::LeftBehind) => said = Some(words.said.left_behind.clone()),
+                News::Said(outcome) => notice.0 = Some((said_in_words(*outcome), 0.0)),
             },
             // Seated in a game without having asked: the leader of your
             // group did. Each game by its own name, Bridge Wars and House
@@ -361,22 +359,42 @@ fn hear(
                         Tell::Seated { .. } => crate::games::name_of(Minigame::BridgeWars),
                         _ => crate::games::name_of(Minigame::HouseBuilder),
                     };
-                    toast(&mut commands, &fill(&words.summoned, &[("game", &game)]));
+                    said = Some(fill(&words.summoned, &[("game", &game)]));
                 }
                 if panel.open {
                     shut(&mut panel, &mut up, &mut name_box);
                 }
             }
-            Tell::Refused(Refusal::NotLeader) => toast(&mut commands, &words.only_leader),
+            Tell::Refused(Refusal::NotLeader) => said = Some(words.only_leader.clone()),
             _ => {}
         }
+    }
+    let follows = online.me().is_some_and(|me| friends.follows(me.id));
+    for entered in tables.read() {
+        if !entered.online || entered.same_table {
+            continue;
+        }
+        if follows {
+            let ui = ui();
+            said = Some(fill(&ui.words.friends.summoned, &[("game", &crate::games::name_of(entered.game))]));
+        }
+        if panel.open {
+            shut(&mut panel, &mut up, &mut name_box);
+        }
+    }
+    if let Some(said) = said {
+        for before in &toasts {
+            commands.entity(before).despawn();
+        }
+        toast(&mut commands, &said);
     }
 }
 
 /// A line across the lower middle of the screen for a few seconds, over
 /// whatever else is up: what is said to you about your group while the
 /// panel is as likely shut. Lower than a headline, which a game puts its
-/// own name in as you arrive in it, and clear of you in the middle.
+/// own name in as you arrive in it, and clear of you in the middle. The
+/// only one up ([`hear`] takes down the one before).
 fn toast(commands: &mut Commands, text: &str) {
     commands.spawn((
         Toast(0.0),
@@ -1860,6 +1878,27 @@ mod tests {
         // A table this device hosts, offline: nobody's but yours.
         heard(&mut world, false, false);
         assert_eq!(toasts(&mut world), 1);
+        // Told only the leader starts a game (a "Play again" of your own at
+        // the results), and a moment later taken on to the next table by
+        // the leader: one line across the screen at a time, the newest,
+        // never two drawn over each other.
+        let said = |world: &mut World| -> Vec<String> {
+            let mut toasts = world.query_filtered::<&Children, With<Toast>>();
+            let lines: Vec<Entity> = toasts.iter(world).flat_map(|children| children.to_vec()).collect();
+            lines.into_iter().filter_map(|line| world.get::<Text>(line).map(|text| text.0.clone())).collect()
+        };
+        world.resource_mut::<Messages<Tell>>().write(Tell::Refused(Refusal::NotLeader));
+        world.run_system_once(hear).expect("heard");
+        world.resource_mut::<Messages<Tell>>().drain().for_each(drop);
+        assert_eq!(said(&mut world), [ui().words.friends.only_leader.clone()]);
+        heard(&mut world, true, false);
+        let summoned = fill(&ui().words.friends.summoned, &[("game", &crate::games::name_of(Minigame::KnockOff))]);
+        assert_eq!(said(&mut world), [summoned.clone()]);
+        // Both in the one frame: the table begun is the newer word.
+        world.resource_mut::<Messages<Tell>>().write(Tell::Refused(Refusal::NotLeader));
+        heard(&mut world, true, false);
+        world.resource_mut::<Messages<Tell>>().drain().for_each(drop);
+        assert_eq!(said(&mut world), [summoned]);
     }
 
     #[test]
