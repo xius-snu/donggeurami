@@ -5,6 +5,11 @@
 //! What each does is the rules' (`roundtown_net::bridge_wars`), carried out
 //! by this device offline and by the server online (`arena::use_things`);
 //! this is the button: what it shows, and what a finger on it does.
+//! **In any fight** (since 2026-11-18): the buttons show whatever kit the
+//! game being played puts in `arena::Outfit`, work wherever its venue is
+//! (`arena::Fighting::venue`), and say what was used (`arena::Used`) for
+//! that game to read, Bridge Race's sticks of dynamite as Bridge Wars'
+//! own.
 //!
 //! **What it shows** ([`fill_slot`]): the picture of what is on it, tinted
 //! as on its card in the shop (`market::look_of`), how many of it in its
@@ -462,10 +467,13 @@ fn slot_shown(slot: usize, filled: bool, more: bool) -> bool {
     filled || more || (SECOND_ALWAYS && slot == 0)
 }
 
-/// Whether you are in a fight, alive, with nothing in the way of using
-/// the button.
+/// Whether you are in a fight, alive, standing where it is, with nothing
+/// in the way of using the button: any fight's venue (since 2026-11-18,
+/// `arena::Fighting::venue`; Bridge Wars' map alone until then), whose
+/// game fills the buttons (`arena::Outfit`) and reads what is used
+/// (`arena::Used`).
 fn in_play(fighting: &Fighting, dialog: &DialogUp, venue: Venue, dead: bool) -> bool {
-    fighting.playing && !dialog.0 && venue == Venue::Arena && !dead
+    fighting.playing && !dialog.0 && fighting.venue == Some(venue) && !dead
 }
 
 /// Takes a press on one of the buttons, or its key: a potion is begun,
@@ -537,7 +545,7 @@ fn buttons(
             // By its key, a stick of dynamite goes as far as a quick tap
             // throws one.
             let heading = heading_of(body.rotation);
-            if throw(utility, heading, DYNAMITE_TAP, &mut body, &islands, &mut used) {
+            if throw(utility, heading, DYNAMITE_TAP, &mut body, venue, &islands, &mut used) {
                 hand.rest = AIM_REST;
             }
         }
@@ -545,10 +553,18 @@ fn buttons(
 }
 
 /// Uses `utility`, which is aimed, along `heading`, from where your `body`
-/// stands, turning you to face that way: whether it was. A builder is sent
-/// off only from the ground; a stick of dynamite is thrown to come down
-/// `far` from you.
-fn throw(utility: Utility, heading: f32, far: f32, body: &mut Transform, islands: &Islands, used: &mut MessageWriter<Used>) -> bool {
+/// stands on `venue`, turning you to face that way: whether it was. A
+/// builder is sent off only from the ground; a stick of dynamite is thrown
+/// to come down `far` from you.
+fn throw(
+    utility: Utility,
+    heading: f32,
+    far: f32,
+    body: &mut Transform,
+    venue: Venue,
+    islands: &Islands,
+    used: &mut MessageWriter<Used>,
+) -> bool {
     match utility {
         Utility::Fireball => {
             used.write(Used::Fireball { heading });
@@ -559,7 +575,7 @@ fn throw(utility: Utility, heading: f32, far: f32, body: &mut Transform, islands
         Utility::Builder => {
             let feet = body.translation;
             let standing = islands
-                .get(Venue::Arena)
+                .get(venue)
                 .and_then(|island| island.floor(feet.xz(), feet.y + LAND_STEP_UP))
                 .is_some_and(|ground| feet.y - ground <= IN_THE_AIR);
             if !standing {
@@ -631,7 +647,7 @@ fn aim(
         hand.hold = None;
         shown.set_if_neq(Visibility::Hidden);
         if let Some(heading) = hold.let_go(heading_of(body.rotation))
-            && throw(utility, heading, hold.far(), &mut body, &islands, &mut used)
+            && throw(utility, heading, hold.far(), &mut body, venue, &islands, &mut used)
         {
             hand.rest = AIM_REST;
         }

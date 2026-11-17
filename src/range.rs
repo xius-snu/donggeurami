@@ -39,7 +39,7 @@ use bevy::light::{NotShadowCaster, NotShadowReceiver};
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
 
-use crate::island::Venue;
+use crate::island::{self, Venue};
 use crate::ui::{self, UiChanged};
 use crate::{Dead, LAND_STEP_UP, Player, drive};
 
@@ -144,6 +144,14 @@ struct HitRange {
     outline_look: Handle<StandardMaterial>,
 }
 
+/// On your body, the range is drawn round you wherever you are, not only
+/// where fights are played ([`follow`]; since 2026-11-18): for a game
+/// whose punch lands where no fight is, Blend In's seekers' swing in the
+/// town (Hajun: "trying to find who is the person, by punching with a aura
+/// sword"). Its game puts it on and takes it off.
+#[derive(Component)]
+pub(crate) struct Shows;
+
 pub(crate) fn plugin(app: &mut App) {
     app.add_systems(Startup, spawn)
         // Once the body has been moved this frame, in or out of the car.
@@ -197,13 +205,17 @@ fn spawn(
 }
 
 /// Puts it at your feet, [`HEIGHT`] up, turned the way you face along the
-/// ground, in a game of Bridge Wars (`arena`, since the night of 2026-11-07; everywhere
-/// for 2026-11-07, when the town was its map), and puts it away anywhere
-/// else, in the car, while you are dead, or with no body to stand round.
+/// ground, where fights are played (`island::fights`: Bridge Wars' map,
+/// `arena`, since the night of 2026-11-07, everywhere for 2026-11-07, when
+/// the town was its map; and since 2026-11-18 Bridge Race's and Last
+/// Stand's), and wherever you are while you are marked [`Shows`]; and puts
+/// it away anywhere else, in the car, while you are dead, or with no body
+/// to stand round.
+#[allow(clippy::type_complexity)]
 fn follow(
     driving: Res<drive::Driving>,
     bridging: Res<crate::bridge::Bridging>,
-    me: Query<(&Transform, &Venue, Has<Dead>, Has<crate::Drinking>, Has<crate::Squashed>), With<Player>>,
+    me: Query<(&Transform, &Venue, Has<Dead>, Has<crate::Drinking>, Has<crate::Squashed>, Has<Shows>), With<Player>>,
     mut ranges: Query<(&mut Transform, &mut Visibility), (With<HitRange>, Without<Player>)>,
 ) {
     let Ok((mut place, mut shown)) = ranges.single_mut() else {
@@ -216,8 +228,8 @@ fn follow(
     let body = me
         .single()
         .ok()
-        .filter(|&(_, &here, dead, drinking, squashed)| {
-            here == Venue::Arena && !driving.on() && !dead && !bridging.0 && !drinking && !squashed
+        .filter(|&(_, &here, dead, drinking, squashed, marked)| {
+            (island::fights(here) || marked) && !driving.on() && !dead && !bridging.0 && !drinking && !squashed
         })
         .map(|(body, ..)| body);
     shown.set_if_neq(if body.is_some() { Visibility::Inherited } else { Visibility::Hidden });
@@ -767,5 +779,44 @@ mod tests {
             let ahead = (turned_to(facing) * Vec3::NEG_Z).xz();
             assert!(ahead.distance(facing) < 1e-5, "{facing} came out {ahead}");
         }
+    }
+
+    #[test]
+    fn the_range_is_drawn_wherever_fights_are_and_wherever_you_are_marked_for_it() {
+        use bevy::ecs::system::RunSystemOnce;
+        // Drawn round you on Bridge Wars' map and, since 2026-11-18, on
+        // Bridge Race's and Last Stand's; not in the town, nor in Blend In's
+        // town, but for a seeker there, marked for it.
+        let shown = |here: Venue, marked: bool| {
+            let mut world = World::new();
+            world.init_resource::<drive::Driving>();
+            world.init_resource::<crate::bridge::Bridging>();
+            let range = world
+                .spawn((
+                    HitRange {
+                        shape: Sector::of(&ui::ui().melee),
+                        fill: Handle::default(),
+                        outline: Handle::default(),
+                        fill_look: Handle::default(),
+                        outline_look: Handle::default(),
+                    },
+                    Transform::default(),
+                    Visibility::Hidden,
+                ))
+                .id();
+            let you = world.spawn((Player, Transform::from_xyz(3.0, 0.25, 4.0), here)).id();
+            if marked {
+                world.entity_mut(you).insert(Shows);
+            }
+            world.run_system_once(follow).expect("it runs");
+            world.get::<Visibility>(range) == Some(&Visibility::Inherited)
+        };
+        for here in [Venue::Arena, Venue::BridgeRace, Venue::LastStand] {
+            assert!(shown(here, false), "{here:?}");
+        }
+        for here in [Venue::Town, Venue::BlendIn, Venue::KnockOff] {
+            assert!(!shown(here, false), "{here:?}");
+        }
+        assert!(shown(Venue::BlendIn, true));
     }
 }
