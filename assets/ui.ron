@@ -432,6 +432,22 @@
         // by day and by night. Blend In's, a soft violet.
         blend_in: (
             accent: "#c9a2ff",
+            // The faint dashed line on the ground at the ring road's outer
+            // edge, past which nobody walks: the plate's grey, as
+            // see-through as its alpha says.
+            ring: "#6666668c",
+            // The glow on the ground round each seeker, from the hide to the
+            // end of the seek, so that the hider sees them coming: light,
+            // added to what is under it, as strong as its alpha says.
+            glow: "#b98cff80",
+            // The tall column of light over the hider where they stood, once
+            // a round is over: light too, as strong as its alpha says.
+            column: "#fff1c2bf",
+            // What covers a seeker's screen while the hider gets into place.
+            blind: "#000000",
+            // The tick by each who has chosen, in the window each round
+            // begins with.
+            tick: "#34d634",
         ),
 
         // Knock Off's: its accent, the blue of ice.
@@ -875,6 +891,64 @@
         // its score is called among the results at the end.
         blend_in: (
             score: "points",
+            // The window each round begins with: its title ({round} of
+            // {rounds}); what you are this round, hiding or seeking; over
+            // the box your name is in; under it when a name was turned down;
+            // the button that says you have chosen, and what it says once
+            // you have; and beside the one who hides, among the players.
+            round_of: "Round {round} of {rounds}",
+            hiding_line: "You're hiding: look and sound like one of the town's own",
+            seeking_line: "You're seeking: find who isn't one of them",
+            name: "Name",
+            refused: "Pick another name.",
+            ready: "Ready",
+            waiting: "Waiting for the others",
+            hides: "hides",
+            // The plate top centre, with the {time} left: everyone choosing;
+            // the hide, as the hider sees it and as the seekers do; the
+            // seek, as a seeker and as the hider; a round over, and the last
+            // one over. And under it the round, {round}/{rounds}.
+            choosing: "Choosing {time}",
+            hide: "Hide {time}",
+            hiding: "Hiding {time}",
+            seek: "Seek {time}",
+            stay_hidden: "Stay hidden {time}",
+            next_round: "Next round {time}",
+            last_round: "Results {time}",
+            round: "Round {round}/{rounds}",
+            // Across the screen: to the hider as the hide begins, the title
+            // and the line over it; on a seeker's black screen meanwhile; as
+            // the seek begins, to the seekers and to the hider; to a seeker
+            // who struck one of the town's own ({seconds} left of it); as a
+            // round ends, found by {name} in {time}, or {name} stayed
+            // hidden; a round given up, the hider having gone; and at the
+            // end, one who wins, more than one ({names}, with "and" between),
+            // or everyone alike.
+            hide_title: "Hide!",
+            hide_caption: "Walk like them, stop like them",
+            blind: "The hider is getting into place",
+            seek_title: "Seek!",
+            seek_caption: "Find who isn't one of them",
+            hidden_title: "Stay hidden!",
+            hidden_caption: "The seekers are coming",
+            wrong: "Wrong! {seconds}",
+            found: "Found by {name} in {time}!",
+            stayed: "{name} stayed hidden!",
+            void: "{name}'s round is given up",
+            wins: "{name} wins!",
+            win_together: "{names} win!",
+            and: " and ",
+            draw: "A draw!",
+            // In the chat: a seeker ({name}) struck one of the crowd; the
+            // {seeker} found the {hider} in {time}; {name} stayed hidden; a
+            // round given up.
+            struck: "{name} struck one of the town's own.",
+            found_line: "{seeker} found {hider} in {time}.",
+            stayed_line: "{name} stayed hidden.",
+            void_line: "{name}'s round is given up.",
+            // Under your name top left while you are dressed as someone
+            // else, the name you go by.
+            you: "(you)",
         ),
 
         // Knock Off's: what its score is called among the results.

@@ -246,8 +246,17 @@ pub enum Tell {
     /// you wear if you choose nothing else), to the hider as the hide
     /// begins if a seeker took the name they chose (one thrown in its
     /// place, [`Event::Renamed`]), and again to a device that comes back.
-    /// The hider's is for them alone.
+    /// The hider's is for them alone. Since G2 also in answer to every
+    /// [`Ask::Disguise`], what the choice stands at once it has been heard
+    /// (the asked, or what it was if that was refused), and to everyone as
+    /// the hide begins ([`Event::Dressed`]): what they are dressed as.
     Wear { name: String, look: String },
+    /// The seeker in seat `seeker` struck one of the town's own, a wrong
+    /// guess ([`Event::Wrong`]): told everyone in the game, for its chat to
+    /// say so (G2; Hajun: "incorrect guesses cost you time by
+    /// stunning/blinding etc."). Never which of the crowd it was: the one
+    /// struck staggers where it stands, for anyone looking to see.
+    Struck { seeker: u8 },
 }
 
 impl Tell {
@@ -286,6 +295,13 @@ pub struct BlendRound {
     /// The id the hider's body went by this round ([`Guise::id`]), once the
     /// round is over and where they were is shown: a secret until then.
     pub unmasked: Option<u64>,
+    /// The id each seeker's body goes by this round, by seat, from the hide
+    /// to the end of the seek: the bodies that hold the aura sword, for
+    /// every device to draw it in their hands, and that a seeker's swing
+    /// passes by (G2). Nobody's (0) for the hider's seat and for anyone
+    /// gone; empty the rest of the time. Seekers are no secret, sword in
+    /// hand: what is kept from everyone is which of the rest is the hider.
+    pub swords: Vec<u64>,
 }
 
 impl BlendRound {
@@ -838,16 +854,38 @@ impl Game {
     pub fn round(&self) -> BlendRound {
         let round = self.round.min(self.order.len().saturating_sub(1));
         let choosing = self.begun && self.stage == BlendStage::Choose;
+        let armed = self.begun && matches!(self.stage, BlendStage::Hide | BlendStage::Seek);
+        let hider = self.order.get(round).copied();
         BlendRound {
             round: round as u8,
             rounds: self.order.len() as u8,
-            hider: self.order.get(round).copied().unwrap_or(0) as u8,
+            hider: hider.unwrap_or(0) as u8,
             stage: self.stage,
             until: self.until,
             points: self.seats.iter().map(|them| them.points).collect(),
             ready: self.seats.iter().map(|them| choosing && them.ready).collect(),
             found: self.found,
             unmasked: self.unmasked,
+            swords: if armed {
+                self.seats
+                    .iter()
+                    .enumerate()
+                    .map(|(seat, them)| if Some(seat) == hider || them.gone { 0 } else { them.worn.id })
+                    .collect()
+            } else {
+                Vec::new()
+            },
+        }
+    }
+
+    /// For trying the game out (the server's `RT_ALLOW_SKIP`, a tap on the
+    /// board): the part of the round under way ends now, by the server's
+    /// clock, as if its time were up, on the next step. The choosing as if
+    /// everyone had chosen, the hide, the seek as run out (the hider's
+    /// point), the round shown. Nothing before the play nor once it is over.
+    pub fn hurry(&mut self) {
+        if self.begun && self.stage != BlendStage::Over {
+            self.until = self.until.min(self.clock);
         }
     }
 

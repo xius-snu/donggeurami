@@ -580,6 +580,7 @@ fn what_the_room_is_sent_is_small_and_comes_back_as_it_went() {
         ready: vec![true; 4],
         found: Some((2, u16::MAX)),
         unmasked: Some(FIRST_ID + IDS - 1),
+        swords: vec![FIRST_ID + IDS - 1; 4],
     };
     let bytes = postcard::to_allocvec(&round).unwrap();
     assert!(bytes.len() <= 80, "{} bytes", bytes.len());
@@ -599,7 +600,12 @@ fn what_the_room_is_sent_is_small_and_comes_back_as_it_went() {
         let back: crate::Ask = postcard::from_bytes(&postcard::to_allocvec(&wrapped).unwrap()).unwrap();
         assert!(matches!(back, crate::Ask::BlendIn(back) if back == ask));
     }
-    for tell in [Tell::Stunned { until: CLOCK + 4.0 }, Tell::Refused, Tell::Wear { name: "Dubu".into(), look: "girl".into() }] {
+    for tell in [
+        Tell::Stunned { until: CLOCK + 4.0 },
+        Tell::Refused,
+        Tell::Wear { name: "Dubu".into(), look: "girl".into() },
+        Tell::Struck { seeker: 3 },
+    ] {
         let wrapped = crate::Tell::BlendIn(tell.clone());
         let back: crate::Tell = postcard::from_bytes(&postcard::to_allocvec(&wrapped).unwrap()).unwrap();
         assert!(matches!(back, crate::Tell::BlendIn(back) if back == tell));
@@ -623,6 +629,76 @@ fn seekers_run_in_the_seek_and_everyone_else_walks() {
     assert_eq!(paces(&game), seeking);
     run_to(&mut game, BlendStage::Shown, SEEK + 1.0);
     assert_eq!(paces(&game), vec![WALK_SPEED; 3], "shown");
+}
+
+#[test]
+fn every_device_is_sent_the_seekers_bodies_from_the_hide_to_the_end_of_the_seek_and_never_the_hider_s() {
+    let mut game = begun(4, 21);
+    let hider = game.hider().unwrap();
+    assert!(game.round().swords.is_empty(), "choosing");
+    for seat in 0..4 {
+        game.ready(seat);
+    }
+    tick(&mut game);
+    assert_eq!(game.stage(), BlendStage::Hide);
+    let check = |game: &Game| {
+        let swords = game.round().swords;
+        assert_eq!(swords.len(), 4);
+        for seat in 0..4 {
+            if seat == hider {
+                assert_eq!(swords[seat], 0, "the hider's body is never named");
+            } else {
+                assert_eq!(swords[seat], game.seats[seat].worn.id);
+                assert_eq!(game.who(swords[seat]), Some(Who::Seat(seat)));
+            }
+        }
+        // Nothing of the hider's id is in what is sent while they hide.
+        assert!(!swords.contains(&game.seats[hider].worn.id));
+        assert_eq!(game.round().unmasked, None);
+    };
+    check(&game);
+    run_to(&mut game, BlendStage::Seek, HIDE + 1.0);
+    check(&game);
+    // A seeker who leaves is nobody's sword.
+    let seeker = a_seeker(&game);
+    game.leave(seeker);
+    tick(&mut game);
+    assert_eq!(game.round().swords[seeker], 0);
+    run_to(&mut game, BlendStage::Shown, SEEK + 1.0);
+    assert!(game.round().swords.is_empty(), "shown: the round is over");
+}
+
+#[test]
+fn hurried_each_part_of_a_round_ends_on_the_next_step() {
+    let mut game = begun(2, 22);
+    let hider = game.hider().unwrap();
+    let before = game.round().until;
+    game.hurry();
+    assert_eq!(game.stage(), BlendStage::Choose, "on the next step, not at once");
+    assert!(tick(&mut game).contains(&Event::Dressed));
+    assert_eq!(game.stage(), BlendStage::Hide);
+    assert!(game.round().until < before);
+    game.hurry();
+    assert!(tick(&mut game).contains(&Event::Seeking));
+    game.hurry();
+    assert!(tick(&mut game).contains(&Event::Hidden { hider }));
+    assert_eq!(game.round().points[hider], 1, "the seek run out: the hider's point");
+    game.hurry();
+    tick(&mut game);
+    assert_eq!(game.stage(), BlendStage::Choose);
+    assert_eq!(game.round().round, 1);
+    // Nothing before the play, nor once it is over.
+    let mut waiting = Game::new(&members(2), 1, Crowd::new(1));
+    waiting.hurry();
+    assert_eq!(waiting.until, 0.0);
+    while game.stage() != BlendStage::Over {
+        game.hurry();
+        tick(&mut game);
+    }
+    let over = game.round();
+    game.hurry();
+    tick(&mut game);
+    assert_eq!(game.round(), over);
 }
 
 #[test]

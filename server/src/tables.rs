@@ -2963,6 +2963,9 @@ mod tests {
         server.ask(a, Ask::Skip);
         server.frame(0.1);
         server.skip_to_the_game(b, BLEND_IN, 0);
+        // A game that tells a device back nothing of its own (Blend In's
+        // tells it what it wears).
+        server.world.resource_mut::<Tables>().games.insert((BLEND_IN, 0), Box::new(OverAsTheyGo));
         assert!(server.world.resource::<Tables>().keeps(room, body_a));
         // Its device goes (as `players::gone` has it): the body stands in its
         // seat, away; what it is told meanwhile it misses.
@@ -3005,6 +3008,9 @@ mod tests {
         server.ask(a, Ask::Skip);
         server.frame(0.1);
         server.skip_to_the_game(a, BLEND_IN, 0);
+        // A game that plays on with one person left (Blend In's own ends a
+        // game of two as one leaves, paid by points so far).
+        server.world.resource_mut::<Tables>().games.insert((BLEND_IN, 0), Box::new(OverAsTheyGo));
         let mochi = |id: u64| Member {
             id,
             name: "Mochi".into(),
