@@ -61,8 +61,10 @@
 //! they always were ([`bridge_wars_stall`], from its shelves and
 //! [`offer`]); on any other, what the fight's game hands over ([`Stalls`]),
 //! and nothing, no window, where it hands nothing (Bridge Race's stands
-//! are scenery). A card pressed asks for its ware (`arena::Want`), which
-//! that game reads itself.
+//! are scenery). A card pressed asks for what it sells ([`Pick`]): one of
+//! Bridge Wars' wares as `arena::Want`, as ever; another game's own, which
+//! are not Bridge Wars' (Last Stand's), by the number the game gave the
+//! card, as [`Picked`]; either read by that game itself.
 
 use bevy::gltf::GltfMaterialName;
 use bevy::mesh::VertexAttributeValues;
@@ -93,12 +95,19 @@ const ONE_THING: f32 = 3.0;
 /// stand's roof, in metres: the outline lies under the front of it, 0.3 m
 /// off; the other stand on the island is 10 m away.
 const AT_ITS_STAND: f32 = 2.0;
-/// How far over or under an outline your feet may be and still be
-/// standing in it, in metres: not jumping over it. (Over or under the
-/// islands' top, Bridge Wars' 0.25 m, until 2026-11-18: an outline lies
-/// two centimetres over the ground it is drawn on, Bridge Wars' and Last
-/// Stand's alike.)
+/// How far over or under the ground an outline marks your feet may be and
+/// still be standing in it, in metres: not jumping over it. (Over or under
+/// the islands' top, Bridge Wars' 0.25 m, until 2026-11-18, which is the
+/// ground under every one of its outlines: [`OUTLINE_OVER`].)
 const ON_THE_GROUND: f32 = 0.6;
+/// How far over the ground it marks an outline is drawn, in metres: every
+/// one Hajun has drawn lies two centimetres over its ground, so as not to
+/// flicker into it (measured 2026-11-18: Bridge Wars' eight at 0.27 over
+/// its islands' 0.25; Last Stand's two and Bridge Race's four at 0.02 over
+/// land at 0, before the two maps are stood up). Taken off an outline's
+/// height for the ground under it ([`Zone::floor`]), so that on Bridge
+/// Wars' map a shop opens for feet exactly as high as it always did.
+const OUTLINE_OVER: f32 = 0.02;
 /// Sizes, as shares of the short side of the screen: how far down the
 /// screen each shop's window begins, as a share of the screen's height,
 /// the item shop's, which is three rows, higher, both under the time and
@@ -133,10 +142,12 @@ const CLOSE: f32 = 7.0;
 const CLOSE_IN: f32 = PAD + HEADER * 0.5;
 
 /// One shop as its map has it: the box round its outline across the
-/// ground, as its lowest and highest corners, and how high the outline
-/// lies, the highest of its corners, which is where feet stand in it to a
-/// few centimetres (since 2026-11-18; every outline was taken to lie on
-/// the islands' top, Bridge Wars' 0.25 m, until then).
+/// ground, as its lowest and highest corners, and how high the ground it
+/// marks is, where feet stand in it: the highest of the outline's corners
+/// less what an outline is drawn over its ground ([`OUTLINE_OVER`]; since
+/// 2026-11-18, each outline by its own height; every outline was taken to
+/// lie on the islands' top, Bridge Wars' 0.25 m, until then, which is
+/// what each of Bridge Wars' still comes to).
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub(crate) struct Zone {
     pub(crate) low: Vec2,
@@ -248,17 +259,48 @@ struct Counter {
 /// A shop's window, and which shop's.
 #[derive(Component)]
 struct ShopWindow(Shop);
-/// A card, and what a tap on it buys.
+/// A card: what a tap on it asks for ([`Pick`]), at which of the shops.
 #[derive(Component)]
-pub(crate) struct Card(pub(crate) Ware);
+pub(crate) struct Card {
+    pub(crate) pick: Pick,
+    pub(crate) shop: Shop,
+}
 /// The cross on the window's corner.
 #[derive(Component)]
 struct CloseShop;
+
+/// What a card asks for as it is pressed ([`press`]): one of Bridge Wars'
+/// wares, asked for as `arena::Want`, as every card of its own is
+/// ([`offer`]); or, on a card of another fight's game, the number that
+/// game gave it, said as [`Picked`] for the game to read and make its own
+/// ware of again (since 2026-11-18: Last Stand sells wares of its own,
+/// `last_stand::Ware`, that are not Bridge Wars' and that nothing here
+/// knows, its endless upgrades among them; mine, a number rather than any
+/// one game's wares, so that the window needs to know none of them).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Pick {
+    Ware(Ware),
+    #[cfg_attr(not(test), allow(dead_code))]
+    Own(u16),
+}
+
+/// A card of another fight's game pressed in its shop's window
+/// ([`Pick::Own`], since 2026-11-18): on the fight's venue, at which of
+/// its shops, and the number its game gave the card. The game reads it
+/// itself, with a reader of its own, as Bridge Wars reads `arena::Want`;
+/// written only while the fight is on.
+#[derive(Message, Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) struct Picked {
+    pub(crate) venue: Venue,
+    pub(crate) shop: Shop,
+    pub(crate) pick: u16,
+}
 
 pub(crate) fn plugin(app: &mut App) {
     app.init_resource::<Counter>()
         .init_resource::<Shops>()
         .init_resource::<Stalls>()
+        .add_message::<Picked>()
         .add_observer(read_map)
         .add_observer(press)
         .add_systems(Update, (shut_by_hand, watch).chain().after(crate::move_bodies));
@@ -335,7 +377,8 @@ fn read_map(
 /// The shops at the stands with these `roofs`, given every corner of every
 /// outline on the ground and of every such roof, across the ground: the
 /// box round each outline whose middle is at the middle of one of them,
-/// at the height of the outline (the highest of its corners).
+/// on the ground the outline marks (the highest of its corners, less
+/// [`OUTLINE_OVER`]).
 pub(crate) fn shop_zones(outlines: &[Vec3], roofs: &[Vec2]) -> Vec<Zone> {
     let middle = |(low, high): &(Vec2, Vec2)| (*low + *high) * 0.5;
     let roofs: Vec<Vec2> = boxes(roofs).iter().map(middle).collect();
@@ -350,7 +393,8 @@ pub(crate) fn shop_zones(outlines: &[Vec3], roofs: &[Vec2]) -> Vec<Zone> {
                 .iter()
                 .filter(|corner| corner.xz().cmpge(low).all() && corner.xz().cmple(high).all())
                 .map(|corner| corner.y)
-                .fold(f32::NEG_INFINITY, f32::max),
+                .fold(f32::NEG_INFINITY, f32::max)
+                - OUTLINE_OVER,
         })
         .collect()
 }
@@ -566,7 +610,8 @@ pub(crate) enum State {
 }
 
 /// Everything a card shows: what it sells, which a tap on it asks for
-/// (`arena::Want`); its picture and the colour that is tinted; its name
+/// ([`Pick`]: `arena::Want` for Bridge Wars' wares, [`Picked`] for
+/// another game's); its picture and the colour that is tinted; its name
 /// and the line under it; how many of its steps have been taken, of how
 /// many, for an upgrade that goes by steps (none for one that goes on
 /// without end, whose step its line can say); how many of it are on your
@@ -574,7 +619,7 @@ pub(crate) enum State {
 /// cards of these (a [`Stall`]), as [`offer`] does Bridge Wars'.
 #[derive(Clone, PartialEq, Debug)]
 pub(crate) struct Offer {
-    pub(crate) ware: Ware,
+    pub(crate) pick: Pick,
     pub(crate) picture: Picture,
     pub(crate) tint: Color,
     pub(crate) name: String,
@@ -758,7 +803,7 @@ pub(crate) fn offer(ware: Ware, outfit: &Outfit, held: &Purse) -> Offer {
         _ => 0,
     };
     Offer {
-        ware,
+        pick: Pick::Ware(ware),
         picture,
         tint,
         name,
@@ -848,7 +893,7 @@ fn open(
                         };
                         let width = card_width(shelf.len());
                         for offer in shelf {
-                            card(row, images, pictures, offer, width, height);
+                            card(row, images, pictures, shop, offer, width, height);
                         }
                     });
             }
@@ -856,14 +901,15 @@ fn open(
         });
 }
 
-/// One card, `width` wide and `height` tall: the picture, the name, the
-/// line under it, the pips of an upgrade that goes by steps, and the
-/// price, or why there is none. Lit under the pointer only if it can be
-/// bought; blocked out otherwise.
+/// One card of `shop`'s, `width` wide and `height` tall: the picture, the
+/// name, the line under it, the pips of an upgrade that goes by steps,
+/// and the price, or why there is none. Lit under the pointer only if it
+/// can be bought; blocked out otherwise.
 fn card(
     row: &mut ChildSpawnerCommands,
     images: &mut Assets<Image>,
     pictures: &mut Pictures,
+    shop: Shop,
     offer: &Offer,
     width: f32,
     height: f32,
@@ -883,7 +929,7 @@ fn card(
         offer.tint.with_alpha(offer.tint.alpha() * 0.35)
     };
     row.spawn((
-        Card(offer.ware),
+        Card { pick: offer.pick, shop },
         TakesPress,
         Button,
         Node {
@@ -996,8 +1042,9 @@ fn card(
     });
 }
 
-/// A tap on a card asks for what it sells, at once (`arena::sell`, which
-/// knows whether you can have it); a tap on the cross shuts the shop.
+/// A tap on a card asks for what it sells, at once ([`asked`]: Bridge
+/// Wars' `arena::sell`, which knows whether you can have it, or the
+/// fight's own game); a tap on the cross shuts the shop.
 fn press(
     click: On<Pointer<Click>>,
     cards: Query<&Card>,
@@ -1005,6 +1052,7 @@ fn press(
     fighting: Res<Fighting>,
     mut counter: ResMut<Counter>,
     mut wants: MessageWriter<Want>,
+    mut picked: MessageWriter<Picked>,
 ) {
     if click.button != PointerButton::Primary || click.original_event_target() != click.entity {
         return;
@@ -1013,10 +1061,36 @@ fn press(
         counter.shut = true;
         return;
     }
-    if let Ok(card) = cards.get(click.entity)
-        && fighting.playing
-    {
-        wants.write(Want(card.0));
+    let Ok(card) = cards.get(click.entity) else {
+        return;
+    };
+    let (want, pick) = asked(card, &fighting);
+    if let Some(want) = want {
+        wants.write(want);
+    }
+    if let Some(pick) = pick {
+        picked.write(pick);
+    }
+}
+
+/// What a press on `card` asks for, as the fight stands: while it is on,
+/// one of Bridge Wars' wares as `arena::Want`, wherever it is pressed, as
+/// every card did until 2026-11-18; another game's own as [`Picked`], on
+/// the fight's venue, at the card's shop. Nothing out of a fight.
+fn asked(card: &Card, fighting: &Fighting) -> (Option<Want>, Option<Picked>) {
+    if !fighting.playing {
+        return (None, None);
+    }
+    match card.pick {
+        Pick::Ware(ware) => (Some(Want(ware)), None),
+        Pick::Own(pick) => (
+            None,
+            fighting.venue.map(|venue| Picked {
+                venue,
+                shop: card.shop,
+                pick,
+            }),
+        ),
     }
 }
 
@@ -1157,10 +1231,11 @@ mod tests {
         outlines.extend(outline(-5.0));
         let roof = vec![Vec2::new(4.7, -1.4), Vec2::new(5.9, 1.4)];
         let zones = shop_zones(&outlines, &roof);
+        // (On the ground it marks, two centimetres under it.)
         assert_eq!(zones, vec![Zone {
             low: Vec2::new(4.25, -1.25),
             high: Vec2::new(5.75, 1.25),
-            floor: 0.27,
+            floor: 0.25,
         }]);
         assert!(shop_zones(&outlines, &[]).is_empty());
         assert!(shop_zones(&[], &roof).is_empty());
@@ -1360,7 +1435,7 @@ mod tests {
         for (zone, shop) in [(items[0], Shop::Items), (upgrades[0], Shop::Upgrades)] {
             let size = zone.high - zone.low;
             assert!((size.min_element() - 1.5).abs() < 0.1 && (size.max_element() - 2.49).abs() < 0.1, "{shop:?}: {size}");
-            assert!((zone.floor - last_stand::LIFT).abs() < 0.05, "{shop:?}'s outline lies {} up", zone.floor);
+            assert!((zone.floor - last_stand::LIFT).abs() < 1e-4, "{shop:?}'s outline marks ground {} up", zone.floor);
             assert!(zone.middle().distance(ANCHOR) < 6.0, "{shop:?} at {}", zone.middle());
             // Standing in its nearer half, toward the anchor, on the ground
             // there, which the stand leaves clear, is standing in the shop;
@@ -1470,6 +1545,71 @@ mod tests {
                     assert_eq!(*card, offer(ware, &bare, &held));
                 }
             }
+        }
+    }
+
+    #[test]
+    fn bridge_wars_shops_open_for_feet_exactly_as_high_as_they_always_did() {
+        // Until 2026-11-18 every outline was taken to lie on the islands'
+        // top, 0.25 m, and a shop opened for feet within 0.6 m of it. Read
+        // off each outline since, Bridge Wars' come to that same ground:
+        // drawn at 0.27, two centimetres over it.
+        let parts = island::glb::read("pvptownmap.glb");
+        let outlines = corners_up(&parts, ACTIVATION_MATERIAL);
+        assert!(outlines.iter().all(|corner| (corner.y - (island::LAND_TOP_OF_THE_ISLANDS + OUTLINE_OVER)).abs() < 1e-5));
+        let mut zones = shop_zones(&outlines, &corners_of(&parts, RED_ROOF_MATERIAL));
+        zones.extend(shop_zones(&outlines, &corners_of(&parts, BLUE_ROOF_MATERIAL)));
+        assert_eq!(zones.len(), 2 * ARENA_TEAMS);
+        for zone in zones {
+            assert!((zone.floor - island::LAND_TOP_OF_THE_ISLANDS).abs() < 1e-6, "{zone:?}");
+            // Feet from a metre under it to well over it, in its middle,
+            // stand in it exactly when they did: each height three
+            // millimetres clear of the edges, where the two rules can part
+            // by no more than a float's rounding.
+            let middle = zone.middle();
+            for step in -100..=150 {
+                let y = step as f32 * 0.01 + 0.003;
+                let was = (y - island::LAND_TOP_OF_THE_ISLANDS).abs() <= ON_THE_GROUND;
+                assert_eq!(zone.holds(Vec3::new(middle.x, y, middle.y)), was, "feet {y} up in {zone:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_card_asks_for_one_of_bridge_wars_wares_as_ever_and_for_another_game_s_by_its_number() {
+        let fight = |venue: Venue| Fighting {
+            playing: true,
+            venue: Some(venue),
+            ..default()
+        };
+        let sword = Card {
+            pick: Pick::Ware(Ware::Sword(2)),
+            shop: Shop::Items,
+        };
+        // Bridge Wars' own: what it sells, wherever it is pressed while the
+        // fight is on, as every card asked until 2026-11-18.
+        assert_eq!(asked(&sword, &fight(Venue::Arena)), (Some(Want(Ware::Sword(2))), None));
+        assert_eq!(asked(&sword, &fight(Venue::LastStand)), (Some(Want(Ware::Sword(2))), None));
+        // Another game's own, Last Stand's fifth upgrade, say: its number,
+        // on its venue, at its shop, for it to make its own ware of again;
+        // nothing of Bridge Wars' asked.
+        let beam = Card {
+            pick: Pick::Own(5),
+            shop: Shop::Upgrades,
+        };
+        assert_eq!(
+            asked(&beam, &fight(Venue::LastStand)),
+            (None, Some(Picked { venue: Venue::LastStand, shop: Shop::Upgrades, pick: 5 }))
+        );
+        // Nothing out of a fight, nor before or after it.
+        for card in [&sword, &beam] {
+            assert_eq!(asked(card, &Fighting::default()), (None, None));
+            assert_eq!(asked(card, &Fighting { playing: false, ..fight(Venue::LastStand) }), (None, None));
+        }
+        // Bridge Wars' cards are its wares, every one.
+        let bare = Outfit::default();
+        for ware in shelves(Shop::Items).into_iter().chain(shelves(Shop::Upgrades)).flatten() {
+            assert_eq!(offer(ware, &bare, &[0; 4]).pick, Pick::Ware(ware));
         }
     }
 }

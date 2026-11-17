@@ -293,7 +293,9 @@ fn shining(red: Color, shine: f32) -> LinearRgba {
 }
 
 /// Online, the sticks are the server's: each it sends is thrown here as
-/// it comes, on the fight's venue (`Fighting::served_on`).
+/// it comes, on the fight's venue (`Fighting::served_on`; one sent before
+/// this device knew where the fight was moved there as soon as it does,
+/// `arena::settle`).
 fn follow_server(
     fresh: Query<(Entity, &Dynamite), (With<Remote>, Added<Dynamite>)>,
     fighting: Res<Fighting>,
@@ -310,7 +312,8 @@ fn follow_server(
             to: Vec3::new(stick.to_x, stick.to_y, stick.to_z),
             age: 0.0,
         };
-        throw(&mut commands, lob, usize::from(stick.seat), Some(source), venue);
+        let thrown = throw(&mut commands, lob, usize::from(stick.seat), Some(source), venue);
+        fighting.settle_later(&mut commands, thrown);
     }
 }
 
@@ -363,7 +366,8 @@ fn hear_blasts(
             return;
         }
         bridges.blast_tip(at.xz(), DYNAMITE_RADIUS);
-        fire::burst(&mut commands, at + Vec3::Y * STICK_RADIUS, venue);
+        let burst = fire::burst(&mut commands, at + Vec3::Y * STICK_RADIUS, venue);
+        fighting.settle_later(&mut commands, burst);
         info!(
             "a stick of dynamite blew at {:.1}, taking {} planks, and {} more to fall",
             at.xz(),

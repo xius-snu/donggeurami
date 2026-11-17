@@ -566,8 +566,10 @@ pub(crate) struct Outfit {
 pub(crate) struct FightTime(pub(crate) f32);
 
 /// You want to buy this, standing at a shop (`market`): out of what you
-/// hold here, offline, or asked of the server.
-#[derive(Message, Clone, Copy)]
+/// hold here, offline, or asked of the server. Written by a card of Bridge
+/// Wars' wares, wherever it is pressed (`market::Pick::Ware`); another
+/// game's own wares are asked for as `market::Picked`.
+#[derive(Message, Clone, Copy, PartialEq, Debug)]
 pub(crate) struct Want(pub(crate) Ware);
 
 /// You have used what is on one of your buttons (`utility`): a fireball
@@ -1012,6 +1014,16 @@ pub(crate) struct Fighting {
     /// once asked for `Venue::Arena`: a plank is laid, a shop opens, a
     /// button is used, only by someone standing on it.
     pub(crate) venue: Option<Venue>,
+    /// The team each seat is on, by seat, as `members` is: what a name in
+    /// the chat is written in the colour of once the teams are out
+    /// (`chat`, [`Fighting::team_of_member`]). Bridge Wars' seat modulo
+    /// four ([`publish`], `arena_team`); another game's by its own rule,
+    /// Bridge Race's seat modulo two, Last Stand's one team; and empty
+    /// where a game's seats have no teams to colour, whose names are then
+    /// written in the colour of names (since 2026-11-18; until then every
+    /// name was coloured by Bridge Wars' rule, which would have put Bridge
+    /// Race's third and fourth seats in green and yellow).
+    pub(crate) teams: Vec<u8>,
 }
 
 impl Fighting {
@@ -1022,13 +1034,72 @@ impl Fighting {
         Fighting { game, ..default() }
     }
 
-    /// Where something the server sends of the fight is, online (a stick
-    /// of dynamite, a fireball, a thing lying about): on the fight's venue;
-    /// in the frame before that has been said, wherever you are, the
-    /// server sending a game's things only to whoever is in it; and on
-    /// Bridge Wars' map with neither, where they all were until 2026-11-18.
+    /// The team the seat `seat` is on, if its game says ([`Fighting::teams`]).
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn team_of(&self, seat: usize) -> Option<u8> {
+        self.teams.get(seat).copied()
+    }
+
+    /// The team of whoever has the id `who` in the fight, by their seat
+    /// among its members, if they are in it and its game says
+    /// ([`Fighting::teams`]): for the chat to write their name in its
+    /// colour once the teams are out.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn team_of_member(&self, who: u64) -> Option<u8> {
+        let seat = self.members.iter().position(|member| *member == who && who != 0)?;
+        self.team_of(seat)
+    }
+
+    /// Where something the server sends of the fight is put, online (a
+    /// stick of dynamite, a fireball, its blast, a thing lying about): on
+    /// the fight's venue. In the frame or two before that has been said,
+    /// which is when a device put back into a game under way is sent what
+    /// is in it (`Tell::Back`, a table's `Tell::Entered`: replicon brings
+    /// what is in a room no later than the word of it, and maybe sooner),
+    /// on the venue you stand on if a fight is played there, and otherwise
+    /// on Bridge Wars' map, where everything the server sent of a fight was
+    /// put until 2026-11-18; never where no fight is, the town, where it
+    /// would be drawn among its people. Whatever is put there on that guess
+    /// is moved onto the fight's venue as soon as it is said
+    /// ([`Fighting::settle_later`], [`settle`]).
     pub(crate) fn served_on(&self, here: Option<Venue>) -> Venue {
-        self.venue.or(here).unwrap_or(Venue::Arena)
+        self.venue.or(here.filter(|&here| island::fights(here))).unwrap_or(Venue::Arena)
+    }
+
+    /// Marks `thing`, made just now from the server's word of the fight
+    /// where [`Fighting::served_on`] put it, to be moved onto the fight's
+    /// venue once that is said ([`Unsettled`]), if it has not been yet.
+    pub(crate) fn settle_later(&self, commands: &mut Commands, thing: Entity) {
+        if self.venue.is_none() {
+            commands.entity(thing).insert(Unsettled);
+        }
+    }
+}
+
+/// Something made from the server's word of a fight before this device
+/// knew where the fight was, put where [`Fighting::served_on`] guessed
+/// (since 2026-11-18): moved onto the fight's venue as soon as that is
+/// said ([`settle`]). Bridge Wars' guess is its own map, which is where
+/// all of it always went; another game's is set right a frame or two
+/// later.
+#[derive(Component)]
+pub(crate) struct Unsettled;
+
+/// Moves whatever was made from the server's word of a fight before this
+/// device knew where the fight was ([`Unsettled`]) onto the fight's venue,
+/// as soon as that is said, its venue written only if it was another.
+/// Nothing is marked so but in the frame or two after a device is put
+/// back into a game under way, so that this finds nothing on any other.
+fn settle(fighting: Res<Fighting>, unsettled: Query<(Entity, &Venue), With<Unsettled>>, mut commands: Commands) {
+    let Some(venue) = fighting.venue else {
+        return;
+    };
+    for (thing, &was) in &unsettled {
+        let mut thing = commands.entity(thing);
+        thing.try_remove::<Unsettled>();
+        if was != venue {
+            thing.try_insert(venue);
+        }
     }
 }
 
@@ -1170,10 +1241,10 @@ pub(crate) struct DeathLine;
 
 /// What is needed to keep "You died. Respawning in 4..." across the screen
 /// ([`DeathWords::say`]): Bridge Wars' while its own game is here
-/// ([`show_death`]), and any other fight's, whose game says how long until
-/// you stand again in its own system with this among what it asks for
-/// (since 2026-11-18; Bridge Race's two seconds back on your island, Last
-/// Stand's six beside the anchor).
+/// ([`show_death`]), and any other fight's, in its own words, whose game
+/// says how long until you stand again in its own system with this among
+/// what it asks for (since 2026-11-18; Bridge Race's "Back on your island
+/// in 2", Last Stand's "Back in 6").
 #[derive(bevy::ecs::system::SystemParam)]
 pub(crate) struct DeathWords<'w, 's> {
     texts: Query<'w, 's, Entity, With<DeathText>>,
@@ -1186,17 +1257,20 @@ impl DeathWords<'_, '_> {
         self.texts.single().is_ok()
     }
 
-    /// Says you will stand again in `left` seconds, counting down in
-    /// halves, the words put up the first time ([`InArena`], for the game's
-    /// end to take with the rest) and changed only as the count does; or,
-    /// with none, takes them away. None for someone out for good, whose
-    /// wait never ends (`Dead { left: f32::INFINITY }`): a game says that
-    /// its own way, as Bridge Wars' panel does.
-    pub(crate) fn say(&mut self, commands: &mut Commands, left: Option<f32>) {
+    /// Says you will stand again in `left` seconds, in `words`, the file's
+    /// for whichever game it is, its `{seconds}` filled in counting down in
+    /// halves (Bridge Wars' `words.arena.died`, "You died. Respawning in
+    /// {seconds}..."; until 2026-11-18 those were the only words it had):
+    /// put up the first time ([`InArena`], for the game's end to take with
+    /// the rest) and changed only as the count, or the words, do; or, with
+    /// none, taken away. None for someone out for good, whose wait never
+    /// ends (`Dead { left: f32::INFINITY }`): a game says that its own way,
+    /// as Bridge Wars' panel does.
+    pub(crate) fn say(&mut self, commands: &mut Commands, words: &str, left: Option<f32>) {
         let up = self.texts.single().ok();
         match (left.filter(|left| left.is_finite()), up) {
             (Some(left), Some(_)) => {
-                let line = died_in(left);
+                let line = died_in(words, left);
                 for mut text in &mut self.lines {
                     if text.0 != line {
                         text.0.clone_from(&line);
@@ -1216,7 +1290,7 @@ impl DeathWords<'_, '_> {
                         ..default()
                     },
                     Pickable::IGNORE,
-                    children![(DeathLine, hud::words(died_in(left), DEATH_TEXT, ui().colours.text))],
+                    children![(DeathLine, hud::words(died_in(words, left), DEATH_TEXT, ui().colours.text))],
                 ));
             }
             (None, Some(text)) => {
@@ -1284,6 +1358,9 @@ pub(crate) fn plugin(app: &mut App) {
         .init_resource::<Begun>()
         .add_observer(ask)
         .add_observer(read_map)
+        // What the server sent of a fight before this device knew where it
+        // was, onto the fight's venue once that is said.
+        .add_systems(Update, settle)
         .add_systems(
             Update,
             (hear, follow_round, cut_off, play, timetable, warn_of_the_anchor, gather, sell, use_things, publish, dress, show_board)
@@ -3361,7 +3438,9 @@ fn finish(
 /// of Bridge Wars here, it wrote that none was on every frame it was not
 /// so already, and a game of another kind saying that it was on would have
 /// been told otherwise the next frame. Both are any fight's to own
-/// ([`Fighting`], [`OfflineArena`]).
+/// ([`Fighting`], [`OfflineArena`]). Each seat's team is its seat modulo
+/// four (`arena_team`), said for the chat's names ([`Fighting::teams`]),
+/// which went by that rule itself until 2026-11-18.
 fn publish(game: Option<Res<Game>>, mut had: Local<bool>, mut fighting: ResMut<Fighting>, mut offline: ResMut<OfflineArena>) {
     let Some(game) = game.as_deref() else {
         if std::mem::take(&mut *had) {
@@ -3379,10 +3458,12 @@ fn publish(game: Option<Res<Game>>, mut had: Local<bool>, mut fighting: ResMut<F
     let seats = game.seats.as_slice();
     let same_members =
         fighting.members.len() == seats.len() && fighting.members.iter().zip(seats).all(|(id, member)| *id == member.id);
+    let same_teams = fighting.teams.len() == seats.len() && fighting.teams.iter().enumerate().all(|(seat, &team)| team == arena_team(seat));
     if (fighting.playing, fighting.teams_out, fighting.seat, fighting.online, fighting.game) != (playing, teams_out, seat, online, id)
         || fighting.watched != watched
         || fighting.venue != venue
         || !same_members
+        || !same_teams
     {
         *fighting = Fighting {
             playing,
@@ -3393,6 +3474,7 @@ fn publish(game: Option<Res<Game>>, mut had: Local<bool>, mut fighting: ResMut<F
             members: seats.iter().map(|member| member.id).collect(),
             watched,
             venue,
+            teams: (0..seats.len()).map(arena_team).collect(),
         };
     }
     offline.set_if_neq(OfflineArena(!game.online));
@@ -4528,9 +4610,11 @@ fn show_death(
     mut words: DeathWords,
     mut commands: Commands,
 ) {
+    let file = ui();
+    let died = &file.words.arena.died;
     let Some(game) = game.as_deref() else {
         if std::mem::take(&mut *had) {
-            words.say(&mut commands, None);
+            words.say(&mut commands, died, None);
         }
         return;
     };
@@ -4544,19 +4628,19 @@ fn show_death(
     {
         dead.left = (dead.left - time.delta_secs()).max(0.0);
     }
-    words.say(&mut commands, waiting.map(|dead| dead.left));
+    words.say(&mut commands, died, waiting.map(|dead| dead.left));
 }
 
-/// "You died. Respawning in 3.5...": `left` seconds, rounded up to the
-/// half: "4", "3.5", down to "0.5".
-fn died_in(left: f32) -> String {
+/// "You died. Respawning in 3.5...": `words` with `left` seconds filled in
+/// for its `{seconds}`, rounded up to the half: "4", "3.5", down to "0.5".
+fn died_in(words: &str, left: f32) -> String {
     let halves = (left.max(0.0) * 2.0).ceil();
     let seconds = if halves % 2.0 == 0.0 {
         format!("{}", halves / 2.0)
     } else {
         format!("{:.1}", halves / 2.0)
     };
-    fill(&ui().words.arena.died, &[("seconds", &seconds)])
+    fill(words, &[("seconds", &seconds)])
 }
 
 /// Keeps the panel in the middle of the screen while you are out for good,
@@ -5703,7 +5787,7 @@ mod tests {
     #[test]
     fn the_death_count_goes_down_in_halves() {
         let seconds = |left: f32| {
-            let line = died_in(left);
+            let line = died_in(&ui().words.arena.died, left);
             line.trim_start_matches("You died. Respawning in ").trim_end_matches("...").to_string()
         };
         assert_eq!(seconds(4.0), "4");
@@ -5804,6 +5888,7 @@ mod tests {
             seat: Some(2),
             game,
             venue: Some(venue),
+            teams: vec![0, 1, 0, 1],
             ..default()
         };
         world.insert_resource(another(7, Venue::LastStand));
@@ -5851,6 +5936,11 @@ mod tests {
         let fighting = world.resource::<Fighting>();
         assert_eq!((fighting.playing, fighting.game, fighting.seat, fighting.venue), (true, 1, Some(0), Some(Venue::Arena)));
         assert_eq!(fighting.members.len(), ARENA_SEATS);
+        // Each seat's team its seat modulo four, as the chat's names went
+        // by until 2026-11-18: whoever is in seat 5 is blue.
+        assert_eq!(fighting.teams, (0..ARENA_SEATS).map(arena_team).collect::<Vec<_>>());
+        assert_eq!(fighting.team_of_member(fighting.members[5]), Some(1));
+        assert_eq!(fighting.team_of_member(0), None);
         assert!(world.resource::<OfflineArena>().0);
         assert_eq!((world.resource::<Outfit>().kit.sword, world.resource::<FightTime>().0), (0, 0.0));
         assert_eq!(world.get::<Wears>(you), Some(&Wears::default()));
@@ -5932,6 +6022,86 @@ mod tests {
         // Where no fight is played, none: Blend In's town, the town.
         assert_eq!(tags_over(Venue::BlendIn), [None, None, None]);
         assert_eq!(tags_over(Venue::Town), [None, None, None]);
+    }
+
+    #[test]
+    fn what_the_server_sends_before_the_fight_s_venue_is_said_is_never_put_in_the_town_and_is_moved_once_it_is() {
+        // Put back into a game under way (`Tell::Back`), a device may be
+        // sent what is in it before the word of it, in the town still:
+        // what comes then is put on Bridge Wars' map, where all of it went
+        // until 2026-11-18, or on the venue you stand on if a fight is
+        // played there; never in the town, nor on Blend In's town.
+        let unsaid = Fighting::default();
+        for here in [None, Some(Venue::Town), Some(Venue::BlendIn), Some(Venue::KnockOff), Some(Venue::Arena)] {
+            assert_eq!(unsaid.served_on(here), Venue::Arena, "{here:?}");
+        }
+        assert_eq!(unsaid.served_on(Some(Venue::LastStand)), Venue::LastStand);
+        // Once said, on the fight's venue, wherever you stand.
+        let said = |venue: Venue| Fighting {
+            venue: Some(venue),
+            ..default()
+        };
+        assert_eq!(said(Venue::BridgeRace).served_on(Some(Venue::Town)), Venue::BridgeRace);
+        // What was put on a guess is marked so, and moved onto the fight's
+        // venue as soon as it is said; what was put there knowing is left
+        // as it is.
+        let mut world = World::new();
+        world.insert_resource(unsaid);
+        let put = |world: &mut World, fighting: &Fighting| {
+            let thing = world.spawn(Venue::Arena).id();
+            {
+                let mut commands = world.commands();
+                fighting.settle_later(&mut commands, thing);
+            }
+            world.flush();
+            thing
+        };
+        let guessed = put(&mut world, &Fighting::default());
+        let known = put(&mut world, &said(Venue::Arena));
+        assert!(world.get::<Unsettled>(guessed).is_some() && world.get::<Unsettled>(known).is_none());
+        let settle = world.register_system(settle);
+        world.run_system(settle).expect("it runs");
+        assert!(world.get::<Unsettled>(guessed).is_some(), "nothing is said yet");
+        world.insert_resource(said(Venue::LastStand));
+        world.run_system(settle).expect("it runs");
+        assert_eq!(world.get::<Venue>(guessed), Some(&Venue::LastStand));
+        assert!(world.get::<Unsettled>(guessed).is_none());
+        assert_eq!(world.get::<Venue>(known), Some(&Venue::Arena));
+        // Bridge Wars' own, guessed on its map: left there, as ever.
+        world.insert_resource(Fighting::default());
+        let bridge_wars = put(&mut world, &Fighting::default());
+        world.insert_resource(said(Venue::Arena));
+        world.run_system(settle).expect("it runs");
+        assert_eq!(world.get::<Venue>(bridge_wars), Some(&Venue::Arena));
+        assert!(world.get::<Unsettled>(bridge_wars).is_none());
+    }
+
+    #[test]
+    fn the_words_while_you_are_dead_are_the_game_s_own_counting_down_in_halves() {
+        use bevy::ecs::system::RunSystemOnce;
+        // Another fight's words (Last Stand's "Back in 6", say), put up
+        // once, changed as the count goes, and taken away as you stand.
+        let mut world = World::new();
+        let say = |world: &mut World, left: Option<f32>| {
+            world
+                .run_system_once(move |mut words: DeathWords, mut commands: Commands| words.say(&mut commands, "Back in {seconds}", left))
+                .expect("it runs");
+        };
+        let lines = |world: &mut World| {
+            let mut lines = world.query_filtered::<&Text, With<DeathLine>>();
+            lines.iter(world).map(|text| text.0.clone()).collect::<Vec<_>>()
+        };
+        say(&mut world, Some(5.6));
+        assert_eq!(lines(&mut world), ["Back in 6"]);
+        say(&mut world, Some(2.2));
+        assert_eq!(lines(&mut world), ["Back in 2.5"]);
+        // Out for good, nothing counts down: a game says that its own way.
+        say(&mut world, Some(f32::INFINITY));
+        assert!(lines(&mut world).is_empty());
+        say(&mut world, Some(1.0));
+        say(&mut world, None);
+        assert!(lines(&mut world).is_empty());
+        assert_eq!(world.query_filtered::<(), With<DeathText>>().iter(&world).count(), 0);
     }
 
     #[test]

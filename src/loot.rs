@@ -65,8 +65,8 @@
 //! **In any fight** (since 2026-11-18, for Last Stand's generators and its
 //! zombies' drops): a thing is laid on the venue of the game it is of, a
 //! generator's over that game's pads' top ([`lay`]; Bridge Wars' own
-//! `PAD_TOP` for its own, [`PadTop`] for what the server sends), and only
-//! whoever is on that venue is taken to have taken it.
+//! `PAD_TOP` for its own, and [`PadTop`] for what the server sends of any
+//! other's), and only whoever is on that venue is taken to have taken it.
 
 use std::f32::consts::TAU;
 
@@ -178,14 +178,30 @@ pub(crate) struct Look {
 /// How high the tops of the generators' pads are in the fight being
 /// played, in metres: where a thing the server sends from a generator
 /// hangs over (a [`Loot`] says nothing of its height, only a dropped one
-/// does, `Spilt::ground`). Bridge Wars' `PAD_TOP` as the app opens, and
-/// out of any other game. **Any fight may own it**, as it does
-/// `arena::Fighting` (since 2026-11-18): another game whose pads stand
-/// otherwise sets it as it begins, and sets it back to Bridge Wars' once
-/// as it ends. (Last Stand's map is stood up a quarter of a metre so that
-/// its pads' tops are where Bridge Wars' are: none of its own needed.)
+/// does, `Spilt::ground`), on any map but Bridge Wars', whose things hang
+/// over its own `PAD_TOP` whatever this says, as they always did. Bridge
+/// Wars' `PAD_TOP` as the app opens, and out of any other game. **Any
+/// fight may own it**, as it does `arena::Fighting` (since 2026-11-18):
+/// another game whose pads stand otherwise sets it as it begins, and sets
+/// it back to Bridge Wars' once as it ends. (Last Stand's map is stood up
+/// a quarter of a metre so that its pads' tops are where Bridge Wars' are:
+/// none of its own needed. What the server sends in the frame or two
+/// before this device knows where the fight is, as it is put back into a
+/// game, is hung over Bridge Wars' pads, where it was put, and keeps that
+/// height as it is moved onto the fight's venue, `arena::settle`: right
+/// for every fight there is.)
 #[derive(Resource, Clone, Copy, PartialEq, Debug)]
 pub(crate) struct PadTop(pub(crate) f32);
+
+impl PadTop {
+    /// The top of the pads a thing the server sends from a generator on
+    /// `venue` hangs over: Bridge Wars' own `PAD_TOP` on its map, so that
+    /// nothing another game leaves here moves its things; this anywhere
+    /// else.
+    pub(crate) fn on(self, venue: Venue) -> f32 {
+        if venue == Venue::Arena { PAD_TOP } else { self.0 }
+    }
+}
 
 impl Default for PadTop {
     fn default() -> Self {
@@ -282,10 +298,12 @@ fn learn_look(
 /// what their purchases need (`roundtown_net::bots`). Until then only
 /// people were looked for, the computer's picking up nothing, and a
 /// thing one of them took would have flown to the nearest person, or
-/// nowhere. Each laid on the fight's venue (`Fighting::served_on`), a
-/// generator's at the fight's pads' top ([`PadTop`]), and taken by whoever
-/// is nearest of those on the thing's own venue (since 2026-11-18; Bridge
-/// Wars' map alone until then).
+/// nowhere. Each laid on the fight's venue (`Fighting::served_on`; one
+/// sent before this device knew where the fight was moved there as soon
+/// as it does, `arena::settle`), a generator's at the fight's pads' top
+/// ([`PadTop::on`]), and taken by whoever is nearest of those on the
+/// thing's own venue (since 2026-11-18; Bridge Wars' map alone until
+/// then).
 #[allow(clippy::too_many_arguments)]
 fn follow_server(
     time: Res<Time>,
@@ -302,7 +320,8 @@ fn follow_server(
         let mine = people.iter().find(|(.., mine)| *mine).map(|(_, _, venue, ..)| *venue);
         let venue = fighting.served_on(mine);
         for (source, loot) in &fresh {
-            lay(&mut commands, &look, now, Key::Server(source), *loot, venue, pad_top.0);
+            let thing = lay(&mut commands, &look, now, Key::Server(source), *loot, venue, pad_top.on(venue));
+            fighting.settle_later(&mut commands, thing);
         }
     }
     for (thing, lying, &on) in &things {
@@ -457,8 +476,11 @@ mod tests {
         assert_eq!(world.get::<Thing>(thing).expect("laid").at, Vec3::new(6.0, 0.5 + HOVER, 1.0));
         assert!(world.get::<InArena>(thing).is_some(), "to go with its game");
         // And what the server sends hangs over Bridge Wars' pads, until a
-        // fight's game says its own are elsewhere.
+        // fight's game says its own are elsewhere; on Bridge Wars' own map
+        // over its own, whatever another game has left said.
         assert_eq!(PadTop::default(), PadTop(PAD_TOP));
+        assert_eq!(PadTop::default().on(Venue::LastStand), PAD_TOP);
+        assert_eq!((PadTop(0.9).on(Venue::LastStand), PadTop(0.9).on(Venue::Arena)), (0.9, PAD_TOP));
     }
 
     #[test]
