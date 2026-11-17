@@ -1359,6 +1359,9 @@ pub(crate) fn plugin(app: &mut App) {
         // What the server sent of a fight before this device knew where it
         // was, onto the fight's venue once that is said.
         .add_systems(Update, settle)
+        // Taken from a game over for you into another: this one ends
+        // first, before the next begins here.
+        .add_systems(Update, taken_elsewhere.before(crate::table::TableSystems))
         .add_systems(
             Update,
             (hear, follow_round, cut_off, play, timetable, warn_of_the_anchor, gather, sell, use_things, publish, dress, show_board)
@@ -1674,6 +1677,50 @@ fn hear(
             _ => {}
         }
     }
+}
+
+/// Online, stood by the server in another game while your game of Bridge
+/// Wars is over for you (since 2026-11-18: your group's leader, back in the
+/// town from the result, has led the group into one of the four games
+/// played at tables, `table`, and you with it, straight from the result):
+/// the game ends here as it does as you go back to the town ([`hear`]),
+/// and before the game you are taken into begins here
+/// (`table::TableSystems`), so that the camera is as it was before Bridge
+/// Wars fixed it over you, for that game to fix as it will, and nothing of
+/// Bridge Wars is left up over it. Until then only the town and home ended
+/// it, and on a follower's screen Bridge Wars' board stood over the
+/// table's, its game going on here under the next (seen 2026-11-18, two
+/// copies against a server on this PC; mine).
+#[allow(clippy::too_many_arguments)]
+fn taken_elsewhere(
+    mut tells: MessageReader<Tell>,
+    game: Option<Res<Game>>,
+    me: Query<Entity, With<Player>>,
+    in_arena: Query<Entity, With<InArena>>,
+    anchors: Option<ResMut<Anchors>>,
+    mut islands: ResMut<Islands>,
+    mut visibilities: Query<&mut Visibility>,
+    mut bodies: Whereabouts,
+    mut orbit: ResMut<OrbitCamera>,
+    mut commands: Commands,
+) {
+    let elsewhere = tells
+        .read()
+        .filter(|tell| matches!(tell, Tell::Arrive { venue, .. } if !matches!(venue, Venue::Arena | Venue::Town | Venue::Home)))
+        .count()
+        > 0;
+    let Some(game) = game.as_deref().filter(|game| game.online) else {
+        return;
+    };
+    let Ok(you) = me.single() else {
+        return;
+    };
+    if !elsewhere {
+        return;
+    }
+    let mut anchors = anchors;
+    finish(&mut commands, game, &in_arena, you, &mut bodies, &mut orbit, anchors.as_deref_mut(), &mut islands, &mut visibilities, false);
+    info!("Bridge Wars: over, and on into another game");
 }
 
 /// Online, the game is the server's: whatever it says the round is, this
@@ -5962,6 +6009,63 @@ mod tests {
         // Every game's number from the one count, whichever game it is.
         let mut begun = Begun::default();
         assert_eq!((begun.next(), begun.next(), begun.next()), (1, 2, 3));
+    }
+
+    #[test]
+    fn a_game_online_ends_here_as_the_server_stands_you_in_another_game_with_the_camera_as_it_was_before_it() {
+        use bevy::ecs::message::Messages;
+        use bevy::ecs::system::RunSystemOnce;
+        let mut world = World::new();
+        world.init_resource::<Messages<Tell>>();
+        world.init_resource::<Islands>();
+        let mut orbit = OrbitCamera::default();
+        orbit.distance = 7.0;
+        let before = orbit.view();
+        let kept = orbit.top_down();
+        world.insert_resource(orbit);
+        let you = world.spawn((Player, Transform::default(), Venue::Arena, PlayerJump::default(), Team(1))).id();
+        let board = world.spawn(InArena).id();
+        let over = |online: bool| Game {
+            online,
+            stage: Stage::Over { winner: None, left: 10.0 },
+            view: kept,
+            ..a_game()
+        };
+        let told = |world: &mut World, venue: Venue| {
+            world.resource_mut::<Messages<Tell>>().write(Tell::Arrive {
+                venue,
+                seat: 1,
+                spot: None,
+                arrival: 3,
+            });
+            world.run_system_once(taken_elsewhere).expect("it runs");
+            world.resource_mut::<Messages<Tell>>().drain().for_each(drop);
+        };
+        // Stood up again on its own map, or sent to the town or home, whose
+        // ending of it is `hear`'s: nothing here.
+        world.insert_resource(over(true));
+        for venue in [Venue::Arena, Venue::Town, Venue::Home] {
+            told(&mut world, venue);
+            assert!(world.contains_resource::<Game>(), "{venue:?}");
+        }
+        // A game played offline is this device's own: nobody stands you
+        // anywhere else in the middle of it.
+        world.insert_resource(over(false));
+        told(&mut world, Venue::LastStand);
+        assert!(world.contains_resource::<Game>());
+        // Online, stood at a table of another game by your group's leader,
+        // straight from the result: the game is over here, everything it
+        // put up gone, nothing of the fight left on you, and the camera
+        // turned and zoomed as it was before Bridge Wars fixed it over you,
+        // for the next game to fix as it will.
+        world.insert_resource(over(true));
+        told(&mut world, Venue::KnockOff);
+        assert!(!world.contains_resource::<Game>());
+        assert!(world.get_entity(board).is_err());
+        assert!(world.get::<Team>(you).is_none());
+        let orbit = world.resource::<OrbitCamera>();
+        assert!(!orbit.locked && !orbit.overhead);
+        assert_eq!(orbit.view(), before);
     }
 
     #[test]
