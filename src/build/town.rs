@@ -718,11 +718,14 @@ fn raise_houses(
         let picks = mix(house.middle);
         let door = def(DOORS[picks as usize % DOORS.len()]);
         let aside = if (picks >> 8).is_multiple_of(2) { SQUARE } else { WIDE };
+        // The town's scenery: drawn on Blend In's venue too, which is the
+        // town as it stands (`island::Scenery`).
         let root = commands
             .spawn((
                 Name::new("Town house"),
                 TownHouse,
                 Venue::Town,
+                island::Scenery,
                 Transform::from_matrix(Mat4::from(house.place)),
                 Visibility::Hidden,
                 Rooms(vec![shape.floor]),

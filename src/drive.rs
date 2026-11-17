@@ -567,7 +567,10 @@ fn read_my_car(
 /// facing the way you face, with the camera fixed over you; or out of it,
 /// standing where the car is, with the camera back as you had it. Not
 /// while a dialog is up or the camera is on someone you talk to; and out
-/// of it, whatever is pressed, once you are sent to another island.
+/// of it, whatever is pressed, once you are sent to another island. Into
+/// it only in the town (since 2026-11-18, when four games came whose
+/// venues are none of the car's: C on desktop got you into it anywhere,
+/// a game of Bridge Wars too).
 #[allow(clippy::too_many_arguments)]
 fn toggle(
     mut pressed: MessageReader<CarPressed>,
@@ -585,6 +588,9 @@ fn toggle(
     };
     let sent = driving.0.as_ref().is_some_and(|drive| drive.venue != Some(venue));
     if !sent && !(asked && !dialog.0 && !close_up.busy()) {
+        return;
+    }
+    if !sent && driving.0.is_none() && venue != Venue::Town {
         return;
     }
     let shown = match driving.0.take() {

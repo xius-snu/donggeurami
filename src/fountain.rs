@@ -561,7 +561,8 @@ fn find_fountain(
 }
 
 /// The fountain's running water, and its jet, down for now: in the town, and
-/// only drawn there.
+/// only drawn there, and on Blend In's venue, which is the town as it
+/// stands (`island::Scenery`).
 fn spawn_water(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
@@ -576,6 +577,7 @@ fn spawn_water(
         .spawn((
             Name::new("Fountain water"),
             Venue::Town,
+            island::Scenery,
             Transform::from_translation(fountain.at),
             Visibility::Hidden,
         ))

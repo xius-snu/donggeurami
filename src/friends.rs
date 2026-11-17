@@ -333,15 +333,18 @@ fn hear(
                 News::Said(said) => notice.0 = Some((said_in_words(*said), 0.0)),
             },
             // Seated in a game without having asked: the leader of your
-            // group did.
-            Tell::Seated { .. } | Tell::Joined { .. } => {
+            // group did. Each game by its own name: Bridge Wars, House
+            // Builder's, and since 2026-11-18 whichever of the four sat you
+            // at its table.
+            Tell::Seated { .. } | Tell::Joined { .. } | Tell::Entered { .. } => {
                 let follows = online.me().is_some_and(|me| friends.follows(me.id));
                 if follows {
                     let game = match tell {
-                        Tell::Seated { .. } => &ui.words.games.bridge_wars,
-                        _ => &ui.words.games.home_builders,
+                        Tell::Seated { .. } => crate::games::name_of(Minigame::BridgeWars),
+                        Tell::Entered { game, .. } => crate::games::name_of(*game),
+                        _ => crate::games::name_of(Minigame::HouseBuilder),
                     };
-                    toast(&mut commands, &fill(&words.summoned, &[("game", game)]));
+                    toast(&mut commands, &fill(&words.summoned, &[("game", &game)]));
                 }
                 if panel.open {
                     shut(&mut panel, &mut up, &mut name_box);
@@ -888,17 +891,13 @@ fn note(commands: &mut Commands, list: Entity, text: &str) {
 fn whereabouts(presence: &Presence, now: f64) -> String {
     let ui = ui();
     let words = &ui.words.friends;
-    let game = |game: &Minigame| match game {
-        Minigame::BridgeWars => &ui.words.games.bridge_wars,
-        Minigame::HouseBuilder => &ui.words.games.home_builders,
-        // minigames: S2 (the device's side of the tables) gives these words of their own.
-        Minigame::BlendIn | Minigame::KnockOff | Minigame::BridgeRace | Minigame::LastStand => &ui.words.games.bridge_wars,
-    };
+    // Each game by its own name on the selector's card (`games`).
+    let game = |game: &Minigame| crate::games::name_of(*game);
     match presence {
         Presence::Town { channel } => fill(&words.in_town, &[("channel", &(u32::from(*channel) + 1).to_string())]),
         Presence::Home => words.at_home.clone(),
-        Presence::Playing { game: which, queued: true } => fill(&words.in_queue, &[("game", game(which))]),
-        Presence::Playing { game: which, queued: false } => fill(&words.in_game, &[("game", game(which))]),
+        Presence::Playing { game: which, queued: true } => fill(&words.in_queue, &[("game", &game(which))]),
+        Presence::Playing { game: which, queued: false } => fill(&words.in_game, &[("game", &game(which))]),
         Presence::Offline { since: 0 } => words.offline.clone(),
         Presence::Offline { since } => {
             let gone = (now - *since as f64).max(0.0);
@@ -1689,6 +1688,25 @@ mod tests {
             queued: false,
         };
         assert_eq!(whereabouts(&game, 0.0), "Home Builders: In Game");
+        // Each of the four games of 2026-11-18 by its own name, whatever
+        // the file calls it.
+        let file = ui();
+        let race = Presence::Playing {
+            game: Minigame::BridgeRace,
+            queued: true,
+        };
+        let queued = fill(&file.words.friends.in_queue, &[("game", &file.words.games.bridge_race)]);
+        assert_eq!(whereabouts(&race, 0.0), queued);
+        let stand = Presence::Playing {
+            game: Minigame::LastStand,
+            queued: false,
+        };
+        let playing = fill(&file.words.friends.in_game, &[("game", &file.words.games.last_stand)]);
+        assert_eq!(whereabouts(&stand, 0.0), playing);
+        for game in Minigame::TABLES {
+            let presence = Presence::Playing { game, queued: false };
+            assert_ne!(whereabouts(&presence, 0.0), whereabouts(&Presence::Playing { game: Minigame::HouseBuilder, queued: false }, 0.0));
+        }
         // Gone: for how long, in whole minutes, hours and days, one of
         // each said as one; and with no word of when, only that they are.
         let since = 1_700_000_000u64;

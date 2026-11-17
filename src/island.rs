@@ -185,7 +185,6 @@ pub(crate) fn lift(venue: Venue) -> f32 {
 /// range drawn, the fight's buttons (Arena, BridgeRace, LastStand). The games of
 /// 2026-11-18 on them were asked for so (Hajun: "similar controls and cam with bridge
 /// wars", "similar cam and controls with bridgewars").
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn fights(venue: Venue) -> bool {
     matches!(venue, Venue::Arena | Venue::BridgeRace | Venue::LastStand)
 }
@@ -201,13 +200,22 @@ pub(crate) fn bridged(venue: Venue) -> bool {
 /// Whose scenery is drawn on `venue`: the town's on BlendIn; its own elsewhere. A game of
 /// Blend In is played in the town as it stands (Hajun: "Map = roundtownmap"), its houses,
 /// lamps and fountain, but none of the town's people, who are on [`Venue::Town`].
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn scenery(venue: Venue) -> Venue {
     match venue {
         Venue::BlendIn => Venue::Town,
         _ => venue,
     }
 }
+
+/// What of an island is its scenery, drawn on any venue whose scenery it
+/// is ([`scenery`]) as well as on its own ([`show_where_i_am`], since
+/// 2026-11-18): every island's land and its sea ([`spawn_island`]), and
+/// the town's fountain's running water (`fountain`) and each of its houses
+/// (`build::town`). Never a body, a bus, the House Builder, nor anything of
+/// the town save's (`map`), which is each device's own, so that on Blend
+/// In's venue the town stands as it is with nobody of its own in it.
+#[derive(Component)]
+pub(crate) struct Scenery;
 
 /// Where the player in `seat` stands on arriving on `venue`: on Bridge
 /// Wars' map, on the island their seat says, facing the middle down its
@@ -382,7 +390,8 @@ pub(crate) fn spawn_islands(mut commands: Commands, assets: Res<AssetServer>, wa
 ///
 /// The model stands as far up as its venue has it ([`lift`]): its meshes
 /// are its children, so that where the scene puts them, which is what
-/// [`read_island`] reads its shape from, is lifted with it.
+/// [`read_island`] reads its shape from, is lifted with it. The model and
+/// its sea are the island's [`Scenery`].
 pub(crate) fn spawn_island(
     commands: &mut Commands,
     assets: &AssetServer,
@@ -393,6 +402,7 @@ pub(crate) fn spawn_island(
         .spawn((
             venue,
             Land,
+            Scenery,
             WorldAssetRoot(assets.load(GltfAssetLabel::Scene(0).from_asset(model(venue)))),
             Transform::from_xyz(0.0, lift(venue), 0.0),
             Visibility::Hidden,
@@ -406,7 +416,7 @@ pub(crate) fn spawn_island(
     // than a child of the model, so that reading the island back out of the
     // model does not take the sea for a floor.
     let sea = commands
-        .spawn((venue, sky::sea(water), Visibility::Hidden))
+        .spawn((venue, Scenery, sky::sea(water), Visibility::Hidden))
         .id();
     vec![land, sea]
 }
@@ -414,20 +424,24 @@ pub(crate) fn spawn_island(
 /// Draws the island you are on, and everything and everyone on it, and hides
 /// the others, and the dead (`arena`). You yourself are always where you
 /// are, and drawn unless the camera is inside you, or you are dead
-/// (`follow_camera`).
+/// (`follow_camera`). On a venue whose scenery is another's, Blend In's,
+/// that one's [`Scenery`] is drawn too: the town's, its people not.
+#[allow(clippy::type_complexity)]
 pub(crate) fn show_where_i_am(
     me: Query<(&Venue, Option<&crate::Team>), With<Player>>,
     mut things: Query<
-        (&Venue, &mut Visibility, Has<Dead>, Option<&crate::arena::Wears>, Option<&crate::Team>),
+        (&Venue, &mut Visibility, Has<Dead>, Option<&crate::arena::Wears>, Option<&crate::Team>, Has<Scenery>),
         Without<Player>,
     >,
 ) {
     let (here, mine) = me.single().map_or((None, None), |(venue, team)| (Some(*venue), team));
-    for (venue, mut visibility, dead, wears, team) in &mut things {
+    let borrowed = here.map(scenery).filter(|seen| Some(*seen) != here);
+    for (venue, mut visibility, dead, wears, team, setting) in &mut things {
         // Nor anyone who has drunk Bridge Wars' invisibility potion, but
         // one of your own team, whom you see see-through (`gear`).
         let unseen = wears.is_some_and(|wears| wears.unseen) && !(mine.is_some() && team == mine);
-        visibility.set_if_neq(if Some(*venue) == here && !dead && !unseen {
+        let on_it = Some(*venue) == here || (setting && Some(*venue) == borrowed);
+        visibility.set_if_neq(if on_it && !dead && !unseen {
             Visibility::Inherited
         } else {
             Visibility::Hidden
@@ -1297,6 +1311,35 @@ mod venue_tests {
     }
 
     #[test]
+    fn on_blend_in_the_town_stands_with_nobody_of_its_own_in_it() {
+        use bevy::ecs::system::RunSystemOnce;
+        let mut world = World::new();
+        let you = world.spawn((crate::Player, Venue::BlendIn)).id();
+        // The town's land and a house of it, a body of the town's, a bus,
+        // someone at the game, and another island's land.
+        let land = world.spawn((Venue::Town, Scenery, Visibility::Hidden)).id();
+        let house = world.spawn((Venue::Town, Scenery, Visibility::Hidden)).id();
+        let townsfolk = world.spawn((Venue::Town, Visibility::Inherited)).id();
+        let bus = world.spawn((Venue::Town, Visibility::Inherited)).id();
+        let player = world.spawn((Venue::BlendIn, Visibility::Hidden)).id();
+        let elsewhere = world.spawn((Venue::Arena, Scenery, Visibility::Inherited)).id();
+        let shown = |world: &mut World| -> Vec<bool> {
+            world.run_system_once(show_where_i_am).expect("it runs");
+            [land, house, townsfolk, bus, player, elsewhere]
+                .map(|thing| world.get::<Visibility>(thing) == Some(&Visibility::Inherited))
+                .to_vec()
+        };
+        assert_eq!(shown(&mut world), [true, true, false, false, true, false]);
+        // Back in the town, the town is its own, its people and all; the
+        // game's are not there.
+        world.entity_mut(you).insert(Venue::Town);
+        assert_eq!(shown(&mut world), [true, true, true, true, false, false]);
+        // And anywhere else, nothing of the town's.
+        world.entity_mut(you).insert(Venue::KnockOff);
+        assert_eq!(shown(&mut world), [false, false, false, false, false, false]);
+    }
+
+    #[test]
     fn everyone_arrives_on_dry_land_at_each_of_the_four_games() {
         // Blend In's on the town's path round its pond, Knock Off's on the
         // ice, Bridge Race's on the teams' islands and Last Stand's round
@@ -1408,6 +1451,15 @@ impl Island {
 
     pub(crate) fn of_parts_for_tests(parts: &[&[[Vec3; 3]]]) -> Self {
         Self::of_parts(parts)
+    }
+}
+
+#[cfg(test)]
+impl Islands {
+    /// `venue`'s model as loaded, a triangle of it, for tests that ask only
+    /// whether it has.
+    pub(crate) fn set_for_tests(&mut self, venue: Venue) {
+        self.set(model(venue), vec![[Vec3::ZERO, Vec3::Z, Vec3::X]]);
     }
 }
 
