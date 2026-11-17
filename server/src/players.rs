@@ -499,7 +499,16 @@ fn room_for(
 ) -> (Room, Venue, u8, bool) {
     match venue {
         Venue::Home => (Room::Home(id), venue, 0, true),
-        Venue::Town | Venue::Lobby | Venue::Plot(_) | Venue::Arena => {
+        // minigames: S1 (the server's tables) handles this; until then the four
+        // games' venues go to the town, as Bridge Wars' does.
+        Venue::Town
+        | Venue::Lobby
+        | Venue::Plot(_)
+        | Venue::Arena
+        | Venue::BlendIn
+        | Venue::KnockOff
+        | Venue::BridgeRace
+        | Venue::LastStand => {
             let (channel, seat) = towns.sit(body, rather);
             (Room::Town(channel), Venue::Town, seat, venue == Venue::Town)
         }

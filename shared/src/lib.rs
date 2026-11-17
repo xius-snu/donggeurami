@@ -235,7 +235,21 @@ pub const PROTOCOL_ID: u64 = u64::from_be_bytes(*b"DGRMTOWN");
 /// whenever that changes ([`bridge_wars::Buses`], registered after
 /// [`Flattened`]); a place on one of them is a place on a car numbered up
 /// to seven, past the town's four.
-pub const PROTOCOL_VERSION: u32 = 21;
+///
+/// 22 since 2026-11-18 (Hajun: "add these minigames: Blend In, Knock Off,
+/// Bridge Race, Last Stand"): four new games, each at a table ([`table`]).
+/// Four venues, after [`Venue::Arena`] ([`Venue::BlendIn`] and the rest),
+/// which an app from before cannot read; four [`Minigame`]s, which a
+/// friend's presence sends ([`social::Presence::Playing`]), so that an app
+/// from before could not read what it is told of its friends while one of
+/// them sat at a table; the join ([`Ask::Join`], answered by
+/// [`Tell::Entered`]) and each game's own asks and tells ([`Ask::BlendIn`],
+/// [`Tell::BlendIn`] and the rest), appended after them; the board
+/// everyone at a table is sent ([`table::Board`], registered after
+/// [`bridge_wars::Buses`]); and each game's own components, which each
+/// game registers after the board, in its own module (`blend_in::register`
+/// and the rest, in that order).
+pub const PROTOCOL_VERSION: u32 = 22;
 
 /// The UDP port the game server listens on. 443, where QUIC goes, because a
 /// network that lets any UDP through lets that through: school and office
@@ -647,7 +661,14 @@ pub fn protocol(app: &mut App) {
         .replicate::<BuilderOf>()
         .replicate::<Flattened>()
         .replicate::<bridge_wars::Buses>()
-        .add_client_message::<Moved>(Channel::Unreliable)
+        .replicate::<table::Board>();
+    // The four games of 2026-11-18 register their own, each in its own
+    // module, in this order.
+    blend_in::register(app);
+    knock_off::register(app);
+    bridge_race::register(app);
+    last_stand::register(app);
+    app.add_client_message::<Moved>(Channel::Unreliable)
         .add_client_message::<Ask>(Channel::Ordered)
         .add_server_message::<Tell>(Channel::Ordered)
         .add_client_message::<WhatTime>(Channel::Unreliable)
@@ -684,6 +705,36 @@ pub enum Venue {
     /// with bots: online you are in a room of your own there, as at home,
     /// and nothing of where you stand is sent.
     Arena,
+    /// `roundtownmap.glb`, the town's own map, for a game of Blend In
+    /// ([`blend_in`], since 2026-11-18): its scenery, none of its people. A
+    /// venue of its own, so that the players of a game, and the crowd its
+    /// hider passes among, meet nobody in the town, nor the town them.
+    BlendIn,
+    /// `iceisland.glb`: Knock Off's island of ice in the sea
+    /// ([`knock_off`], since 2026-11-18).
+    KnockOff,
+    /// `bridgeracemap.glb`: Bridge Race's two team islands and the golden
+    /// island, over the void ([`bridge_race`], since 2026-11-18).
+    BridgeRace,
+    /// `laststandmap.glb`: Last Stand's stone and sand round the anchor,
+    /// over the void ([`last_stand`], since 2026-11-18).
+    LastStand,
+}
+
+impl Venue {
+    /// The game of the four (2026-11-18) played on this venue, if it is one
+    /// of theirs: none for the town, home, House Builder's venues or Bridge
+    /// Wars', whose games are not played at tables ([`Minigame::venue`]
+    /// goes the other way, for all six).
+    pub fn game(self) -> Option<Minigame> {
+        match self {
+            Venue::BlendIn => Some(Minigame::BlendIn),
+            Venue::KnockOff => Some(Minigame::KnockOff),
+            Venue::BridgeRace => Some(Minigame::BridgeRace),
+            Venue::LastStand => Some(Minigame::LastStand),
+            Venue::Town | Venue::Home | Venue::Lobby | Venue::Plot(_) | Venue::Arena => None,
+        }
+    }
 }
 
 /// How far from the middle everyone stands on arriving on an island, in
@@ -1117,6 +1168,17 @@ pub struct Upgrades {
 pub mod bots;
 pub mod horde;
 pub mod nav;
+
+// The four games of 2026-11-18 (Hajun: "add these minigames: Blend In,
+// Knock Off, Bridge Race, Last Stand"): what they have in common, and each
+// one's own rules.
+pub mod table;
+pub mod blend_in;
+pub mod knock_off;
+pub mod bridge_race;
+pub mod last_stand;
+
+pub use social::Minigame;
 
 /// Bridge Wars' rules, as the game plays them on the device (`arena`) and
 /// the server does online (`server/src/arena.rs`): in one place, so that
@@ -3441,8 +3503,16 @@ pub mod bridge_wars {
 /// ([`TOWN_ARRIVAL_RADIUS`]) — the first eight seats each an eighth of the
 /// turn on from the one before, the next eight between them, and past
 /// sixteen a ring further out. The server works out arrivals with this too,
-/// so that everyone sees you arrive where you do.
+/// so that everyone sees you arrive where you do. Each of the four games of
+/// 2026-11-18 has its own, in its own module: Blend In's is the town's.
 pub fn arrival(venue: Venue, seat: usize) -> (Vec3, Quat) {
+    match venue {
+        Venue::BlendIn => return blend_in::arrival(seat),
+        Venue::KnockOff => return knock_off::arrival(seat),
+        Venue::BridgeRace => return bridge_race::arrival(seat),
+        Venue::LastStand => return last_stand::arrival(seat),
+        Venue::Town | Venue::Home | Venue::Lobby | Venue::Plot(_) | Venue::Arena => {}
+    }
     if venue == Venue::Arena {
         let island = ARENA_ISLANDS[arena_island(seat)];
         let round = seat / ARENA_ISLANDS.len();
@@ -4024,7 +4094,7 @@ pub enum Use {
 pub mod social {
     use serde::{Deserialize, Serialize};
 
-    use super::{profile, text};
+    use super::{Venue, profile, text};
 
     /// The tags there are, the number after a name: `#1000` to `#9999`.
     pub const TAG_FIRST: u16 = 1000;
@@ -4104,11 +4174,53 @@ pub mod social {
         (!message.is_empty() && text::length(&message) <= MESSAGE_LONGEST).then(|| text::masked(&message))
     }
 
-    /// One of the games there are to be in.
+    /// One of the games there are to be in: Bridge Wars and House Builder,
+    /// and since 2026-11-18 the four Hajun asked for that day ("add these
+    /// minigames: Blend In, Knock Off, Bridge Race, Last Stand"), each
+    /// played at a table ([`crate::table`]), appended after the two, as a
+    /// friend's presence sends it by its number ([`Presence::Playing`]).
+    /// Re-exported at the crate's root.
     #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Hash, Debug)]
     pub enum Minigame {
         BridgeWars,
         HouseBuilder,
+        /// Hide and seek in the town, the hider passing for one of its
+        /// people ([`crate::blend_in`]).
+        BlendIn,
+        /// Aim on the ice, then everyone slides at once
+        /// ([`crate::knock_off`]).
+        KnockOff,
+        /// Two teams bridging to the golden island ([`crate::bridge_race`]).
+        BridgeRace,
+        /// Wave after wave of zombies round an anchor ([`crate::last_stand`]).
+        LastStand,
+    }
+
+    impl Minigame {
+        /// The four games played at a table ([`crate::table`]), in the
+        /// selector's order.
+        pub const TABLES: [Minigame; 4] = [Minigame::BlendIn, Minigame::KnockOff, Minigame::BridgeRace, Minigame::LastStand];
+
+        /// Whether it is one of [`TABLES`](Self::TABLES).
+        pub fn at_a_table(self) -> bool {
+            Self::TABLES.contains(&self)
+        }
+
+        /// The venue it is played on: Bridge Wars' map for Bridge Wars,
+        /// House Builder's lobby for House Builder, where its players wait
+        /// (each builder's plot is a venue of its own, [`Venue::Plot`]),
+        /// and each of the four its own ([`Venue::game`] the other way
+        /// round).
+        pub fn venue(self) -> Venue {
+            match self {
+                Minigame::BridgeWars => Venue::Arena,
+                Minigame::HouseBuilder => Venue::Lobby,
+                Minigame::BlendIn => Venue::BlendIn,
+                Minigame::KnockOff => Venue::KnockOff,
+                Minigame::BridgeRace => Venue::BridgeRace,
+                Minigame::LastStand => Venue::LastStand,
+            }
+        }
     }
 
     /// Where someone is, as their friends are told.
@@ -4502,6 +4614,19 @@ pub enum Ask {
     /// fight, not flat already, and where I last said I stood is anywhere
     /// near that bus's front.
     RunOver { bus: u8 },
+    /// Join a game of one of the four (since 2026-11-18, [`table`]): from
+    /// the town, or from a table that is over for me, for another
+    /// ([`Tell::Entered`] answers). Refused for the two older games, which
+    /// have their own ([`Ask::Arena`], [`Ask::Play`]).
+    Join(Minigame),
+    /// Something asked in my game of Blend In ([`blend_in::Ask`]).
+    BlendIn(blend_in::Ask),
+    /// Something asked in my game of Knock Off ([`knock_off::Ask`]).
+    KnockOff(knock_off::Ask),
+    /// Something asked in my game of Bridge Race ([`bridge_race::Ask`]).
+    BridgeRace(bridge_race::Ask),
+    /// Something asked in my game of Last Stand ([`last_stand::Ask`]).
+    LastStand(last_stand::Ask),
 }
 
 /// What the server tells you alone. In order, and never lost.
@@ -4560,6 +4685,20 @@ pub enum Tell {
     /// away for a moment, is told none of this: it is let in where it
     /// stands and carries on.
     Back { seat: u8, metres: f32, compass: bool },
+    /// You are at a table of `game`, in this seat ([`table`], since
+    /// 2026-11-18): the game is begun afresh here. Sent as you are seated,
+    /// and again to a device that comes back to a game it was in.
+    Entered { game: Minigame, seat: u8 },
+    /// Something for you alone in your game of Blend In ([`blend_in::Tell`]).
+    BlendIn(blend_in::Tell),
+    /// Something for you alone in your game of Knock Off ([`knock_off::Tell`]).
+    KnockOff(knock_off::Tell),
+    /// Something for you alone in your game of Bridge Race
+    /// ([`bridge_race::Tell`]).
+    BridgeRace(bridge_race::Tell),
+    /// Something for you alone in your game of Last Stand
+    /// ([`last_stand::Tell`]).
+    LastStand(last_stand::Tell),
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
@@ -6736,5 +6875,179 @@ mod tests {
         assert_eq!(flat.until(9), Some(104.0));
         assert_eq!(flat.until(0), None);
         assert_eq!(Flattened::default().until(3), None);
+    }
+
+    // ---------------------------------------- the four games of 2026-11-18
+
+    #[test]
+    fn each_of_the_four_is_played_on_its_own_venue_and_at_a_table() {
+        for game in Minigame::TABLES {
+            assert!(game.at_a_table(), "{game:?}");
+            assert_eq!(game.venue().game(), Some(game), "{game:?}");
+            assert!(table::shape(game).is_some(), "{game:?}");
+        }
+        // The selector's order.
+        assert_eq!(Minigame::TABLES, [Minigame::BlendIn, Minigame::KnockOff, Minigame::BridgeRace, Minigame::LastStand]);
+        // The two older games are not, and no other venue is any of theirs.
+        for game in [Minigame::BridgeWars, Minigame::HouseBuilder] {
+            assert!(!game.at_a_table(), "{game:?}");
+            assert_eq!(game.venue().game(), None, "{game:?}");
+        }
+        assert_eq!(Minigame::BridgeWars.venue(), Venue::Arena);
+        assert_eq!(Minigame::HouseBuilder.venue(), Venue::Lobby);
+        for venue in [Venue::Town, Venue::Home, Venue::Lobby, Venue::Plot(3), Venue::Arena] {
+            assert_eq!(venue.game(), None, "{venue:?}");
+        }
+    }
+
+    #[test]
+    fn what_was_sent_before_the_four_games_is_sent_as_it_was() {
+        // The new venues, games, asks and tells come after all that was
+        // there, which keeps the number it was sent as.
+        fn sent<T: Serialize>(what: &T) -> Vec<u8> {
+            postcard::to_allocvec(what).unwrap()
+        }
+        assert_eq!(sent(&Venue::Arena), [4]);
+        assert_eq!(sent(&Venue::Plot(2)), [3, 2]);
+        assert_eq!(sent(&Venue::BlendIn), [5]);
+        assert_eq!(sent(&Venue::LastStand), [8]);
+        assert_eq!(sent(&Minigame::HouseBuilder), [1]);
+        assert_eq!(sent(&Minigame::BlendIn), [2]);
+        assert_eq!(sent(&Ask::RunOver { bus: 2 }), [20, 2]);
+        assert_eq!(sent(&Ask::Join(Minigame::LastStand)), [21, 5]);
+        assert_eq!(sent(&Tell::Back { seat: 1, metres: 0.0, compass: false })[0], 12);
+        assert_eq!(sent(&Tell::Entered { game: Minigame::KnockOff, seat: 3 }), [13, 3, 3]);
+        // And each game's own come back as they went.
+        let asks = [
+            Ask::Join(Minigame::BridgeRace),
+            Ask::BlendIn(blend_in::Ask::Nothing),
+            Ask::KnockOff(knock_off::Ask::Nothing),
+            Ask::BridgeRace(bridge_race::Ask::Nothing),
+            Ask::LastStand(last_stand::Ask::Nothing),
+        ];
+        for ask in asks {
+            let bytes = postcard::to_allocvec(&ask).unwrap();
+            let back: Ask = postcard::from_bytes(&bytes).unwrap();
+            assert_eq!(format!("{back:?}"), format!("{ask:?}"));
+        }
+        let tells = [
+            Tell::Entered { game: Minigame::LastStand, seat: 2 },
+            Tell::BlendIn(blend_in::Tell::Nothing),
+            Tell::KnockOff(knock_off::Tell::Nothing),
+            Tell::BridgeRace(bridge_race::Tell::Nothing),
+            Tell::LastStand(last_stand::Tell::Nothing),
+        ];
+        for tell in tells {
+            let bytes = postcard::to_allocvec(&tell).unwrap();
+            let back: Tell = postcard::from_bytes(&bytes).unwrap();
+            assert_eq!(format!("{back:?}"), format!("{tell:?}"));
+        }
+        // A friend at a table of one of them.
+        let playing = social::Presence::Playing { game: Minigame::KnockOff, queued: true };
+        let back: social::Presence = postcard::from_bytes(&postcard::to_allocvec(&playing).unwrap()).unwrap();
+        assert_eq!(back, playing);
+    }
+
+    #[test]
+    fn blend_in_is_arrived_at_as_the_town_is() {
+        for seat in 0..4 {
+            assert_eq!(arrival(Venue::BlendIn, seat), arrival(Venue::Town, seat), "seat {seat}");
+            assert_eq!(blend_in::arrival(seat), arrival(Venue::Town, seat), "seat {seat}");
+        }
+    }
+
+    #[test]
+    fn knock_off_begins_with_everyone_on_the_diagonals_facing_the_middle() {
+        let spots: Vec<(Vec3, Quat)> = (0..4).map(|seat| arrival(Venue::KnockOff, seat)).collect();
+        // Well inside the ice.
+        let (ring, ice) = (knock_off::START_RING, knock_off::RADIUS);
+        assert!(ring < ice - 2.0, "{ring} m out, the ice {ice}");
+        for (seat, &(at, turn)) in spots.iter().enumerate() {
+            assert_eq!(arrival(Venue::KnockOff, seat), knock_off::arrival(seat));
+            assert!((at.xz().length() - knock_off::START_RING).abs() < 1e-4, "seat {seat} at {at}");
+            assert_eq!(at.y, 0.0);
+            // On a diagonal: as far across as along.
+            assert!((at.x.abs() - at.z.abs()).abs() < 1e-4, "seat {seat} at {at}");
+            let facing = (turn * Vec3::NEG_Z).xz();
+            assert!(facing.distance(-at.xz().normalize()) < 1e-4, "seat {seat} faces {facing}");
+        }
+        // Each on a diagonal of its own.
+        for (a, &(at, _)) in spots.iter().enumerate() {
+            for &(other, _) in &spots[a + 1..] {
+                assert!(at.distance(other) > 9.0, "{at} and {other}");
+            }
+        }
+    }
+
+    #[test]
+    fn bridge_race_seats_two_teams_on_their_islands_facing_the_golden_one() {
+        use bridge_race::{GOLDEN, ISLAND_RADIUS, ISLANDS, LIFT, PEOPLE_FIRST, team};
+        // Seat by seat, red and blue in turn.
+        assert_eq!((0..4).map(team).collect::<Vec<u8>>(), [0, 1, 0, 1]);
+        for seat in 0..4 {
+            let (at, turn) = arrival(Venue::BridgeRace, seat);
+            assert_eq!((at, turn), bridge_race::arrival(seat));
+            let island = ISLANDS[usize::from(team(seat))];
+            let out = at.xz().distance(island);
+            let expected = if seat < 2 { 0.0 } else { 3.0 };
+            assert!((out - expected).abs() < 1e-4, "seat {seat}: {out} m from its island's middle");
+            assert!(out < ISLAND_RADIUS - 2.0, "seat {seat}: near the edge");
+            // Toward the golden island, and facing it.
+            assert!(at.xz().distance(GOLDEN) <= island.distance(GOLDEN) + 1e-4, "seat {seat}");
+            let facing = (turn * Vec3::NEG_Z).xz();
+            assert!(facing.distance((GOLDEN - at.xz()).normalize()) < 1e-4, "seat {seat} faces {facing}");
+            assert_eq!(at.y, LIFT);
+        }
+        // The two teams' islands, and the golden island as far from each.
+        assert!((ISLANDS[0].distance(ISLANDS[1]) - 42.0).abs() < 1e-3);
+        assert!((ISLANDS[0].distance(GOLDEN) - ISLANDS[1].distance(GOLDEN)).abs() < 1e-3);
+        // People take every seat once, the first two on one team.
+        let mut taken = PEOPLE_FIRST;
+        taken.sort_unstable();
+        assert_eq!(taken, [0, 1, 2, 3]);
+        assert_eq!(team(PEOPLE_FIRST[0]), team(PEOPLE_FIRST[1]));
+        assert_ne!(team(PEOPLE_FIRST[0]), team(PEOPLE_FIRST[2]));
+        // One person against the computer is seats 0 and 1, one a side.
+        assert_eq!(bridge_race::seats_for(1), 2);
+        assert_ne!(team(PEOPLE_FIRST[0]), team(1));
+        // Everyone waits on the room's floor, apart.
+        let waiting: Vec<Vec3> = (0..4).map(bridge_race::waiting_spot).collect();
+        for (seat, at) in waiting.iter().enumerate() {
+            assert_eq!(at.y, bridge_race::WAITING_FLOOR);
+            assert!((at.xz().distance(bridge_race::WAITING_ROOM) - bridge_wars::WAIT_RING).abs() < 1e-4, "seat {seat} at {at}");
+            for other in &waiting[seat + 1..] {
+                assert!(at.distance(*other) > 3.0, "{at} and {other}");
+            }
+        }
+    }
+
+    #[test]
+    fn last_stand_seats_everyone_round_the_anchor_facing_out() {
+        use last_stand::{ANCHOR, LIFT};
+        let spots: Vec<(Vec3, Quat)> = (0..4).map(|seat| arrival(Venue::LastStand, seat)).collect();
+        for (seat, &(at, turn)) in spots.iter().enumerate() {
+            assert_eq!((at, turn), last_stand::arrival(seat));
+            let out = at.xz() - ANCHOR;
+            assert!((out.length() - 3.2).abs() < 1e-4, "seat {seat}: {} m from the anchor", out.length());
+            // On a diagonal, clear of the anchor's slab, 2 m across.
+            assert!((out.x.abs() - out.y.abs()).abs() < 1e-4, "seat {seat}: {out}");
+            assert!(out.x.abs().min(out.y.abs()) > 1.0 + 0.9, "seat {seat}: on the slab");
+            let facing = (turn * Vec3::NEG_Z).xz();
+            assert!(facing.distance(out.normalize()) < 1e-4, "seat {seat} faces {facing}");
+            assert_eq!(at.y, LIFT);
+        }
+        for (a, &(at, _)) in spots.iter().enumerate() {
+            for &(other, _) in &spots[a + 1..] {
+                assert!(at.distance(other) > 4.0, "{at} and {other}");
+            }
+        }
+        let waiting: Vec<Vec3> = (0..4).map(last_stand::waiting_spot).collect();
+        for (seat, at) in waiting.iter().enumerate() {
+            assert_eq!(at.y, last_stand::WAITING_FLOOR);
+            assert!((at.xz().distance(last_stand::WAITING_ROOM) - bridge_wars::WAIT_RING).abs() < 1e-4, "seat {seat} at {at}");
+            for other in &waiting[seat + 1..] {
+                assert!(at.distance(*other) > 3.0, "{at} and {other}");
+            }
+        }
     }
 }

@@ -9,7 +9,13 @@
 //! players wait for it to fill; and Bridge Wars' map, `pvptownmap.glb`
 //! (`arena`), the town's middle in the sky with four islands at the ends of
 //! its bridges, which stands over the void rather than the sea
-//! ([`bottomless`]). Those four are loaded once, when the app opens. A game
+//! ([`bottomless`]). Since 2026-11-18 there are the maps of the four games
+//! Hajun asked for that day too: Knock Off's island of ice in the sea,
+//! `iceisland.glb`; Bridge Race's two islands and its golden one,
+//! `bridgeracemap.glb`, and Last Stand's stone and sand round its anchor,
+//! `laststandmap.glb`, both over the void and both stood a quarter of a
+//! metre up as they load ([`lift`]); and Blend In's, which is the town's own
+//! ([`scenery`]). Those seven are loaded once, when the app opens. A game
 //! of House Builder also has a plot for each of its builders, a copy of the
 //! plain home, `assets/homemap.glb`, each, which come and go with the game
 //! ([`spawn_island`]).
@@ -111,20 +117,34 @@ pub(crate) fn is_material(name: &str, wanted: &str) -> bool {
 pub(crate) use roundtown_net::Venue;
 
 /// The islands there from the moment the app opens. A game's plots come and
-/// go with it.
-pub(crate) const LOADED: [Venue; 4] = [Venue::Town, Venue::Home, Venue::Lobby, Venue::Arena];
+/// go with it. Not Blend In's, which is the town's own model, loaded once
+/// for the town, and is drawn with the town's own scenery ([`scenery`]).
+pub(crate) const LOADED: [Venue; 7] = [
+    Venue::Town,
+    Venue::Home,
+    Venue::Lobby,
+    Venue::Arena,
+    Venue::KnockOff,
+    Venue::BridgeRace,
+    Venue::LastStand,
+];
 
 /// The model of `venue`, under `assets/`: the town, `testhomemap.glb` for your
 /// home — the plain home with a room and a tall wall in it, to try the camera
 /// against — for every plot a copy of the plain home, without the room
-/// yours has, and Bridge Wars' map (`arena`).
+/// yours has, Bridge Wars' map (`arena`), and each of the four games' of
+/// 2026-11-18. Blend In's is the town's: [`Islands`] keeps the shape of
+/// each model, so that Blend In's is the town's, with nothing more to it.
 pub(crate) fn model(venue: Venue) -> &'static str {
     match venue {
-        Venue::Town => "roundtownmap.glb",
+        Venue::Town | Venue::BlendIn => "roundtownmap.glb",
         Venue::Home => "testhomemap.glb",
         Venue::Plot(_) => "homemap.glb",
         Venue::Lobby => "lobbymap.glb",
         Venue::Arena => "pvptownmap.glb",
+        Venue::KnockOff => "iceisland.glb",
+        Venue::BridgeRace => "bridgeracemap.glb",
+        Venue::LastStand => "laststandmap.glb",
     }
 }
 
@@ -139,10 +159,54 @@ pub(crate) const LAND_TOP_OF_THE_ISLANDS: f32 = 0.25;
 /// Bridge Wars' map (Hajun, 2026-11-07: "remove the ocean and it will be a
 /// void that if you step over, u fall and then u 'die' and respawn back at
 /// your spawn"): Hajun's `pvptownmap.glb`, a town with four islands at the
-/// ends of its bridges, in the sky. Every other island has the sea round
-/// it.
+/// ends of its bridges, in the sky. And since 2026-11-18 Bridge Race's map,
+/// three islands in the sky, and Last Stand's, a disc of stone and sand,
+/// where whoever is knocked off the edge, a zombie or one of the players,
+/// falls for good. Every other island has the sea round it.
 pub(crate) fn bottomless(venue: Venue) -> bool {
-    venue == Venue::Arena
+    matches!(venue, Venue::Arena | Venue::BridgeRace | Venue::LastStand)
+}
+
+/// How far up `venue`'s model is stood as it loads, in metres (Bridge Race's and Last
+/// Stand's `LIFT`; 0 elsewhere): Hajun made their land at 0 where Bridge Wars' map has it
+/// at [`LAND_TOP_OF_THE_ISLANDS`], and every rule written for Bridge Wars' heights goes by
+/// that (a plank's top, a pad's, how far a body falls before it is dead), so they are stood
+/// as high, model and shape alike ([`spawn_island`]). Only maps over the void are lifted:
+/// a sea is the sky's to raise and lower (`sky::sea`), and stays where it is.
+pub(crate) fn lift(venue: Venue) -> f32 {
+    match venue {
+        Venue::BridgeRace => roundtown_net::bridge_race::LIFT,
+        Venue::LastStand => roundtown_net::last_stand::LIFT,
+        Venue::Town | Venue::Home | Venue::Lobby | Venue::Plot(_) | Venue::Arena | Venue::BlendIn | Venue::KnockOff => 0.0,
+    }
+}
+
+/// Whether `venue` is played as Bridge Wars is: overhead camera, running, the punch's
+/// range drawn, the fight's buttons (Arena, BridgeRace, LastStand). The games of
+/// 2026-11-18 on them were asked for so (Hajun: "similar controls and cam with bridge
+/// wars", "similar cam and controls with bridgewars").
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn fights(venue: Venue) -> bool {
+    matches!(venue, Venue::Arena | Venue::BridgeRace | Venue::LastStand)
+}
+
+/// Whether bridges are built by walking on `venue` (Arena, BridgeRace): Bridge Wars, and
+/// Bridge Race, which builds them as Bridge Wars does (Hajun: "Like King of the Ladder but
+/// with bridge building").
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn bridged(venue: Venue) -> bool {
+    matches!(venue, Venue::Arena | Venue::BridgeRace)
+}
+
+/// Whose scenery is drawn on `venue`: the town's on BlendIn; its own elsewhere. A game of
+/// Blend In is played in the town as it stands (Hajun: "Map = roundtownmap"), its houses,
+/// lamps and fountain, but none of the town's people, who are on [`Venue::Town`].
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn scenery(venue: Venue) -> Venue {
+    match venue {
+        Venue::BlendIn => Venue::Town,
+        _ => venue,
+    }
 }
 
 /// Where the player in `seat` stands on arriving on `venue`: on Bridge
@@ -315,6 +379,10 @@ pub(crate) fn spawn_islands(mut commands: Commands, assets: Res<AssetServer>, wa
 /// An island on `venue`: its model, and the sea round it, unless it stands
 /// over the void ([`bottomless`]), both hidden until `show_where_i_am` has
 /// seen who is there. Returns them, for whoever is to take them away again.
+///
+/// The model stands as far up as its venue has it ([`lift`]): its meshes
+/// are its children, so that where the scene puts them, which is what
+/// [`read_island`] reads its shape from, is lifted with it.
 pub(crate) fn spawn_island(
     commands: &mut Commands,
     assets: &AssetServer,
@@ -326,6 +394,7 @@ pub(crate) fn spawn_island(
             venue,
             Land,
             WorldAssetRoot(assets.load(GltfAssetLabel::Scene(0).from_asset(model(venue)))),
+            Transform::from_xyz(0.0, lift(venue), 0.0),
             Visibility::Hidden,
         ))
         .observe(read_island)
@@ -423,6 +492,11 @@ fn read_island(
     if corners.is_empty() {
         warn!("{model}: no triangles to stand on, so the whole island is sea");
     }
+    let (low, high) = corners
+        .iter()
+        .flatten()
+        .fold((f32::INFINITY, f32::NEG_INFINITY), |(low, high), corner| (low.min(corner.y), high.max(corner.y)));
+    debug!("{model}: read, {} triangles from {low:.2} m to {high:.2} m up", corners.len());
     islands.set(model, corners);
 }
 
@@ -1136,6 +1210,196 @@ mod model_tests {
     }
 }
 
+/// The maps of the four games of 2026-11-18, as the game stands them, against what
+/// `roundtown_net` says of them, which the server goes by, having no maps.
+#[cfg(test)]
+mod venue_tests {
+    use std::f32::consts::TAU;
+
+    use roundtown_net::{Minigame, bridge_race, knock_off, last_stand};
+
+    use super::*;
+
+    /// `venue`'s map as the game stands it ([`lift`]): its land, every mesh but the bodies'
+    /// and the water, and its water alone.
+    fn map(venue: Venue) -> (Island, Island) {
+        let parts = glb::read_venue(venue);
+        let wet = |part: &glb::Part| part.material.as_deref().is_some_and(|name| is_material(name, WATER_MATERIAL));
+        let of = |wanted: bool| -> Vec<[Vec3; 3]> {
+            parts
+                .iter()
+                .filter(|part| !part.skinned && wet(part) == wanted)
+                .flat_map(|part| part.triangles.iter().copied())
+                .collect()
+        };
+        (Island::new(&of(false)), Island::new(&of(true)))
+    }
+
+    /// The middle of the box round `triangles`, and its lowest and highest corners.
+    fn bounds(triangles: &[[Vec3; 3]]) -> (Vec3, Vec3, Vec3) {
+        let (low, high) = triangles
+            .iter()
+            .flatten()
+            .fold((Vec3::INFINITY, Vec3::NEG_INFINITY), |(low, high), corner| (low.min(*corner), high.max(*corner)));
+        ((low + high) * 0.5, low, high)
+    }
+
+    /// Whether nothing of `map` is in the way of a body standing on `ground` at `at`.
+    fn room_at(map: &Island, at: Vec2, ground: f32) -> bool {
+        let body = [(crate::PLAYER_RADIUS, ground + crate::LAND_STEP_UP, ground + crate::PLAYER_HEIGHT)];
+        map.walls_round(at, &body).is_empty()
+    }
+
+    #[test]
+    fn the_four_games_venues_are_where_and_how_they_are_played() {
+        // Blend In is the town's own model, shape and all, which the town
+        // has loaded already, and its scenery the town's.
+        assert_eq!(model(Venue::BlendIn), model(Venue::Town));
+        assert!(!LOADED.contains(&Venue::BlendIn));
+        assert_eq!(scenery(Venue::BlendIn), Venue::Town);
+        let mut islands = Islands::default();
+        islands.set(model(Venue::Town), vec![[Vec3::ZERO, Vec3::Z, Vec3::X]]);
+        assert!(islands.get(Venue::BlendIn).is_some(), "Blend In has the town's shape");
+        // Each of the four is drawn on a map loaded as the app opens: the
+        // other three each on its own.
+        for game in Minigame::TABLES {
+            let venue = game.venue();
+            assert!(LOADED.contains(&scenery(venue)), "{game:?}");
+            if venue != Venue::BlendIn {
+                assert_eq!(scenery(venue), venue);
+                assert_ne!(model(venue), model(Venue::Town), "{game:?}");
+            }
+        }
+        // Over the void, lifted, fought and bridged as each is.
+        let every = LOADED.iter().copied().chain([Venue::Plot(0), Venue::BlendIn]);
+        for venue in every {
+            let lifted = lift(venue) != 0.0;
+            // A sea is not lifted (`sky::bob_sea` keeps it where it is):
+            // only a map over the void is.
+            assert!(!lifted || bottomless(venue), "{venue:?} is lifted over a sea");
+            assert!(!bridged(venue) || fights(venue), "{venue:?}: bridges are built in a fight");
+            assert_eq!(
+                (bottomless(venue), lifted, fights(venue), bridged(venue)),
+                match venue {
+                    Venue::Arena => (true, false, true, true),
+                    Venue::BridgeRace => (true, true, true, true),
+                    Venue::LastStand => (true, true, true, false),
+                    _ => (false, false, false, false),
+                },
+                "{venue:?}"
+            );
+        }
+        assert_eq!(lift(Venue::BridgeRace), bridge_race::LIFT);
+        assert_eq!(lift(Venue::LastStand), last_stand::LIFT);
+        // Lifted to where Bridge Wars' islands are.
+        assert_eq!(bridge_race::LIFT, LAND_TOP_OF_THE_ISLANDS);
+        assert_eq!(last_stand::LIFT, LAND_TOP_OF_THE_ISLANDS);
+    }
+
+    #[test]
+    fn everyone_arrives_on_dry_land_at_each_of_the_four_games() {
+        // Blend In's on the town's path round its pond, Knock Off's on the
+        // ice, Bridge Race's on the teams' islands and Last Stand's round
+        // its anchor, those two a quarter of a metre up as the game stands
+        // their maps (`lift`): where the server says each stands, on
+        // ground within a step of where the game puts a body arriving, out
+        // of the water, with nothing in the way.
+        for venue in [Venue::BlendIn, Venue::KnockOff, Venue::BridgeRace, Venue::LastStand] {
+            let (land, water) = map(venue);
+            for seat in 0..4 {
+                let (said, _) = roundtown_net::arrival(venue, seat);
+                let at = arrival(venue, seat).translation;
+                assert_eq!(at.xz(), said.xz(), "{venue:?}, seat {seat}");
+                let ground = land
+                    .floor(at.xz(), at.y + crate::LAND_STEP_UP)
+                    .unwrap_or_else(|| panic!("{venue:?}, seat {seat}: no ground within a step of {at}"));
+                let wet = water.floor(at.xz(), ground + 3.0);
+                assert!(wet.is_none_or(|wet| wet < ground), "{venue:?}, seat {seat}: in the water at {at}");
+                assert!(room_at(&land, at.xz(), ground), "{venue:?}, seat {seat}: something in the way at {at}");
+                match venue {
+                    // As the town has it, wherever its path is.
+                    Venue::BlendIn => assert_eq!(said, roundtown_net::arrival(Venue::Town, seat).0),
+                    // The ice's top, and Bridge Race's islands' and Last
+                    // Stand's stone's, lifted: or a shop's outline, painted
+                    // on Bridge Race's islands 2 cm over them.
+                    _ => assert!((ground - said.y).abs() < 0.03, "{venue:?}, seat {seat}: ground at {ground}, said {}", said.y),
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn knock_off_s_ice_reaches_as_far_as_the_rules_say() {
+        let (ice, _) = map(Venue::KnockOff);
+        for step in 0..64 {
+            let way = Vec2::from_angle(step as f32 * TAU / 64.0);
+            let inside = ice.floor(way * (knock_off::RADIUS - 0.1), 1.0);
+            assert!(inside.is_some_and(|top| top.abs() < 0.01), "{way}: {inside:?} inside the edge");
+            assert_eq!(ice.floor(way * (knock_off::RADIUS + 0.1), 1.0), None, "{way}: ice past the edge");
+        }
+    }
+
+    #[test]
+    fn bridge_race_s_islands_are_where_the_map_has_them_and_its_waiting_room_too() {
+        use bridge_race::{GOLDEN, ISLAND_RADIUS, ISLANDS, LIFT, WAITING_FLOOR, WAITING_ROOM};
+        let (map, _) = map(Venue::BridgeRace);
+        // Each of the three a disc of land, lifted, as wide as the rules
+        // say round where they say, to within 0.1 m all the way round; and
+        // nothing but the void between them.
+        for middle in [ISLANDS[0], ISLANDS[1], GOLDEN] {
+            assert!(map.floor(middle, LIFT + 1.0).is_some_and(|top| top >= LIFT - 0.01), "{middle}");
+            for step in 0..64 {
+                let way = Vec2::from_angle(step as f32 * TAU / 64.0);
+                let inside = map.floor(middle + way * (ISLAND_RADIUS - 0.1), LIFT + 1.0);
+                assert!(inside.is_some_and(|top| (top - LIFT).abs() < 0.03), "{middle}, {way}: {inside:?} inside the edge");
+                assert_eq!(map.floor(middle + way * (ISLAND_RADIUS + 0.1), 3.0), None, "{middle}, {way}: land past the edge");
+            }
+        }
+        for between in [(ISLANDS[0] + ISLANDS[1]) * 0.5, (ISLANDS[0] + GOLDEN) * 0.5, (ISLANDS[1] + GOLDEN) * 0.5] {
+            assert_eq!(map.floor(between, 3.0), None, "land at {between}");
+        }
+        // The waiting room's floor, where the rules have everyone wait.
+        let floor = map.floor(WAITING_ROOM, WAITING_FLOOR + 1.0).expect("a floor in the waiting room");
+        assert!((floor - WAITING_FLOOR).abs() < 0.01, "floor at {floor}, the rules say {WAITING_FLOOR}");
+        for seat in 0..4 {
+            let at = bridge_race::waiting_spot(seat);
+            let ground = map.floor(at.xz(), at.y + 1.0).unwrap_or_else(|| panic!("seat {seat}: no floor at {at}"));
+            assert!((ground - at.y).abs() < 0.01, "seat {seat} waits at {at}, the floor at {ground}");
+            assert!(room_at(&map, at.xz(), ground), "seat {seat}: something in the way at {at}");
+        }
+    }
+
+    #[test]
+    fn last_stand_s_anchor_is_where_the_map_s_pillar_is_and_its_waiting_room_too() {
+        use last_stand::{ANCHOR, LIFT, WAITING_FLOOR, WAITING_ROOM};
+        let parts = glb::read_venue(Venue::LastStand);
+        let pillars: Vec<(Vec3, Vec3, Vec3)> = parts
+            .iter()
+            .filter(|part| part.material.as_deref().is_some_and(|name| is_material(name, crate::arena::SPAWN_MATERIAL)))
+            .map(|part| bounds(&part.triangles))
+            .collect();
+        assert_eq!(pillars.len(), 1, "{pillars:?}");
+        let (middle, low, high) = pillars[0];
+        assert!(middle.xz().distance(ANCHOR) < 0.1, "the pillar is at {middle}, the rules say {ANCHOR}");
+        // Standing on its slab over the stone, lifted with the rest; as
+        // wide as Bridge Wars' anchors.
+        assert!(low.y > LIFT && high.y > LIFT + 3.0, "{low} to {high}");
+        assert!(((high - low).x * 0.5 - 0.71).abs() < 0.05, "{low} to {high}");
+        let (map, _) = map(Venue::LastStand);
+        let stone = map.floor(ANCHOR + Vec2::new(3.0, 0.0), LIFT + 1.0).expect("stone round the anchor");
+        assert!((stone - LIFT).abs() < 0.01, "the stone at {stone}");
+        // The waiting room's floor, where the rules have everyone wait.
+        let floor = map.floor(WAITING_ROOM, WAITING_FLOOR + 1.0).expect("a floor in the waiting room");
+        assert!((floor - WAITING_FLOOR).abs() < 0.01, "floor at {floor}, the rules say {WAITING_FLOOR}");
+        for seat in 0..4 {
+            let at = last_stand::waiting_spot(seat);
+            let ground = map.floor(at.xz(), at.y + 1.0).unwrap_or_else(|| panic!("seat {seat}: no floor at {at}"));
+            assert!((ground - at.y).abs() < 0.01, "seat {seat} waits at {at}, the floor at {ground}");
+            assert!(room_at(&map, at.xz(), ground), "seat {seat}: something in the way at {at}");
+        }
+    }
+}
+
 #[cfg(test)]
 impl Island {
     pub(crate) fn new_for_tests(corners: &[[Vec3; 3]]) -> Self {
@@ -1328,6 +1592,19 @@ pub(crate) mod glb {
                         .collect(),
                 });
             }
+        }
+        parts
+    }
+
+    /// Every mesh of `venue`'s model, placed where the game places it, as
+    /// [`read`] places it, and stood as far up as the game stands it
+    /// ([`lift`](super::lift)): for tests of the maps that are lifted, Bridge
+    /// Race's and Last Stand's, and of the rest alike.
+    pub(crate) fn read_venue(venue: super::Venue) -> Vec<Part> {
+        let up = Vec3::Y * super::lift(venue);
+        let mut parts = read(super::model(venue));
+        for corner in parts.iter_mut().flat_map(|part| part.triangles.iter_mut().flatten()) {
+            *corner += up;
         }
         parts
     }

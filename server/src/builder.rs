@@ -556,7 +556,13 @@ fn hear(
             | Ask::Chat(_)
             | Ask::Builder { .. }
             | Ask::Metres(_)
-            | Ask::RunOver { .. } => {}
+            | Ask::RunOver { .. }
+            // minigames: S1 (the server's tables) handles these.
+            | Ask::Join(_)
+            | Ask::BlendIn(_)
+            | Ask::KnockOff(_)
+            | Ask::BridgeRace(_)
+            | Ask::LastStand(_) => {}
         }
     }
 }

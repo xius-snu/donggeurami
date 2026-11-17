@@ -710,7 +710,13 @@ fn hear(
             | Tell::Bought(_)
             | Tell::Social(_)
             | Tell::Said { .. }
-            | Tell::Feed(_) => {}
+            | Tell::Feed(_)
+            // minigames: S2 (the device's side of the tables) handles these.
+            | Tell::Entered { .. }
+            | Tell::BlendIn(_)
+            | Tell::KnockOff(_)
+            | Tell::BridgeRace(_)
+            | Tell::LastStand(_) => {}
         }
     }
 }

@@ -891,6 +891,8 @@ fn whereabouts(presence: &Presence, now: f64) -> String {
     let game = |game: &Minigame| match game {
         Minigame::BridgeWars => &ui.words.games.bridge_wars,
         Minigame::HouseBuilder => &ui.words.games.home_builders,
+        // minigames: S2 (the device's side of the tables) gives these words of their own.
+        Minigame::BlendIn | Minigame::KnockOff | Minigame::BridgeRace | Minigame::LastStand => &ui.words.games.bridge_wars,
     };
     match presence {
         Presence::Town { channel } => fill(&words.in_town, &[("channel", &(u32::from(*channel) + 1).to_string())]),
