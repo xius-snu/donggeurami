@@ -1159,8 +1159,14 @@ fn the_round_goes_small_and_whole() {
         assert!(bytes.len() <= 8);
         assert_eq!(postcard::from_bytes::<Ask>(&bytes).unwrap(), ask);
     }
-    for tell in [Tell::Nothing, Tell::Metres { metres: 3.0, grants: 9 }] {
+    for tell in [
+        Tell::Nothing,
+        Tell::Metres { metres: 3.0, grants: 9 },
+        Tell::Feed(Feed::Fell { seat: 3, by: Some(0) }),
+        Tell::Feed(Feed::Blew { by: 1, team: Some(0), planks: 4 }),
+    ] {
         let bytes = postcard::to_allocvec(&tell).unwrap();
+        assert!(bytes.len() <= 8, "{tell:?}: {} bytes", bytes.len());
         assert_eq!(postcard::from_bytes::<Tell>(&bytes).unwrap(), tell);
     }
     // Everyone's kit as the room is sent it, every one with two sticks.
@@ -1204,4 +1210,40 @@ fn the_computer_s_players_lay_their_team_s_way_and_stand_on_the_golden_island() 
     assert_eq!(finish, Finish::Held);
     let winner = winner.expect("won");
     assert!(game.on_gold(usize::from(winner)), "the winner stands on the golden island");
+}
+
+#[test]
+fn the_chat_says_who_fell_by_whose_doing_and_whose_bridge_a_stick_holed() {
+    // A fall, by nobody's doing and by the other team's.
+    assert_eq!(feed(&Event::Fell { seat: 2, by: None }), Some(Feed::Fell { seat: 2, by: None }));
+    assert_eq!(feed(&Event::Fell { seat: 3, by: Some(0) }), Some(Feed::Fell { seat: 3, by: Some(0) }));
+    // A stick of blue's (seat 1): mostly red's planks, red's bridge holed;
+    // only its own team's, its own; none, nobody's.
+    let blew = |planks: Vec<(u8, u16, u16)>| Event::Blew { stick: 0, by: 1, at: Vec3::ZERO, planks };
+    assert_eq!(feed(&blew(vec![(0, 0, 3), (0, 0, 4), (2, 1, 0)])), Some(Feed::Blew { by: 1, team: Some(0), planks: 3 }));
+    assert_eq!(feed(&blew(vec![(0, 0, 3), (1, 0, 9), (3, 0, 9)])), Some(Feed::Blew { by: 1, team: Some(0), planks: 3 }));
+    assert_eq!(feed(&blew(vec![(3, 0, 9)])), Some(Feed::Blew { by: 1, team: Some(1), planks: 1 }));
+    assert_eq!(feed(&blew(Vec::new())), Some(Feed::Blew { by: 1, team: None, planks: 0 }));
+    // Nothing else is the chat's.
+    assert_eq!(feed(&Event::Holding { team: 0, holding: true }), None);
+    assert_eq!(feed(&Event::Granted { grant: 1, sticks: vec![0] }), None);
+}
+
+#[test]
+fn time_called_ends_a_game_being_played_by_the_time_limit_s_own_rule() {
+    // Nothing before it begins.
+    let mut game = Game::new(2, &[true, true], 4);
+    game.call_time();
+    assert_eq!(game.result(), None);
+    // Begun, red's bridge further across: red wins it, by the time.
+    game.begin();
+    lay_across(&mut game, 0, 0, 12);
+    run(&mut game, 1.0);
+    game.call_time();
+    let events = run(&mut game, FRAME);
+    assert!(events.contains(&Event::Over { winner: Some(0), finish: Finish::Time }), "{events:?}");
+    assert!(!game.playing());
+    // And once over, again is nothing.
+    game.call_time();
+    assert!(run(&mut game, FRAME).is_empty());
 }

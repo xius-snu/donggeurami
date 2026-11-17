@@ -439,9 +439,15 @@
             accent: "#8fdcff",
         ),
 
-        // Bridge Race's: its accent, the golden island's gold.
+        // Bridge Race's: its accent, the golden island's gold, in which
+        // the arrow at the edge of the screen points the way to the golden
+        // island while it is off the screen, with how far it is. And the
+        // dark under each team's bar on the plate top centre, which fills
+        // in the team's colour (arena.team_red and team_blue, above) as
+        // its bridge gets across.
         bridge_race: (
             accent: "#ffd34d",
+            bar_back: "#00000059",
         ),
 
         // Last Stand's: its accent, the orange of a fire kept going.
@@ -882,9 +888,51 @@
             score: "place",
         ),
 
-        // Bridge Race's: what its score is called among the results.
+        // Bridge Race's: what its score is called among the results, and
+        // its two teams, by the colour of their islands.
         bridge_race: (
             score: "metres built",
+            red: "Red",
+            blue: "Blue",
+            // Across the screen as the race begins, with your team over it;
+            // and as it ends: who won ({team}), or a draw, with how it went
+            // for you over it, or that the time ran out.
+            go: "Go!",
+            your_team: "You are on {team}",
+            wins: "{team} wins!",
+            draw: "Draw",
+            won: "Your team got there first!",
+            lost: "The other team got there first",
+            times_up: "Time's up!",
+            // On the plate top centre, under each team's bar: how far its
+            // bridge still has to go, that it is across, or how many of the
+            // team stand on the golden island ({count} of {of}).
+            to_go: "{metres}m to go",
+            across: "Across!",
+            on_island: "{count}/{of} on the island",
+            // Over the golden island while every one of a team stands on
+            // it: the seconds they still have to hold it.
+            hold: "Hold! {seconds}",
+            // Rising off you as each grant of bridge comes; and by the
+            // arrow at the edge of the screen, how far the golden island
+            // is.
+            granted: "+{metres}m",
+            away: "{metres}m",
+            // Across the screen after a fall into the void, counting down
+            // in halves: "2", "1.5", ... "0.5".
+            back_in: "Back on your island in {seconds}",
+            // In the upper half of the screen (the first with the
+            // dynamite's picture after it), and the last two in the chat
+            // too: a stick come to your button, a team's bridge come
+            // across, and a team standing on the golden island together.
+            dynamite: "Dynamite!",
+            reached: "{team}'s bridge has reached the golden island!",
+            holding: "{team} is holding the golden island!",
+            // In the chat: who fell into the void, by whose doing
+            // ({killer}), and whose stick holed whose bridge.
+            fell: "{name} fell into the void.",
+            knocked: "{killer} knocked {name} into the void.",
+            blew: "{name} blew a hole in {team}'s bridge.",
         ),
 
         // Last Stand's: what its score is called among the results.

@@ -377,6 +377,56 @@ pub enum Tell {
     /// of bridge you had left as your device last said, with every grant
     /// since added, and how many grants that counts ([`Game::kept`]).
     Metres { metres: f32, grants: u16 },
+    /// Something has happened in your game that its chat says ([`Feed`]):
+    /// told every device in the room that is connected, as it happens, and
+    /// to nobody whose device has gone (a line of the chat missed is no
+    /// reason to be put back in the game afresh).
+    Feed(Feed),
+}
+
+/// What the chat of a game of Bridge Race says as it goes (the game's
+/// `bridge_race`, which writes each in the file's words, names in their
+/// teams' colours): online the server tells each device ([`Tell::Feed`]),
+/// offline the device's own game says the same, both by [`feed`].
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Feed {
+    /// Whoever is in `seat` has fallen into the void, knocked off by whoever
+    /// is in `by` if anyone of the other team had a hand in it
+    /// ([`Event::Fell`]).
+    Fell { seat: u8, by: Option<u8> },
+    /// The stick of dynamite of whoever is in `by` has blown, taking
+    /// `planks` planks, most of them of `team`'s bridges (of the thrower's
+    /// own only if it took none of the other team's); none, if it took
+    /// none ([`Event::Blew`]).
+    Blew { by: u8, team: Option<u8>, planks: u16 },
+}
+
+/// What the chat says of `event`, if it says anything of it: a fall, and a
+/// stick blown. The grants, the sticks given, the bridges joined to the
+/// golden island and a team holding it are said by every device off the
+/// round and the kits it is sent ([`RaceRound`], [`crate::Kits`]), which
+/// come to everyone alike.
+pub fn feed(event: &Event) -> Option<Feed> {
+    match event {
+        Event::Fell { seat, by } => Some(Feed::Fell {
+            seat: *seat as u8,
+            by: by.map(|by| by as u8),
+        }),
+        Event::Blew { by, planks, .. } => {
+            let mut of = [0u16; TEAMS];
+            for &(seat, ..) in planks {
+                of[usize::from(team(usize::from(seat)))] += 1;
+            }
+            let theirs = usize::from(1 - team(*by));
+            let side = if of[theirs] > 0 { theirs } else { 1 - theirs };
+            Some(Feed::Blew {
+                by: *by as u8,
+                team: (of[side] > 0).then_some(side as u8),
+                planks: planks.len().min(usize::from(u16::MAX)) as u16,
+            })
+        }
+        _ => None,
+    }
 }
 
 /// Registers this game's own replicated components: its round.
@@ -1199,6 +1249,16 @@ impl Game {
             [true, false] => self.finish(Some(0), Finish::Held),
             [false, true] => self.finish(Some(1), Finish::Held),
             [false, false] => {}
+        }
+    }
+
+    /// The time is up now, whatever the clock says, if the game is being
+    /// played: it is over by the same rule as at [`PLAY_SECS`]. For trying
+    /// the game out, when someone skips the rest of it (`Ask::Skip`, which
+    /// only a server that allows it hears; mine).
+    pub fn call_time(&mut self) {
+        if self.playing() {
+            self.time_up();
         }
     }
 
