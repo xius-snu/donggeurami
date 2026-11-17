@@ -1,5 +1,7 @@
 //! 동그라미타운's game server: one program holding every room there is — the
-//! town's channels, everyone's home, and every game of House Builder
+//! town's channels, everyone's home, every game of House Builder and of
+//! Bridge Wars, and since 2026-11-18 every table of the four games played at
+//! tables, Blend In, Knock Off, Bridge Race and Last Stand ([`tables`])
 //! (`MULTIPLAYER.md`, "The shape").
 //!
 //! It is a Bevy app with no window, no renderer and no assets: replicon over
@@ -23,8 +25,10 @@
 //! * `RT_DB`: how to reach Postgres, e.g. `host=/var/run/postgresql
 //!   user=roundtown dbname=roundtown`. Without it, accounts are made up afresh
 //!   on connecting and coins kept in memory. The login needs it.
-//! * `RT_ALLOW_SKIP`: `1` lets a device skip House Builder's waits, for trying
-//!   the game out. Never on a server real players use.
+//! * `RT_ALLOW_SKIP`: `1` lets a device skip House Builder's waits, Bridge
+//!   Wars' and, since 2026-11-18, the wait and the countdown at a table of
+//!   the four games, for trying the games out. Never on a server real
+//!   players use.
 //! * `RT_ARENA_FROM`: how many seconds into its timetable a game of Bridge
 //!   Wars begins its fight, for trying the timetable out: `595` is five
 //!   seconds before every anchor breaks. Never on a server real players use.
@@ -37,11 +41,19 @@ mod arena;
 mod builder;
 mod chat;
 mod clock;
+mod fees;
 mod login;
 mod players;
 mod rooms;
 mod social;
 mod stats;
+mod tables;
+// The four games of 2026-11-18, each what is played at its tables
+// (`tables::Rules`).
+mod blend_in;
+mod bridge_race;
+mod knock_off;
+mod last_stand;
 
 use std::io;
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket};
@@ -74,7 +86,8 @@ pub(crate) struct Config {
     /// Where devices reach the game.
     pub public: Vec<SocketAddr>,
     pub db: Option<String>,
-    /// Devices may skip House Builder's waits.
+    /// Devices may skip House Builder's waits, Bridge Wars', and a table's
+    /// wait and countdown (`tables`).
     pub allow_skip: bool,
     /// How far into its timetable a game of Bridge Wars begins its fight,
     /// in seconds: 0 but for trying it out.
@@ -151,8 +164,10 @@ fn main() {
     // Everything kept about who is whose friend comes back from setting
     // the accounts up, for `social` to go by from here on.
     let friends = accounts::plugin(&mut app, config.db.clone());
+    fees::plugin(&mut app);
     rooms::plugin(&mut app);
     players::plugin(&mut app);
+    tables::plugin(&mut app);
     builder::plugin(&mut app);
     arena::plugin(&mut app);
     chat::plugin(&mut app);
@@ -227,7 +242,7 @@ fn listen(
             "letting anyone in (no RT_KEY)"
         },
         if config.allow_skip {
-            ", with House Builder's waits skippable"
+            ", with the games' waits skippable"
         } else {
             ""
         }

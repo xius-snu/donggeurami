@@ -54,13 +54,19 @@
 //! bigger ([`size`]). One that lay on a plank that has gone drops away
 //! with it.
 //!
-//! Each is one entity, the model's scene under it, carrying the arena's
+//! Each is one entity, the model's scene under it, carrying its fight's
 //! `Venue`, so that it is drawn only while you are there, and `InArena`,
 //! so that it goes with the game. Only those near the camera are moved: a
 //! full map has 240 of them, most of them a hundred metres off. At night
 //! they glow a little in their own colours ([`glow`]), as the anchors do
 //! (`lamps`): a sapphire is nearly black by moonlight, and the smaller
 //! islands have no lamps.
+//!
+//! **In any fight** (since 2026-11-18, for Last Stand's generators and its
+//! zombies' drops): a thing is laid on the venue of the game it is of, a
+//! generator's over that game's pads' top ([`lay`]; Bridge Wars' own
+//! `PAD_TOP` for its own, and [`PadTop`] for what the server sends of any
+//! other's), and only whoever is on that venue is taken to have taken it.
 
 use std::f32::consts::TAU;
 
@@ -70,7 +76,7 @@ use bevy_replicon::prelude::Remote;
 use roundtown_net::bridge_wars::{DROP_FROM, DROP_SECS, HOVER, MAGNET, TOSS_SECS, drop_height, toss};
 use roundtown_net::{Item, Loot, Member, PAD_TOP};
 
-use crate::arena::InArena;
+use crate::arena::{Fighting, InArena};
 use crate::island::Venue;
 use crate::sky::Daylight;
 use crate::{Dead, Player, ThirdPersonCamera};
@@ -169,8 +175,43 @@ pub(crate) struct Look {
     lit: Option<f32>,
 }
 
+/// How high the tops of the generators' pads are in the fight being
+/// played, in metres: where a thing the server sends from a generator
+/// hangs over (a [`Loot`] says nothing of its height, only a dropped one
+/// does, `Spilt::ground`), on any map but Bridge Wars', whose things hang
+/// over its own `PAD_TOP` whatever this says, as they always did. Bridge
+/// Wars' `PAD_TOP` as the app opens, and out of any other game. **Any
+/// fight may own it**, as it does `arena::Fighting` (since 2026-11-18):
+/// another game whose pads stand otherwise sets it as it begins, and sets
+/// it back to Bridge Wars' once as it ends. (Last Stand's map is stood up
+/// a quarter of a metre so that its pads' tops are where Bridge Wars' are:
+/// none of its own needed. What the server sends in the frame or two
+/// before this device knows where the fight is, as it is put back into a
+/// game, is hung over Bridge Wars' pads, where it was put, and keeps that
+/// height as it is moved onto the fight's venue, `arena::settle`: right
+/// for every fight there is.)
+#[derive(Resource, Clone, Copy, PartialEq, Debug)]
+pub(crate) struct PadTop(pub(crate) f32);
+
+impl PadTop {
+    /// The top of the pads a thing the server sends from a generator on
+    /// `venue` hangs over: Bridge Wars' own `PAD_TOP` on its map, so that
+    /// nothing another game leaves here moves its things; this anywhere
+    /// else.
+    pub(crate) fn on(self, venue: Venue) -> f32 {
+        if venue == Venue::Arena { PAD_TOP } else { self.0 }
+    }
+}
+
+impl Default for PadTop {
+    fn default() -> Self {
+        Self(PAD_TOP)
+    }
+}
+
 pub(crate) fn plugin(app: &mut App) {
-    app.add_systems(Startup, load)
+    app.init_resource::<PadTop>()
+        .add_systems(Startup, load)
         .add_systems(Update, (follow_server, animate, glow));
 }
 
@@ -182,14 +223,15 @@ fn load(assets: Res<AssetServer>, mut commands: Commands) {
     });
 }
 
-/// The thing `loot` says, made now: one a generator made, over a pad's
-/// top, high over where it will hang, to drop there ([`animate`]); or one
-/// that someone who died dropped, at the middle of them, to fly out to
-/// where it lies. Turned out of step with whatever lies beside it, by
-/// where it lies.
-pub(crate) fn lay(commands: &mut Commands, look: &Look, now: f32, key: Key, loot: Loot) -> Entity {
+/// The thing `loot` says, made now, on `venue`, the fight's: one a
+/// generator made, over a pad's top, `pad_top` up (Bridge Wars' `PAD_TOP`
+/// for its own), high over where it will hang, to drop there
+/// ([`animate`]); or one that someone who died dropped, at the middle of
+/// them, to fly out to where it lies, over the ground it says. Turned out
+/// of step with whatever lies beside it, by where it lies.
+pub(crate) fn lay(commands: &mut Commands, look: &Look, now: f32, key: Key, loot: Loot, venue: Venue, pad_top: f32) -> Entity {
     let item = loot.item;
-    let ground = loot.spilt.map_or(PAD_TOP, |spilt| spilt.ground);
+    let ground = loot.spilt.map_or(pad_top, |spilt| spilt.ground);
     let place = Vec3::new(loot.x, ground + HOVER, loot.z);
     let from = loot.spilt.map(|spilt| Vec3::new(spilt.from_x, spilt.from_y, spilt.from_z));
     let size = size(loot.spilt.map_or(1, |spilt| spilt.worth));
@@ -206,7 +248,7 @@ pub(crate) fn lay(commands: &mut Commands, look: &Look, now: f32, key: Key, loot
                 size,
             },
             InArena,
-            Venue::Arena,
+            venue,
             Name::new(format!("{item:?}")),
             WorldAssetRoot(look.scenes[item.index()].clone()),
             Transform::from_translation(from.unwrap_or(place + Vec3::Y * DROP_FROM))
@@ -256,21 +298,33 @@ fn learn_look(
 /// what their purchases need (`roundtown_net::bots`). Until then only
 /// people were looked for, the computer's picking up nothing, and a
 /// thing one of them took would have flown to the nearest person, or
-/// nowhere.
+/// nowhere. Each laid on the fight's venue (`Fighting::served_on`; one
+/// sent before this device knew where the fight was moved there as soon
+/// as it does, `arena::settle`), a generator's at the fight's pads' top
+/// ([`PadTop::on`]), and taken by whoever is nearest of those on the
+/// thing's own venue (since 2026-11-18; Bridge Wars' map alone until
+/// then).
+#[allow(clippy::too_many_arguments)]
 fn follow_server(
     time: Res<Time>,
     look: Res<Look>,
+    (fighting, pad_top): (Res<Fighting>, Res<PadTop>),
     fresh: Query<(Entity, &Loot), (With<Remote>, Added<Loot>)>,
     sources: Query<(), With<Loot>>,
-    things: Query<(Entity, &Thing), Without<Flying>>,
+    things: Query<(Entity, &Thing, &Venue), Without<Flying>>,
     people: Query<(Entity, &Transform, &Venue, Option<&Member>, Has<Player>), Without<Dead>>,
     mut commands: Commands,
 ) {
     let now = time.elapsed_secs();
-    for (source, loot) in &fresh {
-        lay(&mut commands, &look, now, Key::Server(source), *loot);
+    if !fresh.is_empty() {
+        let mine = people.iter().find(|(.., mine)| *mine).map(|(_, _, venue, ..)| *venue);
+        let venue = fighting.served_on(mine);
+        for (source, loot) in &fresh {
+            let thing = lay(&mut commands, &look, now, Key::Server(source), *loot, venue, pad_top.on(venue));
+            fighting.settle_later(&mut commands, thing);
+        }
     }
-    for (thing, lying) in &things {
+    for (thing, lying, &on) in &things {
         let Key::Server(source) = lying.key else {
             continue;
         };
@@ -282,8 +336,7 @@ fn follow_server(
             .iter()
             // Anyone but a zombie, which picks up nothing.
             .filter(|(_, _, venue, member, mine)| {
-                **venue == Venue::Arena
-                    && (*mine || member.is_some_and(|member| member.look != roundtown_net::bridge_wars::ZOMBIE_LOOK))
+                **venue == on && (*mine || member.is_some_and(|member| member.look != roundtown_net::bridge_wars::ZOMBIE_LOOK))
             })
             .map(|(person, at, ..)| (person, at.translation.xz().distance(here)))
             .filter(|(_, away)| *away <= MAGNET + TAKER_SLACK)
@@ -397,6 +450,38 @@ fn glow(daylight: Res<Daylight>, mut look: ResMut<Look>, mut materials: ResMut<A
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_thing_is_laid_on_its_fight_s_venue_over_its_pads_top() {
+        // Since 2026-11-18 on whichever venue its game is played, over that
+        // game's pads: Last Stand's here, made up as half a metre up.
+        let mut world = World::new();
+        let look = Look {
+            scenes: Default::default(),
+            materials: Default::default(),
+            lit: None,
+        };
+        let loot = Loot {
+            item: Item::Gold,
+            x: 6.0,
+            z: 1.0,
+            spilt: None,
+        };
+        let thing = {
+            let mut commands = world.commands();
+            lay(&mut commands, &look, 0.0, Key::Own(1), loot, Venue::LastStand, 0.5)
+        };
+        world.flush();
+        assert_eq!(world.get::<Venue>(thing), Some(&Venue::LastStand));
+        assert_eq!(world.get::<Thing>(thing).expect("laid").at, Vec3::new(6.0, 0.5 + HOVER, 1.0));
+        assert!(world.get::<InArena>(thing).is_some(), "to go with its game");
+        // And what the server sends hangs over Bridge Wars' pads, until a
+        // fight's game says its own are elsewhere; on Bridge Wars' own map
+        // over its own, whatever another game has left said.
+        assert_eq!(PadTop::default(), PadTop(PAD_TOP));
+        assert_eq!(PadTop::default().on(Venue::LastStand), PAD_TOP);
+        assert_eq!((PadTop(0.9).on(Venue::LastStand), PadTop(0.9).on(Venue::Arena)), (0.9, PAD_TOP));
+    }
 
     #[test]
     fn a_thing_drops_onto_its_pad_and_then_bobs_there() {

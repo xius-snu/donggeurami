@@ -156,6 +156,16 @@
 //! The width is Hajun's bridges' (2.726 m, their `bridge` object of
 //! 2026-11-08, 0.25 m thick); a plank is half as long as it is wide, like
 //! the boards of a dock, which follows a curve closely.
+//!
+//! **In any fight that builds bridges** (since 2026-11-18, for Bridge
+//! Race: "Like King of the Ladder but with bridge building"): everything
+//! here goes by where the fight is (`arena::Fighting::venue`) and whether
+//! bridges are built there (`island::bridged`), not by Bridge Wars' map;
+//! the bridges remember the venue they are on ([`Bridges::venue`]), are
+//! drawn there, and are laid over its island alone. How they are shaped
+//! is not touched by that: nothing of their geometry knows what venue it
+//! is on. The metres they cost are whatever the fight's game puts in
+//! `arena::Resources`, granted as it goes or bought.
 
 use std::f32::consts::{FRAC_PI_4, TAU};
 
@@ -169,7 +179,7 @@ use roundtown_net::{Ask as NetAsk, Plank};
 
 use crate::arena::{Fighting, InArena, Resources};
 use crate::hud::{self, BridgeButton, DialogUp};
-use crate::island::{Islands, Venue};
+use crate::island::{self, Islands, Venue};
 use crate::net::Online;
 use crate::ui::{UiChanged, ui};
 use crate::{Carrying, Dead, Intent, LAND_STEP_UP, MOVE_SPEED, PLAYER_RADIUS, Player, ThirdPersonCamera};
@@ -680,6 +690,13 @@ pub(crate) struct Bridges {
     /// The game they belong to (`Fighting::game`): another game, and they
     /// are cleared.
     game: u32,
+    /// The venue they are on, whose island their planks are laid over as
+    /// ground (`Islands::lay_over`), and whose they are drawn with: the
+    /// fight's, a venue bridges are built on (`island::bridged`; Bridge
+    /// Wars' map, or Bridge Race's since 2026-11-18), while you stand on
+    /// it; none out of one. Another venue, and they are cleared, and taken
+    /// off the island they were laid over ([`rebuild`]).
+    venue: Option<Venue>,
     /// The meshes of chains forgotten, to be taken down ([`rebuild`]).
     orphans: Vec<Entity>,
     /// Rungs you have fixed in a game online while its connection was
@@ -917,6 +934,13 @@ impl Bridges {
     /// they were last cleared for another ([`rebuild`]).
     pub(crate) fn game(&self) -> u32 {
         self.game
+    }
+
+    /// The venue these bridges are on, if any: the fight's, where bridges
+    /// are built, while you are there ([`rebuild`]).
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn venue(&self) -> Option<Venue> {
+        self.venue
     }
 
     /// Whether the plank numbered so of the bridge numbered so of whoever
@@ -1279,9 +1303,10 @@ pub(crate) fn crumble(
         return;
     }
     let seen = bridges.take_due(now);
-    if seen.is_empty() {
+    // Seen to fall where the bridges are; with them nowhere, nowhere.
+    let Some(venue) = bridges.venue.filter(|_| !seen.is_empty()) else {
         return;
-    }
+    };
     // In the file's colour as it is now.
     let burnt = ui().colours.arena.plank_doomed;
     if let Some(mut material) = materials.get_mut(&tumble.burnt)
@@ -1304,7 +1329,7 @@ pub(crate) fn crumble(
                 age: 0.0,
             },
             InArena,
-            Venue::Arena,
+            venue,
             Name::new("A plank falling"),
             Mesh3d(tumble.board.clone()),
             MeshMaterial3d(tumble.burnt.clone()),
@@ -1333,10 +1358,18 @@ fn fall(time: Res<Time>, mut planks: Query<(Entity, &mut FallingPlank, &mut Tran
     }
 }
 
-/// Turns building on and off at the plank button, or B, in a game of Bridge
-/// Wars while it is on; off anywhere else, and as a game ends. With no
-/// metres of bridge left it is not turned on: the "0m" shows in front of
-/// you for a moment instead ([`show_left`]).
+/// Whether bridges are being built where you stand, `here`: a fight is on
+/// there (`Fighting::venue`), and it is a venue bridges are built on
+/// (`island::bridged`). Bridge Wars' map, and since 2026-11-18 Bridge
+/// Race's.
+fn builds_here(fighting: &Fighting, here: Venue) -> bool {
+    fighting.playing && fighting.venue == Some(here) && island::bridged(here)
+}
+
+/// Turns building on and off at the plank button, or B, in a fight that
+/// builds bridges while it is on ([`builds_here`]); off anywhere else, and
+/// as a game ends. With no metres of bridge left it is not turned on: the
+/// "0m" shows in front of you for a moment instead ([`show_left`]).
 #[allow(clippy::too_many_arguments)]
 fn toggle(
     mut presses: MessageReader<BridgePressed>,
@@ -1349,7 +1382,7 @@ fn toggle(
     mut ran_out: ResMut<RanOut>,
 ) {
     let pressed = presses.read().count() > 0 || keyboard.just_pressed(KeyCode::KeyB);
-    let in_a_game = fighting.playing && me.single().is_ok_and(|(&here, _)| here == Venue::Arena);
+    let in_a_game = me.single().is_ok_and(|(&here, _)| builds_here(&fighting, here));
     // Flat on the road where a bus ran you over, there is no building:
     // the plank is out of your arms, and the button does nothing until
     // you are up (`arena::squash`).
@@ -1447,7 +1480,7 @@ fn show_left(
         }
         return;
     };
-    let you = me.single().ok().filter(|&(_, &venue, dead)| fighting.playing && venue == Venue::Arena && !dead);
+    let you = me.single().ok().filter(|&(_, &venue, dead)| builds_here(&fighting, venue) && !dead);
     let wanted = bridging.0 || ran_out.halted || ran_out.shown > 0.0;
     let point = you.filter(|_| wanted).and_then(|(body, _, _)| {
         let (camera, eye) = cameras.single().ok()?;
@@ -1590,7 +1623,7 @@ pub(crate) fn lay(
         return;
     };
     let mut sent: Vec<(u16, u16, Rung)> = Vec::new();
-    let building = bridging.0 && fighting.playing && !dead && venue == Venue::Arena;
+    let building = bridging.0 && !dead && builds_here(&fighting, venue);
     // Dead, you are stopped no longer: you come back free to walk.
     if dead && ran_out.halted {
         ran_out.halted = false;
@@ -1604,7 +1637,7 @@ pub(crate) fn lay(
         {
             sent.push(fixed);
         }
-    } else if let Some(island) = islands.get(Venue::Arena) {
+    } else if let Some(island) = islands.get(venue) {
         let feet = body.translation.y;
         let here = body.translation.xz();
         let reach = feet + LAND_STEP_UP;
@@ -2467,12 +2500,18 @@ fn take(chain: &mut Chain, index: u16, rung: Rung) {
 
 /// Builds a chain's mesh again as the chain itself changes, a rung fixed
 /// or its tip moved (and every chain's as the file's colours change), and
-/// lays the planks' shape over the island; and clears everything out of
-/// the arena, or as another game begins. A chain that has not changed is
-/// neither worked out nor drawn again: until 2026-11-10 every chain was,
-/// against the ground as it then stood, each time anything changed, and
-/// the end of a bridge left unfinished reached out for a bridge built past
-/// it afterwards.
+/// lays the planks' shape over the island; and clears everything away as
+/// you leave the venue they are on, or as another game begins. A chain
+/// that has not changed is neither worked out nor drawn again: until
+/// 2026-11-10 every chain was, against the ground as it then stood, each
+/// time anything changed, and the end of a bridge left unfinished reached
+/// out for a bridge built past it afterwards.
+///
+/// The bridges are on whichever venue bridges are built on that you stand
+/// on (`island::bridged`; since 2026-11-18 Bridge Race's as well as Bridge
+/// Wars' map), drawn there and laid over its island; cleared, they are
+/// taken off the island they were on, not the one you are on now (until
+/// then Bridge Wars' map was the only one).
 #[allow(clippy::too_many_arguments)]
 fn rebuild(
     fighting: Res<Fighting>,
@@ -2484,20 +2523,22 @@ fn rebuild(
     mut meshes: ResMut<Assets<Mesh>>,
     mut commands: Commands,
 ) {
-    let here = me.single().ok().copied();
+    let on = me.single().ok().copied().filter(|&here| island::bridged(here));
     if !bridges.orphans.is_empty() {
         for mesh in bridges.orphans.drain(..) {
             commands.entity(mesh).try_despawn();
         }
     }
-    if here != Some(Venue::Arena) || fighting.game != bridges.game {
+    if on != bridges.venue || fighting.game != bridges.game {
         if !bridges.chains.is_empty() {
             for chain in bridges.chains.drain(..) {
                 if chain.mesh != Entity::PLACEHOLDER {
                     commands.entity(chain.mesh).try_despawn();
                 }
             }
-            islands.lay_over(Venue::Arena, None);
+            if let Some(was) = bridges.venue {
+                islands.lay_over(was, None);
+            }
             bridges.version += 1;
             info!("the bridges are cleared away");
         }
@@ -2505,6 +2546,7 @@ fn rebuild(
         bridges.next_id = 0;
         bridges.dirty = false;
         bridges.game = fighting.game;
+        bridges.venue = on;
         bridges.unsent.clear();
         bridges.begun_here.clear();
         bridges.falling.clear();
@@ -2525,7 +2567,11 @@ fn rebuild(
     if !bridges.dirty && !stale && !restyled {
         return;
     }
-    let Some(island) = islands.get(Venue::Arena) else {
+    // Nowhere bridges are built, there are none to build.
+    let Some(venue) = bridges.venue else {
+        return;
+    };
+    let Some(island) = islands.get(venue) else {
         return;
     };
     let relay = bridges.dirty || overlay_due || restyled;
@@ -2593,7 +2639,7 @@ fn rebuild(
                     InArena,
                     PlankMesh,
                     Name::new(format!("Bridge {} of seat {}", chain.id, chain.seat)),
-                    Venue::Arena,
+                    venue,
                     Mesh3d(chain.handle.clone()),
                     MeshMaterial3d(look.0.clone()),
                     Transform::default(),
@@ -2607,7 +2653,7 @@ fn rebuild(
     bridges.dirty = false;
     if relay {
         bridges.version += 1;
-        islands.lay_over(Venue::Arena, (!parts.is_empty()).then_some(parts));
+        islands.lay_over(venue, (!parts.is_empty()).then_some(parts));
     }
 }
 
@@ -4155,5 +4201,111 @@ mod tests {
         }
         // And the bridge it mends is as it was built, hole and all.
         assert_eq!(bridges.chains[0].fixed_quads().count(), 4);
+    }
+
+    /// A world to build bridges in by the game's own systems ([`lay`],
+    /// [`rebuild`]): Bridge Race's map as a disc of land 10 m round its
+    /// middle and Bridge Wars' as one far off (no model is read), you
+    /// standing 9 m out on Bridge Race's with 60 m of bridge and the
+    /// plank in your arms, and the fight (`Fighting`) where `fight` says.
+    fn a_fight_on(fight: Option<Venue>) -> (World, Entity) {
+        let mut world = World::new();
+        let mut islands = Islands::default();
+        islands.reshape(Venue::BridgeRace, disc(Vec2::ZERO, 10.0), &[]);
+        islands.reshape(Venue::Arena, disc(Vec2::splat(300.0), 10.0), &[]);
+        world.insert_resource(islands);
+        world.insert_resource(Time::<()>::default());
+        world.insert_resource(Online::default());
+        world.insert_resource(UiChanged);
+        world.insert_resource(Look(Handle::default()));
+        world.init_resource::<Assets<Mesh>>();
+        world.init_resource::<Messages<NetAsk>>();
+        world.insert_resource(Bridging(true));
+        world.init_resource::<RanOut>();
+        world.init_resource::<Bridges>();
+        world.insert_resource(Resources {
+            bridge_metres: 60.0,
+            ..default()
+        });
+        world.insert_resource(Fighting {
+            playing: true,
+            seat: Some(0),
+            game: 3,
+            venue: fight,
+            ..default()
+        });
+        let you = world
+            .spawn((
+                Player,
+                Transform::from_xyz(0.0, 0.25, 9.0),
+                Venue::BridgeRace,
+                Intent {
+                    walk: Vec3::Z,
+                    ..default()
+                },
+            ))
+            .id();
+        (world, you)
+    }
+
+    /// Walks you `steps` times 0.3 m on out along +Z, a frame of the
+    /// bridges' own systems at each, as the game runs them: laid under
+    /// your feet, then built and laid over the island.
+    fn walk_out(world: &mut World, you: Entity, steps: usize) {
+        use bevy::ecs::system::RunSystemOnce;
+        for _ in 0..steps {
+            world.run_system_once(lay).expect("laid");
+            world.run_system_once(rebuild).expect("built");
+            world.get_mut::<Transform>(you).expect("you").translation.z += 0.3;
+        }
+    }
+
+    #[test]
+    fn a_fight_on_another_venue_lays_its_planks_there_and_takes_them_off_that_island_as_you_leave() {
+        use bevy::ecs::system::RunSystemOnce;
+        // Since 2026-11-18 the bridges are any fight's that builds them:
+        // on Bridge Race's map, as you walk out off its edge, its own.
+        let (mut world, you) = a_fight_on(Some(Venue::BridgeRace));
+        // (The first frame there takes the bridges to it, with nothing on.)
+        world.run_system_once(rebuild).expect("built");
+        assert_eq!(world.resource::<Bridges>().venue(), Some(Venue::BridgeRace));
+        walk_out(&mut world, you, 40);
+        let bridges = world.resource::<Bridges>();
+        assert!(bridges.laid().count() >= 5, "{} rungs laid", bridges.laid().count());
+        assert_eq!(bridges.venue(), Some(Venue::BridgeRace));
+        assert!(world.resource::<Resources>().bridge_metres < 52.0, "{} m left", world.resource::<Resources>().bridge_metres);
+        // Drawn on that venue, and laid over its island as ground, 4 m out
+        // over its void; Bridge Wars' island has nothing laid over it.
+        let mut meshes = world.query_filtered::<&Venue, With<PlankMesh>>();
+        let drawn: Vec<Venue> = meshes.iter(&world).copied().collect();
+        assert!(!drawn.is_empty() && drawn.iter().all(|venue| *venue == Venue::BridgeRace), "{drawn:?}");
+        let islands = world.resource::<Islands>();
+        let race = islands.get(Venue::BridgeRace).expect("the race's island");
+        let out = Vec2::new(0.0, 14.0);
+        assert!(race.floor(out, 1.0).is_some_and(|top| (top - TOP).abs() < 0.01), "no plank under {out}");
+        assert!(islands.get(Venue::Arena).expect("Bridge Wars' island").floor(out, 1.0).is_none());
+        // Leaving for the town, they are cleared, and taken off the island
+        // they were on.
+        world.entity_mut(you).insert(Venue::Town);
+        world.insert_resource(Fighting::none(3));
+        world.run_system_once(rebuild).expect("built");
+        world.flush();
+        let bridges = world.resource::<Bridges>();
+        assert_eq!((bridges.laid().count(), bridges.venue()), (0, None));
+        let islands = world.resource::<Islands>();
+        assert!(islands.get(Venue::BridgeRace).expect("the race's island").floor(out, 1.0).is_none());
+        assert_eq!(world.query_filtered::<(), With<PlankMesh>>().iter(&world).count(), 0);
+    }
+
+    #[test]
+    fn no_plank_is_laid_where_the_fight_is_not() {
+        // The fight on Bridge Wars' map while you stand on Bridge Race's,
+        // or none at all: nothing is built, and the plank leaves your arms.
+        for fight in [Some(Venue::Arena), None] {
+            let (mut world, you) = a_fight_on(fight);
+            walk_out(&mut world, you, 30);
+            assert_eq!(world.resource::<Bridges>().laid().count(), 0, "{fight:?}");
+            assert_eq!(world.resource::<Resources>().bridge_metres, 60.0, "{fight:?}");
+        }
     }
 }

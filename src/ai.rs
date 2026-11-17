@@ -159,14 +159,15 @@ pub(crate) fn dry_all_the_way(island: &Island, from: Vec3, heading: Vec3, distan
 
 /// Turns each body's walk under way into this frame's [`Intent`]: at full
 /// speed until the last stretch, which is taken slower so the body stops where
-/// it was sent rather than a stride past it. In a game of Bridge Wars the
-/// walk is a run (`arena`), and whom a bot goes for there is written over
-/// this after (`arena::hunt`).
+/// it was sent rather than a stride past it. Where fights are played the
+/// walk is a run (`arena`; `island::fights`, Bridge Wars' map, and since
+/// 2026-11-18 Bridge Race's and Last Stand's too), and whom a bot goes for
+/// there is written over this after (`arena::hunt`).
 pub(crate) fn steer(time: Res<Time>, mut bodies: Query<(&Transform, &Venue, &mut Steering, &mut Intent)>) {
     let dt = time.delta_secs();
     for (transform, &venue, mut steering, mut intent) in &mut bodies {
         *intent = Intent::default();
-        if venue == Venue::Arena {
+        if crate::island::fights(venue) {
             intent.sprint = crate::ui::ui().arena.run_speed / MOVE_SPEED;
         }
         let Some(leg) = &mut steering.leg else {

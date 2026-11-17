@@ -1,7 +1,9 @@
 //! What the server logs once a minute while anyone is on: how many are
 //! playing and where, and the bytes going out and coming in, all told and per
 //! player, to set against the estimates in `MULTIPLAYER.md` ("Bandwidth is the
-//! bill": 2 KB/s each in a room of eight, 3.2 in one of sixteen).
+//! bill": 2 KB/s each in a room of eight, 3.2 in one of sixteen). Since
+//! 2026-11-18, how many people are at the four games' tables too, each game
+//! by itself, so that a look at the journal before a deploy finds them.
 
 use std::time::Duration;
 
@@ -11,6 +13,7 @@ use bevy_replicon::prelude::*;
 
 use crate::players::Body;
 use crate::rooms::{Room, Towns};
+use crate::tables::{Tables, name};
 
 const EVERY: Duration = Duration::from_secs(60);
 
@@ -18,7 +21,7 @@ pub(crate) fn plugin(app: &mut App) {
     app.add_systems(Update, report.run_if(on_timer(EVERY)));
 }
 
-fn report(clients: Query<&ConnectedClientStats>, bodies: Query<&Body>, towns: Res<Towns>) {
+fn report(clients: Query<&ConnectedClientStats>, bodies: Query<&Body>, towns: Res<Towns>, tables: Res<Tables>) {
     let connected = clients.iter().count();
     if connected == 0 {
         return;
@@ -39,10 +42,16 @@ fn report(clients: Query<&ConnectedClientStats>, bodies: Query<&Body>, towns: Re
         .filter(|body| body.client.is_some() && matches!(body.room, Room::Arena(_)))
         .count();
     let each = out / connected as f64;
+    let tabled: Vec<String> = tables
+        .counts()
+        .into_iter()
+        .map(|(game, people)| format!("{people} at {}", name(game)))
+        .collect();
     info!(
         "{connected} connected: town channels {:?}, {homes} at home, {gaming} in House Builder, \
-         {fighting} in Bridge Wars; out {:.1} KB/s ({:.2} KB/s, {:.1} MB an hour, each), in {:.1} KB/s",
+         {fighting} in Bridge Wars, {}; out {:.1} KB/s ({:.2} KB/s, {:.1} MB an hour, each), in {:.1} KB/s",
         towns.counts(),
+        tabled.join(", "),
         out / 1000.0,
         each / 1000.0,
         each * 3600.0 / 1e6,
