@@ -698,9 +698,15 @@ fn hear(
     let (here, mine) = me.single().map_or((None, None), |(&venue, team)| (Some(venue), team.map(|team| team.0)));
     for tell in tells.read() {
         if let Tell::Said { who, name, text } = tell {
-            // Who is on which team: in Bridge Wars by their seat, as ever;
-            // anywhere else by the team their body is on, yours too.
-            let team = if here == Some(Venue::Arena) {
+            // Who is on which team: in a fight, by their seat, as its game
+            // says each seat's team (`Fighting::teams`: Bridge Wars' seat
+            // modulo four as ever, Bridge Race's two, Last Stand's none, so
+            // that a team of everyone is not all written in red); at another
+            // game's table, by the team their body is on, yours too, where
+            // its game gives one.
+            let team = if fighting.venue.is_some() && fighting.venue == here {
+                fighting.team_of_member(*who)
+            } else if here == Some(Venue::Arena) {
                 fighting.members.iter().position(|member| *member == *who && *who != 0).map(arena_team)
             } else if online.me().is_some_and(|me| me.id == *who) {
                 mine

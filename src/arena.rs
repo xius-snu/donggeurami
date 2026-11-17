@@ -1035,7 +1035,6 @@ impl Fighting {
     }
 
     /// The team the seat `seat` is on, if its game says ([`Fighting::teams`]).
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn team_of(&self, seat: usize) -> Option<u8> {
         self.teams.get(seat).copied()
     }
@@ -1044,7 +1043,6 @@ impl Fighting {
     /// among its members, if they are in it and its game says
     /// ([`Fighting::teams`]): for the chat to write their name in its
     /// colour once the teams are out.
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn team_of_member(&self, who: u64) -> Option<u8> {
         let seat = self.members.iter().position(|member| *member == who && who != 0)?;
         self.team_of(seat)
