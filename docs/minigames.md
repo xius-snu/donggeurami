@@ -9,8 +9,32 @@ share. Dated entries, newest first.
 
 ## Contents
 
-1. The evening of 2026-11-18: Bridge Wars costs 50 too, prices drawn with the coin, and twelve asks after a play
-2. Since 2026-11-18 four new games are on the selector, each played at a table
+1. Later on the evening of 2026-11-18: Knock Off's stick anywhere, Bridge Race's grants and dynamite, Last Stand's chests struck open
+2. The evening of 2026-11-18: Bridge Wars costs 50 too, prices drawn with the coin, and twelve asks after a play
+3. Since 2026-11-18 four new games are on the selector, each played at a table
+
+## Later on the evening of 2026-11-18: Knock Off's stick anywhere, Bridge Race's grants and dynamite, Last Stand's chests struck open
+
+Hajun's next message, after APK 42, ending "fix and rebuild apk and push".
+**`PROTOCOL_VERSION` 24**: APK 42 and before are told to update and stay
+offline. The server has it and so does APK 43 (`docs/building.md`). No iOS
+tag.
+
+| Ask | Where it is written up |
+|---|---|
+| Knock Off: the stick taken anywhere on the screen, its middle where the finger goes down, but not round the buttons | `docs/knock-off.md` |
+| Bridge Race: grants oftener (12 s), twice the bridge, 8 to 16 m at random | `docs/bridge-race.md` |
+| Bridge Race: dynamite twice as often, and bringing the whole connected bridge down as in Bridge Wars | `docs/bridge-race.md` |
+| Bridge Race: "Next Item: 14m (plank) 1 (stick)" under the clock in place of each team's "62m to go" | `docs/bridge-race.md` |
+| Last Stand: chests broken open by one, two or three blows, bursting like someone dying, no bubble | `docs/last-stand.md` |
+| Last Stand: no words over the generators, nothing under the plate before the first wave | `docs/last-stand.md` |
+
+**A trap the tests did not catch, and a hidden run did**: a query added
+to Last Stand's doings read every body's `Transform` where the same
+system moves the zombies' (`play`): Bevy refuses such a system as the app
+starts (B0001), and every test passed, none of them building the whole
+app. It reads `GlobalTransform` now. A hidden run of the desktop build is
+what starts every system.
 
 ## The evening of 2026-11-18: Bridge Wars costs 50 too, prices drawn with the coin, and twelve asks after a play
 

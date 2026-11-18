@@ -1006,7 +1006,7 @@ fn whoever_dies_in_the_sea_drops_it_on_the_land_where_they_last_stood() {
 }
 
 #[test]
-fn a_treasure_chest_comes_unsaid_now_and_then_and_whoever_opens_it_has_what_was_in_it() {
+fn a_treasure_chest_comes_unsaid_now_and_then_and_breaks_open_in_one_two_or_three_blows_throwing_out_what_was_in_it() {
     let mut game = holding([0; 4], 0, Vec3::new(4.0, STONE_TOP, 0.0));
     // Not at once.
     let early = run_for(&mut game, 10.0);
@@ -1017,6 +1017,7 @@ fn a_treasure_chest_comes_unsaid_now_and_then_and_whoever_opens_it_has_what_was_
     let placed: Vec<Treasure> = events.iter().filter_map(|event| if let Event::ChestPlaced(chest) = event { Some(*chest) } else { None }).collect();
     assert_eq!(placed.len(), 1);
     let chest = placed[0];
+    assert_eq!(chest.hits, 0);
     let out = chest.at.xz().length();
     assert!(out > STONE_RADIUS && out < SHORE, "{}", chest.at);
     assert_eq!(chest.at.y, floor(chest.at.xz()).expect("somewhere to stand"));
@@ -1024,28 +1025,75 @@ fn a_treasure_chest_comes_unsaid_now_and_then_and_whoever_opens_it_has_what_was_
     // One at a time.
     game.chest_at = game.elapsed();
     assert!(!game.step(DT).iter().any(|event| matches!(event, Event::ChestPlaced(_))));
-    // From across the map, no; beside it, yes, and what was in it is theirs.
-    assert!(!game.open(0, chest.id));
-    let (purse, kit) = (game.purses()[0], game.kits()[0]);
+    // A blow from across the map, no; beside it with a fist, yes, three of
+    // them, each no sooner after the last than a blow on a zombie counts.
+    assert!(!game.hit_chest(0, chest.id));
+    let purse = game.purses()[0];
     game.sync(0, chest.at + Vec3::X * 1.5, 0.0);
-    assert!(game.open(0, chest.id));
-    assert!(game.chests().is_empty());
+    assert!(game.hit_chest(0, chest.id));
+    assert!(!game.hit_chest(0, chest.id), "not again at once");
+    let struck = run_for(&mut game, HURT_TIME + DT);
+    assert!(struck.iter().any(|event| matches!(event, Event::ChestHit { seat: 0, chest: it } if it.hits == chest_blow(0))));
+    assert!(game.hit_chest(0, chest.id));
+    run_for(&mut game, HURT_TIME + DT);
+    assert_eq!(game.chests()[0].hits, 2 * chest_blow(0));
+    assert!(game.hit_chest(0, chest.id));
+    assert!(game.chests().is_empty(), "the third blow breaks it open");
     let opened = game.step(DT);
     let find = opened
         .iter()
         .find_map(|event| match event {
-            Event::ChestOpened { seat: 0, chest: it, find } if *it == chest => Some(*find),
+            Event::ChestOpened { seat: 0, chest: it, find } if it.id == chest.id => Some(*find),
             _ => None,
         })
-        .expect("opened");
+        .expect("broken open");
+    // What was in it is thrown out round it to lie, not given: its things,
+    // all of them, or a sword one better.
+    assert_eq!(game.purses()[0], purse);
     match find {
-        Find::Things { item, count } => assert_eq!(game.purses()[0][item.index()], purse[item.index()] + count),
-        Find::Sword(tier) => assert_eq!((tier, game.kits()[0].sword), (kit.sword + 1, kit.sword + 1)),
-        Find::Utility(utility) => assert_eq!(game.kits()[0].held(utility), kit.held(utility) + 1),
+        Find::Things { item, count } => {
+            let made: Vec<Piece> = opened.iter().filter_map(|event| if let Event::Made(piece) = event { Some(*piece) } else { None }).collect();
+            assert!(made.iter().all(|piece| piece.item == item && piece.dropped()));
+            assert_eq!(made.iter().map(|piece| piece.worth).sum::<u16>(), count);
+            for piece in &made {
+                assert!(piece.at.distance(chest.at.xz()) <= 7.5, "{:?}", piece.at);
+                assert_eq!(ground(piece.at), Some(piece.ground), "on the land: {:?}", piece.at);
+            }
+            // Walked into once it has lain a moment, theirs.
+            let piece = made[0];
+            game.sync(0, Vec3::new(piece.at.x, piece.ground, piece.at.y), 0.0);
+            run_for(&mut game, 1.0);
+            assert!(game.purses()[0][item.index()] > purse[item.index()]);
+        }
+        Find::Sword(tier) => {
+            assert_eq!(tier, 1);
+            assert!(opened.iter().any(|event| matches!(event, Event::SwordDropped(blade) if blade.tier == 1)));
+        }
+        Find::Utility(_) => panic!("nothing for a button lies on the ground"),
     }
-    assert!(!game.open(0, chest.id), "opened once");
-    // What chests hold, over many: silver most often, every kind now and
-    // then, a sword always one better than the one held.
+    assert!(!game.hit_chest(0, chest.id), "broken once");
+    // Blows by the sword: the aura sword's one, the others' two, a fist's
+    // three; and the bubble's (off) at once.
+    assert_eq!((chest_blow(3), chest_blow(2), chest_blow(1), chest_blow(0)), (CHEST_HP, CHEST_HP / 2, CHEST_HP / 2, CHEST_HP / 3));
+    for (sword, blows) in [(3u8, 1), (2, 2), (1, 2), (0, 3)] {
+        let mut game = Game::new(1, &[true], 5);
+        game.begin();
+        game.kits[0].sword = sword;
+        game.chest_at = 0.0;
+        let placed = game.step(DT);
+        let chest = placed.iter().find_map(|event| if let Event::ChestPlaced(chest) = event { Some(*chest) } else { None }).expect("a chest");
+        game.sync(0, chest.at, 0.0);
+        let mut struck = 0;
+        while !game.chests().is_empty() {
+            assert!(game.hit_chest(0, chest.id));
+            struck += 1;
+            run_for(&mut game, HURT_TIME + DT);
+        }
+        assert_eq!(struck, blows, "sword {sword}");
+    }
+    // What chests hold, over many: silver most often, every kind of thing
+    // and a sword now and then, the sword always one better than the one
+    // held; nothing for a button.
     let mut kinds = [0u32; 6];
     for seed in 0..400 {
         let mut game = Game::new(1, &[true], seed);
@@ -1071,7 +1119,8 @@ fn a_treasure_chest_comes_unsaid_now_and_then_and_whoever_opens_it_has_what_was_
             Find::Utility(_) => 5,
         }] += 1;
     }
-    assert!(kinds.iter().all(|count| *count > 0), "{kinds:?}");
+    assert!(kinds[..5].iter().all(|count| *count > 0), "{kinds:?}");
+    assert_eq!(kinds[5], 0, "{kinds:?}");
     assert!(kinds[0] > kinds[2] && kinds[0] > kinds[3], "{kinds:?}");
 }
 

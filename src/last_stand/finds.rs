@@ -72,8 +72,35 @@ const FOUND_FADE: f32 = 0.6;
 /// found, in metres: online they are drawn a couple of updates behind.
 const TAKER_SLACK: f32 = 2.5;
 
+/// Whether a treasure chest is opened at once by the town's bubble that
+/// comes up over it near it (`talk::Opens`): not since the evening of
+/// 2026-11-18 (Hajun: "the treasure chest, instead of proximitychatbubble
+/// just make it so they have some hp (enough to 1 tap with aura sword, 2
+/// tap with other swords, 3 tap with fist) and they explode like a player
+/// dying of that item contents"), blows breaking it open now
+/// ([`struck`], `rules::Game::hit_chest`); true puts the bubble back.
+const BUBBLE_OPENS: bool = false;
+
+/// Whether what was in a chest rises in words over where it stood ("+4
+/// Gold", "Silver Sword!"): not since the evening of 2026-11-18, what was
+/// in it being thrown out round it, to be seen and walked into, as what
+/// the dead drop is; true says it again.
+pub(super) const FOUND_WORDS: bool = false;
+
+/// How far out from its middle a treasure chest is to a blow, in metres: a
+/// punch lands on it with any of this in its range, as on a body with any
+/// of its own (mine, the model's half-width).
+const CHEST_RADIUS: f32 = 0.55;
+
+/// How a chest a blow lands on shakes and still stands (mine): for how
+/// long, in seconds; how much it squashes down and grows wide, as a share
+/// of its size; and how far it rocks about its upright, in radians.
+const JOLT_SECS: f32 = 0.24;
+const JOLT_SQUASH: f32 = 0.2;
+const JOLT_ROCK: f32 = 0.22;
+
 pub(super) fn plugin(app: &mut App) {
-    app.add_systems(Update, (follow_server, animate, pop, rise_found).chain());
+    app.add_systems(Update, (follow_server, animate, shake, pop, rise_found).chain());
 }
 
 /// Which one a thing here is to whoever rules it: the game's own number for
@@ -111,7 +138,16 @@ pub(super) struct ChestLook {
     pub(super) key: Key,
     pub(super) id: u32,
     popping: Option<f32>,
+    /// Where and how it stands, to shake about and come back to; and how
+    /// much the blows on it had taken as last seen ([`Chest::hits`]).
+    rest: Transform,
+    hits: u8,
 }
+
+/// A chest a blow has just landed on, shaking, for so long so far
+/// ([`shake`]).
+#[derive(Component)]
+struct Jolt(f32);
 
 /// What was in a chest, rising off where it stood.
 #[derive(Component)]
@@ -154,24 +190,54 @@ pub(super) fn take_sword(commands: &mut Commands, thing: Entity, by: Option<Enti
 /// A treasure chest standing `at`, turned `yaw`, numbered `id` in its game:
 /// the bubble comes up over it ([`Opens`]).
 pub(super) fn place_chest(commands: &mut Commands, assets: &AssetServer, key: Key, id: u32, at: Vec3, yaw: f32) -> Entity {
-    commands
-        .spawn((
-            ChestLook { key, id, popping: None },
-            Opens,
-            InArena,
-            Venue::LastStand,
-            Name::new("Treasure chest"),
-            WorldAssetRoot(assets.load(GltfAssetLabel::Scene(0).from_asset(CHEST_MODEL))),
-            Transform::from_translation(at).with_rotation(Quat::from_rotation_y(yaw)),
-            Visibility::Hidden,
-        ))
-        .id()
+    let rest = Transform::from_translation(at).with_rotation(Quat::from_rotation_y(yaw));
+    let mut chest = commands.spawn((
+        ChestLook {
+            key,
+            id,
+            popping: None,
+            rest,
+            hits: 0,
+        },
+        InArena,
+        Venue::LastStand,
+        Name::new("Treasure chest"),
+        WorldAssetRoot(assets.load(GltfAssetLabel::Scene(0).from_asset(CHEST_MODEL))),
+        rest,
+        Visibility::Hidden,
+    ));
+    if BUBBLE_OPENS {
+        chest.insert(Opens);
+    }
+    chest.id()
+}
+
+/// A blow has landed on the chest `thing`, and it stands: it shakes
+/// ([`shake`]).
+pub(super) fn strike_chest(commands: &mut Commands, thing: Entity) {
+    commands.entity(thing).try_insert(Jolt(0.0));
+}
+
+/// Which treasure chest, of `chests` (each its number and where it stands),
+/// a punch of yours thrown from `at`, `feet` up, facing `facing` lands on:
+/// the nearest with any of itself ([`CHEST_RADIUS`]) in the range the
+/// file's `melee` draws round you (`range::Sector`), as a body is, no
+/// further up or down than a body's height.
+pub(super) fn struck(at: Vec2, feet: f32, facing: Vec2, chests: impl Iterator<Item = (u32, Vec3)>) -> Option<u32> {
+    let sector = crate::range::Sector::of(&ui().melee);
+    chests
+        .filter_map(|(id, there)| {
+            let off = there.xz() - at;
+            ((there.y - feet).abs() <= crate::PLAYER_HEIGHT && sector.holds(facing, off, CHEST_RADIUS)).then_some((off.length(), id))
+        })
+        .min_by(|a, b| a.0.total_cmp(&b.0))
+        .map(|(_, id)| id)
 }
 
 /// The chest `thing` is opened, or has stood its while: it pops, and is
 /// gone; the bubble no longer comes up over it.
 pub(super) fn pop_chest(commands: &mut Commands, thing: Entity) {
-    commands.entity(thing).try_remove::<Opens>().try_insert(Popping);
+    commands.entity(thing).try_remove::<(Opens, Jolt)>().try_insert(Popping);
 }
 
 /// A chest popping: marked so, for [`pop`] to begin its pop.
@@ -240,10 +306,11 @@ fn follow_server(
     assets: Res<AssetServer>,
     fresh_swords: Query<(Entity, &LyingSword), (With<Remote>, Added<LyingSword>)>,
     fresh_chests: Query<(Entity, &Chest), (With<Remote>, Added<Chest>)>,
+    struck_chests: Query<(Entity, &Chest), (With<Remote>, Changed<Chest>)>,
     swords: Query<(), With<LyingSword>>,
     chests: Query<(), With<Chest>>,
     lying: Query<(Entity, &DroppedSword), Without<Going>>,
-    standing: Query<(Entity, &ChestLook), Without<Popping>>,
+    mut standing: Query<(Entity, &mut ChestLook), Without<Popping>>,
     people: Query<(Entity, &Transform, &Venue, Has<Player>), (With<crate::WalkCycle>, Without<crate::Dead>, Without<rules::Shambler>)>,
     mut commands: Commands,
 ) {
@@ -279,12 +346,44 @@ fn follow_server(
             .flatten();
         take_sword(&mut commands, thing, taker);
     }
-    for (thing, chest) in &standing {
-        if let Key::Server(source) = chest.key
-            && !chests.contains(source)
-        {
+    for (thing, mut chest) in &mut standing {
+        let Key::Server(source) = chest.key else {
+            continue;
+        };
+        if !chests.contains(source) {
             pop_chest(&mut commands, thing);
+        } else if let Ok((_, now)) = struck_chests.get(source)
+            && now.hits > chest.hits
+        {
+            // A blow on it that it stood (since the evening of
+            // 2026-11-18): it shakes.
+            chest.hits = now.hits;
+            strike_chest(&mut commands, thing);
         }
+    }
+}
+
+/// Every chest a blow has just landed on, and that stands: squashed down
+/// and spread wide and rocked about its upright, less and less, and back
+/// as it stood ([`JOLT_SECS`]).
+fn shake(time: Res<Time>, mut chests: Query<(Entity, &ChestLook, &mut Jolt, &mut Transform)>, mut commands: Commands) {
+    let dt = time.delta_secs();
+    for (entity, chest, mut jolt, mut transform) in &mut chests {
+        jolt.0 += dt;
+        let done = jolt.0 / JOLT_SECS;
+        if done >= 1.0 {
+            transform.set_if_neq(chest.rest);
+            commands.entity(entity).try_remove::<Jolt>();
+            continue;
+        }
+        let left = 1.0 - done;
+        let wave = (done * TAU * 2.0).sin() * left;
+        let squash = JOLT_SQUASH * left * left;
+        *transform = Transform {
+            translation: chest.rest.translation,
+            rotation: chest.rest.rotation * Quat::from_rotation_y(JOLT_ROCK * wave),
+            scale: chest.rest.scale * Vec3::new(1.0 + squash * 0.5, 1.0 - squash, 1.0 + squash * 0.5),
+        };
     }
 }
 
@@ -393,6 +492,23 @@ fn rise_found(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_punch_strikes_the_nearest_chest_in_front_within_its_range_and_none_behind() {
+        let (at, feet, facing) = (Vec2::ZERO, 0.0, Vec2::NEG_Y);
+        let ahead = |far: f32| Vec3::new(0.0, 0.0, -far);
+        // In front, near: struck; the nearer of two.
+        assert_eq!(struck(at, feet, facing, [(7, ahead(1.6))].into_iter()), Some(7));
+        assert_eq!(struck(at, feet, facing, [(7, ahead(2.4)), (8, ahead(1.4))].into_iter()), Some(8));
+        // Behind, beside out of the cone, far beyond the reach, or a body's
+        // height up: not.
+        assert_eq!(struck(at, feet, facing, [(7, Vec3::new(0.0, 0.0, 1.6))].into_iter()), None);
+        assert_eq!(struck(at, feet, facing, [(7, Vec3::new(3.0, 0.0, 0.0))].into_iter()), None);
+        assert_eq!(struck(at, feet, facing, [(7, ahead(9.0))].into_iter()), None);
+        assert_eq!(struck(at, feet, facing, [(7, ahead(1.6) + Vec3::Y * 2.5)].into_iter()), None);
+        // The bubble and the words over it are put away for the blows.
+        assert!(!BUBBLE_OPENS && !FOUND_WORDS);
+    }
 
     #[test]
     fn what_was_in_a_chest_is_said_in_the_file_s_words() {

@@ -183,8 +183,13 @@ pub(super) fn play(
                     }
                 }
             }
-            Event::Blew { stick, at, planks, .. } => {
+            Event::Blew { stick, at, planks, later, by } => {
                 bridges.break_planks(&planks);
+                // And the rest of the bridge, each plank at its time, drawn
+                // as about to go until then (since the evening of
+                // 2026-11-18, as Bridge Wars' offline).
+                let now = time.elapsed_secs_f64();
+                bridges.doom(later.iter().map(|&(plank, after)| (plank, now + f64::from(after))), by.min(usize::from(u8::MAX)) as u8);
                 bridges.blast_tip(at.xz(), DYNAMITE_RADIUS);
                 fire::burst(&mut commands, at + Vec3::Y * 0.3, Venue::BridgeRace);
                 if let Some(drawn) = played.drawn.remove(&stick) {

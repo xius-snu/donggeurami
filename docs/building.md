@@ -7,6 +7,43 @@
 > "above" or "below", or names another section in quotes, that section may be
 > in another file here: the table in `CLAUDE.md` says which.
 
+## APK 43, and the server with protocol 24
+
+Later on the evening of 2026-11-18, for Hajun's next message, "fix and
+rebuild apk and push" (`docs/minigames.md`, the entry above APK 42's,
+lists what it asked). **`PROTOCOL_VERSION` 24**: APK 42 and before, and
+the iPhone's `ios-1.0.2-18`, are told to update and stay offline.
+
+- **Before the deploy**: the three crates' tests (the game's 476, the
+  rules' 252, the server's 106); Bridge Race's whole races (200 of each
+  size, in the rules' tests) and Last Stand's (`stand_many`, 20 of each);
+  hidden runs of the desktop build, offline (the plate's next item at
+  six grants, a chest struck open by the game's own punch, Last Stand's
+  opening), which found what the tests could not: a system Bevy refused
+  as the app started (`docs/minigames.md`), mended and run again.
+- **The server**: `server/deploy.sh` at 13:33:07 UTC (22:33 here), with
+  nobody connected since 12:13 UTC (one person's two games of Last Stand
+  ending then, the journal's last lines two stray packets); the binary
+  before (protocol 23, sha1 `0ceec955`) kept on the VM as
+  `roundtown-server.prev-2026-11-18c`. After: the VM's binary the same
+  bytes as the one built here (sha1 `7a2cb95a`), the service active, the
+  database kept ("3 accounts"); this PC's own account online on it,
+  hidden, from the scratch folder whose `device.id` was compared byte for
+  byte with this PC's ("connected to 141.164.62.193:443", "online as xd,
+  a boy"). Nothing of the round was played on it: none of it touches the
+  database.
+- **The APK**: 43 (`versionCode`), at 22:37 here (13:37 UTC), from the
+  main checkout. cargo ndk 2m43s, stripped from 196.7 MB to 105.8 MB with
+  `GameActivity_onCreate` and the six `MainActivity` methods in it, Gradle
+  18 s; 123.4 MB, put over APK 42 with no copy kept. Checked:
+  `versionCode` read back with aapt; the library in it the same bytes as
+  the stripped one (sha1 `c0d66581`); all 90 files under `assets/` the
+  same as the tree's, the 152 of the tree hashed before cargo ndk and
+  after Gradle and unchanged; no `.blend`, no `ui.ron`; the plate's new
+  words in the library. **Not installed: no phone was attached.**
+- **The iPhone**: no tag pushed; not type-checked, nothing behind
+  `target_os = "ios"` touched.
+
 ## APK 42, and the server with protocol 23
 
 The evening of 2026-11-18, for the dozen asks Hajun sent after playing the

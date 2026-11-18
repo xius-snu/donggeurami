@@ -280,6 +280,14 @@ impl LastStand {
                     let thing = ctx.spawn_in_room(table, Chest::of(&chest));
                     self.chests.insert(chest.id, thing);
                 }
+                // Struck, and standing: sent again, with what the blows have
+                // taken, for every device to shake it (since the evening of
+                // 2026-11-18).
+                Event::ChestHit { chest, .. } => {
+                    if let Some(&thing) = self.chests.get(&chest.id) {
+                        ctx.commands.entity(thing).try_insert(Chest::of(&chest));
+                    }
+                }
                 Event::ChestOpened { seat, chest, find } => {
                     if let Some(thing) = self.chests.remove(&chest.id) {
                         ctx.commands.entity(thing).try_despawn();
@@ -446,6 +454,9 @@ impl Rules for LastStand {
             Ask::LastStand(last_stand::Ask::Ready) => game.ready(seat),
             Ask::LastStand(last_stand::Ask::Open(chest)) => {
                 game.open(seat, *chest);
+            }
+            Ask::LastStand(last_stand::Ask::Hit(chest)) => {
+                game.hit_chest(seat, *chest);
             }
             Ask::Use(used) => {
                 game.use_item(seat, *used);

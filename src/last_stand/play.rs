@@ -308,9 +308,24 @@ pub(super) struct Doings<'w, 's> {
     picked: MessageReader<'w, 's, Picked>,
     used: MessageReader<'w, 's, Used>,
     ready: MessageReader<'w, 's, ReadyAsked>,
-    /// The bubble over a treasure chest tapped (`talk`), and the chests.
+    /// The bubble over a treasure chest tapped (`talk`; off since the
+    /// evening of 2026-11-18, `finds::BUBBLE_OPENS`), your punches thrown,
+    /// to strike a chest with (`crate::Swung`, since then), and the chests.
     opened: MessageReader<'w, 's, Opened>,
-    chests: Query<'w, 's, &'static ChestLook>,
+    swung: MessageReader<'w, 's, crate::Swung>,
+    chests: Query<'w, 's, (&'static ChestLook, &'static GlobalTransform)>,
+}
+
+impl Doings<'_, '_> {
+    /// The treasure chests your punches thrown this frame landed on, by
+    /// their numbers ([`finds::struck`]).
+    fn chests_struck(&mut self) -> Vec<u32> {
+        let chests = &self.chests;
+        self.swung
+            .read()
+            .filter_map(|swing| finds::struck(swing.at, swing.feet, swing.facing, chests.iter().map(|(look, place)| (look.id, place.translation()))))
+            .collect()
+    }
 }
 
 /// What was used off a button, as the rules have it.
@@ -384,6 +399,7 @@ fn run_offline(
         doings.used.clear();
         doings.ready.clear();
         doings.opened.clear();
+        doings.swung.clear();
         return;
     };
     let Ok((you, body, intent, dead, mut your_shove, mut your_jump)) = me.single_mut() else {
@@ -426,9 +442,12 @@ fn run_offline(
         stand.ready = true;
     }
     for &Opened(chest) in doings.opened.read() {
-        if let Ok(chest) = doings.chests.get(chest) {
+        if let Ok((chest, _)) = doings.chests.get(chest) {
             game.open(seat, chest.id);
         }
+    }
+    for chest in doings.chests_struck() {
+        game.hit_chest(seat, chest);
     }
     // Fallen into the void: dead, the anchor standing or not; once the
     // game is over, back where you began, as in the town.
@@ -550,11 +569,20 @@ fn run_offline(
                 let thing = finds::place_chest(&mut commands, &kit.assets, Found::Own(chest.id), chest.id, chest.at, chest.yaw);
                 stand.chests.insert(chest.id, thing);
             }
+            Event::ChestHit { chest, .. } => {
+                if let Some(&thing) = stand.chests.get(&chest.id) {
+                    finds::strike_chest(&mut commands, thing);
+                }
+            }
+            // Broken open: it pops, and what was in it is thrown out round
+            // it ([`Event::Made`], [`Event::SwordDropped`]).
             Event::ChestOpened { chest, find, .. } => {
                 if let Some(thing) = stand.chests.remove(&chest.id) {
                     finds::pop_chest(&mut commands, thing);
                 }
-                finds::say_found(&mut commands, chest.at, find);
+                if finds::FOUND_WORDS {
+                    finds::say_found(&mut commands, chest.at, find);
+                }
             }
             Event::ChestLapsed(chest) => {
                 if let Some(thing) = stand.chests.remove(&chest.id) {
@@ -730,7 +758,9 @@ fn follow_online(
             // A chest opened: what was in it, over where it stood (the
             // chest itself pops as the server's goes, `finds`).
             rules::Tell::Found { x, y, z, find, .. } => {
-                finds::say_found(&mut commands, Vec3::new(x, y, z), find);
+                if finds::FOUND_WORDS {
+                    finds::say_found(&mut commands, Vec3::new(x, y, z), find);
+                }
             }
             rules::Tell::Bought(ware) => debug!("Last Stand: bought {ware:?}"),
         }
@@ -760,12 +790,16 @@ fn ask_online(
         doings.used.clear();
         doings.ready.clear();
         doings.opened.clear();
+        doings.swung.clear();
         return;
     }
     for &Opened(chest) in doings.opened.read() {
-        if let Ok(chest) = doings.chests.get(chest) {
+        if let Ok((chest, _)) = doings.chests.get(chest) {
             asks.write(NetAsk::LastStand(rules::Ask::Open(chest.id)));
         }
+    }
+    for chest in doings.chests_struck() {
+        asks.write(NetAsk::LastStand(rules::Ask::Hit(chest)));
     }
     for picked in doings.picked.read() {
         if picked.venue == Venue::LastStand

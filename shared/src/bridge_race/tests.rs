@@ -444,11 +444,16 @@ fn the_computer_plays_whole_races_close_varied_and_not_too_long() {
         // always: the time limit is for when nobody gets there.
         let held = stories.iter().filter(|story| story.finish == Finish::Held && story.winner.is_some()).count();
         assert!(held as f32 >= 0.85 * n, "{seats} seats: won by holding {held} of {n}");
-        // In two to four minutes, at the median.
+        // In about a minute or two, at the median: in two to four minutes
+        // until the evening of 2026-11-18, when the grants came to twice as
+        // much and oftener (Hajun: "shorten the interval at which u get
+        // sth, increase the amount of bridge you get by 2x"), and the
+        // median race went from about two and a half minutes to 73 s two
+        // against two and 65 s one against one.
         let mut overs: Vec<f32> = stories.iter().map(|story| story.over).collect();
         overs.sort_by(f32::total_cmp);
         let median = overs[overs.len() / 2];
-        assert!((120.0..=240.0).contains(&median), "{seats} seats: over at {median} s at the median");
+        assert!((40.0..=150.0).contains(&median), "{seats} seats: over at {median} s at the median");
         // Each side wins about as often as the other.
         for side in 0..2 {
             let won = stories.iter().filter(|story| story.winner == Some(side)).count() as f32;
@@ -477,10 +482,14 @@ fn the_computer_plays_whole_races_close_varied_and_not_too_long() {
         // the target island shouldnt matter cuz u could jump across".)
         assert!(bridged >= 0.7 * n, "{seats} seats: the winners went over by their bridge in {bridged} of {n}");
         // There is fighting: a knock in most games, someone knocked off in
-        // many; more two against two, with twice as many to fight.
+        // many; more two against two, with twice as many to fight. (Fewer
+        // knocks since the races grew shorter on the evening of 2026-11-18:
+        // 66% of games two against two and 40% one against one, where 80%
+        // and 50% were asked; someone knocked off as often as before or
+        // more, the whole bridge going with a stick.)
         let knocked = stories.iter().filter(|story| story.tally.knocks > 0).count() as f32;
         let off = stories.iter().filter(|story| story.tally.knocked_off > 0).count() as f32;
-        let (most, many) = if seats == 4 { (0.8, 0.5) } else { (0.5, 0.2) };
+        let (most, many) = if seats == 4 { (0.6, 0.5) } else { (0.3, 0.2) };
         assert!(knocked >= most * n, "{seats} seats: a knock in {knocked} of {n}");
         assert!(off >= many * n, "{seats} seats: someone knocked off in {off} of {n}");
         // Nobody lays a plank of the other team's bridge for them, and a
@@ -499,9 +508,17 @@ fn the_computer_plays_whole_races_close_varied_and_not_too_long() {
         // times on its own bridge, 3.1 s in all, never held fast.)
         let restless = stories.iter().filter(|story| story.stalls > 1).count() as f32;
         assert!(restless <= 0.01 * n, "{seats} seats: got nowhere more than once in {restless} of {n}");
+        // (Held fast a moment, thinking again after 3 s, in one race of a
+        // hundred at the most, and once in it: never until the evening of
+        // 2026-11-18, when a stick came to bring the whole of a bridge down
+        // after its blast, and one against one, seed 167, a player stood
+        // 2.5 s at the edge of a blast's hole mid-bridge, 75 planks coming
+        // down in that race, and went on to win it.)
+        let pinned = stories.iter().filter(|story| story.pinned > 0).count() as f32;
+        assert!(pinned <= 0.01 * n, "{seats} seats: one of them was held fast in {pinned} of {n}");
         for story in &stories {
             let seed = story.seed;
-            assert_eq!(story.pinned, 0, "{seats} seats, seed {seed}: one of them was held fast");
+            assert!(story.pinned <= 1, "{seats} seats, seed {seed}: one of them was held fast {} times", story.pinned);
             assert!(story.stalls <= 3, "{seats} seats, seed {seed}: got nowhere {} times", story.stalls);
             assert!(story.stuck < 8.0, "{seats} seats, seed {seed}: seat {} stood {} s with a way to walk, until {}", story.stuck_by.0, story.stuck, story.stuck_by.1);
             // Never a knock on a teammate.
@@ -583,21 +600,30 @@ fn on_gold(game: &mut Game, seat: usize, out: f32) {
 }
 
 #[test]
-fn everyone_begins_with_ten_metres_and_more_comes_every_sixteen_seconds_shared_by_a_team() {
-    assert_eq!(grant_metres(2), TEAM_GRANT);
-    assert_eq!(grant_metres(4), TEAM_GRANT / 2.0);
+fn everyone_begins_with_ten_metres_and_eight_to_sixteen_more_come_to_a_team_every_twelve_seconds_as_the_round_said() {
+    assert_eq!(grant_metres(2), (8.0, 16.0));
+    assert_eq!(grant_metres(4), (4.0, 8.0));
     assert_eq!((grants_by(0.0), grants_by(GRANT_EVERY - 0.01), grants_by(GRANT_EVERY)), (0, 0, 1));
     assert_eq!(grants_by(PLAY_SECS), (PLAY_SECS / GRANT_EVERY) as u16);
     // The computer's metres, counted by the game: ten, then a share of the
-    // team's grant at each.
+    // team's grant at each, each grant what the round said the next would
+    // be, from 8 to 16 m to the team.
     let mut game = Game::new(4, &[false; 4], 3);
     assert_eq!(game.metres(1), START_METRES);
     game.begin();
     let mut granted = Vec::new();
+    let mut said = game.round().next;
+    let mut sizes = Vec::new();
     for _ in 0..(3.5 * GRANT_EVERY / FRAME) as usize {
         for event in game.step(FRAME) {
             if let Event::Granted { grant, .. } = event {
                 granted.push((grant, game.elapsed()));
+                let round = game.round();
+                for side in 0..TEAMS as u8 {
+                    assert!((round.share_of(side) * 2.0 - f32::from(said[usize::from(side)])).abs() < 0.06, "grant {grant}: {} said, {} each", said[usize::from(side)], round.share_of(side));
+                    sizes.push(said[usize::from(side)]);
+                }
+                said = round.next;
             }
         }
     }
@@ -605,12 +631,31 @@ fn everyone_begins_with_ten_metres_and_more_comes_every_sixteen_seconds_shared_b
     for (grant, when) in granted {
         assert!((when - f32::from(grant) * GRANT_EVERY).abs() < 2.0 * FRAME, "grant {grant} at {when}");
     }
+    assert!(sizes.iter().all(|metres| (TEAM_GRANT.0..=TEAM_GRANT.1).contains(metres)), "{sizes:?}");
     assert_eq!(game.round().grants, 3);
     // Laid and given, by seat: what each has laid and has left comes to
     // what each was given.
     for seat in 0..4 {
-        let given = START_METRES + 3.0 * grant_metres(4);
+        let given = START_METRES + game.granted(seat, 0, 3);
         assert!((game.laid()[seat] + game.metres(seat) - given).abs() < 0.01, "seat {seat}: laid {} and left {}", game.laid()[seat], game.metres(seat));
+    }
+    // Over many grants, every size from 8 to 16 comes, and as often as
+    // each other near enough.
+    let mut counts = [0u32; 9];
+    for seed in 0..60 {
+        let mut game = Game::new(2, &[false; 2], seed);
+        game.begin();
+        for _ in 0..20 {
+            let next = game.round().next;
+            counts[usize::from(next[0] - TEAM_GRANT.0)] += 1;
+            counts[usize::from(next[1] - TEAM_GRANT.0)] += 1;
+            game.grant();
+        }
+    }
+    let all: u32 = counts.iter().sum();
+    for (size, &count) in counts.iter().enumerate() {
+        let share = count as f32 / all as f32;
+        assert!((share - 1.0 / 9.0).abs() < 0.03, "{} m in {share:.3} of {all}", size + 8);
     }
     // A person's are their device's: what it says, believed only as far as
     // it could be so, and given back to it with every grant since if it
@@ -618,22 +663,24 @@ fn everyone_begins_with_ten_metres_and_more_comes_every_sixteen_seconds_shared_b
     let mut game = people(2, 3);
     run(&mut game, 2.0 * GRANT_EVERY + 1.0);
     assert_eq!(game.round().grants, 2);
-    assert_eq!(game.kept(0), (START_METRES + 2.0 * grant_metres(2), 2));
+    let (first, both) = (game.granted(0, 1, 2), game.granted(0, 0, 2));
+    assert_eq!(game.kept(0), (START_METRES + both, 2));
     game.said(0, 4.5, 1);
-    assert_eq!(game.kept(0), (4.5 + grant_metres(2), 2));
+    assert_eq!(game.kept(0), (4.5 + first, 2));
     game.said(0, 999.0, 2);
-    assert_eq!(game.kept(0).0, START_METRES + 2.0 * grant_metres(2), "more than was ever given");
+    assert_eq!(game.kept(0).0, START_METRES + both, "more than was ever given");
     game.said(0, 3.0, 9);
-    assert_eq!(game.kept(0).0, START_METRES + 2.0 * grant_metres(2), "a grant that has not come");
+    assert_eq!(game.kept(0).0, START_METRES + both, "a grant that has not come");
 }
 
 #[test]
-fn sticks_come_with_the_grants_at_about_one_in_five_and_nobody_holds_more_than_two() {
+fn sticks_come_with_the_grants_at_about_three_in_ten_as_the_round_said_and_nobody_holds_more_than_two() {
     let (mut given, mut room) = (0, 0);
     for seed in 0..40 {
         let mut game = people(4, seed);
         for _ in 0..20 {
             let held: Vec<u8> = game.kits().iter().map(|kit| kit.held(Utility::Dynamite)).collect();
+            let said = game.round();
             // On to the next grant.
             let sticks: Vec<usize> = (0..)
                 .take((GRANT_EVERY / FRAME) as usize + 10)
@@ -650,6 +697,8 @@ fn sticks_come_with_the_grants_at_about_one_in_five_and_nobody_holds_more_than_t
                 let now = game.kits()[seat].held(Utility::Dynamite);
                 assert!(now <= DYNAMITE_MOST, "{now} sticks");
                 assert_eq!(now, held[seat] + u8::from(sticks.contains(&seat)), "seat {seat}");
+                // Given as the round said, room for it on the button.
+                assert_eq!(sticks.contains(&seat), said.stick_next(seat) && held[seat] < DYNAMITE_MOST, "seat {seat}");
             }
         }
     }
@@ -658,7 +707,7 @@ fn sticks_come_with_the_grants_at_about_one_in_five_and_nobody_holds_more_than_t
 }
 
 #[test]
-fn a_stick_takes_the_planks_its_blast_reaches_and_no_more_and_knocks_only_the_other_team() {
+fn a_stick_takes_the_planks_its_blast_reaches_and_then_the_rest_of_the_bridge_and_knocks_only_the_other_team() {
     let mut game = people(4, 1);
     // Red's way laid twenty planks out from its island.
     grants_now(&mut game, 4);
@@ -681,17 +730,23 @@ fn a_stick_takes_the_planks_its_blast_reaches_and_no_more_and_knocks_only_the_ot
     assert_eq!(game.kits()[1].held(Utility::Dynamite), 0);
     assert_eq!(game.kits()[1].slot_of(Utility::Dynamite), None, "the empty button is put away");
     assert!(!game.throw(1, 0.0, 5.0), "and has none left");
-    let events = run(&mut game, 3.0);
-    let (at, planks) = events
-        .iter()
-        .find_map(|event| match event {
-            Event::Blew { at, planks, by: 1, .. } => Some((*at, planks.clone())),
+    // To the frame it blows.
+    let mut events = Vec::new();
+    let mut blew = None;
+    for _ in 0..(3.0 / FRAME) as usize {
+        let now = game.step(FRAME);
+        blew = now.iter().find_map(|event| match event {
+            Event::Blew { at, planks, later, by: 1, .. } => Some((*at, planks.clone(), later.clone())),
             _ => None,
-        })
-        .expect("the stick blew");
+        });
+        events.extend(now);
+        if blew.is_some() {
+            break;
+        }
+    }
+    let (at, planks, later) = blew.expect("the stick blew");
     assert!(at.xz().distance(target) < 0.2, "blew at {at}");
-    // Every plank whose middle it reached is gone, and no other: none
-    // falls after them, however many stand beyond.
+    // Every plank whose middle it reached is gone at once, and no other.
     assert!(!planks.is_empty());
     let rungs = game.nav().rungs(0, 0).to_vec();
     for plank in 0..20 {
@@ -701,6 +756,20 @@ fn a_stick_takes_the_planks_its_blast_reaches_and_no_more_and_knocks_only_the_ot
         assert_eq!(game.nav().broken(0, 0, plank as u16), reached, "plank {plank}");
     }
     assert_eq!(game.nav().planks().count(), 20 - planks.len());
+    // And every other plank of the bridge is doomed to fall after them,
+    // as in Bridge Wars (since the evening of 2026-11-18): a beat after the
+    // blast at the soonest, the further from the hole the later, out both
+    // ways along it.
+    let doomed: Vec<u16> = later.iter().map(|&((_, _, plank), _)| plank).collect();
+    for plank in 0..20u16 {
+        assert_eq!(doomed.contains(&plank), !planks.contains(&(0, 0, plank)), "plank {plank}");
+    }
+    let hole = planks.iter().map(|&(_, _, plank)| plank).min().expect("a hole");
+    let when = |plank: u16| later.iter().find(|((_, _, it), _)| *it == plank).map(|(_, after)| *after).expect("doomed");
+    assert!(later.iter().all(|(_, after)| *after >= crate::bridge_wars::CASCADE_WAIT - 1e-3));
+    for plank in 1..hole {
+        assert!(when(plank - 1) > when(plank), "toward the island, the further the later: {plank}");
+    }
     // Red's other, in the blast, was knocked from it, and the thrower's
     // teammate beside them was not; nobody is hurt, there being no health.
     let knocked: Vec<usize> = events
@@ -715,10 +784,13 @@ fn a_stick_takes_the_planks_its_blast_reaches_and_no_more_and_knocks_only_the_ot
     game.fell(2);
     assert!(run(&mut game, FRAME).contains(&Event::Fell { seat: 2, by: Some(1) }));
     assert_eq!(game.tally().knocked_off, 1);
-    // And nothing more of the bridge goes after it.
-    let more = run(&mut game, 10.0);
+    // Until then the rest of it stands; by the last of their times it is
+    // all gone, no stick more having blown.
+    assert!(game.nav().planks().count() > 0);
+    let last = later.iter().map(|(_, after)| *after).fold(0.0, f32::max);
+    let more = run(&mut game, last + 0.5);
     assert!(!more.iter().any(|event| matches!(event, Event::Blew { .. })));
-    assert_eq!(game.nav().planks().count(), 20 - planks.len(), "nothing more falls after");
+    assert_eq!(game.nav().planks().count(), 0, "the whole bridge came down");
 }
 
 #[test]
@@ -915,22 +987,26 @@ fn whoever_is_left_of_a_team_is_given_the_whole_of_its_grant() {
     // Two against two of people: blue's second leaves for good after the
     // first grant.
     let mut game = people(4, 13);
+    let first = game.round().next.map(|metres| metres * 5);
     run(&mut game, GRANT_EVERY + 0.5);
-    assert_eq!((game.round().grants, game.round().share), (1, [30, 30]));
+    assert_eq!((game.round().grants, game.round().share), (1, first), "half each, in tenths");
     game.leave(3);
-    assert_eq!(game.round().share, [30, 30], "what the last grant gave");
+    assert_eq!(game.round().share, first, "what the last grant gave");
+    let second = game.round().next;
+    assert!((game.round().next_of(1) - f32::from(second[1])).abs() < 1e-4, "the next, the one left's whole");
     run(&mut game, GRANT_EVERY);
     let round = game.round();
-    assert_eq!((round.grants, round.share), (2, [30, 60]));
-    assert_eq!((round.share_of(0), round.share_of(1)), (grant_metres(4), TEAM_GRANT));
+    assert_eq!((round.grants, round.share), (2, [second[0] * 5, second[1] * 10]));
+    assert_eq!((round.share_of(0), round.share_of(1)), (f32::from(second[0]) / 2.0, f32::from(second[1])));
     // Back on a device that has forgotten, each is given every grant as it
     // came, and is believed no further than that.
-    assert_eq!(game.kept(1), (START_METRES + 3.0 + 6.0, 2));
-    assert_eq!(game.kept(0), (START_METRES + 3.0 + 3.0, 2));
+    let (red, blue) = (f32::from(first[0]) / 10.0 + f32::from(second[0]) / 2.0, f32::from(first[1]) / 10.0 + f32::from(second[1]));
+    assert!((game.kept(1).0 - (START_METRES + blue)).abs() < 1e-3 && game.kept(1).1 == 2, "{:?}", game.kept(1));
+    assert!((game.kept(0).0 - (START_METRES + red)).abs() < 1e-3 && game.kept(0).1 == 2, "{:?}", game.kept(0));
     game.said(1, 999.0, 2);
-    assert_eq!(game.kept(1).0, START_METRES + 9.0);
+    assert!((game.kept(1).0 - (START_METRES + blue)).abs() < 1e-3);
     game.said(1, 2.0, 1);
-    assert_eq!(game.kept(1), (2.0 + 6.0, 2));
+    assert!((game.kept(1).0 - (2.0 + f32::from(second[1]))).abs() < 1e-3);
     // The computer's too: a person and the computer's against two of the
     // computer's, the person gone before the first grant.
     let mut game = Game::new(4, &[true, false, false, false], 13);
@@ -938,9 +1014,19 @@ fn whoever_is_left_of_a_team_is_given_the_whole_of_its_grant() {
     game.leave(0);
     run(&mut game, 3.0 * GRANT_EVERY + 0.5);
     let given = |game: &Game, seat: usize| game.laid()[seat] + game.metres(seat);
-    assert!((given(&game, 2) - (START_METRES + 3.0 * TEAM_GRANT)).abs() < 0.01, "red's: {}", given(&game, 2));
+    let shares = game.shares.clone();
+    assert_eq!(shares.len(), 3);
+    let red: f32 = shares.iter().map(|share| share[0]).sum();
+    let blue: f32 = shares.iter().map(|share| share[1]).sum();
+    assert!((given(&game, 2) - (START_METRES + red)).abs() < 0.01, "red's: {}", given(&game, 2));
     for seat in [1, 3] {
-        assert!((given(&game, seat) - (START_METRES + 3.0 * grant_metres(4))).abs() < 0.01, "blue's {seat}: {}", given(&game, seat));
+        assert!((given(&game, seat) - (START_METRES + blue)).abs() < 0.01, "blue's {seat}: {}", given(&game, seat));
+    }
+    // Red's one left is given the whole of each grant, blue's two half
+    // each: red's as much as blue's two together, grant for grant.
+    for (grant, share) in shares.iter().enumerate() {
+        assert!((TEAM_GRANT.0..=TEAM_GRANT.1).contains(&(share[0].round() as u8)), "grant {grant}: {share:?}");
+        assert!((f32::from(TEAM_GRANT.0) / 2.0..=f32::from(TEAM_GRANT.1) / 2.0).contains(&share[1]), "grant {grant}: {share:?}");
     }
 }
 
@@ -1161,8 +1247,13 @@ fn the_round_goes_small_and_whole() {
     assert_eq!((round.grants, round.hold, round.on_gold, round.winner, round.finish, round.across), (0, [0, 0], [0, 0], None, None, [0, 0]));
     assert!(!round.over());
     assert_eq!(round.players, [2, 2]);
-    assert_eq!(round.share, [30, 30], "3 m each, two against two");
-    assert_eq!(round.share_of(1), grant_metres(4));
+    // Before the first grant, what it will give: half each of the team's
+    // 8 to 16 m, two against two.
+    for side in 0..TEAMS {
+        assert!((TEAM_GRANT.0..=TEAM_GRANT.1).contains(&round.next[side]), "{:?}", round.next);
+        assert_eq!(round.share[side], round.next[side] * 5);
+        assert!((round.next_of(side as u8) - f32::from(round.next[side]) / 2.0).abs() < 1e-4);
+    }
     // As long as it ever is.
     let longest = RaceRound {
         left: u16::MAX,
@@ -1174,9 +1265,11 @@ fn the_round_goes_small_and_whole() {
         finish: Some(Finish::Left),
         across: [100, 100],
         players: [u8::MAX, u8::MAX],
+        next: [u8::MAX, u8::MAX],
+        next_sticks: u8::MAX,
     };
     let bytes = postcard::to_allocvec(&longest).unwrap();
-    assert!(bytes.len() <= 20, "{} bytes", bytes.len());
+    assert!(bytes.len() <= 23, "{} bytes", bytes.len());
     assert_eq!(postcard::from_bytes::<RaceRound>(&bytes).unwrap(), longest);
     // As long as it is in a game, won, the clock at its longest.
     let won = RaceRound {
@@ -1189,12 +1282,14 @@ fn the_round_goes_small_and_whole() {
         finish: Some(Finish::Held),
         across: [100, 100],
         players: [2, 2],
+        next: [16, 16],
+        next_sticks: 0b1111,
     };
     let most = postcard::to_allocvec(&won).unwrap().len();
-    assert!(most <= 17, "{most} bytes");
+    assert!(most <= 20, "{most} bytes");
     // And as it most often is.
     let bytes = postcard::to_allocvec(&round).unwrap();
-    assert!(bytes.len() <= 15, "{} bytes", bytes.len());
+    assert!(bytes.len() <= 18, "{} bytes", bytes.len());
     println!("the round: {} bytes as it begins, {most} at the most in a game, {} at the most it could be", bytes.len(), postcard::to_allocvec(&longest).unwrap().len());
     // What a device says and is told, too.
     for ask in [Ask::Metres { metres: 12.5, grants: 3 }] {
@@ -1262,7 +1357,7 @@ fn the_chat_says_who_fell_by_whose_doing_and_whose_bridge_a_stick_holed() {
     assert_eq!(feed(&Event::Fell { seat: 3, by: Some(0) }), Some(Feed::Fell { seat: 3, by: Some(0) }));
     // A stick of blue's (seat 1): mostly red's planks, red's bridge holed;
     // only its own team's, its own; none, nobody's.
-    let blew = |planks: Vec<(u8, u16, u16)>| Event::Blew { stick: 0, by: 1, at: Vec3::ZERO, planks };
+    let blew = |planks: Vec<(u8, u16, u16)>| Event::Blew { stick: 0, by: 1, at: Vec3::ZERO, planks, later: Vec::new() };
     assert_eq!(feed(&blew(vec![(0, 0, 3), (0, 0, 4), (2, 1, 0)])), Some(Feed::Blew { by: 1, team: Some(0), planks: 3 }));
     assert_eq!(feed(&blew(vec![(0, 0, 3), (1, 0, 9), (3, 0, 9)])), Some(Feed::Blew { by: 1, team: Some(0), planks: 3 }));
     assert_eq!(feed(&blew(vec![(3, 0, 9)])), Some(Feed::Blew { by: 1, team: Some(1), planks: 1 }));
@@ -1384,9 +1479,12 @@ fn every_rung_a_device_lays_on_what_it_is_given_is_taken_however_often_it_runs_o
     // A device laying as the game's own bridge lays, on what it is given
     // and no more: what it has laid a plank at a time, and as it runs out
     // the plank in hand fixed a step ahead of you whatever is left (1.05 m
-    // past what it has), at the start and at every grant, to the end of a
-    // game, two against two and one against one: every rung of it taken.
-    for (seats, grants) in [(4, grants_by(PLAY_SECS - 1.0)), (2, 14)] {
+    // past what it has), at the start and at every grant, two against two
+    // and one against one: every rung of it taken. As many grants as a
+    // straight line out from red's island holds on the map, about 90 m of
+    // it (to the end of a game until the evening of 2026-11-18, when the
+    // grants grew to 8 to 16 m a team).
+    for (seats, grants) in [(4, 12), (2, 6)] {
         let mut game = people(seats, 18);
         let way = (GOLDEN - ISLANDS[0]).normalize();
         let shore = ISLANDS[0] + way * (ISLAND_RADIUS - 0.5);

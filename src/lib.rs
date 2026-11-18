@@ -1922,6 +1922,8 @@ fn read_touch_controls(
         return;
     };
     let layout = hud_layout(window, *buttons);
+    let anywhere = stick_anywhere(*buttons);
+    let clear = window.width().min(window.height()) * STICK_CLEAR_VMIN / 100.0;
     let now = time.elapsed_secs();
 
     let released = |id: u64| {
@@ -1998,7 +2000,8 @@ fn read_touch_controls(
         // jump button, and those before the thing itself: something as big as
         // a house right in front of you is drawn under both of them, and they
         // still have to work.
-        let on_stick = in_circle(pos, layout.stick_center, layout.stick_radius * 1.15);
+        let stick_at = takes_the_stick(anywhere, pos, &layout, anywhere && presses.near(window, pos, clear));
+        let on_stick = stick_at.is_some();
         let on_jump = in_circle(pos, layout.jump_center, layout.jump_radius * 1.2);
         let for_editor =
             menu.on_button(window, pos) || (!on_stick && !on_jump && menu.on_thing(pos));
@@ -2008,7 +2011,7 @@ fn read_touch_controls(
             pointer.press();
         } else if controls.stick_id.is_none() && on_stick {
             controls.stick_id = Some(id);
-            controls.stick_origin = Some(stick_origin(pos, layout.stick_center, layout.stick_radius));
+            controls.stick_origin = stick_at;
         } else if controls.jump_id.is_none() && on_jump {
             controls.jump_id = Some(id);
             controls.jump_just_pressed = true;
@@ -2265,9 +2268,12 @@ fn read_mouse_controls(
     };
     let layout = hud_layout(window, *buttons);
     if mouse.just_pressed(MouseButton::Left) && !presses.claimed(window, pos) {
-        if controls.stick_id.is_none() && in_circle(pos, layout.stick_center, layout.stick_radius * 1.15) {
+        let anywhere = stick_anywhere(*buttons);
+        let clear = window.width().min(window.height()) * STICK_CLEAR_VMIN / 100.0;
+        let stick_at = takes_the_stick(anywhere, pos, &layout, anywhere && presses.near(window, pos, clear));
+        if controls.stick_id.is_none() && stick_at.is_some() {
             controls.stick_id = Some(MOUSE_ID);
-            controls.stick_origin = Some(stick_origin(pos, layout.stick_center, layout.stick_radius));
+            controls.stick_origin = stick_at;
         } else if controls.jump_id.is_none() && in_circle(pos, layout.jump_center, layout.jump_radius * 1.2) {
             controls.jump_id = Some(MOUSE_ID);
             controls.jump_just_pressed = true;
@@ -2307,6 +2313,37 @@ const STICK_ORIGIN_REACH: f32 = 0.5;
 /// pushing it half way, that way, and has the other half to go.
 fn stick_origin(pos: Vec2, center: Vec2, radius: f32) -> Vec2 {
     center + (pos - center).clamp_length_max(radius * STICK_ORIGIN_REACH)
+}
+
+/// How far round each button a finger does not take the stick where the
+/// stick is taken anywhere ([`stick_anywhere`]), as a share of the
+/// screen's short side (mine): a finger meant for a button that missed it
+/// by a little presses nothing, and takes no stick either.
+const STICK_CLEAR_VMIN: f32 = 4.0;
+
+/// Whether the stick is taken by a finger gone down anywhere on the screen
+/// but on or round a button, its middle where the finger went down: in
+/// Knock Off (since 2026-11-18, Hajun: "i want that radius/area to be the
+/// whole screen for that mode, so anywhere u touch on the screen become
+/// the new origin of the joystick ... make it so the area around those
+/// buttons dont get registered as a joystick tap, but everywhere else, it
+/// can be the new origin of the joystick"). Everywhere else on its own
+/// disc ([`stick_origin`]).
+pub(crate) fn stick_anywhere(layout: hud::Layout) -> bool {
+    layout == hud::Layout::KnockOff
+}
+
+/// Where the stick's middle goes for a finger gone down at `pos`, if the
+/// finger takes the stick at all: taken `anywhere`, right where it went
+/// down, unless that is on or round a button (`near_a_button`); else only
+/// on the stick's own disc, as near where it went down as
+/// [`stick_origin`] lets it be.
+fn takes_the_stick(anywhere: bool, pos: Vec2, layout: &HudLayout, near_a_button: bool) -> Option<Vec2> {
+    if anywhere {
+        return (!near_a_button).then_some(pos);
+    }
+    in_circle(pos, layout.stick_center, layout.stick_radius * 1.15)
+        .then(|| stick_origin(pos, layout.stick_center, layout.stick_radius))
 }
 
 /// Where the stick's disc has its left and bottom edges: in its own place,
@@ -5047,6 +5084,39 @@ mod body_tests {
             assert!((origin.distance(center) - radius * STICK_ORIGIN_REACH).abs() < 1e-3);
             assert!((origin - center).angle_to(pos - center).abs() < 1e-4);
         }
+    }
+
+    #[test]
+    fn in_knock_off_the_stick_is_taken_anywhere_but_round_a_button_its_middle_where_the_finger_went_down() {
+        let layout = HudLayout {
+            stick_center: Vec2::new(200.0, 600.0),
+            stick_radius: 100.0,
+            jump_center: Vec2::new(1700.0, 900.0),
+            jump_radius: 0.0,
+        };
+        // Knock Off's alone.
+        assert!(stick_anywhere(hud::Layout::KnockOff));
+        for other in [hud::Layout::Town, hud::Layout::Arena, hud::Layout::BridgeRace, hud::Layout::LastStand, hud::Layout::BlendIn] {
+            assert!(!stick_anywhere(other), "{other:?}");
+        }
+        // Taken anywhere: top right, the middle, the far corner; the
+        // middle right where the finger went down, not pulled toward the
+        // stick's own.
+        for pos in [Vec2::new(1500.0, 120.0), Vec2::new(960.0, 540.0), Vec2::new(1900.0, 1070.0), layout.stick_center] {
+            assert_eq!(takes_the_stick(true, pos, &layout, false), Some(pos));
+        }
+        // But not on or round a button.
+        assert_eq!(takes_the_stick(true, Vec2::new(1700.0, 800.0), &layout, true), None);
+        // Elsewhere only on its own disc, as ever.
+        assert_eq!(takes_the_stick(false, Vec2::new(960.0, 540.0), &layout, false), None);
+        let low = layout.stick_center + Vec2::new(0.0, 100.0);
+        assert_eq!(takes_the_stick(false, low, &layout, false), Some(stick_origin(low, layout.stick_center, layout.stick_radius)));
+        // Round a button is its box grown by the margin all round.
+        let (middle, half) = (Vec2::new(1700.0, 800.0), Vec2::splat(50.0));
+        assert!(hud::within_box(middle, half, Vec2::new(1755.0, 800.0), 10.0));
+        assert!(!hud::within_box(middle, half, Vec2::new(1765.0, 800.0), 10.0));
+        assert!(hud::within_box(middle, half, Vec2::new(1740.0, 745.0), 10.0));
+        assert!(!hud::within_box(middle, half, Vec2::new(1700.0, 735.0), 10.0));
     }
 
     #[test]

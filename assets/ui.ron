@@ -1147,10 +1147,18 @@
             team_left: "{team} left the race",
             // On the plate top centre, under each team's bar: how far its
             // bridge still has to go, that it is across, or how many of the
-            // team stand on the golden island ({count} of {of}).
+            // team stand on the golden island ({count} of {of}). Not shown
+            // since 2026-11-18 (Hajun: "remove the unnecessary stats below
+            // the timer"), next_item in their place.
             to_go: "{metres}m to go",
             across: "Across!",
             on_island: "{count}/{of} on the island",
+            // On the plate top centre, under the clock: what your next
+            // grant brings, the plank's picture after it, and, if a stick
+            // of dynamite comes with it, "1" and its picture (Hajun,
+            // 2026-11-18: "Next Item: 14m (bridge icon) 1 (dynamite
+            // icon)").
+            next_item: "Next Item: {metres}m",
             // Over the golden island while every one of a team stands on
             // it: the seconds they still have to hold it; and, in the
             // team's colour, as one of them is knocked off it, or jumps.

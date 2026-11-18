@@ -9,7 +9,7 @@
 use bevy::math::{Quat, Vec2, Vec3, Vec3Swizzles};
 
 use super::forges::Forges;
-use super::map::{CRYSTAL_RADIUS, OBSTACLES, RIM, SEA_BED, SHORE, STONE_RADIUS, at_a_stand, ground};
+use super::map::{CRYSTAL_RADIUS, OBSTACLES, RIM, SAND_TOP, SEA_BED, SHORE, STONE_RADIUS, at_a_stand, ground};
 use super::shop::{self, BEAM_DAMAGE, FORTIFY, Ware, blow, sharpened, through};
 use super::waves::{BREAK, FIRST_WAVE, Kind, MOST_STANDING, drop_of, first_in, kill_score, mix, rising, strength, toughness};
 use super::zombies::{Act, Seen, SPIT_RADIUS, Spittle, View, Zombie};
@@ -99,13 +99,39 @@ impl Blade {
 
 /// A treasure chest lying on the sand or in the sea, unannounced, for
 /// whoever finds it to open (since 2026-11-18): its number, where it
-/// stands, which way it faces, and when it came, in seconds into the fight.
+/// stands, which way it faces, when it came, in seconds into the fight,
+/// and how much of it the blows on it have taken so far ([`CHEST_HP`],
+/// since the evening of 2026-11-18).
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct Treasure {
     pub id: u32,
     pub at: Vec3,
     pub yaw: f32,
     pub born: f32,
+    pub hits: u8,
+}
+
+/// How much a treasure chest takes before it breaks open, and how much a
+/// blow takes off it by the sword it is struck with, none for a fist
+/// ([`chest_blow`]): the aura sword breaks it at once, the others in two
+/// blows, a fist in three (since the evening of 2026-11-18, Hajun: "the
+/// treasure chest, instead of proximitychatbubble just make it so they have
+/// some hp (enough to 1 tap with aura sword, 2 tap with other swords, 3 tap
+/// with fist) and they explode like a player dying of that item
+/// contents"). By the blow, not by the sword's damage, which no one number
+/// could make come out so; the team's sharpness counts for nothing on a
+/// chest (mine).
+pub const CHEST_HP: u8 = 6;
+
+/// What a blow with the sword of `tier` takes off a treasure chest
+/// ([`CHEST_HP`]): all of it with the aura sword, half with the others, a
+/// third with a fist.
+pub fn chest_blow(tier: u8) -> u8 {
+    match tier {
+        0 => CHEST_HP / 3,
+        1 | 2 => CHEST_HP / 2,
+        _ => CHEST_HP,
+    }
 }
 
 /// Everyone's health, as in Bridge Wars ([`HEALTH`](crate::bridge_wars::HEALTH)):
@@ -270,10 +296,15 @@ pub enum Event {
     Lapsed(Piece),
     SwordLapsed(Blade),
     /// A treasure chest has come to stand here, said to nobody: the room is
-    /// sent it, and whoever comes upon it may open it.
+    /// sent it, and whoever comes upon it may break it open.
     ChestPlaced(Treasure),
-    /// The person in `seat` opened this chest ([`Game::open`]): what came
-    /// out of it is theirs now ([`Find`]), and the chest is gone.
+    /// The person in `seat` struck this chest, and it stands, so much the
+    /// worse ([`Treasure::hits`], [`Game::hit_chest`]).
+    ChestHit { seat: usize, chest: Treasure },
+    /// The person in `seat` broke this chest open ([`Game::hit_chest`], or
+    /// [`Game::open`]): it is gone, and what was in it ([`Find`]) is thrown
+    /// out round it ([`Event::Made`], [`Event::SwordDropped`]) or, with
+    /// nowhere for it to lie, theirs at once.
     ChestOpened { seat: usize, chest: Treasure, find: Find },
     /// A chest nobody opened has stood its while and is gone.
     ChestLapsed(Treasure),
@@ -308,6 +339,9 @@ struct Player {
     /// The last place they stood on the land, as their device said: where
     /// what they hold is dropped if they die off it, in the sea.
     footing: Vec3,
+    /// When they last struck a treasure chest, in seconds into the fight:
+    /// no oftener than a blow on a zombie counts ([`HURT_TIME`]).
+    chest_blow: f32,
 }
 
 /// How far a game has got.
@@ -394,6 +428,7 @@ impl Game {
                     dealt: 0.0,
                     ready: false,
                     footing: at,
+                    chest_blow: f32::NEG_INFINITY,
                 }
             })
             .collect();
@@ -502,11 +537,45 @@ impl Game {
         }
     }
 
-    /// The person in `seat` opens the treasure chest numbered `chest`: if
-    /// the game is on, they stand, and it is there within their reach as
-    /// their device last said ([`OPEN_REACH`]). What comes out is theirs at
-    /// once ([`Find`], [`Event::ChestOpened`]), and the chest is gone.
-    /// Whether it opened.
+    /// The person in `seat` strikes the treasure chest numbered `chest`
+    /// (since the evening of 2026-11-18): it counts if the game is on, they
+    /// stand, it is there within their reach as their device last said
+    /// ([`OPEN_REACH`]), and their last blow on a chest was not just now
+    /// ([`HURT_TIME`]). The blow takes off it what their sword's does
+    /// ([`chest_blow`], [`Event::ChestHit`]); taken to [`CHEST_HP`], it
+    /// breaks open and what was in it is thrown out round it, to lie there
+    /// as what the dead drop does ([`Game::break_chest`]). Whether it
+    /// counted.
+    pub fn hit_chest(&mut self, seat: usize, chest: u32) -> bool {
+        if !self.playing() || !self.alive(seat) {
+            return false;
+        }
+        let at = self.players[seat].at;
+        let Some(index) = self.chests.iter().position(|it| it.id == chest && it.at.xz().distance(at.xz()) <= OPEN_REACH) else {
+            return false;
+        };
+        if self.elapsed - self.players[seat].chest_blow < HURT_TIME {
+            return false;
+        }
+        self.players[seat].chest_blow = self.elapsed;
+        let it = &mut self.chests[index];
+        it.hits = it.hits.saturating_add(chest_blow(self.kits[seat].sword)).min(CHEST_HP);
+        let struck = *it;
+        self.reveal(seat);
+        if struck.hits < CHEST_HP {
+            self.events.push(Event::ChestHit { seat, chest: struck });
+        } else {
+            self.break_chest(seat, index);
+        }
+        true
+    }
+
+    /// The person in `seat` opens the treasure chest numbered `chest` at
+    /// once, by the bubble over it (the game's `finds::BUBBLE_OPENS`, off
+    /// since the evening of 2026-11-18; blows open it now,
+    /// [`Game::hit_chest`]): if the game is on, they stand, and it is there
+    /// within their reach as their device last said ([`OPEN_REACH`]). It
+    /// breaks open as to a last blow. Whether it opened.
     pub fn open(&mut self, seat: usize, chest: u32) -> bool {
         if !self.playing() || !self.alive(seat) {
             return false;
@@ -515,12 +584,67 @@ impl Game {
         let Some(index) = self.chests.iter().position(|it| it.id == chest && it.at.xz().distance(at.xz()) <= OPEN_REACH) else {
             return false;
         };
+        self.break_chest(seat, index);
+        true
+    }
+
+    /// The chest at `index` breaks open, `seat`'s doing: it is gone, and
+    /// what was in it ([`Find`]) is thrown out round where it stood, onto
+    /// the land only, as what the dead drop is ([`Game::spill`]), for
+    /// whoever walks into it ([`Event::ChestOpened`]); the next comes a
+    /// while after.
+    fn break_chest(&mut self, seat: usize, index: usize) {
         let chest = self.chests.remove(index);
         let find = self.find(seat);
-        self.give(seat, find);
+        self.spill(seat, &chest, find);
         self.chest_at = self.elapsed + self.dice.around(CHEST_EVERY.0, CHEST_EVERY.1);
         self.events.push(Event::ChestOpened { seat, chest, find });
-        true
+    }
+
+    /// What was in `chest`, thrown out round it as the dead throw out what
+    /// they held ([`Game::drop_all`]): a thing for each one, up to
+    /// [`DROP_MOST`], out in a ring as wide as it is worth; a sword lying
+    /// there, for whoever holds a lesser one. Onto the land only: a chest
+    /// out in the sea throws it from the sand nearest it. With nowhere for
+    /// it to lie, or a thing for a button, it is `seat`'s at once.
+    fn spill(&mut self, seat: usize, chest: &Treasure, find: Find) {
+        let from = if ground(chest.at.xz()).is_some() {
+            chest.at
+        } else {
+            let toward = chest.at.xz().normalize_or(Vec2::X) * (RIM - 1.5);
+            Vec3::new(toward.x, ground(toward).unwrap_or(SAND_TOP), toward.y)
+        };
+        let elapsed = self.elapsed;
+        match find {
+            Find::Things { item, count } => {
+                let pieces = count.min(DROP_MOST).max(1);
+                let things: Vec<(Item, u16)> = (0..pieces).map(|piece| (item, count / pieces + u16::from(piece < count % pieces))).collect();
+                let far = (f32::from(count) / (std::f32::consts::PI * DROP_DENSITY) + SPILL_NEAR * SPILL_NEAR)
+                    .sqrt()
+                    .clamp(SPILL_FAR, DROP_FAR);
+                let dice = &mut self.dice;
+                match self.forges.pile_mut().scatter_within(&things, from, far, elapsed, &mut || dice.roll(), &lies_on) {
+                    Some(dropped) => self.events.extend(dropped.into_iter().map(Event::Made)),
+                    None => self.give(seat, find),
+                }
+            }
+            Find::Sword(tier) => match self.spot_near(from, SPILL_FAR) {
+                Some((spot, top)) => {
+                    let blade = Blade {
+                        id: self.number(4),
+                        tier,
+                        at: spot,
+                        ground: top,
+                        from: from + Vec3::Y * SPILL_FROM,
+                        born: elapsed,
+                    };
+                    self.blades.push(blade);
+                    self.events.push(Event::SwordDropped(blade));
+                }
+                None => self.give(seat, find),
+            },
+            Find::Utility(_) => self.give(seat, find),
+        }
     }
 
     /// The person in `seat` says their blow landed on the zombie numbered
@@ -1240,11 +1364,11 @@ impl Game {
         lies(from.xz()).map(|top| (from.xz(), top))
     }
 
-    /// What a treasure chest has in it for the person in `seat` (mine): a
-    /// handful of silver most often, then gold, sapphire, amethyst, a
-    /// sword one better than theirs, or something for a button, a little
-    /// more of each as the waves go on. A sword or a thing for a button
-    /// they could not have is gold instead.
+    /// What a treasure chest has in it, broken open by the person in
+    /// `seat` (mine): a handful of silver most often, then gold, sapphire,
+    /// amethyst, or a sword one better than theirs, a little more of each
+    /// as the waves go on. A sword they hold already, or better, is gold
+    /// instead.
     fn find(&mut self, seat: usize) -> Find {
         let more = 1.0 + 0.08 * f32::from(self.wave.max(1) - 1);
         let roll = self.dice.roll();
@@ -1260,14 +1384,12 @@ impl Game {
             roll if roll < 0.94 => {
                 if kit.sword < 3 { Find::Sword(kit.sword + 1) } else { gold(count(4.0, 8.0)) }
             }
-            roll => {
-                let utility = if roll < 0.97 { Utility::Fireball } else { Utility::Healing };
-                let room = match kit.slot_of(utility) {
-                    Some(slot) => kit.slots[slot].is_some_and(|stack| stack.count < 9),
-                    None => kit.free_slot().is_some(),
-                };
-                if room { Find::Utility(utility) } else { gold(count(2.0, 6.0)) }
-            }
+            // (A fireball or a healing potion, one roll in sixteen, until
+            // the evening of 2026-11-18, when a chest came to be broken
+            // open and what was in it thrown out to lie on the ground, as
+            // the dead's is, where nothing for a button lies: gold now,
+            // mine.)
+            _ => gold(count(2.0, 6.0)),
         }
     }
 
@@ -1574,6 +1696,7 @@ impl Game {
                 at: Vec3::new(at.x, y, at.y),
                 yaw: self.dice.roll() * std::f32::consts::TAU,
                 born: self.elapsed,
+                hits: 0,
             };
             self.chests.push(chest);
             self.events.push(Event::ChestPlaced(chest));

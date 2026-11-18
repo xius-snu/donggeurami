@@ -84,9 +84,9 @@ mod tests;
 
 pub use forges::{CAPS, Forges, INTERVALS, OVERCLOCK, SPREADS};
 pub use game::{
-    ANCHOR_HEALTH, BEAM_EVERY, BEAM_REACH, Blade, CREDIT_SECS, DROP_MOST, DYNAMITE_HIT, Event, FIREBALL_HIT, GRACE_SECS,
-    Game, HEALTH, HURT_TIME, Knock, LEAP_SECS, LIES_FOR, OPEN_REACH, PUNCH_SLACK, READY_SECS, REGEN_AFTER, REGEN_PER_SEC,
-    RESPAWN_SECS, SPEED_SECS, Treasure, UNSEEN_SECS, WAVE_SCORE,
+    ANCHOR_HEALTH, BEAM_EVERY, BEAM_REACH, Blade, CHEST_HP, CREDIT_SECS, DROP_MOST, DYNAMITE_HIT, Event, FIREBALL_HIT,
+    GRACE_SECS, Game, HEALTH, HURT_TIME, Knock, LEAP_SECS, LIES_FOR, OPEN_REACH, PUNCH_SLACK, READY_SECS, REGEN_AFTER,
+    REGEN_PER_SEC, RESPAWN_SECS, SPEED_SECS, Treasure, UNSEEN_SECS, WAVE_SCORE, chest_blow,
 };
 pub use map::{
     CRYSTAL_RADIUS, ITEM_SHOP, OBSTACLES, Obstacle, PAD_HALF, PAD_TOP, PADS, PLINTH_HALF, PLINTH_TOP, RIM, SAND_RADIUS,
@@ -169,8 +169,15 @@ pub enum Ask {
     /// shopping, and whoever has done shopping need not stand about).
     Ready,
     /// Open the treasure chest numbered so ([`Chest::id`], [`Game::open`]),
-    /// which I stand by: what is in it is mine, [`Tell::Found`] says what.
+    /// which I stand by, at once: by the bubble over it, which is off since
+    /// the evening of 2026-11-18 (the game's `finds::BUBBLE_OPENS`); what
+    /// was in it is thrown out round it, [`Tell::Found`] says what.
     Open(u32),
+    /// My blow landed on the treasure chest numbered so ([`Chest::id`],
+    /// [`Game::hit_chest`], since the evening of 2026-11-18): it takes what
+    /// my sword's blow does ([`chest_blow`]), and taken to [`CHEST_HP`] it
+    /// breaks open, what was in it thrown out round it.
+    Hit(u32),
 }
 
 /// Something told one device in a game of Last Stand
@@ -247,9 +254,10 @@ impl LyingSword {
 }
 
 /// A treasure chest standing in a game of Last Stand ([`Treasure`]): its
-/// number, which a device asks to open it by ([`Ask::Open`]), where it
-/// stands and which way it faces. Sent once as it comes, and gone, for
-/// everyone, as it is opened or has stood its while.
+/// number, which a device strikes it by ([`Ask::Hit`]), where it stands,
+/// which way it faces, and how much the blows on it have taken so far
+/// ([`CHEST_HP`]). Sent as it comes and again with every blow it stands,
+/// and gone, for everyone, as it breaks open or has stood its while.
 #[derive(Component, Serialize, Deserialize, Clone, Copy, PartialEq, Debug)]
 #[component(immutable)]
 pub struct Chest {
@@ -258,10 +266,11 @@ pub struct Chest {
     pub y: f32,
     pub z: f32,
     pub yaw: f32,
+    pub hits: u8,
 }
 
 impl Chest {
-    /// What the room is sent of a chest come.
+    /// What the room is sent of a chest come, or struck.
     pub fn of(chest: &Treasure) -> Self {
         Self {
             id: chest.id,
@@ -269,6 +278,7 @@ impl Chest {
             y: chest.at.y,
             z: chest.at.z,
             yaw: chest.yaw,
+            hits: chest.hits,
         }
     }
 }

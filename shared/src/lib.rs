@@ -259,7 +259,15 @@ pub const PROTOCOL_ID: u64 = u64::from_be_bytes(*b"DGRMTOWN");
 /// the void, whose rules an app from before would not play by; Bridge Wars
 /// with a fee ([`bridge_wars::FEE`]); and Blend In's seekers on the speed
 /// potion's pace ([`blend_in::SEEKER_PACE`]).
-pub const PROTOCOL_VERSION: u32 = 23;
+///
+/// 24 since later that evening (Hajun's next message): Last Stand's
+/// treasure chests struck open ([`last_stand::Ask::Hit`], appended after
+/// the bubble's `Open`; [`last_stand::Chest::hits`]); Bridge Race's round
+/// saying what the next grant brings ([`bridge_race::RaceRound::next`],
+/// [`bridge_race::RaceRound::next_sticks`]), its grants of a size thrown
+/// for each and coming every 12 s, and its blasts bringing the rest of the
+/// bridge down after them, which an app from before would not play by.
+pub const PROTOCOL_VERSION: u32 = 24;
 
 /// The UDP port the game server listens on. 443, where QUIC goes, because a
 /// network that lets any UDP through lets that through: school and office

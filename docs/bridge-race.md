@@ -13,10 +13,91 @@
 
 ## Contents
 
-1. The evening of 2026-11-18: always by day, two people seated three ways, the islands where Hajun moved them
-2. 2026-11-18, later that day: what a play-test found, the race made easier to follow
-3. 2026-11-18, the same day: nine things a checker found, put right
-4. Since 2026-11-18 Bridge Race is played at its tables, online and offline, to the golden island
+1. Later on the evening of 2026-11-18: bigger grants, oftener, said ahead on the plate; dynamite twice as often, bringing the whole bridge down
+2. The evening of 2026-11-18: always by day, two people seated three ways, the islands where Hajun moved them
+3. 2026-11-18, later that day: what a play-test found, the race made easier to follow
+4. 2026-11-18, the same day: nine things a checker found, put right
+5. Since 2026-11-18 Bridge Race is played at its tables, online and offline, to the golden island
+
+## Later on the evening of 2026-11-18: bigger grants, oftener, said ahead on the plate; dynamite twice as often, bringing the whole bridge down
+
+Hajun: "for the bridge race game, shorten the interval at which u get sth,
+increase the amount of bridge you get by 2x and make it a random range
+(8~16m), increase the rate at which u get a dynamite by 2x, and make the
+dynamite to destroy the entire bridge connected similar to bridge wars.
+and remove the unnecessary stats below the timer (red: 62m to go, blue:
+55m to go) and replace that with a Next Item: 14m (bridge icon) 1
+(dynamite icon)." **`PROTOCOL_VERSION` 24**, with Last Stand's chests
+(`docs/last-stand.md`); the server and APK 43 have it
+(`docs/building.md`).
+
+- **A grant every 12 s, 16 until now** (mine, the number: "shorten"
+  named none), **of 8 to 16 m to each team**, a whole number of metres
+  thrown for each team and each grant, as often each as the others
+  (`TEAM_GRANT`, `GRANT_EVERY`; 6 m every time until now). Shared between
+  those of a team still in the game as before (`team_share`): 8 to 16 m
+  for one against one, 4 to 8 m each two against two. "2x" by the grant:
+  12 m at the middle where it was 6.
+- **Thrown a grant ahead** (`Game::roll_next`, as a game begins and at
+  every grant), so that it can be said: the round sends each team's next
+  metres and whose next grant brings a stick (`RaceRound::next`,
+  `next_sticks`, `next_of`, `stick_next`; three bytes more).
+- **Dynamite twice as often by the clock** (mine, how to read "the
+  rate"): a chance of 0.3 a grant every 12 s, one stick every 40 s each,
+  where it was 0.2 every 16 s, one every 80 s (`DYNAMITE_ODDS`); thrown a
+  grant ahead with the metres, given if there is room on the button then,
+  two at the most as before.
+- **A stick brings the whole bridge down** (`Game::tick_sticks`,
+  `Game::crumble`): the planks its blast reaches go at once, as before,
+  and the rest of every bridge they were part of after them, plank by
+  plank from the hole outward, at Bridge Wars' own pace (`Nav::cascade`,
+  `doom`, `crumble`, `cascade_after`: a beat, then 6 m a second quickening
+  to 12); drawn on every device in the colour of a plank about to go
+  until it falls. Online the server sends which and when with the blast
+  (`Blasted::later`, empty until now) and every device takes each at its
+  time, as in Bridge Wars; offline the device dooms them itself
+  (`offline::play`). Whoever of the other team stood on a plank that fell
+  fell by the thrower's doing. Until now the blast's planks alone went
+  (mine then: "a hole, not the bridge").
+- **The plate**: the clock, and under it "Next Item: 14m", the plank's
+  picture, and, while a stick comes with your next grant and there is
+  room for it, "1" and the stick's picture (`show::NextItem`,
+  `NextStick`, `next_words`; the words `words.bridge_race.next_item`).
+  Your share of your team's next grant, so "Next Item: 7m" two against two
+  for a team's 14, or "6.5m" for its 13. Each team's bar and "62m to go"
+  (or "1/1 on the island") are put away behind a switch
+  (`show::SIDES_SHOWN`), not deleted.
+- **What it did to a race**, two hundred whole races of each size by the
+  computer (`the_computer_plays_whole_races_close_varied_and_not_too_long`):
+  over at **73 s** at the median two against two and **65 s** one
+  against one, where both were about two and a half minutes. Still won by
+  holding the golden island 98% and 100%, each side as often as the
+  other, a stick thrown in 93% and 74% of races and taking planks in 92%
+  and 69% (75 planks came down in one); a knock in 66% and 40% of races
+  (the test asked 80% and 50% of the slower game, and asks 60% and 30%
+  now), someone knocked off the world in 91% and 66%. One race in two
+  hundred, one against one, had the computer's player stand 2.5 s at the
+  edge of a blast's hole mid-bridge before it thought again, and win: the
+  test allows that in one race of a hundred, never more than once in it.
+  If a race is over too soon now, `GRANT_EVERY` is the number to raise.
+- **Tests brought along**: the grants (each the size the round said
+  before, every size from 8 to 16 as often as the others over 1,200
+  throws, a person's metres given back by what each grant gave), the
+  sticks (three in ten, as the round said), the blast (the rest of the
+  bridge doomed, the further from the hole the later, all of it gone by
+  the last), the round's size, a straight bridge laid on every grant (as
+  many grants as fit on the map now), the device's grant and the server's
+  table, with what each told.
+- **Seen hidden** (offline, enlarged, a throwaway driver taken out
+  again): "Next Item: 13m", the plank's picture, and "1" and the stick's
+  picture, a stick coming with the next grant; at each grant after, the
+  next: 14m with a stick, then 13, 11, 9 and 11 without. The plank's
+  picture is drawn bigger since the first look, where it was a row of
+  dots (`NEXT_PICTURE`, reaching over and under the line without making
+  it taller). **Not seen**: a bridge coming down in Bridge Race running
+  (offline a person races the computer's one player, which has nothing of
+  the person's to blow up when the person lays none), nor anything on a
+  phone.
 
 ## The evening of 2026-11-18: always by day, two people seated three ways, the islands where Hajun moved them
 

@@ -360,6 +360,13 @@ fn ready_wanted(stand: &Stand) -> bool {
 /// only "Get ready" (mine).
 const GET_READY_SECS: f64 = 5.0;
 
+/// Whether the line under the plate says, in the break before the first
+/// wave, where to buy what ("Red stand: items · Blue stand: team
+/// upgrades"): not since the evening of 2026-11-18 (Hajun: "remove the
+/// "Red stand: items - Blue stand: Ugrades" text below the wave number in
+/// the beginning"), the line empty then; true says it again.
+const SAYS_THE_SHOPS: bool = false;
+
 /// What the plate says, as the game stands at the town's clock `now`: its
 /// big line and the line under it. Between waves, under the time to the
 /// next: how many of you are ready, once anyone is; in the break before
@@ -388,7 +395,7 @@ fn plate_words(stand: &Stand, now: f64) -> (String, String) {
             } else if until - now <= GET_READY_SECS {
                 words.get_ready.clone()
             } else if round.wave == 0 {
-                words.tip.clone()
+                if SAYS_THE_SHOPS { words.tip.clone() } else { String::new() }
             } else if let Some(new) = new_in(round.wave + 1) {
                 fill(&words.next_new, &[("new", &new)])
             } else {
@@ -1356,9 +1363,11 @@ mod tests {
             });
             plate_words(&stand, now)
         };
-        // Before the first wave, which stand sells what; at the last, get
-        // ready.
-        assert_eq!(break_of(0, 18.0), ("Next wave in 0:18".to_string(), ui().words.last_stand.tip.clone()));
+        // Before the first wave, nothing under it (which stand sells what,
+        // until the evening of 2026-11-18, `SAYS_THE_SHOPS`); at the last,
+        // get ready.
+        let shops = if SAYS_THE_SHOPS { ui().words.last_stand.tip.clone() } else { String::new() };
+        assert_eq!(break_of(0, 18.0), ("Next wave in 0:18".to_string(), shops));
         assert_eq!(break_of(0, 4.0).1, "Get ready");
         // Before a wave with something new in it, what; else, the wave
         // cleared.

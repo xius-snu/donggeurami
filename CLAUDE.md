@@ -13,8 +13,8 @@ working, and spend nothing on it unasked. Since 2026-11-18 the selector has
 the four games Hajun asked for that day, each played at a table: Blend In,
 Knock Off, Bridge Race, Last Stand (`docs/minigames.md`).
 
-As of the evening of 2026-11-18: `PROTOCOL_VERSION` 23, APK 42
-(`versionCode`, not yet on a phone), the server deployed then (08:53 UTC)
+As of the evening of 2026-11-18: `PROTOCOL_VERSION` 24, APK 43
+(`versionCode`, not yet on a phone), the server deployed then (13:33 UTC)
 with everything in `server/` and `shared/`, all of it committed and pushed,
 the town's map with Hajun's `plot` planes among it. The iPhone's last tag,
 `ios-1.0.2-18`, pushed in the first hour of 2026-11-16 (whether Codemagic
@@ -540,16 +540,19 @@ server online and by the device offline.
   once.
 - **Knock Off** (four seats, the computer filling them): a 12 m disc of ice
   in the sea. Everyone aims at once in secret (12 s, then 10: the stick
-  for the way, up and down for power 1 to 10, from 1 each turn), then all
-  slide at once, the
-  same to the bit on every device and the server; the ice's edge breaks a
+  for the way, taken anywhere on the screen but round the buttons
+  (`stick_anywhere`), up and down for power 1 to 10, from 1 each turn),
+  then all slide at once, the same to the bit on every device and the
+  server; the ice's edge breaks a
   metre a turn, gone after turn 13. The last on it wins; the rest watch or
   leave.
 - **Bridge Race** (the computer filling; one person is one against one,
   two or more two against two, people on one team first): two islands and
-  the golden one. 10 m of bridge each to begin, 6 m to each team every 16
-  s shared between its players, now and then a stick of dynamite; a punch
-  only knocks, and the fallen are back on their island in 2 s. A team wins
+  the golden one. 10 m of bridge each to begin, 8 to 16 m to each team
+  every 12 s shared between its players, and a stick of dynamite three
+  grants in ten, each grant thrown ahead and said on the plate ("Next
+  Item: 14m", `RaceRound::next`); a stick brings the whole connected
+  bridge down after its blast, as in Bridge Wars; a punch only knocks, and the fallen are back on their island in 2 s. A team wins
   standing all together on the golden island for 3 s, a bridge to it or
   not; at 6 minutes, the team with more on it or nearer, or a draw. Two
   people are on one team, on each, or one against one, a third of the time
@@ -562,8 +565,10 @@ server online and by the device offline.
   the sand, nobody past a ring 41.5 m out (`last_stand::SHORE`). The dead
   drop all four things and their sword for anyone to take, a sword only by
   one holding a lesser, five minutes (`drop_all`, `LIES_FOR`); now and then
-  an unannounced treasure chest, opened by the town's bubble
-  (`talk::Opens`); a zombie a blow does not kill shows red. Over when the
+  an unannounced treasure chest, broken open by one blow of the aura
+  sword, two of another, three of a fist (`Game::hit_chest`, `CHEST_HP`),
+  its contents thrown out round it to lie as the dead's do; a zombie a
+  blow does not kill shows red. Over when the
   crystal is broken and nobody stands; everyone's score and the team's,
   10 coins a wave cleared, to 400. Bridge Wars' camera and buttons.
 - Tuned by whole games, as Bridge Wars' bots are (`cargo test -p

@@ -1119,17 +1119,21 @@ mod tests {
         let game = &world.resource::<Racing>().0.as_ref().expect("a race").played.as_ref().expect("played here").game;
         assert!(game.playing() && game.person(0) && !game.person(1));
         // A grant comes in the game: your team's share of it on your
-        // metres, once, however often the round is looked at.
-        {
+        // metres, once, however often the round is looked at; what the
+        // round said the next would bring, 8 to 16 m to a team of one.
+        let said = {
             let mut racing = world.resource_mut::<Racing>();
             let played = racing.0.as_mut().and_then(|race| race.played.as_mut()).expect("played here");
+            let said = played.game.round().next_of(0);
             while played.game.round().grants < 1 {
                 played.game.step(0.1);
             }
-        }
+            said
+        };
+        assert!((rules::grant_metres(2).0..=rules::grant_metres(2).1).contains(&said), "{said}");
         world.run_system(follow).expect("followed");
         world.run_system(follow).expect("followed");
-        assert_eq!(world.resource::<Resources>().bridge_metres, rules::START_METRES + rules::grant_metres(2));
+        assert_eq!(world.resource::<Resources>().bridge_metres, rules::START_METRES + said);
         // Gone from the tables: the fight given back, "no game" with the
         // game's number kept, and nothing of the race left.
         world.resource_mut::<AtTable>().0 = None;
@@ -1287,6 +1291,8 @@ mod tests {
             finish: None,
             across: [100, 60],
             players: [1, 1],
+            next: [12, 12],
+            next_sticks: 0b01,
         };
         let kits = Kits(vec![roundtown_net::Kit::default().holding(Utility::Dynamite, 1), roundtown_net::Kit::default()]);
         let shown = world.spawn((Remote, board.clone(), round.clone(), kits)).id();
@@ -1343,6 +1349,8 @@ mod tests {
             finish: None,
             across: [0, 0],
             players: [1, 1],
+            next: [12, 12],
+            next_sticks: 0,
         }
     }
 

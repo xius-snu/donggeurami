@@ -20,22 +20,28 @@
 //! same [`Event`]s, so that the two never differ. In it:
 //!
 //! * **Metres**: everyone begins with [`START_METRES`] of bridge, and every
-//!   [`GRANT_EVERY`] seconds each team is given [`TEAM_GRANT`] more, shared
-//!   between those of its players still in the game ([`team_share`];
-//!   "Every interval you are given more bridge meters"). A person's are
-//!   counted on their own device, as in Bridge Wars, which lays their bridge
-//!   and pays for it; the room is told how many grants there have been and
-//!   what the last gave each team's players ([`RaceRound::grants`],
-//!   [`RaceRound::share`]). The computer's the game counts itself.
+//!   [`GRANT_EVERY`] seconds each team is given 8 to 16 m more
+//!   ([`TEAM_GRANT`], thrown a grant ahead), shared between those of its
+//!   players still in the game ([`team_share`]; "Every interval you are
+//!   given more bridge meters"). A person's are counted on their own
+//!   device, as in Bridge Wars, which lays their bridge and pays for it;
+//!   the room is told how many grants there have been, what the last gave
+//!   each team's players and what the next will ([`RaceRound::grants`],
+//!   [`RaceRound::share`], [`RaceRound::next`]). The computer's the game
+//!   counts itself.
 //! * **Dynamite**, now and then ("sometimes u get dynamite as well,
-//!   randomly"): with each grant one chance in five of a stick for each
-//!   player, two at the most, on their button. Thrown as in Bridge Wars, and
-//!   where it blows the planks its blast reaches go and **no more** (mine: no
-//!   falling of the rest of the bridge after them, which in a race would
-//!   decide it at the first stick), and whoever of the other team is in it
-//!   is knocked away from it as a punch on the run knocks (mine: the other
-//!   team's alone, as Bridge Wars' blast reaches only the other teams and a
-//!   punch never lands on a teammate; the planks go from under anyone).
+//!   randomly"): with each grant a chance of a stick for each player
+//!   ([`DYNAMITE_ODDS`], thrown with the metres a grant ahead), two at the
+//!   most, on their button. Thrown as in Bridge Wars, and where it blows
+//!   the planks its blast reaches go, and **since the evening of
+//!   2026-11-18 the rest of their bridge after them**, plank by plank from
+//!   the hole, as in Bridge Wars ([`Nav::cascade`]; Hajun: "make the
+//!   dynamite to destroy the entire bridge connected similar to bridge
+//!   wars"; the blast's alone until then); and whoever of the other team
+//!   is in it is knocked away from it as a punch on the run knocks (mine:
+//!   the other team's alone, as Bridge Wars' blast reaches only the other
+//!   teams and a punch never lands on a teammate; the planks go from under
+//!   anyone).
 //! * **Punches** knock and do nothing else ("You can punch each other off the
 //!   map"): nobody has health. The void is the only way to die: fall into it
 //!   and you are back on your own island's middle a moment later ("ur
@@ -238,42 +244,50 @@ pub const SHAPE: table::Shape = table::Shape {
 /// How many metres of bridge everyone begins with, how many more each team
 /// is given every so often, shared evenly between those of its players
 /// still in the game, and how often, in seconds of play ("Every interval
-/// you are given more bridge meters"; the numbers are ours, tuned by whole
-/// games, `many_races`). A team's bridge comes on as fast with one of a
-/// side as with two ([`team_share`]), and with one left of two, and a game
-/// is about two and a half minutes at the median either way, the computer
-/// laying its way all the way over: with each player given 5 m every 10 s
-/// whatever their team, as first written, two against two was over in
-/// under a minute, and one against one in under two.
+/// you are given more bridge meters"). A team's bridge comes on as fast
+/// with one of a side as with two ([`team_share`]), and with one left of
+/// two. **Since the evening of 2026-11-18** (Hajun: "shorten the interval
+/// at which u get sth, increase the amount of bridge you get by 2x and
+/// make it a random range (8~16m)"): each grant gives each team a whole
+/// number of metres from 8 to 16 ([`TEAM_GRANT`]), thrown for each team
+/// and each grant a grant ahead, so that the board can say it ("Next
+/// Item", [`RaceRound::next`]), every 12 s (mine). Until then 6 m every
+/// 16 s, tuned by whole games (`many_races`) to about two and a half
+/// minutes a game; with each player given 5 m every 10 s whatever their
+/// team, as first written, two against two was over in under a minute,
+/// and one against one in under two.
 pub const START_METRES: f32 = 10.0;
-pub const TEAM_GRANT: f32 = 6.0;
-pub const GRANT_EVERY: f32 = 16.0;
+pub const TEAM_GRANT: (u8, u8) = (8, 16);
+pub const GRANT_EVERY: f32 = 12.0;
 
 /// How many metres of bridge each of a team of `players` still in the game
-/// is given with every grant ([`GRANT_EVERY`]): the team's [`TEAM_GRANT`]
-/// shared between them, 6 m for one alone and 3 m each for two. Whoever
+/// is given by a grant of `metres` to the team ([`TEAM_GRANT`]): shared
+/// between them, all of it for one alone and half each for two. Whoever
 /// has left for good ([`Game::leave`]) leaves their share to whoever of
 /// their team is left (mine: a team does not race at half pace for having
 /// lost someone).
-pub fn team_share(players: usize) -> f32 {
-    TEAM_GRANT / players.max(1) as f32
+pub fn team_share(metres: f32, players: usize) -> f32 {
+    metres / players.max(1) as f32
 }
 
-/// How many metres of bridge each player of a table of `seats` seats is
-/// given with every grant while everyone is still in the game: their
-/// team's [`TEAM_GRANT`] shared between however many each team has, 6 m
-/// each one against one and 3 m each two against two ([`team_share`]).
-/// What each grant gives is in the round as it comes ([`RaceRound::share`]).
-pub fn grant_metres(seats: usize) -> f32 {
-    team_share(seats / TEAMS)
+/// The least and the most metres of bridge each player of a table of
+/// `seats` seats is given by a grant while everyone is still in the game:
+/// their team's [`TEAM_GRANT`] shared between however many each team has,
+/// 8 to 16 m each one against one and 4 to 8 m each two against two
+/// ([`team_share`]). What each grant gives is in the round as it comes
+/// ([`RaceRound::share`]), and what the next will ([`RaceRound::next`]).
+pub fn grant_metres(seats: usize) -> (f32, f32) {
+    let players = seats / TEAMS;
+    (team_share(f32::from(TEAM_GRANT.0), players), team_share(f32::from(TEAM_GRANT.1), players))
 }
 
 /// How likely each player is to be given a stick of dynamite with each
-/// grant, and the most sticks anyone holds ("sometimes u get dynamite as
-/// well, randomly"; the numbers are ours): about one every minute and a
-/// third each, and not so many held that a team could take a whole bridge
-/// down.
-pub const DYNAMITE_ODDS: f32 = 0.2;
+/// grant, thrown a grant ahead with the metres, and the most sticks anyone
+/// holds ("sometimes u get dynamite as well, randomly"). Since the evening
+/// of 2026-11-18 (Hajun: "increase the rate at which u get a dynamite by
+/// 2x") 0.3 a grant every 12 s, one every 40 s each, where it was 0.2 a
+/// grant every 16 s, one every 80 s (mine, the rate by the clock doubled).
+pub const DYNAMITE_ODDS: f32 = 0.3;
 pub const DYNAMITE_MOST: u8 = 2;
 
 /// How long every one of a team has to stand on the golden island together
@@ -410,9 +424,33 @@ pub struct RaceRound {
     /// together to hold it, which the plate says ("1/1 on the island" once
     /// one of two has gone, where it went on saying "1/2"; mine).
     pub players: [u8; 2],
+    /// What the next grant will give each team, in whole metres
+    /// ([`TEAM_GRANT`], thrown a grant ahead): shared between however many
+    /// of it are still in the game as it comes ([`RaceRound::next_of`]).
+    /// What the board says ("Next Item: 14m", since the evening of
+    /// 2026-11-18).
+    pub next: [u8; 2],
+    /// Whose next grant brings a stick of dynamite, a bit for each seat
+    /// from the lowest ([`RaceRound::stick_next`]): thrown with the metres
+    /// ([`DYNAMITE_ODDS`]), given if they have room for it then.
+    pub next_sticks: u8,
 }
 
 impl RaceRound {
+    /// What the next grant will give each player of `team`, in metres:
+    /// the team's ([`RaceRound::next`]) shared between those of it still
+    /// in the game ([`team_share`]).
+    pub fn next_of(&self, team: u8) -> f32 {
+        let side = usize::from(team) % TEAMS;
+        team_share(f32::from(self.next[side]), usize::from(self.players[side]))
+    }
+
+    /// Whether the next grant brings whoever is in `seat` a stick of
+    /// dynamite, if they have room for it then ([`RaceRound::next_sticks`]).
+    pub fn stick_next(&self, seat: usize) -> bool {
+        seat < 8 && self.next_sticks & (1 << seat) != 0
+    }
+
     /// What the last grant gave each player of `team`, in metres
     /// ([`RaceRound::share`]): what a person's device adds for each grant
     /// it has not yet counted.
@@ -554,10 +592,13 @@ pub enum Event {
     Lost { stick: u32, by: usize },
     /// The stick numbered so, whoever in `by` threw it, has blown at `at`,
     /// taking these planks, each as whose, which of their bridges and which
-    /// plank of that one ([`Nav::blast`]): no more, with nothing after them
-    /// (online a [`crate::Blasted`] with no `later`).
-    Blew { stick: u32, by: usize, at: Vec3, planks: Vec<(u8, u16, u16)> },
-    /// The grant numbered `grant` has come: [`grant_metres`] for everyone,
+    /// plank of that one ([`Nav::blast`]); and, since the evening of
+    /// 2026-11-18, dooming the rest of the bridge they were part of, each
+    /// plank to fall so many seconds after ([`Nav::cascade`], as Bridge
+    /// Wars': online a [`crate::Blasted`] with them as its `later`, every
+    /// device taking each at its time).
+    Blew { stick: u32, by: usize, at: Vec3, planks: Vec<(u8, u16, u16)>, later: Vec<((u8, u16, u16), f32)> },
+    /// The grant numbered `grant` has come: its metres for everyone,
     /// and a stick of dynamite for each of `sticks`, by seat, now on their
     /// button.
     Granted { grant: u16, sticks: Vec<usize> },
@@ -660,6 +701,11 @@ pub struct Game {
     /// and by team ([`team_share`]): what a person's metres are reckoned
     /// by, coming back ([`Game::kept`]).
     shares: Vec<[f32; TEAMS]>,
+    /// What the next grant gives each team, in whole metres, and whether
+    /// it brings each seat a stick of dynamite: thrown a grant ahead
+    /// ([`Game::roll_next`]), for the board to say.
+    next: [u8; TEAMS],
+    next_sticks: Vec<bool>,
     /// Whether each of the computer's players carried a plank, the frame
     /// before.
     carrying: Vec<bool>,
@@ -705,7 +751,7 @@ impl Game {
                 crew.seat(seat, spot, yaw_of(turn));
             }
         }
-        Self {
+        let mut game = Self {
             gone: vec![false; seats],
             away: vec![false; seats],
             at,
@@ -721,6 +767,8 @@ impl Game {
             chains: Vec::new(),
             counted: Vec::new(),
             shares: Vec::new(),
+            next: [TEAM_GRANT.0; TEAMS],
+            next_sticks: vec![false; seats],
             carrying: vec![false; seats],
             people,
             nav,
@@ -739,7 +787,11 @@ impl Game {
             over: None,
             events: Vec::new(),
             tally: Tally::default(),
-        }
+        };
+        // What the first grant gives, thrown now, for the board to say
+        // from the start.
+        game.roll_next();
+        game
     }
 
     /// The countdown is over: everyone stands where they arrive on their
@@ -1054,7 +1106,7 @@ impl Game {
     /// the team's grant, shared between them ([`team_share`]).
     fn share(&self, side: usize) -> f32 {
         let players = (0..self.seats()).filter(|&seat| usize::from(team(seat)) == side && !self.gone[seat]).count();
-        team_share(players)
+        team_share(f32::from(self.next[side]), players)
     }
 
     /// Whoever is in `seat` has left for good: they no longer count for
@@ -1113,6 +1165,7 @@ impl Game {
         }
         self.play_computer(dt);
         self.tick_sticks(dt);
+        self.crumble(dt);
         self.reckon_across();
         self.holds(dt);
         if self.over.is_none() && self.elapsed >= PLAY_SECS {
@@ -1137,7 +1190,7 @@ impl Game {
             if !self.people[seat] {
                 self.crew.grant(seat, share[usize::from(team(seat))], self.elapsed);
             }
-            if self.dice.roll() < DYNAMITE_ODDS {
+            if self.next_sticks[seat] {
                 let held = self.kits[seat].held(Utility::Dynamite);
                 if held < DYNAMITE_MOST {
                     self.kits[seat] = with_sticks(self.kits[seat], held + 1);
@@ -1146,10 +1199,25 @@ impl Game {
                 }
             }
         }
+        self.roll_next();
         self.events.push(Event::Granted {
             grant: self.grants,
             sticks: given,
         });
+    }
+
+    /// Throws what the next grant will give: each team's metres, a whole
+    /// number from the least to the most of [`TEAM_GRANT`], and for each
+    /// seat whether a stick of dynamite comes with it ([`DYNAMITE_ODDS`]).
+    fn roll_next(&mut self) {
+        let (least, most) = TEAM_GRANT;
+        for side in 0..TEAMS {
+            let spread = f32::from(most - least + 1);
+            self.next[side] = least + ((self.dice.roll() * spread).floor() as u8).min(most - least);
+        }
+        for seat in 0..self.seats() {
+            self.next_sticks[seat] = self.dice.roll() < DYNAMITE_ODDS;
+        }
     }
 
     /// Whoever is in `seat` stands again on their island's middle.
@@ -1283,6 +1351,11 @@ impl Game {
                 self.last_hit[seat] = Some((stick.by, self.elapsed));
             }
             let planks = self.nav.blast(at.xz(), DYNAMITE_RADIUS);
+            // And the rest of the bridge they were part of falls after
+            // them, plank by plank from the hole outward, as in Bridge
+            // Wars ([`Game::crumble`]).
+            let later = self.nav.cascade(&planks);
+            self.nav.doom(&later, stick.by.min(usize::from(u8::MAX)) as u8);
             let reached: Vec<usize> = (0..self.seats())
                 .filter(|&seat| team(seat) != side && self.standing(seat) && in_dynamite(at, self.at[seat]))
                 .collect();
@@ -1296,11 +1369,40 @@ impl Game {
                 by: stick.by,
                 at,
                 planks,
+                later,
             });
             false
         });
         lying.append(&mut self.sticks);
         self.sticks = lying;
+    }
+
+    /// The bridges a blast has doomed, for one frame ([`Nav::crumble`],
+    /// since the evening of 2026-11-18, as Bridge Wars'): every plank whose
+    /// time has come is gone from under whoever stands on it. Nobody is
+    /// told: every device was told which and when as the stick blew
+    /// ([`Event::Blew`]), and takes them itself. Whoever of the other team
+    /// than the thrower's stood on one falls by the thrower's doing, should
+    /// they fall: a person's own device says whether they do, and the
+    /// computer's fall here, finding nothing under them.
+    fn crumble(&mut self, dt: f32) {
+        let fallen = self.nav.crumble(dt);
+        if fallen.is_empty() {
+            return;
+        }
+        self.tally.planks_blown += fallen.len() as u32;
+        for seat in 0..self.seats() {
+            if !self.standing(seat) {
+                continue;
+            }
+            let at = self.at[seat].xz();
+            let Some(by) = fallen.iter().find(|plank| plank.under(at)).map(|plank| usize::from(plank.by)) else {
+                continue;
+            };
+            if by < self.seats() && team(by) != team(seat) {
+                self.last_hit[seat] = Some((by, self.elapsed));
+            }
+        }
     }
 
     /// Works out again how far each team's bridge has got
@@ -1502,6 +1604,13 @@ impl Game {
             finish: self.over.map(|(_, finish, _)| finish),
             across: self.across,
             players: [players(0), players(1)],
+            next: self.next,
+            next_sticks: self
+                .next_sticks
+                .iter()
+                .take(8)
+                .enumerate()
+                .fold(0, |bits, (seat, &stick)| if stick { bits | 1 << seat } else { bits }),
         }
     }
 

@@ -215,6 +215,30 @@ pub(super) struct Progress(u8);
 #[derive(Component)]
 pub(super) struct ProgressWords(u8);
 
+/// Whether the plate has each team's bar and words under the clock (how
+/// far its bridge has to go, "62m to go", or how many of it stand on the
+/// golden island): not since the evening of 2026-11-18 (Hajun: "remove the
+/// unnecessary stats below the timer (red: 62m to go, blue: 55m to go) and
+/// replace that with a Next Item: 14m (bridge icon) 1 (dynamite icon)"),
+/// [`NextItem`] in their place; true puts them back, and takes it away.
+const SIDES_SHOWN: bool = false;
+
+/// Under the clock, what your next grant brings: its words ("Next Item:
+/// 14m"), the plank's picture after them, and, while a stick of dynamite
+/// comes with it, "1" and the stick's picture ([`NextStick`]).
+#[derive(Component)]
+pub(super) struct NextItem;
+#[derive(Component)]
+pub(super) struct NextStick;
+
+/// How big the pictures in the next item's line are, as a share of the
+/// screen's short side, and how far each reaches over and under the line
+/// without making it taller (mine): the plank's is three planks side by
+/// side, a third as tall as it is wide, which at the words' own height was
+/// a row of dots (seen enlarged in a hidden run).
+const NEXT_PICTURE: f32 = 5.6;
+const NEXT_PICTURE_SPILL: f32 = 1.2;
+
 /// The ring round the golden island, each team's arc of it, and the dark
 /// band under them.
 #[derive(Component)]
@@ -443,6 +467,51 @@ pub(super) fn spawn(commands: &mut Commands, images: &mut Assets<Image>, picture
                 ))
                 .with_children(|inside| {
                     inside.spawn((PlateClock, hud::words("", CLOCK_TEXT, colours.text)));
+                    if !SIDES_SHOWN {
+                        let picture = |image: Handle<Image>| {
+                            (
+                                ImageNode::new(image),
+                                Node {
+                                    width: Val::VMin(NEXT_PICTURE),
+                                    height: Val::VMin(NEXT_PICTURE),
+                                    margin: UiRect::vertical(Val::VMin(-NEXT_PICTURE_SPILL)),
+                                    ..default()
+                                },
+                                Pickable::IGNORE,
+                            )
+                        };
+                        let plank = pictures.of(images, Picture::Plank);
+                        let stick = pictures.of(images, Picture::Dynamite);
+                        inside
+                            .spawn((
+                                Node {
+                                    align_items: AlignItems::Center,
+                                    column_gap: Val::VMin(0.8),
+                                    ..default()
+                                },
+                                Pickable::IGNORE,
+                            ))
+                            .with_children(|line| {
+                                line.spawn((NextItem, hud::words("", PROGRESS_TEXT, colours.text)));
+                                line.spawn(picture(plank));
+                                line.spawn((
+                                    NextStick,
+                                    Node {
+                                        align_items: AlignItems::Center,
+                                        column_gap: Val::VMin(0.5),
+                                        margin: UiRect::left(Val::VMin(0.8)),
+                                        ..default()
+                                    },
+                                    Visibility::Hidden,
+                                    Pickable::IGNORE,
+                                ))
+                                .with_children(|stick_line| {
+                                    stick_line.spawn(hud::words("1", PROGRESS_TEXT, colours.text));
+                                    stick_line.spawn(picture(stick));
+                                });
+                            });
+                        return;
+                    }
                     inside
                         .spawn((
                             Node {
@@ -571,7 +640,9 @@ pub(super) fn plate(
     mut plates: Query<&mut Visibility, With<Plate>>,
     mut clocks: Query<&mut Text, (With<PlateClock>, Without<ProgressWords>)>,
     mut bars: Query<(&Progress, &mut Node)>,
-    mut said: Query<(&ProgressWords, &mut Text), Without<PlateClock>>,
+    mut said: Query<(&ProgressWords, &mut Text), (Without<PlateClock>, Without<NextItem>)>,
+    mut next: Query<&mut Text, (With<NextItem>, Without<PlateClock>, Without<ProgressWords>)>,
+    mut stick_next: Query<&mut Visibility, (With<NextStick>, Without<Plate>)>,
     drawn: Query<Entity, Or<(With<Plate>, With<HoldWords>, With<Needle>, With<NeedleWords>, With<JumpWords>, With<Ring>)>>,
     mut images: ResMut<Assets<Image>>,
     mut pictures: ResMut<hud::Pictures>,
@@ -613,6 +684,31 @@ pub(super) fn plate(
             text.0 = words;
         }
     }
+    // What your next grant brings: your share of your team's next metres,
+    // and a stick of dynamite if one comes with it and there is room for it
+    // on your button.
+    let words = next_words(round.next_of(race.team()));
+    for mut text in &mut next {
+        if text.0 != words {
+            text.0.clone_from(&words);
+        }
+    }
+    let stick = round.stick_next(race.seat) && race.sticks < roundtown_net::bridge_race::DYNAMITE_MOST;
+    for mut shown in &mut stick_next {
+        shown.set_if_neq(if stick { Visibility::Inherited } else { Visibility::Hidden });
+    }
+}
+
+/// What the plate says of your next grant of `metres` ("Next Item: 14m"):
+/// in whole metres, or to a half where a team of two shares an odd number.
+fn next_words(metres: f32) -> String {
+    let file = ui();
+    let shown = if (metres - metres.round()).abs() < 0.05 {
+        format!("{metres:.0}")
+    } else {
+        format!("{metres:.1}")
+    };
+    fill(&file.words.bridge_race.next_item, &[("metres", &shown)])
 }
 
 /// The flat band of a ring between `inner` and `outer` round its middle,
@@ -1443,11 +1539,25 @@ mod tests {
         assert_eq!(jump_gap(from(3.0) - Vec3::Y * 2.0, 0.0), None);
         assert_eq!(jump_gap(from(3.0) + Vec3::Y * 1.0, 0.0), None, "in the air, jumping");
         // A running jump carries a body further than it is said from, with
-        // a metre in hand: the game's own jump and fall, at the race's run;
-        // and it is said for every gap a grant of one against one leaves.
+        // a metre in hand: the game's own jump and fall, at the race's run.
+        // (Until the evening of 2026-11-18 it was said for every gap a
+        // grant of one against one could leave, 6 m; since then a grant is
+        // 8 to 16 m, and a gap it leaves wider than a jump is a grant's
+        // wait, as the next grant's size on the plate says.)
         let airborne = 2.0 * crate::JUMP_SPEED / crate::GRAVITY;
         assert!(ui().arena.run_speed * airborne > JUMP_FROM + 1.0, "{} m", ui().arena.run_speed * airborne);
-        assert!(JUMP_FROM > roundtown_net::bridge_race::grant_metres(2));
+    }
+
+    #[test]
+    fn the_plate_says_what_your_next_grant_brings_in_whole_metres_or_to_a_half() {
+        let said = |metres: &str| fill(&ui().words.bridge_race.next_item, &[("metres", metres)]);
+        assert_eq!(next_words(14.0), said("14"));
+        assert_eq!(next_words(6.5), said("6.5"));
+        assert_eq!(next_words(8.0), said("8"));
+        // The file's own words, as written.
+        assert_eq!(said("14"), "Next Item: 14m");
+        // Each team's rows of how far it has to go are put away for it.
+        assert!(!SIDES_SHOWN);
     }
 
     #[test]

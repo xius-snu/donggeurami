@@ -6,11 +6,51 @@
 
 ## Contents
 
-1. The evening of 2026-11-18: every turn begins at power 1
-2. At the merge, 2026-11-18: the far player clear of the table's board, the game's name said low, the out panel clear of the chat's button
-3. Later still on 2026-11-18, after a play-test: the camera comes in as the ice breaks, a hit is felt, nothing stands over the play, the ice breaks into pieces, and whoever wins has a moment
-4. Later on 2026-11-18, after a check of it: the last person to leave is paid for their place online too, where you came is the game's own word for it, a device that comes back is held ready if it was, and every slide begins on every device the moment it begins
-5. Since 2026-11-18 Knock Off is a game people play, online and offline: four on a disc of ice in the sea, everyone aiming at once in secret and sliding at once, the ice breaking a metre a turn
+1. Later on the evening of 2026-11-18: the stick is taken anywhere on the screen but round the buttons
+2. The evening of 2026-11-18: every turn begins at power 1
+3. At the merge, 2026-11-18: the far player clear of the table's board, the game's name said low, the out panel clear of the chat's button
+4. Later still on 2026-11-18, after a play-test: the camera comes in as the ice breaks, a hit is felt, nothing stands over the play, the ice breaks into pieces, and whoever wins has a moment
+5. Later on 2026-11-18, after a check of it: the last person to leave is paid for their place online too, where you came is the game's own word for it, a device that comes back is held ready if it was, and every slide begins on every device the moment it begins
+6. Since 2026-11-18 Knock Off is a game people play, online and offline: four on a disc of ice in the sea, everyone aiming at once in secret and sliding at once, the ice breaking a metre a turn
+
+## Later on the evening of 2026-11-18: the stick is taken anywhere on the screen but round the buttons
+
+Hajun: "for the knock off game, you know how the joystick is a semi-free
+joystick so wherever u touch within a certain radius becomes the new
+"origin" of that joystick until u let go. i want that radius/area to be
+the whole screen for that mode, so anywhere u touch on the screen become
+the new origin of the joystick. but ofc this might make it accidentally
+when ur trying to press the up/down/check/chat button it might register
+as the josytick if u slightly mispress it so make it so the area around
+those buttons dont get registered as a joystick tap, but everywhere else,
+it can be the new origin of the joystick." With the evening's other asks
+(`docs/minigames.md`); in APK 43. The device's alone: nothing sent
+changed for it.
+
+- **In Knock Off a finger takes the stick wherever it goes down**, its
+  middle right there (not pulled toward the stick's own place, as
+  elsewhere, by half its radius at the most, `stick_origin`), and the
+  stick's disc drawn round it until it is let go, as it is drawn round
+  the finger anywhere (`stick_anywhere`, `takes_the_stick`, in
+  `src/lib.rs`, for a phone's touches and the desktop's mouse alike).
+- **But not on or round a button**: a press on a button is the button's,
+  as ever, and one within 4% of the screen's short side round it (mine,
+  `STICK_CLEAR_VMIN`) presses nothing and takes no stick, the finger
+  having meant the button and missed it by a little
+  (`hud::Presses::near`, `within_box`: each button's laid-out box grown by
+  the margin). The power column's bar and its number take no press, and
+  keep the stick off too (`hud::KeepsTheStickOff`), so the whole column
+  from the tick to the up arrow is the buttons'; so are the chat's
+  keyboard button and the table's board, with its Leave. Everywhere else,
+  the name plate top left among it, takes the stick.
+- **Elsewhere as it was**: the town, Bridge Wars and the other games keep
+  the stick on its own disc.
+- **Checked**: a test of the choice
+  (`in_knock_off_the_stick_is_taken_anywhere_but_round_a_button_its_middle_where_the_finger_went_down`:
+  Knock Off's alone; anywhere, right where the finger went down; not round
+  a button; a box grown by its margin) and the game's tests. **Not seen
+  running**: a hidden desktop run presses with the mouse, and the mouse
+  cannot be pressed for it without moving yours; nor on a phone.
 
 ## The evening of 2026-11-18: every turn begins at power 1
 

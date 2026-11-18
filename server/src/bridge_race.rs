@@ -20,8 +20,9 @@
 //!   falls if what was under them goes (`Game::away`).
 //! * **Out**, to the table's room: every rung as a [`Plank`] and every stick
 //!   as a [`Dynamite`], each a replicated entity of the room (`InRoom`); a
-//!   stick that blew as a [`Blasted`] with nothing to fall after it (the
-//!   rules' own: a hole, not the bridge); the computer's players where the
+//!   stick that blew as a [`Blasted`], with the rest of the bridge to fall
+//!   after it, which and when (since the evening of 2026-11-18, as Bridge
+//!   Wars'; nothing after it until then); the computer's players where the
 //!   game moves them (`Table::at`, which the table sends); the round
 //!   ([`RaceRound`]: the clock, the grants, the golden island's ring, who
 //!   won) and everyone's sticks ([`Kits`]) on the table's own entity, each
@@ -102,17 +103,20 @@ impl BridgeRace {
                     ctx.commands.entity(entity).try_despawn();
                 }
             }
-            Event::Blew { stick, at, planks, .. } => {
+            Event::Blew { stick, at, planks, later, .. } => {
                 if let Some(entity) = self.sticks.remove(&stick) {
                     ctx.commands.entity(entity).try_despawn();
                 }
+                // With the rest of the bridge to fall after it, which and
+                // when, as Bridge Wars' (since the evening of 2026-11-18):
+                // every device takes each at its time.
                 let blasted = Blasted {
                     x: at.x,
                     y: at.y,
                     z: at.z,
                     planks,
                     at: ctx.clock,
-                    later: Vec::new(),
+                    later: Blasted::later_of(&later),
                 };
                 let entity = ctx.spawn_in_room(table, blasted);
                 self.kept.push(entity);
@@ -561,7 +565,11 @@ mod tests {
         assert!(results.scores[1] > 40 && results.scores[0] == 0, "{:?}", results.scores);
         // Its bridge, a rung at a time, each in the room; its body sent
         // where it went; the round and the kits on the table's entity.
-        assert!(server.count::<Plank>() > 40, "{} rungs", server.count::<Plank>());
+        // (Thirty rungs and more, the way across being some forty: more
+        // than forty until the evening of 2026-11-18, when with grants of 8
+        // to 16 m it came to jump the last few metres now and then, 39
+        // rungs here.)
+        assert!(server.count::<Plank>() > 30, "{} rungs", server.count::<Plank>());
         let moved = server.world.get::<Spot>(bot).expect("the computer's body").translation();
         assert!(moved.distance(started) > 50.0, "{started} to {moved}");
         let shown = server.table().shown;
@@ -606,6 +614,9 @@ mod tests {
         // Their metres as their device says, given back to it should it
         // come back to the game afresh, with the grants since.
         server.ask(0, Ask::BridgeRace(rules::Ask::Metres { metres: 4.5, grants: 0 }));
+        // (What the grant brings, the round's word for it beforehand: 8 to
+        // 16 m to a team of one, since the evening of 2026-11-18.)
+        let next = server.game().round().next_of(0);
         for _ in 0..(rules::GRANT_EVERY / FRAME) as usize + 2 {
             server.frame(FRAME);
         }
@@ -614,7 +625,8 @@ mod tests {
             Tell::BridgeRace(rules::Tell::Metres { metres, grants }) => Some((*metres, *grants)),
             _ => None,
         });
-        assert_eq!(told, Some((4.5 + rules::grant_metres(2), 1)));
+        assert_eq!(told, Some((4.5 + next, 1)));
+        assert!((rules::grant_metres(2).0..=rules::grant_metres(2).1).contains(&next), "{next}");
         // A fall into the void, as their device says: the chat's line to
         // them, and a moment later stood on their island's middle again.
         server.stand(0, Vec3::new(-60.0, -40.0, -10.0));

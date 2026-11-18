@@ -1448,6 +1448,7 @@ pub(crate) struct BridgeRaceWords {
     pub to_go: String,
     pub across: String,
     pub on_island: String,
+    pub next_item: String,
     pub hold: String,
     pub hold_broken: String,
     pub granted: String,

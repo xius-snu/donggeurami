@@ -463,8 +463,16 @@ struct WelcomeDue(bool);
 #[derive(Component, Default)]
 pub(crate) struct TakesPress;
 
+/// Something on the screen that takes no press itself, round which a
+/// finger still does not take the stick where the stick is taken anywhere
+/// (Knock Off's: `crate::stick_anywhere`): the bar of power between its up
+/// and down buttons, which a finger meant for one of them lands on.
+#[derive(Component)]
+pub(crate) struct KeepsTheStickOff;
+
 /// Where the things that take a press for themselves are on the screen, as
-/// they were last laid out.
+/// they were last laid out; and those that keep the stick off
+/// ([`KeepsTheStickOff`]).
 #[derive(SystemParam)]
 pub(crate) struct Presses<'w, 's> {
     takers: Query<
@@ -476,6 +484,16 @@ pub(crate) struct Presses<'w, 's> {
             &'static InheritedVisibility,
         ),
         With<TakesPress>,
+    >,
+    keep_off: Query<
+        'w,
+        's,
+        (
+            &'static ComputedNode,
+            &'static UiGlobalTransform,
+            &'static InheritedVisibility,
+        ),
+        (With<KeepsTheStickOff>, Without<TakesPress>),
     >,
 }
 
@@ -489,6 +507,27 @@ impl Presses<'_, '_> {
             .iter()
             .any(|(node, place, shown)| shown.get() && node.contains_point(*place, pos))
     }
+
+    /// Whether `pos`, in logical window pixels, is on or within `margin`
+    /// logical pixels of something showing that takes a press, or that
+    /// keeps the stick off ([`KeepsTheStickOff`]): where a finger may have
+    /// meant a button and missed it by a little (since 2026-11-18, for
+    /// Knock Off's stick, which is taken anywhere else). Each by the box it
+    /// was laid out in, grown by the margin all round.
+    pub(crate) fn near(&self, window: &Window, pos: Vec2, margin: f32) -> bool {
+        let scale = window.scale_factor();
+        let (pos, margin) = (pos * scale, margin * scale);
+        self.takers.iter().chain(self.keep_off.iter()).any(|(node, place, shown)| {
+            shown.get() && within_box(place.translation, node.size() * 0.5, pos, margin)
+        })
+    }
+}
+
+/// Whether `pos` is within the box of half-size `half` round `middle`,
+/// grown by `margin` all round.
+pub(crate) fn within_box(middle: Vec2, half: Vec2, pos: Vec2, margin: f32) -> bool {
+    let off = (pos - middle).abs();
+    off.x <= half.x + margin && off.y <= half.y + margin
 }
 
 /// A dialog is up, over everything else: nothing but its own buttons can be

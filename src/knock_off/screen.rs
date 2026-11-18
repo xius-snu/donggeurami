@@ -223,10 +223,14 @@ pub(super) fn spawn_bar(commands: &mut Commands, _assets: &AssetServer, images: 
         let (right, bottom, size) = READY;
         round.spawn((ReadyButton, PowerColumn, glyph_button(tick, size, false, hud::beside_the_jump(right, bottom))));
         // The bar, its ten steps from the bottom up.
+        // (Neither the bar nor its number takes a press, and neither takes
+        // the stick, which is taken anywhere else: a finger on them meant
+        // the arrows, `crate::stick_anywhere`.)
         let (right, bottom) = BAR;
         round
             .spawn((
                 PowerColumn,
+                hud::KeepsTheStickOff,
                 Node {
                     width: Val::VMin(BAR_SIZE.0),
                     height: Val::VMin(BAR_SIZE.1),
@@ -258,6 +262,7 @@ pub(super) fn spawn_bar(commands: &mut Commands, _assets: &AssetServer, images: 
         round
             .spawn((
                 PowerColumn,
+                hud::KeepsTheStickOff,
                 Node {
                     width: Val::VMin(BAR_SIZE.0 + 5.0),
                     justify_content: JustifyContent::Center,

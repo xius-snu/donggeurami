@@ -10,11 +10,79 @@
 
 ## Contents
 
-1. The evening of 2026-11-18: a sea and a ring, everything dropped on a death, the shops sooner, zombies red when hit, treasure chests
-2. At the merge, 2026-11-18: the headlines stroked
-3. 2026-11-18, later still: what a play-tester found, made clearer
-4. 2026-11-18, later: sixteen things a check of it found, mended
-5. Since 2026-11-18 Last Stand is a game people play, online and offline
+1. Later on the evening of 2026-11-18: chests broken open by blows, nothing over the pads, nothing under the plate before the first wave
+2. The evening of 2026-11-18: a sea and a ring, everything dropped on a death, the shops sooner, zombies red when hit, treasure chests
+3. At the merge, 2026-11-18: the headlines stroked
+4. 2026-11-18, later still: what a play-tester found, made clearer
+5. 2026-11-18, later: sixteen things a check of it found, mended
+6. Since 2026-11-18 Last Stand is a game people play, online and offline
+
+## Later on the evening of 2026-11-18: chests broken open by blows, nothing over the pads, nothing under the plate before the first wave
+
+Hajun: "for last stand minigame, the treasure chest, instead of
+proximitychatbubble just make it so they have some hp (enough to 1 tap
+with aura sword, 2 tap with other swords, 3 tap with fist) and they
+explode like a player dying of that item contents. also remove the
+"Silver" "Silver, Gold" "Silver, Gold, Sapphire" those kind of texts above
+the generators, as well as remove the "Red stand: items - Blue stand:
+Ugrades" text below the wave number in the beginning." **`PROTOCOL_VERSION`
+24** with Bridge Race's (`docs/bridge-race.md`); the server and APK 43.
+
+- **A chest takes blows** (`Game::hit_chest`, `CHEST_HP` 6, `chest_blow`):
+  the aura sword's takes all 6, the basic and the silver sword's 3, a
+  fist's 2: one blow, two, three. By the blow and not the sword's damage
+  (no one number of health comes out so for 14, 22 and 34 damage and a
+  fist), and the team's sharpness counts nothing on it (mine). A blow
+  counts from where your device last said you stood within 6.5 m
+  (`OPEN_REACH`), no oftener than a blow on a zombie does (`HURT_TIME`,
+  half a second), and seen again if unseen. It lands as a punch lands on
+  a body: the nearest chest in the range the file's `melee` draws in front
+  of you, a body's height up or down (`finds::struck`, `CHEST_RADIUS`
+  0.55 m), read off every punch you throw (`crate::Swung`, which Bridge
+  Wars' anchors go by too); online asked of the server
+  (`Ask::Hit`), offline the game's own.
+- **Struck and standing, it shakes** (`finds::shake`, `strike_chest`:
+  squashed down and spread wide and rocked about its upright, less and
+  less, a quarter of a second; mine). Online the chest is sent again with
+  what the blows have taken (`Chest::hits`), every device shaking it.
+- **Broken, it bursts like someone dying** (`Game::break_chest`, `spill`):
+  it pops and is gone, and what was in it is thrown out round it to lie
+  there, as the dead's things are: a thing for each one, out in a ring as
+  wide as it is worth, onto the land only (a chest out in the sea throws
+  it from the sand nearest it), for whoever walks into it; a sword lying
+  there, for whoever holds a lesser one. Nothing goes into a purse at
+  once any more (until now it did, and "+4 Gold" rose over the chest: off
+  behind `finds::FOUND_WORDS`, the server still telling it,
+  `Tell::Found`). With nowhere for it to lie, it is the breaker's.
+- **What a chest holds**: the same, but nothing for a button (a fireball
+  or a healing potion, one roll in sixteen, which no ground holds): gold
+  in its place (mine).
+- **The bubble is off, not gone** (`finds::BUBBLE_OPENS`): true puts it
+  back over a chest, its tap opening the chest at once (`Game::open`,
+  `Ask::Open`, kept).
+- **Nothing over the generators' pads** ("Silver", "Lvl 2: silver, gold,
+  sapphire"...): off behind `looks::PAD_WORDS_SHOWN`.
+- **Nothing under the plate in the break before the first wave**, where
+  "Red stand: items · Blue stand: team upgrades" was (mine, since that
+  morning): off behind `screen::SAYS_THE_SHOPS`, the line empty then;
+  "Get ready" in the last seconds as before, and later breaks as before.
+- **Tests**: the rules' chest test rewritten (three blows with a fist, two
+  with the basic and the silver sword, one with the aura; none sooner than
+  half a second after the last; none from across the map; the things
+  thrown out, all of them, on the land within reach, and walked into; a
+  sword one better lying there; nothing for a button over 400 chests);
+  the device's (a punch strikes the nearest chest in front within its
+  range, none behind, beside, too far or a body's height up; the plate's
+  line before the first wave empty).
+- **Seen hidden** (offline, a fresh game by day, a throwaway driver taken
+  out again): "Next wave in 0:17" with nothing under it, nothing over the
+  pads; a chest come at 78 s, 32 m out on the sand; stood 1.3 m from it,
+  facing it, bare-handed, three presses of the punch through the game's
+  own punch (the fist's press, the swing, `finds::struck`,
+  `Game::hit_chest`): taken to 2, to 4, and broken; five things of gold
+  thrown out round it, enlarged; walked into, 4 gold in the purse. The
+  shake is not to be judged from a still. **Not seen**: a chest struck
+  online, nor on a phone; a chest in the sea broken.
 
 ## The evening of 2026-11-18: a sea and a ring, everything dropped on a death, the shops sooner, zombies red when hit, treasure chests
 

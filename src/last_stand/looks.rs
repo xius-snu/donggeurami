@@ -1460,6 +1460,12 @@ fn splats(
 #[derive(Component)]
 struct PadWords(usize);
 
+/// Whether anything is written over the generators' pads ("Silver", "Lvl
+/// 2: silver, gold, sapphire"...): not since the evening of 2026-11-18
+/// (Hajun: "remove the "Silver" "Silver, Gold" "Silver, Gold, Sapphire"
+/// those kind of texts above the generators"); true writes them again.
+const PAD_WORDS_SHOWN: bool = false;
+
 /// What the generators make, at `level` (the team's Generator line): silver
 /// alone; then the level and everything they make, the silver with what
 /// each step adds, gold and sapphire; with amethyst too, all four; and past
@@ -1526,7 +1532,7 @@ fn over_the_pads(
         }
         return;
     }
-    let here = in_sight(&me, &stand, &announced) && stand.playing();
+    let here = PAD_WORDS_SHOWN && in_sight(&me, &stand, &announced) && stand.playing();
     let said = pad_words(stand.upgrades.generator);
     let view = cameras.single().ok().zip(windows.single().ok());
     for (pad, mut shown, mut place, node, mut text) in &mut words {
