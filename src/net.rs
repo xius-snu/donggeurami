@@ -843,9 +843,7 @@ fn tell_where_i_am(
         *sent = Sent::default();
         return;
     }
-    let mut spot = spot_of(at, riding, &cars);
-    spot.still = sent.was.is_some_and(|was| was.same(&spot));
-    sent.was = Some(Spot { still: spot.still, ..spot });
+    let spot = mark_still(&mut sent.was, spot_of(at, riding, &cars));
     sent.since += time.delta_secs();
     if sent.since < (1.0 / TICK_HZ) as f32 {
         return;
@@ -864,6 +862,19 @@ fn tell_where_i_am(
         arrival: online.arrival,
         spot,
     });
+}
+
+/// `spot`, where you are this frame (read unmarked), marked still if it is
+/// where you were the frame before (`was`); and this frame's kept in `was`
+/// for the next, as it was read, never marked: `same` compares the mark,
+/// so one kept marked made the next frame's not the same, and someone
+/// standing was marked still and then not, frame by frame, and sent on and
+/// on, some 7 times a second (found by Blend In's builder, where it told a
+/// person from the town's own; fixed 2026-11-18).
+fn mark_still(was: &mut Option<Spot>, mut spot: Spot) -> Spot {
+    spot.still = was.is_some_and(|was| was.same(&spot));
+    *was = Some(Spot { still: false, ..spot });
+    spot
 }
 
 // ------------------------------------------------------- the town's clock
@@ -1205,6 +1216,22 @@ mod tests {
     /// Where a body off the car is, at `then`.
     fn x_at(updates: &VecDeque<(f64, Spot)>, then: f64) -> f32 {
         pose_at(updates, then, |_, _| None).unwrap().0.translation.x
+    }
+
+    #[test]
+    fn someone_standing_is_still_frame_after_frame() {
+        // Walking, then standing for a second at 120 frames a second: still
+        // from the second frame stood on, every frame, never still and then
+        // not (which kept a standing body sent on and on).
+        let mut was = None;
+        for x in [0.0, 0.1, 0.2] {
+            assert!(!mark_still(&mut was, spot(x, false)).still, "{x}");
+        }
+        for frame in 0..120 {
+            assert!(mark_still(&mut was, spot(0.2, false)).still, "frame {frame}");
+        }
+        // And on the move again, not.
+        assert!(!mark_still(&mut was, spot(0.3, false)).still);
     }
 
     #[test]
