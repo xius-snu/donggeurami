@@ -80,6 +80,7 @@ mod blend_in;
 mod knock_off;
 mod bridge_race;
 mod last_stand;
+#[cfg(test)] mod race_bake;
 use island::{Island, Islands, Venue};
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 use bevy::input::mouse::{MouseMotion, MouseScrollUnit, MouseWheel};
