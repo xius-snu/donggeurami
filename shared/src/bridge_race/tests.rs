@@ -535,6 +535,20 @@ fn run(game: &mut Game, secs: f32) -> Vec<Event> {
     events
 }
 
+/// Has `count` grants come now, ahead of the clock, each what it would give
+/// as things stand, to people alone (none of the computer's, and no
+/// sticks): for laying a long way as a person in a test without playing
+/// out the time the metres for it take, the game taking no rung past what
+/// someone has been given ([`Game::most_laid`]). The next grant by the
+/// clock comes once the clock has caught up.
+fn grants_now(game: &mut Game, count: u16) {
+    for _ in 0..count {
+        game.grants += 1;
+        let share = [game.share(0), game.share(1)];
+        game.shares.push(share);
+    }
+}
+
 /// Lays `planks` rungs' worth of `seat`'s team's way across, as the
 /// person in `seat` would, walking out along it: rungs from just inside its
 /// island's shore, each a plank on, as if they stood a little behind each.
@@ -634,6 +648,7 @@ fn sticks_come_with_the_grants_at_about_one_in_five_and_nobody_holds_more_than_t
 fn a_stick_takes_the_planks_its_blast_reaches_and_no_more_and_knocks_only_the_other_team() {
     let mut game = people(4, 1);
     // Red's way laid twenty planks out from its island.
+    grants_now(&mut game, 4);
     let span = lay_across(&mut game, 0, 0, 20);
     let laid = game.nav().planks().count();
     assert_eq!(laid, 20);
@@ -809,7 +824,8 @@ fn a_team_wins_with_every_one_of_it_on_the_golden_island_together_for_three_seco
     let events = run(&mut game, HOLD + 0.2);
     assert!(events.contains(&Event::Over { winner: Some(0), finish: Finish::Held }));
     assert_eq!(game.round().winner, Some(0));
-    assert!(game.round().over && !game.playing());
+    assert!(game.round().over() && !game.playing());
+    assert_eq!(game.round().finish, Some(Finish::Held));
     let (places, scores, total) = game.outcome().expect("over");
     assert_eq!(places, [0, 1, 0, 1]);
     assert_eq!(scores, [0; 4]);
@@ -833,6 +849,8 @@ fn a_team_wins_with_every_one_of_it_on_the_golden_island_together_for_three_seco
     let events = run(&mut game, HOLD + 0.2);
     assert!(events.contains(&Event::Over { winner: None, finish: Finish::Held }));
     assert_eq!(game.outcome().expect("over").0, [0, 0]);
+    // Which the round says, for every device to say it so.
+    assert_eq!((game.round().winner, game.round().finish), (None, Some(Finish::Held)));
 }
 
 /// Stands the computer's player in `seat` `at`, there and then.
@@ -948,6 +966,7 @@ fn one_of_the_computer_s_left_on_the_other_team_s_bridge_lays_none_of_it_and_jum
     // its own team's way, which nobody has laid.
     let mut game = Game::new(2, &[true, false], 15);
     game.begin();
+    grants_now(&mut game, 9);
     let span = game.nav().grid().span(Region::Team(0), Region::Middle, 0.0).expect("red's way");
     let short_of = |rung: usize| span.rung(rung).distance(GOLDEN) - ISLAND_RADIUS;
     let last = (0..=span.planks()).take_while(|&rung| short_of(rung) >= 9.0).last().expect("rungs");
@@ -992,6 +1011,7 @@ fn at_the_time_limit_more_on_the_golden_island_wins_or_the_bridge_further_across
     assert_eq!(game.round().left, 0);
     // As many: the bridge further across.
     let mut game = people(2, 5);
+    grants_now(&mut game, 1);
     lay_across(&mut game, 1, 0, 12);
     lay_across(&mut game, 0, 0, 8);
     let round = game.step(FRAME);
@@ -1013,6 +1033,7 @@ fn at_the_time_limit_more_on_the_golden_island_wins_or_the_bridge_further_across
     assert_eq!(game.outcome().expect("over").0, [0, 0]);
     // A bridge joined to the golden island is the whole way across.
     let mut game = people(2, 5);
+    grants_now(&mut game, 8);
     let span = lay_across(&mut game, 0, 0, usize::MAX);
     game.step(FRAME);
     assert_eq!(game.round().across[0], 100, "{} planks", span.planks());
@@ -1097,13 +1118,18 @@ const PLANK_TOP_AT_LIFT: f32 = crate::nav::PLANK_TOP;
 #[test]
 fn a_team_with_nobody_left_in_the_game_has_lost_it() {
     let mut game = people(4, 8);
+    assert_eq!(game.round().players, [2, 2]);
     game.leave(1);
     run(&mut game, 1.0);
     assert!(game.playing(), "blue has another");
-    // Blue's other left too: red wins it.
+    // The round says how many of each are still in it: the plate's "1/1
+    // on the island" for blue now.
+    assert_eq!(game.round().players, [2, 1]);
+    // Blue's other left too: red wins it, which the round says.
     game.leave(3);
     let events = run(&mut game, FRAME);
     assert!(events.contains(&Event::Over { winner: Some(0), finish: Finish::Left }));
+    assert_eq!((game.round().winner, game.round().finish, game.round().players), (Some(0), Some(Finish::Left), [2, 0]));
     // Gone, they count for nothing on the golden island: the one of red
     // left there holds it for red.
     let mut game = people(4, 8);
@@ -1119,7 +1145,9 @@ fn the_round_goes_small_and_whole() {
     game.begin();
     let round = game.round();
     assert_eq!(round.left, PLAY_SECS as u16);
-    assert_eq!((round.grants, round.hold, round.on_gold, round.winner, round.over, round.across), (0, [0, 0], [0, 0], None, false, [0, 0]));
+    assert_eq!((round.grants, round.hold, round.on_gold, round.winner, round.finish, round.across), (0, [0, 0], [0, 0], None, None, [0, 0]));
+    assert!(!round.over());
+    assert_eq!(round.players, [2, 2]);
     assert_eq!(round.share, [30, 30], "3 m each, two against two");
     assert_eq!(round.share_of(1), grant_metres(4));
     // As long as it ever is.
@@ -1130,11 +1158,12 @@ fn the_round_goes_small_and_whole() {
         hold: [10, 10],
         on_gold: [2, 2],
         winner: Some(1),
-        over: true,
+        finish: Some(Finish::Left),
         across: [100, 100],
+        players: [u8::MAX, u8::MAX],
     };
     let bytes = postcard::to_allocvec(&longest).unwrap();
-    assert!(bytes.len() <= 18, "{} bytes", bytes.len());
+    assert!(bytes.len() <= 20, "{} bytes", bytes.len());
     assert_eq!(postcard::from_bytes::<RaceRound>(&bytes).unwrap(), longest);
     // As long as it is in a game, won, the clock at its longest.
     let won = RaceRound {
@@ -1144,14 +1173,15 @@ fn the_round_goes_small_and_whole() {
         hold: [10, 10],
         on_gold: [2, 2],
         winner: Some(1),
-        over: true,
+        finish: Some(Finish::Held),
         across: [100, 100],
+        players: [2, 2],
     };
     let most = postcard::to_allocvec(&won).unwrap().len();
-    assert!(most <= 15, "{most} bytes");
+    assert!(most <= 17, "{most} bytes");
     // And as it most often is.
     let bytes = postcard::to_allocvec(&round).unwrap();
-    assert!(bytes.len() <= 14, "{} bytes", bytes.len());
+    assert!(bytes.len() <= 15, "{} bytes", bytes.len());
     println!("the round: {} bytes as it begins, {most} at the most in a game, {} at the most it could be", bytes.len(), postcard::to_allocvec(&longest).unwrap().len());
     // What a device says and is told, too.
     for ask in [Ask::Nothing, Ask::Metres { metres: 12.5, grants: 3 }] {
@@ -1237,13 +1267,145 @@ fn time_called_ends_a_game_being_played_by_the_time_limit_s_own_rule() {
     assert_eq!(game.result(), None);
     // Begun, red's bridge further across: red wins it, by the time.
     game.begin();
+    grants_now(&mut game, 1);
     lay_across(&mut game, 0, 0, 12);
     run(&mut game, 1.0);
     game.call_time();
     let events = run(&mut game, FRAME);
     assert!(events.contains(&Event::Over { winner: Some(0), finish: Finish::Time }), "{events:?}");
     assert!(!game.playing());
+    // The round says so: time, with the clock not yet run out.
+    assert_eq!((game.round().winner, game.round().finish), (Some(0), Some(Finish::Time)));
+    assert!(game.round().left > 0);
     // And once over, again is nothing.
     game.call_time();
     assert!(run(&mut game, FRAME).is_empty());
+}
+
+#[test]
+fn a_person_whose_device_has_gone_counts_for_nothing_on_the_golden_island_and_falls_as_they_would_have() {
+    // One against one of people, red's on the golden island: holding it.
+    let mut game = people(2, 16);
+    on_gold(&mut game, 0, 2.0);
+    let events = run(&mut game, 1.0);
+    assert!(events.contains(&Event::Holding { team: 0, holding: true }));
+    // Red's device gone, its body standing there with nothing to knock it
+    // off: no longer on it, the ring empty, and nobody wins by it.
+    game.away(0, true);
+    let events = run(&mut game, FRAME);
+    assert!(events.contains(&Event::Holding { team: 0, holding: false }));
+    assert_eq!((game.round().on_gold, game.round().hold), ([0, 0], [0, 0]));
+    assert!(game.standing(0), "standing there all the same");
+    run(&mut game, HOLD + 1.0);
+    assert!(game.playing(), "{:?}", game.result());
+    // Back, it is on it again, and holds it, and wins.
+    game.away(0, false);
+    let events = run(&mut game, HOLD + 0.2);
+    assert!(events.contains(&Event::Over { winner: Some(0), finish: Finish::Held }), "{:?}", game.result());
+    // Nor does it count at the time limit: red's there and gone, blue's at
+    // home, neither bridge out, a draw (with red's device there, red's).
+    let mut game = people(2, 16);
+    on_gold(&mut game, 0, 2.0);
+    game.sync(1, Vec3::new(ISLANDS[1].x, LAND_TOP, ISLANDS[1].y), 0.0);
+    game.away(0, true);
+    run(&mut game, PLAY_SECS + 0.5);
+    assert_eq!(game.result().map(|(winner, finish, _)| (winner, finish)), Some((None, Finish::Time)));
+    // Gone standing on a bridge, it stands; last said under it, on its way
+    // down into the void, or over the void beside it, it falls.
+    let mut game = people(2, 16);
+    grants_now(&mut game, 1);
+    let span = lay_across(&mut game, 0, 0, 6);
+    let on = span.rung(3);
+    game.sync(0, Vec3::new(on.x, LAND_TOP, on.y), 0.0);
+    game.away(0, true);
+    run(&mut game, 1.0);
+    assert!(game.standing(0), "fell from the bridge it stood on");
+    game.sync(0, Vec3::new(on.x, LAND_TOP - 3.0, on.y), 0.0);
+    assert!(game.nav().ground(on).is_some(), "the bridge is ground there");
+    assert!(run(&mut game, FRAME).contains(&Event::Fell { seat: 0, by: None }));
+    // Stood up again on its island, gone or not, it stays.
+    run(&mut game, RESPAWN + 0.2);
+    assert!(game.standing(0));
+    let beside = on + (span.rung(4) - span.rung(3)).normalize().perp() * 12.0;
+    assert!(game.nav().ground(beside).is_none(), "{beside} is ground");
+    game.sync(0, Vec3::new(beside.x, LAND_TOP, beside.y), 0.0);
+    assert!(run(&mut game, FRAME).contains(&Event::Fell { seat: 0, by: None }));
+}
+
+#[test]
+fn a_rung_past_the_metres_a_person_has_been_given_is_not_taken_nor_one_laid_a_while_after_they_fell() {
+    // A device that says it has more than it was given, laying straight
+    // across at the start: taken as far as the ten metres it began with,
+    // and what its own bridge lays past them, and no further.
+    let mut game = people(2, 17);
+    let span = game.nav().grid().span(Region::Team(0), Region::Middle, 0.0).expect("red's way");
+    let lay = |game: &mut Game, index: usize| {
+        let at = span.rung(index);
+        game.sync(0, Vec3::new(at.x, LAND_TOP, at.y), span.heading());
+        game.rung(0, 0, index as u16, at, span.heading_at(index))
+    };
+    let taken = (0..=span.planks()).take_while(|&index| lay(&mut game, index)).last().expect("rungs");
+    let laid = game.laid()[0];
+    assert!(taken < span.planks() && laid > START_METRES, "{laid} m laid in {taken} rungs");
+    assert!(laid <= START_METRES + SPARE_EACH + SPARE_ONCE, "{laid} m laid in {taken} rungs");
+    assert!(!lay(&mut game, taken + 1), "and again");
+    // A grant comes: on as far as it gives.
+    run(&mut game, GRANT_EVERY + 0.1);
+    assert!(lay(&mut game, taken + 1));
+    // Fallen: the plank in hand as they fell, which their device sends
+    // just after, is taken; one laid a while after, until they stand
+    // again, is not.
+    game.fell(0);
+    assert!(lay(&mut game, taken + 2));
+    run(&mut game, FALLEN_RUNG + 0.1);
+    assert!(!lay(&mut game, taken + 3));
+    run(&mut game, RESPAWN);
+    assert!(game.standing(0));
+    assert!(lay(&mut game, taken + 3));
+}
+
+#[test]
+fn every_rung_a_device_lays_on_what_it_is_given_is_taken_however_often_it_runs_out() {
+    // A device laying as the game's own bridge lays, on what it is given
+    // and no more: what it has laid a plank at a time, and as it runs out
+    // the plank in hand fixed a step ahead of you whatever is left (1.05 m
+    // past what it has), at the start and at every grant, to the end of a
+    // game, two against two and one against one: every rung of it taken.
+    for (seats, grants) in [(4, grants_by(PLAY_SECS - 1.0)), (2, 14)] {
+        let mut game = people(seats, 18);
+        let way = (GOLDEN - ISLANDS[0]).normalize();
+        let shore = ISLANDS[0] + way * (ISLAND_RADIUS - 0.5);
+        let mut index = 0u16;
+        let mut along = 0.0;
+        let mut lay = |game: &mut Game, along: f32| {
+            let at = shore + way * along;
+            game.sync(0, Vec3::new(at.x, LAND_TOP, at.y), 0.0);
+            let taken = game.rung(0, 0, index, at, 0.0);
+            index += 1;
+            taken
+        };
+        assert!(lay(&mut game, along));
+        let mut metres = START_METRES;
+        for grant in 0..=grants {
+            if grant > 0 {
+                while game.round().grants < grant {
+                    game.step(FRAME);
+                }
+                metres += game.round().share_of(0);
+            }
+            while metres >= crate::nav::PLANK_SPACING {
+                along += crate::nav::PLANK_SPACING;
+                metres -= crate::nav::PLANK_SPACING;
+                assert!(lay(&mut game, along), "{seats} seats, grant {grant}: a plank at {along} m");
+            }
+            along += 1.05;
+            metres = 0.0;
+            assert!(lay(&mut game, along), "{seats} seats, grant {grant}: the plank in hand at {along} m");
+            // Back on the island to wait for the next (out on the golden
+            // island, one alone of a team would hold it and win).
+            game.sync(0, Vec3::new(ISLANDS[0].x, LAND_TOP, ISLANDS[0].y), 0.0);
+        }
+        assert!(game.playing());
+        println!("{seats} seats: {:.1} m laid on {grants} grants", game.laid()[0]);
+    }
 }

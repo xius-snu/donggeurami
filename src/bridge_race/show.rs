@@ -34,7 +34,9 @@
 //!
 //! Everything here is the table's (`table::InTable`) or the fight's
 //! (`arena::InArena`), and goes with it; and everything that runs every
-//! frame writes only what has changed.
+//! frame writes only what has changed. The teams' colours are the file's
+//! (`colours.arena.team_red`, `team_blue`), drawn in the bars, the ring and
+//! "Hold!" as solid as it says (`colours.bridge_race`'s strengths).
 
 use bevy::asset::RenderAssetUsages;
 use bevy::light::{NotShadowCaster, NotShadowReceiver};
@@ -48,8 +50,8 @@ use crate::builder::DIALOG_LAYER;
 use crate::hud::{self, Picture};
 use crate::island::Venue;
 use crate::range;
-use crate::table::{InTable, TableView};
-use crate::ui::{UiChanged, fill, ui};
+use crate::table::InTable;
+use crate::ui::{BridgeRaceColours, UiChanged, fill, ui};
 use crate::{Dead, Player, ThirdPersonCamera};
 
 /// Sizes on the plate, in shares of the short side of the screen: the
@@ -207,7 +209,7 @@ pub(super) fn spawn(commands: &mut Commands, images: &mut Assets<Image>, picture
                         ))
                         .with_children(|sides| {
                             for side in 0..2u8 {
-                                let ink = colours.arena.team(side);
+                                let ink = BridgeRaceColours::solid(colours.arena.team(side), colours.bridge_race.bar_strength);
                                 sides
                                     .spawn((
                                         Node {
@@ -239,7 +241,7 @@ pub(super) fn spawn(commands: &mut Commands, images: &mut Assets<Image>, picture
                                                         height: Val::Percent(100.0),
                                                         ..default()
                                                     },
-                                                    BackgroundColor(ink.with_alpha(1.0)),
+                                                    BackgroundColor(ink),
                                                     Pickable::IGNORE,
                                                 ));
                                             });
@@ -302,15 +304,17 @@ pub(super) fn spawn(commands: &mut Commands, images: &mut Assets<Image>, picture
     ));
 }
 
-/// What the plate says of `side`'s way across, as the round has it, at a
-/// table of `seats`: how many of the team stand on the golden island, if
-/// any do; across, if its bridge is; or how many metres of void it still
+/// What the plate says of `side`'s way across, as the round has it: how
+/// many of the team stand on the golden island, if any do, of its
+/// `players` still in the game (of its seats, until 2026-11-18, the same
+/// day, so that "1/2" stayed up under a ring filling for the one left of
+/// two); across, if its bridge is; or how many metres of void it still
 /// has to bridge.
-fn progress_words(side: usize, across: u8, on_gold: u8, seats: usize) -> String {
+fn progress_words(side: usize, across: u8, on_gold: u8, players: u8) -> String {
     let file = ui();
     let words = &file.words.bridge_race;
     if on_gold > 0 {
-        let of = (seats / 2).max(1).to_string();
+        let of = players.max(on_gold).max(1).to_string();
         fill(&words.on_island, &[("count", &on_gold.to_string()), ("of", &of)])
     } else if across >= 100 {
         words.across.clone()
@@ -327,7 +331,6 @@ fn progress_words(side: usize, across: u8, on_gold: u8, seats: usize) -> String 
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub(super) fn plate(
     racing: Res<Racing>,
-    view: Res<TableView>,
     changed: Res<UiChanged>,
     mut plates: Query<&mut Visibility, With<Plate>>,
     mut clocks: Query<&mut Text, (With<PlateClock>, Without<ProgressWords>)>,
@@ -367,10 +370,9 @@ pub(super) fn plate(
             bar.width = width;
         }
     }
-    let seats = view.members.len();
     for (side, mut text) in &mut said {
         let side = usize::from(side.0);
-        let words = progress_words(side, round.across[side], round.on_gold[side], seats);
+        let words = progress_words(side, round.across[side], round.on_gold[side], round.players[side]);
         if text.0 != words {
             text.0 = words;
         }
@@ -427,7 +429,7 @@ pub(super) fn ring(
         return;
     };
     if rings.is_empty() {
-        let colours = ui().colours.arena;
+        let colours = ui().colours;
         *drawn = [0; 2];
         commands
             .spawn((
@@ -447,7 +449,7 @@ pub(super) fn ring(
                             mesh: mesh.clone(),
                         },
                         Mesh3d(mesh),
-                        MeshMaterial3d(materials.add(range::look(colours.team(side).with_alpha(0.92)))),
+                        MeshMaterial3d(materials.add(range::look(BridgeRaceColours::solid(colours.arena.team(side), colours.bridge_race.ring_strength)))),
                         // Red's over blue's, should both hold at once.
                         Transform::from_xyz(0.0, 0.004 * f32::from(1 - side), 0.0),
                         Visibility::Hidden,
@@ -499,7 +501,7 @@ pub(super) fn hold_words(
     let Ok((mut text, mut ink, mut shown, mut place, node)) = words.single_mut() else {
         return;
     };
-    let holding = racing.0.as_ref().and_then(|race| race.round.as_ref().filter(|round| race.begun && !round.over));
+    let holding = racing.0.as_ref().and_then(|race| race.round.as_ref().filter(|round| race.begun && !round.over()));
     let held = holding.and_then(|round| (0..2u8).filter(|&side| round.hold[usize::from(side)] > 0).max_by_key(|&side| round.hold[usize::from(side)]).map(|side| (side, round.hold[usize::from(side)])));
     let point = held.and_then(|_| on_the_screen(&cameras, Vec3::new(GOLDEN.x, LIFT, GOLDEN.y) + HOLD_AT));
     let (Some((side, tenths)), Some(point), Ok(window)) = (held, point, windows.single()) else {
@@ -516,7 +518,7 @@ pub(super) fn hold_words(
     if text.0 != said {
         text.0 = said;
     }
-    let colour = file.colours.arena.team(side).with_alpha(1.0);
+    let colour = BridgeRaceColours::solid(file.colours.arena.team(side), file.colours.bridge_race.hold_strength);
     if ink.0 != colour {
         ink.0 = colour;
     }
@@ -802,9 +804,25 @@ mod tests {
     fn the_plate_says_how_far_a_bridge_has_to_go_or_that_it_is_across_or_who_stands_there() {
         // Nobody across and nothing laid: the whole way.
         let whole = the_way_across(0);
-        assert_eq!(progress_words(0, 0, 0, 4), fill(&ui().words.bridge_race.to_go, &[("metres", &format!("{:.0}", whole.ceil()))]));
-        assert_eq!(progress_words(1, 100, 0, 4), ui().words.bridge_race.across);
-        assert_eq!(progress_words(1, 100, 1, 4), fill(&ui().words.bridge_race.on_island, &[("count", "1"), ("of", "2")]));
-        assert_eq!(progress_words(0, 40, 1, 2), fill(&ui().words.bridge_race.on_island, &[("count", "1"), ("of", "1")]));
+        assert_eq!(progress_words(0, 0, 0, 2), fill(&ui().words.bridge_race.to_go, &[("metres", &format!("{:.0}", whole.ceil()))]));
+        assert_eq!(progress_words(1, 100, 0, 2), ui().words.bridge_race.across);
+        assert_eq!(progress_words(1, 100, 1, 2), fill(&ui().words.bridge_race.on_island, &[("count", "1"), ("of", "2")]));
+        assert_eq!(progress_words(0, 40, 1, 1), fill(&ui().words.bridge_race.on_island, &[("count", "1"), ("of", "1")]));
+        // One of two gone for good, the one left there is all of the team.
+        assert_eq!(progress_words(1, 100, 1, 1), fill(&ui().words.bridge_race.on_island, &[("count", "1"), ("of", "1")]));
+    }
+
+    #[test]
+    fn the_teams_colours_are_drawn_as_solid_as_the_file_says_and_no_more() {
+        // The file's strengths, and the teams' own colour under them.
+        let colours = ui().colours;
+        let red = colours.arena.team(0);
+        let bar = BridgeRaceColours::solid(red, colours.bridge_race.bar_strength);
+        assert_eq!(bar.alpha(), colours.bridge_race.bar_strength.clamp(0.0, 1.0));
+        assert_eq!(bar.with_alpha(1.0), red.with_alpha(1.0), "the team's own colour");
+        // Out of 0 to 1, held to it; no number, all of it.
+        assert_eq!(BridgeRaceColours::solid(red, 3.0).alpha(), 1.0);
+        assert_eq!(BridgeRaceColours::solid(red, -1.0).alpha(), 0.0);
+        assert_eq!(BridgeRaceColours::solid(red, f32::NAN).alpha(), 1.0);
     }
 }

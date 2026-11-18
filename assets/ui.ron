@@ -450,6 +450,16 @@
             accent: "#ffd34d",
             bar_back: "#00000059",
             granted: "#ffffff",
+            // How solid each team's colour (arena.team_red and team_blue,
+            // above, kept faint for the names over heads) is drawn in what
+            // the race draws of it, whatever those say: 1 is all of it, 0
+            // none of it. Its bar on the plate top centre; the ring round
+            // the golden island as the team holds it, a little see-through,
+            // so that the island's gold band shows under it; and "Hold! 2"
+            // over the island.
+            bar_strength: 1.0,
+            ring_strength: 0.92,
+            hold_strength: 1.0,
         ),
 
         // Last Stand's: its accent, the orange of a fire kept going.
@@ -897,15 +907,19 @@
             red: "Red",
             blue: "Blue",
             // Across the screen as the race begins, with your team over it;
-            // and as it ends: who won ({team}), or a draw, with how it went
-            // for you over it, or that the time ran out.
+            // and as it ends: who won ({team}), or a draw, with how it came
+            // to an end over it: your team held the golden island first, or
+            // the other did, or both teams at once; the time ran out; or
+            // every one of a team ({team}) left the race.
             go: "Go!",
             your_team: "You are on {team}",
             wins: "{team} wins!",
             draw: "Draw",
             won: "Your team got there first!",
             lost: "The other team got there first",
+            together: "Both teams got there at once",
             times_up: "Time's up!",
+            team_left: "{team} left the race",
             // On the plate top centre, under each team's bar: how far its
             // bridge still has to go, that it is across, or how many of the
             // team stand on the golden island ({count} of {of}).

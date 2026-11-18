@@ -13,7 +13,169 @@
 
 ## Contents
 
-1. Since 2026-11-18 Bridge Race is played at its tables, online and offline, to the golden island
+1. 2026-11-18, the same day: nine things a checker found, put right
+2. Since 2026-11-18 Bridge Race is played at its tables, online and offline, to the golden island
+
+## 2026-11-18, the same day: nine things a checker found, put right
+
+A checker went over the first entry's work and found nine things wrong;
+all nine are fixed. What each was, what now happens, and whose call:
+
+1. **Taken on into another game from the race's results** (your group's
+   leader starting another of the four games' tables from them), the race
+   went on here under the next game. The table says so with that game's
+   `table::Entered` alone, no `Gone` between (its way), and only a `Gone`
+   gave the race back: it went on writing the fight as its own every
+   frame, putting its team on you, taking the next game's death words down
+   or counting your death twice; and in Bridge Wars after it, its fight and
+   Bridge Wars' were written in turn every frame, which tears the bridges
+   down (`bridge::rebuild` clears them whenever the fight's number
+   changes). Now **the race lasts exactly as long as you sit at a table of
+   Bridge Race** (`table::AtTable`): at none, or at another game's, it is
+   given back by one function, `give_back`, whichever way you went. If the
+   next game has taken the fight already in that same frame (which of the
+   two goes first is nobody's say), its fight is left as it is (mine).
+   What the race put on everyone else's body, their team and no bar, is
+   marked (`Dressed`) and taken off wherever the body is now: one of your
+   group comes into the next game with you as the same body, and its bar
+   over its head in Last Stand would have stayed hidden (mine). Your own
+   body is the table's to let go of, or the next game's to dress.
+   - Found with it (mine): Last Stand gives its fight back on any
+     `Entered` with no metres of bridge (`Resources::default()`), and run
+     after the race's taking of the fight in that frame it would have left
+     you 0 m at the start. The race now keeps your metres at ten until it
+     begins, unless the server has told you yours. Last Stand's side of it
+     is not this game's file, and is reported to the orchestrator.
+2. **A player whose device had gone could not be knocked off the golden
+   island, and still counted on it.** Their body stands where it stood,
+   and a knock is their own device's to carry out (`Tell::Knocked`), which
+   is not there to: put the app away on the island and you held it and
+   won. Now someone whose device has gone (the table's `Seat::away`, told
+   to the game every frame, `Game::away`) **counts for nothing on the
+   golden island**: their team cannot hold it, nor have them counted at
+   the time limit, until they are back, or gone for good (the rest of the
+   team then holds it alone). The checker offered this or the server
+   knocking the body itself; mine, this: the server has no knock of a
+   person's own (its numbers are `ui.ron`'s `melee`, which only the device
+   reads), and a body it moved would not be where the device has it as
+   the app is resumed.
+3. **The server took any rung within 15 m of its layer's feet**, however
+   much bridge they had been given: the first entry's own online run laid
+   63 m on 28 m granted (its throwaway gave the device 90 m more) and was
+   paid. Now a rung is taken only while what its layer has been held to
+   (`charged`: each plank as its rung comes; a rung that comes before
+   those ahead of it at the longest a plank is, 6 m, its own plank not
+   yet known) stays within what they have been given and what their own
+   device lays past it (`most_laid`): the 10 m they began with, every
+   grant to them as it came, 1.5 m at the start and at each grant, and 6 m
+   once. The 1.5 m is the device's bridge itself: as it runs out, the
+   plank in your hands is fixed where it reaches, never shorter than the
+   1.05 m it keeps ahead of you whatever is left, so that you do not walk
+   off its end, and that leaves you none, so once at the most for each
+   grant (read in `bridge::grow` and `fix_tip`); the 6 m is the plank
+   that lands a bridge on a shore, as long as the gap it crosses (up to
+   5 m) whatever is left. Mine, all of it: every rung of a real bridge
+   is taken (a rung turned away would leave its layer on a plank nobody
+   else has), and a device saying it has more than it was given lays no
+   more than one that does not. And **a rung from someone fallen into
+   the void is not taken**, but in the first second after the fall: the
+   device fixes the plank in hand as it finds you dead and sends it just
+   after its word that you fell (`bridge::lay`), which turned away would
+   be yours alone (mine).
+   - In numbers: an over-saying device at the start is taken to about
+     17.5 m; a device laying exactly what it is given, running out at
+     every grant, lays 99 m on 22 grants two against two and 109 m on 14
+     one against one, and every rung of it is taken (a test).
+4. **Someone whose device had gone fell only where the map had nothing
+   under them**, so that one gone in mid-fall under a bridge or an island
+   hung in the void to the end. Now, as Bridge Wars has it, they fall too
+   when under the ground there by more than 1.5 m (`AWAY_UNDER`, Bridge
+   Wars' own). The rule is the game's now (`Game::away`), not the
+   server's wrapper's.
+5. **A device put back in the race after its app was closed played the
+   start again**: "Go!" and your team, "Dynamite!" for the sticks you
+   held, whose bridge had reached the golden island and who was holding
+   it, across the screen and in the chat. Now a race this device sees
+   begin more than 3 s into its play (`LATE`) is taken as it stands, and
+   nothing of it is said again: which bridges are across, who holds the
+   island, your sticks, the grants (your metres the server tells you).
+   Mine: the 3 s, which a device seeing a race from its start never
+   reaches, and reopening an app and logging in again always does.
+6. **The words at the end were wrong for some endings**: a win by the
+   other team all leaving said "Your team got there first!", a draw by
+   both teams holding the island in the same moment "Time's up!", and a
+   skipped game "got there first". The round now says how it ended
+   (`RaceRound::finish`, the protocol still 22, not yet out), and the end
+   goes by it: held by your team ("Your team got there first!"), by the
+   other ("The other team got there first"), by both at once ("Both teams
+   got there at once", new), the time up or skipped ("Time's up!"), or a
+   team all gone ("Blue left the race", new, over "Red wins!"). The two
+   new lines are mine, in `words.bridge_race` (`together`, `team_left`).
+7. **Three colours were set in the code**: each team's bar on the plate
+   and "Hold! 2" drawn solid, and the ring at 0.92, whatever
+   `arena.team_red` and `team_blue` say (they are kept faint, `d9`, for
+   the names over heads). Now `colours.bridge_race` has `bar_strength`
+   (1.0), `ring_strength` (0.92) and `hold_strength` (1.0), how solid each
+   draws the teams' own colours, for Hajun to change: what is drawn is as
+   it was.
+8. **The first entry claimed more than was seen**: its night run, its
+   day pictures and its online run are put right in it, below.
+9. **"1/2 on the island" stayed up for the one left of two**: the round
+   says how many of each team are still in the game (`RaceRound::players`),
+   and the plate counts of those.
+
+The round is 15 bytes as a game begins (13 before), 17 at the most in a
+game, 20 at the most it could be. Protocol 22 is unchanged: none of this
+has been out.
+
+### Checked, and where
+
+- **Unit tests**, all three suites through `rtcargo.sh race`: the rules'
+  145 (three new: a gone device on the golden island, in mid-fall and
+  over the void; rungs past the metres given and from someone fallen a
+  while; and a device laying exactly on its grants, running out at each,
+  every rung of it taken over a whole game, both sizes of table; and in
+  the old tests, how each game ended as the round says it and its size);
+  the server's 88 (one new: a person whose device has gone holds nothing
+  on the golden island, and a device laying straight across at the start
+  is taken only as far as its metres); the game's 378 (four new: taken on
+  into Last Stand's table the race gives the fight back, the mate's body
+  undressed and nothing written again after, and the next game's fight
+  left as it is when that game took it first; a race come back into
+  under way, nothing of it said; the end's words for every ending; the
+  teams' colours as solid as the file says).
+- **In the desktop build, hidden**, by a throwaway taken out again, every
+  picture looked at (kept as `RoundTown-wt/scratch-race/shots/fix_*`):
+  - Offline, by day, one against one: four grants built on what was
+    granted alone, and every rung this device laid taken by the game (8,
+    13, 18 and 23 of as many); then told 90 m more, as a device gone wrong
+    would be, its bridge went on across while the game took its rungs to
+    46 m (37 of 47; at four grants it allows 47.5); on the golden island
+    the ring filled in red with "Hold! 2" and "Red is holding the golden
+    island!", then "Red wins!" over "Your team got there first!", the
+    results ("46 metres built", +110, 1,060), and back in the town
+    nothing of the race. The bars, the ring and "Hold!" looked at
+    enlarged: as they were before their strengths were in the file.
+  - Against a server on this PC (port 5483), three hidden copies in turn:
+    two people on red against the computer's two, 3 m a grant. Every rung
+    the one building laid on its grants was in the room (20 of 20 after
+    five grants). The other's app was closed eight seconds into the race
+    and opened again: put back 40 s in, told its 16 m, and nothing of the
+    start said again (no "Go!", no "You are on Red"), the next grant's
+    "+3m" and the stick that came with it ("Dynamite!") said as they came.
+    The first skipped the rest: "Blue wins!" over "Time's up!" on both,
+    and back in the town nothing of the race left on either.
+- **Not checked**: by night (not run again: this PC's GPU driver reset
+  twice in the first tries by day, `DeviceLost`, each within two seconds
+  of another worktree's build starting); a group taken on into another
+  game from the race's results in a real run (its unit test alone); a
+  table of three; a draw by holding together, a team all gone, a gone
+  device on the golden island, in a run (unit tests alone); the results
+  window online (the copies ran so slowly that the table's 15 s of
+  results were over before the throwaway's picture of them); any phone.
+- **Seen, and not this game's**: put back after its app was closed, a
+  device has the game's name said across the screen again ("Bridge
+  Race"), the table's own word for a table it was not at (`table`).
 
 ## Since 2026-11-18 Bridge Race is played at its tables, online and offline, to the golden island
 
@@ -236,12 +398,19 @@ Every word and colour is in `assets/ui.ron` (`words.bridge_race`,
   words).
 - **In the desktop build, hidden** (`RT_BACKGROUND=1`), offline, by a
   throwaway taken out again, every picture looked at (the best kept in
-  `RoundTown-wt/scratch-race/shots/`): a whole game in which you are given
-  90 m more and build straight across and win (the waiting room, the
-  countdown, the start on your island with 10 m in the plank button, a
-  bridge out over the void, both teams' bridges from over the map, a grant
-  "+6m", the ring filling with "Hold! 2", "Red wins!", the results with
-  +110), by day and by night; and a game of the fight (a punch on the run
+  `RoundTown-wt/scratch-race/shots/`): by day, a whole game in which you
+  are given 90 m more and build straight across and win (the waiting
+  room, the countdown, the start on your island with 10 m in the plank
+  button, a bridge out over the void, both teams' bridges from over the
+  map, a grant "+6m", the ring filling with "Hold! 2", "Red wins!", the
+  results with +110). Those day pictures (`01` to `09`) were taken before
+  the last fixes of that entry (the plate's words white over the bars,
+  "+3m" white and rising up the screen, "Hold!" and the arrow's words
+  moved, one line at a time across the upper half); the online pictures
+  show those. **By night the same game got only as far as the ring
+  filling** (`night_01` to `night_07`): there this PC's GPU driver reset
+  (`DeviceLost` in its log), and neither "Red wins!" nor the results were
+  seen by night. And a game of the fight, by day (a punch on the run
   knocking the computer's player off its bridge, "Mochi knocked Bori into
   the void.", your own fall with "Back on your island in 0.5" and back on
   your island, "Dynamite!" with its picture and the button, the stick
@@ -255,8 +424,11 @@ Every word and colour is in `assets/ui.ron` (`words.bridge_race`,
   the bridge, both on the golden island holding it, red winning: paid 110
   each (1,060 from 1,000), the same plate, ring, words, chat lines and
   results on both, and back in the town nothing of the game left on either
-  (no plank, stick, blast, round or kit). An earlier run had the two at two
-  tables of one against one each: one won (paid 110), one lost to the
+  (no plank, stick, blast, round or kit). **The one who built across was
+  given 90 m more by the throwaway**, so nobody bridged across online on
+  the metres granted (the server took all of it then; since the next
+  entry it takes no more than was given). An earlier run had the two at
+  two tables of one against one each: one won (paid 110), one lost to the
   computer (paid nothing), both cleared away.
 
 ### Not checked

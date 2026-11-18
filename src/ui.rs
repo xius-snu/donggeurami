@@ -580,7 +580,11 @@ pub(crate) struct KnockOffColours {
 /// screen points the way to it and says how far; the dark under each
 /// team's bar on the plate top centre, which fills in the team's colour
 /// (`colours.arena.team_red` and `team_blue`) as its bridge gets across;
-/// and "+3m" rising off you as a grant of bridge comes.
+/// "+3m" rising off you as a grant of bridge comes; and how solid the
+/// teams' colours are drawn in the bars, in the ring round the golden
+/// island and in "Hold! 2" (since 2026-11-18, the same day: until then
+/// written into the code, out of Hajun's hands), from 0, none of it, to 1,
+/// all of it ([`BridgeRaceColours::solid`]).
 #[derive(Deserialize, Clone, Copy, PartialEq, Debug)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct BridgeRaceColours {
@@ -590,6 +594,17 @@ pub(crate) struct BridgeRaceColours {
     pub bar_back: Color,
     #[serde(deserialize_with = "colour")]
     pub granted: Color,
+    pub bar_strength: f32,
+    pub ring_strength: f32,
+    pub hold_strength: f32,
+}
+
+impl BridgeRaceColours {
+    /// `colour` drawn as solid as `strength` says, whatever its own alpha:
+    /// a strength out of 0 to 1 held to it.
+    pub(crate) fn solid(colour: Color, strength: f32) -> Color {
+        colour.with_alpha(if strength.is_finite() { strength.clamp(0.0, 1.0) } else { 1.0 })
+    }
 }
 
 /// Last Stand's own colours (`last_stand`), as Blend In's are.
@@ -1190,18 +1205,19 @@ pub(crate) struct KnockOffWords {
 /// Bridge Race's own words (`bridge_race`), as Blend In's are: what its
 /// score is called among the results; its two teams; across the screen as
 /// it begins ("Go!", and your team, `{team}`) and as it ends (who won,
-/// `{team}`, or a draw, over how it went for you, or that the time ran
-/// out); on the plate top centre, under each team's bar, how far its
-/// bridge still has to go (`{metres}`), that it is across, or how many of
-/// it stand on the golden island (`{count}` of `{of}`); over the golden
-/// island while a team holds it (`{seconds}`); rising off you as a grant
-/// of bridge comes (`{metres}`); by the arrow toward the golden island
-/// (`{metres}`); across the screen while you wait to stand again after a
-/// fall (`{seconds}`, counting down in halves); in the upper half and the
-/// chat as a stick comes to your button, as a team's bridge reaches the
-/// golden island and as a team holds it (`{team}`); and in the chat who
-/// fell into the void (`{name}`), by whose doing (`{killer}`), and whose
-/// stick holed whose bridge (`{name}`, `{team}`).
+/// `{team}`, or a draw, over how it came to an end: your team there first,
+/// the other, both at once, the time run out, or every one of a team,
+/// `{team}`, gone); on the plate top centre, under each team's bar, how
+/// far its bridge still has to go (`{metres}`), that it is across, or how
+/// many of it stand on the golden island (`{count}` of `{of}`); over the
+/// golden island while a team holds it (`{seconds}`); rising off you as a
+/// grant of bridge comes (`{metres}`); by the arrow toward the golden
+/// island (`{metres}`); across the screen while you wait to stand again
+/// after a fall (`{seconds}`, counting down in halves); in the upper half
+/// and the chat as a stick comes to your button, as a team's bridge
+/// reaches the golden island and as a team holds it (`{team}`); and in the
+/// chat who fell into the void (`{name}`), by whose doing (`{killer}`), and
+/// whose stick holed whose bridge (`{name}`, `{team}`).
 #[derive(Deserialize, PartialEq, Debug)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct BridgeRaceWords {
@@ -1214,7 +1230,9 @@ pub(crate) struct BridgeRaceWords {
     pub draw: String,
     pub won: String,
     pub lost: String,
+    pub together: String,
     pub times_up: String,
+    pub team_left: String,
     pub to_go: String,
     pub across: String,
     pub on_island: String,

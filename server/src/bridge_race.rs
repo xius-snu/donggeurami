@@ -16,7 +16,8 @@
 //!   (`Ask::Rung`), a punch landed (`Ask::Punch`), a stick of dynamite
 //!   thrown (`Ask::Use`), a fall into the void (`Ask::Respawn`), the metres
 //!   a device has left (`Ask::BridgeRace`). Someone whose device has gone
-//!   stands where they stood, and falls if what was under them goes.
+//!   stands where they stood, counts for nothing on the golden island, and
+//!   falls if what was under them goes (`Game::away`).
 //! * **Out**, to the table's room: every rung as a [`Plank`] and every stick
 //!   as a [`Dynamite`], each a replicated entity of the room (`InRoom`); a
 //!   stick that blew as a [`Blasted`] with nothing to fall after it (the
@@ -210,12 +211,11 @@ impl Rules for BridgeRace {
                 continue;
             }
             game.sync(seat, table.at[seat], table.yaw[seat]);
-            // Someone whose device has gone stands where they stood; with
-            // nothing under them any more (a stick took the plank), they
-            // fall, as they would have on their device.
-            if it.away && game.standing(seat) && game.nav().ground(table.at[seat].xz()).is_none() {
-                game.fell(seat);
-            }
+            // Someone whose device has gone stands where they stood, nothing
+            // to knock them (a knock is their own device's to carry out):
+            // they count for nothing on the golden island, and fall as their
+            // device would have said, the game's own rule (`Game::away`).
+            game.away(seat, it.away);
         }
         let events = game.step(dt);
         let left = (rules::PLAY_SECS - game.elapsed()).max(0.0);
@@ -481,6 +481,12 @@ mod tests {
                         table.at[seat] = spot.translation();
                         table.yaw[seat] = spot.yaw();
                     }
+                    // Whether their device has gone, as `tables::sync` has it.
+                    if table.seats[seat].here()
+                        && let Ok((body, ..)) = ctx.bodies.get(table.seats[seat].body)
+                    {
+                        table.seats[seat].away = body.client.is_none();
+                    }
                 }
                 if table.playing() {
                     race.step(ctx, table, dt);
@@ -560,7 +566,8 @@ mod tests {
         assert!(moved.distance(started) > 50.0, "{started} to {moved}");
         let shown = server.table().shown;
         let round = server.world.get::<RaceRound>(shown).expect("the round").clone();
-        assert!(round.over && round.winner == Some(1) && round.across[1] >= 90, "{round:?}");
+        assert!(round.over() && round.winner == Some(1) && round.across[1] >= 90, "{round:?}");
+        assert_eq!(round.finish, Some(rules::Finish::Held));
         assert_eq!(server.world.get::<Kits>(shown).map(|kits| kits.0.len()), Some(2));
         // The table closes: every rung, blast and stick it sent goes.
         server.act(|ctx, table, race| race.close(ctx.commands, table));
@@ -627,5 +634,43 @@ mod tests {
         server.frame(FRAME);
         assert_eq!(server.game().result().map(|(_, finish, _)| finish), Some(rules::Finish::Time));
         assert!(server.table().over());
+    }
+
+    #[test]
+    fn a_person_whose_device_has_gone_holds_nothing_and_a_rung_past_their_metres_reaches_nobody() {
+        // One person against the computer, on the golden island, holding
+        // it; then their device gone, the body standing there with nothing
+        // to knock it off: not on it, however long it stands there.
+        let mut server = Server::new(2, &[0], 5);
+        server.stand(0, Vec3::new(-2.0, rules::LAND_TOP, -0.5));
+        for _ in 0..(1.0 / FRAME) as usize {
+            server.frame(FRAME);
+        }
+        assert_eq!(server.game().round().on_gold[0], 1);
+        assert!(server.game().round().hold[0] > 0);
+        let body = server.table().seats[0].body;
+        server.world.get_mut::<Body>(body).expect("a body").client = None;
+        for _ in 0..((rules::HOLD + 1.0) / FRAME) as usize {
+            server.frame(FRAME);
+        }
+        assert!(server.table().seats[0].away);
+        assert_eq!((server.game().round().on_gold[0], server.game().round().hold[0]), (0, 0));
+        assert!(server.table().playing(), "{:?}", server.game().result());
+        // A device laying straight across at the start, as if it had all
+        // the metres it says: taken as far as the ten it was given and what
+        // its own bridge lays past them, and the rest sent to nobody.
+        let mut server = Server::new(2, &[0], 6);
+        use roundtown_net::nav::Region;
+        let way = server.game().nav().grid().span(Region::Team(0), Region::Middle, 0.0).expect("red's way across");
+        for index in 0..=way.planks() {
+            let at = way.rung(index);
+            server.stand(0, Vec3::new(at.x, rules::LAND_TOP, at.y));
+            server.frame(FRAME);
+            server.ask(0, Ask::Rung { chain: 0, index: index as u16, x: at.x, z: at.y, heading: way.heading() });
+        }
+        server.frame(FRAME);
+        let (rungs, laid) = (server.count::<Plank>(), server.game().laid()[0]);
+        assert!(rungs > 6 && rungs < way.planks() / 2, "{rungs} of {} rungs", way.planks() + 1);
+        assert!(laid > rules::START_METRES && laid < 2.0 * rules::START_METRES, "{laid} m laid");
     }
 }

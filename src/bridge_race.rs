@@ -48,7 +48,7 @@ mod show;
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use bevy_replicon::prelude::Remote;
-use roundtown_net::bridge_race::{self as rules, Feed, RaceRound, team};
+use roundtown_net::bridge_race::{self as rules, Feed, Finish, RaceRound, team};
 use roundtown_net::{Ask as NetAsk, Kits, Member, Minigame, Tell, UTILITY_SLOTS, Upgrades, Use, Utility, Venue};
 
 use crate::arena::{ArenaSystems, Begun, DeathWords, FightTime, Fighting, InArena, NoBar, OfflineArena, Outfit, Resources, Used};
@@ -68,6 +68,23 @@ pub(crate) struct Told(pub roundtown_net::bridge_race::Tell);
 /// back to it should it come back to the game afresh.
 const METRES_EVERY: f32 = 1.0;
 
+/// How far into the race this device can be as it sees it begin and still
+/// say "Go!", in seconds of play: further, it has come into a race already
+/// under way (put back in it, its app having been closed and opened
+/// again), and takes it as it stands, saying nothing again of what has
+/// happened in it (mine: until 2026-11-18, the same day, it said "Go!" and
+/// your team, "Dynamite!" for the sticks you held, and whose bridge was
+/// across and who held the golden island, all over again).
+const LATE: f32 = 3.0;
+
+/// A body this game has put on its team, with no bar under its name
+/// ([`dress_bodies`]): everyone else in the race, the computer's offline
+/// and the people the server sends online. What it put there is taken off
+/// again as the race goes ([`give_back`]), wherever the body is by then
+/// (one of your group goes on into the next game with you, the same body).
+#[derive(Component)]
+struct Dressed;
+
 /// A game of Bridge Race on this device, from the table's word that you sit
 /// at one to its end: its number among every fight's (`arena::Begun`), whose
 /// bridges are its own; whether the server plays it; your seat; whether it
@@ -75,7 +92,8 @@ const METRES_EVERY: f32 = 1.0;
 /// how many of the round's grants your metres count; the round as last
 /// seen, which what is drawn goes by; your sticks as last seen, to say one
 /// that comes; what the server was last told of your metres, and how long
-/// ago; whether each team's bridge was across, and each team holding the
+/// ago; whether the server has told you your metres, back in the race
+/// afresh; whether each team's bridge was across, and each team holding the
 /// golden island, as last said; and offline, the game itself.
 struct Race {
     number: u32,
@@ -88,6 +106,7 @@ struct Race {
     sticks: u8,
     told: Option<(f32, u16)>,
     since_told: f32,
+    told_back: bool,
     joined: [bool; rules::TEAMS],
     holding: [bool; rules::TEAMS],
     played: Option<Box<offline::Played>>,
@@ -106,6 +125,7 @@ impl Race {
             sticks: 0,
             told: None,
             since_told: 0.0,
+            told_back: false,
             joined: [false; rules::TEAMS],
             holding: [false; rules::TEAMS],
             played: None,
@@ -281,45 +301,26 @@ fn feed_words(view: &TableView, said: Feed) -> Option<chat::Line> {
 /// this game's from now on, and its pieces over the world put up again (the
 /// table has taken down everything of its own, `table::InTable`); the same
 /// table told again (your seat moved before the race, or this device put
-/// back into it) keeps what it has and takes the seat. And that you have
-/// left the tables (`table::Gone`): the fight's state given back, "no
-/// game" written once, and whatever the fight put up taken down.
+/// back into it) keeps what it has and takes the seat. And, sat at no table
+/// of Bridge Race any more, the race given back ([`give_back`]): away from
+/// the tables (`table::Gone`), or at another game's, taken on into it
+/// straight from this one's results by your group's leader, which the table
+/// says with that game's `Entered` and no `Gone` between (its way, S2's).
+/// Until 2026-11-18, the same day, only a `Gone` gave it back, and taken
+/// on into another game the race went on here under it, writing the fight
+/// as its own every frame, its team on you and your death its own.
 #[allow(clippy::too_many_arguments)]
 fn enter(
     mut entered: MessageReader<table::Entered>,
-    mut gone: MessageReader<table::Gone>,
+    at_table: Res<AtTable>,
     mut racing: ResMut<Racing>,
     mut fight: Fight,
-    worn: Query<(Entity, &Venue), (With<NoBar>, Without<Player>)>,
+    dressed: Query<Entity, With<Dressed>>,
     fought: Query<Entity, With<InArena>>,
     mut images: ResMut<Assets<Image>>,
     mut pictures: ResMut<hud::Pictures>,
     mut commands: Commands,
 ) {
-    for left in gone.read() {
-        if left.game != Minigame::BridgeRace || racing.0.take().is_none() {
-            continue;
-        }
-        let none = Fighting::none(fight.fighting.game);
-        if *fight.fighting != none {
-            *fight.fighting = none;
-        }
-        fight.offline.set_if_neq(OfflineArena(false));
-        fight.outfit.set_if_neq(Outfit::default());
-        if fight.clock.0 != 0.0 {
-            fight.clock.0 = 0.0;
-        }
-        fight.stock.set_if_neq(Resources::default());
-        for thing in &fought {
-            commands.entity(thing).try_despawn();
-        }
-        for (body, &venue) in &worn {
-            if venue == Venue::BridgeRace {
-                commands.entity(body).try_remove::<(Team, NoBar, crate::Carrying)>();
-            }
-        }
-        info!("Bridge Race: the fight given back");
-    }
     for at in entered.read() {
         if at.game != Minigame::BridgeRace {
             continue;
@@ -346,6 +347,43 @@ fn enter(
         fight.offline.set_if_neq(OfflineArena(!at.online));
         show::spawn(&mut commands, &mut images, &mut pictures);
         info!("Bridge Race: in seat {}{}", at.seat, if same { ", the same table" } else { "" });
+    }
+    if at_table.of(Minigame::BridgeRace).is_none()
+        && let Some(race) = racing.0.take()
+    {
+        give_back(&race, &mut fight, &fought, &dressed, &mut commands);
+        info!("Bridge Race: the fight given back{}", if at_table.0.is_some() { ", on into another game" } else { "" });
+    }
+}
+
+/// The fight given back as the race goes from this device, once: if it is
+/// still the race's (another game taken on into may have taken it already,
+/// in this very frame, the order of the two being nobody's: then it is
+/// that game's, and left as it is), "no game" written (its number kept),
+/// nothing played offline, no metres, no kit and no clock, and whatever the
+/// fight put up taken down; and off every body the race put on its team
+/// ([`Dressed`]), wherever it is now, the team and the bar's absence. Your
+/// own body the table lets go of (`table::Gone`), or the game you are taken
+/// into dresses as it will.
+fn give_back(race: &Race, fight: &mut Fight, fought: &Query<Entity, With<InArena>>, dressed: &Query<Entity, With<Dressed>>, commands: &mut Commands) {
+    let ours = fight.fighting.game == race.number || fight.fighting.venue.is_none_or(|venue| venue == Venue::BridgeRace);
+    if ours {
+        let none = Fighting::none(fight.fighting.game);
+        if *fight.fighting != none {
+            *fight.fighting = none;
+        }
+        fight.offline.set_if_neq(OfflineArena(false));
+        fight.outfit.set_if_neq(Outfit::default());
+        if fight.clock.0 != 0.0 {
+            fight.clock.0 = 0.0;
+        }
+        fight.stock.set_if_neq(Resources::default());
+        for thing in fought {
+            commands.entity(thing).try_despawn();
+        }
+    }
+    for body in dressed {
+        commands.entity(body).try_remove::<(Team, NoBar, crate::Carrying, Dressed)>();
     }
 }
 
@@ -375,6 +413,7 @@ fn hear(
                 info!("Bridge Race: back with {metres:.1} m of bridge, {grants} grants counted");
                 stock.bridge_metres = *metres;
                 race.counted = *grants;
+                race.told_back = true;
             }
             rules::Tell::Feed(said) => feed_line(&mut log, &view, *said),
             rules::Tell::Nothing => {}
@@ -396,8 +435,10 @@ fn hear(
 // ------------------------------------------------------------ the race
 
 /// Follows the game, every frame its table is up: the fight's state as it
-/// stands, written as it changes; the race begun as its table is played
-/// ("Go!", and offline the game itself); and what the round says, online
+/// stands, written as it changes; your metres before the race, those every
+/// race begins with; the race begun as its table is played ("Go!", and
+/// offline the game itself), or, come into it under way, taken as it
+/// stands with nothing of it said again; and what the round says, online
 /// as the server sends it to the table's entity and offline as this
 /// device's own game has it ([`take_round`]), with your sticks of
 /// dynamite.
@@ -423,18 +464,53 @@ fn follow(
         race.seat = usize::from(sitting.seat);
     }
     let seats = view.members.len();
-    // The race begins as its table is played.
+    // Before the race your metres are those every race begins with (but
+    // for what the server tells you, back in it afresh): written again
+    // should anything have undone them since the table was entered, as
+    // another game's way of giving back its fight does, Last Stand's, in
+    // the very frame this table is entered from its results, the order
+    // of the two being nobody's (mine).
+    if !race.begun && !race.told_back {
+        fight.stock.set_if_neq(Resources {
+            bridge_metres: rules::START_METRES,
+            ..default()
+        });
+    }
+    // The race begins as its table is played: "Go!" over your team, and
+    // offline the game itself. Online, come into it under way, put back
+    // in it as your app was opened again, it is taken as it stands, and
+    // nothing of what has happened in it is said again ([`LATE`]): which
+    // bridges are across and who holds the golden island, your sticks,
+    // the grants, whose metres the server tells you.
     if view.playing() && !race.begun {
         race.begun = true;
-        let file = ui();
-        let words = &file.words.bridge_race;
-        let yours = fill(&words.your_team, &[("team", &team_name(race.team()))]);
-        hud::announce(&mut commands, Some(&yours), &words.go, hud::HEADLINE, 2.5).insert(table::InTable);
-        if !race.online {
-            let people: Vec<bool> = view.members.iter().map(|member| member.id != 0 && !member.ai).collect();
-            race.played = Some(Box::new(offline::Played::new(&people, fastrand::u64(..))));
+        let under_way = view
+            .shown
+            .and_then(|shown| rounds.get(shown).ok())
+            .filter(|(round, _)| race.online && (round.over() || f32::from(round.left) < rules::PLAY_SECS - LATE));
+        match under_way {
+            Some((round, kits)) => {
+                race.joined = round.across.map(|across| across >= 100);
+                race.holding = round.hold.map(|hold| hold > 0);
+                race.over = round.over();
+                if !race.told_back {
+                    race.counted = round.grants;
+                }
+                race.sticks = kits.and_then(|kits| kits.0.get(race.seat)).map_or(0, |kit| kit.held(Utility::Dynamite));
+                info!("Bridge Race: back in the race {} s in, {} seats, your team {}", rules::PLAY_SECS as u16 - round.left.min(rules::PLAY_SECS as u16), seats, race.team());
+            }
+            None => {
+                let file = ui();
+                let words = &file.words.bridge_race;
+                let yours = fill(&words.your_team, &[("team", &team_name(race.team()))]);
+                hud::announce(&mut commands, Some(&yours), &words.go, hud::HEADLINE, 2.5).insert(table::InTable);
+                if !race.online {
+                    let people: Vec<bool> = view.members.iter().map(|member| member.id != 0 && !member.ai).collect();
+                    race.played = Some(Box::new(offline::Played::new(&people, fastrand::u64(..))));
+                }
+                info!("Bridge Race: the race is on, {} seats, your team {}", seats, race.team());
+            }
         }
-        info!("Bridge Race: the race is on, {} seats, your team {}", seats, race.team());
     }
     // The round, and your own kit, as they stand: offline this device's
     // game's, online as the server sends them to the table's entity.
@@ -515,13 +591,13 @@ fn take_round(
         let colour = file.colours.arena.team(side as u8);
         let name = team_name(side as u8);
         let across = round.across[side] >= 100;
-        if across && !race.joined[side] && !round.over {
+        if across && !race.joined[side] && !round.over() {
             say.log.push(chat::spans(&words.reached, ink, &[("team", &name, colour)]));
             show::notice(commands, say, &fill(&words.reached, &[("team", &name)]), None);
         }
         race.joined[side] = across;
         let holding = round.hold[side] > 0;
-        if holding && !race.holding[side] && !round.over {
+        if holding && !race.holding[side] && !round.over() {
             say.log.push(chat::spans(&words.holding, ink, &[("team", &name, colour)]));
             show::notice(commands, say, &fill(&words.holding, &[("team", &name)]), None);
         }
@@ -531,22 +607,16 @@ fn take_round(
     if fight.clock.0 != elapsed {
         fight.clock.0 = elapsed;
     }
-    if round.over && !race.over {
+    if round.over() && !race.over {
         race.over = true;
         // The end said on its own: whatever line is up goes.
         show::clear_notices(commands, say);
-        let title = match round.winner {
-            Some(side) => fill(&words.wins, &[("team", &team_name(side))]),
-            None => words.draw.clone(),
-        };
-        let caption = match round.winner {
-            _ if round.left == 0 => words.times_up.clone(),
-            Some(side) if side == mine => words.won.clone(),
-            Some(_) => words.lost.clone(),
-            None => words.times_up.clone(),
-        };
-        hud::announce(commands, Some(&caption), &title, hud::HEADLINE, 3.0).insert(table::InTable);
-        info!("Bridge Race: over, {:?} won, {} m and {} m across", round.winner, round.across[0], round.across[1]);
+        let (title, caption) = end_words(&round, mine);
+        hud::announce(commands, caption.as_deref(), &title, hud::HEADLINE, 3.0).insert(table::InTable);
+        info!(
+            "Bridge Race: over, {:?} won by {:?} (\"{title}\" over {caption:?}), {} m and {} m across",
+            round.winner, round.finish, round.across[0], round.across[1]
+        );
         if let Some(played) = &race.played
             && let Some((places, scores, total)) = played.game.outcome()
         {
@@ -554,6 +624,34 @@ fn take_round(
         }
     }
     race.round = Some(round);
+}
+
+/// What is said across the screen as the race ends, as the round has it:
+/// who won, or a draw ("Red wins!", "Draw"), over how it came to an end,
+/// for you on team `mine` ([`RaceRound::finish`]): held by your team, or
+/// by the other; held by both at once; the time up, however it stood; or
+/// every one of a team gone, whoever is left winning. Until 2026-11-18,
+/// the same day, the time's being up was told by the clock alone and every
+/// other end by who won, so that a team all gone was "Your team got there
+/// first!", both holding at once "Time's up!", and a skip "got there
+/// first" (mine).
+fn end_words(round: &RaceRound, mine: u8) -> (String, Option<String>) {
+    let file = ui();
+    let words = &file.words.bridge_race;
+    let title = match round.winner {
+        Some(side) => fill(&words.wins, &[("team", &team_name(side))]),
+        None => words.draw.clone(),
+    };
+    let caption = match (round.finish, round.winner) {
+        (Some(Finish::Held), Some(side)) if side == mine => Some(words.won.clone()),
+        (Some(Finish::Held), Some(_)) => Some(words.lost.clone()),
+        (Some(Finish::Held), None) => Some(words.together.clone()),
+        (Some(Finish::Left), Some(side)) => Some(fill(&words.team_left, &[("team", &team_name(1 - side.min(1)))])),
+        // Everyone gone: nobody is here to be told how.
+        (Some(Finish::Left), None) => None,
+        (Some(Finish::Time) | None, _) => Some(words.times_up.clone()),
+    };
+    (title, caption)
 }
 
 /// A stick of dynamite thrown at its button (`arena::Used`, `utility`), in
@@ -599,14 +697,15 @@ fn tell_metres(mut racing: ResMut<Racing>, stock: Res<Resources>, mut requests: 
 /// the race is on), and each a name over its head with no bar under it
 /// ([`NoBar`]: nobody has health): you, the computer's players offline
 /// (`table::ComputerSeat`), and online everyone the server sends, by who
-/// they are among the table's seats. Each written only as it changes.
+/// they are among the table's seats, each of them marked as the race's to
+/// undo ([`Dressed`]). Each written only as it changes.
 #[allow(clippy::type_complexity)]
 fn dress_bodies(
     racing: Res<Racing>,
     view: Res<TableView>,
     me: Query<(Entity, Option<&Team>), With<Player>>,
-    remotes: Query<(Entity, &Member, &Venue, Option<&Team>, Has<NoBar>), (With<Remote>, Without<Player>)>,
-    computers: Query<(Entity, &ComputerSeat, Option<&Team>, Has<NoBar>), Without<Player>>,
+    remotes: Query<(Entity, &Member, &Venue, Option<&Team>, Has<Dressed>), (With<Remote>, Without<Player>)>,
+    computers: Query<(Entity, &ComputerSeat, Option<&Team>, Has<Dressed>), Without<Player>>,
     mut commands: Commands,
 ) {
     let Some(race) = racing.0.as_ref() else {
@@ -624,7 +723,7 @@ fn dress_bodies(
             commands.entity(body).insert(theirs);
         }
         if !marked {
-            commands.entity(body).insert(NoBar);
+            commands.entity(body).insert((NoBar, Dressed));
         }
     };
     if race.online {
@@ -748,6 +847,24 @@ mod tests {
         world
     }
 
+    /// You sit at a table of Bridge Race in seat 0, the server's if
+    /// `online`, as the table has it (`table::Seating::open`): at it, and
+    /// told so, at another table than any you were at.
+    fn sit(world: &mut World, online: bool) {
+        world.resource_mut::<AtTable>().0 = Some(table::Sitting {
+            game: Minigame::BridgeRace,
+            seat: 0,
+            online,
+            id: 1,
+        });
+        world.write_message(table::Entered {
+            game: Minigame::BridgeRace,
+            seat: 0,
+            online,
+            same_table: false,
+        });
+    }
+
     /// A table this device hosts, offline, you in seat 0 and the computer
     /// in seat 1, at `stage`.
     fn hosted(world: &mut World, stage: Stage) {
@@ -785,12 +902,7 @@ mod tests {
         let (enter, follow) = (world.register_system(enter), world.register_system(follow));
         // Sat at a table offline: ten metres of bridge, the fight here,
         // offline, numbered afresh, nothing being played yet.
-        world.write_message(table::Entered {
-            game: Minigame::BridgeRace,
-            seat: 0,
-            online: false,
-            same_table: false,
-        });
+        sit(&mut world, false);
         hosted(&mut world, Stage::Waiting);
         world.run_system(enter).expect("in");
         world.run_system(follow).expect("followed");
@@ -823,6 +935,7 @@ mod tests {
         assert_eq!(world.resource::<Resources>().bridge_metres, rules::START_METRES + rules::grant_metres(2));
         // Gone from the tables: the fight given back, "no game" with the
         // game's number kept, and nothing of the race left.
+        world.resource_mut::<AtTable>().0 = None;
         world.write_message(table::Gone { game: Minigame::BridgeRace });
         world.run_system(enter).expect("out");
         assert!(*world.resource::<Fighting>() == Fighting::none(number));
@@ -853,5 +966,214 @@ mod tests {
         assert_eq!(line, fill(&words.blew, &[("name", "Dori"), ("team", &words.red)]));
         // A stick that took nothing says nothing.
         assert_eq!(written(Feed::Blew { by: 1, team: None, planks: 0 }), None);
+    }
+
+    /// Whether anything on the screen says `words`.
+    fn says(world: &mut World, words: &str) -> bool {
+        world.query::<&Text>().iter(world).any(|text| text.0 == words)
+    }
+
+    #[test]
+    fn taken_on_into_another_game_s_table_the_race_gives_the_fight_back_as_on_leaving_the_tables() {
+        let mut world = world();
+        let (enter, follow, dress) = (world.register_system(enter), world.register_system(follow), world.register_system(dress_bodies));
+        // Online, you and one of your group in the race, its body as the
+        // server sends it.
+        let you = world.spawn((Player, Transform::default(), Venue::BridgeRace)).id();
+        let mate = Member {
+            id: 8,
+            name: "Dubu".into(),
+            look: "girl".into(),
+            ai: false,
+        };
+        let theirs = world.spawn((Remote, mate.clone(), Venue::BridgeRace, Transform::default())).id();
+        sit(&mut world, true);
+        hosted(&mut world, Stage::Playing);
+        world.resource_mut::<TableView>().members[1] = mate;
+        for system in [enter, follow, dress] {
+            world.run_system(system).expect("run");
+        }
+        let number = world.resource::<Fighting>().game;
+        assert_eq!(world.resource::<Fighting>().venue, Some(Venue::BridgeRace));
+        assert!(world.get::<Team>(theirs) == Some(&Team(1)) && world.get::<NoBar>(theirs).is_some());
+        assert_eq!(world.get::<Team>(you), Some(&Team(0)));
+        // Taken on into a table of Last Stand from the race's results by
+        // your group's leader, the mate with you, its body on Last Stand's
+        // venue by now: the table says so with Last Stand's `Entered`, and
+        // no `Gone`.
+        world.resource_mut::<AtTable>().0 = Some(table::Sitting {
+            game: Minigame::LastStand,
+            seat: 1,
+            online: true,
+            id: 3,
+        });
+        world.write_message(table::Entered {
+            game: Minigame::LastStand,
+            seat: 1,
+            online: true,
+            same_table: false,
+        });
+        *world.get_mut::<Venue>(theirs).expect("a body") = Venue::LastStand;
+        world.run_system(enter).expect("on");
+        // Given back as on leaving the tables: "no game" with the number
+        // kept, nothing offline, no metres, no kit, no clock; and off the
+        // mate's body, wherever it is, the race's team and the bar's
+        // absence.
+        assert!(world.resource::<Racing>().0.is_none());
+        assert!(*world.resource::<Fighting>() == Fighting::none(number));
+        assert!(!world.resource::<OfflineArena>().0);
+        assert_eq!(*world.resource::<Resources>(), Resources::default());
+        assert_eq!(*world.resource::<Outfit>(), Outfit::default());
+        world.flush();
+        assert!(world.get::<Team>(theirs).is_none() && world.get::<NoBar>(theirs).is_none() && world.get::<Dressed>(theirs).is_none());
+        // And nothing of the race comes back, frame after frame, over what
+        // the next game writes: its fight, and your team as it has it.
+        *world.resource_mut::<Fighting>() = Fighting {
+            venue: Some(Venue::LastStand),
+            ..Fighting::none(number + 1)
+        };
+        world.entity_mut(you).insert(Team(5));
+        for _ in 0..3 {
+            for system in [enter, follow, dress] {
+                world.run_system(system).expect("run");
+            }
+        }
+        assert_eq!(world.resource::<Fighting>().venue, Some(Venue::LastStand));
+        assert_eq!(world.get::<Team>(you), Some(&Team(5)));
+        assert!(world.get::<Team>(theirs).is_none());
+        // The next game having taken the fight already in the very frame
+        // the race is given back (whichever goes first is nobody's say):
+        // its fight, metres and all, left as it has them.
+        sit(&mut world, true);
+        world.run_system(enter).expect("in");
+        world.run_system(follow).expect("followed");
+        assert_eq!(world.resource::<Fighting>().venue, Some(Venue::BridgeRace));
+        world.resource_mut::<AtTable>().0 = None;
+        *world.resource_mut::<Fighting>() = Fighting {
+            venue: Some(Venue::Arena),
+            ..Fighting::none(number + 9)
+        };
+        world.resource_mut::<Resources>().bridge_metres = 25.0;
+        world.run_system(enter).expect("out");
+        assert!(world.resource::<Racing>().0.is_none());
+        assert_eq!(world.resource::<Fighting>().venue, Some(Venue::Arena));
+        assert_eq!(world.resource::<Resources>().bridge_metres, 25.0);
+    }
+
+    #[test]
+    fn a_race_come_back_into_under_way_is_taken_as_it_stands_and_nothing_of_it_said_again() {
+        let mut world = world();
+        world.init_resource::<Messages<Told>>();
+        world.init_resource::<Messages<Tell>>();
+        let (enter, hear, follow) = (world.register_system(enter), world.register_system(hear), world.register_system(follow));
+        world.spawn((Player, Transform::default(), Venue::BridgeRace));
+        let file = ui();
+        let words = &file.words.bridge_race;
+        // The table as the server sends it, a hundred seconds in: red's
+        // bridge across and red holding the golden island, six grants come,
+        // a stick on your button.
+        let board = Board {
+            game: Minigame::BridgeRace,
+            id: 4,
+            stage: Stage::Playing,
+            left: 0,
+            people: 1,
+            seats: 2,
+        };
+        let round = RaceRound {
+            left: 260,
+            grants: 6,
+            share: [60, 60],
+            hold: [4, 0],
+            on_gold: [1, 0],
+            winner: None,
+            finish: None,
+            across: [100, 60],
+            players: [1, 1],
+        };
+        let kits = Kits(vec![roundtown_net::Kit::default().holding(Utility::Dynamite, 1), roundtown_net::Kit::default()]);
+        let shown = world.spawn((Remote, board.clone(), round.clone(), kits)).id();
+        // This device put back in it, its app opened again: the table, and
+        // the race, afresh.
+        sit(&mut world, true);
+        hosted(&mut world, Stage::Playing);
+        world.resource_mut::<TableView>().shown = Some(shown);
+        world.run_system(enter).expect("in");
+        world.run_system(follow).expect("followed");
+        // Nothing said: no "Go!", no line across the upper half (each of
+        // which goes with a line in the chat), nothing rising off you.
+        assert!(!says(&mut world, &words.go) && !says(&mut world, &fill(&words.your_team, &[("team", &words.red)])));
+        assert!(!says(&mut world, &words.dynamite) && !says(&mut world, &fill(&words.granted, &[("metres", "6")])));
+        assert_eq!(world.query_filtered::<(), With<show::Notice>>().iter(&world).count(), 0);
+        {
+            let race = world.resource::<Racing>().0.as_ref().expect("a race");
+            assert!(race.begun && !race.over);
+            assert_eq!((race.joined, race.holding, race.sticks, race.counted), ([true, false], [true, false], 1, 6));
+        }
+        assert!(world.resource::<Fighting>().playing && world.resource::<Fighting>().teams_out);
+        // Your metres as the server tells them; and a grant after, said as
+        // ever.
+        world.write_message(Told(rules::Tell::Metres { metres: 23.5, grants: 6 }));
+        world.run_system(hear).expect("heard");
+        world.run_system(follow).expect("followed");
+        assert_eq!(world.resource::<Resources>().bridge_metres, 23.5);
+        *world.get_mut::<RaceRound>(shown).expect("the round") = RaceRound { grants: 7, left: 244, ..round };
+        world.run_system(follow).expect("followed");
+        assert_eq!(world.resource::<Resources>().bridge_metres, 29.5);
+        assert!(says(&mut world, &fill(&words.granted, &[("metres", "6")])));
+        // Seen from its start, as ever: "Go!".
+        let mut begun = self::world();
+        let (enter, follow) = (begun.register_system(super::enter), begun.register_system(super::follow));
+        begun.spawn((Player, Transform::default(), Venue::BridgeRace));
+        let shown = begun.spawn((Remote, board, fresh_round())).id();
+        sit(&mut begun, true);
+        hosted(&mut begun, Stage::Playing);
+        begun.resource_mut::<TableView>().shown = Some(shown);
+        begun.run_system(enter).expect("in");
+        begun.run_system(follow).expect("followed");
+        assert!(says(&mut begun, &words.go));
+    }
+
+    /// A round as a race begins.
+    fn fresh_round() -> RaceRound {
+        RaceRound {
+            left: rules::PLAY_SECS as u16,
+            grants: 0,
+            share: [60, 60],
+            hold: [0, 0],
+            on_gold: [0, 0],
+            winner: None,
+            finish: None,
+            across: [0, 0],
+            players: [1, 1],
+        }
+    }
+
+    #[test]
+    fn the_end_is_said_as_it_came() {
+        let file = ui();
+        let words = &file.words.bridge_race;
+        let over = |winner: Option<u8>, finish: Finish| RaceRound {
+            winner,
+            finish: Some(finish),
+            left: 100,
+            ..fresh_round()
+        };
+        let red_wins = fill(&words.wins, &[("team", &words.red)]);
+        // Held: by your team, or the other; both at once, a draw.
+        assert_eq!(end_words(&over(Some(0), Finish::Held), 0), (red_wins.clone(), Some(words.won.clone())));
+        assert_eq!(end_words(&over(Some(0), Finish::Held), 1), (red_wins.clone(), Some(words.lost.clone())));
+        assert_eq!(end_words(&over(None, Finish::Held), 0), (words.draw.clone(), Some(words.together.clone())));
+        // The time up, or skipped: the time, whoever won.
+        assert_eq!(end_words(&over(Some(0), Finish::Time), 0), (red_wins.clone(), Some(words.times_up.clone())));
+        assert_eq!(end_words(&over(None, Finish::Time), 1), (words.draw.clone(), Some(words.times_up.clone())));
+        // Blue all gone: red wins, and blue is said to have left.
+        assert_eq!(end_words(&over(Some(0), Finish::Left), 0), (red_wins, Some(fill(&words.team_left, &[("team", &words.blue)]))));
+        assert_eq!(end_words(&over(None, Finish::Left), 0), (words.draw.clone(), None));
+        // Every one of them words the fonts draw, the team filled in.
+        assert!(words.team_left.contains("{team}"));
+        for said in [&words.together, &words.team_left, &words.times_up] {
+            assert!(!said.trim().is_empty() && said.chars().all(roundtown_net::text::allowed), "{said:?}");
+        }
     }
 }

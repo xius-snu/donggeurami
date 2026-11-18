@@ -277,6 +277,35 @@ pub const PUNCH_SLACK: f32 = 6.5;
 /// layer would) while one laid from across the map is.
 pub const RUNG_SLACK: f32 = 15.0;
 
+/// How much more bridge than they have been given a person's device lays
+/// as it lays it, in metres (the game's own `bridge`, Bridge Wars'): as it
+/// runs out, the plank in your hands is fixed where it reaches, never
+/// shorter than the 1.05 m it keeps ahead of you (its `AHEAD`) whatever is
+/// left, so that you do not walk off its end, which leaves you none: so
+/// once at the most for what you begin with and once for each grant
+/// ([`SPARE_EACH`], a little over that); and the plank that lands a bridge
+/// on a shore is as long as the gap it crosses, up to five metres, whatever
+/// is left: once ([`SPARE_ONCE`], a plank of the longest). A rung that would take what
+/// someone has laid past what they have been given and these is not taken
+/// (since 2026-11-18, the same day; mine: a device that says it has more
+/// than it was given lays no more than one that does not, where every rung
+/// within [`RUNG_SLACK`] was taken, and no rung of a real bridge is turned
+/// away, which would leave its layer walking on a plank nobody else has).
+const SPARE_EACH: f32 = 1.5;
+const SPARE_ONCE: f32 = LONGEST_PLANK;
+
+/// How long after falling into the void a person's rungs are still taken,
+/// in seconds: the plank they were laying as they fell, which their device
+/// fixes as it finds them dead, and sends just after its word that they
+/// fell. Later, nothing they lay is taken until they stand again (mine).
+const FALLEN_RUNG: f32 = 1.0;
+
+/// How far under the ground where they stand someone whose device has gone
+/// has to be to have fallen, in metres: under the islands and the planks,
+/// on the way down into the void (Bridge Wars' own, the server's
+/// `arena::AWAY_UNDER`).
+const AWAY_UNDER: f32 = 1.5;
+
 /// The most rungs one seat can lay, and how far from the middle of the map
 /// one can be: far more than a game's worth, and the edge of the map and a
 /// good deal more, so that a device gone wrong cannot fill the game's
@@ -305,7 +334,7 @@ pub fn grants_by(elapsed: f32) -> u16 {
 /// ([`crate::Kits`], where each stick of dynamite shows on its owner's
 /// button), and re-inserted only when it changes: once a second for the
 /// clock, a tenth of [`HOLD`] at a time while a team holds the golden
-/// island, and as bridges get further across. A dozen bytes.
+/// island, and as bridges get further across. Fifteen bytes or so.
 #[derive(Component, Serialize, Deserialize, Clone, PartialEq, Debug)]
 pub struct RaceRound {
     /// Whole seconds of play left, rounded up.
@@ -322,19 +351,30 @@ pub struct RaceRound {
     /// Each team's ring round the golden island, in tenths of [`HOLD`],
     /// from 0 to 10: full is won.
     pub hold: [u8; 2],
-    /// How many of each team stand on the golden island.
+    /// How many of each team stand on the golden island ([`Game::on_gold`]:
+    /// on their feet there, and their device not gone).
     pub on_gold: [u8; 2],
     /// The team that won, once it is over; none while it is played, and none
-    /// for a draw ([`RaceRound::over`]).
+    /// for a draw ([`RaceRound::finish`]).
     pub winner: Option<u8>,
-    /// Whether it is over.
-    pub over: bool,
+    /// How it came to be over, once it is ([`Finish`]): what every device
+    /// says of it at the end ("Time's up!", or both teams holding the golden
+    /// island at once, or a team gone), the winner alone not saying so (a
+    /// win by the other team all leaving was said as "Your team got there
+    /// first!" until 2026-11-18, the same day; mine). None while it is
+    /// played.
+    pub finish: Option<Finish>,
     /// How far each team's bridge has got toward the golden island, in
     /// hundredths of the way across ([`the_way_across`]), by its plank
     /// nearest it: 100 once it is there. What the time limit goes by when
     /// nobody is on the island (mine: so that what everyone sees on their
     /// screen is what decides it).
     pub across: [u8; 2],
+    /// How many of each team are still in the game, not left for good
+    /// ([`Game::leave`]): how many of it have to stand on the golden island
+    /// together to hold it, which the plate says ("1/1 on the island" once
+    /// one of two has gone, where it went on saying "1/2"; mine).
+    pub players: [u8; 2],
 }
 
 impl RaceRound {
@@ -343,6 +383,11 @@ impl RaceRound {
     /// it has not yet counted.
     pub fn share_of(&self, team: u8) -> f32 {
         f32::from(self.share[usize::from(team) % TEAMS]) / 10.0
+    }
+
+    /// Whether it is over ([`RaceRound::finish`]).
+    pub fn over(&self) -> bool {
+        self.finish.is_some()
     }
 }
 
@@ -436,8 +481,9 @@ pub fn register(app: &mut App) {
 
 // ---------------------------------------------------------------- the game
 
-/// How a game of Bridge Race came to be over.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+/// How a game of Bridge Race came to be over: sent in the round at its end
+/// ([`RaceRound::finish`]).
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Finish {
     /// A team held the golden island, every one of it, for [`HOLD`]; or
     /// both did in the same moment, a draw.
@@ -541,6 +587,9 @@ pub struct Game {
     /// The seats whose people have left for good: no longer anyone the
     /// golden island waits for.
     gone: Vec<bool>,
+    /// The seats whose person's device has gone, the seat waiting for it
+    /// ([`Game::away`]).
+    away: Vec<bool>,
     /// Where each body stands, feet, and which way it faces: a person's as
     /// their device last said ([`Game::sync`]), the computer's as the game
     /// moves it.
@@ -560,6 +609,11 @@ pub struct Game {
     said: Vec<(f32, u16)>,
     /// How many metres of bridge each has laid, all told: their score.
     laid: Vec<f32>,
+    /// How many metres of bridge each person has been held to for the rungs
+    /// of theirs taken, as each was taken: its plank, or for one that came
+    /// before those ahead of it, the longest a plank can be. What is held
+    /// to the metres they have been given ([`Game::most_laid`]).
+    charged: Vec<f32>,
     /// How many rungs each has had taken.
     rungs: Vec<usize>,
     /// Every bridge heard of, as whose, by seat, and which of theirs; and
@@ -618,6 +672,7 @@ impl Game {
         }
         Self {
             gone: vec![false; seats],
+            away: vec![false; seats],
             at,
             yaw,
             down: vec![None; seats],
@@ -626,6 +681,7 @@ impl Game {
             kits: vec![Kit::default(); seats],
             said: vec![(START_METRES, 0); seats],
             laid: vec![0.0; seats],
+            charged: vec![0.0; seats],
             rungs: vec![0; seats],
             chains: Vec::new(),
             counted: Vec::new(),
@@ -705,15 +761,37 @@ impl Game {
         }
     }
 
+    /// Whether the device of the person in `seat` has gone, the seat waiting
+    /// for it (online, as whoever runs the game says each frame): their body
+    /// stands where it last was, with nobody to move it and nothing to knock
+    /// it, so it counts for nothing on the golden island ([`Game::on_gold`]:
+    /// held there, out of reach of a punch, it held the island for its team
+    /// and won it, until 2026-11-18, the same day; mine); and it falls, as
+    /// its device would have said, with nothing under it any more (a stick
+    /// took the plank), or under the ground there by more than
+    /// [`AWAY_UNDER`] (gone as it fell).
+    pub fn away(&mut self, seat: usize, away: bool) {
+        if let Some(it) = self.away.get_mut(seat) {
+            *it = away && self.people[seat];
+        }
+    }
+
     /// Whoever is in `seat` has laid this rung of a bridge ([`crate::Ask::Rung`]):
     /// the `index`th of their bridge numbered `chain`, `at` across the
     /// ground, heading so. Taken, if it could be theirs: while the game is
-    /// played, from a person in it, no further from where they last said
-    /// they stood than [`RUNG_SLACK`], on the map, and within the most
-    /// anyone lays ([`Event::Plank`]). A person's metres are their device's
-    /// to count, as in Bridge Wars. Whether it was taken.
+    /// played, from a person in it, on their feet or only just fallen
+    /// ([`FALLEN_RUNG`]), no further from where they last said they stood
+    /// than [`RUNG_SLACK`], on the map, within the most anyone lays
+    /// ([`Event::Plank`]), and its plank within the metres they have been
+    /// given ([`Game::most_laid`]). A person's metres are their device's to
+    /// count, as in Bridge Wars, and this is only how far it is believed.
+    /// Whether it was taken: one the map has had already is taken as
+    /// nothing new.
     pub fn rung(&mut self, seat: usize, chain: u16, index: u16, at: Vec2, heading: f32) -> bool {
         if !self.playing() || seat >= self.seats() || !self.people[seat] || self.gone[seat] {
+            return false;
+        }
+        if self.down[seat].is_some_and(|left| RESPAWN - left > FALLEN_RUNG) {
             return false;
         }
         if !at.is_finite() || !heading.is_finite() || self.rungs[seat] >= MOST_RUNGS || at.distance(MIDST) > FURTHEST {
@@ -722,8 +800,33 @@ impl Game {
         if at.distance(self.at[seat].xz()) > RUNG_SLACK {
             return false;
         }
+        // What it holds them to: its plank, from the last of that bridge's
+        // rungs, if it comes next (one longer than a plank is none, and
+        // nothing to stand on); coming before those ahead of it, whose
+        // plank cannot yet be known, the longest a plank is.
+        let rungs = self.nav.rungs(seat as u8, chain);
+        let costs = match usize::from(index).cmp(&rungs.len()) {
+            std::cmp::Ordering::Less => return true,
+            std::cmp::Ordering::Equal => rungs.last().map_or(0.0, |last| {
+                let length = last.distance(at);
+                if length <= LONGEST_PLANK { length } else { 0.0 }
+            }),
+            std::cmp::Ordering::Greater => LONGEST_PLANK,
+        };
+        if self.charged[seat] + costs > self.most_laid(seat) {
+            return false;
+        }
+        self.charged[seat] += costs;
         self.take_rung(seat, chain, index, at, heading);
         true
+    }
+
+    /// The most metres of bridge the person in `seat` can have laid by now
+    /// on their own device: the metres everyone begins with, every grant to
+    /// them since as each came, and what the device lays past what it has
+    /// as it runs out ([`SPARE_EACH`], [`SPARE_ONCE`]).
+    fn most_laid(&self, seat: usize) -> f32 {
+        START_METRES + self.granted(seat, 0, self.grants) + SPARE_EACH * (f32::from(self.grants) + 1.0) + SPARE_ONCE
     }
 
     /// A rung laid by whoever is in `seat`, taken: onto the map, counted in
@@ -926,6 +1029,7 @@ impl Game {
     pub fn leave(&mut self, seat: usize) {
         if seat < self.seats() {
             self.gone[seat] = true;
+            self.away[seat] = false;
             self.down[seat] = None;
         }
     }
@@ -955,6 +1059,21 @@ impl Game {
             } else {
                 self.down[seat] = None;
                 self.stand(seat);
+            }
+        }
+        // Someone whose device has gone stands where they stood ([`Game::away`]):
+        // with nothing under them any more, or under the ground there by more
+        // than [`AWAY_UNDER`], as Bridge Wars has it (the server's `arena`;
+        // until 2026-11-18, the same day, only with nothing under them, so
+        // that one gone in mid-fall under a bridge hung there to the end),
+        // they fall.
+        for seat in 0..self.seats() {
+            if !self.away[seat] || !self.standing(seat) {
+                continue;
+            }
+            let at = self.at[seat];
+            if self.nav.ground(at.xz()).is_none_or(|ground| at.y < ground - AWAY_UNDER) {
+                self.fall(seat);
             }
         }
         self.play_computer(dt);
@@ -1185,10 +1304,11 @@ impl Game {
     }
 
     /// Whether whoever is in `seat` stands on the golden island: on their
-    /// feet, over its land, their feet within [`ON_GOLD`] of its top; and,
-    /// the computer's, not in the air, as the game knows.
+    /// feet, over its land, their feet within [`ON_GOLD`] of its top; a
+    /// person, with their device there ([`Game::away`]); and, the
+    /// computer's, not in the air, as the game knows.
     pub fn on_gold(&self, seat: usize) -> bool {
-        if !self.standing(seat) {
+        if !self.standing(seat) || self.away[seat] {
             return false;
         }
         let at = self.at[seat];
@@ -1336,6 +1456,7 @@ impl Game {
     /// What the room is sent of it ([`RaceRound`]), cheap to compare.
     pub fn round(&self) -> RaceRound {
         let share = self.shares.last().copied().unwrap_or_else(|| [self.share(0), self.share(1)]);
+        let players = |side: u8| (0..self.seats()).filter(|&seat| team(seat) == side && !self.gone[seat]).count().min(usize::from(u8::MAX)) as u8;
         RaceRound {
             left: (PLAY_SECS - self.elapsed).max(0.0).ceil() as u16,
             grants: self.grants,
@@ -1343,8 +1464,9 @@ impl Game {
             hold: self.hold.map(|held| ((held / HOLD) * 10.0).floor().clamp(0.0, 10.0) as u8),
             on_gold: self.on_gold,
             winner: self.over.and_then(|(winner, ..)| winner),
-            over: self.over.is_some(),
+            finish: self.over.map(|(_, finish, _)| finish),
             across: self.across,
+            players: [players(0), players(1)],
         }
     }
 
