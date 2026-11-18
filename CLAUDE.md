@@ -9,7 +9,9 @@ bundles). It plays online against a server in Seoul (`server/`; `shared/` is
 
 **What matters now** (Hajun, 2026-11-14): the main lobby, Round Town, and
 Bridge Wars. House Builder, the build-battle game, is stalled: keep it
-working, and spend nothing on it unasked.
+working, and spend nothing on it unasked. Since 2026-11-18 the selector has
+the four games Hajun asked for that day, each played at a table: Blend In,
+Knock Off, Bridge Race, Last Stand (`docs/minigames.md`).
 
 As of 2026-11-17: `PROTOCOL_VERSION` 21, APK 40 (`versionCode`), the
 server deployed then (07:05 UTC) with everything in `server/` and
@@ -39,6 +41,11 @@ heading in one of these:
 | the sign-up's pages, anything typed into | `docs/signup.md` | "The first time, you sign up" |
 | **Bridge Wars** | `docs/bridge-wars.md`, `bridgewarsgameevent.md` | "Games" |
 | Bridge Wars' map | `docs/bridge-wars-map.md` | "The PvP map itself" |
+| the four games' tables (joining, waiting, fees, prizes, results), the fight kit they share with Bridge Wars | `docs/minigames.md` | |
+| **Blend In** | `docs/blend-in.md` | |
+| **Knock Off** | `docs/knock-off.md` | |
+| **Bridge Race** | `docs/bridge-race.md` | |
+| **Last Stand** | `docs/last-stand.md` | |
 | the opening, the buttons round the screen, the camera's hole, settings | `docs/town-hud.md` | "The app opens under a cover", "The app opens in Round Town", "Settings" |
 | friends, groups, messages | `docs/friends.md` | "Friends, groups and messages" |
 | the chat, the quick chat, fonts, Korean and Vietnamese, the word filter | `docs/chat-and-text.md` | "The chat", "The font is Inter" |
@@ -195,6 +202,8 @@ to try again.
   next player's view; `src/arena/watch.rs`), `RT_UNFOCUSED=1` (the
   window shown but not made the active one),
   `RT_SAFE_AREA=<left>,<right>` (a camera's hole made up),
+  `RT_STAND_WAVE=<n>`, `RT_STAND_PURSE=<count>` (Last Stand from a later
+  wave, with coins to spend; offline, and the server's own),
   `RT_BACKGROUND=1` (below). Two copies need
   their own `APPDATA`. A server on this PC: `RT_PORT=5443
   RT_ALLOW_SKIP=1 target/debug/roundtown-server.exe`, and the copies with
@@ -249,7 +258,11 @@ to try again.
 
 - Maps are Blender models (`assets/*.glb`, `island::Venue` names them):
   `roundtownmap.glb` the town, `pvptownmap.glb` Bridge Wars, `lobbymap.glb`
-  and `homemap.glb` House Builder's, `testhomemap.glb` home. `src/island.rs`
+  and `homemap.glb` House Builder's, `testhomemap.glb` home, `iceisland.glb`
+  Knock Off, `bridgeracemap.glb` Bridge Race, `laststandmap.glb` Last Stand
+  (these two stood 0.25 m up as they load, to Bridge Wars' heights:
+  `island::lift`); Blend In is played on the town's (`island::Scenery`).
+  `src/island.rs`
   reads every triangle of each; nothing is kept by hand. All are loaded at
   startup and stand at the origin: **`Venue` keeps them apart**, and
   anything spawned without one is drawn everywhere and collides with
@@ -264,15 +277,16 @@ to try again.
 - Water is a part whose material is called `water`; a material named with
   `.001` after it is the same material. A part with no material loads near
   black. Skinned meshes are not land. Where a map has nothing underfoot
-  there is sea (`WATER_Y`), but under Bridge Wars' map, which has the void
-  (`island::bottomless`).
+  there is sea (`WATER_Y`), but under Bridge Wars', Bridge Race's and Last
+  Stand's, which have the void (`island::bottomless`).
 - Export with Apply Modifiers (arrays and mirrors come out as one piece
   otherwise). A texture in a `.glb` needs Bevy's feature for its format
   (`jpeg` is on).
 - After a new export of Bridge Wars' map: the constants in `shared/` have
   to agree with it (tests read the map), the bots' map has to be baked
   again (`RT_BAKE_NAV=1 cargo test --lib nav_bake`), and the server
-  deployed.
+  deployed. So too Bridge Race's (`race_bake`) and the town's, whose grid
+  is Blend In's crowd's (`blend_in_bake`).
 - Every body is Hajun's `playercharacter.glb` or `playercharactergirl.glb`
   and their two recolourings each (`lobby::LOOKS`; the same list is
   `roundtown_net::BOY_LOOKS`, `GIRL_LOOKS`, which the server checks: deploy
@@ -353,8 +367,10 @@ to try again.
   window since 2026-11-15, on both sides, not yet seen on one). The
   right end of the bar is moved no further than the fan of things to say
   leaves room, and the chat's small button steps in from an island.
-- The gamepad opens the selector (`src/games.rs`): Bridge Wars, Home
-  Builders (100 coins), and one to come.
+- The gamepad opens the selector (`src/games.rs`): six cards, Bridge Wars
+  (free), Blend In, Knock Off, Bridge Race, Last Stand (50 coins each) and
+  Home Builders (100); the card for one to come is turned off
+  (`games::COMING_SOON`).
 - You can talk to any AI (`src/talk.rs`), ride the four buses that go
   round the roads by the clock (`car.rs`, `roads.rs`: the way is read off
   the road's paint), drive a car of your own (`drive.rs`, the face button,
@@ -497,6 +513,48 @@ and the game is as that file has it. The rules both sides play by are
 - Nearly all of it since 2026-11-07 was checked in the desktop build and
   against servers on this PC, and built into APKs that were not installed:
   the log says of each thing whether it has been seen on a phone.
+
+## The four games of 2026-11-18, as they stand
+
+Each is played at a **table** (`server/src/tables.rs`, a `Rules` per game;
+`src/table.rs` on the device, which hosts it offline; `roundtown_net::table`):
+the fee as you join, a board top centre with Leave, a 5 s countdown, the
+game, then the results in a window (places, scores, coins paid; Leave, Play
+again) and back to the town. Leaving before play gives the fee back; a
+device that goes keeps its seat, as in Bridge Wars. Fees and prizes are in
+`docs/minigames.md`: by Hajun's rule, more than half beaten pays more than
+the fee. Each game's rules are one `Game` in `shared/`, stepped by the
+server online and by the device offline.
+
+- **Blend In** (online only; 2 to 4 people, no computer): on the town's map
+  inside a 70 m ring, among 28 of the town's people. Everyone picks a name
+  and a look (30 s, sooner once all have); each round one person hides (15
+  s, the seekers' screens black) and the rest seek for 150 s with an aura
+  sword and the town's free camera; a wrong strike blinds, 4 s and 3 more
+  each time. A point for finding, one for staying hidden; everyone hides
+  once.
+- **Knock Off** (four seats, the computer filling them): a 12 m disc of ice
+  in the sea. Everyone aims at once in secret (12 s, then 10: the stick
+  for the way, up and down for power 1 to 10), then all slide at once, the
+  same to the bit on every device and the server; the ice's edge breaks a
+  metre a turn, gone after turn 13. The last on it wins; the rest watch or
+  leave.
+- **Bridge Race** (the computer filling; one person is one against one,
+  two or more two against two, people on one team first): two islands and
+  the golden one. 10 m of bridge each to begin, 6 m to each team every 16
+  s shared between its players, now and then a stick of dynamite; a punch
+  only knocks, and the fallen are back on their island in 2 s. A team wins
+  standing all together on the golden island for 3 s; at 6 minutes, the
+  team with more on it or nearer, or a draw. Bridge Wars' camera and buttons.
+- **Last Stand** (1 to 4 people together, no computer): endless waves of
+  zombies at the anchor crystal (1,500); two generators raised from silver
+  and gold to sapphire and amethyst; loot off zombies, luckier as you
+  upgrade; an item shop and an upgrade shop, endless levels. Over when the
+  crystal is broken and nobody stands; everyone's score and the team's,
+  10 coins a wave cleared, to 400. Bridge Wars' camera and buttons.
+- Tuned by whole games, as Bridge Wars' bots are (`cargo test -p
+  roundtown_net <name> -- --ignored --nocapture`): `many_games_of_blend_in`,
+  `many_games_of_the_computer` (Knock Off), `many_races`, `stand_many`.
 
 ## House Builder (stalled)
 
