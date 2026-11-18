@@ -36,9 +36,9 @@
 //!    seeker pick it, the hider goes by another as the hide begins.
 //! 2. **Hide** ([`HIDE`]): everyone is dressed as they chose, every body in
 //!    the game goes by a new id, and the crowd by new names and looks. The
-//!    seekers stand where they came in, on the path round the pond, and see
-//!    nothing; the hider is put among the crowd at least [`HIDER_CLEAR`]
-//!    from all of them, free to go where they like.
+//!    seekers stand where they came in, on the path round the pond, facing
+//!    out from it, and see nothing; the hider is put among the crowd at
+//!    least [`HIDER_CLEAR`] from all of them, free to go where they like.
 //! 3. **Seek** ([`SEEK`]): the seekers move, at a run ([`SEEKER_PACE`]),
 //!    and swing, and the hider walks as the crowd does. A swing that lands
 //!    on the hider finds them ([`Game::strike`]): a point to the finder,
@@ -251,7 +251,15 @@ pub enum Tell {
     /// [`Ask::Disguise`], what the choice stands at once it has been heard
     /// (the asked, or what it was if that was refused), and to everyone as
     /// the hide begins ([`Event::Dressed`]): what they are dressed as.
-    Wear { name: String, look: String },
+    /// `now`: whether you are dressed in it now, from the hide to the end of
+    /// the round shown, or will be from the coming hide (while choosing).
+    /// Said with it since a play-tester found a device taking the next
+    /// round's offer for what it was dressed in: it came as the round before
+    /// was still being followed there, shown or given up in its seek
+    /// (replicon holds a message back until a component put on or taken off
+    /// before it has come, but not one changed, as [`BlendRound`] is; G2,
+    /// protocol 22 not yet out).
+    Wear { name: String, look: String, now: bool },
     /// The seeker in seat `seeker` struck one of the town's own, a wrong
     /// guess ([`Event::Wrong`]): told everyone in the game, for its chat to
     /// say so (G2; Hajun: "incorrect guesses cost you time by
@@ -1013,6 +1021,7 @@ impl Game {
                 continue;
             }
             let (at, yaw) = came_in(seat, self.crowd.grid());
+            let yaw = facing_out(yaw);
             self.put(seat, at, yaw);
             self.seats[seat].held = Some(at);
             seekers.push(at.xz());
@@ -1123,6 +1132,17 @@ fn came_in(seat: usize, grid: &Grid) -> (Vec3, f32) {
     let (at, turn) = arrival(seat);
     let ahead = turn * Vec3::NEG_Z;
     (at.with_y(grid.height(at.xz()).unwrap_or(at.y)), (-ahead.x).atan2(-ahead.z))
+}
+
+/// The turn about the upright that faces the other way from `yaw`, from
+/// -π to π: a seeker's as they are stood where they came in for the hide,
+/// facing out from the pond, where the crowd walks, rather than at the
+/// fountain they came in facing (mine, since a play-tester found every
+/// seek begun looking at an empty pond with the crowd behind: their device
+/// swings the camera round behind them as they are stood there).
+fn facing_out(yaw: f32) -> f32 {
+    let turned = yaw + PI;
+    if turned > PI { turned - TAU } else { turned }
 }
 
 /// Where the hider is put as the hide begins: beside one of the crowd far

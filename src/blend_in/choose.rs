@@ -22,7 +22,8 @@
 //! is never written here).
 //!
 //! **Mine**: it stands to the right of the screen, clear of the chat down
-//! the left, and is no dialog: you stand still while it is up (`hold`),
+//! the left, drawn smaller on a screen narrower than a phone's until it is
+//! ([`fit`]), and is no dialog: you stand still while it is up (`hold`),
 //! but the chat may be used (the design: "While it is up the chat may be
 //! used"), so the box is taken for the name only while the name is being
 //! typed (tapped), and nothing else is held. Its cross is Ready with what
@@ -30,7 +31,9 @@
 //! look over to the other side, a boy's to a girl's or back, throws a name
 //! of that side too if the name was one of the other side's town names, so
 //! that a hider is never a girl by a boy's name, which none of the crowd
-//! is.
+//! is; and a hider by a name none of the town's people of their side goes
+//! by is told so under the box. To a seeker it says what a wrong swing
+//! costs; and, the round before given up, whose it was.
 
 use bevy::prelude::*;
 use roundtown_net::blend_in::{self as rules, BlendStage};
@@ -48,14 +51,18 @@ use crate::window::{self, Look};
 
 /// Sizes, as shares of the short side of the screen: the window; the card
 /// with your look on it and the picture on it; an arrow beside it, its
-/// head and the room round it for a finger; the box your name is in; the
-/// tick by a name; the players' words; and Ready.
+/// head and the room round it for a finger (10.5 since a play-tester found
+/// the 6.4 it was too small to be sure of on a phone, 25 points across:
+/// the sign-up's are 8, and these are pressed in a hurry), the head kept
+/// by the card; the box your name is in (34, from 40, to make room for
+/// them); the tick by a name; the players' words; and Ready (as tall as
+/// every window's buttons are, `window::CHOICE_HEIGHT`).
 const WIDTH: f32 = 100.0;
 const CARD: f32 = 21.0;
 const PICTURE: f32 = 17.0;
 const ARROW: f32 = 4.4;
-const ARROW_TOUCH: f32 = 6.4;
-const FIELD_WIDTH: f32 = 40.0;
+const ARROW_TOUCH: f32 = 10.5;
+const FIELD_WIDTH: f32 = 34.0;
 const TICK: f32 = 2.8;
 const PLAYER_TEXT: f32 = 3.0;
 const READY_WIDTH: f32 = 38.0;
@@ -66,6 +73,16 @@ const READY_WIDTH: f32 = 38.0;
 /// nothing while you choose.
 const RIGHT: f32 = 29.0;
 const TOP: f32 = 24.0;
+/// How wide the chat down the left is, which the window keeps clear of
+/// ([`fit`]): 80 shares of the short side, and no more than 40 parts in a
+/// hundred of the screen's width (`chat`'s own `WIDTH` and `MOST_WIDE`, as
+/// they stand since 2026-11-14), from the screen's edge (`hud::EDGE`); how
+/// far from its right end the window stands at the least; and how much
+/// smaller than it is laid out the window is ever drawn.
+const CHAT_WIDE: f32 = 80.0;
+const CHAT_MOST: f32 = 40.0;
+const BESIDE_CHAT: f32 = 2.0;
+const SMALLEST: f32 = 0.6;
 /// Where it is among what is on the screen: under the screen's own, with
 /// the names over heads (`tags`), which none show through it.
 const LAYER: i32 = -1;
@@ -80,12 +97,53 @@ pub(super) fn plugin(app: &mut App) {
         .add_systems(Startup, make_pictures)
         .add_systems(
             Update,
-            (put_up, act, draw, count_down, light_ready)
+            (put_up, act, draw, refit, count_down, light_ready)
                 .chain()
                 .after(super::follow)
                 .after(signup::Typed)
                 .before(super::hold),
         );
+}
+
+/// How the window stands on a screen `wide` by `high` (in any one unit):
+/// how much smaller than it is laid out it is drawn, about its middle, and
+/// how far in from the screen's right edge it is laid out, in shares of the
+/// short side, so that what is drawn ends [`RIGHT`] in. Mine, since a
+/// play-tester found the chat's lines running over it at the desktop's 16
+/// by 9: on a phone lying on its side (19.5 by 9 and wider) it stands
+/// whole to the right of the chat; on a screen narrower than that it is
+/// drawn smaller until it does (0.72 of itself at 16 by 9, 0.61 at 16 by
+/// 10), but never smaller than [`SMALLEST`] (at 4 by 3 the chat's longest
+/// lines still reach under it).
+fn fit(wide: f32, high: f32) -> (f32, f32) {
+    let across = 100.0 * wide / wide.min(high).max(1.0);
+    let chat = hud::EDGE + CHAT_WIDE.min(CHAT_MOST * across / 100.0);
+    let room = across - RIGHT - chat - BESIDE_CHAT;
+    let scale = (room / WIDTH).clamp(SMALLEST, 1.0);
+    (scale, RIGHT - (1.0 - scale) * WIDTH * 0.5)
+}
+
+/// Draws the window as [`fit`] has it on the screen as it is, written only
+/// as that changes (a window put up afresh, a desktop window resized).
+fn refit(
+    screens: Query<&Window, With<bevy::window::PrimaryWindow>>,
+    mut roots: Query<&mut Node, With<ChooseWindow>>,
+    mut panes: Query<&mut UiTransform, With<ChoosePane>>,
+) {
+    let Ok(screen) = screens.single() else {
+        return;
+    };
+    let (scale, right) = fit(screen.width(), screen.height());
+    for mut root in &mut roots {
+        if root.padding.right != Val::VMin(right) {
+            root.padding.right = Val::VMin(right);
+        }
+    }
+    for mut pane in &mut panes {
+        if pane.scale != Vec2::splat(scale) {
+            pane.scale = Vec2::splat(scale);
+        }
+    }
 }
 
 /// The window, while it is up, and what was last done on it. (Which round's
@@ -136,11 +194,26 @@ struct Drawn {
     ready: bool,
     /// Each player: their name, whether they have chosen, whether they hide.
     players: Vec<(String, bool, bool)>,
+    /// Whose round was given up just before this one, if one was.
+    given_up: Option<String>,
+}
+
+impl Drawn {
+    /// Whether you hide by a name none of the town's people of your look's
+    /// side goes by, which would give you away (mine: a play-tester found
+    /// any name taken without a word, your own account's too).
+    fn odd_name(&self) -> bool {
+        self.hiding && !ai_names(BOY_LOOKS.contains(&self.look.as_str())).contains(&self.name.as_str())
+    }
 }
 
 /// The window's root, over the whole screen, taking no press of its own.
 #[derive(Component)]
 struct ChooseWindow;
+
+/// The window itself, drawn as large as [`fit`] says.
+#[derive(Component)]
+struct ChoosePane;
 
 /// The time left on it.
 #[derive(Component)]
@@ -189,12 +262,18 @@ pub(super) fn choosing(blend: &Blend) -> Option<u8> {
 
 /// Puts the window up as a round's choosing begins, and away as it ends or
 /// its cross shuts it; lets the cursor go for it on desktop while it is up.
+/// Whatever the game still has across the screen goes as it comes up (the
+/// end of the round before, cut short by a tap on the plate), which would
+/// stand over it (mine, as the results' window has it,
+/// `super::clear_for_results`).
+#[allow(clippy::too_many_arguments)]
 fn put_up(
     blend: Res<Blend>,
     mut chooser: ResMut<Chooser>,
     mut name_box: ResMut<NameBox>,
     mut wants: ResMut<WantsPointer>,
     windows: Query<Entity, With<ChooseWindow>>,
+    headlines: Query<Entity, With<super::Headline>>,
     mut commands: Commands,
 ) {
     let choosing = choosing(&blend);
@@ -209,6 +288,11 @@ fn put_up(
             }
             chooser.drawn = None;
             chooser.pressed = None;
+        }
+        if choosing.is_some() {
+            for headline in &headlines {
+                commands.entity(headline).try_despawn();
+            }
         }
         chooser.up = choosing;
     }
@@ -370,6 +454,7 @@ fn draw(
                 (name, round.ready.get(other).copied().unwrap_or(false), usize::from(round.hider) == other)
             })
             .collect(),
+        given_up: blend.given_up.clone(),
     };
     let restyled = changed.is_changed() && !changed.is_added();
     if chooser.drawn.as_ref() == Some(&now) && !restyled {
@@ -415,6 +500,7 @@ fn spawn(commands: &mut Commands, assets: &AssetServer, pictures: &Pictures, dra
     let pane = commands
         .spawn((
             ChildOf(root),
+            ChoosePane,
             HidesNames,
             LiftsForKeyboard::whole(),
             window::pane(Node {
@@ -437,8 +523,18 @@ fn spawn(commands: &mut Commands, assets: &AssetServer, pictures: &Pictures, dra
         ],
     ));
     commands.spawn((ChildOf(pane), window::cross(assets.load("icons/close.png"), ChooseTap::Shut)));
+    // The round before given up, its hider gone (said here rather than
+    // across the screen, which this window comes up under).
+    if let Some(name) = &drawn.given_up {
+        commands.spawn((ChildOf(pane), wrapped(fill(&words.void, &[("name", name)]), window::STATUS, colours.notice)));
+    }
     let line = if drawn.hiding { &words.hiding_line } else { &words.seeking_line };
     commands.spawn((ChildOf(pane), wrapped(line.clone(), window::NAME, colours.name)));
+    // To a seeker, what a wrong swing costs, before they first find out
+    // (mine, since a play-tester's first word of it was "Wrong! 4").
+    if !drawn.hiding {
+        commands.spawn((ChildOf(pane), wrapped(super::stun_rule(), window::STATUS, colours.status)));
+    }
     let body = commands
         .spawn((
             ChildOf(pane),
@@ -549,7 +645,13 @@ fn spawn(commands: &mut Commands, assets: &AssetServer, pictures: &Pictures, dra
             .spawn((ChildOf(side), signup::name_notice("", window::NOTICE_TEXT, colours.status)))
             .insert(TextLayout::justify(Justify::Left));
     } else {
-        let said = if drawn.refused { words.refused.clone() } else { String::new() };
+        let said = if drawn.refused {
+            words.refused.clone()
+        } else if drawn.odd_name() {
+            words.odd_name.clone()
+        } else {
+            String::new()
+        };
         commands.spawn((
             ChildOf(side),
             Node {
@@ -557,7 +659,7 @@ fn spawn(commands: &mut Commands, assets: &AssetServer, pictures: &Pictures, dra
                 ..default()
             },
             Pickable::IGNORE,
-            children![window::words(said, window::NOTICE_TEXT, colours.notice)],
+            children![wrapped(said, window::NOTICE_TEXT, colours.notice)],
         ));
     }
     let players = commands
@@ -609,7 +711,8 @@ fn spawn(commands: &mut Commands, assets: &AssetServer, pictures: &Pictures, dra
 }
 
 /// An arrow beside your look, stepping `by` one on or one back: an
-/// arrowhead in `ink` on nothing, pointing left, or turned to point right.
+/// arrowhead in `ink` on nothing, pointing left, or turned to point right,
+/// by the card, the room for a finger reaching out from it.
 fn arrow(image: Handle<Image>, by: i32, ink: Color) -> impl Bundle {
     (
         ChooseTap::Turn(by),
@@ -618,8 +721,9 @@ fn arrow(image: Handle<Image>, by: i32, ink: Color) -> impl Bundle {
         Node {
             width: Val::VMin(ARROW_TOUCH),
             height: Val::VMin(ARROW_TOUCH * 1.6),
-            justify_content: JustifyContent::Center,
+            justify_content: if by < 0 { JustifyContent::FlexEnd } else { JustifyContent::FlexStart },
             align_items: AlignItems::Center,
+            padding: UiRect::horizontal(Val::VMin(1.0)),
             ..default()
         },
         BackgroundColor(Color::NONE),
@@ -681,7 +785,67 @@ fn light_ready(
 
 #[cfg(test)]
 mod tests {
+    use bevy::ecs::system::RunSystemOnce;
+    use roundtown_net::blend_in::BlendRound;
+
     use super::*;
+
+    #[test]
+    fn whatever_the_game_has_across_the_screen_goes_as_the_window_comes_up() {
+        let mut world = World::new();
+        world.init_resource::<Chooser>();
+        world.init_resource::<NameBox>();
+        world.init_resource::<WantsPointer>();
+        world.insert_resource(Blend {
+            seat: Some(0),
+            round: Some(BlendRound {
+                round: 1,
+                rounds: 2,
+                hider: 0,
+                stage: BlendStage::Shown,
+                until: 0.0,
+                points: vec![1, 0],
+                ready: vec![false; 2],
+                found: Some((0, 22)),
+                unmasked: Some(9),
+                swords: Vec::new(),
+            }),
+            ..default()
+        });
+        // The end of the round before, still up as its showing is cut
+        // short.
+        let headline = world.spawn(super::super::Headline).id();
+        world.run_system_once(put_up).expect("put up");
+        assert!(world.get_entity(headline).is_ok(), "no window yet: left be");
+        world.resource_mut::<Blend>().round.as_mut().unwrap().stage = BlendStage::Choose;
+        world.run_system_once(put_up).expect("put up");
+        assert_eq!(world.resource::<Chooser>().up, Some(1));
+        assert!(world.get_entity(headline).is_err(), "gone as the window comes up");
+    }
+
+    #[test]
+    fn a_hider_by_a_name_none_of_the_town_s_people_of_their_side_go_by_is_told_so() {
+        let drawn = |hiding: bool, name: &str, look: &str| Drawn {
+            round: 0,
+            rounds: 2,
+            hiding,
+            name: name.into(),
+            look: look.into(),
+            typing: false,
+            refused: false,
+            ready: false,
+            players: Vec::new(),
+            given_up: None,
+        };
+        let boy = roundtown_net::BOY_NAMES[0];
+        let girl = roundtown_net::GIRL_NAMES[0];
+        assert!(!drawn(true, boy, BOY_LOOKS[1]).odd_name());
+        assert!(!drawn(true, girl, GIRL_LOOKS[2]).odd_name());
+        assert!(drawn(true, girl, BOY_LOOKS[0]).odd_name(), "a boy by a girl's name");
+        assert!(drawn(true, "Alpha", GIRL_LOOKS[0]).odd_name(), "an account's own");
+        assert!(drawn(true, &boy.to_lowercase(), BOY_LOOKS[0]).odd_name(), "as none of them writes it");
+        assert!(!drawn(false, "Alpha", GIRL_LOOKS[0]).odd_name(), "a seeker goes by what they like");
+    }
 
     #[test]
     fn the_arrows_step_through_every_look_there_is_round_and_round() {
@@ -732,8 +896,41 @@ mod tests {
         let side = FIELD_WIDTH + 1.6 + window::ROW_BUTTON;
         assert!(card + 3.0 + side <= WIDTH - 2.0 * window::PAD, "{}", card + 3.0 + side);
         // Under the points top right, and on the screen at its foot: its
-        // padding, the title, the line (two lines), the card, and the gaps.
-        let tall = 2.0 * window::PAD + window::TAB_HEIGHT + 2.0 * window::NAME * 1.2 + CARD * 1.42 + 3.0 * 1.6;
+        // padding, the title, the round before given up, the line (two
+        // lines), what a wrong swing costs, the card, and the gaps.
+        let status = window::STATUS * 1.2;
+        let tall = 2.0 * window::PAD + window::TAB_HEIGHT + status + 2.0 * window::NAME * 1.2 + status + CARD * 1.42 + 5.0 * 1.6;
         assert!(TOP + tall <= 100.0 - hud::EDGE, "{}", TOP + tall);
+    }
+
+    #[test]
+    fn on_a_screen_narrower_than_a_phone_s_the_window_is_drawn_smaller_clear_of_the_chat() {
+        // What is drawn: from its left to its right edge, in shares of the
+        // short side from the screen's left, as `fit` lays it out and draws
+        // it smaller about its middle.
+        let drawn = |wide: f32, high: f32| {
+            let across = 100.0 * wide / wide.min(high);
+            let (scale, right) = fit(wide, high);
+            let middle = across - right - WIDTH * 0.5;
+            (scale, middle - WIDTH * 0.5 * scale, middle + WIDTH * 0.5 * scale, across)
+        };
+        let chat_end = |across: f32| hud::EDGE + CHAT_WIDE.min(CHAT_MOST * across / 100.0);
+        // A phone on its side, 19.5 by 9 and wider: whole, where it was.
+        for (wide, high) in [(852.0, 393.0), (2400.0, 1080.0)] {
+            let (scale, left, right, across) = drawn(wide, high);
+            assert_eq!(scale, 1.0);
+            assert!((across - right - RIGHT).abs() < 1e-3);
+            assert!(left >= chat_end(across), "{wide} by {high}: {left}");
+        }
+        // The desktop's 16 by 9 and a 16 by 10: smaller, its right edge
+        // where it was, and clear of the chat's lines.
+        for (wide, high) in [(1920.0, 1080.0), (1280.0, 720.0), (1920.0, 1200.0)] {
+            let (scale, left, right, across) = drawn(wide, high);
+            assert!(scale < 1.0 && scale >= SMALLEST, "{wide} by {high}: {scale}");
+            assert!((across - right - RIGHT).abs() < 1e-3, "{wide} by {high}");
+            assert!(left >= chat_end(across) + BESIDE_CHAT - 1e-3, "{wide} by {high}: {left}");
+        }
+        // Never smaller than that, however narrow.
+        assert_eq!(fit(1024.0, 768.0).0, SMALLEST);
     }
 }

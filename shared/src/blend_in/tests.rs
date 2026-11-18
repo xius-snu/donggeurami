@@ -428,6 +428,18 @@ fn the_seekers_wait_where_they_came_in_and_the_hider_far_from_them_among_the_cro
             let (came, _) = arrival(seat);
             assert!(places[&seat].xz().distance(came.xz()) < 1e-4);
             assert!(hidden.xz().distance(places[&seat].xz()) >= HIDER_CLEAR, "seed {seed}");
+            // Facing out from the pond, where the crowd is, and never at
+            // the fountain they came in facing.
+            let yaw = events
+                .iter()
+                .find_map(|event| match event {
+                    Event::Place { seat: placed, yaw, .. } if *placed == seat => Some(*yaw),
+                    _ => None,
+                })
+                .unwrap();
+            let ahead = Vec2::new(-yaw.sin(), -yaw.cos());
+            assert!(ahead.dot(came.xz().normalize()) > 0.99, "seed {seed}: seat {seat} faces {ahead}");
+            assert!((-PI..=PI).contains(&yaw), "{yaw}");
         }
         let grid = grid();
         assert!(grid.clear(hidden.xz()) && hidden.xz().length() < RING, "seed {seed}: {hidden}");
@@ -644,7 +656,7 @@ fn what_the_room_is_sent_is_small_and_comes_back_as_it_went() {
     for tell in [
         Tell::Stunned { until: CLOCK + 4.0 },
         Tell::Refused,
-        Tell::Wear { name: "Dubu".into(), look: "girl".into() },
+        Tell::Wear { name: "Dubu".into(), look: "girl".into(), now: true },
         Tell::Struck { seeker: 3 },
     ] {
         let wrapped = crate::Tell::BlendIn(tell.clone());

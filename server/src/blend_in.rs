@@ -318,7 +318,9 @@ impl BlendIn {
 }
 
 /// Tells the person in `seat`, if they are here, what they wear, or will
-/// from the coming hide (`Tell::Wear`).
+/// from the coming hide (`Tell::Wear`), and which: from the hide to the end
+/// of the round shown, what they are dressed in now (nothing chosen then
+/// changes it); otherwise what they will be.
 fn wear(ctx: &mut Ctx, table: &mut Table, game: &Game, seat: usize) {
     if !table.seats.get(seat).is_some_and(|it| it.here()) {
         return;
@@ -327,6 +329,7 @@ fn wear(ctx: &mut Ctx, table: &mut Table, game: &Game, seat: usize) {
         let told = Tell::BlendIn(blend_in::Tell::Wear {
             name: name.to_owned(),
             look: look.to_owned(),
+            now: matches!(game.stage(), BlendStage::Hide | BlendStage::Seek | BlendStage::Shown),
         });
         ctx.tell(table, seat, told);
     }
@@ -898,18 +901,24 @@ mod tests {
         // crowd's guise, the seeker their own account.
         let hider = usize::from(server.round().hider);
         let seeker = 1 - hider;
-        let offered = |server: &Server, seat: usize| -> (String, String) {
+        let told_now = |server: &Server, seat: usize| -> (String, String, bool) {
             server
                 .heard(seat)
                 .iter()
                 .rev()
                 .find_map(|told| match told {
-                    blend_in::Tell::Wear { name, look } => Some((name.clone(), look.clone())),
+                    blend_in::Tell::Wear { name, look, now } => Some((name.clone(), look.clone(), *now)),
                     _ => None,
                 })
                 .expect("told what they wear")
         };
+        let offered = |server: &Server, seat: usize| -> (String, String) {
+            let (name, look, _) = told_now(server, seat);
+            (name, look)
+        };
         assert_eq!(offered(&server, seeker).0, ["Dubu", "Mochi"][seeker]);
+        // While choosing, what they will wear from the hide, not now.
+        assert!(!told_now(&server, seeker).2 && !told_now(&server, hider).2);
         // A choice is answered with what is worn as it stands: a name, and
         // no name, refused, and what it was kept.
         server.ask(seeker, Ask::BlendIn(blend_in::Ask::Disguise { name: "Sol".into(), look: "girl".into() }));
@@ -937,6 +946,8 @@ mod tests {
             assert!(!member.ai);
             assert!((FIRST_ID..FIRST_ID + IDS).contains(&member.id), "{member:?}");
             assert_eq!((member.name.clone(), member.look.clone()), offered(&server, seat));
+            // Dressed: told so, as worn now.
+            assert!(told_now(&server, seat).2, "seat {seat} told it is dressed so now");
             ids.push(member.id);
         }
         ids.sort_unstable();

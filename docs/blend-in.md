@@ -11,8 +11,203 @@
 
 ## Contents
 
-1. Later on 2026-11-18, after the game was checked: the crowd is sent by the rule a person's device sends by, nothing said from the hide to the end of the seek is passed on, a tap on the board no longer decides a round, and whoever leaves comes last
-2. Since 2026-11-18 Blend In is played online: two to four people, each hiding once among twenty-eight of the town's people while the others look for them
+1. Later still on 2026-11-18, after a play-tester's look: what you wear changes only at the hide, nothing stands over the window, the window keeps clear of the chat, the end of a round says who the hider went by and points the way to them, the column meets the ground softly, the ring lights up as you come near it, and a seeker is told what a wrong swing costs
+2. Later on 2026-11-18, after the game was checked: the crowd is sent by the rule a person's device sends by, nothing said from the hide to the end of the seek is passed on, a tap on the board no longer decides a round, and whoever leaves comes last
+3. Since 2026-11-18 Blend In is played online: two to four people, each hiding once among twenty-eight of the town's people while the others look for them
+
+## Later still on 2026-11-18, after a play-tester's look: what you wear changes only at the hide, nothing stands over the window, the window keeps clear of the chat, the end of a round says who the hider went by and points the way to them, the column meets the ground softly, the ring lights up as you come near it, and a seeker is told what a wrong swing costs
+
+A play-tester of ours played the game as it stood after the entry below,
+two hidden copies against a server on this PC, by day at the desktop's
+size and at night at a phone's, and listed eighteen things a player would
+find wrong, most important first. What was done with each, in their order;
+nothing of Hajun's changed, and every call here is mine.
+
+1. **Nothing stands over the window a round begins with.** The end of the
+   round before ("Found by Alpha in 0:22!") stayed up over the next
+   round's window when the round shown was cut short by a tap on the
+   plate, and a round given up ("Mochi's round is given up") was said
+   across the screen in the very frame the next window came up, always.
+   Now whatever the game has across the screen goes as the window comes
+   up (`choose::put_up`), and a round given up is said in the chat and in
+   a line at the top of the next round's window (`Blend::given_up`), never
+   across the screen.
+2. **What you wear changes only at the hide.** The server's offer for the
+   next round (what you wear if you choose nothing else) comes as the
+   round before is still shown, and the device took it for what you were
+   dressed as: from round 2 on, the hider's plate top left and their own
+   body changed to the offer before the hide, and then ignored what was
+   picked in the window until the hide put it right. The server now says
+   with every word of what you wear whether you are dressed in it now
+   (from the hide to the end of the round shown) or will be from the
+   coming hide (`blend_in::Tell::Wear`'s `now`), and the device goes by
+   that (`hear`). A first try at this, going by the part of the round the
+   device had last followed, was found wrong by a run of three below: a
+   round given up in the middle of its seek has no showing, and the offer
+   came while the device still followed the seek; nor does replicon hold a
+   message back for a change to a component the table's entity already
+   has, as the round is. The word is the game's own, and protocol 22 is
+   not yet out.
+3. **The window keeps clear of the chat.** At the desktop's 16 by 9 (and
+   on any screen under about 2 to 1) the chat's lines ran over it. It is
+   drawn smaller there until it stands clear of them, its right edge where
+   it was (`choose::fit`: 0.72 of itself at 16 by 9, 0.61 at 16 by 10,
+   never under 0.6; whole on a phone on its side, where it was clear
+   already). On a seeker's black screen the words now begin under the
+   chat's lines (52 shares of the short side down, where they ended 48.6),
+   instead of across the middle where the longest line ran into them.
+4. **The end of a round says who the hider went by**: over "Found by Alpha
+   in 0:22!" or "Mochi stayed hidden!", "Bravo hid as Latte"; and the chat
+   says "Alpha found Bravo (Latte) in 0:22." or "Mochi stayed hidden as
+   Latte." (the plain lines as before should a device not know the body).
+   And while the hider lit up is off the screen, behind you too, a gold
+   arrowhead at the screen's edge points the way to them
+   (`screen::toward_hider`), in a band from under the plates along the top
+   to over the chat's lines and the chat's keyboard (26 to 34 shares of the
+   short side down; lower, it first stood beside the keyboard). The camera
+   is never swung round to them (in the town nothing in the world moves
+   it).
+5. **The column meets the ground softly.** It was three sheets crossed at
+   the hider, strongest at the ground: its foot was cut in hard straight
+   edges and triangles, a sheet seen edge-on was a bright line down the
+   hider's own body, and their name over them was white on its white by
+   day. It is now one sheet turned square to the camera about the upright
+   (`light::face_the_camera`), so that the hider's own body stands in front
+   of it, with a pool of its light on the ground at their feet (the
+   glow's shape); nothing at its very foot, faint up the body and round the
+   name (0.3 of its colour), strongest 5 m up (0.85), nothing at its top.
+   The name tag itself is `tags.rs`'s and is not stroked: the column is
+   faint where the name is instead.
+6. **The ring can be seen by day, and lights up as you come near it.** Its
+   dashes were the plate's grey, about 10 in 255 darker than the asphalt,
+   beside the road's own white edge line; a seeker running out stopped at
+   a wall nobody could see. The dashes are now the game's violet
+   (`colours.blend_in.ring`, `#c9a2ffd9`), 0.3 m wide (from 0.22), drawn
+   1.5 times their colour (not 2.5, which came out near white); and within
+   12 m of the ring a light rises off it round the point nearest you, 1.6 m
+   high and 18 m along either way, fading upward and toward its ends, whole
+   from 2 m in (`light::wall`, `colours.blend_in.wall`, `#b98cffb3`, laid
+   over what is behind it rather than added, so that it shows by day). The
+   first time you walk into the ring at a table your chat says "The game is
+   played inside the ring." The seekers' glow by day on sand, pale pink
+   rather than violet, is as it was: a colour of Hajun's to choose.
+7. **A seeker is told what a wrong swing costs** before they first find
+   out: "A wrong swing blinds you: 4 s, then 7, then 10" under the seeker's
+   line in their window, and under the seconds on their black screen
+   through the hide, the numbers read from the rules (`stun_rule`).
+8. **The plate's words**: the seekers' "Seek in 0:13" through the hide
+   (it said "Hiding 0:13", which read as if they hid), "Next round in
+   0:05", "Results in 0:05".
+9. **The arrows by the look are bigger to press**: 10.5 shares of the
+   short side across where they were 6.4 (25 points on a phone; the
+   sign-up's are 8), the arrowhead kept by the card; the name's box 34 where
+   it was 40, to make room. Ready and the dice are as every window's
+   buttons are.
+10. **The cross is as it was**, Ready with what is chosen and the window put
+    away for the round: put away without it, there is nothing left to
+    choose with and the others would wait the 30 s out; and Ready is not
+    made to be taken back, which would need a new word in the protocol
+    (`blend_in::Ask`) for 30 seconds of choosing. Asked of Hajun below.
+11. **"1 points"** among the results is the tables' (`table`'s results
+    write every count with the game's one score word): asked of them below.
+12. **A hider by a name none of the town's people of their side goes by is
+    told so** under the box, "Not one of the town's names" (their own
+    account's, a boy's look by a girl's name, a name in other capitals), as
+    a name turned down is; it is still theirs to keep.
+13. **The seek begins facing out**: the seekers are stood for the hide
+    facing out from the pond, where the crowd walks, not at the fountain
+    they came in facing (`blend_in::facing_out` in the rules), and their
+    device swings the camera round behind them as they are stood there.
+14. **The sword's button shows from the seek**, not on the black screen
+    of the hide, where a swing does nothing. The sword is in their hand
+    from the hide as before, for the hider to see.
+15. **Names over heads covered or run together** are `tags.rs`'s: not
+    changed (the game's headlines are up three seconds as before).
+16. **Two clocks while choosing**, the plate's and the window's: both kept,
+    the design asking for the seconds in the window and the plate saying
+    the time in every part of a round; by the one clock they never differ.
+17. **A game of two is mostly a draw**: Hajun's rule ("given a draw if both
+    found each other or both couldnt find each other"); a hint late in the
+    seek would change how the game plays, which is Hajun's to say.
+18. **What is still sent that a device made to read the network could
+    use** (a person standing still sent several times a second, the
+    hider's body jumping at the hide, the same entity round to round) is
+    the tables' and the rooms', as the entry below asks.
+
+### Asked of others
+
+- **The tables' results, one word**: `table`'s results window writes "1
+  points"; a singular from the game would need `score_word` to take the
+  count (`fn score_word(count: u32) -> String` in each of the four games,
+  and `table` passing it), or a `score_one` word beside it.
+- **Hajun**: whether the window's cross should only put it away (the
+  others then wait the choosing out for whoever pressed it), and whether
+  Ready should be taken back by a second press (a new `Ask` of the game's,
+  appended); the colours of the ring's line and its light, now the game's
+  violet, and of the seekers' glow by day.
+
+### What was checked, and where (this entry)
+
+- **Tests** (all three suites whole: `roundtown_net` 153 passed and 3
+  ignored, `roundtown_server` 93 passed and 4 ignored, `--lib` 395
+  passed): the rules': the seekers stood for the hide on the path facing
+  out from the pond. The server's: what each is told they wear said as
+  not yet worn while choosing and as worn now from the hide. The game's:
+  the next round's offer not worn until its hide, the round before shown
+  or given up in its seek; a round given up said in the next
+  window and nothing put across it, gone with the hide; the end of a round
+  naming the body the hider went by; what a wrong swing costs said as the
+  rules have it; the window coming up taking the game's headlines down; a
+  hider's odd name; the window drawn smaller and clear of the chat at 16 by
+  9, 16 by 10 and whole on a phone, never smaller than 0.6; the column
+  nothing at its foot and faint up the body and round the name; the ring's
+  light rising off it near you, fading along it, whole at the ring and
+  nothing 12 m in; the arrow toward the hider at the screen's edge on the
+  way to them, behind you too.
+- **Hidden runs of copies against a server on this PC** (`RT_BACKGROUND=1`,
+  port 5481, `RT_ALLOW_SKIP=1`, no database), scripted by a throwaway
+  taken out again (kept outside the tree,
+  `RoundTown-wt/scratch-blendin/polish/kept/scratch_polish.rs` and
+  `polish.sh`), each a whole game of two unless said:
+  - by day at the desktop's 16 by 9, twice (the second on the final
+    build): the window drawn at 0.72 of itself, its left edge clear of
+    the chat's longest line; a hider's own name typed, "Not one of the
+    town's names" under the box, gone after the dice; the seeker's black
+    screen, "Seek in 0:13", its words under the chat's line and what a
+    wrong swing costs, no sword's button; the seek begun facing out from
+    the pond (facing 1.00 out, logged), the crowd ahead; at the ring the
+    violet dashes by the road's white line and the light off it, and "The
+    game is played inside the ring." once; the find, "Bravo hid as Yeppi"
+    over "Found by Alpha in 0:28!", the chat's "Alpha found Bravo (Yeppi)
+    in 0:28.", "Next round in 0:04"; the column, a soft beam and a pool of
+    light, the hider's own body in front of it, enlarged; the round shown
+    cut short by a tap on the plate and the next window up a quarter of a
+    second later with nothing over it; the second round's hider's plate
+    their last round's name through the offer and the dice ("Alpha", the
+    window "Sol" then "Dori") and the chosen at the hide; a seek run out,
+    "Alpha hid as Hobak" over "Alpha stayed hidden!", "Results in 0:05",
+    the arrow at the screen's edge with the hider behind (beside the chat's
+    keyboard in the first run, in the band above it after); 1,050 and 950
+    coins; back in the town;
+  - at night at a phone's 852 by 393: the window whole, where it was; the
+    rest as by day, the ring's dashes and light and the column and its
+    pool at night, enlarged, the arrow above the keyboard;
+  - three copies at 16 by 10 (1280 by 800), twice: the first round's hider
+    (Alpha the first time, Bravo the second) left in the seek; the next
+    window with "Alpha's round is given up" (and "Bravo's") at its top, the
+    same in the chat, nothing across it, drawn at 0.61 and clear of the
+    chat. The first of the two found the next hider's plate taking the
+    offer ("Latte (you)": the device then went by the round it had last
+    followed), which item 2 now fixes; the second, on the final build,
+    "Alpha" kept on the next hider's plate with "Saem" offered in the
+    window.
+  - Nothing panicked or logged an error or a warning; nothing was left
+    running. Pictures in `RoundTown-wt/scratch-blendin/polish/`
+    (`out_day/shots`, `out_day_first/shots`, `out_phone_night/shots`,
+    `out_void/shots`, `out_void_first/shots`), enlargements in
+    `polish/crops`, logs beside the pictures.
+- **Not**: a phone or an iPhone (nothing of this has been seen on one);
+  the VM; a database; four people; a slow network.
 
 ## Later on 2026-11-18, after the game was checked: the crowd is sent by the rule a person's device sends by, nothing said from the hide to the end of the seek is passed on, a tap on the board no longer decides a round, and whoever leaves comes last
 
@@ -232,7 +427,8 @@ of the server's and the device's sides (*mine*).
   outer edge (the design; the rules measured the white line there at 70.3
   to 70.7 m). A faint dashed line lies on the ground at 70 m, unlit, in
   the plate's grey (the design), in dashes of 1.6 m with gaps of 1.6 m,
-  0.22 m wide (mine); your body is kept a body's width inside it as you
+  0.22 m wide (mine; since the entry at the top, the game's violet, 0.3 m
+  wide, with a light rising off it as you come near); your body is kept a body's width inside it as you
   walk at it (mine: seen at 69.55 m in the run below), and the server puts
   back anyone seen 1.5 m past it, at most once every 2 s (the rules).
 - **The crowd**: 28 of the town's people (the town's 32 bodies with four
@@ -282,7 +478,9 @@ of the server's and the device's sides (*mine*).
      every seeker (the rules) and told "Hide!" ("Walk like them, stop like
      them"); the seekers stand on the path round the pond, their screens
      black but for the plate, "The hider is getting into place" and the
-     seconds, and cannot move (the design).
+     seconds, and cannot move (the design). (Since the entry at the top
+     they stand facing out from the pond, and their screen says what a
+     wrong swing costs.)
   3. **The seek**, 2:30 (the design): "Seek!" ("Find who isn't one of
      them") to the seekers, "Stay hidden!" ("The seekers are coming") to
      the hider. The seekers run at 10 m/s, and only in the seek; the hider
@@ -306,8 +504,10 @@ of the server's and the device's sides (*mine*).
      server passes on nothing said then either.
   4. **The round over**, 6 s: a tall soft column of light over where the
      hider stands (the design), and "Found by Dubu in 1:12!" or "Mochi
-     stayed hidden!", the same in the chat. A point to the finder, or to
-     the hider if the time ran out (Hajun's).
+     stayed hidden!", the same in the chat (since the entry at the top,
+     with who the hider went by, and an arrow toward them while they are
+     off the screen). A point to the finder, or to the hider if the time
+     ran out (Hajun's).
 - **A hider who leaves**, or whose device is gone 20 s, gives up their
   round with no point ("Mochi's round is given up"), and someone who
   leaves before their turn to hide loses that round; with fewer than two
@@ -325,7 +525,8 @@ of the server's and the device's sides (*mine*).
   "Stay hidden 2:14", with "Round 2/3" under it (the design); and in the
   other parts of a round "Choosing 0:24", "Hide 0:12" to the hider and
   "Hiding 0:12" to the seekers, "Next round 0:05" and "Results 0:05"
-  (mine). Top right the points, a row to each person (the design), the
+  (mine; since the entry at the top "Seek in 0:12", "Next round in 0:05"
+  and "Results in 0:05"). Top right the points, a row to each person (the design), the
   hider's in the game's violet (mine). Top left your name, and from the
   first hide the name you go by with "(you)" under it, in its place (the
   design). Names over every head, the crowd's and everyone's, as the town
@@ -386,7 +587,8 @@ shows either.
 
 - The window stands to the right of the screen, clear of the chat down the
   left and of the chat's keyboard and the speech bubble (on a phone on
-  its side; on a narrower screen the chat's lines draw over it). It is no
+  its side; on a narrower screen the chat's lines draw over it, until the
+  entry at the top drew it smaller there). It is no
   dialog, so that the chat may be used while it is up (the design said
   both "a dialog: you stand still" and "the chat may be used"), and you
   are held still instead. Its box is the keyboard's only while the name is
@@ -397,14 +599,17 @@ shows either.
   side's town names: a girl by a boy's name, which none of the crowd is,
   would give a hider away.
 - The sword is in the seekers' hands from the hide, as they stand blind at
-  the pond, so that the hider knows who they are from the start.
+  the pond, so that the hider knows who they are from the start. (Its
+  button, since the entry at the top, only from the seek.)
 - The seekers' bodies are on one team on every device (never drawn), so
   that a seeker's swing passes another seeker by and lands on whoever is
   behind them.
 - The glow round a seeker is a soft disc of light 1.5 m out on the ground,
   in the game's violet, added to what is under it; the column over the
   hider three crossed sheets of warm light, added too, 24 m high and 2.4
-  wide, strongest at the foot, nothing at the edges or the top.
+  wide, strongest at the foot, nothing at the edges or the top (since the
+  entry at the top, one sheet turned to the camera, nothing at its foot,
+  with a pool of light on the ground).
 - The stun blinds by a blindfold of the game's own, drawn as Bridge Wars'
   is, whose own would say "A trap has blinded you!" as it comes: Blend In
   takes none of Bridge Wars' fight state.
@@ -423,7 +628,8 @@ shows either.
   the seek too, the seek as run out with the hider's point, whoever
   tapped: no longer, since the entry above.)
 - Words and colours are all in `assets/ui.ron` (`words.blend_in`,
-  `colours.blend_in`): the ring `#6666668c`, the glow `#b98cff80`, the
+  `colours.blend_in`): the ring `#6666668c` (`#c9a2ffd9` since the entry
+  at the top, with its light `#b98cffb3`), the glow `#b98cff80`, the
   column `#fff1c2bf`, the black `#000000`, the tick `#34d634`.
 
 ### A change outside the game's files

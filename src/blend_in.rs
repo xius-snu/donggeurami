@@ -37,7 +37,8 @@
 //!   who has chosen. You stand still; the chat may be used.
 //! * **The hide**: the hider is told across the screen to walk like the
 //!   town's people and stop like them; a seeker's screen is black ("The
-//!   hider is getting into place", and the seconds) and they cannot move.
+//!   hider is getting into place", the seconds, and what a wrong swing
+//!   will cost) and they cannot move, stood facing out from the pond.
 //! * **The seek**: the seekers run ([`BlendRound::pace`]), the aura sword in
 //!   their hands for everyone to see and a faint glow on the ground round
 //!   them, the punch's range drawn under the one who is you
@@ -46,15 +47,17 @@
 //!   blindfold) and holds them where they stand, "Wrong!" counting down;
 //!   everyone's chat says so. The chat and the quick chat are hushed from
 //!   the hide to the end of the seek ([`Hushed`]).
-//! * **Over**: a column of light over the hider where they stood, and who
-//!   found them in how long, or that they stayed hidden; and at the end
-//!   who wins, and the table's results.
+//! * **Over**: a column of light over the hider where they stood, an arrow
+//!   at the screen's edge toward it while it is off the screen, and who
+//!   found them in how long, or that they stayed hidden, and who they went
+//!   by; and at the end who wins, and the table's results.
 //!
 //! Top centre a plate says what is going on and the time; top right the
 //! points; top left your name, and while you are dressed as someone else
-//! that name, with "(you)" under it (`screen`). A faint dashed line on the
-//! ground marks the ring past which nobody walks (`light`), and your body
-//! is kept inside it ([`keep_inside`]).
+//! that name, with "(you)" under it (`screen`). A dashed line on the
+//! ground marks the ring past which nobody walks, a light rising off it as
+//! you come near (`light`), and your body is kept inside it
+//! ([`keep_inside`]).
 
 mod choose;
 mod light;
@@ -222,6 +225,13 @@ struct Blend {
     /// the window back on an older choice, and a tap made then stepped on
     /// from that one and was lost.
     asked: u32,
+    /// Whose round was given up just before this one, by the name they sit
+    /// at the table under: said in this round's window (`choose`), which
+    /// comes up as it is, and where a headline would stand over it.
+    given_up: Option<String>,
+    /// Whether you have been told the game is played inside the ring, as
+    /// you first walked into it at this table ([`keep_inside`]).
+    ringed: bool,
 }
 
 impl Blend {
@@ -311,12 +321,19 @@ fn hear(
 ) {
     for Told(said) in told.read() {
         match said {
-            blend_in::Tell::Wear { name, look } => {
+            blend_in::Tell::Wear { name, look, now } => {
                 let wearing = (name.clone(), look.clone());
                 blend.asked = blend.asked.saturating_sub(1);
-                // Dressed as it once the hide has begun: what everyone sees
-                // you as from then.
-                let dressed = blend.round.as_ref().is_some_and(|round| dressed(round.stage));
+                // Dressed as it now, from the hide to the end of the round
+                // shown, as the server says: what everyone sees you as.
+                // Otherwise what you will wear from the coming hide, and you
+                // go on as you were until then. (In the first build the
+                // device guessed which by the part of the round it had last
+                // followed, and the next round's offer, which comes as the
+                // round before is still shown, or given up in its seek, was
+                // put on at once: your plate and your body the offer, and a
+                // choice made in the window not worn until the hide.)
+                let dressed = *now;
                 if dressed {
                     blend.worn = Some(wearing.clone());
                 }
@@ -450,6 +467,7 @@ fn follow(
     at: Res<AtTable>,
     view: Res<TableView>,
     rounds: Query<&BlendRound, With<Remote>>,
+    bodies: Query<&Member, With<Remote>>,
     mut blend: ResMut<Blend>,
     mut log: ResMut<chat::Log>,
     headlines: Query<Entity, With<Headline>>,
@@ -504,17 +522,22 @@ fn follow(
         let new = hud::announce(commands, caption, title, size, secs).insert((InTable, Headline)).id();
         up.push(new);
     };
+    let mut given_up = None;
     for moment in came {
         match moment {
             Moment::Choose => {
                 blend.refused = false;
                 blend.stunned = None;
                 blend.asked = 0;
+                // Said in the window this round's choosing comes up in,
+                // if the round before was given up.
+                blend.given_up = given_up.take();
             }
             Moment::Hide => {
                 // What you chose is what you are dressed as from now, if
                 // the word of it is here; it is told again as you are.
                 blend.asked = 0;
+                blend.given_up = None;
                 if let Some(offered) = blend.offered.clone() {
                     blend.worn = Some(offered);
                 }
@@ -532,24 +555,46 @@ fn follow(
             }
             Moment::Shown { found } => {
                 let hidden = names.get(hider).cloned().unwrap_or_default();
-                let (headline, line) = match found {
-                    Some((by, after)) => {
+                // Who they went by, so that a seeker who never saw them
+                // has the answer (mine, since a play-tester found the end
+                // of a round named only the account): their own word of
+                // it, or the name over the body the room is told was
+                // theirs.
+                let guise = if hider == seat {
+                    blend.worn.as_ref().map(|(name, _)| name.clone())
+                } else {
+                    now.unmasked.and_then(|id| bodies.iter().find(|body| body.id == id)).map(|body| body.name.clone())
+                };
+                let (headline, line) = match (found, &guise) {
+                    (Some((by, after)), _) => {
                         let time = table::clock(f32::from(after));
                         let finder = names.get(by).cloned().unwrap_or_default();
-                        (
-                            fill(&words.found, &[("name", &finder), ("time", &time)]),
-                            said(&words.found_line, &[("seeker", &finder), ("hider", &hidden), ("time", &time)]),
-                        )
+                        let line = match &guise {
+                            Some(guise) => said(
+                                &words.found_as_line,
+                                &[("seeker", &finder), ("hider", &hidden), ("guise", guise), ("time", &time)],
+                            ),
+                            None => said(&words.found_line, &[("seeker", &finder), ("hider", &hidden), ("time", &time)]),
+                        };
+                        (fill(&words.found, &[("name", &finder), ("time", &time)]), line)
                     }
-                    None => (fill(&words.stayed, &[("name", &hidden)]), said(&words.stayed_line, &[("name", &hidden)])),
+                    (None, Some(guise)) => (
+                        fill(&words.stayed, &[("name", &hidden)]),
+                        said(&words.stayed_as_line, &[("name", &hidden), ("guise", guise)]),
+                    ),
+                    (None, None) => (fill(&words.stayed, &[("name", &hidden)]), said(&words.stayed_line, &[("name", &hidden)])),
                 };
-                announce(&mut commands, None, &headline, hud::HEADLINE, SHOWN_SECS);
+                let caption = guise.as_ref().map(|guise| fill(&words.hid_as, &[("name", &hidden), ("guise", guise)]));
+                announce(&mut commands, caption.as_deref(), &headline, hud::HEADLINE, SHOWN_SECS);
                 log.push(line);
             }
+            // In the chat, and in the window of the round that comes up as
+            // it is: never across the screen, where it stood over that
+            // window (in the first build it did).
             Moment::Void { hider } => {
                 let name = names.get(hider).cloned().unwrap_or_default();
-                announce(&mut commands, None, &fill(&words.void, &[("name", &name)]), hud::CAPTION, HEADLINE_SECS);
                 log.push(said(&words.void_line, &[("name", &name)]));
+                given_up = Some(name);
             }
             Moment::Over => {
                 // By the places the table pays by, which put whoever left
@@ -654,9 +699,9 @@ fn arm(
         .map(|round| round.swords.iter().copied().filter(|&id| id != 0).collect())
         .unwrap_or_default();
     let armed = blend.armed();
+    let seeking = armed && blend.playing().is_some_and(|round| round.stage == BlendStage::Seek);
     if let Ok((you, wears, team, shows)) = me.single() {
         put(&mut commands, you, armed, wears, team);
-        let seeking = armed && blend.playing().is_some_and(|round| round.stage == BlendStage::Seek);
         if seeking && !shows {
             commands.entity(you).insert(Shows);
         } else if !seeking && shows {
@@ -666,7 +711,12 @@ fn arm(
             blend.me_armed = armed;
         }
     }
-    let shown = if armed { Visibility::Inherited } else { Visibility::Hidden };
+    // The sword's button from the seek alone: in the hide, on the black
+    // screen, a swing does nothing (the server takes strikes in the seek
+    // only), and a button that does nothing is no button (mine, since a
+    // play-tester pressed it there). The sword is in your hand from the
+    // hide all the same, for the hider to see.
+    let shown = if seeking { Visibility::Inherited } else { Visibility::Hidden };
     for mut button in &mut swords {
         button.set_if_neq(shown);
     }
@@ -752,9 +802,15 @@ fn pace(blend: Res<Blend>, mut me: Query<(&mut Intent, &mut WalkCycle), With<Pla
 
 /// Keeps your body inside the ring ([`RING`]): nobody walks past it, and
 /// the server would put you back anyway. Walking out at it, you stand at
-/// it, a body's width inside the line on the ground. Written only if you
-/// were past it.
-fn keep_inside(blend: Res<Blend>, mut me: Query<(&mut Transform, &Venue), With<Player>>) {
+/// it, a body's width inside the line on the ground, and the first time at
+/// a table your chat says why (mine: a wall nobody can see is no wall; the
+/// light rising off the line as you come near it shows where, `light`).
+/// Written only if you were past it.
+fn keep_inside(
+    mut blend: ResMut<Blend>,
+    mut log: ResMut<chat::Log>,
+    mut me: Query<(&mut Transform, &Venue), With<Player>>,
+) {
     if blend.seat.is_none() {
         return;
     }
@@ -772,6 +828,24 @@ fn keep_inside(blend: Res<Blend>, mut me: Query<(&mut Transform, &Venue), With<P
     let inside = across.clamp_length_max(most);
     body.translation.x = inside.x;
     body.translation.z = inside.y;
+    if !blend.ringed {
+        blend.ringed = true;
+        let file = ui();
+        log.push(chat::spans(&file.words.blend_in.ring_line, file.colours.chat.event, &[]));
+    }
+}
+
+/// What a wrong swing costs a seeker, in the file's words
+/// (`words.blend_in.stun_rule`): the stun of a round's first wrong guess,
+/// its second and its third, in seconds, as the rules have them
+/// ([`STUN_FIRST`](blend_in::STUN_FIRST), [`STUN_MORE`](blend_in::STUN_MORE)),
+/// so that the words never say other than the game does. On a seeker's
+/// window and on their black screen through the hide (mine, since a
+/// play-tester found a first-time seeker's first word of it was "Wrong!
+/// 4", and nothing said the next would be 7).
+fn stun_rule() -> String {
+    let nth = |guess: u8| (blend_in::STUN_FIRST + blend_in::STUN_MORE * f32::from(guess)).round().to_string();
+    fill(&ui().words.blend_in.stun_rule, &[("first", &nth(0)), ("second", &nth(1)), ("third", &nth(2))])
 }
 
 /// Asks the server something of the game, as this device's own word
@@ -911,10 +985,23 @@ mod tests {
         world.resource_mut::<Messages<Told>>().clear();
     }
 
+    /// What the server says you will wear from the coming hide: as the
+    /// choosing begins, and in answer to each choice.
     fn wear(name: &str, look: &str) -> blend_in::Tell {
         blend_in::Tell::Wear {
             name: name.into(),
             look: look.into(),
+            now: false,
+        }
+    }
+
+    /// What the server says you are dressed in now: as the hide begins, or
+    /// to a device back from the hide to the end of the round shown.
+    fn worn(name: &str, look: &str) -> blend_in::Tell {
+        blend_in::Tell::Wear {
+            name: name.into(),
+            look: look.into(),
+            now: true,
         }
     }
 
@@ -922,8 +1009,7 @@ mod tests {
     fn a_device_opened_again_part_way_through_a_round_is_dressed_as_it_wears_whichever_word_comes_first() {
         // What it wears told before the round comes.
         let mut world = at_the_table();
-        told(&mut world, wear("Bori", "girl"));
-        assert_eq!(world.resource::<Blend>().worn, None, "nothing yet to say it is dressed");
+        told(&mut world, worn("Bori", "girl"));
         sent(&mut world, BlendStage::Seek);
         world.run_system_once(follow).expect("followed");
         let blend = world.resource::<Blend>();
@@ -933,7 +1019,7 @@ mod tests {
         sent(&mut world, BlendStage::Shown);
         world.run_system_once(follow).expect("followed");
         assert_eq!(world.resource::<Blend>().worn, None);
-        told(&mut world, wear("Bori", "girl"));
+        told(&mut world, worn("Bori", "girl"));
         assert_eq!(world.resource::<Blend>().worn, Some(("Bori".into(), "girl".into())));
         // Seen first while everyone chooses, nobody is dressed yet.
         let mut world = at_the_table();
@@ -972,9 +1058,102 @@ mod tests {
         world.resource_mut::<Blend>().asked = 2;
         sent(&mut world, BlendStage::Hide);
         world.run_system_once(follow).expect("followed");
-        told(&mut world, wear("Kong", "boy"));
+        told(&mut world, worn("Kong", "boy"));
         let blend = world.resource::<Blend>();
         assert_eq!((blend.offered.clone(), blend.worn.clone()), (Some(("Kong".into(), "boy".into())), Some(("Kong".into(), "boy".into()))));
+    }
+
+    #[test]
+    fn what_the_next_round_offers_is_not_worn_until_its_hide() {
+        let mut world = at_the_table();
+        sent(&mut world, BlendStage::Seek);
+        world.run_system_once(follow).expect("followed");
+        told(&mut world, worn("Bori", "girl"));
+        assert_eq!(world.resource::<Blend>().worn, Some(("Bori".into(), "girl".into())));
+        // The round shown, and the next round's offer come before the room
+        // says its choosing has begun: offered, and not worn.
+        sent(&mut world, BlendStage::Shown);
+        world.run_system_once(follow).expect("followed");
+        told(&mut world, wear("Kong", "boy"));
+        let blend = world.resource::<Blend>();
+        assert_eq!(blend.worn, Some(("Bori".into(), "girl".into())), "still as everyone sees you");
+        assert_eq!(blend.offered, Some(("Kong".into(), "boy".into())), "the window's");
+        // A round given up in the middle of its seek: the next round's offer
+        // comes while this device still follows the seek (as a play-tester's
+        // run of three found it).
+        let mut world = at_the_table();
+        sent(&mut world, BlendStage::Seek);
+        world.run_system_once(follow).expect("followed");
+        told(&mut world, worn("Bori", "girl"));
+        told(&mut world, wear("Kong", "boy"));
+        let blend = world.resource::<Blend>();
+        assert_eq!(blend.worn, Some(("Bori".into(), "girl".into())), "the offer is not worn");
+        assert_eq!(blend.offered, Some(("Kong".into(), "boy".into())));
+        // At the hide, what it is dressed in, whichever comes first, the
+        // word or the round.
+        told(&mut world, worn("Kong", "boy"));
+        assert_eq!(world.resource::<Blend>().worn, Some(("Kong".into(), "boy".into())));
+    }
+
+    #[test]
+    fn a_round_given_up_is_said_in_the_next_round_s_window_and_never_across_it() {
+        let mut world = at_the_table();
+        sent(&mut world, BlendStage::Seek);
+        world.run_system_once(follow).expect("followed");
+        // The hider (Mochi, seat 1) gone in the seek: the next round's
+        // choosing comes at once.
+        let shown = world.resource::<TableView>().shown.unwrap();
+        let mut next = round(1, BlendStage::Choose);
+        next.hider = 0;
+        world.entity_mut(shown).insert(next);
+        world.run_system_once(follow).expect("followed");
+        assert_eq!(world.resource::<Blend>().given_up, Some("Mochi".to_owned()));
+        let mut up = world.query_filtered::<(), With<Headline>>();
+        assert_eq!(up.iter(&world).count(), 0, "nothing across the window");
+        // Gone as the hide begins.
+        let mut hide = round(1, BlendStage::Hide);
+        hide.hider = 0;
+        world.entity_mut(shown).insert(hide);
+        world.run_system_once(follow).expect("followed");
+        assert_eq!(world.resource::<Blend>().given_up, None);
+    }
+
+    #[test]
+    fn the_end_of_a_round_says_who_the_hider_went_by() {
+        let mut world = at_the_table();
+        sent(&mut world, BlendStage::Seek);
+        world.run_system_once(follow).expect("followed");
+        // Mochi (seat 1) hid in the body that went by 777, as Latte.
+        world.spawn((
+            Remote,
+            Member {
+                id: 777,
+                name: "Latte".into(),
+                look: "girl".into(),
+                ai: false,
+            },
+        ));
+        let shown = world.resource::<TableView>().shown.unwrap();
+        let mut over = round(0, BlendStage::Shown);
+        over.hider = 1;
+        over.unmasked = Some(777);
+        world.entity_mut(shown).insert(over);
+        world.run_system_once(follow).expect("followed");
+        let file = ui();
+        let said = fill(&file.words.blend_in.hid_as, &[("name", "Mochi"), ("guise", "Latte")]);
+        let mut texts = world.query::<&Text>();
+        assert!(texts.iter(&world).any(|text| text.0 == said), "{said:?} across the screen");
+        assert!(texts.iter(&world).any(|text| text.0 == fill(&file.words.blend_in.stayed, &[("name", "Mochi")])));
+    }
+
+    #[test]
+    fn what_a_wrong_swing_costs_is_said_as_the_rules_have_it() {
+        let rule = stun_rule();
+        for seconds in [4, 7, 10] {
+            assert!(rule.contains(&seconds.to_string()), "{rule}");
+        }
+        assert!(!rule.contains('{'), "{rule}");
+        assert!(rule.chars().all(roundtown_net::text::allowed));
     }
 
     #[test]

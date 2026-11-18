@@ -561,10 +561,10 @@ pub(crate) struct Colours {
 /// file: the colour that is the game's, on what is drawn over the world
 /// for it (the plate's grey under it, by day and by night), and the hider's
 /// name among the points; the dashed line on the ground at the ring past
-/// which nobody walks; the glow on the ground round each seeker; the
-/// column of light over the hider once a round is over; what blacks a
-/// seeker's screen out while the hider hides; and the tick by each who has
-/// chosen.
+/// which nobody walks, and the light rising off it as you come near it;
+/// the glow on the ground round each seeker; the column of light over the
+/// hider once a round is over; what blacks a seeker's screen out while the
+/// hider hides; and the tick by each who has chosen.
 #[derive(Deserialize, Clone, Copy, PartialEq, Debug)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct BlendInColours {
@@ -572,6 +572,8 @@ pub(crate) struct BlendInColours {
     pub accent: Color,
     #[serde(deserialize_with = "colour")]
     pub ring: Color,
+    #[serde(deserialize_with = "colour")]
+    pub wall: Color,
     #[serde(deserialize_with = "colour")]
     pub glow: Color,
     #[serde(deserialize_with = "colour")]
@@ -1181,13 +1183,15 @@ pub(crate) struct TableWords {
 /// block of its own so that the four games' own work never meets in this
 /// file: what its score is called among the results (`table`); the window
 /// each round begins with (its title, `{round}` of `{rounds}`; what you
-/// are this round; over the box, what it holds; a name turned down; Ready,
-/// and what it says once pressed; beside the one hiding, what they do);
-/// the plate top centre (`{time}`) and the line under it; what is said
-/// across the screen as each part of a round begins and ends (`{name}`,
-/// `{names}`, `{time}`, `{seconds}`), and on a seeker's black screen; the
-/// chat's lines (`{seeker}`, `{hider}`); and under your name top left
-/// while you are dressed as someone else.
+/// are this round; over the box, what it holds; a name turned down, or the
+/// hider's none of the town's; Ready, and what it says once pressed;
+/// beside the one hiding, what they do); what a wrong swing costs
+/// (`{first}`, `{second}`, `{third}`); the plate top centre (`{time}`) and
+/// the line under it; what is said across the screen as each part of a
+/// round begins and ends (`{name}`, `{names}`, `{guise}`, `{time}`,
+/// `{seconds}`), and on a seeker's black screen; the chat's lines
+/// (`{seeker}`, `{hider}`, `{guise}`); and under your name top left while
+/// you are dressed as someone else.
 #[derive(Deserialize, PartialEq, Debug)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct BlendInWords {
@@ -1197,9 +1201,11 @@ pub(crate) struct BlendInWords {
     pub seeking_line: String,
     pub name: String,
     pub refused: String,
+    pub odd_name: String,
     pub ready: String,
     pub waiting: String,
     pub hides: String,
+    pub stun_rule: String,
     pub choosing: String,
     pub hide: String,
     pub hiding: String,
@@ -1218,15 +1224,19 @@ pub(crate) struct BlendInWords {
     pub wrong: String,
     pub found: String,
     pub stayed: String,
+    pub hid_as: String,
     pub void: String,
     pub wins: String,
     pub win_together: String,
     pub and: String,
     pub draw: String,
     pub struck: String,
+    pub found_as_line: String,
+    pub stayed_as_line: String,
     pub found_line: String,
     pub stayed_line: String,
     pub void_line: String,
+    pub ring_line: String,
     pub you: String,
 }
 

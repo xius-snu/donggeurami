@@ -432,10 +432,14 @@
         // by day and by night. Blend In's, a soft violet.
         blend_in: (
             accent: "#c9a2ff",
-            // The faint dashed line on the ground at the ring road's outer
-            // edge, past which nobody walks: the plate's grey, as
-            // see-through as its alpha says.
-            ring: "#6666668c",
+            // The dashed line on the ground at the ring road's outer edge,
+            // past which nobody walks: the game's violet, as see-through as
+            // its alpha says (the plate's grey, "#6666668c", until a
+            // play-tester could not find it on the road by day). And the
+            // light that rises off it as you come near it, laid over what
+            // is behind it, as strong as its alpha says.
+            ring: "#c9a2ffd9",
+            wall: "#b98cffb3",
             // The glow on the ground round each seeker, from the hide to the
             // end of the seek, so that the hider sees them coming: light,
             // added to what is under it, as strong as its alpha says.
@@ -893,37 +897,44 @@
             score: "points",
             // The window each round begins with: its title ({round} of
             // {rounds}); what you are this round, hiding or seeking; over
-            // the box your name is in; under it when a name was turned down;
-            // the button that says you have chosen, and what it says once
-            // you have; and beside the one who hides, among the players.
+            // the box your name is in; under it when a name was turned down,
+            // or when the hider's is none the town's people go by; the
+            // button that says you have chosen, and what it says once you
+            // have; and beside the one who hides, among the players.
             round_of: "Round {round} of {rounds}",
             hiding_line: "You're hiding: look and sound like one of the town's own",
             seeking_line: "You're seeking: find who isn't one of them",
             name: "Name",
             refused: "Pick another name.",
+            odd_name: "Not one of the town's names",
             ready: "Ready",
             waiting: "Waiting for the others",
             hides: "hides",
+            // What a wrong swing costs a seeker, on their window and on
+            // their black screen through the hide: the {first}, {second}
+            // and {third} wrong guess of a round, in seconds.
+            stun_rule: "A wrong swing blinds you: {first} s, then {second}, then {third}",
             // The plate top centre, with the {time} left: everyone choosing;
             // the hide, as the hider sees it and as the seekers do; the
             // seek, as a seeker and as the hider; a round over, and the last
             // one over. And under it the round, {round}/{rounds}.
             choosing: "Choosing {time}",
             hide: "Hide {time}",
-            hiding: "Hiding {time}",
+            hiding: "Seek in {time}",
             seek: "Seek {time}",
             stay_hidden: "Stay hidden {time}",
-            next_round: "Next round {time}",
-            last_round: "Results {time}",
+            next_round: "Next round in {time}",
+            last_round: "Results in {time}",
             round: "Round {round}/{rounds}",
             // Across the screen: to the hider as the hide begins, the title
             // and the line over it; on a seeker's black screen meanwhile; as
             // the seek begins, to the seekers and to the hider; to a seeker
             // who struck one of the town's own ({seconds} left of it); as a
             // round ends, found by {name} in {time}, or {name} stayed
-            // hidden; a round given up, the hider having gone; and at the
-            // end, one who wins, more than one ({names}, with "and" between),
-            // or everyone alike.
+            // hidden, and over it who the hider ({name}) went by, {guise};
+            // and at the end, one who wins, more than one ({names}, with
+            // "and" between), or everyone alike. And a round given up, the
+            // hider having gone, in the window of the next.
             hide_title: "Hide!",
             hide_caption: "Walk like them, stop like them",
             blind: "The hider is getting into place",
@@ -934,18 +945,25 @@
             wrong: "Wrong! {seconds}",
             found: "Found by {name} in {time}!",
             stayed: "{name} stayed hidden!",
+            hid_as: "{name} hid as {guise}",
             void: "{name}'s round is given up",
             wins: "{name} wins!",
             win_together: "{names} win!",
             and: " and ",
             draw: "A draw!",
             // In the chat: a seeker ({name}) struck one of the crowd; the
-            // {seeker} found the {hider} in {time}; {name} stayed hidden; a
-            // round given up.
+            // {seeker} found the {hider}, who went by {guise}, in {time};
+            // {name} stayed hidden, as {guise}; each of those two without
+            // the {guise}, should this device not know it; a round given up;
+            // and, to you alone the first time you walk into the ring at a
+            // table, why you stop there.
             struck: "{name} struck one of the town's own.",
+            found_as_line: "{seeker} found {hider} ({guise}) in {time}.",
+            stayed_as_line: "{name} stayed hidden as {guise}.",
             found_line: "{seeker} found {hider} in {time}.",
             stayed_line: "{name} stayed hidden.",
             void_line: "{name}'s round is given up.",
+            ring_line: "The game is played inside the ring.",
             // Under your name top left while you are dressed as someone
             // else, the name you go by.
             you: "(you)",

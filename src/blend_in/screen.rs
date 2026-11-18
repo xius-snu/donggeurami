@@ -5,9 +5,11 @@
 //! person, the one hiding in the game's colour; top left, while you are
 //! dressed as someone else, that name on your plate with "(you)" under it,
 //! in place of your own; a seeker's screen black through the hide, "The
-//! hider is getting into place" and the seconds on it, under the plate (the
-//! blindfold's idea); and, stunned, "Wrong!" counting down over the
-//! blindfold (`gear`), which leaves a seeker a small circle round them.
+//! hider is getting into place", the seconds and what a wrong swing costs
+//! on it, under the plate (the blindfold's idea); stunned, "Wrong!" counting down over the
+//! blindfold (`gear`), which leaves a seeker a small circle round them;
+//! and as a round is shown, an arrow at the screen's edge toward the hider
+//! lit up while they are off it.
 //!
 //! Everything here is the plate's grey and the file's words and colours
 //! (`words.blend_in`, `colours.blend_in`), written only as it changes.
@@ -41,6 +43,13 @@ const SCORE_TEXT: f32 = 3.0;
 const SCORE_STROKE: f32 = SCORE_TEXT * 0.036;
 const BLIND_LINE: f32 = 4.5;
 const BLIND_COUNT: f32 = 9.0;
+const BLIND_RULE: f32 = 3.0;
+/// How far down the screen the words on a seeker's black screen begin, in
+/// shares of the short side: under the chat's lines, which in the town end
+/// 48.6 down (`chat`), and which stay on the screen through the hide (mine:
+/// across the middle of the screen, as they were, the chat's longest line
+/// ran into them).
+const BLIND_DOWN: f32 = 52.0;
 const WRONG_TEXT: f32 = 7.0;
 /// How far down the screen "Wrong!" is, as a share of its height: over the
 /// circle a stunned seeker is left to see round them.
@@ -48,9 +57,137 @@ const WRONG_DOWN: f32 = 22.0;
 
 pub(super) fn plugin(app: &mut App) {
     app.add_observer(skip)
+        .add_systems(Startup, make_arrow)
         .add_systems(Update, (show_plates, show_scores, board, dark, wrong, hush_buttons).after(super::arm))
         // The camera's place for this frame is set by then.
-        .add_systems(Update, blindfold.after(crate::follow_camera));
+        .add_systems(Update, (blindfold, toward_hider).after(crate::follow_camera));
+}
+
+/// The arrow at the edge of the screen that points toward the hider lit
+/// up, while they are off it: how big, in shares of the short side; how
+/// far in from the screen's sides its middle stands, and how far from its
+/// top and its foot: a band from under the plates along the top to over
+/// the chat's lines down the left and the chat's keyboard on the right,
+/// which begin 38.5 and 42 down (mine: kept lower, it stood beside the
+/// keyboard); and how far over the hider's feet the point it points at is,
+/// in metres (where the column of light over them is strongest, `light`).
+const TOWARD: f32 = 7.0;
+const TOWARD_IN: f32 = 6.0;
+const TOWARD_TOP: f32 = 26.0;
+const TOWARD_FOOT: f32 = 66.0;
+const TOWARD_UP: f32 = 5.0;
+
+/// The arrowhead it is drawn with (`hud::side_arrow`, the sign-up's), made
+/// once.
+#[derive(Resource)]
+struct ArrowPicture(Handle<Image>);
+
+fn make_arrow(mut images: ResMut<Assets<Image>>, mut commands: Commands) {
+    commands.insert_resource(ArrowPicture(images.add(hud::side_arrow())));
+}
+
+/// The arrow toward the hider lit up.
+#[derive(Component)]
+struct TowardHider;
+
+/// Where on the screen, `size` across and down, the arrow toward a point
+/// stands, and the turn that points the arrowhead (drawn pointing left)
+/// at it, for a point `local` in the camera's own frame (x right, y up,
+/// looking along -z): along the way to it from the middle of the screen,
+/// as far as the room the arrow is kept in ([`TOWARD_IN`], [`TOWARD_TOP`],
+/// [`TOWARD_FOOT`]) goes; for a point behind the camera, to the side
+/// turning that way would bring it round from.
+fn toward(local: Vec3, size: Vec2, short: f32) -> (Vec2, f32) {
+    let way = if local.z > 0.0 {
+        Vec2::new(if local.x < 0.0 { -1.0 } else { 1.0 }, 0.0)
+    } else {
+        Vec2::new(local.x, -local.y).normalize_or(Vec2::X)
+    };
+    let share = short / 100.0;
+    let (low, high) = (
+        Vec2::new(TOWARD_IN * share, TOWARD_TOP * share),
+        Vec2::new(size.x - TOWARD_IN * share, size.y - TOWARD_FOOT * share),
+    );
+    let middle = (low + high) * 0.5;
+    let reach = (high - low) * 0.5;
+    let far = [(way.x, reach.x), (way.y, reach.y)]
+        .into_iter()
+        .filter(|(along, _)| along.abs() > 1e-4)
+        .map(|(along, room)| room / along.abs())
+        .fold(f32::INFINITY, f32::min);
+    (middle + way * far, (-way.y).atan2(-way.x))
+}
+
+/// Points an arrow from the edge of the screen toward the hider lit up as
+/// a round is shown, while where they are is off the screen, behind you
+/// too, so that a seeker who never found them knows where to look (mine,
+/// since a play-tester found the column of light at the very edge of the
+/// screen, or out of sight, and nothing to say where). Gone once it is on
+/// the screen, and to the hider, who knows. Its place and turn written
+/// only as they change.
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
+fn toward_hider(
+    blend: Res<Blend>,
+    picture: Option<Res<ArrowPicture>>,
+    windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
+    cameras: Query<(&Camera, &Transform), With<crate::ThirdPersonCamera>>,
+    bodies: Query<(&roundtown_net::Member, &Transform), With<bevy_replicon::prelude::Remote>>,
+    mut arrows: Query<(Entity, &mut UiTransform), With<TowardHider>>,
+    mut commands: Commands,
+) {
+    let target = blend
+        .playing()
+        .filter(|round| round.stage == BlendStage::Shown && !blend.hiding())
+        .and_then(|round| round.unmasked)
+        .and_then(|id| bodies.iter().find(|(member, _)| member.id == id))
+        .map(|(_, body)| body.translation + Vec3::Y * TOWARD_UP);
+    let placed = target.and_then(|target| {
+        let (camera, eye) = cameras.single().ok()?;
+        let window = windows.single().ok()?;
+        let size = Vec2::new(window.width(), window.height());
+        let seen = camera
+            .world_to_viewport(&GlobalTransform::from(*eye), target)
+            .is_ok_and(|at| at.cmpge(Vec2::ZERO).all() && at.cmple(size).all());
+        let local = eye.compute_affine().inverse().transform_point3(target);
+        (!seen || local.z > 0.0).then(|| toward(local, size, size.min_element()))
+    });
+    let Some((at, turn)) = placed else {
+        for (arrow, _) in &arrows {
+            commands.entity(arrow).despawn();
+        }
+        return;
+    };
+    let side = windows.single().map_or(0.0, |window| window.width().min(window.height())) * TOWARD / 100.0;
+    let place = UiTransform {
+        translation: Val2::px((at.x - side * 0.5).round(), (at.y - side * 0.5).round()),
+        scale: Vec2::ONE,
+        rotation: Rot2::radians(turn),
+    };
+    if let Some((_, mut was)) = arrows.iter_mut().next() {
+        was.set_if_neq(place);
+        return;
+    }
+    let Some(picture) = picture else {
+        return;
+    };
+    commands.spawn((
+        TowardHider,
+        InTable,
+        ImageNode::new(picture.0.clone()).with_color(ui().colours.gold),
+        Node {
+            position_type: PositionType::Absolute,
+            left: Val::ZERO,
+            top: Val::ZERO,
+            width: Val::VMin(TOWARD),
+            height: Val::VMin(TOWARD),
+            ..default()
+        },
+        place,
+        // Under the screen's own, over the world and its names.
+        GlobalZIndex(-1),
+        ZIndex(1),
+        Pickable::IGNORE,
+    ));
 }
 
 /// Your name on its plate top left, the town's own (`hud::name_plate`),
@@ -399,7 +536,8 @@ struct DarkCount;
 
 /// Blacks a seeker's screen out through the hide, under the plate and the
 /// buttons and over the world and its names, as the blindfold is: "The
-/// hider is getting into place", and the seconds left.
+/// hider is getting into place", the seconds left, and what a wrong swing
+/// will cost them in the seek (`super::stun_rule`).
 fn dark(
     blend: Res<Blend>,
     town: Res<TownClock>,
@@ -427,8 +565,9 @@ fn dark(
                 width: Val::Percent(100.0),
                 height: Val::Percent(100.0),
                 flex_direction: FlexDirection::Column,
-                justify_content: JustifyContent::Center,
+                justify_content: JustifyContent::FlexStart,
                 align_items: AlignItems::Center,
+                padding: UiRect::top(Val::VMin(BLIND_DOWN)),
                 row_gap: Val::VMin(2.0),
                 ..default()
             },
@@ -441,6 +580,7 @@ fn dark(
             children![
                 hud::words(file.words.blend_in.blind.clone(), BLIND_LINE, file.colours.text),
                 (DarkCount, hud::words(seconds, BLIND_COUNT, file.colours.gold)),
+                hud::words(super::stun_rule(), BLIND_RULE, file.colours.text_soft),
             ],
         ));
         return;
@@ -668,6 +808,29 @@ mod tests {
         let size = image.width();
         let (column, row) = ((x * size as f32) as u32, (y * size as f32) as u32);
         image.data.as_ref().unwrap()[((row * size + column) * 4 + 3) as usize]
+    }
+
+    #[test]
+    fn the_arrow_toward_the_hider_stands_at_the_screen_s_edge_on_the_way_to_them() {
+        let size = Vec2::new(1920.0, 1080.0);
+        let share = 10.8;
+        let points = |turn: f32| Vec2::new(-turn.cos(), -turn.sin());
+        // Ahead, off to the right: at the right edge, pointing right.
+        let (at, turn) = toward(Vec3::new(60.0, 0.0, -10.0), size, 1080.0);
+        assert!((at.x - (size.x - TOWARD_IN * share)).abs() < 1.0, "{at}");
+        assert!(points(turn).distance(Vec2::X) < 1e-3, "{turn}");
+        // Behind, a little to the left: at the left edge, pointing left,
+        // halfway down the room it is kept in, whatever its height.
+        let (at, turn) = toward(Vec3::new(-0.5, -3.0, 10.0), size, 1080.0);
+        assert!((at.x - TOWARD_IN * share).abs() < 1.0, "{at}");
+        assert!((at.y - (TOWARD_TOP * share + size.y - TOWARD_FOOT * share) * 0.5).abs() < 1.0, "{at}");
+        assert!(points(turn).distance(Vec2::NEG_X) < 1e-3, "{turn}");
+        // Ahead, up and to the left: on the way there, in the room it is
+        // kept in, pointing up and to the left.
+        let (at, turn) = toward(Vec3::new(-10.0, 10.0, -5.0), size, 1080.0);
+        assert!(at.x >= TOWARD_IN * share - 1.0 && at.y >= TOWARD_TOP * share - 1.0, "{at}");
+        assert!(at.x < size.x * 0.5 && at.y < size.y * 0.5, "{at}");
+        assert!(points(turn).distance(Vec2::new(-1.0, -1.0).normalize()) < 1e-3, "{turn}");
     }
 
     #[test]
