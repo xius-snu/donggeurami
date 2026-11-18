@@ -395,6 +395,42 @@ fn stroked(text: String, size: f32, colour: Color) -> impl Bundle {
     )
 }
 
+/// The line under the plate, "Round 1/2", with a thin stroke round it, as
+/// the scores' rows have ([`stroked`]): with only a shadow it was lost in
+/// the hider's column of light by day and in a lit street lamp by night (a
+/// check of the merged games, 2026-11-18; mine). Every copy is the
+/// caption's, so that each is written as the round changes ([`board`]).
+fn stroked_caption(text: String, colour: Color) -> impl Bundle {
+    let off = BOARD_CAPTION * 0.036;
+    let rim = |corner: Vec2, text: &str| {
+        (
+            BoardCaption,
+            Text::new(text),
+            crate::font::sized(BOARD_CAPTION),
+            TextColor(ui().colours.chat.stroke),
+            Node {
+                position_type: PositionType::Absolute,
+                left: Val::ZERO,
+                top: Val::ZERO,
+                ..default()
+            },
+            UiTransform::from_translation(Val2::new(Val::VMin(corner.x * off), Val::VMin(corner.y * off))),
+            Pickable::IGNORE,
+        )
+    };
+    (
+        Node::default(),
+        Pickable::IGNORE,
+        children![
+            rim(Vec2::new(-1.0, -1.0), &text),
+            rim(Vec2::new(1.0, -1.0), &text),
+            rim(Vec2::new(-1.0, 1.0), &text),
+            rim(Vec2::new(1.0, 1.0), &text),
+            (BoardCaption, hud::words(text, BOARD_CAPTION, colour)),
+        ],
+    )
+}
+
 /// Puts the speech bubble and the chat's keyboard away while the game has
 /// the chat hushed, from the hide to the end of the seek: there is nothing
 /// to say then, and a button that says nothing is no button. Only Blend
@@ -512,7 +548,7 @@ fn board(
                     },
                     children![(BoardText, hud::words(line, BOARD_TEXT, colours.text))],
                 ));
-                column.spawn((BoardCaption, hud::words(caption, BOARD_CAPTION, colours.text)));
+                column.spawn(stroked_caption(caption, colours.text));
             });
         return;
     }

@@ -99,6 +99,9 @@ const GLYPH_FAINT: f32 = 0.35;
 const PANEL_TITLE: f32 = 4.2;
 const PANEL_TEXT: f32 = 2.6;
 const PANEL_BUTTON: f32 = 17.0;
+/// How wide what the panel says may be, its title and its line, in vmin:
+/// the title on one line, the line on two.
+const PANEL_SAID: f32 = 40.0;
 /// Where you came, under your name top left, once out: how big.
 const OUT_TAG_TEXT: f32 = 2.8;
 /// The headlines, low over the near sea (mine: centred on the screen, as
@@ -762,6 +765,14 @@ fn low(mut headline: EntityCommands, caption: bool) {
     }
 }
 
+/// The table's own headline, the game's name as you come to it
+/// (`table`), put where this game's headlines go, low over the near sea:
+/// across the middle, where the town's go, it ran into the names of the
+/// two at the sides (a check of the merged game, 2026-11-18).
+pub(super) fn lower(headline: EntityCommands) {
+    low(headline, false);
+}
+
 /// Who won, in the file's words: "Mochi wins!", or for a first shared,
 /// "Mochi & Dubu win!", the names joined as the file joins them
 /// (`words.knock_off.wins`, `win_together`, `and`).
@@ -954,6 +965,11 @@ fn spawn_panel(commands: &mut Commands, place: u8) {
                             flex_direction: FlexDirection::Column,
                             align_items: AlignItems::FlexStart,
                             row_gap: Val::VMin(0.6),
+                            // Its line on two, the panel narrower: on one,
+                            // at 16:9 its end stood over the chat's
+                            // keyboard button (a check of the merged
+                            // games, 2026-11-18; mine).
+                            max_width: Val::VMin(PANEL_SAID),
                             ..default()
                         },
                         Pickable::IGNORE,

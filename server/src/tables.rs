@@ -443,14 +443,6 @@ impl Table {
         self.seats.iter().filter(|seat| seat.here()).count()
     }
 
-    /// How long its game has been played, in seconds: nothing until it is.
-    pub(crate) fn elapsed(&self) -> f32 {
-        match self.stage {
-            Stage::Playing { elapsed } => elapsed,
-            _ => 0.0,
-        }
-    }
-
     /// The seat `body` is in, if it is in one.
     pub(crate) fn seat_of(&self, body: Entity) -> Option<usize> {
         if body == Entity::PLACEHOLDER {

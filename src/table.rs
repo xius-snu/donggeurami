@@ -743,7 +743,14 @@ impl Seating<'_, '_> {
         }
         spawn_board(&mut self.commands);
         if !same {
-            hud::announce(&mut self.commands, None, &games::name_of(game), hud::HEADLINE, NAME_SECS).insert(InTable);
+            let mut headline = hud::announce(&mut self.commands, None, &games::name_of(game), hud::HEADLINE, NAME_SECS);
+            headline.insert(InTable);
+            // Where the game's own headlines go, Knock Off's low over the
+            // near sea: across the middle it ran into the names of the two
+            // at the sides of the ice.
+            if game == Minigame::KnockOff {
+                crate::knock_off::lower_headline(headline);
+            }
         }
         self.at.0 = Some(Sitting { game, seat, online, id });
         self.kept.cut_off = None;

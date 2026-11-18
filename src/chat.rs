@@ -654,18 +654,27 @@ fn place(here: Venue) -> (f32, f32) {
 
 /// Shows the chat in the town and in Bridge Wars, where each has room for
 /// it ([`place`]), and puts it away anywhere else, under the sign-up's
-/// pages, and while the camera is on someone you talk to, as the stick is.
+/// pages, and while the camera is on someone you talk to, as the stick is;
+/// and while a game's results are up over it, unless a line is being typed
+/// (mine, 2026-11-18: its lines ran under the see-through window into its
+/// rows, "Alpha stayed hidden as Moc" into "1st"; they are back with the
+/// town).
 #[allow(clippy::type_complexity)]
 fn show(
     me: Query<&Venue, With<Player>>,
-    signup: Res<Signup>,
-    close_up: Res<CloseUp>,
+    (signup, close_up, typing): (Res<Signup>, Res<CloseUp>, Res<Typing>),
+    results: Query<(), With<crate::table::ResultsWindow>>,
     mut roots: Query<(&mut Visibility, &mut Node), (With<ChatRoot>, Without<LogBox>, Without<Backdrop>)>,
     mut boxes: Query<&mut Node, (Or<(With<LogBox>, With<Backdrop>)>, Without<ChatRoot>)>,
 ) {
     let venue = me.single().ok().copied();
     let here = venue.is_some_and(shown_on);
-    let wanted = if here && !signup.up() && close_up.on.is_none() { Visibility::Inherited } else { Visibility::Hidden };
+    let under_results = !results.is_empty() && !typing.on;
+    let wanted = if here && !signup.up() && close_up.on.is_none() && !under_results {
+        Visibility::Inherited
+    } else {
+        Visibility::Hidden
+    };
     let (top, height) = place(venue.unwrap_or(Venue::Town));
     for (mut visibility, mut node) in &mut roots {
         visibility.set_if_neq(wanted);

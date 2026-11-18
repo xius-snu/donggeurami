@@ -687,7 +687,7 @@ fn say(
         said.over = round.stage == StandStage::Over;
         // The play just begun, not a game come back into.
         if round.stage != StandStage::Over && elapsed < 5.0 {
-            hud::announce(&mut commands, None, &words.go, hud::HEADLINE, GO_SECS)
+            hud::announce_stroked(&mut commands, &words.go, hud::HEADLINE, GO_SECS)
                 .insert((InArena, Announced))
                 .with_children(|lines| {
                     lines.spawn(hud::words(words.go_caption.clone(), hud::CAPTION, file.colours.text.with_alpha(0.0)));
@@ -705,7 +705,7 @@ fn say(
         said.wave = round.wave;
         said.on = true;
         let new = new_in(round.wave);
-        hud::announce(&mut commands, None, &fill(&words.wave, &[("wave", &round.wave.to_string())]), hud::HEADLINE, WAVE_SECS)
+        hud::announce_stroked(&mut commands, &fill(&words.wave, &[("wave", &round.wave.to_string())]), hud::HEADLINE, WAVE_SECS)
             .insert((InArena, Announced))
             .with_children(|lines| {
                 if let Some(new) = new {
@@ -717,7 +717,7 @@ fn say(
     if matches!(round.stage, StandStage::Break { .. }) && said.on {
         said.on = false;
         let wave = round.wave.to_string();
-        hud::announce(&mut commands, None, &fill(&words.cleared, &[("wave", &wave)]), hud::HEADLINE, CLEARED_SECS)
+        hud::announce_stroked(&mut commands, &fill(&words.cleared, &[("wave", &wave)]), hud::HEADLINE, CLEARED_SECS)
             .insert((InArena, Announced));
         if CLEARED_IN_CHAT {
             log.push(chat::spans(&fill(&words.cleared_line, &[("wave", &wave)]), ink, &[]));
@@ -734,7 +734,7 @@ fn say(
     if round.anchor == 0 && !said.broken {
         said.broken = true;
         if round.stage != StandStage::Over {
-            hud::announce(&mut commands, None, &words.anchor_broken, hud::HEADLINE, BROKEN_SECS)
+            hud::announce_stroked(&mut commands, &words.anchor_broken, hud::HEADLINE, BROKEN_SECS)
                 .insert((InArena, Announced, BrokenLine))
                 .with_children(|lines| {
                     lines.spawn(hud::words(words.anchor_broken_caption.clone(), hud::CAPTION, file.colours.text.with_alpha(0.0)));
@@ -766,7 +766,7 @@ fn say(
         for line in &broken_lines {
             commands.entity(line).try_despawn();
         }
-        hud::announce(&mut commands, None, &fill(&words.fell, &[("wave", &round.wave.to_string())]), hud::HEADLINE, FELL_SECS)
+        hud::announce_stroked(&mut commands, &fill(&words.fell, &[("wave", &round.wave.to_string())]), hud::HEADLINE, FELL_SECS)
             .insert((InArena, Announced));
     }
 }
@@ -808,7 +808,7 @@ fn warn(
     }
     *said_at = Some(stand.elapsed);
     let file = ui();
-    let mut line = hud::announce(&mut commands, None, &file.words.last_stand.under_attack, WARN_TEXT, WARN_SECS);
+    let mut line = hud::announce_stroked(&mut commands, &file.words.last_stand.under_attack, WARN_TEXT, WARN_SECS);
     line.insert((
         InArena,
         Announced,

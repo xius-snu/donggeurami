@@ -311,11 +311,25 @@ const WELCOME_SECS: f32 = 3.5;
 /// (`search`), two sheets (`content_copy`), an envelope (`mail`), a cross
 /// (`close`), a chevron (`arrow_back_ios_new`), a door (`logout`), and the
 /// group of three (`groups`), unused for twelve days until then.
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) const ICONS: [&str; 16] = [
     "person", "settings", "gift", "social", "gamepad", "mood", "chat", "friends", "add_friend", "search", "copy", "mail",
     "close", "back", "leave", "groups",
 ];
+
+/// Every picture of the buttons that is read off a file ([`ICONS`], and
+/// the coin), held for as long as the app runs: one shown by the town's
+/// buttons alone was let go of while you were in a game, which has its
+/// own, and read again as you came back, so that for the first frames the
+/// gear, the coin, the friends' and the gamepad's buttons were empty discs
+/// (a check of the merged games, 2026-11-18; mine).
+#[derive(Resource)]
+#[allow(dead_code)]
+struct KeptIcons(Vec<Handle<Image>>);
+
+fn keep_icons(assets: Res<AssetServer>, mut commands: Commands) {
+    let icons = ICONS.iter().map(|name| assets.load(format!("icons/{name}.png"))).chain([assets.load(COIN_ICON)]);
+    commands.insert_resource(KeptIcons(icons.collect()));
+}
 
 /// Your balance, top left.
 #[derive(Component)]
@@ -481,7 +495,7 @@ pub(crate) fn plugin(app: &mut App) {
         .init_resource::<Pictures>()
         .init_resource::<YourTag>()
         .add_observer(press_buttons)
-        .add_systems(Startup, show_top_bar)
+        .add_systems(Startup, (show_top_bar, keep_icons))
         .add_systems(Update, shade)
         .add_systems(
             Update,
@@ -1767,22 +1781,7 @@ pub(crate) fn announce<'a>(
     size: f32,
     secs: f32,
 ) -> EntityCommands<'a> {
-    let mut headline = commands.spawn((
-        Headline { age: 0.0, secs },
-        // Over the whole screen, with the words stacked in the middle and high
-        // enough to leave your character, just below the middle, in sight.
-        Node {
-            position_type: PositionType::Absolute,
-            width: Val::Percent(100.0),
-            height: Val::Percent(100.0),
-            flex_direction: FlexDirection::Column,
-            justify_content: JustifyContent::Center,
-            align_items: AlignItems::Center,
-            padding: UiRect::bottom(Val::Vh(ABOVE_YOU)),
-            ..default()
-        },
-        Pickable::IGNORE,
-    ));
+    let mut headline = announce_frame(commands, secs);
     // Put up clear, for `fade_headlines` to bring up: whenever in the frame
     // this is spawned, it is never drawn once at full strength first.
     let colours = ui().colours;
@@ -1795,14 +1794,84 @@ pub(crate) fn announce<'a>(
     headline
 }
 
-/// Brings each headline up, holds it, and takes it away again.
+/// What a headline stands in, up for `secs`: over the whole screen, with
+/// the words stacked in the middle and high enough to leave your
+/// character, just below the middle, in sight.
+fn announce_frame<'a>(commands: &'a mut Commands, secs: f32) -> EntityCommands<'a> {
+    commands.spawn((
+        Headline { age: 0.0, secs },
+        Node {
+            position_type: PositionType::Absolute,
+            width: Val::Percent(100.0),
+            height: Val::Percent(100.0),
+            flex_direction: FlexDirection::Column,
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            padding: UiRect::bottom(Val::Vh(ABOVE_YOU)),
+            ..default()
+        },
+        Pickable::IGNORE,
+    ))
+}
+
+/// How far each of the four dark copies under a stroked headline
+/// ([`announce_stroked`]) stands off its words, as a share of their size:
+/// as thin for a headline as the chat's stroke is for a line (mine).
+const HEADLINE_STROKE: f32 = 0.035;
+
+/// One of the four dark copies under a stroked headline's words that are
+/// its stroke ([`announce_stroked`]).
+#[derive(Component)]
+struct StrokeCopy;
+
+/// As [`announce`] with no caption, its words with a thin dark stroke round
+/// them (four dark copies under them, as the chat's lines and your name's
+/// plate have, `colours.chat.stroke`): for a game whose ground is as light
+/// as the gold, Last Stand's sand by day, where "The anchor is under
+/// attack!" was hard to read (a check of the merged games, 2026-11-18).
+/// Faded in and out as every headline is.
+pub(crate) fn announce_stroked<'a>(commands: &'a mut Commands, title: &str, size: f32, secs: f32) -> EntityCommands<'a> {
+    let mut headline = announce_frame(commands, secs);
+    let colours = ui().colours;
+    let stroke = colours.chat.stroke;
+    let off = size * HEADLINE_STROKE;
+    headline.with_children(|lines| {
+        lines.spawn((Node::default(), Pickable::IGNORE)).with_children(|group| {
+            for corner in [Vec2::new(-1.0, -1.0), Vec2::new(1.0, -1.0), Vec2::new(-1.0, 1.0), Vec2::new(1.0, 1.0)] {
+                group.spawn((
+                    StrokeCopy,
+                    Text::new(title),
+                    crate::font::sized(size),
+                    TextColor(stroke.with_alpha(0.0)),
+                    TextLayout::justify(Justify::Center),
+                    Node {
+                        position_type: PositionType::Absolute,
+                        left: Val::ZERO,
+                        top: Val::ZERO,
+                        ..default()
+                    },
+                    UiTransform::from_translation(Val2::new(Val::VMin(corner.x * off), Val::VMin(corner.y * off))),
+                    Pickable::IGNORE,
+                ));
+            }
+            group.spawn(words(title, size, colours.gold.with_alpha(0.0)));
+        });
+    });
+    headline
+}
+
+/// Brings each headline up, holds it, and takes it away again: its lines,
+/// and the words and the stroke of a stroked one ([`announce_stroked`]),
+/// the stroke as strong as its own colour has it.
 fn fade_headlines(
     time: Res<Time>,
     mut headlines: Query<(Entity, &mut Headline, &Children)>,
-    mut lines: Query<(&mut TextColor, &mut TextShadow)>,
+    groups: Query<&Children, Without<Headline>>,
+    mut lines: Query<(&mut TextColor, Option<&mut TextShadow>, Has<StrokeCopy>)>,
     mut commands: Commands,
 ) {
-    let tint = ui().colours.text_shadow;
+    let colours = ui().colours;
+    let (tint, stroke) = (colours.text_shadow, colours.chat.stroke);
     for (entity, mut headline, children) in &mut headlines {
         headline.age += time.delta_secs();
         if headline.age >= headline.secs {
@@ -1812,13 +1881,16 @@ fn fade_headlines(
         let solid = (headline.age / HEADLINE_IN)
             .min((headline.secs - headline.age) / HEADLINE_OUT)
             .clamp(0.0, 1.0);
-        let mut words = lines.iter_many_mut(children);
-        while let Some((mut colour, mut shadow)) = words.fetch_next() {
+        let inside = children.iter().filter_map(|child| groups.get(child).ok()).flat_map(|group| group.iter());
+        let mut words = lines.iter_many_mut(children.iter().chain(inside));
+        while let Some((mut colour, shadow, copy)) = words.fetch_next() {
             // Only while it is fading: held, the words are left alone.
-            let faded = colour.0.with_alpha(solid);
+            let faded = colour.0.with_alpha(if copy { stroke.alpha() * solid } else { solid });
             if colour.0 != faded {
                 colour.0 = faded;
-                shadow.color = tint.with_alpha(tint.alpha() * solid);
+                if let Some(mut shadow) = shadow {
+                    shadow.color = tint.with_alpha(tint.alpha() * solid);
+                }
             }
         }
     }
@@ -2645,6 +2717,41 @@ pub(crate) fn clear_of_each_other(buttons: &[((f32, f32), f32)]) -> Result<(), S
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_stroked_headline_fades_in_with_its_stroke_and_goes_whole() {
+        use bevy::ecs::system::RunSystemOnce;
+        use std::time::Duration;
+        let mut world = World::new();
+        world.insert_resource(Time::<()>::default());
+        world
+            .run_system_once(|mut commands: Commands| {
+                announce_stroked(&mut commands, "The anchor is under attack!", 5.0, 3.0);
+            })
+            .expect("said");
+        let step = |world: &mut World, secs: f32| {
+            world.resource_mut::<Time>().advance_by(Duration::from_secs_f32(secs));
+            world.run_system_once(fade_headlines).expect("faded");
+        };
+        // Halfway in: the words half there, the four copies under them half
+        // as strong as the stroke's own colour.
+        step(&mut world, HEADLINE_IN * 0.5);
+        let stroke = ui().colours.chat.stroke.alpha();
+        let mut texts = world.query::<(&TextColor, Has<StrokeCopy>)>();
+        let (copies, words): (Vec<_>, Vec<_>) = texts.iter(&world).map(|(colour, copy)| (colour.0.alpha(), copy)).partition(|(_, copy)| *copy);
+        assert_eq!(copies.len(), 4);
+        assert_eq!(words.len(), 1);
+        assert!((words[0].0 - 0.5).abs() < 1e-3, "{words:?}");
+        for (alpha, _) in copies {
+            assert!((alpha - stroke * 0.5).abs() < 1e-3, "{alpha}");
+        }
+        // Held, then gone, the stroke with it.
+        step(&mut world, 1.0);
+        assert!(texts.iter(&world).all(|(colour, copy)| (colour.0.alpha() - if copy { stroke } else { 1.0 }).abs() < 1e-3));
+        step(&mut world, 2.0);
+        assert_eq!(world.query::<&Headline>().iter(&world).count(), 0);
+        assert_eq!(texts.iter(&world).count(), 0);
+    }
 
     #[test]
     fn the_face_is_up_only_where_the_car_is_to_be_had() {

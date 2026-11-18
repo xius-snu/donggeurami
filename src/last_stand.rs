@@ -145,7 +145,7 @@ impl ShopDoor {
 }
 
 /// Something this game has said across the middle of the screen
-/// (`hud::announce`: "Go!", a wave come or cleared, the anchor broken, the
+/// (`hud::announce_stroked`: "Go!", a wave come or cleared, the anchor broken, the
 /// end), for as long as it is up: what this game writes over the world
 /// there (the crystal's bar, the words over the pads) is put away
 /// meanwhile, rather than drawn into its words ([`looks`]; a play-tester,

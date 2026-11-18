@@ -66,6 +66,8 @@ const CARD_GAP: f32 = 2.2;
 const CARD_PAD: f32 = 1.5;
 const CARD_TEXT: f32 = 4.0;
 const NOTE_TEXT: f32 = 2.8;
+/// The room the line under a card's name has, in vmin: two lines of it.
+const LINE_ROOM: f32 = 2.0 * NOTE_TEXT * 1.2;
 /// The cards, row by row, in the order Hajun listed the games: the new
 /// four after Bridge Wars, and Home Builders, stalled, last.
 const CARDS: [[Minigame; 3]; 2] = [
@@ -386,7 +388,17 @@ fn card(name: String, line: String, note: String, note_colour: Option<Color>, ch
         fill,
         children![
             builder::label(name, CARD_TEXT, ink),
-            builder::label(line, NOTE_TEXT, soft),
+            (
+                builder::label(line, NOTE_TEXT, soft),
+                // Two lines' room, whether the line takes one or two, so
+                // that every card's name and price stand level with its
+                // neighbours' (a card with a short line sat lower; mine,
+                // 2026-11-18).
+                Node {
+                    min_height: Val::VMin(LINE_ROOM),
+                    ..default()
+                },
+            ),
             builder::label(note, NOTE_TEXT, note_colour.unwrap_or(soft)),
         ],
     )
@@ -548,7 +560,7 @@ mod tests {
             let (price, ..) = price(game, 0, true);
             assert!(price.chars().count() as f32 * NOTE_TEXT * 0.5 <= inside, "{game:?}: {price}");
         }
-        let stacked = 2.0 * CARD_PAD + CARD_TEXT * 1.2 + 1.2 + 2.0 * NOTE_TEXT * 1.2 + 1.2 + NOTE_TEXT * 1.2;
+        let stacked = 2.0 * CARD_PAD + CARD_TEXT * 1.2 + 1.2 + LINE_ROOM + 1.2 + NOTE_TEXT * 1.2;
         assert!(stacked <= CARD_HEIGHT, "{stacked}");
     }
 

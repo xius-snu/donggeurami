@@ -86,6 +86,13 @@ const SEA_MARGIN: f32 = 2.0;
 /// nowhere else to go, stood on the far side's heads: a check of the game,
 /// 2026-11-18).
 const CLEAR_TOP: f32 = 0.165;
+/// What is kept clear at the top while the table waits and counts down, as
+/// a share of the screen: the table's board stands there then, the game's
+/// name, the seconds left and Leave under them, down to nearly a quarter of
+/// the screen, and Leave stood on the far player's head (a check of the
+/// merged game, 2026-11-18; mine). The camera eases to [`CLEAR_TOP`] as
+/// play begins and the board goes.
+const CLEAR_TOP_WAITING: f32 = 0.26;
 const CLEAR_BOTTOM: f32 = 0.10;
 const CLEAR_SIDES: f32 = 0.03;
 /// The least the camera is fitted to as the ice breaks away, in metres from
@@ -353,6 +360,12 @@ pub(crate) fn spawn_bar(commands: &mut Commands, assets: &AssetServer, images: &
     screen::spawn_bar(commands, assets, images);
 }
 
+/// Puts the table's headline, the game's name as you come to it, where
+/// this game's own go: low over the near sea (`screen`).
+pub(crate) fn lower_headline(headline: EntityCommands) {
+    screen::lower(headline);
+}
+
 /// What its score is called among the results: the file's
 /// (`words.knock_off.score`), the turns each was still on the ice at the
 /// end of (mine: the place has a column of its own there).
@@ -385,7 +398,7 @@ fn facing(way: Vec2) -> Option<f32> {
 /// tests ([`camera_target`] says it in play).
 #[cfg(test)]
 fn over_the_ice(seat: u8, aspect: f32) -> Transform {
-    view_of(seat, aspect, Vec2::ZERO, rules::RADIUS + SEA_MARGIN)
+    view_of(seat, aspect, Vec2::ZERO, rules::RADIUS + SEA_MARGIN, CLEAR_TOP)
 }
 
 /// The camera for whoever sits in `seat` (mine: Hajun, "not sure what
@@ -394,10 +407,11 @@ fn over_the_ice(seat: u8, aspect: f32) -> Transform {
 /// middle, as near as keeps everything within `reach` metres of `centre`
 /// on the ground (the ice and the sea round it, or whoever won) on a screen
 /// `aspect` times as wide as it is high, clear of what stands at its edges
-/// ([`CLEAR_TOP`] and the rest), and midway between the top and the bottom
-/// kept clear; their spot toward the bottom of the screen, and the stick's
-/// up away from the camera, across the ice toward the middle.
-fn view_of(seat: u8, aspect: f32, centre: Vec2, reach: f32) -> Transform {
+/// (`clear_top` of it at the top, [`CLEAR_TOP`] in play, and the rest), and
+/// midway between the top and the bottom kept clear; their spot toward the
+/// bottom of the screen, and the stick's up away from the camera, across
+/// the ice toward the middle.
+fn view_of(seat: u8, aspect: f32, centre: Vec2, reach: f32, clear_top: f32) -> Transform {
     let side = rules::arrival(usize::from(seat)).0.xz().normalize_or(Vec2::Y);
     let half = (crate::CAMERA_FOV * 0.5).tan();
     let aspect = aspect.clamp(0.5, 4.0);
@@ -429,7 +443,7 @@ fn view_of(seat: u8, aspect: f32, centre: Vec2, reach: f32) -> Transform {
         }
         Some((low, high, wide))
     };
-    let (bottom, top, sides) = (-1.0 + 2.0 * CLEAR_BOTTOM, 1.0 - 2.0 * CLEAR_TOP, 1.0 - 2.0 * CLEAR_SIDES);
+    let (bottom, top, sides) = (-1.0 + 2.0 * CLEAR_BOTTOM, 1.0 - 2.0 * clear_top, 1.0 - 2.0 * CLEAR_SIDES);
     let middle = (bottom + top) * 0.5;
     // From `distance`, the point looked at moved nearer you or further until
     // the circle is midway between the top and the bottom kept clear (a
@@ -962,13 +976,14 @@ fn send_aim(time: Res<Time>, online: Res<Online>, mut knock: ResMut<Knock>, mut 
 
 /// The camera being brought from one view to another ([`hold_the_camera`]):
 /// for whom and what shape of screen, what it is fitted to
-/// ([`camera_target`]), from where to where, and how far it has come, 0 to
-/// 1.
+/// ([`camera_target`]) and how much is kept clear over it, from where to
+/// where, and how far it has come, 0 to 1.
 #[derive(Default)]
 struct Eased {
     seat: Option<u8>,
     shape: u32,
     target: Option<(Vec2, f32)>,
+    top: u32,
     from: Transform,
     to: Transform,
     done: f32,
@@ -1015,16 +1030,19 @@ fn hold_the_camera(
     };
     let aspect = windows.single().map_or(16.0 / 9.0, |window| window.width() / window.height().max(1.0));
     let target = camera_target(&knock);
+    // More kept clear at the top while the table's board is up, before play.
+    let top = if knock.playing().is_some() { CLEAR_TOP } else { CLEAR_TOP_WAITING };
     // Fitted again only for another seat, another shape of screen, or
     // something else to fit: at once for the first two, eased for the last.
     let fresh = eased.seat != Some(sitting.seat) || eased.shape != aspect.to_bits();
-    if fresh || eased.target != Some(target) {
-        let to = view_of(sitting.seat, aspect, target.0, target.1);
+    if fresh || eased.target != Some(target) || eased.top != top.to_bits() {
+        let to = view_of(sitting.seat, aspect, target.0, target.1, top);
         let from = if fresh { to } else { eased.now() };
         *eased = Eased {
             seat: Some(sitting.seat),
             shape: aspect.to_bits(),
             target: Some(target),
+            top: top.to_bits(),
             from,
             to,
             done: if fresh { 1.0 } else { 0.0 },
@@ -1394,6 +1412,15 @@ mod tests {
                 // what is said across the screen.
                 let near = into.transform_point3((side * rules::RADIUS).extend(0.0).xzy());
                 assert!(near.y / -near.z / half > -1.0 + 2.0 * CLEAR_BOTTOM - 1e-3, "{aspect} {seat}");
+                // While the table waits, the far edge, and the far player
+                // on it, under the board and its Leave as well.
+                let waiting = view_of(seat, aspect, Vec2::ZERO, rules::RADIUS + SEA_MARGIN, CLEAR_TOP_WAITING);
+                let into = waiting.to_matrix().inverse();
+                let far = into.transform_point3((-side * rules::RADIUS).extend(0.0).xzy());
+                assert!(far.y / -far.z / half < 1.0 - 2.0 * CLEAR_TOP_WAITING + 1e-3, "{aspect} {seat}");
+                let across = (seat + 2) % 4;
+                let them = into.transform_point3(rules::arrival(usize::from(across)).0);
+                assert!(them.y / -them.z / half < 1.0 - 2.0 * CLEAR_TOP_WAITING - 0.1, "{aspect} {seat}: the far player");
             }
         }
     }
@@ -1406,7 +1433,7 @@ mod tests {
         let mut last = f32::MAX;
         for turn in 1..=rules::LAST_TURN {
             let reach = rules::radius_in(turn).max(FEWEST) + SEA_MARGIN;
-            let view = view_of(2, aspect, Vec2::ZERO, reach);
+            let view = view_of(2, aspect, Vec2::ZERO, reach, CLEAR_TOP);
             assert!(off(view) <= last + 1e-3, "turn {turn}");
             last = off(view);
         }
