@@ -172,7 +172,7 @@ pub(super) fn play(
             }
             // Come down where the game has no ground for it: on into the
             // void, whatever this device makes of where it came down.
-            Event::Lost { stick } => {
+            Event::Lost { stick, .. } => {
                 if let Some(drawn) = played.drawn.remove(&stick)
                     && let Ok(mut lying) = sticks.get_mut(drawn)
                 {

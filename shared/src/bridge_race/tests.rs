@@ -717,7 +717,7 @@ fn a_stick_that_comes_down_where_there_is_nothing_is_lost_unblown() {
     game.sync(0, Vec3::new(edge.x, LAND_TOP, edge.y), 0.0);
     assert!(game.throw(0, std::f32::consts::FRAC_PI_2, DYNAMITE_FURTHEST));
     let events = run(&mut game, 3.0);
-    assert!(events.iter().any(|event| matches!(event, Event::Lost { stick: 0 })));
+    assert!(events.iter().any(|event| matches!(event, Event::Lost { stick: 0, by: 0 })));
     assert!(!events.iter().any(|event| matches!(event, Event::Blew { .. })));
 }
 
@@ -1194,6 +1194,7 @@ fn the_round_goes_small_and_whole() {
         Tell::Metres { metres: 3.0, grants: 9 },
         Tell::Feed(Feed::Fell { seat: 3, by: Some(0) }),
         Tell::Feed(Feed::Blew { by: 1, team: Some(0), planks: 4 }),
+        Tell::Feed(Feed::Lost { by: 2 }),
     ] {
         let bytes = postcard::to_allocvec(&tell).unwrap();
         assert!(bytes.len() <= 8, "{tell:?}: {} bytes", bytes.len());
@@ -1254,6 +1255,8 @@ fn the_chat_says_who_fell_by_whose_doing_and_whose_bridge_a_stick_holed() {
     assert_eq!(feed(&blew(vec![(0, 0, 3), (1, 0, 9), (3, 0, 9)])), Some(Feed::Blew { by: 1, team: Some(0), planks: 3 }));
     assert_eq!(feed(&blew(vec![(3, 0, 9)])), Some(Feed::Blew { by: 1, team: Some(1), planks: 1 }));
     assert_eq!(feed(&blew(Vec::new())), Some(Feed::Blew { by: 1, team: None, planks: 0 }));
+    // A stick that came down on nothing, whose it was.
+    assert_eq!(feed(&Event::Lost { stick: 4, by: 3 }), Some(Feed::Lost { by: 3 }));
     // Nothing else is the chat's.
     assert_eq!(feed(&Event::Holding { team: 0, holding: true }), None);
     assert_eq!(feed(&Event::Granted { grant: 1, sticks: vec![0] }), None);

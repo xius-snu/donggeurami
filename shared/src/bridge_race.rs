@@ -444,19 +444,26 @@ pub enum Feed {
     /// own only if it took none of the other team's); none, if it took
     /// none ([`Event::Blew`]).
     Blew { by: u8, team: Option<u8>, planks: u16 },
+    /// The stick of dynamite of whoever is in `by` came down where there
+    /// was no ground for it and is gone into the void, unblown
+    /// ([`Event::Lost`]; since 2026-11-18, the same day, mine: a stick that
+    /// missed only fell out of sight, a red speck, and nothing said so,
+    /// seen in a play-test).
+    Lost { by: u8 },
 }
 
-/// What the chat says of `event`, if it says anything of it: a fall, and a
-/// stick blown. The grants, the sticks given, the bridges joined to the
-/// golden island and a team holding it are said by every device off the
-/// round and the kits it is sent ([`RaceRound`], [`crate::Kits`]), which
-/// come to everyone alike.
+/// What the chat says of `event`, if it says anything of it: a fall, a
+/// stick blown, and a stick lost. The grants, the sticks given, the bridges
+/// joined to the golden island and a team holding it are said by every
+/// device off the round and the kits it is sent ([`RaceRound`],
+/// [`crate::Kits`]), which come to everyone alike.
 pub fn feed(event: &Event) -> Option<Feed> {
     match event {
         Event::Fell { seat, by } => Some(Feed::Fell {
             seat: *seat as u8,
             by: by.map(|by| by as u8),
         }),
+        Event::Lost { by, .. } => Some(Feed::Lost { by: *by as u8 }),
         Event::Blew { by, planks, .. } => {
             let mut of = [0u16; TEAMS];
             for &(seat, ..) in planks {
@@ -514,9 +521,9 @@ pub enum Event {
     /// room is to be sent it as it is ([`Dynamite`]), every device lobbing
     /// it on from there.
     Thrown { stick: u32, shown: Dynamite },
-    /// The stick numbered so came down where there was no ground for it,
-    /// and is gone into the void, unblown.
-    Lost { stick: u32 },
+    /// The stick numbered so, whoever in `by` threw it, came down where
+    /// there was no ground for it, and is gone into the void, unblown.
+    Lost { stick: u32, by: usize },
     /// The stick numbered so, whoever in `by` threw it, has blown at `at`,
     /// taking these planks, each as whose, which of their bridges and which
     /// plank of that one ([`Nav::blast`]): no more, with nothing after them
@@ -1219,7 +1226,7 @@ impl Game {
             let at = stick.lob.to;
             if !stick.lies {
                 if !caught(at.xz(), |spot| self.nav.ground(spot).is_some()) {
-                    self.events.push(Event::Lost { stick: stick.id });
+                    self.events.push(Event::Lost { stick: stick.id, by: stick.by });
                     self.tally.lost += 1;
                     return false;
                 }

@@ -456,10 +456,27 @@
             // none of it. Its bar on the plate top centre; the ring round
             // the golden island as the team holds it, a little see-through,
             // so that the island's gold band shows under it; and "Hold! 2"
-            // over the island.
+            // over the island, "Hold broken!", and a team's name in the
+            // words across the middle of the screen ("You are on Red",
+            // "Red wins!").
             bar_strength: 1.0,
             ring_strength: 0.92,
             hold_strength: 1.0,
+            // The dark band the ring round the golden island fills over
+            // while a team holds it, a little wider than the ring, so that
+            // each team's colour has a dark edge on the island's lilac.
+            ring_edge: "#00000059",
+            // The ring round the plank button bottom right that fills, the
+            // way the clock goes, toward the next grant of bridge; and the
+            // faint ring it fills over.
+            next_grant: "#ffffffd9",
+            next_grant_track: "#ffffff38",
+            // On the minimap top right: the rim round your own dot. Each
+            // dot is in its team's colour (arena.team_red and team_blue,
+            // above, drawn solid), the islands in arena.map_land with a
+            // thin line in their team's colour, the golden island's in the
+            // accent above, and the bridges in arena.plank.
+            map_you: "#ffffff",
         ),
 
         // Last Stand's: its accent, the orange of a fire kept going.
@@ -908,15 +925,16 @@
             blue: "Blue",
             // Across the screen as the race begins, with your team over it;
             // and as it ends: who won ({team}), or a draw, with how it came
-            // to an end over it: your team held the golden island first, or
-            // the other did, or both teams at once; the time ran out; or
-            // every one of a team ({team}) left the race.
+            // to an end over it: your team held the golden island, or the
+            // other ({team}) did, or both teams at once; the time ran out;
+            // or every one of a team ({team}) left the race. A team's name
+            // is written in its team's colour.
             go: "Go!",
             your_team: "You are on {team}",
             wins: "{team} wins!",
             draw: "Draw",
-            won: "Your team got there first!",
-            lost: "The other team got there first",
+            won: "Your team held the golden island!",
+            lost: "{team} held the golden island",
             together: "Both teams got there at once",
             times_up: "Time's up!",
             team_left: "{team} left the race",
@@ -927,13 +945,19 @@
             across: "Across!",
             on_island: "{count}/{of} on the island",
             // Over the golden island while every one of a team stands on
-            // it: the seconds they still have to hold it.
+            // it: the seconds they still have to hold it; and, in the
+            // team's colour, as one of them is knocked off it, or jumps.
             hold: "Hold! {seconds}",
+            hold_broken: "Hold broken!",
             // Rising off you as each grant of bridge comes; and by the
             // arrow at the edge of the screen, how far the golden island
             // is.
             granted: "+{metres}m",
             away: "{metres}m",
+            // Over the gap between you and the golden island, once it is
+            // near enough to jump and you have too little bridge to lay
+            // across it.
+            jump: "Jump!",
             // Across the screen after a fall into the void, counting down
             // in halves: "2", "1.5", ... "0.5".
             back_in: "Back on your island in {seconds}",
@@ -944,11 +968,16 @@
             dynamite: "Dynamite!",
             reached: "{team}'s bridge has reached the golden island!",
             holding: "{team} is holding the golden island!",
+            // In the upper half a moment after "Go!", to a team of two:
+            // one bridge laid by both goes twice as fast as one each.
+            one_bridge: "Build one bridge together!",
             // In the chat: who fell into the void, by whose doing
-            // ({killer}), and whose stick holed whose bridge.
+            // ({killer}), whose stick holed whose bridge, and whose went
+            // into the void with nothing under it.
             fell: "{name} fell into the void.",
             knocked: "{killer} knocked {name} into the void.",
             blew: "{name} blew a hole in {team}'s bridge.",
+            missed: "{name}'s dynamite fell into the void.",
         ),
 
         // Last Stand's: what its score is called among the results.

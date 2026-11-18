@@ -39,9 +39,20 @@
 //! wins!", before the table's results. Over the world ([`show`]): the time
 //! left and each team's way across top centre, the ring round the golden
 //! island filling in the colour of a team that holds it with "Hold! 2"
-//! over it, and an arrow at the edge of the screen toward the golden island
-//! while it is off the screen, with how far.
+//! over it, an arrow at the edge of the screen toward the golden island
+//! while it is off the screen, with how far, "Jump!" once it is a jump
+//! away, and a ring round the plank button filling toward the next grant;
+//! and top right the whole race from above ([`map`]).
+//!
+//! **The camera** is Bridge Wars' (`table`), fixed over you, but that it
+//! does not follow you down into the void: falling, and dead, you look on
+//! from over where you went off, at the land's height; and as the race is
+//! won on the golden island it goes over the island, to the winners and
+//! the full ring ([`watch_over`]; mine, since a play-test of 2026-11-18,
+//! the same day, whose player was knocked off at the end and saw nothing
+//! but the dark void, then "Blue wins!" over their own island).
 
+mod map;
 mod offline;
 mod show;
 
@@ -77,6 +88,33 @@ const METRES_EVERY: f32 = 1.0;
 /// across and who held the golden island, all over again).
 const LATE: f32 = 3.0;
 
+/// How long "Go!" is across the screen, and the race's end, in seconds:
+/// the end's no longer than the table waits before its results come up
+/// (`table`'s two seconds; it showed through the results' window at three,
+/// seen in a play-test), and taken down as they do.
+const GO_SECS: f32 = 2.5;
+const END_SECS: f32 = 2.0;
+
+/// How long after "Go!" a team of two is told to build one bridge
+/// together, in seconds: once "Go!" has gone (mine: two people each
+/// laying their own bridge go half as fast as the computer's pair laying
+/// one, and nothing said so; worked out from the rules in a play-test).
+const ONE_BRIDGE_AFTER: f32 = 3.0;
+
+/// How far from the golden island's middle you have to be, in metres, for
+/// a team holding it again to be said across the upper half: further than
+/// the ring is seen from over you. Nearer, the ring and "Hold!" say it
+/// (mine: every hold said, a scramble on the island put up seventeen of
+/// them, seen in a play-test). The first hold of each team is said
+/// wherever you are.
+const HOLD_SAID_PAST: f32 = 24.0;
+
+/// How far under the land's top the camera follows you down as you fall,
+/// in metres, and how long it takes to come over the golden island as the
+/// race is won on it, in seconds ([`watch_over`]; mine).
+const FALL_SEEN: f32 = 0.3;
+const TO_THE_WINNERS: f32 = 1.2;
+
 /// A body this game has put on its team, with no bar under its name
 /// ([`dress_bodies`]): everyone else in the race, the computer's offline
 /// and the people the server sends online. What it put there is taken off
@@ -94,7 +132,12 @@ struct Dressed;
 /// that comes; what the server was last told of your metres, and how long
 /// ago; whether the server has told you your metres, back in the race
 /// afresh; whether each team's bridge was across, and each team holding the
-/// golden island, as last said; and offline, the game itself.
+/// golden island, as last said, whether each has held it yet, and the line
+/// across the upper half that says a team holds it, to take down as its
+/// hold is broken; how long since the last grant came, which the ring
+/// round the plank button fills by; whether a team of two is yet to be
+/// told to build one bridge, and how long since "Go!"; and offline, the
+/// game itself.
 struct Race {
     number: u32,
     online: bool,
@@ -109,6 +152,11 @@ struct Race {
     told_back: bool,
     joined: [bool; rules::TEAMS],
     holding: [bool; rules::TEAMS],
+    held_once: [bool; rules::TEAMS],
+    hold_said: Option<(usize, Entity)>,
+    since_grant: f32,
+    one_bridge: bool,
+    since_go: f32,
     played: Option<Box<offline::Played>>,
 }
 
@@ -128,6 +176,11 @@ impl Race {
             told_back: false,
             joined: [false; rules::TEAMS],
             holding: [false; rules::TEAMS],
+            held_once: [false; rules::TEAMS],
+            hold_said: None,
+            since_grant: 0.0,
+            one_bridge: false,
+            since_go: 0.0,
             played: None,
         }
     }
@@ -163,14 +216,17 @@ struct Fight<'w> {
 
 /// What a line said in the game goes on: the chat, the line across the
 /// upper half (every one up, and the one put up this very frame, which the
-/// world has yet to be told of), and the pictures it may have.
+/// world has yet to be told of), and the pictures it may have; and the
+/// words rising over the world, taken down for the end with the lines.
 #[derive(SystemParam)]
+#[allow(clippy::type_complexity)]
 struct Say<'w, 's> {
     log: ResMut<'w, chat::Log>,
     images: ResMut<'w, Assets<Image>>,
     pictures: ResMut<'w, hud::Pictures>,
     notices: Query<'w, 's, Entity, Or<(With<show::Notice>, With<crate::arena::Alert>)>>,
     posted: Local<'s, Option<Entity>>,
+    risings: Query<'w, 's, Entity, With<show::Rising>>,
 }
 
 pub(crate) fn plugin(app: &mut App) {
@@ -197,10 +253,24 @@ pub(crate) fn plugin(app: &mut App) {
                 // landed, the computer's players moved before anyone else
                 // is.
                 offline::play.after(crate::start_punch).before(crate::move_bodies),
-                // A fall into the void, once everyone has moved.
-                reap.after(crate::move_bodies).before(crate::follow_camera),
+                // A fall into the void, once everyone has moved; and where
+                // the camera looks on from, before it is placed.
+                (reap, watch_over).chain().after(crate::move_bodies).before(crate::follow_camera),
                 // What is drawn over the world, once the camera is placed.
-                (show::plate, show::ring, show::hold_words, show::point, show::rise, show::fade_notices)
+                (
+                    show::plate,
+                    show::ring,
+                    show::hold_words,
+                    show::point,
+                    show::jump_hint,
+                    show::rise,
+                    show::fade_notices,
+                    show::fade_banners,
+                    show::count_to_grant,
+                    map::draw,
+                    map::dots,
+                    map::recolour,
+                )
                     .after(crate::follow_camera),
             ),
         );
@@ -210,13 +280,17 @@ pub(crate) fn plugin(app: &mut App) {
 /// less what is not in the race (Hajun: "similar controls and cam with
 /// bridge wars"): your name top left, with no health (nobody has any: the
 /// void is the only way to die) and none of the four things the generators
-/// make, nor the minimap; and round the jump button the fist in its place,
-/// which punches, the jump button beside it, the plank, which builds, the
-/// five buttons for things to use (the dynamite), and the chat's keyboard,
-/// each where Bridge Wars has it.
+/// make; top right the race's own minimap ([`map`], where Bridge Wars has
+/// its own; since 2026-11-18, the same day: none until then); and round
+/// the jump button the fist in its place, which punches, the jump button
+/// beside it, the plank, which builds, with the ring round its rim that
+/// fills toward the next grant of bridge ([`show::next_grant`]), the five
+/// buttons for things to use (the dynamite), and the chat's keyboard, each
+/// where Bridge Wars has it.
 pub(crate) fn spawn_bar(commands: &mut Commands, _assets: &AssetServer, images: &mut Assets<Image>) {
-    let (left, _right) = hud::game_bar(commands);
+    let (left, right) = hud::game_bar(commands);
     commands.spawn((ChildOf(left), hud::name_plate()));
+    map::spawn(commands, right, images);
     let round = commands.spawn(hud::round_the_jump()).id();
     let arrow = images.add(hud::jump_arrow());
     commands.spawn((
@@ -231,6 +305,8 @@ pub(crate) fn spawn_bar(commands: &mut Commands, _assets: &AssetServer, images: 
     }
     let (right, bottom) = hud::ARENA_BRIDGE;
     commands.spawn((ChildOf(round), hud::bridge_button(images.add(hud::plank()), hud::beside_the_jump(right, bottom))));
+    // Over the plank button, on its rim, taking no press of its own.
+    commands.spawn((ChildOf(round), show::next_grant(images, right, bottom)));
     commands.spawn((ChildOf(round), hud::chat_button(images)));
 }
 
@@ -267,8 +343,9 @@ fn feed_line(log: &mut chat::Log, view: &TableView, said: Feed) {
 }
 
 /// What the chat says of what the game says has happened ([`Feed`]), names
-/// in their teams' colours: who fell into the void, by whose doing; and
-/// whose stick holed whose bridge. Nothing of a stick that took nothing.
+/// in their teams' colours: who fell into the void, by whose doing; whose
+/// stick holed whose bridge; and whose went into the void with nothing
+/// under it. Nothing of a stick that blew and took nothing.
 fn feed_words(view: &TableView, said: Feed) -> Option<chat::Line> {
     let file = ui();
     let (words, colours) = (&file.words.bridge_race, file.colours);
@@ -290,6 +367,10 @@ fn feed_words(view: &TableView, said: Feed) -> Option<chat::Line> {
         }
         // A stick that took nothing is nothing to say.
         Feed::Blew { team: None, .. } => return None,
+        Feed::Lost { by } => {
+            let (name, colour) = of(by);
+            chat::spans(&words.missed, ink, &[("name", &name, colour)])
+        }
     };
     Some(line)
 }
@@ -492,18 +573,26 @@ fn follow(
             Some((round, kits)) => {
                 race.joined = round.across.map(|across| across >= 100);
                 race.holding = round.hold.map(|hold| hold > 0);
+                race.held_once = race.holding;
                 race.over = round.over();
                 if !race.told_back {
                     race.counted = round.grants;
                 }
+                let elapsed = (rules::PLAY_SECS - f32::from(round.left)).max(0.0);
+                race.since_grant = elapsed % rules::GRANT_EVERY;
                 race.sticks = kits.and_then(|kits| kits.0.get(race.seat)).map_or(0, |kit| kit.held(Utility::Dynamite));
                 info!("Bridge Race: back in the race {} s in, {} seats, your team {}", rules::PLAY_SECS as u16 - round.left.min(rules::PLAY_SECS as u16), seats, race.team());
             }
             None => {
                 let file = ui();
-                let words = &file.words.bridge_race;
-                let yours = fill(&words.your_team, &[("team", &team_name(race.team()))]);
-                hud::announce(&mut commands, Some(&yours), &words.go, hud::HEADLINE, 2.5).insert(table::InTable);
+                let (words, colours) = (&file.words.bridge_race, file.colours);
+                let mine = race.team();
+                let yours = chat::spans(&words.your_team, colours.text, &[("team", &team_name(mine), show::team_ink(mine))]).0;
+                let go = show::banner(&mut commands, Some(yours.as_slice()), &[(words.go.clone(), colours.gold)], GO_SECS, false);
+                commands.entity(go).insert(table::InTable);
+                // A team of two, people or one with the computer, is told
+                // to lay one bridge between them, once "Go!" has gone.
+                race.one_bridge = (0..seats).filter(|&seat| team(seat) == mine && view.members[seat].id != 0).count() >= 2;
                 if !race.online {
                     let people: Vec<bool> = view.members.iter().map(|member| member.id != 0 && !member.ai).collect();
                     race.played = Some(Box::new(offline::Played::new(&people, fastrand::u64(..))));
@@ -538,8 +627,23 @@ fn follow(
             team: Upgrades::default(),
         });
     }
-    // Online, how long since your metres were told.
-    race.since_told += time.delta_secs();
+    // Online, how long since your metres were told; how long since the
+    // last grant came, offline as the game has it and online by this
+    // device's own count from the round that brought it; and a moment after
+    // "Go!", to a team of two, that one bridge is laid twice as fast.
+    let dt = time.delta_secs();
+    race.since_told += dt;
+    if race.on() {
+        race.since_go += dt;
+        race.since_grant = match &race.played {
+            Some(played) => played.game.elapsed() % rules::GRANT_EVERY,
+            None => (race.since_grant + dt).min(rules::GRANT_EVERY),
+        };
+        if race.one_bridge && race.since_go >= ONE_BRIDGE_AFTER {
+            race.one_bridge = false;
+            show::notice(&mut commands, &mut say, &ui().words.bridge_race.one_bridge, None);
+        }
+    }
     // The fight's state as it stands now, the race begun or over this very
     // frame included.
     let wanted = Fighting {
@@ -560,10 +664,15 @@ fn follow(
 
 /// What the round says, as it changes: each grant come, your team's share
 /// added to your metres with "+3m" rising off you (`feet`, unless `dead`);
-/// each team's bridge come across to the golden island, and each team
-/// standing on it all together, said across the upper half and in the
-/// chat; the fight's clock; and the end, across the screen, and offline
-/// how everyone came, for the table to put up and pay.
+/// each team's bridge come across to the golden island, said across the
+/// upper half and in the chat; each team standing on it all together, its
+/// first hold said in the chat and across the upper half, and a hold again
+/// across it only while you are far from the island, the line taken down
+/// as that hold is broken, with "Hold broken!" over the island in its
+/// colour (mine: every hold was said in both, seventeen in one scramble,
+/// one left up after its hold had gone, and a hold broken said nothing,
+/// seen in a play-test); the fight's clock; and the end, across the screen,
+/// and offline how everyone came, for the table to put up and pay.
 #[allow(clippy::too_many_arguments)]
 fn take_round(
     race: &mut Race,
@@ -580,10 +689,11 @@ fn take_round(
     let mine = race.team();
     while race.counted < round.grants {
         race.counted += 1;
+        race.since_grant = 0.0;
         let share = round.share_of(mine);
         fight.stock.bridge_metres += share;
         if !dead {
-            show::rising(commands, feet, &fill(&words.granted, &[("metres", &format!("{share:.0}"))]));
+            show::granted(commands, feet, &fill(&words.granted, &[("metres", &format!("{share:.0}"))]));
         }
     }
     let ink = file.colours.chat.event;
@@ -598,8 +708,23 @@ fn take_round(
         race.joined[side] = across;
         let holding = round.hold[side] > 0;
         if holding && !race.holding[side] && !round.over() {
-            say.log.push(chat::spans(&words.holding, ink, &[("team", &name, colour)]));
-            show::notice(commands, say, &fill(&words.holding, &[("team", &name)]), None);
+            let first = !std::mem::replace(&mut race.held_once[side], true);
+            if first {
+                say.log.push(chat::spans(&words.holding, ink, &[("team", &name, colour)]));
+            }
+            if first || feet.xz().distance(rules::GOLDEN) > HOLD_SAID_PAST {
+                let posted = show::notice(commands, say, &fill(&words.holding, &[("team", &name)]), None);
+                race.hold_said = Some((side, posted));
+            }
+        }
+        if !holding && race.holding[side] && !round.over() {
+            if let Some((of, posted)) = race.hold_said
+                && of == side
+            {
+                commands.entity(posted).try_despawn();
+                race.hold_said = None;
+            }
+            show::broken(commands, side as u8);
         }
         race.holding[side] = holding;
     }
@@ -609,13 +734,24 @@ fn take_round(
     }
     if round.over() && !race.over {
         race.over = true;
-        // The end said on its own: whatever line is up goes.
+        // The end said on its own: whatever line is up goes, and whatever
+        // is rising ("Hold broken!" a moment before a win ran into "Blue
+        // wins!", seen in a scripted run).
         show::clear_notices(commands, say);
+        for rising in &say.risings {
+            commands.entity(rising).try_despawn();
+        }
         let (title, caption) = end_words(&round, mine);
-        hud::announce(commands, caption.as_deref(), &title, hud::HEADLINE, 3.0).insert(table::InTable);
+        let end = show::banner(commands, caption.as_deref(), &title, END_SECS, true);
+        commands.entity(end).insert(table::InTable);
         info!(
-            "Bridge Race: over, {:?} won by {:?} (\"{title}\" over {caption:?}), {} m and {} m across",
-            round.winner, round.finish, round.across[0], round.across[1]
+            "Bridge Race: over, {:?} won by {:?} (\"{}\" over {:?}), {} m and {} m across",
+            round.winner,
+            round.finish,
+            written(&title),
+            caption.as_deref().map(written),
+            round.across[0],
+            round.across[1]
         );
         if let Some(played) = &race.played
             && let Some((places, scores, total)) = played.game.outcome()
@@ -626,30 +762,42 @@ fn take_round(
     race.round = Some(round);
 }
 
-/// What is said across the screen as the race ends, as the round has it:
-/// who won, or a draw ("Red wins!", "Draw"), over how it came to an end,
-/// for you on team `mine` ([`RaceRound::finish`]): held by your team, or
-/// by the other; held by both at once; the time up, however it stood; or
-/// every one of a team gone, whoever is left winning. Until 2026-11-18,
-/// the same day, the time's being up was told by the clock alone and every
-/// other end by who won, so that a team all gone was "Your team got there
-/// first!", both holding at once "Time's up!", and a skip "got there
-/// first" (mine).
-fn end_words(round: &RaceRound, mine: u8) -> (String, Option<String>) {
+/// Words in pieces, each in its colour: a line across the screen.
+type Pieces = Vec<(String, Color)>;
+
+/// What `pieces` say, all together.
+fn written(pieces: &[(String, Color)]) -> String {
+    pieces.iter().map(|(words, _)| words.as_str()).collect()
+}
+
+/// What is said across the screen as the race ends, as the round has it,
+/// a team's name in its colour: who won, or a draw ("Red wins!", "Draw"),
+/// in gold, over how it came to an end, for you on team `mine`
+/// ([`RaceRound::finish`]), in white: held by your team, or by the other
+/// (named: until 2026-11-18, the same day, "your team" or "the other team
+/// got there first", wrong when the first there lost the hold, seen in a
+/// play-test); held by both at once; the time up, however it stood; or
+/// every one of a team gone, whoever is left winning. Until earlier that
+/// day the time's being up was told by the clock alone and every other end
+/// by who won, so that a team all gone was "Your team got there first!",
+/// both holding at once "Time's up!", and a skip "got there first" (mine).
+fn end_words(round: &RaceRound, mine: u8) -> (Pieces, Option<Pieces>) {
     let file = ui();
-    let words = &file.words.bridge_race;
+    let (words, colours) = (&file.words.bridge_race, file.colours);
+    let (gold, white) = (colours.gold, colours.text);
+    let named = |template: &str, ink: Color, side: u8| chat::spans(template, ink, &[("team", &team_name(side), show::team_ink(side))]).0;
     let title = match round.winner {
-        Some(side) => fill(&words.wins, &[("team", &team_name(side))]),
-        None => words.draw.clone(),
+        Some(side) => named(&words.wins, gold, side),
+        None => vec![(words.draw.clone(), gold)],
     };
     let caption = match (round.finish, round.winner) {
-        (Some(Finish::Held), Some(side)) if side == mine => Some(words.won.clone()),
-        (Some(Finish::Held), Some(_)) => Some(words.lost.clone()),
-        (Some(Finish::Held), None) => Some(words.together.clone()),
-        (Some(Finish::Left), Some(side)) => Some(fill(&words.team_left, &[("team", &team_name(1 - side.min(1)))])),
+        (Some(Finish::Held), Some(side)) if side == mine => Some(vec![(words.won.clone(), white)]),
+        (Some(Finish::Held), Some(side)) => Some(named(&words.lost, white, side)),
+        (Some(Finish::Held), None) => Some(vec![(words.together.clone(), white)]),
+        (Some(Finish::Left), Some(side)) => Some(named(&words.team_left, white, 1 - side.min(1))),
         // Everyone gone: nobody is here to be told how.
         (Some(Finish::Left), None) => None,
-        (Some(Finish::Time) | None, _) => Some(words.times_up.clone()),
+        (Some(Finish::Time) | None, _) => Some(vec![(words.times_up.clone(), white)]),
     };
     (title, caption)
 }
@@ -799,6 +947,56 @@ fn reap(
             }
         }
     }
+}
+
+/// Where the camera looks on from, if not from over you (`crate::Lookout`,
+/// the camera standing as it would were you there; mine): falling into
+/// the void, and dead, from over where you went off, at the land's height,
+/// following you no further down than [`FALL_SEEN`] under it (it followed
+/// you down into the void, where there was nothing but the dark to see,
+/// seen in a play-test whose player was knocked off at the end and missed
+/// the other team's hold that won it); and as the race is won on the
+/// golden island, over the island, the winners on it and its ring full,
+/// coming there smoothly in [`TO_THE_WINNERS`]. Written only as it changes;
+/// with the race gone, given back once (the table puts you where it will).
+fn watch_over(
+    time: Res<Time>,
+    racing: Res<Racing>,
+    me: Query<(&Transform, &Venue, Has<Dead>), With<Player>>,
+    mut lookout: ResMut<crate::Lookout>,
+    (mut toward, mut wrote): (Local<Option<(Vec3, f32)>>, Local<bool>),
+) {
+    let Some(race) = racing.0.as_ref().filter(|race| race.begun) else {
+        *toward = None;
+        if std::mem::take(&mut *wrote) {
+            lookout.set_if_neq(crate::Lookout(None));
+        }
+        return;
+    };
+    let Ok((body, &venue, dead)) = me.single() else {
+        return;
+    };
+    *wrote = true;
+    let feet = body.translation;
+    let held = race.over && race.round.as_ref().is_some_and(|round| round.finish == Some(Finish::Held));
+    lookout.set_if_neq(crate::Lookout(looked_on_from(feet, venue == Venue::BridgeRace, dead, held, lookout.0, &mut toward, time.delta_secs())));
+}
+
+/// Where the camera looks on from ([`watch_over`]), you standing at `feet`,
+/// `on` the race's map or not, `dead` or not, the race won on the golden
+/// island (`held`) or not; where it looked on from last (`was`); and the
+/// way it is coming over the golden island, if it is, from where and for
+/// how long (`toward`), `dt` seconds on. None: from over you.
+fn looked_on_from(feet: Vec3, on: bool, dead: bool, held: bool, was: Option<Vec3>, toward: &mut Option<(Vec3, f32)>, dt: f32) -> Option<Vec3> {
+    if held {
+        let (from, age) = toward.get_or_insert((was.unwrap_or(feet), 0.0));
+        *age += dt;
+        let t = (*age / TO_THE_WINNERS).clamp(0.0, 1.0);
+        let gold = Vec3::new(rules::GOLDEN.x, rules::LIFT, rules::GOLDEN.y);
+        return Some(from.lerp(gold, t * t * (3.0 - 2.0 * t)));
+    }
+    *toward = None;
+    (on && (dead || feet.y < rules::LIFT - FALL_SEEN)).then(|| Vec3::new(feet.x, feet.y.max(rules::LIFT - FALL_SEEN), feet.z))
 }
 
 #[cfg(test)]
@@ -1159,21 +1357,176 @@ mod tests {
             left: 100,
             ..fresh_round()
         };
+        let said = |(title, caption): (Pieces, Option<Pieces>)| (written(&title), caption.as_deref().map(written));
         let red_wins = fill(&words.wins, &[("team", &words.red)]);
-        // Held: by your team, or the other; both at once, a draw.
-        assert_eq!(end_words(&over(Some(0), Finish::Held), 0), (red_wins.clone(), Some(words.won.clone())));
-        assert_eq!(end_words(&over(Some(0), Finish::Held), 1), (red_wins.clone(), Some(words.lost.clone())));
-        assert_eq!(end_words(&over(None, Finish::Held), 0), (words.draw.clone(), Some(words.together.clone())));
+        // Held: by your team, or the other, named; both at once, a draw.
+        assert_eq!(said(end_words(&over(Some(0), Finish::Held), 0)), (red_wins.clone(), Some(words.won.clone())));
+        assert_eq!(said(end_words(&over(Some(0), Finish::Held), 1)), (red_wins.clone(), Some(fill(&words.lost, &[("team", &words.red)]))));
+        assert_eq!(said(end_words(&over(None, Finish::Held), 0)), (words.draw.clone(), Some(words.together.clone())));
         // The time up, or skipped: the time, whoever won.
-        assert_eq!(end_words(&over(Some(0), Finish::Time), 0), (red_wins.clone(), Some(words.times_up.clone())));
-        assert_eq!(end_words(&over(None, Finish::Time), 1), (words.draw.clone(), Some(words.times_up.clone())));
+        assert_eq!(said(end_words(&over(Some(0), Finish::Time), 0)), (red_wins.clone(), Some(words.times_up.clone())));
+        assert_eq!(said(end_words(&over(None, Finish::Time), 1)), (words.draw.clone(), Some(words.times_up.clone())));
         // Blue all gone: red wins, and blue is said to have left.
-        assert_eq!(end_words(&over(Some(0), Finish::Left), 0), (red_wins, Some(fill(&words.team_left, &[("team", &words.blue)]))));
-        assert_eq!(end_words(&over(None, Finish::Left), 0), (words.draw.clone(), None));
+        assert_eq!(said(end_words(&over(Some(0), Finish::Left), 0)), (red_wins, Some(fill(&words.team_left, &[("team", &words.blue)]))));
+        assert_eq!(said(end_words(&over(None, Finish::Left), 0)), (words.draw.clone(), None));
+        // A team's name in its own colour, the rest of the title in gold
+        // and of the caption in white.
+        let (title, caption) = end_words(&over(Some(1), Finish::Held), 0);
+        assert!(title.contains(&(words.blue.clone(), show::team_ink(1))), "{title:?}");
+        assert!(title.iter().any(|(_, colour)| *colour == file.colours.gold));
+        let caption = caption.expect("how");
+        assert!(caption.contains(&(words.blue.clone(), show::team_ink(1))), "{caption:?}");
+        assert!(caption.iter().any(|(_, colour)| *colour == file.colours.text));
         // Every one of them words the fonts draw, the team filled in.
-        assert!(words.team_left.contains("{team}"));
-        for said in [&words.together, &words.team_left, &words.times_up] {
+        assert!(words.team_left.contains("{team}") && words.lost.contains("{team}"));
+        for said in [&words.together, &words.team_left, &words.times_up, &words.won, &words.lost, &words.hold_broken, &words.jump, &words.one_bridge, &words.missed] {
             assert!(!said.trim().is_empty() && said.chars().all(roundtown_net::text::allowed), "{said:?}");
         }
+    }
+
+    #[test]
+    fn a_stick_lost_in_the_void_is_said_in_the_chat_whose_it_was() {
+        let mut world = world();
+        hosted(&mut world, Stage::Playing);
+        let view = world.resource::<TableView>().clone();
+        let line = feed_words(&view, Feed::Lost { by: 1 }).expect("a line");
+        let file = ui();
+        assert_eq!(written(&line.0), fill(&file.words.bridge_race.missed, &[("name", "Dori")]));
+        assert!(line.0.contains(&("Dori".to_string(), file.colours.arena.team(1))));
+    }
+
+    #[test]
+    fn a_hold_is_said_across_the_upper_half_its_line_goes_as_it_is_broken_and_the_break_is_said() {
+        let mut world = world();
+        world.init_resource::<Messages<Told>>();
+        let (enter, follow) = (world.register_system(enter), world.register_system(follow));
+        // Online, you on red by the golden island, the race from its start.
+        let you = world.spawn((Player, Transform::from_xyz(-2.0, rules::LIFT, 0.0), Venue::BridgeRace)).id();
+        let board = Board {
+            game: Minigame::BridgeRace,
+            id: 4,
+            stage: Stage::Playing,
+            left: 0,
+            people: 1,
+            seats: 2,
+        };
+        let shown = world.spawn((Remote, board, fresh_round())).id();
+        sit(&mut world, true);
+        hosted(&mut world, Stage::Playing);
+        world.resource_mut::<TableView>().shown = Some(shown);
+        world.run_system(enter).expect("in");
+        world.run_system(follow).expect("followed");
+        let file = ui();
+        let words = &file.words.bridge_race;
+        let holding = fill(&words.holding, &[("team", &words.blue)]);
+        let notices = |world: &mut World| world.query_filtered::<Entity, With<show::Notice>>().iter(world).count();
+        let hold = |world: &mut World, tenths: [u8; 2]| {
+            world.get_mut::<RaceRound>(shown).expect("the round").hold = tenths;
+        };
+        let held_once = |world: &World| world.resource::<Racing>().0.as_ref().expect("a race").held_once;
+        // Blue holds: across the upper half, the first time (and in the
+        // chat, which is said with it).
+        hold(&mut world, [0, 2]);
+        world.run_system(follow).expect("followed");
+        assert_eq!(notices(&mut world), 1);
+        assert!(says(&mut world, &holding));
+        assert_eq!(held_once(&world), [false, true]);
+        // Knocked off it: the line taken down, and "Hold broken!" said.
+        hold(&mut world, [0, 0]);
+        world.run_system(follow).expect("followed");
+        world.flush();
+        assert_eq!(notices(&mut world), 0);
+        assert!(says(&mut world, &words.hold_broken));
+        // Again, by the island: nothing across the upper half, the ring and
+        // "Hold!" saying it.
+        hold(&mut world, [0, 3]);
+        world.run_system(follow).expect("followed");
+        assert_eq!(notices(&mut world), 0);
+        // And again, with you far off on your own island: across the upper
+        // half.
+        hold(&mut world, [0, 0]);
+        world.run_system(follow).expect("followed");
+        world.get_mut::<Transform>(you).expect("you").translation = Vec3::new(rules::ISLANDS[0].x, rules::LIFT, rules::ISLANDS[0].y);
+        hold(&mut world, [0, 1]);
+        world.run_system(follow).expect("followed");
+        assert_eq!(notices(&mut world), 1);
+    }
+
+    #[test]
+    fn a_team_of_two_is_told_once_go_has_gone_to_build_one_bridge_and_a_team_of_one_is_not() {
+        for seats in [2, 4] {
+            let mut world = world();
+            let (enter, follow) = (world.register_system(enter), world.register_system(follow));
+            world.spawn((Player, Transform::default(), Venue::BridgeRace));
+            sit(&mut world, false);
+            hosted(&mut world, Stage::Playing);
+            // Four seats: you and the computer on red, two of it on blue.
+            if seats == 4 {
+                let mut view = world.resource_mut::<TableView>();
+                let bot = |id: u64, name: &str| Member {
+                    id,
+                    name: name.into(),
+                    look: "girl".into(),
+                    ai: true,
+                };
+                view.members.extend([bot(3, "Bori"), bot(4, "Latte")]);
+                view.board.as_mut().expect("a board").seats = 4;
+            }
+            world.run_system(enter).expect("in");
+            world.run_system(follow).expect("followed");
+            let words = ui().words.bridge_race.one_bridge.clone();
+            assert!(!says(&mut world, &words), "not with \"Go!\"");
+            let mut told = 0;
+            for _ in 0..50 {
+                world.resource_mut::<Time>().advance_by(std::time::Duration::from_millis(100));
+                world.run_system(follow).expect("followed");
+                told += usize::from(says(&mut world, &words) && told == 0);
+            }
+            assert_eq!(told, usize::from(seats == 4), "{seats} seats");
+        }
+    }
+
+    #[test]
+    fn falling_and_dead_the_camera_stays_at_the_land_over_where_you_went_and_goes_to_the_winners() {
+        let mut toward = None;
+        let feet = Vec3::new(-50.0, rules::LIFT, -10.0);
+        // On your feet, jumping, or off the race's map: over you.
+        assert_eq!(looked_on_from(feet, true, false, false, None, &mut toward, 0.1), None);
+        assert_eq!(looked_on_from(feet + Vec3::Y, true, false, false, None, &mut toward, 0.1), None);
+        assert_eq!(looked_on_from(feet - Vec3::Y * 9.0, false, false, false, None, &mut toward, 0.1), None);
+        // Falling, and dead far down: over where you are, at the land.
+        let falling = looked_on_from(feet - Vec3::Y * 9.0, true, false, false, None, &mut toward, 0.1).expect("held up");
+        assert_eq!(falling, Vec3::new(feet.x, rules::LIFT - FALL_SEEN, feet.z));
+        let dead = looked_on_from(feet - Vec3::Y * 40.0, true, true, false, Some(falling), &mut toward, 0.1).expect("held up");
+        assert_eq!(dead, falling);
+        // Won on the golden island: on to it, smoothly, from where it was,
+        // and there once it has come.
+        let gold = Vec3::new(rules::GOLDEN.x, rules::LIFT, rules::GOLDEN.y);
+        let first = looked_on_from(feet, true, false, true, Some(dead), &mut toward, 0.1).expect("going");
+        assert!(first.distance(dead) < 2.0 && first.distance(gold) < dead.distance(gold), "{first}");
+        let mut at = first;
+        for _ in 0..30 {
+            at = looked_on_from(feet, true, false, true, Some(at), &mut toward, 0.1).expect("going");
+        }
+        assert!(at.distance(gold) < 1e-3, "{at}");
+        // Over another way: over you again.
+        assert_eq!(looked_on_from(feet, true, false, false, Some(at), &mut toward, 0.1), None);
+        assert!(toward.is_none());
+    }
+
+    #[test]
+    fn the_camera_is_given_back_with_the_race() {
+        let mut world = world();
+        world.init_resource::<crate::Lookout>();
+        let watch = world.register_system(watch_over);
+        world.spawn((Player, Transform::from_xyz(-50.0, -40.0, -10.0), Venue::BridgeRace, Dead { left: 1.0 }));
+        let mut race = Race::new(1, true, 0);
+        race.begun = true;
+        world.resource_mut::<Racing>().0 = Some(race);
+        world.run_system(watch).expect("watched");
+        assert_eq!(world.resource::<crate::Lookout>().0, Some(Vec3::new(-50.0, rules::LIFT - FALL_SEEN, -10.0)));
+        world.resource_mut::<Racing>().0 = None;
+        world.run_system(watch).expect("watched");
+        assert_eq!(world.resource::<crate::Lookout>().0, None);
     }
 }

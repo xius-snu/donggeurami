@@ -97,7 +97,7 @@ impl BridgeRace {
                 let entity = ctx.spawn_in_room(table, shown);
                 self.sticks.insert(stick, entity);
             }
-            Event::Lost { stick } => {
+            Event::Lost { stick, .. } => {
                 if let Some(entity) = self.sticks.remove(&stick) {
                     ctx.commands.entity(entity).try_despawn();
                 }

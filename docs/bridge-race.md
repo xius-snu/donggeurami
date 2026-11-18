@@ -13,8 +13,243 @@
 
 ## Contents
 
-1. 2026-11-18, the same day: nine things a checker found, put right
-2. Since 2026-11-18 Bridge Race is played at its tables, online and offline, to the golden island
+1. 2026-11-18, later that day: what a play-test found, the race made easier to follow
+2. 2026-11-18, the same day: nine things a checker found, put right
+3. Since 2026-11-18 Bridge Race is played at its tables, online and offline, to the golden island
+
+## 2026-11-18, later that day: what a play-test found, the race made easier to follow
+
+A play-tester played three whole games offline in hidden runs (1920 by
+1080 by day, a phone's 852 by 393 by day, and by night with an iPhone's
+safe area) and found the game working and the coins right, but not yet
+fun: about 85 seconds in every hundred stood at the end of your own
+bridge with nothing left to lay and the other team out of sight; the
+golden island's scramble hard to follow, its words wrong; blue's colours
+all but gone on the island's lilac; the screen dark as you fell; the
+arrow under a phone's thumb. Hajun's word for all four games stands over
+what was done: "the details i didn't mention are yours to decide to make
+each game polished and fun". Every call below is mine unless it says
+otherwise; what was turned down says why.
+
+### What a player sees now
+
+- **The whole race, top right** (`src/bridge_race/map.rs`, new): a
+  minimap where Bridge Wars has its own, in its look: the three islands
+  from above, red's and blue's lined in their colours and the golden
+  island in its gold, both teams' bridges drawn again as they change
+  (holes and all), and a dot for everyone in the race in their team's
+  colour from "Go!" on, yours bigger with a white rim. Until now the
+  other team's bridge first came into sight about 140 seconds into a
+  race of about 150, at the screen's edge. Bridge Wars' minimap shows you
+  and your teammate alone (Hajun, for Bridge Wars: "not show the other
+  players"); this one shows the other team too, a race being run in the
+  open and where they stand being how far they have got.
+- **When the next metres come**: a ring round the rim of the plank
+  button that fills, the way the clock goes, over the sixteen seconds to
+  the next grant, drawn again in 32 steps (`show::next_grant`,
+  `count_to_grant`). Offline it goes by the game's own clock; online by
+  this device's count from the round that brought the last grant.
+- **"Jump!"** in gold over the gap between you and the golden island,
+  while you stand within 6.5 m of its shore with too little bridge to lay
+  across (`show::jump_hint`). A body runs 10 m a second in the race and a
+  jump keeps it in the air 0.77 s (`JUMP_SPEED`, `GRAVITY`), 7.7 m at a
+  run, which clears 6.5 m with a metre in hand; and a grant of one
+  against one leaves you at most 6 m short. The computer's players jumped
+  such gaps and nothing told a person they could. It stands up the screen
+  off the line of your bridge, and only while you stand on something.
+  (At first 5.5 m, over the gap's middle, and in the air too: the first
+  scripted run waited out a last gap of 5.7 m it could have jumped, and
+  the next wrote "Jump!" over the "0m" in front of you and kept it up as
+  it jumped.)
+- **"Build one bridge together!"** across the upper half three seconds
+  after "Go!", to a team of two (people, or one with the computer): two
+  each laying their own bridge go half as fast as two laying one.
+- **The golden island's scramble**:
+  - Each holding team's "Hold! 2" in a place of its own when both hold
+    (one "Hold!" went from red to blue and back as either got further).
+  - "Hold broken!" over the island in the team's colour as its hold goes,
+    whether it was knocked off or jumped (`ON_GOLD`: a jump takes you off
+    the island's ground, as the rules have had it since G1; now it is
+    said), rising from a little down the screen from the island's middle
+    (begun where "Hold!" stands, red's was written over blue's "Hold! 3"
+    as blue held on), and taken down with the lines as the race ends (one
+    ran into "Blue wins!").
+  - "X is holding the golden island!" is in the chat the first time each
+    team holds it, and across the upper half then, and again only while
+    you are more than 24 m from the island; the line comes down as that
+    hold is broken. One scramble put up seventeen of them, and one stayed
+    up after its hold had gone.
+  - A dark band under the ring's arcs, a little wider than them
+    (`colours.bridge_race.ring_edge`), so that each team's colour has an
+    edge on the lilac.
+  - The end's caption says who held it: "Your team held the golden
+    island!" or "Blue held the golden island" (it said "The other team got
+    there first" when red had got there first and blue won the
+    scramble).
+- **Stroked words** (`show::stroked`): "Hold!", "Hold broken!", the
+  arrow's metres, "Jump!", "+3m" and the words across the middle of the
+  screen have a thin dark stroke, four copies a hair off toward each
+  corner in `colours.chat.stroke`, as your name top left has in its
+  team's colour. Blue's "Hold! 2" on the lilac measured 1.04 to 1, red's
+  1.19, gold on the day's sky 1.17; Hajun's way, his colours kept, is to
+  stroke them.
+- **"Go!" and the end are the race's own** (`show::banner`): where and
+  as big as `hud::announce` puts Bridge Wars', fading the same, with the
+  stroke, and a team's name in its colour ("You are on Red", "Red
+  wins!"). The end is up two seconds and goes as the table's results come
+  up (at three, under the see-through window, it showed through).
+- **The camera does not follow you into the void** (`watch_over`, by
+  `crate::Lookout`, which until now only Bridge Wars' watching used):
+  falling, it stops 0.3 m under the land's top over where you are, so
+  that you see the bridge you went off and whoever knocked you, and stays
+  there while you are dead; and as the race is won on the golden island
+  it comes over the island in 1.2 s, to the winners and the full ring. The
+  play-tester was knocked off at the end and saw only the dark void, then
+  "Blue wins!" over their own island.
+- **The arrow to the golden island** keeps inside the safe area (an
+  iPhone's island stood over it 15 to 37 points from the edge), stands on
+  the right edge over the buttons round the jump button rather than among
+  them under the thumb (or along the bottom between the stick and them,
+  the island being more down than to the right), never higher than 32
+  shares of the short side, under the plate and the minimap, goes as soon
+  as any of the island is on the screen (its gold words sat on the
+  island's gold band), and writes its metres inward of it.
+- **The plate**: each team's bar has a sliver of its colour from the
+  start (both were the same grey at 0 m), its end rounded as its track
+  is, and its words at 2.8 shares of the short side (2.3 was 9 points on a
+  phone).
+- **"+3m"** begins 0.4 m up the screen from you and rises 1.4 m (it rose
+  3.4 m, into the line across the upper half that the same grant's bridge
+  across had put up).
+- **A stick lost in the void is said in the chat**: "Mochi's dynamite fell
+  into the void." (`Feed::Lost`, `Event::Lost` with its thrower; online
+  the server tells every connected device, as it does the rest of the
+  feed; the round's size is unchanged). It fell out of sight as a red
+  speck, and a miss looked like nothing at all.
+
+### Turned down, and why
+
+- **Smaller grants more often** (the play-tester's 1.5 m every 4 s, "still
+  every interval"): the kit's bridge, as it runs out, fixes the plank in
+  your hands at least 1.05 m ahead of you whatever is left
+  (`bridge::lay`, its `AHEAD`), once at every run-out; at 1.5 m a grant
+  (0.75 m each two against two, under a plank's length) a person would lay
+  up to 70 to 140 per cent more than granted and the computer none, and
+  the server's cap (`SPARE_EACH`, 1.5 m a grant) would come to more than
+  the grants themselves. G1 tuned whole games of the computer on the
+  sixteen seconds. The ring round the plank button answers the "when" of
+  it instead.
+- **Things to pick up for metres**, as the genre's Bridge Race has bricks:
+  a new rule, where Hajun's is that the metres come by the clock ("Every
+  interval you are given more bridge meters"). His to decide.
+- **Dynamite thrown further**, or given later: its reach is the kit's
+  throw (`utility`'s drag) and Bridge Wars' numbers, not this game's file;
+  when it comes is G1's odds, which the computer's whole games were tuned
+  on. A stick held early keeps for later.
+- **A score that separates players**: the spec names it ("score word:
+  metres built"), and in a team of two it does say who laid the bridge.
+  The end's words no longer show through the results.
+- **Something to find yourself by at night** (the bridge is 1.18 to 1 on
+  the night's void, your head 1.26): what gives light is `lamps::SOURCES`,
+  the planks are `bridge`'s, and a race only by day is Hajun's call. The
+  minimap shows where you are by night as by day.
+- **Jumping on the golden island keeps your hold**: the rules have said
+  "not in the air" since G1 (`ON_GOLD`); it is said now instead.
+
+### Not this game's files (for the orchestrator)
+
+- Names over heads are `arena::spawn_tag`'s: blue's on the lilac is all
+  but unread; a stroke there, as the race's own words have now.
+- The plank button at 0 m still looks pressable, with a white "0m", while
+  the metres in front of you are red (`hud`).
+- The game selector's card shows the fee, not what a win pays (`games`).
+- The chat's lines run under the results' window (`chat`, `table`).
+- With the waits skipped (`RT_ALLOW_SKIP`, the VM's), the table's "Bridge
+  Race" across the screen is still up as "Go!" comes (`table`).
+- The map is Hajun's: each team's island has Bridge Wars' red and blue
+  shop stands and pad, which do nothing here (a blue stand on red's
+  island), and the "golden" island is violet (`goldenisland`, 0.49, 0.15,
+  0.76) under the words and the arrow's gold.
+
+### Checked, and where
+
+- **Unit tests**, all three suites through `rtcargo.sh race`: the rules'
+  145 (5 ignored; two of them extended: a stick lost said in the chat,
+  whose it was, and what is sent of it, its size); the server's 88 (4
+  ignored); the game's 389, eleven of them new: the arrow's room on a
+  phone and a desktop,
+  over the buttons, between the stick and them along the bottom, under
+  the plate, inside an iPhone's safe area; the arrow gone once any of the
+  island is in sight; "Jump!" only within a jump with too little bridge,
+  on your feet, and a running jump clearing what it is said from; the
+  ring round the plank button filled the way the clock goes on its rim;
+  stroked words as four copies under the words, clear to begin with; the
+  minimap's picture (north up, the three islands lined in their colours,
+  the void clear) and a plank and a dot where they stand; the end's
+  words as pieces, a team's name in its colour, held by the other team
+  named; a stick lost said in the chat; a hold said across the upper half
+  the first time, its line taken down as it is broken, "Hold broken!"
+  said, a hold again said only from afar; a team of two told to build one
+  bridge after "Go!" and a team of one not; the camera falling, dead,
+  over the winners, and given back with the race.
+- **In the desktop build, hidden** (`RT_BACKGROUND=1`), by a throwaway
+  taken out again (kept at `RoundTown-wt/scratch-race/polish/kept/`),
+  every picture looked at, those of small things enlarged (in
+  `RoundTown-wt/scratch-race/polish/`):
+  - Offline, 1920 by 1080, by day (`desk_day/`), a whole game from the
+    town's selector: the waiting room with the minimap and nobody on it;
+    "Go!" over "You are on Red", red in red, stroked over the blue stand;
+    each team's sliver on the plate; off the back of the island and the
+    camera held at the land as you fell and lay dead ("Back on your island
+    in 1.5" over the island's edge, not the dark); the ring round the
+    plank button empty at a grant and half full eight seconds on; "+6m"
+    clear of the upper half; the arrow over the buttons with "73m"
+    inward; "Hana's dynamite fell into the void." in the chat after a
+    stick thrown wide; both bridges growing on the minimap; a scramble on
+    the golden island: "Hold! 2" in red and "Hold! 3" in blue side by side
+    over the ring's dark band, "Hold broken!" again and again, every
+    first hold once in the chat; the camera coming over the island to
+    "Blue held the golden island" over "Blue wins!", blue in blue; the
+    results with no end words through the window; back in the town at 950.
+    Seen there and put right after it: "Hold broken!" began where
+    "Hold!" stands, over the other team's (now from down the screen), and
+    one ran into "Blue wins!" (now taken down for the end); and "Jump!"
+    from 5.5 m let a gap of 5.7 go by (now 6.5).
+  - Offline, a phone's 852 by 393, by night, an iPhone's safe area of 59
+    points either side (`phone_night/`): the arrow inside the safe area
+    and over the buttons; the minimap moved in with the bar; by night,
+    your dot on it where your bridge ends, the bridge itself all but
+    unseen; "Jump!" 6.4 m from the shore with 3 m left, the jump, and the
+    hold won before either bridge was across ("Red wins!" over "Your team
+    held the golden island!", the full ring, by night); the results; back
+    in the town at 1,060. Seen there and put right after it: "Jump!" stood
+    on the "0m" in front of you, and stayed up in the air.
+  - Offline, the phone's size by day (`phone_day/`), the last of it as
+    committed: "Jump!" up the screen clear of "0m", the jump, a jump on the
+    golden island while holding it and "Hold broken!" in red rising from
+    under the middle, the hold won after, "Your team held the golden
+    island!" over "Red wins!" with nothing left rising, 1,060 after.
+  - Against a server on this PC (port 5483), two hidden copies at 1280 by
+    720 (`online_1v1/`, `online/`), each its own `APPDATA`. The first time
+    they came to two tables, one against one each: on one the race was
+    skipped ("Red wins!" over "Time's up!", paid 110); on the other the
+    copy built, was told "Jump!" (now up the screen, clear of "0m", gone in
+    the air), jumped, held the golden island and won (paid 110), its two
+    sticks that missed said in the chat through the server and the one
+    that hit holed the computer's bridge; the ring round the plank button
+    filled by the device's own count; the minimap showed the server's
+    computer player. The second time both sat at one table, red together
+    against the computer's two: "Build one bridge together!" on both
+    after "Go!", the two building one bridge, the minimap with both teams
+    on it; skipped 50 s in, "Red wins!" over "Time's up!" on both, the
+    camera left over you for a time-up, paid 110 each. Every time both
+    back in the town at 1,060 with nothing of the race left, the logs
+    clean.
+- **Not checked**: anything on a phone or an iPhone; a table of three;
+  the time limit run out (a skip calls it); a draw; a team gone; the
+  scripted player knocked off the golden island by a punch (its breaks
+  were the computer's and its own jumps and walks); the online copies by
+  night.
 
 ## 2026-11-18, the same day: nine things a checker found, put right
 

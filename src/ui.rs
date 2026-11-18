@@ -584,7 +584,12 @@ pub(crate) struct KnockOffColours {
 /// teams' colours are drawn in the bars, in the ring round the golden
 /// island and in "Hold! 2" (since 2026-11-18, the same day: until then
 /// written into the code, out of Hajun's hands), from 0, none of it, to 1,
-/// all of it ([`BridgeRaceColours::solid`]).
+/// all of it ([`BridgeRaceColours::solid`]). And, since a play-test later
+/// that day: the dark band under the ring's arcs while a team holds the
+/// golden island, which edges them off the island's lilac; the ring round
+/// the plank button that fills toward the next grant of bridge, and the
+/// faint one it fills over; and on the minimap top right the rim round
+/// your own dot (everyone's in their team's colour).
 #[derive(Deserialize, Clone, Copy, PartialEq, Debug)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct BridgeRaceColours {
@@ -597,6 +602,14 @@ pub(crate) struct BridgeRaceColours {
     pub bar_strength: f32,
     pub ring_strength: f32,
     pub hold_strength: f32,
+    #[serde(deserialize_with = "colour")]
+    pub ring_edge: Color,
+    #[serde(deserialize_with = "colour")]
+    pub next_grant: Color,
+    #[serde(deserialize_with = "colour")]
+    pub next_grant_track: Color,
+    #[serde(deserialize_with = "colour")]
+    pub map_you: Color,
 }
 
 impl BridgeRaceColours {
@@ -1205,19 +1218,22 @@ pub(crate) struct KnockOffWords {
 /// Bridge Race's own words (`bridge_race`), as Blend In's are: what its
 /// score is called among the results; its two teams; across the screen as
 /// it begins ("Go!", and your team, `{team}`) and as it ends (who won,
-/// `{team}`, or a draw, over how it came to an end: your team there first,
-/// the other, both at once, the time run out, or every one of a team,
-/// `{team}`, gone); on the plate top centre, under each team's bar, how
-/// far its bridge still has to go (`{metres}`), that it is across, or how
-/// many of it stand on the golden island (`{count}` of `{of}`); over the
-/// golden island while a team holds it (`{seconds}`); rising off you as a
-/// grant of bridge comes (`{metres}`); by the arrow toward the golden
-/// island (`{metres}`); across the screen while you wait to stand again
-/// after a fall (`{seconds}`, counting down in halves); in the upper half
-/// and the chat as a stick comes to your button, as a team's bridge
-/// reaches the golden island and as a team holds it (`{team}`); and in the
-/// chat who fell into the void (`{name}`), by whose doing (`{killer}`), and
-/// whose stick holed whose bridge (`{name}`, `{team}`).
+/// `{team}`, or a draw, over how it came to an end: your team held the
+/// golden island, the other, `{team}`, both at once, the time run out, or
+/// every one of a team, `{team}`, gone); on the plate top centre, under
+/// each team's bar, how far its bridge still has to go (`{metres}`), that
+/// it is across, or how many of it stand on the golden island (`{count}`
+/// of `{of}`); over the golden island while a team holds it (`{seconds}`),
+/// and as a team's hold on it is broken; rising off you as a grant of
+/// bridge comes (`{metres}`); by the arrow toward the golden island
+/// (`{metres}`); over the gap, as your bridge's end is a jump from the
+/// golden island; across the screen while you wait to stand again after a
+/// fall (`{seconds}`, counting down in halves); in the upper half and the
+/// chat as a stick comes to your button, as a team's bridge reaches the
+/// golden island and as a team holds it (`{team}`); in the upper half, a
+/// moment after "Go!", to a team of two; and in the chat who fell into the
+/// void (`{name}`), by whose doing (`{killer}`), whose stick holed whose
+/// bridge (`{name}`, `{team}`), and whose went into the void (`{name}`).
 #[derive(Deserialize, PartialEq, Debug)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct BridgeRaceWords {
@@ -1237,15 +1253,19 @@ pub(crate) struct BridgeRaceWords {
     pub across: String,
     pub on_island: String,
     pub hold: String,
+    pub hold_broken: String,
     pub granted: String,
     pub away: String,
+    pub jump: String,
     pub back_in: String,
     pub dynamite: String,
     pub reached: String,
     pub holding: String,
+    pub one_bridge: String,
     pub fell: String,
     pub knocked: String,
     pub blew: String,
+    pub missed: String,
 }
 
 /// Last Stand's own words (`last_stand`), as Blend In's are.
