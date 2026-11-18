@@ -497,7 +497,6 @@ fn hear(
                 race.told_back = true;
             }
             rules::Tell::Feed(said) => feed_line(&mut log, &view, *said),
-            rules::Tell::Nothing => {}
         }
     }
     for tell in tells.read() {

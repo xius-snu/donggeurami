@@ -358,12 +358,10 @@ impl Health {
     /// How much is left, and how much there is when it is all there: for
     /// another fight's game to compare the server's word with before it
     /// writes it (writing a `Mut` marks it changed).
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn left(&self) -> f32 {
         self.left
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn full(&self) -> f32 {
         self.full
     }

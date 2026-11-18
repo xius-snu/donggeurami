@@ -221,15 +221,6 @@ pub enum Ask {
     Ready,
 }
 
-impl Ask {
-    /// The placeholder the four games' shared base was laid with
-    /// (2026-11-18), which a test of that base still names: kept until that
-    /// line names a real one, and to go with it.
-    #[allow(non_upper_case_globals)]
-    #[doc(hidden)]
-    pub const Nothing: Ask = Ask::Ready;
-}
-
 /// Something told one device in a game of Blend In
 /// ([`Tell::BlendIn`](crate::Tell::BlendIn)).
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
@@ -266,14 +257,6 @@ pub enum Tell {
     /// stunning/blinding etc."). Never which of the crowd it was: the one
     /// struck staggers where it stands, for anyone looking to see.
     Struck { seeker: u8 },
-}
-
-impl Tell {
-    /// As [`Ask::Nothing`]: the base's placeholder, until its test names a
-    /// real one.
-    #[allow(non_upper_case_globals)]
-    #[doc(hidden)]
-    pub const Nothing: Tell = Tell::Refused;
 }
 
 /// A game of Blend In as everyone in it sees it: which round of how many,

@@ -192,7 +192,6 @@ pub(crate) fn fights(venue: Venue) -> bool {
 /// Whether bridges are built by walking on `venue` (Arena, BridgeRace): Bridge Wars, and
 /// Bridge Race, which builds them as Bridge Wars does (Hajun: "Like King of the Ladder but
 /// with bridge building").
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn bridged(venue: Venue) -> bool {
     matches!(venue, Venue::Arena | Venue::BridgeRace)
 }

@@ -7038,10 +7038,10 @@ mod tests {
         // And each game's own come back as they went.
         let asks = [
             Ask::Join(Minigame::BridgeRace),
-            Ask::BlendIn(blend_in::Ask::Nothing),
-            Ask::KnockOff(knock_off::Ask::Nothing),
-            Ask::BridgeRace(bridge_race::Ask::Nothing),
-            Ask::LastStand(last_stand::Ask::Nothing),
+            Ask::BlendIn(blend_in::Ask::Disguise { name: "Mochi".into(), look: "girl".into() }),
+            Ask::KnockOff(knock_off::Ask::Aim { x: 0.6, z: -0.8, power: 7 }),
+            Ask::BridgeRace(bridge_race::Ask::Metres { metres: 12.5, grants: 3 }),
+            Ask::LastStand(last_stand::Ask::Buy(last_stand::Ware::Sharpness)),
         ];
         for ask in asks {
             let bytes = postcard::to_allocvec(&ask).unwrap();
@@ -7050,10 +7050,10 @@ mod tests {
         }
         let tells = [
             Tell::Entered { game: Minigame::LastStand, seat: 2 },
-            Tell::BlendIn(blend_in::Tell::Nothing),
-            Tell::KnockOff(knock_off::Tell::Nothing),
-            Tell::BridgeRace(bridge_race::Tell::Nothing),
-            Tell::LastStand(last_stand::Tell::Nothing),
+            Tell::BlendIn(blend_in::Tell::Stunned { until: 1_800_000_000.25 }),
+            Tell::KnockOff(knock_off::Tell::Aimed { x: 0.0, z: -1.0, power: 5 }),
+            Tell::BridgeRace(bridge_race::Tell::Metres { metres: 12.5, grants: 3 }),
+            Tell::LastStand(last_stand::Tell::Upgraded { by: 1, ware: last_stand::Ware::Beam, level: 3 }),
         ];
         for tell in tells {
             let bytes = postcard::to_allocvec(&tell).unwrap();

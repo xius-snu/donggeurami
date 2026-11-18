@@ -187,25 +187,6 @@ pub enum Tell {
     Slain { by: u8, kind: Kind },
 }
 
-/// The four games' shared base has a test of what is sent
-/// (`what_was_sent_before_the_four_games_is_sent_as_it_was`, in the
-/// crate's root) written while each game's asks and tells were a
-/// placeholder called `Nothing`, which these are not: until that test names
-/// real ones, it builds with one of each by that name, here, so that the
-/// test itself is left as it was (it is not this game's). Nothing outside
-/// the tests sees it.
-#[cfg(test)]
-#[allow(non_upper_case_globals)]
-impl Ask {
-    pub const Nothing: Ask = Ask::Ready;
-}
-
-#[cfg(test)]
-#[allow(non_upper_case_globals)]
-impl Tell {
-    pub const Nothing: Tell = Tell::Zap { x: 0.0, y: 0.25, z: 0.0 };
-}
-
 /// Registers this game's own replicated components, appended after
 /// everything else in this order: how the game stands ([`StandRound`]), the
 /// team's upgrades ([`StandUpgrades`]), each zombie's kind and health on its

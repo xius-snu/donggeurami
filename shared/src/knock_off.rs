@@ -229,22 +229,6 @@ pub enum Tell {
     Aimed { x: f32, z: f32, power: u8 },
 }
 
-/// The base's test of what is sent (`what_was_sent_before_the_four_games_is_sent_as_it_was`,
-/// in the crate's root) was written while each game's asks and tells were a placeholder
-/// called `Nothing`, which these are not: until that test is written for them, it builds
-/// with one of each by that name. Nothing outside the tests sees it.
-#[cfg(test)]
-#[allow(non_upper_case_globals)]
-impl Ask {
-    pub const Nothing: Ask = Ask::Ready;
-}
-
-#[cfg(test)]
-#[allow(non_upper_case_globals)]
-impl Tell {
-    pub const Nothing: Tell = Tell::Aimed { x: 0.0, z: -1.0, power: 5 };
-}
-
 /// Registers this game's own replicated components, after the board
 /// ([`table::Board`]): what everyone in a game sees of it ([`KnockRound`]).
 pub fn register(app: &mut App) {

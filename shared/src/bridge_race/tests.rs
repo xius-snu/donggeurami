@@ -1184,13 +1184,12 @@ fn the_round_goes_small_and_whole() {
     assert!(bytes.len() <= 15, "{} bytes", bytes.len());
     println!("the round: {} bytes as it begins, {most} at the most in a game, {} at the most it could be", bytes.len(), postcard::to_allocvec(&longest).unwrap().len());
     // What a device says and is told, too.
-    for ask in [Ask::Nothing, Ask::Metres { metres: 12.5, grants: 3 }] {
+    for ask in [Ask::Metres { metres: 12.5, grants: 3 }] {
         let bytes = postcard::to_allocvec(&ask).unwrap();
         assert!(bytes.len() <= 8);
         assert_eq!(postcard::from_bytes::<Ask>(&bytes).unwrap(), ask);
     }
     for tell in [
-        Tell::Nothing,
         Tell::Metres { metres: 3.0, grants: 9 },
         Tell::Feed(Feed::Fell { seat: 3, by: Some(0) }),
         Tell::Feed(Feed::Blew { by: 1, team: Some(0), planks: 4 }),

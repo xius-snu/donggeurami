@@ -397,10 +397,6 @@ impl RaceRound {
 /// [`crate::Ask::Respawn`]).
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
 pub enum Ask {
-    /// Nothing: the placeholder this game had before its own asks came,
-    /// kept first so that whatever was written against it still reads as
-    /// it did. No device sends it, and the game takes it for nothing.
-    Nothing,
     /// How many metres of bridge I have left to lay, and how many of the
     /// game's grants ([`RaceRound::grants`]) they count: my own device
     /// counts them, as Bridge Wars' does, laying my bridge a plank at a
@@ -415,9 +411,6 @@ pub enum Ask {
 /// ([`Tell::BridgeRace`](crate::Tell::BridgeRace)).
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
 pub enum Tell {
-    /// Nothing: the placeholder this game had before its own tells came,
-    /// kept first as [`Ask::Nothing`] is. Never sent.
-    Nothing,
     /// You are back in your game after your connection went: the metres
     /// of bridge you had left as your device last said, with every grant
     /// since added, and how many grants that counts ([`Game::kept`]).
