@@ -2446,10 +2446,14 @@ mod tests {
         let counted = server.until(10.0, |server| server.table(KNOCK_OFF, 0).playing());
         assert!((4.5..=5.5).contains(&counted), "{counted}");
         assert_eq!(server.table(KNOCK_OFF, 0).seats.len(), 4);
-        // The stand-in plays twenty seconds, and it is over, seat 0 first:
-        // the person is paid first's 130, the computer nothing.
-        let played = server.until(25.0, |server| server.table(KNOCK_OFF, 0).over());
-        assert!((19.5..=20.5).contains(&played), "{played}");
+        // The game is Knock Off's own, played by the clock (`knock_off`,
+        // whose own tests play it through): here it is over as it says it
+        // is, seat 0 first: the person is paid first's 130, the computer
+        // nothing.
+        server.frame(0.1);
+        assert!(server.table(KNOCK_OFF, 0).playing());
+        server.table_mut(KNOCK_OFF, 0).finish(vec![0, 1, 2, 3], vec![4, 3, 2, 1], None);
+        server.frame(0.1);
         let results = server.table(KNOCK_OFF, 0).results.clone().expect("how it came out");
         assert_eq!((results.places, results.prizes), (vec![0, 1, 2, 3], vec![130, 0, 0, 0]));
         assert_eq!((server.body(body).coins, server.balance(client)), (1080, Some(1080)));

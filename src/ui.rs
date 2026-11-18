@@ -567,12 +567,47 @@ pub(crate) struct BlendInColours {
     pub accent: Color,
 }
 
-/// Knock Off's own colours (`knock_off`), as Blend In's are.
+/// Knock Off's own colours (`knock_off`), as Blend In's are: its accent;
+/// each seat's colour, on its arrow, the ring at its feet and its name; the
+/// dark rim round what lies on the ice; the power bar's steps filled and
+/// not; Ready pressed, and the tick over whoever is ready; the cracks where
+/// the ice will break, the band of it that will (see-through), and the
+/// moon on the rest by night; the puff of ice where two meet, and the
+/// splash; and the slabs the edge breaks into, until the island's own ice
+/// is there.
 #[derive(Deserialize, Clone, Copy, PartialEq, Debug)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct KnockOffColours {
     #[serde(deserialize_with = "colour")]
     pub accent: Color,
+    #[serde(deserialize_with = "colour")]
+    pub seat_red: Color,
+    #[serde(deserialize_with = "colour")]
+    pub seat_blue: Color,
+    #[serde(deserialize_with = "colour")]
+    pub seat_green: Color,
+    #[serde(deserialize_with = "colour")]
+    pub seat_yellow: Color,
+    #[serde(deserialize_with = "colour")]
+    pub rim: Color,
+    #[serde(deserialize_with = "colour")]
+    pub power: Color,
+    #[serde(deserialize_with = "colour")]
+    pub power_off: Color,
+    #[serde(deserialize_with = "colour")]
+    pub ready: Color,
+    #[serde(deserialize_with = "colour")]
+    pub cracks: Color,
+    #[serde(deserialize_with = "colour")]
+    pub thin_ice: Color,
+    #[serde(deserialize_with = "colour")]
+    pub sheen: Color,
+    #[serde(deserialize_with = "colour")]
+    pub dust: Color,
+    #[serde(deserialize_with = "colour")]
+    pub splash: Color,
+    #[serde(deserialize_with = "colour")]
+    pub slab: Color,
 }
 
 /// Bridge Race's own colours (`bridge_race`), as Blend In's are.
@@ -1171,11 +1206,43 @@ pub(crate) struct BlendInWords {
     pub score: String,
 }
 
-/// Knock Off's own words (`knock_off`), as Blend In's are.
+/// Knock Off's own words (`knock_off`), as Blend In's are: what its score
+/// is called among the results; the plate top centre's, and what is under
+/// your name once you are out; the headlines'; the chat's, as each goes
+/// into the sea; who won, or who shared first, and what joins their names;
+/// and the panel's for whoever is out.
 #[derive(Deserialize, PartialEq, Debug)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct KnockOffWords {
     pub score: String,
+    pub turn: String,
+    pub last_turn: String,
+    pub aim: String,
+    pub ready: String,
+    pub set: String,
+    pub sliding: String,
+    pub breaks: String,
+    pub watch_aim: String,
+    pub watching: String,
+    pub went_in: String,
+    pub go: String,
+    pub how: String,
+    pub last_turn_headline: String,
+    pub wins: String,
+    pub win_together: String,
+    pub you_win: String,
+    pub slid_in: String,
+    pub knocked_in: String,
+    pub knocked_each_other: String,
+    pub broke_under: String,
+    pub left: String,
+    pub won: String,
+    pub won_together: String,
+    pub and: String,
+    pub out: String,
+    pub out_line: String,
+    pub watch: String,
+    pub leave: String,
 }
 
 /// Bridge Race's own words (`bridge_race`), as Blend In's are.
