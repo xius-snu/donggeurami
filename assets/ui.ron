@@ -959,10 +959,13 @@
             generator: "Silver",
             generator_level: "Lvl {level}: {items}",
             generator_fast: "Lvl {level}: all four, x{fast}",
-            // What the chat says.
+            // What the chat says: someone bought the team an upgrade; is
+            // down (and back in a moment); is out (down with the anchor
+            // broken); has left the game; brought down a giant.
             bought_line: "{name} bought {ware} Lvl {level}",
             down_line: "{name} is down",
             out_chat: "{name} is out",
+            left_line: "{name} has left",
             slain_line: "{name} brought down a giant",
             anchor_line: "The anchor is broken",
             cleared_line: "Wave {wave} cleared",

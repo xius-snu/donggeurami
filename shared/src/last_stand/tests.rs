@@ -894,14 +894,15 @@ fn what_is_sent_is_small() {
         health: vec![100; 4],
         back_at: vec![1.8e9, 0.0, f64::INFINITY, 0.0],
         scores: vec![u32::MAX; 4],
-        ready: 0b1111,
+        ready: 0b1011,
+        gone: 0b0100,
         began: 1.8e9,
     };
     let bytes = postcard::to_allocvec(&round).unwrap();
     assert!(bytes.len() < 128, "{} bytes", bytes.len());
     assert_eq!(postcard::from_bytes::<StandRound>(&bytes).unwrap(), round);
     // As it is in a game: under seventy bytes (sixty until the time it
-    // began came into it, eight bytes, on 2026-11-18).
+    // began and who has gone came into it, nine bytes, on 2026-11-18).
     let mut game = Game::new(4, &[true; 4], 1);
     game.clock(1.8e9);
     game.begin();
@@ -952,6 +953,34 @@ fn what_is_sent_is_small() {
         let bytes = postcard::to_allocvec(&tell).unwrap();
         assert_eq!(postcard::from_bytes::<Tell>(&bytes).unwrap(), tell);
     }
+}
+
+#[test]
+fn whoever_leaves_is_gone_in_the_round_and_not_one_of_the_dead() {
+    let mut game = Game::new(3, &[true, true, true], 4);
+    game.clock(1.8e9);
+    game.begin();
+    game.step(DT);
+    game.leave(1);
+    game.step(DT);
+    let round = game.round();
+    assert!(round.is_gone(1) && !round.is_gone(0) && !round.is_gone(2) && !round.is_gone(9));
+    // Their health none and their back never, as someone out's are: only
+    // the bit tells the two apart.
+    assert_eq!((round.health[1], round.back_at[1]), (0, f64::INFINITY));
+    assert!(round.health[0] > 0 && round.back_at[0] == 0.0);
+    // Someone dying is not gone.
+    game.fell(2);
+    game.step(DT);
+    let round = game.round();
+    assert_eq!(round.health[2], 0);
+    assert!(!round.is_gone(2) && round.back_at[2].is_finite());
+}
+
+#[test]
+fn a_giant_alone_brought_down_is_said() {
+    let said: Vec<Kind> = Kind::ALL.into_iter().filter(|kind| kind.announced()).collect();
+    assert_eq!(said, [Kind::Giant]);
 }
 
 #[test]

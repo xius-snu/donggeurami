@@ -47,7 +47,7 @@ use std::collections::HashMap;
 
 use bevy::prelude::*;
 use roundtown_net::last_stand::{
-    self, Event, Game, Knock, Kind, Shambler, Spit, StandRound, StandUpgrades, sold_at,
+    self, Event, Game, Knock, Shambler, Spit, StandRound, StandUpgrades, sold_at,
 };
 use roundtown_net::bridge_wars::Shop;
 use roundtown_net::{Ask, Blasted, Dynamite, Fireball, Kit, Kits, Loot, Member, Purse, Purses, Spot, Tell, Venue, arrival};
@@ -166,7 +166,8 @@ impl LastStand {
                         ctx.commands.entity(body).try_despawn();
                     }
                     self.by_member.remove(&zombie_id(table.id, zombie));
-                    if kind == Kind::Giant
+                    // Said in the chat by the one rule both sides go by.
+                    if kind.announced()
                         && let Some(by) = by
                     {
                         ctx.tell_room(table, Tell::LastStand(last_stand::Tell::Slain { by: by as u8, kind }));

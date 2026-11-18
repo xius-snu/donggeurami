@@ -181,8 +181,8 @@ pub enum Tell {
     Zap { x: f32, y: f32, z: f32 },
     /// Someone of the team, by seat, has killed a zombie of this kind
     /// ([`Event::Killed`]): told to everyone, for a line in the chat
-    /// ("Mochi brought down a giant"). Sent for a giant alone (mine: a
-    /// line for every walker would bury the chat), which a device cannot
+    /// ("Mochi brought down a giant"). Sent for the kinds whose kill is
+    /// said ([`Kind::announced`]: a giant alone), which a device cannot
     /// tell from the body going, a fall into the void taking one as well.
     Slain { by: u8, kind: Kind },
 }
@@ -255,9 +255,9 @@ pub fn team_score(scores: &[u32], waves: u32) -> u32 {
 /// beside its [`Board`](table::Board) whenever any of it changes: which wave
 /// it is, and whether it is coming or here; the anchor's health and the most
 /// it has; how many of the wave are not yet dead; and everyone's health,
-/// when the dead stand again and score, by seat. Some sixty bytes for four
-/// ([`Game::round`]), sent a few times a second while health comes back and
-/// the zombies are hit.
+/// when the dead stand again and score, by seat. Under seventy bytes for
+/// four ([`Game::round`]), sent whole each time, a few times a second while
+/// health comes back and the zombies are hit.
 #[derive(Component, Serialize, Deserialize, Clone, PartialEq, Debug)]
 pub struct StandRound {
     /// The wave on now, or the last one, between waves: 0 before the first.
@@ -282,12 +282,20 @@ pub struct StandRound {
     /// Who is ready for the next wave ([`Ask::Ready`]), a bit to a seat:
     /// during a break only.
     pub ready: u8,
+    /// Who has left the game for good ([`Game::leave`]), a bit to a seat:
+    /// their health is 0 and they stand again never, as someone out is,
+    /// but they are not dead, and nothing is said of them as of the dead
+    /// (since 2026-11-18, mine: one byte, without which a device said
+    /// "Dubu is down", or "is out", of someone who had gone).
+    pub gone: u8,
     /// When the fight began, by the room's clock ([`Game::clock`]): what
     /// every device counts the fight's own time from (the game's
     /// `FightTime`, which a potion's time left is by, [`Kit::fast`](crate::Kit::fast)),
-    /// a device that comes back into a game under way too. Sent once, as
-    /// it begins (since 2026-11-18, mine: eight bytes more, for a count
-    /// that is right from the first frame of a game come back to).
+    /// a device that comes back into a game under way too. It never
+    /// changes, but goes with the rest of the round each time that is
+    /// sent, a component being sent whole (since 2026-11-18, mine: eight
+    /// bytes more each time, for a count that is right from the first
+    /// frame of a game come back to).
     pub began: f64,
 }
 
@@ -295,6 +303,11 @@ impl StandRound {
     /// Whether whoever is in `seat` is ready for the next wave.
     pub fn is_ready(&self, seat: usize) -> bool {
         seat < 8 && self.ready & (1 << seat) != 0
+    }
+
+    /// Whether whoever was in `seat` has left the game for good.
+    pub fn is_gone(&self, seat: usize) -> bool {
+        seat < 8 && self.gone & (1 << seat) != 0
     }
 }
 

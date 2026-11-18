@@ -16,10 +16,12 @@
 //!   game has them.
 //! * **The anchor's crystal** (the map's `spawn` pillar, [`Crystal`]): a
 //!   bar over it, wider than a body's ([`anchor_bar`]); a white flash
-//!   over it as it is hit; and once broken it shatters, its pieces flying
-//!   out and falling, and it is gone, from sight and from underfoot
-//!   ([`anchor`]); stood up again as the game goes. The beam, bought: a
-//!   short bright line from the crystal to whatever it zaps ([`beam`]).
+//!   over it as it is hit, with a number of what the blows took, and a
+//!   green one as a Fortify brings it all back; and once broken it
+//!   shatters, its pieces flying out and falling, and it is gone, from
+//!   sight and from underfoot ([`anchor`]); stood up again as the game goes
+//!   and as the next begins. The beam, bought: a short bright line from
+//!   the crystal to whatever it zaps ([`beam`]).
 //! * **A spitter's ball** ([`SpitBall`]): a small green ball arcing from the
 //!   spitter to where it comes down, and a green splash there.
 //! * **The generators**: over each pad, what it makes ([`over_the_pads`]:
@@ -41,6 +43,8 @@ use super::{Happened, Stand, StandSystems};
 use crate::arena::{self, Health, InArena};
 use crate::island::{Islands, Land, Venue, is_material};
 use crate::lobby::WalkFromMotion;
+use crate::market::Shops;
+use crate::net::Online;
 use crate::ui::{UiChanged, fill, ui};
 use crate::{Player, Team, ThirdPersonCamera, WalkBone, WalkCycle};
 
@@ -101,6 +105,9 @@ const BEAM_AT: f32 = 1.8;
 const SPIT_SIZE: f32 = 0.22;
 const SPLAT_SECS: f32 = 1.0;
 const SPLAT_FROM: f32 = 0.45;
+/// How many times brighter than its colour the spit's ball is drawn,
+/// unlit, as a fireball is: seen by day and by night alike.
+const SPIT_GAIN: f32 = 1.6;
 /// How long after a ball the server sent should have come down it is taken
 /// away, if the server has not taken its own away first, in seconds.
 const SPIT_SLACK: f32 = 0.6;
@@ -121,6 +128,53 @@ fn under_the_plate(window: &Window, point: Vec2) -> bool {
     point.y < PLATE_DOWN * vmin && (point.x - window.width() * 0.5).abs() < PLATE_ACROSS * vmin
 }
 
+/// The column of words top left (your name, your health, and what you
+/// hold of each of the four, `hud::game_bar`'s left column) where the
+/// screen has it laid out: what this game writes over the world is put
+/// away where it would stand among its rows, rather than drawn into them,
+/// as it is under the plate (mine; seen in a hidden run, 2026-11-18, a
+/// pad's "Silver" over the count of gold; Bridge Wars draws its names and
+/// its generators' words on under its own).
+#[derive(bevy::ecs::system::SystemParam)]
+struct Column<'w, 's> {
+    bars: Query<'w, 's, &'static Children, With<crate::hud::TopBar>>,
+    nodes: Query<'w, 's, (&'static ComputedNode, &'static UiGlobalTransform)>,
+}
+
+impl Column<'_, '_> {
+    /// Whether something drawn over `rect` of the screen, in the window's
+    /// logical pixels, would stand among the column's rows.
+    fn covers(&self, rect: Rect) -> bool {
+        let Some(&column) = self.bars.iter().next().and_then(|bar| bar.first()) else {
+            return false;
+        };
+        let Ok((node, place)) = self.nodes.get(column) else {
+            return false;
+        };
+        let scale = node.inverse_scale_factor();
+        let rows = Rect::from_center_size(place.translation * scale, node.size() * scale);
+        !rows.intersect(rect).is_empty()
+    }
+}
+
+/// What a thing whose foot is at `point` on the screen, over its middle,
+/// covers, `size` big.
+fn standing_over(point: Vec2, size: Vec2) -> Rect {
+    Rect::new(point.x - size.x * 0.5, point.y - size.y, point.x + size.x * 0.5, point.y)
+}
+
+/// Whether what this game writes over the world is to be in sight: you on
+/// its map, and not standing in a shop's outline, whose window comes down
+/// over the middle of the screen (`market`), under which it would show
+/// through the window's see-through dark among its cards' words (seen in a
+/// hidden run by night, 2026-11-18: a pad's "Silver" by "Heal" and by
+/// "Leap"; mine, as the line under the plate is put away there,
+/// `screen::show_plate`).
+fn in_sight(me: &Query<(&Venue, &Transform), With<Player>>, shops: &Shops) -> bool {
+    me.single()
+        .is_ok_and(|(venue, at)| *venue == Venue::LastStand && shops.at(Venue::LastStand, at.translation).is_none())
+}
+
 /// What is written over each pad: how high over the ground, in metres, and
 /// how big, in shares of the short side of the screen.
 const PAD_WORDS_OVER: f32 = 2.4;
@@ -139,7 +193,7 @@ pub(super) fn plugin(app: &mut App) {
                 // the server, and before their legs are swung.
                 stride.after(StandSystems).after(crate::move_bodies).before(crate::animate_walk),
                 (anchor, beam, fly_spits, shards, splats).after(StandSystems),
-                (anchor_bar, over_the_pads).after(crate::follow_camera),
+                (recolour, (anchor_bar, over_the_pads)).chain().after(crate::follow_camera),
             ),
         );
 }
@@ -163,7 +217,7 @@ fn load(mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardM
         // Unlit and brighter than its colour, as a fireball is: it is seen
         // by day and by night alike.
         spit: materials.add(StandardMaterial {
-            base_color: bright(colours.spit, 1.6),
+            base_color: bright(colours.spit, SPIT_GAIN),
             unlit: true,
             ..default()
         }),
@@ -178,6 +232,32 @@ fn load(mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardM
 fn bright(colour: Color, times: f32) -> Color {
     let linear = colour.to_linear();
     LinearRgba::new(linear.red * times, linear.green * times, linear.blue * times, linear.alpha).into()
+}
+
+/// What of this game's in the world the file colours, drawn again as it
+/// changes on desktop (`UiChanged`, the rule for whatever stays on the
+/// screen): the spit's ball, whose look is made once as the app opens; and
+/// the crystal's bar and the words over the pads, taken down here to be put
+/// up again in the file's colours, as each is whenever there is none
+/// ([`anchor_bar`], [`over_the_pads`]). (The zombies' paint, the flash, the
+/// beam and the splash take theirs as they are drawn; none of these three
+/// did until 2026-11-18.)
+fn recolour(
+    changed: Res<UiChanged>,
+    looks: Res<Looks>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    drawn: Query<Entity, Or<(With<AnchorBar>, With<PadWords>)>>,
+    mut commands: Commands,
+) {
+    if !changed.is_changed() || changed.is_added() {
+        return;
+    }
+    if let Some(mut spit) = materials.get_mut(&looks.spit) {
+        spit.base_color = bright(ui().colours.last_stand.spit, SPIT_GAIN);
+    }
+    for thing in &drawn {
+        commands.entity(thing).try_despawn();
+    }
 }
 
 // -------------------------------------------------------------- the zombies
@@ -255,15 +335,20 @@ fn hurt(mut zombies: Query<(&Transform, &Shambler, &mut Dressed, &mut Health), C
 /// standing ([`hurt`]). Its body goes in the frame of the blow, before its
 /// health is seen to go, so it is said here as what it had left (what a
 /// blow could take from it). Not one gone into the void, which no blow
-/// had, nor any once the game is over, as everything of it goes.
+/// had, nor any once the game is over, as everything of it goes; nor,
+/// online, any that goes with the connection (`net` takes everything the
+/// server sent away as it is lost, and says so first): until 2026-11-18
+/// every zombie on the sand floated what it had left as the connection went.
 fn last_blow(
     gone: On<Remove, Dressed>,
     zombies: Query<(&Transform, &Dressed)>,
     stand: Option<Res<Stand>>,
+    online: Option<Res<Online>>,
     me: Query<&Venue, With<Player>>,
     mut commands: Commands,
 ) {
-    if !stand.is_some_and(|stand| stand.playing()) || me.single().ok() != Some(&Venue::LastStand) {
+    let killed = stand.is_some_and(|stand| stand.playing() && (!stand.online || online.is_some_and(|online| online.is())));
+    if !killed || me.single().ok() != Some(&Venue::LastStand) {
         return;
     }
     let Ok((place, dressed)) = zombies.get(gone.entity) else {
@@ -402,8 +487,9 @@ fn stride(time: Res<Time>, mut zombies: Query<(&Transform, &mut Dressed, &mut Wa
 
 /// The anchor's crystal as the map has it: its parts, each with the flash
 /// over it; the map's shape as it was before it shattered, to stand it up
-/// again; whether it has; the health it last had, and how long ago it last
-/// flashed.
+/// again; whether it has; the game it stands in (`Stand::fight`), the
+/// health it last had there, what it has taken since a number last said
+/// it, and how long ago it last flashed.
 #[derive(Resource, Default)]
 pub(super) struct Crystal {
     parts: Vec<Entity>,
@@ -411,7 +497,9 @@ pub(super) struct Crystal {
     flash: Option<Handle<StandardMaterial>>,
     original: Option<Vec<[Vec3; 3]>>,
     broken: bool,
+    fight: Option<u32>,
     health: Option<u16>,
+    unsaid: f32,
     since_flash: f32,
     flashing: f32,
 }
@@ -485,11 +573,18 @@ fn read_crystal(
     };
 }
 
-/// The crystal as the anchor stands: a flash as it is hit, no oftener than
-/// [`FLASH_EVERY`]; and the moment it is broken, shattered: its parts
-/// hidden (the light in it goes with them, `lamps`), its pieces flying out
-/// from it ([`Shard`]), and it taken away from underfoot. Stood up again,
-/// whole, once the game has gone.
+/// The crystal as the anchor stands: a flash as it is hit, and over it a
+/// number of what the blows took (Bridge Wars floats one off its anchors),
+/// together no oftener than [`FLASH_EVERY`], the number saying all it took
+/// since the last; a number in a heal's green as a Fortify brings it all
+/// back; and the moment it is broken, shattered: its parts hidden (the
+/// light in it goes with them, `lamps`), its pieces flying out from it
+/// ([`Shard`]), and it taken away from underfoot. Stood up again, whole, as
+/// the game goes and as every game begins, whatever the one before did to
+/// it (until 2026-11-18 only on a frame with no game at all, which a
+/// table followed by the next, Play again or a group taken on, never has:
+/// every game after the first had no crystal, nothing to stand on, no light
+/// and nothing to flash or shatter, its bar over nothing).
 #[allow(clippy::too_many_arguments)]
 fn anchor(
     time: Res<Time>,
@@ -503,19 +598,15 @@ fn anchor(
     mut commands: Commands,
 ) {
     let crystal = &mut *crystal;
-    let Some(stand) = stand else {
+    let fight = stand.as_ref().map(|stand| stand.fight);
+    if crystal.fight != fight {
+        crystal.fight = fight;
         crystal.health = None;
-        if crystal.broken {
-            crystal.broken = false;
-            for &part in &crystal.parts {
-                if let Ok(mut shown) = visibilities.get_mut(part) {
-                    shown.set_if_neq(Visibility::Inherited);
-                }
-            }
-            if let Some(original) = crystal.original.take() {
-                islands.reshape(Venue::LastStand, original, &[]);
-            }
-        }
+        crystal.unsaid = 0.0;
+        crystal.flashing = 0.0;
+        whole_again(crystal, &mut visibilities, &mut islands);
+    }
+    let Some(stand) = stand else {
         return;
     };
     let dt = time.delta_secs();
@@ -524,9 +615,20 @@ fn anchor(
         return;
     };
     let was = crystal.health.replace(now);
-    if was.is_some_and(|was| now < was) && now > 0 && crystal.since_flash >= FLASH_EVERY {
+    let foot = Vec3::new(ANCHOR.x, PLINTH_TOP, ANCHOR.y);
+    match was {
+        Some(was) if now < was => crystal.unsaid += f32::from(was - now),
+        Some(was) if now > was => arena::spawn_healed(&mut commands, foot, f32::from(now - was)),
+        _ => {}
+    }
+    // The blow that breaks it said at once, as it shatters.
+    if crystal.unsaid > 0.0 && (crystal.since_flash >= FLASH_EVERY || now == 0) {
+        arena::spawn_number(&mut commands, foot, crystal.unsaid);
+        crystal.unsaid = 0.0;
         crystal.since_flash = 0.0;
-        crystal.flashing = FLASH_SECS;
+        if now > 0 {
+            crystal.flashing = FLASH_SECS;
+        }
     }
     // The flash, fading as it goes.
     let strength = if crystal.flashing > 0.0 {
@@ -597,6 +699,22 @@ fn anchor(
     islands.reshape(Venue::LastStand, left, &[]);
 }
 
+/// The crystal stood up again whole, if it has shattered: its parts shown
+/// (and the light in them, `lamps`), and back underfoot as the map has it.
+fn whole_again(crystal: &mut Crystal, visibilities: &mut Query<&mut Visibility>, islands: &mut Islands) {
+    if !std::mem::take(&mut crystal.broken) {
+        return;
+    }
+    for &part in &crystal.parts {
+        if let Ok(mut shown) = visibilities.get_mut(part) {
+            shown.set_if_neq(Visibility::Inherited);
+        }
+    }
+    if let Some(original) = crystal.original.take() {
+        islands.reshape(Venue::LastStand, original, &[]);
+    }
+}
+
 /// Whether `triangle` of the map is of the crystal: all of it near the
 /// anchor across the ground, and some of it well over the plinth's top,
 /// which nothing else near the anchor reaches.
@@ -644,12 +762,16 @@ struct AnchorBar;
 struct AnchorFill;
 
 /// Keeps the bar over the crystal, filled as far as the anchor goes, put
-/// away while it is off the screen, broken, or the game is not being
-/// played; put up as the game begins and taken down with it.
+/// away while it is off the screen, under the plate or among the rows top
+/// left ([`Column`]), broken, or the game is not being played, or a shop's
+/// window is up ([`in_sight`]); put up as the game begins and taken down
+/// with it.
 #[allow(clippy::type_complexity)]
 fn anchor_bar(
     stand: Option<Res<Stand>>,
-    me: Query<&Venue, With<Player>>,
+    me: Query<(&Venue, &Transform), With<Player>>,
+    shops: Res<Shops>,
+    column: Column,
     cameras: Query<(&Camera, &Transform), With<ThirdPersonCamera>>,
     windows: Query<&Window>,
     mut bars: Query<(Entity, &mut Visibility, &mut UiTransform, &ComputedNode), With<AnchorBar>>,
@@ -665,7 +787,7 @@ fn anchor_bar(
     };
     let _ = bar;
     let round = stand.round.as_ref().filter(|round| round.anchor > 0);
-    let here = me.single().ok() == Some(&Venue::LastStand);
+    let here = in_sight(&me, &shops);
     let point = round
         .filter(|_| here)
         .zip(cameras.single().ok())
@@ -691,11 +813,11 @@ fn anchor_bar(
             Some(Vec2::new((left + right) * 0.5, top - gap))
                 .filter(|point| arena::on_screen(window, *point) && !under_the_plate(window, *point))
         });
-    let (Some(point), Some(round)) = (point, round) else {
+    let size = node.size() * node.inverse_scale_factor();
+    let (Some(point), Some(round)) = (point.filter(|point| !column.covers(standing_over(*point, size))), round) else {
         shown.set_if_neq(Visibility::Hidden);
         return;
     };
-    let size = node.size() * node.inverse_scale_factor();
     place.set_if_neq(UiTransform {
         translation: Val2::px(point.x - size.x * 0.5, point.y - size.y),
         scale: Vec2::ONE,
@@ -978,12 +1100,15 @@ fn pad_words(level: u16) -> String {
 }
 
 /// Writes over each pad what its generator makes, as the team raises it,
-/// where the pad is on the screen; put away while it is off the screen or
-/// the game is not being played.
+/// where the pad is on the screen; put away while it is off the screen,
+/// under the plate or among the rows top left ([`Column`]), the game is not
+/// being played, or a shop's window is up ([`in_sight`]).
 #[allow(clippy::type_complexity)]
 fn over_the_pads(
     stand: Option<Res<Stand>>,
-    me: Query<&Venue, With<Player>>,
+    me: Query<(&Venue, &Transform), With<Player>>,
+    shops: Res<Shops>,
+    column: Column,
     cameras: Query<(&Camera, &Transform), With<ThirdPersonCamera>>,
     windows: Query<&Window>,
     mut words: Query<(&PadWords, &mut Visibility, &mut UiTransform, &ComputedNode, &mut Text)>,
@@ -1011,7 +1136,7 @@ fn over_the_pads(
         }
         return;
     }
-    let here = me.single().ok() == Some(&Venue::LastStand) && stand.playing();
+    let here = in_sight(&me, &shops) && stand.playing();
     let said = pad_words(stand.upgrades.generator);
     let view = cameras.single().ok().zip(windows.single().ok());
     for (pad, mut shown, mut place, node, mut text) in &mut words {
@@ -1022,14 +1147,14 @@ fn over_the_pads(
                 .ok()
                 .filter(|point| arena::on_screen(window, *point) && !under_the_plate(window, *point))
         });
-        let Some(point) = point else {
+        let size = node.size() * node.inverse_scale_factor();
+        let Some(point) = point.filter(|point| !column.covers(standing_over(*point, size))) else {
             shown.set_if_neq(Visibility::Hidden);
             continue;
         };
         if text.0 != said {
             text.0.clone_from(&said);
         }
-        let size = node.size() * node.inverse_scale_factor();
         place.set_if_neq(UiTransform {
             translation: Val2::px(point.x - size.x * 0.5, point.y - size.y),
             scale: Vec2::ONE,
@@ -1061,6 +1186,103 @@ mod tests {
         // The plinth's own top, and the stone round it, are not.
         assert!(!of_the_crystal(&[at(-1.0, PLINTH_TOP, -1.0), at(1.0, PLINTH_TOP, -1.0), at(1.0, PLINTH_TOP, 1.0)]));
         assert!(!of_the_crystal(&[at(3.0, up, 0.0), at(3.5, up, 0.0), at(3.0, up, 0.5)]));
+    }
+
+    /// A game of Last Stand numbered `fight` whose anchor has `anchor` left.
+    fn stand(fight: u32, anchor: u16) -> Stand {
+        let mut stand = Stand::new(false, 0, fight);
+        stand.round = Some(rules::StandRound {
+            wave: 4,
+            stage: rules::StandStage::Wave,
+            anchor,
+            anchor_most: 1500,
+            left: 9,
+            health: vec![if anchor > 0 { 100 } else { 0 }],
+            back_at: vec![if anchor > 0 { 0.0 } else { f64::INFINITY }],
+            scores: vec![0],
+            ready: 0,
+            gone: 0,
+            began: 0.0,
+        });
+        stand
+    }
+
+    #[test]
+    fn the_crystal_stands_whole_again_in_the_game_after_one_that_broke_it() {
+        let mut app = App::new();
+        app.insert_resource(Time::<()>::default())
+            .init_resource::<Assets<StandardMaterial>>()
+            .insert_resource(Looks {
+                ball: Handle::default(),
+                spit: Handle::default(),
+                beam: Handle::default(),
+                shard: Handle::default(),
+                disc: Handle::default(),
+            })
+            .add_systems(Update, anchor);
+        // The map: the stone, and the crystal standing over the plinth.
+        let at = |x: f32, y: f32, z: f32| Vec3::new(ANCHOR.x + x, y, ANCHOR.y + z);
+        let stone = [at(-9.0, PLINTH_TOP, -9.0), at(9.0, PLINTH_TOP, -9.0), at(9.0, PLINTH_TOP, 9.0)];
+        let crystal = [at(0.0, PLINTH_TOP, 0.0), at(0.4, PLINTH_TOP + 2.0, 0.0), at(0.0, PLINTH_TOP + 2.0, 0.4)];
+        let mut islands = Islands::default();
+        islands.reshape(Venue::LastStand, vec![stone, crystal], &[]);
+        app.insert_resource(islands);
+        let part = app.world_mut().spawn(Visibility::Inherited).id();
+        app.insert_resource(Crystal {
+            parts: vec![part],
+            ..default()
+        });
+        let underfoot = |app: &App| app.world().resource::<Islands>().corners(Venue::LastStand).map_or(0, <[_]>::len);
+        let shown = |app: &App| app.world().get::<Visibility>(part) == Some(&Visibility::Inherited);
+        // A game whose anchor stands, and then breaks: it shatters, gone
+        // from sight and from underfoot.
+        app.insert_resource(stand(1, 1500));
+        app.update();
+        assert!(shown(&app) && underfoot(&app) == 2);
+        app.insert_resource(stand(1, 0));
+        app.update();
+        assert!(!shown(&app) && underfoot(&app) == 1);
+        // Play again: the next game's in its place, with no frame between
+        // with none; it stands there whole, and breaks again in its turn.
+        app.insert_resource(stand(2, 1500));
+        app.update();
+        assert!(shown(&app) && underfoot(&app) == 2, "the next game's crystal whole");
+        app.insert_resource(stand(2, 0));
+        app.update();
+        assert!(!shown(&app) && underfoot(&app) == 1);
+        // And with no game at all, as before.
+        app.world_mut().remove_resource::<Stand>();
+        app.update();
+        assert!(shown(&app) && underfoot(&app) == 2);
+    }
+
+    #[test]
+    fn the_file_changed_draws_the_spit_the_crystal_s_bar_and_the_pads_words_again() {
+        let mut app = App::new();
+        app.init_resource::<Assets<StandardMaterial>>().init_resource::<UiChanged>().add_systems(Update, recolour);
+        let spit = app.world_mut().resource_mut::<Assets<StandardMaterial>>().add(StandardMaterial {
+            base_color: Color::BLACK,
+            ..default()
+        });
+        app.insert_resource(Looks {
+            ball: Handle::default(),
+            spit: spit.clone(),
+            beam: Handle::default(),
+            shard: Handle::default(),
+            disc: Handle::default(),
+        });
+        let bar = app.world_mut().spawn(AnchorBar).id();
+        let words = app.world_mut().spawn(PadWords(0)).id();
+        // As the app opens, nothing is drawn again.
+        app.update();
+        assert!(app.world().get_entity(bar).is_ok() && app.world().get_entity(words).is_ok());
+        // The file read again: the spit in its colour, the bar and the
+        // words taken down, to be put up again in theirs.
+        app.world_mut().resource_mut::<UiChanged>().set_changed();
+        app.update();
+        let colour = app.world().resource::<Assets<StandardMaterial>>().get(&spit).expect("the spit").base_color;
+        assert_eq!(colour, bright(ui().colours.last_stand.spit, SPIT_GAIN));
+        assert!(app.world().get_entity(bar).is_err() && app.world().get_entity(words).is_err());
     }
 
     #[test]

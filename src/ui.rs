@@ -1250,8 +1250,8 @@ pub(crate) struct BridgeRaceWords {
 /// what is written over each kind of zombie, and over the generators'
 /// pads (their `{level}`, the `{items}` they make past silver, how many
 /// times as `{fast}` as at first); what the chat says (`{name}` bought
-/// `{ware}` at level `{level}`, is down, is out, brought down a giant; the
-/// anchor broken; a wave cleared); and the shops' titles and what their
+/// `{ware}` at level `{level}`, is down, is out, has left, brought down a
+/// giant; the anchor broken; a wave cleared); and the shops' titles and what their
 /// cards say that is not Bridge Wars' own (`words.market`'s are its swords',
 /// shields' and things' names): a sword's and a stick's `{damage}`, the
 /// six upgrades' names and lines (an endless one's `{level}`, Protection's
@@ -1289,6 +1289,7 @@ pub(crate) struct LastStandWords {
     pub bought_line: String,
     pub down_line: String,
     pub out_chat: String,
+    pub left_line: String,
     pub slain_line: String,
     pub anchor_line: String,
     pub cleared_line: String,

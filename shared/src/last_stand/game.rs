@@ -677,6 +677,12 @@ impl Game {
                 .enumerate()
                 .filter(|(_, player)| player.ready)
                 .fold(0u8, |bits, (seat, _)| bits | (1 << seat)),
+            gone: self
+                .players
+                .iter()
+                .enumerate()
+                .filter(|(_, player)| player.gone)
+                .fold(0u8, |bits, (seat, _)| bits | (1 << seat)),
             began: self.began,
         }
     }

@@ -15,9 +15,9 @@
 //!   more coming back" (Bridge Wars' line for what its timetable does,
 //!   `arena::alert`); and at the end "The last stand fell at wave 9".
 //! * **In the chat**: what someone bought the team ("Mochi bought
-//!   Sharpness Lvl 3"), who is down and who is out, a giant brought down,
-//!   the anchor broken, a wave cleared; names in the team's colour, as
-//!   what anyone types here is written.
+//!   Sharpness Lvl 3"), who is down, who is out and who has left, a giant
+//!   brought down, the anchor broken, a wave cleared; names in the team's
+//!   colour, as what anyone types here is written.
 //! * **You**: dead, "Back in 6", counting down, the kit's own words
 //!   (`arena::DeathWords`); out, with the anchor broken, a small window
 //!   saying so with a button to leave, and the camera on whoever of your
@@ -32,11 +32,11 @@ use bevy::prelude::*;
 use roundtown_net::bridge_wars::{FAST, HEALING, LEAP};
 use roundtown_net::last_stand::{
     self as rules, DYNAMITE_HIT, FIREBALL_HIT, LEAP_SECS, LUCKY_MOST, PROTECTION, PROTECTION_MOST, SHIELD_SHARE, SPEED_SECS,
-    SWORD_DAMAGE, StandStage, StandUpgrades, UNSEEN_SECS, Ware, first_in, giants, price,
+    SWORD_DAMAGE, StandRound, StandStage, StandUpgrades, UNSEEN_SECS, Ware, first_in, giants, price,
 };
 use roundtown_net::{Item, Kit, Purse, Utility, Venue};
 
-use super::{Happened, ReadyAsked, Stand, StandSystems, TEAM, TeamScore};
+use super::{Happened, ReadyAsked, Said, Stand, StandSystems, TEAM, TeamScore};
 use crate::arena::{self, DeathWords, InArena, Line};
 use crate::chat;
 use crate::clock::TownClock;
@@ -248,8 +248,18 @@ fn tap(
     }
 }
 
-/// R on desktop is Ready, between waves.
-fn ready_key(stand: Option<Res<Stand>>, keyboard: Res<ButtonInput<KeyCode>>, mut ready: MessageWriter<ReadyAsked>) {
+/// R on desktop is Ready, between waves: but not while a line is typed into
+/// the chat, or any dialog is up (`hud::DialogUp`), whose keys are its own
+/// (until 2026-11-18, "ready" or "bro" typed in a break said you were).
+fn ready_key(
+    stand: Option<Res<Stand>>,
+    keyboard: Res<ButtonInput<KeyCode>>,
+    dialog: Option<Res<hud::DialogUp>>,
+    mut ready: MessageWriter<ReadyAsked>,
+) {
+    if dialog.is_some_and(|dialog| dialog.0) {
+        return;
+    }
     if stand.is_some_and(|stand| ready_wanted(&stand)) && keyboard.just_pressed(KeyCode::KeyR) {
         ready.write(ReadyAsked);
     }
@@ -373,10 +383,22 @@ fn show_out(stand: Option<Res<Stand>>, mut panes: Query<&mut Visibility, With<Ou
 
 /// While you are dead and will stand again: "Back in 6", counting down by
 /// the town's clock, the kit's own words across the screen
-/// (`arena::DeathWords`).
-fn death_words(stand: Option<Res<Stand>>, town: Res<TownClock>, mut words: DeathWords, mut commands: Commands) {
-    let left = stand.as_deref().and_then(|stand| {
-        let round = stand.round.as_ref()?;
+/// (`arena::DeathWords`). Only in a game of Last Stand, the words taken down
+/// once as it goes: with none here they are Bridge Wars' to put up and take
+/// down (`arena::show_death`), and until 2026-11-18 this took them down
+/// every frame they were up, its "You died. Respawning in 4..." showing
+/// every other frame.
+fn death_words(stand: Option<Res<Stand>>, town: Res<TownClock>, mut had: Local<bool>, mut words: DeathWords, mut commands: Commands) {
+    let file = ui();
+    let back_in = &file.words.last_stand.back_in;
+    let Some(stand) = stand.as_deref() else {
+        if std::mem::take(&mut *had) {
+            words.say(&mut commands, back_in, None);
+        }
+        return;
+    };
+    *had = true;
+    let left = stand.round.as_ref().and_then(|round| {
         (round.health.get(stand.seat) == Some(&0) && round.stage != StandStage::Over)
             .then(|| round.back_at.get(stand.seat).copied())
             .flatten()
@@ -388,7 +410,7 @@ fn death_words(stand: Option<Res<Stand>>, town: Res<TownClock>, mut words: Death
     if left.is_none() && !words.up() {
         return;
     }
-    words.say(&mut commands, &ui().words.last_stand.back_in, left);
+    words.say(&mut commands, back_in, left);
 }
 
 /// Out of the game, the camera stays on whoever of your team still stands,
@@ -450,6 +472,7 @@ fn say(
     let file = ui();
     let words = &file.words.last_stand;
     let outs: Vec<bool> = round.back_at.iter().map(|back| back.is_infinite()).collect();
+    let gone: Vec<bool> = (0..round.health.len()).map(|seat| round.is_gone(seat)).collect();
     let elapsed = stand.elapsed;
     let said = &mut stand.said;
     if !said.begun {
@@ -460,6 +483,7 @@ fn say(
         said.broken = round.anchor == 0;
         said.health = round.health.clone();
         said.out = outs;
+        said.gone = gone;
         said.over = round.stage == StandStage::Over;
         // The play just begun, not a game come back into.
         if round.stage != StandStage::Over && elapsed < 5.0 {
@@ -508,22 +532,19 @@ fn say(
         log.push(chat::spans(&words.anchor_line, ink, &[]));
     }
     said.anchor = Some(round.anchor);
-    // Whoever is down, and whoever is out.
-    for seat in 0..round.health.len() {
-        let was = said.health.get(seat).copied().unwrap_or(0);
-        let now = round.health[seat];
-        let out_now = outs.get(seat).copied().unwrap_or(false) && round.anchor == 0;
-        let out_was = said.out.get(seat).copied().unwrap_or(false);
-        let person = view.members.get(seat).is_some_and(|member| member.id != 0);
-        if person && was > 0 && now == 0 && !out_now {
-            log.push(chat::spans(&words.down_line, ink, &[("name", &name(seat), theirs)]));
-        }
-        if person && out_now && !out_was && round.stage != StandStage::Over {
-            log.push(chat::spans(&words.out_chat, ink, &[("name", &name(seat), theirs)]));
-        }
+    // Whoever is down, whoever is out, and whoever has left.
+    let person = |seat: usize| view.members.get(seat).is_some_and(|member| member.id != 0);
+    for (seat, news) in news_of(said, &round, person) {
+        let line = match news {
+            News::Down => &words.down_line,
+            News::Out => &words.out_chat,
+            News::Left => &words.left_line,
+        };
+        log.push(chat::spans(line, ink, &[("name", &name(seat), theirs)]));
     }
     said.health.clone_from(&round.health);
     said.out = outs;
+    said.gone = gone;
     // The end: over the anchor's line, if that is still up (the last of
     // you falling a moment after it broke), which goes for it.
     if round.stage == StandStage::Over && !said.over {
@@ -555,6 +576,48 @@ fn new_in(wave: u16) -> Option<String> {
         rules::Kind::Leaper => Some(words.leapers.clone()),
         rules::Kind::Walker | rules::Kind::Giant => None,
     })
+}
+
+/// What the chat says of someone at the table as it comes ([`news_of`]).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum News {
+    /// Down, to stand again in a moment ("Mochi is down").
+    Down,
+    /// Down with the anchor broken: out for good ("Mochi is out").
+    Out,
+    /// Gone from the game for good ("Mochi has left").
+    Left,
+}
+
+/// What is new of the people at the table (each seat `person` says is
+/// one), between what was last said of them (`said`) and how the round
+/// stands now: whoever is down, whoever is out, and whoever has left the
+/// game, who is neither, though their health is none and they stand again
+/// never, as someone out does (the round's `gone` tells them apart; until
+/// 2026-11-18 someone who left was said to be down, or out). Nothing of
+/// anyone out or leaving once the game is over, as everyone goes then.
+fn news_of(said: &Said, round: &StandRound, person: impl Fn(usize) -> bool) -> Vec<(usize, News)> {
+    let over = round.stage == StandStage::Over;
+    let mut news = Vec::new();
+    for seat in (0..round.health.len()).filter(|&seat| person(seat)) {
+        if round.is_gone(seat) {
+            if !over && !said.gone.get(seat).copied().unwrap_or(false) {
+                news.push((seat, News::Left));
+            }
+            continue;
+        }
+        let was = said.health.get(seat).copied().unwrap_or(0);
+        let now = round.health[seat];
+        let out_now = round.back_at.get(seat).is_some_and(|back| back.is_infinite()) && round.anchor == 0;
+        let out_was = said.out.get(seat).copied().unwrap_or(false);
+        if was > 0 && now == 0 && !out_now {
+            news.push((seat, News::Down));
+        }
+        if out_now && !out_was && !over {
+            news.push((seat, News::Out));
+        }
+    }
+    news
 }
 
 /// What the chat says of what happened that the round does not say: what
@@ -753,7 +816,6 @@ fn offer(ware: Ware, pick: u16, purse: &Purse, kit: &Kit, team: &StandUpgrades) 
 #[cfg(test)]
 mod tests {
     use roundtown_net::bridge_wars::Shop;
-    use roundtown_net::last_stand::StandRound;
 
     use super::*;
 
@@ -830,6 +892,7 @@ mod tests {
             back_at: vec![if health == 0 { f64::INFINITY } else { 0.0 }],
             scores: vec![40],
             ready: 0,
+            gone: 0,
             began: 0.0,
         };
         let alerts = |app: &mut App| app.world_mut().query_filtered::<(), With<arena::Alert>>().iter(app.world()).count();
@@ -855,6 +918,139 @@ mod tests {
             app.update();
             assert_eq!(alerts(&mut app), 0, "the anchor broken {}", if together { "as it ended" } else { "before" });
         }
+    }
+
+    /// A round of two in a wave: health and when each stands again by seat,
+    /// the anchor's health, and who has gone.
+    fn of_two(health: [u16; 2], back_at: [f64; 2], anchor: u16, gone: u8) -> StandRound {
+        StandRound {
+            wave: 3,
+            stage: StandStage::Wave,
+            anchor,
+            anchor_most: 1500,
+            left: 5,
+            health: health.to_vec(),
+            back_at: back_at.to_vec(),
+            scores: vec![0, 0],
+            ready: 0,
+            gone,
+            began: 0.0,
+        }
+    }
+
+    /// What was said of everyone, as of `round`.
+    fn said_of(round: &StandRound) -> Said {
+        Said {
+            begun: true,
+            health: round.health.clone(),
+            out: round.back_at.iter().map(|back| back.is_infinite()).collect(),
+            gone: (0..round.health.len()).map(|seat| round.is_gone(seat)).collect(),
+            ..Said::default()
+        }
+    }
+
+    #[test]
+    fn someone_who_leaves_is_said_to_have_left_and_never_to_be_down_or_out() {
+        let everyone = |_: usize| true;
+        let never = f64::INFINITY;
+        let before = of_two([80, 60], [0.0, 0.0], 900, 0);
+        let said = said_of(&before);
+        // Down, to stand again in a moment; and out, down with the anchor
+        // broken.
+        assert_eq!(news_of(&said, &of_two([80, 0], [0.0, 1.8e9], 900, 0), everyone), [(1, News::Down)]);
+        assert_eq!(news_of(&said, &of_two([80, 0], [0.0, never], 0, 0), everyone), [(1, News::Out)]);
+        // Gone, the anchor standing or broken: neither, as their health
+        // none and their back never alone would have it.
+        assert_eq!(news_of(&said, &of_two([80, 0], [0.0, never], 900, 0b10), everyone), [(1, News::Left)]);
+        assert_eq!(news_of(&said, &of_two([80, 0], [0.0, never], 0, 0b10), everyone), [(1, News::Left)]);
+        // Down first, and then gone: each once.
+        let down = of_two([80, 0], [0.0, 1.8e9], 900, 0);
+        let left = of_two([80, 0], [0.0, never], 900, 0b10);
+        assert_eq!(news_of(&said_of(&down), &left, everyone), [(1, News::Left)]);
+        assert!(news_of(&said_of(&left), &left, everyone).is_empty());
+        // Nothing of anyone leaving once it is over, nor of a seat no
+        // person sat in.
+        let over = StandRound {
+            stage: StandStage::Over,
+            ..of_two([0, 0], [never, never], 0, 0b10)
+        };
+        assert!(news_of(&said_of(&of_two([0, 0], [never, never], 0, 0)), &over, everyone).is_empty());
+        assert!(news_of(&said, &of_two([80, 0], [0.0, 1.8e9], 900, 0), |seat| seat == 0).is_empty());
+    }
+
+    #[test]
+    fn the_words_while_you_are_dead_are_bridge_wars_own_with_no_game_of_last_stand_here() {
+        let mut app = App::new();
+        app.init_resource::<TownClock>().add_systems(Update, death_words);
+        let up = |app: &mut App| {
+            app.world_mut()
+                .query_filtered::<(), With<arena::DeathText>>()
+                .iter(app.world())
+                .count()
+        };
+        // Bridge Wars' "You died. Respawning in 4...", put up by its own
+        // system: left up, every frame.
+        let theirs = app.world_mut().spawn((arena::DeathText, InArena)).id();
+        for _ in 0..4 {
+            app.update();
+            assert_eq!(up(&mut app), 1, "Bridge Wars' words taken down");
+        }
+        app.world_mut().despawn(theirs);
+        // Dead in a game of Last Stand: "Back in", up; the game gone, down.
+        let now = app.world().resource::<TownClock>().now();
+        let mut stand = Stand::new(false, 0, 1);
+        stand.round = Some(StandRound {
+            stage: StandStage::Wave,
+            ..of_two([0, 70], [now + 6.0, 0.0], 900, 0)
+        });
+        app.insert_resource(stand);
+        app.update();
+        app.update();
+        assert_eq!(up(&mut app), 1, "Back in 6");
+        app.world_mut().remove_resource::<Stand>();
+        app.update();
+        app.update();
+        assert_eq!(up(&mut app), 0, "taken down with the game");
+        // And Bridge Wars' left alone again.
+        app.world_mut().spawn((arena::DeathText, InArena));
+        for _ in 0..3 {
+            app.update();
+            assert_eq!(up(&mut app), 1);
+        }
+    }
+
+    #[test]
+    fn r_is_ready_but_not_while_a_line_is_typed() {
+        #[derive(Resource, Default)]
+        struct Asked(usize);
+        let mut app = App::new();
+        app.init_resource::<ButtonInput<KeyCode>>()
+            .init_resource::<hud::DialogUp>()
+            .init_resource::<Asked>()
+            .add_message::<ReadyAsked>()
+            .add_systems(
+                Update,
+                (ready_key, |mut asked: MessageReader<ReadyAsked>, mut count: ResMut<Asked>| count.0 += asked.read().count()).chain(),
+            );
+        let mut stand = Stand::new(false, 0, 1);
+        stand.round = Some(StandRound {
+            stage: StandStage::Break { until: 2e9 },
+            ..of_two([100, 100], [0.0, 0.0], 900, 0)
+        });
+        app.insert_resource(stand);
+        let press = |app: &mut App| {
+            let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+            keys.release(KeyCode::KeyR);
+            keys.clear();
+            keys.press(KeyCode::KeyR);
+            app.update();
+            app.world().resource::<Asked>().0
+        };
+        // Typing in the chat: "r" is a letter of the line.
+        app.world_mut().resource_mut::<hud::DialogUp>().0 = true;
+        assert_eq!(press(&mut app), 0);
+        app.world_mut().resource_mut::<hud::DialogUp>().0 = false;
+        assert_eq!(press(&mut app), 1);
     }
 
     #[test]

@@ -10,7 +10,169 @@
 
 ## Contents
 
-1. Since 2026-11-18 Last Stand is a game people play, online and offline
+1. 2026-11-18, later: sixteen things a check of it found, mended
+2. Since 2026-11-18 Last Stand is a game people play, online and offline
+
+## 2026-11-18, later: sixteen things a check of it found, mended
+
+A check of the game as first built (the entry below) listed sixteen
+things; every one is mended or answered here, the same day. Nothing of it
+has been seen on a phone.
+
+1. **Bridge Wars' "You died. Respawning in 4..." showed every other
+   frame.** Last Stand's own words while you are dead ("Back in 6") ran in
+   every game and took down whatever death words were up whenever it had
+   none of its own to say: in Bridge Wars, Bridge Wars' (`arena::show_death`
+   put them back the next frame). Now they run only in a game of Last
+   Stand, and take its words down once as it goes, as Bridge Wars' own do
+   (`screen::death_words`).
+2. **The crystal stayed shattered in every game after the first** when one
+   table followed another (Play again, or a group's leader taking it on):
+   it was stood up again only on a frame with no game of it, which a table
+   followed by the next never has, and every game ends with it broken. The
+   next game had no crystal to see, none to stand on or bump into, no
+   light from it at night, no flash and no shatter, its bar over nothing.
+   It is made whole as every game begins now (`looks::anchor`, by the
+   game's own number).
+3. **Online, a teammate dead stood where they fell**, their name over an
+   empty bar, for the six seconds and, once out, to the end. Their body is
+   dead while the round says so (`crate::Dead`), which hides it and its
+   name, as Bridge Wars hides its dead (`play::publish`).
+4. **A game of it ends before Bridge Wars' or House Builder's systems
+   run** (`play::enter`, before `arena::ArenaSystems` and
+   `builder::GameSystems`): someone led by their group from its results
+   straight into one of those is told the table is gone and seated in the
+   next game in one frame, and its end, run after the next game's
+   beginning, would have taken that game's team, health, board, bars and
+   opening bridge off them. Bridge Race's systems run in Bridge Wars' set,
+   and so come after it too. Checked by the order the schedule is given
+   alone, and by the game starting with it (a cycle would stop it); the
+   case itself was not played.
+5. **"Mochi brought down a giant" is said offline too.** Which kills the
+   chat says is one rule in the shared game now (`Kind::announced`: a
+   giant alone), which the server tells the room by and a device playing
+   offline says its own game's kills by (`play::happened_of`).
+6. **Teammates' bodies keep nothing of the game after it.** Its end takes
+   the team, the health and the death off every body it put them on
+   (`play::Teammate`), not only yours: a teammate still in sight in the
+   town kept a bar over their head there, and one dead as the game ended
+   stood there unseen.
+7. **R is not Ready while a line is typed** in the chat, or any dialog is
+   up (`hud::DialogUp`): typing "ready" in a break said you were.
+8. **Numbers off people and off the crystal.** A blow or a spit on you or
+   a teammate floats what it took, and a healing potion what it gave, in
+   the heal's green, as Bridge Wars floats them (mine: a rise of three
+   points or more is a heal, so that what comes back by itself, a point
+   at a time, and all of it as someone stands again float nothing). The
+   crystal floats what the blows on it took, each number with its flash,
+   no oftener than every 0.35 s and saying all it took since the last
+   (mine: a heap of zombies clawing at it would float a number a frame),
+   the blow that breaks it at once; and a Fortify floats what it gave back.
+9. **The connection lost no longer floats a number off every zombie.**
+   `net` takes away everything the server sent as the connection goes, and
+   every zombie's body going was taken for a kill: online, one is taken
+   for a kill only while connected now (`looks::last_blow`).
+10. **Teammates' names are over them in the waiting room**: they are given
+    their health from the table's start (full until there is a round),
+    the kit tagging only a body with health (mine: a full bar under each
+    name there, rather than a name alone, which the kit would not give a
+    bar once the play began).
+11. **Someone who leaves is said to have left** ("Dubu has left", a new
+    line in the file, `words.last_stand.left_line`), never "is down" or
+    "is out": the round says who has gone, a bit to a seat
+    (`StandRound.gone`, mine, one byte; within protocol 22, which no
+    release has yet). Nothing is said of it once the game is over, as
+    everyone goes then.
+12. **On desktop, the spit's ball, the crystal's bar and the words over the
+    pads take the file's colours as it changes** (`looks::recolour`), as
+    the plate always did; and the shops' cards are made again then too.
+13. **`StandRound.began` is not sent once**, as this account said: it goes
+    with every send of the round, eight bytes a time, a few times a second
+    in a wave. Said so now, here and in the code. Kept where it is, mine:
+    a component of its own, sent once, would be one more registration for
+    eight bytes a send.
+14. **Offline, a stick of dynamite the game has gone into the void no
+    longer lies to the end** where this device's map has ground and the
+    rules' has none (`play::sink`); not seen happen, the two maps agreeing
+    everywhere the hidden runs threw one.
+15. **This account holds every rule and number, and whose call each was**
+    (the entry below, "The game, as the rules have it"): until now some
+    were only in the rules' tuning report, which is not in the repository.
+    The Leap potion is said there to be a departure from the design's list.
+16. **What was not checked before** is, below: the night's waiting room,
+    item shop, brutes and spitters; the online runs on the final build;
+    Play again; dying in Bridge Wars with this build; a connection lost
+    mid-wave.
+
+**Two more, found in the hidden runs below** (both mine):
+
+- With a shop's window open, the pads' words showed through its
+  see-through dark among the cards' words ("Silver" by "Heal" and by
+  "Leap", by night): they and the crystal's bar are put away while you
+  stand in a shop's outline, as the line under the plate always was
+  (`looks::in_sight`).
+- Where the screen put a pad, or the crystal, by the column top left, its
+  words or its bar were drawn into the column's rows ("Silver" over the
+  count of gold): put away where they would stand among them, the column
+  read where the screen lays it out (`looks::Column`), as they are under
+  the plate. Bridge Wars draws its names and its generators' words on
+  under its own column; that is left as it is.
+
+### Checked, and where
+
+- **Tests**, through the wrapper: the game's (`--lib`) 384, eight new (the
+  crystal whole in the game after one that broke it; Bridge Wars' death
+  words left alone with no game of this here; R not Ready while a line is
+  typed; who has left said so, never down or out; a giant brought down
+  said offline by the shared rule; a potion's heal told from what comes
+  back by itself; a game's end taking its marks off a teammate's body;
+  the file changed drawing the spit, the bar and the pads' words again),
+  the first two seen to fail on the code before; the rules' 155 and 5
+  ignored (two new: who has gone is in the round, and a giant alone is
+  said); the server's 87 and 4 ignored. The desktop game builds with the
+  five warnings it had before (`lib.rs` twice, `island.rs`, `lobby.rs`,
+  `signup.rs`), the server with none.
+- **Hidden, offline, by night** (`RT_STAND_WAVE=8 RT_STAND_PURSE=200`, a
+  throwaway taken out again): the waiting room; "Go!"; the item shop open,
+  every card read and nothing through it; a healing potion bought; numbers
+  off you ("10") and the potion's "+50"; numbers off the crystal ("4", "6"
+  over its purple); spitters and their balls, a brute; the end; the
+  results; and **Play again**: the next game's crystal standing, under its
+  bar, the map underfoot whole again (10,284 triangles, where 10,276 were
+  left once it shattered), and walked at, you stopped 1.12 m from its
+  middle; then leaving.
+- **Hidden, offline, in Bridge Wars**: fallen into the void, "You died.
+  Respawning in 3..." up in every frame looked at, 12 of 12.
+- **Two hidden copies against a server on this PC** (port 5484, Mochi and
+  Dubu, from wave 8 with full purses), twice:
+  - each other's names and bars over them in the waiting room;
+  - Dubu fallen into the void: on Mochi's screen, gone with their name,
+    "Dubu is down", and back six seconds later; numbers off each other on
+    both screens, and off the crystal;
+  - Mochi's connection lost in the middle of the wave, fourteen zombies on
+    the sand: "Reconnecting...", no number floated off any of them (none
+    in 2.5 s), and back in the game, played to the end;
+  - the end: both paid 70, "Waves cleared: 7 · Team score: 700"; back in
+    the town, the other's body seen, with no team, health or death of the
+    game left on it;
+  - the second run: Mochi's potion, "+36" over Mochi on both screens; and
+    Dubu leaving in the middle of the wave at full health: on Mochi's
+    screen "Dubu has left" (it said "Dubu is down" before).
+  The first run was on the build before the column's check above; the
+  second on the final one.
+- **Not checked**: a phone or an iPhone (nothing is behind `target_os =
+  "ios"`; the iOS type-check was not run); the VM; someone led by their
+  group from its results into Bridge Wars or House Builder (the order is
+  the schedule's alone); a stick of dynamite going into the void where the
+  two maps disagree (no such place was met); the file changed under a
+  running game (a test only); Play again by day.
+- Two of these hidden runs lost the GPU (`DeviceLost`), with other
+  copies of the game drawing on the PC at the time: the first night run,
+  after its first game, and the first Bridge Wars run, at once; both were
+  run again and went through. The pictures are in
+  `RoundTown-wt/scratch-stand/shots/fix/`, the runs' logs in
+  `RoundTown-wt/scratch-stand/fix2/out/`, and the throwaway that drove
+  them in `RoundTown-wt/scratch-stand/fix2/kept/`.
 
 ## Since 2026-11-18 Last Stand is a game people play, online and offline
 
@@ -51,47 +213,166 @@ colours in `assets/ui.ron` (`words.last_stand`, `colours.last_stand`, with
 ### The game, as the rules have it
 
 The rules were written and tuned first, by whole games of stand-in players
-(`cargo test -p roundtown_net stand_many -- --ignored --nocapture`; its own
-report has every table): a plain player alone, landing a blow a second,
-clears six or seven waves in the middle of its games, in twelve minutes,
-and has the fee back (five waves) in 85 games of 100 (Hajun's "above
-50%"); four together clear eleven, in nineteen.
+(`cargo test -p roundtown_net stand_many -- --ignored --nocapture` prints
+the table, `stand_waves` the pressure wave by wave; the module's tests hold
+the targets): a plain player, landing a blow a second on what is in front
+of it, alone clears six or seven waves in the middle of its games, in
+twelve minutes, and has the fee back (five waves) in 85 games of 100
+(Hajun's "above 50%"); two and three together clear ten, four eleven, in
+seventeen to nineteen minutes. A good player (three blows a second,
+potions, dodging) clears nine alone and thirteen with four. A lone
+player's results have two humps, the first giant (wave 5) and the walkers
+needing a third blow (wave 10) being the walls; every team meets the
+second about the tenth wave. A team of three or four good players plays
+past twenty minutes; the plain one, which the game is tuned by, within
+them.
 
-- **A table**: people only, one to four (alone too, mine, so that nobody
-  waits for a second person who is not coming; Hajun said "2~4"); 50 coins
-  to join; it begins 15 s after the last person joined, or at once with
-  four; a 5 s countdown; everyone is paid 10 coins for every wave the team
-  cleared, up to 400 (five waves give the fee back).
-- **The map** (`laststandmap.glb`, stood 0.25 m up as Bridge Wars' is): a
-  stone disc 50 m across in a ring of sand 75 m across, over the void; the
-  anchor's crystal on its plinth in the middle, the generators' pads either
-  side, the item shop's red stand and the upgrade shop's blue one in front
-  and behind. A test holds the rules' numbers to the map
-  (`the_rules_numbers_for_the_map_are_hajun_s_map_s`).
+**Hajun's**: co-op; endless waves of zombies stronger every wave coming
+from the edges for the anchor or the players; the anchor crystal in the
+middle; two generators, silver at first and then gold, sapphire and
+amethyst as the team upgrades them; loot from the zombies, by a chance
+that grows luckier as the game goes; an item shop and an upgrade shop,
+upgrades without end; each person's score and the team's at the end;
+`laststandmap`; Bridge Wars' camera and controls; "2~4" players; a fee
+and a payout, "above 50%" to come out ahead. **The design's** is the brief
+written for the four games the same day (ours, `specs/design-games.md`);
+**mine** is this game's own builders' and tuners'. Every number:
+
+- **The table**: people only, never the computer; one to four (mine: alone
+  too, so that nobody waits for a second person who is not coming; Hajun
+  said "2~4"); it begins 15 s after the last person joined, or at once
+  with four; a 5 s countdown; the results 20 s (the design's); 50 coins to
+  join; every person paid 10 coins a wave the team cleared, up to 400
+  (the design's: five waves give the fee back).
+- **The map** (`laststandmap.glb`, stood 0.25 m up as Bridge Wars' is,
+  `LIFT`): a stone disc 50 m across in a ring of sand 75 m across, over the
+  void (the design's, so that a zombie or you can be knocked off); the
+  anchor's crystal on its plinth in the middle, the generators' pads
+  either side, the item shop's red stand and the upgrade shop's blue one
+  in front and behind. A test holds the rules' numbers to the map
+  (`the_rules_numbers_for_the_map_are_hajun_s_map_s`). Everyone begins
+  3.2 m from the anchor on the diagonals, facing out (mine).
 - **The anchor**: 1500 health (mine; the design's 1000 fell to the first
-  brutes); while it stands whoever dies is back beside it 6 s later; broken,
-  the dead stay dead, and the game is over once nobody stands.
-- **Waves**: the first 20 s after "Go!", then 25 s between waves to shop,
-  three seconds once everyone standing has said they are ready; walkers,
-  runners from the third wave, brutes from the fourth (mine: the design's
-  fifth), a giant every fifth wave, spitters from the eighth, leapers from
-  the twelfth; each a little stronger every wave (health x1.22, blow
-  x1.09, pace +1% to +30%); at most 40 standing at once; each climbing up
-  over the rim from a few places round it, going for the anchor or for
-  someone, turning on whoever hits it.
-- **What you have**: 100 health, back slowly; your fists, then a sword;
-  your shield; things to use on your buttons, as in Bridge Wars; what you
-  hold of the four minerals. Dying, you keep all of it (mine: it is played
-  together, and a death already costs the wait); what you had drunk is
-  over.
-- **The two shops**: the item shop's three swords, three shields and six
-  things to use (healing, speed, fireball, dynamite, invisibility, leap);
-  the upgrade shop's six lines, the team's, each step dearer than the last:
-  the generators (gold, then sapphire, then amethyst, then faster without
-  end), Sharpness, Protection (five steps), Fortify Anchor, Anchor Beam,
-  Lucky Loot (five steps).
-- **Score**: each kill by its kind and its wave, and one for every ten
-  damage; the team's is everyone's and 100 for each wave cleared.
+  brutes); while it stands, whoever dies is back beside it 6 s later (the
+  design's), with 2 s in which no zombie turns on them (mine); broken, the
+  dead stay dead; the game is over once it is broken and nobody stands,
+  or everyone has gone (the design's).
+- **Waves**: the first 20 s after "Go!", then 25 s between waves to shop
+  (the design's); once everyone standing has said they are ready, the next
+  in 3 s (mine, `Ask::Ready`). Wave n sends (6 + 3n + n^2/4) x (0.75 +
+  0.25 a person), rounded (the formula the design's; the share by people
+  mine, where the design's 0.6 + 0.4 a person had four at one anchor no
+  further on than one): 9 in the first for one and 16 for four, 61 in the
+  tenth for one and 107 for four. They come over the rim (0.22 + 0.1 a
+  person) a second in the first wave and 12% more each wave after (mine),
+  from two places round the rim, up to four as the waves go on (2 + n/4 at
+  most), in bursts of two to four, each place well apart from the rest
+  (mine); at most 40 standing at once (the design's).
+- **The zombies**, the wave each first comes in, then their health, blow
+  and pace in the first wave of all (the paces the design's; the healths
+  and blows mine, half the design's or less at first and growing faster):
+  - walker, wave 1: 20, 6, 3.2 m/s (design 40 and 8);
+  - runner, wave 3: 12, 5, 6 (design 25 and 6);
+  - brute, wave 4 (mine; the design's 5th, so that each early wave brings
+    one thing new and the fifth is the giant's alone): 48, 14, 2.4
+    (design 160 and 22); a third bigger, takes a quarter of a knock,
+    knocks you as a punch does, and its blow on the crystal counts three
+    quarters (the design's "hits the anchor hard"), every other kind's a
+    half (mine);
+  - giant, every fifth wave: 450, 28, 2 (design 1200 and 40); twice as
+    big, knocked by nothing, knocks you as a running punch does, always
+    for the anchor (mine), drops a hoard of 12; one in the 5th and 10th
+    waves, two in the 15th and 20th, one more every ten waves (mine; the
+    design's one more every five ended half of a lone player's games at
+    the tenth); its health 0.5 + 0.125 a person times its own (mine: the
+    rest of a wave grows with the people in its numbers);
+  - spitter, wave 8: 18, 10 (its ball's), 3 (design 35 and 12); keeps 7
+    to 9 m off (mine, thrown for each) and spits a slow green ball that
+    splashes whoever is within 1.3 m of where it comes down, and the
+    crystal if by it;
+  - leaper, wave 12: 25, 12, 4 (design 50 and 14); leaps at whoever is
+    from 3.5-5 to 7.5-9.5 m off (mine, thrown for each), knocking them on
+    the way it came.
+  - Every wave past the first, health x1.22 and blows x1.09 (mine; the
+    design's 1.12 and 1.07), pace +1% to at most +30% (the design's). A
+    spitter's health comes to the design's in the 9th wave, a walker's, a
+    runner's and a leaper's in the 10th, a giant's in the 13th, a brute's
+    in the 16th; a leaper's blow in the 10th, a runner's and a spitter's
+    in the 11th, a walker's in the 17th, a giant's in the 21st, a brute's
+    in the 26th (a test holds these).
+  - What each goes for, thrown as it rises (mine): the anchor, or whoever
+    is nearest; a giant always the anchor, a brute 85% of the time, a
+    runner 35%, the rest 80% in the first wave and 3.5% less each wave to
+    35%. Each turns on whoever hits it. Some come round on an arc of their
+    own (0.35 to 0.9 of a radian off), 15% in the first wave and 2% more a
+    wave, to half (mine). Each turns on someone within 2 to 4.5 m (times
+    the root of its size) and gives them up 11 to 22 m off (mine, thrown
+    for each). At the crystal, each holds to it within 2 to 4 m past its
+    reach and turns on someone near only by a chance of none to 6% each
+    time it looks round (mine, thrown for each: every one turning would
+    draw the whole heap off the anchor, none would make standing by the
+    crystal safe). A wave's last 1.5 to 5 come on 1.4 times as fast
+    (mine). No zombie walks at or hits anyone unseen, or in their two
+    seconds back. The small kinds' blows knock nobody (mine: a crowd of
+    them would bat whoever holds the anchor about the stone).
+- **You**: 100 health, coming back 4 a second from 5 s after the last hit
+  (mine; the design's "back slowly 5 s after"); fists 6, the swords 14, 22
+  and 34, the shields 10%, 20% and 30% off every blow (the design's); a
+  blow counts on a zombie within 6.5 m of where your device last said you
+  were (and its own size), once in 0.5 s from each of you (mine, Bridge
+  Wars' `HURT_TIME`). Dying, you keep your purse and everything you bought
+  (mine: it is played together, and a death costs the wait); what you had
+  drunk is over.
+- **The generators**: silver from the start, one about every 2 s on each
+  pad (the design's); gold, sapphire and amethyst about every 8, 30 and 60
+  s, each give or take 1.5, 4 and 8 (silver 0.5), at most 24, 6, 3 and 2
+  lying on a pad (mine); all of it faster, and as many more lying, with
+  more people: 0.6 + 0.4 a person times (mine: four living off what one
+  would have were each a quarter as well armed); each Overclock step
+  x1.25 (the design's).
+- **What zombies drop**: one thing a third of the time, a tenth more for
+  each step of Lucky Loot, at most 95% (the design's third and tenth); a
+  brute two or three, a giant twelve; each thing silver, gold, sapphire or
+  amethyst by weights 100, 10 + 4n, 2n from the third wave, n - 4 from the
+  fifth (the design's), three waves further on for each step of luck
+  (mine). A zombie killed climbing drops on the sand over it; one fallen
+  more than a step below the sand, nothing (mine).
+- **The item shop** (each person's own, kept when they die): Basic Sword
+  12 silver, Silver Sword 8 gold, Aura Sword 6 sapphire; Basic Shield 20
+  silver, Advanced 10 gold, Aura 5 sapphire; Healing Potion 4 gold (half
+  your health), Speed Potion 1 sapphire (30 s, +40%), Fireball 30 silver
+  (40 in its blast), Dynamite 1 amethyst (120 in its blast, and a big
+  knock), Invisibility 2 sapphire (20 s, the zombies lose you), all the
+  design's; and **the Leap potion, 1 sapphire** (Bridge Wars' own, 45 s,
+  mine: a departure from the design's list, which had none, so that every
+  button Bridge Wars has does something here too). The Bridge Builder is
+  not sold.
+- **The upgrade shop** (the team's; each step dearer than the last by the
+  times shown, worked out in whole numbers, rounded half up, so that the
+  server and every device ask the same):
+  - Generator: Gold Forge 24 silver, Sapphire Forge 12 gold, Amethyst
+    Forge 8 sapphire, then Overclock from 4 amethyst, x1.5 a step,
+    endless (the design's);
+  - Sharpness: 6 gold, x1.45 a step, endless; +12% on every blow of the
+    team's (the design's), the fireball and dynamite too (mine; the
+    design's swords and fists alone);
+  - Protection: 20 silver, x1.6 a step; 8% off every blow, five at most
+    (the design's); with the best shield, at most 42% of a blow gets
+    through (they multiply);
+  - Fortify Anchor: 24 silver, x1.6 a step (mine; at x1.35 a lone player
+    bought one after about every wave), endless; +250 health and all of
+    it back (the design's); not to be had once the anchor is broken;
+  - Anchor Beam: 2 sapphire, x1.5 a step, endless; every 2 s the zombie
+    nearest the crystal within 12 m is zapped (the design's) for 12 a
+    step (mine; with the design's 20 a lone player who got past the
+    first giant was carried by the beam as far as a team of four);
+  - Lucky Loot: 5 gold, x1.6 a step, five at most (the design's five).
+  The prices of each line are mine; the design named the first of the
+  generators' and the Overclock's.
+- **The score** (the design's): each kill by its kind, walker 10, runner
+  15, spitter 25, leaper 30, brute 40, giant 250, a tenth more for each
+  wave, to whoever dealt the last blow, and 1 for every 10 damage dealt;
+  the team's is everyone's and 100 for each wave cleared.
 
 ### The server (`server/src/last_stand.rs`)
 
@@ -116,10 +397,13 @@ believes none of it that could not be. Whoever is dead with the anchor
 broken is out of the game (`Seat::out`), free to watch or to go.
 `Tell::LastStand(Slain)` is new (mine): a giant brought down, and by whom,
 for the chat, which a device cannot tell from the body going.
-`StandRound.began` is new too (mine, eight bytes, sent once): when the
-fight began by the room's clock, so that a device counts the fight's own
-time (what a potion's time left is by) right from the first frame of a
-game it comes back into.
+`StandRound.began` is new too (mine): when the fight began by the room's
+clock, so that a device counts the fight's own time (what a potion's time
+left is by) right from the first frame of a game it comes back into. It
+never changes, but goes with the round every time that is sent, a
+component being sent whole: eight bytes more a time, the round being sent
+a few times a second in a wave (this said "sent once" until the check
+below).
 
 ### The device (`src/last_stand.rs`, `src/last_stand/`)
 

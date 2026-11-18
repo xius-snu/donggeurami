@@ -80,6 +80,9 @@ pub(crate) struct Stand {
     balls: HashMap<u32, Entity>,
     sticks: HashMap<u32, Entity>,
     pieces: HashMap<u32, Entity>,
+    /// Offline, sticks of dynamite the game has gone into the void, until
+    /// this device's own have too (`play::sink`).
+    sinking: Vec<Entity>,
     /// What has been said of how it goes ([`screen`]).
     said: Said,
     /// You have said you are ready, in this break.
@@ -109,6 +112,7 @@ impl Stand {
             balls: HashMap::new(),
             sticks: HashMap::new(),
             pieces: HashMap::new(),
+            sinking: Vec::new(),
             said: Said::default(),
             ready: false,
             finished: false,
@@ -144,8 +148,9 @@ impl Stand {
 /// What has been said of how a game goes, across the screen and in the
 /// chat, for each thing to be said once as it comes: that it has begun;
 /// the wave last said, and whether it was on; the anchor's health as last
-/// seen, and whether it was said to be broken; everyone's health and
-/// whether they were out, by seat; and the end.
+/// seen, and whether it was said to be broken; everyone's health, whether
+/// they were out, and whether they had left the game, by seat; and the
+/// end.
 #[derive(Default)]
 struct Said {
     begun: bool,
@@ -155,6 +160,7 @@ struct Said {
     broken: bool,
     health: Vec<u16>,
     out: Vec<bool>,
+    gone: Vec<bool>,
     over: bool,
 }
 
@@ -344,6 +350,7 @@ mod tests {
             &words.bought_line,
             &words.down_line,
             &words.out_chat,
+            &words.left_line,
             &words.slain_line,
             &words.anchor_line,
             &words.cleared_line,
@@ -384,6 +391,8 @@ mod tests {
             (&words.generator_fast, &["{level}", "{fast}"]),
             (&words.bought_line, &["{name}", "{ware}", "{level}"]),
             (&words.down_line, &["{name}"]),
+            (&words.out_chat, &["{name}"]),
+            (&words.left_line, &["{name}"]),
             (&words.slain_line, &["{name}"]),
             (&words.level, &["{level}"]),
         ] {

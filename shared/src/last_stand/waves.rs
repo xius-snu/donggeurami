@@ -151,6 +151,16 @@ impl Kind {
             Kind::Giant => 250.0,
         }
     }
+
+    /// Whether killing one is said in the chat, and by whom ("Mochi brought
+    /// down a giant"): a giant alone (mine: a line for every walker would
+    /// bury the chat). The one rule for both sides: the server tells the
+    /// room of it ([`Tell::Slain`](super::Tell::Slain)) and a device playing
+    /// offline says it of its own game's kill (since 2026-11-18; until then
+    /// the rule was the server's alone, and offline said nothing).
+    pub const fn announced(self) -> bool {
+        matches!(self, Kind::Giant)
+    }
 }
 
 /// How much stronger every zombie is for each wave past the first: its

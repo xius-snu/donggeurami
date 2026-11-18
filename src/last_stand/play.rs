@@ -42,12 +42,27 @@ use crate::loot::{self, Key, PadTop};
 use crate::market::{Picked, Stalls};
 use crate::net::Online;
 use crate::table::{self, TableView};
+use crate::ui::UiChanged;
 use crate::{Dead, Intent, Landed, Lookout, OrbitCamera, Player, PlayerJump, Shove, Team, WalkCycle, dynamite, fire};
 
 pub(super) fn plugin(app: &mut App) {
     app.add_systems(
         Update,
-        (enter, claim, begin_offline, follow_online)
+        (
+            // A game of it ended here before any other begins, Bridge Wars'
+            // and House Builder's (and every game that runs in Bridge Wars'
+            // set, as Bridge Race does): someone led by their group from
+            // its results straight into one of those is told the table is
+            // gone and seated there in the same frame, and the fight's state
+            // given back after the next game had taken it would take that
+            // game's from it (its team and health off your body, its board
+            // and bars, the bridge it gives you as it opens). As Bridge
+            // Wars' own end goes before the tables (`arena::taken_elsewhere`).
+            enter.before(arena::ArenaSystems).before(crate::builder::GameSystems),
+            claim,
+            begin_offline,
+            follow_online,
+        )
             .chain()
             .in_set(StandSystems)
             .after(table::TableSystems)
@@ -70,11 +85,19 @@ pub(super) fn plugin(app: &mut App) {
 #[derive(Component, Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) struct OwnZombie(pub(super) u32);
 
+/// On the body of someone else at your table of Last Stand, online, that
+/// this game has put its team on, their health, and their being dead
+/// ([`publish`]): for all of it to be taken off again as the game goes
+/// ([`Fight::give_back`]), a body still in sight then (in the town, or in
+/// the next game with a group) carrying none of it on.
+#[derive(Component, Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) struct Teammate;
+
 /// What a game of Last Stand takes over of the fight's state as it begins
 /// and gives back as it ends: the fight itself, whether it is played
 /// offline, its number, what you hold and have, its time, the shops'
-/// cards, where things from the generators hang, the camera's lookout, and
-/// your body.
+/// cards, where things from the generators hang, the camera's lookout, your
+/// body, and your teammates'.
 #[derive(bevy::ecs::system::SystemParam)]
 pub(super) struct Fight<'w, 's> {
     commands: Commands<'w, 's>,
@@ -88,6 +111,7 @@ pub(super) struct Fight<'w, 's> {
     pad_top: ResMut<'w, PadTop>,
     lookout: ResMut<'w, Lookout>,
     me: Query<'w, 's, Entity, With<Player>>,
+    mates: Query<'w, 's, Entity, With<Teammate>>,
     worn: Query<'w, 's, Entity, With<Wears>>,
     things: Query<'w, 's, Entity, With<InArena>>,
 }
@@ -113,7 +137,10 @@ impl Fight<'_, '_> {
 
     /// The game, numbered `fight`, is over here: the fight's state given
     /// back, once, everything of it taken down, and nothing on your body
-    /// or anyone's of it.
+    /// or anyone's of it: your team, health and death off yours, and off
+    /// every teammate's it put them on ([`Teammate`]; until 2026-11-18
+    /// theirs kept the team and a bar over them into the town, and one dead
+    /// as the game ended stood there unseen).
     fn give_back(&mut self, fight: u32) {
         self.fighting.set_if_neq(Fighting::none(fight));
         self.offline.set_if_neq(OfflineArena(false));
@@ -133,6 +160,9 @@ impl Fight<'_, '_> {
         }
         if let Ok(you) = self.me.single() {
             self.commands.entity(you).remove::<(Health, Dead, Team)>();
+        }
+        for mate in &self.mates {
+            self.commands.entity(mate).try_remove::<(Health, Dead, Team, Teammate)>();
         }
         self.commands.remove_resource::<Stand>();
     }
@@ -277,6 +307,23 @@ pub(super) struct Makers<'w> {
     loot: Res<'w, loot::Look>,
 }
 
+/// What one of the game's own events says happened that its round does
+/// not, for what is drawn and said of it ([`Happened`]): offline, as the
+/// server's tells say it online (`Tell::Zap`, `Upgraded`, `Slain`), by the
+/// same rules: the beam's zap; something bought for the team; a kill the
+/// chat says, whose kind's is ([`Kind::announced`](rules::Kind::announced):
+/// a giant brought down, which offline said nothing until 2026-11-18).
+fn happened_of(event: &Event) -> Option<Happened> {
+    match *event {
+        Event::Zap { at, .. } => Some(Happened::Zap(at)),
+        Event::Bought { seat, ware, level } if rules::sold_at(ware) == roundtown_net::bridge_wars::Shop::Upgrades => {
+            Some(Happened::Upgraded { by: seat, ware, level })
+        }
+        Event::Killed { kind, by: Some(by), .. } if kind.announced() => Some(Happened::Slain { by, kind }),
+        _ => None,
+    }
+}
+
 /// Offline, a frame of the game: told the town's clock and where you
 /// stand, and what you did; stepped; what it says happened carried out;
 /// and every zombie's body where the game has it, its health on it, each
@@ -291,6 +338,7 @@ fn run_offline(
     kit: Makers,
     mut me: Query<(Entity, &Transform, &Intent, Has<Dead>, &mut Shove, &mut PlayerJump), With<Player>>,
     mut zombies: Query<(&mut Transform, &mut Shove, &mut PlayerJump, &mut Shambler, &OwnZombie), Without<Player>>,
+    sticks: Query<&dynamite::Stick>,
     mut happened: MessageWriter<Happened>,
     mut finish: MessageWriter<table::Finish>,
     mut commands: Commands,
@@ -363,6 +411,9 @@ fn run_offline(
     let events = game.step(time.delta_secs());
     let now = time.elapsed_secs();
     for event in events {
+        if let Some(said) = happened_of(&event) {
+            happened.write(said);
+        }
         match event {
             Event::Risen { zombie, kind, at, yaw } => {
                 let Some((health, most)) = game.zombies().find(|(id, ..)| *id == zombie).map(|(.., health, most)| (health, most))
@@ -395,9 +446,6 @@ fn run_offline(
                     stand.put = Some(Transform::from_translation(at).with_rotation(Quat::from_rotation_y(yaw)));
                 }
             }
-            Event::Zap { at, .. } => {
-                happened.write(Happened::Zap(at));
-            }
             Event::Spat { spit, spittle } => {
                 let ball = commands.spawn(SpitBall::of(spittle, None)).id();
                 stand.spits.insert(spit, ball);
@@ -427,9 +475,14 @@ fn run_offline(
                 }
                 fire::burst(&mut commands, at + Vec3::Y * 0.1, Venue::LastStand);
             }
-            // Gone into the void: the stick falls on there by itself.
+            // Gone into the void: the stick here falls on by itself, as it
+            // comes down where this device's map has nothing either; where
+            // it has something the rules' map has not, it would lie there
+            // to the end, its fuse lit, never to blow ([`sink`]).
             Event::Sank { stick } => {
-                stand.sticks.remove(&stick);
+                if let Some(thrown) = stand.sticks.remove(&stick) {
+                    stand.sinking.push(thrown);
+                }
             }
             Event::Made(piece) => {
                 let thing = loot::lay(&mut commands, &kit.loot, now, Key::Own(piece.id), Loot::of(&piece), Venue::LastStand, rules::PAD_TOP);
@@ -440,12 +493,6 @@ fn run_offline(
                     loot::take(&mut commands, thing, (by == seat).then_some(you));
                 }
             }
-            Event::Bought { seat: by, ware, level } => {
-                if rules::sold_at(ware) == roundtown_net::bridge_wars::Shop::Upgrades {
-                    happened.write(Happened::Upgraded { by, ware, level });
-                }
-            }
-            Event::Hurt { .. } => {}
             Event::Wave { .. } => stand.ready = false,
             Event::Over { waves } => {
                 if !stand.finished {
@@ -456,7 +503,11 @@ fn run_offline(
                     }
                 }
             }
-            Event::Cleared { .. }
+            // (What `happened_of` says, and what the round does.)
+            Event::Zap { .. }
+            | Event::Bought { .. }
+            | Event::Hurt { .. }
+            | Event::Cleared { .. }
             | Event::Died { .. }
             | Event::Out { .. }
             | Event::AnchorHurt { .. }
@@ -464,6 +515,7 @@ fn run_offline(
             | Event::Drank { .. } => {}
         }
     }
+    sink(&mut stand.sinking, &sticks, &mut commands);
     for (zombie, kind, at, yaw, health, most) in game.zombies() {
         let Some(&body) = stand.zombies.get(&zombie) else {
             continue;
@@ -494,6 +546,24 @@ fn run_offline(
         stand.kits = game.kits().to_vec();
     }
     stand.elapsed = game.elapsed();
+}
+
+/// Offline, every stick of dynamite the game has gone into the void
+/// (`Event::Sank`): one lying on something of this device's map, as the
+/// rules' map has nothing there, is taken away, its fuse with it; one still
+/// in the air waits to come down, and one falling goes by itself
+/// (`dynamite::fly`), as online the server's word takes a stick away
+/// (since 2026-11-18; until then a stick that came to lie so lay to the end
+/// of the game, its ring and its fuse with it, and never blew).
+fn sink(sinking: &mut Vec<Entity>, sticks: &Query<&dynamite::Stick>, commands: &mut Commands) {
+    sinking.retain(|&thrown| match sticks.get(thrown).map(|stick| stick.lies) {
+        Ok(dynamite::Lies::Flying) => true,
+        Ok(dynamite::Lies::Lying) => {
+            commands.entity(thrown).try_despawn();
+            false
+        }
+        Ok(dynamite::Lies::Falling(_)) | Err(_) => false,
+    });
 }
 
 /// Stands you where the game has put you, offline, as it says: beside the
@@ -643,28 +713,64 @@ fn ask_online(
     let _ = stand;
 }
 
+/// The least a rise in someone's health between two of the round's words
+/// is to be a heal, a healing potion's, said by a number floating off them
+/// in the heal's green, rather than what comes back by itself
+/// ([`REGEN_PER_SEC`](rules::REGEN_PER_SEC), a point at a time) or all of
+/// it as they stand again (mine: a potion drunk with two points or less to
+/// go floats nothing).
+const HEALED_LEAST: f32 = 3.0;
+
+/// Whether health gone from `before` to `now` between two of the round's
+/// words on it is a heal ([`HEALED_LEAST`]).
+fn healed_by(before: f32, now: f32) -> bool {
+    before > 0.0 && now - before >= HEALED_LEAST
+}
+
+/// A number floating off the body standing at `at` for its health gone
+/// from `before` to `now`, as the round says it: what a blow or a spit took,
+/// in the kit's red, or what a potion gave, in its green; nothing for what
+/// came back by itself. As Bridge Wars floats them off everyone
+/// (`arena`'s round), and as this game does off every zombie
+/// ([`looks`](super::looks)): a blow on you or a teammate floated nothing
+/// until 2026-11-18.
+fn say_health(commands: &mut Commands, at: Vec3, before: f32, now: f32) {
+    if now < before {
+        arena::spawn_number(commands, at, before - now);
+    } else if healed_by(before, now) {
+        arena::spawn_healed(commands, at, now - before);
+    }
+}
+
 /// Everything about you and the others that the fight's kit draws, from how
 /// the game stands, each written only as it changes: what you hold
 /// (`arena::Resources`, counted top left) and have (`arena::Outfit`: your
 /// buttons, the shops' cards, your pace on a potion), the fight's time; the
-/// shops' cards (`market::Stalls`); your health (the bar top left), and
-/// whether you are dead (`crate::Dead`, how long for); and on every
-/// person's body what they wear (`arena::Wears`: the sword in their hand,
-/// the shield round them, whether they are unseen), and on your
-/// teammates', online, their health for the bars over their heads, and the
-/// team.
-#[allow(clippy::too_many_arguments)]
+/// shops' cards (`market::Stalls`), made again as the file changes on
+/// desktop too; your health (the bar top left, and a number off you as it
+/// goes down or a potion brings it up), and whether you are dead
+/// (`crate::Dead`, how long for); on every person's body what they wear
+/// (`arena::Wears`: the sword in their hand, the shield round them, whether
+/// they are unseen); and on your teammates', online, from the table's
+/// start, the team and their health, for their names and bars over their
+/// heads (`arena::place_tags`, which tags a body that has health: their
+/// names were over nobody in the waiting room until 2026-11-18), a number
+/// off them as theirs goes, and their being dead, which hides them and
+/// their names (`island::show_where_i_am`; until that day a teammate dead,
+/// or out, stood where they fell, their name over an empty bar).
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn publish(
     stand: Option<Res<Stand>>,
     view: Res<TableView>,
     town: Res<TownClock>,
-    mut stock: ResMut<Resources>,
-    mut outfit: ResMut<Outfit>,
-    mut clock: ResMut<FightTime>,
-    mut stalls: ResMut<Stalls>,
+    changed: Res<UiChanged>,
+    (mut stock, mut outfit, mut clock, mut stalls): (ResMut<Resources>, ResMut<Outfit>, ResMut<FightTime>, ResMut<Stalls>),
     mut shelved: Local<Option<(u32, roundtown_net::Purse, roundtown_net::Kit, StandUpgrades)>>,
     mut me: Query<(Entity, &Transform, Option<&mut Health>, Option<&mut Dead>, Option<&Wears>), With<Player>>,
-    mut others: Query<(Entity, &Member, Option<&mut Health>, Option<&Team>, Option<&Wears>), (With<Remote>, With<WalkCycle>, Without<Shambler>, Without<Player>)>,
+    mut others: Query<
+        (Entity, &Member, &Transform, Option<&mut Health>, Option<&Team>, Option<&Wears>, Has<Dead>, Has<Teammate>),
+        (With<Remote>, With<WalkCycle>, Without<Shambler>, Without<Player>),
+    >,
     mut commands: Commands,
 ) {
     let Some(stand) = stand else {
@@ -682,15 +788,14 @@ fn publish(
     if clock.0 != stand.elapsed {
         clock.0 = stand.elapsed;
     }
-    // The shops' cards, made again only as anything on them changes.
+    // The shops' cards, made again only as anything on them changes, or the
+    // file they are written from does.
     let shelf = (stand.fight, purse, kit, stand.upgrades);
-    if shelved.as_ref() != Some(&shelf) {
+    if shelved.as_ref() != Some(&shelf) || (changed.is_changed() && !changed.is_added()) {
         *shelved = Some(shelf);
         stalls.set_if_neq(super::screen::stalls(&purse, &kit, &stand.upgrades));
     }
-    let Some(round) = &stand.round else {
-        return;
-    };
+    let round = stand.round.as_ref();
     let wears = |kit: &roundtown_net::Kit| Wears {
         sword: kit.sword,
         shield: kit.shield,
@@ -698,11 +803,16 @@ fn publish(
         fast: kit.fast(stand.elapsed),
         leaping: kit.leaping(stand.elapsed),
     };
-    let health = |seat: usize| round.health.get(seat).copied().map(f32::from);
-    if let Ok((you, body, mine, dead, worn)) = me.single_mut() {
+    let health = |seat: usize| round.and_then(|round| round.health.get(seat).copied()).map(f32::from);
+    if let Some(round) = round
+        && let Ok((you, body, mine, dead, worn)) = me.single_mut()
+    {
         let now = health(stand.seat).unwrap_or(rules::HEALTH);
         match mine {
-            Some(mut mine) if mine.left() != now || mine.full() != rules::HEALTH => *mine = Health::at(now, rules::HEALTH),
+            Some(mut mine) if mine.left() != now || mine.full() != rules::HEALTH => {
+                say_health(&mut commands, body.translation, mine.left(), now);
+                *mine = Health::at(now, rules::HEALTH);
+            }
             Some(_) => {}
             None => {
                 commands.entity(you).insert(Health::at(now, rules::HEALTH));
@@ -741,22 +851,36 @@ fn publish(
     if !stand.online {
         return;
     }
-    // Your teammates, online: their health, team and what they wear, by
-    // their seat at the table.
-    for (body, member, health_now, team, worn) in &mut others {
+    // Your teammates, online, by their seat at the table: from the table's
+    // start, before there is a round, with all their health.
+    for (body, member, place, health_now, team, worn, dead, mate) in &mut others {
         let Some(seat) = view.members.iter().position(|seated| seated.id == member.id && seated.id != 0) else {
             continue;
         };
+        if !mate {
+            commands.entity(body).insert(Teammate);
+        }
         if team != Some(&Team(TEAM)) {
             commands.entity(body).insert(Team(TEAM));
         }
         let now = health(seat).unwrap_or(rules::HEALTH);
         match health_now {
-            Some(mut health_now) if health_now.left() != now => *health_now = Health::at(now, rules::HEALTH),
+            Some(mut health_now) if health_now.left() != now => {
+                say_health(&mut commands, place.translation, health_now.left(), now);
+                *health_now = Health::at(now, rules::HEALTH);
+            }
             Some(_) => {}
             None => {
                 commands.entity(body).insert(Health::at(now, rules::HEALTH));
             }
+        }
+        // Dead (or gone), until the server stands them up again, which it
+        // does itself: for as long as the round says, as Bridge Wars has its
+        // dead (`arena`'s round).
+        if now <= 0.0 && !dead {
+            commands.entity(body).insert(Dead { left: f32::INFINITY });
+        } else if now > 0.0 && dead {
+            commands.entity(body).remove::<Dead>();
         }
         if let Some(kit) = stand.kits.get(seat) {
             let wearing = wears(kit);
@@ -764,5 +888,91 @@ fn publish(
                 commands.entity(body).insert(wearing);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use bevy::ecs::message::Messages;
+    use bevy::ecs::system::RunSystemOnce;
+    use roundtown_net::last_stand::{Kind, Ware};
+
+    use super::*;
+
+    #[test]
+    fn offline_a_kill_is_said_by_the_rule_the_server_tells_it_by() {
+        let killed = |kind: Kind, by: Option<usize>| Event::Killed {
+            zombie: 7,
+            kind,
+            by,
+            at: Vec3::ZERO,
+            void: false,
+        };
+        assert_eq!(happened_of(&killed(Kind::Giant, Some(1))), Some(Happened::Slain { by: 1, kind: Kind::Giant }));
+        assert_eq!(happened_of(&killed(Kind::Brute, Some(1))), None);
+        assert_eq!(happened_of(&killed(Kind::Giant, None)), None, "the beam's, or nobody's");
+        // The beam, and what the team was bought; not what is your own.
+        assert_eq!(happened_of(&Event::Zap { zombie: 2, at: Vec3::X, damage: 12.0 }), Some(Happened::Zap(Vec3::X)));
+        assert_eq!(
+            happened_of(&Event::Bought { seat: 0, ware: Ware::Beam, level: 2 }),
+            Some(Happened::Upgraded { by: 0, ware: Ware::Beam, level: 2 })
+        );
+        assert_eq!(happened_of(&Event::Bought { seat: 0, ware: Ware::Sword(1), level: 0 }), None);
+    }
+
+    #[test]
+    fn a_potion_s_heal_floats_a_number_and_what_comes_back_by_itself_none() {
+        // A point at a time as it comes back; all of it standing again.
+        assert!(!healed_by(40.0, 41.0) && !healed_by(40.0, 42.0));
+        assert!(!healed_by(0.0, rules::HEALTH));
+        // Half your health, or what was left of it to have.
+        assert!(healed_by(40.0, 90.0) && healed_by(90.0, 100.0));
+    }
+
+    /// Everything a game of Last Stand's beginning and end take over and
+    /// give back ([`Fight`]), on a world of its own.
+    fn world() -> World {
+        let mut world = World::new();
+        world.init_resource::<Fighting>();
+        world.init_resource::<OfflineArena>();
+        world.init_resource::<Begun>();
+        world.init_resource::<Resources>();
+        world.init_resource::<Outfit>();
+        world.init_resource::<FightTime>();
+        world.init_resource::<Stalls>();
+        world.init_resource::<PadTop>();
+        world.init_resource::<Lookout>();
+        world.init_resource::<Messages<table::Entered>>();
+        world.init_resource::<Messages<table::Gone>>();
+        world
+    }
+
+    #[test]
+    fn a_game_gone_takes_its_team_health_and_death_off_every_teammate_s_body() {
+        let mut world = world();
+        let you = world.spawn(Player).id();
+        world.write_message(table::Entered {
+            game: Minigame::LastStand,
+            seat: 0,
+            online: true,
+            same_table: false,
+        });
+        world.run_system_once(enter).expect("it runs");
+        assert!(world.contains_resource::<Stand>());
+        assert_eq!(world.get::<Team>(you), Some(&Team(TEAM)));
+        // A teammate as `publish` has them, dead; and someone else at no
+        // table of it, whose own team is someone else's to say.
+        let mate = world.spawn((Teammate, Team(TEAM), Health::at(0.0, rules::HEALTH), Dead { left: f32::INFINITY })).id();
+        let stranger = world.spawn((Team(3), Health::at(50.0, 100.0))).id();
+        world.resource_mut::<Messages<table::Entered>>().update();
+        world.resource_mut::<Messages<table::Entered>>().update();
+        world.write_message(table::Gone { game: Minigame::LastStand });
+        world.run_system_once(enter).expect("it runs");
+        assert!(!world.contains_resource::<Stand>());
+        for body in [you, mate] {
+            let it = world.entity(body);
+            assert!(!it.contains::<Team>() && !it.contains::<Health>() && !it.contains::<Dead>() && !it.contains::<Teammate>());
+        }
+        assert!(world.entity(stranger).contains::<Team>() && world.entity(stranger).contains::<Health>());
     }
 }
