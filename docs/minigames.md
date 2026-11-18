@@ -166,6 +166,52 @@ that were not theirs to change:
 - Knock Off's test of how long the computer thinks goes by the middle of twenty turns, not
   the slowest, which a test run beside a build held up once.
 
+Then the merged build was played through twice, hidden, each in a worktree of its own: once
+offline (Knock Off, Bridge Race and Last Stand to their results by day, again by night at a
+phone's 852 by 393 with a camera's hole, then Bridge Wars, its watch mode, House Builder and
+the town), and once with two copies against a server on this PC, each copy one unbroken
+session through all five games (Knock Off twice with Play again, Bridge Race with one app put
+away mid-race, Last Stand, Blend In, a group into Bridge Wars), by day and by night. Neither
+found a crash, a panic or an error; the coins were the table's in every game, on the server
+and both devices; both copies saw the same games; nothing of one game was left in the town or
+in the next. Of what they found, mended (all mine, 2026-11-18):
+
+- **The chat is put away while a game's results are up**, unless a line is being typed
+  (`chat::show`): its lines ran under the see-through window into its rows, "Alpha stayed
+  hidden as Moc" into "1st". They are back with the town.
+- **Knock Off**: while the table waits and counts down the camera keeps the top quarter of
+  the screen clear (`CLEAR_TOP_WAITING`, easing to the play's `CLEAR_TOP` as play begins),
+  where Leave had stood on the far player's head; the game's name, said across the screen as
+  you sit down, is said low over the near sea, as the game's own headlines are, not over the
+  players at the sides; and the "You're out!" panel's line goes on two lines, the panel no
+  longer reaching the chat's keyboard button at 16:9.
+- **Last Stand's headlines have a thin dark stroke** (`hud::announce_stroked`, four dark
+  copies under the words, faded with them), "The anchor is under attack!" having been gold on
+  the sand by day; and **Blend In's "Round 1/2"** under its plate, lost in the hider's column
+  by day and in a lamp by night.
+- **The selector's cards stand level**: each card's line has two lines' room, where a card
+  with a one-line line had sat lower than its neighbours.
+- **The town's buttons' pictures are never let go of** (`hud::KeptIcons`): a picture read off
+  a file and shown by the town's buttons alone was let go of during a game and read again on
+  the way back, the gear, the coin and the friends' and gamepad's buttons empty discs for the
+  first frames.
+- The server's one unused method went, its build without a warning again.
+
+Each was looked at in the running game afterwards, hidden (the selector, Knock Off waiting
+and counting down, the town three frames after a Leave, Last Stand's "Go!" enlarged), but the
+out panel, the round line and the chat under the results, which are covered by tests and code
+alone. **Left, and why**: the results window's corners over the stick and the jump button
+(the game is over, and the window is in front); Last Stand's damage numbers now and then on
+each other, and a teammate's fall into the void floating "100" (the device cannot tell a fall
+from a blow without a new message); Knock Off's own mark on its plate's line after a slide to
+the far edge; "X wins!" over empty ice when the last two went in together and the one who
+stayed on longer is in the sea (places by who stayed on longer, the builder's call, kept: the
+design had said the same slide shares a place); Bridge Race's bridges dark on the void by
+night and names in a team's blue hard to read on the violet golden island (a stroke on names
+over heads would change Bridge Wars' too: offered, not done); two fresh copies coming online
+at once standing inside each other in the town (the server keeps each device's own spot from
+offline, as ever, and two new ones have the same; not one of the four games').
+
 ### Checked, and not
 
 - **Tests**: the rules', the server's and the game's suites, with tests of every stage of a
@@ -181,5 +227,14 @@ that were not theirs to change:
   already), leaving its bots on their device; a follower got two group lines on top of each
   other; a follower taken from Bridge Wars' results into a table kept Bridge Wars running.
   **House Builder has the first and the third too: stalled, left.**
-- **Not checked**: a database (fees and prizes there), the "not enough coins" refusal, the
-  15 s "Reconnecting" give-up, any phone.
+- **The netcode's mend, online** (the second play-through, a throwaway count on the server):
+  three moves marked still once a body stops, then none while it stands, where it had gone
+  on at about seven a second; 12 to 14 a second walking; the other copy drew the stopped body
+  where it stood, its walk eased out.
+- **The deployed server** (protocol 22, 2026-11-18 04:16 UTC): this PC's own account through
+  a table and back against the real database, the fee taken and given back
+  (`docs/building.md`, "APK 41").
+- **Not checked**: prizes paid by the real database (only a fee and its refund were), the
+  "not enough coins" refusal, the 15 s "Reconnecting" give-up, Blend In with three or four
+  people, Bridge Race won by holding online, and **any phone or iPhone**: APK 41 was built,
+  not installed.

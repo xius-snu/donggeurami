@@ -10,9 +10,21 @@
 
 ## Contents
 
-1. 2026-11-18, later still: what a play-tester found, made clearer
-2. 2026-11-18, later: sixteen things a check of it found, mended
-3. Since 2026-11-18 Last Stand is a game people play, online and offline
+1. At the merge, 2026-11-18: the headlines stroked
+2. 2026-11-18, later still: what a play-tester found, made clearer
+3. 2026-11-18, later: sixteen things a check of it found, mended
+4. Since 2026-11-18 Last Stand is a game people play, online and offline
+
+## At the merge, 2026-11-18: the headlines stroked
+
+A play-through of the merged build (`docs/minigames.md`, "At the merge")
+found "The anchor is under attack!", the line this game most needs read,
+gold on the sand by day, and "Wave 3 cleared" the same. Every headline of
+this game is now said with a thin dark stroke round its words
+(`hud::announce_stroked`: four copies under them in `colours.chat.stroke`,
+faded in and out with them, a test of it in `hud`), the same lines in the
+same places (mine; the town's and Bridge Wars' headlines are as they were).
+Seen hidden afterwards, enlarged: "Go!" at the start of a game, by day.
 
 ## 2026-11-18, later still: what a play-tester found, made clearer
 

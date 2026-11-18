@@ -7,6 +7,54 @@
 > "above" or "below", or names another section in quotes, that section may be
 > in another file here: the table in `CLAUDE.md` says which.
 
+## APK 41, and the server with protocol 22
+
+2026-11-18, for the four games Hajun asked for that morning, Blend In,
+Knock Off, Bridge Race and Last Stand (`docs/minigames.md` and each game's
+own doc), in one message that ended "then build apk and push to git", and
+then "keep going, tell me when the apk is built". **`PROTOCOL_VERSION`
+22**: APK 40 and an iPhone's build of `ios-1.0.2-18` are told to update
+and stay offline.
+
+- **Before the deploy**: the three crates' tests (the rules' 246, the
+  server's 105, the game's 465); the Android library built once beforehand
+  to catch anything only Android compiles (none), and the iPhone's
+  type-check on the merged code (`check_on_windows.sh`, clean); two
+  play-throughs of the merged build, hidden, one offline and one with two
+  copies against a server on this PC (`docs/minigames.md`, "Checked, and
+  not"), and what they found mended and looked at again.
+- **The server**: `server/deploy.sh` at 04:16 UTC (13:16 here), from the
+  main checkout fast-forwarded to the merged branch, with nobody connected
+  since 15:53 UTC the day before (the VM's journal: one person's game of
+  Bridge Wars closing then); the binary before (deployed 2026-11-17 07:05
+  UTC, protocol 21, sha1 `8e3c05c6`) kept on the VM as
+  `roundtown-server.prev-2026-11-18`. After: the VM's binary the same bytes
+  as the one built here (sha1 `cd9ce3a8`), the service active, the database
+  kept. This PC's own account online on it, hidden, from a scratch folder
+  whose `device.id` was compared byte for byte with this PC's ("connected
+  to 141.164.62.193:443", "online as xd, a boy", `xd#3690 joined`), and
+  through a table and back: Knock Off joined, its fee of 50 taken by the
+  real database, left while it waited, the fee given back (the device told
+  1000, 950, 1000; the server "26's fee of 50 is given back"; the ledger's
+  two rows "Knock Off entry" -50 and "Knock Off refund" +50). Nothing of the
+  four games had met a database before that.
+- **The APK**: 41 (`versionCode`), at 13:26 here, **built in the merged
+  worktree, not the main checkout**, so as to carry the committed town
+  (`roundtownmap.glb` sha1 `fc2af54b`, as APK 40): the main checkout has
+  Hajun's export of 2026-11-17 23:54 (48 flat planes of a new `plot`
+  material, for something to come), uncommitted, which nothing here was
+  made or checked against, Blend In's crowd's grid (`town.nav`) among it.
+  cargo ndk 2m35s, stripped to 105.5 MB with `GameActivity_onCreate` and
+  the six `MainActivity` methods in it, Gradle 37 s; 123.0 MB, put over APK
+  40 with no copy kept. Checked: `versionCode` read back with aapt; the
+  library in it the same bytes as the stripped one; all 88 files under
+  `assets/` the same as the tree's; the three new maps and the sword in it,
+  no `.blend`, no `ui.ron`; four of the games' words found in the library.
+  **Not installed: no phone was attached.** Nothing of the four games has
+  been seen on a phone.
+- **The iPhone**: type-checked, **no tag pushed** (Hajun's to ask for; the
+  next is `ios-1.0.2-19`).
+
 ## APK 40, and the server with protocol 21
 
 2026-11-17, for Bridge Wars' four buses that stop at the crossings

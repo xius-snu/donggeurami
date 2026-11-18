@@ -11,9 +11,27 @@
 
 ## Contents
 
-1. Later still on 2026-11-18, after a play-tester's look: what you wear changes only at the hide, nothing stands over the window, the window keeps clear of the chat, the end of a round says who the hider went by and points the way to them, the column meets the ground softly, the ring lights up as you come near it, and a seeker is told what a wrong swing costs
-2. Later on 2026-11-18, after the game was checked: the crowd is sent by the rule a person's device sends by, nothing said from the hide to the end of the seek is passed on, a tap on the board no longer decides a round, and whoever leaves comes last
-3. Since 2026-11-18 Blend In is played online: two to four people, each hiding once among twenty-eight of the town's people while the others look for them
+1. At the merge, 2026-11-18: the round line stroked, and nobody standing still is sent on and on
+2. Later still on 2026-11-18, after a play-tester's look: what you wear changes only at the hide, nothing stands over the window, the window keeps clear of the chat, the end of a round says who the hider went by and points the way to them, the column meets the ground softly, the ring lights up as you come near it, and a seeker is told what a wrong swing costs
+3. Later on 2026-11-18, after the game was checked: the crowd is sent by the rule a person's device sends by, nothing said from the hide to the end of the seek is passed on, a tap on the board no longer decides a round, and whoever leaves comes last
+4. Since 2026-11-18 Blend In is played online: two to four people, each hiding once among twenty-eight of the town's people while the others look for them
+
+## At the merge, 2026-11-18: the round line stroked, and nobody standing still is sent on and on
+
+- **Someone standing still is no longer sent on and on** (`net::mark_still`,
+  with a test; the builder's find, which was the tables' file to mend):
+  where you stood was marked still, then not, frame by frame, and a standing
+  person's device sent their spot some seven times a second, while the
+  crowd's standing bodies were sent never, a difference a changed client
+  could have read. Now three moves marked still once you stop, then none: the
+  second play-through counted it on the server.
+- **"Round 1/2" under the plate has a thin dark stroke** (`stroked_caption`,
+  every copy the caption's, so that each is written as the round changes):
+  with only a shadow it was lost in the hider's column by day and in a lamp
+  by night (mine). Not seen in the running game since: it is made as the
+  scores' stroked rows are, which were.
+- The chat, which says how each round went, is put away while the results
+  are up (`chat::show`): its long lines had run into the window's rows.
 
 ## Later still on 2026-11-18, after a play-tester's look: what you wear changes only at the hide, nothing stands over the window, the window keeps clear of the chat, the end of a round says who the hider went by and points the way to them, the column meets the ground softly, the ring lights up as you come near it, and a seeker is told what a wrong swing costs
 

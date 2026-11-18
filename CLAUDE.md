@@ -13,13 +13,15 @@ working, and spend nothing on it unasked. Since 2026-11-18 the selector has
 the four games Hajun asked for that day, each played at a table: Blend In,
 Knock Off, Bridge Race, Last Stand (`docs/minigames.md`).
 
-As of 2026-11-17: `PROTOCOL_VERSION` 21, APK 40 (`versionCode`), the
-server deployed then (07:05 UTC) with everything in `server/` and
-`shared/`, all of it committed and pushed. The iPhone's last
-tag, `ios-1.0.2-18`, pushed in the first hour of 2026-11-16 (whether
-Codemagic built it is not known here), is protocol 18: its build is told to
-update and stays offline until `ios-1.0.2-19` is built, whose tag is
-Hajun's to ask for.
+As of 2026-11-18: `PROTOCOL_VERSION` 22, APK 41 (`versionCode`, not yet on
+a phone), the server deployed then (04:16 UTC) with everything in `server/`
+and `shared/`, all of it committed and pushed. APK 41 has the committed
+`roundtownmap.glb`: Hajun's export of 2026-11-17 23:54 (48 `plot` planes)
+is in their checkout, uncommitted, and Blend In's crowd's grid was not baked
+for it. The iPhone's last tag, `ios-1.0.2-18`, pushed in the first hour of
+2026-11-16 (whether Codemagic built it is not known here), is protocol 18:
+its build is told to update and stays offline until `ios-1.0.2-19` is
+built, whose tag is Hajun's to ask for.
 
 ## This file, and where the rest is
 

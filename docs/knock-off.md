@@ -6,9 +6,28 @@
 
 ## Contents
 
-1. Later still on 2026-11-18, after a play-test: the camera comes in as the ice breaks, a hit is felt, nothing stands over the play, the ice breaks into pieces, and whoever wins has a moment
-2. Later on 2026-11-18, after a check of it: the last person to leave is paid for their place online too, where you came is the game's own word for it, a device that comes back is held ready if it was, and every slide begins on every device the moment it begins
-3. Since 2026-11-18 Knock Off is a game people play, online and offline: four on a disc of ice in the sea, everyone aiming at once in secret and sliding at once, the ice breaking a metre a turn
+1. At the merge, 2026-11-18: the far player clear of the table's board, the game's name said low, the out panel clear of the chat's button
+2. Later still on 2026-11-18, after a play-test: the camera comes in as the ice breaks, a hit is felt, nothing stands over the play, the ice breaks into pieces, and whoever wins has a moment
+3. Later on 2026-11-18, after a check of it: the last person to leave is paid for their place online too, where you came is the game's own word for it, a device that comes back is held ready if it was, and every slide begins on every device the moment it begins
+4. Since 2026-11-18 Knock Off is a game people play, online and offline: four on a disc of ice in the sea, everyone aiming at once in secret and sliding at once, the ice breaking a metre a turn
+
+## At the merge, 2026-11-18: the far player clear of the table's board, the game's name said low, the out panel clear of the chat's button
+
+Two play-throughs of the merged build (`docs/minigames.md`, "At the merge")
+found the table's board, "Starting in 4" and Leave under it, reaching nearly
+a quarter of the way down the screen, and Leave standing on the head of the
+player at the far edge of the ice; the gold "Knock Off" the table says
+across the screen as you sit down running into the names of the two at the
+sides; and the "You're out!" panel's end over the chat's keyboard button at
+16:9. Mended (mine): while the table waits and counts down the camera is
+fitted with `CLEAR_TOP_WAITING` (0.26 of the screen) kept clear at the top,
+and eases to `CLEAR_TOP` as play begins (`view_of` takes it; a test has the
+far edge and the far player under it on three shapes of screen); the table's
+headline is put low over the near sea, as this game's own are
+(`knock_off::lower_headline`, from `table`); the panel's line is held to
+`PANEL_SAID` (40 vmin) and goes on two lines. Seen hidden afterwards, by
+day at 16:9: the wait and the countdown with three of the computer's
+players; not the panel (code alone).
 
 ## Later still on 2026-11-18, after a play-test: the camera comes in as the ice breaks, a hit is felt, nothing stands over the play, the ice breaks into pieces, and whoever wins has a moment
 
