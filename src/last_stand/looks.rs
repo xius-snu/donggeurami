@@ -6,22 +6,26 @@
 //!
 //! * **The zombies** ([`dress`]): Bridge Wars' zombie, the boy painted
 //!   green, each kind in a tint of its own ([`paint`]; the file's
-//!   `colours.last_stand`), a brute a third bigger and a giant twice as big
-//!   ([`size`]; the rules' `Kind::size`), their legs swinging the slower
-//!   the bigger they are ([`stride`]), so that a giant's footfalls are
-//!   heavy; each with its name, if its kind has one in the file, over a
-//!   bar of its health (the kit's tags, `arena::place_tags`), and a number
-//!   floating off it for every blow that takes any ([`hurt`]). They come
-//!   up out of the void at the sand's edge, climbing over the rim, as the
-//!   game has them.
+//!   `colours.last_stand`), which by night it glows faintly too, a brute a
+//!   third bigger and a giant twice as big ([`size`]; the rules'
+//!   `Kind::size`), their legs swinging the slower the bigger they are
+//!   ([`stride`]), so that a giant's footfalls are heavy; each with its
+//!   name, if its kind has one in the file, over a bar of its health (the
+//!   kit's tags, `arena::place_tags`; a big one's as much bigger, and over
+//!   its head, `arena::Bigger`), and a number floating off it for the
+//!   blows that take any, a little way off it, together no oftener than
+//!   every 0.3 s ([`say_blows`]). They come up out of the void at the
+//!   sand's edge, climbing over the rim, as the game has them.
 //! * **The anchor's crystal** (the map's `spawn` pillar, [`Crystal`]): a
 //!   bar over it, wider than a body's ([`anchor_bar`]); a white flash
-//!   over it as it is hit, with a number of what the blows took, and a
-//!   green one as a Fortify brings it all back; and once broken it
+//!   over it as it is hit, with a number of what the blows took beside it,
+//!   and a green one as a Fortify brings it all back; and once broken it
 //!   shatters, its pieces flying out and falling, and it is gone, from
 //!   sight and from underfoot ([`anchor`]); stood up again as the game goes
 //!   and as the next begins. The beam, bought: a short bright line from
-//!   the crystal to whatever it zaps ([`beam`]).
+//!   the crystal to whatever it zaps ([`beam`]). While it is off the
+//!   screen, an arrow round you points the way to it, flashing red as it is
+//!   hit ([`toward_the_anchor`]).
 //! * **A spitter's ball** ([`SpitBall`]): a small green ball arcing from the
 //!   spitter to where it comes down, and a green splash there.
 //! * **The generators**: over each pad, what it makes ([`over_the_pads`]:
@@ -39,14 +43,15 @@ use roundtown_net::bridge_wars::ZOMBIE_TEAM;
 use roundtown_net::last_stand::{self as rules, ANCHOR, CRYSTAL_RADIUS, Forges, Kind, PADS, PLINTH_TOP, SPIT_RADIUS, Shambler, Spit, Spittle};
 use roundtown_net::Item;
 
-use super::{Happened, Stand, StandSystems};
+use super::{Announced, Happened, Stand, StandSystems, Tally, spread};
 use crate::arena::{self, Health, InArena};
+use crate::hud::{Picture, Pictures};
 use crate::island::{Islands, Land, Venue, is_material};
 use crate::lobby::WalkFromMotion;
-use crate::market::Shops;
 use crate::net::Online;
+use crate::sky::Daylight;
 use crate::ui::{UiChanged, fill, ui};
-use crate::{Player, Team, ThirdPersonCamera, WalkBone, WalkCycle};
+use crate::{Dead, Player, Team, ThirdPersonCamera, WalkBone, WalkCycle};
 
 /// The crystal's bar stands on the screen over the crystal as the screen
 /// has it: over the highest on the screen of the crystal's foot and its
@@ -164,15 +169,14 @@ fn standing_over(point: Vec2, size: Vec2) -> Rect {
 }
 
 /// Whether what this game writes over the world is to be in sight: you on
-/// its map, and not standing in a shop's outline, whose window comes down
-/// over the middle of the screen (`market`), under which it would show
+/// its map, and no shop's window up over you, under which it would show
 /// through the window's see-through dark among its cards' words (seen in a
 /// hidden run by night, 2026-11-18: a pad's "Silver" by "Heal" and by
 /// "Leap"; mine, as the line under the plate is put away there,
-/// `screen::show_plate`).
-fn in_sight(me: &Query<(&Venue, &Transform), With<Player>>, shops: &Shops) -> bool {
-    me.single()
-        .is_ok_and(|(venue, at)| *venue == Venue::LastStand && shops.at(Venue::LastStand, at.translation).is_none())
+/// `screen::show_plate`); nor anything this game says across the middle of
+/// the screen ([`Announced`]), into whose words it would be drawn.
+fn in_sight(me: &Query<&Venue, With<Player>>, stand: &Stand, announced: &Query<(), With<Announced>>) -> bool {
+    me.single().is_ok_and(|venue| *venue == Venue::LastStand) && !stand.shopping() && announced.is_empty()
 }
 
 /// What is written over each pad: how high over the ground, in metres, and
@@ -180,20 +184,47 @@ fn in_sight(me: &Query<(&Venue, &Transform), With<Player>>, shops: &Shops) -> bo
 const PAD_WORDS_OVER: f32 = 2.4;
 const PAD_WORDS: f32 = 2.8;
 
+/// How brightly a zombie's head glows at night, the street lamps all the way
+/// on (`sky::Daylight::lamps`), in its kind's tint brought up to the same
+/// brightness for every kind, so many times its brightest part: about a
+/// tenth of how it is drawn by day (an anchor's glow, `lamps`, is one and a
+/// half times its colour for about as bright as by day); none by day. Mine,
+/// since 2026-11-18: by night, away from the crystal's light, every kind
+/// was a black disc on the dark sand, the giant too, told apart by their
+/// size alone.
+const NIGHT_GLOW: f32 = 0.16;
+
+/// The arrow round you toward the anchor's crystal while it is off the
+/// screen: how big it is, and how far out from you its middle is, in
+/// shares of the short side of the screen (as the Tracker's in Bridge Wars,
+/// `compass`, about two metres of the map, clear of you and of the punch's
+/// range in front of you, but a little bigger); and how high over your
+/// feet the point is that it is drawn round, in metres.
+const ARROW: f32 = 5.0;
+const ARROW_OUT: f32 = 11.0;
+const ARROW_ROUND: f32 = 0.9;
+/// How far inside the edge of the screen the crystal's foot has to be for
+/// it to count as on the screen, in shares of its short side: a hair, so
+/// that the arrow comes no sooner than the crystal goes (with its middle 4
+/// in, the two stood on the screen together, the crystal at its foot).
+const SEEN_INSIDE: f32 = 0.5;
+
 pub(super) fn plugin(app: &mut App) {
     app.init_resource::<Crystal>()
+        .init_resource::<CrystalSeen>()
         .add_observer(read_crystal)
         .add_observer(last_blow)
         .add_systems(Startup, load)
         .add_systems(
             Update,
             (
-                (dress, hurt, paint, size, follow_spits).after(StandSystems),
+                (dress, hurt, say_blows).chain().after(StandSystems),
+                (paint, size, follow_spits).after(StandSystems),
                 // After the zombies have been moved, by the game here or
                 // the server, and before their legs are swung.
                 stride.after(StandSystems).after(crate::move_bodies).before(crate::animate_walk),
                 (anchor, beam, fly_spits, shards, splats).after(StandSystems),
-                (recolour, (anchor_bar, over_the_pads)).chain().after(crate::follow_camera),
+                (see_crystal, recolour, (anchor_bar, over_the_pads, toward_the_anchor)).chain().after(crate::follow_camera),
             ),
         );
 }
@@ -263,12 +294,14 @@ fn recolour(
 // -------------------------------------------------------------- the zombies
 
 /// A zombie's body as this game has dressed it: its kind, the health last
-/// seen on it, where it was last frame, for its stride, and whether it has
+/// seen on it, what the blows on it have taken that no number has said yet
+/// ([`Tally`]), where it was last frame, for its stride, and whether it has
 /// been painted and sized yet (each waits for its model).
 #[derive(Component)]
 pub(super) struct Dressed {
     kind: Kind,
     health: u16,
+    tally: Tally,
     last: Vec3,
     painted: bool,
     sized: bool,
@@ -290,17 +323,21 @@ fn kind_word(kind: Kind) -> String {
 
 /// Every zombie's body as it comes (one this device made, offline, or the
 /// server's, once `net` has given it a body): on the zombies' team, with
-/// its health for the bar over it (`arena::place_tags`), and its kind's
-/// name; its legs swung by this game ([`stride`]) rather than read off how
-/// it moves, which knows nothing of its size.
+/// its health for the bar over it (`arena::place_tags`), the bar over a
+/// brute or a giant as much bigger as it is, and over its head
+/// (`arena::Bigger`; since 2026-11-18, a giant's bar having been a body's,
+/// across its head), and its kind's name; its legs swung by this game
+/// ([`stride`]) rather than read off how it moves, which knows nothing of
+/// its size.
 fn dress(fresh: Query<(Entity, &Transform, &Shambler), (With<WalkCycle>, Without<Dressed>)>, mut commands: Commands) {
     for (body, place, shambler) in &fresh {
-        commands
-            .entity(body)
+        let mut dressed = commands.entity(body);
+        dressed
             .insert((
                 Dressed {
                     kind: shambler.kind,
                     health: shambler.health,
+                    tally: Tally::default(),
                     last: place.translation,
                     painted: false,
                     sized: false,
@@ -310,15 +347,19 @@ fn dress(fresh: Query<(Entity, &Transform, &Shambler), (With<WalkCycle>, Without
                 Name::new(kind_word(shambler.kind)),
             ))
             .remove::<WalkFromMotion>();
+        if shambler.kind.size() > 1.0 {
+            dressed.insert(arena::Bigger(shambler.kind.size()));
+        }
     }
 }
 
-/// A zombie's health as it changes: its bar, and the damage it took
-/// floating off it.
-fn hurt(mut zombies: Query<(&Transform, &Shambler, &mut Dressed, &mut Health), Changed<Shambler>>, mut commands: Commands) {
-    for (place, shambler, mut dressed, mut health) in &mut zombies {
+/// A zombie's health as it changes: its bar, and what the blow took, to
+/// float off it ([`say_blows`]).
+fn hurt(mut zombies: Query<(&Shambler, &mut Dressed, &mut Health), Changed<Shambler>>) {
+    for (shambler, mut dressed, mut health) in &mut zombies {
         if shambler.health < dressed.health {
-            arena::spawn_number(&mut commands, place.translation + Vec3::Y * (shambler.kind.size() - 1.0), f32::from(dressed.health - shambler.health));
+            let taken = f32::from(dressed.health - shambler.health);
+            dressed.tally.add(taken);
         }
         if dressed.health != shambler.health {
             dressed.health = shambler.health;
@@ -330,11 +371,37 @@ fn hurt(mut zombies: Query<(&Transform, &Shambler, &mut Dressed, &mut Health), C
     }
 }
 
+/// Where a number off a zombie of `kind` standing at `at` floats from: over
+/// a big one's head as much higher as it is (the kit floats every number
+/// from a body's own head height, `arena::spawn_number`).
+fn number_off(at: Vec3, kind: Kind) -> Vec3 {
+    at + Vec3::Y * (kind.size() - 1.0)
+}
+
+/// The damage blows have taken off each zombie, floating off it, by one
+/// number no oftener than every 0.3 s ([`Tally`]: a crowd of blows on one
+/// zombie, yours, a teammate's, the beam's, was a heap of numbers one over
+/// another), each from a little way off it, thrown ([`spread`]).
+fn say_blows(time: Res<Time>, mut zombies: Query<(&Transform, &mut Dressed)>, mut commands: Commands) {
+    let now = time.elapsed_secs();
+    for (place, mut dressed) in &mut zombies {
+        // (Read first: only one with something to say is written.)
+        if dressed.tally.unsaid <= 0.0 {
+            continue;
+        }
+        let kind = dressed.kind;
+        if let Some(taken) = dressed.tally.due(now) {
+            arena::spawn_number(&mut commands, spread(number_off(place.translation, kind)), taken);
+        }
+    }
+}
+
 /// A zombie gone in the middle of the game, killed: the blow that killed it
 /// floating off it, as every blow does that takes health and leaves it
-/// standing ([`hurt`]). Its body goes in the frame of the blow, before its
-/// health is seen to go, so it is said here as what it had left (what a
-/// blow could take from it). Not one gone into the void, which no blow
+/// standing ([`say_blows`]), with whatever blows before it had taken that
+/// no number had said yet. Its body goes in the frame of the blow, before
+/// its health is seen to go, so it is said here as what it had left (what
+/// a blow could take from it). Not one gone into the void, which no blow
 /// had, nor any once the game is over, as everything of it goes; nor,
 /// online, any that goes with the connection (`net` takes everything the
 /// server sent away as it is lost, and says so first): until 2026-11-18
@@ -357,30 +424,55 @@ fn last_blow(
     if place.translation.y < rules::SAND_TOP - 1.0 || dressed.health == 0 {
         return;
     }
-    arena::spawn_number(&mut commands, place.translation + Vec3::Y * (dressed.kind.size() - 1.0), f32::from(dressed.health));
+    let mut tally = dressed.tally;
+    let taken = f32::from(dressed.health) + tally.rest();
+    arena::spawn_number(&mut commands, spread(number_off(place.translation, dressed.kind)), taken);
+}
+
+/// How a zombie whose kind's skin is `tint` glows, the street lamps `lamps`
+/// of the way on: its tint brought up to the same brightness for every
+/// kind, [`NIGHT_GLOW`] of the way at night, none by day.
+fn night_glow(tint: Color, lamps: f32) -> LinearRgba {
+    let linear = tint.to_linear();
+    let most = linear.red.max(linear.green).max(linear.blue);
+    if lamps <= 0.0 || most <= 0.0 {
+        return LinearRgba::BLACK;
+    }
+    let times = NIGHT_GLOW * lamps.min(1.0) / most;
+    LinearRgba::rgb(linear.red * times, linear.green * times, linear.blue * times)
 }
 
 /// Paints each zombie in its kind's colours as its model comes: its skin
 /// and its hair, the parts the camera over it sees most of, as Bridge
 /// Wars' zombies are (`arena::paint_zombies`); each a copy of the model's
 /// own material, made once for each kind and shared by all of it, and
-/// coloured again as the file changes.
-#[allow(clippy::type_complexity)]
+/// coloured again as the file changes. By night both glow faintly in the
+/// kind's tint, so that each kind is seen, and seen for what it is, away
+/// from the crystal's light too ([`night_glow`]), as the time of day
+/// changes (`sky::Daylight`, a step at a time).
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn paint(
     mut zombies: Query<(Entity, &mut Dressed)>,
     children: Query<&Children>,
     parts: Query<(&GltfMaterialName, &MeshMaterial3d<StandardMaterial>)>,
     changed: Res<UiChanged>,
+    daylight: Option<Res<Daylight>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut paints: Local<HashMap<(Kind, bool), Handle<StandardMaterial>>>,
     mut commands: Commands,
 ) {
     let colours = ui().colours.last_stand;
-    if changed.is_changed() && !changed.is_added() {
+    let lamps = daylight.as_ref().map_or(0.0, |day| day.lamps);
+    let file = changed.is_changed() && !changed.is_added();
+    if file || daylight.as_ref().is_some_and(|day| day.is_changed()) {
         for (&(kind, hair), paint) in paints.iter() {
             let (skin_colour, hair_colour) = colours.paint(kind);
-            if let Some(mut look) = materials.get_mut(paint) {
-                look.base_color = if hair { hair_colour } else { skin_colour };
+            let (base, glow) = (if hair { hair_colour } else { skin_colour }, night_glow(skin_colour, lamps));
+            if materials.get(paint).is_some_and(|look| look.base_color != base || look.emissive != glow)
+                && let Some(mut look) = materials.get_mut(paint)
+            {
+                look.base_color = base;
+                look.emissive = glow;
             }
         }
     }
@@ -404,6 +496,7 @@ fn paint(
                     let (skin_colour, hair_colour) = colours.paint(kind);
                     let mut look = materials.get(&worn.0).cloned().unwrap_or_default();
                     look.base_color = if hair { hair_colour } else { skin_colour };
+                    look.emissive = night_glow(skin_colour, lamps);
                     materials.add(look)
                 })
                 .clone();
@@ -487,9 +580,10 @@ fn stride(time: Res<Time>, mut zombies: Query<(&Transform, &mut Dressed, &mut Wa
 
 /// The anchor's crystal as the map has it: its parts, each with the flash
 /// over it; the map's shape as it was before it shattered, to stand it up
-/// again; whether it has; the game it stands in (`Stand::fight`), the
-/// health it last had there, what it has taken since a number last said
-/// it, and how long ago it last flashed.
+/// again; whether it has, when (by the app's own time, in seconds), and
+/// whether it was off the screen as it did; the game it stands in
+/// (`Stand::fight`), the health it last had there, what it has taken
+/// since a number last said it, and how long ago it last flashed.
 #[derive(Resource, Default)]
 pub(super) struct Crystal {
     parts: Vec<Entity>,
@@ -497,11 +591,94 @@ pub(super) struct Crystal {
     flash: Option<Handle<StandardMaterial>>,
     original: Option<Vec<[Vec3; 3]>>,
     broken: bool,
+    broke_at: Option<f32>,
+    broke_unseen: bool,
     fight: Option<u32>,
     health: Option<u16>,
     unsaid: f32,
     since_flash: f32,
     flashing: f32,
+}
+
+/// How long the camera looks on at the crystal as it shatters off the
+/// screen, in seconds, from its first piece flying out (mine, 2026-11-18: a
+/// play-tester saw it break out of sight, and the end said over empty
+/// stone, the game's biggest moment never seen).
+pub(super) const SHATTER_LOOK: f32 = 2.2;
+
+impl Crystal {
+    /// How strongly it is flashing now, from 1 as it is hit to 0: what the
+    /// anchor's bar on the plate and its arrow flash by too.
+    pub(super) fn flash(&self) -> f32 {
+        (self.flashing / FLASH_SECS).clamp(0.0, 1.0)
+    }
+
+    /// Whether it shattered off the screen less than [`SHATTER_LOOK`] ago,
+    /// at `now` by the app's own time.
+    pub(super) fn shattering_unseen(&self, now: f32) -> bool {
+        self.broke_unseen && self.broke_at.is_some_and(|at| now - at < SHATTER_LOOK)
+    }
+}
+
+/// Whether the crystal's foot is on the screen, far enough inside its edge
+/// to be seen ([`SEEN_INSIDE`]), as last drawn: off it, an arrow round you
+/// points the way to it ([`toward_the_anchor`]), and the line that says the
+/// anchor is under attack is said (`screen`). On it, at first, until the
+/// camera is placed.
+#[derive(Resource)]
+pub(super) struct CrystalSeen(pub(super) bool);
+
+impl Default for CrystalSeen {
+    fn default() -> Self {
+        Self(true)
+    }
+}
+
+/// Where the crystal's foot is on the screen, as the camera over it has it,
+/// if it is in front of the camera: of the crystal, what is drawn nearest
+/// the middle of the screen, the camera looking down on it, whichever way
+/// it is from you (its middle, a little further out, could be off the
+/// screen with the crystal and its bar half on it, and the arrow came with
+/// them).
+fn crystal_on_screen(camera: &Camera, eye: &Transform) -> Option<Vec2> {
+    camera
+        .world_to_viewport(&GlobalTransform::from(*eye), Vec3::new(ANCHOR.x, PLINTH_TOP, ANCHOR.y))
+        .ok()
+}
+
+/// Whether `point`, in the window's logical pixels, is far enough inside the
+/// window's edge to be seen ([`SEEN_INSIDE`]).
+fn well_inside(window: &Window, point: Vec2) -> bool {
+    let inside = window.width().min(window.height()) * SEEN_INSIDE / 100.0;
+    point.x >= inside && point.y >= inside && point.x <= window.width() - inside && point.y <= window.height() - inside
+}
+
+/// Keeps [`CrystalSeen`] as the screen has it, in a game of Last Stand,
+/// written only as it changes.
+fn see_crystal(
+    stand: Option<Res<Stand>>,
+    cameras: Query<(&Camera, &Transform), With<ThirdPersonCamera>>,
+    windows: Query<&Window>,
+    mut seen: ResMut<CrystalSeen>,
+) {
+    let (Some(_), Ok((camera, eye)), Ok(window)) = (stand, cameras.single(), windows.single()) else {
+        return;
+    };
+    let on = crystal_on_screen(camera, eye).is_some_and(|point| well_inside(window, point));
+    if seen.0 != on {
+        seen.0 = on;
+    }
+}
+
+/// Where a number off the crystal floats from: beside it, to its left or
+/// its right on the screen, thrown, never over it (mine, 2026-11-18: from
+/// its foot the numbers rose red over its purple, and read badly).
+fn beside_the_crystal() -> Vec3 {
+    let side = if fastrand::bool() { 1.0 } else { -1.0 };
+    let turn = (fastrand::f32() * 2.0 - 1.0) * 0.85;
+    let out = CRYSTAL_RADIUS + 0.6 + fastrand::f32() * 0.9;
+    let way = Vec2::new(side * turn.cos(), turn.sin());
+    Vec3::new(ANCHOR.x + way.x * out, PLINTH_TOP, ANCHOR.y + way.y * out)
 }
 
 /// Finds the crystal in Last Stand's map as it spawns: every part in the
@@ -590,6 +767,7 @@ fn anchor(
     time: Res<Time>,
     stand: Option<Res<Stand>>,
     looks: Res<Looks>,
+    seen: Res<CrystalSeen>,
     mut crystal: ResMut<Crystal>,
     mut islands: ResMut<Islands>,
     mut visibilities: Query<&mut Visibility>,
@@ -604,6 +782,8 @@ fn anchor(
         crystal.health = None;
         crystal.unsaid = 0.0;
         crystal.flashing = 0.0;
+        crystal.broke_at = None;
+        crystal.broke_unseen = false;
         whole_again(crystal, &mut visibilities, &mut islands);
     }
     let Some(stand) = stand else {
@@ -615,15 +795,14 @@ fn anchor(
         return;
     };
     let was = crystal.health.replace(now);
-    let foot = Vec3::new(ANCHOR.x, PLINTH_TOP, ANCHOR.y);
     match was {
         Some(was) if now < was => crystal.unsaid += f32::from(was - now),
-        Some(was) if now > was => arena::spawn_healed(&mut commands, foot, f32::from(now - was)),
+        Some(was) if now > was => arena::spawn_healed(&mut commands, beside_the_crystal(), f32::from(now - was)),
         _ => {}
     }
     // The blow that breaks it said at once, as it shatters.
     if crystal.unsaid > 0.0 && (crystal.since_flash >= FLASH_EVERY || now == 0) {
-        arena::spawn_number(&mut commands, foot, crystal.unsaid);
+        arena::spawn_number(&mut commands, beside_the_crystal(), crystal.unsaid);
         crystal.unsaid = 0.0;
         crystal.since_flash = 0.0;
         if now > 0 {
@@ -656,9 +835,14 @@ fn anchor(
         return;
     }
     // Broken: it shatters, unless it was already when this device came
-    // into the game, which sees it gone.
+    // into the game, which sees it gone; off the screen, the camera comes
+    // to look on (`screen::watch_view`).
     crystal.broken = true;
     let fresh = was.is_some();
+    if fresh {
+        crystal.broke_at = Some(time.elapsed_secs());
+        crystal.broke_unseen = !seen.0;
+    }
     let material = crystal.parts.first().and_then(|&part| worn.get(part).ok()).map(|worn| worn.0.clone());
     for &part in &crystal.parts {
         if let Ok(mut shown) = visibilities.get_mut(part) {
@@ -764,13 +948,13 @@ struct AnchorFill;
 /// Keeps the bar over the crystal, filled as far as the anchor goes, put
 /// away while it is off the screen, under the plate or among the rows top
 /// left ([`Column`]), broken, or the game is not being played, or a shop's
-/// window is up ([`in_sight`]); put up as the game begins and taken down
-/// with it.
-#[allow(clippy::type_complexity)]
+/// window is up, or something is said across the middle of the screen
+/// ([`in_sight`]); put up as the game begins and taken down with it.
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn anchor_bar(
     stand: Option<Res<Stand>>,
-    me: Query<(&Venue, &Transform), With<Player>>,
-    shops: Res<Shops>,
+    me: Query<&Venue, With<Player>>,
+    announced: Query<(), With<Announced>>,
     column: Column,
     cameras: Query<(&Camera, &Transform), With<ThirdPersonCamera>>,
     windows: Query<&Window>,
@@ -787,7 +971,7 @@ fn anchor_bar(
     };
     let _ = bar;
     let round = stand.round.as_ref().filter(|round| round.anchor > 0);
-    let here = in_sight(&me, &shops);
+    let here = in_sight(&me, &stand, &announced);
     let point = round
         .filter(|_| here)
         .zip(cameras.single().ok())
@@ -830,6 +1014,122 @@ fn anchor_bar(
             fill.width = width;
         }
     }
+}
+
+/// The arrow round you that points the way to the anchor's crystal.
+#[derive(Component)]
+struct TowardAnchor;
+
+/// `from` brought `share` of the way to `to`, alpha and all.
+pub(super) fn blend(from: Color, to: Color, share: f32) -> Color {
+    let (a, b, t) = (from.to_srgba(), to.to_srgba(), share.clamp(0.0, 1.0));
+    Srgba::new(
+        a.red + (b.red - a.red) * t,
+        a.green + (b.green - a.green) * t,
+        a.blue + (b.blue - a.blue) * t,
+        a.alpha + (b.alpha - a.alpha) * t,
+    )
+    .into()
+}
+
+/// Where on the screen the arrow round you stands, and the turn that points
+/// its picture (drawn pointing up the screen) the way it goes, for you
+/// drawn at `from` and a step toward the crystal drawn at `step`, `vmin`
+/// logical pixels to a share of the short side: [`ARROW_OUT`] out from you
+/// that way. None where the two are one, as they would be straight under
+/// the camera's eye.
+fn arrow_round(from: Vec2, step: Vec2, vmin: f32) -> Option<(Vec2, f32)> {
+    let way = (step - from).normalize_or_zero();
+    (way != Vec2::ZERO).then(|| (from + way * ARROW_OUT * vmin, way.x.atan2(-way.y)))
+}
+
+/// Keeps an arrow a little way out from you pointing the way to the
+/// anchor's crystal while it is off the screen (mine, since 2026-11-18: a
+/// play-tester fighting at the rim watched the anchor go from 1,500 to
+/// nothing over three waves with nothing on the screen saying it was hit,
+/// or where it was), in the anchor's purple, flashing red as it is hit
+/// (`colours.last_stand.anchor_hit`, with the crystal's own flash, and the
+/// anchor's bar on the plate): the Tracker's arrow in Bridge Wars, drawn
+/// as it is (`compass`, Hajun's: "a small white arrow around your
+/// character"). Put away while the crystal is on the screen, or broken,
+/// you are dead or away, a shop's window is up, something is said across
+/// the middle of the screen (pointing up the screen, it stood in its words,
+/// on the "u" of "Brutes!"), or the game is not being played; put up as the game
+/// begins and taken down with it. Written only as it changes.
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+fn toward_the_anchor(
+    stand: Option<Res<Stand>>,
+    seen: Res<CrystalSeen>,
+    crystal: Res<Crystal>,
+    across: Query<(), (With<Announced>, Without<super::screen::Aloft>)>,
+    me: Query<(&Transform, &Venue, Has<Dead>), With<Player>>,
+    cameras: Query<(&Camera, &Transform), With<ThirdPersonCamera>>,
+    windows: Query<&Window>,
+    mut arrows: Query<(&mut Visibility, &mut UiTransform, &ComputedNode, &mut ImageNode), With<TowardAnchor>>,
+    mut images: ResMut<Assets<Image>>,
+    mut pictures: ResMut<Pictures>,
+    mut commands: Commands,
+) {
+    let Some(stand) = stand else {
+        return;
+    };
+    let Ok((mut shown, mut place, node, mut image)) = arrows.single_mut() else {
+        commands.spawn((
+            TowardAnchor,
+            InArena,
+            Name::new("Toward the anchor"),
+            Node {
+                position_type: PositionType::Absolute,
+                left: Val::ZERO,
+                top: Val::ZERO,
+                width: Val::VMin(ARROW),
+                height: Val::VMin(ARROW),
+                ..default()
+            },
+            ImageNode::new(pictures.of(&mut images, Picture::Compass)).with_color(ui().colours.last_stand.anchor),
+            UiTransform::default(),
+            Visibility::Hidden,
+            // Under the screen's own, over the world and its names.
+            GlobalZIndex(-1),
+            Pickable::IGNORE,
+        ));
+        return;
+    };
+    let wanted = stand.playing()
+        && !seen.0
+        && !stand.shopping()
+        && across.is_empty()
+        && stand.round.as_ref().is_some_and(|round| round.anchor > 0);
+    let placed = me
+        .single()
+        .ok()
+        .filter(|(_, venue, dead)| wanted && **venue == Venue::LastStand && !dead)
+        .zip(cameras.single().ok())
+        .zip(windows.single().ok())
+        .and_then(|(((you, ..), (camera, eye)), window)| {
+            let eye = GlobalTransform::from(*eye);
+            let middle = you.translation + Vec3::Y * ARROW_ROUND;
+            let toward = Vec3::new(ANCHOR.x - middle.x, 0.0, ANCHOR.y - middle.z).normalize_or_zero();
+            let from = camera.world_to_viewport(&eye, middle).ok()?;
+            let step = camera.world_to_viewport(&eye, middle + toward).ok()?;
+            arrow_round(from, step, window.width().min(window.height()) / 100.0)
+        });
+    let Some((middle, turn)) = placed else {
+        shown.set_if_neq(Visibility::Hidden);
+        return;
+    };
+    let size = node.size() * node.inverse_scale_factor();
+    place.set_if_neq(UiTransform {
+        translation: Val2::px(middle.x - size.x * 0.5, middle.y - size.y * 0.5),
+        scale: Vec2::ONE,
+        rotation: Rot2::radians(turn),
+    });
+    let colours = ui().colours.last_stand;
+    let ink = blend(colours.anchor, colours.anchor_hit, crystal.flash());
+    if image.color != ink {
+        image.color = ink;
+    }
+    shown.set_if_neq(Visibility::Inherited);
 }
 
 fn spawn_anchor_bar(commands: &mut Commands) {
@@ -1075,23 +1375,26 @@ fn splats(
 struct PadWords(usize);
 
 /// What the generators make, at `level` (the team's Generator line): silver
-/// alone; then what each step adds, gold, sapphire and amethyst; and past
-/// them, all four, so many times as fast (Hajun's brief: "Lvl 2: gold,
-/// sapphire").
+/// alone; then the level and everything they make, the silver with what
+/// each step adds, gold and sapphire; with amethyst too, all four; and past
+/// that, all four, so many times as fast (Hajun's brief: "Lvl 2: gold,
+/// sapphire"; with the silver since 2026-11-18, mine, a play-tester having
+/// read "Lvl 1: gold" as the gold alone).
 fn pad_words(level: u16) -> String {
     let file = ui();
     let words = &file.words.last_stand;
     let level_word = level.to_string();
     match level {
         0 => words.generator.clone(),
-        1..=3 => {
-            let items: Vec<String> = [Item::Gold, Item::Sapphire, Item::Amethyst]
+        1 | 2 => {
+            let items: Vec<String> = [Item::Silver, Item::Gold, Item::Sapphire]
                 .iter()
-                .take(usize::from(level))
+                .take(usize::from(level) + 1)
                 .map(|item| file.words.arena.item(*item).to_lowercase())
                 .collect();
             fill(&words.generator_level, &[("level", &level_word), ("items", &items.join(", "))])
         }
+        3 => fill(&words.generator_all, &[("level", &level_word)]),
         _ => fill(
             &words.generator_fast,
             &[("level", &level_word), ("fast", &format!("{:.2}", Forges::speed(level)).trim_end_matches('0').trim_end_matches('.'))],
@@ -1102,12 +1405,13 @@ fn pad_words(level: u16) -> String {
 /// Writes over each pad what its generator makes, as the team raises it,
 /// where the pad is on the screen; put away while it is off the screen,
 /// under the plate or among the rows top left ([`Column`]), the game is not
-/// being played, or a shop's window is up ([`in_sight`]).
-#[allow(clippy::type_complexity)]
+/// being played, a shop's window is up, or something is said across the
+/// middle of the screen ([`in_sight`]).
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn over_the_pads(
     stand: Option<Res<Stand>>,
-    me: Query<(&Venue, &Transform), With<Player>>,
-    shops: Res<Shops>,
+    me: Query<&Venue, With<Player>>,
+    announced: Query<(), With<Announced>>,
     column: Column,
     cameras: Query<(&Camera, &Transform), With<ThirdPersonCamera>>,
     windows: Query<&Window>,
@@ -1136,7 +1440,7 @@ fn over_the_pads(
         }
         return;
     }
-    let here = in_sight(&me, &shops) && stand.playing();
+    let here = in_sight(&me, &stand, &announced) && stand.playing();
     let said = pad_words(stand.upgrades.generator);
     let view = cameras.single().ok().zip(windows.single().ok());
     for (pad, mut shown, mut place, node, mut text) in &mut words {
@@ -1169,11 +1473,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn over_the_pads_is_what_the_generators_make() {
+    fn over_the_pads_is_everything_the_generators_make() {
         assert_eq!(pad_words(0), "Silver");
-        assert_eq!(pad_words(1), "Lvl 1: gold");
-        assert_eq!(pad_words(2), "Lvl 2: gold, sapphire");
-        assert_eq!(pad_words(3), "Lvl 3: gold, sapphire, amethyst");
+        assert_eq!(pad_words(1), "Lvl 1: silver, gold");
+        assert_eq!(pad_words(2), "Lvl 2: silver, gold, sapphire");
+        assert_eq!(pad_words(3), "Lvl 3: all four");
         assert_eq!(pad_words(4), "Lvl 4: all four, x1.25");
         assert_eq!(pad_words(5), "Lvl 5: all four, x1.56");
     }
@@ -1212,6 +1516,7 @@ mod tests {
         let mut app = App::new();
         app.insert_resource(Time::<()>::default())
             .init_resource::<Assets<StandardMaterial>>()
+            .init_resource::<CrystalSeen>()
             .insert_resource(Looks {
                 ball: Handle::default(),
                 spit: Handle::default(),
@@ -1286,6 +1591,55 @@ mod tests {
     }
 
     #[test]
+    fn a_brute_s_and_a_giant_s_bar_is_as_much_bigger_as_they_are_and_by_night_each_glows_alike() {
+        let mut app = App::new();
+        app.add_systems(Update, dress);
+        let zombie = |app: &mut App, kind: Kind| {
+            app.world_mut()
+                .spawn((
+                    Transform::default(),
+                    WalkCycle {
+                        phase: 0.0,
+                        weight: 0.0,
+                        speed: 0.0,
+                    },
+                    Shambler { kind, health: 10, most: 10 },
+                ))
+                .id()
+        };
+        let (walker, brute, giant) = (zombie(&mut app, Kind::Walker), zombie(&mut app, Kind::Brute), zombie(&mut app, Kind::Giant));
+        app.update();
+        let bigger = |app: &App, body| app.world().get::<arena::Bigger>(body).copied();
+        assert_eq!(bigger(&app, walker), None, "a body's own bar");
+        assert_eq!(bigger(&app, brute), Some(arena::Bigger(Kind::Brute.size())));
+        assert_eq!(bigger(&app, giant), Some(arena::Bigger(2.0)));
+        // By day nothing glows; by night every kind's tint as bright as
+        // every other's, so that the darkest are seen too.
+        let colours = ui().colours.last_stand;
+        assert_eq!(night_glow(colours.giant_skin, 0.0), LinearRgba::BLACK);
+        for kind in Kind::ALL {
+            let glow = night_glow(colours.paint(kind).0, 1.0);
+            let most = glow.red.max(glow.green).max(glow.blue);
+            assert!((most - NIGHT_GLOW).abs() < 1e-5, "{kind:?}: {glow:?}");
+        }
+    }
+
+    #[test]
+    fn the_arrow_round_you_stands_out_from_you_the_way_to_the_crystal() {
+        let vmin = 10.0;
+        // The crystal up the screen from you: the arrow over you, its
+        // picture unturned; to your right, beside you, a quarter turn.
+        let (at, turn) = arrow_round(Vec2::new(500.0, 400.0), Vec2::new(500.0, 380.0), vmin).expect("a way");
+        assert_eq!(at, Vec2::new(500.0, 400.0 - ARROW_OUT * vmin));
+        assert!(turn.abs() < 1e-6);
+        let (at, turn) = arrow_round(Vec2::new(500.0, 400.0), Vec2::new(530.0, 400.0), vmin).expect("a way");
+        assert_eq!(at, Vec2::new(500.0 + ARROW_OUT * vmin, 400.0));
+        assert!((turn - std::f32::consts::FRAC_PI_2).abs() < 1e-6);
+        // No way to it from right under the eye.
+        assert_eq!(arrow_round(Vec2::ONE, Vec2::ONE, vmin), None);
+    }
+
+    #[test]
     fn a_giant_s_legs_swing_half_as_often_as_a_walker_s_for_the_ground_it_covers() {
         let mut app = App::new();
         app.insert_resource(Time::<()>::default());
@@ -1296,6 +1650,7 @@ mod tests {
                 Dressed {
                     kind,
                     health: 1,
+                    tally: Tally::default(),
                     last: Vec3::ZERO,
                     painted: true,
                     sized: true,

@@ -91,6 +91,121 @@ pub(crate) struct Stand {
     finished: bool,
     /// Where the game has just put you, offline, for you to be stood there.
     put: Option<Transform>,
+    /// Whether a shop's window may come down over you as you stand in its
+    /// outline, in the middle of a wave only once you have stood there a
+    /// moment ([`ShopDoor`]).
+    door: ShopDoor,
+}
+
+/// Whether a shop's window may open for you (since 2026-11-18; a
+/// play-tester, fighting round the crystal in the eighth wave, stepped into
+/// the item shop's outline 4.8 m from it and had the window come down over
+/// the middle of the screen, every zombie round them under it): between
+/// waves, as you step into its outline, as in Bridge Wars; in the middle of
+/// a wave, only once you have stood in it [`SHOP_SETTLE`] seconds without
+/// swinging or being hit (mine: whoever means to shop stops, whoever is
+/// fighting there swings or is hit), and then for as long as you stay in
+/// it. Its window is the kit's (`market`), which opens on Last Stand's map
+/// only where the game hands it cards to show (`market::Stalls`): until it
+/// may, the game hands it none (`play::publish`).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct ShopDoor {
+    /// How long you have stood in the outline in this wave without a swing
+    /// or a blow, in seconds.
+    settled: f32,
+    /// The window may be up: you are in an outline, and may shop there.
+    open: bool,
+}
+
+/// How long you stand in a shop's outline in the middle of a wave before
+/// its window comes down, in seconds (mine).
+const SHOP_SETTLE: f32 = 0.5;
+
+impl ShopDoor {
+    /// A frame `dt` long: you `inside` a shop's outline or not, in a `wave`
+    /// or not, and `stirred` (you swung, or were hit) or not. Whether its
+    /// window may be up now.
+    fn step(&mut self, inside: bool, wave: bool, stirred: bool, dt: f32) -> bool {
+        if !inside {
+            *self = Self::default();
+            return false;
+        }
+        if !self.open {
+            if !wave {
+                self.open = true;
+            } else if stirred {
+                self.settled = 0.0;
+            } else {
+                self.settled += dt;
+                self.open = self.settled >= SHOP_SETTLE;
+            }
+        }
+        self.open
+    }
+}
+
+/// Something this game has said across the middle of the screen
+/// (`hud::announce`: "Go!", a wave come or cleared, the anchor broken, the
+/// end), for as long as it is up: what this game writes over the world
+/// there (the crystal's bar, the words over the pads) is put away
+/// meanwhile, rather than drawn into its words ([`looks`]; a play-tester,
+/// 2026-11-18: "——Go!", the bar run into it, and "Hold the anchor" into a
+/// pad's "Silver"); all of it is put away while a shop's window is up, as
+/// it would show through the window's see-through dark among its cards
+/// ([`screen`]), and taken down as the results come up, whose window it
+/// would show through as well.
+#[derive(Component)]
+pub(crate) struct Announced;
+
+/// How long one body's blows are said by one number, in seconds: no number
+/// comes off it oftener ([`Tally`]; mine, a play-tester having found the
+/// numbers off a body clawed at by several zombies at once, or the crystal,
+/// in a heap that read as one figure: "6" over "7").
+const TALLY_SECS: f32 = 0.3;
+
+/// What blows on one body have taken that no number has said yet, and when
+/// the last number came off it: each blow floats a number at once, but no
+/// oftener than every [`TALLY_SECS`], those that come meanwhile said
+/// together by the next.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct Tally {
+    unsaid: f32,
+    said_at: Option<f32>,
+}
+
+impl Tally {
+    /// A blow that took `damage`.
+    fn add(&mut self, damage: f32) {
+        self.unsaid += damage.max(0.0);
+    }
+
+    /// What a number is to say now, at `now` seconds, if one is to come.
+    fn due(&mut self, now: f32) -> Option<f32> {
+        if self.unsaid <= 0.0 || self.said_at.is_some_and(|at| now - at < TALLY_SECS) {
+            return None;
+        }
+        self.said_at = Some(now);
+        Some(std::mem::take(&mut self.unsaid))
+    }
+
+    /// Whatever is unsaid, to be said with a last blow.
+    fn rest(&mut self) -> f32 {
+        std::mem::take(&mut self.unsaid)
+    }
+}
+
+/// How far a number floating off a body stands from it, either way across
+/// the screen and up and down it, in metres, thrown afresh for each: from
+/// straight overhead a number rises toward the camera and hardly moves on
+/// the screen, so that numbers off one body stood one over another (mine).
+const SPREAD_ACROSS: f32 = 0.75;
+const SPREAD_ALONG: f32 = 0.45;
+
+/// Where a number off the body at `at` floats from: thrown about it
+/// ([`SPREAD_ACROSS`]), the camera over it looking down the way it does,
+/// -Z up the screen.
+fn spread(at: Vec3) -> Vec3 {
+    at + Vec3::new((fastrand::f32() * 2.0 - 1.0) * SPREAD_ACROSS, 0.0, (fastrand::f32() * 2.0 - 1.0) * SPREAD_ALONG)
 }
 
 impl Stand {
@@ -117,7 +232,14 @@ impl Stand {
             ready: false,
             finished: false,
             put: None,
+            door: ShopDoor::default(),
         }
+    }
+
+    /// Whether a shop's window is up over you: you in its outline, it
+    /// allowed to be ([`ShopDoor`]), the game on.
+    fn shopping(&self) -> bool {
+        self.door.open && self.playing()
     }
 
     /// Your purse, as last seen.
@@ -308,6 +430,57 @@ mod tests {
     }
 
     #[test]
+    fn a_shop_s_window_comes_down_at_once_between_waves_and_in_a_wave_only_once_you_stand_still() {
+        // (Frames an eighth of a second long, which add up exactly.)
+        let frame = 0.125;
+        let mut door = ShopDoor::default();
+        // Between waves, as you step in; out, shut.
+        assert!(door.step(true, false, false, frame));
+        assert!(!door.step(false, false, false, frame));
+        // In a wave: not as you step in, nor while you swing or are hit;
+        // once you have stood there a moment.
+        let mut opened_at = None;
+        for step in 0..40 {
+            let stirred = step < 10;
+            if door.step(true, true, stirred, frame) && opened_at.is_none() {
+                opened_at = Some(step);
+            }
+        }
+        // Stirred last in frame 9: open half a second after, in frame 13.
+        assert_eq!(opened_at, Some(9 + (SHOP_SETTLE / frame) as i32));
+        // Open, it stays so while you are in it, whatever you do.
+        assert!(door.step(true, true, true, frame));
+        // Walking through in a wave, in less than the while: never.
+        let mut door = ShopDoor::default();
+        assert!((0..3).all(|_| !door.step(true, true, false, frame)));
+        assert!(!door.step(false, true, false, frame));
+        // Open as the wave comes, it stays open.
+        let mut door = ShopDoor::default();
+        assert!(door.step(true, false, false, frame) && door.step(true, true, true, frame));
+    }
+
+    #[test]
+    fn blows_on_one_body_are_said_at_once_and_then_together_no_oftener_than_a_while() {
+        let mut tally = Tally::default();
+        assert_eq!(tally.due(0.0), None, "nothing taken");
+        tally.add(6.0);
+        assert_eq!(tally.due(1.0), Some(6.0), "the first at once");
+        tally.add(7.0);
+        tally.add(5.0);
+        assert_eq!(tally.due(1.1), None);
+        assert_eq!(tally.due(1.01 + TALLY_SECS), Some(12.0), "the next two as one");
+        // With a last blow, whatever is unsaid.
+        tally.add(3.0);
+        assert_eq!(tally.rest(), 3.0);
+        assert_eq!(tally.due(9.0), None);
+        // Thrown about the body, a little way off it at most.
+        for _ in 0..50 {
+            let off = spread(Vec3::new(4.0, 1.0, -2.0)) - Vec3::new(4.0, 1.0, -2.0);
+            assert!(off.x.abs() <= SPREAD_ACROSS && off.z.abs() <= SPREAD_ALONG && off.y == 0.0);
+        }
+    }
+
+    #[test]
     fn the_line_under_the_results_says_the_waves_and_the_team_s_score() {
         TeamScore::keep(8, &[1800, 1610]);
         let line = total_words(8).expect("a line");
@@ -328,7 +501,10 @@ mod tests {
             &words.next_wave,
             &words.get_ready,
             &words.cleared_caption,
+            &words.next_new,
+            &words.tip,
             &words.ready_count,
+            &words.anchor_health,
             &words.ready,
             &words.go,
             &words.go_caption,
@@ -340,12 +516,15 @@ mod tests {
             &words.giants,
             &words.cleared,
             &words.anchor_broken,
+            &words.anchor_broken_caption,
+            &words.under_attack,
             &words.fell,
             &words.back_in,
             &words.out,
             &words.out_line,
             &words.generator,
             &words.generator_level,
+            &words.generator_all,
             &words.generator_fast,
             &words.bought_line,
             &words.down_line,
@@ -382,12 +561,15 @@ mod tests {
             (&words.wave, &["{wave}"]),
             (&words.left, &["{count}"]),
             (&words.next_wave, &["{time}"]),
+            (&words.next_new, &["{new}"]),
             (&words.ready_count, &["{count}", "{of}"]),
+            (&words.anchor_health, &["{left}", "{most}"]),
             (&words.giants, &["{count}"]),
             (&words.cleared, &["{wave}"]),
             (&words.fell, &["{wave}"]),
             (&words.back_in, &["{seconds}"]),
             (&words.generator_level, &["{level}", "{items}"]),
+            (&words.generator_all, &["{level}"]),
             (&words.generator_fast, &["{level}", "{fast}"]),
             (&words.bought_line, &["{name}", "{ware}", "{level}"]),
             (&words.down_line, &["{name}"]),

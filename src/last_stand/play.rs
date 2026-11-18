@@ -34,16 +34,16 @@ use roundtown_net::last_stand::{
 use roundtown_net::{Ask as NetAsk, Kits, Loot, Member, Minigame, Purses, Upgrades, Use, Venue};
 
 use super::looks::SpitBall;
-use super::{Happened, ReadyAsked, Stand, StandSystems, TEAM};
+use super::{Happened, ReadyAsked, Stand, StandSystems, TEAM, Tally, spread};
 use crate::arena::{self, Begun, FightTime, Fighting, Health, InArena, OfflineArena, Outfit, Resources, Used, Wears};
 use crate::clock::TownClock;
 use crate::lobby::{self, Whereabouts};
 use crate::loot::{self, Key, PadTop};
-use crate::market::{Picked, Stalls};
+use crate::market::{Picked, Shops, Stalls};
 use crate::net::Online;
 use crate::table::{self, TableView};
 use crate::ui::UiChanged;
-use crate::{Dead, Intent, Landed, Lookout, OrbitCamera, Player, PlayerJump, Shove, Team, WalkCycle, dynamite, fire};
+use crate::{Dead, Intent, Landed, Lookout, OrbitCamera, Player, PlayerJump, Shove, Swung, Team, WalkCycle, dynamite, fire};
 
 pub(super) fn plugin(app: &mut App) {
     app.add_systems(
@@ -71,7 +71,7 @@ pub(super) fn plugin(app: &mut App) {
     )
     .add_systems(
         Update,
-        (run_offline, put_back, ask_online, publish)
+        (run_offline, put_back, ask_online, mind_the_shops, publish)
             .chain()
             .in_set(StandSystems)
             .after(crate::move_bodies)
@@ -727,18 +727,59 @@ fn healed_by(before: f32, now: f32) -> bool {
     before > 0.0 && now - before >= HEALED_LEAST
 }
 
-/// A number floating off the body standing at `at` for its health gone
-/// from `before` to `now`, as the round says it: what a blow or a spit took,
-/// in the kit's red, or what a potion gave, in its green; nothing for what
-/// came back by itself. As Bridge Wars floats them off everyone
-/// (`arena`'s round), and as this game does off every zombie
-/// ([`looks`](super::looks)): a blow on you or a teammate floated nothing
-/// until 2026-11-18.
-fn say_health(commands: &mut Commands, at: Vec3, before: f32, now: f32) {
+/// The body standing at `at` has had its health go from `before` to `now`,
+/// as the round says it: what a blow or a spit took goes on its `tally`, to
+/// float off it in the kit's red ([`say_tallied`]); what a potion gave
+/// floats off it at once, in its green; what came back by itself, nothing.
+/// As Bridge Wars floats them off everyone (`arena`'s round), and as this
+/// game does off every zombie ([`looks`](super::looks)): a blow on you or a
+/// teammate floated nothing until 2026-11-18.
+fn felt(tally: &mut Tally, commands: &mut Commands, at: Vec3, before: f32, now: f32) {
     if now < before {
-        arena::spawn_number(commands, at, before - now);
+        tally.add(before - now);
     } else if healed_by(before, now) {
-        arena::spawn_healed(commands, at, now - before);
+        arena::spawn_healed(commands, spread(at), now - before);
+    }
+}
+
+/// What the blows on the body standing at `at` have taken, floated off it
+/// as a number if one is due ([`Tally`]), from a little way off it, thrown
+/// ([`spread`]).
+fn say_tallied(tally: &mut Tally, commands: &mut Commands, at: Vec3, now: f32) {
+    if let Some(taken) = tally.due(now) {
+        arena::spawn_number(commands, spread(at), taken);
+    }
+}
+
+/// Whether a shop's window may come down over you, as you stand where you
+/// do ([`ShopDoor`](super::ShopDoor)): in a shop's outline on the game's
+/// map, alive, or not; in the middle of a wave, or not; and whether you
+/// swung (`crate::Swung`) or were hit (your health down since the frame
+/// before) in this one, which stirs you.
+fn mind_the_shops(
+    time: Res<Time>,
+    stand: Option<ResMut<Stand>>,
+    shops: Res<Shops>,
+    me: Query<(&Transform, &Venue, Has<Dead>), With<Player>>,
+    mut swung: MessageReader<Swung>,
+    mut was: Local<Option<u16>>,
+) {
+    let swing = swung.read().count() > 0;
+    let Some(mut stand) = stand else {
+        *was = None;
+        return;
+    };
+    let health = stand.round.as_ref().and_then(|round| round.health.get(stand.seat).copied());
+    let hit = matches!((*was, health), (Some(before), Some(now)) if now < before);
+    *was = health;
+    let inside = me
+        .single()
+        .is_ok_and(|(at, &venue, dead)| venue == Venue::LastStand && !dead && shops.at(Venue::LastStand, at.translation).is_some());
+    let wave = stand.round.as_ref().is_some_and(|round| round.stage == StandStage::Wave);
+    let mut door = stand.door;
+    door.step(inside, wave, swing || hit, time.delta_secs());
+    if stand.door != door {
+        stand.door = door;
     }
 }
 
@@ -747,8 +788,10 @@ fn say_health(commands: &mut Commands, at: Vec3, before: f32, now: f32) {
 /// (`arena::Resources`, counted top left) and have (`arena::Outfit`: your
 /// buttons, the shops' cards, your pace on a potion), the fight's time; the
 /// shops' cards (`market::Stalls`), made again as the file changes on
-/// desktop too; your health (the bar top left, and a number off you as it
-/// goes down or a potion brings it up), and whether you are dead
+/// desktop too, and handed over only while a shop's window may be up
+/// ([`ShopDoor`](super::ShopDoor)), none otherwise, which keeps it shut;
+/// your health (the bar top left, and a number off you as it goes down or
+/// a potion brings it up, [`felt`]), and whether you are dead
 /// (`crate::Dead`, how long for); on every person's body what they wear
 /// (`arena::Wears`: the sword in their hand, the shield round them, whether
 /// they are unseen); and on your teammates', online, from the table's
@@ -760,12 +803,14 @@ fn say_health(commands: &mut Commands, at: Vec3, before: f32, now: f32) {
 /// or out, stood where they fell, their name over an empty bar).
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn publish(
+    time: Res<Time>,
     stand: Option<Res<Stand>>,
     view: Res<TableView>,
     town: Res<TownClock>,
     changed: Res<UiChanged>,
     (mut stock, mut outfit, mut clock, mut stalls): (ResMut<Resources>, ResMut<Outfit>, ResMut<FightTime>, ResMut<Stalls>),
-    mut shelved: Local<Option<(u32, roundtown_net::Purse, roundtown_net::Kit, StandUpgrades)>>,
+    mut shelved: Local<Option<(u32, roundtown_net::Purse, roundtown_net::Kit, StandUpgrades, bool)>>,
+    mut tallies: Local<(u32, Vec<Tally>)>,
     mut me: Query<(Entity, &Transform, Option<&mut Health>, Option<&mut Dead>, Option<&Wears>), With<Player>>,
     mut others: Query<
         (Entity, &Member, &Transform, Option<&mut Health>, Option<&Team>, Option<&Wears>, Has<Dead>, Has<Teammate>),
@@ -788,12 +833,27 @@ fn publish(
     if clock.0 != stand.elapsed {
         clock.0 = stand.elapsed;
     }
-    // The shops' cards, made again only as anything on them changes, or the
-    // file they are written from does.
-    let shelf = (stand.fight, purse, kit, stand.upgrades);
+    // The shops' cards, made again only as anything on them changes, the
+    // file they are written from does, or the window may come or go.
+    let open = stand.door.open;
+    let shelf = (stand.fight, purse, kit, stand.upgrades, open);
     if shelved.as_ref() != Some(&shelf) || (changed.is_changed() && !changed.is_added()) {
         *shelved = Some(shelf);
-        stalls.set_if_neq(super::screen::stalls(&purse, &kit, &stand.upgrades));
+        stalls.set_if_neq(if open {
+            super::screen::stalls(&purse, &kit, &stand.upgrades)
+        } else {
+            Stalls::default()
+        });
+    }
+    // Each seat's blows not yet said, afresh in every game.
+    let now_secs = time.elapsed_secs();
+    let tallies = &mut *tallies;
+    if tallies.0 != stand.fight {
+        *tallies = (stand.fight, Vec::new());
+    }
+    let seats = stand.round.as_ref().map_or(0, |round| round.health.len());
+    if tallies.1.len() < seats {
+        tallies.1.resize(seats, Tally::default());
     }
     let round = stand.round.as_ref();
     let wears = |kit: &roundtown_net::Kit| Wears {
@@ -808,15 +868,21 @@ fn publish(
         && let Ok((you, body, mine, dead, worn)) = me.single_mut()
     {
         let now = health(stand.seat).unwrap_or(rules::HEALTH);
+        let tally = tallies.1.get_mut(stand.seat);
         match mine {
             Some(mut mine) if mine.left() != now || mine.full() != rules::HEALTH => {
-                say_health(&mut commands, body.translation, mine.left(), now);
+                if let Some(tally) = tally {
+                    felt(tally, &mut commands, body.translation, mine.left(), now);
+                }
                 *mine = Health::at(now, rules::HEALTH);
             }
             Some(_) => {}
             None => {
                 commands.entity(you).insert(Health::at(now, rules::HEALTH));
             }
+        }
+        if let Some(tally) = tallies.1.get_mut(stand.seat) {
+            say_tallied(tally, &mut commands, body.translation, now_secs);
         }
         // Dead, until the game has you standing again: how long for, by
         // the town's clock; for good with the anchor broken.
@@ -866,13 +932,18 @@ fn publish(
         let now = health(seat).unwrap_or(rules::HEALTH);
         match health_now {
             Some(mut health_now) if health_now.left() != now => {
-                say_health(&mut commands, place.translation, health_now.left(), now);
+                if let Some(tally) = tallies.1.get_mut(seat) {
+                    felt(tally, &mut commands, place.translation, health_now.left(), now);
+                }
                 *health_now = Health::at(now, rules::HEALTH);
             }
             Some(_) => {}
             None => {
                 commands.entity(body).insert(Health::at(now, rules::HEALTH));
             }
+        }
+        if let Some(tally) = tallies.1.get_mut(seat) {
+            say_tallied(tally, &mut commands, place.translation, now_secs);
         }
         // Dead (or gone), until the server stands them up again, which it
         // does itself: for as long as the round says, as Bridge Wars has its

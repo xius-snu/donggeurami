@@ -467,6 +467,9 @@
             // centre, and the white the crystal flashes as it is hit.
             anchor: "#c58cffe6",
             anchor_flash: "#ffffffb3",
+            // The red the anchor's bar on the plate and its arrow round you
+            // flash as it is hit.
+            anchor_hit: "#ff5c5c",
             // The anchor's beam, a short bright line to what it zaps.
             beam: "#d9b3ff",
             // A spitter's ball, and the splash where it comes down.
@@ -920,19 +923,25 @@
             total: "Waves cleared: {waves} · Team score: {score}",
             // The plate top centre: in a wave, its number over how many of
             // it are left; between waves, the time to the next over what
-            // came before it, and how many of you are ready.
+            // came before it, or what is new in the next, and how many of
+            // you are ready; in the first break, where to buy what; and in
+            // the anchor's bar, how much of it is left of the most it has.
             wave: "Wave {wave}",
             left: "{count} left",
             next_wave: "Next wave in {time}",
             get_ready: "Get ready",
             cleared_caption: "Wave {wave} cleared",
+            next_new: "Next: {new}",
+            tip: "Red stand: items · Blue stand: team upgrades",
             ready_count: "{count}/{of} ready",
+            anchor_health: "{left}/{most}",
             // The button beside the plate between waves (R on desktop):
             // the next wave comes in three seconds once everyone is.
             ready: "Ready",
             // Across the screen: as the play begins; as a wave comes, with
             // what is new in it under it; as one is cleared; the anchor
-            // broken; and the end.
+            // broken, with what that means under it; the anchor under
+            // attack while it is off the screen; and the end.
             go: "Go!",
             go_caption: "Hold the anchor",
             runners: "Runners!",
@@ -942,7 +951,9 @@
             a_giant: "A giant!",
             giants: "{count} giants!",
             cleared: "Wave {wave} cleared",
-            anchor_broken: "The anchor is broken: no more coming back",
+            anchor_broken: "The anchor is broken!",
+            anchor_broken_caption: "No more coming back",
+            under_attack: "The anchor is under attack!",
             fell: "The last stand fell at wave {wave}",
             // While you are dead, and once you are out.
             back_in: "Back in {seconds}",
@@ -955,9 +966,10 @@
             // put them back).
             kinds: ("", "", "", "", "", ""),
             // Over the generators' pads: silver alone; then the level and
-            // what they make past silver; past amethyst, how much faster.
+            // everything they make; all four; past that, how much faster.
             generator: "Silver",
             generator_level: "Lvl {level}: {items}",
+            generator_all: "Lvl {level}: all four",
             generator_fast: "Lvl {level}: all four, x{fast}",
             // What the chat says: someone bought the team an upgrade; is
             // down (and back in a moment); is out (down with the anchor
@@ -976,7 +988,7 @@
             sword_stat: "{damage} dmg",
             dynamite_stat: "{damage} dmg",
             forge: ("Gold Forge", "Sapphire Forge", "Amethyst Forge", "Overclock"),
-            forge_stats: ("+ Gold", "+ Sapphire", "+ Amethyst", "Lvl {level}"),
+            forge_stats: ("+ Gold", "+ Sapphire", "+ Amethyst", "Next: Lvl {level}"),
             sharpness: "Sharpness",
             protection: "Protection",
             protection_stat: "-{share}% dmg",
@@ -984,8 +996,9 @@
             beam: "Anchor Beam",
             lucky: "Lucky Loot",
             lucky_stat: "More drops",
-            // An endless upgrade's line: the level it takes the team to.
-            level: "Lvl {level}",
+            // An endless upgrade's line: the level it takes the team to
+            // (a bare "Lvl 3" read as the level the team had already).
+            level: "Next: Lvl {level}",
         ),
     ),
     // The car you drive (the face button, or C on desktop): every number of

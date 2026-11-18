@@ -10,8 +10,211 @@
 
 ## Contents
 
-1. 2026-11-18, later: sixteen things a check of it found, mended
-2. Since 2026-11-18 Last Stand is a game people play, online and offline
+1. 2026-11-18, later still: what a play-tester found, made clearer
+2. 2026-11-18, later: sixteen things a check of it found, mended
+3. Since 2026-11-18 Last Stand is a game people play, online and offline
+
+## 2026-11-18, later still: what a play-tester found, made clearer
+
+A play-tester played it through four times, hidden, from the town's
+gamepad to the results and back (by day and by night, at a desktop's size
+and a phone's), and listed what a player would find wrong, the most
+important first. Their three biggest: nothing said the anchor was being
+hit, or where it was; a shop's window came down over the fight; by night
+the zombies were black blobs. Every call here is mine unless it is
+quoted; Hajun has seen none of it, nor has any phone.
+
+**The anchor, the game's whole point:**
+
+1. **Its bar on the plate is thick, with its number in it, and flashes
+   red as it is hit** ("517/1500"; 30 by 2.8 of the screen's short side
+   where it was 24 by 1.1, a hairline nobody saw go down; the red,
+   `colours.last_stand.anchor_hit`, comes and goes with the crystal's own
+   white flash, no oftener than every 0.35 s).
+2. **An arrow round you points the way to the crystal while it is off the
+   screen**, in its purple, flashing red with it as it is hit: the
+   Tracker's arrow in Bridge Wars (`compass`, Hajun's "a small white arrow
+   around your character"), drawn as it is, eleven hundredths of the
+   short side out from you (`looks::toward_the_anchor`). Not while
+   something is said across the middle of the screen, into whose words it
+   stood pointing up ("Brutes!"), nor while a shop's window is up. Off the
+   screen means its foot is not on it, the part of it drawn nearest the
+   middle of the screen from straight over it (by its middle, and then by
+   its middle 4 hundredths in from the edge, the arrow came up with the
+   crystal and its bar still at the foot of the screen).
+3. **"The anchor is under attack!"** high on the screen, in the gold of
+   what is said across it, as the anchor loses health while the crystal
+   is off the screen, no oftener than every 8 s of the fight (Bridge
+   Wars' own while for its own anchor), and never over anything else said
+   across the screen (`screen::warn`).
+4. **Breaking off the screen, the camera comes to look**: it eases over
+   to the crystal as it shatters and stays 2.2 s (`looks::SHATTER_LOOK`),
+   then comes back to you, so that the shatter is seen; the play-tester's
+   broke out of sight, and "The last stand fell" was said over empty
+   stone. Not while a shop's window is up over you.
+5. **"The anchor is broken!" is said across the screen in the gold of
+   everything else said there**, with "No more coming back" under it
+   (the file's words split in two); it was Bridge Wars' line for its
+   timetable (`arena::alert`), white, which on the pale stone by day
+   hardly read, and it is the game's most important line.
+
+**The shops:**
+
+6. **In the middle of a wave a shop's window comes down only once you
+   have stood in its outline half a second without swinging or being
+   hit** (`ShopDoor`, `SHOP_SETTLE` 0.5 s; between waves, at once, as
+   before; once down it stays while you stay). Fighting round the crystal
+   in the eighth wave, the play-tester stepped into the item shop's
+   outline 4.8 m from it and had the window come down over the middle of
+   the screen, every zombie round them under it. Done with the kit's own
+   rule, that a shop on another game's map opens only where its game hands
+   it cards (`market::Stalls`): until the door is open the game hands it
+   none (`play::publish`); `market` is as it was.
+7. **Nothing this game says across the screen shows through a shop's
+   window**: it is put away while the window is up, and goes on fading
+   meanwhile ("Go! Hold the anchor" stood between the sword cards).
+8. **An endless upgrade's card says "Next: Lvl 3"** (a bare "Lvl 3" read
+   as the level the team had; the capped two keep their pips), and so
+   does the generators' Overclock card.
+
+**By night:**
+
+9. **Every zombie's head glows faintly at night in its kind's tint**,
+   brought up to one brightness for every kind (`looks::NIGHT_GLOW` 0.16
+   of its brightest part, about a tenth of how it is drawn by day, as the
+   street lamps come on, `sky::Daylight::lamps`; none by day). Away from
+   the crystal's light they were black discs, the giant too, told apart by
+   their size alone. Not a light over the sand: `lamps` is not this
+   game's, and every light costs the phone.
+10. **A brute's and a giant's bar is as much bigger as they are, and over
+    their head** (a third and twice as wide, a sixth and half again as
+    thick), by a hook added to the kit's tags (`arena::Bigger`, carried
+    by no body of Bridge Wars'): a giant's bar was a body's, across its
+    head.
+
+**What piled up, and what said too much:**
+
+11. **The crystal's bar and the pads' words are put away while anything
+    is said across the middle of the screen** ("——Go!", the bar run into
+    it; "anchoSilver"), as they are under the plate and a shop's window.
+12. **"Back in 6" stands low on the screen** (70% down, `BACK_DOWN`), the
+    kit's own words moved there in this game alone: at its 38% it stood
+    on the crystal and its numbers, the camera now looking at the
+    crystal while you are dead (below); **in whole seconds** ("Back in
+    5.5" read fussy).
+13. **Numbers off a body are a little way off it, thrown, and its blows
+    no oftener than every 0.3 s are said together** (`Tally`, `spread`;
+    from straight overhead a number rises toward the camera and hardly
+    moves on the screen, and "6" stood over "7", "134 135 51 28 38 135"
+    in one heap); **the crystal's beside it**, to its left or right, never
+    over its purple, where its red read badly. The kit's numbers have no
+    stroke, as Bridge Wars' have none; left as they are (below).
+14. **The results come up with nothing said across the screen over them**:
+    "The last stand fell at wave 4" (up 4 s, the results 2 s after the
+    end) showed through the window's title.
+15. **The chat no longer says your own deaths** ("Mochi is down" three
+    times pushed what the others did out of its three lines; the screen
+    says yours), and **no longer says a wave cleared**, which the
+    headline and the plate say at the same moment (`CLEARED_IN_CHAT`, off;
+    the line is kept in the file).
+16. **"You're out" is a slim window along the foot of the screen**,
+    between the stick and the buttons round the jump, its words beside
+    its Leave; half way down the screen it stood on the crystal's site and
+    the horde round it, which it tells you to watch.
+
+**The camera, and teaching a first game:**
+
+17. **Dead, the camera eases to the anchor**, where you will stand again
+    (it stayed six seconds on the stone where you fell, and then jumped);
+    out, to whoever still stands, as before, now eased; at the end, to the
+    anchor's place, where the last stand fell (`screen::watch_view`, half
+    the way in about a ninth of a second, nearly all of it in half a
+    second).
+18. **The line under the plate teaches and warns**: in the break before
+    the first wave "Red stand: items · Blue stand: team upgrades"; in a
+    break before a wave with something new, "Next: A giant!" (to buy for
+    it); in the last five seconds of any break, "Get ready"; otherwise the
+    wave cleared, and, once anyone is ready, how many are.
+19. **Over the pads, everything they make**: "Lvl 1: silver, gold", "Lvl
+    2: silver, gold, sapphire", "Lvl 3: all four" ("Lvl 1: gold" read as
+    the gold alone).
+
+**Left as they were, and why:**
+
+- **The palms' crowns hiding whoever is under them**: Hajun's rule is that
+  nothing fades out of the way anywhere but inside a house (2026-10-25,
+  `see_through`: "only happen when the player is inside the home ... not
+  anywhere else"), and the palms are his map's. To ask him: move or shrink
+  the palms nearest the middle of `laststandmap`.
+- **A stroke round the damage numbers**: the numbers are the kit's,
+  Bridge Wars' too, and drawn as they are there; spread and kept off the
+  crystal and the blast, they read.
+- **A light over the sand by night**: what gives off light is `lamps`'
+  list, not this game's, and the phone pays for every light (`MOST_LIT`).
+- **Not this game's to mend**: on a phone the shop's window reaches over
+  the fireball's button on the right, and its cards' lines are about 7 pt
+  (`market`'s sizes); offline alone the board says "Waiting for players
+  1/4", and the results call a lone player "1st" (the tables').
+
+**Outside this game's files**: one hook in the kit's `src/arena.rs`,
+`Bigger` (a component, read where a tag is made and placed; a body without
+it, every one of Bridge Wars', is tagged exactly as before).
+
+### Checked, and where
+
+- **Tests**, through the wrapper, on the tree as committed: the game's
+  (`--lib`), the rules' (`-p roundtown_net`) and the server's (`-p
+  roundtown_server`), counts in the commit's report; new here: the shop's
+  door (at once between waves, in a wave only after half a second
+  unstirred, never walking through), the tally of blows and the spread,
+  the line under the plate (where to buy what, "Next: A giant!", "Get
+  ready", how many are ready), the anchor's number, the chat never saying
+  your own deaths, "Back in" in whole seconds, what the camera looks on at,
+  the end's words gone under the results, the pads' words, the cards'
+  "Next: Lvl", the bigger bars and the night's glow, the arrow's place.
+- **Hidden, offline, by day, at a desktop's size, from the town's gamepad
+  through four waves to the results and back** (the play-tester's own
+  throwaway, with a deliberate visit to the item shop in the middle of the
+  second wave, and left at the rim from the fourth): the plate's bar and
+  its number, flashing; "Red stand: items · Blue stand: team upgrades"
+  under the plate; "Go!" with no bar or "Silver" in it; the arrow round
+  you, and "The anchor is under attack!" off the screen; the camera
+  easing to the anchor while dead, "Back in 6" low; the cards' "Next: Lvl
+  1"; the mid-wave shop: no window 0.28 s in, the window at 0.51 s; the
+  crystal breaking off the screen at the rim: the camera over it, the
+  shards, "The anchor is broken!" over "No more coming back"; the end
+  over the anchor's place; the results with nothing over them; 1,000
+  coins to 980 (three waves cleared).
+- **Hidden, offline, by night, at a desktop's size, from wave 5 with 40
+  of each** (`RT_STAND_WAVE=5 RT_STAND_PURSE=40`): every kind's head
+  seen on the dark sand away from the crystal's light, a giant's pale
+  green and twice as broad, its bar twice as wide (enlarged); a brute's
+  bar a third wider; numbers spread; "Next: A giant!"; fighting in the
+  upgrade shop's outline in the sixth wave, no window; the spit; the
+  anchor broken; 1,000 to 1,020 (seven cleared).
+- **Hidden, offline, by night, at a phone's size (852 by 393) with a 59
+  pt camera's hole each side, from wave 15** ("2 giants!"): the arrow,
+  "Back in 6" low, fighting in the upgrade shop's outline with no window,
+  the end over the anchor's place, the results; 1,000 to 1,090.
+- **Two hidden copies against a server on this PC** (port 5484, from wave
+  8 with 200 of each), twice: Dubu fallen into the void, on Dubu's screen
+  the camera over the anchor and "Back in 5" low, and in Dubu's chat no
+  "Dubu is down", in Mochi's "Dubu is down"; numbers off each other and a
+  potion's "+36"; the connection lost in the middle of the wave (one
+  number floated in the 2.5 s it was gone: a blow the round had said just
+  before, its number held its 0.3 s); the anchor broken; once with Dubu
+  invisible at the edge and Mochi gone into the void: Mochi out, the slim
+  window along the foot with Leave beside its words, the camera on Dubu;
+  "Mochi is out" in Dubu's chat and not in Mochi's; both paid 70; back in
+  the town, nothing of the game on either body.
+- **Not**: a phone or an iPhone (nothing here is behind `target_os`); the
+  VM; Play again by day; a group led from the results into another game;
+  the shatter's look and the line under attack online (the crystal was on
+  Dubu's screen at the edge as it broke); the frame rate (the hidden runs
+  drew 57 to 60 frames a second, a debug build on this PC).
+- The runs' pictures are in `RoundTown-wt/scratch-stand/polish/<run>/shots/`
+  (`desk_day`, `desk_night`, `phone_night`, `online_day`, `online_out`),
+  crops beside them; the throwaways in `scratch-stand/polish/kept/`.
 
 ## 2026-11-18, later: sixteen things a check of it found, mended
 
