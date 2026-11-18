@@ -212,13 +212,14 @@ const SEEN_INSIDE: f32 = 0.5;
 pub(super) fn plugin(app: &mut App) {
     app.init_resource::<Crystal>()
         .init_resource::<CrystalSeen>()
+        .init_resource::<Paints>()
         .add_observer(read_crystal)
         .add_observer(last_blow)
         .add_systems(Startup, load)
         .add_systems(
             Update,
             (
-                (dress, hurt, say_blows).chain().after(StandSystems),
+                (dress, hurt, flash_hits, say_blows).chain().after(StandSystems),
                 (paint, size, follow_spits).after(StandSystems),
                 // After the zombies have been moved, by the game here or
                 // the server, and before their legs are swung.
@@ -296,7 +297,10 @@ fn recolour(
 /// A zombie's body as this game has dressed it: its kind, the health last
 /// seen on it, what the blows on it have taken that no number has said yet
 /// ([`Tally`]), where it was last frame, for its stride, and whether it has
-/// been painted and sized yet (each waits for its model).
+/// been painted and sized yet (each waits for its model); the parts of its
+/// model painted in its kind's colours, and whether each is its hair; and
+/// how much longer it shows red after a blow, and whether it does now
+/// ([`flash_hits`]).
 #[derive(Component)]
 pub(super) struct Dressed {
     kind: Kind,
@@ -305,6 +309,40 @@ pub(super) struct Dressed {
     last: Vec3,
     painted: bool,
     sized: bool,
+    parts: Vec<(Entity, bool)>,
+    red_for: f32,
+    red: bool,
+}
+
+/// How long a zombie shows red after a blow takes health off it, in
+/// seconds; how far its skin and hair go toward the red; and how brightly
+/// they glow in it, as so many times the red (Bevy counts a glow so,
+/// `lamps`): enough to read on the stone and the sand by day, and by night.
+/// Mine (since 2026-11-18; Hajun: "when u hit the zombie in last stand
+/// minigame, give some indication of the zombie being hit maybe like a red
+/// tint when they take the hit so its more satisfying"), the red the file's
+/// (`colours.last_stand.hit`).
+const HIT_SECS: f32 = 0.16;
+const HIT_TINT: f32 = 0.75;
+const HIT_GLOW: f32 = 0.45;
+
+/// The zombies' paints: each kind's skin and its hair, and the red each
+/// goes for a moment as it is hit; each a copy of the model's own material,
+/// made once for each kind and shared by every zombie of it.
+#[derive(Resource, Default)]
+pub(super) struct Paints {
+    worn: HashMap<(Kind, bool), Handle<StandardMaterial>>,
+    hit: HashMap<(Kind, bool), Handle<StandardMaterial>>,
+}
+
+/// The red a zombie's skin (or `hair`) of `kind` goes as it is hit: its
+/// own colour most of the way to the file's red, glowing a little in it.
+fn hit_paint(look: &mut StandardMaterial, kind: Kind, hair: bool) {
+    let colours = ui().colours.last_stand;
+    let (skin, hair_colour) = colours.paint(kind);
+    look.base_color = blend(if hair { hair_colour } else { skin }, colours.hit, HIT_TINT);
+    let red = colours.hit.to_linear();
+    look.emissive = LinearRgba::rgb(red.red * HIT_GLOW, red.green * HIT_GLOW, red.blue * HIT_GLOW);
 }
 
 /// What is written over a zombie of `kind`: the file's (`kinds`; nothing
@@ -341,6 +379,9 @@ fn dress(fresh: Query<(Entity, &Transform, &Shambler), (With<WalkCycle>, Without
                     last: place.translation,
                     painted: false,
                     sized: false,
+                    parts: Vec::new(),
+                    red_for: 0.0,
+                    red: false,
                 },
                 Team(ZOMBIE_TEAM),
                 Health::at(f32::from(shambler.health), f32::from(shambler.most.max(1))),
@@ -353,13 +394,14 @@ fn dress(fresh: Query<(Entity, &Transform, &Shambler), (With<WalkCycle>, Without
     }
 }
 
-/// A zombie's health as it changes: its bar, and what the blow took, to
-/// float off it ([`say_blows`]).
+/// A zombie's health as it changes: its bar, what the blow took, to float
+/// off it ([`say_blows`]), and a moment of red ([`flash_hits`]).
 fn hurt(mut zombies: Query<(&Shambler, &mut Dressed, &mut Health), Changed<Shambler>>) {
     for (shambler, mut dressed, mut health) in &mut zombies {
         if shambler.health < dressed.health {
             let taken = f32::from(dressed.health - shambler.health);
             dressed.tally.add(taken);
+            dressed.red_for = HIT_SECS;
         }
         if dressed.health != shambler.health {
             dressed.health = shambler.health;
@@ -368,6 +410,33 @@ fn hurt(mut zombies: Query<(&Shambler, &mut Dressed, &mut Health), Changed<Shamb
         if health.left() != left || health.full() != full {
             *health = Health::at(left, full);
         }
+    }
+}
+
+/// Each zombie a blow has just taken health off shows red for
+/// [`HIT_SECS`], every painted part of it in its kind's red, and its own
+/// paint again after: each part written only as it goes red or back.
+fn flash_hits(time: Res<Time>, paints: Res<Paints>, mut zombies: Query<&mut Dressed>, mut commands: Commands) {
+    let dt = time.delta_secs();
+    for mut dressed in &mut zombies {
+        // (Read first: only one that is red, or is to be, is written.)
+        if dressed.red_for <= 0.0 && !dressed.red {
+            continue;
+        }
+        let red_for = (dressed.red_for - dt).max(0.0);
+        dressed.red_for = red_for;
+        let red = red_for > 0.0;
+        if red == dressed.red || dressed.parts.is_empty() {
+            continue;
+        }
+        let kind = dressed.kind;
+        for &(part, hair) in &dressed.parts {
+            let paint = if red { paints.hit.get(&(kind, hair)) } else { paints.worn.get(&(kind, hair)) };
+            if let Some(paint) = paint {
+                commands.entity(part).try_insert(MeshMaterial3d(paint.clone()));
+            }
+        }
+        dressed.red = red;
     }
 }
 
@@ -458,14 +527,14 @@ fn paint(
     changed: Res<UiChanged>,
     daylight: Option<Res<Daylight>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    mut paints: Local<HashMap<(Kind, bool), Handle<StandardMaterial>>>,
+    mut paints: ResMut<Paints>,
     mut commands: Commands,
 ) {
     let colours = ui().colours.last_stand;
     let lamps = daylight.as_ref().map_or(0.0, |day| day.lamps);
     let file = changed.is_changed() && !changed.is_added();
     if file || daylight.as_ref().is_some_and(|day| day.is_changed()) {
-        for (&(kind, hair), paint) in paints.iter() {
+        for (&(kind, hair), paint) in paints.worn.iter() {
             let (skin_colour, hair_colour) = colours.paint(kind);
             let (base, glow) = (if hair { hair_colour } else { skin_colour }, night_glow(skin_colour, lamps));
             if materials.get(paint).is_some_and(|look| look.base_color != base || look.emissive != glow)
@@ -476,12 +545,20 @@ fn paint(
             }
         }
     }
+    if file {
+        for (&(kind, hair), paint) in paints.hit.iter() {
+            if let Some(mut look) = materials.get_mut(paint) {
+                hit_paint(&mut look, kind, hair);
+            }
+        }
+    }
+    let paints = &mut *paints;
     for (zombie, mut dressed) in &mut zombies {
         if dressed.painted {
             continue;
         }
         let kind = dressed.kind;
-        let mut painted = false;
+        let mut painted = Vec::new();
         for part in children.iter_descendants(zombie) {
             let Ok((name, worn)) = parts.get(part) else {
                 continue;
@@ -490,24 +567,33 @@ fn paint(
             if !hair && !is_material(&name.0, "skin") {
                 continue;
             }
+            let model = materials.get(&worn.0).cloned().unwrap_or_default();
             let paint = paints
+                .worn
                 .entry((kind, hair))
                 .or_insert_with(|| {
                     let (skin_colour, hair_colour) = colours.paint(kind);
-                    let mut look = materials.get(&worn.0).cloned().unwrap_or_default();
+                    let mut look = model.clone();
                     look.base_color = if hair { hair_colour } else { skin_colour };
                     look.emissive = night_glow(skin_colour, lamps);
                     materials.add(look)
                 })
                 .clone();
+            // Its red, made with it ([`flash_hits`]).
+            paints.hit.entry((kind, hair)).or_insert_with(|| {
+                let mut look = model;
+                hit_paint(&mut look, kind, hair);
+                materials.add(look)
+            });
             if worn.0 != paint {
                 commands.entity(part).insert(MeshMaterial3d(paint));
             }
-            painted = true;
+            painted.push((part, hair));
         }
         // Not until its model is there: it comes a frame or two after.
-        if painted {
+        if !painted.is_empty() {
             dressed.painted = true;
+            dressed.parts = painted;
         }
     }
 }
@@ -1640,6 +1726,69 @@ mod tests {
     }
 
     #[test]
+    fn a_zombie_a_blow_takes_health_off_shows_red_a_moment_and_then_its_own_colours() {
+        use std::time::Duration;
+        let mut app = App::new();
+        app.insert_resource(Time::<()>::default());
+        app.init_resource::<Assets<StandardMaterial>>();
+        app.add_systems(Update, (hurt, flash_hits).chain());
+        let (worn, red) = {
+            let mut materials = app.world_mut().resource_mut::<Assets<StandardMaterial>>();
+            let worn = materials.add(StandardMaterial::default());
+            let mut look = StandardMaterial::default();
+            hit_paint(&mut look, Kind::Brute, false);
+            (worn, materials.add(look))
+        };
+        let mut paints = Paints::default();
+        paints.worn.insert((Kind::Brute, false), worn.clone());
+        paints.hit.insert((Kind::Brute, false), red.clone());
+        app.insert_resource(paints);
+        let skin = app.world_mut().spawn(MeshMaterial3d(worn.clone())).id();
+        let zombie = app
+            .world_mut()
+            .spawn((
+                Shambler { kind: Kind::Brute, health: 40, most: 48 },
+                Dressed {
+                    kind: Kind::Brute,
+                    health: 40,
+                    tally: Tally::default(),
+                    last: Vec3::ZERO,
+                    painted: true,
+                    sized: true,
+                    parts: vec![(skin, false)],
+                    red_for: 0.0,
+                    red: false,
+                },
+                Health::at(40.0, 48.0),
+            ))
+            .id();
+        let step = |app: &mut App, secs: f32| {
+            app.world_mut().resource_mut::<Time>().advance_by(Duration::from_secs_f32(secs));
+            app.update();
+        };
+        let worn_now = |app: &App| app.world().get::<MeshMaterial3d<StandardMaterial>>(skin).expect("a part").0.clone();
+        step(&mut app, 0.016);
+        assert_eq!(worn_now(&app), worn, "nothing hit it");
+        // A blow: red at once, for a moment, and its own colours after.
+        app.world_mut().get_mut::<Shambler>(zombie).expect("a zombie").health = 31;
+        step(&mut app, 0.016);
+        assert_eq!(worn_now(&app), red);
+        step(&mut app, HIT_SECS * 0.5);
+        assert_eq!(worn_now(&app), red);
+        step(&mut app, HIT_SECS);
+        assert_eq!(worn_now(&app), worn);
+        // Health that comes back is no blow.
+        app.world_mut().get_mut::<Shambler>(zombie).expect("a zombie").health = 40;
+        step(&mut app, 0.016);
+        assert_eq!(worn_now(&app), worn);
+        // The red is the file's, most of the way from the kind's own.
+        let materials = app.world().resource::<Assets<StandardMaterial>>();
+        let look = materials.get(&red).expect("the red");
+        assert_eq!(look.base_color, blend(ui().colours.last_stand.brute_skin, ui().colours.last_stand.hit, HIT_TINT));
+        assert!(look.emissive.red > 0.3 && look.emissive.green < look.emissive.red * 0.5);
+    }
+
+    #[test]
     fn a_giant_s_legs_swing_half_as_often_as_a_walker_s_for_the_ground_it_covers() {
         let mut app = App::new();
         app.insert_resource(Time::<()>::default());
@@ -1654,6 +1803,9 @@ mod tests {
                     last: Vec3::ZERO,
                     painted: true,
                     sized: true,
+                    parts: Vec::new(),
+                    red_for: 0.0,
+                    red: false,
                 },
                 WalkCycle {
                     phase: 0.0,

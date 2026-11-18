@@ -40,6 +40,7 @@ use roundtown_net::{Item, Kit, Purse, UTILITY_SLOTS};
 use crate::hud;
 use crate::ui::{fill, ui};
 
+mod finds;
 mod looks;
 mod play;
 mod screen;
@@ -80,6 +81,10 @@ pub(crate) struct Stand {
     balls: HashMap<u32, Entity>,
     sticks: HashMap<u32, Entity>,
     pieces: HashMap<u32, Entity>,
+    /// Offline, the swords the dead dropped and the treasure chests
+    /// standing, by the game's numbers ([`finds`]).
+    swords: HashMap<u32, Entity>,
+    chests: HashMap<u32, Entity>,
     /// Offline, sticks of dynamite the game has gone into the void, until
     /// this device's own have too (`play::sink`).
     sinking: Vec<Entity>,
@@ -118,8 +123,12 @@ pub(crate) struct ShopDoor {
 }
 
 /// How long you stand in a shop's outline in the middle of a wave before
-/// its window comes down, in seconds (mine).
-const SHOP_SETTLE: f32 = 0.5;
+/// its window comes down, in seconds (mine): 0.2 since the evening of
+/// 2026-11-18 (Hajun: "right now the shops seem to only open when u rly go
+/// inside deep into the shop, so make it a bit more sensitive"; it was half
+/// a second, in which a body at a run is through the outline and at the
+/// back of the stand), the outline a little wider too (`market`).
+const SHOP_SETTLE: f32 = 0.2;
 
 impl ShopDoor {
     /// A frame `dt` long: you `inside` a shop's outline or not, in a `wave`
@@ -227,6 +236,8 @@ impl Stand {
             balls: HashMap::new(),
             sticks: HashMap::new(),
             pieces: HashMap::new(),
+            swords: HashMap::new(),
+            chests: HashMap::new(),
             sinking: Vec::new(),
             said: Said::default(),
             ready: false,
@@ -314,6 +325,7 @@ pub(crate) fn plugin(app: &mut App) {
     play::plugin(app);
     looks::plugin(app);
     screen::plugin(app);
+    finds::plugin(app);
 }
 
 /// The buttons round the screen at a table of Last Stand, Bridge Wars' less
@@ -416,6 +428,15 @@ mod tests {
     }
 
     #[test]
+    fn the_rules_sea_is_where_a_body_wades_in_the_town_s_sea() {
+        // Where the feet of a body in the sea come to (`water_rest_y`, but
+        // for its bob), as the rules have them for zombies and the drops.
+        assert!((roundtown_net::last_stand::SEA_BED - (crate::WATER_Y - crate::WATER_WADE)).abs() < 1e-4);
+        // And Last Stand's map has the sea round it.
+        assert!(!crate::island::bottomless(roundtown_net::Venue::LastStand));
+    }
+
+    #[test]
     fn the_rules_numbers_for_the_map_are_hajun_s_map_s() {
         // The ground, the plinth, the pads, the stands, the palms and the
         // crates where the server's zombies go round them, held to
@@ -431,8 +452,8 @@ mod tests {
 
     #[test]
     fn a_shop_s_window_comes_down_at_once_between_waves_and_in_a_wave_only_once_you_stand_still() {
-        // (Frames an eighth of a second long, which add up exactly.)
-        let frame = 0.125;
+        // (Frames a sixteenth of a second long, which add up exactly.)
+        let frame = 0.0625;
         let mut door = ShopDoor::default();
         // Between waves, as you step in; out, shut.
         assert!(door.step(true, false, false, frame));
@@ -446,8 +467,11 @@ mod tests {
                 opened_at = Some(step);
             }
         }
-        // Stirred last in frame 9: open half a second after, in frame 13.
-        assert_eq!(opened_at, Some(9 + (SHOP_SETTLE / frame) as i32));
+        // Stirred last in frame 9: open the while after, in frame 13.
+        assert_eq!(opened_at, Some(9 + (SHOP_SETTLE / frame).ceil() as i32));
+        // A moment, no longer (since the evening of 2026-11-18: half a
+        // second, a run through the outline and more, until then).
+        assert!(SHOP_SETTLE <= 0.25);
         // Open, it stays so while you are in it, whatever you do.
         assert!(door.step(true, true, true, frame));
         // Walking through in a wave, in less than the while: never.

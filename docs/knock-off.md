@@ -6,10 +6,32 @@
 
 ## Contents
 
-1. At the merge, 2026-11-18: the far player clear of the table's board, the game's name said low, the out panel clear of the chat's button
-2. Later still on 2026-11-18, after a play-test: the camera comes in as the ice breaks, a hit is felt, nothing stands over the play, the ice breaks into pieces, and whoever wins has a moment
-3. Later on 2026-11-18, after a check of it: the last person to leave is paid for their place online too, where you came is the game's own word for it, a device that comes back is held ready if it was, and every slide begins on every device the moment it begins
-4. Since 2026-11-18 Knock Off is a game people play, online and offline: four on a disc of ice in the sea, everyone aiming at once in secret and sliding at once, the ice breaking a metre a turn
+1. The evening of 2026-11-18: every turn begins at power 1
+2. At the merge, 2026-11-18: the far player clear of the table's board, the game's name said low, the out panel clear of the chat's button
+3. Later still on 2026-11-18, after a play-test: the camera comes in as the ice breaks, a hit is felt, nothing stands over the play, the ice breaks into pieces, and whoever wins has a moment
+4. Later on 2026-11-18, after a check of it: the last person to leave is paid for their place online too, where you came is the game's own word for it, a device that comes back is held ready if it was, and every slide begins on every device the moment it begins
+5. Since 2026-11-18 Knock Off is a game people play, online and offline: four on a disc of ice in the sea, everyone aiming at once in secret and sliding at once, the ice breaking a metre a turn
+
+## The evening of 2026-11-18: every turn begins at power 1
+
+Hajun, after playing it: "for the knock off minigame, make the default
+strength to be 1 rather than 0 every round." Every turn's aim now begins at
+power 1 (`START_POWER`, `src/knock_off.rs`), the power column lit at its
+first step and "1" over it; until now it began at 0, and the stick alone,
+pushed, did nothing until the up arrow was pressed too. **Which way is
+still nothing until the stick is touched** (mine): power with no way is
+standing still, as the rules have always had it, so that whoever does
+nothing this turn still stays where they are (the arrow toward the middle
+that a step of power with no way gives is given only for a step pressed by
+hand now, not for the 1 a turn begins at). A device sends the server its
+aim as it begins, power 1 and no way, which the server plays as standing
+still. Device only: nothing of the rules or the server changed.
+
+Checked: a test of the turn's beginning (`take_aim` on a world of its own:
+1 and no way at the turn's start, still no way doing nothing, a step up by
+hand toward the middle, the next turn at 1 again); hidden, offline, the
+first turn's aim (`knock_turn_one`, below in `docs/minigames.md`'s
+evening entry). Not on a phone.
 
 ## At the merge, 2026-11-18: the far player clear of the table's board, the game's name said low, the out panel clear of the chat's button
 

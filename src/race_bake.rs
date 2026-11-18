@@ -208,7 +208,7 @@ fn the_grid_built_in_is_the_race_map_s_as_it_is() {
 }
 
 #[test]
-fn the_race_map_baked_is_three_lands_a_body_walks_and_the_way_across_is_63_metres() {
+fn the_race_map_baked_is_three_lands_a_body_walks_and_the_way_across_is_the_rules_way() {
     let grid = bake();
     let nav = Nav::new(Arc::new(grid.clone()));
     // How much of each land a body walks: discs 20 m across, 314 m2, less
@@ -275,11 +275,13 @@ fn the_race_map_baked_is_three_lands_a_body_walks_and_the_way_across_is_63_metre
     let floor = map().floor(WAITING_ROOM, WAITING_FLOOR + 1.0).expect("the waiting room's floor");
     assert!((floor - WAITING_FLOOR).abs() < 0.01, "{floor}");
     // Each team's way across, straight: from just inside its island's shore
-    // to just inside the golden island's, 62.7 m of void and a metre of
-    // shore; and to either side of it.
+    // to just inside the golden island's, the rules' way across (61.6 m of
+    // void since the islands were moved, 62.7 before) and a metre of shore;
+    // and to either side of it.
     for team in 0..2u8 {
         let span = grid.span(Region::Team(team), Region::Middle, 0.0).expect("a span to the golden island");
-        assert!((span.length() - 63.7).abs() < 0.8, "team {team}: {} m", span.length());
+        let across = bridge_race::the_way_across(team) + 1.0;
+        assert!((span.length() - across).abs() < 0.8, "team {team}: {} m, not {across}", span.length());
         assert_eq!(grid.region(span.from), Some(Region::Team(team)));
         assert_eq!(grid.region(span.to), Some(Region::Middle));
         for aside in [-3.0, 3.0] {
@@ -303,7 +305,10 @@ fn the_race_map_baked_is_three_lands_a_body_walks_and_the_way_across_is_63_metre
         walked += at.distance(point);
         at = point;
     }
-    assert!((82.0..90.0).contains(&walked), "{walked} m to the golden island's middle");
+    // (From the island's middle to the golden island's: 81.6 m straight
+    // since the islands were moved, 83 before.)
+    let straight = ISLANDS[0].distance(GOLDEN);
+    assert!((straight..straight + 8.0).contains(&walked), "{walked} m to the golden island's middle");
     // The grid reaches far out over the void all round each island, and a
     // bridge laid out there, wide of everything, is ground a body stands
     // on and walks to from the island.

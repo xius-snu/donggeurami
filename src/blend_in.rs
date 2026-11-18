@@ -699,9 +699,10 @@ fn arm(
         .map(|round| round.swords.iter().copied().filter(|&id| id != 0).collect())
         .unwrap_or_default();
     let armed = blend.armed();
-    let seeking = armed && blend.playing().is_some_and(|round| round.stage == BlendStage::Seek);
+    let seek = blend.playing().is_some_and(|round| round.stage == BlendStage::Seek);
+    let seeking = armed && seek;
     if let Ok((you, wears, team, shows)) = me.single() {
-        put(&mut commands, you, armed, wears, team);
+        put(&mut commands, you, armed, seek, wears, team);
         if seeking && !shows {
             commands.entity(you).insert(Shows);
         } else if !seeking && shows {
@@ -721,16 +722,19 @@ fn arm(
         button.set_if_neq(shown);
     }
     for (body, member, wears, team) in &others {
-        put(&mut commands, body, swords_out.contains(&member.id), wears, team);
+        put(&mut commands, body, swords_out.contains(&member.id), seek, wears, team);
     }
 }
 
 /// Puts the aura sword and the seekers' team on `body` if it is `armed`,
-/// and takes off whatever of them it has if not: only what is not so
-/// already.
-fn put(commands: &mut Commands, body: Entity, armed: bool, wears: Option<&Wears>, team: Option<&Team>) {
+/// and in the `seek` the speed potion's effect, which leaves its blue
+/// sparks behind them (`trail`; since 2026-11-18, Hajun: "the seeker should
+/// get speed boost potion effect"; their pace is [`pace`]'s); and takes off
+/// whatever of them it has if not: only what is not so already.
+fn put(commands: &mut Commands, body: Entity, armed: bool, seek: bool, wears: Option<&Wears>, team: Option<&Team>) {
     let armed_with = Wears {
         sword: AURA_SWORD,
+        fast: seek,
         ..default()
     };
     if armed {
@@ -778,10 +782,10 @@ fn dress_me(
 }
 
 /// While you seek, you run ([`BlendRound::pace`], the shared rule:
-/// [`SEEKER_PACE`](blend_in::SEEKER_PACE)), as everyone runs in Bridge
-/// Wars: your walk this frame that much faster, and your legs with it. The
-/// hider walks as the crowd does, and everyone else in any other part of a
-/// round.
+/// [`SEEKER_PACE`](blend_in::SEEKER_PACE)), as fast as Bridge Wars' speed
+/// potion runs you (since 2026-11-18; a plain run until then): your walk
+/// this frame that much faster, and your legs with it. The hider walks as
+/// the crowd does, and everyone else in any other part of a round.
 fn pace(blend: Res<Blend>, mut me: Query<(&mut Intent, &mut WalkCycle), With<Player>>) {
     let (Some(seat), Some(round)) = (blend.seat, blend.playing()) else {
         return;

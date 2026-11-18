@@ -563,6 +563,10 @@
             // A spitter's ball, and the splash where it comes down.
             spit: "#8dff3a",
             splat: "#6fd12a99",
+            // The red a zombie flashes for a moment as a blow takes health
+            // off it (Hajun, 2026-11-18: "maybe like a red tint when they
+            // take the hit so its more satisfying").
+            hit: "#ff2a1a",
         ),
     ),
     // The font is Inter (since 2026-11-13; Bevy's own, plain ASCII, until
@@ -697,11 +701,14 @@
             bridge_race_line: "Build to the golden island first",
             last_stand: "Last Stand",
             last_stand_line: "Hold out against the waves",
-            // What one of the four costs, and what its card says when you
-            // have not got that ({coins} is how many). Home Builders' card
-            // says its own, house_builder.price and need_coins, below.
-            price: "{coins} coins",
-            needs_coins: "Needs {coins} coins",
+            // What a game costs, on its card, and what its card says when
+            // you have not got that: {coins} is the coin's picture and how
+            // many, "(coin) 50" (Hajun, 2026-11-18: "use the actual coin
+            // icon instead so its "(coin_icon) 50""). Every card's, Bridge
+            // Wars' and Home Builders' too. "free" is for a game that costs
+            // nothing, which none does now.
+            price: "{coins}",
+            needs_coins: "Needs {coins}",
             // On Blend In's card offline: it needs people to play with.
             online_only: "Online only",
             // Across the screen when the server turns a game down: you have
@@ -1264,6 +1271,13 @@
             // An endless upgrade's line: the level it takes the team to
             // (a bare "Lvl 3" read as the level the team had already).
             level: "Next: Lvl {level}",
+            // Over a treasure chest as it is opened, what was in it, rising
+            // and fading: so many of a thing ({item} is market's or arena's
+            // name for it), a sword ({sword} is market's name for its
+            // tier), or a thing for a button ({thing}).
+            found: "+{count} {item}",
+            found_sword: "{sword} Sword!",
+            found_thing: "+1 {thing}",
         ),
     ),
     // The car you drive (the face button, or C on desktop): every number of

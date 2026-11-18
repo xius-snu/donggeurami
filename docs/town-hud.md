@@ -7,6 +7,34 @@
 > "above" or "below", or names another section in quotes, that section may be
 > in another file here: the table in `CLAUDE.md` says which.
 
+## The town's name goes at once when a window comes up over it
+
+The evening of 2026-11-18, with the four games' asks (`docs/minigames.md`).
+Hajun: "also the Donggeurami Town intro text when u open the app should
+automatically fade right away when u open some menu like game or setting or
+friends". Until then "Donggeurami Town" stood over the game selector, the
+settings or the friends' panel for the rest of its three seconds.
+
+- **As the app opens** (`src/intro.rs`): once you are let go, the first
+  frame anything holds `hud::DialogUp`, the name goes from however strong
+  it is then to nothing in `hud::HUSH_SECS`, a quarter of a second, and
+  never comes back up (`Intro::hushed`, `title_solid`, `named`, a test);
+  the opening is over as soon as it has gone. The sign-up's pages, which
+  hold `DialogUp` too, do not count: the name never stands over them.
+- **Back in the town** (`src/hud.rs`): the same name said again as a
+  welcome as you come back from a game goes the same way under a window
+  (`hush_welcome`, before `fade_headlines`; `Headline::out`, `solid`, a
+  test). Nothing else said in a headline is hushed.
+- **Mine**: a quarter of a second, half the name's own going or less
+  (a test holds it so); every window that holds `DialogUp` hushes it, the
+  chat's box and a talk too, not only the three Hajun named; and the
+  welcome back in the town as well as the opening's.
+- **Seen hidden** (`RT_BACKGROUND=1`, offline, a throwaway driver tapping
+  the gamepad through the window's own touch events): the name full up
+  over the town; 0.12 s after the tap, half gone over the selector, its
+  white down from 12,706 pixels to 1,067 in its band (enlarged); at 0.6 s
+  gone, the selector clear. Not seen on a phone.
+
 ## The cover is plain black, and fades
 
 2026-11-17, with the four buses of Bridge Wars (the first entry of

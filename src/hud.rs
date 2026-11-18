@@ -275,6 +275,15 @@ pub(crate) const ABOVE_YOU: f32 = 36.0;
 const HEADLINE_IN: f32 = 0.4;
 const HEADLINE_OUT: f32 = 0.8;
 const WELCOME_SECS: f32 = 3.5;
+/// How quickly the town's name goes once a window comes up while it is on
+/// the screen, in seconds, from however strong it is then (since
+/// 2026-11-18; Hajun: "the Donggeurami Town intro text when u open the app
+/// should automatically fade right away when u open some menu like game or
+/// setting or friends"; mine, how quickly): the opening's (`intro`) and the
+/// welcome's back in the town ([`hush_welcome`]). Any window that holds
+/// [`DialogUp`] does it: the game selector, the settings, the friends'
+/// panel, the chat's box, a talk.
+pub(crate) const HUSH_SECS: f32 = 0.25;
 
 // Every colour is `assets/ui.ron`'s (`ui`): the soft shadow under every
 // word, so that it reads over sky and grass alike; the dark glass behind
@@ -421,11 +430,20 @@ struct ResourceCount(Item);
 struct BridgeCount;
 
 /// Words across the middle of the screen, up for a moment, and how long they
-/// have been up.
+/// have been up; and how long they take to go ([`HEADLINE_OUT`], or
+/// [`HUSH_SECS`] once a window has come up over the welcome).
 #[derive(Component)]
 struct Headline {
     age: f32,
     secs: f32,
+    out: f32,
+}
+
+impl Headline {
+    /// How strongly it is drawn now: coming up, held, or going.
+    fn solid(&self) -> f32 {
+        (self.age / HEADLINE_IN).min((self.secs - self.age) / self.out).clamp(0.0, 1.0)
+    }
 }
 
 /// The headline that is the town's name, as a welcome.
@@ -512,7 +530,7 @@ pub(crate) fn plugin(app: &mut App) {
                 release_held,
                 repicture.after(restyle),
                 repaint,
-                (arrive, welcome, fade_headlines).chain(),
+                (arrive, welcome, hush_welcome, fade_headlines).chain(),
             ),
         );
 }
@@ -1771,6 +1789,25 @@ fn welcome(
     announce(&mut commands, None, &ui().words.welcome, HEADLINE, WELCOME_SECS).insert(Welcome);
 }
 
+/// While a window is up over the town (anything that holds [`DialogUp`]),
+/// the town's name, if it is on the screen as a welcome, goes at once: in
+/// [`HUSH_SECS`], from however strong it is (it stood over the game
+/// selector, the settings and the friends' panel for the rest of its three
+/// and a half seconds until 2026-11-18).
+fn hush_welcome(up: Res<DialogUp>, mut welcomes: Query<&mut Headline, With<Welcome>>) {
+    if !up.0 {
+        return;
+    }
+    for mut headline in &mut welcomes {
+        if headline.out == HUSH_SECS {
+            continue;
+        }
+        let solid = headline.solid();
+        headline.out = HUSH_SECS;
+        headline.secs = headline.age + HUSH_SECS * solid;
+    }
+}
+
 /// Puts `title` across the middle of the screen for `secs` seconds, in gold,
 /// `size` big ([`HEADLINE`] unless it is long), with `caption` over it in
 /// white, fading in and out.
@@ -1799,7 +1836,11 @@ pub(crate) fn announce<'a>(
 /// character, just below the middle, in sight.
 fn announce_frame<'a>(commands: &'a mut Commands, secs: f32) -> EntityCommands<'a> {
     commands.spawn((
-        Headline { age: 0.0, secs },
+        Headline {
+            age: 0.0,
+            secs,
+            out: HEADLINE_OUT,
+        },
         Node {
             position_type: PositionType::Absolute,
             width: Val::Percent(100.0),
@@ -1878,9 +1919,7 @@ fn fade_headlines(
             commands.entity(entity).despawn();
             continue;
         }
-        let solid = (headline.age / HEADLINE_IN)
-            .min((headline.secs - headline.age) / HEADLINE_OUT)
-            .clamp(0.0, 1.0);
+        let solid = headline.solid();
         let inside = children.iter().filter_map(|child| groups.get(child).ok()).flat_map(|group| group.iter());
         let mut words = lines.iter_many_mut(children.iter().chain(inside));
         while let Some((mut colour, shadow, copy)) = words.fetch_next() {
@@ -2717,6 +2756,44 @@ pub(crate) fn clear_of_each_other(buttons: &[((f32, f32), f32)]) -> Result<(), S
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_welcome_goes_at_once_when_a_window_comes_up_over_it() {
+        use bevy::ecs::system::RunSystemOnce;
+        use std::time::Duration;
+        let mut world = World::new();
+        world.insert_resource(Time::<()>::default());
+        world.insert_resource(DialogUp(false));
+        world
+            .run_system_once(|mut commands: Commands| {
+                announce(&mut commands, None, "Donggeurami Town", HEADLINE, WELCOME_SECS).insert(Welcome);
+            })
+            .expect("said");
+        let step = |world: &mut World, secs: f32| {
+            world.resource_mut::<Time>().advance_by(Duration::from_secs_f32(secs));
+            world.run_system_once(hush_welcome).expect("hushed");
+            world.run_system_once(fade_headlines).expect("faded");
+        };
+        let mut words = world.query::<&TextColor>();
+        // Up, with nothing over it: held.
+        step(&mut world, 1.0);
+        assert!(words.iter(&world).all(|colour| (colour.0.alpha() - 1.0).abs() < 1e-3));
+        // The game selector, the settings, the friends' panel: it goes from
+        // there, half gone half way through, and gone at the end.
+        world.resource_mut::<DialogUp>().0 = true;
+        step(&mut world, HUSH_SECS * 0.5);
+        assert!(words.iter(&world).all(|colour| (colour.0.alpha() - 0.5).abs() < 0.02));
+        step(&mut world, HUSH_SECS * 0.6);
+        assert_eq!(world.query::<&Welcome>().iter(&world).count(), 0, "gone");
+        // Any other headline is left as it is.
+        world
+            .run_system_once(|mut commands: Commands| {
+                announce(&mut commands, None, "Wave 3", HEADLINE, 3.0);
+            })
+            .expect("said");
+        step(&mut world, 1.0);
+        assert!(words.iter(&world).all(|colour| (colour.0.alpha() - 1.0).abs() < 1e-3));
+    }
 
     #[test]
     fn a_stroked_headline_fades_in_with_its_stroke_and_goes_whole() {

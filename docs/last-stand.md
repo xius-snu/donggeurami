@@ -10,10 +10,174 @@
 
 ## Contents
 
-1. At the merge, 2026-11-18: the headlines stroked
-2. 2026-11-18, later still: what a play-tester found, made clearer
-3. 2026-11-18, later: sixteen things a check of it found, mended
-4. Since 2026-11-18 Last Stand is a game people play, online and offline
+1. The evening of 2026-11-18: a sea and a ring, everything dropped on a death, the shops sooner, zombies red when hit, treasure chests
+2. At the merge, 2026-11-18: the headlines stroked
+3. 2026-11-18, later still: what a play-tester found, made clearer
+4. 2026-11-18, later: sixteen things a check of it found, mended
+5. Since 2026-11-18 Last Stand is a game people play, online and offline
+
+## The evening of 2026-11-18: a sea and a ring, everything dropped on a death, the shops sooner, zombies red when hit, treasure chests
+
+Five of Hajun's messages of that evening, after playing it, with the other
+games' (`docs/minigames.md`). **`PROTOCOL_VERSION` 23**: Last Stand's new
+ask (`Ask::Open`), tell (`Tell::Found`) and things sent (`LyingSword`,
+`Chest`, registered after `Spit`). The server and APK 42 have it
+(`docs/building.md`). Every call below is mine unless it is quoted.
+
+### The sea, and a ring nobody passes
+
+Hajun: "also in last stand map, it shouldnt be void, but ocean with a tight
+invisible circular boundary border so u can still go in the ocean but not
+too far."
+
+- **The sea round the sand, not the void** (`island::bottomless` is Bridge
+  Wars' and Bridge Race's alone now): the town's sea drawn round the map,
+  and whoever steps off the sand wades in it, slowed as in the town's. The
+  rules' sea bed is where a body's feet come to wading
+  (`last_stand::SEA_BED`, -1.08: the game's `WATER_Y` less `WATER_WADE`,
+  the map being lifted and the sea not; a test in the game holds the two
+  together), and `floor`, `in_the_sea` and `within_the_shore` are the
+  rules' for it (`shared/src/last_stand/map.rs`).
+- **The ring** (`SHORE`, 41.5 m from the middle, four metres out past the
+  sand's edge at 37.5): nobody's middle goes past it, a body, a zombie or a
+  giant, and no knock throws anyone past it; on this device you are held at
+  it as at a wall nobody sees (`play::keep_to_the_shore`, written only if
+  you were past it). The sand's edge is too high to step up onto from the
+  water: a body jumps up, a zombie climbs.
+- **The zombies** rise out of the sea now, under the water at the rim
+  (`CLIMB_UNDER`), and climb up over the sand's edge as they climbed out of
+  the void; they never walk off the sand but after someone in the sea, and
+  wade there at 0.72 of their pace (`WADE_PACE`, the game's
+  `WATER_MOVE_SCALE`); one knocked in climbs back out. One killed wading
+  drops what it would have onto the sand nearest it: nothing lies in the
+  sea. Nothing falls far enough over the sea to die of it; the device's
+  fall into the void (`fell`) stays, for a body that somehow goes through
+  the ground.
+- **Seen hidden**: put in the sea 40 m out, standing at -1.12 (the sea
+  bed's -1.08 and a body's settle); put at 47.5 m, held at 41.50.
+
+### Everything dropped on a death, for yourself or a teammate
+
+Hajun: "when a player dies they should drop all their loot (silver, gold,
+sapphire, amethyst, sword) onto the ground, so after they respawn, they
+need to go collect it again, or if ur playing with a teammate, ur teammate
+can pick ur stuff up too (for sword, can only pick up if its greater than
+the sword they are already holding) and the items despawns after a very
+long time, and If and only if dropping like 200 silver at once will cause
+severe lag, then make some visual merging technique ..." Until then the
+dead kept it all.
+
+- **Dying** (`Game::die`, `drop_all`) throws out everything you held of the
+  four things, a thing for each one up to 200 of an item (past that each
+  worth more and drawn bigger, `DROP_MOST`), round where you fell, onto
+  the land only: out in a ring as wide as what it is worth wants
+  (`DROP_DENSITY`, four to the square metre, out to `DROP_FAR`, 6 m;
+  Bridge Wars' 2.4 m heap was one lump of it). Dead in the sea, it is
+  thrown from where you last stood on the land (`Player::footing`). Your
+  sword goes too, a sword of its tier lying there (`Blade`,
+  `Event::SwordDropped`). Your shield and what is on your buttons you keep:
+  Hajun's five are what is dropped.
+- **Anyone walks into a thing and has it** once it has lain a moment, as in
+  Bridge Wars: you once you stand again, or a teammate meanwhile. **A sword
+  only to whoever holds a lesser one** (`Event::SwordTaken`); a better or
+  equal one walks over it and it stays.
+- **It lies five minutes** (`LIES_FOR`, 300 s, Minecraft's own), then goes
+  (`Pile::lapse`, `Event::Lapsed`, `SwordLapsed`), each sinking away. What
+  a zombie drops lies as long; until then it lay until someone took it.
+- **Drawn**: things as Bridge Wars' are (`loot`, thrown out from the body,
+  bobbing and turning); a sword is the sword's own model lying flat,
+  thrown, bobbing and turning, flying to whoever took it or sinking away
+  (`src/last_stand/finds.rs`).
+- **The lag, measured by Hajun's rule**: two hundred of each of the four,
+  794 things and the sword, dropped on the desktop, hidden, at 120 frames
+  a second: 8.3 ms a frame before and 8.4 with them all lying, twice, so
+  no merging (an earlier run, the computer slower at everything, went 18
+  ms to 22). The merging is one number away, measured too: `DROP_MOST` 50
+  lies a quarter of the things, each worth four and drawn half again as
+  big, in as wide a ring, at 8.4 ms. No phone was measured: if one lags,
+  that is the number to change.
+- **Seen hidden**: a death with 200, 200, 194 and 200 and the aura sword,
+  everything lying in a ring round the spot (794 things and one sword),
+  the purse and the hand empty; standing again, walking onto the sword
+  took it back, sword 3, and what lay on the way (12, 15, 15, 13).
+- **Not checked**: a teammate taking it online (two devices); a death in
+  the sea in the running game (the rules' test does it).
+
+### The shops open sooner
+
+Hajun: "right now the shops seem to only open when u rly go inside deep
+into the shop, so make it a bit moresensitive by increasing the activation
+detection area to similar as build wars." Measured first: the shops'
+outlines are Bridge Wars' size already. What made them open deep was the
+wait a shop had in a wave, half a second, in which a body at a run is
+through the outline and at the back of the stand. Now a fifth of a second
+(`SHOP_SETTLE`), and on Last Stand's map a shop opens with your body
+(0.5 m, `market::margin`) coming onto its outline, not your feet
+(`Stands::at`, `holds_within`, a test); Bridge Wars' as ever. Seen hidden:
+put a third of a metre short of the item shop's outline in a wave, the
+shop came up.
+
+### A zombie shows red when a blow takes health off it
+
+Hajun: "when u hit the zombie in last stand minigame, give some indication
+of the zombie being hit maybe like a red tint when they take the hit so
+its more satisfying." Every painted part of it, skin and hair, goes three
+quarters of the way to `colours.last_stand.hit` (`#ff2a1a`, Hajun's file)
+and glows a little in it, for 0.16 s, then its own paint again
+(`looks::flash_hits`, `hit_paint`, `Paints`, a test); each kind's red made
+once and shared, each part written only as it goes red or back. **A blow
+that kills shows no red**: the body is gone at once, as before, and its
+number floats. Seen hidden, logged frame by frame: a runner's skin
+`#A7C25A` to `#E9502A` and its hair `#4D5C1A` to `#D3371A` from the frame
+of a bare-handed blow until 0.16 s, then back; in the picture, enlarged,
+the one struck plainly red-orange beside two green.
+
+### Treasure chests
+
+Hajun: "make treasurechest.glb that sometimes spawn in the sand area or the
+ocean, with no notification to the player of its location or existence,
+so the player can sometime wander around and find a treasure chest, and u
+need to go close to it and it will show the proximitychatbubble and u
+press that and the chest pops/vanishes and you get a random chance item
+and random quantity like gold, sapphire, amethyst, swords, etc. it should
+a minor thing not the main thing." His model, `assets/treasurechest.glb`
+(and `.blend`), loaded as he made it.
+
+- **One at a time, said to nobody** (`place_chest`): the first 45 to 120 s
+  into the fight, the next 75 to 160 s after the last has gone; anywhere
+  from 1.5 m past the stone to a metre short of the ring, on the sand or
+  in the sea, not within a metre of the sand's edge nor of the crystal, a
+  shop or anything else in the way (`OBSTACLES`); it stands five minutes
+  unopened and goes (`ChestLapsed`).
+- **Opened by the bubble** (`talk::Opens`, `Opened`): the town's own round
+  bubble comes up over it as you come near (4.5 m, the town's reach), on
+  any map, and its tap, or E, opens it (`Ask::Open` online; the rules
+  allow 6.5 m, `OPEN_REACH`, for the way you may have gone since). It pops
+  and is gone, and what was in it rises over where it stood in gold
+  ("+4 Gold", "Silver Sword!", "+1 Fireball": `words.last_stand.found`,
+  `found_sword`, `found_thing`), to everyone in the game.
+- **What is in it** (`Game::find`): silver 10 to 25 (32%), gold 2 to 6
+  (28%), sapphire 1 to 3 (18%), amethyst 1 or 2 (9%), the next sword up
+  (7%; gold if yours is the best), a fireball or a healing potion (6%; gold
+  if there is no room on your buttons); counts 8% more each wave.
+- **Seen hidden**: a chest came at 86 s, 35 m out on the sand; the bubble
+  over it (enlarged); E beside it opened it, none left standing, the words
+  rising. Not seen online, nor in the sea.
+
+### Checked, and where
+
+The rules' tests (`cargo test -p roundtown_net`): everything dropped and a
+teammate taking it, a lesser sword left lying; the five minutes and the
+most things; a death in the sea dropping on the land; the chests; the
+rules' sea where a body wades. The device's: the red; the shops' margin;
+the bottomless maps. The server's suite. The whole-games tuning
+(`stand_many`, 20 games of each way of playing for one to four people,
+after the deploy): the stand-ins wade and jump now, and fetch what they
+dropped and their sword; 6 to 13 waves cleared in the middle, by how many
+play and how well, dying 13 to 42 times a game, nothing into the void. Hidden runs of the desktop build,
+offline, as above. This PC's account online on the deployed server went
+through Bridge Wars' fee only (`docs/building.md`), not this game. Not on
+a phone; not online with two devices.
 
 ## At the merge, 2026-11-18: the headlines stroked
 

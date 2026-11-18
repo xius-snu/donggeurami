@@ -121,7 +121,9 @@ fn every(speed: f32) -> f32 {
 
 /// Leaves sparks behind every body on a speed potion or a leap potion, in
 /// the fight being played (since 2026-11-18, `arena::Fighting::venue`;
-/// Bridge Wars' map alone until then).
+/// Bridge Wars' map alone until then); and behind Blend In's seekers in
+/// their seek, who have the speed potion's effect (since 2026-11-18,
+/// `blend_in`'s `put`), Blend In owning no fight.
 #[allow(clippy::type_complexity)]
 fn leave(
     time: Res<Time>,
@@ -138,7 +140,7 @@ fn leave(
     let mine = me.single().ok().flatten().map(|team| team.0);
     for (body, at, wears, &venue, team, dead, sparkling) in &mut bodies {
         let (fast, leaping) = kinds(wears, team.map(|team| team.0), mine, dead);
-        let fought = fighting.venue == Some(venue);
+        let fought = fighting.venue == Some(venue) || venue == Venue::BlendIn;
         let Some(mut sparkling) = sparkling else {
             // Only a body with a potion on is given the count.
             if (fast || leaping) && fought {

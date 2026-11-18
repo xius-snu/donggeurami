@@ -7,6 +7,70 @@
 > "above" or "below", or names another section in quotes, that section may be
 > in another file here: the table in `CLAUDE.md` says which.
 
+## APK 42, and the server with protocol 23
+
+The evening of 2026-11-18, for the dozen asks Hajun sent after playing the
+four games, the last "then build apk and push to git"
+(`docs/minigames.md`, the evening's entry, lists them and where each is
+written up). **`PROTOCOL_VERSION` 23**: APK 41, and the iPhone's
+`ios-1.0.2-18`, are told to update and stay offline.
+
+- **Before the deploy**: the three crates' tests (the game's 473, the
+  rules' 252, the server's 106), after the throwaway drivers of the hidden
+  runs were taken out; the whole-games tunings of Bridge Race
+  (`many_races`, 200 of each size, after Hajun's export moved its
+  islands) and Blend In (`many_games_of_blend_in`); the bakes of Bridge
+  Race's map (new) and the town's (the same bytes); hidden runs of the
+  desktop build, offline, of every ask (`docs/minigames.md`, "Checked, and
+  where"). Last Stand's (`stand_many`, 20 games of each way of playing for
+  one to four people) only after the deploy, before the commit: the
+  stand-ins dying and fetching what they dropped, 6 to 13 waves cleared
+  in the middle by how many play and how well.
+- **The server**: `server/deploy.sh` at 08:53:10 UTC (17:53 here), with
+  nobody connected since 06:17 UTC (the VM's journal: one person's two
+  games of Last Stand that morning); the binary before (deployed 04:16
+  UTC, protocol 22, sha1 `cd9ce3a8`) kept on the VM as
+  `roundtown-server.prev-2026-11-18b`. After: the VM's binary the same
+  bytes as the one built here (sha1 `0ceec955`), the service active, the
+  database kept ("3 accounts"). This PC's own account online on it,
+  hidden, from a scratch folder whose `device.id` was compared byte for
+  byte with this PC's ("connected to 141.164.62.193:443", "online as xd,
+  a boy"), through Bridge Wars' new fee and back, by a throwaway driver
+  taken out again: 1,000 coins; into Bridge Wars, 950 in the waiting room
+  (seat 2); the app sent to the background as a phone's is (the
+  connection closed, the server told) and quit; the server, "seat 2's
+  device is not back as the fight begins, and the seat is free again",
+  "26 left before the fight, and has the fee back", and the game closed
+  with only the computer in it; the database's `coin_changes` rows
+  "Bridge Wars entry" -50 and "Bridge Wars refund" +50 (game 0), the
+  balance 1,000; and the device, opened again, told 1,000. The prizes at a
+  game's end were not met on the real database (a whole game of twenty
+  minutes): the server's tests pay them.
+- **The APK**: 42 (`versionCode`), at 18:01 here (09:01 UTC), from the
+  main checkout. cargo ndk 2m19s, stripped from 196.5 MB to 105.7 MB with
+  `GameActivity_onCreate` and the six `MainActivity` methods in it, Gradle
+  20 s; 123.3 MB, put over APK 41 with no copy kept. Checked: `versionCode`
+  read back with aapt; the library in it the same bytes as the stripped
+  one (sha1 `23c18384`); all 90 files under `assets/` the same as the
+  tree's, the 152 of the tree hashed before cargo ndk and after Gradle and
+  unchanged (nothing exported meanwhile), among them the town's map with
+  the plots, Bridge Race's with its islands moved, and the chest; no
+  `.blend`, no `ui.ron`; four of the evening's words (the chest's, the
+  red, the selector's) found in the library. Hajun's `coinfountain.glb`,
+  in the tree, not committed and loaded by nothing, is in it too (160 KB):
+  the APK takes every asset not left out. **Not installed: no phone was
+  attached.** Nothing of the evening's work has been seen on a phone.
+- **The iPhone**: no tag pushed (Hajun's to ask for; the next is
+  `ios-1.0.2-19`), and not type-checked this time: nothing behind
+  `target_os = "ios"` was touched.
+- **Apple's mail of that day** (ITMS-90725, build 54 of 1.0.2: built with
+  the iOS 26.5 SDK; from April 2027 an upload must be built with the iOS
+  27 SDK, Xcode 27): a warning, nothing refused. `codemagic.yaml` asks for
+  `xcode: latest`, which Codemagic moves to a new major only some while
+  after its release; Xcode 27 is on its machines (`edge`, and by version).
+  Pinning `xcode: 27.x` before April 2027 is the fix, after an iPhone
+  build to check it on; not changed here.
+
 ## APK 41, and the server with protocol 22
 
 2026-11-18, for the four games Hajun asked for that morning, Blend In,

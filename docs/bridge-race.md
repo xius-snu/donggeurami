@@ -13,9 +13,70 @@
 
 ## Contents
 
-1. 2026-11-18, later that day: what a play-test found, the race made easier to follow
-2. 2026-11-18, the same day: nine things a checker found, put right
-3. Since 2026-11-18 Bridge Race is played at its tables, online and offline, to the golden island
+1. The evening of 2026-11-18: always by day, two people seated three ways, the islands where Hajun moved them
+2. 2026-11-18, later that day: what a play-test found, the race made easier to follow
+3. 2026-11-18, the same day: nine things a checker found, put right
+4. Since 2026-11-18 Bridge Race is played at its tables, online and offline, to the golden island
+
+## The evening of 2026-11-18: always by day, two people seated three ways, the islands where Hajun moved them
+
+Three of Hajun's messages of that evening, with the other games'
+(`docs/minigames.md`, the evening's entry). **`PROTOCOL_VERSION` 23** with
+the rest; the server and APK 42 have it (`docs/building.md`).
+
+- **Always by day** (Hajun: "or bridge race game, i think it should always
+  be day time cuz theres no light source"). The sky, the sun and the light
+  stand at noon while you are on Bridge Race's islands, whatever the town's
+  clock says, and go by the clock again as you leave (`sky::ALWAYS_DAY`,
+  `sky_time`, a test). Only the sky: the clock itself, the buses' and the
+  fountain's, is the town's as ever. Mine: noon, the light Hajun approved
+  for the town (2026-10-13), rather than some other hour of day.
+- **Holding the golden island is what wins, however you came onto it**
+  (Hajun: "in bridge race, the bridge physically reaching the target
+  island shouldnt matter cuz u could jump across, so u should be able to
+  win and finish the game as long as u reached it and hold it"). It was so
+  already: the rules count whoever stands on its land with their device
+  there (`Game::on_gold`: over the golden island, their feet at its top),
+  and never ask how they came, and the test of the hold puts people
+  straight onto it with no bridge built
+  (`a_team_wins_with_every_one_of_it_on_the_golden_island_together_for_three_seconds`).
+  Nothing changed but this account. Seen hidden: offline, the town's clock
+  at night, put onto the golden island's shore with no bridge near it,
+  "Red is holding the golden island!", "Hold! 2", and "Red wins!" four and
+  a half seconds after.
+- **Two people at a table are seated three ways, a third of the time each**
+  (Hajun: "for the bridge race game make it so if there is 2 real players,
+  then 33/33/33 chance of 1. being on same team against 2 bots 2. being on
+  different team, each with a bot teammate, 3. being a 1v1 with no bot
+  player"; always the first until then). `bridge_race::Pairing`
+  (`Together`, `Apart`, `Alone`), `pairing(roll)`; thrown on the table's
+  dice as the computer comes, when two people are coming
+  (`server/src/tables.rs`, `wait`): together, red's two seats against two
+  of the computer's, as before; apart, the one in red's far seat moved to
+  blue's first, `close_ranks`, the computer in the two seats left; alone,
+  the table cut to two seats, one against one, as one person alone plays.
+  The server logs which. Mine: a group of two is seated the same way as two
+  who came apart, his words saying nothing of groups; and it is the
+  server's alone, two people never being at a table offline. Three or four
+  people are as they were. Tests: the third of the way each
+  (`roundtown_net`), and a table of two of either arrangement
+  (`roundtown_server`). Not seen with two devices.
+- **Hajun's export of the afternoon moved each team's island 5 m nearer
+  the other**, with everything on it: red's at (-80, -16) and blue's at
+  (-80, 16), 32 m apart, 42 until then (`bridge_race::ISLANDS`, which a test
+  reads off the map, found it). The way across is 61.6 m of void, 62.7
+  before, and 81.6 m from an island's middle to the golden island's, 83
+  before. The bots' map baked again (`RT_BAKE_NAV=1 cargo test --lib
+  race_bake`, `shared/src/race.nav`), its test reading the way across off
+  the rules now and not 63 m. Two hundred whole races of each size after it
+  (`many_races`): one against one, the winners had gone over on their own
+  bridge in 145 of 200 and jumped the last of the void in 55, so the test's
+  three in four is seven in ten, with a note (and Hajun's words of the same
+  evening); one race of two hundred, seed 141, had a player stop three
+  times on its own bridge, 3.1 s in all, never held fast, so "never more
+  than once" in every race is "more than once in one race of a hundred at
+  the most, never more than three times". The map's other change, the
+  golden island's colour a little redder, is his.
 
 ## 2026-11-18, later that day: what a play-test found, the race made easier to follow
 

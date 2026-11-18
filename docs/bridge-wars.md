@@ -12,35 +12,36 @@
 The entries of the log below, in its order (the newest dated work first,
 then the game as it was first made). Search for an entry by its first words.
 
-1. Since 2026-11-17 four buses drive round the middle of the map, one to each lane of the ring, and every one stops short of a crossing while anyone of the players is on it
-2. Later on the night of 2026-11-16 a game is twenty minutes with no clock until its last ten seconds, the anchors break at 14:00, and from 15:00 zombies that nothing hurts come a few and then more, to fifty, which the computer's players run from
-3. Since the night of 2026-11-16 a game the computer plays alone can be looked on at, on desktop: `RT_ARENA_WATCH=1`
-4. Since the evening of 2026-11-16 two buses drive round the middle of the map and run over whoever is in front of one, who lies flat on the road for t...
-5. Since the afternoon of 2026-11-16 which team anyone is on is drawn nowhere until the fight begins, and the computer's players come into the waiting ro...
-6. Later on the night of 2026-11-15 a stick of dynamite is 1 amethyst and the falling it starts quickens to a little over a run; and whoever dies on land dr...
-7. Since the night of 2026-11-15 a seat in a game waits for whoever's connection has gone, and they are put back in it; a stick of dynamite takes the w...
-8. Since the small hours of 2026-11-15 the team you begin on is thrown for each game, each team's island is lined in its colour on the minimap, and yo...
-9. Later on the night of 2026-11-14 the two shops and the panel that says you are out are drawn as the friends' panel is
-10. Since the night of 2026-11-14 a plank is a tenth wider than Hajun's and not a quarter, whoever kills someone has their sapphire and amethyst, and the comp...
-11. Since the evening of 2026-11-14 there is a Leap Potion and a faster builder to buy, a drink shows, a potion that is on leaves sparks, the bridge is...
-12. Since the small hours of 2026-11-14 the dynamite's arch rises and falls and leans to neither side, with an X where it will land; its fuse is seen t...
-13. Since the night of 2026-11-13 there is dynamite, which cuts bridges; the computer's players no longer fall for three easy tricks, and are not all a...
-14. Later on 2026-11-13: the compass's arrow points out, the anchors are their teams' colours, and the computer's players fill their buttons, each as i...
-15. Since 2026-11-13 there are five buttons for things to use, and you hold several kinds at once
-16. Since late on the night of 2026-11-12 each of the computer's players is someone, a knock no longer stuns them, and no two fights with them go the s...
-17. Since the night of 2026-11-12 the computer's players play the game
-18. Since the evening of 2026-11-12 every game online is 2v2v2v2, people teamed up with each other first and the computer in every seat left
-19. Later on 2026-11-12: dying loses everything you hold, what is aimed is seen over the void, and a sword is held on its edge and cut downward
-20. Since 2026-11-12 Bridge Wars has two shops, and everything in Hajun's file is in the game
-21. Since the night of 2026-11-11 Bridge Wars has generators, a shop and a timetable
-22. Since the night of 2026-11-08 Bridge Wars is the server's online, eight to a game in four teams of two, with respawn anchors and bridges you build
-23. The gamepad down the right edge opens the game selector
-24. Bridge Wars
-25. The fight
-26. Online, a game of Bridge Wars is a room of your own
-27. The camera is fixed straight down over you only in the arena
-28. In the arena the buttons are Hajun's `pvpmapbuttonui.jpg`
-29. Falling off the map
+1. Since the evening of 2026-11-18 a game costs 50 coins and pays everyone by how their team came
+2. Since 2026-11-17 four buses drive round the middle of the map, one to each lane of the ring, and every one stops short of a crossing while anyone of the players is on it
+3. Later on the night of 2026-11-16 a game is twenty minutes with no clock until its last ten seconds, the anchors break at 14:00, and from 15:00 zombies that nothing hurts come a few and then more, to fifty, which the computer's players run from
+4. Since the night of 2026-11-16 a game the computer plays alone can be looked on at, on desktop: `RT_ARENA_WATCH=1`
+5. Since the evening of 2026-11-16 two buses drive round the middle of the map and run over whoever is in front of one, who lies flat on the road for t...
+6. Since the afternoon of 2026-11-16 which team anyone is on is drawn nowhere until the fight begins, and the computer's players come into the waiting ro...
+7. Later on the night of 2026-11-15 a stick of dynamite is 1 amethyst and the falling it starts quickens to a little over a run; and whoever dies on land dr...
+8. Since the night of 2026-11-15 a seat in a game waits for whoever's connection has gone, and they are put back in it; a stick of dynamite takes the w...
+9. Since the small hours of 2026-11-15 the team you begin on is thrown for each game, each team's island is lined in its colour on the minimap, and yo...
+10. Later on the night of 2026-11-14 the two shops and the panel that says you are out are drawn as the friends' panel is
+11. Since the night of 2026-11-14 a plank is a tenth wider than Hajun's and not a quarter, whoever kills someone has their sapphire and amethyst, and the comp...
+12. Since the evening of 2026-11-14 there is a Leap Potion and a faster builder to buy, a drink shows, a potion that is on leaves sparks, the bridge is...
+13. Since the small hours of 2026-11-14 the dynamite's arch rises and falls and leans to neither side, with an X where it will land; its fuse is seen t...
+14. Since the night of 2026-11-13 there is dynamite, which cuts bridges; the computer's players no longer fall for three easy tricks, and are not all a...
+15. Later on 2026-11-13: the compass's arrow points out, the anchors are their teams' colours, and the computer's players fill their buttons, each as i...
+16. Since 2026-11-13 there are five buttons for things to use, and you hold several kinds at once
+17. Since late on the night of 2026-11-12 each of the computer's players is someone, a knock no longer stuns them, and no two fights with them go the s...
+18. Since the night of 2026-11-12 the computer's players play the game
+19. Since the evening of 2026-11-12 every game online is 2v2v2v2, people teamed up with each other first and the computer in every seat left
+20. Later on 2026-11-12: dying loses everything you hold, what is aimed is seen over the void, and a sword is held on its edge and cut downward
+21. Since 2026-11-12 Bridge Wars has two shops, and everything in Hajun's file is in the game
+22. Since the night of 2026-11-11 Bridge Wars has generators, a shop and a timetable
+23. Since the night of 2026-11-08 Bridge Wars is the server's online, eight to a game in four teams of two, with respawn anchors and bridges you build
+24. The gamepad down the right edge opens the game selector
+25. Bridge Wars
+26. The fight
+27. Online, a game of Bridge Wars is a room of your own
+28. The camera is fixed straight down over you only in the arena
+29. In the arena the buttons are Hajun's `pvpmapbuttonui.jpg`
+30. Falling off the map
 
 ## Games: the gamepad opens a selector, and Bridge Wars is the PvP map
 
@@ -69,6 +70,46 @@ deployed with it, the binary before kept on the VM as
 was the town itself; everything below about the map, its islands, the
 void, the punch's knockback and its range held for the town then, and
 holds for the arena now.
+
+- **Since the evening of 2026-11-18 a game costs 50 coins and pays
+  everyone by how their team came** (Hajun, after playing the four new
+  games: "also make the cost of bridgewars to be 50 coins as well"; free
+  until then). **The fee** (`bridge_wars::FEE`): taken as you go in, from
+  every one of a group that can pay it (a follower who cannot stays
+  behind, as one not free does; a leader who cannot is told "Not enough
+  coins"), and given back to whoever leaves before the fight begins, from
+  the waiting room or the countdown, or whose device is not back as the
+  fight begins (`Game::vacate`, `Game::refunds`). With the database it is
+  taken there, each of a group's, and all of them seated together once
+  every one has been answered (`arena::Pending`, `arena::paid`, as the
+  tables take theirs; a fee taken for someone no longer here or free to go
+  in is given back as "Bridge Wars refund"); a server without one takes it
+  at once. Offline the device takes it off your balance as you go in
+  (`play`), as a table offline takes its. The selector's card is blocked
+  out without it, as every game's is. **The prizes are mine**, by Hajun's
+  rule for every game with a fee ("Generally should be above 50% to win
+  net positive coin, and if not, net negative coin"): each person paid by
+  their team's place, Knock Off's four places, **130, 60, 10 and 0** (net
+  +80, +10, -40, -50: a team that beats two of the three others comes out
+  ahead; `bridge_wars::PRIZES`, `prizes`). A team's place is by when it
+  had nobody left in play (`Game::out_at`, `bridge_wars::places`): the team
+  left standing first; at the draw, every team still in shares first (two
+  at 20:00 share 130 and 60, 95 each; all four, 50 each, the fee back);
+  the rest by how long each lasted, two out in the same moment sharing.
+  Whoever left in the fight, or whose device has gone, is paid by their
+  team's place too, the fee having been theirs; the computer nothing; a
+  game the computer plays alone to be watched (`RT_ARENA_WATCH`) nothing.
+  Paid once, as the game is over (`run`): with the database as "Bridge
+  Wars prize" credits, which tell each device its balance as they land;
+  without, at once. **On the screen**: under "Victory!" or "Defeat", the
+  coin's picture and "+130" in gold as your balance goes up by it, 4 s
+  (`say_prize`, `fade_prize`, mine), online as the credit lands and
+  offline as the device pays. **`PROTOCOL_VERSION` 23** with the evening's
+  other work (`docs/minigames.md`). `shared/src/lib.rs` (`FEE`, `PRIZES`,
+  `places`, `prizes`, and their test); `server/src/arena.rs` (the join, `paid`,
+  `pay`, `free_to_go`, the refunds and the prizes, a test of the refunds
+  and the places); `src/arena.rs` (the fee and the prize offline, the
+  line); `src/games.rs` (the card).
 
 - **Since 2026-11-17 four buses drive round the middle of the map, one to
   each lane of the ring, and every one stops short of a crossing while

@@ -24,10 +24,12 @@
 //! generators, everyone's health and purse.
 //!
 //! * **The map** ([`ground`], [`OBSTACLES`]): a stone disc 50 m across in a
-//!   ring of sand 75 m across, over the void, with the anchor's crystal on
-//!   its plinth in the middle, the two generators' pads either side of it,
-//!   and the item shop's red stand and the upgrade shop's blue one in front
-//!   of it and behind it. Lifted a quarter of a metre as the device loads it
+//!   ring of sand 75 m across, in the sea (over the void until the evening
+//!   of 2026-11-18), which anybody can wade out into as far as a ring four
+//!   metres out ([`SHORE`]), with the anchor's crystal on its plinth in the
+//!   middle, the two generators' pads either side of it, and the item
+//!   shop's red stand and the upgrade shop's blue one in front of it and
+//!   behind it. Lifted a quarter of a metre as the device loads it
 //!   ([`LIFT`]), as every height here is.
 //! * **The anchor** ([`ANCHOR_HEALTH`]): while it stands, whoever dies is
 //!   back beside it [`RESPAWN_SECS`] later; broken, the dead stay dead, and
@@ -44,8 +46,14 @@
 //!   it is killed ([`drop_of`]), better things as the waves go on, for
 //!   whoever walks into it.
 //! * **Two shops** ([`Ware`]): the item shop's swords, shields and things to
-//!   use are yours and kept when you die; the upgrade shop's are the whole
-//!   team's and have no end but two.
+//!   use are yours; the upgrade shop's are the whole team's and have no end
+//!   but two.
+//! * **Dying** drops all you hold of the four things and your sword round
+//!   where you fell, for you to fetch again, or a teammate to take (a sword
+//!   only by whoever holds a lesser one), each gone after [`LIES_FOR`]; your
+//!   shield and your buttons you keep.
+//! * **Treasure chests** ([`Chest`]) now and then on the sand or in the sea,
+//!   said to nobody, for whoever comes upon one to open ([`Find`]).
 //! * **The score** ([`kill_score`]): each kill, and every ten damage; the
 //!   team's is everyone's and [`WAVE_SCORE`] for each wave cleared. What the
 //!   table pays is the waves cleared ([`prizes`]).
@@ -76,13 +84,14 @@ mod tests;
 
 pub use forges::{CAPS, Forges, INTERVALS, OVERCLOCK, SPREADS};
 pub use game::{
-    ANCHOR_HEALTH, BEAM_EVERY, BEAM_REACH, CREDIT_SECS, DYNAMITE_HIT, Event, FIREBALL_HIT, GRACE_SECS, Game, HEALTH,
-    HURT_TIME, Knock, LEAP_SECS, PUNCH_SLACK, READY_SECS, REGEN_AFTER, REGEN_PER_SEC, RESPAWN_SECS, SPEED_SECS,
-    UNSEEN_SECS, WAVE_SCORE,
+    ANCHOR_HEALTH, BEAM_EVERY, BEAM_REACH, Blade, CREDIT_SECS, DROP_MOST, DYNAMITE_HIT, Event, FIREBALL_HIT, GRACE_SECS,
+    Game, HEALTH, HURT_TIME, Knock, LEAP_SECS, LIES_FOR, OPEN_REACH, PUNCH_SLACK, READY_SECS, REGEN_AFTER, REGEN_PER_SEC,
+    RESPAWN_SECS, SPEED_SECS, Treasure, UNSEEN_SECS, WAVE_SCORE,
 };
 pub use map::{
     CRYSTAL_RADIUS, ITEM_SHOP, OBSTACLES, Obstacle, PAD_HALF, PAD_TOP, PADS, PLINTH_HALF, PLINTH_TOP, RIM, SAND_RADIUS,
-    SAND_TOP, SHOP_SLACK, STONE_RADIUS, STONE_TOP, UPGRADE_SHOP, WALK_EDGE, at_a_stand, disagreements, ground, keep_out,
+    SAND_TOP, SEA_BED, SHOP_SLACK, SHORE, STONE_RADIUS, STONE_TOP, UPGRADE_SHOP, WALK_EDGE, at_a_stand, disagreements,
+    floor, ground, in_the_sea, keep_out, within_the_shore,
 };
 pub use shop::{
     BEAM_DAMAGE, FORTIFY, LUCKY_MOST, PROTECTION, PROTECTION_MOST, SHARPNESS, SHIELD_SHARE, SWORD_DAMAGE, Ware, blow,
@@ -159,6 +168,9 @@ pub enum Ask {
     /// standing is, it comes in [`READY_SECS`] (mine: a break is for
     /// shopping, and whoever has done shopping need not stand about).
     Ready,
+    /// Open the treasure chest numbered so ([`Chest::id`], [`Game::open`]),
+    /// which I stand by: what is in it is mine, [`Tell::Found`] says what.
+    Open(u32),
 }
 
 /// Something told one device in a game of Last Stand
@@ -185,6 +197,80 @@ pub enum Tell {
     /// said ([`Kind::announced`]: a giant alone), which a device cannot
     /// tell from the body going, a fall into the void taking one as well.
     Slain { by: u8, kind: Kind },
+    /// Someone of the team, by seat, opened a treasure chest, and this was
+    /// in it, theirs now: told to everyone, for it to be said over where
+    /// the chest stood (the chest itself goes as its [`Chest`] does).
+    Found { by: u8, x: f32, y: f32, z: f32, find: Find },
+}
+
+/// What was in a treasure chest ([`Game::open`]; since 2026-11-18, Hajun: "you
+/// get a random chance item and random quantity like gold, sapphire,
+/// amethyst, swords, etc."): so many of one of the four things, a sword,
+/// or a thing for a button.
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Debug)]
+pub enum Find {
+    Things { item: crate::Item, count: u16 },
+    Sword(u8),
+    Utility(crate::Utility),
+}
+
+/// A sword lying where someone who died dropped it in a game of Last Stand
+/// ([`Blade`]): which sword, where it lies across the ground and how high
+/// what it lies on is, and where it was thrown from. Sent once as it is
+/// dropped, and gone, for everyone, the moment someone has it or it has
+/// lain its while ([`LIES_FOR`]).
+#[derive(Component, Serialize, Deserialize, Clone, Copy, PartialEq, Debug)]
+#[component(immutable)]
+pub struct LyingSword {
+    pub tier: u8,
+    pub x: f32,
+    pub z: f32,
+    pub ground: f32,
+    pub from_x: f32,
+    pub from_y: f32,
+    pub from_z: f32,
+}
+
+impl LyingSword {
+    /// What the room is sent of a sword dropped.
+    pub fn of(blade: &Blade) -> Self {
+        Self {
+            tier: blade.tier,
+            x: blade.at.x,
+            z: blade.at.y,
+            ground: blade.ground,
+            from_x: blade.from.x,
+            from_y: blade.from.y,
+            from_z: blade.from.z,
+        }
+    }
+}
+
+/// A treasure chest standing in a game of Last Stand ([`Treasure`]): its
+/// number, which a device asks to open it by ([`Ask::Open`]), where it
+/// stands and which way it faces. Sent once as it comes, and gone, for
+/// everyone, as it is opened or has stood its while.
+#[derive(Component, Serialize, Deserialize, Clone, Copy, PartialEq, Debug)]
+#[component(immutable)]
+pub struct Chest {
+    pub id: u32,
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
+    pub yaw: f32,
+}
+
+impl Chest {
+    /// What the room is sent of a chest come.
+    pub fn of(chest: &Treasure) -> Self {
+        Self {
+            id: chest.id,
+            x: chest.at.x,
+            y: chest.at.y,
+            z: chest.at.z,
+            yaw: chest.yaw,
+        }
+    }
 }
 
 /// Registers this game's own replicated components, appended after
@@ -199,7 +285,9 @@ pub fn register(app: &mut App) {
     app.replicate::<StandRound>()
         .replicate::<StandUpgrades>()
         .replicate::<Shambler>()
-        .replicate::<Spit>();
+        .replicate::<Spit>()
+        .replicate::<LyingSword>()
+        .replicate::<Chest>();
 }
 
 /// Where the player in `seat` stands as they arrive on the game's venue, and which way they

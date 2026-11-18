@@ -9,15 +9,104 @@
 use bevy::math::{Quat, Vec2, Vec3, Vec3Swizzles};
 
 use super::forges::Forges;
-use super::map::{CRYSTAL_RADIUS, OBSTACLES, at_a_stand, ground};
+use super::map::{CRYSTAL_RADIUS, OBSTACLES, RIM, SEA_BED, SHORE, STONE_RADIUS, at_a_stand, ground};
 use super::shop::{self, BEAM_DAMAGE, FORTIFY, Ware, blow, sharpened, through};
 use super::waves::{BREAK, FIRST_WAVE, Kind, MOST_STANDING, drop_of, first_in, kill_score, mix, rising, strength, toughness};
 use super::zombies::{Act, Seen, SPIT_RADIUS, Spittle, View, Zombie};
-use super::{ANCHOR, StandRound, StandStage, StandUpgrades, arrival};
+use super::{ANCHOR, Find, StandRound, StandStage, StandUpgrades, arrival};
 use crate::bots::Dice;
-use crate::bridge_wars::{BLAST_HEIGHT, BLAST_RADIUS, DYNAMITE_RADIUS, FIREBALL_RADIUS, Flight, HEALING, Lob, Piece, caught};
+use crate::bridge_wars::{
+    BLAST_HEIGHT, BLAST_RADIUS, DYNAMITE_RADIUS, FIREBALL_RADIUS, Flight, HEALING, HOVER, Lob, MAGNET, Piece, REACH_OVER,
+    REACH_UNDER, SPILL_FAR, SPILL_FROM, SPILL_NEAR, SPILL_WAIT, caught, toss,
+};
 use crate::nav::BODY;
-use crate::{Kit, Purse, Use, Utility};
+use crate::{Item, Kit, Purse, Use, Utility};
+
+/// How long what is dropped lies before it is gone, in seconds: what the
+/// dead drop, and what a zombie does (since 2026-11-18; Hajun: "the items
+/// despawns after a very long time"; mine, Minecraft's five minutes, a
+/// third of a game or more). A treasure chest lies as long, unopened.
+pub const LIES_FOR: f32 = 300.0;
+/// The most things of one item someone who dies drops, each more than one
+/// of it past this ([`Piece::worth`]) and drawn the bigger for it (the
+/// game's `loot::size`), and how thickly what they drop lies, in things to
+/// the square metre: a purse of a hundred lies in a ring of sand three and
+/// a half metres out, of two hundred four (mine; a heap in Bridge Wars'
+/// 2.4 m, at its fifty a square metre, was one lump). By Hajun's rule (since
+/// 2026-11-18): "If and only if dropping like 200 silver at once will cause
+/// severe lag, then make some visual merging technique for nearby drops so
+/// it still looks like a lot but not Lag inducing quantity - if performance
+/// is not that severly affected its ok to just drop 200 of it". Measured
+/// that evening on the desktop, hidden: two hundred of each of the four,
+/// 794 things bobbing and turning, kept it at 120 frames a second (8.3 ms
+/// a frame before, 8.4 with them lying, twice), though an earlier run, with
+/// the computer slower at everything, went from 18 ms to 22. No phone was
+/// measured. Should one lag, fifty here is the merging, measured too: a
+/// quarter of the things, each worth four and drawn half again as big, in
+/// as wide a ring (by worth, not by things).
+pub const DROP_MOST: u16 = 200;
+const DROP_DENSITY: f32 = 4.0;
+/// The furthest out what the dead drop lies, in metres.
+const DROP_FAR: f32 = 6.0;
+/// When the first treasure chest comes, in seconds into the fight, and how
+/// long after one has gone, opened or lain its while, the next comes, at
+/// the least and the most, thrown for each; and how near someone has to be
+/// to open one, as the game believes it (the bubble comes up over it from
+/// 4.5 m, the town's talking reach, and the rest is for the way they may
+/// have gone since). Mine (since 2026-11-18; Hajun: "make treasurechest.glb
+/// that sometimes spawn in the sand area or the ocean, with no notification
+/// to the player of its location or existence ... it should a minor thing
+/// not the main thing").
+const CHEST_FIRST: (f32, f32) = (45.0, 120.0);
+const CHEST_EVERY: (f32, f32) = (75.0, 160.0);
+pub const OPEN_REACH: f32 = 6.5;
+
+/// A sword lying where someone who died dropped it (since 2026-11-18;
+/// Hajun: "they should drop all their loot (silver,gold,sapphire,
+/// amethyst, sword) ... for sword, can only pick up if its greater than
+/// the sword they are already holding"): its number, which sword (1 to 3),
+/// where it lies across the ground and how high what it lies on is, where
+/// it was thrown from, and when, in seconds into the fight. It flies out
+/// and lies as what they held does ([`Piece`]), for whoever walks into it
+/// holding a lesser sword, themselves once they stand again among them.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct Blade {
+    pub id: u32,
+    pub tier: u8,
+    pub at: Vec2,
+    pub ground: f32,
+    pub from: Vec3,
+    pub born: f32,
+}
+
+impl Blade {
+    /// Where its middle hangs once it has come down.
+    pub fn rest(&self) -> Vec3 {
+        Vec3::new(self.at.x, self.ground + HOVER, self.at.y)
+    }
+
+    /// How high its middle is `elapsed` seconds into the fight: on its way
+    /// from whoever dropped it, and then where it hangs.
+    pub fn height(&self, elapsed: f32) -> f32 {
+        toss(self.from, self.rest(), elapsed - self.born).y
+    }
+
+    /// Whether it has come down and lain a moment, for anyone to have it.
+    pub fn lying(&self, elapsed: f32) -> bool {
+        elapsed - self.born >= SPILL_WAIT
+    }
+}
+
+/// A treasure chest lying on the sand or in the sea, unannounced, for
+/// whoever finds it to open (since 2026-11-18): its number, where it
+/// stands, which way it faces, and when it came, in seconds into the fight.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct Treasure {
+    pub id: u32,
+    pub at: Vec3,
+    pub yaw: f32,
+    pub born: f32,
+}
 
 /// Everyone's health, as in Bridge Wars ([`HEALTH`](crate::bridge_wars::HEALTH)):
 /// how much they have, and how long after the last hit it starts to come
@@ -170,6 +259,24 @@ pub enum Event {
     /// The person in `seat` drank this potion (a healing one has given
     /// them their health already).
     Drank { seat: usize, potion: Utility },
+    /// Someone who died dropped their sword, to lie here ([`Blade`]); what
+    /// they held of the four things is [`Event::Made`], each thing thrown
+    /// out from them.
+    SwordDropped(Blade),
+    /// The person in `seat` walked into this sword, holding a lesser one:
+    /// it is theirs now, and lies there no longer.
+    SwordTaken { seat: usize, blade: Blade },
+    /// What was dropped has lain its while ([`LIES_FOR`]) and is gone.
+    Lapsed(Piece),
+    SwordLapsed(Blade),
+    /// A treasure chest has come to stand here, said to nobody: the room is
+    /// sent it, and whoever comes upon it may open it.
+    ChestPlaced(Treasure),
+    /// The person in `seat` opened this chest ([`Game::open`]): what came
+    /// out of it is theirs now ([`Find`]), and the chest is gone.
+    ChestOpened { seat: usize, chest: Treasure, find: Find },
+    /// A chest nobody opened has stood its while and is gone.
+    ChestLapsed(Treasure),
     /// The anchor is broken and nobody is standing, or everyone has gone:
     /// the game is over, `waves` cleared ([`Game::outcome`]).
     Over { waves: u16 },
@@ -198,6 +305,9 @@ struct Player {
     kills: u32,
     dealt: f32,
     ready: bool,
+    /// The last place they stood on the land, as their device said: where
+    /// what they hold is dropped if they die off it, in the sea.
+    footing: Vec3,
 }
 
 /// How far a game has got.
@@ -249,7 +359,13 @@ pub struct Game {
     spits: Vec<(u32, Spittle, f32)>,
     balls: Vec<(u32, Flight, usize)>,
     sticks: Vec<(u32, Lob, usize, bool)>,
-    next: [u32; 4],
+    /// Swords the dead dropped, lying about.
+    blades: Vec<Blade>,
+    /// The treasure chest standing, if one is, and when the next comes, in
+    /// seconds into the fight.
+    chests: Vec<Treasure>,
+    pub(super) chest_at: f32,
+    next: [u32; 6],
     events: Vec<Event>,
 }
 
@@ -277,11 +393,14 @@ impl Game {
                     kills: 0,
                     dealt: 0.0,
                     ready: false,
+                    footing: at,
                 }
             })
             .collect();
+        let mut dice = Dice::new(seed);
+        let chest_at = dice.around(CHEST_FIRST.0, CHEST_FIRST.1);
         Self {
-            dice: Dice::new(seed),
+            dice,
             elapsed: 0.0,
             clock: 0.0,
             began: 0.0,
@@ -302,7 +421,10 @@ impl Game {
             spits: Vec::new(),
             balls: Vec::new(),
             sticks: Vec::new(),
-            next: [0; 4],
+            blades: Vec::new(),
+            chests: Vec::new(),
+            chest_at,
+            next: [0; 6],
             events: Vec::new(),
         }
     }
@@ -330,6 +452,7 @@ impl Game {
             let (at, turn) = arrival(seat);
             player.at = at;
             player.yaw = yaw_of(turn);
+            player.footing = at;
         }
         self.stage = Stage::Break {
             ends: FIRST_WAVE,
@@ -360,7 +483,8 @@ impl Game {
         }
     }
 
-    /// Where the person in `seat` is now, as their device last said.
+    /// Where the person in `seat` is now, as their device last said; and,
+    /// on the land, the last place they stood on it.
     pub fn sync(&mut self, seat: usize, at: Vec3, yaw: f32) {
         if let Some(player) = self.players.get_mut(seat)
             && !player.vacant
@@ -370,7 +494,33 @@ impl Game {
         {
             player.at = at;
             player.yaw = yaw;
+            if let Some(top) = ground(at.xz())
+                && (at.y - top).abs() <= 0.6
+            {
+                player.footing = Vec3::new(at.x, top, at.z);
+            }
         }
+    }
+
+    /// The person in `seat` opens the treasure chest numbered `chest`: if
+    /// the game is on, they stand, and it is there within their reach as
+    /// their device last said ([`OPEN_REACH`]). What comes out is theirs at
+    /// once ([`Find`], [`Event::ChestOpened`]), and the chest is gone.
+    /// Whether it opened.
+    pub fn open(&mut self, seat: usize, chest: u32) -> bool {
+        if !self.playing() || !self.alive(seat) {
+            return false;
+        }
+        let at = self.players[seat].at;
+        let Some(index) = self.chests.iter().position(|it| it.id == chest && it.at.xz().distance(at.xz()) <= OPEN_REACH) else {
+            return false;
+        };
+        let chest = self.chests.remove(index);
+        let find = self.find(seat);
+        self.give(seat, find);
+        self.chest_at = self.elapsed + self.dice.around(CHEST_EVERY.0, CHEST_EVERY.1);
+        self.events.push(Event::ChestOpened { seat, chest, find });
+        true
     }
 
     /// The person in `seat` says their blow landed on the zombie numbered
@@ -532,6 +682,8 @@ impl Game {
         self.beam(dt);
         self.forge();
         self.gather();
+        self.lapse();
+        self.place_chest();
         self.potions();
         self.bury();
         self.clear();
@@ -608,6 +760,16 @@ impl Game {
     /// Everything lying about, for whoever walks into it.
     pub fn pieces(&self) -> &[Piece] {
         self.forges.pile().pieces()
+    }
+
+    /// Every sword the dead dropped, lying about.
+    pub fn swords(&self) -> &[Blade] {
+        &self.blades
+    }
+
+    /// The treasure chests standing, unopened.
+    pub fn chests(&self) -> &[Treasure] {
+        &self.chests
     }
 
     /// Every zombie, where it is: its number, its kind, its feet, which way
@@ -712,7 +874,7 @@ impl Game {
     // -------------------------------------------------------------- inside
 
     /// The next number of `kind` of thing (0 zombies, 1 fireballs, 2 sticks,
-    /// 3 balls of spit).
+    /// 3 balls of spit, 4 swords dropped, 5 treasure chests).
     fn number(&mut self, kind: usize) -> u32 {
         let number = self.next[kind];
         self.next[kind] = number.wrapping_add(1);
@@ -972,9 +1134,16 @@ impl Game {
     }
 
     /// The person in `seat` is dead, at `at`: for [`RESPAWN_SECS`] while the
-    /// anchor stands, and for good otherwise. What they have from the item
-    /// shop and their purse they keep (mine: Last Stand is played together,
-    /// and a death already costs the wait); what they had drunk is over.
+    /// anchor stands, and for good otherwise. What they had drunk is over;
+    /// and everything they held of the four things, and their sword, is
+    /// thrown out round where they fell, to lie there ([`Game::drop_all`]),
+    /// for them to fetch again once they stand, or a teammate to take (since
+    /// 2026-11-18; Hajun: "when a player dies they should drop all their
+    /// loot (silver,gold,sapphire, amethyst, sword) onto the ground, so
+    /// after they respawn, they need to go collect it again, or if ur
+    /// playing with a teammate, ur teammate can pick ur stuff up too": until
+    /// then they kept it all). Their shield and what is on their buttons
+    /// they keep (mine: Hajun's five are the things dropped).
     fn die(&mut self, seat: usize, at: Vec3) {
         let out = self.anchor <= 0.0;
         let back = self.on_clock(RESPAWN_SECS);
@@ -995,6 +1164,131 @@ impl Game {
         kit.leap_until = 0;
         kit.blind = false;
         self.events.push(Event::Died { seat, at, out });
+        self.drop_all(seat, at);
+    }
+
+    /// The person in `seat`, dead at `at`, drops all they hold of the four
+    /// things and their sword: thrown out round them, onto the land only,
+    /// from where they fell, or, dead in the sea, from where they last stood
+    /// on the land (nothing lies in the sea); a thing for each one of an
+    /// item, up to [`DROP_MOST`] of it, past that each more than one; the
+    /// more there is, the wider it lies, by what it is worth and not by how
+    /// many things ([`DROP_DENSITY`], out to [`DROP_FAR`]); each for whoever walks into it once it has lain a
+    /// moment, them or a teammate, and gone after [`LIES_FOR`]. The sword
+    /// lies among them for whoever holds a lesser one ([`Game::gather`]).
+    fn drop_all(&mut self, seat: usize, at: Vec3) {
+        let on_land = ground(at.xz()).is_some_and(|top| (at.y - top).abs() <= 1.0);
+        let from = if on_land { at } else { self.players[seat].footing };
+        let purse = self.purses[seat];
+        let mut things: Vec<(Item, u16)> = Vec::new();
+        for item in Item::ALL {
+            let count = purse[item.index()];
+            let pieces = count.min(DROP_MOST);
+            for piece in 0..pieces {
+                things.push((item, count / pieces + u16::from(piece < count % pieces)));
+            }
+        }
+        let sword = self.kits[seat].sword;
+        if things.is_empty() && sword == 0 {
+            return;
+        }
+        // As wide as a thing for each one would lie, however few things
+        // they are: fewer and bigger past the most, not a smaller heap.
+        let worth = things.iter().map(|&(_, worth)| u32::from(worth)).sum::<u32>() + u32::from(sword > 0);
+        let far = (worth as f32 / (std::f32::consts::PI * DROP_DENSITY) + SPILL_NEAR * SPILL_NEAR)
+            .sqrt()
+            .clamp(SPILL_FAR, DROP_FAR);
+        let elapsed = self.elapsed;
+        if !things.is_empty() {
+            let dice = &mut self.dice;
+            // Nowhere at all for it to lie (never, from the land), it is
+            // kept.
+            if let Some(dropped) = self.forges.pile_mut().scatter_within(&things, from, far, elapsed, &mut || dice.roll(), &lies_on) {
+                self.purses[seat] = Purse::default();
+                self.events.extend(dropped.into_iter().map(Event::Made));
+            }
+        }
+        if sword > 0
+            && let Some((spot, top)) = self.spot_near(from, far)
+        {
+            self.kits[seat].sword = 0;
+            let blade = Blade {
+                id: self.number(4),
+                tier: sword,
+                at: spot,
+                ground: top,
+                from: from + Vec3::Y * SPILL_FROM,
+                born: elapsed,
+            };
+            self.blades.push(blade);
+            self.events.push(Event::SwordDropped(blade));
+        }
+    }
+
+    /// Somewhere for a thing thrown from `from` to lie, from [`SPILL_NEAR`]
+    /// to `far` off it: the land, a step over its feet at the most, as
+    /// [`Pile::scatter`](crate::bridge_wars::Pile::scatter) has it; or under
+    /// the feet; or nowhere.
+    fn spot_near(&mut self, from: Vec3, far: f32) -> Option<(Vec2, f32)> {
+        let lies = |at: Vec2| lies_on(at).filter(|top| (-12.0..=0.6).contains(&(top - from.y)));
+        for _ in 0..12 {
+            let at = from.xz() + Vec2::from_angle(self.dice.roll() * std::f32::consts::TAU) * self.dice.around(SPILL_NEAR, far);
+            if let Some(top) = lies(at) {
+                return Some((at, top));
+            }
+        }
+        lies(from.xz()).map(|top| (from.xz(), top))
+    }
+
+    /// What a treasure chest has in it for the person in `seat` (mine): a
+    /// handful of silver most often, then gold, sapphire, amethyst, a
+    /// sword one better than theirs, or something for a button, a little
+    /// more of each as the waves go on. A sword or a thing for a button
+    /// they could not have is gold instead.
+    fn find(&mut self, seat: usize) -> Find {
+        let more = 1.0 + 0.08 * f32::from(self.wave.max(1) - 1);
+        let roll = self.dice.roll();
+        let dice = &mut self.dice;
+        let mut count = |low: f32, high: f32| (dice.around(low, high + 0.99).floor() * more).floor().clamp(1.0, 999.0) as u16;
+        let kit = self.kits[seat];
+        let gold = |count: u16| Find::Things { item: Item::Gold, count };
+        match roll {
+            roll if roll < 0.32 => Find::Things { item: Item::Silver, count: count(10.0, 25.0) },
+            roll if roll < 0.60 => gold(count(2.0, 6.0)),
+            roll if roll < 0.78 => Find::Things { item: Item::Sapphire, count: count(1.0, 3.0) },
+            roll if roll < 0.87 => Find::Things { item: Item::Amethyst, count: count(1.0, 2.0) },
+            roll if roll < 0.94 => {
+                if kit.sword < 3 { Find::Sword(kit.sword + 1) } else { gold(count(4.0, 8.0)) }
+            }
+            roll => {
+                let utility = if roll < 0.97 { Utility::Fireball } else { Utility::Healing };
+                let room = match kit.slot_of(utility) {
+                    Some(slot) => kit.slots[slot].is_some_and(|stack| stack.count < 9),
+                    None => kit.free_slot().is_some(),
+                };
+                if room { Find::Utility(utility) } else { gold(count(2.0, 6.0)) }
+            }
+        }
+    }
+
+    /// What came out of a chest, the person in `seat`'s at once.
+    fn give(&mut self, seat: usize, find: Find) {
+        match find {
+            Find::Things { item, count } => {
+                let held = &mut self.purses[seat][item.index()];
+                *held = held.saturating_add(count);
+            }
+            Find::Sword(tier) => {
+                let kit = &mut self.kits[seat];
+                kit.sword = kit.sword.max(tier);
+            }
+            Find::Utility(utility) => {
+                let kit = &mut self.kits[seat];
+                if let Some(slot) = kit.slot_of(utility).or(kit.free_slot()) {
+                    kit.slots[slot].get_or_insert(crate::Stack { utility, count: 0 }).count += 1;
+                }
+            }
+        }
     }
 
     /// The anchor takes `damage`: broken at none, and whoever is dead and
@@ -1196,16 +1490,97 @@ impl Game {
     /// reach of their feet ([`Pile::pick_up`](crate::bridge_wars::Pile::pick_up)):
     /// into their own purse.
     fn gather(&mut self) {
+        let elapsed = self.elapsed;
         for seat in 0..self.players.len() {
             if !self.alive(seat) {
                 continue;
             }
-            for piece in self.forges.pile_mut().pick_up(self.players[seat].at, self.elapsed) {
+            let feet = self.players[seat].at;
+            for piece in self.forges.pile_mut().pick_up(feet, elapsed) {
                 let held = &mut self.purses[seat][piece.item.index()];
                 *held = held.saturating_add(piece.worth);
                 self.events.push(Event::Taken { seat, piece });
             }
+            // A sword the dead dropped, within reach as anything lying is
+            // ([`MAGNET`], [`REACH_OVER`], [`REACH_UNDER`]) and lying a
+            // moment: the best of them, if it is better than the one they
+            // hold (Hajun: "for sword, can only pick up if its greater than
+            // the sword they are already holding"); the one they held goes
+            // as a sword bought over it does.
+            let held = self.kits[seat].sword;
+            let best = self
+                .blades
+                .iter()
+                .enumerate()
+                .filter(|(_, blade)| {
+                    let over = blade.height(elapsed) - feet.y;
+                    blade.tier > held
+                        && blade.lying(elapsed)
+                        && blade.at.distance(feet.xz()) <= MAGNET
+                        && (-REACH_UNDER..=REACH_OVER).contains(&over)
+                })
+                .max_by_key(|(_, blade)| blade.tier)
+                .map(|(index, _)| index);
+            if let Some(index) = best {
+                let blade = self.blades.remove(index);
+                self.kits[seat].sword = blade.tier;
+                self.events.push(Event::SwordTaken { seat, blade });
+            }
         }
+    }
+
+    /// What was dropped and has lain [`LIES_FOR`], and a chest nobody
+    /// opened that long, are gone; and the next chest comes a while after.
+    fn lapse(&mut self) {
+        let elapsed = self.elapsed;
+        let gone = self.forges.pile_mut().lapse(elapsed, LIES_FOR);
+        self.events.extend(gone.into_iter().map(Event::Lapsed));
+        if self.blades.iter().any(|blade| elapsed - blade.born >= LIES_FOR) {
+            let (gone, kept): (Vec<Blade>, Vec<Blade>) =
+                std::mem::take(&mut self.blades).into_iter().partition(|blade| elapsed - blade.born >= LIES_FOR);
+            self.blades = kept;
+            self.events.extend(gone.into_iter().map(Event::SwordLapsed));
+        }
+        if let Some(index) = self.chests.iter().position(|chest| elapsed - chest.born >= LIES_FOR) {
+            let chest = self.chests.remove(index);
+            self.chest_at = elapsed + self.dice.around(CHEST_EVERY.0, CHEST_EVERY.1);
+            self.events.push(Event::ChestLapsed(chest));
+        }
+    }
+
+    /// A treasure chest, once its time has come and none stands: somewhere
+    /// on the sand or out in the sea, thrown, clear of the stands, the
+    /// palms, the barrels and the sand's very edge, and said to nobody
+    /// (Hajun: "sometimes spawn in the sand area or the ocean, with no
+    /// notification to the player of its location or existence, so the
+    /// player can sometime wander around and find a treasure chest"). One at
+    /// a time (mine).
+    fn place_chest(&mut self) {
+        if !self.chests.is_empty() || self.elapsed < self.chest_at {
+            return;
+        }
+        for _ in 0..16 {
+            let out = self.dice.around(STONE_RADIUS + 1.5, SHORE - 1.0);
+            if (out - RIM).abs() < 1.0 {
+                continue;
+            }
+            let at = Vec2::from_angle(self.dice.roll() * std::f32::consts::TAU) * out;
+            if OBSTACLES.iter().any(|obstacle| obstacle.outside(at).0 < 1.0) {
+                continue;
+            }
+            let y = ground(at).unwrap_or(SEA_BED);
+            let chest = Treasure {
+                id: self.number(5),
+                at: Vec3::new(at.x, y, at.y),
+                yaw: self.dice.roll() * std::f32::consts::TAU,
+                born: self.elapsed,
+            };
+            self.chests.push(chest);
+            self.events.push(Event::ChestPlaced(chest));
+            return;
+        }
+        // Nowhere this time: again in a moment.
+        self.chest_at = self.elapsed + 2.0;
     }
 
     /// What was drunk runs out, and a button with none left on it and

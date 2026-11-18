@@ -1268,6 +1268,10 @@ fn many_games_of_blend_in() {
             (Hiding::Fleeing, Seeking::Watchful, WALK_SPEED),
             (Hiding::Crowdlike, Seeking::Nearest, crate::bridge_wars::RUN_SPEED),
             (Hiding::Fleeing, Seeking::Watchful, crate::bridge_wars::RUN_SPEED),
+            // The seekers' pace since 2026-11-18, the speed potion's run.
+            (Hiding::Crowdlike, Seeking::Nearest, SEEKER_PACE),
+            (Hiding::Crowdlike, Seeking::Watchful, SEEKER_PACE),
+            (Hiding::Fleeing, Seeking::Watchful, SEEKER_PACE),
         ] {
             let (mut found, mut after, mut wrong, mut draws, mut secs) = (0, Vec::new(), 0, 0, 0.0);
             for seed in from..from + games {

@@ -151,6 +151,7 @@ use roundtown_net::{
 };
 
 use crate::Config;
+use crate::accounts::{Bank, Charged};
 use crate::fees::Paying;
 use crate::players::{Accounts, Body, Everyone, Plays, Who, move_to, place, tell, themselves};
 use crate::rooms::{InRoom, NotFor, Room, Towns};
@@ -237,17 +238,38 @@ pub(crate) fn plugin(app: &mut App) {
     app.init_resource::<Arenas>()
         .add_systems(
             PreUpdate,
-            hear.after(ServerSystems::Receive).run_if(in_state(ServerState::Running)),
+            (
+                hear.after(ServerSystems::Receive),
+                // A fee is read after any prize asked for before it
+                // (`fees::credited`), as the tables read theirs.
+                paid.after(crate::fees::credited),
+            )
+                .run_if(in_state(ServerState::Running)),
         )
         .add_systems(Update, run.run_if(in_state(ServerState::Running)));
 }
 
-/// Every game under way, by id, and the one filling now.
+/// Every game under way, by id, and the one filling now; and whoever is
+/// going in, their fees being taken in the database, by the number they
+/// were given as they asked ([`Pending`]).
 #[derive(Resource, Default)]
 pub(crate) struct Arenas {
     next: u32,
     games: HashMap<u32, Game>,
     filling: Option<u32>,
+    pending: HashMap<u32, Pending>,
+    next_pending: u32,
+}
+
+/// Whoever asked to go into a game of Bridge Wars together, one or a group,
+/// their fees being taken in the database ([`FEE`], since 2026-11-18;
+/// Hajun: "make the cost of bridgewars to be 50 coins as well"): each body
+/// and its account, and whether its fee has been taken, refused, or not
+/// yet answered. Seated together once every one has been answered
+/// ([`paid`]).
+pub(crate) struct Pending {
+    bodies: Vec<(Entity, u64)>,
+    answered: Vec<Option<bool>>,
 }
 
 /// One game of Bridge Wars.
@@ -438,6 +460,14 @@ struct Game {
     /// Its bots and planks have gone ([`close`]); everyone goes back to the
     /// town next tick ([`end`]).
     closing: bool,
+    /// The accounts whose fee is to be given back, having left before the
+    /// fight began ([`Game::vacate`]), until it has been ([`run`]); how far
+    /// into the fight each team had nobody left in play, if it has not
+    /// (what places them at the end, [`places`]); and whether the prizes
+    /// have been paid (since 2026-11-18, with the fee).
+    refunds: Vec<u64>,
+    out_at: [Option<f32>; ARENA_TEAMS],
+    paid_out: bool,
     /// Someone has gone out of its room since it last ran ([`Game::leave`]);
     /// and the server's tick as it ran after the last of them went, with
     /// whether what its room is sent has gone out since
@@ -674,6 +704,9 @@ impl Game {
             closing: false,
             went_out: false,
             gone_out: None,
+            refunds: Vec::new(),
+            out_at: [None; ARENA_TEAMS],
+            paid_out: false,
         }
     }
 
@@ -1200,8 +1233,13 @@ impl Game {
 
     /// Empties `seat`: nobody in it, gone and out, with no body, as a seat
     /// nobody has taken yet is ([`Game::push_vacant`]), for the next to
-    /// come, a person or the computer, to take.
+    /// come, a person or the computer, to take. A person's, before the
+    /// fight (which is the only time a seat is emptied), has its fee given
+    /// back ([`Game::refunds`]).
     fn vacate(&mut self, seat: usize) {
+        if !self.bot[seat] && !self.vacant[seat] && self.members[seat].id != 0 {
+            self.refunds.push(self.members[seat].id);
+        }
         self.seats[seat] = Entity::PLACEHOLDER;
         self.members[seat] = nobody();
         self.bot[seat] = false;
@@ -1651,6 +1689,13 @@ impl Game {
         self.dynamites(dt);
         self.outfit(dt);
         let teams = self.teams_in_play();
+        // Each team with nobody left in play, as it went: what places them
+        // at the end ([`places`]).
+        for team in 0..ARENA_TEAMS {
+            if self.out_at[team].is_none() && !teams.contains(&(team as u8)) {
+                self.out_at[team] = Some(self.elapsed);
+            }
+        }
         let winner = match (teams.len(), self.left <= 0.0) {
             (0, _) => Some(None),
             (1, _) => Some(Some(teams[0])),
@@ -2463,6 +2508,139 @@ type Bodies<'w, 's> = Query<
     ),
 >;
 
+/// Whether `body`, as `body_of` says, is free to go into a game of Bridge
+/// Wars: connected, and in the town, or in a game that is over for them, of
+/// Bridge Wars or at a table (`tables`).
+fn free_to_go(body_of: &Body, body: Entity, arenas: &Arenas, tables: &Tables) -> bool {
+    body_of.client.is_some()
+        && match body_of.room {
+            Room::Town(_) => true,
+            Room::Arena(_) => arenas.done_with(body_of.room, body),
+            Room::Table(..) => tables.done_with(body_of.room, body),
+            Room::Home(_) | Room::Game(_) => false,
+        }
+}
+
+/// Gives the account `account` `amount` coins, saying why: in the database,
+/// which tells their device as it answers (`fees::credited`); with none, at
+/// once, here, if they are here.
+#[allow(clippy::too_many_arguments)]
+fn pay(
+    bank: &Bank,
+    everyone: &Everyone,
+    bodies: &mut Bodies,
+    tells: &mut MessageWriter<ToClients<Tell>>,
+    account: u64,
+    amount: u32,
+    why: &'static str,
+    game: Option<u32>,
+) {
+    if amount == 0 {
+        return;
+    }
+    if bank.kept() {
+        bank.credit(account, amount, why, game);
+        return;
+    }
+    if let Some(&body) = everyone.0.get(&Who(account))
+        && let Ok((mut body_of, ..)) = bodies.get_mut(body)
+    {
+        body_of.coins = body_of.coins.saturating_add(amount);
+        if let Some(device) = body_of.client {
+            tell(tells, device, Tell::Balance(body_of.coins));
+        }
+    }
+}
+
+/// A Bridge Wars fee taken, or refused, in the database ([`Pending`]): the
+/// device told what it has, or that it had not enough; and once every fee
+/// of those going in together has been answered, whoever's was taken is
+/// seated with the rest in the game filling now, and whoever's was taken
+/// but is no longer here, or no longer free to go in, given it back.
+#[allow(clippy::too_many_arguments)]
+fn paid(
+    mut charged: MessageReader<Charged>,
+    mut arenas: ResMut<Arenas>,
+    (mut tables, mut towns): (ResMut<Tables>, ResMut<Towns>),
+    mut bodies: Bodies,
+    accounts: Accounts,
+    (everyone, bank): (Res<Everyone>, Res<Bank>),
+    config: Res<Config>,
+    time: Res<Time>,
+    mut tells: MessageWriter<ToClients<Tell>>,
+    mut commands: Commands,
+) {
+    let now = time.elapsed_secs_f64();
+    for answer in charged.read() {
+        if answer.game != Minigame::BridgeWars {
+            continue;
+        }
+        let body = everyone.0.get(&Who(answer.id)).copied();
+        if let Some(body) = body {
+            commands.entity(body).try_remove::<Paying>();
+            if let Ok((mut body_of, ..)) = bodies.get_mut(body) {
+                match answer.left {
+                    Some(left) => {
+                        body_of.coins = left;
+                        if let Some(device) = body_of.client {
+                            tell(&mut tells, device, Tell::Balance(left));
+                        }
+                    }
+                    None => {
+                        if let Some(device) = body_of.client {
+                            tell(&mut tells, device, Tell::Refused(Refusal::Coins));
+                        }
+                    }
+                }
+            }
+        }
+        let Some(pending) = answer.into.and_then(|token| arenas.pending.get_mut(&token)) else {
+            // Nobody going in by it any more: given back, if it was taken.
+            if answer.left.is_some() {
+                bank.credit(answer.id, FEE, "Bridge Wars refund", None);
+            }
+            continue;
+        };
+        if let Some(index) = pending.bodies.iter().position(|(_, account)| *account == answer.id) {
+            pending.answered[index] = Some(answer.left.is_some());
+        }
+        if pending.answered.iter().any(Option::is_none) {
+            continue;
+        }
+        let Some(pending) = answer.into.and_then(|token| arenas.pending.remove(&token)) else {
+            continue;
+        };
+        let mut going = Vec::new();
+        for (&(entity, account), paid) in pending.bodies.iter().zip(&pending.answered) {
+            if *paid != Some(true) {
+                continue;
+            }
+            let here = everyone.0.get(&Who(account)) == Some(&entity)
+                && bodies.get(entity).is_ok_and(|(body_of, ..)| free_to_go(body_of, entity, &arenas, &tables));
+            if here {
+                going.push(entity);
+            } else {
+                info!("Bridge Wars: {account}'s fee is given back, with them no longer free to go in");
+                bank.credit(account, FEE, "Bridge Wars refund", None);
+            }
+        }
+        if !going.is_empty() {
+            seat_together(
+                &mut commands,
+                &mut tells,
+                &mut bodies,
+                &accounts,
+                &mut arenas,
+                &mut tables,
+                &mut towns,
+                config.arena_old_bots,
+                &going,
+                now,
+            );
+        }
+    }
+}
+
 /// What players ask of Bridge Wars.
 #[allow(clippy::too_many_arguments)]
 fn hear(
@@ -2473,7 +2651,7 @@ fn hear(
     accounts: Accounts,
     (mut arenas, mut tables): (ResMut<Arenas>, ResMut<Tables>),
     mut towns: ResMut<Towns>,
-    (everyone, mut social): (Res<Everyone>, ResMut<Social>),
+    (everyone, mut social, bank): (Res<Everyone>, ResMut<Social>, Res<Bank>),
     config: Res<Config>,
     time: Res<Time>,
     mut tells: MessageWriter<ToClients<Tell>>,
@@ -2507,27 +2685,25 @@ fn hear(
                 // fee for another (`fees::Paying`, since 2026-11-18: until
                 // then someone could be seated here with House Builder's
                 // fee on the way, and then moved there as it was taken).
+                // And able to pay the fee (since 2026-11-18, [`FEE`]).
                 let (mut going, mut staying) = (Vec::new(), Vec::new());
+                let mut cannot_pay = false;
                 for id in party {
                     let entity = everyone.0.get(&Who(id)).copied();
                     let free = entity.is_some_and(|entity| {
                         !paying.contains(entity)
-                            && bodies.get(entity).is_ok_and(|(body_of, ..)| {
-                                body_of.client.is_some()
-                                    && match body_of.room {
-                                        Room::Town(_) => true,
-                                        Room::Arena(_) => arenas
-                                            .of(body_of.room, entity)
-                                            .is_some_and(|(game, seat)| game.over() || game.out[seat]),
-                                        Room::Table(..) => tables.done_with(body_of.room, entity),
-                                        Room::Home(_) | Room::Game(_) => false,
-                                    }
-                            })
+                            && bodies.get(entity).is_ok_and(|(body_of, ..)| free_to_go(body_of, entity, &arenas, &tables))
                     });
+                    let pays = entity.and_then(|entity| bodies.get(entity).ok()).is_some_and(|(body_of, ..)| body_of.coins >= FEE);
                     match entity {
-                        Some(entity) if free => going.push(entity),
+                        Some(entity) if free && pays => going.push(entity),
+                        Some(entity) if free && entity == body => cannot_pay = true,
                         _ => staying.push(id),
                     }
+                }
+                if cannot_pay {
+                    tell(&mut tells, client, Tell::Refused(Refusal::Coins));
+                    continue;
                 }
                 // The one who asked is first of them, or it is nobody's to
                 // go.
@@ -2537,6 +2713,41 @@ fn hear(
                 }
                 for id in staying {
                     social.left_behind(id);
+                }
+                // Kept in the database: each fee taken there, and all of
+                // them seated together once every one has been answered
+                // ([`paid`]), as the tables' are.
+                if bank.kept() {
+                    let token = arenas.next_pending;
+                    arenas.next_pending = token.wrapping_add(1);
+                    let mut pending = Pending {
+                        bodies: Vec::new(),
+                        answered: Vec::new(),
+                    };
+                    for &entity in &going {
+                        let Ok((body_of, ..)) = bodies.get(entity) else {
+                            continue;
+                        };
+                        let account = body_of.who.0;
+                        bank.charge(account, FEE, "Bridge Wars entry", Minigame::BridgeWars, Some(token));
+                        commands.entity(entity).insert(Paying {
+                            game: Minigame::BridgeWars,
+                            into: Some(token),
+                        });
+                        pending.bodies.push((entity, account));
+                        pending.answered.push(None);
+                    }
+                    arenas.pending.insert(token, pending);
+                    continue;
+                }
+                // Kept here alone, with no database: taken at once.
+                for &entity in &going {
+                    if let Ok((mut body_of, ..)) = bodies.get_mut(entity) {
+                        body_of.coins -= FEE;
+                        if let Some(device) = body_of.client {
+                            tell(&mut tells, device, Tell::Balance(body_of.coins));
+                        }
+                    }
                 }
                 seat_together(
                     &mut commands,
@@ -2828,7 +3039,7 @@ fn run(
     mut arenas: ResMut<Arenas>,
     mut bodies: Bodies,
     mut everyone: ResMut<Everyone>,
-    mut social: ResMut<Social>,
+    (mut social, bank): (ResMut<Social>, Res<Bank>),
     mut towns: ResMut<Towns>,
     mut tells: MessageWriter<ToClients<Tell>>,
     mut commands: Commands,
@@ -2850,6 +3061,13 @@ fn run(
                     .is_ok_and(|(body, ..)| body.client.is_some() && body.room == room)
         });
         game.unwatched = if watched { 0.0 } else { game.unwatched + dt };
+        // The fee back to whoever left before the fight began
+        // ([`Game::vacate`]): first, before a game its last person has
+        // left is closed.
+        for account in std::mem::take(&mut game.refunds) {
+            info!("Bridge Wars game {}: {account} left before the fight, and has the fee back", game.id);
+            pay(&bank, &everyone, &mut bodies, &mut tells, account, FEE, "Bridge Wars refund", Some(game.id));
+        }
         let everyone_gone = (0..game.seats.len()).all(|seat| game.gone[seat] || game.bot[seat]);
         if game.closing {
             end(&mut commands, &mut tells, game, &mut bodies, &mut everyone, &mut towns, now);
@@ -2973,6 +3191,22 @@ fn run(
             game.drive_buses(clock);
         }
         flush(&mut commands, &mut tells, &mut bodies, game, now);
+
+        // Its end: every person who played it paid by how their team came
+        // (since 2026-11-18, [`PRIZES`]), whoever has left it or whose
+        // device has gone too, the fee being theirs; the computer nothing.
+        // Once a game.
+        if game.over() && !game.paid_out {
+            game.paid_out = true;
+            let seats = game.seats.len().min(ARENA_SEATS);
+            let people: Vec<bool> = (0..seats).map(|seat| !game.bot[seat] && !game.vacant[seat] && game.members[seat].id != 0).collect();
+            let places = places(&game.out_at);
+            let paid = prizes(&places, &people);
+            info!("Bridge Wars game {}: the teams came {places:?}, and are paid {paid:?}", game.id);
+            for (seat, coins) in paid.into_iter().enumerate() {
+                pay(&bank, &everyone, &mut bodies, &mut tells, game.members[seat].id, coins, "Bridge Wars prize", Some(game.id));
+            }
+        }
 
         // Whoever of the people in it played it to its end has earned
         // toward their level (`social`, since 2026-11-13): more, on the
@@ -3849,6 +4083,44 @@ mod tests {
         game.leave(0);
         assert!((0..game.seats.len()).all(|seat| game.gone[seat] || game.bot[seat]));
         assert_eq!(game.free_seat(), Some(0));
+    }
+
+    #[test]
+    fn whoever_leaves_before_the_fight_has_the_fee_back_and_the_teams_are_placed_by_when_each_went_out() {
+        let mut game = empty_room();
+        for n in 1..=3 {
+            game.seat(Entity::from_bits(n), person(n), false);
+        }
+        // The second leaves the waiting room, the third the countdown:
+        // each has the fee back (by account), once.
+        game.leave(4);
+        game.stage = ArenaStage::Countdown;
+        game.leave(2);
+        assert_eq!(game.refunds, vec![2, 3]);
+        // The computer coming into the seats left is owed nothing; nor is
+        // whoever leaves once the fight is on.
+        fill_with_bots(&mut game);
+        game.stage = ArenaStage::Playing;
+        game.leave(0);
+        assert_eq!(game.refunds, vec![2, 3]);
+        // Each team's going out is kept as it goes, for its place at the
+        // end: two teams out, the other two in.
+        let mut game = full_game();
+        for seat in [1, 5] {
+            game.out[seat] = true;
+        }
+        game.elapsed = 300.0;
+        game.step(0.05);
+        for seat in [3, 7] {
+            game.out[seat] = true;
+        }
+        game.elapsed = 600.0;
+        game.step(0.05);
+        assert!(game.out_at[1].is_some_and(|at| (at - 300.05).abs() < 0.01), "{:?}", game.out_at);
+        assert!(game.out_at[3].is_some_and(|at| (at - 600.05).abs() < 0.01), "{:?}", game.out_at);
+        assert_eq!((game.out_at[0], game.out_at[2]), (None, None));
+        // Over now at its time, the two still in share first.
+        assert_eq!(places(&game.out_at), [0, 3, 0, 2]);
     }
 
     #[test]

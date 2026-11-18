@@ -157,6 +157,12 @@ const SEND_EVERY: f32 = 0.1;
 /// comes back to the game, before the round has said which turn it is: the
 /// one being aimed now.
 const THIS_TURN: u16 = u16::MAX;
+/// How hard every turn's aim begins (since 2026-11-18; Hajun: "make the
+/// default strength to be 1 rather than 0 every round"): the stick alone
+/// sends you off, at the least there is. Which way is still nothing until
+/// the stick is touched, so that whoever does nothing still stays where
+/// they are ([`take_aim`]).
+const START_POWER: u8 = 1;
 /// How far under the ice's top, or out past its edge, you have gone into
 /// the sea while the game waits, in metres, to be stood back on your spot.
 const FELL_IN: f32 = 0.3;
@@ -802,7 +808,9 @@ fn repeats(held: f32) -> u32 {
 /// up away from the camera, and kept as it was once the stick is let go;
 /// how hard from the arrows on the right (`screen`), or Q and E, Page Up and
 /// Down and the mouse's wheel; and Ready from its button, or Space. A new
-/// turn begins with no aim at all: standing still is what not aiming is.
+/// turn begins at [`START_POWER`] with no way yet: standing still is what
+/// not aiming is, and pushing the stick is all it takes to aim (until
+/// 2026-11-18 a turn began at no power, and the stick alone did nothing).
 #[allow(clippy::too_many_arguments)]
 fn take_aim(
     time: Res<Time>,
@@ -826,7 +834,11 @@ fn take_aim(
         if knock.aim.turn == THIS_TURN {
             knock.aim.turn = turn;
         } else {
-            knock.aim = Aim { turn, ..default() };
+            knock.aim = Aim {
+                turn,
+                power: START_POWER,
+                ..default()
+            };
         }
     }
     ready_as_held(&mut knock);
@@ -905,8 +917,10 @@ fn take_aim(
     }
     let power = (i32::from(aim.power) + steps).clamp(0, i32::from(rules::MOST_POWER));
     aim.power = power as u8;
-    // Some power and no way yet: across the ice, toward its middle.
-    if aim.power > 0 && aim.way == Vec2::ZERO {
+    // Some power set by hand and no way yet: across the ice, toward its
+    // middle. Not the power a turn begins at, which would send whoever does
+    // nothing off across the ice.
+    if steps != 0 && aim.power > 0 && aim.way == Vec2::ZERO {
         let seat = knock.seat.map_or(0, usize::from);
         let from = knock
             .playing()
@@ -1624,6 +1638,41 @@ mod tests {
         assert_eq!(turned(0.0, 2.5, 1.0), 1.0);
         assert!((turned(3.0, -3.0, 10.0) - (std::f32::consts::TAU - 3.0)).abs() < 1e-5);
         assert!((turned(1.0, 1.2, 1.0) - 1.2).abs() < 1e-6);
+    }
+
+    #[test]
+    fn every_turn_s_aim_begins_at_one_with_no_way_so_that_doing_nothing_stays_put() {
+        use bevy::ecs::system::RunSystemOnce;
+        let mut world = World::new();
+        world.init_resource::<Time>();
+        world.init_resource::<ButtonInput<KeyCode>>();
+        world.init_resource::<TouchControls>();
+        world.init_resource::<Messages<MouseWheel>>();
+        world.init_resource::<crate::signup::NameBox>();
+        world.init_resource::<Pressed>();
+        let mut knock = Knock::sit(1, false);
+        knock.round = Some(round(KnockStage::Aim));
+        world.insert_resource(knock);
+        world.run_system_once(take_aim).expect("aimed");
+        let aim = world.resource::<Knock>().aim;
+        assert_eq!((aim.turn, aim.power, aim.way), (1, START_POWER, Vec2::ZERO));
+        // Doing nothing it stays so: power, but no way, goes nowhere.
+        world.run_system_once(take_aim).expect("aimed");
+        assert_eq!(world.resource::<Knock>().aim.way, Vec2::ZERO);
+        // A step up by hand with no way yet: toward the middle, as ever.
+        world.resource_mut::<Pressed>().power = 1;
+        world.run_system_once(take_aim).expect("aimed");
+        let aim = world.resource::<Knock>().aim;
+        assert_eq!(aim.power, START_POWER + 1);
+        let from = rules::arrival(1).0.xz();
+        assert!(aim.way.dot(-from.normalize()) > 0.999, "{:?}", aim.way);
+        // The next turn begins at one again, whatever the last was.
+        let mut next = round(KnockStage::Aim);
+        next.turn = 2;
+        world.resource_mut::<Knock>().round = Some(next);
+        world.run_system_once(take_aim).expect("aimed");
+        let aim = world.resource::<Knock>().aim;
+        assert_eq!((aim.turn, aim.power, aim.way), (2, START_POWER, Vec2::ZERO));
     }
 
     #[test]

@@ -160,19 +160,21 @@ pub(crate) const LAND_TOP_OF_THE_ISLANDS: f32 = 0.25;
 /// void that if you step over, u fall and then u 'die' and respawn back at
 /// your spawn"): Hajun's `pvptownmap.glb`, a town with four islands at the
 /// ends of its bridges, in the sky. And since 2026-11-18 Bridge Race's map,
-/// three islands in the sky, and Last Stand's, a disc of stone and sand,
-/// where whoever is knocked off the edge, a zombie or one of the players,
-/// falls for good. Every other island has the sea round it.
+/// three islands in the sky. Every other island has the sea round it: Last
+/// Stand's since the evening of 2026-11-18 (Hajun: "in last stand map, it
+/// shouldnt be void, but ocean with a tight invisible circular boundary
+/// border so u can still go in the ocean but not too far"; over the void
+/// for its first day), its ring the game's (`last_stand`).
 pub(crate) fn bottomless(venue: Venue) -> bool {
-    matches!(venue, Venue::Arena | Venue::BridgeRace | Venue::LastStand)
+    matches!(venue, Venue::Arena | Venue::BridgeRace)
 }
 
 /// How far up `venue`'s model is stood as it loads, in metres (Bridge Race's and Last
 /// Stand's `LIFT`; 0 elsewhere): Hajun made their land at 0 where Bridge Wars' map has it
 /// at [`LAND_TOP_OF_THE_ISLANDS`], and every rule written for Bridge Wars' heights goes by
 /// that (a plank's top, a pad's, how far a body falls before it is dead), so they are stood
-/// as high, model and shape alike ([`spawn_island`]). Only maps over the void are lifted:
-/// a sea is the sky's to raise and lower (`sky::sea`), and stays where it is.
+/// as high, model and shape alike ([`spawn_island`]). A sea is the sky's to raise and
+/// lower (`sky::sea`), and stays where it is: Last Stand's sand stands 0.55 m out of it.
 pub(crate) fn lift(venue: Venue) -> f32 {
     match venue {
         Venue::BridgeRace => roundtown_net::bridge_race::LIFT,
@@ -1288,15 +1290,16 @@ mod venue_tests {
         for venue in every {
             let lifted = lift(venue) != 0.0;
             // A sea is not lifted (`sky::bob_sea` keeps it where it is):
-            // only a map over the void is.
-            assert!(!lifted || bottomless(venue), "{venue:?} is lifted over a sea");
+            // only a fight's map, to Bridge Wars' heights, is.
+            assert!(!lifted || fights(venue), "{venue:?} is lifted, and no fight's");
             assert!(!bridged(venue) || fights(venue), "{venue:?}: bridges are built in a fight");
             assert_eq!(
                 (bottomless(venue), lifted, fights(venue), bridged(venue)),
                 match venue {
                     Venue::Arena => (true, false, true, true),
                     Venue::BridgeRace => (true, true, true, true),
-                    Venue::LastStand => (true, true, true, false),
+                    // In the sea since the evening of 2026-11-18.
+                    Venue::LastStand => (false, true, true, false),
                     _ => (false, false, false, false),
                 },
                 "{venue:?}"

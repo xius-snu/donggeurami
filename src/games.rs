@@ -51,7 +51,7 @@ use crate::island::{Islands, Venue};
 use crate::lobby::Balance;
 use crate::net::Online;
 use crate::table;
-use crate::ui::{fill, ui};
+use crate::ui::ui;
 use crate::window;
 use crate::{CloseUp, Player};
 
@@ -66,6 +66,10 @@ const CARD_GAP: f32 = 2.2;
 const CARD_PAD: f32 = 1.5;
 const CARD_TEXT: f32 = 4.0;
 const NOTE_TEXT: f32 = 2.8;
+/// The coin's picture in a card's price, as tall as the words' capitals
+/// and a little more, and its gap to the number either side (mine).
+const COIN_SIZE: f32 = 3.0;
+const COIN_GAP: f32 = 0.6;
 /// The room the line under a card's name has, in vmin: two lines of it.
 const LINE_ROOM: f32 = 2.0 * NOTE_TEXT * 1.2;
 /// The cards, row by row, in the order Hajun listed the games: the new
@@ -160,34 +164,109 @@ fn line_of(game: Minigame) -> String {
     }
 }
 
-/// What `game` costs to play, in coins.
+/// What `game` costs to play, in coins: Bridge Wars' since 2026-11-18
+/// (Hajun: "make the cost of bridgewars to be 50 coins as well"; free until
+/// then), the four's by their tables, Home Builders' House Builder's own.
 fn fee(game: Minigame) -> u32 {
     match game {
-        Minigame::BridgeWars => 0,
+        Minigame::BridgeWars => roundtown_net::bridge_wars::FEE,
         Minigame::HouseBuilder => ENTRY,
         game => tables::shape(game).map_or(0, |shape| shape.fee),
+    }
+}
+
+/// What a card says under its line: words; or words with a price in them,
+/// which stands where they say `{coins}` as the coin's picture and how many
+/// (since 2026-11-18; Hajun: "instead of writing the text "50 coins" with
+/// the word "coins" use the actual coin icon instead so its "(coin_icon)
+/// 50""): "(coin) 50", "Needs (coin) 50".
+#[derive(Clone, PartialEq, Debug)]
+enum Note {
+    Words(String),
+    Price { words: String, coins: u32 },
+}
+
+impl Note {
+    /// The words before the price, how many it is, and the words after it;
+    /// words alone are all before.
+    fn parts(&self) -> (String, Option<String>, String) {
+        match self {
+            Note::Words(words) => (words.clone(), None, String::new()),
+            Note::Price { words, coins } => match words.split_once("{coins}") {
+                Some((before, after)) => (before.trim_end().to_string(), Some(hud::money(*coins)), after.trim_start().to_string()),
+                None => (words.clone(), Some(hud::money(*coins)), String::new()),
+            },
+        }
+    }
+
+    /// As it reads, the coin's picture as a letter: for measuring it.
+    #[cfg(test)]
+    fn read(&self) -> String {
+        let (before, coins, after) = self.parts();
+        let price = coins.map(|coins| format!("O {coins}"));
+        [Some(before), price, Some(after)].into_iter().flatten().filter(|part| !part.is_empty()).collect::<Vec<_>>().join(" ")
     }
 }
 
 /// What `game`'s card says under its line, for someone with `balance`
 /// coins, `online` or not: what it costs, or why it is not to be had, in
 /// the colour of a line that says why something cannot be had; and
-/// whether it is to be had. Bridge Wars is free; the rest are blocked out
-/// without the coins; and Blend In offline, where there is nobody to play
-/// it with.
-fn price(game: Minigame, balance: u32, online: bool) -> (String, Option<Color>, bool) {
+/// whether it is to be had. Every game is blocked out without the coins
+/// (Bridge Wars too, since it costs); and Blend In offline, where there is
+/// nobody to play it with. A game that cost nothing would say so.
+fn price(game: Minigame, balance: u32, online: bool) -> (Note, Option<Color>, bool) {
     let ui = ui();
     let words = &ui.words.games;
     let notice = ui.colours.window.notice;
-    let coins = hud::money(fee(game));
+    let coins = fee(game);
+    let priced = |words: &String| Note::Price {
+        words: words.clone(),
+        coins,
+    };
     match game {
-        Minigame::BridgeWars => (words.free.clone(), None, true),
-        Minigame::BlendIn if !online => (words.online_only.clone(), Some(notice), false),
-        // Home Builders' in House Builder's own words, as ever.
-        Minigame::HouseBuilder if balance >= ENTRY => (fill(&ui.words.house_builder.price, &[("coins", &coins)]), None, true),
-        Minigame::HouseBuilder => (fill(&ui.words.house_builder.need_coins, &[("coins", &coins)]), Some(notice), false),
-        game if balance >= fee(game) => (fill(&words.price, &[("coins", &coins)]), None, true),
-        _ => (fill(&words.needs_coins, &[("coins", &coins)]), Some(notice), false),
+        Minigame::BlendIn if !online => (Note::Words(words.online_only.clone()), Some(notice), false),
+        _ if coins == 0 => (Note::Words(words.free.clone()), None, true),
+        _ if balance >= coins => (priced(&words.price), None, true),
+        _ => (priced(&words.needs_coins), Some(notice), false),
+    }
+}
+
+/// The line a card ends on ([`Note`]), under `card`, in `colour`: its
+/// words, and where it has a price, the coin's picture and the number,
+/// on one line in the card's middle, the picture as tall as the words.
+fn spawn_note(commands: &mut Commands, assets: &AssetServer, card: Entity, note: &Note, colour: Color) {
+    let (before, coins, after) = note.parts();
+    let row = commands
+        .spawn((
+            ChildOf(card),
+            Node {
+                align_items: AlignItems::Center,
+                justify_content: JustifyContent::Center,
+                column_gap: Val::VMin(COIN_GAP),
+                ..default()
+            },
+            Pickable::IGNORE,
+        ))
+        .id();
+    if !before.is_empty() {
+        commands.spawn((ChildOf(row), builder::label(before, NOTE_TEXT, colour)));
+    }
+    if let Some(coins) = coins {
+        commands.spawn((
+            ChildOf(row),
+            // Dimmed with the words on a card that cannot be had.
+            ImageNode::new(assets.load(hud::COIN_ICON)).with_color(Color::WHITE.with_alpha(colour.alpha())),
+            Node {
+                width: Val::VMin(COIN_SIZE),
+                height: Val::VMin(COIN_SIZE),
+                ..default()
+            },
+            Pickable::IGNORE,
+        ));
+        commands.spawn((ChildOf(row), builder::label(coins, NOTE_TEXT, colour)));
+    }
+    if !after.is_empty() {
+        commands.spawn((ChildOf(row), builder::label(after, NOTE_TEXT, colour)));
     }
 }
 
@@ -331,18 +410,20 @@ fn open(commands: &mut Commands, assets: &AssetServer, balance: u32, online: boo
         for &game in games {
             let (note, tint, able) = price(game, balance, online);
             let able = able && !follows;
-            let mut card = commands.spawn((ChildOf(row), card(name_of(game), line_of(game), note, tint, able)));
+            let mut card = commands.spawn((ChildOf(row), card(name_of(game), line_of(game), able)));
             if able {
                 card.insert((Choice::Game(game), TakesPress, Button));
             }
+            let card = card.id();
+            let (.., soft) = window::card(able);
+            spawn_note(commands, assets, card, &note, tint.unwrap_or(soft));
         }
         // The game to come, were it back ([`COMING_SOON`]): at the end of
         // the last row, blocked out.
         if COMING_SOON && index + 1 == CARDS.len() {
-            commands.spawn((
-                ChildOf(row),
-                card(words.coming_soon.clone(), String::new(), words.coming_soon_note.clone(), None, false),
-            ));
+            let card = commands.spawn((ChildOf(row), card(words.coming_soon.clone(), String::new(), false))).id();
+            let (.., soft) = window::card(false);
+            spawn_note(commands, assets, card, &Note::Words(words.coming_soon_note.clone()), soft);
         }
     }
     if follows {
@@ -366,10 +447,10 @@ fn bottom_room(follows: bool) -> f32 {
 }
 
 /// One game's card, a third of a row: its name, the line under it of what
-/// it is, and under that what it costs, or why it is not to be had, in
-/// `note_colour` if that is not the card's own; lit under the pointer if it
-/// can be chosen, and blocked out if not.
-fn card(name: String, line: String, note: String, note_colour: Option<Color>, choosable: bool) -> impl Bundle {
+/// it is, and under that (spawned under it, [`spawn_note`]) what it costs,
+/// or why it is not to be had; lit under the pointer if it can be chosen,
+/// and blocked out if not.
+fn card(name: String, line: String, choosable: bool) -> impl Bundle {
     let (fill, ink, soft) = window::card(choosable);
     (
         Node {
@@ -399,7 +480,6 @@ fn card(name: String, line: String, note: String, note_colour: Option<Color>, ch
                     ..default()
                 },
             ),
-            builder::label(note, NOTE_TEXT, note_colour.unwrap_or(soft)),
         ],
     )
 }
@@ -558,7 +638,8 @@ mod tests {
             let line = line_of(game).chars().count() as f32 * NOTE_TEXT * 0.5;
             assert!(line <= 2.0 * inside, "{game:?}: its line is {line} wide in two of {inside}");
             let (price, ..) = price(game, 0, true);
-            assert!(price.chars().count() as f32 * NOTE_TEXT * 0.5 <= inside, "{game:?}: {price}");
+            let read = price.read();
+            assert!(read.chars().count() as f32 * NOTE_TEXT * 0.5 + COIN_SIZE <= inside, "{game:?}: {read}");
         }
         let stacked = 2.0 * CARD_PAD + CARD_TEXT * 1.2 + 1.2 + LINE_ROOM + 1.2 + NOTE_TEXT * 1.2;
         assert!(stacked <= CARD_HEIGHT, "{stacked}");
@@ -568,30 +649,37 @@ mod tests {
     fn each_card_says_what_its_game_costs_or_why_it_is_not_to_be_had() {
         let ui = ui();
         let words = &ui.words.games;
-        // Bridge Wars is free, to anyone.
-        assert_eq!(price(Minigame::BridgeWars, 0, false), (words.free.clone(), None, true));
-        // The four at their fees, by the rules; blocked without the coins.
-        for game in Minigame::TABLES {
-            let cost = tables::shape(game).unwrap().fee;
-            assert_eq!(fee(game), cost);
+        // Every game at its fee, the four's by their tables, Bridge Wars' 50
+        // by the rules, Home Builders' its own; blocked without the coins.
+        assert_eq!(fee(Minigame::BridgeWars), 50);
+        assert_eq!(fee(Minigame::HouseBuilder), ENTRY);
+        for game in CARDS.iter().flatten().copied() {
+            let cost = fee(game);
+            if let Some(shape) = tables::shape(game) {
+                assert_eq!(cost, shape.fee);
+            }
             let (said, tint, able) = price(game, cost, true);
             assert!(able && tint.is_none(), "{game:?}");
-            assert_eq!(said, fill(&words.price, &[("coins", &hud::money(cost))]));
+            assert_eq!(said, Note::Price { words: words.price.clone(), coins: cost });
             let (said, tint, able) = price(game, cost - 1, true);
             assert!(!able && tint.is_some(), "{game:?}");
-            assert_eq!(said, fill(&words.needs_coins, &[("coins", &hud::money(cost))]));
+            assert_eq!(said, Note::Price { words: words.needs_coins.clone(), coins: cost });
         }
+        // The coin's picture where the words say how many, and no "coins"
+        // (Hajun: "(coin_icon) 50").
+        let (before, coins, after) = price(Minigame::KnockOff, 50, true).0.parts();
+        assert_eq!((before.as_str(), coins.as_deref(), after.as_str()), ("", Some("50"), ""));
+        assert_eq!(price(Minigame::KnockOff, 0, true).0.read(), "Needs O 50");
+        assert_eq!(price(Minigame::HouseBuilder, ENTRY, true).0.read(), "O 100");
         // Blend In needs people: offline it is not to be had, whatever you
-        // have; the other three are.
-        assert_eq!(price(Minigame::BlendIn, 10_000, false).0, words.online_only);
+        // have; the rest are.
+        assert_eq!(price(Minigame::BlendIn, 10_000, false).0, Note::Words(words.online_only.clone()));
         assert!(!price(Minigame::BlendIn, 10_000, false).2);
-        for game in [Minigame::KnockOff, Minigame::BridgeRace, Minigame::LastStand] {
+        for game in [Minigame::BridgeWars, Minigame::KnockOff, Minigame::BridgeRace, Minigame::LastStand, Minigame::HouseBuilder] {
             assert!(price(game, 10_000, false).2, "{game:?}");
         }
-        // Home Builders as ever, in House Builder's own words.
-        let coins = hud::money(ENTRY);
-        assert_eq!(price(Minigame::HouseBuilder, ENTRY, false).0, fill(&ui.words.house_builder.price, &[("coins", &coins)]));
-        assert!(!price(Minigame::HouseBuilder, ENTRY - 1, true).2);
+        // Words with no price in them are words.
+        assert_eq!(Note::Words("Free".into()).parts(), ("Free".to_string(), None, String::new()));
     }
 
     #[test]

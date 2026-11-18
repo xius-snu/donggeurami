@@ -1811,6 +1811,22 @@ fn wait(ctx: &mut Ctx, table: &mut Table, rules: &mut dyn Rules, dt: f32) {
         table.size = table::seats_for(table.game, coming_people).min(table.seats.len());
         let due = since_join >= shape.wait || table.hurried || people >= table.size;
         if coming_people > 0 && due {
+            // Two people at Bridge Race: on one team, one on each, or one
+            // against the other, a third of the time each, thrown for the
+            // table (`bridge_race::pairing`, since the evening of
+            // 2026-11-18): the one in red's far seat moved to blue's first
+            // for the last two, as `close_ranks` moves anyone past the
+            // seats a game has.
+            let pairing = (table.game == Minigame::BridgeRace && coming_people == 2)
+                .then(|| bridge_race::pairing(table.dice.f32()));
+            match pairing {
+                Some(bridge_race::Pairing::Apart) => close_ranks(ctx, table, rules, 2, true),
+                Some(bridge_race::Pairing::Alone) => table.size = 2,
+                Some(bridge_race::Pairing::Together) | None => {}
+            }
+            if let Some(pairing) = pairing {
+                info!("{} table {}: two people, {pairing:?}", name(table.game), table.id);
+            }
             let size = table.size;
             close_ranks(ctx, table, rules, size, true);
             coming = Some(0.0);
@@ -2533,7 +2549,10 @@ mod tests {
         assert!(table.seats[0].here() && table.seats[1].computer);
         assert_ne!(bridge_race::team(0), bridge_race::team(1));
         // Two people, one after the other, at the next table: red's two
-        // seats, and the computer blue's.
+        // seats as they wait; and as the computer comes, as the table
+        // throws it (`bridge_race::pairing`, since the evening of
+        // 2026-11-18), on one team against two of the computer's, one on
+        // each team with one of the computer's, or one against the other.
         let (first, first_body) = server.person(2, 1000);
         let (second, _) = server.person(3, 1000);
         server.ask(first, Ask::Join(BRIDGE_RACE));
@@ -2542,12 +2561,19 @@ mod tests {
         server.frame(0.1);
         assert_eq!(server.body(first_body).room, Room::Table(BRIDGE_RACE, 1));
         assert_eq!((server.entered(first), server.entered(second)), (Some((BRIDGE_RACE, 0)), Some((BRIDGE_RACE, 2))));
-        assert_eq!(server.table(BRIDGE_RACE, 1).board().seats, 4, "two against two");
+        assert_eq!(server.table(BRIDGE_RACE, 1).board().seats, 4, "two against two, as they wait");
         server.until(30.0, |server| server.table(BRIDGE_RACE, 1).playing());
         let table = server.table(BRIDGE_RACE, 1);
-        assert_eq!(table.seats.len(), 4);
-        assert!(table.seats[0].here() && table.seats[2].here() && table.seats[1].computer && table.seats[3].computer);
-        assert_eq!(bridge_race::team(0), bridge_race::team(2));
+        let people: Vec<usize> = (0..table.seats.len()).filter(|&seat| table.seats[seat].here()).collect();
+        let computer: Vec<usize> = (0..table.seats.len()).filter(|&seat| table.seats[seat].computer).collect();
+        match table.seats.len() {
+            // One against the other: red's first seat and blue's.
+            2 => assert_eq!((people.as_slice(), computer.as_slice()), (&[0, 1][..], &[][..])),
+            // On one team, or one on each.
+            4 if people == [0, 2] => assert_eq!(computer, [1, 3]),
+            4 => assert_eq!((people.as_slice(), computer.as_slice()), (&[0, 1][..], &[2, 3][..])),
+            seats => panic!("{seats} seats"),
+        }
     }
 
     #[test]

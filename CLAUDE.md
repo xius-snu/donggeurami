@@ -13,15 +13,15 @@ working, and spend nothing on it unasked. Since 2026-11-18 the selector has
 the four games Hajun asked for that day, each played at a table: Blend In,
 Knock Off, Bridge Race, Last Stand (`docs/minigames.md`).
 
-As of 2026-11-18: `PROTOCOL_VERSION` 22, APK 41 (`versionCode`, not yet on
-a phone), the server deployed then (04:16 UTC) with everything in `server/`
-and `shared/`, all of it committed and pushed. APK 41 has the committed
-`roundtownmap.glb`: Hajun's export of 2026-11-17 23:54 (48 `plot` planes)
-is in their checkout, uncommitted, and Blend In's crowd's grid was not baked
-for it. The iPhone's last tag, `ios-1.0.2-18`, pushed in the first hour of
-2026-11-16 (whether Codemagic built it is not known here), is protocol 18:
-its build is told to update and stays offline until `ios-1.0.2-19` is
-built, whose tag is Hajun's to ask for.
+As of the evening of 2026-11-18: `PROTOCOL_VERSION` 23, APK 42
+(`versionCode`, not yet on a phone), the server deployed then (08:53 UTC)
+with everything in `server/` and `shared/`, all of it committed and pushed,
+the town's map with Hajun's `plot` planes among it. The iPhone's last tag,
+`ios-1.0.2-18`, pushed in the first hour of 2026-11-16 (whether Codemagic
+built it is not known here), is protocol 18: its build is told to update
+and stays offline until `ios-1.0.2-19` is built, whose tag is Hajun's to
+ask for. Apple warns that from April 2027 an upload needs Xcode 27
+(`docs/building.md`, APK 42).
 
 ## This file, and where the rest is
 
@@ -279,8 +279,8 @@ to try again.
 - Water is a part whose material is called `water`; a material named with
   `.001` after it is the same material. A part with no material loads near
   black. Skinned meshes are not land. Where a map has nothing underfoot
-  there is sea (`WATER_Y`), but under Bridge Wars', Bridge Race's and Last
-  Stand's, which have the void (`island::bottomless`).
+  there is sea (`WATER_Y`), but under Bridge Wars' and Bridge Race's,
+  which have the void (`island::bottomless`).
 - Export with Apply Modifiers (arrays and mirrors come out as one piece
   otherwise). A texture in a `.glb` needs Bevy's feature for its format
   (`jpeg` is on).
@@ -369,10 +369,10 @@ to try again.
   window since 2026-11-15, on both sides, not yet seen on one). The
   right end of the bar is moved no further than the fan of things to say
   leaves room, and the chat's small button steps in from an island.
-- The gamepad opens the selector (`src/games.rs`): six cards, Bridge Wars
-  (free), Blend In, Knock Off, Bridge Race, Last Stand (50 coins each) and
-  Home Builders (100); the card for one to come is turned off
-  (`games::COMING_SOON`).
+- The gamepad opens the selector (`src/games.rs`): six cards, Bridge Wars,
+  Blend In, Knock Off, Bridge Race, Last Stand (50 coins each) and Home
+  Builders (100), each price the coin's picture and the number; the card
+  for one to come is turned off (`games::COMING_SOON`).
 - You can talk to any AI (`src/talk.rs`), ride the four buses that go
   round the roads by the clock (`car.rs`, `roads.rs`: the way is read off
   the road's paint), drive a car of your own (`drive.rs`, the face button,
@@ -385,7 +385,7 @@ to try again.
 - Town objects are data (`src/map.rs`, a catalogue and `town.json`), edited
   by tapping (`src/editor.rs`), offline only. The edit menu's buttons stay
   on the object: never clamp them to the screen.
-- The balance is the server's online (Postgres); only House Builder's fee
+- The balance is the server's online (Postgres); only the games' fees
   and prizes change it. The music is turned off (`sound::PLAYING`), and
   Bevy's audio with it.
 - Settings (`src/settings.rs`): Graphics and Controls are empty; Accounts
@@ -399,8 +399,10 @@ Hajun's `bridgewarsgameevent.md` has the items, prices, rates and timetable,
 and the game is as that file has it. The rules both sides play by are
 `roundtown_net::bridge_wars` (`shared/src/lib.rs`).
 
-- **A game**: the selector, a black loading screen, a glass waiting room
-  150 m over the map; ten seconds after the last person joins the computer
+- **A game**: 50 coins (`bridge_wars::FEE`, back to whoever leaves before
+  the fight), each person paid by their team's place, 130, 60, 10, 0
+  (`PRIZES`, `places`); the selector, a black loading screen, a glass
+  waiting room 150 m over the map; ten seconds after the last person joins the computer
   takes the seats left, its players coming in one at a time and going
   about the room each as who it is (`bots::mingle`, `BOT_GAP`); a
   countdown; 20 minutes, with no clock on the screen until the last ten
@@ -532,12 +534,14 @@ server online and by the device offline.
   inside a 70 m ring, among 28 of the town's people. Everyone picks a name
   and a look (30 s, sooner once all have); each round one person hides (15
   s, the seekers' screens black) and the rest seek for 150 s with an aura
-  sword and the town's free camera; a wrong strike blinds, 4 s and 3 more
+  sword, the speed potion's effect and the town's free camera; a wrong
+  strike blinds, 4 s and 3 more
   each time. A point for finding, one for staying hidden; everyone hides
   once.
 - **Knock Off** (four seats, the computer filling them): a 12 m disc of ice
   in the sea. Everyone aims at once in secret (12 s, then 10: the stick
-  for the way, up and down for power 1 to 10), then all slide at once, the
+  for the way, up and down for power 1 to 10, from 1 each turn), then all
+  slide at once, the
   same to the bit on every device and the server; the ice's edge breaks a
   metre a turn, gone after turn 13. The last on it wins; the rest watch or
   leave.
@@ -546,12 +550,20 @@ server online and by the device offline.
   the golden one. 10 m of bridge each to begin, 6 m to each team every 16
   s shared between its players, now and then a stick of dynamite; a punch
   only knocks, and the fallen are back on their island in 2 s. A team wins
-  standing all together on the golden island for 3 s; at 6 minutes, the
-  team with more on it or nearer, or a draw. Bridge Wars' camera and buttons.
+  standing all together on the golden island for 3 s, a bridge to it or
+  not; at 6 minutes, the team with more on it or nearer, or a draw. Two
+  people are on one team, on each, or one against one, a third of the time
+  each (`bridge_race::pairing`). Always noon (`sky::ALWAYS_DAY`). Bridge
+  Wars' camera and buttons.
 - **Last Stand** (1 to 4 people together, no computer): endless waves of
   zombies at the anchor crystal (1,500); two generators raised from silver
   and gold to sapphire and amethyst; loot off zombies, luckier as you
-  upgrade; an item shop and an upgrade shop, endless levels. Over when the
+  upgrade; an item shop and an upgrade shop, endless levels. The sea round
+  the sand, nobody past a ring 41.5 m out (`last_stand::SHORE`). The dead
+  drop all four things and their sword for anyone to take, a sword only by
+  one holding a lesser, five minutes (`drop_all`, `LIES_FOR`); now and then
+  an unannounced treasure chest, opened by the town's bubble
+  (`talk::Opens`); a zombie a blow does not kill shows red. Over when the
   crystal is broken and nobody stands; everyone's score and the team's,
   10 coins a wave cleared, to 400. Bridge Wars' camera and buttons.
 - Tuned by whole games, as Bridge Wars' bots are (`cargo test -p

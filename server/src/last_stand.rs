@@ -47,7 +47,7 @@ use std::collections::HashMap;
 
 use bevy::prelude::*;
 use roundtown_net::last_stand::{
-    self, Event, Game, Knock, Shambler, Spit, StandRound, StandUpgrades, sold_at,
+    self, Chest, Event, Game, Knock, LyingSword, Shambler, Spit, StandRound, StandUpgrades, sold_at,
 };
 use roundtown_net::bridge_wars::Shop;
 use roundtown_net::{Ask, Blasted, Dynamite, Fireball, Kit, Kits, Loot, Member, Purse, Purses, Spot, Tell, Venue, arrival};
@@ -103,8 +103,11 @@ pub(crate) struct LastStand {
     spits: HashMap<u32, Entity>,
     balls: HashMap<u32, Entity>,
     sticks: HashMap<u32, Entity>,
-    /// Everything lying about, by its number in the game's pile.
+    /// Everything lying about, by its number in the game's pile; the swords
+    /// the dead dropped, and the treasure chests standing, by theirs.
     pieces: HashMap<u32, Entity>,
+    swords: HashMap<u32, Entity>,
+    chests: HashMap<u32, Entity>,
     /// Each blast sent, and how long it has been.
     blasts: Vec<(Entity, f32)>,
     /// What the room was last sent of how the game stands.
@@ -129,6 +132,8 @@ impl LastStand {
             balls: HashMap::new(),
             sticks: HashMap::new(),
             pieces: HashMap::new(),
+            swords: HashMap::new(),
+            chests: HashMap::new(),
             blasts: Vec::new(),
             sent_round: None,
             sent_upgrades: None,
@@ -252,8 +257,46 @@ impl LastStand {
                     let thing = ctx.spawn_in_room(table, Loot::of(&piece));
                     self.pieces.insert(piece.id, thing);
                 }
-                Event::Taken { piece, .. } => {
+                Event::Taken { piece, .. } | Event::Lapsed(piece) => {
                     if let Some(thing) = self.pieces.remove(&piece.id) {
+                        ctx.commands.entity(thing).try_despawn();
+                    }
+                }
+                // A sword the dead dropped: sent once, gone as it is taken
+                // or has lain its while.
+                Event::SwordDropped(blade) => {
+                    let sword = ctx.spawn_in_room(table, LyingSword::of(&blade));
+                    self.swords.insert(blade.id, sword);
+                }
+                Event::SwordTaken { blade, .. } | Event::SwordLapsed(blade) => {
+                    if let Some(sword) = self.swords.remove(&blade.id) {
+                        ctx.commands.entity(sword).try_despawn();
+                    }
+                }
+                // A treasure chest: sent once, said to nobody; opened, gone,
+                // and what was in it told to everyone, for the device to say
+                // over where it stood.
+                Event::ChestPlaced(chest) => {
+                    let thing = ctx.spawn_in_room(table, Chest::of(&chest));
+                    self.chests.insert(chest.id, thing);
+                }
+                Event::ChestOpened { seat, chest, find } => {
+                    if let Some(thing) = self.chests.remove(&chest.id) {
+                        ctx.commands.entity(thing).try_despawn();
+                    }
+                    ctx.tell_room(
+                        table,
+                        Tell::LastStand(last_stand::Tell::Found {
+                            by: seat as u8,
+                            x: chest.at.x,
+                            y: chest.at.y,
+                            z: chest.at.z,
+                            find,
+                        }),
+                    );
+                }
+                Event::ChestLapsed(chest) => {
+                    if let Some(thing) = self.chests.remove(&chest.id) {
                         ctx.commands.entity(thing).try_despawn();
                     }
                 }
@@ -401,6 +444,9 @@ impl Rules for LastStand {
                 game.buy(seat, *ware, table.at[seat].xz());
             }
             Ask::LastStand(last_stand::Ask::Ready) => game.ready(seat),
+            Ask::LastStand(last_stand::Ask::Open(chest)) => {
+                game.open(seat, *chest);
+            }
             Ask::Use(used) => {
                 game.use_item(seat, *used);
             }
@@ -470,6 +516,8 @@ impl Rules for LastStand {
             .chain(self.balls.drain().map(|(_, ball)| ball))
             .chain(self.sticks.drain().map(|(_, stick)| stick))
             .chain(self.pieces.drain().map(|(_, thing)| thing))
+            .chain(self.swords.drain().map(|(_, sword)| sword))
+            .chain(self.chests.drain().map(|(_, chest)| chest))
             .chain(self.blasts.drain(..).map(|(blast, _)| blast));
         for thing in things {
             commands.entity(thing).try_despawn();

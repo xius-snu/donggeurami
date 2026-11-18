@@ -332,11 +332,15 @@ fn follow_server(
             continue;
         }
         let here = lying.at.xz();
+        // Dropped in a game of Last Stand and lain its while there, it is
+        // gone by nobody's hand (since 2026-11-18, the rules' `LIES_FOR`):
+        // it falls away, whoever stands by it.
+        let lapsed = on == Venue::LastStand && lying.from.is_some() && now - lying.born >= roundtown_net::last_stand::LIES_FOR - 1.0;
         let taker = people
             .iter()
             // Anyone but a zombie, which picks up nothing.
             .filter(|(_, _, venue, member, mine)| {
-                **venue == on && (*mine || member.is_some_and(|member| member.look != roundtown_net::bridge_wars::ZOMBIE_LOOK))
+                !lapsed && **venue == on && (*mine || member.is_some_and(|member| member.look != roundtown_net::bridge_wars::ZOMBIE_LOOK))
             })
             .map(|(person, at, ..)| (person, at.translation.xz().distance(here)))
             .filter(|(_, away)| *away <= MAGNET + TAKER_SLACK)

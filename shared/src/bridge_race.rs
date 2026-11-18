@@ -113,12 +113,16 @@ pub fn team(seat: usize) -> u8 {
 }
 
 /// Where each team's island is, by team, in metres from the middle of the
-/// map: red's at (-80, -21) and blue's at (-80, 21), 42 m apart, as Hajun's
-/// map has them (a test in the game reads them off it).
-pub const ISLANDS: [Vec2; 2] = [Vec2::new(-80.0, -21.0), Vec2::new(-80.0, 21.0)];
+/// map: red's at (-80, -16) and blue's at (-80, 16), 32 m apart, as Hajun's
+/// map has them (a test in the game reads them off it). Each 5 m nearer the
+/// other since Hajun's export of the afternoon of 2026-11-18, which moved
+/// each island with everything on it; at (-80, -21) and (-80, 21), 42 m
+/// apart, until then.
+pub const ISLANDS: [Vec2; 2] = [Vec2::new(-80.0, -16.0), Vec2::new(-80.0, 16.0)];
 
-/// Where the golden island is: the middle of the map, 83 m from each team's
-/// island ("like the tip of a 80deg 80deg 20deg isosceles triangle").
+/// Where the golden island is: the middle of the map, 81.6 m from each
+/// team's island ("like the tip of a 80deg 80deg 20deg isosceles
+/// triangle").
 pub const GOLDEN: Vec2 = Vec2::ZERO;
 
 /// How far each of the three islands reaches from its middle, in metres:
@@ -126,7 +130,8 @@ pub const GOLDEN: Vec2 = Vec2::ZERO;
 pub const ISLAND_RADIUS: f32 = 10.0;
 
 /// How far it is from a team's island to the golden island, shore to
-/// shore, in metres: the void each team bridges, 62.7 m. What how far a
+/// shore, in metres: the void each team bridges, 61.6 m (62.7 until the
+/// islands were moved, 2026-11-18). What how far a
 /// bridge has got is a share of ([`RaceRound::across`]).
 pub fn the_way_across(team: u8) -> f32 {
     ISLANDS[usize::from(team) % TEAMS].distance(GOLDEN) - 2.0 * ISLAND_RADIUS
@@ -162,8 +167,38 @@ pub fn seats_for(people: usize) -> usize {
 /// The order people take seats in, the first to join first: the first two
 /// on one team, so that two people are one team against the computer ("if
 /// its 2 players then its a 2v2 against bots"), a third on the other, with
-/// the computer, and a fourth beside them.
+/// the computer, and a fourth beside them. Two people are seated otherwise
+/// two times in three as the computer comes ([`Pairing`]).
 pub const PEOPLE_FIRST: [usize; 4] = [0, 2, 1, 3];
+
+/// How two people at a table are seated as the computer comes, thrown for
+/// each table (since the evening of 2026-11-18; Hajun: "if there is 2 real
+/// players, then 33/33/33 chance of 1. being on same team against 2 bots 2.
+/// being on different team, each with a bot teammate, 3. being a 1v1 with
+/// no bot player"; always together until then): a group of two the same as
+/// two who came apart (mine: his "2 real players" says nothing of groups).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Pairing {
+    /// On one team, red's two seats, against two of the computer's.
+    Together,
+    /// One on each team, red's first seat and blue's, each with one of the
+    /// computer's beside them.
+    Apart,
+    /// One against the other, two seats and none of the computer's.
+    Alone,
+}
+
+/// Which way two people are seated, by `roll`, a number from 0 up to 1: a
+/// third of the way each.
+pub fn pairing(roll: f32) -> Pairing {
+    if roll < 1.0 / 3.0 {
+        Pairing::Together
+    } else if roll < 2.0 / 3.0 {
+        Pairing::Apart
+    } else {
+        Pairing::Alone
+    }
+}
 
 /// The waiting room, Hajun's glass box over the map between the two teams'
 /// islands: its middle across the ground, and its floor, lifted with the

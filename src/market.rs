@@ -166,8 +166,29 @@ impl Zone {
     /// across the ground, and on the ground there, not jumping over it
     /// ([`ON_THE_GROUND`]).
     pub(crate) fn holds(&self, at: Vec3) -> bool {
-        (at.y - self.floor).abs() <= ON_THE_GROUND && at.xz().cmpge(self.low).all() && at.xz().cmple(self.high).all()
+        self.holds_within(at, 0.0)
     }
+
+    /// Whether someone whose feet are at `at` stands in it, or within
+    /// `margin` of it across the ground ([`margin`]).
+    pub(crate) fn holds_within(&self, at: Vec3, margin: f32) -> bool {
+        (at.y - self.floor).abs() <= ON_THE_GROUND
+            && at.xz().cmpge(self.low - Vec2::splat(margin)).all()
+            && at.xz().cmple(self.high + Vec2::splat(margin)).all()
+    }
+}
+
+/// How far round a shop's outline someone may stand and be in it, on
+/// `venue`'s map, in metres: on Last Stand's, half a metre, about a body's
+/// width, so that the shop opens as your body comes onto the outline and
+/// not once your feet are in it (since the evening of 2026-11-18; Hajun:
+/// "right now the shops seem to only open when u rly go inside deep into
+/// the shop, so make it a bit more sensitive by increasing the activation
+/// detection area to similar as build wars"; its outlines are Bridge Wars'
+/// size, measured, and the wait it had in a wave is shorter too,
+/// `last_stand`); none on Bridge Wars' own, as ever.
+fn margin(venue: Venue) -> f32 {
+    if venue == Venue::LastStand { 0.5 } else { 0.0 }
 }
 
 /// One map's shops: the outlines at its red stands, item shops, and at its
@@ -179,11 +200,13 @@ pub(crate) struct Stands {
 }
 
 impl Stands {
-    /// Which shop someone whose feet are at `at` stands in, if either.
-    pub(crate) fn at(&self, at: Vec3) -> Option<Shop> {
-        if in_a_shop(&self.items, at) {
+    /// Which shop someone whose feet are at `at` stands in, if either, or
+    /// within `margin` of.
+    pub(crate) fn at(&self, at: Vec3, margin: f32) -> Option<Shop> {
+        let within = |zones: &[Zone]| zones.iter().any(|zone| zone.holds_within(at, margin));
+        if within(&self.items) {
             Some(Shop::Items)
-        } else if in_a_shop(&self.upgrades, at) {
+        } else if within(&self.upgrades) {
             Some(Shop::Upgrades)
         } else {
             None
@@ -206,9 +229,9 @@ impl Shops {
     }
 
     /// Which shop someone standing on `venue` with their feet at `at` is
-    /// in, if any.
+    /// in, if any ([`margin`] round each outline there).
     pub(crate) fn at(&self, venue: Venue, at: Vec3) -> Option<Shop> {
-        self.on(venue)?.at(at)
+        self.on(venue)?.at(at, margin(venue))
     }
 
     /// `venue`'s shops are `stands`, as its map has been read.
@@ -435,6 +458,7 @@ fn boxes(corners: &[Vec2]) -> Vec<(Vec2, Vec2)> {
 }
 
 /// Whether someone whose feet are at `at` stands in one of `zones`.
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn in_a_shop(zones: &[Zone], at: Vec3) -> bool {
     zones.iter().any(|zone| zone.holds(at))
 }
@@ -1129,6 +1153,26 @@ fn shut_by_hand(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn on_last_stand_s_map_a_shop_opens_as_your_body_comes_onto_its_outline_and_on_bridge_wars_as_your_feet_do() {
+        // Last Stand's item shop's outline, as measured off the map.
+        let zone = Zone {
+            low: Vec2::new(-1.11, -5.74),
+            high: Vec2::new(1.38, -4.24),
+            floor: 0.25,
+        };
+        // A third of a metre short of it, coming from the anchor: open on
+        // Last Stand's map, where a body's half width is over it; not on
+        // Bridge Wars', as ever.
+        let short = Vec3::new(0.1, 0.25, -3.9);
+        assert!(!zone.holds(short));
+        assert!(zone.holds_within(short, margin(Venue::LastStand)));
+        assert!(!zone.holds_within(short, margin(Venue::Arena)));
+        // A metre short of it, no; nor jumping over it.
+        assert!(!zone.holds_within(Vec3::new(0.1, 0.25, -3.2), margin(Venue::LastStand)));
+        assert!(!zone.holds_within(Vec3::new(0.1, 1.5, -4.5), margin(Venue::LastStand)));
+    }
     use crate::island;
     use roundtown_net::{ARENA_ISLAND_RADIUS, ARENA_ISLANDS, ARENA_SHOPS, ARENA_TEAMS, ARENA_UPGRADE_SHOPS};
 
@@ -1192,7 +1236,7 @@ mod tests {
             assert!(map.walls_round(nearer, &body).is_empty(), "team {team}: the stand fills its own outline");
             assert!(in_a_shop(&zones, Vec3::new(nearer.x, ground, nearer.y)));
             assert!(!in_a_shop(&zones, Vec3::new(nearer.x, ground + 1.5, nearer.y)), "jumping over it");
-            assert_eq!(shops.at(Vec3::new(nearer.x, ground, nearer.y)), Some(Shop::Items));
+            assert_eq!(shops.at(Vec3::new(nearer.x, ground, nearer.y), 0.0), Some(Shop::Items));
             // And its upgrade shop the same, at the blue stand across the
             // island's middle: an outline of its own, with room to stand.
             let shop = ARENA_UPGRADE_SHOPS[team];
@@ -1204,8 +1248,8 @@ mod tests {
             let ground = map.floor(nearer, 1.0).expect("ground in the outline");
             let body = [(crate::PLAYER_RADIUS, ground + crate::LAND_STEP_UP, ground + crate::PLAYER_HEIGHT)];
             assert!(map.walls_round(nearer, &body).is_empty(), "team {team}: the blue stand fills its own outline");
-            assert_eq!(shops.at(Vec3::new(nearer.x, ground, nearer.y)), Some(Shop::Upgrades));
-            assert_eq!(shops.at(Vec3::new(ARENA_ISLANDS[team].x, ground, ARENA_ISLANDS[team].y)), None);
+            assert_eq!(shops.at(Vec3::new(nearer.x, ground, nearer.y), 0.0), Some(Shop::Upgrades));
+            assert_eq!(shops.at(Vec3::new(ARENA_ISLANDS[team].x, ground, ARENA_ISLANDS[team].y), 0.0), None);
         }
         for seat in 0..roundtown_net::ARENA_SEATS {
             let at = island::arrival(Venue::Arena, seat).translation;

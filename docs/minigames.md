@@ -9,7 +9,73 @@ share. Dated entries, newest first.
 
 ## Contents
 
-1. Since 2026-11-18 four new games are on the selector, each played at a table
+1. The evening of 2026-11-18: Bridge Wars costs 50 too, prices drawn with the coin, and twelve asks after a play
+2. Since 2026-11-18 four new games are on the selector, each played at a table
+
+## The evening of 2026-11-18: Bridge Wars costs 50 too, prices drawn with the coin, and twelve asks after a play
+
+Hajun played the four games of the morning and sent a dozen messages in a row, the last
+"then build apk and push to git". **`PROTOCOL_VERSION` 23** (Last Stand's new asks, tells
+and things, `docs/last-stand.md`; Bridge Wars' fee changes nothing sent): an app from
+before is told to update and stays offline. The server has it and so does APK 42
+(`docs/building.md`). No iOS tag. Each ask is written up in its game's file; this is the
+list, and what they share.
+
+| Ask | Where it is written up |
+|---|---|
+| Bridge Race always by day | `docs/bridge-race.md` |
+| Knock Off's power 1, not 0, as each turn begins | `docs/knock-off.md` |
+| Last Stand: everything dropped on a death, for yourself or a teammate; swords only if better; gone after a long while | `docs/last-stand.md` |
+| Last Stand's shops open sooner, as Bridge Wars' do | `docs/last-stand.md` |
+| The app's "Donggeurami Town" goes at once when a window comes up | `docs/town-hud.md` |
+| Blend In's seekers have the speed potion's effect | `docs/blend-in.md` |
+| Bridge Wars costs 50 coins | `docs/bridge-wars.md`, and below |
+| The coin's picture in place of the word "coins" | below |
+| Bridge Race: win by holding the golden island, jumped onto or not | `docs/bridge-race.md` (it was so already) |
+| Last Stand's sea, with a ring nobody passes, and no void | `docs/last-stand.md` |
+| Last Stand's zombies red a moment when hit | `docs/last-stand.md` |
+| Last Stand's treasure chests, opened by the bubble | `docs/last-stand.md` |
+| The town's map with Hajun's plot planes | `docs/maps-and-collision.md` |
+| Bridge Race: two people seated three ways, a third of the time each | `docs/bridge-race.md` |
+
+### The selector's prices
+
+Hajun: "instead of writing the text "50 coins" with the word "coins" use the actual coin
+icon instead so its "(coin_icon) 50"". A card's price is the coin's picture and the number,
+"(coin) 50", and one you cannot pay "Needs (coin) 50", in the card's middle, the picture as
+tall as the words' capitals and a little more (`games::Note`, `spawn_note`, `COIN_SIZE`,
+`COIN_GAP`, mine). The words are the file's: `words.games.price` is `"{coins}"` and
+`needs_coins` `"Needs {coins}"`, the picture standing where `{coins}` is, so Hajun can put
+words either side of it. Bridge Wars' card says "(coin) 50" and is blocked without it, as
+every card is; a game that cost nothing would still say `free`. Tests: the parts either side
+of the picture, and every card's price and whether it is to be had.
+
+### Coins: Bridge Wars
+
+| Game | Fee | Paid by place | Net |
+|---|---|---|---|
+| Bridge Wars (8 seats, 4 teams of 2) | 50 | each person by their team's place, 130, 60, 10, 0 | +80, +10, -40, -50 |
+
+Mine, by the same rule: a team's place is when it had nobody left in play, and teams still
+in at 20:00 share the places they take up (all four, 50 each, the fee back). The rest is in
+`docs/bridge-wars.md`.
+
+### Checked, and where
+
+- **Unit tests**, all three suites, after everything: `cargo test --lib`, `cargo test -p
+  roundtown_net`, `cargo test -p roundtown_server` (numbers in `docs/building.md`).
+- **Hidden desktop runs** (`RT_BACKGROUND=1`, offline, a throwaway driver taken out
+  again), pictures looked at enlarged where small: the selector with "(coin) 50" on every
+  card and the town's name gone under it; Knock Off's first turn at 1; Bridge Race by day
+  with the clock at night, and won by a jump onto the golden island; Bridge Wars offline,
+  1,000 coins, 950 in the waiting room, the fight skipped to a draw and 50 paid ("+50" with
+  the coin under "Time's up!"), 1,000 again in the town; Last Stand's sea, its ring, a drop
+  of everything on a death, a zombie red, a chest opened by E, the shop's outline; the
+  town's plot planes by day. What each showed is in its game's file.
+- **Not checked**: anything on a phone or an iPhone; two devices at one table (the Bridge
+  Race seating, a teammate taking what you dropped online, Bridge Wars' fee from a group);
+  the server's fees and prizes against the real database but for the check after the
+  deploy (`docs/building.md`).
 
 ## Since 2026-11-18 four new games are on the selector, each played at a table
 

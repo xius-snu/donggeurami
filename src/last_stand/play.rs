@@ -33,8 +33,10 @@ use roundtown_net::last_stand::{
 };
 use roundtown_net::{Ask as NetAsk, Kits, Loot, Member, Minigame, Purses, Upgrades, Use, Venue};
 
+use super::finds::{self, ChestLook, Key as Found};
 use super::looks::SpitBall;
 use super::{Happened, ReadyAsked, Stand, StandSystems, TEAM, Tally, spread};
+use crate::talk::Opened;
 use crate::arena::{self, Begun, FightTime, Fighting, Health, InArena, OfflineArena, Outfit, Resources, Used, Wears};
 use crate::clock::TownClock;
 use crate::lobby::{self, Whereabouts};
@@ -71,13 +73,34 @@ pub(super) fn plugin(app: &mut App) {
     )
     .add_systems(
         Update,
-        (run_offline, put_back, ask_online, mind_the_shops, publish)
+        (keep_to_the_shore, run_offline, put_back, ask_online, mind_the_shops, publish)
             .chain()
             .in_set(StandSystems)
             .after(crate::move_bodies)
             .after(arena::ArenaSystems)
             .before(crate::animate_walk),
     );
+}
+
+/// Keeps you inside the ring round Last Stand's sea
+/// ([`SHORE`](rules::SHORE), since the evening of 2026-11-18; Hajun:
+/// "ocean with a tight invisible circular boundary border so u can still
+/// go in the ocean but not too far"): walked, or knocked, out at it, you
+/// stand at it, as at a wall nobody sees. Written only if you were past it.
+fn keep_to_the_shore(mut me: Query<(&mut Transform, &Venue), With<Player>>) {
+    let Ok((mut body, &here)) = me.single_mut() else {
+        return;
+    };
+    if here != Venue::LastStand {
+        return;
+    }
+    let across = body.translation.xz();
+    if across.length() <= rules::SHORE {
+        return;
+    }
+    let inside = rules::within_the_shore(across);
+    body.translation.x = inside.x;
+    body.translation.z = inside.y;
 }
 
 /// A zombie's body this device moves itself, offline: the game's number
@@ -285,6 +308,9 @@ pub(super) struct Doings<'w, 's> {
     picked: MessageReader<'w, 's, Picked>,
     used: MessageReader<'w, 's, Used>,
     ready: MessageReader<'w, 's, ReadyAsked>,
+    /// The bubble over a treasure chest tapped (`talk`), and the chests.
+    opened: MessageReader<'w, 's, Opened>,
+    chests: Query<'w, 's, &'static ChestLook>,
 }
 
 /// What was used off a button, as the rules have it.
@@ -357,6 +383,7 @@ fn run_offline(
         doings.picked.clear();
         doings.used.clear();
         doings.ready.clear();
+        doings.opened.clear();
         return;
     };
     let Ok((you, body, intent, dead, mut your_shove, mut your_jump)) = me.single_mut() else {
@@ -397,6 +424,11 @@ fn run_offline(
     for _ in doings.ready.read() {
         game.ready(seat);
         stand.ready = true;
+    }
+    for &Opened(chest) in doings.opened.read() {
+        if let Ok(chest) = doings.chests.get(chest) {
+            game.open(seat, chest.id);
+        }
     }
     // Fallen into the void: dead, the anchor standing or not; once the
     // game is over, back where you began, as in the town.
@@ -491,6 +523,42 @@ fn run_offline(
             Event::Taken { seat: by, piece } => {
                 if let Some(thing) = stand.pieces.remove(&piece.id) {
                     loot::take(&mut commands, thing, (by == seat).then_some(you));
+                }
+            }
+            // Lain its while: gone with nobody's having it, a thing dropped
+            // falling away.
+            Event::Lapsed(piece) => {
+                if let Some(thing) = stand.pieces.remove(&piece.id) {
+                    loot::take(&mut commands, thing, None);
+                }
+            }
+            Event::SwordDropped(blade) => {
+                let thing = finds::lay_sword(&mut commands, &kit.assets, now, Found::Own(blade.id), blade.tier, blade.rest(), blade.from);
+                stand.swords.insert(blade.id, thing);
+            }
+            Event::SwordTaken { seat: by, blade } => {
+                if let Some(thing) = stand.swords.remove(&blade.id) {
+                    finds::take_sword(&mut commands, thing, (by == seat).then_some(you));
+                }
+            }
+            Event::SwordLapsed(blade) => {
+                if let Some(thing) = stand.swords.remove(&blade.id) {
+                    finds::take_sword(&mut commands, thing, None);
+                }
+            }
+            Event::ChestPlaced(chest) => {
+                let thing = finds::place_chest(&mut commands, &kit.assets, Found::Own(chest.id), chest.id, chest.at, chest.yaw);
+                stand.chests.insert(chest.id, thing);
+            }
+            Event::ChestOpened { chest, find, .. } => {
+                if let Some(thing) = stand.chests.remove(&chest.id) {
+                    finds::pop_chest(&mut commands, thing);
+                }
+                finds::say_found(&mut commands, chest.at, find);
+            }
+            Event::ChestLapsed(chest) => {
+                if let Some(thing) = stand.chests.remove(&chest.id) {
+                    finds::pop_chest(&mut commands, thing);
                 }
             }
             Event::Wave { .. } => stand.ready = false,
@@ -601,6 +669,7 @@ fn follow_online(
     tables: Query<(Option<&StandRound>, Option<&StandUpgrades>, Option<&Purses>, Option<&Kits>), With<Remote>>,
     mut told: MessageReader<super::Told>,
     mut happened: MessageWriter<Happened>,
+    mut commands: Commands,
 ) {
     let Some(mut stand) = stand else {
         told.clear();
@@ -658,6 +727,11 @@ fn follow_online(
             rules::Tell::Slain { by, kind } => {
                 happened.write(Happened::Slain { by: usize::from(by), kind });
             }
+            // A chest opened: what was in it, over where it stood (the
+            // chest itself pops as the server's goes, `finds`).
+            rules::Tell::Found { x, y, z, find, .. } => {
+                finds::say_found(&mut commands, Vec3::new(x, y, z), find);
+            }
             rules::Tell::Bought(ware) => debug!("Last Stand: bought {ware:?}"),
         }
     }
@@ -685,7 +759,13 @@ fn ask_online(
         doings.picked.clear();
         doings.used.clear();
         doings.ready.clear();
+        doings.opened.clear();
         return;
+    }
+    for &Opened(chest) in doings.opened.read() {
+        if let Ok(chest) = doings.chests.get(chest) {
+            asks.write(NetAsk::LastStand(rules::Ask::Open(chest.id)));
+        }
     }
     for picked in doings.picked.read() {
         if picked.venue == Venue::LastStand

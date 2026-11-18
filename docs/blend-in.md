@@ -11,10 +11,41 @@
 
 ## Contents
 
-1. At the merge, 2026-11-18: the round line stroked, and nobody standing still is sent on and on
-2. Later still on 2026-11-18, after a play-tester's look: what you wear changes only at the hide, nothing stands over the window, the window keeps clear of the chat, the end of a round says who the hider went by and points the way to them, the column meets the ground softly, the ring lights up as you come near it, and a seeker is told what a wrong swing costs
-3. Later on 2026-11-18, after the game was checked: the crowd is sent by the rule a person's device sends by, nothing said from the hide to the end of the seek is passed on, a tap on the board no longer decides a round, and whoever leaves comes last
-4. Since 2026-11-18 Blend In is played online: two to four people, each hiding once among twenty-eight of the town's people while the others look for them
+1. The evening of 2026-11-18: the seekers have the speed potion's effect
+2. At the merge, 2026-11-18: the round line stroked, and nobody standing still is sent on and on
+3. Later still on 2026-11-18, after a play-tester's look: what you wear changes only at the hide, nothing stands over the window, the window keeps clear of the chat, the end of a round says who the hider went by and points the way to them, the column meets the ground softly, the ring lights up as you come near it, and a seeker is told what a wrong swing costs
+4. Later on 2026-11-18, after the game was checked: the crowd is sent by the rule a person's device sends by, nothing said from the hide to the end of the seek is passed on, a tap on the board no longer decides a round, and whoever leaves comes last
+5. Since 2026-11-18 Blend In is played online: two to four people, each hiding once among twenty-eight of the town's people while the others look for them
+
+## The evening of 2026-11-18: the seekers have the speed potion's effect
+
+Hajun, after playing it: "also in blend in, i think the seeker should get
+speed boost potion effect." With the other games' asks of that evening
+(`docs/minigames.md`); in the server and APK 42 (`docs/building.md`).
+
+- **Every seeker, through the seek, runs as Bridge Wars' speed potion runs
+  you**: `blend_in::SEEKER_PACE` is `RUN_SPEED * FAST`, 14 m/s, twice the
+  hider's and the crowd's walk (10, Bridge Wars' plain run, until then).
+  The pace is the rules' (`pace`); the server's check of a move, 52 m/s
+  at the most, is well over it.
+- **And it looks it**: the speed potion's blue sparks behind every seeker
+  in the seek, on every device, theirs and everyone's (`blend_in`'s `put`
+  wears `Wears { fast }`, which `trail` draws; `trail` draws it on Blend
+  In's venue, which has no fight of its own). The hider walks as the
+  crowd does, sparkless, and nobody has it in the hide or between rounds.
+- **What it does to the finds**, measured by whole games of stand-ins
+  (`many_games_of_blend_in`, 20 games of each, rows for 14 m/s added to it
+  beside 7 and 10): a hider who walks as the crowd does is found in 25%
+  of rounds with two people (20% at 10 m/s), 37% with three (32%), 46%
+  with four (46%, a few seconds sooner); one who flees, in 25%, 37% and
+  49% (15%, 40%, 45%). A little more is found, most of all in a game of
+  two, and hiding still wins more rounds than it loses.
+  Twenty games is a small number: a few points either way is noise.
+- **Mine**: the potion's own pace, not some other; the sparks, the
+  potion's look, for "effect"; and all of the seek, not a few seconds of
+  it as a potion lasts in Bridge Wars.
+- **Not checked**: in a game with people (Blend In is online only, and two
+  devices were not run); on a phone.
 
 ## At the merge, 2026-11-18: the round line stroked, and nobody standing still is sent on and on
 

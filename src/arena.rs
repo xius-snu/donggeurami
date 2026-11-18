@@ -186,7 +186,7 @@ use crate::dynamite;
 use crate::fire;
 use crate::hud::{self, TakesPress};
 use crate::island::{self, Island, Islands, Land, Venue, is_material};
-use crate::lobby::{self, Lobby, Seat, Whereabouts};
+use crate::lobby::{self, Balance, Lobby, Seat, Whereabouts};
 use crate::loot;
 use crate::net::Online;
 use crate::range::Sector;
@@ -719,6 +719,11 @@ struct Game {
     /// looked at, and stopping for whoever is on a crossing
     /// (`squash::steer_buses`). Online they are the server's.
     buses: Option<roundtown_net::bridge_wars::Buses>,
+    /// Offline, how far into the fight each team had nobody left in play,
+    /// if it has not: what places them at the end, for what your seat is
+    /// paid (`rules::places`, since 2026-11-18, with the fee). Online the
+    /// server pays.
+    out_at: [Option<f32>; ARENA_TEAMS],
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -1404,8 +1409,110 @@ pub(crate) fn plugin(app: &mut App) {
                 // Whose doing a fall with a plank that has just gone is,
                 // before anyone has fallen far enough to be dead of it.
                 blame_falls.after(bridge::crumble).before(reap),
+                // Your prize, as your balance goes up by it at the end.
+                (say_prize, fade_prize).chain().after(ArenaSystems),
             ),
         );
+}
+
+/// The line under the result that says what your seat was paid: the coin's
+/// picture and "+130" in gold (since 2026-11-18, with the fee and the
+/// prizes; mine), and how long it has been up.
+#[derive(Component)]
+struct PrizeLine(f32);
+
+/// How far down the screen the prize's line stands, as a share of its
+/// height, under the result across its middle; how big its words and its
+/// coin are, as shares of the short side; and how long it is up, the last
+/// of it fading, in seconds.
+const PRIZE_DOWN: f32 = 62.0;
+const PRIZE_TEXT: f32 = 5.2;
+const PRIZE_COIN: f32 = 5.6;
+const PRIZE_SECS: f32 = 4.0;
+const PRIZE_FADE: f32 = 0.8;
+
+/// Your prize at a game's end, said under the result as your balance goes
+/// up by it: online, as the server's credit comes; offline, as this device
+/// pays it ([`play`]). Nothing for nothing.
+fn say_prize(
+    game: Option<Res<Game>>,
+    me: Query<&Balance, With<Player>>,
+    assets: Res<AssetServer>,
+    mut was: Local<Option<u32>>,
+    mut commands: Commands,
+) {
+    let (Some(game), Ok(balance)) = (game, me.single()) else {
+        *was = None;
+        return;
+    };
+    let now = balance.0;
+    if let Some(before) = *was
+        && now > before
+        && game.over()
+        && !game.watched
+    {
+        let gold = ui().colours.gold;
+        commands.spawn((
+            InArena,
+            PrizeLine(0.0),
+            Node {
+                position_type: PositionType::Absolute,
+                width: Val::Percent(100.0),
+                top: Val::Percent(PRIZE_DOWN),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                column_gap: Val::VMin(1.2),
+                ..default()
+            },
+            Pickable::IGNORE,
+            children![
+                (
+                    ImageNode::new(assets.load(hud::COIN_ICON)),
+                    Node {
+                        width: Val::VMin(PRIZE_COIN),
+                        height: Val::VMin(PRIZE_COIN),
+                        ..default()
+                    },
+                    Pickable::IGNORE,
+                ),
+                hud::words(format!("+{}", hud::money(now - before)), PRIZE_TEXT, gold),
+            ],
+        ));
+    }
+    if *was != Some(now) {
+        *was = Some(now);
+    }
+}
+
+/// The prize's line, faded at the last and gone.
+fn fade_prize(
+    time: Res<Time>,
+    mut lines: Query<(Entity, &mut PrizeLine, &Children)>,
+    mut parts: Query<(Option<&mut TextColor>, Option<&mut ImageNode>)>,
+    mut commands: Commands,
+) {
+    for (line, mut up, children) in &mut lines {
+        up.0 += time.delta_secs();
+        if up.0 >= PRIZE_SECS {
+            commands.entity(line).try_despawn();
+            continue;
+        }
+        let solid = ((PRIZE_SECS - up.0) / PRIZE_FADE).clamp(0.0, 1.0);
+        if solid >= 1.0 {
+            continue;
+        }
+        for &child in children {
+            let Ok((text, image)) = parts.get_mut(child) else {
+                continue;
+            };
+            if let Some(mut text) = text {
+                text.0 = text.0.with_alpha(solid);
+            }
+            if let Some(mut image) = image {
+                image.color = image.color.with_alpha(solid);
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------- the map
@@ -1992,7 +2099,7 @@ fn play(
     online: Res<Online>,
     lobby: Res<Lobby>,
     room: Option<Res<WaitingRoom>>,
-    me: Query<(Entity, &Seat), With<Player>>,
+    mut me: Query<(Entity, &Seat, &mut Balance), With<Player>>,
     in_arena: Query<Entity, With<InArena>>,
     (anchors, mut islands, mut visibilities): (Option<ResMut<Anchors>>, ResMut<Islands>, Query<&mut Visibility>),
     mut bodies: Whereabouts,
@@ -2002,7 +2109,7 @@ fn play(
     mut commands: Commands,
 ) {
     let mut anchors = anchors;
-    let Ok((you, seat)) = me.single() else {
+    let Ok((you, seat, mut balance)) = me.single_mut() else {
         asks.clear();
         return;
     };
@@ -2027,6 +2134,15 @@ fn play(
     let Some(mut game) = game else {
         if *asked_in && let Some(map) = islands.get(Venue::Arena) {
             *asked_in = false;
+            // The fee, off your balance as you go in (since 2026-11-18;
+            // Hajun: "make the cost of bridgewars to be 50 coins as
+            // well"), as a table offline takes its; without it, nowhere
+            // (the selector's card is blocked out; Play again is not).
+            if balance.0 < rules::FEE {
+                info!("Bridge Wars: {} coins, short of the fee", balance.0);
+                return;
+            }
+            balance.0 -= rules::FEE;
             // Which team is yours is thrown for each game, and where you
             // stand in the waiting room says nothing of it.
             let me = thrown_seat();
@@ -2188,6 +2304,13 @@ fn play(
         }
         Stage::Playing { left } => {
             let teams = game.teams_in_play();
+            // Each team with nobody left in play, as it went (what places
+            // them at the end, `rules::places`).
+            for team in 0..ARENA_TEAMS {
+                if game.out_at[team].is_none() && !teams.contains(&(team as u8)) {
+                    game.out_at[team] = Some(game.elapsed);
+                }
+            }
             let winner = match (teams.len(), left <= dt || skip) {
                 (0, _) => Some(None),
                 (1, _) => Some(Some(teams[0])),
@@ -2198,6 +2321,15 @@ fn play(
                 Some(winner) => {
                     info!("Bridge Wars: over, team {winner:?} wins");
                     announce_result(&mut commands, game.my_team(), winner);
+                    // Your seat paid by how your team came, as the
+                    // server pays online (`rules::PRIZES`); a game the
+                    // computer plays alone, to be watched, nothing.
+                    if !game.watched {
+                        let people: Vec<bool> = (0..ARENA_SEATS).map(|seat| seat == game.me).collect();
+                        let paid = rules::prizes(&rules::places(&game.out_at), &people)[game.me];
+                        info!("Bridge Wars: the teams came {:?}, and you are paid {paid}", rules::places(&game.out_at));
+                        balance.0 = balance.0.saturating_add(paid);
+                    }
                     Stage::Over {
                         winner,
                         left: RESULTS_SECS,
@@ -2313,6 +2445,7 @@ fn open(
         spilt: Vec::new(),
         shed_at: 0,
         buses: None,
+        out_at: [None; ARENA_TEAMS],
     }
 }
 
@@ -5511,6 +5644,7 @@ mod tests {
         spilt: Vec::new(),
         shed_at: 0,
         buses: None,
+        out_at: [None; ARENA_TEAMS],
     }
     }
 

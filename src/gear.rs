@@ -85,7 +85,7 @@ const PALM: f32 = 0.1;
 /// How much bigger than its model a sword is drawn: across its guard,
 /// along its blade, and through its flat. Twice as broad, so that the
 /// camera over you sees a blade and a guard rather than a line.
-const SWORD_SCALE: Vec3 = Vec3::new(2.0, 1.7, 1.7);
+pub(crate) const SWORD_SCALE: Vec3 = Vec3::new(2.0, 1.7, 1.7);
 /// The trail a slash leaves: from how far out from the body's middle to
 /// how far, in metres, the blade's reach; how high over the feet; how
 /// see-through at its head; and how long it takes to fade once the blade
@@ -625,7 +625,7 @@ fn in_body(mut node: Entity, body: Entity, parents: &Query<&ChildOf>, places: &Q
 
 /// The turn that points a sword's blade, its own +y, along `blade`, with
 /// its flat side, its own z, up as far as that allows.
-fn pointing(blade: Vec3) -> Quat {
+pub(crate) fn pointing(blade: Vec3) -> Quat {
     let y = blade.normalize_or(Vec3::NEG_Z);
     let z = (Vec3::Y - y * Vec3::Y.dot(y)).normalize_or(Vec3::Z);
     Quat::from_mat3(&Mat3::from_cols(y.cross(z), y, z))

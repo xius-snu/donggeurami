@@ -4,9 +4,9 @@
 //! outer edges toward the anchor crystal in the middle and/or player").
 //! Each:
 //!
-//! * **climbs up over the rim** where its wave comes from, out of the void,
-//!   for a second or so ([`Climb`]): hurt as it climbs, but holding on, not
-//!   knocked off;
+//! * **climbs up over the rim** where its wave comes from, out of the sea
+//!   (out of the void until the evening of 2026-11-18), for a second or so
+//!   ([`Climb`]): hurt as it climbs, but holding on, not knocked off;
 //! * **goes for the anchor or for someone**, which is thrown as it rises
 //!   (most for the anchor at first, fewer as the waves go on); turns on
 //!   whoever hits it, or comes within a thrown few metres of it (at the
@@ -16,8 +16,11 @@
 //! * **walks there** over the stone and the sand, round the stands, the
 //!   palms and the crystal (seeking, keeping a little apart from the others,
 //!   sliding round what is in its way, trying the other way round when
-//!   stopped), at its own pace, and **never off the rim by itself**: only a
-//!   knock takes it over, and then the void has it;
+//!   stopped), at its own pace, and **never off the rim by itself**, but
+//!   after someone who is in the sea: otherwise only a knock takes it over,
+//!   and then it wades back, slower, and climbs out again as it first did
+//!   (the void had it until the evening of 2026-11-18); and never past the
+//!   ring round the sea ([`SHORE`](super::SHORE));
 //! * **hits** what it reaches, no oftener than a thrown second or so: a
 //!   spitter keeps its distance and spits a slow ball ([`Spittle`]) that
 //!   can be walked out of, and a leaper leaps at whoever is a few metres off;
@@ -32,7 +35,7 @@ use bevy::math::{Vec2, Vec3, Vec3Swizzles};
 
 use super::ANCHOR;
 use super::game::Knock;
-use super::map::{CRYSTAL_RADIUS, OBSTACLES, PLINTH_TOP, RIM, SAND_TOP, WALK_EDGE, ground, keep_out};
+use super::map::{CRYSTAL_RADIUS, OBSTACLES, PLINTH_TOP, RIM, SAND_TOP, SEA_BED, WALK_EDGE, floor, ground, in_the_sea, keep_out, within_the_shore};
 use super::waves::Kind;
 use crate::bots::Dice;
 use crate::bridge_wars::{AIR_DRAG, GROUND_DRAG, KNOCK_BACK, KNOCK_UP, REACH, SPRINT_BONUS, anchor_in_reach};
@@ -44,10 +47,15 @@ use crate::nav::BODY;
 const RISE_GRAVITY: f32 = 22.0;
 const FALL_GRAVITY: f32 = 33.0;
 const STEP: f32 = 0.51;
-/// How far under the sand a zombie that has gone over the rim has fallen
-/// when it is dead, in metres: far enough to be seen going, and gone
-/// before the next wave.
+/// How far under the sea's bed a zombie has fallen when it is dead, in
+/// metres: none ever is now that there is the sea under the rim
+/// ([`SEA_BED`]), which every one comes down in; kept for one that some
+/// day would (it was how far under the sand one gone over the rim into the
+/// void had fallen, until the evening of 2026-11-18).
 pub(super) const FALL_DEAD: f32 = 12.0;
+/// How fast a zombie wades, as a share of how fast it walks: as fast as a
+/// body in the town's sea goes (the game's `WATER_MOVE_SCALE`).
+const WADE_PACE: f32 = 0.72;
 /// How near whoever it goes for it comes, as a share of its reach; how far
 /// over or under it they may be and still be hit, against its size.
 const PRESS_IN: f32 = 0.7;
@@ -64,10 +72,11 @@ const FEEL: f32 = 1.2;
 const ROUND_BY: f32 = 1.2;
 const STOPPED: f32 = 0.35;
 const STOPPED_FOR: f32 = 0.4;
-/// Where a zombie climbing over the rim begins, under the sand's top and
-/// out past the rim, and where it ends, in from the rim, all in metres, for
-/// one of a body's size.
-const CLIMB_UNDER: f32 = 1.9;
+/// Where a zombie climbing over the rim begins, under the sea's bed (in the
+/// water, its head just out of it) and out past the rim, and where it ends,
+/// in from the rim, all in metres, for one of a body's size. (Under the
+/// sand's top by 1.9, in the void, until the evening of 2026-11-18.)
+const CLIMB_UNDER: f32 = 1.0;
 const CLIMB_OUT: f32 = 0.35;
 const CLIMB_IN: f32 = 1.05;
 
@@ -218,7 +227,8 @@ pub(super) enum Act {
     HitAnchor,
     /// A ball spat.
     Spat(Spittle),
-    /// Gone over the rim, and fallen far enough to be dead.
+    /// Fallen far enough to be dead ([`FALL_DEAD`]): none does, over the
+    /// sea.
     Fell,
 }
 
@@ -304,7 +314,7 @@ impl Zombie {
         let from = way * (RIM + CLIMB_OUT * size);
         let to = way * (RIM - CLIMB_IN - BODY * (size - 1.0));
         let climb = Climb {
-            from: Vec3::new(from.x, SAND_TOP - CLIMB_UNDER * size, from.y),
+            from: Vec3::new(from.x, SEA_BED - CLIMB_UNDER * size, from.y),
             to: Vec3::new(to.x, SAND_TOP, to.y),
             age: 0.0,
             secs: dice.around(1.0, 1.5) * size.sqrt(),
@@ -372,18 +382,50 @@ impl Zombie {
 
     /// Where what it drops is thrown out from: its feet, or, while it is
     /// still climbing, where its climb comes up onto the sand, so that one
-    /// killed on the side of the rim, its feet down in the void, drops what
-    /// it would have on the sand above it, and not nothing.
+    /// killed on the side of the rim, its feet down in the water, drops what
+    /// it would have on the sand above it, and not nothing; and one killed
+    /// wading, on the sand nearest it, nothing lying in the sea.
     pub fn drops_from(&self) -> Vec3 {
-        self.climb.map_or(self.at, |climb| climb.to)
+        if let Some(climb) = self.climb {
+            return climb.to;
+        }
+        if self.wading() {
+            let way = self.at.xz().normalize_or(Vec2::X) * (RIM - 1.0);
+            return Vec3::new(way.x, SAND_TOP, way.y);
+        }
+        self.at
+    }
+
+    /// Whether it is down in the sea, off the sand: its feet more than a
+    /// step under the sand's top, out past the rim.
+    pub fn wading(&self) -> bool {
+        in_the_sea(self.at.xz()) && self.at.y < SAND_TOP - STEP
     }
 
     /// How fast it walks now: its pace, and [`HURRY`] times that once it is
     /// one of the last few of its wave (mine: the last of a wave come on,
     /// as in any game of waves, and none of them hangs back for ever, a
-    /// spitter keeping its distance from people who keep out of its way).
+    /// spitter keeping its distance from people who keep out of its way);
+    /// slower in the sea ([`WADE_PACE`]).
     fn pace_now(&self) -> f32 {
-        self.pace * if self.hurries { HURRY } else { 1.0 }
+        self.pace * if self.hurries { HURRY } else { 1.0 } * if self.wading() { WADE_PACE } else { 1.0 }
+    }
+
+    /// Up out of the sea onto the sand from where it stands at the foot of
+    /// the rim, as it first climbed out of it ([`Zombie::rise`]).
+    fn climb_out(&mut self, dice: &mut Dice) {
+        let size = self.kind.size();
+        let way = self.at.xz().normalize_or(Vec2::X);
+        let to = way * (RIM - CLIMB_IN - BODY * (size - 1.0));
+        self.climb = Some(Climb {
+            from: self.at,
+            to: Vec3::new(to.x, SAND_TOP, to.y),
+            age: 0.0,
+            secs: dice.around(1.0, 1.5) * size.sqrt(),
+        });
+        self.shove = Vec2::ZERO;
+        self.lift = 0.0;
+        self.yaw = way.x.atan2(way.y);
     }
 
     /// How far a spitter keeps off whoever it spits at now: its own
@@ -454,7 +496,7 @@ impl Zombie {
             return (seen.standing && self.reaches(seen.at)).then_some(Act::Hit { seat, knock: Knock::Heavy, from });
         }
         if self.carry(dt) {
-            return (self.at.y < SAND_TOP - FALL_DEAD).then_some(Act::Fell);
+            return (self.at.y < SEA_BED - FALL_DEAD).then_some(Act::Fell);
         }
         // Whom it goes for, looked at again every so often.
         self.think -= dt;
@@ -550,20 +592,21 @@ impl Zombie {
     }
 
     /// Carries it by whatever knock is on it, and by its weight: up and
-    /// down, landing on whatever ground it comes down onto, and falling where
-    /// there is none; across, dying away as it goes, and out of whatever it
-    /// was carried into. Whether it is in the air after.
+    /// down, landing on whatever ground it comes down onto, the sea's bed
+    /// off the sand; across, dying away as it goes, and out of whatever it
+    /// was carried into, and never past the ring round the sea. Whether it
+    /// is in the air after.
     fn carry(&mut self, dt: f32) -> bool {
         let here = self.at.xz();
-        let floor = ground(here).unwrap_or(f32::NEG_INFINITY);
-        let airborne = self.lift > 0.0 || self.at.y > floor + 1e-3 || self.at.y < floor - 1e-3;
+        let under = floor(here).unwrap_or(f32::NEG_INFINITY);
+        let airborne = self.lift > 0.0 || self.at.y > under + 1e-3 || self.at.y < under - 1e-3;
         if airborne {
             let before = self.at.y;
             self.at.y += self.lift * dt;
             self.lift -= if self.lift > 0.0 { RISE_GRAVITY } else { FALL_GRAVITY } * dt;
             // Down onto ground it was over, or up a step onto it.
-            if self.at.y <= floor && before >= floor - 0.3 {
-                self.at.y = floor;
+            if self.at.y <= under && before >= under - 0.3 {
+                self.at.y = under;
                 self.lift = 0.0;
             }
         } else if self.lift != 0.0 {
@@ -571,11 +614,11 @@ impl Zombie {
             // touching it: it is on it (else it stood there still falling,
             // as far as it knew, for the rest of the game: Bridge Wars'
             // bodies did, until 2026-11-13).
-            self.at.y = floor;
+            self.at.y = under;
             self.lift = 0.0;
         }
         if self.shove != Vec2::ZERO {
-            let to = keep_out(here + self.shove * dt, self.radius());
+            let to = self.kept_off_the_sand(within_the_shore(keep_out(here + self.shove * dt, self.radius())));
             self.at.x = to.x;
             self.at.z = to.y;
             let drag = if airborne { AIR_DRAG } else { GROUND_DRAG };
@@ -584,8 +627,20 @@ impl Zombie {
                 self.shove = Vec2::ZERO;
             }
         }
-        let floor = ground(self.at.xz());
-        self.lift != 0.0 || floor.is_none_or(|floor| (self.at.y - floor).abs() > 1e-3)
+        let under = floor(self.at.xz());
+        self.lift != 0.0 || under.is_none_or(|under| (self.at.y - under).abs() > 1e-3)
+    }
+
+    /// `to`, where it is going across the ground: kept at the foot of the
+    /// sand while it is down in the sea, as a wall keeps a body (it climbs
+    /// up, [`Zombie::climb_out`]; nothing carries it in under the sand).
+    fn kept_off_the_sand(&self, to: Vec2) -> Vec2 {
+        let foot = RIM + self.radius();
+        if self.at.y < SAND_TOP - STEP && to.length() < foot {
+            to.normalize_or(self.at.xz().normalize_or(Vec2::X)) * foot
+        } else {
+            to
+        }
     }
 
     /// Walks it `way` for `dt` seconds at its pace, toward `target`: round
@@ -657,18 +712,33 @@ impl Zombie {
         }
         let mut to = here + walk * dt;
         // Never off the rim of its own walking: no further out than the
-        // edge it keeps to, or than it is already.
+        // edge it keeps to, or than it is already; but after someone who is
+        // in the sea, or in it itself, as far as the ring round it.
+        let wading = self.wading();
+        let after_someone_in_the_sea = match self.goal {
+            Goal::Seat(seat) => view.people.get(seat).is_some_and(|seen| seen.standing && in_the_sea(seen.at.xz())),
+            Goal::Anchor => false,
+        };
         let out = to.length();
-        if out > WALK_EDGE && out > here.length() {
+        if !wading && !after_someone_in_the_sea && out > WALK_EDGE && out > here.length() {
             to *= WALK_EDGE.max(here.length()) / out;
         }
-        let to = keep_out(to, radius);
+        let to = within_the_shore(keep_out(to, radius));
+        // Down in the sea at the foot of the sand, making in: up it, as it
+        // climbed out of the sea to begin with; or held at its foot.
+        if wading && to.length() < RIM + radius {
+            if way != Vec2::ZERO && way.dot(-here.normalize_or_zero()) > 0.2 {
+                self.climb_out(dice);
+                return;
+            }
+        }
+        let to = self.kept_off_the_sand(to);
         self.at.x = to.x;
         self.at.z = to.y;
-        if let Some(floor) = ground(to)
-            && (floor - self.at.y).abs() <= STEP
+        if let Some(under) = floor(to)
+            && (under - self.at.y).abs() <= STEP
         {
-            self.at.y = floor;
+            self.at.y = under;
         }
         if way != Vec2::ZERO {
             self.yaw = (-way.x).atan2(-way.y);
@@ -773,7 +843,7 @@ impl Zombie {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::last_stand::map::{STONE_TOP, SAND_RADIUS};
+    use crate::last_stand::map::{SAND_RADIUS, SHORE, STONE_TOP};
     use crate::last_stand::waves::strength;
 
     fn walker(dice: &mut Dice, angle: f32, hunter: bool) -> Zombie {
@@ -855,32 +925,60 @@ mod tests {
     }
 
     #[test]
-    fn a_zombie_never_walks_off_the_rim_of_itself_but_a_knock_takes_it_over_and_the_void_has_it() {
+    fn a_zombie_walks_off_the_rim_only_after_someone_in_the_sea_and_one_knocked_in_climbs_back_out() {
         let mut dice = Dice::new(3);
         let mut zombie = walker(&mut dice, 1.0, true);
         zombie.climb = None;
         let edge = Vec2::from_angle(1.0) * (WALK_EDGE - 0.2);
         zombie.at = Vec3::new(edge.x, SAND_TOP, edge.y);
-        // Someone out over the void beyond it: it comes to the edge it keeps
-        // to, and no further, for as long as they are there.
-        let beyond = Vec2::from_angle(1.0) * (RIM + 4.0);
-        let out = [Seen { at: Vec3::new(beyond.x, SAND_TOP, beyond.y), standing: true, open: true }];
         let dt = 1.0 / 30.0;
-        for _ in 0..300 {
-            assert!(zombie.step(&view(&out, &[(zombie.at, 1.0)], true), &mut dice, dt).is_none());
-            assert!(zombie.at.xz().length() <= WALK_EDGE + 1e-3, "{}", zombie.at);
-            assert!(ground(zombie.at.xz()).is_some());
+        // Someone on the sand at the edge beyond it, round the rim: it
+        // keeps to the edge, and never steps off of itself.
+        let along = Vec2::from_angle(1.25) * (WALK_EDGE - 0.1);
+        let by_the_edge = [Seen { at: Vec3::new(along.x, SAND_TOP, along.y), standing: true, open: true }];
+        for _ in 0..120 {
+            zombie.step(&view(&by_the_edge, &[(zombie.at, 1.0)], true), &mut dice, dt);
+            assert!(zombie.at.xz().length() <= WALK_EDGE + 1e-3 && !zombie.wading(), "{}", zombie.at);
         }
-        // A blow on the run from inside: over, falling, and dead in the void.
+        // Someone out in the sea: it goes in after them, down into the
+        // water, slower there, and no further out than the ring round it.
+        let out_there = Vec2::from_angle(1.0) * (SHORE + 3.0);
+        let in_the_water = [Seen { at: Vec3::new(out_there.x, SEA_BED, out_there.y), standing: true, open: true }];
+        let mut waded = false;
+        for _ in 0..300 {
+            assert!(zombie.step(&view(&in_the_water, &[(zombie.at, 1.0)], true), &mut dice, dt).is_none_or(|act| !matches!(act, Act::Fell)));
+            assert!(zombie.at.xz().length() <= SHORE + 1e-3, "{}", zombie.at);
+            waded |= zombie.wading() && (zombie.at.y - SEA_BED).abs() < 1e-3;
+        }
+        assert!(waded, "it went into the sea after them: {}", zombie.at);
+        // A blow on the run, on the sand, from inside: over the rim, down in
+        // the sea, and not dead; and then, going for the anchor, it wades
+        // back to the sand and climbs out, as it first climbed out.
+        let mut zombie = walker(&mut dice, 1.0, false);
+        zombie.climb = None;
+        zombie.at = Vec3::new(edge.x, SAND_TOP, edge.y);
         zombie.knock(zombie.at.xz() * 0.9, true, 1.0);
-        let mut fell = false;
-        for _ in 0..200 {
-            if let Some(Act::Fell) = zombie.step(&view(&out, &[(zombie.at, 1.0)], true), &mut dice, dt) {
-                fell = true;
+        let nobody: [Seen; 0] = [];
+        let (mut was_in, mut climbed, mut back) = (false, false, false);
+        for _ in 0..600 {
+            let act = zombie.step(&view(&nobody, &[(zombie.at, 1.0)], true), &mut dice, dt);
+            assert!(!matches!(act, Some(Act::Fell)), "the sea has it no more than a step down");
+            was_in |= zombie.wading();
+            climbed |= was_in && zombie.climbing();
+            if climbed && !zombie.climbing() && zombie.at.xz().length() < RIM && (zombie.at.y - SAND_TOP).abs() < 1e-3 {
+                back = true;
                 break;
             }
         }
-        assert!(fell && zombie.at.xz().length() > RIM, "{}", zombie.at);
+        assert!(was_in && climbed && back, "{} {was_in} {climbed} {back}", zombie.at);
+        // What it drops, killed in the sea, lies on the sand in from it.
+        let mut wet = walker(&mut dice, 0.5, false);
+        wet.climb = None;
+        let off = Vec2::from_angle(0.5) * (RIM + 2.0);
+        wet.at = Vec3::new(off.x, SEA_BED, off.y);
+        assert!(wet.wading());
+        let drop = wet.drops_from();
+        assert!(drop.xz().length() < RIM && ground(drop.xz()) == Some(SAND_TOP), "{drop}");
         // A giant is knocked by nothing.
         let mut giant = Zombie::rise(1, Kind::Giant, 5, strength(Kind::Giant, 5), 0.0, 2, false, &mut dice);
         giant.climb = None;

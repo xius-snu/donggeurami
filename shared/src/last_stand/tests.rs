@@ -15,9 +15,9 @@ use bevy::math::{Vec2, Vec3, Vec3Swizzles};
 
 use super::*;
 use crate::bots::Dice;
-use crate::bridge_wars::{AIR_DRAG, FAST, GROUND_DRAG, KNOCK_BACK, KNOCK_UP, REACH, RUN_SPEED, SPRINT_BONUS, Shop};
+use crate::bridge_wars::{AIR_DRAG, FAST, GROUND_DRAG, KNOCK_BACK, KNOCK_UP, Piece, REACH, RUN_SPEED, SPRINT_BONUS, Shop};
 use crate::nav::BODY;
-use crate::{Item, Kit, Use, Utility};
+use crate::{Item, Kit, Purse, Use, Utility};
 
 /// How long a frame of a whole game is, in seconds.
 const DT: f32 = 1.0 / 20.0;
@@ -149,10 +149,11 @@ impl StandIn {
     }
 
     /// Carried by a knock and its weight, as a body is: whether it is in
-    /// the air. Fallen far into the void, it says so.
+    /// the air. Over the rim it comes down in the sea (into the void until
+    /// the evening of 2026-11-18, when it said it had fallen), and goes no
+    /// further out than the ring round it.
     fn carry(&mut self, game: &mut Game, dt: f32) -> bool {
-        let floor = ground(self.at.xz());
-        let base = floor.unwrap_or(f32::NEG_INFINITY);
+        let base = floor(self.at.xz()).unwrap_or(f32::NEG_INFINITY);
         let airborne = self.lift > 0.0 || (self.at.y - base).abs() > 1e-3;
         if airborne {
             let before = self.at.y;
@@ -167,18 +168,34 @@ impl StandIn {
             self.lift = 0.0;
         }
         if self.shove != Vec2::ZERO {
-            let to = keep_out(self.at.xz() + self.shove * dt, BODY);
+            let mut to = within_the_shore(keep_out(self.at.xz() + self.shove * dt, BODY));
+            // Down in the sea, the sand's edge is a wall.
+            if self.at.y < SAND_TOP - 0.5 && to.length() < RIM + BODY {
+                to = to.normalize_or(Vec2::X) * (RIM + BODY);
+            }
             self.at = Vec3::new(to.x, self.at.y, to.y);
             self.shove *= if airborne { AIR_DRAG } else { GROUND_DRAG }.powf(dt * 20.0);
             if self.shove.length_squared() < 0.01 {
                 self.shove = Vec2::ZERO;
             }
         }
-        if self.at.y < SAND_TOP - 8.0 {
+        if self.at.y < SEA_BED - 8.0 {
             game.fell(self.seat);
             self.dead = true;
         }
-        self.lift != 0.0 || ground(self.at.xz()).is_none_or(|floor| (self.at.y - floor).abs() > 1e-3)
+        self.lift != 0.0 || floor(self.at.xz()).is_none_or(|under| (self.at.y - under).abs() > 1e-3)
+    }
+
+    /// A dropped sword better than its own lying near the anchor, the best
+    /// and then the nearest: what it goes back for first once it stands
+    /// again, as anyone would who dropped theirs dying.
+    fn sword_to_fetch(&self, game: &Game) -> Option<Vec2> {
+        let (held, me) = (game.kits()[self.seat].sword, self.at.xz());
+        game.swords()
+            .iter()
+            .filter(|blade| blade.tier > held && blade.lying(game.elapsed()) && blade.at.distance(ANCHOR) < 25.0)
+            .max_by(|a, b| a.tier.cmp(&b.tier).then(b.at.distance(me).total_cmp(&a.at.distance(me))))
+            .map(|blade| blade.at)
     }
 
     /// A frame of it.
@@ -203,6 +220,11 @@ impl StandIn {
             StandStage::Wave => self.fight(game, &kit),
             _ => self.errands(game),
         };
+        // Its sword, dropped as it died, it fetches first (swinging all the
+        // same at whatever it passes).
+        if let Some(sword) = self.sword_to_fetch(game) {
+            to = sword;
+        }
         // A good player gets out of the way of a ball about to come down on
         // it.
         if self.play == Play::Good {
@@ -444,10 +466,12 @@ impl StandIn {
         if off.length() < 0.05 {
             return;
         }
-        let step = off.clamp_length_max(pace * dt);
+        // Slower in the sea, as a body wades.
+        let wading = self.at.y < SAND_TOP - 0.5;
+        let step = off.clamp_length_max(pace * if wading { 0.72 } else { 1.0 } * dt);
         let taken = |turn: f32| {
-            let mut next = keep_out(me + Vec2::from_angle(turn).rotate(step), BODY);
-            if next.length() > WALK_EDGE {
+            let mut next = within_the_shore(keep_out(me + Vec2::from_angle(turn).rotate(step), BODY));
+            if !wading && next.length() > WALK_EDGE {
                 next = next.normalize() * WALK_EDGE;
             }
             next
@@ -475,8 +499,10 @@ impl StandIn {
         if let Some(way) = (next - me).try_normalize() {
             self.facing = way;
         }
-        let floor = ground(next).unwrap_or(self.at.y);
-        self.at = Vec3::new(next.x, floor, next.y);
+        // Out of the sea at the sand's edge: a jump up onto it, as a body
+        // jumps.
+        let under = floor(next).unwrap_or(self.at.y);
+        self.at = Vec3::new(next.x, under, next.y);
     }
 }
 
@@ -836,6 +862,217 @@ fn the_next_wave_comes_soon_once_everyone_still_standing_is_ready() {
     }
     game.step(DT);
     assert!((until(&game) - f64::from(FIRST_WAVE)).abs() < 1e-3, "{}", until(&game));
+}
+
+/// A game of two people begun, its first wave far off, person 0 standing
+/// `at` on the land, holding `purse` and the sword `sword`.
+fn holding(purse: Purse, sword: u8, at: Vec3) -> Game {
+    let mut game = Game::new(2, &[true, true], 40);
+    game.begin();
+    game.purses[0] = purse;
+    game.kits[0].sword = sword;
+    game.sync(0, at, 0.0);
+    game
+}
+
+/// Steps `game` on for `secs` seconds: everything that happened.
+fn run_for(game: &mut Game, secs: f32) -> Vec<Event> {
+    (0..(secs / DT).ceil() as usize).flat_map(|_| game.step(DT)).collect()
+}
+
+#[test]
+fn whoever_dies_drops_all_they_hold_and_their_sword_for_themselves_or_a_teammate_to_take() {
+    let spot = Vec3::new(9.0, STONE_TOP, 3.0);
+    let mut game = holding([120, 7, 3, 1], 2, spot);
+    game.fell(0);
+    let events = game.step(DT);
+    // Out of their purse and their hand, onto the land round where they
+    // fell: a thing for each one of each item, up to the most of an item
+    // (past it, fewer things, each worth more), and the sword.
+    assert_eq!(game.purses()[0], [0; 4]);
+    assert_eq!(game.kits()[0].sword, 0);
+    let made: Vec<Piece> = events.iter().filter_map(|event| if let Event::Made(piece) = event { Some(*piece) } else { None }).collect();
+    assert_eq!(made.len(), usize::from(DROP_MOST.min(120)) + 7 + 3 + 1);
+    for item in Item::ALL {
+        let count: u16 = made.iter().filter(|piece| piece.item == item).map(|piece| piece.worth).sum();
+        assert_eq!(count, [120, 7, 3, 1][item.index()], "{item:?}");
+    }
+    for piece in &made {
+        assert!(piece.dropped() && piece.at.distance(spot.xz()) <= 6.0 + 1e-3, "{:?}", piece.at);
+        assert_eq!(ground(piece.at), Some(piece.ground), "on the land: {:?}", piece.at);
+    }
+    // A hundred and more lie wider than a few did in Bridge Wars' heap, as
+    // wide as a thing for each one would.
+    let widest = made.iter().map(|piece| piece.at.distance(spot.xz())).fold(0.0, f32::max);
+    assert!(widest > 3.0, "{widest}");
+    let blade = events
+        .iter()
+        .find_map(|event| if let Event::SwordDropped(blade) = event { Some(*blade) } else { None })
+        .expect("the sword dropped");
+    assert_eq!(blade.tier, 2);
+    assert_eq!(game.swords(), &[blade]);
+    // Their teammate, sword in hand none, walks into it once it has lain a
+    // moment: it is theirs, and what lies there with it too.
+    game.kits[1].sword = 0;
+    game.sync(1, Vec3::new(blade.at.x, blade.ground, blade.at.y), 0.0);
+    let taken = run_for(&mut game, 1.0);
+    assert!(taken.iter().any(|event| matches!(event, Event::SwordTaken { seat: 1, blade: it } if *it == blade)), "{taken:?}");
+    assert_eq!(game.kits()[1].sword, 2);
+    assert!(game.swords().is_empty());
+    assert!(taken.iter().any(|event| matches!(event, Event::Taken { seat: 1, .. })));
+    // A sword no better than the one held is left lying.
+    let mut game = holding([0; 4], 1, spot);
+    game.kits[1].sword = 1;
+    game.fell(0);
+    let events = game.step(DT);
+    let blade = events.iter().find_map(|event| if let Event::SwordDropped(blade) = event { Some(*blade) } else { None }).expect("dropped");
+    game.sync(1, Vec3::new(blade.at.x, blade.ground, blade.at.y), 0.0);
+    let after = run_for(&mut game, 1.0);
+    assert!(!after.iter().any(|event| matches!(event, Event::SwordTaken { .. })));
+    assert_eq!((game.kits()[1].sword, game.swords().len()), (1, 1));
+    // Standing again, the one who dropped it, with none, has it back.
+    let back = run_for(&mut game, RESPAWN_SECS + 0.5);
+    assert!(back.iter().any(|event| matches!(event, Event::Back { seat: 0, .. })));
+    game.sync(0, Vec3::new(blade.at.x, blade.ground, blade.at.y), 0.0);
+    let after = run_for(&mut game, 0.5);
+    assert!(after.iter().any(|event| matches!(event, Event::SwordTaken { seat: 0, .. })));
+    assert_eq!(game.kits()[0].sword, 1);
+}
+
+#[test]
+fn what_is_dropped_lies_its_while_and_is_gone_and_a_great_purse_lies_as_no_more_things_than_the_most() {
+    let spot = Vec3::new(-10.0, STONE_TOP, -8.0);
+    let mut game = holding([500, 0, 0, 2], 3, spot);
+    // Nobody about to take it: the other far off, on the far side; and an
+    // anchor nothing breaks in the five minutes, so that the game goes on.
+    game.sync(1, Vec3::new(14.0, STONE_TOP, 14.0), 0.0);
+    game.anchor = 1.0e7;
+    game.anchor_most = 1.0e7;
+    game.fell(0);
+    let events = game.step(DT);
+    let made: Vec<Piece> = events.iter().filter_map(|event| if let Event::Made(piece) = event { Some(*piece) } else { None }).collect();
+    let silver: Vec<&Piece> = made.iter().filter(|piece| piece.item == Item::Silver).collect();
+    assert_eq!(silver.len(), usize::from(DROP_MOST));
+    assert_eq!(silver.iter().map(|piece| piece.worth).sum::<u16>(), 500);
+    let least = 500 / DROP_MOST;
+    assert!(silver.iter().all(|piece| piece.worth == least || piece.worth == least + 1));
+    assert!(least > 1, "a great purse lies as fewer things, each worth more");
+    // Its while, and gone, every thing and the sword; not a moment before.
+    let mut lapsed = Vec::new();
+    let mut swords = Vec::new();
+    let mut seconds = 0.0;
+    while seconds < LIES_FOR + 2.0 {
+        for event in game.step(DT) {
+            match event {
+                Event::Lapsed(piece) => lapsed.push((piece, game.elapsed())),
+                Event::SwordLapsed(blade) => swords.push(blade),
+                _ => {}
+            }
+        }
+        seconds += DT;
+    }
+    assert!(game.playing());
+    let dropped_at = made[0].born;
+    assert_eq!(lapsed.iter().filter(|(piece, _)| piece.dropped() && piece.born == dropped_at).count(), made.len());
+    for (piece, when) in &lapsed {
+        assert!(*when - piece.born >= LIES_FOR && *when - piece.born < LIES_FOR + 2.0 * DT, "{when} {}", piece.born);
+    }
+    assert_eq!(swords.len(), 1);
+    assert!(game.pieces().iter().all(|piece| !piece.dropped() || piece.born > dropped_at));
+}
+
+#[test]
+fn whoever_dies_in_the_sea_drops_it_on_the_land_where_they_last_stood() {
+    let shore = Vec2::from_angle(0.7) * (RIM - 2.0);
+    let mut game = holding([30, 4, 0, 0], 0, Vec3::new(shore.x, SAND_TOP, shore.y));
+    // Out into the sea, wading: nothing of it lies in the water.
+    let out = Vec2::from_angle(0.7) * (RIM + 2.5);
+    game.sync(0, Vec3::new(out.x, SEA_BED, out.y), 0.0);
+    game.fell(0);
+    let events = game.step(DT);
+    let made: Vec<Piece> = events.iter().filter_map(|event| if let Event::Made(piece) = event { Some(*piece) } else { None }).collect();
+    assert_eq!(made.len(), 34);
+    for piece in made {
+        assert!(piece.at.length() <= RIM && ground(piece.at).is_some(), "{:?}", piece.at);
+        assert!(piece.at.distance(shore) <= 6.0 + 1e-3);
+    }
+    // The sea's bed is where a body stands in it, out to the ring and no
+    // further; the land is the land.
+    assert_eq!(floor(out), Some(SEA_BED));
+    assert_eq!(floor(Vec2::from_angle(0.7) * (SHORE + 0.5)), None);
+    assert_eq!(floor(shore), Some(SAND_TOP));
+    assert_eq!(within_the_shore(Vec2::new(0.0, SHORE + 3.0)), Vec2::new(0.0, SHORE));
+    assert!(in_the_sea(out) && !in_the_sea(shore));
+}
+
+#[test]
+fn a_treasure_chest_comes_unsaid_now_and_then_and_whoever_opens_it_has_what_was_in_it() {
+    let mut game = holding([0; 4], 0, Vec3::new(4.0, STONE_TOP, 0.0));
+    // Not at once.
+    let early = run_for(&mut game, 10.0);
+    assert!(!early.iter().any(|event| matches!(event, Event::ChestPlaced(_))));
+    // Its time come: one, on the sand or in the sea, clear of everything.
+    game.chest_at = game.elapsed();
+    let events = game.step(DT);
+    let placed: Vec<Treasure> = events.iter().filter_map(|event| if let Event::ChestPlaced(chest) = event { Some(*chest) } else { None }).collect();
+    assert_eq!(placed.len(), 1);
+    let chest = placed[0];
+    let out = chest.at.xz().length();
+    assert!(out > STONE_RADIUS && out < SHORE, "{}", chest.at);
+    assert_eq!(chest.at.y, floor(chest.at.xz()).expect("somewhere to stand"));
+    assert!(OBSTACLES.iter().all(|obstacle| obstacle.outside(chest.at.xz()).0 >= 1.0));
+    // One at a time.
+    game.chest_at = game.elapsed();
+    assert!(!game.step(DT).iter().any(|event| matches!(event, Event::ChestPlaced(_))));
+    // From across the map, no; beside it, yes, and what was in it is theirs.
+    assert!(!game.open(0, chest.id));
+    let (purse, kit) = (game.purses()[0], game.kits()[0]);
+    game.sync(0, chest.at + Vec3::X * 1.5, 0.0);
+    assert!(game.open(0, chest.id));
+    assert!(game.chests().is_empty());
+    let opened = game.step(DT);
+    let find = opened
+        .iter()
+        .find_map(|event| match event {
+            Event::ChestOpened { seat: 0, chest: it, find } if *it == chest => Some(*find),
+            _ => None,
+        })
+        .expect("opened");
+    match find {
+        Find::Things { item, count } => assert_eq!(game.purses()[0][item.index()], purse[item.index()] + count),
+        Find::Sword(tier) => assert_eq!((tier, game.kits()[0].sword), (kit.sword + 1, kit.sword + 1)),
+        Find::Utility(utility) => assert_eq!(game.kits()[0].held(utility), kit.held(utility) + 1),
+    }
+    assert!(!game.open(0, chest.id), "opened once");
+    // What chests hold, over many: silver most often, every kind now and
+    // then, a sword always one better than the one held.
+    let mut kinds = [0u32; 6];
+    for seed in 0..400 {
+        let mut game = Game::new(1, &[true], seed);
+        game.begin();
+        game.kits[0].sword = (seed % 3) as u8;
+        game.chest_at = 0.0;
+        let placed = game.step(DT);
+        let Some(chest) = placed.iter().find_map(|event| if let Event::ChestPlaced(chest) = event { Some(*chest) } else { None }) else {
+            continue;
+        };
+        game.sync(0, chest.at, 0.0);
+        assert!(game.open(0, chest.id));
+        let find = game.step(DT).iter().find_map(|event| if let Event::ChestOpened { find, .. } = event { Some(*find) } else { None }).expect("found");
+        kinds[match find {
+            Find::Things { item, count } => {
+                assert!(count >= 1 && count <= 30, "{count}");
+                item.index()
+            }
+            Find::Sword(tier) => {
+                assert_eq!(tier, (seed % 3) as u8 + 1);
+                4
+            }
+            Find::Utility(_) => 5,
+        }] += 1;
+    }
+    assert!(kinds.iter().all(|count| *count > 0), "{kinds:?}");
+    assert!(kinds[0] > kinds[2] && kinds[0] > kinds[3], "{kinds:?}");
 }
 
 #[test]

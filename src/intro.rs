@@ -228,6 +228,12 @@ pub(crate) struct Intro {
     /// which would be on the screen for a tenth of a second; unless the
     /// cover does not open after all ([`UNSEEN_SECS`]).
     unseen: bool,
+    /// A window came up over the town's name (`hud::DialogUp`, once you
+    /// are let go): how far into the opening, and how strongly the name was
+    /// drawn then, for it to go from there in `hud::HUSH_SECS` (since
+    /// 2026-11-18: it stood over the game selector, the settings and the
+    /// friends' panel for the rest of its three seconds).
+    hushed: Option<(f32, f32)>,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -257,6 +263,7 @@ impl Default for Intro {
             slow: slow.filter(|times| times.is_finite()).map_or(1.0, |times| times.max(1.0)),
             loaded: 0.0,
             unseen: false,
+            hushed: None,
         }
     }
 }
@@ -762,7 +769,14 @@ fn play(
                     up.set_if_neq(DialogUp(false));
                 }
             }
-            if age >= TITLE_STAYS + TITLE_OUT && free {
+            // A window up over the town's name once you are let go (the
+            // game selector, the settings, the friends' panel): it goes at
+            // once, from however strong it is.
+            if free && up.0 && !signup.up() && intro.hushed.is_none() {
+                intro.hushed = Some((age, title_solid(age)));
+            }
+            let hushed = intro.hushed.is_some_and(|(at, _)| age >= at + hud::HUSH_SECS);
+            if free && (age >= TITLE_STAYS + TITLE_OUT || hushed) {
                 for left in &shown {
                     commands.entity(left).despawn();
                 }
@@ -885,10 +899,11 @@ fn show(
         }
     }
 
-    // The town's name: up as the cover opens, there a while, and gone.
+    // The town's name: up as the cover opens, there a while, and gone; at
+    // once, should a window come up over it.
     let solid = match age {
         None => 0.0,
-        Some(age) => (age / TITLE_IN).clamp(0.0, 1.0) * (1.0 - (age - TITLE_STAYS) / TITLE_OUT).clamp(0.0, 1.0),
+        Some(age) => named(age, intro.hushed),
     };
     let tint = file.colours.text_shadow;
     for children in &titles {
@@ -1064,6 +1079,23 @@ fn pose(age: f32) -> Pose {
     }
 }
 
+/// How strongly the town's name is drawn `age` seconds into the opening:
+/// coming up as the cover opens ([`TITLE_IN`]), there a while
+/// ([`TITLE_STAYS`]), and going ([`TITLE_OUT`]).
+fn title_solid(age: f32) -> f32 {
+    (age / TITLE_IN).clamp(0.0, 1.0) * (1.0 - (age - TITLE_STAYS) / TITLE_OUT).clamp(0.0, 1.0)
+}
+
+/// How strongly the town's name is drawn `age` seconds into the opening,
+/// `hushed` by a window that came up over it, how far in and how strong it
+/// was then: from there it goes in `hud::HUSH_SECS`, never coming back up.
+fn named(age: f32, hushed: Option<(f32, f32)>) -> f32 {
+    match hushed {
+        Some((at, from)) => from * (1.0 - (age - at) / hud::HUSH_SECS).clamp(0.0, 1.0),
+        None => title_solid(age),
+    }
+}
+
 /// How far the cover has faded `age` seconds into the opening, 0 not at
 /// all to 1 gone, over [`FADE_SECS`]: slowly away, quickly through the
 /// middle, slowly out.
@@ -1225,6 +1257,26 @@ mod tests {
         // All of it short: Hajun asked for half a second to a second.
         assert!((0.5..=1.0).contains(&UP_AT), "{UP_AT}");
         assert!(OPEN_SECS <= UP_AT);
+    }
+
+    #[test]
+    fn the_town_s_name_goes_at_once_from_however_strong_it_is_when_a_window_comes_up() {
+        // Left alone: up, held, and gone at its end.
+        assert_eq!(named(0.0, None), 0.0);
+        assert_eq!(named(1.0, None), 1.0);
+        assert!(named(TITLE_STAYS + TITLE_OUT, None) < 1e-5);
+        // A window at 1.2 s, the name held: half gone half way through the
+        // hush, gone at its end, and never back.
+        let hushed = Some((1.2, title_solid(1.2)));
+        assert_eq!(named(1.2, hushed), 1.0);
+        assert!((named(1.2 + hud::HUSH_SECS * 0.5, hushed) - 0.5).abs() < 1e-4);
+        assert!(named(1.2 + hud::HUSH_SECS, hushed) < 1e-5);
+        assert_eq!(named(2.0, hushed), 0.0);
+        // A window as it comes up: from there, down, not on up.
+        let early = Some((0.1, title_solid(0.1)));
+        assert!(named(0.15, early) < title_solid(0.1));
+        // Quicker than the name's own going: half of it at the most.
+        assert!(hud::HUSH_SECS <= TITLE_OUT * 0.5);
     }
 
     #[test]

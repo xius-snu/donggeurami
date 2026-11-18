@@ -36,7 +36,8 @@ use bevy::prelude::*;
 use bevy::transform::TransformSystems;
 
 use crate::clock::TownClock;
-use crate::{ThirdPersonCamera, WATER_Y};
+use crate::island::Venue;
+use crate::{Player, ThirdPersonCamera, WATER_Y};
 
 /// How long each part of the day is, in seconds. The day starts with the sun
 /// already up, past sunrise.
@@ -48,6 +49,15 @@ pub(crate) const SUNRISE_SECS: f32 = 90.0;
 pub(crate) const CYCLE_SECS: f32 = DAY_SECS + SUNSET_SECS + NIGHT_SECS + SUNRISE_SECS;
 const SUNSET_END: f32 = DAY_SECS + SUNSET_SECS;
 const NIGHT_END: f32 = SUNSET_END + NIGHT_SECS;
+/// Noon: the light Hajun chose (2026-10-13), the sun 45 degrees up.
+const NOON: f32 = DAY_SECS * 0.5;
+/// Where it is always noon, whatever the town's clock says, for whoever
+/// stands there (since 2026-11-18; Hajun: "for bridge race game, i think it
+/// should always be day time cuz theres no light source"): Bridge Race's
+/// islands, where nothing gives light at night (`lamps::SOURCES`) and the
+/// planks were all but black on the void. Everywhere else the day goes by
+/// the clock, and `RT_TIME_OF_DAY` stops it there, not here.
+const ALWAYS_DAY: [Venue; 1] = [Venue::BridgeRace];
 /// How often the sky is worked out again, in seconds of the day. In a step
 /// the sun moves a sixteenth of a degree, which is a fifth of a metre at the
 /// sky's distance, against a disc 15 m across.
@@ -256,10 +266,21 @@ fn time_of_day(since: f64) -> f32 {
     (since.rem_euclid(f64::from(CYCLE_SECS))) as f32
 }
 
+/// The time of day the sky is drawn at for whoever stands `on` this venue,
+/// the day being at `clocked` by the clock: noon where it is always day
+/// ([`ALWAYS_DAY`]), and the clock's anywhere else, [`STEP`] at a time.
+fn sky_time(on: Option<Venue>, clocked: f32) -> f32 {
+    if on.is_some_and(|venue| ALWAYS_DAY.contains(&venue)) {
+        NOON
+    } else {
+        (clocked / STEP).floor() * STEP
+    }
+}
+
 /// The time of day `said` names, as `RT_TIME_OF_DAY` has it.
 fn pinned(said: &str) -> Option<f32> {
     match said.trim() {
-        "day" | "noon" => Some(DAY_SECS * 0.5),
+        "day" | "noon" => Some(NOON),
         "sunset" => Some(DAY_SECS + SUNSET_SECS * 0.5),
         "night" | "midnight" => Some(SUNSET_END + NIGHT_SECS * 0.5),
         "sunrise" => Some(NIGHT_END + SUNRISE_SECS * 0.5),
@@ -529,11 +550,13 @@ fn setup_sky(
 }
 
 /// Moves the sky on to the time of day it is now, [`STEP`] seconds at a
-/// time, setting only what has changed since the last step.
-#[allow(clippy::too_many_arguments)]
+/// time, setting only what has changed since the last step: noon where you
+/// stand if it is always day there ([`sky_time`]).
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn pass_the_day(
     clock: Res<Clock>,
     town: Res<TownClock>,
+    me: Query<&Venue, With<Player>>,
     sky: Option<ResMut<Sky>>,
     mut daylight: ResMut<Daylight>,
     mut clear: ResMut<ClearColor>,
@@ -550,7 +573,7 @@ fn pass_the_day(
     let Some(mut sky) = sky else {
         return;
     };
-    let time = (clock.now(&town) / STEP).floor() * STEP;
+    let time = sky_time(me.single().ok().copied(), clock.now(&town));
     if time == sky.last.time {
         return;
     }
@@ -1158,7 +1181,6 @@ fn hash01(n: u32, lane: u32) -> f32 {
 mod tests {
     use super::*;
 
-    const NOON: f32 = DAY_SECS * 0.5;
     const MIDNIGHT: f32 = SUNSET_END + NIGHT_SECS * 0.5;
 
     /// Every step of a whole day and night.
@@ -1286,6 +1308,23 @@ mod tests {
         // Today, by the clock: still well inside one day and night.
         let now = time_of_day(1_792_000_000.25);
         assert!((0.0..CYCLE_SECS).contains(&now));
+    }
+
+    #[test]
+    fn bridge_race_is_always_noon_and_everywhere_else_goes_by_the_clock() {
+        // By night, by the clock: noon on Bridge Race's islands alone.
+        assert_eq!(sky_time(Some(Venue::BridgeRace), MIDNIGHT), NOON);
+        assert_eq!(sky_time(Some(Venue::BridgeRace), 61.3), NOON);
+        for venue in [Venue::Town, Venue::Arena, Venue::KnockOff, Venue::LastStand, Venue::BlendIn] {
+            assert_eq!(sky_time(Some(venue), MIDNIGHT), MIDNIGHT, "{venue:?}");
+        }
+        // A step at a time, as ever; and with nobody yet, the clock's.
+        assert_eq!(sky_time(Some(Venue::Town), 61.3), 61.25);
+        assert_eq!(sky_time(None, 61.3), 61.25);
+        // Noon is a step of the day's, so that the sky is set once there.
+        assert_eq!((NOON / STEP).floor() * STEP, NOON);
+        let noon = sky_at(NOON);
+        assert_eq!((noon.lamps, noon.stars), (0.0, 0.0));
     }
 
     #[test]

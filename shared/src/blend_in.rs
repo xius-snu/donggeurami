@@ -149,7 +149,14 @@ pub const STUN_MORE: f32 = 3.0;
 /// on (21, 30 and 47%). The crowd never runs, so a seeker running gives
 /// away no more than their sword does. Their device runs them at this pace
 /// in the seek, as Bridge Wars' does.
-pub const SEEKER_PACE: f32 = crate::bridge_wars::RUN_SPEED;
+///
+/// **And on the speed potion's effect, since 2026-11-18** (Hajun: "in blend
+/// in, i think the seeker should get speed boost potion effect"): a run as
+/// fast as Bridge Wars' speed potion makes it ([`FAST`](crate::bridge_wars::FAST),
+/// 1.4 times, 14 m/s, twice the hider's walk), and the potion's blue sparks
+/// behind every seeker (the game's `trail`). The finds above were measured
+/// at 10.
+pub const SEEKER_PACE: f32 = crate::bridge_wars::RUN_SPEED * crate::bridge_wars::FAST;
 /// How far apart, across the ground, a seeker and the body they struck can
 /// be, where each last was, for the strike to count, in metres: Bridge
 /// Wars' punch's slack (the server's `PUNCH_SLACK`), the reach and the way

@@ -721,6 +721,8 @@ pub(crate) struct LastStandColours {
     pub spit: Color,
     #[serde(deserialize_with = "colour")]
     pub splat: Color,
+    #[serde(deserialize_with = "colour")]
+    pub hit: Color,
 }
 
 impl LastStandColours {
@@ -1538,6 +1540,9 @@ pub(crate) struct LastStandWords {
     pub lucky: String,
     pub lucky_stat: String,
     pub level: String,
+    pub found: String,
+    pub found_sword: String,
+    pub found_thing: String,
 }
 
 /// The chat box (`chat`): what stands in the box a line is typed into

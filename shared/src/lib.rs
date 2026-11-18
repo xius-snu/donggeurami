@@ -249,7 +249,17 @@ pub const PROTOCOL_ID: u64 = u64::from_be_bytes(*b"DGRMTOWN");
 /// [`bridge_wars::Buses`]); and each game's own components, which each
 /// game registers after the board, in its own module (`blend_in::register`
 /// and the rest, in that order).
-pub const PROTOCOL_VERSION: u32 = 22;
+///
+/// 23 since the evening of 2026-11-18 (Hajun, after playing the four):
+/// Last Stand's sword dropped by the dead and its treasure chests lying
+/// about, each a component of its own registered after its spit
+/// ([`last_stand::LyingSword`], [`last_stand::Chest`]), a chest opened
+/// ([`last_stand::Ask::Open`]) and what came out of it told
+/// ([`last_stand::Tell::Found`]); its map over the sea where it was over
+/// the void, whose rules an app from before would not play by; Bridge Wars
+/// with a fee ([`bridge_wars::FEE`]); and Blend In's seekers on the speed
+/// potion's pace ([`blend_in::SEEKER_PACE`]).
+pub const PROTOCOL_VERSION: u32 = 23;
 
 /// The UDP port the game server listens on. 443, where QUIC goes, because a
 /// network that lets any UDP through lets that through: school and office
@@ -1228,6 +1238,47 @@ pub mod bridge_wars {
     /// How long the result is up at the end, in seconds, before everyone
     /// still there is sent back to the town.
     pub const RESULTS_SECS: f32 = 6.0;
+    /// What a seat in a game costs, in coins, taken as you go in and given
+    /// back to whoever leaves before the fight begins (since 2026-11-18;
+    /// Hajun: "make the cost of bridgewars to be 50 coins as well"; free
+    /// until then).
+    pub const FEE: u32 = 50;
+    /// What each person in a game is paid at its end, in coins, by how
+    /// their team came, first to fourth: the team left standing first, and
+    /// the rest by the order they went out, the last out second (mine, by
+    /// Hajun's rule for every game with a fee: "Generally should be above
+    /// 50% to win net positive coin, and if not, net negative coin"; Knock
+    /// Off's four places, net +80, +10, -40 and -50: a team that beats two
+    /// of the three others comes out ahead). Teams that share a place, out
+    /// in the same moment or all still in at the draw, share what the
+    /// places they take up pay ([`prizes`]); the computer is paid nothing.
+    pub const PRIZES: [u32; ARENA_TEAMS] = [130, 60, 10, 0];
+
+    /// Where each team came in a game that is over, from how far into the
+    /// fight each had nobody left in play, `out_at[team]` (none: still in at
+    /// the end): those still in first, together (one winner, or every team
+    /// still in at the draw); then the rest by how long each lasted, the
+    /// last out next; teams out in the very same moment sharing a place. A
+    /// place is how many came before it. The server's and a device's
+    /// offline, the same.
+    pub fn places(out_at: &[Option<f32>; ARENA_TEAMS]) -> [u8; ARENA_TEAMS] {
+        let lasted = out_at.map(|out| out.unwrap_or(f32::INFINITY));
+        std::array::from_fn(|team| lasted.iter().filter(|other| **other > lasted[team]).count() as u8)
+    }
+
+    /// What each seat is paid at the end of a game, by seat: `places[team]`
+    /// is where each team came, from 0, teams that tie on the same place;
+    /// `people[seat]` whether the seat is a person's (the computer's are
+    /// paid nothing). A team's place pays each of its people
+    /// ([`PRIZES`], shared by the teams tied there, as the tables share
+    /// theirs, [`crate::table::split`]).
+    pub fn prizes(places: &[u8; ARENA_TEAMS], people: &[bool]) -> Vec<u32> {
+        let by_team = crate::table::split(&PRIZES, places);
+        (0..people.len())
+            .map(|seat| if people[seat] { by_team[usize::from(arena_team(seat))] } else { 0 })
+            .collect()
+    }
+
     /// The health everyone starts with, what a punch takes off it, and
     /// what a respawn anchor starts with: ten punches' worth (Hajun,
     /// 2026-11-08: twenty, "make its default hp enough so that u need to
@@ -1767,6 +1818,23 @@ pub mod bridge_wars {
             dice: &mut dyn FnMut() -> f32,
             ground: &dyn Fn(Vec2) -> Option<f32>,
         ) -> Option<Vec<Piece>> {
+            self.scatter_within(things, from, SPILL_FAR, elapsed, dice, ground)
+        }
+
+        /// As [`Pile::scatter`], but each thing comes down from
+        /// [`SPILL_NEAR`] to `far` from the feet (since 2026-11-18, for
+        /// all that Last Stand's dead hold, which is hundreds of things
+        /// at a time, and in [`SPILL_FAR`] lay in one heap).
+        pub fn scatter_within(
+            &mut self,
+            things: &[(Item, u16)],
+            from: Vec3,
+            far: f32,
+            elapsed: f32,
+            dice: &mut dyn FnMut() -> f32,
+            ground: &dyn Fn(Vec2) -> Option<f32>,
+        ) -> Option<Vec<Piece>> {
+            let widest = far.max(SPILL_NEAR);
             let lies = |at: Vec2| ground(at).filter(|top| (-SPILL_DOWN..=SPILL_UP).contains(&(top - from.y)));
             let feet = Vec2::new(from.x, from.z);
             let under = lies(feet).map(|top| (feet, top));
@@ -1775,7 +1843,7 @@ pub mod bridge_wars {
             for _ in 0..things.len().max(1) {
                 let mut best: Option<(f32, Vec2, f32)> = None;
                 for _ in 0..SPILL_TRIES {
-                    let (turn, far) = (dice() * TAU, SPILL_NEAR + (SPILL_FAR - SPILL_NEAR) * dice());
+                    let (turn, far) = (dice() * TAU, SPILL_NEAR + (widest - SPILL_NEAR) * dice());
                     let at = feet + Vec2::from_angle(turn) * far;
                     let Some(top) = lies(at) else {
                         continue;
@@ -1820,6 +1888,22 @@ pub mod bridge_wars {
                 return Vec::new();
             }
             let (gone, left): (Vec<Piece>, Vec<Piece>) = self.pieces.iter().copied().partition(|piece| piece.dropped() && !stands(piece.at));
+            self.pieces = left;
+            gone
+        }
+
+        /// Takes away whatever was dropped and has lain `most` seconds or
+        /// more, `elapsed` seconds into the fight: which they were, gone
+        /// for good (since 2026-11-18, Last Stand's: Hajun, "the items
+        /// despawns after a very long time"). What a generator made stays
+        /// on its pad until it is taken, as ever; Bridge Wars calls this
+        /// never.
+        pub fn lapse(&mut self, elapsed: f32, most: f32) -> Vec<Piece> {
+            if !self.pieces.iter().any(|piece| piece.dropped() && elapsed - piece.born >= most) {
+                return Vec::new();
+            }
+            let (gone, left): (Vec<Piece>, Vec<Piece>) =
+                self.pieces.iter().copied().partition(|piece| piece.dropped() && elapsed - piece.born >= most);
             self.pieces = left;
             gone
         }
@@ -4857,6 +4941,36 @@ mod tests {
     use super::*;
 
     #[test]
+    fn bridge_wars_costs_fifty_and_a_team_that_beats_two_of_the_three_others_comes_out_ahead() {
+        use bridge_wars::{FEE, PRIZES, prizes};
+        assert_eq!(FEE, 50);
+        // Hajun's rule: more than half beaten pays more than the fee, the
+        // rest less.
+        assert!(PRIZES[0] > FEE && PRIZES[1] > FEE && PRIZES[2] < FEE && PRIZES[3] < FEE);
+        // By seat: seats 0 and 4 are team 0, 1 and 5 team 1, and so on; the
+        // computer's seats (here 4 to 7) are paid nothing.
+        let people = [true, true, true, true, false, false, false, false];
+        assert_eq!(prizes(&[0, 1, 2, 3], &people), vec![130, 60, 10, 0, 0, 0, 0, 0]);
+        assert_eq!(prizes(&[3, 0, 2, 1], &people), vec![0, 130, 10, 60, 0, 0, 0, 0]);
+        // Two people on the winning team: each is paid.
+        let two = [true, false, false, false, true, false, false, false];
+        assert_eq!(prizes(&[0, 1, 2, 3], &two), vec![130, 0, 0, 0, 130, 0, 0, 0]);
+        // Out in the same moment, or both still in at the draw: the places
+        // they take up, shared; all four in at the draw, the fee back.
+        assert_eq!(prizes(&[0, 0, 2, 3], &people)[..4], [95, 95, 10, 0]);
+        assert_eq!(prizes(&[0, 0, 0, 0], &people)[..4], [50, 50, 50, 50]);
+        assert_eq!(prizes(&[0, 1, 2, 2], &people)[..4], [130, 60, 5, 5]);
+        // Places by how long each team lasted: the one left in first, the
+        // last out second; out together, together; all still in, all first.
+        use bridge_wars::places;
+        assert_eq!(places(&[Some(300.0), None, Some(900.0), Some(50.0)]), [2, 0, 1, 3]);
+        assert_eq!(places(&[Some(300.0), Some(300.0), None, Some(50.0)]), [1, 1, 0, 3]);
+        assert_eq!(places(&[None, None, Some(900.0), None]), [0, 0, 3, 0]);
+        // Everyone out at once (the last two fallen together): first, both.
+        assert_eq!(places(&[Some(1000.0), Some(1000.0), Some(10.0), Some(20.0)]), [0, 0, 3, 2]);
+    }
+
+    #[test]
     fn a_handle_is_a_name_and_its_tag() {
         use social::{handle, split_handle};
         assert_eq!(handle("Hajooon", 1323), "Hajooon#1323");
@@ -7098,6 +7212,24 @@ mod tests {
     }
 
     #[test]
+    fn two_people_at_bridge_race_are_on_one_team_one_on_each_or_one_against_the_other_a_third_each() {
+        use bridge_race::{Pairing, pairing};
+        assert_eq!(pairing(0.0), Pairing::Together);
+        assert_eq!(pairing(0.34), Pairing::Apart);
+        assert_eq!(pairing(0.99), Pairing::Alone);
+        // A third of the way each, over the rolls.
+        let mut ways = [0u32; 3];
+        for step in 0..3000 {
+            ways[match pairing(step as f32 / 3000.0) {
+                Pairing::Together => 0,
+                Pairing::Apart => 1,
+                Pairing::Alone => 2,
+            }] += 1;
+        }
+        assert!(ways.iter().all(|way| (990..=1010).contains(way)), "{ways:?}");
+    }
+
+    #[test]
     fn bridge_race_seats_two_teams_on_their_islands_facing_the_golden_one() {
         use bridge_race::{GOLDEN, ISLAND_RADIUS, ISLANDS, LIFT, PEOPLE_FIRST, team};
         // Seat by seat, red and blue in turn.
@@ -7117,7 +7249,8 @@ mod tests {
             assert_eq!(at.y, LIFT);
         }
         // The two teams' islands, and the golden island as far from each.
-        assert!((ISLANDS[0].distance(ISLANDS[1]) - 42.0).abs() < 1e-3);
+        // (32 m apart since Hajun's export of 2026-11-18; 42 until then.)
+        assert!((ISLANDS[0].distance(ISLANDS[1]) - 32.0).abs() < 1e-3);
         assert!((ISLANDS[0].distance(GOLDEN) - ISLANDS[1].distance(GOLDEN)).abs() < 1e-3);
         // People take every seat once, the first two on one team.
         let mut taken = PEOPLE_FIRST;

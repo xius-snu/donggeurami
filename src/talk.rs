@@ -94,6 +94,18 @@ const RISE_SECS: f32 = 0.3;
 // the town's AIs say, and what you say back, one of them at random: all
 // `assets/ui.ron`'s (`ui`).
 
+/// Something the bubble comes up over that is opened rather than talked to,
+/// on any island (since 2026-11-18, Last Stand's treasure chests; Hajun:
+/// "u need to go close to it and it will show the proximitychatbubble and
+/// u press that and the chest pops/vanishes"): the bubble's tap, or E,
+/// says so ([`Opened`]), for its game to open it, and nothing is talked.
+#[derive(Component, Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) struct Opens;
+
+/// The bubble over something that [`Opens`] was tapped: this one.
+#[derive(Message, Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) struct Opened(pub(crate) Entity);
+
 /// Someone you can talk to, and what about.
 #[derive(Component, Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Speaker {
@@ -165,6 +177,7 @@ enum Ask {
 
 pub(crate) fn plugin(app: &mut App) {
     app.add_message::<Ask>()
+        .add_message::<Opened>()
         .init_resource::<Prompt>()
         .init_resource::<Conversation>()
         .add_observer(press)
@@ -224,12 +237,12 @@ fn spawn_bubble(mut images: ResMut<Assets<Image>>, mut commands: Commands) {
 
 /// Who the bubble is over: the nearest of those you can talk to, whichever
 /// way you face, in the town, while nothing else is up and the camera is
-/// your own.
-#[allow(clippy::too_many_arguments)]
+/// your own; or, on any island, the nearest thing there that [`Opens`].
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn choose(
     time: Res<Time>,
-    me: Query<(&Transform, &Venue), With<Player>>,
-    speakers: Query<(Entity, &GlobalTransform, &Venue, &InheritedVisibility), With<Speaker>>,
+    me: Query<(&Transform, &Venue), (With<Player>, Without<crate::Dead>)>,
+    speakers: Query<(Entity, &GlobalTransform, &Venue, &InheritedVisibility, Has<Opens>), Or<(With<Speaker>, With<Opens>)>>,
     islands: Res<Islands>,
     up: Res<DialogUp>,
     close_up: Res<CloseUp>,
@@ -237,18 +250,16 @@ fn choose(
     driving: Res<crate::drive::Driving>,
     mut prompt: ResMut<Prompt>,
 ) {
-    // Nobody is spoken to from the car (`drive`).
+    // Nobody is spoken to from the car (`drive`), nor by the dead.
     let over = me
         .single()
         .ok()
-        .filter(|&(_, &here)| {
-            here == Venue::Town && !up.0 && !close_up.busy() && conversation.with.is_none() && !driving.on()
-        })
+        .filter(|&(_, _)| !up.0 && !close_up.busy() && conversation.with.is_none() && !driving.on())
         .and_then(|(you, &here)| {
             let island = islands.get(here)?;
             let them = speakers
                 .iter()
-                .filter(|&(_, _, &on, shown)| on == here && shown.get())
+                .filter(|&(_, _, &on, shown, opens)| on == here && shown.get() && (opens || here == Venue::Town))
                 .map(|(who, at, ..)| (who, at.translation()));
             nearest_to(you, them, prompt.over, |from, to| in_sight(island, from, to))
         });
@@ -404,6 +415,8 @@ fn begin(
     mut conversation: ResMut<Conversation>,
     mut up: ResMut<DialogUp>,
     mut speakers: Query<(&Speaker, Option<&Name>, &Transform, Option<&TurningBack>, Option<&mut Steering>)>,
+    opens: Query<(), With<Opens>>,
+    mut opened: MessageWriter<Opened>,
     me: Query<&Balance, With<Player>>,
     assets: Res<AssetServer>,
     mut commands: Commands,
@@ -415,6 +428,11 @@ fn begin(
         let Some(who) = prompt.over.take() else {
             continue;
         };
+        // A thing that opens is opened, by its game, and nothing is said.
+        if opens.contains(who) {
+            opened.write(Opened(who));
+            continue;
+        }
         let Ok((&speaker, name, place, turning, steering)) = speakers.get_mut(who) else {
             continue;
         };

@@ -7,6 +7,21 @@
 > "above" or "below", or names another section in quotes, that section may be
 > in another file here: the table in `CLAUDE.md` says which.
 
+## The town's map has Hajun's plot planes (the evening of 2026-11-18)
+
+Hajun: "also for the map in the main lobby map, use the updated
+roundtownmap with the plot planes so i can see the plot planes." Their
+export of 2026-11-17 23:54 had sat in the tree uncommitted, and APK 41 was
+built with the one before; it is committed now and in APK 42, with its
+`.blend` and `.blend1`. What is new in it: 48 flat planes of the material
+`plot`, 24 m across, 0.27 m up on the ground, in a tan of their own
+choosing, walked on as ground. Checked: the town's grid for Blend In's
+crowd (`shared/src/town.nav`) baked again from it came out byte for byte
+the same, so the server needs nothing new for it; `cargo test --lib` reads
+the map (the arrival ring on dry land, the roads' paint); seen hidden by
+day, standing in the middle of one at (-25, 90): a tan square under you.
+Nothing in the game knows of the plots: they are Hajun's to use.
+
 ## The islands are Blender models
 
 `assets/roundtownmap.glb` is the town (Hajun's, 2026-10-30: "i made a new map

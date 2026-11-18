@@ -15,16 +15,30 @@ use crate::bridge_wars::Shop;
 pub const STONE_RADIUS: f32 = 25.0;
 pub const STONE_TOP: f32 = LIFT;
 /// The ring of sand round it, a step under it: how far it reaches, which is
-/// the rim, past which there is only the void, and its top.
+/// the rim, past which there is the sea, and its top.
 pub const SAND_RADIUS: f32 = 37.5;
 pub const SAND_TOP: f32 = LIFT - 0.2;
-/// Where the void begins, from the middle: the sand's edge, where the
-/// zombies climb up over (mine: "they come in waves from the outer edges").
+/// Where the sea begins, from the middle: the sand's edge, where the
+/// zombies climb up out of the water (mine: "they come in waves from the
+/// outer edges"; out of the void until the evening of 2026-11-18).
 pub const RIM: f32 = SAND_RADIUS;
 /// The furthest from the middle a zombie walks of itself, its middle half a
-/// metre in from the rim: it never walks off, and only a knock takes it
-/// over (mine).
+/// metre in from the rim: it never walks off into the sea but after someone
+/// who is in it, and otherwise only a knock takes it over (mine).
 pub const WALK_EDGE: f32 = SAND_RADIUS - 0.5;
+/// The sea round the sand, since the evening of 2026-11-18 (Hajun: "in last
+/// stand map, it shouldnt be void, but ocean with a tight invisible
+/// circular boundary border so u can still go in the ocean but not too
+/// far"): where the feet of a body in it come to, wading (the game's
+/// `WATER_Y` less its `WATER_WADE`, the town's sea: the map is lifted, the
+/// sea is not; a test in the game holds the two together); and the
+/// furthest from the middle anybody's middle goes, a body, a zombie or a
+/// giant, four metres out from the sand (mine): nobody goes past it, and
+/// nothing knocks anyone past it. The sand's edge is too high to step up
+/// onto from the sea: a body jumps up onto it, and a zombie climbs, as it
+/// climbs out of the sea in the first place.
+pub const SEA_BED: f32 = -1.08;
+pub const SHORE: f32 = RIM + 4.0;
 
 /// The anchor's slab, square round [`ANCHOR`]: half its width, and its top,
 /// a step over the stone that anyone walks up (Hajun's map has a second,
@@ -146,9 +160,28 @@ pub const OBSTACLES: [Obstacle; 7] = [
     },
 ];
 
-/// How high the ground is at `at` across the ground, lifted: the anchor's
+/// What a body stands on at `at` across the ground: the land ([`ground`]),
+/// or the sea's bed out to [`SHORE`], where it wades; nothing past that,
+/// where nobody goes.
+pub fn floor(at: Vec2) -> Option<f32> {
+    ground(at).or_else(|| (at.length() <= SHORE + 1e-3).then_some(SEA_BED))
+}
+
+/// Whether `at` across the ground is out in the sea, past the sand.
+pub fn in_the_sea(at: Vec2) -> bool {
+    at.length() > RIM
+}
+
+/// `at` brought no further from the middle than [`SHORE`]: the ring round
+/// the sea that nobody is let past.
+pub fn within_the_shore(at: Vec2) -> Vec2 {
+    at.clamp_length_max(SHORE)
+}
+
+/// How high the land is at `at` across the ground, lifted: the anchor's
 /// slab, a pad, the stone or the sand; none past the rim, where there is
-/// only the void.
+/// the sea ([`floor`] has its bed). What things dropped lie on, and a
+/// stick of dynamite: one that comes down in the sea sinks.
 pub fn ground(at: Vec2) -> Option<f32> {
     let out = at.length();
     if out > SAND_RADIUS {
