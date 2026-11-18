@@ -442,7 +442,7 @@
             // second's blue, the third's green, the fourth's yellow, as
             // bright as they read on white ice.
             seat_red: "#ff4f45",
-            seat_blue: "#3f8cff",
+            seat_blue: "#58a2ff",
             seat_green: "#2fcf55",
             seat_yellow: "#ffcc1f",
             // The dark line round each arrow and ring on the ice, which
@@ -456,8 +456,12 @@
             // ready.
             ready: "#3fbf5f",
             // The cracks on the ice where it will break at the end of the
-            // turn.
+            // turn; the band from there to the edge, darker, as thin ice
+            // is (see-through: how much is its last two digits); and by
+            // night, the moon on the ice that will stay.
             cracks: "#2d4258",
+            thin_ice: "#1b3a5c4d",
+            sheen: "#b4d4ff",
             // The puff of ice where two meet in a slide, and the splash
             // where anything goes into the sea.
             dust: "#e3f3ff",
@@ -912,14 +916,18 @@
             score: "turns survived",
             // The plate top centre: each turn ({turn}); the last; and under
             // it what to do now, with the seconds left of it ({seconds}), or
-            // how it is going; and, out, where you came ({place}: 1st,
-            // 2nd...), or that you went in while it is not known yet.
+            // how it is going: everyone's arrow shown, everyone sliding, the
+            // ice breaking; and, out, while the rest aim. Under your name,
+            // out: where you came ({place}: 1st, 2nd...), or that you went
+            // in while it is not known yet.
             turn: "Turn {turn}",
             last_turn: "Last turn",
             aim: "Aim! {seconds}",
             ready: "Ready · {seconds}",
+            set: "Set...",
             sliding: "Slide!",
             breaks: "The ice breaks",
+            watch_aim: "Aiming · {seconds}",
             watching: "You're out · {place}",
             went_in: "You went in",
             // Across the screen as the first turn begins, and how to play
@@ -932,11 +940,13 @@
             win_together: "{names} win!",
             you_win: "You win!",
             // In the chat: someone slid into the sea on their own
-            // ({name}), was knocked in ({by}, {name}), went in with the ice
-            // that broke under them, or left the game; and who won, or who
-            // shared first ({names}).
+            // ({name}), was knocked in ({by}, {name}), two knocked each
+            // other in ({a}, {b}), someone went in with the ice that broke
+            // under them, or left the game; and who won, or who shared
+            // first ({names}).
             slid_in: "{name} slid into the sea",
             knocked_in: "{by} knocked {name} into the sea",
+            knocked_each_other: "{a} and {b} knocked each other into the sea",
             broke_under: "The ice broke under {name}",
             left: "{name} left the game",
             won: "{name} wins!",
@@ -947,7 +957,7 @@
             // The panel for whoever is out: its title ({place}), its line,
             // and its two buttons.
             out: "You're out! {place}",
-            out_line: "Stay and watch, or go back to the town. Your place is kept.",
+            out_line: "Watch the rest, or go back. Your place is kept.",
             watch: "Watch",
             leave: "Leave",
         ),

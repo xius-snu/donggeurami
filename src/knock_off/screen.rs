@@ -1,31 +1,40 @@
 //! What is drawn over the world in a game of Knock Off, every word and
 //! colour of it the file's (`words.knock_off`, `colours.knock_off`):
 //!
-//! * **The buttons**: top left your name on its plate; on the right, where
-//!   the jump button would be, an up arrow and a down arrow with a bar of
-//!   ten steps between them, filled as hard as you aim and the number over
-//!   it (Hajun: "right side is a up down arrow for controlling intensity"),
-//!   and under them Ready, a round button with a tick, green once pressed;
-//!   and the chat's keyboard. A press of an arrow is a step, and held it
-//!   repeats. The stick on the left is the town's own, read for which way
-//!   (`take_aim`).
+//! * **The buttons**: top left your name on its plate, and under it, once
+//!   you are out, where you came; on the right, where the jump button would
+//!   be, an up arrow and a down arrow with a bar of ten steps between them,
+//!   filled as hard as you aim and the number over it (Hajun: "right side is
+//!   a up down arrow for controlling intensity"), and under them Ready, a
+//!   round button with a tick, green once pressed; all of them faint, their
+//!   pictures too, while there is no aiming to do, and put away once you are
+//!   out; and the chat's keyboard. A press of an arrow is a step, and held
+//!   it repeats. The stick on the left is the town's own, read for which
+//!   way (`take_aim`).
 //! * **The plate top centre**, the table's board's own look: the turn, and
 //!   under it what to do now and the seconds left of it ("Aim! 7"), or how
-//!   it is going ("Slide!", "The ice breaks"), or, out, where you came.
+//!   it is going ("Set...", "Slide!", "The ice breaks"); out, how it is
+//!   going all the same ("Aiming · 7").
 //! * **Names over heads**, each in its seat's colour, with a dark stroke so
 //!   that it reads on white ice by day and by night, and a green tick over
 //!   whoever is ready (the computer's players as they make up their minds),
-//!   yours too, though your name is never over you (Hajun, 2026-10-31).
+//!   yours too, though your name is never over you (Hajun, 2026-10-31): a
+//!   small mark in your colour is, so that you find yourself after a slide.
 //!   Knock Off's camera is far enough out to see the whole island that the
 //!   town's names (`tags`), sized by how far off they are, could not be
-//!   read: these are as big wherever they are, as Bridge Wars' are.
-//! * **The headlines** (`hud::announce`): "Go!" with how to play as the
-//!   first turn begins, each turn after, and who won.
+//!   read: these are as big wherever they are, as Bridge Wars' are; moved
+//!   apart where two would run into each other, and faint over the end of
+//!   your arrow while you aim.
+//! * **The headlines** (`hud::announce`), low over the near sea, never over
+//!   anyone's head: "Go!" with how to play as the first turn begins, each
+//!   turn after, and who won.
 //! * **A line in the chat** for whoever goes into the sea, and how ("Mochi
-//!   knocked Dubu into the sea"), names in their colours.
-//! * **The panel** for whoever is out, as Bridge Wars' "You're out!" is:
-//!   their place, Watch (stay, the camera as it is) and Leave (to the town,
-//!   their place kept and paid).
+//!   knocked Dubu into the sea"; two who knock each other in, one line),
+//!   names in their colours.
+//! * **The panel** for whoever is out, as Bridge Wars' "You're out!" is, low
+//!   on the screen: their place, Watch (stay, the camera as it is) and Leave
+//!   (to the town, their place kept and paid). None once one or nobody is
+//!   left, the game as good as over.
 
 use bevy::asset::RenderAssetUsages;
 use bevy::picking::pointer::PointerId;
@@ -36,7 +45,8 @@ use roundtown_net::Member;
 use roundtown_net::knock_off::{KnockRound, KnockStage};
 
 use super::{Holding, Knock, KnockSystems, Pressed, bodies_by_seat, seat_colour};
-use crate::builder::{self, DIALOG_LAYER};
+use roundtown_net::knock_off as rules;
+use crate::builder::DIALOG_LAYER;
 use crate::chat::{self, Log};
 use crate::clock::TownClock;
 use crate::hud::{self, TakesPress};
@@ -73,16 +83,38 @@ const TICK: f32 = 2.8;
 const TAG_OVER: f32 = 2.05;
 /// How far the dark stroke round a name stands out from its letters.
 const STROKE: f32 = 0.16;
-/// The panel for whoever is out: how wide, its title and its line, and
-/// its buttons.
-const PANEL_WIDTH: f32 = 60.0;
-const PANEL_TITLE: f32 = 4.6;
-const PANEL_TEXT: f32 = 3.0;
-const PANEL_BUTTON: f32 = 22.0;
-/// How long the headlines are up, in seconds.
-const GO_SECS: f32 = 3.0;
-const TURN_SECS: f32 = 1.4;
-const WON_SECS: f32 = 3.0;
+/// The mark over your own head, in your colour: how wide and how high.
+const YOU_MARK: (f32, f32) = (3.0, 2.2);
+/// How strong a name is over the end of your arrow while you aim (mine,
+/// from a check of the game: the name of whoever you aim at stood over your
+/// arrow's head and the ring where it stops).
+const NAME_FAINT: f32 = 0.2;
+/// The gap kept between two names moved apart, in shares of the short side.
+const NAME_GAP: f32 = 0.4;
+/// How strong the pictures on the buttons on the right are while there is
+/// no aiming to do, as a share (mine: only the discs had changed, by ten
+/// in 255, and a check of the game took them for live).
+const GLYPH_FAINT: f32 = 0.35;
+/// The panel for whoever is out: its title and its line, and its buttons.
+const PANEL_TITLE: f32 = 4.2;
+const PANEL_TEXT: f32 = 2.6;
+const PANEL_BUTTON: f32 = 17.0;
+/// Where you came, under your name top left, once out: how big.
+const OUT_TAG_TEXT: f32 = 2.8;
+/// The headlines, low over the near sea (mine: centred on the screen, as
+/// the town's are, they stood on the far side's heads every turn, a check
+/// of the game found): how far up from the bottom (clear of an iPhone's
+/// bar along it), and how big each is, as shares of the short side.
+const HEADLINE_LOW: f32 = 6.0;
+const GO_TEXT: f32 = 7.0;
+const HOW_TEXT: f32 = 3.4;
+const TURN_TEXT: f32 = 5.6;
+const WON_TEXT: f32 = 7.0;
+/// How long the headlines are up, in seconds: who won, gone as the results
+/// come up two seconds on (`table`), not through them.
+const GO_SECS: f32 = 4.0;
+const TURN_SECS: f32 = 1.6;
+const WON_SECS: f32 = 2.0;
 
 /// One of the power arrows on the right: up, or down.
 #[derive(Component, Clone, Copy)]
@@ -93,6 +125,26 @@ struct PowerArrow {
 /// The Ready button.
 #[derive(Component)]
 struct ReadyButton;
+
+/// The picture on one of the round buttons on the right, faint while there
+/// is no aiming to do.
+#[derive(Component)]
+struct Glyph;
+
+/// Each of what stands on the right for aiming (the arrows, the bar, its
+/// number, Ready): put away once you are out.
+#[derive(Component)]
+struct PowerColumn;
+
+/// The mark over your own head.
+#[derive(Component)]
+struct YouMark;
+
+/// Under your name top left, once you are out: where you came.
+#[derive(Component)]
+struct OutTag;
+#[derive(Component)]
+struct OutTagText;
 
 /// One of the ten steps of the bar, counted from the bottom.
 #[derive(Component)]
@@ -133,7 +185,7 @@ pub(super) fn plugin(app: &mut App) {
         Update,
         (
             (let_go, show_power).chain().after(KnockSystems),
-            (put_up, know_the_place, plate, headlines, chat_lines, out_panel).chain().after(super::place),
+            (put_up, know_the_place, plate, out_tag, headlines, chat_lines, out_panel).chain().after(super::place),
             over_heads.after(crate::follow_camera),
         ),
     );
@@ -144,19 +196,34 @@ pub(super) fn spawn_bar(commands: &mut Commands, _assets: &AssetServer, images: 
     let (left, _right) = hud::game_bar(commands);
     commands.spawn((ChildOf(left), hud::name_plate()));
     let colours = ui().colours;
+    // Under your name, once you are out: where you came.
+    commands.spawn((
+        ChildOf(left),
+        OutTag,
+        Node {
+            padding: UiRect::axes(Val::VMin(1.8), Val::VMin(0.6)),
+            border_radius: BorderRadius::all(Val::VMin(1.2)),
+            ..default()
+        },
+        BackgroundColor(colours.hud.name_plate),
+        Visibility::Hidden,
+        Pickable::IGNORE,
+        children![(OutTagText, Text::new(""), crate::font::sized(OUT_TAG_TEXT), TextColor(colours.text), Pickable::IGNORE)],
+    ));
     let arrow = images.add(hud::jump_arrow());
     let tick = images.add(tick());
     commands.spawn(hud::round_the_jump()).with_children(|round| {
         let (right, bottom, size) = UP;
-        round.spawn((PowerArrow { up: true }, arrow_button(arrow.clone(), size, false, hud::beside_the_jump(right, bottom))));
+        round.spawn((PowerArrow { up: true }, PowerColumn, glyph_button(arrow.clone(), size, false, hud::beside_the_jump(right, bottom))));
         let (right, bottom, size) = DOWN;
-        round.spawn((PowerArrow { up: false }, arrow_button(arrow, size, true, hud::beside_the_jump(right, bottom))));
+        round.spawn((PowerArrow { up: false }, PowerColumn, glyph_button(arrow, size, true, hud::beside_the_jump(right, bottom))));
         let (right, bottom, size) = READY;
-        round.spawn((ReadyButton, hud::round_button(tick, size, hud::beside_the_jump(right, bottom))));
+        round.spawn((ReadyButton, PowerColumn, glyph_button(tick, size, false, hud::beside_the_jump(right, bottom))));
         // The bar, its ten steps from the bottom up.
         let (right, bottom) = BAR;
         round
             .spawn((
+                PowerColumn,
                 Node {
                     width: Val::VMin(BAR_SIZE.0),
                     height: Val::VMin(BAR_SIZE.1),
@@ -187,6 +254,7 @@ pub(super) fn spawn_bar(commands: &mut Commands, _assets: &AssetServer, images: 
         let (right, bottom) = NUMBER;
         round
             .spawn((
+                PowerColumn,
                 Node {
                     width: Val::VMin(BAR_SIZE.0 + 5.0),
                     justify_content: JustifyContent::Center,
@@ -200,11 +268,13 @@ pub(super) fn spawn_bar(commands: &mut Commands, _assets: &AssetServer, images: 
     });
 }
 
-/// A round button with the jump button's arrow on it, `size` across, where
-/// `place` puts it, the arrow turned down for the down one.
-fn arrow_button(arrow: Handle<Image>, size: f32, down: bool, place: Node) -> impl Bundle {
+/// A round button with `picture` on it (the jump button's arrow, or the
+/// tick), `size` across, where `place` puts it, the picture turned upside
+/// down if `down`: as `hud::round_button` is, its picture a [`Glyph`], to
+/// be made faint.
+fn glyph_button(picture: Handle<Image>, size: f32, down: bool, place: Node) -> impl Bundle {
     let colours = ui().colours.hud;
-    let mut picture = ImageNode::new(arrow).with_color(colours.button_mark);
+    let mut picture = ImageNode::new(picture).with_color(colours.button_mark);
     picture.flip_y = down;
     (
         TakesPress,
@@ -219,6 +289,7 @@ fn arrow_button(arrow: Handle<Image>, size: f32, down: bool, place: Node) -> imp
         },
         BackgroundColor(colours.button),
         children![(
+            Glyph,
             picture,
             Node {
                 width: Val::Percent(PICTURE),
@@ -308,16 +379,34 @@ fn let_go(touches: Res<Touches>, mouse: Res<ButtonInput<MouseButton>>, mut press
 }
 
 /// The bar filled as hard as you aim, its number over it, and Ready green
-/// once pressed; the arrows and Ready faint while there is no aiming to do.
-/// Each written only as it changes.
-#[allow(clippy::type_complexity)]
+/// once pressed; the arrows and Ready faint while there is no aiming to do,
+/// their pictures too; and all of it put away once you are out, and under
+/// the results. Each written only as it changes.
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn show_power(
     knock: Res<Knock>,
+    view: Res<TableView>,
+    mut columns: Query<&mut Visibility, With<PowerColumn>>,
+    mut glyphs: Query<(&ChildOf, &mut ImageNode), With<Glyph>>,
     mut steps: Query<(&PowerStep, &mut BackgroundColor), (Without<ReadyButton>, Without<PowerArrow>)>,
     mut numbers: Query<(&mut Text, Has<Stroke>), With<PowerNumber>>,
     mut readies: Query<&mut BackgroundColor, (With<ReadyButton>, Without<PowerStep>, Without<PowerArrow>)>,
     mut arrows: Query<&mut BackgroundColor, (With<PowerArrow>, Without<PowerStep>, Without<ReadyButton>)>,
 ) {
+    let up = knock.seat.is_some() && knock.in_play() && !view.over();
+    for mut shown in &mut columns {
+        shown.set_if_neq(if up { Visibility::Inherited } else { Visibility::Hidden });
+    }
+    let mark = ui().colours.hud.button_mark;
+    let lit = knock.aiming();
+    let pressed = knock.aim.ready && knock.playing().is_some_and(|round| round.stage == KnockStage::Aim && knock.aim.turn == round.turn);
+    for (parent, mut picture) in &mut glyphs {
+        let live = lit || (pressed && readies.contains(parent.parent()));
+        let wanted = if live { mark } else { mark.with_alpha(mark.alpha() * GLYPH_FAINT) };
+        if picture.color != wanted {
+            picture.color = wanted;
+        }
+    }
     let colours = ui().colours;
     let aim = knock.aim;
     let current = knock.playing().is_some_and(|round| round.stage == KnockStage::Aim && aim.turn == round.turn);
@@ -359,6 +448,7 @@ fn put_up(
     heads: Query<Entity, With<OverHead>>,
     mut images: ResMut<Assets<Image>>,
     mut tick_image: Local<Option<Handle<Image>>>,
+    mut mark_image: Local<Option<Handle<Image>>>,
     mut commands: Commands,
 ) {
     if knock.seat.is_none() {
@@ -405,6 +495,7 @@ fn put_up(
             plate.spawn((PlateCaption, hud::words("", PLATE_CAPTION, colours.text)));
         });
     let tick = tick_image.get_or_insert_with(|| images.add(tick())).clone();
+    let mark = mark_image.get_or_insert_with(|| images.add(chevron())).clone();
     for seat in 0..4 {
         commands
             .spawn((
@@ -425,15 +516,29 @@ fn put_up(
                 Pickable::IGNORE,
             ))
             .with_children(|head| {
+                // Out of the layout while not shown (`Display::None`), not
+                // only hidden: a hidden one still takes its room, and had
+                // stood the name over it that much higher, under the plate.
                 head.spawn((
                     ReadyTick,
                     ImageNode::new(tick.clone()).with_color(colours.knock_off.ready),
                     Node {
                         width: Val::VMin(TICK),
                         height: Val::VMin(TICK),
+                        display: Display::None,
                         ..default()
                     },
-                    Visibility::Hidden,
+                    Pickable::IGNORE,
+                ));
+                head.spawn((
+                    YouMark,
+                    ImageNode::new(mark.clone()).with_color(seat_colour(seat)),
+                    Node {
+                        width: Val::VMin(YOU_MARK.0),
+                        height: Val::VMin(YOU_MARK.1),
+                        display: Display::None,
+                        ..default()
+                    },
                     Pickable::IGNORE,
                 ));
                 stroked(head, TagName, "", TAG_TEXT, seat_colour(seat));
@@ -473,19 +578,20 @@ fn plate(
         fill(&words.turn, &[("turn", &round.turn.to_string())])
     };
     let seconds = ((round.until - clock.now()).max(0.0).ceil() as u32).to_string();
-    let caption = if !knock.in_play() {
-        match knock.place {
-            Some(place) => fill(&words.watching, &[("place", &place_word(place))]),
-            None => words.went_in.clone(),
-        }
-    } else {
-        match round.stage {
-            KnockStage::Aim if knock.aim.ready && knock.aim.turn == round.turn => fill(&words.ready, &[("seconds", &seconds)]),
-            KnockStage::Aim => fill(&words.aim, &[("seconds", &seconds)]),
-            KnockStage::Reveal | KnockStage::Slide => words.sliding.clone(),
-            KnockStage::Break => words.breaks.clone(),
-            KnockStage::Over => String::new(),
-        }
+    // Out, how it is going all the same, the seconds too (where you came is
+    // under your name, `out_tag`: a check of the game found a watcher never
+    // saw the clock again).
+    let watching = !knock.in_play();
+    let caption = match round.stage {
+        KnockStage::Aim if watching => fill(&words.watch_aim, &[("seconds", &seconds)]),
+        KnockStage::Aim if knock.aim.ready && knock.aim.turn == round.turn => fill(&words.ready, &[("seconds", &seconds)]),
+        KnockStage::Aim => fill(&words.aim, &[("seconds", &seconds)]),
+        // Everyone's arrow shown, nobody moving yet: "Set...", and then
+        // "Slide!" as they go (it had said "Slide!" through both).
+        KnockStage::Reveal if !knock.sliding() => words.set.clone(),
+        KnockStage::Reveal | KnockStage::Slide => words.sliding.clone(),
+        KnockStage::Break => words.breaks.clone(),
+        KnockStage::Over => String::new(),
     };
     for mut text in &mut titles {
         if text.0 != title {
@@ -522,6 +628,32 @@ fn know_the_place(mut knock: ResMut<Knock>) {
     let place = place_of(round, usize::from(seat));
     if place.is_some() && place != knock.place {
         knock.place = place;
+    }
+}
+
+/// Under your name top left, once you are out: where you came ("You're out
+/// · 3rd"), or that you went in while it is not known yet. Written only as
+/// it changes.
+fn out_tag(
+    knock: Res<Knock>,
+    mut tags: Query<&mut Visibility, With<OutTag>>,
+    mut texts: Query<&mut Text, With<OutTagText>>,
+) {
+    let ui = ui();
+    let words = &ui.words.knock_off;
+    let said = (knock.seat.is_some() && knock.playing().is_some() && !knock.in_play()).then(|| match knock.place {
+        Some(place) => fill(&words.watching, &[("place", &place_word(place))]),
+        None => words.went_in.clone(),
+    });
+    for mut shown in &mut tags {
+        shown.set_if_neq(if said.is_some() { Visibility::Inherited } else { Visibility::Hidden });
+    }
+    if let Some(said) = said {
+        for mut text in &mut texts {
+            if text.0 != said {
+                text.0.clone_from(&said);
+            }
+        }
     }
 }
 
@@ -562,14 +694,14 @@ fn headlines(
         let news = |secs: f32| clock.now() - round.since < f64::from(secs);
         if *said != Some(now) && round.stage == KnockStage::Aim {
             if round.turn == 1 && news(GO_SECS) {
-                hud::announce(&mut commands, Some(&words.how), &words.go, hud::HEADLINE, GO_SECS).insert(InTable);
+                low(hud::announce(&mut commands, Some(&words.how), &words.go, GO_TEXT, GO_SECS), true);
             } else if round.turn > 1 && knock.in_play() && news(TURN_SECS) {
                 let title = if round.next_radius <= 0.0 {
                     words.last_turn_headline.clone()
                 } else {
                     fill(&words.turn, &[("turn", &round.turn.to_string())])
                 };
-                hud::announce(&mut commands, None, &title, hud::HEADLINE * 0.8, TURN_SECS).insert(InTable);
+                low(hud::announce(&mut commands, None, &title, TURN_TEXT, TURN_SECS), false);
             }
         }
         *said = Some(now);
@@ -590,10 +722,43 @@ fn headlines(
                 .collect();
             winners(&names)
         };
-        hud::announce(&mut commands, None, &title, hud::HEADLINE, WON_SECS).insert(InTable);
+        low(hud::announce(&mut commands, None, &title, WON_TEXT, WON_SECS), false);
     }
     if view.results().is_none() {
         *won = false;
+    }
+}
+
+/// A headline put low over the near sea, where the camera keeps the screen
+/// clear of the island for it (`CLEAR_BOTTOM`), centred between the stick
+/// and the buttons, and gone with the table: the title over the line under
+/// it, its how-to (`caption`, made smaller), if it has one.
+fn low(mut headline: EntityCommands, caption: bool) {
+    headline.insert((
+        InTable,
+        Node {
+            position_type: PositionType::Absolute,
+            left: Val::ZERO,
+            right: Val::ZERO,
+            bottom: Val::VMin(HEADLINE_LOW),
+            flex_direction: FlexDirection::ColumnReverse,
+            align_items: AlignItems::Center,
+            row_gap: Val::VMin(0.4),
+            ..default()
+        },
+    ));
+    if caption {
+        // The how-to, the first of its lines (`hud::announce`), smaller
+        // than the town's: under the title, at the foot of the screen.
+        let entity = headline.id();
+        headline.commands().queue(move |world: &mut World| {
+            let first = world.get::<Children>(entity).and_then(|lines| lines.first().copied());
+            if let Some(line) = first
+                && let Some(mut font) = world.get_mut::<TextFont>(line)
+            {
+                *font = crate::font::sized(HOW_TEXT);
+            }
+        });
     }
 }
 
@@ -628,26 +793,25 @@ fn chat_lines(knock: Res<Knock>, view: Res<TableView>, mut log: ResMut<Log>, mut
         // Begun afresh: whoever is out already was said, or is not news.
         said.0 = round.out.iter().map(Option::is_some).collect();
     }
-    let slide = knock.slide.as_ref().filter(|played| played.turn == round.turn).map(|played| &played.slide);
+    let played = knock.slide.as_ref().filter(|played| played.turn == round.turn);
     for seat in 0..round.out.len() {
         if said.0[seat] || round.out[seat].is_none() {
             continue;
         }
-        let in_slide = slide.and_then(|slide| slide.over_edge(seat));
-        let line = match round.stage {
-            KnockStage::Slide if in_slide.is_none() => continue,
-            KnockStage::Slide => {
-                let by = slide.and_then(|slide| slide.hit_by(seat));
-                match by {
-                    Some(by) => chat::spans(&words.knocked_in, ink, &[("by", &name(by), seat_colour(by)), ("name", &name(seat), seat_colour(seat))]),
-                    None => chat::spans(&words.slid_in, ink, &[("name", &name(seat), seat_colour(seat))]),
-                }
+        let line = match what_is_said(round, played, seat) {
+            Said::NotYet => continue,
+            Said::EachOther(other) => {
+                said.0[other] = true;
+                chat::spans(
+                    &words.knocked_each_other,
+                    ink,
+                    &[("a", &name(other), seat_colour(other)), ("b", &name(seat), seat_colour(seat))],
+                )
             }
-            KnockStage::Break if round.start.get(seat).copied().flatten().is_some() => {
-                chat::spans(&words.broke_under, ink, &[("name", &name(seat), seat_colour(seat))])
-            }
-            _ if in_slide.is_some() => chat::spans(&words.slid_in, ink, &[("name", &name(seat), seat_colour(seat))]),
-            _ => chat::spans(&words.left, ink, &[("name", &name(seat), seat_colour(seat))]),
+            Said::KnockedIn(by) => chat::spans(&words.knocked_in, ink, &[("by", &name(by), seat_colour(by)), ("name", &name(seat), seat_colour(seat))]),
+            Said::SlidIn => chat::spans(&words.slid_in, ink, &[("name", &name(seat), seat_colour(seat))]),
+            Said::BrokeUnder => chat::spans(&words.broke_under, ink, &[("name", &name(seat), seat_colour(seat))]),
+            Said::Left => chat::spans(&words.left, ink, &[("name", &name(seat), seat_colour(seat))]),
         };
         said.0[seat] = true;
         log.push(line);
@@ -675,9 +839,55 @@ fn chat_lines(knock: Res<Knock>, view: Res<TableView>, mut log: ResMut<Log>, mut
     }
 }
 
+/// What the chat says of someone gone into the sea ([`what_is_said`]).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Said {
+    /// Nothing yet: in the sea by the round and not yet by the slide played
+    /// here, or knocked in by someone they knocked in too, who has not gone
+    /// over yet (the two are said together as the second goes).
+    NotYet,
+    SlidIn,
+    KnockedIn(usize),
+    EachOther(usize),
+    BrokeUnder,
+    Left,
+}
+
+/// What the chat says of the player in `seat`, out by `round`: in the
+/// slide, as this device's own play of it (`played`) has it, knocked in by
+/// whoever last hit them or on their own; two who knock each other in, as
+/// the slide will have it (played out as it began), one line, said as the
+/// second goes (mine, from a check of the game: two lines, each blaming
+/// the other, had read as a quarrel); as the ice breaks, under them; and
+/// otherwise, gone over in a slide this device never saw end, or left.
+fn what_is_said(round: &KnockRound, played: Option<&super::Played>, seat: usize) -> Said {
+    let slide = played.map(|played| &played.slide);
+    let in_slide = slide.and_then(|slide| slide.over_edge(seat));
+    match round.stage {
+        KnockStage::Slide if in_slide.is_none() => Said::NotYet,
+        KnockStage::Slide => {
+            let gone = |other: usize| round.out.get(other).copied().flatten().is_some() && slide.is_some_and(|slide| slide.over_edge(other).is_some());
+            let by = slide.and_then(|slide| slide.hit_by(seat));
+            let each_other = by.filter(|&by| played.is_some_and(|played| played.ending.fell.get(by).copied().flatten().is_some() && played.ending.by.get(by).copied().flatten() == Some(seat)));
+            match (by, each_other) {
+                (_, Some(other)) if !gone(other) => Said::NotYet,
+                (_, Some(other)) => Said::EachOther(other),
+                (Some(by), None) => Said::KnockedIn(by),
+                (None, None) => Said::SlidIn,
+            }
+        }
+        KnockStage::Break if round.start.get(seat).copied().flatten().is_some() => Said::BrokeUnder,
+        _ if in_slide.is_some() => Said::SlidIn,
+        _ => Said::Left,
+    }
+}
+
 /// The panel for whoever is out, once their turn's slide is over and where
 /// they came is known: "You're out! 3rd", Watch and Leave. Not once the
-/// game is over (its results say it all), nor once Watch is pressed.
+/// game is over (its results say it all), nor once Watch is pressed; nor
+/// once one or nobody is left on the ice, the game over as the ice has
+/// finished breaking (a check of the game found it up for a second there,
+/// to be swept away by who won).
 fn out_panel(
     knock: Res<Knock>,
     view: Res<TableView>,
@@ -685,7 +895,15 @@ fn out_panel(
     mut commands: Commands,
 ) {
     let place = match knock.playing() {
-        Some(round) if !knock.watching && !knock.leaving && !view.over() && round.stage != KnockStage::Over => knock.place,
+        Some(round)
+            if !knock.watching
+                && !knock.leaving
+                && !view.over()
+                && round.stage != KnockStage::Over
+                && round.out.iter().filter(|out| out.is_none()).count() > 1 =>
+        {
+            knock.place
+        }
         _ => None,
     };
     let up = panels.single().ok();
@@ -697,8 +915,11 @@ fn out_panel(
 }
 
 /// The panel saying you are out, and where you came, with Watch and
-/// Leave: drawn as the friends' panel is, and laid out as Bridge Wars'
-/// "You're out!" is (`arena`), not a dialog, the game going on round it.
+/// Leave: drawn as the friends' panel is, as Bridge Wars' "You're out!" is
+/// (`arena`), not a dialog, the game going on round it; low on the screen,
+/// over the near sea and the edge of the ice, in one row (mine: across the
+/// top of the island, where Bridge Wars has it, it stood over the very
+/// ice it asks you to stay and watch, a check of the game found).
 fn spawn_panel(commands: &mut Commands, place: u8) {
     let ui = ui();
     let (colours, words) = (ui.colours.window, &ui.words.knock_off);
@@ -710,32 +931,39 @@ fn spawn_panel(commands: &mut Commands, place: u8) {
             window::pane(Node {
                 position_type: PositionType::Absolute,
                 left: Val::Percent(50.0),
-                top: Val::Vh(26.0),
-                width: Val::VMin(PANEL_WIDTH),
-                align_items: AlignItems::Center,
-                row_gap: Val::VMin(1.6),
-                padding: UiRect::all(Val::VMin(window::PAD)),
+                bottom: Val::VMin(hud::EDGE),
+                padding: UiRect::axes(Val::VMin(window::PAD), Val::VMin(window::PAD * 0.6)),
                 ..default()
             }),
             UiTransform::from_translation(Val2::new(Val::Percent(-50.0), Val::ZERO)),
             GlobalZIndex(DIALOG_LAYER - 1),
         ))
         .with_children(|panel| {
-            panel.spawn(builder::label(fill(&words.out, &[("place", &place_word(place))]), PANEL_TITLE, colours.title));
-            panel.spawn(builder::label(words.out_line.clone(), PANEL_TEXT, colours.status));
             panel
                 .spawn((
                     Node {
-                        justify_content: JustifyContent::Center,
+                        align_items: AlignItems::Center,
                         column_gap: Val::VMin(3.0),
-                        margin: UiRect::top(Val::VMin(1.0)),
                         ..default()
                     },
                     Pickable::IGNORE,
                 ))
-                .with_children(|choices| {
-                    choices.spawn((PanelTap::Leave, window::choice_wide(words.leave.clone(), Look::No, PANEL_BUTTON)));
-                    choices.spawn((PanelTap::Watch, window::choice_wide(words.watch.clone(), Look::Yes, PANEL_BUTTON)));
+                .with_children(|row| {
+                    row.spawn((
+                        Node {
+                            flex_direction: FlexDirection::Column,
+                            align_items: AlignItems::FlexStart,
+                            row_gap: Val::VMin(0.6),
+                            ..default()
+                        },
+                        Pickable::IGNORE,
+                    ))
+                    .with_children(|said| {
+                        said.spawn(window::words(fill(&words.out, &[("place", &place_word(place))]), PANEL_TITLE, colours.title));
+                        said.spawn(window::words(words.out_line.clone(), PANEL_TEXT, colours.status));
+                    });
+                    row.spawn((PanelTap::Leave, window::choice_wide(words.leave.clone(), Look::No, PANEL_BUTTON)));
+                    row.spawn((PanelTap::Watch, window::choice_wide(words.watch.clone(), Look::Yes, PANEL_BUTTON)));
                 });
         });
 }
@@ -758,10 +986,24 @@ fn tap(click: On<Pointer<Click>>, taps: Query<&PanelTap>, mut knock: ResMut<Knoc
     }
 }
 
+/// What is over one head, as [`over_heads`] lays them out: whose, where on
+/// the screen (logical pixels), and what is shown of it.
+struct OverOne {
+    seat: usize,
+    rect: Rect,
+    named: bool,
+    ready: bool,
+    mine: bool,
+}
+
 /// Over every head on the ice its name, in its seat's colour (never over
-/// yours), and while everyone aims, a tick over whoever is ready: as big
-/// wherever they are, kept over their heads as the camera is, and put away
-/// while they are in the sea, off the screen, or anywhere but on the ice.
+/// yours: a small mark in your colour is, so that you find yourself after
+/// a slide), and while everyone aims, a tick over whoever is ready: as big
+/// wherever they are, kept over their heads as the camera is, moved apart
+/// where two would run into each other (the higher one up), faint over the
+/// end of your arrow while you aim, and put away while they are in the
+/// sea, off the screen, or anywhere but on the ice. Each written only as
+/// it changes.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn over_heads(
     knock: Res<Knock>,
@@ -774,10 +1016,12 @@ fn over_heads(
     cameras: Query<(&Camera, &Transform), With<ThirdPersonCamera>>,
     windows: Query<&Window>,
     hiding: Query<(&ComputedNode, &UiGlobalTransform, &InheritedVisibility), (With<crate::tags::HidesNames>, Without<OverHead>)>,
-    mut heads: Query<(&OverHead, &Children, &mut Visibility, &mut UiTransform, &ComputedNode), (Without<ReadyTick>, Without<TagName>)>,
-    mut ticks: Query<&mut Visibility, (With<ReadyTick>, Without<OverHead>, Without<TagName>)>,
-    mut names: Query<(&mut Text, &mut Visibility), (With<TagName>, Without<OverHead>, Without<ReadyTick>)>,
+    mut heads: Query<(&OverHead, &Children, &mut Visibility, &mut UiTransform, &ComputedNode), (Without<ReadyTick>, Without<TagName>, Without<YouMark>)>,
+    mut ticks: Query<&mut Node, (With<ReadyTick>, Without<OverHead>, Without<TagName>, Without<YouMark>)>,
+    mut marks: Query<&mut Node, (With<YouMark>, Without<OverHead>, Without<TagName>, Without<ReadyTick>)>,
+    mut names: Query<(&mut Text, &mut TextColor, &mut Visibility, Has<Stroke>), (With<TagName>, Without<OverHead>, Without<ReadyTick>, Without<YouMark>)>,
     parts: Query<&Children>,
+    mut placed: Local<Vec<OverOne>>,
 ) {
     let (Ok((camera, eye)), Ok(window)) = (cameras.single(), windows.single()) else {
         return;
@@ -798,7 +1042,10 @@ fn over_heads(
             Rect::from_center_size(place.translation * scale, node.size() * scale)
         })
         .collect();
-    for (head, children, mut shown, mut place, node) in &mut heads {
+    let arrow_end = arrow_end_on_screen(&knock, camera, &eye);
+    // Where each would go, over its head.
+    placed.clear();
+    for (head, _, mut shown, _, node) in &mut heads {
         let seat = head.0;
         let member = view.members.get(seat).filter(|member| member.id != 0);
         let mine = knock.seat == Some(seat as u8);
@@ -815,37 +1062,105 @@ fn over_heads(
         let ready = aiming && round.is_some_and(|round| round.ready.get(seat).copied().unwrap_or(false))
             || (mine && aiming && knock.aim.ready && round.is_some_and(|round| knock.aim.turn == round.turn));
         let named = member.is_some() && !mine;
-        let Some(point) = point.filter(|_| named || ready) else {
+        let Some(point) = point.filter(|_| named || ready || mine) else {
             shown.set_if_neq(Visibility::Hidden);
             continue;
         };
         let size = node.size() * node.inverse_scale_factor();
-        let rect = Rect::from_center_size(Vec2::new(point.x, point.y - size.y * 0.5), size);
-        if hidden.iter().any(|hider| !hider.intersect(rect).is_empty()) {
+        placed.push(OverOne {
+            seat,
+            rect: Rect::from_center_size(Vec2::new(point.x, point.y - size.y * 0.5), size),
+            named,
+            ready,
+            mine,
+        });
+    }
+    placed.sort_by(|a, b| a.rect.min.y.total_cmp(&b.rect.min.y));
+    apart(&mut placed, NAME_GAP * window.width().min(window.height()) / 100.0);
+    let stroke = ui().colours.chat.stroke;
+    for (head, children, mut shown, mut place, _) in &mut heads {
+        let Some(one) = placed.iter().find(|one| one.seat == head.0) else {
+            continue;
+        };
+        if hidden.iter().any(|hider| !hider.intersect(one.rect).is_empty()) {
             shown.set_if_neq(Visibility::Hidden);
             continue;
         }
         place.set_if_neq(UiTransform {
-            translation: Val2::px(point.x - size.x * 0.5, point.y - size.y),
+            translation: Val2::px(one.rect.min.x, one.rect.min.y),
             scale: Vec2::ONE,
             rotation: Rot2::IDENTITY,
         });
         shown.set_if_neq(Visibility::Inherited);
-        let wanted_name = if named { member.map_or("", |member| member.name.as_str()) } else { "" };
+        let wanted_name = if one.named { view.members.get(one.seat).map_or("", |member| member.name.as_str()) } else { "" };
+        let faint = one.named && arrow_end.is_some_and(|end| !end.intersect(one.rect).is_empty());
+        let strength = if faint { NAME_FAINT } else { 1.0 };
+        let shown_if = |shown: bool| if shown { Display::Flex } else { Display::None };
         for part in children.iter() {
-            if let Ok(mut tick) = ticks.get_mut(part) {
-                tick.set_if_neq(if ready { Visibility::Inherited } else { Visibility::Hidden });
+            if let Ok(mut tick) = ticks.get_mut(part)
+                && tick.display != shown_if(one.ready)
+            {
+                tick.display = shown_if(one.ready);
+            }
+            if let Ok(mut mark) = marks.get_mut(part)
+                && mark.display != shown_if(one.mine)
+            {
+                mark.display = shown_if(one.mine);
             }
             for word in parts.get(part).into_iter().flat_map(|words| words.iter()) {
-                if let Ok((mut text, mut seen)) = names.get_mut(word) {
+                if let Ok((mut text, mut colour, mut seen, under)) = names.get_mut(word) {
                     if text.0 != wanted_name {
                         text.0 = wanted_name.to_string();
                     }
-                    seen.set_if_neq(if named { Visibility::Inherited } else { Visibility::Hidden });
+                    let ink = if under { stroke } else { seat_colour(one.seat) };
+                    colour.set_if_neq(TextColor(ink.with_alpha(ink.alpha() * strength)));
+                    seen.set_if_neq(if one.named { Visibility::Inherited } else { Visibility::Hidden });
                 }
             }
         }
     }
+}
+
+/// Two of `placed` (highest on the screen first) that would run into each
+/// other moved apart, `gap` between them: the higher one up over the
+/// lower, which stays over its head (names had run together, "MaruBbori",
+/// where two stood close: a check of the game).
+fn apart(placed: &mut [OverOne], gap: f32) {
+    for _ in 0..3 {
+        for lower in 1..placed.len() {
+            for upper in 0..lower {
+                let (above, below) = (placed[upper].rect, placed[lower].rect);
+                let across = above.min.x < below.max.x && below.min.x < above.max.x;
+                let over = above.max.y + gap - below.min.y;
+                if across && over > 0.0 {
+                    placed[upper].rect.min.y -= over;
+                    placed[upper].rect.max.y -= over;
+                }
+            }
+        }
+    }
+}
+
+/// Where the end of your arrow is on the screen while you aim, in logical
+/// pixels: its head and the ring where it stops, for whatever name stands
+/// over it to go faint. None while you do not aim, or with no power yet.
+fn arrow_end_on_screen(knock: &Knock, camera: &Camera, eye: &GlobalTransform) -> Option<Rect> {
+    let round = knock.playing()?;
+    let seat = usize::from(knock.seat?);
+    let aim = knock.aim;
+    if round.stage != KnockStage::Aim || aim.turn != round.turn || !knock.in_play() || aim.power == 0 || aim.way == Vec2::ZERO {
+        return None;
+    }
+    let (x, z) = round.start.get(seat).copied().flatten()?;
+    let stop = Vec2::new(x, z) + aim.way * rules::reach(aim.power);
+    let back = stop - aim.way * (rules::BODY + 1.4);
+    let out = rules::BODY + 0.25;
+    let mut seen: Option<Rect> = None;
+    for point in [stop + Vec2::X * out, stop - Vec2::X * out, stop + Vec2::Y * out, stop - Vec2::Y * out, back] {
+        let at = camera.world_to_viewport(eye, Vec3::new(point.x, 0.0, point.y)).ok()?;
+        seen = Some(seen.map_or(Rect::from_center_size(at, Vec2::ZERO), |seen| seen.union_point(at)));
+    }
+    seen
 }
 
 /// A tick, drawn white for a tint: a short stroke down to the right and a
@@ -868,6 +1183,48 @@ fn tick() -> Image {
         Extent3d {
             width: SIZE,
             height: SIZE,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        data,
+        TextureFormat::Rgba8UnormSrgb,
+        RenderAssetUsages::default(),
+    )
+}
+
+/// The mark over your own head (mine): a short wide arrow pointing down at
+/// you, drawn white for a tint, with a dark rim of its own, so that in your
+/// colour it reads on white ice and dark sea alike.
+fn chevron() -> Image {
+    const WIDE: u32 = 96;
+    const HIGH: u32 = 72;
+    const RIM_SHARE: f32 = 0.2;
+    let corners = [Vec2::new(-0.86, 0.62), Vec2::new(0.86, 0.62), Vec2::new(0.0, -0.66)];
+    let pixel = 2.0 / WIDE as f32;
+    let dark = [24.0, 30.0, 38.0];
+    let mut data = Vec::with_capacity((WIDE * HIGH * 4) as usize);
+    for row in 0..HIGH {
+        for column in 0..WIDE {
+            let at = Vec2::new((column as f32 + 0.5) * pixel - 1.0, (HIGH as f32 * 0.5 - row as f32 - 0.5) * pixel);
+            // How far outside the triangle (less than nothing inside), by
+            // its three sides (its corners go round clockwise, so that each
+            // side's square to the left of along it is out).
+            let outside = (0..3)
+                .map(|k| {
+                    let (a, b) = (corners[k], corners[(k + 1) % 3]);
+                    (at - a).dot((b - a).perp().normalize())
+                })
+                .fold(f32::MIN, f32::max);
+            let cover = (0.5 - outside / pixel).clamp(0.0, 1.0);
+            let white = (0.5 - (outside + RIM_SHARE * 0.5) / pixel).clamp(0.0, 1.0);
+            let shade = |k: usize| (dark[k] + (255.0 - dark[k]) * white).round() as u8;
+            data.extend_from_slice(&[shade(0), shade(1), shade(2), (cover * 255.0).round() as u8]);
+        }
+    }
+    Image::new(
+        Extent3d {
+            width: WIDE,
+            height: HIGH,
             depth_or_array_layers: 1,
         },
         TextureDimension::D2,
@@ -951,8 +1308,10 @@ mod tests {
             (&words.last_turn, &[]),
             (&words.aim, &["{seconds}"]),
             (&words.ready, &["{seconds}"]),
+            (&words.set, &[]),
             (&words.sliding, &[]),
             (&words.breaks, &[]),
+            (&words.watch_aim, &["{seconds}"]),
             (&words.watching, &["{place}"]),
             (&words.went_in, &[]),
             (&words.go, &[]),
@@ -963,6 +1322,7 @@ mod tests {
             (&words.you_win, &[]),
             (&words.slid_in, &["{name}"]),
             (&words.knocked_in, &["{by}", "{name}"]),
+            (&words.knocked_each_other, &["{a}", "{b}"]),
             (&words.broke_under, &["{name}"]),
             (&words.left, &["{name}"]),
             (&words.won, &["{name}"]),
@@ -989,5 +1349,93 @@ mod tests {
         let covered = data.chunks(4).filter(|pixel| pixel[3] > 128).count();
         assert!(covered > 300 && covered < 96 * 96 / 2, "{covered}");
         assert_eq!(data[3], 0, "the top left corner is clear");
+    }
+
+    #[test]
+    fn your_mark_points_down_white_in_a_dark_rim() {
+        let image = chevron();
+        let (wide, high) = (image.width() as usize, image.height() as usize);
+        let data = image.data.as_ref().expect("pixels");
+        let at = |column: usize, row: usize| &data[(row * wide + column) * 4..(row * wide + column) * 4 + 4];
+        // White in the middle, toward its top; nothing in the bottom
+        // corners, beside the point.
+        assert!(at(wide / 2, high / 3)[0] > 240 && at(wide / 2, high / 3)[3] > 240);
+        assert_eq!(at(1, high - 2)[3], 0);
+        assert_eq!(at(wide - 2, high - 2)[3], 0);
+        // Its edge dark: somewhere along the middle going down, solid and
+        // dark before it is clear.
+        let edge = (high / 3..high).find(|&row| at(wide / 2, row)[3] < 128).expect("an end");
+        assert!(at(wide / 2, edge - 3)[0] < 120, "a dark rim at the point");
+    }
+
+    #[test]
+    fn two_who_knock_each_other_in_are_one_line_said_as_the_second_goes() {
+        // Two meeting head on, on a floe 3 m out: each bounces back off the
+        // other and over its own edge, one a little after the other.
+        let mut round = KnockRound {
+            turn: 9,
+            stage: KnockStage::Slide,
+            since: 100.0,
+            until: 106.0,
+            radius: 3.0,
+            next_radius: 2.25,
+            start: vec![Some((-1.0, 0.0)), Some((1.2, 0.0)), None, None],
+            launches: vec![(11.0, 0.0), (-9.0, 0.0), (0.0, 0.0), (0.0, 0.0)],
+            ready: vec![false; 4],
+            out: vec![None; 4],
+            places: vec![None; 4],
+        };
+        let mut played = super::super::Played::of(&round, round.since);
+        assert_eq!((played.ending.by[0], played.ending.by[1]), (Some(1), Some(0)), "{:?}", played.ending);
+        let (Some(a), Some(b)) = (played.ending.fell[0], played.ending.fell[1]) else {
+            panic!("both in: {:?}", played.ending);
+        };
+        let (first, second, when_first, when_second) = if a < b { (0, 1, a, b) } else { (1, 0, b, a) };
+        assert!(when_second > when_first + 0.02, "{a} {b}");
+        // The first over: nothing said yet, the other still on their way.
+        played.slide.step_to(when_first + 0.01);
+        round.out[first] = Some(9);
+        assert_eq!(what_is_said(&round, Some(&played), first), Said::NotYet);
+        // The second over: one line of both, said of either.
+        played.slide.step_to(when_second + 0.01);
+        round.out[second] = Some(9);
+        assert_eq!(what_is_said(&round, Some(&played), first), Said::EachOther(second));
+        assert_eq!(what_is_said(&round, Some(&played), second), Said::EachOther(first));
+        // As the ice breaks, whoever stood on what broke.
+        round.stage = KnockStage::Break;
+        round.start = vec![None, None, Some((2.5, 0.0)), None];
+        round.out[2] = Some(9);
+        assert_eq!(what_is_said(&round, None, 2), Said::BrokeUnder);
+        // And whoever is out with no slide of theirs here, left.
+        round.out[3] = Some(9);
+        assert_eq!(what_is_said(&round, None, 3), Said::Left);
+    }
+
+    #[test]
+    fn two_names_that_would_run_together_are_moved_apart() {
+        // Laid out as `over_heads` does: the higher up over the lower.
+        let mut placed = [
+            OverOne {
+                seat: 1,
+                rect: Rect::new(100.0, 210.0, 180.0, 240.0),
+                named: true,
+                ready: false,
+                mine: false,
+            },
+            OverOne {
+                seat: 2,
+                rect: Rect::new(150.0, 200.0, 230.0, 230.0),
+                named: true,
+                ready: false,
+                mine: false,
+            },
+        ];
+        placed.sort_by(|a, b| a.rect.min.y.total_cmp(&b.rect.min.y));
+        assert_eq!(placed[0].seat, 2);
+        assert!(!placed[0].rect.intersect(placed[1].rect).is_empty());
+        apart(&mut placed, 2.0);
+        assert!(placed[0].rect.intersect(placed[1].rect).is_empty());
+        assert!(placed[0].rect.max.y <= placed[1].rect.min.y - 2.0 + 1e-3);
+        assert_eq!(placed[1].rect, Rect::new(100.0, 210.0, 180.0, 240.0), "the lower one stays over its head");
     }
 }

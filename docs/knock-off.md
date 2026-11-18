@@ -6,8 +6,166 @@
 
 ## Contents
 
-1. Later on 2026-11-18, after a check of it: the last person to leave is paid for their place online too, where you came is the game's own word for it, a device that comes back is held ready if it was, and every slide begins on every device the moment it begins
-2. Since 2026-11-18 Knock Off is a game people play, online and offline: four on a disc of ice in the sea, everyone aiming at once in secret and sliding at once, the ice breaking a metre a turn
+1. Later still on 2026-11-18, after a play-test: the camera comes in as the ice breaks, a hit is felt, nothing stands over the play, the ice breaks into pieces, and whoever wins has a moment
+2. Later on 2026-11-18, after a check of it: the last person to leave is paid for their place online too, where you came is the game's own word for it, a device that comes back is held ready if it was, and every slide begins on every device the moment it begins
+3. Since 2026-11-18 Knock Off is a game people play, online and offline: four on a disc of ice in the sea, everyone aiming at once in secret and sliding at once, the ice breaking a metre a turn
+
+## Later still on 2026-11-18, after a play-test: the camera comes in as the ice breaks, a hit is felt, nothing stands over the play, the ice breaks into pieces, and whoever wins has a moment
+
+A play-tester played the game as the entry below left it, hidden, at a
+desktop's size and at a phone's (852 by 393 points, a 59-point camera's
+hole each side) by day and by night, and listed sixteen things a player
+would find wrong, most of them how it looks: the late fight too small to
+see, hits with no impact, headlines and panels over the play. All of them
+are mended here, or said below why not. **Every call here is mine** (the
+session that mended them; Hajun asked for the game, not for how it looks:
+"the details i didn't mention are yours to decide to make each game
+polished and fun"). The entries below are corrected where they said
+otherwise. Nothing sent changed: no new message, no field, so no
+protocol bump (22, not out yet).
+
+- **The camera comes in as the ice breaks** (`camera_target`,
+  `view_of`, `Eased`): it had stayed as far out as the whole island all
+  game, and by the eighth turn the last two were figures of five pixels
+  on a phone. Now, while the edge breaks off, it is brought in over 0.9 s
+  (`CAMERA_EASE`, inside the break's 1.2) to fit the ice that will be
+  left and 2 m of sea, never less than 3.5 m of ice (`FEWEST`), so that
+  the ice keeps its size on the screen and everyone on it grows: 18.7 m up
+  at the first turn, 8.0 m by the ninth, the two left there 2.3 times as
+  big. It is still while anyone aims or slides, from your own side and as
+  steep (55 degrees) as before, the stick's up as before. The island is
+  lifted between the plate (`CLEAR_TOP`, 16.5% of the screen) and a band
+  kept along the bottom (`CLEAR_BOTTOM`, 10%) for the headlines and the
+  panel, the camera looking at a point a little nearer than the middle (it
+  had looked at the middle, the island low, with room over it nothing
+  used): at the first turn the island is as big as it was. The camera's
+  ease and its shake go by the time that passes (`Time<Real>`), not the
+  engine's time of the frames, which it holds to a quarter of a second
+  each. **Declined**: less sea round the ice on wide phones; the fit is by
+  the screen's height on any landscape screen, and the 2 m keep whoever
+  goes over seen into the sea.
+- **A hit is felt** (`ice::burst`, `ice::shake_for`, `ice::trails`): a
+  white flash spreading on the ice, 0.7 to 2.4 m as hard as they met, and
+  a spray of motes in the dust's white and the two players' own colours,
+  6 to 20 of them (a few grey motes had read as dirt); the camera shakes
+  by a share of how far it is from the ice, a fifth of a per cent to a
+  little over one (a third of a metre from 30 m off, a dozen pixels on a
+  desktop's screen, for the hardest; the few centimetres before were not
+  a pixel on a phone), for 0.28 s, and is pushed in toward the ice a
+  little with it. Behind whoever slides, a streak in their colour, 0.4 s
+  long, narrowing and fading, so that who went where can be followed.
+  **Declined**: a pause as two meet. Every device plays the slide by the
+  town's clock, to the bit, as the server did; holding the drawing still
+  would put it behind and then jump.
+- **Nothing stands over the play.** The headlines (`screen::low`) are low
+  over the near sea, between the stick and the buttons: "Go!" over its
+  how-to, each turn's, "Last turn!", who won (centred, as the town's are,
+  they had stood on the far side's heads and names every turn). The panel
+  for whoever is out is one row along the bottom ("You're out! 3rd", its
+  line, now "Watch the rest, or go back. Your place is kept.", Leave and
+  Watch): across the top of the island, where Bridge Wars has it, it had
+  stood over the very ice it asks you to watch. The names over the end of
+  your arrow go faint while you aim (`NAME_FAINT`, a fifth), the name of
+  whoever you aim at had stood on your arrow's head and ring. Names that
+  would run into each other are moved apart, the higher one up (they had
+  run together, "MaruBbori"); and over your own head a small mark in your
+  colour (`chevron`), so that you find yourself after a slide (never your
+  name, Hajun, 2026-10-31). The tick and the mark are out of the layout
+  while not shown: hidden only, they had stood a name higher, under the
+  plate, which put it away.
+- **No panel once one or nobody is left**: out second as the ice took the
+  third, the panel had come up for a second and gone as who won was said.
+- **The buttons on the right look off when they are**: their pictures
+  faint too (35%: only the discs had changed, by ten in 255), and the
+  whole column (the arrows, the bar, its number, Ready) put away once you
+  are out and under the results.
+- **The ice breaks into pieces** (`piece_mesh`, `pieces_round`): the band
+  that breaks, in pieces of every size, 1.1 to 3.4 m round the rim, their
+  broken insides wandering, with a crack between each two; the crack runs
+  round the rim both ways from a point thrown each turn, in 0.42 s, and
+  each piece tips out and drops as it reaches it, shrinking away under the
+  sea (which is see-through). Boxes all alike, all at once, had read as
+  the teeth of a cog. A fifth of them splash, small and quick (0.4 s): a
+  ring of splashes had stood round the island into the next aim, the
+  brightest thing on the screen by night. The pieces go by the town's
+  clock, as the break does, and the splashes by the time that passes: in
+  a build of a few frames a second they had still been sinking as the
+  next aim began.
+- **The ice that will break is marked**: the band from the cracks to the
+  edge darker, as thin ice is (`colours.knock_off.thin_ice`), while
+  everyone aims, looks and slides; a line of cracks alone had not said at
+  a glance who stood on it.
+- **By night**: the moon on the ice that will stay (`sheen`, as strong as
+  the street lamps are on, `Daylight::lamps`), so that everyone on it
+  reads as a figure on lit ice and the band that will break stands out
+  dark; the splashes and the dust 55% dimmer all night; the second seat's
+  blue lighter, `#58a2ff` (it was `#3f8cff`, dark on dark ice).
+- **An aim that ends in the sea says so**: past the edge the shaft is in
+  dashes, and a cross stands where the ring would (`leaves_the_ice`), on
+  your own arrow and on everyone's at the reveal. A slide straight across
+  into the sea had been drawn as a safe one, and was taken.
+- **Whoever wins has a moment**: the camera comes in to them (5.5 m round,
+  `WINNER_VIEW`); they turn to the camera and hop with their arms up (the
+  intro's landing pose); a gold ring beats at their feet and every seat's
+  colours and gold are thrown over them. Their headline is up 2 s, gone as
+  the results come up (it had shown through the results' window).
+- **Out, the plate keeps the clock**: "Aiming · 7", "Set...", "Slide!",
+  "The ice breaks" (`watch_aim`); where you came is under your name top
+  left ("You're out · 3rd", `out_tag`). It had said "You're out · 4th" for
+  the rest of the game.
+- **The chat**: two who knock each other in are one line, "Gamja and Maru
+  knocked each other into the sea" (`knocked_each_other`, said as the
+  second goes; two lines blaming each other had read as a quarrel).
+- **The reveal says "Set..."** (`set`; it had said "Slide!" with nobody
+  moving).
+- **The computer's players mind going in more the fewer are left**
+  (`computer::STAKES`: going in costs 0.6 to 1.2 times more for each one
+  fewer on the ice than four, thrown each turn, as Hajun's rule for them
+  has it: "if some thing becomes a definite if-then, then its not a real
+  human, but a program"). A final decided by one of them sliding off on
+  its own, its target having moved, felt cheap, and a quarter of finals
+  were. Over a thousand games of them (seeds 1000 to 1999), with two left
+  a turn ends in the sea by one's own move 4.0% of the time (6.4% before),
+  222 finals so decided (277); 6.7 turns a game on average (6.0), the
+  median still 6; every kind wins 12 to 36%. The whole-games test prints
+  the count with two left (`two_left`).
+- **Not mended here, not this game's files** (said to the orchestrator):
+  the results' "1 turns survived" (the table writes one word for any
+  number, `table::score_word`); offline, the board's "Waiting for players
+  2/4" while only the computer comes; the selector's card says the fee
+  but not the prizes; and offline the computer's players are sometimes
+  "Bot", two at a table: the offline table counts the whole town's 32 as
+  names taken (`table.rs`, `lobby::ai_member(.., &others)`), and a side's
+  names run out. **Left as it is**: the ice's flat look and the facets of
+  its outline are Hajun's model's.
+- **Checked**: the game's tests, 388 (new: the camera comes in turn by
+  turn and to whoever won, who cheers; an arrow into the sea is dashed and
+  crossed, and where a slide leaves the ice; the pieces go all the way
+  round, of every size, each solid; a streak fades behind; a shake is
+  felt; two names are moved apart; your mark; two who knock each other in
+  are one line said as the second goes); the rules', 156 and 3 ignored;
+  the server's, 92 and 4 ignored. **In the desktop build, hidden**
+  (`RT_BACKGROUND=1`), by a throwaway taken out again, from the town's
+  gamepad to the town: at a desktop's size by day twice (out in the first
+  turn, the panel low, Watch, the camera in turn by turn to the ninth,
+  three names apart, the winner, the results with no headline through
+  them, 950 after: 4th), at a phone's size with a 59-point hole each side
+  by night (the sheen and the band, the burst and the streaks, out third,
+  Leave, the rest played at once, 960 after) and by day (watched to the
+  end, the ninth turn's two big on a phone, the dashes past the edge at a
+  reveal, the winner). **Against a server on this PC, two hidden copies**
+  (port 5482): each copy's own arrow only while aiming, all four at the
+  reveal, one of them crossed past the edge (and that one slid in alone),
+  the same slide on both, both people under the ice as it broke, no panel
+  (one left), the same winner's moment and results on both, 35 each, 985
+  after. Pictures: `RoundTown-wt/scratch-knockoff/shots/polish_*.png`; the
+  runs, `scratch-knockoff/polish/`.
+- **Not checked**: anything on a phone (Android or iPhone; nothing behind
+  `target_os` was touched); the frame rate on one (each streak's mesh is
+  built again each frame while anyone slides, and a break makes 20 to 40
+  meshes, gone within it); the shake, which a still picture does not show
+  (by its unit test and its numbers); two who knock each other in, in a
+  run (by a unit test); night at a desktop's size; the VM; a database.
 
 ## Later on 2026-11-18, after a check of it: the last person to leave is paid for their place online too, and eight smaller things
 
@@ -246,6 +404,9 @@ countdown, results, prizes) is `server/src/tables.rs` and `src/table.rs`
   moment you sit down to the end: waiting, aiming, sliding and watching once
   you are out (`HeldCamera`). Where two meet in a slide it shakes a few
   centimetres for a tenth of a second (1.5 to 6 cm, by how hard they met).
+  (Since the entry at the top it comes in as the ice breaks, the island
+  lifted between the plate and a band along the bottom, and shakes by a
+  share of how far off it is.)
 - **The buttons** (Hajun: "left side is joystick for direction, right side
   is a up down arrow for controlling intensity"): the stick on the left is
   the town's own, read for which way, camera-relative; let go, the arrow
@@ -280,12 +441,15 @@ countdown, results, prizes) is `server/src/tables.rs` and `src/table.rs`
     the ice that is left (its land's `Transform.scale`, x and z: whole again
     away from the game), while a ring of slabs in the ice's own material,
     where the edge was, lies a moment as the edge in pieces, then tips
-    outward and drops into the sea, some with a splash.
+    outward and drops into the sea, some with a splash. (Since the entry at
+    the top, pieces of every size, going in a run round the rim.)
   - **A splash** where anyone goes into the sea, the moment they reach the
     water (a ring spreading 2.3 m on it and a dozen drops thrown up), a
     smaller one where a slab does. Whoever goes over slides on off the
     edge, drops in, and is gone once under (`Dead`, drawn nowhere).
-  - **A puff of ice dust** where two meet hard enough to count as a hit.
+  - **A puff of ice dust** where two meet hard enough to count as a hit
+    (since the entry at the top, a burst, and a streak behind whoever
+    slides).
   - **Sliding, a body is posed for it**: knees half bent, arms out to the
     sides (the intro's landing pose, `Landing`), turned to face the way it
     slides (since the entry above; it kept the way it set off before);
@@ -299,8 +463,10 @@ countdown, results, prizes) is `server/src/tables.rs` and `src/table.rs`
 - **Over the world** (`screen.rs`):
   - **The plate top centre**, the table's board's look: "Turn 3" over
     "Aim! 7" (whole seconds), "Ready · 7" once you are, "Slide!", "The ice
-    breaks"; "Last turn" on the last; out, "You're out · 3rd". (Over the
-    countdown the table's board is there, "Starting in 3".)
+    breaks"; "Last turn" on the last; out, "You're out · 3rd" (since the
+    entry at the top, out, how it is going, "Aiming · 7", and where you
+    came under your name). (Over the countdown the table's board is there,
+    "Starting in 3".)
   - **Names over heads**, each in its seat's colour with a dark stroke,
     **as big wherever they are**, as Bridge Wars' are, and a green tick over
     whoever is ready; never your name over you (Hajun, 2026-10-31), but
@@ -310,8 +476,9 @@ countdown, results, prizes) is `server/src/tables.rs` and `src/table.rs`
     ice. `tags` leaves Knock Off's ice to these (one condition there).
     Under a window (the results, the panel), a name is put away, as the
     town's are.
-  - **Headlines**: "Go!" as the first turn begins, with "Aim with the
-    stick, set how hard, then Ready" over it; each turn after, "Turn 4",
+  - **Headlines** (low over the near sea since the entry at the top):
+    "Go!" as the first turn begins, with "Aim with the stick, set how
+    hard, then Ready" over it; each turn after, "Turn 4",
     and "Last turn!", to whoever is still on the ice; at the end, "Mochi
     wins!", "Mochi & Dubu win!" for a shared first, or "You win!".
   - **The chat**: a line for each who goes into the sea, as they do, names
@@ -319,8 +486,9 @@ countdown, results, prizes) is `server/src/tables.rs` and `src/table.rs`
     the sea" (whoever last hit them, which every device's own play of the
     slide says), "The ice broke under Mochi", "Mochi left the game", and
     "Mochi wins!" (or "Mochi & Dubu win!").
-  - **Out**: once your turn's slide is over, a panel as Bridge Wars'
-    "You're out!" is: "You're out! 3rd" (the place the server sends,
+  - **Out** (along the bottom of the screen since the entry at the top,
+    and none once one or nobody is left): once your turn's slide is over,
+    a panel as Bridge Wars' "You're out!" is: "You're out! 3rd" (the place the server sends,
     `KnockRound::places`, the results' own), "Stay and watch, or go back
     to the town. Your place is kept.", **Leave** (to the town, your place
     kept and paid: offline, mine, the rest of the game is played out at
@@ -402,4 +570,5 @@ countdown, results, prizes) is `server/src/tables.rs` and `src/table.rs`
   turns survived" (the table writes one word for any number); names over
   two who stand close overlap, as in Bridge Wars; "Go!" and its line stand
   over the far side's name for their three seconds; a break throws up a
-  ring of splashes, some may find it busy.
+  ring of splashes, some may find it busy. (All but the first mended in
+  the entry at the top.)

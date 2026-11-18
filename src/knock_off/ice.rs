@@ -6,24 +6,36 @@
 //!   would go on an empty island (`knock_off::reach`), a flat shaft and head
 //!   lying on the ice in your colour, with a ring where you would stop, and
 //!   a dark rim round both so that they read on white ice by day and by
-//!   night. Built again only when its length changes; turned and moved, not
-//!   built, as its way changes. Nobody else's is drawn until the reveal,
-//!   when everyone's is, each in its owner's colour, for as long as it is
-//!   shown.
+//!   night. Where the slide would end in the sea, the shaft goes on in
+//!   dashes past the edge and a cross stands where the ring would. Built
+//!   again only when its length, or where it leaves the ice, changes;
+//!   turned and moved, not built, as its way changes otherwise. Nobody
+//!   else's is drawn until the reveal, when everyone's is, each in its
+//!   owner's colour, for as long as it is shown.
 //! * **A ring at everyone's feet**, in their colour, so that who is who is
-//!   plain from over the ice, names or not.
-//! * **The cracks**: while everyone aims, a thin dark ring of cracks on the
-//!   ice where it will break at the end of the turn (`next_radius`), with
-//!   short cracks running out from it to the edge.
+//!   plain from over the ice, names or not; and **a streak behind whoever
+//!   slides**, in their colour, fading, so that who went where can be
+//!   followed.
+//! * **The ice that will break**: while everyone aims, a thin dark ring of
+//!   cracks on the ice where it will break at the end of the turn
+//!   (`next_radius`), with short cracks running out from it to the edge,
+//!   and the band from there to the edge darker, as thin ice is. By night
+//!   the ice that will stay has the moon on it, so that the bodies on it
+//!   stand out and the band does too.
 //! * **The ice breaking**: the island's model narrowed across the ground to
 //!   the ice that is left (its land's `Transform.scale`, x and z, put back as
-//!   the game ends), while a ring of slabs in the ice's own material, where
-//!   the edge was, tips outward and drops into the sea. From 3 m down the
-//!   island is a small floe.
-//! * **A splash** where anyone goes into the sea, and a smaller one where a
-//!   slab does: a ring spreading on the water and drops thrown up out of it.
-//! * **A puff of ice dust** where two meet in a slide, with a small shake of
-//!   the camera (`hold_the_camera`): a few centimetres, a tenth of a second.
+//!   the game ends), while the band breaks into pieces of the ice's own
+//!   material, of every size, the crack running round the rim from where it
+//!   began and each piece tipping outward into the sea as it reaches it. From
+//!   3 m down the island is a small floe.
+//! * **A splash** where anyone goes into the sea, and a small one where some
+//!   of the pieces do: a ring spreading on the water and drops thrown up out
+//!   of it, gone within the break.
+//! * **A burst of ice** where two meet in a slide, as big as they met hard:
+//!   a flash spreading on the ice and a spray of it, with a shake of the
+//!   camera (`hold_the_camera`).
+//! * **Whoever won**, alone on the ice at the end: a ring of gold at their
+//!   feet, beating, and a throw of every seat's colours and gold over them.
 //!
 //! Everything here hangs under one root, which alone carries the venue (so
 //! that it is drawn on the ice and nowhere else, `island::show_where_i_am`
@@ -31,26 +43,36 @@
 //! table (`InTable`). Unlit, drawn brighter than its colours as the punch's
 //! range is (`range::bright`), for the tonemapping greys a plain colour.
 
+use std::collections::VecDeque;
+use std::f32::consts::{PI, TAU};
+
 use bevy::asset::RenderAssetUsages;
 use bevy::light::{NotShadowCaster, NotShadowReceiver};
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
 use roundtown_net::knock_off::{self as rules, KnockStage};
 
-use super::{Knock, KnockSystems, bodies_by_seat, seat_colour};
+use super::{Knock, KnockSystems, bodies_by_seat, seat_colour, winner_on_the_ice};
+use crate::clock::TownClock;
 use crate::island::Land;
+use crate::sky::Daylight;
 use crate::table::{ComputerSeat, InTable, TableView};
 use crate::ui::{UiChanged, ui};
 use crate::{Dead, Player, Venue};
 
 /// How long the camera shakes where two meet, in seconds.
-pub(super) const SHAKE_SECS: f32 = 0.12;
+pub(super) const SHAKE_SECS: f32 = 0.28;
 
 /// How far over the ice what lies on it is drawn, in metres: clear of it
 /// by enough that it never flickers through it from the camera's 30 m off,
-/// and the rim a hair under the fill, so that the fill is drawn over it.
+/// and the rim a hair under the fill, so that the fill is drawn over it;
+/// the streaks behind those sliding under the arrows and rings; and the
+/// band of ice that will break and the moon's sheen under the cracks.
 const ON_THE_ICE: f32 = 0.03;
 const RIM_UNDER: f32 = 0.004;
+const TRAIL_UP: f32 = 0.02;
+const THIN_UP: f32 = 0.012;
+const SHEEN_UP: f32 = 0.008;
 /// The arrow, in metres: how far out from the middle of your feet it
 /// begins (just outside a body), how wide its shaft is either side of its
 /// middle, how wide its head is and how long; how wide its ring is, whose
@@ -62,56 +84,107 @@ const HEAD_HALF: f32 = 0.46;
 const HEAD_LONG: f32 = 0.7;
 const RING_WIDE: f32 = 0.14;
 const RIM: f32 = 0.07;
+/// Past the edge, in metres: how long each dash of the shaft is, and the
+/// gap between two; and how wide each bar of the cross where it would stop
+/// (mine, from a check of the game: a slide straight into the sea had been
+/// drawn as a safe one, and was taken).
+const DASH: f32 = 0.42;
+const DASH_GAP: f32 = 0.3;
+const CROSS_WIDE: f32 = 0.2;
 /// The ring at everyone's feet: how far out its inside and outside are, in
 /// metres.
 const FEET_RING: (f32, f32) = (0.44, 0.56);
+/// The streak behind whoever slides: how long it lasts behind them, in
+/// seconds; how wide it is at its newest, in metres; how strong, at its
+/// newest; and how fast they have to be going to leave one, in metres a
+/// second.
+const TRAIL_SECS: f32 = 0.4;
+const TRAIL_WIDE: f32 = 0.55;
+const TRAIL_ALPHA: f32 = 0.6;
+const TRAIL_FROM: f32 = 1.2;
 /// The cracks: how wide a line of them is, in metres; how far either way
 /// across its line the ring of them wanders; and how long a crack running
 /// out from it is, at the most.
 const CRACK_WIDE: f32 = 0.07;
 const CRACK_WANDER: f32 = 0.16;
 const CRACK_OUT: f32 = 0.9;
-/// The slabs the ice breaks into: how many at the most, how deep each is,
-/// how fast they drop, in metres a second each second, and how far they
-/// tip over as they go, in radians.
-const SLABS: usize = 44;
+/// The pieces the ice breaks into (mine; boxes all alike, all at once, had
+/// read as the teeth of a cog, a check of the game found): how long each is
+/// round the rim, in metres, thrown between these; the crack between two,
+/// in metres; how far either way its broken inside wanders; how deep each
+/// is; how fast they drop, in metres a second each second, and how far they
+/// tip over as they go, in radians; how long the crack takes to run round
+/// to the far side of the rim from where it began, in seconds, each piece
+/// going as it reaches it; and how many of them splash, as a share.
+const PIECE_LONG: (f32, f32) = (1.1, 3.4);
+const PIECE_GAP: f32 = 0.07;
+const PIECE_JAG: f32 = 0.14;
 const SLAB_DEEP: (f32, f32) = (0.45, 0.9);
 const SLAB_DROP: f32 = 12.0;
 const SLAB_TIP: f32 = 1.3;
-/// How long each slab lies where it broke off before it goes, in seconds,
-/// at the least and at the most: long enough to be seen as the edge, in
-/// pieces, before it tips away.
-const SLAB_WAIT: (f32, f32) = (0.12, 0.45);
-/// A splash: how long it lasts, in seconds; how far its ring spreads, in
-/// metres, for a body and for a slab; and how many drops it throws up.
-const SPLASH_SECS: f32 = 0.9;
-const SPLASH_SPREAD: (f32, f32) = (2.3, 0.75);
-const SPLASH_DROPS: (usize, usize) = (12, 5);
-/// A puff of ice dust: how long it lasts, in seconds, and how many motes.
-const PUFF_SECS: f32 = 0.5;
-const PUFF_MOTES: usize = 9;
-/// How much the dust's and the drops' gravity is, in metres a second each
+const SLAB_RUN: f32 = 0.42;
+const SLAB_SPLASHES: f32 = 0.22;
+/// A splash, for a body and for a piece of ice: how long it lasts, in
+/// seconds; how far its ring spreads, in metres; how many drops it throws
+/// up; and how strong its ring is at first. A piece's is small and quick,
+/// all of them gone before the next aim (a ring of them had stood round the
+/// island into it, brighter than anything by night).
+const SPLASH_SECS: (f32, f32) = (0.9, 0.4);
+const SPLASH_SPREAD: (f32, f32) = (2.3, 0.6);
+const SPLASH_DROPS: (usize, usize) = (16, 4);
+const SPLASH_ALPHA: (f32, f32) = (0.75, 0.4);
+/// The burst where two meet: how long it lasts, in seconds; how far its
+/// flash spreads, in metres, met softly and met as hard as two meet; how
+/// many motes of ice it throws, likewise; and how hard is hard, in metres a
 /// second.
+const BURST_SECS: f32 = 0.55;
+const BURST_SPREAD: (f32, f32) = (0.7, 2.4);
+const BURST_MOTES: (f32, f32) = (6.0, 20.0);
+const HARD: f32 = 20.0;
+/// How much of the dust's and the drops' gravity is, in metres a second
+/// each second.
 const GRAVITY: f32 = 14.0;
+/// How far under the water a piece of ice shrinks away to nothing, in
+/// metres from where it begins to: the sea is see-through, and a piece
+/// gone at once there would be seen to go.
+const SINKS: (f32, f32) = (0.3, 1.4);
+/// By night: how much dimmer the splashes and the dust are, all night, as a
+/// share (unlit, they had been the brightest things on the screen); and how
+/// strong the moon's sheen on the ice is.
+const NIGHT_DIM: f32 = 0.55;
+const SHEEN: f32 = 0.16;
+/// Whoever won: how far out the ring of gold at their feet reaches, inside
+/// and out, in metres; how far it beats either way, as a share, and how
+/// fast, in radians a second; and how many bits of colour are thrown over
+/// them, and for how long at the most, in seconds.
+const HALO: (f32, f32) = (0.62, 0.86);
+const HALO_BEAT: (f32, f32) = (0.14, 7.0);
+const CONFETTI: usize = 54;
+const CONFETTI_SECS: f32 = 2.8;
 
-/// Someone, or a slab of ice (`big` false), going into the sea at `at`.
+/// Someone, or a piece of ice (`big` false), going into the sea at `at`.
 #[derive(Message, Clone, Copy, Debug)]
 pub(super) struct Splashed {
     pub at: Vec3,
     pub big: bool,
 }
 
-/// Two meeting in a slide, at `at` on the ice, `speed` metres a second the
-/// faster for it.
+/// Two meeting in a slide, the players in `seats`, at `at` on the ice,
+/// `speed` metres a second the faster for it.
 #[derive(Message, Clone, Copy, Debug)]
 pub(super) struct Met {
     pub at: Vec3,
+    pub speed: f32,
+    pub seats: (usize, usize),
 }
 
-/// How far the camera shakes where two meet at `speed`, in metres: a few
-/// centimetres, more the harder they met.
+/// How far the camera shakes where two meet at `speed`, as a share of how
+/// far it is from the ice (as much on the screen however near it has come):
+/// from a fifth of a per cent for a nudge to a little over one for two who
+/// meet as hard as they can, a third of a metre from 30 m off, a dozen
+/// pixels on a desktop's screen.
 pub(super) fn shake_for(speed: f32) -> f32 {
-    (speed / 140.0).clamp(0.015, 0.06)
+    (speed * 0.0006).clamp(0.002, 0.011)
 }
 
 /// The root everything drawn on the ice hangs under, while you are at a
@@ -119,12 +192,13 @@ pub(super) fn shake_for(speed: f32) -> f32 {
 #[derive(Component)]
 struct IceRoot;
 
-/// The arrow of the player in a seat: how long it was built for (its
-/// meshes are its own), and its fill's and rim's meshes.
+/// The arrow of the player in a seat: what it was built for (how long, and
+/// how far along it leaves the ice, if it does: its meshes are its own),
+/// and its fill's and rim's meshes.
 #[derive(Component)]
 struct Arrow {
     seat: usize,
-    built: Option<f32>,
+    built: Option<(f32, Option<f32>)>,
     fill: Handle<Mesh>,
     rim: Handle<Mesh>,
 }
@@ -133,6 +207,13 @@ struct Arrow {
 #[derive(Component)]
 struct FeetRing(usize);
 
+/// The streak behind whoever is in a seat as they slide, and its mesh.
+#[derive(Component)]
+struct Trail {
+    seat: usize,
+    mesh: Handle<Mesh>,
+}
+
 /// The cracks, and where they were drawn for: the radius and the turn.
 #[derive(Component)]
 struct Cracks {
@@ -140,35 +221,61 @@ struct Cracks {
     mesh: Handle<Mesh>,
 }
 
-/// A slab of the ice's edge breaking off: where it began, which way is
-/// out, how long it waits before it goes, its age, how deep it is, and
-/// whether it has splashed.
+/// The band of ice that will break, and what it was built for: from where
+/// to the edge.
+#[derive(Component)]
+struct ThinIce {
+    built: Option<(f32, f32)>,
+    mesh: Handle<Mesh>,
+}
+
+/// The moon on the ice that will stay, by night, and how far it was built
+/// out.
+#[derive(Component)]
+struct Sheen {
+    built: Option<f32>,
+    mesh: Handle<Mesh>,
+}
+
+/// The ring of gold at the feet of whoever won.
+#[derive(Component)]
+struct Halo;
+
+/// A piece of the ice's edge breaking off: where it began, which way is
+/// out, when the ice began to break by the town's clock and how long after
+/// it goes (by the clock, as the break is, and not by the frames, which a
+/// slow one would have holding the pieces up into the next aim), and
+/// whether it has splashed (or never will).
 #[derive(Component)]
 struct Slab {
     from: Vec3,
     out: Vec2,
-    turn: Quat,
+    began: f64,
     wait: f32,
-    age: f32,
     splashed: bool,
 }
 
-/// A splash, how old, and its ring's material, which fades.
+/// A splash, or the burst where two meet: how old, how long it lasts, and
+/// its ring's material, which fades from how strong it was at first.
 #[derive(Component)]
 struct Splash {
     age: f32,
+    lasts: f32,
     ring: Handle<StandardMaterial>,
+    strong: f32,
 }
 
-/// A splash's ring spreading on the water, and how far it spreads.
+/// A splash's ring spreading on the water, or a burst's on the ice: how far
+/// it spreads, and over how long.
 #[derive(Component)]
 struct Ripple {
     spread: f32,
     age: f32,
+    lasts: f32,
 }
 
-/// One of a splash's drops, or of a puff's motes: how fast it goes, how big
-/// it began, how old it is and how long it lasts.
+/// One of a splash's drops, or of a burst's motes: how fast it goes, how
+/// big it began, how old it is and how long it lasts.
 #[derive(Component)]
 struct Drop {
     velocity: Vec3,
@@ -177,23 +284,32 @@ struct Drop {
     lasts: f32,
 }
 
-/// A puff of ice dust, and how old.
+/// A bit of colour thrown over whoever won: how fast it goes, how it
+/// spins (about its axis, radians a second), and how old it is.
 #[derive(Component)]
-struct Puff {
+struct Confetto {
+    velocity: Vec3,
+    spin: Vec3,
     age: f32,
 }
 
 /// What everything on the ice is made of: each seat's colour, the dark rim,
-/// the cracks, the dust, the water's white, and, until the ice's own is
-/// found on its model, a pale ice for the slabs (the file's `slab`); and
-/// the shapes shared by many: a ball, a box and a flat ring.
+/// the cracks, the band of ice that will break and the moon's sheen, the
+/// streaks' (coloured by each streak's own), the dust, the water's white,
+/// gold, and, until the ice's own is found on its model, a pale ice for
+/// the pieces it breaks into (the file's `slab`); and the shapes shared by
+/// many: a ball, a box and flat rings.
 #[derive(Resource)]
 struct IceLook {
     seats: [Handle<StandardMaterial>; 4],
     rim: Handle<StandardMaterial>,
     cracks: Handle<StandardMaterial>,
+    thin: Handle<StandardMaterial>,
+    sheen: Handle<StandardMaterial>,
+    trail: Handle<StandardMaterial>,
     dust: Handle<StandardMaterial>,
     white: Handle<StandardMaterial>,
+    gold: Handle<StandardMaterial>,
     ice: Handle<StandardMaterial>,
     found_ice: bool,
     ball: Handle<Mesh>,
@@ -201,17 +317,44 @@ struct IceLook {
     ring: Handle<Mesh>,
     feet_fill: Handle<Mesh>,
     feet_rim: Handle<Mesh>,
+    halo: Handle<Mesh>,
+    flash: Handle<Mesh>,
 }
 
 impl FromWorld for IceLook {
     fn from_world(world: &mut World) -> Self {
         let colours = ui().colours.knock_off;
+        let gold = ui().colours.gold;
         let mut materials = world.resource_mut::<Assets<StandardMaterial>>();
         let seats = [0, 1, 2, 3].map(|seat| materials.add(flat(seat_colour(seat))));
         let rim = materials.add(flat(colours.rim));
         let cracks = materials.add(flat(colours.cracks));
+        let thin = materials.add(StandardMaterial {
+            base_color: colours.thin_ice,
+            unlit: true,
+            alpha_mode: AlphaMode::Blend,
+            fog_enabled: false,
+            ..default()
+        });
+        let sheen = materials.add(StandardMaterial {
+            base_color: Color::NONE,
+            unlit: true,
+            alpha_mode: AlphaMode::Add,
+            fog_enabled: false,
+            ..default()
+        });
+        // Coloured by its mesh, a seat's colour fading along it.
+        let trail = materials.add(StandardMaterial {
+            base_color: Color::linear_rgb(GAIN, GAIN, GAIN),
+            unlit: true,
+            alpha_mode: AlphaMode::Blend,
+            cull_mode: None,
+            fog_enabled: false,
+            ..default()
+        });
         let dust = materials.add(flat(colours.dust));
         let white = materials.add(flat(colours.splash));
+        let gold = materials.add(flat(gold));
         let ice = materials.add(StandardMaterial {
             base_color: colours.slab,
             perceptual_roughness: 0.3,
@@ -223,12 +366,18 @@ impl FromWorld for IceLook {
         let ring = meshes.add(annulus(0.82, 1.0, 0.0));
         let feet_fill = meshes.add(annulus(FEET_RING.0, FEET_RING.1, 0.0));
         let feet_rim = meshes.add(rimmed_annulus(FEET_RING.0, FEET_RING.1));
+        let halo = meshes.add(annulus(HALO.0, HALO.1, 0.0));
+        let flash = meshes.add(annulus(0.5, 1.0, 0.0));
         Self {
             seats,
             rim,
             cracks,
+            thin,
+            sheen,
+            trail,
             dust,
             white,
+            gold,
             ice,
             found_ice: false,
             ball,
@@ -236,6 +385,8 @@ impl FromWorld for IceLook {
             ring,
             feet_fill,
             feet_rim,
+            halo,
+            flash,
         }
     }
 }
@@ -248,7 +399,7 @@ pub(super) fn plugin(app: &mut App) {
             Update,
             (
                 put_up.after(KnockSystems),
-                (find_the_ice, recolour, arrows, feet_rings, cracks, break_off, splash, puff)
+                (find_the_ice, recolour, arrows, feet_rings, trails, cracks, thin_ice, break_off, splash, burst, celebrate)
                     .chain()
                     .after(super::place)
                     .before(crate::follow_camera),
@@ -281,10 +432,23 @@ fn flat(colour: Color) -> StandardMaterial {
     }
 }
 
+/// How bright the splashes and the dust are by `daylight`: as their colours
+/// by day, [`NIGHT_DIM`] dimmer all night.
+fn by_night(daylight: &Daylight) -> f32 {
+    1.0 - NIGHT_DIM * daylight.lamps.clamp(0.0, 1.0)
+}
+
+/// `colour` as bright as [`flat`] has it, `dim` of that.
+fn dimmed(colour: Color, dim: f32) -> Color {
+    let linear = bright(colour).to_linear();
+    Color::linear_rgb(linear.red * dim, linear.green * dim, linear.blue * dim)
+}
+
 /// Puts up the root and everything that lives under it as you sit down at
 /// a table of Knock Off (the table took down everything of the one
-/// before): an arrow for each seat, a ring for each seat's feet, and the
-/// cracks, all hidden until wanted.
+/// before): an arrow, a ring for the feet and a streak for each seat, the
+/// cracks, the band of ice that will break, the moon's sheen and the ring
+/// of gold, all hidden until wanted.
 fn put_up(
     knock: Res<Knock>,
     roots: Query<(), With<IceRoot>>,
@@ -326,6 +490,17 @@ fn put_up(
                 (Mesh3d(look.feet_rim.clone()), MeshMaterial3d(look.rim.clone()), Transform::from_xyz(0.0, ON_THE_ICE - RIM_UNDER, 0.0), NotShadowCaster, NotShadowReceiver),
             ],
         ));
+        let streak = meshes.add(annulus(0.1, 0.2, 0.0));
+        commands.spawn((
+            ChildOf(root),
+            Trail { seat, mesh: streak.clone() },
+            Mesh3d(streak),
+            MeshMaterial3d(look.trail.clone()),
+            Transform::default(),
+            Visibility::Hidden,
+            NotShadowCaster,
+            NotShadowReceiver,
+        ));
     }
     let crack_mesh = meshes.add(annulus(1.0, 1.1, 0.0));
     commands.spawn((
@@ -341,10 +516,48 @@ fn put_up(
         NotShadowCaster,
         NotShadowReceiver,
     ));
+    let thin = meshes.add(annulus(1.0, 1.1, 0.0));
+    commands.spawn((
+        ChildOf(root),
+        ThinIce {
+            built: None,
+            mesh: thin.clone(),
+        },
+        Mesh3d(thin),
+        MeshMaterial3d(look.thin.clone()),
+        Transform::from_xyz(0.0, THIN_UP, 0.0),
+        Visibility::Hidden,
+        NotShadowCaster,
+        NotShadowReceiver,
+    ));
+    let sheen = meshes.add(annulus(0.0, 1.0, 0.0));
+    commands.spawn((
+        ChildOf(root),
+        Sheen {
+            built: None,
+            mesh: sheen.clone(),
+        },
+        Mesh3d(sheen),
+        MeshMaterial3d(look.sheen.clone()),
+        Transform::from_xyz(0.0, SHEEN_UP, 0.0),
+        Visibility::Hidden,
+        NotShadowCaster,
+        NotShadowReceiver,
+    ));
+    commands.spawn((
+        ChildOf(root),
+        Halo,
+        Mesh3d(look.halo.clone()),
+        MeshMaterial3d(look.gold.clone()),
+        Transform::default(),
+        Visibility::Hidden,
+        NotShadowCaster,
+        NotShadowReceiver,
+    ));
 }
 
-/// The ice's own material, off its model, for the slabs that break off it,
-/// once the model is there.
+/// The ice's own material, off its model, for the pieces that break off
+/// it, once the model is there.
 fn find_the_ice(
     mut look: ResMut<IceLook>,
     lands: Query<(Entity, &Venue), With<Land>>,
@@ -366,37 +579,60 @@ fn find_the_ice(
 }
 
 /// Everything takes the file's colours again as the file changes on
-/// desktop (`ui::reread`).
-fn recolour(changed: Res<UiChanged>, look: Res<IceLook>, mut materials: ResMut<Assets<StandardMaterial>>) {
-    if !changed.is_changed() || changed.is_added() {
+/// desktop (`ui::reread`); and as the day turns to night and back, the
+/// splashes and the dust dimmer by night, and the moon's sheen on the ice.
+fn recolour(changed: Res<UiChanged>, daylight: Res<Daylight>, look: Res<IceLook>, mut materials: ResMut<Assets<StandardMaterial>>) {
+    let reread = changed.is_changed() && !changed.is_added();
+    if !reread && !daylight.is_changed() {
         return;
     }
     let colours = ui().colours.knock_off;
+    let dim = by_night(&daylight);
     let mut paint = |handle: &Handle<StandardMaterial>, colour: Color| {
-        if let Some(mut material) = materials.get_mut(handle) {
-            material.base_color = bright(colour);
+        if let Some(mut material) = materials.get_mut(handle)
+            && material.base_color != colour
+        {
+            material.base_color = colour;
         }
     };
-    for seat in 0..4 {
-        paint(&look.seats[seat], seat_colour(seat));
+    if reread {
+        for seat in 0..4 {
+            paint(&look.seats[seat], bright(seat_colour(seat)));
+        }
+        paint(&look.rim, bright(colours.rim));
+        paint(&look.cracks, bright(colours.cracks));
+        paint(&look.thin, colours.thin_ice);
+        paint(&look.gold, bright(ui().colours.gold));
+        // The pieces' own ice, lit as the island is, until the island's is
+        // found (then theirs is the model's, which is not the file's to
+        // paint).
+        if !look.found_ice {
+            paint(&look.ice, colours.slab);
+        }
     }
-    paint(&look.rim, colours.rim);
-    paint(&look.cracks, colours.cracks);
-    paint(&look.dust, colours.dust);
-    paint(&look.white, colours.splash);
-    // The slabs' own ice, lit as the island is, until the island's is
-    // found (then theirs is the model's, which is not the file's to paint).
-    if !look.found_ice
-        && let Some(mut material) = materials.get_mut(&look.ice)
-    {
-        material.base_color = colours.slab;
+    paint(&look.dust, dimmed(colours.dust, dim));
+    paint(&look.white, dimmed(colours.splash, dim));
+    let moon = colours.sheen.to_linear();
+    let strength = SHEEN * daylight.lamps.clamp(0.0, 1.0);
+    paint(&look.sheen, Color::linear_rgb(moon.red * strength, moon.green * strength, moon.blue * strength));
+}
+
+/// Where a slide from `at` along `way` (of length one) leaves ice reaching
+/// `radius`, in metres along it, if it goes `reach` and stops past the
+/// edge: where its middle crosses it.
+fn leaves_the_ice(at: Vec2, way: Vec2, reach: f32, radius: f32) -> Option<f32> {
+    if (at + way * reach).length() <= radius {
+        return None;
     }
+    let along = at.dot(way);
+    let inside = at.length_squared() - radius * radius;
+    Some((-along + (along * along - inside).max(0.0).sqrt()).max(0.0))
 }
 
 /// Your arrow while you aim, and everyone's while they are shown: from the
 /// feet, as long as the slide would go on an empty island, the ring where
-/// it would stop; put away as everyone sets off. Each built again only as
-/// its length changes.
+/// it would stop, or past the edge, dashes and a cross; put away as
+/// everyone sets off. Each built again only as it changes.
 fn arrows(
     knock: Res<Knock>,
     mut arrows: Query<(&mut Arrow, &mut Transform, &mut Visibility)>,
@@ -413,27 +649,36 @@ fn arrows(
         let wanted = match (round, start) {
             (Some(round), Some(at)) if in_play => match round.stage {
                 KnockStage::Aim if knock.seat == Some(seat as u8) && knock.aim.turn == round.turn => {
-                    (knock.aim.power > 0 && knock.aim.way != Vec2::ZERO).then(|| (at, knock.aim.way, rules::reach(knock.aim.power)))
+                    (knock.aim.power > 0 && knock.aim.way != Vec2::ZERO).then(|| (at, knock.aim.way, rules::reach(knock.aim.power), round.radius))
                 }
                 KnockStage::Reveal if !sliding => {
                     let launch = round.launches.get(seat).map_or(Vec2::ZERO, |&(x, z)| Vec2::new(x, z));
                     let speed = launch.length();
-                    (speed > 1e-3).then(|| (at, launch / speed, speed * speed / (2.0 * rules::ICE)))
+                    (speed > 1e-3).then(|| (at, launch / speed, speed * speed / (2.0 * rules::ICE), round.radius))
                 }
                 _ => None,
             },
             _ => None,
         };
-        let Some((at, way, reach)) = wanted else {
+        let Some((at, way, reach, radius)) = wanted else {
             shown.set_if_neq(Visibility::Hidden);
             continue;
         };
-        if arrow.built.is_none_or(|built| (built - reach).abs() > 1e-3) {
-            let (fill, rim) = arrow_meshes(reach);
+        let sea = leaves_the_ice(at, way, reach, radius);
+        let same = arrow.built.is_some_and(|(built, left)| {
+            (built - reach).abs() <= 1e-3
+                && match (left, sea) {
+                    (None, None) => true,
+                    (Some(left), Some(sea)) => (left - sea).abs() <= 0.02,
+                    _ => false,
+                }
+        });
+        if !same {
+            let (fill, rim) = arrow_meshes(reach, sea);
             if meshes.insert(&arrow.fill, fill).is_err() || meshes.insert(&arrow.rim, rim).is_err() {
                 warn!("Knock Off: an arrow has lost its mesh");
             }
-            arrow.built = Some(reach);
+            arrow.built = Some((reach, sea));
         }
         place.set_if_neq(Transform::from_xyz(at.x, 0.0, at.y).with_rotation(crate::range::turned_to(way)));
         shown.set_if_neq(Visibility::Inherited);
@@ -471,6 +716,47 @@ fn feet_rings(
     }
 }
 
+/// The streak behind whoever slides, in their colour: where they were over
+/// the last [`TRAIL_SECS`], on the ice, narrowing and fading behind them;
+/// built afresh each frame only while there is one to draw. By the time
+/// that passes (`Time<Real>`), as every flourish here is, not the engine's
+/// time of the frames, which it holds to a quarter of a second each: a
+/// device that slows has them kept up with the clock the game goes by.
+fn trails(
+    time: Res<Time<Real>>,
+    knock: Res<Knock>,
+    mut trails: Query<(&Trail, &mut Visibility)>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut kept: Local<(Option<u16>, Vec<VecDeque<(f32, Vec2)>>)>,
+) {
+    let now = time.elapsed_secs();
+    let turn = knock.playing().map(|round| round.turn);
+    if kept.0 != turn || kept.1.len() != 4 {
+        *kept = (turn, vec![VecDeque::new(); 4]);
+    }
+    let played = knock.slide.as_ref().filter(|played| Some(played.turn) == turn);
+    for (seat, points) in kept.1.iter_mut().enumerate() {
+        let going = played.and_then(|played| played.slide.velocity(seat)).map_or(0.0, |velocity| velocity.length());
+        if let Some(at) = knock.drawn.get(seat).copied().flatten().filter(|at| at.y > -0.05 && going > TRAIL_FROM) {
+            points.push_back((now, at.xz()));
+        }
+        while points.front().is_some_and(|(when, _)| now - when > TRAIL_SECS) {
+            points.pop_front();
+        }
+    }
+    for (trail, mut shown) in &mut trails {
+        let points = &kept.1[trail.seat];
+        if points.len() < 2 {
+            shown.set_if_neq(Visibility::Hidden);
+            continue;
+        }
+        if meshes.insert(&trail.mesh, trail_mesh(points, now, seat_colour(trail.seat))).is_err() {
+            warn!("Knock Off: a streak has lost its mesh");
+        }
+        shown.set_if_neq(Visibility::Inherited);
+    }
+}
+
 /// The cracks where the ice will break at the end of the turn, while
 /// everyone aims, looks and slides: built again for each turn.
 fn cracks(knock: Res<Knock>, mut cracks: Query<(&mut Cracks, &mut Visibility)>, mut meshes: ResMut<Assets<Mesh>>) {
@@ -494,18 +780,71 @@ fn cracks(knock: Res<Knock>, mut cracks: Query<(&mut Cracks, &mut Visibility)>, 
     }
 }
 
+/// The band of ice that will break, darker, while everyone aims, looks and
+/// slides (mine, from a check of the game: a line of cracks alone did not
+/// say at a glance who stood on it, and Bridge Wars marks its doomed planks
+/// too); and by night the moon on the ice that will stay. Each built again
+/// only as it changes.
+#[allow(clippy::type_complexity)]
+fn thin_ice(
+    knock: Res<Knock>,
+    daylight: Res<Daylight>,
+    mut bands: Query<(&mut ThinIce, &mut Visibility), Without<Sheen>>,
+    mut sheens: Query<(&mut Sheen, &mut Visibility), Without<ThinIce>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+) {
+    let round = knock.playing();
+    let doomed = round
+        .filter(|round| matches!(round.stage, KnockStage::Aim | KnockStage::Reveal | KnockStage::Slide))
+        .filter(|round| round.next_radius < round.radius - 0.01)
+        .map(|round| (round.next_radius.max(0.0), round.radius));
+    for (mut band, mut shown) in &mut bands {
+        let Some((inside, edge)) = doomed else {
+            shown.set_if_neq(Visibility::Hidden);
+            continue;
+        };
+        if band.built != Some((inside, edge)) {
+            if meshes.insert(&band.mesh, annulus(inside, edge, 0.0)).is_err() {
+                warn!("Knock Off: the thin ice has lost its mesh");
+            }
+            band.built = Some((inside, edge));
+        }
+        shown.set_if_neq(Visibility::Inherited);
+    }
+    // The ice that stays: all of it while the table waits, and from the
+    // first turn on what will be left once this turn's edge has gone.
+    let stays = round.map_or(rules::RADIUS, |round| round.next_radius);
+    let lit = knock.seat.is_some() && daylight.lamps > 0.02 && stays > 0.05;
+    for (mut sheen, mut shown) in &mut sheens {
+        if !lit {
+            shown.set_if_neq(Visibility::Hidden);
+            continue;
+        }
+        if sheen.built != Some(stays) {
+            if meshes.insert(&sheen.mesh, annulus(0.0, stays, 0.0)).is_err() {
+                warn!("Knock Off: the sheen has lost its mesh");
+            }
+            sheen.built = Some(stays);
+        }
+        shown.set_if_neq(Visibility::Inherited);
+    }
+}
+
 /// The ice breaking at the end of a turn: the island's model narrowed to
 /// the ice that is left (and whole again away from the game), and as it
-/// begins to break, a ring of slabs where the edge was, tipping out and
-/// dropping into the sea, a few of them with a splash.
+/// begins to break, the band where the edge was in pieces of every size,
+/// the crack running round the rim both ways from where it began, each
+/// piece tipping out and dropping into the sea as it reaches it, a few of
+/// them with a splash.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn break_off(
-    time: Res<Time>,
+    clock: Res<TownClock>,
     knock: Res<Knock>,
     look: Res<IceLook>,
     roots: Query<Entity, With<IceRoot>>,
     mut lands: Query<(&Venue, &mut Transform), (With<Land>, Without<Slab>)>,
     mut slabs: Query<(Entity, &mut Slab, &mut Transform), Without<Land>>,
+    mut meshes: ResMut<Assets<Mesh>>,
     mut splashes: MessageWriter<Splashed>,
     mut broke: Local<Option<u16>>,
     mut commands: Commands,
@@ -525,7 +864,7 @@ fn break_off(
             }
         }
     }
-    // As it begins to break: the slabs, once a turn.
+    // As it begins to break: the pieces, once a turn.
     if let Some(round) = round.filter(|round| round.stage == KnockStage::Break)
         && *broke != Some(round.turn)
         && let Ok(root) = roots.single()
@@ -533,32 +872,32 @@ fn break_off(
         *broke = Some(round.turn);
         let (outer, inner) = (round.radius, round.next_radius.max(0.0));
         let mut dice = fastrand::Rng::with_seed(u64::from(round.turn) * 7919);
-        let middle = (outer + inner) * 0.5;
-        let count = ((std::f32::consts::TAU * middle / 1.25).ceil() as usize).clamp(5, SLABS);
-        let wide = (outer - inner).max(0.3);
-        let spacing = std::f32::consts::TAU * middle / count as f32;
-        for k in 0..count {
-            let angle = (k as f32 + (dice.f32() - 0.5) * 0.3) * std::f32::consts::TAU / count as f32;
-            let out = Vec2::from_angle(angle);
-            let at = out * (middle + (dice.f32() - 0.5) * wide * 0.15);
+        let middle = ((outer + inner) * 0.5).max(0.3);
+        let began = dice.f32() * TAU;
+        for (from, to) in pieces_round(middle, &mut dice) {
+            let gap = (PIECE_GAP * 0.5 / outer.max(0.3)).min((to - from) * 0.2);
+            let (from, to) = (began + from + gap, began + to - gap);
             let deep = SLAB_DEEP.0 + (SLAB_DEEP.1 - SLAB_DEEP.0) * dice.f32();
-            let long = (spacing * (1.0 + dice.f32() * 0.15)).max(0.3);
-            let size = Vec3::new(long, deep, wide * (0.85 + dice.f32() * 0.2));
-            let from = Vec3::new(at.x, -deep * 0.5 - dice.f32() * 0.04, at.y);
-            let turn = crate::range::turned_to(Vec2::from_angle((dice.f32() - 0.5) * 0.25).rotate(out.perp()));
+            let (mesh, centre) = piece_mesh(inner, outer, from, to, deep, &mut dice);
+            let half_way = (from + to) * 0.5;
+            // How far round the rim from where the crack began: it gets
+            // there in its time, and the piece goes.
+            let round_from = (half_way - began).rem_euclid(TAU);
+            let round_from = round_from.min(TAU - round_from);
+            let wait = SLAB_RUN * round_from / PI + dice.f32() * 0.06;
+            let at = Vec3::new(centre.x, -0.004 - dice.f32() * 0.02, centre.y);
             commands.spawn((
                 ChildOf(root),
                 Slab {
-                    from,
-                    out,
-                    turn,
-                    wait: SLAB_WAIT.0 + (SLAB_WAIT.1 - SLAB_WAIT.0) * dice.f32(),
-                    age: 0.0,
-                    splashed: k % 3 != 0,
+                    from: at,
+                    out: Vec2::from_angle(half_way),
+                    began: round.since,
+                    wait,
+                    splashed: dice.f32() >= SLAB_SPLASHES,
                 },
-                Mesh3d(look.slab.clone()),
+                Mesh3d(meshes.add(mesh)),
                 MeshMaterial3d(look.ice.clone()),
-                Transform::from_translation(from).with_rotation(turn).with_scale(size),
+                Transform::from_translation(at),
                 NotShadowCaster,
             ));
         }
@@ -567,22 +906,25 @@ fn break_off(
     if round.is_none() {
         *broke = None;
     }
-    // Each slab tips out and drops, and is gone under the sea.
-    let dt = time.delta_secs();
+    // Each piece tips out and drops, and shrinks away under the sea.
+    let now = clock.now();
     for (slab, mut thing, mut place) in &mut slabs {
-        thing.age += dt;
-        let going = (thing.age - thing.wait).max(0.0);
-        if going > 2.0 || round.is_none() {
+        let going = ((now - thing.began) as f32 - thing.wait).max(0.0);
+        let drop = 0.5 * SLAB_DROP * going * going;
+        let under = -(thing.from.y - drop) + crate::WATER_Y;
+        let left = 1.0 - ((under - SINKS.0) / (SINKS.1 - SINKS.0)).clamp(0.0, 1.0);
+        if left <= 0.0 || going > 2.0 || round.is_none() {
             commands.entity(slab).despawn();
             continue;
         }
-        let drop = 0.5 * SLAB_DROP * going * going;
         let tip = (going * 1.8).min(1.0) * SLAB_TIP;
         let at = thing.from + Vec3::new(thing.out.x, 0.0, thing.out.y) * going * 1.2 - Vec3::Y * drop;
         let axis = Vec3::new(-thing.out.y, 0.0, thing.out.x);
-        let turned = Quat::from_axis_angle(axis, -tip) * thing.turn;
-        let scale = place.scale;
-        place.set_if_neq(Transform::from_translation(at).with_rotation(turned).with_scale(scale));
+        place.set_if_neq(
+            Transform::from_translation(at)
+                .with_rotation(Quat::from_axis_angle(axis, -tip))
+                .with_scale(Vec3::splat(left)),
+        );
         if !thing.splashed && at.y < crate::WATER_Y - 0.3 {
             thing.splashed = true;
             splashes.write(Splashed {
@@ -593,12 +935,32 @@ fn break_off(
     }
 }
 
+/// The pieces a ring breaks into, `middle` metres out: from where to where
+/// round it each one is, in radians from where the crack began, each its
+/// own length ([`PIECE_LONG`]), and the last never a sliver.
+fn pieces_round(middle: f32, dice: &mut fastrand::Rng) -> Vec<(f32, f32)> {
+    let mut pieces = Vec::new();
+    let mut from = 0.0;
+    while from < TAU - 1e-3 {
+        let long = PIECE_LONG.0 + (PIECE_LONG.1 - PIECE_LONG.0) * dice.f32();
+        let mut to = from + (long / middle).min(TAU * 0.4);
+        if TAU - to < 0.4 * PIECE_LONG.0 / middle {
+            to = TAU;
+        }
+        let to = to.min(TAU);
+        pieces.push((from, to));
+        from = to;
+    }
+    pieces
+}
+
 /// A splash where anything goes into the sea: a ring spreading out on the
 /// water, fading as it goes, and drops thrown up out of it.
 fn splash(
     mut splashed: MessageReader<Splashed>,
     roots: Query<Entity, With<IceRoot>>,
     look: Res<IceLook>,
+    daylight: Res<Daylight>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut commands: Commands,
 ) {
@@ -606,10 +968,15 @@ fn splash(
         splashed.clear();
         return;
     };
+    let white = dimmed(ui().colours.knock_off.splash, by_night(&daylight));
     for one in splashed.read() {
-        let (spread, drops) = if one.big { (SPLASH_SPREAD.0, SPLASH_DROPS.0) } else { (SPLASH_SPREAD.1, SPLASH_DROPS.1) };
+        let (spread, drops, lasts, strong) = if one.big {
+            (SPLASH_SPREAD.0, SPLASH_DROPS.0, SPLASH_SECS.0, SPLASH_ALPHA.0)
+        } else {
+            (SPLASH_SPREAD.1, SPLASH_DROPS.1, SPLASH_SECS.1, SPLASH_ALPHA.1)
+        };
         let ring = materials.add(StandardMaterial {
-            base_color: crate::range::bright(ui().colours.knock_off.splash),
+            base_color: white.with_alpha(strong),
             unlit: true,
             alpha_mode: AlphaMode::Blend,
             fog_enabled: false,
@@ -620,7 +987,9 @@ fn splash(
                 ChildOf(root),
                 Splash {
                     age: 0.0,
+                    lasts,
                     ring: ring.clone(),
+                    strong,
                 },
                 Transform::from_translation(one.at + Vec3::Y * 0.05),
                 Visibility::default(),
@@ -628,7 +997,7 @@ fn splash(
             .id();
         commands.spawn((
             ChildOf(splash),
-            Ripple { spread, age: 0.0 },
+            Ripple { spread, age: 0.0, lasts },
             Mesh3d(look.ring.clone()),
             MeshMaterial3d(ring),
             Transform::from_scale(Vec3::splat(0.3)),
@@ -637,17 +1006,17 @@ fn splash(
         ));
         let mut dice = fastrand::Rng::with_seed((one.at.x.to_bits() as u64) << 32 | u64::from(one.at.z.to_bits()));
         for k in 0..drops {
-            let angle = (k as f32 + dice.f32()) * std::f32::consts::TAU / drops as f32;
-            let out = Vec2::from_angle(angle) * (1.0 + dice.f32() * 2.0) * spread * 0.5;
-            let up = (3.0 + dice.f32() * 3.0) * if one.big { 1.0 } else { 0.6 };
-            let size = (0.06 + dice.f32() * 0.07) * if one.big { 1.0 } else { 0.7 };
+            let angle = (k as f32 + dice.f32()) * TAU / drops as f32;
+            let out = Vec2::from_angle(angle) * (0.6 + dice.f32() * 2.0) * spread * 0.5;
+            let up = if one.big { 4.0 + dice.f32() * 3.5 } else { 2.0 + dice.f32() * 1.6 };
+            let size = (0.06 + dice.f32() * 0.08) * if one.big { 1.0 } else { 0.7 };
             commands.spawn((
                 ChildOf(splash),
                 Drop {
                     velocity: Vec3::new(out.x, up, out.y),
                     size,
                     age: 0.0,
-                    lasts: SPLASH_SECS,
+                    lasts,
                 },
                 Mesh3d(look.ball.clone()),
                 MeshMaterial3d(look.white.clone()),
@@ -659,33 +1028,82 @@ fn splash(
     }
 }
 
-/// A puff of ice dust where two meet: a few motes thrown out low over the
-/// ice, shrinking away.
-fn puff(mut met: MessageReader<Met>, roots: Query<Entity, With<IceRoot>>, look: Res<IceLook>, mut commands: Commands) {
+/// A burst of ice where two meet, as big as they met hard (mine, from a
+/// check of the game: a few motes of dust had read as dirt, and a hit is
+/// what every aim is for): a flash spreading on the ice, and a spray of
+/// motes thrown out low over it, shrinking away.
+fn burst(
+    mut met: MessageReader<Met>,
+    roots: Query<Entity, With<IceRoot>>,
+    look: Res<IceLook>,
+    daylight: Res<Daylight>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut commands: Commands,
+) {
     let Ok(root) = roots.single() else {
         met.clear();
         return;
     };
+    let white = dimmed(ui().colours.knock_off.splash, by_night(&daylight));
     for one in met.read() {
-        let puff = commands
-            .spawn((ChildOf(root), Puff { age: 0.0 }, Transform::from_translation(one.at + Vec3::Y * 0.35), Visibility::default()))
+        let hard = (one.speed / HARD).clamp(0.0, 1.0);
+        let flash = materials.add(StandardMaterial {
+            base_color: white.with_alpha(0.9),
+            unlit: true,
+            alpha_mode: AlphaMode::Blend,
+            fog_enabled: false,
+            ..default()
+        });
+        let burst = commands
+            .spawn((
+                ChildOf(root),
+                Splash {
+                    age: 0.0,
+                    lasts: BURST_SECS,
+                    ring: flash.clone(),
+                    strong: 0.95,
+                },
+                Transform::from_translation(one.at + Vec3::Y * (ON_THE_ICE + 0.01)),
+                Visibility::default(),
+            ))
             .id();
+        commands.spawn((
+            ChildOf(burst),
+            Ripple {
+                spread: BURST_SPREAD.0 + (BURST_SPREAD.1 - BURST_SPREAD.0) * hard,
+                age: 0.0,
+                lasts: BURST_SECS * 0.5,
+            },
+            Mesh3d(look.flash.clone()),
+            MeshMaterial3d(flash),
+            Transform::from_scale(Vec3::splat(0.3)),
+            NotShadowCaster,
+            NotShadowReceiver,
+        ));
+        // The spray: white, and the two who met's own colours, so that it
+        // is seen on white ice whose it was.
         let mut dice = fastrand::Rng::with_seed(u64::from(one.at.x.to_bits()) ^ u64::from(one.at.z.to_bits()).rotate_left(17));
-        for k in 0..PUFF_MOTES {
-            let angle = (k as f32 + dice.f32()) * std::f32::consts::TAU / PUFF_MOTES as f32;
-            let out = Vec2::from_angle(angle) * (1.6 + dice.f32() * 2.2);
-            let size = 0.1 + dice.f32() * 0.1;
+        let motes = (BURST_MOTES.0 + (BURST_MOTES.1 - BURST_MOTES.0) * hard).round() as usize;
+        for k in 0..motes {
+            let angle = (k as f32 + dice.f32()) * TAU / motes as f32;
+            let out = Vec2::from_angle(angle) * (1.8 + dice.f32() * 2.6) * (0.7 + 0.8 * hard);
+            let size = (0.1 + dice.f32() * 0.12) * (0.8 + 0.6 * hard);
+            let material = match k % 3 {
+                0 => look.dust.clone(),
+                1 => look.seats[one.seats.0 % 4].clone(),
+                _ => look.seats[one.seats.1 % 4].clone(),
+            };
             commands.spawn((
-                ChildOf(puff),
+                ChildOf(burst),
                 Drop {
-                    velocity: Vec3::new(out.x, 1.2 + dice.f32() * 2.0, out.y),
+                    velocity: Vec3::new(out.x, 1.4 + dice.f32() * 2.4 * (0.6 + hard), out.y),
                     size,
                     age: 0.0,
-                    lasts: PUFF_SECS,
+                    lasts: BURST_SECS,
                 },
+                Transform::from_xyz(0.0, 0.3, 0.0).with_scale(Vec3::splat(size)),
                 Mesh3d(look.ball.clone()),
-                MeshMaterial3d(look.dust.clone()),
-                Transform::from_scale(Vec3::splat(size)),
+                MeshMaterial3d(material),
                 NotShadowCaster,
                 NotShadowReceiver,
             ));
@@ -693,41 +1111,108 @@ fn puff(mut met: MessageReader<Met>, roots: Query<Entity, With<IceRoot>>, look: 
     }
 }
 
-/// The splashes' rings spread and fade, and every drop and mote flies, falls
-/// and shrinks away; each gone at its end.
+/// Whoever won, alone on the ice at the end: the ring of gold at their feet,
+/// beating; and once, as it is over, a throw of every seat's colours and
+/// gold over them, the bits spinning and drifting down.
+#[allow(clippy::type_complexity)]
+fn celebrate(
+    time: Res<Time<Real>>,
+    knock: Res<Knock>,
+    look: Res<IceLook>,
+    roots: Query<Entity, With<IceRoot>>,
+    mut halos: Query<(&mut Transform, &mut Visibility), (With<Halo>, Without<Confetto>)>,
+    mut bits: Query<(Entity, &mut Confetto, &mut Transform), Without<Halo>>,
+    mut thrown: Local<Option<u16>>,
+    mut commands: Commands,
+) {
+    let round = knock.playing();
+    let won = round.and_then(winner_on_the_ice);
+    for (mut place, mut shown) in &mut halos {
+        let Some((_, at)) = won else {
+            shown.set_if_neq(Visibility::Hidden);
+            continue;
+        };
+        let beat = 1.0 + HALO_BEAT.0 * (time.elapsed_secs() * HALO_BEAT.1).sin();
+        place.set_if_neq(Transform::from_xyz(at.x, ON_THE_ICE + 0.004, at.y).with_scale(Vec3::new(beat, 1.0, beat)));
+        shown.set_if_neq(Visibility::Inherited);
+    }
+    if let (Some((seat, at)), Some(round), Ok(root)) = (won, round, roots.single())
+        && *thrown != Some(round.turn)
+    {
+        *thrown = Some(round.turn);
+        let mut dice = fastrand::Rng::with_seed(u64::from(round.turn) * 31 + seat as u64);
+        for k in 0..CONFETTI {
+            let angle = dice.f32() * TAU;
+            let out = Vec2::from_angle(angle) * (0.8 + dice.f32() * 2.6);
+            let material = match k % 5 {
+                4 => look.gold.clone(),
+                colour => look.seats[(seat + colour) % 4].clone(),
+            };
+            let spin = Vec3::new(dice.f32() - 0.5, dice.f32() - 0.5, dice.f32() - 0.5).normalize_or(Vec3::Y) * (6.0 + dice.f32() * 10.0);
+            commands.spawn((
+                ChildOf(root),
+                Confetto {
+                    velocity: Vec3::new(out.x, 4.0 + dice.f32() * 4.0, out.y),
+                    spin,
+                    age: dice.f32() * 0.4,
+                },
+                Mesh3d(look.slab.clone()),
+                MeshMaterial3d(material),
+                Transform::from_xyz(at.x, 1.4, at.y).with_scale(Vec3::new(0.16, 0.02, 0.1)),
+                NotShadowCaster,
+                NotShadowReceiver,
+            ));
+        }
+    }
+    if won.is_none() {
+        *thrown = None;
+    }
+    let dt = time.delta_secs();
+    for (bit, mut thing, mut place) in &mut bits {
+        thing.age += dt;
+        if thing.age > CONFETTI_SECS || place.translation.y < crate::WATER_Y || round.is_none() {
+            commands.entity(bit).despawn();
+            continue;
+        }
+        // Light, as paper is: it slows in the air and drifts down.
+        thing.velocity.y -= 7.0 * dt;
+        let slowed = thing.velocity * (1.0 - 1.6 * dt).max(0.0);
+        thing.velocity = slowed;
+        place.translation += slowed * dt;
+        let turned = Quat::from_scaled_axis(thing.spin * dt);
+        place.rotation = turned * place.rotation;
+    }
+}
+
+/// The splashes' and bursts' rings spread and fade, and every drop and mote
+/// flies, falls and shrinks away; each gone at its end.
 #[allow(clippy::type_complexity)]
 fn drip(
-    time: Res<Time>,
+    time: Res<Time<Real>>,
+    daylight: Res<Daylight>,
     mut splashes: Query<(Entity, &mut Splash)>,
-    mut puffs: Query<(Entity, &mut Puff)>,
     mut ripples: Query<(&mut Ripple, &mut Transform), Without<Drop>>,
     mut drops: Query<(&mut Drop, &mut Transform), Without<Ripple>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut commands: Commands,
 ) {
     let dt = time.delta_secs();
-    let white = crate::range::bright(ui().colours.knock_off.splash);
+    let white = dimmed(ui().colours.knock_off.splash, by_night(&daylight));
     for (entity, mut splash) in &mut splashes {
         splash.age += dt;
-        let share = splash.age / SPLASH_SECS;
+        let share = splash.age / splash.lasts;
         if share >= 1.0 {
             commands.entity(entity).despawn();
             continue;
         }
         if let Some(mut ring) = materials.get_mut(&splash.ring) {
-            ring.base_color = white.with_alpha((1.0 - share) * 0.85);
+            ring.base_color = white.with_alpha((1.0 - share) * splash.strong);
         }
     }
     for (mut ripple, mut place) in &mut ripples {
         ripple.age += dt;
-        let share = (ripple.age / SPLASH_SECS).min(1.0);
+        let share = (ripple.age / ripple.lasts).min(1.0);
         place.set_if_neq(Transform::from_scale(Vec3::splat(0.3 + share.sqrt() * ripple.spread)));
-    }
-    for (entity, mut puff) in &mut puffs {
-        puff.age += dt;
-        if puff.age >= PUFF_SECS {
-            commands.entity(entity).despawn();
-        }
     }
     for (mut drop, mut place) in &mut drops {
         drop.age += dt;
@@ -762,35 +1247,75 @@ fn fall_off(knock: Res<Knock>, me: Query<&Transform, With<Player>>, mut splashes
 // ------------------------------------------------------------- the shapes
 
 /// The arrow's two sheets, lying on the ground along -Z from the middle of
-/// the feet: its fill (shaft, head and the ring where it stops, `reach`
-/// out) and the dark rim just outside all of it.
-fn arrow_meshes(reach: f32) -> (Mesh, Mesh) {
+/// the feet: its fill and the dark rim just outside all of it. On the ice
+/// (`sea` none): the shaft and head as one, and the ring where it stops,
+/// `reach` out. Leaving it `sea` metres out: the shaft whole to there and
+/// in dashes past it, the head, and a cross where the ring would be.
+fn arrow_meshes(reach: f32, sea: Option<f32>) -> (Mesh, Mesh) {
     let ring_out = rules::BODY;
     let ring_in = ring_out - RING_WIDE;
     let tip = (reach - ring_out).max(ARROW_FROM + 0.2);
     let base = (tip - HEAD_LONG).max(ARROW_FROM + 0.05);
     let head_long = tip - base;
     let head_half = HEAD_HALF.min(head_long * 0.9).max(SHAFT_HALF + 0.08);
-    let outline = [
-        Vec2::new(-SHAFT_HALF, -ARROW_FROM),
-        Vec2::new(-SHAFT_HALF, -base),
-        Vec2::new(-head_half, -base),
-        Vec2::new(0.0, -tip),
-        Vec2::new(head_half, -base),
-        Vec2::new(SHAFT_HALF, -base),
-        Vec2::new(SHAFT_HALF, -ARROW_FROM),
-    ];
-    let mut fill = Sheet::default();
-    // The shaft, and the head.
-    fill.quad(outline[0], outline[1], outline[5], outline[6]);
-    fill.triangle(outline[2], outline[3], outline[4]);
-    let mut rim = Sheet::default();
-    rim.band(&outline, RIM);
-    // The ring where it stops, with its rim inside and out.
     let stop = Vec2::new(0.0, -reach);
-    fill.ring(stop, ring_in, ring_out);
-    rim.ring(stop, ring_out, ring_out + RIM);
-    rim.ring(stop, (ring_in - RIM).max(0.0), ring_in);
+    let mut fill = Sheet::default();
+    let mut rim = Sheet::default();
+    match sea {
+        None => {
+            let outline = [
+                Vec2::new(-SHAFT_HALF, -ARROW_FROM),
+                Vec2::new(-SHAFT_HALF, -base),
+                Vec2::new(-head_half, -base),
+                Vec2::new(0.0, -tip),
+                Vec2::new(head_half, -base),
+                Vec2::new(SHAFT_HALF, -base),
+                Vec2::new(SHAFT_HALF, -ARROW_FROM),
+            ];
+            // The shaft, and the head.
+            fill.quad(outline[0], outline[1], outline[5], outline[6]);
+            fill.triangle(outline[2], outline[3], outline[4]);
+            rim.band(&outline, RIM);
+            // The ring where it stops, with its rim inside and out.
+            fill.ring(stop, ring_in, ring_out);
+            rim.ring(stop, ring_out, ring_out + RIM);
+            rim.ring(stop, (ring_in - RIM).max(0.0), ring_in);
+        }
+        Some(edge) => {
+            let shaft = |from: f32, to: f32| {
+                [
+                    Vec2::new(-SHAFT_HALF, -from),
+                    Vec2::new(-SHAFT_HALF, -to),
+                    Vec2::new(SHAFT_HALF, -to),
+                    Vec2::new(SHAFT_HALF, -from),
+                ]
+            };
+            let whole = edge.clamp(ARROW_FROM, base);
+            if whole > ARROW_FROM + 0.02 {
+                let piece = shaft(ARROW_FROM, whole);
+                fill.quad(piece[0], piece[1], piece[2], piece[3]);
+                rim.band(&piece, RIM);
+            }
+            let mut from = if whole > ARROW_FROM + 0.02 { whole + DASH_GAP } else { ARROW_FROM };
+            while from < base - 0.04 {
+                let to = (from + DASH).min(base);
+                let piece = shaft(from, to);
+                fill.quad(piece[0], piece[1], piece[2], piece[3]);
+                rim.band(&piece, RIM);
+                from = to + DASH_GAP;
+            }
+            let head = [Vec2::new(-head_half, -base), Vec2::new(0.0, -tip), Vec2::new(head_half, -base)];
+            fill.triangle(head[0], head[1], head[2]);
+            rim.band(&head, RIM);
+            for turn in [PI * 0.25, -PI * 0.25] {
+                let along = Vec2::from_angle(turn) * ring_out;
+                let across = along.perp().normalize_or(Vec2::X) * CROSS_WIDE * 0.5;
+                let bar = [stop - along - across, stop + along - across, stop + along + across, stop - along + across];
+                fill.quad(bar[0], bar[1], bar[2], bar[3]);
+                rim.band(&bar, RIM);
+            }
+        }
+    }
     (fill.mesh(), rim.mesh())
 }
 
@@ -810,6 +1335,81 @@ fn rimmed_annulus(inner: f32, outer: f32) -> Mesh {
     sheet.mesh()
 }
 
+/// The streak behind a body that slides: through `points` (when, and where
+/// across the ice), oldest first, as wide as [`TRAIL_WIDE`] and as strong
+/// as [`TRAIL_ALPHA`] at its newest, narrowing and fading to nothing
+/// [`TRAIL_SECS`] behind `now`, in `colour`. Coloured by its corners
+/// (`ATTRIBUTE_COLOR`), its material white.
+fn trail_mesh(points: &VecDeque<(f32, Vec2)>, now: f32, colour: Color) -> Mesh {
+    let linear = colour.to_linear();
+    let count = points.len();
+    let mut positions = Vec::with_capacity(count * 2);
+    let mut colours = Vec::with_capacity(count * 2);
+    for k in 0..count {
+        let (when, at) = points[k];
+        let before = points[k.saturating_sub(1)].1;
+        let after = points[(k + 1).min(count - 1)].1;
+        let across = (after - before).normalize_or(Vec2::X).perp();
+        let fresh = (1.0 - (now - when) / TRAIL_SECS).clamp(0.0, 1.0);
+        let half = TRAIL_WIDE * 0.5 * fresh.sqrt();
+        for side in [-1.0f32, 1.0] {
+            let corner = at + across * half * side;
+            positions.push([corner.x, TRAIL_UP, corner.y]);
+            colours.push([linear.red, linear.green, linear.blue, TRAIL_ALPHA * fresh * fresh]);
+        }
+    }
+    let mut indices = Vec::with_capacity(count.saturating_sub(1) * 6);
+    for k in 0..count.saturating_sub(1) as u32 {
+        let (a, b, c, d) = (2 * k, 2 * k + 1, 2 * k + 2, 2 * k + 3);
+        indices.extend([a, b, c, b, d, c]);
+    }
+    let corners = positions.len();
+    Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default())
+        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, vec![[0.0, 1.0, 0.0]; corners])
+        .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, vec![[0.0, 0.0]; corners])
+        .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, colours)
+        .with_inserted_indices(Indices::U32(indices))
+}
+
+/// A piece of the ice's edge broken off: the band from `inner` to `outer`
+/// out, from `from` to `to` round (radians), `deep` deep, its broken inside
+/// wandering a little either way of its line, thrown from `dice`; built
+/// round its own middle, which is returned (across the ground) for it to
+/// be put there and to tip about.
+fn piece_mesh(inner: f32, outer: f32, from: f32, to: f32, deep: f32, dice: &mut fastrand::Rng) -> (Mesh, Vec2) {
+    let steps = (((to - from) * outer / 0.6).ceil() as usize).clamp(2, 12);
+    let angles: Vec<f32> = (0..=steps).map(|k| from + (to - from) * k as f32 / steps as f32).collect();
+    let outside: Vec<Vec2> = angles.iter().map(|&angle| Vec2::from_angle(angle) * outer).collect();
+    let inside: Vec<Vec2> = angles
+        .iter()
+        .map(|&angle| {
+            let jag = if inner > 0.3 { (dice.f32() - 0.5) * 2.0 * PIECE_JAG } else { 0.0 };
+            Vec2::from_angle(angle) * (inner + jag).clamp(0.0, outer - 0.1)
+        })
+        .collect();
+    let middle = outside.iter().chain(&inside).copied().sum::<Vec2>() / (2 * (steps + 1)) as f32;
+    let at = |point: Vec2, y: f32| Vec3::new(point.x - middle.x, y, point.y - middle.y);
+    let flat = |way: Vec2| Vec3::new(way.x, 0.0, way.y);
+    let mut solid = Solid::default();
+    for k in 0..steps {
+        let (o0, o1, i0, i1) = (outside[k], outside[k + 1], inside[k], inside[k + 1]);
+        let out = Vec2::from_angle((angles[k] + angles[k + 1]) * 0.5);
+        // Its top and its bottom, the rim it had, and the crack it broke
+        // along.
+        solid.face([at(o0, 0.0), at(o1, 0.0), at(i1, 0.0), at(i0, 0.0)], Vec3::Y);
+        solid.face([at(o0, -deep), at(o1, -deep), at(i1, -deep), at(i0, -deep)], Vec3::NEG_Y);
+        solid.face([at(o0, 0.0), at(o1, 0.0), at(o1, -deep), at(o0, -deep)], flat(out));
+        solid.face([at(i0, 0.0), at(i1, 0.0), at(i1, -deep), at(i0, -deep)], flat(-out));
+    }
+    // Its two ends, where it broke from the pieces either side.
+    for (k, side) in [(0, -1.0), (steps, 1.0)] {
+        let along = Vec2::from_angle(angles[k]).perp() * side;
+        solid.face([at(inside[k], 0.0), at(outside[k], 0.0), at(outside[k], -deep), at(inside[k], -deep)], flat(along));
+    }
+    (solid.mesh(), middle)
+}
+
 /// The cracks round the ice where it will break, `radius` out on ice
 /// reaching `edge`: a ring of them that wanders a little either side of
 /// the line, and short ones running out from it toward the edge, thrown
@@ -819,10 +1419,10 @@ fn crack_mesh(radius: f32, edge: f32, seed: u64) -> Mesh {
     let mut dice = fastrand::Rng::with_seed(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ 0x6372_6163);
     let mut sheet = Sheet::default();
     if radius > 0.3 {
-        let steps = ((radius * std::f32::consts::TAU / 0.45).ceil() as usize).max(12);
+        let steps = ((radius * TAU / 0.45).ceil() as usize).max(12);
         let points: Vec<Vec2> = (0..steps)
             .map(|k| {
-                let angle = k as f32 / steps as f32 * std::f32::consts::TAU;
+                let angle = k as f32 / steps as f32 * TAU;
                 Vec2::from_angle(angle) * (radius + (dice.f32() - 0.5) * 2.0 * CRACK_WANDER)
             })
             .collect();
@@ -846,7 +1446,7 @@ fn crack_mesh(radius: f32, edge: f32, seed: u64) -> Mesh {
     } else {
         // Nothing will be left: cracks from the middle out.
         for k in 0..7 {
-            let angle = (k as f32 + dice.f32() * 0.6) * std::f32::consts::TAU / 7.0;
+            let angle = (k as f32 + dice.f32() * 0.6) * TAU / 7.0;
             let out = Vec2::from_angle(angle) * edge * 0.9;
             let middle = out * 0.5 + out.perp() * (dice.f32() - 0.5) * 0.3;
             sheet.line(Vec2::ZERO, middle, CRACK_WIDE);
@@ -891,8 +1491,8 @@ impl Sheet {
         let steps = 48;
         for k in 0..steps {
             let (a, b) = (
-                Vec2::from_angle(k as f32 / steps as f32 * std::f32::consts::TAU),
-                Vec2::from_angle((k + 1) as f32 / steps as f32 * std::f32::consts::TAU),
+                Vec2::from_angle(k as f32 / steps as f32 * TAU),
+                Vec2::from_angle((k + 1) as f32 / steps as f32 * TAU),
             );
             self.quad(middle + a * inner, middle + a * outer, middle + b * outer, middle + b * inner);
         }
@@ -936,6 +1536,44 @@ impl Sheet {
     }
 }
 
+/// A solid of flat faces, each its own corners facing its own way: the
+/// pieces the ice breaks into.
+#[derive(Default)]
+struct Solid {
+    positions: Vec<[f32; 3]>,
+    normals: Vec<[f32; 3]>,
+    indices: Vec<u32>,
+}
+
+impl Solid {
+    /// The flat four-sided face with `corners` in order round it, facing
+    /// `out`, whichever way round they go.
+    fn face(&mut self, corners: [Vec3; 4], out: Vec3) {
+        let first = self.positions.len() as u32;
+        let normal = out.normalize_or(Vec3::Y);
+        for corner in corners {
+            self.positions.push(corner.to_array());
+            self.normals.push(normal.to_array());
+        }
+        // Anticlockwise seen from the side it faces, which is its front.
+        let turning = (corners[1] - corners[0]).cross(corners[2] - corners[0]) + (corners[2] - corners[0]).cross(corners[3] - corners[0]);
+        if turning.dot(normal) >= 0.0 {
+            self.indices.extend([first, first + 1, first + 2, first, first + 2, first + 3]);
+        } else {
+            self.indices.extend([first, first + 2, first + 1, first, first + 3, first + 2]);
+        }
+    }
+
+    fn mesh(self) -> Mesh {
+        let count = self.positions.len();
+        Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default())
+            .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, self.positions)
+            .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, self.normals)
+            .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, vec![[0.0, 0.0]; count])
+            .with_inserted_indices(Indices::U32(self.indices))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -961,22 +1599,56 @@ mod tests {
     fn every_arrow_is_as_long_as_its_slide_faces_up_and_has_something_in_it() {
         for power in 1..=rules::MOST_POWER {
             let reach = rules::reach(power);
-            let (fill, rim) = arrow_meshes(reach);
-            for mesh in [&fill, &rim] {
-                let all = triangles(mesh);
-                assert!(!all.is_empty(), "never a mesh with nothing in it");
-                for [a, b, c] in all {
-                    // Facing up: the corners go round the other way than on
-                    // a page, in (x, z).
-                    assert!((b - a).perp_dot(c - a) <= 1e-6, "power {power}");
+            for sea in [None, Some(reach * 0.5), Some(0.2)] {
+                let (fill, rim) = arrow_meshes(reach, sea);
+                for mesh in [&fill, &rim] {
+                    let all = triangles(mesh);
+                    assert!(!all.is_empty(), "never a mesh with nothing in it");
+                    for [a, b, c] in all {
+                        // Facing up: the corners go round the other way than
+                        // on a page, in (x, z).
+                        assert!((b - a).perp_dot(c - a) <= 1e-6, "power {power}, {sea:?}");
+                    }
                 }
+                // The ring's far side, or the cross's, is the slide's end and a
+                // body's reach, or within it.
+                let furthest = triangles(&fill).iter().flatten().map(|at| -at.y).fold(0.0f32, f32::max);
+                assert!(furthest <= reach + rules::BODY + 0.02, "power {power}: {furthest}");
+                if sea.is_none() {
+                    assert!((furthest - (reach + rules::BODY)).abs() < 0.02, "power {power}: {furthest}");
+                } else {
+                    assert!(furthest > reach + rules::BODY * 0.6, "power {power}: the cross where it stops");
+                }
+                // The head's tip short of the ring.
+                assert!(triangles(&fill).iter().flatten().all(|at| at.y <= 0.0));
             }
-            // The ring's far side is the slide's end and a body's reach.
-            let furthest = triangles(&fill).iter().flatten().map(|at| -at.y).fold(0.0f32, f32::max);
-            assert!((furthest - (reach + rules::BODY)).abs() < 0.02, "power {power}: {furthest}");
-            // The head's tip short of the ring.
-            assert!(triangles(&fill).iter().flatten().all(|at| at.y <= 0.0));
         }
+        // Past the edge, the shaft is in dashes: gaps in it along the way.
+        let (dashed, _) = arrow_meshes(rules::reach(10), Some(3.0));
+        let (whole, _) = arrow_meshes(rules::reach(10), None);
+        // Whether the point `along` the middle of the arrow is in any of its
+        // triangles.
+        let covered = |mesh: &Mesh, along: f32| {
+            let at = Vec2::new(0.0, -along);
+            triangles(mesh).iter().any(|&[a, b, c]| {
+                let sides = [(b - a).perp_dot(at - a), (c - b).perp_dot(at - b), (a - c).perp_dot(at - c)];
+                sides.iter().all(|&side| side <= 1e-6) || sides.iter().all(|&side| side >= -1e-6)
+            })
+        };
+        let gaps = (0..60).map(|k| 3.2 + k as f32 * 0.25).filter(|&along| along < rules::reach(10) - 2.0 && !covered(&dashed, along)).count();
+        assert!(gaps > 3, "{gaps} gaps");
+        assert!((0..60).map(|k| 1.0 + k as f32 * 0.25).filter(|&along| along < rules::reach(10) - 2.0).all(|along| covered(&whole, along)));
+    }
+
+    #[test]
+    fn a_slide_leaves_the_ice_where_its_middle_crosses_the_edge() {
+        // From 7 m out, straight out: 5 m along.
+        let at = Vec2::new(7.0, 0.0);
+        assert_eq!(leaves_the_ice(at, Vec2::X, 4.0, 12.0), None);
+        assert!((leaves_the_ice(at, Vec2::X, 8.0, 12.0).unwrap() - 5.0).abs() < 1e-4);
+        // Straight across: 19 m along.
+        assert!((leaves_the_ice(at, -Vec2::X, 22.0, 12.0).unwrap() - 19.0).abs() < 1e-4);
+        assert_eq!(leaves_the_ice(at, -Vec2::X, 18.0, 12.0), None);
     }
 
     #[test]
@@ -993,9 +1665,69 @@ mod tests {
     }
 
     #[test]
-    fn a_shake_is_a_few_centimetres() {
-        assert!((0.01..=0.06).contains(&shake_for(0.3)));
-        assert!((0.01..=0.06).contains(&shake_for(30.0)));
-        assert!(shake_for(10.0) >= shake_for(2.0));
+    fn the_ice_breaks_into_pieces_of_every_size_that_go_all_the_way_round() {
+        for turn in 1..=rules::LAST_TURN {
+            let (inner, outer) = (rules::radius_after(turn), rules::radius_in(turn));
+            let middle = ((outer + inner) * 0.5).max(0.3);
+            let mut dice = fastrand::Rng::with_seed(u64::from(turn));
+            let pieces = pieces_round(middle, &mut dice);
+            assert!(pieces.len() >= 2, "turn {turn}");
+            // Round the whole rim, one after another, none a sliver.
+            assert_eq!(pieces[0].0, 0.0);
+            assert!((pieces.last().unwrap().1 - TAU).abs() < 1e-4, "turn {turn}");
+            for pair in pieces.windows(2) {
+                assert_eq!(pair[0].1, pair[1].0);
+            }
+            let lengths: Vec<f32> = pieces.iter().map(|(from, to)| (to - from) * middle).collect();
+            assert!(lengths.iter().all(|&long| long > 0.3 * PIECE_LONG.0), "turn {turn}: {lengths:?}");
+            if pieces.len() > 6 {
+                let (least, most) = lengths.iter().fold((f32::MAX, 0.0f32), |(least, most), &long| (least.min(long), most.max(long)));
+                assert!(most > 1.5 * least, "turn {turn}: all alike, {lengths:?}");
+            }
+            // And each piece is solid, never a mesh with nothing in it,
+            // facing out all round.
+            let (from, to) = pieces[0];
+            let (mesh, middle) = piece_mesh(inner, outer, from, to, 0.6, &mut dice);
+            let Some(bevy::mesh::VertexAttributeValues::Float32x3(points)) = mesh.attribute(Mesh::ATTRIBUTE_POSITION) else {
+                panic!("positions");
+            };
+            assert!(!points.is_empty());
+            let Some(bevy::mesh::VertexAttributeValues::Float32x3(normals)) = mesh.attribute(Mesh::ATTRIBUTE_NORMAL) else {
+                panic!("normals");
+            };
+            let Some(Indices::U32(indices)) = mesh.indices() else {
+                panic!("indices");
+            };
+            for three in indices.chunks(3) {
+                let [a, b, c] = [0, 1, 2].map(|k| Vec3::from_array(points[three[k] as usize]));
+                let facing = Vec3::from_array(normals[three[0] as usize]);
+                let turning = (b - a).cross(c - a);
+                assert!(turning.dot(facing) >= -1e-6, "turn {turn}: a face turned inward");
+            }
+            assert!(middle.length() > inner * 0.8 && middle.length() < outer + 0.01, "turn {turn}: {middle}");
+        }
+    }
+
+    #[test]
+    fn a_streak_narrows_and_fades_behind_whoever_slides() {
+        let points: VecDeque<(f32, Vec2)> = (0..10).map(|k| (k as f32 * 0.04, Vec2::new(k as f32 * 0.5, 0.0))).collect();
+        let mesh = trail_mesh(&points, 0.36, Color::WHITE);
+        let Some(bevy::mesh::VertexAttributeValues::Float32x4(colours)) = mesh.attribute(Mesh::ATTRIBUTE_COLOR) else {
+            panic!("colours");
+        };
+        assert_eq!(colours.len(), 20);
+        // The oldest faint, the newest strongest.
+        assert!(colours[0][3] < colours[19][3] && (colours[19][3] - TRAIL_ALPHA).abs() < 1e-4);
+        assert!(!triangles(&mesh).is_empty());
+    }
+
+    #[test]
+    fn a_shake_is_felt_and_no_more() {
+        assert!((0.0015..=0.011).contains(&shake_for(0.3)));
+        assert!((0.0015..=0.011).contains(&shake_for(30.0)));
+        assert!(shake_for(10.0) > shake_for(2.0));
+        // As hard as two meet, a little over a per cent of the way to the
+        // ice: a third of a metre from 30 m off.
+        assert!(shake_for(rules::speed(rules::MOST_POWER) * 2.0) * 30.0 > 0.25);
     }
 }

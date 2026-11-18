@@ -53,6 +53,16 @@ const SAFE: f32 = 4.0;
 const HEM: f32 = 0.6;
 const CROWD: f32 = 1.5;
 
+/// How much more going into the sea itself costs for each one fewer on the
+/// ice than four, as a share of [`LIFE`], thrown each turn between these
+/// (mine, 2026-11-18): with two left, going in is losing the game, and a
+/// check of the game found finals decided by one of the two sliding off on
+/// its own, its target having moved, which felt cheap (a quarter of all
+/// games' finals were, over a thousand of them). The place one more turn
+/// on the ice is worth grows the same way: 10 coins from fourth to third,
+/// 70 from second to first.
+const STAKES: (f32, f32) = (0.6, 1.2);
+
 /// What anyone is guessed to do before they have been seen to do anything,
 /// as so many times seen: standing still, going at whoever is nearest them,
 /// going for the middle, getting out of the way of whoever is nearest them
@@ -289,6 +299,9 @@ struct Temper {
     wary: f32,
     close: f32,
     reads: usize,
+    /// How much more going in costs for each one fewer on the ice than four
+    /// ([`STAKES`]).
+    stakes: f32,
 }
 
 impl Temper {
@@ -319,6 +332,7 @@ impl Temper {
             overdoes: about(kind.overdoes, 0.3),
             cushion: dice.around(1.0, 2.6),
             reads: (f32::from(kind.reads) + dice.bell()).round().clamp(1.0, 12.0) as usize,
+            stakes: dice.around(STAKES.0, STAKES.1),
         }
     }
 }
@@ -780,7 +794,9 @@ fn judge(me: usize, start: &[Option<Vec2>], ending: &Ending, next: f32, temper: 
         }
     }
     if gone(me) {
-        score -= LIFE * temper.minds;
+        // The fewer are left, the more it costs.
+        let left = start.iter().flatten().count();
+        score -= LIFE * temper.minds * (1.0 + temper.stakes * 4usize.saturating_sub(left) as f32);
     } else {
         score += SAFE * temper.keeps_in * safety(me) - CROWD * temper.wary * crowded;
         if standing == 0 {

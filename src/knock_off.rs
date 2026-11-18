@@ -34,8 +34,10 @@
 //!   the up and down arrows on the right for how hard, and Ready; sent to
 //!   the server as it changes (or put into the game here, offline), and
 //!   drawn on the ice from your feet (`ice`).
-//! * **The camera** is fixed over the island from your own spot's side,
-//!   from the moment you sit down to the end (mine: Hajun left it to me).
+//! * **The camera** looks down over the island from your own spot's side,
+//!   from the moment you sit down to the end (mine: Hajun left it to me),
+//!   still while anyone aims or slides, and coming in to the ice that is
+//!   left as it breaks, and to whoever won at the end.
 //!
 //! What is drawn on the ice (the arrows, the cracks, the ice breaking off,
 //! the splashes, the dust where two meet) is `ice`'s; the buttons, the plate
@@ -46,10 +48,12 @@
 mod ice;
 mod screen;
 
+use std::f32::consts::{PI, TAU};
+
 use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
 use bevy::prelude::*;
 use bevy_replicon::prelude::Remote;
-use roundtown_net::knock_off::{self as rules, Game, KnockRound, KnockStage, Loiter, Slide};
+use roundtown_net::knock_off::{self as rules, Ending, Game, KnockRound, KnockStage, Loiter, Slide};
 use roundtown_net::{Ask as NetAsk, Member, Minigame, Venue};
 
 use crate::clock::TownClock;
@@ -73,11 +77,45 @@ const CAMERA_PITCH: f32 = 55.0 * std::f32::consts::PI / 180.0;
 /// who went in where.
 const SEA_MARGIN: f32 = 2.0;
 /// What is kept clear of the island at each edge of the screen, as a share
-/// of the screen: the top for the plate and the names over the far side's
-/// heads, the bottom and the sides a little.
-const CLEAR_TOP: f32 = 0.11;
-const CLEAR_BOTTOM: f32 = 0.03;
+/// of the screen: the top for the plate (its turn and the line under it),
+/// the bottom for what is said across the screen and the panel for whoever
+/// is out (`screen`), over the near sea, and the sides a little. The island
+/// is lifted between them, the camera looking at a point a little nearer
+/// than the middle (it had looked at the middle itself, the island low on
+/// the screen with room to spare over it, and the headlines, which had
+/// nowhere else to go, stood on the far side's heads: a check of the game,
+/// 2026-11-18).
+const CLEAR_TOP: f32 = 0.165;
+const CLEAR_BOTTOM: f32 = 0.10;
 const CLEAR_SIDES: f32 = 0.03;
+/// The least the camera is fitted to as the ice breaks away, in metres from
+/// the middle, before the sea round it: in the last turns, floes of 2.25 m
+/// and less, room still to see whoever goes off them into the sea.
+const FEWEST: f32 = 3.5;
+/// How long the camera takes to come in to the ice that is left as it
+/// breaks, or to whoever won, in seconds (mine: within the break's own 1.2,
+/// so that it is still for every aim). With the ice it had stayed as far out
+/// as the whole island all game, and by the eighth turn the last two were
+/// figures of a few pixels on a phone (a check of the game, 2026-11-18).
+const CAMERA_EASE: f32 = 0.9;
+/// How far round whoever won the camera comes in to, at the end, in metres
+/// (3.4 was a close-up their head filled, the island's facets as big as
+/// they are).
+const WINNER_VIEW: f32 = 5.5;
+/// How many points round the circle the camera is fitted to, and how many
+/// times it is tried nearer or further (and the point it looks at moved),
+/// for where it fits.
+const FIT_POINTS: usize = 40;
+const FIT_TRIES: usize = 24;
+/// How far the camera is pushed in toward the ice where two meet hard, as
+/// a share of how far it shakes (mine): a kick, a moment.
+const KICK: f32 = 1.8;
+/// Whoever won, on the ice at the end: how high each hop goes, in metres,
+/// how long one takes, in seconds, and how soon after it is over they begin
+/// (mine: arms up, as the intro's landing pose has them).
+const HOP: f32 = 0.32;
+const HOP_SECS: f32 = 0.55;
+const HOP_FROM: f32 = 0.3;
 
 /// How a body is posed sliding (`Landing`, the intro's own pose): knees
 /// half bent, arms out to the sides (mine: as someone keeping their
@@ -156,7 +194,8 @@ struct Knock {
     place: Option<u8>,
     watching: bool,
     leaving: bool,
-    /// A shake of the camera, after two meet: how much longer, and how hard.
+    /// A shake of the camera, after two meet: how much longer, and how hard
+    /// (as a share of how far the camera is from the ice, `ice::shake_for`).
     shake: Option<(f32, f32)>,
 }
 
@@ -205,7 +244,9 @@ impl Knock {
 /// A slide as this device plays it: in which turn, when it began by the
 /// town's clock, what it began from as the round said it (where everyone
 /// stood, how each set off, how far the ice reached), the slide itself,
-/// and how many of its hits have been shown.
+/// how it will come out (played out at once as it begins: for the chat to
+/// say two who knock each other in in one line), and how many of its hits
+/// have been shown.
 struct Played {
     turn: u16,
     since: f64,
@@ -213,6 +254,7 @@ struct Played {
     launches: Vec<(f32, f32)>,
     radius: f32,
     slide: Slide,
+    ending: Ending,
     hits_shown: usize,
 }
 
@@ -229,6 +271,7 @@ impl Played {
             launches: round.launches.clone(),
             radius: round.radius,
             slide: Slide::new(&start, &launches, round.radius),
+            ending: Slide::play_out(&start, &launches, round.radius),
             hits_shown: 0,
         }
     }
@@ -337,48 +380,129 @@ fn facing(way: Vec2) -> Option<f32> {
     (way.length_squared() > 1e-8).then(|| (-way.x).atan2(-way.y))
 }
 
-/// The camera over the ice for whoever sits in `seat` (mine: Hajun, "not
-/// sure what camera is good for this one, you choose"): over the island
-/// from their own spot's side, looking down at its middle at
-/// [`CAMERA_PITCH`], as far out as keeps the whole island and
-/// [`SEA_MARGIN`] of sea round it on a screen `aspect` times as wide as it
-/// is high, clear of what stands at its edges; their spot toward the
-/// bottom of the screen, and the stick's up away from the camera, across
-/// the ice toward the middle. The same for the whole game: waiting,
-/// aiming, sliding and looking on once out.
+/// The camera over the whole island for whoever sits in `seat`, as it is
+/// while the table waits and as the game begins ([`view_of`]): for the
+/// tests ([`camera_target`] says it in play).
+#[cfg(test)]
 fn over_the_ice(seat: u8, aspect: f32) -> Transform {
+    view_of(seat, aspect, Vec2::ZERO, rules::RADIUS + SEA_MARGIN)
+}
+
+/// The camera for whoever sits in `seat` (mine: Hajun, "not sure what
+/// camera is good for this one, you choose"): from their own spot's side,
+/// looking down at [`CAMERA_PITCH`] along the line from them through the
+/// middle, as near as keeps everything within `reach` metres of `centre`
+/// on the ground (the ice and the sea round it, or whoever won) on a screen
+/// `aspect` times as wide as it is high, clear of what stands at its edges
+/// ([`CLEAR_TOP`] and the rest), and midway between the top and the bottom
+/// kept clear; their spot toward the bottom of the screen, and the stick's
+/// up away from the camera, across the ice toward the middle.
+fn view_of(seat: u8, aspect: f32, centre: Vec2, reach: f32) -> Transform {
     let side = rules::arrival(usize::from(seat)).0.xz().normalize_or(Vec2::Y);
     let half = (crate::CAMERA_FOV * 0.5).tan();
     let aspect = aspect.clamp(0.5, 4.0);
-    let view = |distance: f32| {
-        let (down, along) = (CAMERA_PITCH.sin(), CAMERA_PITCH.cos());
-        let eye = Vec3::new(side.x * distance * along, distance * down, side.y * distance * along);
-        Transform::from_translation(eye).looking_at(Vec3::ZERO, Vec3::Y)
+    let (down, along) = (CAMERA_PITCH.sin(), CAMERA_PITCH.cos());
+    // From `distance` off the point `toward` metres from `centre` toward
+    // you, looking at it.
+    let view = |distance: f32, toward: f32| {
+        let look = centre + side * toward;
+        let eye = Vec3::new(look.x + side.x * distance * along, distance * down, look.y + side.y * distance * along);
+        Transform::from_translation(eye).looking_at(Vec3::new(look.x, 0.0, look.y), Vec3::Y)
     };
-    let fits = |distance: f32| {
-        let eye = view(distance);
+    // Where the circle comes on the screen from `eye`: its lowest and its
+    // highest, and how far to either side, as shares of half the screen;
+    // none if any of it is behind the camera.
+    let lies = |eye: &Transform| {
         let into = eye.to_matrix().inverse();
-        (0..72).all(|k| {
-            let edge = Vec2::from_angle(k as f32 * std::f32::consts::TAU / 72.0) * (rules::RADIUS + SEA_MARGIN);
+        let (mut low, mut high, mut wide) = (f32::MAX, f32::MIN, 0.0f32);
+        for k in 0..FIT_POINTS {
+            let edge = centre + Vec2::from_angle(k as f32 * TAU / FIT_POINTS as f32) * reach;
             let seen = into.transform_point3(Vec3::new(edge.x, 0.0, edge.y));
             let deep = -seen.z;
             if deep <= 0.1 {
-                return false;
+                return None;
             }
-            let (across, up) = (seen.x / deep / (half * aspect), seen.y / deep / half);
-            (-1.0 + 2.0 * CLEAR_BOTTOM..=1.0 - 2.0 * CLEAR_TOP).contains(&up) && across.abs() <= 1.0 - 2.0 * CLEAR_SIDES
-        })
+            let up = seen.y / deep / half;
+            low = low.min(up);
+            high = high.max(up);
+            wide = wide.max((seen.x / deep / (half * aspect)).abs());
+        }
+        Some((low, high, wide))
     };
-    let (mut near, mut far) = (8.0f32, 120.0f32);
-    for _ in 0..32 {
-        let middle = (near + far) * 0.5;
-        if fits(middle) {
-            far = middle;
+    let (bottom, top, sides) = (-1.0 + 2.0 * CLEAR_BOTTOM, 1.0 - 2.0 * CLEAR_TOP, 1.0 - 2.0 * CLEAR_SIDES);
+    let middle = (bottom + top) * 0.5;
+    // From `distance`, the point looked at moved nearer you or further until
+    // the circle is midway between the top and the bottom kept clear (a
+    // point nearer you lifts it up the screen); and whether it fits.
+    let placed = |distance: f32| {
+        let (mut away, mut near) = (-reach, reach);
+        let mut eye = view(distance, 0.0);
+        let mut fits = false;
+        for _ in 0..FIT_TRIES {
+            let toward = (away + near) * 0.5;
+            eye = view(distance, toward);
+            match lies(&eye) {
+                Some((low, high, wide)) => {
+                    fits = high - low <= top - bottom && wide <= sides;
+                    if (low + high) * 0.5 > middle {
+                        near = toward;
+                    } else {
+                        away = toward;
+                    }
+                }
+                None => {
+                    fits = false;
+                    near = toward;
+                }
+            }
+        }
+        (eye, fits)
+    };
+    let (mut near, mut far) = (2.0f32, 160.0f32);
+    for _ in 0..FIT_TRIES {
+        let distance = (near + far) * 0.5;
+        if placed(distance).1 {
+            far = distance;
         } else {
-            near = middle;
+            near = distance;
         }
     }
-    view(far)
+    placed(far).0
+}
+
+/// Whoever won, if it is over and they are on the ice, and where they
+/// stand: the one left (by its place, first, and alone).
+pub(super) fn winner_on_the_ice(round: &KnockRound) -> Option<(usize, Vec2)> {
+    if round.stage != KnockStage::Over {
+        return None;
+    }
+    let mut first = (0..round.places.len()).filter(|&seat| round.places[seat] == Some(0));
+    let (seat, None) = (first.next()?, first.next()) else {
+        return None;
+    };
+    let (x, z) = round.start.get(seat).copied().flatten()?;
+    round.out.get(seat).is_some_and(Option::is_none).then_some((seat, Vec2::new(x, z)))
+}
+
+/// What the camera is fitted to now ([`view_of`]): the middle of the ice
+/// and how far round it, the sea's margin with it. The whole island while
+/// the table waits; while everyone aims, looks and slides, the ice there is
+/// this turn; as it breaks, what will be left (so that the camera comes in
+/// as the edge goes); and once it is over, whoever won, if they are on the
+/// ice. Never less than [`FEWEST`] of ice.
+fn camera_target(knock: &Knock) -> (Vec2, f32) {
+    let ice = |radius: f32| (Vec2::ZERO, radius.max(FEWEST) + SEA_MARGIN);
+    let Some(round) = knock.playing() else {
+        return ice(rules::RADIUS);
+    };
+    match round.stage {
+        KnockStage::Aim | KnockStage::Reveal | KnockStage::Slide => ice(round.radius),
+        KnockStage::Break => ice(round.next_radius),
+        KnockStage::Over => match winner_on_the_ice(round) {
+            Some((_, at)) => (at, WINNER_VIEW),
+            None => ice(round.radius),
+        },
+    }
 }
 
 /// The body in each seat at the table, as this device has them: yours, and
@@ -836,39 +960,95 @@ fn send_aim(time: Res<Time>, online: Res<Online>, mut knock: ResMut<Knock>, mut 
     }
 }
 
-/// The camera over the ice from your spot's side ([`over_the_ice`]), held
-/// there by the game from the moment you sit down to the end, and shaken a
-/// little where two meet in a slide (mine: a few centimetres, a tenth of a
-/// second).
+/// The camera being brought from one view to another ([`hold_the_camera`]):
+/// for whom and what shape of screen, what it is fitted to
+/// ([`camera_target`]), from where to where, and how far it has come, 0 to
+/// 1.
+#[derive(Default)]
+struct Eased {
+    seat: Option<u8>,
+    shape: u32,
+    target: Option<(Vec2, f32)>,
+    from: Transform,
+    to: Transform,
+    done: f32,
+}
+
+impl Eased {
+    /// Where it is now: eased in and out from one to the other. The two
+    /// look the same way (from the same side, as steeply), so that it comes
+    /// straight in.
+    fn now(&self) -> Transform {
+        let share = self.done.clamp(0.0, 1.0);
+        let share = share * share * (3.0 - 2.0 * share);
+        Transform {
+            translation: self.from.translation.lerp(self.to.translation, share),
+            rotation: self.from.rotation.slerp(self.to.rotation, share),
+            scale: Vec3::ONE,
+        }
+    }
+}
+
+/// The camera over the ice from your spot's side ([`view_of`]), held there
+/// by the game from the moment you sit down to the end: still while anyone
+/// aims or slides, brought in over [`CAMERA_EASE`] to what is left of the
+/// ice as it breaks, and to whoever won at the end ([`camera_target`]); and
+/// shaken where two meet in a slide, and pushed in a little where they meet
+/// hard (mine: a check of the game found the few centimetres it had shaken
+/// by, from nearly 30 m off, were not a pixel on a phone). By the time that
+/// passes (`Time<Real>`), not the engine's time of the frames, which it
+/// holds to a quarter of a second each, so that a device that slows still
+/// has the camera in before the next aim.
 fn hold_the_camera(
-    time: Res<Time>,
+    time: Res<Time<Real>>,
     at: Res<AtTable>,
     windows: Query<&Window>,
     mut knock: ResMut<Knock>,
     mut held: ResMut<HeldCamera>,
-    mut fitted: Local<Option<(u8, u32, Transform)>>,
+    mut eased: Local<Eased>,
 ) {
     let Some(sitting) = at.of(Minigame::KnockOff) else {
+        if eased.seat.is_some() {
+            *eased = Eased::default();
+        }
         return;
     };
     let aspect = windows.single().map_or(16.0 / 9.0, |window| window.width() / window.height().max(1.0));
-    // Fitted again only for another seat or another shape of screen.
-    let view = match *fitted {
-        Some((seat, shape, view)) if seat == sitting.seat && shape == aspect.to_bits() => view,
-        _ => {
-            let view = over_the_ice(sitting.seat, aspect);
-            *fitted = Some((sitting.seat, aspect.to_bits(), view));
-            view
-        }
-    };
-    let mut view = view;
-    if let Some((left, strength)) = &mut knock.shake {
+    let target = camera_target(&knock);
+    // Fitted again only for another seat, another shape of screen, or
+    // something else to fit: at once for the first two, eased for the last.
+    let fresh = eased.seat != Some(sitting.seat) || eased.shape != aspect.to_bits();
+    if fresh || eased.target != Some(target) {
+        let to = view_of(sitting.seat, aspect, target.0, target.1);
+        let from = if fresh { to } else { eased.now() };
+        *eased = Eased {
+            seat: Some(sitting.seat),
+            shape: aspect.to_bits(),
+            target: Some(target),
+            from,
+            to,
+            done: if fresh { 1.0 } else { 0.0 },
+        };
+    }
+    if eased.done < 1.0 {
+        eased.done = (eased.done + time.delta_secs() / CAMERA_EASE).min(1.0);
+    }
+    let mut view = eased.now();
+    if let Some((left, share)) = &mut knock.shake {
         *left -= time.delta_secs();
         if *left <= 0.0 {
             knock.shake = None;
         } else {
-            let wobble = (time.elapsed_secs() * 90.0).sin() * *strength * (*left / ice::SHAKE_SECS);
-            view.translation += view.right() * wobble + view.up() * wobble * 0.6;
+            // As a share of how far off the ice the camera is, so that it is
+            // as much on the screen wherever the camera has come in to.
+            let fade = *left / ice::SHAKE_SECS;
+            let off = view.translation.y / CAMERA_PITCH.sin();
+            let clock = time.elapsed_secs();
+            let wobble = *share * off * fade * fade;
+            let (right, up, ahead) = (view.right(), view.up(), view.forward());
+            view.translation += right * (clock * 73.0).sin() * wobble
+                + up * (clock * 57.0 + 1.1).sin() * wobble * 0.6
+                + ahead * *share * KICK * off * fade * fade * fade;
         }
     }
     held.set_if_neq(HeldCamera(Some(view)));
@@ -889,10 +1069,11 @@ fn slide_begins(round: &KnockRound, now: f64) -> Option<f64> {
 }
 
 /// Where the body in `seat` is drawn, and how: on the ice, facing `yaw`,
-/// posed for sliding or not; or nowhere, gone into the sea.
+/// posed for sliding or not, or cheering, having won; or nowhere, gone
+/// into the sea.
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Pose {
-    On { at: Vec3, yaw: f32, sliding: bool },
+    On { at: Vec3, yaw: f32, sliding: bool, cheer: bool },
     Gone,
 }
 
@@ -910,7 +1091,12 @@ fn pose(round: &KnockRound, played: Option<&Played>, seat: usize, clock: f64, fa
     let start = round.start.get(seat).copied().flatten().map(|(x, z)| Vec2::new(x, z));
     let out = round.out.get(seat).copied().flatten().is_some();
     let since = (clock - round.since).max(0.0) as f32;
-    let on = |at: Vec2, yaw: f32| Pose::On { at: Vec3::new(at.x, 0.0, at.y), yaw, sliding: false };
+    let on = |at: Vec2, yaw: f32| Pose::On {
+        at: Vec3::new(at.x, 0.0, at.y),
+        yaw,
+        sliding: false,
+        cheer: false,
+    };
     let played = played.filter(|played| played.turn == round.turn);
     let stage = match round.stage {
         KnockStage::Reveal if played.is_some() => KnockStage::Slide,
@@ -935,7 +1121,7 @@ fn pose(round: &KnockRound, played: Option<&Played>, seat: usize, clock: f64, fa
                 Some((at, going)) => {
                     let sliding = going.length() > SLIDING_FROM && at.y > -0.05;
                     let yaw = if sliding { facing(going).unwrap_or(face) } else { face };
-                    Pose::On { at, yaw, sliding }
+                    Pose::On { at, yaw, sliding, cheer: false }
                 }
                 None => match start {
                     Some(at) if !out => on(at, face),
@@ -950,7 +1136,12 @@ fn pose(round: &KnockRound, played: Option<&Played>, seat: usize, clock: f64, fa
                 if drop >= rules::SUNK - 1e-3 {
                     Pose::Gone
                 } else {
-                    Pose::On { at: Vec3::new(at.x, -drop, at.y), yaw: face, sliding: false }
+                    Pose::On {
+                        at: Vec3::new(at.x, -drop, at.y),
+                        yaw: face,
+                        sliding: false,
+                        cheer: false,
+                    }
                 }
             }
             // Settled where the server has the slide leave them.
@@ -960,12 +1151,23 @@ fn pose(round: &KnockRound, played: Option<&Played>, seat: usize, clock: f64, fa
                     Some(from) if from.distance(there) > 0.01 => from.lerp(there, (since / SETTLE).clamp(0.0, 1.0)),
                     _ => there,
                 };
-                Pose::On { at, yaw: face, sliding: false }
+                Pose::On {
+                    at,
+                    yaw: face,
+                    sliding: false,
+                    cheer: false,
+                }
             }
             None => Pose::Gone,
         },
+        // Whoever won, alone on the ice, cheers (`place` has them hop).
         KnockStage::Over => match start {
-            Some(at) if !out => on(at, face),
+            Some(at) if !out => Pose::On {
+                at: Vec3::new(at.x, 0.0, at.y),
+                yaw: face,
+                sliding: false,
+                cheer: winner_on_the_ice(round).is_some_and(|(won, _)| won == seat),
+            },
             _ => Pose::Gone,
         },
     }
@@ -1055,20 +1257,33 @@ fn place(
         }
         let pose = pose(&round, knock.slide.as_ref(), seat, now, knock.faces[seat], knock.settle_from[seat]);
         match pose {
-            Pose::On { at, yaw, sliding } => {
+            Pose::On { at, yaw, sliding, cheer } => {
                 // Sliding, swung round to the way it goes, not snapped, and
-                // facing so as it slows.
+                // facing so as it slows; having won, swung round to face the
+                // camera.
                 let yaw = if sliding {
                     let swung = turned(knock.faces[seat], yaw, SLIDING_TURN * time.delta_secs());
+                    knock.faces[seat] = swung;
+                    swung
+                } else if cheer {
+                    let camera = rules::arrival(usize::from(knock.seat.unwrap_or(0))).0.xz();
+                    let toward = facing(camera - at.xz()).unwrap_or(yaw);
+                    let swung = turned(knock.faces[seat], toward, SLIDING_TURN * 0.5 * time.delta_secs());
                     knock.faces[seat] = swung;
                     swung
                 } else {
                     yaw
                 };
-                let pose_wanted = sliding.then_some(Landing {
-                    squat: SLIDING_SQUAT,
-                    arms: SLIDING_ARMS,
-                });
+                let pose_wanted = if sliding {
+                    Some(Landing {
+                        squat: SLIDING_SQUAT,
+                        arms: SLIDING_ARMS,
+                    })
+                } else if cheer {
+                    Some(Landing { squat: 0.0, arms: 1.0 })
+                } else {
+                    None
+                };
                 if landing != pose_wanted.as_ref() {
                     match pose_wanted {
                         Some(wanted) => commands.entity(body).insert(wanted),
@@ -1076,7 +1291,10 @@ fn place(
                     };
                 }
                 let sink = pose_wanted.map_or(0.0, |pose| pose.sink(HIPS));
-                let wanted = Transform::from_translation(at - Vec3::Y * sink).with_rotation(Quat::from_rotation_y(yaw));
+                // Having won, hopping, arms up.
+                let won_for = (now - round.since) as f32 - HOP_FROM;
+                let hop = if cheer && won_for > 0.0 { HOP * (won_for * PI / HOP_SECS).sin().abs() } else { 0.0 };
+                let wanted = Transform::from_translation(at - Vec3::Y * sink + Vec3::Y * hop).with_rotation(Quat::from_rotation_y(yaw));
                 transform.set_if_neq(wanted);
                 if dead {
                     commands.entity(body).remove::<Dead>();
@@ -1110,7 +1328,11 @@ fn place(
         for hit in &hits[played.hits_shown.min(hits.len())..] {
             // (Coming back in the middle of one, only those just now.)
             if played.slide.time() - hit.time < 0.4 {
-                met.write(ice::Met { at: Vec3::new(hit.at.x, 0.0, hit.at.y) });
+                met.write(ice::Met {
+                    at: Vec3::new(hit.at.x, 0.0, hit.at.y),
+                    speed: hit.speed,
+                    seats: hit.seats,
+                });
                 shaken = Some(shaken.unwrap_or(0.0f32).max(hit.speed));
             }
         }
@@ -1148,13 +1370,12 @@ mod tests {
             for seat in 0..4u8 {
                 let view = over_the_ice(seat, aspect);
                 let side = rules::arrival(usize::from(seat)).0.xz().normalize();
-                // From your own side, looking down at the middle at 55
-                // degrees.
+                // From your own side, looking down at 55 degrees along the
+                // line from you through the middle.
                 assert!(view.translation.xz().normalize().dot(side) > 0.999, "{seat}: {view:?}");
                 let looking = view.forward();
                 assert!((looking.y.asin().abs() - CAMERA_PITCH).abs() < 1e-3, "{looking}");
-                let to_middle = (Vec3::ZERO - view.translation).normalize();
-                assert!(looking.dot(to_middle) > 0.9999);
+                assert!(looking.xz().normalize().dot(-side) > 0.9999);
                 // The stick's up, away from the camera, is toward the middle
                 // from your spot.
                 let ahead = crate::camera_ahead(&view).xz();
@@ -1169,8 +1390,55 @@ mod tests {
                 assert!(far.y / -far.z / half < 1.0 - 2.0 * CLEAR_TOP + 1e-3, "{aspect} {seat}");
                 // Not far off: the island fills the screen as it fits.
                 assert!(view.translation.length() < 45.0, "{}", view.translation.length());
+                // And the near edge over the band kept at the bottom for
+                // what is said across the screen.
+                let near = into.transform_point3((side * rules::RADIUS).extend(0.0).xzy());
+                assert!(near.y / -near.z / half > -1.0 + 2.0 * CLEAR_BOTTOM - 1e-3, "{aspect} {seat}");
             }
         }
+    }
+
+    #[test]
+    fn the_camera_comes_in_as_the_ice_breaks_and_to_whoever_won() {
+        let aspect = 19.5 / 9.0;
+        let off = |view: Transform| view.translation.y / CAMERA_PITCH.sin();
+        // The ice that is left, nearer each turn, to the least it fits.
+        let mut last = f32::MAX;
+        for turn in 1..=rules::LAST_TURN {
+            let reach = rules::radius_in(turn).max(FEWEST) + SEA_MARGIN;
+            let view = view_of(2, aspect, Vec2::ZERO, reach);
+            assert!(off(view) <= last + 1e-3, "turn {turn}");
+            last = off(view);
+        }
+        assert!(off(over_the_ice(2, aspect)) > 2.0 * last, "the last turns at least twice as near as the first");
+        // As the ice breaks, fitted to what will be left; at the end, to
+        // whoever won, alone on the ice.
+        let mut knock = Knock::sit(2, false);
+        let mut round = round(KnockStage::Aim);
+        round.turn = 4;
+        round.radius = rules::radius_in(4);
+        round.next_radius = rules::radius_after(4);
+        knock.round = Some(round.clone());
+        assert_eq!(camera_target(&knock), (Vec2::ZERO, round.radius + SEA_MARGIN));
+        round.stage = KnockStage::Break;
+        knock.round = Some(round.clone());
+        assert_eq!(camera_target(&knock), (Vec2::ZERO, round.next_radius + SEA_MARGIN));
+        round.stage = KnockStage::Over;
+        round.out = vec![Some(2), None, Some(3), Some(3)];
+        round.places = vec![Some(3), Some(0), Some(1), Some(1)];
+        round.start = vec![None, Some((1.0, -2.0)), None, None];
+        knock.round = Some(round.clone());
+        assert_eq!(camera_target(&knock), (Vec2::new(1.0, -2.0), WINNER_VIEW));
+        let Pose::On { cheer, .. } = pose(&round, None, 1, round.since + 1.0, 0.0, None) else {
+            panic!("on the ice");
+        };
+        assert!(cheer);
+        // With nobody left on the ice, nobody to come in to.
+        round.out[1] = Some(3);
+        round.start[1] = None;
+        round.places = vec![Some(3), Some(0), Some(0), Some(0)];
+        knock.round = Some(round);
+        assert_eq!(camera_target(&knock).0, Vec2::ZERO);
     }
 
     #[test]
@@ -1195,7 +1463,7 @@ mod tests {
     fn everyone_faces_the_middle_while_they_aim_and_the_way_they_go_once_shown() {
         let aiming = round(KnockStage::Aim);
         for seat in 0..4 {
-            let Pose::On { at, yaw, sliding } = pose(&aiming, None, seat, 101.0, 0.0, None) else {
+            let Pose::On { at, yaw, sliding, .. } = pose(&aiming, None, seat, 101.0, 0.0, None) else {
                 panic!("on the ice");
             };
             assert_eq!(at, rules::arrival(seat).0);

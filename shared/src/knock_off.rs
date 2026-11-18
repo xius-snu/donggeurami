@@ -1655,6 +1655,11 @@ mod tests {
         /// How many went in in each turn, from the first, all games told.
         by_turn: [u32; LAST_TURN as usize],
         thought: Duration,
+        /// Turns aimed in with only two on the ice (each of the two's), and
+        /// how many of those ended in the sea by one's own move alone: the
+        /// game handed to the other.
+        two_left: u32,
+        alone_with_two: u32,
     }
 
     fn tally(games: &[Told]) -> Tally {
@@ -1663,6 +1668,18 @@ mod tests {
         for game in games {
             tally.turns.push(game.turns);
             tally.thought += game.thought;
+            // How many were on the ice as each turn began.
+            let on_the_ice = |turn: u16| 4 - game.fell.iter().filter(|fell| fell.1 < turn).count();
+            for turn in 1..=game.turns {
+                if on_the_ice(turn) == 2 {
+                    tally.two_left += 2;
+                }
+            }
+            for &(_, turn, by, broke) in &game.fell {
+                if on_the_ice(turn) == 2 && by.is_none() && !broke {
+                    tally.alone_with_two += 1;
+                }
+            }
             if game.first.len() > 1 {
                 tally.shared_first += 1;
             }
@@ -1717,6 +1734,12 @@ mod tests {
             tally.thought.as_secs_f64() * 1000.0 / tally.aimed.iter().sum::<u32>().max(1) as f64,
         );
         println!("in the sea by turn, all games told: {:?}", tally.by_turn);
+        println!(
+            "with two left: {} turns aimed, {} ({:.1}%) in the sea by their own move alone",
+            tally.two_left,
+            tally.alone_with_two,
+            100.0 * tally.alone_with_two as f32 / tally.two_left.max(1) as f32
+        );
         println!("kind     | games | won  (rate) | shared | turns | slid in alone (of turns) | in at all | put in");
         for (of, persona) in PERSONAS.iter().enumerate() {
             println!(

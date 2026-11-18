@@ -571,8 +571,10 @@ pub(crate) struct BlendInColours {
 /// each seat's colour, on its arrow, the ring at its feet and its name; the
 /// dark rim round what lies on the ice; the power bar's steps filled and
 /// not; Ready pressed, and the tick over whoever is ready; the cracks where
-/// the ice will break; the puff of ice where two meet, and the splash; and
-/// the slabs the edge breaks into, until the island's own ice is there.
+/// the ice will break, the band of it that will (see-through), and the
+/// moon on the rest by night; the puff of ice where two meet, and the
+/// splash; and the slabs the edge breaks into, until the island's own ice
+/// is there.
 #[derive(Deserialize, Clone, Copy, PartialEq, Debug)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct KnockOffColours {
@@ -596,6 +598,10 @@ pub(crate) struct KnockOffColours {
     pub ready: Color,
     #[serde(deserialize_with = "colour")]
     pub cracks: Color,
+    #[serde(deserialize_with = "colour")]
+    pub thin_ice: Color,
+    #[serde(deserialize_with = "colour")]
+    pub sheen: Color,
     #[serde(deserialize_with = "colour")]
     pub dust: Color,
     #[serde(deserialize_with = "colour")]
@@ -1201,9 +1207,10 @@ pub(crate) struct BlendInWords {
 }
 
 /// Knock Off's own words (`knock_off`), as Blend In's are: what its score
-/// is called among the results; the plate top centre's; the headlines';
-/// the chat's, as each goes into the sea; who won, or who shared first, and
-/// what joins their names; and the panel's for whoever is out.
+/// is called among the results; the plate top centre's, and what is under
+/// your name once you are out; the headlines'; the chat's, as each goes
+/// into the sea; who won, or who shared first, and what joins their names;
+/// and the panel's for whoever is out.
 #[derive(Deserialize, PartialEq, Debug)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct KnockOffWords {
@@ -1212,8 +1219,10 @@ pub(crate) struct KnockOffWords {
     pub last_turn: String,
     pub aim: String,
     pub ready: String,
+    pub set: String,
     pub sliding: String,
     pub breaks: String,
+    pub watch_aim: String,
     pub watching: String,
     pub went_in: String,
     pub go: String,
@@ -1224,6 +1233,7 @@ pub(crate) struct KnockOffWords {
     pub you_win: String,
     pub slid_in: String,
     pub knocked_in: String,
+    pub knocked_each_other: String,
     pub broke_under: String,
     pub left: String,
     pub won: String,
