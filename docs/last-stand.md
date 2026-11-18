@@ -163,8 +163,11 @@ it, every one of Bridge Wars', is tagged exactly as before).
 ### Checked, and where
 
 - **Tests**, through the wrapper, on the tree as committed: the game's
-  (`--lib`), the rules' (`-p roundtown_net`) and the server's (`-p
-  roundtown_server`), counts in the commit's report; new here: the shop's
+  (`--lib`) 392 (384 before, eight new), the rules' (`-p roundtown_net`)
+  155 and 5 ignored, the server's (`-p roundtown_server`) 87 and 4
+  ignored, the rules and the server untouched; the desktop game builds
+  with the five warnings it had (`lib.rs` twice, `island.rs`, `lobby.rs`,
+  `signup.rs`), the server with none. New here: the shop's
   door (at once between waves, in a wave only after half a second
   unstirred, never walking through), the tally of blows and the spread,
   the line under the plate (where to buy what, "Next: A giant!", "Get
