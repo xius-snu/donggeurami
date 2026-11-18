@@ -1014,7 +1014,6 @@ fn host(
     mut finishes: MessageReader<Finish>,
     hosted: Option<ResMut<Hosted>>,
     mut seating: Seating,
-    lobby: Res<Lobby>,
     assets: Res<AssetServer>,
     mut tables: Query<(&mut Board, &mut Seats), Without<Remote>>,
 ) {
@@ -1040,14 +1039,16 @@ fn host(
         }
     }
     let skip = std::mem::take(&mut hosted.skip);
-    let others = lobby.seats.clone();
     let happened = hosted.host.step(
         time.delta_secs(),
         skip,
         &mut || BOT_GAP.0 + (BOT_GAP.1 - BOT_GAP.0) * fastrand::f32(),
         // The computer as each seat's number and one, as Bridge Wars' are
-        // offline: yours, the first seat's, is 1.
-        &mut |seat: usize, seats: &[Member]| lobby::ai_member(seat, seat as u64 + 1, seats, &others),
+        // offline: yours, the first seat's, is 1. A name not taken at the
+        // table, only: the town's thirty-two seats take up all of one
+        // side's names between them, and two of the computer's players at
+        // one table were both called "Bot" (since 2026-11-18).
+        &mut |seat: usize, seats: &[Member]| lobby::ai_member(seat, seat as u64 + 1, seats, &[]),
     );
     for happening in happened {
         match happening {
@@ -1468,7 +1469,59 @@ fn spawn_results(commands: &mut Commands, assets: &AssetServer, sitting: Sitting
             Pickable::IGNORE,
         ))
         .id();
-    let word = score_word(sitting.game);
+    // What the scores count, once, over their column, in the game's own
+    // words: so that no row reads "1 turns survived" (mine, 2026-11-18;
+    // until then each score had the word after it).
+    let heading = commands
+        .spawn((
+            ChildOf(list),
+            Node {
+                align_items: AlignItems::FlexEnd,
+                column_gap: Val::VMin(1.6),
+                padding: UiRect::horizontal(Val::VMin(1.6)),
+                ..default()
+            },
+            Pickable::IGNORE,
+        ))
+        .id();
+    commands.spawn((
+        ChildOf(heading),
+        Node {
+            width: Val::VMin(PLACE_WIDTH),
+            flex_shrink: 0.0,
+            ..default()
+        },
+        Pickable::IGNORE,
+    ));
+    commands.spawn((
+        ChildOf(heading),
+        Node {
+            flex_grow: 1.0,
+            min_width: Val::ZERO,
+            ..default()
+        },
+        Pickable::IGNORE,
+    ));
+    commands.spawn((
+        ChildOf(heading),
+        Node {
+            width: Val::VMin(SCORE_WIDTH),
+            flex_shrink: 0.0,
+            justify_content: JustifyContent::FlexEnd,
+            ..default()
+        },
+        Pickable::IGNORE,
+        children![window::words(score_word(sitting.game), window::STATUS, colours.status)],
+    ));
+    commands.spawn((
+        ChildOf(heading),
+        Node {
+            width: Val::VMin(PRIZE_WIDTH),
+            flex_shrink: 0.0,
+            ..default()
+        },
+        Pickable::IGNORE,
+    ));
     for row in rows(results, members, Some(sitting.seat)) {
         let line = commands
             .spawn((
@@ -1506,7 +1559,7 @@ fn spawn_results(commands: &mut Commands, assets: &AssetServer, sitting: Sitting
             Pickable::IGNORE,
             children![window::words(row.name.clone(), window::NAME, colours.name)],
         ));
-        // The score, and smaller after it, fainter, what it is.
+        // The score, under what it counts.
         commands.spawn((
             ChildOf(line),
             Node {
@@ -1514,14 +1567,10 @@ fn spawn_results(commands: &mut Commands, assets: &AssetServer, sitting: Sitting
                 flex_shrink: 0.0,
                 justify_content: JustifyContent::FlexEnd,
                 align_items: AlignItems::Baseline,
-                column_gap: Val::VMin(1.0),
                 ..default()
             },
             Pickable::IGNORE,
-            children![
-                window::words(hud::money(row.score), window::NAME, colours.name),
-                window::words(word.clone(), window::STATUS, colours.status),
-            ],
+            children![window::words(hud::money(row.score), window::NAME, colours.name)],
         ));
         let coins = commands
             .spawn((
