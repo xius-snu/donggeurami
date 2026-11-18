@@ -516,6 +516,16 @@ pub(crate) struct Zombie;
 #[derive(Component, Default)]
 pub(crate) struct NoBar;
 
+/// A body so many times as big as a person's, as another fight's game marks
+/// it (since 2026-11-18: Last Stand's brutes, a third bigger, and giants,
+/// twice): its tag stands that many times as high over its feet, over its
+/// head, and the bar in it is that many times as wide and half that much
+/// again as thick ([`place_tags`]; a giant's bar was a body's, across its
+/// head). No body of Bridge Wars' carries it, and every tag there is as it
+/// was.
+#[derive(Component, Clone, Copy, PartialEq, Debug)]
+pub(crate) struct Bigger(pub(crate) f32);
+
 /// What a body in a game of Bridge Wars has on it that is to be seen
 /// (since 2026-11-12, `gear`): the sword in its hand and the shield round
 /// it, by tier, 0 for none, and whether it has drunk the invisibility
@@ -4778,7 +4788,7 @@ fn spawn_panel(commands: &mut Commands) {
 /// start"): no team's colour, and no bar, which was a teammate's colour or
 /// an enemy's and said who was with you. As the teams come out
 /// ([`Fighting::teams_out`]) every tag is made again as it is in the
-/// fight.
+/// fight. Over a body marked [`Bigger`], higher and bigger.
 ///
 /// **In any fight** (since 2026-11-18): wherever fights are played
 /// (`island::fights`: Bridge Wars' map, Bridge Race's and Last Stand's),
@@ -4795,6 +4805,7 @@ fn place_tags(
         (Entity, &Transform, Option<&Health>, &Team, &Name, Has<Dead>, Has<crate::Squashed>, Has<NoBar>),
         Without<Player>,
     >,
+    bigger: Query<&Bigger>,
     wears: Query<&Wears>,
     mut tags: Query<(Entity, &TagOf, &mut Visibility, &mut UiTransform, &ComputedNode, &Children)>,
     parts: Query<&Children>,
@@ -4815,7 +4826,8 @@ fn place_tags(
         for (body, _, health, team, name, _, _, no_bar) in &bodies {
             if (health.is_some() || no_bar) && !tags.iter().any(|(_, of, ..)| of.0 == body) {
                 let side = fighting.teams_out.then_some((team.0, Some(*team) == my_team));
-                spawn_tag(&mut commands, body, name.as_str(), side, !no_bar);
+                let big = bigger.get(body).map_or(1.0, |bigger| bigger.0);
+                spawn_tag(&mut commands, body, name.as_str(), side, !no_bar, big);
             }
         }
     }
@@ -4840,7 +4852,11 @@ fn place_tags(
         let unseen = wears.get(of.0).is_ok_and(|wears| wears.unseen) && Some(*team) != my_team;
         // Over their head; or, lying flat where a bus ran them over,
         // over the end of them that is furthest up the screen (`squash`).
-        let over = if squashed { squash::far_end(body, turned) } else { body.translation + Vec3::Y * TAG_OVER };
+        let over = if squashed {
+            squash::far_end(body, turned)
+        } else {
+            body.translation + Vec3::Y * TAG_OVER * bigger.get(of.0).map_or(1.0, |bigger| bigger.0)
+        };
         let point = (in_a_fight && !dead && !unseen)
             .then(|| camera.world_to_viewport(&eye, over).ok())
             .flatten()
@@ -4891,8 +4907,9 @@ pub(crate) fn on_screen(window: &Window, point: Vec2) -> bool {
 /// colour if it is one of yours, or an enemy's, `side` being its team and
 /// whether it is yours. With no `side`, the teams not being out yet, the
 /// name alone, in the colour of words; and with no `bar`, the name alone
-/// too ([`NoBar`]).
-fn spawn_tag(commands: &mut Commands, body: Entity, name: &str, side: Option<(u8, bool)>, bar: bool) {
+/// too ([`NoBar`]). Over a body `big` times as big as a person's, its bar
+/// that many times as wide and half that much again as thick ([`Bigger`]).
+fn spawn_tag(commands: &mut Commands, body: Entity, name: &str, side: Option<(u8, bool)>, bar: bool, big: f32) {
     let colours = ui().colours;
     let arena = colours.arena;
     let ink = side.map_or(colours.text, |(team, _)| arena.team(team));
@@ -4923,8 +4940,8 @@ fn spawn_tag(commands: &mut Commands, body: Entity, name: &str, side: Option<(u8
             };
             tag.spawn((
                 Node {
-                    width: Val::VMin(BAR_WIDTH),
-                    height: Val::VMin(BAR_HEIGHT),
+                    width: Val::VMin(BAR_WIDTH * big),
+                    height: Val::VMin(BAR_HEIGHT * (1.0 + (big - 1.0) * 0.5)),
                     border: UiRect::all(Val::VMin(BAR_RIM)),
                     border_radius: BorderRadius::all(Val::VMin(0.4)),
                     ..default()

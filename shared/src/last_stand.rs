@@ -13,14 +13,86 @@
 //! module, and the server and the device both play by them, as by Bridge
 //! Wars' in [`crate::bridge_wars`]; how its table fills, starts and pays is
 //! [`crate::table`]'s.
+//!
+//! **The whole game is a plain [`Game`]**, with no world, no network and no
+//! map file: the server steps one online, a thin wrapper round it, and the
+//! device one offline, the same game either way. Each feeds it where the
+//! people stand ([`Game::sync`]) and what they do ([`Game::punch`],
+//! [`Game::buy`], [`Game::use_item`], [`Game::fell`]...), steps it
+//! ([`Game::step`]) and carries out what it says happened ([`Event`]);
+//! everything else is the game's own: the zombies, the anchor, the
+//! generators, everyone's health and purse.
+//!
+//! * **The map** ([`ground`], [`OBSTACLES`]): a stone disc 50 m across in a
+//!   ring of sand 75 m across, over the void, with the anchor's crystal on
+//!   its plinth in the middle, the two generators' pads either side of it,
+//!   and the item shop's red stand and the upgrade shop's blue one in front
+//!   of it and behind it. Lifted a quarter of a metre as the device loads it
+//!   ([`LIFT`]), as every height here is.
+//! * **The anchor** ([`ANCHOR_HEALTH`]): while it stands, whoever dies is
+//!   back beside it [`RESPAWN_SECS`] later; broken, the dead stay dead, and
+//!   **the game is over when the anchor is broken and nobody is standing**.
+//! * **Waves** ([`count`], [`Kind`]): the first [`FIRST_WAVE`] seconds after
+//!   "Go!", then [`BREAK`] between waves to shop; each bigger and harder,
+//!   climbing up over the rim from a few places round it, walkers first and
+//!   then runners, brutes, giants every fifth wave, spitters and leapers.
+//!   Each goes for the anchor or for someone, turns on whoever hits it, and
+//!   some come round the side.
+//! * **Generators** ([`Forges`]): silver on both pads from the start, then
+//!   gold, sapphire and amethyst as the team raises them, and faster, for
+//!   ever; more of everything for more people. And what a zombie drops when
+//!   it is killed ([`drop_of`]), better things as the waves go on, for
+//!   whoever walks into it.
+//! * **Two shops** ([`Ware`]): the item shop's swords, shields and things to
+//!   use are yours and kept when you die; the upgrade shop's are the whole
+//!   team's and have no end but two.
+//! * **The score** ([`kill_score`]): each kill, and every ten damage; the
+//!   team's is everyone's and [`WAVE_SCORE`] for each wave cleared. What the
+//!   table pays is the waves cleared ([`prizes`]).
+//!
+//! Every number here not quoted from Hajun is ours ("the details i didn't
+//! mention are yours to decide to make each game polished and fun"), tuned
+//! by whole games played by stand-in players in this module's tests
+//! (`cargo test -p roundtown_net stand_many -- --ignored --nocapture`).
 
 use std::f32::consts::{PI, TAU};
 
-use bevy::prelude::{App, Quat, Vec2, Vec3};
+use bevy::prelude::{App, Component, Quat, Vec2, Vec3};
+use bevy_replicon::prelude::AppRuleExt;
 use serde::{Deserialize, Serialize};
 
 use crate::bridge_wars::WAIT_RING;
 use crate::table;
+
+mod forges;
+mod game;
+mod map;
+mod shop;
+mod waves;
+mod zombies;
+
+#[cfg(test)]
+mod tests;
+
+pub use forges::{CAPS, Forges, INTERVALS, OVERCLOCK, SPREADS};
+pub use game::{
+    ANCHOR_HEALTH, BEAM_EVERY, BEAM_REACH, CREDIT_SECS, DYNAMITE_HIT, Event, FIREBALL_HIT, GRACE_SECS, Game, HEALTH,
+    HURT_TIME, Knock, LEAP_SECS, PUNCH_SLACK, READY_SECS, REGEN_AFTER, REGEN_PER_SEC, RESPAWN_SECS, SPEED_SECS,
+    UNSEEN_SECS, WAVE_SCORE,
+};
+pub use map::{
+    CRYSTAL_RADIUS, ITEM_SHOP, OBSTACLES, Obstacle, PAD_HALF, PAD_TOP, PADS, PLINTH_HALF, PLINTH_TOP, RIM, SAND_RADIUS,
+    SAND_TOP, SHOP_SLACK, STONE_RADIUS, STONE_TOP, UPGRADE_SHOP, WALK_EDGE, at_a_stand, disagreements, ground, keep_out,
+};
+pub use shop::{
+    BEAM_DAMAGE, FORTIFY, LUCKY_MOST, PROTECTION, PROTECTION_MOST, SHARPNESS, SHIELD_SHARE, SWORD_DAMAGE, Ware, blow,
+    buy, level, price, sharpened, sold_at, through,
+};
+pub use waves::{
+    BREAK, DAMAGE_GROWS, FIRST_WAVE, HEALTH_GROWS, Kind, MOST_STANDING, PACE_GROWS, PACE_MOST, count, drop_chance,
+    drop_of, first_in, giants, kill_score, mix, rising, strength, toughness, weights,
+};
+pub use zombies::{SPIT_RADIUS, Spittle};
 
 /// How far up the map is stood as the device loads it, in metres (the
 /// game's `island::lift`), as Bridge Race's is
@@ -72,27 +144,88 @@ pub const SHAPE: table::Shape = table::Shape {
 };
 
 /// Something asked in a game of Last Stand ([`Ask::LastStand`](crate::Ask::LastStand)).
+/// The rest of what a player does is asked as in Bridge Wars, and the
+/// game's wrapper hands it to the [`Game`]: a punch that landed on a zombie
+/// ([`Ask::Punch`](crate::Ask::Punch), the zombie's body's member),
+/// something used off a button ([`Ask::Use`](crate::Ask::Use)), a fall into
+/// the void ([`Ask::Respawn`](crate::Ask::Respawn)).
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
 pub enum Ask {
-    /// A placeholder until the game's own asks come.
-    Nothing,
+    /// Sell me this, at the stand that sells it ([`Game::buy`]): its price
+    /// comes out of what I hold, and [`Tell::Bought`] says it is mine; with
+    /// too little, or nowhere near that stand, nothing happens.
+    Buy(Ware),
+    /// I am ready for the next wave ([`Game::ready`]): once everyone
+    /// standing is, it comes in [`READY_SECS`] (mine: a break is for
+    /// shopping, and whoever has done shopping need not stand about).
+    Ready,
 }
 
 /// Something told one device in a game of Last Stand
 /// ([`Tell::LastStand`](crate::Tell::LastStand)).
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
 pub enum Tell {
-    /// A placeholder until the game's own tells come.
-    Nothing,
+    /// The shop has sold you this ([`Ask::Buy`]): its price is out of what
+    /// you hold, as the room's [`Purses`](crate::Purses) will show, and
+    /// what it was is in your kit ([`Kits`](crate::Kits)) or the team's
+    /// ([`StandUpgrades`]), each as it comes.
+    Bought(Ware),
+    /// Someone of the team, by seat, has bought this at the upgrade shop for
+    /// everyone, which the team has to `level` now: told to everyone, for a
+    /// line in the chat ("Mochi bought Sharpness Lvl 3").
+    Upgraded { by: u8, ware: Ware, level: u16 },
+    /// The anchor's beam has zapped the zombie standing here
+    /// ([`Event::Zap`]): told to everyone, for a line to be drawn from the
+    /// crystal to it. What it took shows as the zombie's own health
+    /// ([`Shambler`]) goes down.
+    Zap { x: f32, y: f32, z: f32 },
+    /// Someone of the team, by seat, has killed a zombie of this kind
+    /// ([`Event::Killed`]): told to everyone, for a line in the chat
+    /// ("Mochi brought down a giant"). Sent for the kinds whose kill is
+    /// said ([`Kind::announced`]: a giant alone), which a device cannot
+    /// tell from the body going, a fall into the void taking one as well.
+    Slain { by: u8, kind: Kind },
 }
 
-/// Registers this game's own replicated components (none yet).
-pub fn register(_app: &mut App) {}
+/// The four games' shared base has a test of what is sent
+/// (`what_was_sent_before_the_four_games_is_sent_as_it_was`, in the
+/// crate's root) written while each game's asks and tells were a
+/// placeholder called `Nothing`, which these are not: until that test names
+/// real ones, it builds with one of each by that name, here, so that the
+/// test itself is left as it was (it is not this game's). Nothing outside
+/// the tests sees it.
+#[cfg(test)]
+#[allow(non_upper_case_globals)]
+impl Ask {
+    pub const Nothing: Ask = Ask::Ready;
+}
+
+#[cfg(test)]
+#[allow(non_upper_case_globals)]
+impl Tell {
+    pub const Nothing: Tell = Tell::Zap { x: 0.0, y: 0.25, z: 0.0 };
+}
+
+/// Registers this game's own replicated components, appended after
+/// everything else in this order: how the game stands ([`StandRound`]), the
+/// team's upgrades ([`StandUpgrades`]), each zombie's kind and health on its
+/// body ([`Shambler`]), and a spitter's ball in the air ([`Spit`]). What
+/// everyone holds and has goes as Bridge Wars' does, in
+/// [`Purses`](crate::Purses) and [`Kits`](crate::Kits) on the table's
+/// entity, and what lies about as its [`Loot`](crate::Loot), each thing of
+/// its own.
+pub fn register(app: &mut App) {
+    app.replicate::<StandRound>()
+        .replicate::<StandUpgrades>()
+        .replicate::<Shambler>()
+        .replicate::<Spit>();
+}
 
 /// Where the player in `seat` stands as they arrive on the game's venue, and which way they
 /// face: 3.2 m from the anchor, clear of its slab, on one of the diagonals, an eighth of the
 /// turn round from +Z and a quarter on from one seat to the next, on the stone's top as
-/// lifted ([`LIFT`]), facing out, toward where the zombies come from.
+/// lifted ([`LIFT`]), facing out, toward where the zombies come from. Where the dead stand
+/// again too, while the anchor stands.
 pub fn arrival(seat: usize) -> (Vec3, Quat) {
     let angle = TAU / 8.0 + (seat % SHAPE.most) as f32 * TAU / 4.0;
     let out = Quat::from_rotation_y(angle) * Vec3::new(0.0, 0.0, 3.2);
@@ -109,4 +242,152 @@ pub fn prizes(results: &table::Results, people: &[bool]) -> Vec<u32> {
     (0..results.places.len())
         .map(|seat| if people.get(seat).copied().unwrap_or(false) { each } else { 0 })
         .collect()
+}
+
+/// The team's score at the end, as the results show it beside everyone's own
+/// (Hajun: "individual scores of each person + total combined team score"):
+/// everyone's added up, and [`WAVE_SCORE`] for each wave the team cleared.
+pub fn team_score(scores: &[u32], waves: u32) -> u32 {
+    scores.iter().fold(0u32, |sum, score| sum.saturating_add(*score)).saturating_add(waves.saturating_mul(WAVE_SCORE))
+}
+
+/// How a game of Last Stand stands, sent to its room on the table's entity
+/// beside its [`Board`](table::Board) whenever any of it changes: which wave
+/// it is, and whether it is coming or here; the anchor's health and the most
+/// it has; how many of the wave are not yet dead; and everyone's health,
+/// when the dead stand again and score, by seat. Under seventy bytes for
+/// four ([`Game::round`]), sent whole each time, a few times a second while
+/// health comes back and the zombies are hit.
+#[derive(Component, Serialize, Deserialize, Clone, PartialEq, Debug)]
+pub struct StandRound {
+    /// The wave on now, or the last one, between waves: 0 before the first.
+    pub wave: u16,
+    pub stage: StandStage,
+    /// The anchor's health, in whole points, and the most it has
+    /// ([`ANCHOR_HEALTH`], and more for each Fortify): 0 is broken.
+    pub anchor: u16,
+    pub anchor_most: u16,
+    /// How many of this wave are not yet dead: still to come over the rim,
+    /// coming, or standing. 0 between waves.
+    pub left: u16,
+    /// Everyone's health by seat, in whole points of [`HEALTH`] (rounded up,
+    /// so that anyone standing has some): 0 is dead.
+    pub health: Vec<u16>,
+    /// When each seat stands again, by the room's clock ([`Game::clock`]):
+    /// 0 for anyone standing, and infinity for anyone out for good (dead
+    /// with the anchor broken) or gone.
+    pub back_at: Vec<f64>,
+    /// Everyone's score by seat ([`kill_score`]).
+    pub scores: Vec<u32>,
+    /// Who is ready for the next wave ([`Ask::Ready`]), a bit to a seat:
+    /// during a break only.
+    pub ready: u8,
+    /// Who has left the game for good ([`Game::leave`]), a bit to a seat:
+    /// their health is 0 and they stand again never, as someone out is,
+    /// but they are not dead, and nothing is said of them as of the dead
+    /// (since 2026-11-18, mine: one byte, without which a device said
+    /// "Dubu is down", or "is out", of someone who had gone).
+    pub gone: u8,
+    /// When the fight began, by the room's clock ([`Game::clock`]): what
+    /// every device counts the fight's own time from (the game's
+    /// `FightTime`, which a potion's time left is by, [`Kit::fast`](crate::Kit::fast)),
+    /// a device that comes back into a game under way too. It never
+    /// changes, but goes with the rest of the round each time that is
+    /// sent, a component being sent whole (since 2026-11-18, mine: eight
+    /// bytes more each time, for a count that is right from the first
+    /// frame of a game come back to).
+    pub began: f64,
+}
+
+impl StandRound {
+    /// Whether whoever is in `seat` is ready for the next wave.
+    pub fn is_ready(&self, seat: usize) -> bool {
+        seat < 8 && self.ready & (1 << seat) != 0
+    }
+
+    /// Whether whoever was in `seat` has left the game for good.
+    pub fn is_gone(&self, seat: usize) -> bool {
+        seat < 8 && self.gone & (1 << seat) != 0
+    }
+}
+
+/// How far a game of Last Stand has got.
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Debug)]
+pub enum StandStage {
+    /// Between waves, or before the first: the next comes at `until`, by the
+    /// room's clock, which every device counts down to with nothing more
+    /// sent ("Next wave in 0:18"). Sooner, once everyone is ready.
+    Break { until: f64 },
+    /// A wave is on.
+    Wave,
+    /// The anchor is broken and nobody is standing: the last stand fell.
+    Over,
+}
+
+/// What the team of a game of Last Stand has bought at the upgrade shop,
+/// for everyone: how far each line has been taken ([`Ware`]). On the
+/// table's entity, sent as it changes. Endless but for two: the protection
+/// ([`PROTECTION_MOST`]) and the luck ([`LUCKY_MOST`]).
+#[derive(Component, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub struct StandUpgrades {
+    /// The generators: gold from 1, sapphire from 2, amethyst from 3, and
+    /// faster for every step past that ([`OVERCLOCK`]).
+    pub generator: u16,
+    /// How many times every blow is [`SHARPNESS`] harder.
+    pub sharpness: u16,
+    /// How many [`PROTECTION`]s off every hit, up to [`PROTECTION_MOST`].
+    pub protection: u8,
+    /// How many times [`FORTIFY`] has been added to the anchor.
+    pub fortify: u16,
+    /// The anchor's beam: [`BEAM_DAMAGE`] for each step.
+    pub beam: u16,
+    /// How lucky the team's kills are, up to [`LUCKY_MOST`]
+    /// ([`drop_chance`], [`drop_of`]).
+    pub lucky: u8,
+}
+
+/// On each zombie's body in a game of Last Stand: what kind it is (which the
+/// device draws it as, by its size and tint), and its health and the most
+/// it had, in whole points, for the bar over it; a hit shows as the health
+/// going down. Sent as it rises and whenever its health changes.
+#[derive(Component, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Shambler {
+    pub kind: Kind,
+    pub health: u16,
+    pub most: u16,
+}
+
+/// A spitter's ball on its way in a game of Last Stand ([`Spittle`]): where
+/// it left the spitter's mouth and where it comes down. Sent once as it is
+/// spat; every device flies it on from there by the same rules, and it is
+/// gone, for everyone, the moment it lands, where it bursts in a splash of
+/// green ([`SPIT_RADIUS`]).
+#[derive(Component, Serialize, Deserialize, Clone, Copy, PartialEq, Debug)]
+#[component(immutable)]
+pub struct Spit {
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
+    pub to_x: f32,
+    pub to_y: f32,
+    pub to_z: f32,
+}
+
+impl Spit {
+    /// What the room is sent of a ball on its way.
+    pub fn of(spittle: &Spittle) -> Self {
+        Self {
+            x: spittle.from.x,
+            y: spittle.from.y,
+            z: spittle.from.z,
+            to_x: spittle.to.x,
+            to_y: spittle.to.y,
+            to_z: spittle.to.z,
+        }
+    }
+
+    /// The ball it is, just spat: for a device to fly it on.
+    pub fn spittle(&self) -> Spittle {
+        Spittle::spat(Vec3::new(self.x, self.y, self.z), Vec3::new(self.to_x, self.to_y, self.to_z))
+    }
 }

@@ -2235,11 +2235,19 @@ pub(crate) enum Picture {
     BuilderPlus,
     /// A dart pointing to the right: what sends a line of chat (`chat`).
     Send,
+    /// Last Stand's anchor crystal with a plus up and to its left, as the
+    /// team's stronger swords have: Fortify Anchor (since 2026-11-18,
+    /// `last_stand`).
+    Crystal,
+    /// The crystal small, and a bolt from it: Last Stand's Anchor Beam.
+    Beam,
+    /// A four-leaf clover: Last Stand's Lucky Loot.
+    Clover,
 }
 
 impl Picture {
     #[cfg_attr(not(test), allow(dead_code))]
-    pub(crate) const ALL: [Picture; 15] = [
+    pub(crate) const ALL: [Picture; 18] = [
         Picture::Plank,
         Picture::Sword,
         Picture::Shield,
@@ -2255,6 +2263,9 @@ impl Picture {
         Picture::Dynamite,
         Picture::BuilderPlus,
         Picture::Send,
+        Picture::Crystal,
+        Picture::Beam,
+        Picture::Clover,
     ];
 
     /// Whether it is drawn in colours of its own out of the file
@@ -2281,6 +2292,43 @@ impl Picture {
             Picture::BuilderPlus => drawn(|at| {
                 let builder = builder_distance((at - Vec2::new(0.16, -0.14)) / 0.82) * 0.82;
                 builder.min(plus_distance(at - Vec2::new(-0.64, 0.62), 0.28, 0.09) - 0.02)
+            }),
+            // The crystal, smaller and down to the right, with a plus up
+            // and to the left of it.
+            Picture::Crystal => drawn(|at| {
+                let crystal = crystal_distance((at - Vec2::new(0.16, -0.1)) / 0.86) * 0.86;
+                crystal.min(plus_distance(at - Vec2::new(-0.62, 0.62), 0.28, 0.09) - 0.02)
+            }),
+            // The crystal small on the left, and a bolt of lightning on
+            // the right, leaving it.
+            Picture::Beam => drawn(|at| {
+                let crystal = crystal_distance((at - Vec2::new(-0.5, -0.12)) / 0.6) * 0.6;
+                let bolt = polygon_distance(
+                    at,
+                    &[
+                        Vec2::new(0.42, 0.95),
+                        Vec2::new(0.02, 0.05),
+                        Vec2::new(0.32, 0.05),
+                        Vec2::new(0.08, -0.95),
+                        Vec2::new(0.78, 0.25),
+                        Vec2::new(0.46, 0.25),
+                        Vec2::new(0.74, 0.95),
+                    ],
+                ) - 0.02;
+                crystal.min(bolt)
+            }),
+            // Four round leaves about a middle, and a stem out of it, down
+            // and to the right.
+            Picture::Clover => drawn(|at| {
+                let leaves = [Vec2::new(0.0, 0.4), Vec2::new(0.4, 0.0), Vec2::new(0.0, -0.4), Vec2::new(-0.4, 0.0)]
+                    .into_iter()
+                    .map(|middle| circle_distance(at - Vec2::new(-0.08, 0.08), middle, 0.34))
+                    .fold(f32::INFINITY, f32::min);
+                let (sin, cos) = std::f32::consts::FRAC_PI_4.sin_cos();
+                let from = at - Vec2::new(0.3, -0.42);
+                let turned = Vec2::new(from.x * cos + from.y * sin, from.y * cos - from.x * sin);
+                let stem = box_distance(turned, Vec2::new(0.07, 0.42));
+                leaves.min(stem)
             }),
             // A dart seen from above, pointing to the right, notched at
             // its tail.
@@ -2360,6 +2408,25 @@ impl Picture {
             }
         }
     }
+}
+
+/// How far `at` is from the edge of Last Stand's crystal's picture: a cut
+/// stone standing on its point, as the anchor's crystal stands on its
+/// plinth, with a line cut down its middle for its facets.
+fn crystal_distance(at: Vec2) -> f32 {
+    let stone = polygon_distance(
+        at,
+        &[
+            Vec2::new(0.0, 0.95),
+            Vec2::new(0.46, 0.38),
+            Vec2::new(0.46, -0.2),
+            Vec2::new(0.0, -0.95),
+            Vec2::new(-0.46, -0.2),
+            Vec2::new(-0.46, 0.38),
+        ],
+    ) - 0.02;
+    let facet = box_distance(at - Vec2::new(0.0, 0.0), Vec2::new(0.035, 0.7));
+    stone.max(-facet)
 }
 
 /// How far `at` is from the edge of the builder's picture: a head, a body,

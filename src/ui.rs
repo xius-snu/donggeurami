@@ -672,12 +672,70 @@ impl BridgeRaceColours {
     }
 }
 
-/// Last Stand's own colours (`last_stand`), as Blend In's are.
+/// Last Stand's own colours (`last_stand`), as Blend In's are; and what its
+/// game draws over the world and in it: each kind of zombie's skin and
+/// hair, the zombies' look being Bridge Wars' (a walker is painted as its
+/// zombies are) in a tint of each kind's own, which by night is also what
+/// each glows; the anchor's bar over the crystal and under the plate, the
+/// white the crystal flashes as it is hit, and the red its bar on the
+/// plate and its arrow round you flash as it is hit (since 2026-11-18);
+/// the anchor's beam; and a spitter's ball and its splash.
 #[derive(Deserialize, Clone, Copy, PartialEq, Debug)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct LastStandColours {
     #[serde(deserialize_with = "colour")]
     pub accent: Color,
+    #[serde(deserialize_with = "colour")]
+    pub walker_skin: Color,
+    #[serde(deserialize_with = "colour")]
+    pub walker_hair: Color,
+    #[serde(deserialize_with = "colour")]
+    pub runner_skin: Color,
+    #[serde(deserialize_with = "colour")]
+    pub runner_hair: Color,
+    #[serde(deserialize_with = "colour")]
+    pub brute_skin: Color,
+    #[serde(deserialize_with = "colour")]
+    pub brute_hair: Color,
+    #[serde(deserialize_with = "colour")]
+    pub spitter_skin: Color,
+    #[serde(deserialize_with = "colour")]
+    pub spitter_hair: Color,
+    #[serde(deserialize_with = "colour")]
+    pub leaper_skin: Color,
+    #[serde(deserialize_with = "colour")]
+    pub leaper_hair: Color,
+    #[serde(deserialize_with = "colour")]
+    pub giant_skin: Color,
+    #[serde(deserialize_with = "colour")]
+    pub giant_hair: Color,
+    #[serde(deserialize_with = "colour")]
+    pub anchor: Color,
+    #[serde(deserialize_with = "colour")]
+    pub anchor_flash: Color,
+    #[serde(deserialize_with = "colour")]
+    pub anchor_hit: Color,
+    #[serde(deserialize_with = "colour")]
+    pub beam: Color,
+    #[serde(deserialize_with = "colour")]
+    pub spit: Color,
+    #[serde(deserialize_with = "colour")]
+    pub splat: Color,
+}
+
+impl LastStandColours {
+    /// A zombie of `kind`'s skin and hair.
+    pub(crate) fn paint(&self, kind: roundtown_net::last_stand::Kind) -> (Color, Color) {
+        use roundtown_net::last_stand::Kind;
+        match kind {
+            Kind::Walker => (self.walker_skin, self.walker_hair),
+            Kind::Runner => (self.runner_skin, self.runner_hair),
+            Kind::Brute => (self.brute_skin, self.brute_hair),
+            Kind::Spitter => (self.spitter_skin, self.spitter_hair),
+            Kind::Leaper => (self.leaper_skin, self.leaper_hair),
+            Kind::Giant => (self.giant_skin, self.giant_hair),
+        }
+    }
 }
 
 /// The chat on the left of the screen (`chat`, since 2026-11-14): what
@@ -1404,11 +1462,82 @@ pub(crate) struct BridgeRaceWords {
     pub missed: String,
 }
 
-/// Last Stand's own words (`last_stand`), as Blend In's are.
+/// Last Stand's own words (`last_stand`), as Blend In's are: what its score
+/// is called among the results, and the line under them (`{waves}`
+/// cleared, the team's `{score}`); the plate top centre, in a wave (Wave
+/// `{wave}`, `{count}` left) and between waves (the next in `{time}`,
+/// before the first, after one `{wave}` cleared, `{new}` in the next, and
+/// `{count}` of `{of}` ready; in the first break, where to buy what), the
+/// anchor's health in its bar (`{left}` of `{most}`), and its Ready
+/// button; what is said across the screen (the play begun, a wave come,
+/// with the kinds new in it, a wave cleared, the anchor broken and what
+/// that means, the anchor under attack, the end at wave `{wave}`); while
+/// you are dead, and out; what is written over each kind of zombie, and
+/// over the generators' pads (their `{level}`, the `{items}` they make,
+/// all four, how many times as `{fast}` as at first); what the chat says
+/// (`{name}` bought `{ware}` at level `{level}`, is down, is out, has
+/// left, brought down a giant; the anchor broken; a wave cleared); and the
+/// shops' titles and what their cards say that is not Bridge Wars' own
+/// (`words.market`'s are its swords', shields' and things' names): a
+/// sword's and a stick's `{damage}`, the six upgrades' names and lines (an
+/// endless one's next `{level}`, Protection's `{share}`).
 #[derive(Deserialize, PartialEq, Debug)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct LastStandWords {
     pub score: String,
+    pub total: String,
+    pub wave: String,
+    pub left: String,
+    pub next_wave: String,
+    pub get_ready: String,
+    pub cleared_caption: String,
+    pub next_new: String,
+    pub tip: String,
+    pub ready_count: String,
+    pub anchor_health: String,
+    pub ready: String,
+    pub go: String,
+    pub go_caption: String,
+    pub runners: String,
+    pub brutes: String,
+    pub spitters: String,
+    pub leapers: String,
+    pub a_giant: String,
+    pub giants: String,
+    pub cleared: String,
+    pub anchor_broken: String,
+    pub anchor_broken_caption: String,
+    pub under_attack: String,
+    pub fell: String,
+    pub back_in: String,
+    pub out: String,
+    pub out_line: String,
+    pub kinds: [String; 6],
+    pub generator: String,
+    pub generator_level: String,
+    pub generator_all: String,
+    pub generator_fast: String,
+    pub bought_line: String,
+    pub down_line: String,
+    pub out_chat: String,
+    pub left_line: String,
+    pub slain_line: String,
+    pub anchor_line: String,
+    pub cleared_line: String,
+    pub items_title: String,
+    pub upgrades_title: String,
+    pub sword_stat: String,
+    pub dynamite_stat: String,
+    pub forge: [String; 4],
+    pub forge_stats: [String; 4],
+    pub sharpness: String,
+    pub protection: String,
+    pub protection_stat: String,
+    pub fortify: String,
+    pub beam: String,
+    pub lucky: String,
+    pub lucky_stat: String,
+    pub level: String,
 }
 
 /// The chat box (`chat`): what stands in the box a line is typed into

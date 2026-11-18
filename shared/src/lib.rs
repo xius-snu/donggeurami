@@ -1646,10 +1646,219 @@ pub mod bridge_wars {
         next
     }
 
+    /// Everything lying in a game for whoever walks into it, and the rules
+    /// of its lying there: what a generator makes, dropping onto its pad,
+    /// and what is thrown out round where someone died, or something was
+    /// killed, coming down where there is ground for it; each picked up by
+    /// whoever comes within reach of it, and gone with a plank it lay on.
+    /// Taken out of [`Mint`] on 2026-11-18, which keeps its generators over
+    /// one of these, for the generators of Last Stand
+    /// ([`crate::last_stand`]) and the things its zombies drop: the same
+    /// rules, the same numbers. It rolls no dice of its own, as the mint
+    /// rolls none: whoever runs it hands it some, numbers from 0 up to 1.
+    #[derive(Clone, Debug, Default)]
+    pub struct Pile {
+        pieces: Vec<Piece>,
+        next: u32,
+    }
+
+    impl Pile {
+        /// Nothing lying anywhere yet.
+        pub fn new() -> Self {
+            Self::default()
+        }
+
+        /// Everything lying there.
+        pub fn pieces(&self) -> &[Piece] {
+            &self.pieces
+        }
+
+        /// How many things the generator numbered `generator` has lying
+        /// on its pad; of [`SPILT`], how many lie where they were
+        /// dropped.
+        pub fn held(&self, generator: u8) -> usize {
+            self.pieces.iter().filter(|piece| piece.generator == generator).count()
+        }
+
+        /// One more `item` from the generator numbered `generator`,
+        /// coming up on its pad, whose middle is `pad` across the ground,
+        /// which reaches `half` each way from it, and whose top is `top`
+        /// high: of a few places on it at random, the one furthest from
+        /// everything already lying there, as far inside the pad's edge as
+        /// on Bridge Wars' ([`PAD_SPREAD`] of [`PAD_HALF`]). `elapsed`
+        /// seconds into the fight.
+        #[allow(clippy::too_many_arguments)]
+        pub fn make(
+            &mut self,
+            generator: u8,
+            item: Item,
+            pad: Vec2,
+            half: f32,
+            top: f32,
+            elapsed: f32,
+            dice: &mut dyn FnMut() -> f32,
+        ) -> Piece {
+            let piece = Piece {
+                id: self.next,
+                generator,
+                item,
+                at: self.place(pad, half, dice),
+                born: elapsed,
+                ground: top,
+                from: None,
+                worth: 1,
+            };
+            self.next = self.next.wrapping_add(1);
+            self.pieces.push(piece);
+            piece
+        }
+
+        /// Somewhere on the pad round `pad`, `half` each way, for a new
+        /// thing: of a few places at random, the one furthest from
+        /// everything already lying on that pad.
+        fn place(&self, pad: Vec2, half: f32, dice: &mut dyn FnMut() -> f32) -> Vec2 {
+            let spread = half * (PAD_SPREAD / PAD_HALF);
+            let lying: Vec<Vec2> = self
+                .pieces
+                .iter()
+                .map(|piece| piece.at)
+                .filter(|at| (*at - pad).abs().max_element() <= half)
+                .collect();
+            let mut best = (f32::NEG_INFINITY, pad);
+            for _ in 0..PLACES_TRIED {
+                let off = Vec2::new(dice() * 2.0 - 1.0, dice() * 2.0 - 1.0) * spread;
+                let at = pad + off;
+                let room = lying
+                    .iter()
+                    .map(|other| other.distance_squared(at))
+                    .fold(f32::INFINITY, f32::min);
+                if room > best.0 {
+                    best = (room, at);
+                }
+            }
+            best.1
+        }
+
+        /// `things` thrown out from feet at `from`, `elapsed` seconds into
+        /// the fight, each the item it is and as many of it as it is worth
+        /// ([`Piece::worth`]): every way, each to come down [`SPILL_NEAR`]
+        /// to [`SPILL_FAR`] from them, of a few places at random the one
+        /// furthest from the rest of what is thrown, and to lie there for
+        /// whoever walks into it once it has lain a moment
+        /// ([`Piece::lying`]). What [`Mint::spill`] throws out of whoever
+        /// died, and what Last Stand's zombies drop.
+        ///
+        /// **Only onto ground**: `ground` says how high what a thing may
+        /// lie on is at a place, if there is anything there that a body
+        /// can walk to. Nor onto anything more than a step over the feet,
+        /// a stand's roof, nor further under them than [`SPILL_DOWN`]. A
+        /// place none of the tries finds ground at is under the feet, if
+        /// that is ground, or where another of the things lies.
+        ///
+        /// What was thrown, which is nothing with nothing to throw; or
+        /// `None`, with nothing thrown, where there is nowhere for any of
+        /// it to lie, the feet being out over the void (asked with nothing
+        /// to throw too, so that whoever has nothing is told so as well).
+        pub fn scatter(
+            &mut self,
+            things: &[(Item, u16)],
+            from: Vec3,
+            elapsed: f32,
+            dice: &mut dyn FnMut() -> f32,
+            ground: &dyn Fn(Vec2) -> Option<f32>,
+        ) -> Option<Vec<Piece>> {
+            let lies = |at: Vec2| ground(at).filter(|top| (-SPILL_DOWN..=SPILL_UP).contains(&(top - from.y)));
+            let feet = Vec2::new(from.x, from.z);
+            let under = lies(feet).map(|top| (feet, top));
+            // Where each comes down.
+            let mut places: Vec<(Vec2, f32)> = Vec::new();
+            for _ in 0..things.len().max(1) {
+                let mut best: Option<(f32, Vec2, f32)> = None;
+                for _ in 0..SPILL_TRIES {
+                    let (turn, far) = (dice() * TAU, SPILL_NEAR + (SPILL_FAR - SPILL_NEAR) * dice());
+                    let at = feet + Vec2::from_angle(turn) * far;
+                    let Some(top) = lies(at) else {
+                        continue;
+                    };
+                    let room = places.iter().map(|(other, _)| other.distance_squared(at)).fold(f32::INFINITY, f32::min);
+                    if best.is_none_or(|(most, ..)| room > most) {
+                        best = Some((room, at, top));
+                    }
+                }
+                let place = best
+                    .map(|(_, at, top)| (at, top))
+                    .or(under)
+                    .or_else(|| places.get(places.len().wrapping_sub(1)).copied());
+                places.push(place?);
+            }
+            let thrown = from + Vec3::Y * SPILL_FROM;
+            let mut dropped = Vec::with_capacity(things.len());
+            for (&(item, worth), &(at, top)) in things.iter().zip(&places) {
+                let piece = Piece {
+                    id: self.next,
+                    generator: SPILT,
+                    item,
+                    at,
+                    born: elapsed,
+                    ground: top,
+                    from: Some(thrown),
+                    worth,
+                };
+                self.next = self.next.wrapping_add(1);
+                self.pieces.push(piece);
+                dropped.push(piece);
+            }
+            Some(dropped)
+        }
+
+        /// Takes away whatever was dropped and lies where `stands` says
+        /// there is nothing under it any more, a plank it lay on having
+        /// gone: which they were. It falls with the plank, and is
+        /// nobody's.
+        pub fn shed(&mut self, stands: &dyn Fn(Vec2) -> bool) -> Vec<Piece> {
+            if !self.pieces.iter().any(Piece::dropped) {
+                return Vec::new();
+            }
+            let (gone, left): (Vec<Piece>, Vec<Piece>) = self.pieces.iter().copied().partition(|piece| piece.dropped() && !stands(piece.at));
+            self.pieces = left;
+            gone
+        }
+
+        /// Whoever's feet are at `at`, `elapsed` seconds into the fight,
+        /// picks up everything within reach of them: within [`MAGNET`]
+        /// across the ground, and, where the thing is now, dropping or
+        /// lying ([`Piece::height`]), no further over their feet than
+        /// [`REACH_OVER`] nor under them than [`REACH_UNDER`]; and of
+        /// what was dropped, only what has come down and lain a moment
+        /// ([`Piece::lying`]). What they took, no longer there for anyone
+        /// else: each is as many of its item as it is worth
+        /// ([`Piece::worth`]).
+        pub fn pick_up(&mut self, at: Vec3, elapsed: f32) -> Vec<Piece> {
+            self.pick_up_where(at, elapsed, &mut |_| true)
+        }
+
+        /// As [`Pile::pick_up`], but only what `wanted` says yes to, asked
+        /// of each thing within reach in turn: the rest is left lying.
+        pub fn pick_up_where(&mut self, at: Vec3, elapsed: f32, wanted: &mut dyn FnMut(&Piece) -> bool) -> Vec<Piece> {
+            let (across, reach) = (Vec2::new(at.x, at.z), MAGNET * MAGNET);
+            let (taken, left): (Vec<Piece>, Vec<Piece>) = self.pieces.iter().copied().partition(|piece| {
+                let over = piece.height(elapsed) - at.y;
+                piece.lying(elapsed)
+                    && piece.at.distance_squared(across) <= reach
+                    && (-REACH_UNDER..=REACH_OVER).contains(&over)
+                    && wanted(piece)
+            });
+            self.pieces = left;
+            taken
+        }
+    }
+
     /// Every generator of a game and everything they have made that still
     /// lies there: the server's online, and the device's own in a game
     /// played offline, run by the same rules either way. It rolls no dice
     /// of its own: whoever runs it hands it some, numbers from 0 up to 1.
+    /// What lies about is its [`Pile`]'s (since 2026-11-18; its own until
+    /// then, by the same rules).
     #[derive(Clone, Debug)]
     pub struct Mint {
         /// When each generator next comes to make one, in seconds into
@@ -1660,8 +1869,7 @@ pub mod bridge_wars {
         /// When each team's own generator next makes an amethyst, once it
         /// has been raised to ([`FORGE_AMETHYST`]): none until then.
         forge_due: [Option<f32>; ARENA_TEAMS],
-        pieces: Vec<Piece>,
-        next: u32,
+        pile: Pile,
     }
 
     impl Mint {
@@ -1682,19 +1890,18 @@ pub mod bridge_wars {
             Self {
                 due,
                 forge_due: [None; ARENA_TEAMS],
-                pieces: Vec::new(),
-                next: 0,
+                pile: Pile::new(),
             }
         }
 
         /// Everything lying on the pads.
         pub fn pieces(&self) -> &[Piece] {
-            &self.pieces
+            self.pile.pieces()
         }
 
         /// How many things the generator numbered `index` holds.
         pub fn held(&self, index: usize) -> usize {
-            self.pieces.iter().filter(|piece| usize::from(piece.generator) == index).count()
+            u8::try_from(index).map_or(0, |generator| self.pile.held(generator))
         }
 
         /// Runs every generator up to `elapsed` seconds into the fight
@@ -1755,19 +1962,7 @@ pub mod bridge_wars {
 
         /// One more thing from the generator numbered `index`, on its pad.
         fn make(&mut self, index: usize, item: Item, pad: Vec2, elapsed: f32, dice: &mut dyn FnMut() -> f32) -> Piece {
-            let piece = Piece {
-                id: self.next,
-                generator: index as u8,
-                item,
-                at: self.place(pad, dice),
-                born: elapsed,
-                ground: PAD_TOP,
-                from: None,
-                worth: 1,
-            };
-            self.next = self.next.wrapping_add(1);
-            self.pieces.push(piece);
-            piece
+            self.pile.make(index as u8, item, pad, PAD_HALF, PAD_TOP, elapsed, dice)
         }
 
         /// Whoever has died with their feet at `from`, `elapsed` seconds
@@ -1803,9 +1998,6 @@ pub mod bridge_wars {
             dice: &mut dyn FnMut() -> f32,
             ground: &dyn Fn(Vec2) -> Option<f32>,
         ) -> Option<Vec<Piece>> {
-            let lies = |at: Vec2| ground(at).filter(|top| (-SPILL_DOWN..=SPILL_UP).contains(&(top - from.y)));
-            let feet = Vec2::new(from.x, from.z);
-            let under = lies(feet).map(|top| (feet, top));
             // How many things, and how many of its item each is.
             let mut things: Vec<(Item, u16)> = Vec::new();
             for item in [Item::Sapphire, Item::Amethyst] {
@@ -1815,45 +2007,10 @@ pub mod bridge_wars {
                     things.push((item, count / pieces + u16::from(piece < count % pieces)));
                 }
             }
-            // Where each comes down.
-            let mut places: Vec<(Vec2, f32)> = Vec::new();
-            for _ in 0..things.len().max(1) {
-                let mut best: Option<(f32, Vec2, f32)> = None;
-                for _ in 0..SPILL_TRIES {
-                    let (turn, far) = (dice() * TAU, SPILL_NEAR + (SPILL_FAR - SPILL_NEAR) * dice());
-                    let at = feet + Vec2::from_angle(turn) * far;
-                    let Some(top) = lies(at) else {
-                        continue;
-                    };
-                    let room = places.iter().map(|(other, _)| other.distance_squared(at)).fold(f32::INFINITY, f32::min);
-                    if best.is_none_or(|(most, ..)| room > most) {
-                        best = Some((room, at, top));
-                    }
-                }
-                let place = best
-                    .map(|(_, at, top)| (at, top))
-                    .or(under)
-                    .or_else(|| places.get(places.len().wrapping_sub(1)).copied());
-                places.push(place?);
-            }
+            // Thrown out where there is ground for them ([`Pile::scatter`]),
+            // and out of the purse only then.
+            let dropped = self.pile.scatter(&things, from, elapsed, dice, ground)?;
             spoils(held);
-            let thrown = from + Vec3::Y * SPILL_FROM;
-            let mut dropped = Vec::with_capacity(things.len());
-            for (&(item, worth), &(at, top)) in things.iter().zip(&places) {
-                let piece = Piece {
-                    id: self.next,
-                    generator: SPILT,
-                    item,
-                    at,
-                    born: elapsed,
-                    ground: top,
-                    from: Some(thrown),
-                    worth,
-                };
-                self.next = self.next.wrapping_add(1);
-                self.pieces.push(piece);
-                dropped.push(piece);
-            }
             Some(dropped)
         }
 
@@ -1862,37 +2019,7 @@ pub mod bridge_wars {
         /// gone: which they were. It falls with the plank, and is
         /// nobody's.
         pub fn shed(&mut self, stands: &dyn Fn(Vec2) -> bool) -> Vec<Piece> {
-            if !self.pieces.iter().any(Piece::dropped) {
-                return Vec::new();
-            }
-            let (gone, left): (Vec<Piece>, Vec<Piece>) = self.pieces.iter().copied().partition(|piece| piece.dropped() && !stands(piece.at));
-            self.pieces = left;
-            gone
-        }
-
-        /// Somewhere on the pad round `pad` for a new thing: of a few
-        /// places at random, the one furthest from everything already
-        /// lying on that pad.
-        fn place(&self, pad: Vec2, dice: &mut dyn FnMut() -> f32) -> Vec2 {
-            let lying: Vec<Vec2> = self
-                .pieces
-                .iter()
-                .map(|piece| piece.at)
-                .filter(|at| (*at - pad).abs().max_element() <= PAD_HALF)
-                .collect();
-            let mut best = (f32::NEG_INFINITY, pad);
-            for _ in 0..PLACES_TRIED {
-                let off = Vec2::new(dice() * 2.0 - 1.0, dice() * 2.0 - 1.0) * PAD_SPREAD;
-                let at = pad + off;
-                let room = lying
-                    .iter()
-                    .map(|other| other.distance_squared(at))
-                    .fold(f32::INFINITY, f32::min);
-                if room > best.0 {
-                    best = (room, at);
-                }
-            }
-            best.1
+            self.pile.shed(stands)
         }
 
         /// Whoever's feet are at `at`, `elapsed` seconds into the fight,
@@ -1905,7 +2032,7 @@ pub mod bridge_wars {
         /// else: each is as many of its item as it is worth
         /// ([`Piece::worth`]).
         pub fn pick_up(&mut self, at: Vec3, elapsed: f32) -> Vec<Piece> {
-            self.pick_up_where(at, elapsed, &mut |_| true)
+            self.pile.pick_up(at, elapsed)
         }
 
         /// As [`Mint::pick_up`], but only what `wanted` says yes to, asked
@@ -1913,16 +2040,7 @@ pub mod bridge_wars {
         /// How one of the computer's players takes from a pad no more
         /// than its next purchase needs (`bots`).
         pub fn pick_up_where(&mut self, at: Vec3, elapsed: f32, wanted: &mut dyn FnMut(&Piece) -> bool) -> Vec<Piece> {
-            let (across, reach) = (Vec2::new(at.x, at.z), MAGNET * MAGNET);
-            let (taken, left): (Vec<Piece>, Vec<Piece>) = self.pieces.iter().copied().partition(|piece| {
-                let over = piece.height(elapsed) - at.y;
-                piece.lying(elapsed)
-                    && piece.at.distance_squared(across) <= reach
-                    && (-REACH_UNDER..=REACH_OVER).contains(&over)
-                    && wanted(piece)
-            });
-            self.pieces = left;
-            taken
+            self.pile.pick_up_where(at, elapsed, wanted)
         }
     }
 

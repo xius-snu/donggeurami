@@ -535,6 +535,34 @@
         // Last Stand's: its accent, the orange of a fire kept going.
         last_stand: (
             accent: "#ff8a5c",
+            // Each kind of zombie's skin and hair: a walker's are Bridge
+            // Wars' zombies' own green; a runner a paler, yellower green,
+            // a brute a dark olive, a spitter an acid green, a leaper a
+            // blue green, and the giant a deep, grey green.
+            walker_skin: "#619952",
+            walker_hair: "#1f4d1a",
+            runner_skin: "#a7c25a",
+            runner_hair: "#4d5c1a",
+            brute_skin: "#4f6b2e",
+            brute_hair: "#1e2b10",
+            spitter_skin: "#7fe03a",
+            spitter_hair: "#2e6b0c",
+            leaper_skin: "#4fa88a",
+            leaper_hair: "#16453a",
+            giant_skin: "#4a5e45",
+            giant_hair: "#1a2618",
+            // The anchor's bar, over the crystal and under the plate top
+            // centre, and the white the crystal flashes as it is hit.
+            anchor: "#c58cffe6",
+            anchor_flash: "#ffffffb3",
+            // The red the anchor's bar on the plate and its arrow round you
+            // flash as it is hit.
+            anchor_hit: "#ff5c5c",
+            // The anchor's beam, a short bright line to what it zaps.
+            beam: "#d9b3ff",
+            // A spitter's ball, and the splash where it comes down.
+            spit: "#8dff3a",
+            splat: "#6fd12a99",
         ),
     ),
     // The font is Inter (since 2026-11-13; Bevy's own, plain ASCII, until
@@ -1155,6 +1183,87 @@
         // Last Stand's: what its score is called among the results.
         last_stand: (
             score: "score",
+            // Under the results: the waves the team cleared and its score,
+            // everyone's added up and 100 a wave.
+            total: "Waves cleared: {waves} · Team score: {score}",
+            // The plate top centre: in a wave, its number over how many of
+            // it are left; between waves, the time to the next over what
+            // came before it, or what is new in the next, and how many of
+            // you are ready; in the first break, where to buy what; and in
+            // the anchor's bar, how much of it is left of the most it has.
+            wave: "Wave {wave}",
+            left: "{count} left",
+            next_wave: "Next wave in {time}",
+            get_ready: "Get ready",
+            cleared_caption: "Wave {wave} cleared",
+            next_new: "Next: {new}",
+            tip: "Red stand: items · Blue stand: team upgrades",
+            ready_count: "{count}/{of} ready",
+            anchor_health: "{left}/{most}",
+            // The button beside the plate between waves (R on desktop):
+            // the next wave comes in three seconds once everyone is.
+            ready: "Ready",
+            // Across the screen: as the play begins; as a wave comes, with
+            // what is new in it under it; as one is cleared; the anchor
+            // broken, with what that means under it; the anchor under
+            // attack while it is off the screen; and the end.
+            go: "Go!",
+            go_caption: "Hold the anchor",
+            runners: "Runners!",
+            brutes: "Brutes!",
+            spitters: "Spitters!",
+            leapers: "Leapers!",
+            a_giant: "A giant!",
+            giants: "{count} giants!",
+            cleared: "Wave {wave} cleared",
+            anchor_broken: "The anchor is broken!",
+            anchor_broken_caption: "No more coming back",
+            under_attack: "The anchor is under attack!",
+            fell: "The last stand fell at wave {wave}",
+            // While you are dead, and once you are out.
+            back_in: "Back in {seconds}",
+            out: "You're out",
+            out_line: "Watching the rest hold on",
+            // Over each kind of zombie, by kind: walker, runner, brute,
+            // spitter, leaper, giant. Nothing over any but its bar: their
+            // pale green names read badly on the stone by day, and a kind
+            // is told by its size and its tint ("Brute", "Giant"... would
+            // put them back).
+            kinds: ("", "", "", "", "", ""),
+            // Over the generators' pads: silver alone; then the level and
+            // everything they make; all four; past that, how much faster.
+            generator: "Silver",
+            generator_level: "Lvl {level}: {items}",
+            generator_all: "Lvl {level}: all four",
+            generator_fast: "Lvl {level}: all four, x{fast}",
+            // What the chat says: someone bought the team an upgrade; is
+            // down (and back in a moment); is out (down with the anchor
+            // broken); has left the game; brought down a giant.
+            bought_line: "{name} bought {ware} Lvl {level}",
+            down_line: "{name} is down",
+            out_chat: "{name} is out",
+            left_line: "{name} has left",
+            slain_line: "{name} brought down a giant",
+            anchor_line: "The anchor is broken",
+            cleared_line: "Wave {wave} cleared",
+            // The shops: their titles, and what their cards say that is
+            // not Bridge Wars' own.
+            items_title: "Shop",
+            upgrades_title: "Team Upgrades",
+            sword_stat: "{damage} dmg",
+            dynamite_stat: "{damage} dmg",
+            forge: ("Gold Forge", "Sapphire Forge", "Amethyst Forge", "Overclock"),
+            forge_stats: ("+ Gold", "+ Sapphire", "+ Amethyst", "Next: Lvl {level}"),
+            sharpness: "Sharpness",
+            protection: "Protection",
+            protection_stat: "-{share}% dmg",
+            fortify: "Fortify Anchor",
+            beam: "Anchor Beam",
+            lucky: "Lucky Loot",
+            lucky_stat: "More drops",
+            // An endless upgrade's line: the level it takes the team to
+            // (a bare "Lvl 3" read as the level the team had already).
+            level: "Next: Lvl {level}",
         ),
     ),
     // The car you drive (the face button, or C on desktop): every number of
