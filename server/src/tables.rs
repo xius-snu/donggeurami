@@ -2246,6 +2246,7 @@ mod tests {
             world.init_resource::<Messages<Loaded>>();
             world.init_resource::<Messages<Charged>>();
             world.init_resource::<Messages<Credited>>();
+            world.init_resource::<Messages<crate::accounts::Dealt>>();
             let systems = vec![
                 world.register_system(crate::accounts::answers),
                 world.register_system(crate::fees::credited),
@@ -2333,6 +2334,7 @@ mod tests {
             self.world.resource_mut::<Messages<Loaded>>().update();
             self.world.resource_mut::<Messages<Charged>>().update();
             self.world.resource_mut::<Messages<Credited>>().update();
+            self.world.resource_mut::<Messages<crate::accounts::Dealt>>().update();
         }
 
         /// Frames of a tenth of a second until `until` holds, for at most

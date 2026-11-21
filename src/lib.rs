@@ -25,6 +25,7 @@ use bevy::world_serialization::WorldInstanceReady;
 
 mod ai;
 mod arena;
+mod bag;
 #[cfg(test)] mod blend_in_bake;
 mod bridge;
 mod build;
@@ -33,6 +34,7 @@ mod minimap;
 mod car;
 mod chat;
 mod games;
+mod land;
 mod clock;
 mod compass;
 mod drive;
@@ -1481,6 +1483,9 @@ pub fn main() {
     bridge::plugin(&mut app);
     minimap::plugin(&mut app);
     games::plugin(&mut app);
+    land::plugin(&mut app);
+    // Your bag: what you own, the shop, and what stands on your plot.
+    bag::plugin(&mut app);
     // The four games of 2026-11-18, on the selector too: the tables they
     // are played at, one way in and out for all four, and each game.
     table::plugin(&mut app);

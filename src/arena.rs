@@ -3610,7 +3610,7 @@ fn finish(
     }
     match game.view {
         Some(view) => orbit.back_to(view),
-        None => *orbit = OrbitCamera::behind(&island::arrival(Venue::Town, game.town_seat)),
+        None => *orbit = OrbitCamera::behind(&island::arrival_of_a_person(Venue::Town, game.town_seat)),
     }
     if let Some(anchors) = anchors {
         stand_anchors_up(anchors, islands, visibilities);

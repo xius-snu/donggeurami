@@ -1,0 +1,31 @@
+Mythic FF4500 $15,000
+Legendary FFA500 $2,500
+Epic 800080 $1,000
+Rare 4169E1 $400
+Uncommon 32CD32 $150
+Common D3D3D3 $50
+
+Buildings:
+Street Lamp - Legendary
+Single Bed - Uncommon
+Double Bed - Rare
+Cafe Chair - Common
+Circle Table - Common
+Cafe Desk Edge - Common
+Cafe Desk Corner - Common
+Soft Couch - Rare
+Square House - Common
+Flat House - Epic
+Two Floor House - Uncommon
+Roof Terrace House - Uncommon
+Classic Door - Common
+Classic Window Door - Common
+Classic Double Door - Common
+Glass Door - Common
+Glass Double Door - Common
+Square Window - Common
+Wide Window - Common
+
+Vehicles:
+
+Red sports car - Mythic

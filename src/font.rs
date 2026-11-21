@@ -54,6 +54,14 @@ use fontique::{Blob, FallbackKey, Script};
 const INTER: &[u8] = include_bytes!("../assets/fonts/Inter-Regular.ttf");
 /// Pretendard Regular, as built into the game: Hangul's letters.
 const HANGUL: &[u8] = include_bytes!("../assets/fonts/Pretendard-Regular.ttf");
+/// The game's fonts as their files are, Inter and then Hangul's, for whoever
+/// draws letters without the screen's text: the words on a plot's sign
+/// (`land`), drawn into a picture. A letter the first has not is the
+/// second's.
+pub(crate) fn files() -> [&'static [u8]; 2] {
+    [INTER, HANGUL]
+}
+
 /// The family Pretendard calls itself, by which the list of fonts has it.
 const HANGUL_FAMILY: &str = "Pretendard";
 /// Hangul, as Unicode's scripts are named: what a run of Korean is laid

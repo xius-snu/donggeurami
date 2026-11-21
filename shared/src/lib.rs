@@ -3194,9 +3194,11 @@ pub mod bridge_wars {
     ];
 
     /// How fast a bus goes, in metres a second, with nothing in its way:
-    /// twice the 7 the town's buses go at
-    /// ([`cars::TOP_SPEED`](super::cars::TOP_SPEED); "2x normal speed"),
-    /// as the two of 2026-11-16 went. The same in every lane, so that a bus
+    /// twice the 7 the town's buses went at when it was asked for ("2x
+    /// normal speed"), as the two of 2026-11-16 went, and left as it is
+    /// since the town's own were slowed to three quarters on 2026-11-21
+    /// ([`cars::TOP_SPEED`](super::cars::TOP_SPEED), which was for the
+    /// town's alone). The same in every lane, so that a bus
     /// round an inner lane, which is shorter, comes round sooner: every 21
     /// s round the innermost, 30 round the outermost ("at varying
     /// intervals", with where each begins thrown for every game,
@@ -3756,6 +3758,77 @@ pub fn arrival(venue: Venue, seat: usize) -> (Vec3, Quat) {
     (turn * Vec3::new(0.0, 0.0, radius), turn)
 }
 
+/// Land (the game's `land`, since 2026-11-20): each person in the town has
+/// a plot of its own, by their seat there, and arrives in the middle of it
+/// (Hajun: "u need to spawn on your plot in the center, facing toward the
+/// fountain"). The plots are the planes of the material `plot` in the
+/// town's map, which the game reads as the map spawns; the server has no
+/// map, and goes by what is written here.
+pub mod land {
+    use super::{Quat, TOWN_SEATS, Vec2, Vec3};
+
+    /// The middle of the plot each seat of the town has, across the ground
+    /// (x and z), in metres: the twelve plots round the pond, then four of
+    /// the next ring. Written from the map by the game's own rule (its
+    /// `land::seat_plots`: seat by seat, the plot whose sign is nearest
+    /// where the seat used to arrive, on the path round the pond), and a
+    /// test of the game's holds the two together: after an export of the
+    /// town's map that moves a plot, these have to be written again, and
+    /// the server deployed.
+    pub const HOMES: [[f32; 2]; TOWN_SEATS] = [
+        [25.0, 90.0],
+        [66.0, 66.0],
+        [90.0, -25.0],
+        [66.0, -66.0],
+        [-25.0, -90.0],
+        [-66.0, -66.0],
+        [-90.0, 25.0],
+        [-66.0, 66.0],
+        [90.0, 25.0],
+        [25.0, -90.0],
+        [-90.0, -25.0],
+        [-25.0, 90.0],
+        [-64.896, -107.387],
+        [-107.387, -64.896],
+        [-107.387, 64.896],
+        [-64.896, 107.387],
+    ];
+
+    /// How near the middle of a plot someone stands who has only just
+    /// arrived on one, and not walked off it yet, in metres.
+    pub const JUST_ARRIVED: f32 = 2.0;
+
+    /// Where the person in `seat` of the town stands on arriving there, and
+    /// which way they face: in the middle of their plot, facing the
+    /// fountain, which is the middle of the town. `None` past the town's
+    /// seats.
+    pub fn arrival(seat: usize) -> Option<(Vec3, Quat)> {
+        let [x, z] = *HOMES.get(seat)?;
+        // A turn of this much about the upright points -Z at the middle
+        // from where it puts +Z, as [`super::arrival`] has it.
+        Some((Vec3::new(x, 0.0, z), Quat::from_rotation_y(x.atan2(z))))
+    }
+
+    /// Whether someone standing `at`, across the ground, stands where a
+    /// seat of the town arrives, any seat's: a device that has only just
+    /// opened, which guessed at its seat before the server gave it one.
+    pub fn just_arrived(at: Vec2) -> bool {
+        HOMES.iter().any(|&home| Vec2::from(home).distance(at) <= JUST_ARRIVED)
+    }
+}
+
+/// Where the person in `seat` stands on arriving on `venue`: in the town,
+/// in the middle of their own plot ([`land::arrival`]); anywhere else, and
+/// in the town past its seats, where [`arrival`] has the seat. The town's
+/// own crowd, which each device runs for itself, arrives round the pond as
+/// it always has ([`arrival`]).
+pub fn arrival_of_a_person(venue: Venue, seat: usize) -> (Vec3, Quat) {
+    match venue {
+        Venue::Town => land::arrival(seat).unwrap_or_else(|| arrival(venue, seat)),
+        _ => arrival(venue, seat),
+    }
+}
+
 // ---------------------------------------------------------------- players
 
 /// One player in a room, as the server describes them: sent once, when they
@@ -3856,9 +3929,16 @@ fn centimetres(metres: f32) -> i32 {
 /// car can take anyone.
 pub mod cars {
     /// The fastest a car goes, in metres a second, along the straight and
-    /// gentle stretches of the town's roads: as fast as a body runs, so that
-    /// someone running beside it keeps up and no more, and can get on.
-    pub const TOP_SPEED: f32 = 7.0;
+    /// gentle stretches of the town's roads, and twice it along an open
+    /// road (the game's `roads::OPEN_ROAD`): three quarters of what it was
+    /// (Hajun, 2026-11-21: "decrease the bus speed to 75% for the main
+    /// lobby donnbgeurami town buses"), a little under a walk, so that
+    /// someone on foot gets on with ease. 7 until then, as fast as a body
+    /// walks, so that someone beside it kept up and no more. Each device
+    /// works out where the buses are from this and the town's clock: an app
+    /// built before the change has them elsewhere on their rounds, and
+    /// draws whoever rides one on the bus as it has it.
+    pub const TOP_SPEED: f32 = 5.25;
     /// How far from a car's own middle a body riding it can be, in metres:
     /// on it, which is 12.5 m long, its corners 6.5 m out, or in the air off
     /// it, carried along with it until it comes down, which a run takes
@@ -3866,13 +3946,21 @@ pub mod cars {
     pub const REACH: f32 = 15.0;
     /// The fastest the car anyone can drive themselves goes, in metres a
     /// second (the game's `drive`, since 2026-11-05): boosted, or reversing.
-    /// Nothing says over the network that a body is in a car, so the server
-    /// lets every body go this fast across the ground
-    /// (`server/src/players.rs`). The car's own speeds are in the game's
+    /// The server lets every body go this fast across the ground
+    /// (`server/src/players.rs`), in a car or not: nothing said a body was
+    /// in one until 2026-11-21 ([`Ask::Drive`](super::Ask::Drive)), and an
+    /// app from before still does not say. The car's own speeds are in the game's
     /// `assets/ui.ron`, and a test there keeps them no faster than this:
     /// 40 since 2026-11-06 (Hajun: "change the max speed to 40m/s"), 20
     /// until then.
     pub const DRIVEN_TOP_SPEED: f32 = 40.0;
+    /// How fast a body can go across the ground, in metres a second, as far
+    /// as the server lets it: that car, boosted, with some slack for the
+    /// odd update arriving early. Every body is allowed as much, whether it
+    /// has said it is in the car or not; and a device takes anyone shown
+    /// going faster to have been put where they are, not to have gone
+    /// there (the game's `net::leaps`).
+    pub const MOST_SPEED: f32 = DRIVEN_TOP_SPEED * 1.3;
 }
 
 /// A [`Spot`] as it arrives, stamped with the tick of the update it came in.
@@ -4720,6 +4808,422 @@ pub mod chat {
     }
 }
 
+// ---------------------------------------------------------------- the bag
+
+/// What a person owns, and what of it stands on their plot of the town (the
+/// game's `bag`, since 2026-11-21; Hajun: "im gonna change the emote button
+/// in the lobby to a inventory/shop panel ... the first tab is a inventory
+/// tab and the second tab is the shop tab").
+///
+/// **Things** ([`THINGS`]) are what there is to own: every piece House
+/// Builder's shop sells, by its name there (the game's `build::PIECES`), and
+/// the car anyone drives. Each is of a [`Group`], which the panel sorts them
+/// by, and of a [`Rarity`], which is the colour its name is written in; and
+/// each has its price, which for now is its rarity's (Hajun: "rarity is
+/// tied to the color, but is not tied to the price. but for now, set the
+/// price for each rarity items to this"). Sold back, a thing fetches half of
+/// it ("sell price should be 50% of buy price").
+///
+/// **A bag** ([`Bag`]) is one person's: their gems, how many of each thing
+/// they own, and which of those stand on their plot and where. Everyone
+/// begins with ten gems, one car and one street lamp ([`Bag::new`]; Hajun:
+/// "make the default gem count to be 10 ... make every player own 1 car and
+/// 1 street lamp by default"). Nothing earns or spends a gem yet.
+///
+/// **A thing that stands on the plot is out of the bag** until it is taken
+/// back ([`Bag::free`]): it cannot be sold, nor stood there twice. Where it
+/// stands is in the plot's own space ([`Standing`]), so that it stands the
+/// same on whichever of the town's plots its owner's seat has that day.
+///
+/// The rules are here for both sides: the server plays by them online, with
+/// the account's coins, and the game by itself offline. What is said is
+/// [`Ask`] and [`Tell`], inside [`super::Ask::Bag`] and [`super::Tell::Bag`],
+/// which were appended last with no new protocol: an app from before says
+/// none of it and is told none of it.
+pub mod bag {
+    use serde::{Deserialize, Serialize};
+
+    use super::At;
+
+    /// How rare a thing is, the commonest first: the colour its name is
+    /// written in (the game's `colours.bag`), and for now what it costs
+    /// ([`Rarity::price`]).
+    #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+    pub enum Rarity {
+        Common,
+        Uncommon,
+        Rare,
+        Epic,
+        Legendary,
+        Mythic,
+    }
+
+    impl Rarity {
+        pub const ALL: [Rarity; 6] = [
+            Rarity::Common,
+            Rarity::Uncommon,
+            Rarity::Rare,
+            Rarity::Epic,
+            Rarity::Legendary,
+            Rarity::Mythic,
+        ];
+
+        /// What a thing of this rarity costs for now, in coins (Hajun's
+        /// numbers, 2026-11-21). A thing's price is its own ([`Thing::price`])
+        /// and only begins as this.
+        pub const fn price(self) -> u32 {
+            match self {
+                Rarity::Common => 50,
+                Rarity::Uncommon => 150,
+                Rarity::Rare => 400,
+                Rarity::Epic => 1_000,
+                Rarity::Legendary => 2_500,
+                Rarity::Mythic => 15_000,
+            }
+        }
+    }
+
+    /// What kind of thing something is: what the panel's list down its left
+    /// sorts by. Nothing is a utility or a cosmetic yet.
+    #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+    pub enum Group {
+        Buildings,
+        Vehicles,
+        Utilities,
+        Cosmetics,
+    }
+
+    impl Group {
+        pub const ALL: [Group; 4] = [Group::Buildings, Group::Vehicles, Group::Utilities, Group::Cosmetics];
+    }
+
+    /// One thing there is to own.
+    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+    pub struct Thing {
+        /// What it goes by over the wire and where it is kept: for a
+        /// building, its piece's name in the game's `build::PIECES`. Never
+        /// an asset path, and never changed once anyone owns one.
+        pub kind: &'static str,
+        pub group: Group,
+        pub rarity: Rarity,
+        /// What the shop sells one for, in coins.
+        pub price: u32,
+    }
+
+    impl Thing {
+        /// What the shop gives for one sold back: half its price.
+        pub const fn resale(&self) -> u32 {
+            self.price / 2
+        }
+
+        /// Whether it is something that stands on a plot.
+        pub const fn stands(&self) -> bool {
+            matches!(self.group, Group::Buildings)
+        }
+    }
+
+    const fn building(kind: &'static str, rarity: Rarity) -> Thing {
+        Thing {
+            kind,
+            group: Group::Buildings,
+            rarity,
+            price: rarity.price(),
+        }
+    }
+
+    const fn vehicle(kind: &'static str, rarity: Rarity) -> Thing {
+        Thing {
+            kind,
+            group: Group::Vehicles,
+            rarity,
+            price: rarity.price(),
+        }
+    }
+
+    /// The street lamp, and the car anyone drives (the game's `drive`):
+    /// what everyone begins with one of.
+    pub const LAMP: &str = "streetlamp";
+    pub const CAR: &str = "red_sports_car";
+
+    /// Everything there is to own, in the order Hajun listed it with its
+    /// rarity (`assets/itemrarities.txt`, 2026-11-21), which is the order
+    /// the shop shows it in.
+    pub const THINGS: &[Thing] = &[
+        building(LAMP, Rarity::Legendary),
+        building("singlebed", Rarity::Uncommon),
+        building("doublebed", Rarity::Rare),
+        building("cafechair", Rarity::Common),
+        building("circletable", Rarity::Common),
+        building("cafedeskedge", Rarity::Common),
+        building("cafedeskcorner", Rarity::Common),
+        building("softcouch", Rarity::Rare),
+        building("square_house", Rarity::Common),
+        // The Flat House, the Two Floor House and the Roof Terrace House.
+        building("square_house_roofless", Rarity::Epic),
+        building("square_house_two_floor", Rarity::Uncommon),
+        building("square_house_roofless_two_floor", Rarity::Uncommon),
+        building("classic_door", Rarity::Common),
+        building("classic_door_with_window", Rarity::Common),
+        building("classic_double_door", Rarity::Common),
+        building("glass_door", Rarity::Common),
+        building("glass_double_door", Rarity::Common),
+        building("square_window", Rarity::Common),
+        building("wide_window", Rarity::Common),
+        vehicle(CAR, Rarity::Mythic),
+    ];
+
+    /// The thing that goes by `kind`, if there is one.
+    pub fn thing(kind: &str) -> Option<&'static Thing> {
+        THINGS.iter().find(|thing| thing.kind == kind)
+    }
+
+    /// How many gems everyone begins with.
+    pub const GEMS: u32 = 10;
+    /// The most of one kind of thing anyone owns, and the most things that
+    /// stand on one plot: what a plot is told of in one message.
+    pub const MOST_OF_A_KIND: u16 = 99;
+    pub const MOST_STANDING: usize = 100;
+    /// How far from the middle of its plot a thing's own middle may stand,
+    /// across the ground, in metres: half a plot, 24 m square, and a little
+    /// (the game keeps the whole of it inside the plot; this only keeps
+    /// what is said sane); and how far under and over the plot's ground.
+    pub const REACH: f32 = 12.5;
+    pub const DEEP: f32 = 2.0;
+    pub const HIGH: f32 = 40.0;
+
+    /// Something standing on its owner's plot: `id` is its owner's number
+    /// for it, the same for as long as it stands; `kind` what it is
+    /// ([`Thing::kind`]); and `at` where, **in the plot's own space**: its
+    /// origin the middle of the plot on its ground, x to the right of
+    /// someone standing there looking out over the plot's front (the side
+    /// its sign stands on), y up, and -z out over that front, so that a turn
+    /// of nothing faces a thing's front that way. A door or a window is in
+    /// a wall of the plot's house, as in House Builder ([`At::Wall`]).
+    #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
+    pub struct Standing {
+        pub id: u32,
+        pub kind: String,
+        pub at: At,
+    }
+
+    /// Why something asked of a bag was not done.
+    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+    pub enum No {
+        /// There is no such thing.
+        Unknown,
+        /// Not the coins for it.
+        Coins,
+        /// As many of it as anyone may own, or as many things as may stand
+        /// on a plot.
+        Full,
+        /// None of it in the bag: none owned, or every one standing.
+        None,
+        /// Not something that stands on a plot, or nowhere a thing may
+        /// stand.
+        Place,
+    }
+
+    /// Whether `at` is somewhere a thing may be said to stand: numbers, and
+    /// within reach of its plot.
+    pub fn sound(at: &At) -> bool {
+        let level = |y: f32| (-DEEP..=HIGH).contains(&y);
+        match *at {
+            At::Ground { x, y, z, yaw } => {
+                [x, y, z, yaw].iter().all(|n| n.is_finite()) && x.abs() <= REACH && z.abs() <= REACH && level(y)
+            }
+            At::Wall { along, up, face, .. } => {
+                along.is_finite() && up.is_finite() && along.abs() <= 2.0 * REACH && level(up) && (face == 1 || face == -1)
+            }
+        }
+    }
+
+    /// One person's bag: their gems, how many of each kind of thing they
+    /// own, those standing on their plot among them, and what stands there.
+    #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
+    pub struct Bag {
+        pub gems: u32,
+        pub owned: Vec<(String, u16)>,
+        pub stands: Vec<Standing>,
+    }
+
+    impl Default for Bag {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
+
+    impl Bag {
+        /// What everyone begins with: ten gems, one car and one street
+        /// lamp, and nothing on their plot.
+        pub fn new() -> Self {
+            Self {
+                gems: GEMS,
+                owned: vec![(LAMP.to_string(), 1), (CAR.to_string(), 1)],
+                stands: Vec::new(),
+            }
+        }
+
+        /// How many of `kind` are owned, those standing among them.
+        pub fn count(&self, kind: &str) -> u16 {
+            self.owned.iter().find(|(owned, _)| owned == kind).map_or(0, |(_, count)| *count)
+        }
+
+        /// How many of `kind` stand on the plot.
+        pub fn standing(&self, kind: &str) -> u16 {
+            self.stands.iter().filter(|stood| stood.kind == kind).count().min(usize::from(u16::MAX)) as u16
+        }
+
+        /// How many of `kind` are in the bag: owned, and not standing on
+        /// the plot. What the inventory shows, and what may be sold or
+        /// stood there.
+        pub fn free(&self, kind: &str) -> u16 {
+            self.count(kind).saturating_sub(self.standing(kind))
+        }
+
+        /// Whether the car is owned, to drive.
+        pub fn has_car(&self) -> bool {
+            self.count(CAR) > 0
+        }
+
+        fn set(&mut self, kind: &str, count: u16) {
+            self.owned.retain(|(owned, _)| owned != kind);
+            if count > 0 {
+                self.owned.push((kind.to_string(), count));
+                // In the order of the things there are, whatever was
+                // bought when.
+                let place = |kind: &str| THINGS.iter().position(|thing| thing.kind == kind).unwrap_or(usize::MAX);
+                self.owned.sort_by_key(|(kind, _)| place(kind));
+            }
+        }
+
+        /// Buys one of `kind` with `coins` in hand: what is left of them.
+        pub fn buy(&mut self, kind: &str, coins: u32) -> Result<u32, No> {
+            let thing = thing(kind).ok_or(No::Unknown)?;
+            let count = self.count(kind);
+            if count >= MOST_OF_A_KIND {
+                return Err(No::Full);
+            }
+            let left = coins.checked_sub(thing.price).ok_or(No::Coins)?;
+            self.set(kind, count + 1);
+            Ok(left)
+        }
+
+        /// Sells one of `kind` out of the bag, with `coins` in hand: what
+        /// there is of them after. One that stands on the plot is not in
+        /// the bag to be sold.
+        pub fn sell(&mut self, kind: &str, coins: u32) -> Result<u32, No> {
+            let thing = thing(kind).ok_or(No::Unknown)?;
+            if self.free(kind) == 0 {
+                return Err(No::None);
+            }
+            self.set(kind, self.count(kind) - 1);
+            Ok(coins.saturating_add(thing.resale()))
+        }
+
+        /// Stands one of `kind` on the plot at `at`, under the number `id`;
+        /// or, if what stands under that number is one of that kind, moves
+        /// it there.
+        pub fn put(&mut self, id: u32, kind: &str, at: At) -> Result<(), No> {
+            let thing = thing(kind).ok_or(No::Unknown)?;
+            if !thing.stands() || !sound(&at) {
+                return Err(No::Place);
+            }
+            if let Some(stood) = self.stands.iter_mut().find(|stood| stood.id == id) {
+                if stood.kind != kind {
+                    return Err(No::Place);
+                }
+                stood.at = at;
+                return Ok(());
+            }
+            if self.free(kind) == 0 {
+                return Err(No::None);
+            }
+            if self.stands.len() >= MOST_STANDING {
+                return Err(No::Full);
+            }
+            self.stands.push(Standing {
+                id,
+                kind: kind.to_string(),
+                at,
+            });
+            Ok(())
+        }
+
+        /// Takes what stands under the number `id` back into the bag.
+        pub fn take(&mut self, id: u32) -> Result<(), No> {
+            let before = self.stands.len();
+            self.stands.retain(|stood| stood.id != id);
+            if self.stands.len() == before { Err(No::None) } else { Ok(()) }
+        }
+
+        /// A number for the next thing to stand on the plot: one more than
+        /// the highest there.
+        pub fn next_id(&self) -> u32 {
+            self.stands.iter().map(|stood| stood.id).max().map_or(1, |most| most.wrapping_add(1).max(1))
+        }
+
+        /// The bag as it may be: as it was kept, with whatever was kept
+        /// wrongly put right, so that nothing read out of a file or a table
+        /// breaks the rules above. Kinds there are no longer are let go of,
+        /// with whatever of them stood; no more of a kind than may be owned;
+        /// nothing standing that is not owned, that stands nowhere, or
+        /// twice under one number.
+        pub fn sane(mut self) -> Self {
+            let mut owned: Vec<(String, u16)> = Vec::new();
+            for thing in THINGS {
+                let count: u32 = self.owned.iter().filter(|(kind, _)| kind == thing.kind).map(|(_, count)| u32::from(*count)).sum();
+                if count > 0 {
+                    owned.push((thing.kind.to_string(), count.min(u32::from(MOST_OF_A_KIND)) as u16));
+                }
+            }
+            self.owned = owned;
+            let stood = std::mem::take(&mut self.stands);
+            for standing in stood {
+                if self.stands.iter().all(|other| other.id != standing.id) {
+                    let _ = self.put(standing.id, &standing.kind, standing.at);
+                }
+            }
+            self
+        }
+    }
+
+    /// Something asked about your bag.
+    #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
+    pub enum Ask {
+        /// Tell me of my bag, and of what stands on the plots of my channel
+        /// of the town, now and as either changes. Said once, on coming
+        /// online, by an app that knows how to read the answers.
+        Watch,
+        /// Sell me one of this, for its price out of my coins.
+        Buy(String),
+        /// Buy one of this back off me, out of my bag, for half its price.
+        Sell(String),
+        /// Stand this thing of mine on my plot, here: `id` is mine to
+        /// choose, and says the same thing again if it is moved.
+        Put { id: u32, kind: String, at: At },
+        /// Take this back off my plot, into my bag.
+        Take { id: u32 },
+    }
+
+    /// Something told about a bag.
+    #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
+    pub enum Tell {
+        /// Your bag, as it stands: said as you sit down in the town, having
+        /// asked ([`Ask::Watch`]), and once in answer to everything you ask
+        /// of it after, done or not. `asked` is how many of this
+        /// connection's asks about the bag the server has answered by then,
+        /// that one among them: with more of your own on their way, a newer
+        /// answer is coming.
+        Yours { asked: u32, bag: Bag },
+        /// What stands on the plot of someone else in your channel of the
+        /// town, by their [`Member::id`](super::Member::id): all of it, as
+        /// you come into the channel or they do, and whenever it changes.
+        /// Which plot is theirs goes by their seat
+        /// ([`Tell::Channel`](super::Tell::Channel)).
+        Theirs { who: u64, stands: Vec<Standing> },
+    }
+}
+
 // --------------------------------------------------------------- messages
 
 /// Where you are now: sent while it changes, 15 times a second, and nothing
@@ -4837,6 +5341,38 @@ pub enum Ask {
     BridgeRace(bridge_race::Ask),
     /// Something asked in my game of Last Stand ([`last_stand::Ask`]).
     LastStand(last_stand::Ask),
+    /// Tell me of my channel of the town ([`Tell::Channel`]): who sits in
+    /// which of its seats, and so whose plot is whose (the game's `land`),
+    /// and who is in their own car (`drive`), now and whenever either
+    /// changes. Said once, on coming online, by an app that knows how to
+    /// read the answer. Last but one, since 2026-11-21, with no new
+    /// protocol: an app from before never says it and is never told, and a
+    /// server from before ignores it, as either ignores what it cannot
+    /// read.
+    Channel,
+    /// I am in my own car now (`true`), or out of it: for everyone else in
+    /// my channel of the town to see the car, and not me walking where it
+    /// goes ([`Tell::Channel`]). Last but one, since 2026-11-21, as
+    /// [`Ask::Channel`] is. Since the bag came, later that day, the server
+    /// takes it only from someone who owns the car ([`bag::Bag::has_car`]),
+    /// which everyone does who has not sold theirs.
+    Drive(bool),
+    /// Something about my bag: what I own, buying and selling, and what of
+    /// it stands on my plot of the town ([`bag::Ask`], since 2026-11-21).
+    /// Last, with no new protocol, as [`Ask::Channel`] is: an app from
+    /// before never says it, and a server from before ignores it.
+    Bag(bag::Ask),
+}
+
+/// One person in a channel of the town, as [`Tell::Channel`] has them: who,
+/// by their [`Member::id`]; which of the channel's seats they sit in, which
+/// says which plot of the town is theirs ([`land`]); and whether they are
+/// in their own car ([`Ask::Drive`]).
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Seated {
+    pub who: u64,
+    pub seat: u8,
+    pub driving: bool,
 }
 
 /// What the server tells you alone. In order, and never lost.
@@ -4909,6 +5445,18 @@ pub enum Tell {
     /// Something for you alone in your game of Last Stand
     /// ([`last_stand::Tell`]).
     LastStand(last_stand::Tell),
+    /// Everyone in your channel of the town, you among them, as they sit
+    /// and as they go ([`Seated`]): all of them, as you come into the
+    /// channel and whenever any of it changes (someone comes or goes, gets
+    /// into their car or out of it). Only to an app that asked
+    /// ([`Ask::Channel`]). Last but one, since 2026-11-21, with no new
+    /// protocol.
+    Channel(Vec<Seated>),
+    /// Something about a bag: your own, or what stands on the plot of
+    /// someone else in your channel of the town ([`bag::Tell`], since
+    /// 2026-11-21). Only to an app that asked ([`bag::Ask::Watch`]). Last,
+    /// with no new protocol.
+    Bag(bag::Tell),
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
@@ -6765,8 +7313,11 @@ mod tests {
             // the inner clockwise.
             assert_eq!(lane.anticlockwise, lane.out > 57.5, "lane {number}");
         }
-        // "2x normal speed": twice the town's buses' 7.
-        assert!((BUS_SPEED - 2.0 * cars::TOP_SPEED).abs() < 0.3, "{BUS_SPEED} m/s");
+        // "2x normal speed": twice the 7 the town's buses went at then,
+        // whatever the town's go at since.
+        assert!((BUS_SPEED - 14.0).abs() < 0.3, "{BUS_SPEED} m/s");
+        // The town's own: three quarters of that 7.
+        assert_eq!(cars::TOP_SPEED, 7.0 * 0.75);
         // Years after 1970, to the last of a second: always on its lane,
         // facing along it, the kerb on its right, going at full speed the
         // way its lane goes.
@@ -7308,5 +7859,222 @@ mod tests {
                 assert!(at.distance(*other) > 3.0, "{at} and {other}");
             }
         }
+    }
+
+    #[test]
+    fn a_thing_costs_what_its_rarity_does_for_now_and_sells_back_for_half() {
+        use bag::{Group, Rarity, THINGS, thing};
+        // Hajun's numbers, 2026-11-21.
+        let prices = [50, 150, 400, 1_000, 2_500, 15_000];
+        for (rarity, price) in Rarity::ALL.into_iter().zip(prices) {
+            assert_eq!(rarity.price(), price, "{rarity:?}");
+        }
+        for thing in THINGS {
+            assert_eq!(thing.price, thing.rarity.price(), "{}", thing.kind);
+            assert_eq!(thing.resale() * 2, thing.price, "{}", thing.kind);
+            assert_eq!(bag::thing(thing.kind), Some(thing));
+            assert_eq!(THINGS.iter().filter(|other| other.kind == thing.kind).count(), 1, "{} twice", thing.kind);
+        }
+        // As their file has them (`assets/itemrarities.txt`).
+        let rare = |kind: &str| thing(kind).map(|thing| thing.rarity);
+        assert_eq!(rare("streetlamp"), Some(Rarity::Legendary));
+        assert_eq!(rare("singlebed"), Some(Rarity::Uncommon));
+        assert_eq!(rare("doublebed"), Some(Rarity::Rare));
+        assert_eq!(rare("softcouch"), Some(Rarity::Rare));
+        assert_eq!(rare("square_house"), Some(Rarity::Common));
+        assert_eq!(rare("square_house_roofless"), Some(Rarity::Epic));
+        assert_eq!(rare("square_house_two_floor"), Some(Rarity::Uncommon));
+        assert_eq!(rare("square_house_roofless_two_floor"), Some(Rarity::Uncommon));
+        assert_eq!(rare("red_sports_car"), Some(Rarity::Mythic));
+        let common = THINGS.iter().filter(|thing| thing.rarity == Rarity::Common).count();
+        assert_eq!((THINGS.len(), common), (20, 12));
+        // Nineteen buildings, which stand on a plot, and one car, which
+        // does not.
+        assert_eq!(THINGS.iter().filter(|thing| thing.group == Group::Buildings && thing.stands()).count(), 19);
+        assert_eq!(THINGS.iter().filter(|thing| thing.group == Group::Vehicles && !thing.stands()).count(), 1);
+        assert_eq!(thing("a_castle"), None);
+    }
+
+    #[test]
+    fn everyone_begins_with_ten_gems_a_car_and_a_street_lamp() {
+        use bag::{Bag, CAR, GEMS, LAMP};
+        let bag = Bag::new();
+        assert_eq!((bag.gems, GEMS), (10, 10));
+        assert_eq!((bag.count(CAR), bag.count(LAMP), bag.owned.len()), (1, 1, 2));
+        assert!(bag.has_car() && bag.stands.is_empty());
+        assert_eq!(bag.free(LAMP), 1);
+        assert_eq!(bag.count("singlebed"), 0);
+    }
+
+    #[test]
+    fn buying_takes_the_price_and_selling_gives_half_of_it_back() {
+        use bag::{Bag, CAR, LAMP, MOST_OF_A_KIND, No};
+        let mut bag = Bag::new();
+        // A bed for 150 out of 1,000; then no coins for a lamp at 2,500.
+        assert_eq!(bag.buy("singlebed", 1_000), Ok(850));
+        assert_eq!(bag.count("singlebed"), 1);
+        assert_eq!(bag.buy(LAMP, 850), Err(No::Coins));
+        assert_eq!(bag.count(LAMP), 1);
+        assert_eq!(bag.buy("a_castle", 1_000_000), Err(No::Unknown));
+        // Exactly the price is enough.
+        assert_eq!(bag.buy("cafechair", 50), Ok(0));
+        // Kept in the order of the things there are, whatever was bought
+        // when.
+        let kinds: Vec<&str> = bag.owned.iter().map(|(kind, _)| kind.as_str()).collect();
+        assert_eq!(kinds, [LAMP, "singlebed", "cafechair", CAR]);
+        // Sold back for half: the bed for 75, the lamp for 1,250, the car
+        // for 7,500; and then there is none to sell.
+        assert_eq!(bag.sell("singlebed", 0), Ok(75));
+        assert_eq!(bag.sell("singlebed", 75), Err(No::None));
+        assert_eq!(bag.sell(LAMP, 75), Ok(1_325));
+        assert_eq!(bag.sell(CAR, 0), Ok(7_500));
+        assert!(!bag.has_car());
+        assert_eq!(bag.sell("a_castle", 0), Err(No::Unknown));
+        // No more of one kind than anyone may own.
+        let mut many = Bag::new();
+        for _ in 0..MOST_OF_A_KIND {
+            many.buy("cafechair", 50).unwrap();
+        }
+        assert_eq!(many.buy("cafechair", 50), Err(No::Full));
+        assert_eq!(many.count("cafechair"), MOST_OF_A_KIND);
+    }
+
+    #[test]
+    fn a_thing_stood_on_the_plot_is_out_of_the_bag_until_it_is_taken_back() {
+        use bag::{Bag, CAR, LAMP, MOST_STANDING, No};
+        let here = At::Ground { x: 3.0, y: 0.0, z: -4.5, yaw: 1.5 };
+        let there = At::Ground { x: -2.0, y: 0.0, z: 6.0, yaw: 0.0 };
+        let mut bag = Bag::new();
+        assert_eq!(bag.next_id(), 1);
+        assert_eq!(bag.put(1, LAMP, here), Ok(()));
+        assert_eq!((bag.count(LAMP), bag.standing(LAMP), bag.free(LAMP)), (1, 1, 0));
+        assert_eq!(bag.next_id(), 2);
+        // The one lamp stands: there is none to stand again, nor to sell.
+        assert_eq!(bag.put(2, LAMP, there), Err(No::None));
+        assert_eq!(bag.sell(LAMP, 0), Err(No::None));
+        // The same number again moves it.
+        assert_eq!(bag.put(1, LAMP, there), Ok(()));
+        assert_eq!(bag.stands.len(), 1);
+        assert_eq!(bag.stands[0].at, there);
+        // But not as something else.
+        assert_eq!(bag.put(1, "singlebed", here), Err(No::Place));
+        // The car stands on no plot, nor anything nowhere, nor what is not
+        // owned.
+        assert_eq!(bag.put(5, CAR, here), Err(No::Place));
+        assert_eq!(bag.put(5, "singlebed", here), Err(No::None));
+        let far = At::Ground { x: 40.0, y: 0.0, z: 0.0, yaw: 0.0 };
+        let nowhere = At::Ground { x: f32::NAN, y: 0.0, z: 0.0, yaw: 0.0 };
+        bag.buy("singlebed", 150).unwrap();
+        assert_eq!(bag.put(5, "singlebed", far), Err(No::Place));
+        assert_eq!(bag.put(5, "singlebed", nowhere), Err(No::Place));
+        let in_a_wall = At::Wall { wall: 2, along: 1.5, up: 0.0, face: 1 };
+        assert_eq!(bag.put(5, "singlebed", in_a_wall), Ok(()));
+        assert_eq!(bag.put(6, "singlebed", At::Wall { wall: 2, along: 1.5, up: 0.0, face: 3 }), Err(No::Place));
+        // Taken back, it is in the bag again, to sell.
+        assert_eq!(bag.take(1), Ok(()));
+        assert_eq!(bag.take(1), Err(No::None));
+        assert_eq!(bag.free(LAMP), 1);
+        assert_eq!(bag.sell(LAMP, 0), Ok(1_250));
+        // No more on a plot than a plot is told of at once.
+        let mut full = Bag::new();
+        for _ in 0..2 {
+            for _ in 0..60 {
+                full.buy("cafechair", 50).unwrap_or_default();
+            }
+        }
+        for _ in 0..60 {
+            full.buy("circletable", 50).unwrap();
+        }
+        let mut stood = 0;
+        for id in 1..=150 {
+            let kind = if id <= 90 { "cafechair" } else { "circletable" };
+            if full.put(id, kind, here).is_ok() {
+                stood += 1;
+            }
+        }
+        assert_eq!((stood, full.stands.len()), (MOST_STANDING, MOST_STANDING));
+        assert_eq!(full.put(999, "circletable", here), Err(No::Full));
+    }
+
+    #[test]
+    fn a_bag_kept_wrongly_is_put_right_as_it_is_read() {
+        use bag::{Bag, CAR, LAMP, MOST_OF_A_KIND, Standing};
+        let here = At::Ground { x: 1.0, y: 0.0, z: 1.0, yaw: 0.0 };
+        let kept = Bag {
+            gems: 3,
+            owned: vec![
+                (CAR.into(), 1),
+                ("a_castle".into(), 4),
+                ("cafechair".into(), 500),
+                (LAMP.into(), 1),
+                (LAMP.into(), 1),
+            ],
+            stands: vec![
+                Standing { id: 7, kind: LAMP.into(), at: here },
+                // The same number twice, a thing there is no longer, one
+                // that is not owned, and one standing nowhere.
+                Standing { id: 7, kind: "cafechair".into(), at: here },
+                Standing { id: 8, kind: "a_castle".into(), at: here },
+                Standing { id: 9, kind: "singlebed".into(), at: here },
+                Standing { id: 10, kind: "cafechair".into(), at: At::Ground { x: 99.0, y: 0.0, z: 0.0, yaw: 0.0 } },
+                Standing { id: 11, kind: "cafechair".into(), at: here },
+            ],
+        };
+        let bag = kept.sane();
+        assert_eq!(bag.gems, 3);
+        assert_eq!(bag.owned, vec![(LAMP.to_string(), 2), ("cafechair".to_string(), MOST_OF_A_KIND), (CAR.to_string(), 1)]);
+        let stood: Vec<(u32, &str)> = bag.stands.iter().map(|stood| (stood.id, stood.kind.as_str())).collect();
+        assert_eq!(stood, [(7, LAMP), (11, "cafechair")]);
+        // One that is right already is left as it is.
+        assert_eq!(bag.clone().sane(), bag);
+        assert_eq!(Bag::new().sane(), Bag::new());
+    }
+
+    #[test]
+    fn what_is_said_of_a_bag_goes_over_the_wire_last_of_all() {
+        use bag::{Bag, LAMP, Standing};
+        let mut bag = Bag::new();
+        bag.put(1, LAMP, At::Ground { x: 3.25, y: 0.0, z: -4.5, yaw: 0.785 }).unwrap();
+        // Appended last, after everything an app from before knows: a
+        // variant's number is all postcard writes of which it is.
+        let ask = Ask::Bag(bag::Ask::Put { id: 1, kind: LAMP.into(), at: bag.stands[0].at });
+        let bytes = postcard::to_allocvec(&ask).unwrap();
+        assert_eq!(bytes[0], 28, "Ask::Bag is the twenty-ninth thing a device asks");
+        assert_eq!(postcard::to_allocvec(&Ask::Drive(true)).unwrap()[0], 27);
+        assert_eq!(postcard::to_allocvec(&Ask::Channel).unwrap()[0], 26);
+        let Ask::Bag(back) = postcard::from_bytes(&bytes).unwrap() else {
+            panic!("an ask about a bag came back as something else");
+        };
+        assert_eq!(back, bag::Ask::Put { id: 1, kind: LAMP.into(), at: bag.stands[0].at });
+        for ask in [bag::Ask::Watch, bag::Ask::Buy("singlebed".into()), bag::Ask::Sell(LAMP.into()), bag::Ask::Take { id: 9 }] {
+            let bytes = postcard::to_allocvec(&Ask::Bag(ask.clone())).unwrap();
+            let Ask::Bag(back) = postcard::from_bytes(&bytes).unwrap() else {
+                panic!("{ask:?} came back as something else");
+            };
+            assert_eq!(back, ask);
+        }
+        let tell = Tell::Bag(bag::Tell::Yours { asked: 3, bag: bag.clone() });
+        let bytes = postcard::to_allocvec(&tell).unwrap();
+        assert_eq!(bytes[0], 19, "Tell::Bag is the twentieth thing a device is told");
+        assert_eq!(postcard::to_allocvec(&Tell::Channel(Vec::new())).unwrap()[0], 18);
+        let Tell::Bag(bag::Tell::Yours { asked, bag: back }) = postcard::from_bytes(&bytes).unwrap() else {
+            panic!("a bag came back as something else");
+        };
+        assert_eq!((asked, &back), (3, &bag));
+        let theirs = Tell::Bag(bag::Tell::Theirs { who: 77, stands: bag.stands.clone() });
+        let Tell::Bag(bag::Tell::Theirs { who, stands }) = postcard::from_bytes(&postcard::to_allocvec(&theirs).unwrap()).unwrap() else {
+            panic!("a plot came back as something else");
+        };
+        assert_eq!((who, stands), (77, bag.stands.clone()));
+        // A plot as full as it may be is a few kilobytes: one message.
+        let full: Vec<Standing> = (0..bag::MOST_STANDING as u32)
+            .map(|id| Standing {
+                id: id + 1_000,
+                kind: "square_house_roofless_two_floor".into(),
+                at: At::Ground { x: -11.5, y: 0.25, z: 11.5, yaw: 5.5 },
+            })
+            .collect();
+        let bytes = postcard::to_allocvec(&Tell::Bag(bag::Tell::Theirs { who: u64::MAX, stands: full })).unwrap();
+        assert!(bytes.len() < 6_000, "{} bytes", bytes.len());
     }
 }

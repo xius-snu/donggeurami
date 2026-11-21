@@ -103,6 +103,21 @@ node of that name in a town's model still stands where it is put
 
 ## Building your house
 
+> **Since 2026-11-22 the same code puts buildings down on your plot of the
+> town** (`build::stand`, `docs/bag.md`). What changed here for it, and
+> nothing else: where you are building is a `build::Site` (this game's
+> plot while its time to build runs, as `builder::Building` says; or, out
+> of a game, your plot of the town, a `Yard` that pieces are kept inside);
+> a fresh piece is brought out by `build::bring_out`, which `take_chosen`
+> calls as it did the same lines itself; and whatever of this game's looks
+> for its own pieces looks for those that carry `builder::InGame` (the
+> shop's "one house to a plot", the house a door goes in, the pieces told
+> to the server, the pieces put down as the time runs out), so that a
+> house standing on your plot of the town is no house of the game's. The
+> town's own plots are not built on (`Islands::build_on`) but laid over
+> (`lay_layer`). The game's tests pass as they did; the game itself was
+> not played through that night.
+
 While the time to build runs, a hammer button sits top right, below where a
 button that went home sat in the town until 2026-10-31 (`src/shop.rs`). It opens the shop: a window under
 the time, 65% of the screen wide, with a tab each for Foundation, Doors &

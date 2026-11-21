@@ -9,9 +9,82 @@ share. Dated entries, newest first.
 
 ## Contents
 
-1. Later on the evening of 2026-11-18: Knock Off's stick anywhere, Bridge Race's grants and dynamite, Last Stand's chests struck open
-2. The evening of 2026-11-18: Bridge Wars costs 50 too, prices drawn with the coin, and twelve asks after a play
-3. Since 2026-11-18 four new games are on the selector, each played at a table
+1. 2026-11-19: Bridge Race's and Last Stand's cards are turned off
+2. 2026-11-19: a sheet for each game, as Bridge Wars has
+3. Later on the evening of 2026-11-18: Knock Off's stick anywhere, Bridge Race's grants and dynamite, Last Stand's chests struck open
+4. The evening of 2026-11-18: Bridge Wars costs 50 too, prices drawn with the coin, and twelve asks after a play
+5. Since 2026-11-18 four new games are on the selector, each played at a table
+
+## 2026-11-19: Bridge Race's and Last Stand's cards are turned off
+
+Hajun, having played all six: "i likethe bridge wars minigame, i also like
+knockoffgame as a quickie, but laststand is a bit too long and unexciting,
+and bridgerace not sure but its not that fun rn which maybe is because its
+ai bots and not much diverse choices, and blendin game is bit too hard cuz
+its way too hard to tell who is the real person if they just walk in a
+similar way as the ai so its not fun to be the seeker. also its not much
+difference in the "education" that the game gives compared to the bridgewars
+game." They asked what to do; of what was put to them (turn those two off,
+rework Blend In once later, land in the town before another game, quick
+games on Knock Off's dial) they said: "ok first turn off last stand and
+bridge race. dont rebuild yet".
+
+- **`games::OFF`** (`src/games.rs`) names the games whose cards are not on
+  the selector: Bridge Race and Last Stand. Turned off, not removed:
+  `CARDS` still holds the six, and with `OFF` emptied they stand as they
+  did, three to a row.
+- **Four cards, two to a row** (`games::shown`, `laid`): Bridge Wars and
+  Blend In over Knock Off and Home Builders, in the order they were in,
+  each card half the window's width, the window the size it was. A row
+  short of the first (five cards: three over two) keeps the room its
+  missing card would have, so that its cards are no wider than the rest.
+- **Only the cards.** The two games' rules, tables, maps, words in
+  `ui.ron`, sheets and tuning tests are untouched; nothing in `shared/` or
+  `server/` changed, so there is no new protocol and nothing to deploy.
+  The server still seats anyone at those two tables: an app built before
+  this (APK 43, and whatever is on a phone) still shows six cards and
+  plays all of them.
+- **Mine**: that four are laid two and two (not three and one, nor four in
+  a line); that Blend In's card stays, since they did not name it; that
+  the server is left taking those two games' joins, so that an app already
+  out is not turned down at a card it still shows.
+- **Checked**: the selector's unit tests (`games::tests`: the four as they
+  are shown, the six with nothing off, three over two with one off) with
+  the rest of `cargo test --lib`; the desktop build, hidden
+  (`RT_BACKGROUND=1`, offline, a phone's 852 by 393), the gamepad tapped by
+  a throwaway module since taken out, and the picture looked at: four
+  cards, level, Blend In saying "Online only" as it does offline.
+- **Not done, at their word**: no APK (43 is still the newest, with six
+  cards), no deploy, no commit. Not seen on a phone.
+
+## 2026-11-19: a sheet for each game, as Bridge Wars has
+
+Hajun: "similar to my bridgewarsgameevent.md file that has the game event by
+time, the shop itemes, make the same for all the minigames. list the major
+game event per time in order, the shop/item in short concise way ... need to
+be concise and not cognitively dense to read so i can read it fast and quick
+and understand."
+
+- **Five files at the root**, beside `bridgewarsgameevent.md` and laid out as
+  it is (the `@... , Event` line, the events in order, then a `######` heading
+  to each short list): `bridgeracegameevent.md`, `knockoffgameevent.md`,
+  `laststandgameevent.md`, `blendingameevent.md`, `homebuildersgameevent.md`.
+  Each ends with its coins.
+- **Written from the code, not from these logs**: every number was read off
+  the rules as they stand (`shared/src/bridge_race.rs`, `knock_off.rs`,
+  `blend_in.rs`, `last_stand/` with its `shop.rs`, `waves.rs`, `forges.rs`
+  and `game.rs`, each game's `SHAPE` and `prizes`; House Builder's `rules`
+  in `shared/src/lib.rs`, `build::PIECES`, `builder::THEMES`). No code
+  changed; nothing was built or run.
+- **They follow the code**, where `bridgewarsgameevent.md` is Hajun's and
+  the game follows it: a number changed in a game is changed in its sheet
+  with it. A number Hajun changes in a sheet is an ask.
+- **Mine**: Knock Off's is by turn (it has no clock, a turn is as long as
+  its slide), Blend In's by the time of one round, Last Stand's by wave
+  after the first; ranges are written "8-16", not Hajun's "8~16" (two `~`
+  on a line strike the words between out in some viewers); and what is left
+  out of each: the camera, the buttons, the netcode, how the computer's
+  players think.
 
 ## Later on the evening of 2026-11-18: Knock Off's stick anywhere, Bridge Race's grants and dynamite, Last Stand's chests struck open
 

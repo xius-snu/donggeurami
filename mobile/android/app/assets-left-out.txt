@@ -75,6 +75,11 @@ LICENSE-pretendard.txt
 # Blender read this file, the game never did.
 woodplanktexture.jpg
 
+# Hajun's list of what there is to own, with each thing's rarity and what a
+# rarity costs (2026-11-21): the game's own list is written from it
+# (roundtown_net::bag::THINGS), and reads nothing from this file.
+itemrarities.txt
+
 # The market stand Hajun put on Bridge Wars' islands (2026-11-11), as it came
 # from poly.pizza: it is in pvptownmap.glb, and the game reads nothing from
 # this folder.

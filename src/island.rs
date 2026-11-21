@@ -230,6 +230,17 @@ pub(crate) fn arrival(venue: Venue, seat: usize) -> Transform {
     Transform::from_translation(spot.with_y(LAND_TOP)).with_rotation(turn)
 }
 
+/// Where you stand on arriving on `venue` in `seat`, you or anyone who is a
+/// person: in the town, in the middle of your own plot, facing the fountain
+/// (`roundtown_net::land`, since 2026-11-20; Hajun: "u need to spawn on
+/// your plot in the center, facing toward the fountain"), as the server has
+/// it too; anywhere else, where [`arrival`] has the seat. The town's AIs,
+/// which have no plot, arrive round the pond as ever ([`arrival`]).
+pub(crate) fn arrival_of_a_person(venue: Venue, seat: usize) -> Transform {
+    let (spot, turn) = roundtown_net::arrival_of_a_person(venue, seat);
+    Transform::from_translation(spot.with_y(LAND_TOP)).with_rotation(turn)
+}
+
 /// The shape of each island, once its model has loaded, kept by model: every
 /// copy of one — every plot — has the same shape, read once, until something is
 /// built on it (`build_on`). Until then nobody on it moves: there is nothing
@@ -244,6 +255,10 @@ pub(crate) struct Islands {
     /// Something laid over an island whose model has not loaded yet
     /// ([`Islands::lay_over`]), to lay over it when it has: its parts.
     pending_overlay: Vec<(Venue, Vec<Vec<[Vec3; 3]>>)>,
+    /// What is laid over each island, layer by layer, each by its name
+    /// ([`Islands::lay_layer`]): the town has two, the signs on its plots
+    /// and what people have stood on them, which come and go apart.
+    layers: Vec<(Venue, &'static str, Vec<Vec<[Vec3; 3]>>)>,
 }
 
 impl Islands {
@@ -341,6 +356,26 @@ impl Islands {
     /// loaded there is nothing to lay it over, and it is kept for when there
     /// is.
     pub(crate) fn lay_over(&mut self, venue: Venue, parts: Option<Vec<Vec<[Vec3; 3]>>>) {
+        self.lay_layer(venue, "", parts);
+    }
+
+    /// The same, for one of several things laid over `venue` that come and
+    /// go apart, each a layer by its own name: `parts` in place of whatever
+    /// that layer was, the others left as they are, and all of them laid
+    /// over the island together. [`Islands::lay_over`] is the layer with no
+    /// name.
+    pub(crate) fn lay_layer(&mut self, venue: Venue, layer: &'static str, parts: Option<Vec<Vec<[Vec3; 3]>>>) {
+        self.layers.retain(|(on, name, _)| !(*on == venue && *name == layer));
+        if let Some(parts) = parts.filter(|parts| !parts.is_empty()) {
+            self.layers.push((venue, layer, parts));
+        }
+        let all: Vec<Vec<[Vec3; 3]>> = self
+            .layers
+            .iter()
+            .filter(|(on, ..)| *on == venue)
+            .flat_map(|(_, _, parts)| parts.iter().cloned())
+            .collect();
+        let parts = (!all.is_empty()).then_some(all);
         let model = model(venue);
         let overlay = |parts: &Option<Vec<Vec<[Vec3; 3]>>>| {
             parts.as_ref().map(|parts| {
@@ -423,24 +458,34 @@ pub(crate) fn spawn_island(
 }
 
 /// Draws the island you are on, and everything and everyone on it, and hides
-/// the others, and the dead (`arena`). You yourself are always where you
-/// are, and drawn unless the camera is inside you, or you are dead
+/// the others, and the dead (`arena`), and anyone in their own car, which
+/// is drawn in their place (`drive::InCar`). You yourself are always where
+/// you are, and drawn unless the camera is inside you, or you are dead
 /// (`follow_camera`). On a venue whose scenery is another's, Blend In's,
 /// that one's [`Scenery`] is drawn too: the town's, its people not.
 #[allow(clippy::type_complexity)]
 pub(crate) fn show_where_i_am(
     me: Query<(&Venue, Option<&crate::Team>), With<Player>>,
     mut things: Query<
-        (&Venue, &mut Visibility, Has<Dead>, Option<&crate::arena::Wears>, Option<&crate::Team>, Has<Scenery>),
+        (
+            &Venue,
+            &mut Visibility,
+            Has<Dead>,
+            Option<&crate::arena::Wears>,
+            Option<&crate::Team>,
+            Has<Scenery>,
+            Has<crate::drive::InCar>,
+        ),
         Without<Player>,
     >,
 ) {
     let (here, mine) = me.single().map_or((None, None), |(venue, team)| (Some(*venue), team));
     let borrowed = here.map(scenery).filter(|seen| Some(*seen) != here);
-    for (venue, mut visibility, dead, wears, team, setting) in &mut things {
+    for (venue, mut visibility, dead, wears, team, setting, in_car) in &mut things {
         // Nor anyone who has drunk Bridge Wars' invisibility potion, but
-        // one of your own team, whom you see see-through (`gear`).
-        let unseen = wears.is_some_and(|wears| wears.unseen) && !(mine.is_some() && team == mine);
+        // one of your own team, whom you see see-through (`gear`); nor
+        // anyone in their own car, which is drawn where they are (`drive`).
+        let unseen = wears.is_some_and(|wears| wears.unseen) && !(mine.is_some() && team == mine) || in_car;
         let on_it = Some(*venue) == here || (setting && Some(*venue) == borrowed);
         visibility.set_if_neq(if on_it && !dead && !unseen {
             Visibility::Inherited

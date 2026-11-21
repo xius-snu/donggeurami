@@ -11,12 +11,18 @@ bundles). It plays online against a server in Seoul (`server/`; `shared/` is
 Bridge Wars. House Builder, the build-battle game, is stalled: keep it
 working, and spend nothing on it unasked. Since 2026-11-18 the selector has
 the four games Hajun asked for that day, each played at a table: Blend In,
-Knock Off, Bridge Race, Last Stand (`docs/minigames.md`).
+Knock Off, Bridge Race, Last Stand (`docs/minigames.md`). Having played
+them (2026-11-19), Hajun likes Bridge Wars and Knock Off and had Bridge
+Race's and Last Stand's cards turned off (`games::OFF`, since APK 44):
+spend nothing on those two unasked.
 
-As of the evening of 2026-11-18: `PROTOCOL_VERSION` 24, APK 43
-(`versionCode`, not yet on a phone), the server deployed then (13:33 UTC)
-with everything in `server/` and `shared/`, all of it committed and pushed,
-the town's map with Hajun's `plot` planes among it. The iPhone's last tag,
+As of 2026-11-22: `PROTOCOL_VERSION` 24 (since 2026-11-18, so APK 43 and
+44 play on, without what came after them), **APK 45** (`versionCode`,
+built 2026-11-22, not put on a phone from here, `docs/building.md`), the
+server deployed at 15:59 UTC on 2026-11-21 with everything in `server/` and
+`shared/`, **all of it committed and pushed**: the land (`docs/land.md`),
+everyone's signs and cars, the town's slower buses, and the bag
+(`docs/bag.md`). The iPhone's last tag,
 `ios-1.0.2-18`, pushed in the first hour of 2026-11-16 (whether Codemagic
 built it is not known here), is protocol 18: its build is told to update
 and stays offline until `ios-1.0.2-19` is built, whose tag is Hajun's to
@@ -44,19 +50,21 @@ heading in one of these:
 | **Bridge Wars** | `docs/bridge-wars.md`, `bridgewarsgameevent.md` | "Games" |
 | Bridge Wars' map | `docs/bridge-wars-map.md` | "The PvP map itself" |
 | the four games' tables (joining, waiting, fees, prizes, results), the fight kit they share with Bridge Wars | `docs/minigames.md` | |
-| **Blend In** | `docs/blend-in.md` | |
-| **Knock Off** | `docs/knock-off.md` | |
-| **Bridge Race** | `docs/bridge-race.md` | |
-| **Last Stand** | `docs/last-stand.md` | |
+| **Blend In** | `docs/blend-in.md`, `blendingameevent.md` | |
+| **Knock Off** | `docs/knock-off.md`, `knockoffgameevent.md` | |
+| **Bridge Race** | `docs/bridge-race.md`, `bridgeracegameevent.md` | |
+| **Last Stand** | `docs/last-stand.md`, `laststandgameevent.md` | |
 | the opening, the buttons round the screen, the camera's hole, settings | `docs/town-hud.md` | "The app opens under a cover", "The app opens in Round Town", "Settings" |
 | friends, groups, messages | `docs/friends.md` | "Friends, groups and messages" |
 | the chat, the quick chat, fonts, Korean and Vietnamese, the word filter | `docs/chat-and-text.md` | "The chat", "The font is Inter" |
 | netcode, the login, the town's clock | `docs/online.md`, `SERVER.md`, `MULTIPLAYER.md` | "Playing online" |
 | a map's model, collision | `docs/maps-and-collision.md` | "The islands are Blender models" |
+| the town's plots, whose they are, the sign on yours | `docs/land.md` | |
+| the bag: what you own, the shop, gems, buildings put down on your plot (`bag`, `build::stand`, `server/src/bag.rs`) | `docs/bag.md` | |
 | fountain, music, town houses, town objects and their editor, AIs, talking | `docs/town.md` | "The fountain runs", "The town has music", "The town's houses", "The town is data", "The town holds 32 players", "You can talk to anyone" |
 | the buses, the car you drive | `docs/vehicles.md` | "The town's buses", "The car you drive" |
 | the camera | `docs/camera.md` | "The camera stands where you zoomed it" |
-| House Builder, the shop's pieces, `assets/mybuilds/` | `docs/house-builder.md` | "House Builder", "Building your house" |
+| House Builder, the shop's pieces, `assets/mybuilds/` | `docs/house-builder.md`, `homebuildersgameevent.md` | "House Builder", "Building your house" |
 | anything under `mobile/ios` | `IOS.md` | |
 
 `docs/bridge-wars.md` is long, a log with the newest work first: read its
@@ -75,6 +83,10 @@ rule or how things stand has changed, and then in a line or two. No logs here.
 - They edit `assets/ui.ron` (colours, words, the car's numbers) and
   `bridgewarsgameevent.md` (Bridge Wars' items, prices and timetable) by
   hand, sometimes while you work: read them again before changing a number.
+- Every other game has a short sheet like it at the root
+  (`<game>gameevent.md`, since 2026-11-19: its events in order, items,
+  prices, coins), written from the code: change a number in a game and its
+  line there with it.
 - Say what was checked where: unit tests, the desktop build (scripted), two
   copies against a server on this PC, the VM, a phone. A phone is rarely
   attached; never let "built" read as "seen on the phone".
@@ -206,6 +218,7 @@ to try again.
   `RT_SAFE_AREA=<left>,<right>` (a camera's hole made up),
   `RT_STAND_WAVE=<n>`, `RT_STAND_PURSE=<count>` (Last Stand from a later
   wave, with coins to spend; offline, and the server's own),
+  `RT_LAND_SIGNS=all` (a sign on every plot of the town, to look at),
   `RT_BACKGROUND=1` (below). Two copies need
   their own `APPDATA`. A server on this PC: `RT_PORT=5443
   RT_ALLOW_SKIP=1 target/debug/roundtown-server.exe`, and the copies with
@@ -233,7 +246,10 @@ to try again.
   field added, or one meaning something new, needs `PROTOCOL_VERSION`
   bumped, or an old app connects and breaks. An app whose version differs
   is told to update and stays offline; a change that leaves what is sent as
-  it was keeps the apps already out playing.
+  it was keeps the apps already out playing. Something new that either
+  side can do without may be a variant added at the END of `Ask` or
+  `Tell`, with no new number, if the server says it only to a device that
+  asked (`Ask::Channel`, `players::Watching`; `docs/online.md`).
 - Your body is yours: moved here at once, told to the server 15 times a
   second while it moves, which checks the move could have been made (no
   faster than 52 m/s, the car's boost with slack; a rise no faster than a
@@ -288,7 +304,9 @@ to try again.
   to agree with it (tests read the map), the bots' map has to be baked
   again (`RT_BAKE_NAV=1 cargo test --lib nav_bake`), and the server
   deployed. So too Bridge Race's (`race_bake`) and the town's, whose grid
-  is Blend In's crowd's (`blend_in_bake`).
+  is Blend In's crowd's (`blend_in_bake`), and the middles of whose plots
+  are written for the server (`roundtown_net::land::HOMES`; a test of
+  `land`'s says when they no longer agree).
 - Every body is Hajun's `playercharacter.glb` or `playercharactergirl.glb`
   and their two recolourings each (`lobby::LOOKS`; the same list is
   `roundtown_net::BOY_LOOKS`, `GIRL_LOOKS`, which the server checks: deploy
@@ -342,8 +360,9 @@ to try again.
 - The app opens under a plain black cover that fades once the town is
   loaded (`src/intro.rs`, since 2026-11-17); the "Loading..." bar and the
   drop through a circle are turned off (`SAYS_LOADING`, `DROPS_IN`). No
-  menu. Everyone arrives on the path round the pond
-  (`roundtown_net::arrival`), facing the fountain.
+  menu. You arrive in the middle of your plot, facing the fountain
+  (`roundtown_net::land`, since 2026-11-20, the server too); the town's
+  AIs on the path round the pond (`roundtown_net::arrival`).
 - The town holds 32 bodies: whoever is in your channel (16 people to one)
   and this device's own AIs for the rest (`lobby.rs`, `ai.rs`). An AI is a
   player whose `Intent` comes from `ai::Steering`; it never steps down what
@@ -358,25 +377,68 @@ to try again.
   car's gun, itself off since, `drive::GUN`) are turned off since
   2026-11-14, "too many lobby ui buttons" (`hud::PERSON`, `hud::GIFT`).
   Round the jump button a
-  face (in and out of the car), a speech bubble (a fan of things to say
+  bag (your bag, since 2026-11-22; a face until then, which put you in
+  the car), a speech bubble (a fan of things to say
   at a press, `src/quick.rs`, `words.chat.quick`), a small keyboard over
   it (the chat's box) and a fist (a punch; the car's reverse); the stick,
   whose middle is set where the finger first goes down, within half its
-  radius. On Windows the stick and the jump button take the mouse.
+  radius. In your car the bag is put away and a door stands half way down
+  the left edge, which gets you out (`hud::ExitButton`). Under your
+  balance, your gems. On Windows the stick and the jump button take the
+  mouse.
+- **The bag** (`src/bag.rs`, `src/bag/panel.rs`, since 2026-11-22, APK
+  45; not seen on a phone; drawn from Hajun's `bagandinventorypanel1.png`
+  and `2`): a window of two tabs, what you own and the shop, categories
+  down the left, cards three to a row, each thing's name in its rarity's
+  colour (`colours.bag`). Twenty things, House Builder's nineteen pieces
+  and the car, each with a rarity and a price that is its rarity's for
+  now, sold back for half (`roundtown_net::bag`, written from Hajun's
+  `assets/itemrarities.txt`: **change a rarity or a price there and in
+  `THINGS`, and deploy the server**). Everyone begins with ten gems, a car
+  and a street lamp. Online it is the account's (Postgres, `players.gems`
+  and `.bag`): buying and selling are the server's; offline the device's
+  own, kept in `bag.json`. A tap on your car in it drives; a tap on a
+  building, standing on your plot, puts it down.
 - The top bar and the chat keep clear of the camera's hole and an
   iPhone's island (`src/safe.rs`: Android's cutout, by `MainActivity`,
   seen working on Hajun's phone; an iPhone's safe area, read off its
   window since 2026-11-15, on both sides, not yet seen on one). The
   right end of the bar is moved no further than the fan of things to say
   leaves room, and the chat's small button steps in from an island.
-- The gamepad opens the selector (`src/games.rs`): six cards, Bridge Wars,
-  Blend In, Knock Off, Bridge Race, Last Stand (50 coins each) and Home
-  Builders (100), each price the coin's picture and the number; the card
-  for one to come is turned off (`games::COMING_SOON`).
+- The gamepad opens the selector (`src/games.rs`): four cards, two to a
+  row, Bridge Wars, Blend In, Knock Off (50 coins each) and Home Builders
+  (100), each price the coin's picture and the number. Bridge Race's and
+  Last Stand's cards are turned off since 2026-11-19 (`games::OFF`: the
+  cards alone, the games and their tables are as they were), and so is
+  the card for one to come (`games::COMING_SOON`).
+- **Your plot** (`src/land.rs`, since 2026-11-20, APK 44; not seen on a
+  phone): the town's 48 plots are the map's `plot` planes,
+  read as it spawns. Your seat in the town has one of them, the twelve round the
+  pond first, and a sign (`plotsign.glb`) stands a metre and a half in
+  from the right hand end of its front, the side with a street along it
+  or toward the pond, saying "{name}'s land" (`words.land.sign`) on both
+  faces of its board. **The words are a thing in the world**, a picture
+  of them drawn once with the game's fonts and hung on the board (since
+  2026-11-21): never text on the screen laid over it, which Hajun turned
+  down. The sign is solid, a box laid over the town's shape
+  (`Islands::lay_over`). One stands for everyone in your channel online
+  too, with their name (since 2026-11-21, APK 45: the server says
+  who sits where, `Tell::Channel`, `lobby::Channel`). **What you own
+  stands on it** (`src/build/stand.rs`, since 2026-11-22): a building out
+  of your bag is put down as a piece is in House Builder, by the same
+  code (`build::Site`, `Yard`: the same ghost and menu, nothing of it off
+  the plot, one house to a plot), is out of your bag until it is tapped
+  and binned, is kept by the server in the plot's own space, so that it
+  stands the same on whichever plot your seat has, and is seen and bumped
+  into by everyone in your channel (`bag::Tell::Theirs`). Where the land
+  is going is Hajun's to say (`docs/land.md`).
 - You can talk to any AI (`src/talk.rs`), ride the four buses that go
   round the roads by the clock (`car.rs`, `roads.rs`: the way is read off
-  the road's paint), drive a car of your own (`drive.rs`, the face button,
-  its numbers in `ui.ron`), and be thrown by the fountain's jet.
+  the road's paint; 5.25 m/s, 10.5 on the open road, three quarters of
+  what they were, since 2026-11-21), drive a car of your own (`drive.rs`,
+  out of your bag, its numbers in `ui.ron`; everyone else in your channel
+  sees the car since 2026-11-21, `Ask::Drive`), and be thrown by the
+  fountain's jet.
 - The camera orbits you 1.5 to 18 m out, and zoomed all the way in is your
   eyes. **Nothing in the world moves it**: walls never bring it nearer. On
   a phone the stick brings it round behind you after 1.5 s, and a double
@@ -385,9 +447,9 @@ to try again.
 - Town objects are data (`src/map.rs`, a catalogue and `town.json`), edited
   by tapping (`src/editor.rs`), offline only. The edit menu's buttons stay
   on the object: never clamp them to the screen.
-- The balance is the server's online (Postgres); only the games' fees
-  and prizes change it. The music is turned off (`sound::PLAYING`), and
-  Bevy's audio with it.
+- The balance is the server's online (Postgres); the games' fees and
+  prizes change it, and the bag's shop. The music is turned off
+  (`sound::PLAYING`), and Bevy's audio with it.
 - Settings (`src/settings.rs`): Graphics and Controls are empty; Accounts
   has your name on a row with a pencil (Edit name, a box over the window),
   sign-in buttons that do nothing yet, and Delete account, which asks once
@@ -497,7 +559,8 @@ and the game is as that file has it. The rules both sides play by are
   team's island lined in its colour; top left your name in your team's.
 - **Four buses**, the town's bus, one to each lane of the ring road round
   the pond, the outer half anticlockwise and the inner clockwise, at 14.2
-  m/s (twice the town's), each thrown round its lane every game
+  m/s (twice the 7 the town's went at then), each thrown round its lane
+  every game
   (`bridge_wars::LANES`, `Buses`). **Each stops short of a crossing while
   anyone of the players is on it**, and goes on as nobody is (the four
   `CROSSINGS`, `Buses::drive`); the server runs them and sends how they go

@@ -1,0 +1,1039 @@
+//! The bag's window, behind the bag button among those round the jump
+//! button (`hud::BagButton`), as Hajun drew it (`bagandinventorypanel1.png`
+//! and `2`, 2026-11-21: "the first tab is a inventory tab and the second tab
+//! is the shop tab. and on the left, you can select the categories
+//! (scrollable if long), and on the right side u see the items in rows of 3
+//! (scrollable)"). Only in the town, where your plot and your car are.
+//!
+//! It is a window as every window is (`window`): dark and see-through, its
+//! two tabs along its top, a box seen from a corner for what you own and a
+//! cart for the shop, the one shown white over a white line, and a bare
+//! white cross in its corner. Down its left the categories, a line between
+//! each, the one shown white: All, Buildings, Vehicles, Utilities and
+//! Cosmetics, and in the shop Owned before them, which is what is shown
+//! there first, as drawn. On its right the things, three to a row, each a
+//! dark card with its picture and under it its name, in the colour of its
+//! rarity (`colours.bag`), and how many of it are in your bag ("x1").
+//!
+//! **What you own** shows what is in your bag: what you own that does not
+//! stand on your plot. A tap on a building, standing on your own plot,
+//! shuts the window and brings the building up in front of you to be put
+//! down (`build::stand`); anywhere else, the window says why not along its
+//! bottom. A tap on your car shuts the window and puts you in it (`drive`).
+//!
+//! **The shop** shows everything there is, or what of it you own. A tap on
+//! a thing puts two buttons on its card in place of its picture: Buy, in
+//! green, with the coin and its price, greyed without the coins for it; and
+//! Sell, in dark red, with half that, there while one is in your bag
+//! (Hajun: "when u tap an item in the owned category, it shows a buy button
+//! and a sell button"). Each is asked of `bag` ([`Deal`]): online the
+//! server's to do, and both buttons greyed until it has answered.
+//!
+//! The sizes are measured off the two pictures, 874 by 402, as shares of
+//! the short side of the screen (four of their pixels to a share), and
+//! every colour and word is `assets/ui.ron`'s. The window is drawn again
+//! whenever what it shows changes, each list where it was scrolled to.
+
+use bevy::prelude::*;
+use bevy::ui_widgets::ScrollArea;
+
+use super::{Bag, Deal, Group, THINGS, Thing};
+use crate::build::stand::{Home, Stand, Why};
+use crate::build::{PIECES, Stock};
+use crate::builder::{self, DIALOG_LAYER, Fill};
+use crate::drive::{CarPressed, Driving};
+use crate::hud::{self, BagButton, DialogUp, TakesPress};
+use crate::island::Venue;
+use crate::lobby::Balance;
+use crate::ui::{UiChanged, fill, ui};
+use crate::window::{self, Look};
+use crate::{CloseUp, Player};
+
+/// The picture of the car on its card, beside its model: rendered as the
+/// buildings' are (`blender/render_thing.py`).
+pub(crate) const CAR_PICTURE: &str = "car1.png";
+
+/// The window: how wide and how tall it is, and how much of the screen's
+/// width it takes at the most, in parts of a hundred, on a screen as broad
+/// as a tablet's, where the first is more than there is.
+const WIDTH: f32 = 130.0;
+const HEIGHT: f32 = 70.0;
+const MOST_WIDE: f32 = 93.0;
+/// The room over the tabs, and between the line under them and the
+/// categories; how far its cross's middle is in from its right and down
+/// from its top.
+const OVER_TABS: f32 = 1.5;
+const UNDER_TABS: f32 = 1.7;
+const CROSS_IN: f32 = 5.0;
+const CROSS_DOWN: f32 = 4.8;
+/// The gap between its two tabs.
+const TAB_GAP: f32 = 3.2;
+/// The categories down the left: how wide their column is, how tall each
+/// is, its words, and the line between two of them.
+const SORTS_WIDE: f32 = 15.3;
+const SORT_ROW: f32 = 10.4;
+const SORT_TEXT: f32 = 3.0;
+const SORT_LINE: f32 = 0.25;
+/// The room between the categories and the cards, and right of the cards.
+const BETWEEN: f32 = 4.5;
+const RIGHT: f32 = 8.0;
+/// A card: how far the first row is under the categories' top, how tall it
+/// is, the gap between two of them across, the room under it for its name,
+/// the name's size, and how much of the card's height its picture takes.
+const OVER_CARDS: f32 = 3.5;
+const CARD_HEIGHT: f32 = 20.0;
+const CARD_GAP: f32 = 4.2;
+const NAME_ROW: f32 = 6.1;
+const NAME_TEXT: f32 = 2.7;
+const PICTURE: f32 = 88.0;
+/// The two buttons on a card in the shop: how wide and how tall each is,
+/// the gap between them, their words, and the coin beside the price.
+const DEAL_WIDE: f32 = 22.6;
+const DEAL_HIGH: f32 = 6.0;
+const DEAL_GAP: f32 = 1.7;
+const DEAL_TEXT: f32 = 2.6;
+const DEAL_COIN: f32 = 2.8;
+/// How far a press may be dragged and still be a tap, in logical pixels,
+/// rather than a drag to scroll a list; and how long the line along the
+/// bottom stays up, in seconds.
+const TAP_SLOP: f32 = 16.0;
+const NOTICE_SECS: f32 = 3.0;
+/// The line that says why something cannot be done, along the window's top
+/// between its tabs and its cross: its words, and the room either side of
+/// it.
+const NOTICE_TEXT: f32 = 2.6;
+const NOTICE_GAP: f32 = 2.0;
+
+/// The window's two tabs.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+enum Tab {
+    /// What you own.
+    #[default]
+    Inventory,
+    Shop,
+}
+
+/// A category down the window's left.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Sort {
+    /// What of the shop's you own: the shop's alone, and its first.
+    Owned,
+    All,
+    Of(Group),
+}
+
+impl Sort {
+    /// The categories of `tab`, top to bottom.
+    fn of(tab: Tab) -> Vec<Sort> {
+        let owned = (tab == Tab::Shop).then_some(Sort::Owned);
+        owned.into_iter().chain([Sort::All]).chain(Group::ALL.map(Sort::Of)).collect()
+    }
+
+    fn title(self) -> String {
+        let ui = ui();
+        let words = &ui.words.bag;
+        match self {
+            Sort::Owned => &words.owned,
+            Sort::All => &words.all,
+            Sort::Of(Group::Buildings) => &words.buildings,
+            Sort::Of(Group::Vehicles) => &words.vehicles,
+            Sort::Of(Group::Utilities) => &words.utilities,
+            Sort::Of(Group::Cosmetics) => &words.cosmetics,
+        }
+        .clone()
+    }
+}
+
+/// The things `tab` shows under `sort`, each with how many of it are in
+/// the bag `has`, in the order of the things there are. What you own shows
+/// only what is in your bag, and so does the shop's Owned; the rest of the
+/// shop shows everything of its category.
+fn shown(tab: Tab, sort: Sort, has: &roundtown_net::bag::Bag) -> Vec<(&'static Thing, u16)> {
+    THINGS
+        .iter()
+        .map(|thing| (thing, has.free(thing.kind)))
+        .filter(|&(thing, free)| match sort {
+            Sort::Owned => free > 0,
+            Sort::All => true,
+            Sort::Of(group) => thing.group == group,
+        })
+        .filter(|&(_, free)| tab == Tab::Shop || free > 0)
+        .collect()
+}
+
+/// The window: whether it is up, which tab, which category of each tab,
+/// and, in the shop, the thing whose two buttons are up.
+#[derive(Resource, Debug)]
+struct Panel {
+    open: bool,
+    tab: Tab,
+    sorts: [Sort; 2],
+    picked: Option<&'static str>,
+}
+
+impl Default for Panel {
+    fn default() -> Self {
+        Self {
+            open: false,
+            tab: Tab::Inventory,
+            // The first of each tab's, as drawn.
+            sorts: [Sort::All, Sort::Owned],
+            picked: None,
+        }
+    }
+}
+
+impl Panel {
+    fn sort(&self) -> Sort {
+        self.sorts[self.tab as usize]
+    }
+}
+
+/// What a press on something of the window's does.
+#[derive(Component, Clone, Copy, PartialEq, Eq, Debug)]
+enum Tap {
+    Close,
+    Show(Tab),
+    Sort(Sort),
+    Thing(&'static str),
+    Buy(&'static str),
+    Sell(&'static str),
+    Nothing,
+}
+
+/// The presses on the window since they were last acted on ([`act`]); that
+/// the bag button was pressed; and how far the press now down has been
+/// dragged, so that a drag to scroll a list is not also a tap on what it
+/// began on.
+#[derive(Resource, Default)]
+struct Pressed {
+    taps: Vec<Tap>,
+    open: bool,
+    dragged: f32,
+}
+
+/// The line along the window's bottom that says why something cannot be
+/// done, and how long it has been up.
+#[derive(Resource, Default)]
+struct Notice(Option<(String, f32)>);
+
+/// How far each of the window's lists was scrolled, to draw it there
+/// again: the categories of each tab, and the cards.
+#[derive(Resource, Default)]
+struct Scrolled {
+    sorts: [f32; 2],
+    cards: f32,
+}
+
+/// The lists that scroll.
+#[derive(Component, Clone, Copy, PartialEq, Eq, Debug)]
+enum List {
+    Sorts,
+    Cards,
+}
+
+/// The pictures on the window's two tabs, drawn once (`hud::cube`,
+/// `hud::cart`); and the car's, read as the app opens and kept, as every
+/// building's is (`build::Stock`), so that its card is never up empty.
+#[derive(Resource)]
+struct Icons {
+    cube: Handle<Image>,
+    cart: Handle<Image>,
+    car: Handle<Image>,
+}
+
+/// The root of the window, over the whole screen.
+#[derive(Component)]
+struct Root;
+
+/// The line that says why something cannot be done.
+#[derive(Component)]
+struct NoticeLine;
+
+pub(super) fn plugin(app: &mut App) {
+    app.init_resource::<Panel>()
+        .init_resource::<Pressed>()
+        .init_resource::<Notice>()
+        .init_resource::<Scrolled>()
+        .add_observer(press)
+        .add_observer(start_press)
+        .add_systems(Startup, draw_icons)
+        .add_systems(
+            Update,
+            (act, redraw, show_notice, remember_scroll)
+                .chain()
+                .after(super::BagSystems)
+                // Before whatever a tap in it sets going is read: the car
+                // (`drive::toggle`), and a building brought out
+                // (`build::stand`).
+                .before(crate::read_player_input)
+                .before(crate::build::BuildSystems),
+        );
+}
+
+fn draw_icons(mut images: ResMut<Assets<Image>>, assets: Res<AssetServer>, mut commands: Commands) {
+    commands.insert_resource(Icons {
+        cube: images.add(hud::cube()),
+        cart: images.add(hud::cart()),
+        car: assets.load(CAR_PICTURE),
+    });
+}
+
+/// A new press: nothing dragged yet.
+fn start_press(_press: On<Pointer<Press>>, mut pressed: ResMut<Pressed>) {
+    pressed.dragged = 0.0;
+}
+
+/// Whatever of the window's was tapped or clicked, or the bag button, to
+/// be acted on ([`act`]). Only what the press landed on, not what the click
+/// passed up through on its way out; and not a press dragged to scroll a
+/// list.
+fn press(click: On<Pointer<Click>>, taps: Query<&Tap>, bags: Query<(), With<BagButton>>, mut pressed: ResMut<Pressed>) {
+    if click.button != PointerButton::Primary || click.original_event_target() != click.entity {
+        return;
+    }
+    if bags.contains(click.entity) {
+        pressed.open = true;
+    }
+    if let Ok(&tap) = taps.get(click.entity)
+        && pressed.dragged <= TAP_SLOP
+    {
+        pressed.taps.push(tap);
+    }
+}
+
+/// Scrolls a list with a finger, or a mouse held down, dragged over it.
+fn drag_list(drag: On<Pointer<Drag>>, mut lists: Query<(&ComputedNode, &mut ScrollPosition), With<List>>, mut pressed: ResMut<Pressed>) {
+    pressed.dragged = pressed.dragged.max(drag.distance.length());
+    let Ok((node, mut scroll)) = lists.get_mut(drag.entity) else {
+        return;
+    };
+    let shown = node.size().y * node.inverse_scale_factor();
+    let whole = node.content_size().y * node.inverse_scale_factor();
+    let most = (whole - shown).max(0.0);
+    let to = (scroll.y - drag.delta.y).clamp(0.0, most);
+    if scroll.y != to {
+        scroll.y = to;
+    }
+}
+
+/// Why a building cannot be brought out of the bag just now, in words.
+fn said(why: Why) -> String {
+    let ui = ui();
+    let words = &ui.words.bag;
+    match why {
+        Why::OffYourLand => &words.on_your_land,
+        Why::OneHouse => &words.one_house,
+        Why::HouseFirst => &words.house_first,
+    }
+    .clone()
+}
+
+/// Does what was pressed: the bag button opens the window, in the town,
+/// with nothing else up; and its own buttons go on from there. On desktop
+/// `Escape` shuts it. Gone from the town with it up, it is shut.
+#[allow(clippy::too_many_arguments)]
+fn act(
+    mut pressed: ResMut<Pressed>,
+    mut panel: ResMut<Panel>,
+    mut up: ResMut<DialogUp>,
+    mut notice: ResMut<Notice>,
+    mut scrolled: ResMut<Scrolled>,
+    (close_up, keyboard, driving): (Res<CloseUp>, Res<ButtonInput<KeyCode>>, Res<Driving>),
+    me: Query<(&Venue, &Balance), With<Player>>,
+    (bag, home): (Res<Bag>, Res<Home>),
+    (mut deals, mut stands, mut cars): (MessageWriter<Deal>, MessageWriter<Stand>, MessageWriter<CarPressed>),
+) {
+    let Ok((&here, balance)) = me.single() else {
+        pressed.taps.clear();
+        pressed.open = false;
+        return;
+    };
+    let shut = |panel: &mut Panel, up: &mut DialogUp| {
+        panel.open = false;
+        panel.picked = None;
+        if up.0 {
+            up.0 = false;
+        }
+    };
+    if std::mem::take(&mut pressed.open) && !panel.open && !up.0 && !close_up.busy() && here == Venue::Town && !driving.on() {
+        // On what you own, whichever tab it was shut on: it is your bag
+        // that the button opens (mine). Each tab keeps its category.
+        panel.open = true;
+        if panel.tab != Tab::Inventory {
+            panel.tab = Tab::Inventory;
+            scrolled.cards = 0.0;
+        }
+        panel.picked = None;
+        notice.0 = None;
+        up.0 = true;
+    }
+    if !panel.open {
+        pressed.taps.clear();
+        return;
+    }
+    if keyboard.just_pressed(KeyCode::Escape) || here != Venue::Town {
+        pressed.taps.clear();
+        shut(&mut panel, &mut up);
+        return;
+    }
+    for tap in std::mem::take(&mut pressed.taps) {
+        match tap {
+            Tap::Close => {
+                shut(&mut panel, &mut up);
+                break;
+            }
+            Tap::Show(tab) if tab != panel.tab => {
+                panel.tab = tab;
+                panel.picked = None;
+                notice.0 = None;
+                scrolled.cards = 0.0;
+            }
+            Tap::Sort(sort) if sort != panel.sort() => {
+                let tab = panel.tab as usize;
+                panel.sorts[tab] = sort;
+                panel.picked = None;
+                scrolled.cards = 0.0;
+            }
+            Tap::Thing(kind) if panel.tab == Tab::Shop => {
+                panel.picked = (panel.picked != Some(kind)).then_some(kind);
+            }
+            // Out of the bag: your car, to drive; a building, to put down
+            // on your plot.
+            Tap::Thing(kind) => {
+                let Some(thing) = roundtown_net::bag::thing(kind).filter(|thing| bag.has.free(thing.kind) > 0) else {
+                    continue;
+                };
+                match thing.group {
+                    Group::Vehicles => {
+                        shut(&mut panel, &mut up);
+                        cars.write(CarPressed);
+                        break;
+                    }
+                    Group::Buildings => {
+                        let Some(def) = PIECES.iter().find(|def| def.kind == kind) else {
+                            continue;
+                        };
+                        match home.may_stand(def) {
+                            Ok(()) => {
+                                shut(&mut panel, &mut up);
+                                stands.write(Stand(def));
+                                break;
+                            }
+                            Err(why) => notice.0 = Some((said(why), 0.0)),
+                        }
+                    }
+                    Group::Utilities | Group::Cosmetics => {}
+                }
+            }
+            Tap::Buy(kind) => {
+                let Some(thing) = roundtown_net::bag::thing(kind) else {
+                    continue;
+                };
+                if bag.waits() {
+                    continue;
+                }
+                if balance.0 < thing.price {
+                    notice.0 = Some((ui().words.bag.no_coins.clone(), 0.0));
+                    continue;
+                }
+                deals.write(Deal::Buy(thing.kind));
+            }
+            Tap::Sell(kind) => {
+                if let Some(thing) = roundtown_net::bag::thing(kind).filter(|thing| !bag.waits() && bag.has.free(thing.kind) > 0) {
+                    deals.write(Deal::Sell(thing.kind));
+                }
+            }
+            Tap::Show(_) | Tap::Sort(_) | Tap::Nothing => {}
+        }
+    }
+}
+
+/// Puts the window up while it is open, and draws it again whenever what
+/// it shows has changed: the tab or the category, the thing picked, what
+/// is in your bag, what you have to spend, the file's colours and words.
+/// Takes it down once it is shut.
+#[allow(clippy::too_many_arguments)]
+fn redraw(
+    panel: Res<Panel>,
+    bag: Res<Bag>,
+    changed: Res<UiChanged>,
+    me: Query<Ref<Balance>, With<Player>>,
+    scrolled: Res<Scrolled>,
+    roots: Query<Entity, With<Root>>,
+    (assets, stock, icons): (Res<AssetServer>, Res<Stock>, Res<Icons>),
+    mut commands: Commands,
+) {
+    if !panel.open {
+        for root in &roots {
+            commands.entity(root).despawn();
+        }
+        return;
+    }
+    let Ok(balance) = me.single() else {
+        return;
+    };
+    let stale = panel.is_changed() || bag.is_changed() || balance.is_changed() || (changed.is_changed() && !changed.is_added());
+    if !stale && !roots.is_empty() {
+        return;
+    }
+    for root in &roots {
+        commands.entity(root).despawn();
+    }
+    let view = View {
+        panel: &panel,
+        bag: &bag,
+        balance: balance.0,
+        scrolled: &scrolled,
+        assets: &assets,
+        stock: &stock,
+        icons: &icons,
+    };
+    draw(&mut commands, &view);
+}
+
+/// What the window is drawn from.
+struct View<'a> {
+    panel: &'a Panel,
+    bag: &'a Bag,
+    balance: u32,
+    scrolled: &'a Scrolled,
+    assets: &'a AssetServer,
+    stock: &'a Stock,
+    icons: &'a Icons,
+}
+
+/// The picture of `thing` on its card: a building's is its piece's, the
+/// one House Builder's shop shows; the car's its own.
+fn picture_of(view: &View, thing: &Thing) -> Handle<Image> {
+    match PIECES.iter().find(|def| def.kind == thing.kind) {
+        Some(def) => view.stock.picture(def),
+        None => view.icons.car.clone(),
+    }
+}
+
+/// The window as things stand: its root, over the whole screen, which a
+/// tap on shuts it; the pane, its tabs and its cross; the categories down
+/// its left; and the cards.
+fn draw(commands: &mut Commands, view: &View) {
+    let colours = ui().colours.window;
+    let root = commands
+        .spawn((
+            Root,
+            Tap::Close,
+            TakesPress,
+            Node {
+                position_type: PositionType::Absolute,
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                ..default()
+            },
+            BackgroundColor(Color::NONE),
+            GlobalZIndex(DIALOG_LAYER),
+        ))
+        .id();
+    let pane = commands
+        .spawn((
+            ChildOf(root),
+            Tap::Nothing,
+            window::pane(Node {
+                width: Val::VMin(WIDTH),
+                max_width: Val::Vw(MOST_WIDE),
+                height: Val::VMin(HEIGHT),
+                padding: UiRect {
+                    left: Val::VMin(window::PAD),
+                    right: Val::VMin(RIGHT - CARD_GAP * 0.5),
+                    top: Val::VMin(OVER_TABS),
+                    bottom: Val::ZERO,
+                },
+                ..default()
+            }),
+        ))
+        .id();
+    // The tabs, from where the cards begin.
+    let tabs = commands
+        .spawn((
+            ChildOf(pane),
+            Node {
+                height: Val::VMin(window::TAB_HEIGHT),
+                margin: UiRect::left(Val::VMin(SORTS_WIDE + BETWEEN)),
+                column_gap: Val::VMin(TAB_GAP),
+                align_items: AlignItems::Center,
+                flex_shrink: 0.0,
+                ..default()
+            },
+            Pickable::IGNORE,
+        ))
+        .id();
+    for (tab, image) in [(Tab::Inventory, &view.icons.cube), (Tab::Shop, &view.icons.cart)] {
+        let shown = view.panel.tab == tab;
+        commands.spawn((
+            ChildOf(tabs),
+            Tap::Show(tab),
+            window::tab(shown),
+            children![window::picture(image.clone(), Val::VMin(window::TAB_ICON), window::tab_ink(shown))],
+        ));
+    }
+    commands.spawn((
+        ChildOf(pane),
+        window::cross_at(view.assets.load("icons/close.png"), Tap::Close, window::CLOSE, CROSS_IN, CROSS_DOWN),
+    ));
+    // Under them: the categories, and the cards.
+    let body = commands
+        .spawn((
+            ChildOf(pane),
+            Node {
+                flex_grow: 1.0,
+                min_height: Val::ZERO,
+                margin: UiRect::top(Val::VMin(UNDER_TABS)),
+                ..default()
+            },
+            Pickable::IGNORE,
+        ))
+        .id();
+    sorts(commands, body, view);
+    cards(commands, body, view);
+    // Why something cannot be done: along the top, between the tabs and
+    // the cross, where nothing else is. (Along the bottom, as the friends'
+    // panel has it, it lay over the names of the second row of cards.)
+    commands.spawn((
+        ChildOf(pane),
+        NoticeLine,
+        Visibility::Hidden,
+        Node {
+            position_type: PositionType::Absolute,
+            left: Val::VMin(window::PAD + SORTS_WIDE + BETWEEN + 2.0 * window::TAB_WIDTH + TAB_GAP + NOTICE_GAP),
+            right: Val::VMin(CROSS_IN + window::CLOSE * 0.5 + NOTICE_GAP),
+            top: Val::VMin(OVER_TABS),
+            height: Val::VMin(window::TAB_HEIGHT),
+            justify_content: JustifyContent::FlexEnd,
+            align_items: AlignItems::Center,
+            overflow: Overflow::clip(),
+            ..default()
+        },
+        Pickable::IGNORE,
+        children![(NoticeWords, window::words("", NOTICE_TEXT, colours.notice))],
+    ));
+}
+
+/// The words of the line that says why something cannot be done.
+#[derive(Component)]
+struct NoticeWords;
+
+/// The categories down the window's left, a line between each, the one
+/// shown white: a list that scrolls, where it was last scrolled to.
+fn sorts(commands: &mut Commands, body: Entity, view: &View) {
+    let colours = ui().colours.window;
+    let all = Sort::of(view.panel.tab);
+    let list = commands
+        .spawn((
+            ChildOf(body),
+            List::Sorts,
+            ScrollArea,
+            Node {
+                width: Val::VMin(SORTS_WIDE),
+                flex_shrink: 0.0,
+                flex_direction: FlexDirection::Column,
+                overflow: Overflow::scroll_y(),
+                ..default()
+            },
+            ScrollPosition(Vec2::new(0.0, view.scrolled.sorts[view.panel.tab as usize])),
+        ))
+        .observe(drag_list)
+        .id();
+    for (index, &sort) in all.iter().enumerate() {
+        let shown = sort == view.panel.sort();
+        let last = index + 1 == all.len();
+        commands.spawn((
+            ChildOf(list),
+            Tap::Sort(sort),
+            TakesPress,
+            Button,
+            Node {
+                height: Val::VMin(SORT_ROW),
+                flex_shrink: 0.0,
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                border: UiRect::bottom(Val::VMin(if last { 0.0 } else { SORT_LINE })),
+                ..default()
+            },
+            BackgroundColor(Color::NONE),
+            BorderColor::all(colours.line),
+            children![builder::label(sort.title(), SORT_TEXT, window::tab_ink(shown))],
+        ));
+    }
+}
+
+/// The cards of what the window shows now, three to a row: a list that
+/// scrolls, where it was last scrolled to. With nothing to show, a line
+/// that says so.
+fn cards(commands: &mut Commands, body: Entity, view: &View) {
+    let ui = ui();
+    let colours = ui.colours.window;
+    let list = commands
+        .spawn((
+            ChildOf(body),
+            List::Cards,
+            ScrollArea,
+            Node {
+                flex_grow: 1.0,
+                flex_basis: Val::ZERO,
+                min_width: Val::ZERO,
+                margin: UiRect::left(Val::VMin(BETWEEN - CARD_GAP * 0.5)),
+                padding: UiRect::top(Val::VMin(OVER_CARDS)),
+                flex_wrap: FlexWrap::Wrap,
+                align_content: AlignContent::FlexStart,
+                overflow: Overflow::scroll_y(),
+                ..default()
+            },
+            ScrollPosition(Vec2::new(0.0, view.scrolled.cards)),
+        ))
+        .observe(drag_list)
+        .id();
+    let things = shown(view.panel.tab, view.panel.sort(), &view.bag.has);
+    if things.is_empty() {
+        commands.spawn((
+            ChildOf(list),
+            Node {
+                padding: UiRect::left(Val::VMin(CARD_GAP * 0.5)),
+                ..default()
+            },
+            Pickable::IGNORE,
+            children![window::words(ui.words.bag.nothing.clone(), window::HEADING, colours.status)],
+        ));
+        return;
+    }
+    for (thing, free) in things {
+        let cell = commands
+            .spawn((
+                ChildOf(list),
+                Node {
+                    width: Val::Percent(100.0 / 3.0),
+                    flex_direction: FlexDirection::Column,
+                    align_items: AlignItems::Center,
+                    padding: UiRect::horizontal(Val::VMin(CARD_GAP * 0.5)),
+                    flex_shrink: 0.0,
+                    ..default()
+                },
+                Pickable::IGNORE,
+            ))
+            .id();
+        let (fill, ..) = window::card(true);
+        let card = commands
+            .spawn((
+                ChildOf(cell),
+                Tap::Thing(thing.kind),
+                TakesPress,
+                Button,
+                Node {
+                    width: Val::Percent(100.0),
+                    height: Val::VMin(CARD_HEIGHT),
+                    flex_direction: FlexDirection::Column,
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    row_gap: Val::VMin(DEAL_GAP),
+                    border_radius: BorderRadius::all(Val::VMin(window::CARD_ROUNDED)),
+                    ..default()
+                },
+                BackgroundColor(fill.idle),
+                fill,
+            ))
+            .id();
+        if view.panel.tab == Tab::Shop && view.panel.picked == Some(thing.kind) {
+            deal_buttons(commands, card, view, thing, free);
+        } else {
+            commands.spawn((
+                ChildOf(card),
+                ImageNode::new(picture_of(view, thing)),
+                Node {
+                    height: Val::Percent(PICTURE),
+                    aspect_ratio: Some(1.0),
+                    ..default()
+                },
+                Pickable::IGNORE,
+            ));
+        }
+        // Its name, in its rarity's colour, and how many are in the bag.
+        let name = commands
+            .spawn((
+                ChildOf(cell),
+                Node {
+                    height: Val::VMin(NAME_ROW),
+                    column_gap: Val::VMin(0.9),
+                    padding: UiRect::top(Val::VMin(0.9)),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::FlexStart,
+                    ..default()
+                },
+                Pickable::IGNORE,
+            ))
+            .id();
+        commands.spawn((
+            ChildOf(name),
+            window::words(ui.words.bag.name(thing.kind).to_string(), NAME_TEXT, ui.colours.bag.rarity(thing.rarity)),
+        ));
+        if free > 0 {
+            let count = fill_count(free);
+            commands.spawn((ChildOf(name), window::words(count, NAME_TEXT, ui.colours.bag.count)));
+        }
+    }
+}
+
+/// How many of a thing are in the bag, as the file's words have it: "x1".
+fn fill_count(count: u16) -> String {
+    fill(&ui().words.bag.count, &[("count", &count.to_string())])
+}
+
+/// The two buttons on the card of the thing picked in the shop, in place
+/// of its picture: Buy, with the coin and its price, green, and greyed
+/// without the coins for it or while a purchase or a sale is on its way;
+/// and Sell, with half that, dark red, there while one of it is in your
+/// bag, `free` of them.
+fn deal_buttons(commands: &mut Commands, card: Entity, view: &View, thing: &'static Thing, free: u16) {
+    let ui = ui();
+    let colours = ui.colours.bag;
+    let waits = view.bag.waits();
+    let greyed = Look::Greyed.colours();
+    let buy = Fill {
+        idle: colours.buy,
+        lit: colours.buy_lit,
+    };
+    let look = if waits || view.balance < thing.price { greyed } else { (buy, colours.on_deal) };
+    deal_button(commands, card, view, Tap::Buy(thing.kind), look, &ui.words.bag.buy, thing.price);
+    if free > 0 {
+        let sell = Fill {
+            idle: colours.sell,
+            lit: colours.sell_lit,
+        };
+        let look = if waits { greyed } else { (sell, colours.on_deal) };
+        deal_button(commands, card, view, Tap::Sell(thing.kind), look, &ui.words.bag.sell, thing.resale());
+    }
+}
+
+/// One of the two: its word, the coin, and how many coins.
+fn deal_button(commands: &mut Commands, card: Entity, view: &View, tap: Tap, (fill, ink): (Fill, Color), word: &str, coins: u32) {
+    commands.spawn((
+        ChildOf(card),
+        tap,
+        TakesPress,
+        Button,
+        Node {
+            width: Val::VMin(DEAL_WIDE),
+            max_width: Val::Percent(92.0),
+            height: Val::VMin(DEAL_HIGH),
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            column_gap: Val::VMin(1.0),
+            border_radius: BorderRadius::all(Val::VMin(0.8)),
+            flex_shrink: 0.0,
+            ..default()
+        },
+        BackgroundColor(fill.idle),
+        fill,
+        children![
+            builder::label(word.to_string(), DEAL_TEXT, ink),
+            (
+                // Dimmed with the words on a button that cannot be pressed.
+                ImageNode::new(view.assets.load(hud::COIN_ICON)).with_color(Color::WHITE.with_alpha(ink.alpha())),
+                Node {
+                    width: Val::VMin(DEAL_COIN),
+                    height: Val::VMin(DEAL_COIN),
+                    margin: UiRect::left(Val::VMin(0.8)),
+                    ..default()
+                },
+                Pickable::IGNORE,
+            ),
+            builder::label(hud::money(coins), DEAL_TEXT, ink),
+        ],
+    ));
+}
+
+/// Shows the line that says why something cannot be done for a few
+/// seconds, and then puts it away.
+fn show_notice(
+    time: Res<Time>,
+    mut notice: ResMut<Notice>,
+    mut lines: Query<&mut Visibility, With<NoticeLine>>,
+    mut words: Query<&mut Text, With<NoticeWords>>,
+) {
+    let said = match &mut notice.0 {
+        Some((text, age)) => {
+            *age += time.delta_secs();
+            (*age <= NOTICE_SECS).then(|| text.clone())
+        }
+        None => None,
+    };
+    if said.is_none() && notice.0.is_some() {
+        notice.0 = None;
+    }
+    for mut visibility in &mut lines {
+        visibility.set_if_neq(if said.is_some() { Visibility::Inherited } else { Visibility::Hidden });
+    }
+    if let Some(said) = said {
+        for mut text in &mut words {
+            if text.0 != said {
+                text.0.clone_from(&said);
+            }
+        }
+    }
+}
+
+/// Remembers how far each list is scrolled, for when the window is drawn
+/// again.
+fn remember_scroll(panel: Res<Panel>, lists: Query<(&List, &ScrollPosition), Changed<ScrollPosition>>, mut scrolled: ResMut<Scrolled>) {
+    for (list, scroll) in &lists {
+        match list {
+            List::Sorts => scrolled.sorts[panel.tab as usize] = scroll.y,
+            List::Cards => scrolled.cards = scroll.y,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use roundtown_net::bag::{Bag as Rules, CAR, LAMP};
+
+    use super::*;
+
+    #[test]
+    fn the_window_fits_a_phone_lying_on_its_side_and_a_tablet() {
+        // The short side is 100 shares: a phone's long side is over 200, a
+        // 4:3 tablet's 133, where the window is as wide as it is let be.
+        assert!(HEIGHT < 100.0 - 2.0 * hud::EDGE);
+        assert!(WIDTH < 200.0 - 2.0 * hud::EDGE);
+        assert!(133.0 * MOST_WIDE / 100.0 < 133.0 - 2.0 * hud::EDGE);
+        // Three cards and the gaps between them fill what is left of the
+        // window's width beside the categories, as drawn: a card 121 of the
+        // picture's dots wide, thirty shares.
+        let cards = WIDTH - window::PAD - SORTS_WIDE - BETWEEN - RIGHT;
+        let card = (cards - 2.0 * CARD_GAP) / 3.0;
+        assert!((card - 30.1).abs() < 0.2, "{card}");
+        // Two rows of cards and their names show whole under the tabs.
+        let room = HEIGHT - OVER_TABS - window::TAB_HEIGHT - UNDER_TABS - OVER_CARDS;
+        assert!(2.0 * (CARD_HEIGHT + NAME_ROW) <= room, "{room}");
+        // The two buttons fit a card, on a tablet too, where a card is
+        // narrower.
+        assert!(2.0 * DEAL_HIGH + DEAL_GAP < CARD_HEIGHT);
+        assert!(DEAL_WIDE < card);
+        // Five categories show whole, as drawn, and a sixth begins.
+        let sorts = HEIGHT - OVER_TABS - window::TAB_HEIGHT - UNDER_TABS;
+        assert!(5.0 * SORT_ROW <= sorts && sorts < 6.0 * SORT_ROW, "{sorts}");
+        // Every line that says why something cannot be done fits between
+        // the tabs and the cross: a letter of Inter is a little under half
+        // as wide as its size, taken over a line of words (the longest of
+        // these, 36 letters at 2.6, was 44 across on the screen).
+        let room = WIDTH - (window::PAD + SORTS_WIDE + BETWEEN + 2.0 * window::TAB_WIDTH + TAB_GAP + NOTICE_GAP) - (CROSS_IN + window::CLOSE * 0.5 + NOTICE_GAP);
+        let ui = ui();
+        let words = &ui.words.bag;
+        for line in [&words.on_your_land, &words.one_house, &words.house_first, &words.no_coins] {
+            let wide = line.chars().count() as f32 * NOTICE_TEXT * 0.5;
+            assert!(wide <= room, "{line:?} is about {wide} wide, and there is room for {room}");
+        }
+    }
+
+    #[test]
+    fn the_shop_has_owned_before_the_categories_the_inventory_has() {
+        let (bag, shop) = (Sort::of(Tab::Inventory), Sort::of(Tab::Shop));
+        assert_eq!(bag[0], Sort::All);
+        assert_eq!(bag.len(), 5);
+        assert_eq!(shop[0], Sort::Owned);
+        assert_eq!(shop[1..], bag[..]);
+        // The first of each is the one shown as the window opens.
+        let panel = Panel::default();
+        assert_eq!((panel.tab, panel.sort()), (Tab::Inventory, Sort::All));
+        assert_eq!(panel.sorts[Tab::Shop as usize], Sort::Owned);
+        // And each has its words.
+        for sort in shop {
+            assert!(!sort.title().is_empty(), "{sort:?}");
+        }
+    }
+
+    #[test]
+    fn the_inventory_shows_what_is_in_the_bag_and_the_shop_everything() {
+        let kinds = |things: Vec<(&'static Thing, u16)>| things.into_iter().map(|(thing, free)| (thing.kind, free)).collect::<Vec<_>>();
+        let mut bag = Rules::new();
+        // What everyone begins with: a lamp and a car.
+        assert_eq!(kinds(shown(Tab::Inventory, Sort::All, &bag)), [(LAMP, 1), (CAR, 1)]);
+        assert_eq!(kinds(shown(Tab::Inventory, Sort::Of(Group::Buildings), &bag)), [(LAMP, 1)]);
+        assert_eq!(kinds(shown(Tab::Inventory, Sort::Of(Group::Vehicles), &bag)), [(CAR, 1)]);
+        assert!(shown(Tab::Inventory, Sort::Of(Group::Cosmetics), &bag).is_empty());
+        // The shop: everything there is, twenty things, and what is owned.
+        assert_eq!(shown(Tab::Shop, Sort::All, &bag).len(), THINGS.len());
+        assert_eq!(shown(Tab::Shop, Sort::Of(Group::Buildings), &bag).len(), 19);
+        assert_eq!(kinds(shown(Tab::Shop, Sort::Owned, &bag)), [(LAMP, 1), (CAR, 1)]);
+        assert!(shown(Tab::Shop, Sort::Of(Group::Utilities), &bag).is_empty());
+        // The lamp stood on the plot is out of the bag: gone from the
+        // inventory and from what is owned, and still in the shop.
+        let here = roundtown_net::At::Ground { x: 0.0, y: 0.0, z: 0.0, yaw: 0.0 };
+        bag.put(1, LAMP, here).unwrap();
+        assert_eq!(kinds(shown(Tab::Inventory, Sort::All, &bag)), [(CAR, 1)]);
+        assert_eq!(kinds(shown(Tab::Shop, Sort::Owned, &bag)), [(CAR, 1)]);
+        assert_eq!(shown(Tab::Shop, Sort::All, &bag)[0], (&THINGS[0], 0));
+        // Two beds bought: two in the bag.
+        bag.buy("singlebed", 1_000).unwrap();
+        bag.buy("singlebed", 1_000).unwrap();
+        assert_eq!(kinds(shown(Tab::Inventory, Sort::All, &bag)), [("singlebed", 2), (CAR, 1)]);
+    }
+
+    #[test]
+    fn every_thing_has_a_name_a_picture_and_a_colour_and_the_file_s_rarities_are_hajun_s() {
+        let ui = ui();
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets");
+        for thing in THINGS {
+            let name = ui.words.bag.name(thing.kind);
+            assert_ne!(name, thing.kind, "{} has no name in ui.ron", thing.kind);
+            let picture = match PIECES.iter().find(|def| def.kind == thing.kind) {
+                Some(def) => def.picture(),
+                None => CAR_PICTURE.to_string(),
+            };
+            assert!(root.join(&picture).is_file(), "{}: no picture, {picture}", thing.kind);
+        }
+        // A building's name is the one House Builder's shop has for it.
+        for def in PIECES {
+            assert_eq!(ui.words.bag.name(def.kind), def.name);
+        }
+        // The colours as Hajun gave them, 2026-11-21.
+        use roundtown_net::bag::Rarity;
+        let hex = |colour: Color| {
+            let srgb = colour.to_srgba();
+            format!("{:02X}{:02X}{:02X}", (srgb.red * 255.0).round() as u8, (srgb.green * 255.0).round() as u8, (srgb.blue * 255.0).round() as u8)
+        };
+        let colours = crate::ui::Ui::built_in().colours.bag;
+        let given = [
+            (Rarity::Mythic, "FF4500"),
+            (Rarity::Legendary, "FFA500"),
+            (Rarity::Epic, "800080"),
+            (Rarity::Rare, "4169E1"),
+            (Rarity::Uncommon, "32CD32"),
+            (Rarity::Common, "D3D3D3"),
+        ];
+        for (rarity, colour) in given {
+            assert_eq!(hex(colours.rarity(rarity)), colour, "{rarity:?}");
+        }
+        assert_eq!(fill_count(3), "x3");
+    }
+
+    #[test]
+    fn the_car_s_picture_and_the_gem_s_are_in_the_apk() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let list = std::fs::read_to_string(root.join("mobile/android/app/assets-left-out.txt")).expect("the APK's list of what it leaves out");
+        let patterns: Vec<&str> = list
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty() && !line.starts_with('#'))
+            .map(|line| line.trim_start_matches("<dir>").trim_start_matches("<file>"))
+            .collect();
+        for picture in [CAR_PICTURE, hud::GEM_ICON] {
+            let bytes = std::fs::read(root.join("assets").join(picture)).expect(picture);
+            assert_eq!(&bytes[1..4], b"PNG", "{picture}");
+            let left_out = patterns.iter().find(|pattern| match (pattern.strip_prefix('*'), pattern.strip_suffix('*')) {
+                (Some(end), _) => picture.ends_with(end),
+                (_, Some(start)) => picture.starts_with(start),
+                _ => **pattern == picture,
+            });
+            assert!(left_out.is_none(), "{picture} is left out of the APK by `{}`", left_out.unwrap());
+        }
+    }
+}

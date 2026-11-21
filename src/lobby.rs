@@ -25,7 +25,7 @@
 
 use bevy::prelude::*;
 use bevy_replicon::prelude::Remote;
-use roundtown_net::TOWN_BODIES;
+use roundtown_net::{Seated, TOWN_BODIES, Tell};
 #[cfg(test)]
 use roundtown_net::{BOY_LOOKS, BOY_NAMES, GIRL_LOOKS, GIRL_NAMES, PEOPLE_LOOKS};
 
@@ -228,8 +228,43 @@ pub(crate) fn plugin(app: &mut App) {
                     .after(crate::move_bodies)
                     .before(crate::animate_walk),
                 fill_the_town,
+                hear_of_the_channel,
             ),
-        );
+        )
+        .init_resource::<Channel>();
+}
+
+/// Everyone in your channel of the town online, you among them, as the
+/// server last said (`Tell::Channel`, since 2026-11-21): who, by their
+/// `Member::id`; in which of its seats, which says which plot is theirs
+/// (`land`); and whether in their own car (`drive`). Empty offline, and
+/// online with a server from before, which says nothing of it: then all
+/// that is known is your own seat.
+#[derive(Resource, Default, PartialEq, Debug)]
+pub(crate) struct Channel(pub Vec<Seated>);
+
+/// Keeps [`Channel`] as the server says it, and forgets it offline. What is
+/// said is kept whether or not the server's welcome has been read yet this
+/// frame: the two may come together.
+fn hear_of_the_channel(mut tells: MessageReader<Tell>, online: Res<Online>, mut channel: ResMut<Channel>) {
+    let mut said = None;
+    for tell in tells.read() {
+        if let Tell::Channel(everyone) = tell {
+            said = Some(everyone);
+        }
+    }
+    match said {
+        Some(everyone) => {
+            if channel.0 != *everyone {
+                channel.0.clone_from(everyone);
+            }
+        }
+        None => {
+            if !online.is() && !channel.0.is_empty() {
+                channel.0.clear();
+            }
+        }
+    }
 }
 
 /// A room nobody else joined: you in the first seat, and the computer in every
@@ -303,7 +338,7 @@ fn spawn_players(
         if mine {
             // Fixed over you, the camera is as it is wherever you arrive.
             if !orbit.overhead {
-                *orbit = OrbitCamera::behind(&island::arrival(Venue::Town, seat));
+                *orbit = OrbitCamera::behind(&island::arrival_of_a_person(Venue::Town, seat));
             }
         } else {
             commands.entity(body).insert((Townsfolk(member.id), Speaker::Townsfolk));
@@ -394,7 +429,10 @@ pub(crate) fn spawn_player(
     venue: Venue,
     mine: bool,
 ) -> Entity {
-    spawn_player_at(commands, assets, member, seat, venue, mine, island::arrival(venue, seat))
+    // You arrive as a person does, in the town on your own plot; the
+    // computer's, where its seat arrives.
+    let at = if mine { island::arrival_of_a_person(venue, seat) } else { island::arrival(venue, seat) };
+    spawn_player_at(commands, assets, member, seat, venue, mine, at)
 }
 
 /// A body for `member`, in `seat`, standing at `spawn` on `venue`, as
@@ -533,7 +571,9 @@ pub(crate) type Whereabouts<'w, 's> = Query<
 /// Puts `body` on `venue`, where `seat` arrives there, facing in: whatever
 /// jump it was in dropped, whatever car it was riding left behind, whatever
 /// walk the computer had it on forgotten, and the leap not taken for a
-/// stride. If it is yours, the camera swings round behind you.
+/// stride. If it is yours, the camera swings round behind you; and you
+/// arrive as a person does, in the town in the middle of your own plot
+/// (`island::arrival_of_a_person`, since 2026-11-20).
 pub(crate) fn send(
     bodies: &mut Whereabouts,
     orbit: &mut OrbitCamera,
@@ -541,7 +581,9 @@ pub(crate) fn send(
     venue: Venue,
     seat: usize,
 ) {
-    put(bodies, orbit, body, venue, island::arrival(venue, seat));
+    let mine = bodies.get(body).is_ok_and(|(.., mine, _, _)| mine);
+    let at = if mine { island::arrival_of_a_person(venue, seat) } else { island::arrival(venue, seat) };
+    put(bodies, orbit, body, venue, at);
 }
 
 /// Puts `body` on `venue`, standing `at`, as [`send`] does.

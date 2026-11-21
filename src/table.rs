@@ -798,7 +798,7 @@ impl Seating<'_, '_> {
             Some(view) => self.orbit.back_to(view),
             // Fixed over you with nothing to go back to: behind you, as you
             // stand in the town.
-            None if self.orbit.locked => *self.orbit = OrbitCamera::behind(&island::arrival(Venue::Town, seat_now)),
+            None if self.orbit.locked => *self.orbit = OrbitCamera::behind(&island::arrival_of_a_person(Venue::Town, seat_now)),
             None => {}
         }
         if *self.view != TableView::default() {

@@ -120,13 +120,26 @@ KB/s out per player, most of it renet keeping the connection alive.
 ## The database
 
 ```
-players          id, name, look, coins, created, seen, tag, xp
+players          id, name, look, coins, created, seen, tag, xp, gems, bag
 devices          secret (SHA-256 of the device's secret), player
 coin_changes     player, amount, reason, game, at
 friends          a, b (the lesser number first), since
 friend_requests  sender, receiver, at
 messages         id, sender, receiver, body, at
 ```
+
+`gems` and `bag` are the bag's (since 2026-11-22; `docs/bag.md`): an
+account's gems, ten for every account old or new (the column's default),
+and what it owns of the things there are and what of that stands on its
+plot, as one JSON document, `{"owned": [[kind, count], ...], "stands":
+[{"id", "kind", "at"}, ...]}`; none (NULL) until the account first buys,
+sells or stands something, which reads as what everyone begins with, a car
+and a street lamp. An account is loaded with both as its device connects,
+and the server goes by its own copy for as long as it is here: **a bag
+changed by hand is not noticed while its owner is connected.** A purchase
+or a sale changes `coins` and `bag` in one transaction with a line of
+`coin_changes` ("bought a thing", "sold a thing"). Dumped before the
+columns were added: `/var/backups/roundtown/before-bags-2026-11-22.dump`.
 
 `tag`, `xp` and the last three tables are the friends' (since 2026-11-13;
 `docs/friends.md`): the number after a name,
@@ -199,7 +212,12 @@ sudo -u roundtown env RT_TEST_DB="host=/var/run/postgresql user=roundtown dbname
 sudo -u postgres dropdb empty_scratch; sudo -u postgres dropdb copy_scratch; rm rt-test
 ```
 
-Both were run so on 2026-11-13, before tags and friends went out.
+Both were run so on 2026-11-13, before tags and friends went out, and
+again on 2026-11-22 (UTC the 21st), before gems and bags did: the first
+writes and reads back a bag, a purchase, a sale and one turned down; the
+second, which until then held every account to have no friends and to have
+earned nothing, as was so in 2026-11-13, now holds a copy to what starting
+up may change and no more.
 
 ## When something is wrong
 

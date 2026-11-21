@@ -175,7 +175,9 @@ fn open(
     click: On<Pointer<Click>>,
     building: Res<Building>,
     stock: Res<Stock>,
-    pieces: Query<&Piece, Without<Shadow>>,
+    // The game's own: a house on your plot of the town (`build::stand`) is
+    // no house on this plot.
+    pieces: Query<&Piece, (Without<Shadow>, With<InGame>)>,
     mut shop: ResMut<Shop>,
     mut up: ResMut<DialogUp>,
     mut commands: Commands,
@@ -444,7 +446,9 @@ fn press(
     buttons: Query<&ShopButton>,
     building: Res<Building>,
     stock: Res<Stock>,
-    pieces: Query<&Piece, Without<Shadow>>,
+    // The game's own: a house on your plot of the town (`build::stand`) is
+    // no house on this plot.
+    pieces: Query<&Piece, (Without<Shadow>, With<InGame>)>,
     mut shop: ResMut<Shop>,
     mut up: ResMut<DialogUp>,
     mut chosen: MessageWriter<Chosen>,

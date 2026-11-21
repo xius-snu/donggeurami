@@ -49,6 +49,11 @@ ron = "0.12"
 # target, so this costs no extra build time either.
 fastrand = "2"
 
+# Draws the words on a plot's sign into a picture (`land`): the font reader
+# and rasterizer Bevy's own text is drawn with, already built for it on
+# every target, with the features it has on.
+swash = "0.2"
+
 # Playing online (MULTIPLAYER.md): the protocol shared with the server, and
 # the client halves of replicon and renet. Pure Rust, UDP, no async runtime.
 roundtown_net = { path = "shared" }

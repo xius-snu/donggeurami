@@ -38,6 +38,7 @@
 
 mod accounts;
 mod arena;
+mod bag;
 mod builder;
 mod chat;
 mod clock;
@@ -167,6 +168,7 @@ fn main() {
     fees::plugin(&mut app);
     rooms::plugin(&mut app);
     players::plugin(&mut app);
+    bag::plugin(&mut app);
     tables::plugin(&mut app);
     builder::plugin(&mut app);
     arena::plugin(&mut app);

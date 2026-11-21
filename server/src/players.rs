@@ -45,7 +45,7 @@ use bevy::prelude::*;
 use bevy_replicon::prelude::*;
 use bevy_replicon::shared::backend::connected_client::NetworkId;
 use bevy_replicon_renet::netcode::NetcodeServerTransport;
-use roundtown_net::{Ask, Member, Moved, Refusal, Spot, Tell, Venue, arrival, cars, profile};
+use roundtown_net::{Ask, Member, Moved, Refusal, Seated, Spot, Tell, Venue, arrival_of_a_person, cars, land, profile};
 use sha2::{Digest, Sha256};
 
 use crate::accounts::{Bank, Loaded, Record};
@@ -58,9 +58,11 @@ use crate::tables::{self, Tables};
 /// How fast a body can go across the ground, in metres a second: the car
 /// anyone can drive, boosted (`cars::DRIVEN_TOP_SPEED`, since 2026-11-05,
 /// 40 since 2026-11-06; the game's `MOVE_SPEED`, 7, until then), with some
-/// slack for the odd update arriving early. Nothing says a body is in the
-/// car, so every body is allowed as much.
-const MOST_SPEED: f32 = cars::DRIVEN_TOP_SPEED * 1.3;
+/// slack for the odd update arriving early. Every body is allowed as much:
+/// nothing said a body was in the car until 2026-11-21 ([`Ask::Drive`],
+/// [`Body::driving`]), and an app from before still does not say. The
+/// number is the rules' now (`cars::MOST_SPEED`), a device going by it too.
+const MOST_SPEED: f32 = cars::MOST_SPEED;
 /// How fast a body can rise, in metres a second: a jump, `JUMP_SPEED`, with
 /// slack. Falling is not limited.
 const MOST_RISE: f32 = 8.5 * 1.3;
@@ -98,6 +100,12 @@ pub(crate) fn new_name() -> String {
     )
 }
 
+/// Hearing what devices ask, letting them in and passing their moves on:
+/// what comes after it in a tick finds everyone let in that tick with their
+/// body.
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct PlayerSystems;
+
 pub(crate) fn plugin(app: &mut App) {
     app.init_resource::<Everyone>()
         .add_observer(gone)
@@ -105,11 +113,20 @@ pub(crate) fn plugin(app: &mut App) {
             PreUpdate,
             (hear, admit, moves)
                 .chain()
+                .in_set(PlayerSystems)
                 .after(ServerSystems::Receive)
                 .after(crate::accounts::answers)
                 .run_if(in_state(ServerState::Running)),
-        );
+        )
+        // Once everything of the tick that seats anyone or stands them up
+        // has run, the games' own too.
+        .add_systems(PostUpdate, tell_channels.run_if(in_state(ServerState::Running)));
 }
+
+/// A device that has asked to be told of its channel of the town
+/// ([`Ask::Channel`], since 2026-11-21): one whose app knows how to read it.
+#[derive(Component)]
+pub(crate) struct Watching;
 
 /// Who a player is: their account, in secure mode, or the hash of the
 /// device's own sixteen bytes without it. The id everyone else sees them by.
@@ -162,6 +179,9 @@ pub(crate) struct Body {
     /// What it has to spend: what the database last said, or without one, all
     /// there is of it.
     pub coins: u32,
+    /// In its own car, in the town, as its device last said ([`Ask::Drive`],
+    /// since 2026-11-21): for the rest of its channel to see the car.
+    pub driving: bool,
     pace: Pace,
 }
 
@@ -176,6 +196,7 @@ impl Body {
             arrival: 0,
             town: None,
             coins: 0,
+            driving: false,
             pace: Pace::new(now),
         }
     }
@@ -191,6 +212,7 @@ impl Body {
             arrival: 0,
             town,
             coins,
+            driving: false,
             pace: Pace::new(now),
         }
     }
@@ -374,6 +396,7 @@ fn hear(
     clients: Query<Option<&Plays>, With<ConnectedClient>>,
     mut bodies: Query<(&mut Body, &mut Spot, &mut Venue, &Member)>,
     accounts: Accounts,
+    bags: Query<&crate::bag::Holds>,
     mut towns: ResMut<Towns>,
     bank: Res<Bank>,
     mut social: ResMut<Social>,
@@ -537,9 +560,88 @@ fn hear(
                     },
                 );
             }
+            // An app that reads what is said of its channel of the town:
+            // told from here on ([`tell_channels`]), and at once if it is
+            // in one already. Said before it is let in, as a rule, and its
+            // being seated is what tells it first.
+            (Ask::Channel, plays) => {
+                commands.entity(client).insert(Watching);
+                if let Some(&Plays(body)) = plays
+                    && let Ok((body_of, ..)) = bodies.get(body)
+                    && let Room::Town(channel) = body_of.room
+                {
+                    towns.stir(channel);
+                }
+            }
+            // Into its own car, or out of it: in the town alone, where the
+            // car is to be had, and the rest of its channel is told. Into
+            // it only if it owns one (`bag`, since 2026-11-21), which
+            // everyone does who has not sold theirs.
+            (Ask::Drive(on), Some(&Plays(body))) => {
+                let Ok((mut body_of, ..)) = bodies.get_mut(body) else {
+                    continue;
+                };
+                if *on && bags.get(body).is_ok_and(|holds| !holds.bag.has_car()) {
+                    continue;
+                }
+                if let Room::Town(channel) = body_of.room
+                    && body_of.driving != *on
+                {
+                    body_of.driving = *on;
+                    towns.stir(channel);
+                }
+            }
             _ => {}
         }
     }
+}
+
+/// Tells every device in a channel of the town that something has changed
+/// in, and that asked to be told ([`Watching`]), of everyone in it: who
+/// sits in which seat, and who is in their own car ([`Tell::Channel`]). The
+/// whole channel each time, sixteen at the most.
+pub(crate) fn tell_channels(
+    mut towns: ResMut<Towns>,
+    bodies: Query<(&Body, &Member)>,
+    watching: Query<(), With<Watching>>,
+    mut tells: MessageWriter<ToClients<Tell>>,
+) {
+    // Looked at before it is taken: nothing is written on a tick nothing
+    // has changed in.
+    if !towns.is_stirred() {
+        return;
+    }
+    for channel in towns.take_stirred() {
+        let (everyone, devices) = channel_of(&towns.seated(channel), |body| bodies.get(body).ok());
+        for device in devices {
+            if watching.contains(device) {
+                tell(&mut tells, device, Tell::Channel(everyone.clone()));
+            }
+        }
+    }
+}
+
+/// Everyone seated in a channel, as they are told of ([`Seated`]), and the
+/// devices playing them, given each taken seat and the body in it and what
+/// is known of a body. A body that is gone is left out.
+fn channel_of<'a>(
+    seated: &[(u8, Entity)],
+    known: impl Fn(Entity) -> Option<(&'a Body, &'a Member)>,
+) -> (Vec<Seated>, Vec<Entity>) {
+    let mut everyone = Vec::new();
+    let mut devices = Vec::new();
+    for &(seat, body) in seated {
+        let Some((body, member)) = known(body) else {
+            continue;
+        };
+        everyone.push(Seated {
+            who: member.id,
+            seat,
+            driving: body.driving,
+        });
+        devices.extend(body.client);
+    }
+    (everyone, devices)
 }
 
 /// Puts `body` in `room`, on `venue` where `seat` arrives, and tells its
@@ -572,8 +674,10 @@ pub(crate) fn place(
     at: Option<Spot>,
     now: f64,
 ) {
+    // Everyone the server puts anywhere is a person: in the town, in the
+    // middle of their own plot (`land`, since 2026-11-20).
     *spot = at.unwrap_or_else(|| {
-        let (at, turn) = arrival(to, usize::from(seat));
+        let (at, turn) = arrival_of_a_person(to, usize::from(seat));
         Spot::of(at, turn)
     });
     venue.set_if_neq(to);
@@ -582,6 +686,12 @@ pub(crate) fn place(
     body.pace = Pace::new(now);
     if body.room != room {
         body.room = room;
+        // Out of its own car, which is the town's alone and which its
+        // device gets out of as it is sent to any other island; from one
+        // channel of the town to another it stays in it.
+        if !matches!(room, Room::Town(_)) {
+            body.driving = false;
+        }
         commands.entity(entity).insert(InRoom(room));
         if let Some(client) = body.client {
             commands.entity(client).insert(ClientRoom(room));
@@ -889,6 +999,8 @@ fn admit(
         // Known to their friends by this name and tag from here on: the
         // account's own, or, with none yet, one given now.
         let tag = social.enroll(who.0, &record.name, record.tag, record.xp);
+        // What they own, and what of it stands on their plot (`bag`).
+        let holds = crate::bag::Holds::of(&record);
         let member = Member {
             id: who.0,
             name: record.name,
@@ -901,9 +1013,15 @@ fn admit(
             Room::Town(channel) => Some(channel),
             _ => None,
         };
-        let spot = keeps.then_some(hello.spot);
+        // Let in where it stands; but a device in the town that has only
+        // just opened stands in the middle of the plot of the seat it
+        // guessed at, the first, and is stood on the plot of the seat it
+        // has (`land::just_arrived`): where it stood is someone else's.
+        let stands = hello.spot.translation();
+        let guessed = venue == Venue::Town && hello.spot.aboard.is_none() && land::just_arrived(stands.xz());
+        let spot = (keeps && !guessed).then_some(hello.spot);
         let placed = spot.unwrap_or_else(|| {
-            let (at, turn) = arrival(venue, usize::from(seat));
+            let (at, turn) = arrival_of_a_person(venue, usize::from(seat));
             Spot::of(at, turn)
         });
         commands.entity(body).insert((
@@ -915,6 +1033,7 @@ fn admit(
             InRoom(room),
             NotFor(client),
             Body::person(client, who, room, seat, town, record.coins, now),
+            holds,
         ));
         commands
             .entity(client)
@@ -1044,6 +1163,47 @@ mod tests {
     use bevy::math::{Quat, Vec3};
 
     use super::*;
+
+    #[test]
+    fn a_channel_is_told_as_who_sits_where_and_who_is_in_their_car() {
+        let entity = |n: u32| Entity::from_raw_u32(n).unwrap();
+        let member = |id: u64| Member {
+            id,
+            name: format!("Person {id}"),
+            look: "boy".into(),
+            ai: false,
+        };
+        let mut first = Body::person(entity(11), Who(7), Room::Town(0), 0, Some(0), 0, 0.0);
+        first.driving = true;
+        let second = Body::person(entity(12), Who(8), Room::Town(0), 3, Some(0), 0, 0.0);
+        let people = [(entity(1), first, member(7)), (entity(2), second, member(8))];
+        let known = |body: Entity| {
+            people
+                .iter()
+                .find(|(entity, ..)| *entity == body)
+                .map(|(_, body, member)| (body, member))
+        };
+        // Everyone as they sit and as they go, and the devices to tell; a
+        // body that has gone, its seat not yet given up, is left out.
+        let (everyone, devices) = channel_of(&[(0, entity(1)), (2, entity(9)), (3, entity(2))], known);
+        assert_eq!(
+            everyone,
+            [
+                Seated {
+                    who: 7,
+                    seat: 0,
+                    driving: true
+                },
+                Seated {
+                    who: 8,
+                    seat: 3,
+                    driving: false
+                }
+            ]
+        );
+        assert_eq!(devices, [entity(11), entity(12)]);
+        assert_eq!(channel_of(&[], known), (Vec::new(), Vec::new()));
+    }
 
     fn spot(x: f32, y: f32, z: f32) -> Spot {
         Spot::of(Vec3::new(x, y, z), Quat::IDENTITY)

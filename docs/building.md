@@ -7,6 +7,88 @@
 > "above" or "below", or names another section in quotes, that section may be
 > in another file here: the table in `CLAUDE.md` says which.
 
+## APK 45: the bag
+
+2026-11-22, 01:09 here (16:09 UTC on the 21st), at Hajun's "then build apk
+and push to git" (`docs/bag.md`). From the main checkout, committed and
+pushed after it. What is new in it since 44: the bag and its window, gems,
+buildings put down on your plot and seen by everyone, the car in the bag
+with a door out of it; and what the tree had gone ahead of 44 by, which a
+phone has not had until now: a sign for everyone in your channel, the car
+you drive seen by everyone else, the town's buses at three quarters of
+their speed. **`PROTOCOL_VERSION` 24 still**: 43 and 44 play on against the
+server deployed at 15:59 UTC on the 21st (`docs/online.md`), without bags.
+
+- **Before it**: the three crates' tests (the game's 508, the rules' 258,
+  the server's 115); hidden runs of the desktop build and of two copies
+  against a server on this PC; the deploy and the check after it
+  (`docs/bag.md` lists them).
+- **The APK**: 45 (`versionCode`). cargo ndk 2m24s, with no error of
+  Android's own; stripped from 201.2 MB to 109.6 MB with
+  `GameActivity_onCreate` and the six `MainActivity` methods in it;
+  Gradle 19 s; 127.4 MB, put over APK 44 with no copy kept. Checked:
+  `versionCode` read back with aapt; the library in it the same bytes as
+  the stripped one (sha1 `d7de46aa`); all 93 files under `assets/` the
+  same as the tree's, `gems.png` and `car1.png` among them, the 277 of the
+  tree hashed before cargo ndk and after Gradle and unchanged; no
+  `.blend`, no `ui.ron`, no `itemrarities.txt` (on the list of what is
+  left out since this APK: the game reads nothing from it); the bag's
+  words and the car's kind in the library.
+- `assets/mybuilds/car.blend`, `car.glb`, `car2.blend`, `car2.glb` and
+  `car.blend1` are gone from the tree, Hajun's doing that evening (the
+  first car and the Roadster, off the roads since 2026-10-24): nothing
+  loaded them, and `car.glb` and `car2.glb` stay named on the list of what
+  is left out, where they do no harm.
+- **Not installed: no phone was attached** (`adb devices`, empty). Nothing
+  of the bag, nor of the land since APK 44, has been seen on one.
+- **The iPhone**: no tag pushed; not type-checked, nothing behind
+  `target_os = "ios"` touched.
+
+## APK 44: the land's first things, and two cards off
+
+The small hours of 2026-11-21 here (16:05 UTC on the 20th), at Hajun's "build
+apk", from the main checkout, **uncommitted**. What is new in it since 43:
+Bridge Race's and Last Stand's cards off the selector (`docs/minigames.md`);
+your plot in the town, its sign with "{name}'s land" on both faces of its
+board as a thing in the world, solid, and arriving in the middle of the plot
+facing the fountain (`docs/land.md`). **`PROTOCOL_VERSION` 24 still**: APK 43
+plays on, and so does 44, against the server deployed at 13:31 UTC on
+2026-11-20 with where a person arrives in the town (`docs/land.md`); nothing
+of `shared/` or `server/` has changed since that deploy.
+
+**Since it, later that day**: the server was deployed again (17:15 UTC on
+the 20th, protocol 24 still, so 43 and 44 play on as they did) and the tree
+went ahead of APK 44, at Hajun's "no need to rebuild apk": a sign for
+everyone in your channel (`docs/land.md`), the car you drive seen by
+everyone else and the town's buses at three quarters of their speed
+(`docs/vehicles.md`). **APK 44 has none of the three.** Until the next APK a
+phone shows its own sign alone and nobody's car, and has the town's buses
+at the old speed, in other places than a build from this tree has them.
+
+- **Before it**: the game's tests (486), and the rules' 252 and the
+  server's 106 as they stood at that deploy, neither crate touched since;
+  hidden runs of the desktop build, which `docs/land.md` lists.
+- **The APK**: 44 (`versionCode`), at 01:04 here. cargo ndk 2m17s, with no
+  error of Android's own (swash, drawn with directly for the sign's words,
+  is the one Bevy's text already builds); stripped from 199.8 MB to 109.0
+  MB (3.2 more than 43's) with `GameActivity_onCreate` and the six
+  `MainActivity` methods in it; Gradle 18 s; 126.7 MB, put over APK 43
+  with no copy kept. Checked: `versionCode` read back with aapt; the
+  library in it the same bytes as the stripped one (sha1 `3d782f26`); all
+  91 files under `assets/` the same as the tree's, `plotsign.glb` among
+  them, the 279 of the tree hashed before cargo ndk and after Gradle and
+  unchanged; no `.blend`, no `ui.ron`; the sign's words and its model's
+  name in the library.
+- `assets/coinfountain.glb`, Hajun's and loaded by nothing yet, goes into
+  it (160 KB): it is not on the list of what is left out, which is theirs
+  to say of a model they have just made.
+- **Not installed: no phone was attached** (`adb devices`, empty). Nothing
+  of the land has been seen on one: the words on the sign are the first
+  picture the game makes for the world at run time with its own smaller
+  copies.
+- **The iPhone**: no tag pushed; not type-checked, nothing behind
+  `target_os = "ios"` touched.
+
 ## APK 43, and the server with protocol 24
 
 Later on the evening of 2026-11-18, for Hajun's next message, "fix and

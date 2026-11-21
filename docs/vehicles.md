@@ -7,6 +7,135 @@
 > "above" or "below", or names another section in quotes, that section may be
 > in another file here: the table in `CLAUDE.md` says which.
 
+## The car is in your bag, and a door gets you out of it
+
+2026-11-22, with the bag (`docs/bag.md`). Hajun: "for the vehicle section
+in ur inventory, u tap your car and u go in to the car riding mode, and
+when ur in the car riding mode, a new ui button around left side center of
+your screen that is like a leave door icon and u press that to get off ur
+car."
+
+- **The face button no longer puts you in the car**: it is the bag
+  (`docs/town-hud.md`). Your car is a thing in the bag
+  (`roundtown_net::bag::CAR`, "Red Sports Car", Mythic), which everyone
+  begins with one of; a tap on it there shuts the window and puts you in
+  it (`drive::CarPressed`, as the face did). The door half way down the
+  left edge, there while you drive, gets you out (`hud::ExitButton`). C on
+  desktop does both, as it did.
+- **Only with one in your bag** (`drive::toggle`, `Bag::has_car`): sold,
+  there is no getting in; sold from under you, you are out. The server
+  takes `Ask::Drive(true)` only from someone who owns one
+  (`players::hear`), which every account does that has not sold it, an app
+  from before among them.
+- **A tap from the car picks nothing up** off your plot
+  (`stand::hands_off_in_the_car`, `build::untappable_from_inside`).
+- Everything else of the car is as it was: how it drives, its numbers in
+  `ui.ron`, what everyone else sees.
+- **Checked**: the hidden desktop build (into it from the bag, the door,
+  out; the bag put away meanwhile; a tap on your house from the car), and
+  unit tests of the two buttons. **Not on a phone.**
+
+## Everyone else sees the car you drive
+
+Since 2026-11-21 (Hajun, having tried the town with someone else in it: "it seems
+like only your sign shows, and you dont see other player's signs. also the
+car only shows to yourself, not to other players. fix both, but no need to
+rebuild apk or cargo run again"). Until then "Nothing of it goes over the
+network", under "The car you drive" below, was so: everyone else saw your
+body go where the car went, legs walking. The signs are in `docs/land.md`,
+and how the server tells a channel of itself in `docs/online.md`.
+
+- **All that is sent is that you are in the car, or out of it**
+  (`roundtown_net::Ask::Drive(bool)`): as you get in or out (`drive::toggle`,
+  every way out of it, being sent to another island too), and on coming
+  online in it (`say_so_on_coming_online`). The server keeps it on your body
+  (`Body::driving`, in the town alone; put out of it as it puts you in any
+  room that is not the town) and tells your channel
+  (`Tell::Channel`, `Seated::driving`). Your body is sent as it always
+  was, where the car is and facing the way it faces.
+- **Whoever is said to be in theirs is drawn as the car where their body
+  is** (`drive::their_cars`, after the bodies are put where they are this
+  frame): a `car1.glb` of their own (`TheirCar`), facing the way their body
+  faces, its wheels rolled as far as it has gone along its nose, backwards
+  when it backs; and their body is not drawn (`drive::InCar`, which
+  `island::show_where_i_am` goes by). Their name stays over it. The car goes
+  and the body is back as they get out, go elsewhere or leave. Nothing is
+  written on a frame nothing moved in, and nothing is looked at while
+  nobody in the channel is in a car.
+- **My calls.** The front wheels are not turned: how it steers is not sent.
+  Their car is in nobody's way, as their body never was (players walk
+  through each other). The car is drawn for your channel of the town only,
+  where the car is to be had.
+- **A fast car was being snapped from place to place, and is not now**
+  (`net::leaps`, my call, and not asked for). A body shown more than 3 m
+  from where its last update had it was taken to have been put there
+  (`LEAP`: "further than anyone runs between two" updates), its track
+  begun again: drawn at once at the new place and held there. The car
+  boosts at 30 m/s by `ui.ron`, 2 m between two of the server's fifteen
+  updates a second, and whenever one of the driver's own fifteen missed a
+  tick and two came in the next, that was 4 m. A leap is now further than
+  3 m and further than the fastest the server lets a body go would have
+  taken it in the time between the two (`roundtown_net::cars::MOST_SPEED`,
+  52 m/s, which is the server's own `MOST_SPEED` moved to `shared/`),
+  counting three updates' time at the most: 3.5 m after one update, 6.9
+  after two, 10.4 after any longer. Anything put further than that is put
+  there as before (an arrival, a respawn). Measured on this PC, the same
+  scripted drive watched by a second copy, frame by frame: by the old rule
+  three frames in which the car went 1.1, 4.3 and 6.0 m, each with fifteen
+  frames standing still beside it; by the new none, the longest step of any
+  frame 0.53 m.
+- **Protocol 24 still**, and the APKs out play on: the two new things asked
+  are at the end of `Ask`, which keeps replicon's hash, and a server from
+  before drops what it cannot read. **An app from before (APK 44 and
+  older) sees what it saw**, the body alone, and sends nothing of its own
+  car, so nobody sees a car for it. Hajun asked for no APK.
+- **Checked.** Unit tests (`drive::whoever_the_server_says_is_in_their_car_
+  is_drawn_as_it`, `net::a_car_at_its_fastest_is_going_there_and_a_body_put_
+  somewhere_is_not`, the server's two of the channel). Two hidden copies of
+  the desktop build against a server on this PC: the second got into its
+  car and the first saw one car where it stood, its body gone and its name
+  over the car (a picture, looked at); drove off, turned, boosted and backed
+  away, and the car the first saw went the same way, nose first forward
+  (about 16 m/s) and tail first backing (about 30 m/s), and stopped where the driver's
+  own copy said it stood, to the centimetre; out of it, the car was gone
+  and the body back. The VM after the deploy: this PC's account into the
+  car and out, the journal clean.
+- **Not checked.** On a phone. Over a real network, where updates come
+  less evenly than on one PC. Two real accounts on the VM.
+
+## The town's buses go three quarters as fast
+
+Since 2026-11-21 (Hajun: "also decrease the bus speed to 75% for the main
+lobby donnbgeurami town buses").
+
+- **`roundtown_net::cars::TOP_SPEED` is 5.25, from 7**, and everything of
+  the town's buses' speed goes by it: 5.25 m/s on the roads in the middle,
+  and twice that, 10.5 from 14, on the open road round the edge
+  (`roads::OPEN_ROAD`, unchanged). So "7 m/s, as fast as a run" and "14
+  m/s", under "The town's buses" below, are how it was. A walk is 7: a bus
+  in the middle of the town is now slower than you are.
+- **What does not go by it is as it was** (my reading of "speed"): how hard
+  it takes a bend (2.5 m/s² sideways: a bend it took at 4.7 m/s it still
+  does), how fast it gains and loses speed, how long it waits at a
+  crossing.
+- **Bridge Wars' buses are not touched**: 14.2 m/s
+  (`bridge_wars::BUS_SPEED`). Its test said "twice the town's" by the
+  constant, and says 14 now, with the town's own beside it.
+- **Each device works out where the buses are** from that number and the
+  town's clock, and it is compiled in. **An app built before (APK 44 and
+  older) has them at the old speed**, so until the next APK a phone and
+  this PC have the buses in different places, and someone riding one is
+  drawn, by a device of the other kind, on the bus where that device has
+  it. The server has no buses of the town's: it only bounds how fast a
+  rider can be taken (`MOST_RIDE`, 58.8 m/s now, ample for either), and
+  was deployed with the rest that day.
+- **Checked.** Unit tests (the town's real route reaches 10.5 m/s on the
+  open road and no more, `roads`; a bus by the clock is never faster,
+  `car`). The desktop build, hidden and offline, each of the four buses'
+  speed taken every half second for 45 s: 10.5 m/s at the most on the open
+  road, 5.25 on the roads in the middle, 4.6 to 4.7 round the bends,
+  standing at its stops. **Not checked**: on a phone.
+
 ## Two more of the bus drive round Bridge Wars' map, and run people over
 
 Since 2026-11-16 (Hajun: "in the bridge wars minigame map, i want 2 buses to

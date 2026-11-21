@@ -26,6 +26,16 @@
 //! ([`Keep`]), in the order it was made. That is right for the few thousand
 //! accounts one server holds; with many more, friends would be asked of the
 //! database as accounts are.
+//!
+//! **What an account owns** (`bag`, since 2026-11-21): its gems
+//! (`players.gems`, ten to begin with) and its bag, what it owns of the
+//! things there are and what of that stands on its plot of the town, which
+//! is one JSON document (`players.bag`, as `bag::Kept` writes it; none until
+//! the account first buys, sells or stands something, and then what
+//! everyone begins with). An account is loaded with both; a purchase or a
+//! sale changes the coins and the bag in one transaction, with its line of
+//! `coin_changes` ([`Bank::deal`]); what only moves about the plot is
+//! written after the fact ([`Bank::keep_bag`]).
 
 use std::collections::{HashMap, HashSet};
 use std::sync::mpsc::{Receiver, Sender, channel};
@@ -89,6 +99,8 @@ CREATE TABLE IF NOT EXISTS messages (
     at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS messages_receiver ON messages (receiver);
+ALTER TABLE players ADD COLUMN IF NOT EXISTS gems BIGINT NOT NULL DEFAULT 10 CHECK (gems >= 0);
+ALTER TABLE players ADD COLUMN IF NOT EXISTS bag TEXT;
 ";
 
 /// What is made once every account has its tag ([`give_tags`]): no two
@@ -137,6 +149,7 @@ pub(crate) fn plugin(app: &mut App, db: Option<String>) -> Snapshot {
         .add_message::<Loaded>()
         .add_message::<Charged>()
         .add_message::<Credited>()
+        .add_message::<Dealt>()
         .add_systems(PreUpdate, answers);
     snapshot
 }
@@ -391,6 +404,26 @@ impl Bank {
             let _ = jobs.send(Job::Keep(keep));
         }
     }
+
+    /// A purchase or a sale (`bag`): changes the account `id`'s coins by
+    /// `amount`, less than nothing for something bought, if that leaves
+    /// them no less than nothing, and with them keeps its bag as it is
+    /// after, `bag`, and a line saying `why`: all of it or none. The answer
+    /// comes as [`Dealt`].
+    pub(crate) fn deal(&self, id: u64, amount: i64, why: &'static str, bag: String) {
+        if let Self::Database { jobs, .. } = self {
+            let _ = jobs.send(Job::Deal { id, amount, why, bag });
+        }
+    }
+
+    /// Keeps the account `id`'s bag as it is now, `bag`, the game's loop
+    /// having gone by it already (`bag`): something stood on its plot,
+    /// moved there or taken back. Nothing comes back.
+    pub(crate) fn keep_bag(&self, id: u64, bag: String) {
+        if let Self::Database { jobs, .. } = self {
+            let _ = jobs.send(Job::Bag { id, bag });
+        }
+    }
 }
 
 /// One player's account.
@@ -403,6 +436,10 @@ pub(crate) struct Record {
     pub tag: Option<u16>,
     /// What it has earned toward its level.
     pub xp: u32,
+    /// Its gems, and its bag as it is kept (`bag::Kept`): none until it
+    /// first changes, and then what everyone begins with.
+    pub gems: u32,
+    pub bag: Option<String>,
 }
 
 impl Record {
@@ -414,6 +451,8 @@ impl Record {
             coins: STARTING_BALANCE,
             tag: None,
             xp: 0,
+            gems: roundtown_net::bag::GEMS,
+            bag: None,
         }
     }
 }
@@ -445,6 +484,15 @@ pub(crate) struct Credited {
     pub left: Option<u32>,
 }
 
+/// What a purchase or a sale left the account with ([`Bank::deal`]), its
+/// bag kept as it is after; or `None` if nothing was changed: it had not
+/// the coins, or there is no such account any more.
+#[derive(Message)]
+pub(crate) struct Dealt {
+    pub id: u64,
+    pub left: Option<u32>,
+}
+
 pub(crate) enum Job {
     Load(u64),
     Charge {
@@ -467,12 +515,23 @@ pub(crate) enum Job {
         tag: u16,
     },
     Keep(Keep),
+    Deal {
+        id: u64,
+        amount: i64,
+        why: &'static str,
+        bag: String,
+    },
+    Bag {
+        id: u64,
+        bag: String,
+    },
 }
 
 pub(crate) enum Done {
     Loaded(Loaded),
     Charged(Charged),
     Credited(Credited),
+    Dealt(Dealt),
 }
 
 /// Passes on what the database's thread has answered.
@@ -481,6 +540,7 @@ pub(crate) fn answers(
     mut loaded: MessageWriter<Loaded>,
     mut charged: MessageWriter<Charged>,
     mut credited: MessageWriter<Credited>,
+    mut dealt: MessageWriter<Dealt>,
 ) {
     let Bank::Database { done, .. } = &*bank else {
         return;
@@ -498,6 +558,9 @@ pub(crate) fn answers(
             }
             Done::Credited(answer) => {
                 credited.write(answer);
+            }
+            Done::Dealt(answer) => {
+                dealt.write(answer);
             }
         }
     }
@@ -566,6 +629,14 @@ fn work(url: &str, jobs: &Receiver<Job>, done: &Sender<Done>) {
                     error!("could not keep {keep:?}");
                     None
                 }
+                Job::Deal { id, .. } => Some(Done::Dealt(Dealt { id, left: None })),
+                Job::Bag { id, .. } => {
+                    // As with friends: the game's loop holds it until the
+                    // account is next loaded, and its next change is kept
+                    // whole.
+                    error!("could not keep {id}'s bag");
+                    None
+                }
             };
         }
         if let Some(answer) = answer
@@ -581,7 +652,7 @@ fn run(db: &mut Client, job: &Job) -> Result<Option<Done>, postgres::Error> {
     match *job {
         Job::Load(id) => {
             let row = db.query_opt(
-                "UPDATE players SET seen = now() WHERE id = $1 RETURNING name, look, coins, tag, xp",
+                "UPDATE players SET seen = now() WHERE id = $1 RETURNING name, look, coins, tag, xp, gems, bag",
                 &[&(id as i64)],
             )?;
             Ok(Some(Done::Loaded(Loaded {
@@ -592,6 +663,8 @@ fn run(db: &mut Client, job: &Job) -> Result<Option<Done>, postgres::Error> {
                     coins: row.get::<_, i64>(2).clamp(0, i64::from(u32::MAX)) as u32,
                     tag: row.get::<_, Option<i16>>(3).map(|tag| tag as u16),
                     xp: row.get::<_, i64>(4).clamp(0, i64::from(u32::MAX)) as u32,
+                    gems: row.get::<_, i64>(5).clamp(0, i64::from(u32::MAX)) as u32,
+                    bag: row.get(6),
                 }),
             })))
         }
@@ -609,6 +682,36 @@ fn run(db: &mut Client, job: &Job) -> Result<Option<Done>, postgres::Error> {
         }
         Job::Keep(ref keep) => {
             keep_it(db, keep)?;
+            Ok(None)
+        }
+        Job::Deal {
+            id,
+            amount,
+            why,
+            ref bag,
+        } => {
+            // The coins, the bag and the line saying why change together,
+            // or not at all; and the coins never below nothing.
+            let mut transaction = db.transaction()?;
+            let left = transaction.query_opt(
+                "UPDATE players SET coins = coins + $2, bag = $3 WHERE id = $1 AND coins + $2 >= 0 RETURNING coins",
+                &[&(id as i64), &amount, bag],
+            )?;
+            let Some(left) = left else {
+                return Ok(Some(Done::Dealt(Dealt { id, left: None })));
+            };
+            transaction.execute(
+                "INSERT INTO coin_changes (player, amount, reason) VALUES ($1, $2, $3)",
+                &[&(id as i64), &amount, &why],
+            )?;
+            transaction.commit()?;
+            Ok(Some(Done::Dealt(Dealt {
+                id,
+                left: Some(left.get::<_, i64>(0).clamp(0, i64::from(u32::MAX)) as u32),
+            })))
+        }
+        Job::Bag { id, ref bag } => {
+            db.execute("UPDATE players SET bag = $2 WHERE id = $1", &[&(id as i64), bag])?;
             Ok(None)
         }
         Job::Charge {
@@ -850,6 +953,40 @@ mod tests {
         };
         let record = loaded.record.expect("the account");
         assert_eq!((record.name.as_str(), record.look.as_str(), record.coins, record.tag, record.xp), ("Hajun", "girl", 1325, Some(4242), 120));
+        // An account from before there were bags has ten gems and has kept
+        // no bag, which is what everyone begins with (`bag`).
+        assert_eq!((record.gems, record.bag.as_deref()), (10, None));
+        // A purchase takes its price and keeps the bag as it is after,
+        // with a line saying why; one there are not the coins for changes
+        // nothing; a sale gives; and what only moves about the plot is
+        // kept by itself.
+        let dealt = |db: &mut Client, amount: i64, why: &'static str, bag: &str| match done(db, Job::Deal { id: c, amount, why, bag: bag.into() }) {
+            Some(Done::Dealt(dealt)) => dealt.left,
+            _ => panic!("no answer to a deal"),
+        };
+        let mut bag = roundtown_net::bag::Bag::new();
+        let left = bag.buy("singlebed", 1325).expect("a bed");
+        assert_eq!(dealt(&mut db, -150, "bought a thing", &crate::bag::kept(&bag)), Some(left));
+        assert_eq!(dealt(&mut db, -5_000, "bought a thing", "{}"), None);
+        let after = bag.sell("streetlamp", left).expect("the lamp sold");
+        assert_eq!(dealt(&mut db, 1_250, "sold a thing", &crate::bag::kept(&bag)), Some(after));
+        bag.put(1, "singlebed", roundtown_net::At::Ground { x: 1.5, y: 0.0, z: -2.25, yaw: 0.785 }).expect("the bed stood");
+        done(&mut db, Job::Bag { id: c, bag: crate::bag::kept(&bag) });
+        let Some(Done::Loaded(loaded)) = done(&mut db, Job::Load(c)) else {
+            panic!("no answer to a load");
+        };
+        let record = loaded.record.expect("the account");
+        assert_eq!((record.coins, record.gems), (2_425, 10));
+        assert_eq!(crate::bag::Holds::of(&record).bag, bag);
+        let lines: Vec<(i64, String)> = db
+            .query("SELECT amount, reason FROM coin_changes WHERE player = $1 ORDER BY id", &[&(c as i64)])
+            .expect("the lines")
+            .iter()
+            .map(|row| (row.get(0), row.get(1)))
+            .collect();
+        assert_eq!(lines, vec![(-150, "bought a thing".to_string()), (1_250, "sold a thing".to_string())]);
+        // A deal for an account that is not there changes nothing.
+        assert!(matches!(done(&mut db, Job::Deal { id: 999_999, amount: 5, why: "sold a thing", bag: "{}".into() }), Some(Done::Dealt(Dealt { left: None, .. }))));
         // An account deleted takes its friends, what it asked and what was
         // written to and by it with it.
         db.execute("DELETE FROM players WHERE id = $1", &[&(c as i64)]).expect("delete");
@@ -877,6 +1014,9 @@ mod tests {
             .expect("the account")
             .get(0);
         assert_eq!(coins, i64::from(STARTING_BALANCE));
+        // And ten gems, and no bag kept yet.
+        let row = db.query_one("SELECT gems, bag FROM players WHERE id = $1", &[&(made[0] as i64)]).expect("the account");
+        assert_eq!((row.get::<_, i64>(0), row.get::<_, Option<String>>(1)), (10, None));
     }
 
     /// The tables as they stand, with the accounts in them, taken through
@@ -908,13 +1048,19 @@ mod tests {
         assert_eq!(count(&mut db, "devices"), devices, "a device came or went");
         assert_eq!(count(&mut db, "coin_changes"), changes, "a coin change came or went");
         assert_eq!(first.people.len(), before.len());
+        // Every account has its gems, ten for one from before there were
+        // any, and no bag kept that was not kept before.
+        let gems: i64 = db.query_one("SELECT count(*) FROM players WHERE gems IS NULL OR gems < 0", &[]).expect("gems").get(0);
+        assert_eq!(gems, 0);
         let mut handles = HashSet::new();
         for person in &first.people {
             assert!((TAG_FIRST..=TAG_LAST).contains(&person.tag), "account {}: tag {}", person.id, person.tag);
             assert!(handles.insert((person.name.to_lowercase(), person.tag)), "account {}: its name and tag twice", person.id);
-            assert_eq!(person.xp, 0, "account {}", person.id);
         }
-        assert!(first.friends.is_empty() && first.requests.is_empty() && first.letters.is_empty());
+        // (Until 2026-11-22 this also held every account to have earned
+        // nothing and to have no friends, which was so of the accounts
+        // there were before tags and friends, 2026-11-13, and is not of
+        // any copy since.)
         // Starting again gives nobody another tag.
         assert_eq!(set_up(&mut db).expect("set up again"), first);
         // And the login still makes an account in it, and finds it again:

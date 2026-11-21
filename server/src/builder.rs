@@ -584,7 +584,11 @@ fn hear(
             | Ask::BlendIn(_)
             | Ask::KnockOff(_)
             | Ask::BridgeRace(_)
-            | Ask::LastStand(_) => {}
+            | Ask::LastStand(_)
+            | Ask::Channel
+            | Ask::Drive(_)
+            // What is asked of a bag (`bag`).
+            | Ask::Bag(_) => {}
         }
     }
 }

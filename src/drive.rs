@@ -49,10 +49,21 @@
 //! (`crate::strands`); and its nose and tail, which reach far past your
 //! body, stop at anything taller than a kerb ([`settle`]), so that it does
 //! not drive its front into a house before its middle meets the wall.
-//! Nothing of it goes over the network: online, everyone else sees your
-//! body go where the car goes, and the server lets a body go as fast as the
-//! car boosts (`roundtown_net::cars::DRIVEN_TOP_SPEED`). The car's wheels
-//! turn as it rolls and its front ones as it steers (`car::hang_wheels`).
+//! The car's wheels turn as it rolls and its front ones as it steers
+//! (`car::hang_wheels`).
+//!
+//! **Online, everyone else in your channel of the town sees the car**
+//! (since 2026-11-21; Hajun: "the car only shows to yourself, not to other
+//! players"; until then they saw your body go where the car went, legs
+//! walking). All that goes over the network for it is that you are in it,
+//! or out of it (`roundtown_net::Ask::Drive`, as you get in or out, and on
+//! coming online in it), which the server tells the rest of your channel
+//! (`Tell::Channel`, `lobby::Channel`). Your body is sent as it always was,
+//! where the car is and facing the way it faces, and the server lets a body
+//! go as fast as the car boosts (`roundtown_net::cars::DRIVEN_TOP_SPEED`).
+//! Whoever is said to be in theirs is drawn as the car where their body is,
+//! and their body not ([`their_cars`], [`InCar`]): its wheels roll as far
+//! as it goes, and are not turned, how it steers not being sent.
 //!
 //! **Every number of how it goes is in `assets/ui.ron`, under `car`**
 //! ([`Car`], since 2026-11-06; Hajun: "put all the constants related to
@@ -89,9 +100,14 @@ use std::f32::consts::TAU;
 use bevy::mesh::skinning::SkinnedMesh;
 use bevy::prelude::*;
 use bevy::world_serialization::WorldInstanceReady;
+use bevy_replicon::prelude::Remote;
+use roundtown_net::{Ask, Member, Seated};
 
+use crate::bag::Bag;
 use crate::car::{self, Turns, WheelPart};
 use crate::island::{self, Islands, Venue};
+use crate::lobby::Channel;
+use crate::net::Online;
 use crate::ui::{Car, UiChanged, ui};
 use crate::{
     CloseUp, Decks, Intent, OrbitCamera, Player, STICK_DEADZONE, ThirdPersonCamera, TouchControls, View,
@@ -147,7 +163,24 @@ impl Default for Shape {
 #[derive(Component)]
 pub(crate) struct MyCar;
 
-/// The face button pressed: into the car, or out of it.
+/// Someone else's car, in your channel of the town online: the body it
+/// carries, how far it has rolled, for its wheels, and where that body
+/// stood when that was last counted.
+#[derive(Component)]
+struct TheirCar {
+    body: Entity,
+    rolled: f32,
+    last: Vec3,
+}
+
+/// A body that is in its own car, someone else's: the car is drawn, and the
+/// body is not (`island::show_where_i_am`).
+#[derive(Component)]
+pub(crate) struct InCar;
+
+/// Into the car, or out of it: your car tapped in your bag (`bag::panel`),
+/// or the door pressed that stands by the left of the screen while you are
+/// in it (`hud`); the face button, until 2026-11-21.
 #[derive(Message, Default)]
 pub(crate) struct CarPressed;
 
@@ -168,6 +201,13 @@ impl Driving {
 impl Driving {
     pub(crate) fn on(&self) -> bool {
         self.0.is_some()
+    }
+
+    /// In the car, or out of it: for the tests of what is otherwise in it
+    /// (`hud`).
+    #[cfg(test)]
+    pub(crate) fn for_tests(on: bool) -> Self {
+        Self(on.then(|| Drive::facing(Vec2::NEG_Y)))
     }
 }
 
@@ -365,7 +405,17 @@ pub(crate) fn plugin(app: &mut App) {
         .init_resource::<Gun>()
         .add_message::<CarPressed>()
         .add_systems(Startup, spawn_my_car)
-        .add_systems(Update, (toggle.before(crate::read_player_input), retune));
+        .add_systems(
+            Update,
+            (
+                toggle.before(crate::read_player_input),
+                retune,
+                say_so_on_coming_online,
+                // Once everyone else's bodies are where they are this frame
+                // (`net::smooth`, before it).
+                their_cars.after(crate::move_bodies),
+            ),
+        );
     if GUN {
         // The gun fires from where the car has been put this frame, and
         // its bullets fly on from there.
@@ -488,7 +538,7 @@ fn spawn_my_car(assets: Res<AssetServer>, mut commands: Commands) {
 
 /// Reads the car's shape off its model once it has spawned, in the car's own
 /// space, and hangs its wheels to turn, the front ones steering
-/// (`car::hang_wheels`).
+/// (`car::hang_wheels`): yours, and each of everyone else's ([`TheirCar`]).
 #[allow(clippy::too_many_arguments)]
 fn read_my_car(
     ready: On<WorldInstanceReady>,
@@ -498,7 +548,7 @@ fn read_my_car(
     names: Query<&Name>,
     placement: TransformHelper,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut cars: Query<&mut Shape, With<MyCar>>,
+    mut cars: Query<&mut Shape>,
     mut commands: Commands,
 ) {
     let car = ready.entity;
@@ -573,32 +623,39 @@ pub(crate) fn drivable(venue: Venue) -> bool {
     venue == Venue::Town
 }
 
-/// Into the car, at the press of the face button or C, where you stand and
+/// Into the car, at a tap on it in your bag or C, where you stand and
 /// facing the way you face, with the camera fixed over you; or out of it,
-/// standing where the car is, with the camera back as you had it. Not
-/// while a dialog is up or the camera is on someone you talk to; and out
-/// of it, whatever is pressed, once you are sent to another island. Into
-/// it only where it is to be had ([`drivable`]).
+/// at the press of its door or C, standing where the car is, with the
+/// camera back as you had it. Not while a dialog is up or the camera is on
+/// someone you talk to; and out of it, whatever is pressed, once you are
+/// sent to another island, or once the car is no longer yours, sold out
+/// from under you. Into it only where it is to be had ([`drivable`]), and
+/// only with one in your bag (`bag`, since 2026-11-21: everyone begins
+/// with one, and may sell it).
 #[allow(clippy::too_many_arguments)]
 fn toggle(
     mut pressed: MessageReader<CarPressed>,
     keyboard: Res<ButtonInput<KeyCode>>,
     dialog: Res<hud::DialogUp>,
     close_up: Res<CloseUp>,
+    bag: Res<Bag>,
     me: Query<(&Transform, &Venue), With<Player>>,
     mut cars: Query<&mut Visibility, With<MyCar>>,
     mut driving: ResMut<Driving>,
     mut orbit: ResMut<OrbitCamera>,
+    online: Res<Online>,
+    mut asks: MessageWriter<Ask>,
 ) {
     let asked = pressed.read().count() > 0 || keyboard.just_pressed(KeyCode::KeyC);
     let Ok((body, &venue)) = me.single() else {
         return;
     };
-    let sent = driving.0.as_ref().is_some_and(|drive| drive.venue != Some(venue));
+    let owned = bag.has.has_car();
+    let sent = driving.0.as_ref().is_some_and(|drive| drive.venue != Some(venue)) || (driving.on() && !owned);
     if !sent && !(asked && !dialog.0 && !close_up.busy()) {
         return;
     }
-    if !sent && driving.0.is_none() && !drivable(venue) {
+    if !sent && driving.0.is_none() && !(drivable(venue) && owned) {
         return;
     }
     let shown = match driving.0.take() {
@@ -626,6 +683,100 @@ fn toggle(
     };
     for mut visibility in &mut cars {
         visibility.set_if_neq(if shown { Visibility::Inherited } else { Visibility::Hidden });
+    }
+    // For everyone else in your channel of the town to see the car, or you
+    // on your feet again.
+    if online.is() {
+        asks.write(Ask::Drive(shown));
+    }
+}
+
+/// Tells a server this device has just come online with that you are in the
+/// car, if you are: it was got into offline, or before the connection went.
+fn say_so_on_coming_online(online: Res<Online>, driving: Res<Driving>, mut was: Local<bool>, mut asks: MessageWriter<Ask>) {
+    let now = online.is();
+    if now && !*was && driving.on() {
+        asks.write(Ask::Drive(true));
+    }
+    *was = now;
+}
+
+/// Whether the person `who` is in their own car, as the server has said of
+/// your channel of the town (`everyone`): someone other than you (`me`),
+/// whose car is your own to draw.
+fn in_their_car(everyone: &[Seated], me: Option<u64>, who: u64) -> bool {
+    me.is_some_and(|me| me != who) && everyone.iter().any(|seated| seated.who == who && seated.driving)
+}
+
+/// Draws the car of everyone else in your channel of the town who is in
+/// theirs: a car for each, put where their body is as it comes, facing the
+/// way it faces, its wheels rolled as far as it has gone; and their body
+/// not drawn ([`InCar`]). The car goes as they get out, go elsewhere or
+/// leave. Only what has changed is written.
+#[allow(clippy::type_complexity)]
+fn their_cars(
+    (online, channel): (Res<Online>, Res<Channel>),
+    bodies: Query<(Entity, &Member, &Transform, &Venue, Has<InCar>), With<Remote>>,
+    mut cars: Query<
+        (Entity, &mut TheirCar, &Shape, &mut Transform, Option<&Children>),
+        (Without<Remote>, Without<MyCar>, Without<Player>),
+    >,
+    mut wheels: Query<(&Turns, &mut Transform), (Without<TheirCar>, Without<Remote>, Without<MyCar>, Without<Player>)>,
+    assets: Res<AssetServer>,
+    mut commands: Commands,
+) {
+    if cars.is_empty() && !channel.0.iter().any(|seated| seated.driving) {
+        return;
+    }
+    let me = online.me().map(|me| me.id);
+    let drives = |member: &Member, venue: &Venue| *venue == Venue::Town && in_their_car(&channel.0, me, member.id);
+    for (car, mut theirs, shape, mut transform, children) in &mut cars {
+        let Some((_, _, body, ..)) = bodies.get(theirs.body).ok().filter(|(_, member, _, venue, _)| drives(member, venue)) else {
+            // Out of it, or gone: the car goes, and whoever is still here
+            // is drawn again.
+            commands.entity(car).despawn();
+            commands.entity(theirs.body).try_remove::<InCar>();
+            continue;
+        };
+        let way = body.forward().xz().normalize_or(Vec2::NEG_Y);
+        if body.translation != theirs.last {
+            theirs.rolled += (body.translation - theirs.last).xz().dot(way);
+            theirs.last = body.translation;
+        }
+        let turn = Quat::from_rotation_y(car::heading(way) - car::heading(shape.front));
+        transform.set_if_neq(Transform::from_translation(body.translation - Vec3::Y * shape.lowest).with_rotation(turn));
+        for &child in children.into_iter().flatten() {
+            let Ok((turns, mut wheel)) = wheels.get_mut(child) else {
+                continue;
+            };
+            let angle = theirs.rolled.rem_euclid(TAU * turns.radius) / turns.radius;
+            let roll = Quat::from_axis_angle(turns.axle, -angle);
+            if wheel.rotation != roll {
+                wheel.rotation = roll;
+            }
+        }
+    }
+    for (body, member, at, venue, in_car) in &bodies {
+        if in_car || !drives(member, venue) {
+            continue;
+        }
+        commands.entity(body).try_insert(InCar);
+        commands
+            .spawn((
+                Name::new("Someone's car"),
+                TheirCar {
+                    body,
+                    rolled: 0.0,
+                    last: at.translation,
+                },
+                Shape::default(),
+                // On the town, and drawn only there (`island::show_where_i_am`).
+                Venue::Town,
+                WorldAssetRoot(assets.load(GltfAssetLabel::Scene(0).from_asset(MODEL))),
+                Transform::from_translation(at.translation),
+                Visibility::Hidden,
+            ))
+            .observe(read_my_car);
     }
 }
 
@@ -817,6 +968,25 @@ mod tests {
             left -= DT;
         }
         at
+    }
+
+    #[test]
+    fn whoever_the_server_says_is_in_their_car_is_drawn_as_it() {
+        let seated = |who: u64, driving: bool| Seated {
+            who,
+            seat: who as u8,
+            driving,
+        };
+        let channel = [seated(5, true), seated(7, true), seated(8, false)];
+        // Someone else who is in theirs; not someone on their feet, nor
+        // anyone the server has not named.
+        assert!(in_their_car(&channel, Some(5), 7));
+        assert!(!in_their_car(&channel, Some(5), 8));
+        assert!(!in_their_car(&channel, Some(5), 9));
+        // Your own car is your own to draw; and offline nobody's is.
+        assert!(!in_their_car(&channel, Some(5), 5));
+        assert!(!in_their_car(&channel, None, 7));
+        assert!(!in_their_car(&[], Some(5), 7));
     }
 
     #[test]

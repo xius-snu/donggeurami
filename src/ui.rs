@@ -554,6 +554,68 @@ pub(crate) struct Colours {
     pub knock_off: KnockOffColours,
     pub bridge_race: BridgeRaceColours,
     pub last_stand: LastStandColours,
+    pub land: LandColours,
+    pub bag: BagColours,
+}
+
+/// The bag's colours (`bag`, since 2026-11-21): the colour each rarity's
+/// name is written in on the panel, the rarest first (Hajun's, with their
+/// prices: "u can see the names are colored, they indicate the rarity");
+/// how many of a thing there are, after its name ("x1"); and the shop's two
+/// buttons, Buy and Sell, each lit under the pointer, and the words on
+/// them, as their picture of it has them (`bagandinventorypanel2.png`: a
+/// brighter red than a window's no).
+#[derive(Deserialize, Clone, Copy, PartialEq, Debug)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct BagColours {
+    #[serde(deserialize_with = "colour")]
+    pub mythic: Color,
+    #[serde(deserialize_with = "colour")]
+    pub legendary: Color,
+    #[serde(deserialize_with = "colour")]
+    pub epic: Color,
+    #[serde(deserialize_with = "colour")]
+    pub rare: Color,
+    #[serde(deserialize_with = "colour")]
+    pub uncommon: Color,
+    #[serde(deserialize_with = "colour")]
+    pub common: Color,
+    #[serde(deserialize_with = "colour")]
+    pub count: Color,
+    #[serde(deserialize_with = "colour")]
+    pub buy: Color,
+    #[serde(deserialize_with = "colour")]
+    pub buy_lit: Color,
+    #[serde(deserialize_with = "colour")]
+    pub sell: Color,
+    #[serde(deserialize_with = "colour")]
+    pub sell_lit: Color,
+    #[serde(deserialize_with = "colour")]
+    pub on_deal: Color,
+}
+
+impl BagColours {
+    /// The colour a thing of `rarity` has its name written in.
+    pub(crate) fn rarity(&self, rarity: roundtown_net::bag::Rarity) -> Color {
+        use roundtown_net::bag::Rarity;
+        match rarity {
+            Rarity::Mythic => self.mythic,
+            Rarity::Legendary => self.legendary,
+            Rarity::Epic => self.epic,
+            Rarity::Rare => self.rare,
+            Rarity::Uncommon => self.uncommon,
+            Rarity::Common => self.common,
+        }
+    }
+}
+
+/// The land's colours (`land`, since 2026-11-20): the words on the sign of
+/// a plot, which say whose it is.
+#[derive(Deserialize, Clone, Copy, PartialEq, Debug)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct LandColours {
+    #[serde(deserialize_with = "colour")]
+    pub sign: Color,
 }
 
 /// Blend In's own colours (`blend_in`, since 2026-11-18), each game's in a
@@ -1285,6 +1347,53 @@ pub(crate) struct Words {
     pub knock_off: KnockOffWords,
     pub bridge_race: BridgeRaceWords,
     pub last_stand: LastStandWords,
+    pub land: LandWords,
+    pub bag: BagWords,
+}
+
+/// The bag's words (`bag::panel`, since 2026-11-21): the categories down
+/// the left of its two tabs; how many of a thing there are, after its name
+/// (`{count}`); the two buttons on a thing in the shop, each followed by
+/// the coin and a price; what a category with nothing in it says; why
+/// something cannot be done, along the window's top; what is said
+/// across the screen when a thing is put down off your land; and what each
+/// thing is called, by its kind (`roundtown_net::bag::THINGS`).
+#[derive(Deserialize, PartialEq, Debug)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct BagWords {
+    pub owned: String,
+    pub all: String,
+    pub buildings: String,
+    pub vehicles: String,
+    pub utilities: String,
+    pub cosmetics: String,
+    pub count: String,
+    pub buy: String,
+    pub sell: String,
+    pub nothing: String,
+    pub on_your_land: String,
+    pub one_house: String,
+    pub house_first: String,
+    pub no_coins: String,
+    pub off_your_land: String,
+    pub names: Vec<(String, String)>,
+}
+
+impl BagWords {
+    /// What the thing that goes by `kind` is called: its kind itself, if
+    /// the file has no name for it.
+    pub(crate) fn name<'a>(&'a self, kind: &'a str) -> &'a str {
+        self.names.iter().find(|(of, _)| of == kind).map_or(kind, |(_, name)| name.as_str())
+    }
+}
+
+/// The land's words (`land`, since 2026-11-20): what the sign of a plot
+/// says, `{name}` being whose it is (Hajun: "the plotsign should just say
+/// "hajun's land""). A `\n` in it begins a new line on the board.
+#[derive(Deserialize, PartialEq, Debug)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct LandWords {
+    pub sign: String,
 }
 
 /// The tables the four games of 2026-11-18 are played at (`table`): what

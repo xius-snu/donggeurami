@@ -7,6 +7,104 @@
 > "above" or "below", or names another section in quotes, that section may be
 > in another file here: the table in `CLAUDE.md` says which.
 
+## Bags: asked and told with no new protocol, and kept with the account
+
+2026-11-22 (`docs/bag.md` has what a bag is). What goes over the wire for
+it, and why `PROTOCOL_VERSION` is 24 still.
+
+- **`Ask::Bag(bag::Ask)` and `Tell::Bag(bag::Tell)`**, one new variant at
+  the END of each, as `Ask::Channel` and `Tell::Channel` were the day
+  before (the entry below says why that keeps the apps out playing: a
+  variant is written as its number, and a side sent one it does not know
+  drops that one message). A device says `bag::Ask::Watch` as it comes
+  online, and the server speaks of bags only to a device that has
+  (`bag::Watchers`). A test of the rules holds both to being the last
+  variant on the wire.
+- **What a device asks**: `Buy(kind)`, `Sell(kind)`, `Put { id, kind, at }`
+  (stand this on my plot, or move what stands under that number),
+  `Take { id }`. A kind is its name (`bag::Thing::kind`), never a number
+  that a thing added later could shift.
+- **Every answer is the whole bag** (`bag::Tell::Yours { asked, bag }`):
+  once for each thing asked, done or not, in order, with how many of the
+  connection's asks have been answered by then. The device counts what it
+  has sent, and passes over a bag that answers fewer (`bag::Bag::heard`):
+  it has done something since, and the answer to that is coming. Standing
+  and taking back are done on the device at once; a purchase or a sale
+  waits for its answer.
+- **What stands on a plot** goes to the channel as
+  `bag::Tell::Theirs { who, stands }`, the whole plot each time, 100
+  things at the most, a few kilobytes: to whoever sits down in the channel
+  of everyone there with anything standing, and to everyone there of the
+  newcomer's and of every change (`server/src/bag.rs`, `seat_news`;
+  `Towns::take_sat` says who has just sat down). Whoever has nothing
+  standing is not spoken of, and a device lets go of what it was told of
+  anyone no longer in its channel.
+- **Kept with the account**: `players.gems` and `players.bag`
+  (`SERVER.md`, "The database"); a purchase or a sale is one transaction
+  with the coins (`Bank::deal`, answered as `accounts::Dealt`), and a
+  person's asks wait behind one that is at the database
+  (`bag::Holds::waiting`).
+- **Deployed** at 15:59 UTC on 2026-11-21 (00:59 on the 22nd here), from a
+  tree not yet committed, after the new statements had been run on scratch
+  databases on the VM. Before: nobody connected since 14:20 UTC; the
+  database dumped (`before-bags-2026-11-22.dump`); the binary running kept
+  as `roundtown-server.prev-2026-11-22` (the one of 17:15 UTC on the
+  20th). After: the VM's binary the same bytes as the build here, and this
+  PC's own account online on it, hidden, its bag told, a lamp stood on its
+  plot and taken back, both kept in the database, the journal clean.
+
+## A channel of the town is told who is in it, with no new protocol
+
+Since 2026-11-21, for the signs on everyone's plots (`docs/land.md`) and the
+car everyone else now sees (`docs/vehicles.md`): until then the server told
+a device its own seat in the town and nobody else's, and nothing of anyone's
+car.
+
+- **What is said.** `Ask::Channel`: "tell me of my channel", sent once with
+  the hello. `Ask::Drive(bool)`: into your own car, or out. `Tell::Channel`:
+  everyone seated in your channel of the town, each `Seated { who, seat,
+  driving }`, the whole of it each time (sixteen at the most), sent to
+  every device in a channel that has asked, at the end of any tick in
+  which someone sat down in it, stood up, or got into or out of their car
+  (`Towns::stir`, `players::tell_channels`, in `PostUpdate`, after the
+  games' own seating). On a device it is `lobby::Channel`, emptied
+  offline.
+- **Why `PROTOCOL_VERSION` is still 24**, and APK 43 and 44 play on. The
+  three are new variants at the END of `Ask` and of `Tell`. replicon's hash
+  is the names and order of the types registered, which are as they were;
+  postcard writes a variant as its number, so every variant from before
+  reads as it did; and a side sent a variant it does not know fails to read
+  that one message and drops it (read in bevy_replicon 0.44.3's source that
+  day: `client_message.rs`, "ignoring message ... from client ... that
+  failed to deserialize", at debug, on the server; `server_message.rs`,
+  the same as an error in the log, on a device). So a server from before
+  ignores the two asks, and **the server speaks of the channel only to a
+  device that asked** (`players::Watching`), so an app from before is
+  never sent what it cannot read.
+- **When that may be done again**: for something new that either side can
+  do without, added at the end, the server saying it only to those who
+  asked. Never for a field added to something already sent, nor for
+  anything that now means something else: those are a new protocol
+  number, as the rule has it.
+- **A leap is by how fast, not only how far** (`net::leaps`; the account is
+  in `docs/vehicles.md`): a body is taken to have been put somewhere,
+  rather than to have gone there, when it is shown further off than 3 m
+  and than the fastest the server lets a body go would have taken it
+  since its last update. That bound is one number now on both sides,
+  `roundtown_net::cars::MOST_SPEED` (52 m/s; the server's own until then).
+- **Deployed** at 17:15 UTC on 2026-11-20 (02:15 on the 21st here), from a
+  tree not yet committed, with the town's buses' new speed in `shared/`
+  too. Before: nobody connected since 16:20 UTC; the binary running kept
+  as `roundtown-server.prev-2026-11-21` (the one of 13:31 UTC that day).
+  After: the VM's binary the same bytes as the build here, and this PC's
+  own account online on it, hidden, on its plot with its sign, into its
+  car and out, the journal clean, three accounts as before.
+- **Checked** with two hidden copies of the desktop build against a server
+  on this PC, and by the three suites (490, 252, 108). **Not checked**: an
+  app from before against this server on a phone (APK 44 sends neither
+  ask, and what the server does for it is what it did); two real accounts
+  on the VM.
+
 ## Playing online
 
 Since 2026-10-08 the game plays online, against a server in Seoul (a $10

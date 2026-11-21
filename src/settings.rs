@@ -658,6 +658,7 @@ fn deleted(
     mut deleting: ResMut<Deleting>,
     mut link: ResMut<Link>,
     mut profile: ResMut<Profile>,
+    mut bag: ResMut<crate::bag::Bag>,
     mut signup: ResMut<Signup>,
     mut up: ResMut<DialogUp>,
     assets: Res<AssetServer>,
@@ -679,6 +680,8 @@ fn deleted(
             info!("the account was deleted: starting over");
             link.start_over();
             profile.forget();
+            // What it owned went with it, and what stood on its plot.
+            bag.forget();
             signup::open(&mut commands, &assets, &mut signup, &mut up);
         }
         Err(error) => {

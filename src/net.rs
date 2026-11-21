@@ -103,6 +103,25 @@ const CARRY_ON: f64 = 0.1;
 /// two of them.
 const LEAP: f32 = 3.0;
 
+/// How long between two updates someone is taken to have been going all the
+/// while, at the most, in seconds ([`leaps`]): three of the server's, the
+/// one that came and two that did not, or came together.
+const LEAP_OVER: f64 = 3.0 / TICK_HZ;
+
+/// Whether an update takes someone somewhere they were put rather than
+/// went: `apart` metres from where their last had them, `between` seconds
+/// before it. Further than a walk ([`LEAP`]), and further than the fastest
+/// the server lets a body go would have taken them in that time
+/// (`cars::MOST_SPEED`, the car anyone drives, boosted), which is as far as
+/// one in their car goes whenever an update of theirs misses the server's
+/// tick and two come in the next (since 2026-11-21, when the car began to
+/// be drawn for everyone else, `drive`: until then anything past [`LEAP`]
+/// was a leap, and a boosted car, 2 m an update, was put 4 m on and held
+/// there each time).
+fn leaps(apart: f32, between: f64) -> bool {
+    apart > LEAP.max(roundtown_net::cars::MOST_SPEED * between.clamp(0.0, LEAP_OVER) as f32)
+}
+
 /// How fast the estimate of the server's clock drifts back, in seconds a
 /// second, so that a route that has got slower is noticed within seconds.
 const CLOCK_DRIFT: f64 = 0.01;
@@ -489,6 +508,10 @@ fn link(
                     venue,
                     spot: spot_of(at, riding, &cars),
                 });
+                // And to be told of the channel of the town it is let into,
+                // whose plot is whose and who is in their car (`lobby::
+                // Channel`): a server from before ignores it.
+                asks.write(Ask::Channel);
                 link.state = LinkState::Linked;
                 link.rest = REST_MIN;
                 link.linked_to = Some(link.servers[nth]);
@@ -747,7 +770,9 @@ fn hear(
             }
             // What it says of your friends is `friends`' to hear, and what
             // is said in your room, or happens in your game, `chat`'s and
-            // `arena`'s; and that you are at a table, `table`'s.
+            // `arena`'s; that you are at a table, `table`'s; who is in
+            // your channel of the town, `lobby`'s; and what is said of
+            // bags, `bag`'s.
             Tell::Joined { .. }
             | Tell::Seated { .. }
             | Tell::Back { .. }
@@ -756,7 +781,9 @@ fn hear(
             | Tell::Social(_)
             | Tell::Said { .. }
             | Tell::Feed(_)
-            | Tell::Entered { .. } => {}
+            | Tell::Entered { .. }
+            | Tell::Channel(_)
+            | Tell::Bag(_) => {}
         }
     }
 }
@@ -1027,8 +1054,8 @@ fn hear_spots(
     for (spot, venue, mut track) in &mut tracks {
         let sent = f64::from(spot.tick) / TICK_HZ;
         clock.heard(sent, now);
-        let leap = track.updates.back().is_some_and(|(_, last)| {
-            last.aboard == spot.aboard && last.translation().distance(spot.translation()) > LEAP
+        let leap = track.updates.back().is_some_and(|(last_sent, last)| {
+            last.aboard == spot.aboard && leaps(last.translation().distance(spot.translation()), sent - last_sent)
         });
         if venue.is_changed() || leap {
             track.updates.clear();
@@ -1297,6 +1324,30 @@ mod tests {
         let (pose, _) = drawn(&walking, now, &car).unwrap();
         let should = car(0, 0.0).unwrap().outward(Vec3::new(0.5, 1.0, 0.5));
         assert!(pose.translation.distance(should) < 0.01, "{} for {should}", pose.translation);
+    }
+
+    #[test]
+    fn a_car_at_its_fastest_is_going_there_and_a_body_put_somewhere_is_not() {
+        let tick = 1.0 / TICK_HZ;
+        let boost = roundtown_net::cars::DRIVEN_TOP_SPEED;
+        // The car anyone drives, as fast as it goes: an update on, and two
+        // at once, the one before having missed the server's tick.
+        assert!(!leaps(boost * tick as f32, tick));
+        assert!(!leaps(boost * 2.0 * tick as f32, 2.0 * tick));
+        assert!(!leaps(boost * 3.0 * tick as f32, 3.0 * tick));
+        // A walk, and a run, after however long standing.
+        assert!(!leaps(0.5, tick));
+        assert!(!leaps(2.9, 0.0));
+        assert!(!leaps(2.9, 60.0));
+        // Put somewhere: further in one update than anything goes, and
+        // anywhere far off after however long.
+        assert!(leaps(boost * 1.5 * tick as f32, tick));
+        assert!(leaps(12.0, 2.0 * tick));
+        assert!(leaps(12.0, 60.0));
+        assert!(leaps(100.0, 60.0));
+        // Two updates out of order are no time at all: a walk's length.
+        assert!(leaps(3.1, -tick));
+        assert!(!leaps(2.9, -tick));
     }
 
     #[test]

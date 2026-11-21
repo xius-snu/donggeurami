@@ -7,6 +7,35 @@
 > "above" or "below", or names another section in quotes, that section may be
 > in another file here: the table in `CLAUDE.md` says which.
 
+## The face is a bag, the car has a door, and your gems are under your coins
+
+2026-11-22, with the bag (`docs/bag.md` has Hajun's words and the whole of
+it). `src/hud.rs`.
+
+- **The face among the buttons round the jump button is a bag**
+  (`hud::BagButton`): the same place and size, the sack that was drawn in
+  code for Bridge Wars' first sketch (`hud::bag`). It opens your bag
+  (`bag::panel`). Only in the town, as the face was, and **put away while
+  you are in your car** (mine).
+- **In your car a door stands half way down the left edge**
+  (`hud::ExitButton`, `LeftEdge`; Hajun: "a new ui button around left side
+  center of your screen that is like a leave door icon"): Material's
+  `logout`, `icons/leave.png`, 12 across, as far in from the edge as your
+  name and kept clear of a camera's hole as the bar is
+  (`safe::KeepsClear`). A press gets you out (`drive::CarPressed`). Its
+  bottom is eight shares over the stick's top on a phone, and it is put
+  away with the buttons round the jump button while the camera is on
+  someone you talk to.
+- **Your gems are under your coins** (`hud::gems`, `GemsText`,
+  `assets/gems.png`), the gem as wide as the coin and the number three
+  quarters as big, as drawn in `bagandinventorypanel1.png`. They are your
+  bag's (`bag::Bag::has`), ten to begin with.
+- `icons/mood.png`, the face, is on nothing now, as `chat.png` is.
+- **Checked**: unit tests (the bag up only in the town and out of the car,
+  the door up only in it and clear of the stick and of your coins, the
+  pictures drawn); the hidden desktop build, pictures looked at enlarged
+  beside Hajun's (`docs/bag.md`). **Not on a phone.**
+
 ## The town's name goes at once when a window comes up over it
 
 The evening of 2026-11-18, with the four games' asks (`docs/minigames.md`).

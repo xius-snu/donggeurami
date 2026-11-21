@@ -42,6 +42,16 @@
 //! had it taken out. Your home (`testhomemap.glb`) is still loaded, with
 //! nothing that takes you there.
 //!
+//! **Since 2026-11-21 the face is a bag** ([`BagButton`]; Hajun: "im gonna
+//! change the emote button in the lobby to a inventory/shop panel"), which
+//! opens your bag (`bag::panel`): what you own, and the shop. The car it
+//! used to put you in is in the bag now, to be tapped there; and in the car
+//! a door stands half way down the left edge of the screen ([`ExitButton`];
+//! "a new ui button around left side center of your screen that is like a
+//! leave door icon and u press that to get off ur car"), with the bag put
+//! away until you are out. And under your coins, your gems ([`GemsText`];
+//! "i added gems below the coin").
+//!
 //! In a game of Bridge Wars (`arena`, since the night of 2026-11-07) the buttons are
 //! laid out as Hajun sketched them for it instead
 //! (`assets/pvpmapbuttonui.jpg`; [`Layout::Arena`]): top left your name
@@ -69,6 +79,7 @@ use roundtown_net::{Item, UTILITY_SLOTS};
 use crate::arena::{Fighting, Health, Resources};
 use crate::{Player, Team};
 use crate::bridge::BridgePressed;
+use crate::bag::Bag;
 use crate::drive::{CarPressed, Driving};
 use crate::island::{Islands, Venue};
 use crate::lobby::{Balance, STARTING_BALANCE};
@@ -78,6 +89,11 @@ use crate::signup::Signup;
 use crate::ui::{UiChanged, ui};
 
 pub(crate) const COIN_ICON: &str = "coin.png";
+/// The gem's picture, Hajun's (`assets/gems.png`, 288 by 269): beside how
+/// many you have, under your coins.
+pub(crate) const GEM_ICON: &str = "gems.png";
+/// How tall the gem's picture is for its width.
+const GEM_SHAPE: f32 = 269.0 / 288.0;
 
 /// Sizes, as shares of the short side of the screen, so that a phone and a
 /// monitor show the same thing: your name on its plate and your balance
@@ -94,6 +110,10 @@ const NAME_TEXT: f32 = 4.2;
 const NAME_STROKE: f32 = NAME_TEXT * 0.036;
 const BALANCE_TEXT: f32 = 5.0;
 const BALANCE_ICON: f32 = 5.0;
+/// How many gems you have, under your coins: smaller than the coins, as
+/// Hajun drew it (`bagandinventorypanel1.png`: its digits three quarters as
+/// tall), beside a gem as wide as the coin.
+const GEMS_TEXT: f32 = 3.8;
 pub(crate) const SMALL_BUTTON: f32 = 8.0;
 /// The buttons down the right edge: 9.5 until Hajun asked for "very
 /// slightly" bigger (2026-11-01), and that much further in from the top
@@ -101,6 +121,11 @@ pub(crate) const SMALL_BUTTON: f32 = 8.0;
 const SIDE_BUTTON: f32 = 10.5;
 const SIDE_INSET: f32 = 1.5;
 pub(crate) const ACTION_BUTTON: f32 = 14.0;
+/// The door that gets you out of your car, half way down the left edge of
+/// the screen ([`ExitButton`]): between the buttons down the right edge and
+/// those round the jump button for size (mine), and as far in from the
+/// edge as your name is.
+const EXIT_BUTTON: f32 = 12.0;
 /// Whether the gift is there, at the top of the right edge, and the person
 /// beside your name. Neither since 2026-11-14 (Hajun: "there is too many
 /// lobby ui buttons now. i think we can get rid of the gift icon for now,
@@ -336,13 +361,20 @@ pub(crate) const ICONS: [&str; 16] = [
 struct KeptIcons(Vec<Handle<Image>>);
 
 fn keep_icons(assets: Res<AssetServer>, mut commands: Commands) {
-    let icons = ICONS.iter().map(|name| assets.load(format!("icons/{name}.png"))).chain([assets.load(COIN_ICON)]);
+    let icons = ICONS
+        .iter()
+        .map(|name| assets.load(format!("icons/{name}.png")))
+        .chain([assets.load(COIN_ICON), assets.load(GEM_ICON)]);
     commands.insert_resource(KeptIcons(icons.collect()));
 }
 
 /// Your balance, top left.
 #[derive(Component)]
 struct BalanceText;
+
+/// How many gems you have, under it (`bag`, since 2026-11-21).
+#[derive(Component)]
+struct GemsText;
 
 /// Your name, top left, on its plate.
 #[derive(Component)]
@@ -562,10 +594,11 @@ pub(crate) fn plugin(app: &mut App) {
                 show_name.after(restyle),
                 colour_name.after(restyle),
                 count_balance.after(restyle),
+                count_gems.after(restyle),
                 show_health.after(restyle),
                 show_resources.after(restyle),
                 hide_round_the_jump,
-                show_car_button.after(restyle),
+                show_car_buttons.after(restyle),
                 release_held,
                 repicture.after(restyle),
                 repaint,
@@ -596,11 +629,29 @@ pub(crate) struct PunchButton {
     reverse: Handle<Image>,
 }
 
-/// The face among them, which puts you in the car and out of it (`drive`;
-/// Hajun, 2026-11-05: "make the emote button to be a toggle on/off switch
-/// for car").
+/// The bag among them, where the face was, which opens your bag
+/// (`bag::panel`, since 2026-11-21; Hajun: "im gonna change the emote
+/// button in the lobby to a inventory/shop panel"). From 2026-11-05 until
+/// then the face put you in the car and out of it ("make the emote button
+/// to be a toggle on/off switch for car"): the car is in the bag now, and
+/// the way out of it is the door ([`ExitButton`]).
 #[derive(Component)]
-struct CarButton;
+pub(crate) struct BagButton;
+
+/// The door half way down the left edge of the screen, there while you are
+/// in your car, which gets you out of it (`drive`; Hajun, 2026-11-21: "when
+/// ur in the car riding mode, a new ui button around left side center of
+/// your screen that is like a leave door icon and u press that to get off
+/// ur car").
+#[derive(Component)]
+struct ExitButton;
+
+/// What stands by the left edge of the screen, half way down it: the door
+/// out of your car. Taken down and put up with the bar ([`relayout`],
+/// [`restyle`]), and put away while the camera is on someone you talk to,
+/// as the buttons round the jump button are.
+#[derive(Component)]
+struct LeftEdge;
 
 /// The gift, down the right edge, which in the car, held, is the gun
 /// (`drive::shoot`; Hajun, 2026-11-06: "make the gift icon, while riding a
@@ -650,14 +701,14 @@ impl Held {
     }
 }
 
-/// A press on the fist, the face or the gift, as it goes down rather than
-/// as it comes up, so that quick presses land as quickly as they are made:
-/// a punch is asked for, and the fist is held from then; or the car; or the
-/// gift is held from then.
+/// A press on the fist, the car's door or the gift, as it goes down rather
+/// than as it comes up, so that quick presses land as quickly as they are
+/// made: a punch is asked for, and the fist is held from then; or out of
+/// the car; or the gift is held from then.
 fn press_buttons(
     press: On<Pointer<Press>>,
     fists: Query<(), With<PunchButton>>,
-    faces: Query<(), With<CarButton>>,
+    faces: Query<(), With<ExitButton>>,
     guns: Query<(), With<GunButton>>,
     planks: Query<(), With<BridgeButton>>,
     mut held: ResMut<Held>,
@@ -707,27 +758,20 @@ fn pointer_down(pointer: PointerId, touches: &Touches, mouse: &ButtonInput<Mouse
 }
 
 /// Shows the car's controls on the buttons as you get in and out of it
-/// (`drive`): the face lit, as the jump button is held, while you are in
-/// it, and on the fist the jump button's arrow turned down, for the
-/// reverse; and on buttons put up afresh ([`restyle`]).
+/// (`drive`): on the fist the jump button's arrow turned down, for the
+/// reverse; and on buttons put up afresh ([`restyle`]). (Until 2026-11-21
+/// the face was lit too while you were in it: the bag that stands there
+/// now is put away instead, [`show_car_buttons`].)
 fn repicture(
     driving: Res<Driving>,
-    faces: Query<Entity, With<CarButton>>,
     fists: Query<(&PunchButton, &Children)>,
     added: Query<(), Added<PunchButton>>,
-    mut fills: Query<&mut BackgroundColor>,
     mut pictures: Query<&mut ImageNode>,
 ) {
     if !driving.is_changed() && added.is_empty() {
         return;
     }
     let on = driving.on();
-    let colours = ui().colours.hud;
-    for face in &faces {
-        if let Ok(mut fill) = fills.get_mut(face) {
-            fill.set_if_neq(BackgroundColor(if on { colours.button_held } else { colours.button }));
-        }
-    }
     for (button, children) in &fists {
         for child in children.iter() {
             let Ok(mut picture) = pictures.get_mut(child) else {
@@ -748,7 +792,7 @@ fn repicture(
 /// hidden. hide those too").
 fn hide_round_the_jump(
     close_up: Res<crate::CloseUp>,
-    mut boxes: Query<&mut Visibility, With<RoundTheJump>>,
+    mut boxes: Query<&mut Visibility, Or<(With<RoundTheJump>, With<LeftEdge>)>>,
 ) {
     let shown = if close_up.on.is_some() {
         Visibility::Hidden
@@ -760,22 +804,30 @@ fn hide_round_the_jump(
     }
 }
 
-/// Shows the face, which puts you in the car, only where the car is to be
-/// had (`drive::drivable`: the town alone, since 2026-11-18). The town's
-/// buttons are up at home and in House Builder's lobby and plots too,
-/// where the face would be a button that does nothing: there it is put
-/// away, and the others stay where they are. Written only as it changes.
-fn show_car_button(me: Query<&Venue, With<Player>>, mut faces: Query<&mut Visibility, With<CarButton>>) {
+/// Shows the bag only where it is to be had, the town alone, which is
+/// where the car and your plot are (`drive::drivable`): the town's buttons
+/// are up at home and in House Builder's lobby and plots too, where it
+/// would be a button that does nothing, and there it is put away, the
+/// others staying where they are. **In your car it is put away too, and
+/// the door out of the car is there instead**, half way down the left
+/// edge: the bag is not opened from the car (mine: Hajun asked for the
+/// door, and said nothing of the bag there). Written only as it changes.
+fn show_car_buttons(
+    me: Query<&Venue, With<Player>>,
+    driving: Res<Driving>,
+    mut bags: Query<&mut Visibility, (With<BagButton>, Without<ExitButton>)>,
+    mut doors: Query<&mut Visibility, (With<ExitButton>, Without<BagButton>)>,
+) {
     let Ok(&here) = me.single() else {
         return;
     };
-    let shown = if crate::drive::drivable(here) {
-        Visibility::Inherited
-    } else {
-        Visibility::Hidden
-    };
-    for mut face in &mut faces {
-        face.set_if_neq(shown);
+    let shown = |shown: bool| if shown { Visibility::Inherited } else { Visibility::Hidden };
+    let in_the_car = driving.on();
+    for mut bag in &mut bags {
+        bag.set_if_neq(shown(crate::drive::drivable(here) && !in_the_car));
+    }
+    for mut door in &mut doors {
+        door.set_if_neq(shown(in_the_car));
     }
 }
 
@@ -853,7 +905,7 @@ pub(crate) fn show_top_bar(
 fn relayout(
     me: Query<&Venue, (With<Player>, Changed<Venue>)>,
     mut layout: ResMut<Layout>,
-    bars: Query<Entity, Or<(With<TopBar>, With<RoundTheJump>)>>,
+    bars: Query<Entity, Or<(With<TopBar>, With<RoundTheJump>, With<LeftEdge>)>>,
     assets: Res<AssetServer>,
     mut images: ResMut<Assets<Image>>,
     minimap: Res<Minimap>,
@@ -880,7 +932,7 @@ fn relayout(
 fn restyle(
     changed: Res<UiChanged>,
     layout: Res<Layout>,
-    bars: Query<Entity, Or<(With<TopBar>, With<RoundTheJump>)>>,
+    bars: Query<Entity, Or<(With<TopBar>, With<RoundTheJump>, With<LeftEdge>)>>,
     assets: Res<AssetServer>,
     mut images: ResMut<Assets<Image>>,
     minimap: Res<Minimap>,
@@ -1462,6 +1514,7 @@ fn spawn_town_bar(commands: &mut Commands, assets: &AssetServer, images: &mut As
                     }
                 });
                 left.spawn(balance(assets));
+                left.spawn(gems(assets));
             });
             bar.spawn((
                 Node {
@@ -1504,20 +1557,26 @@ fn spawn_town_bar(commands: &mut Commands, assets: &AssetServer, images: &mut As
             });
         });
     // Round the jump button: a box where it is, and the three about it, each
-    // placed from the box's corner, in shares of the short side: the face up
-    // and to the left of it, the speech bubble over it and the fist beside
-    // it, each about 2.5 shares clear of it, as Hajun sketched them; and
-    // over the bubble, a little to the right, the chat's small button.
+    // placed from the box's corner, in shares of the short side: the bag up
+    // and to the left of it, where the face was, the speech bubble over it
+    // and the fist beside it, each about 2.5 shares clear of it, as Hajun
+    // sketched them; and over the bubble, a little to the right, the chat's
+    // small button.
     commands.spawn(round_the_jump()).with_children(|round| {
         let fist = images.add(fist());
         let arrow = images.add(jump_arrow());
+        let sack = images.add(bag());
         let (quick_right, quick_bottom, _) = QUICK_BUTTON;
-        for (name, right, bottom) in [("mood", 18.5, 18.5), ("social", quick_right, quick_bottom), ("punch", 24.3, 1.2)] {
-            let picture = if name == "punch" { fist.clone() } else { icon(name) };
+        for (name, right, bottom) in [("bag", 18.5, 18.5), ("social", quick_right, quick_bottom), ("punch", 24.3, 1.2)] {
+            let picture = match name {
+                "punch" => fist.clone(),
+                "bag" => sack.clone(),
+                name => icon(name),
+            };
             let mut button = round.spawn(round_button(picture, ACTION_BUTTON, beside_the_jump(right, bottom)));
             // The fist throws a punch each time it is pressed, and the
-            // face puts you in the car and out of it; in the car the
-            // fist is the reverse (`drive`).
+            // bag opens your bag (`bag::panel`); in the car the fist is
+            // the reverse (`drive`).
             match name {
                 "punch" => {
                     button.insert(PunchButton {
@@ -1525,8 +1584,8 @@ fn spawn_town_bar(commands: &mut Commands, assets: &AssetServer, images: &mut As
                         reverse: arrow.clone(),
                     });
                 }
-                "mood" => {
-                    button.insert(CarButton);
+                "bag" => {
+                    button.insert(BagButton);
                 }
                 // Things to say at a press (`quick`).
                 _ => {
@@ -1538,6 +1597,28 @@ fn spawn_town_bar(commands: &mut Commands, assets: &AssetServer, images: &mut As
         let (right, bottom, size) = CHAT_BUTTON;
         round.spawn((ChatButton, chat_steps_in(), round_button(images.add(keyboard()), size, beside_the_jump(right, bottom))));
     });
+    // Half way down the left edge, as far in as your name and kept clear
+    // of a camera's hole as it is: the door out of your car, there while
+    // you are in it ([`show_car_buttons`]).
+    commands.spawn((
+        LeftEdge,
+        KeepsClear,
+        Node {
+            position_type: PositionType::Absolute,
+            left: Val::VMin(EDGE),
+            top: Val::ZERO,
+            bottom: Val::ZERO,
+            flex_direction: FlexDirection::Column,
+            justify_content: JustifyContent::Center,
+            ..default()
+        },
+        Pickable::IGNORE,
+        children![(
+            ExitButton,
+            Visibility::Hidden,
+            round_button(icon("leave"), EXIT_BUTTON, Node::default()),
+        )],
+    ));
 }
 
 /// The row top left: your name, and whatever goes with it.
@@ -1739,6 +1820,47 @@ fn balance(assets: &AssetServer) -> impl Bundle {
             (BalanceText, words(money(STARTING_BALANCE), BALANCE_TEXT, ui().colours.text)),
         ],
     )
+}
+
+/// Your gems: the gem and how many, under your coins, as Hajun drew them
+/// (`bagandinventorypanel1.png`, 2026-11-21), the gem as wide as the coin
+/// and the number smaller ([`GEMS_TEXT`]).
+fn gems(assets: &AssetServer) -> impl Bundle {
+    (
+        Node {
+            align_items: AlignItems::Center,
+            column_gap: Val::VMin(1.4),
+            padding: UiRect::left(Val::VMin(1.0)),
+            ..default()
+        },
+        Pickable::IGNORE,
+        children![
+            (
+                ImageNode::new(assets.load(GEM_ICON)),
+                Node {
+                    width: Val::VMin(BALANCE_ICON),
+                    height: Val::VMin(BALANCE_ICON * GEM_SHAPE),
+                    ..default()
+                },
+                Pickable::IGNORE,
+            ),
+            (GemsText, words(money(roundtown_net::bag::GEMS), GEMS_TEXT, ui().colours.text)),
+        ],
+    )
+}
+
+/// Shows how many gems you have whenever your bag changes, and on a number
+/// put up afresh ([`restyle`]).
+fn count_gems(bag: Res<Bag>, mut texts: Query<&mut Text, With<GemsText>>) {
+    for mut text in &mut texts {
+        if !(bag.is_changed() || text.is_added()) {
+            continue;
+        }
+        let label = money(bag.has.gems);
+        if text.0 != label {
+            text.0 = label;
+        }
+    }
 }
 
 /// Shows your balance whenever it changes, and on a number put up afresh
@@ -2613,10 +2735,10 @@ impl Pictures {
     }
 }
 
-/// A bag, for Bridge Wars' inventory button: a round sack with its neck
-/// tied, flaring out over the tie. The button went on 2026-11-09, for the
-/// minimap; the picture stays for when there is an inventory.
-#[cfg_attr(not(test), allow(dead_code))]
+/// A bag: a round sack with its neck tied, flaring out over the tie. Drawn
+/// for Bridge Wars' inventory button, which went on 2026-11-09, for the
+/// minimap; since 2026-11-21 it is the town's button for your bag
+/// ([`BagButton`]).
 pub(crate) fn bag() -> Image {
     const ROUND: f32 = 0.03;
     let neck = [
@@ -2722,6 +2844,71 @@ pub(crate) fn dots() -> Image {
             .map(|x| circle_distance(at, Vec2::new(x, 0.0), 0.17))
             .fold(f32::INFINITY, f32::min)
     })
+}
+
+/// A packed box seen from a corner, in outline: the picture on the bag's
+/// first tab, what you own (`bag::panel`; Hajun's
+/// `bagandinventorypanel1.png`). Six sides round it, and from its middle
+/// the three edges that meet at the corner nearest you, so that its top is
+/// a diamond; and a strip of tape over that top and a little way down its
+/// right face, as theirs has.
+pub(crate) fn cube() -> Image {
+    const LINE: f32 = 0.06;
+    const OUT: f32 = 0.86;
+    /// The tape: how far along the top's edges its two sides run, and how
+    /// far down the right face it hangs, as a share of that face's height.
+    const TAPE: [f32; 2] = [0.36, 0.64];
+    const HANGS: f32 = 0.34;
+    let corner = |turns: f32| Vec2::from_angle((turns * 60.0 + 30.0).to_radians()) * OUT;
+    let round: Vec<Vec2> = (0..6).map(|k| corner(k as f32)).collect();
+    // The top's far left edge, from its back corner to its left one; its
+    // near right edge, from the right corner to the middle; and straight
+    // down, the way the right face's upright edges run.
+    let (back, left, right) = (corner(1.0), corner(2.0), corner(0.0));
+    let down = corner(4.0) * HANGS;
+    let mut lines: Vec<(Vec2, Vec2)> = [right, left, corner(4.0)].into_iter().map(|to| (Vec2::ZERO, to)).collect();
+    let ends: Vec<(Vec2, Vec2)> = TAPE.iter().map(|&along| (back.lerp(left, along), right.lerp(Vec2::ZERO, along))).collect();
+    for &(far, near) in &ends {
+        lines.push((far, near));
+        lines.push((near, near + down));
+    }
+    lines.push((ends[0].1 + down, ends[1].1 + down));
+    drawn(move |at| {
+        let rim = polygon_distance(at, &round).abs();
+        let inside = lines.iter().map(|&(a, b)| line_distance(at, a, b)).fold(f32::INFINITY, f32::min);
+        rim.min(inside) - LINE
+    })
+}
+
+/// A shopping cart, in outline: the picture on the bag's second tab, the
+/// shop (`bag::panel`; Hajun's `bagandinventorypanel2.png`). Its handle
+/// from the left, its basket, and two wheels under it.
+pub(crate) fn cart() -> Image {
+    const LINE: f32 = 0.065;
+    let frame = [
+        // The handle, and down the basket's back to its floor.
+        (Vec2::new(-0.92, 0.7), Vec2::new(-0.64, 0.7)),
+        (Vec2::new(-0.64, 0.7), Vec2::new(-0.3, -0.24)),
+        // The basket: its rim, its front and its floor.
+        (Vec2::new(-0.53, 0.4), Vec2::new(0.88, 0.4)),
+        (Vec2::new(0.88, 0.4), Vec2::new(0.66, -0.24)),
+        (Vec2::new(0.66, -0.24), Vec2::new(-0.3, -0.24)),
+    ];
+    drawn(move |at| {
+        let lines = frame.iter().map(|&(a, b)| line_distance(at, a, b)).fold(f32::INFINITY, f32::min) - LINE;
+        let wheels = [-0.18, 0.56]
+            .into_iter()
+            .map(|x| circle_distance(at, Vec2::new(x, -0.66), 0.15))
+            .fold(f32::INFINITY, f32::min);
+        lines.min(wheels)
+    })
+}
+
+/// How far `at` is from the line from `a` to `b`.
+fn line_distance(at: Vec2, a: Vec2, b: Vec2) -> f32 {
+    let (along, from) = (b - a, at - a);
+    let share = (from.dot(along) / along.length_squared().max(1e-12)).clamp(0.0, 1.0);
+    from.distance(along * share)
 }
 
 /// How far `at` is from the edge of a circle round `middle` of `radius`:
@@ -2870,22 +3057,68 @@ mod tests {
     }
 
     #[test]
-    fn the_face_is_up_only_where_the_car_is_to_be_had() {
+    fn the_bag_is_up_only_in_the_town_and_out_of_the_car_where_the_door_is_up_instead() {
         use bevy::ecs::system::RunSystemOnce;
         let mut world = World::new();
+        world.insert_resource(Driving::for_tests(false));
         let you = world.spawn((Player, Venue::Home)).id();
-        let face = world.spawn((CarButton, Visibility::Inherited)).id();
+        let bag = world.spawn((BagButton, Visibility::Inherited)).id();
+        let door = world.spawn((ExitButton, Visibility::Inherited)).id();
+        let shown = |world: &World, button: Entity| world.get::<Visibility>(button) == Some(&Visibility::Inherited);
         // At home, as in House Builder's lobby and plots, under the town's
-        // buttons: away.
+        // buttons: away, and no door.
         for venue in [Venue::Home, Venue::Lobby, Venue::Plot(3)] {
             *world.get_mut::<Venue>(you).expect("a venue") = venue;
-            world.run_system_once(show_car_button).expect("shown");
-            assert_eq!(world.get::<Visibility>(face), Some(&Visibility::Hidden), "{venue:?}");
+            world.run_system_once(show_car_buttons).expect("shown");
+            assert!(!shown(&world, bag) && !shown(&world, door), "{venue:?}");
         }
         // In the town: up, as the box round the jump button is.
         *world.get_mut::<Venue>(you).expect("a venue") = Venue::Town;
-        world.run_system_once(show_car_button).expect("shown");
-        assert_eq!(world.get::<Visibility>(face), Some(&Visibility::Inherited));
+        world.run_system_once(show_car_buttons).expect("shown");
+        assert!(shown(&world, bag) && !shown(&world, door));
+        // In your car: the door out of it, and the bag away.
+        world.insert_resource(Driving::for_tests(true));
+        world.run_system_once(show_car_buttons).expect("shown");
+        assert!(!shown(&world, bag) && shown(&world, door));
+        // Out again: as it was.
+        world.insert_resource(Driving::for_tests(false));
+        world.run_system_once(show_car_buttons).expect("shown");
+        assert!(shown(&world, bag) && !shown(&world, door));
+    }
+
+    #[test]
+    fn the_door_out_of_the_car_stands_half_way_down_the_left_edge_clear_of_the_stick_and_of_your_coins() {
+        // On a phone lying on its side the short side is the height: the
+        // door's middle is half way down it, 50 shares.
+        let (top, bottom) = (50.0 - EXIT_BUTTON * 0.5, 50.0 + EXIT_BUTTON * 0.5);
+        // The stick's top is its bottom margin and its size up from the
+        // bottom of the screen.
+        let stick_top = 100.0 - crate::STICK_BOTTOM_VH - crate::STICK_SIZE_VMIN;
+        assert!(bottom + 1.5 < stick_top, "the door ends {bottom} down and the stick begins {stick_top} down");
+        // Your name, your coins and your gems end well over it.
+        let rows = EDGE + (NAME_TEXT * 1.3 + 2.0) + 1.4 + BALANCE_TEXT * 1.3 + 1.4 + BALANCE_ICON.max(GEMS_TEXT * 1.3);
+        assert!(rows + 1.5 < top, "the gems end {rows} down and the door begins {top} down");
+        // The gem is drawn no taller than the coin.
+        assert!(GEM_SHAPE <= 1.0);
+    }
+
+    #[test]
+    fn the_pictures_on_the_bag_s_tabs_are_drawn_white_on_clear_and_are_not_empty() {
+        for (name, image) in [("the box", cube()), ("the cart", cart()), ("the bag", bag())] {
+            let data = image.data.as_ref().expect("a picture's bytes");
+            assert!(data.chunks(4).all(|pixel| pixel[..3] == [255, 255, 255]), "{name}");
+            let covered = data.chunks(4).filter(|pixel| pixel[3] > 127).count() as f32 / (data.len() / 4) as f32;
+            assert!((0.08..0.75).contains(&covered), "{name} covers {covered} of its picture");
+            // Clear at its corners: a picture, not a block.
+            assert_eq!(data[3], 0, "{name}");
+        }
+        // The box is an outline: its three near edges meet in its middle,
+        // and its left face, which has no tape on it, is clear.
+        let cube = cube();
+        let data = cube.data.as_ref().expect("bytes");
+        let at = |x: usize, y: usize| data[(y * 128 + x) * 4 + 3];
+        assert!(at(64, 64) > 200, "the three edges meet in its middle");
+        assert_eq!(at(40, 84), 0, "its left face is clear");
     }
 
     #[test]

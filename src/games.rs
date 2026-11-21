@@ -26,6 +26,13 @@
 //! put away ([`COMING_SOON`]). How the cards stand, the line under each
 //! name and the order are mine.
 //!
+//! **Four of them since 2026-11-19**: Bridge Race's and Last Stand's cards
+//! are turned off ([`OFF`]; Hajun, having played all six: "first turn off
+//! last stand and bridge race"), which leaves Bridge Wars and Blend In over
+//! Knock Off and Home Builders, two to a row ([`shown`]). Only the cards:
+//! the two games, their tables and their maps are as they were, and
+//! emptying [`OFF`] puts the six back as they stood.
+//!
 //! Choosing a game, the dialog goes and a black screen comes down
 //! ([`Loading`]): [`LOADING_IN`] seconds later, under it, the game is gone
 //! into — Bridge Wars' waiting room (`arena::Ask::Enter`), House Builder's
@@ -78,6 +85,14 @@ const CARDS: [[Minigame; 3]; 2] = [
     [Minigame::BridgeWars, Minigame::BlendIn, Minigame::KnockOff],
     [Minigame::BridgeRace, Minigame::LastStand, Minigame::HouseBuilder],
 ];
+/// The games whose cards are turned off: Bridge Race and Last Stand since
+/// 2026-11-19 (Hajun, having played all six: "laststand is a bit too long
+/// and unexciting, and bridgerace not sure but its not that fun rn", and
+/// then: "first turn off last stand and bridge race"). Only their cards:
+/// the games, their tables on the server and their maps are as they were,
+/// and an app built before this still shows and plays them. Emptied, the
+/// six stand as they did.
+const OFF: &[Minigame] = &[Minigame::BridgeRace, Minigame::LastStand];
 /// Whether the card for a game to come ("???", "Coming soon") is on the
 /// selector: not since 2026-11-18, the games having come. This one word
 /// puts it back, at the end of the second row.
@@ -133,6 +148,22 @@ pub(crate) fn plugin(app: &mut App) {
             .before(arena::ArenaSystems)
             .before(table::TableSystems),
     );
+}
+
+/// The cards as they stand on the selector, row by row: the games of
+/// [`CARDS`] that are not [`OFF`].
+fn shown() -> Vec<Vec<Minigame>> {
+    laid(OFF)
+}
+
+/// The games of [`CARDS`] but those of `off`, in their order, on as many
+/// rows as [`CARDS`] has and as many to each as fills them: three to a row
+/// with all six, two with four (that four are laid two and two, and not
+/// three and one or all in a line, is mine).
+fn laid(off: &[Minigame]) -> Vec<Vec<Minigame>> {
+    let on: Vec<Minigame> = CARDS.iter().flatten().copied().filter(|game| !off.contains(game)).collect();
+    let to_a_row = on.len().div_ceil(CARDS.len()).max(1);
+    on.chunks(to_a_row).map(<[Minigame]>::to_vec).collect()
 }
 
 /// What `game` is called: on its card, on its table's board and results
@@ -337,7 +368,7 @@ fn keys(
 
 /// The dialog, a window as the friends' panel is one (`window`): its title
 /// along its top, the cross in its corner, and the games on cards in two
-/// rows across it ([`CARDS`]). Its root is over the whole screen, shows
+/// rows across it ([`shown`]). Its root is over the whole screen, shows
 /// nothing, and shuts the dialog at a tap. A card is blocked out when its
 /// game is not to be had, saying why ([`price`]); and every one when you
 /// `follows` someone else's group, whose leader starts its games (since
@@ -396,7 +427,9 @@ fn open(commands: &mut Commands, assets: &AssetServer, balance: u32, online: boo
             Pickable::IGNORE,
         ))
         .id();
-    for (index, games) in CARDS.iter().enumerate() {
+    let shown = shown();
+    let to_a_row = shown.first().map_or(0, Vec::len);
+    for (index, games) in shown.iter().enumerate() {
         let row = commands
             .spawn((
                 ChildOf(rows),
@@ -420,10 +453,25 @@ fn open(commands: &mut Commands, assets: &AssetServer, balance: u32, online: boo
         }
         // The game to come, were it back ([`COMING_SOON`]): at the end of
         // the last row, blocked out.
-        if COMING_SOON && index + 1 == CARDS.len() {
+        let mut stand = games.len();
+        if COMING_SOON && index + 1 == shown.len() {
             let card = commands.spawn((ChildOf(row), card(words.coming_soon.clone(), String::new(), false))).id();
             let (.., soft) = window::card(false);
             spawn_note(commands, assets, card, &Note::Words(words.coming_soon_note.clone()), soft);
+            stand += 1;
+        }
+        // A row short of the first keeps the room its missing cards would
+        // have, so that its own are no wider than the rest.
+        for _ in stand..to_a_row {
+            commands.spawn((
+                ChildOf(row),
+                Node {
+                    flex_grow: 1.0,
+                    flex_basis: Val::ZERO,
+                    ..default()
+                },
+                Pickable::IGNORE,
+            ));
         }
     }
     if follows {
@@ -601,14 +649,15 @@ mod tests {
     use super::*;
 
     /// How tall the selector is, in shares of the short side: its room
-    /// round what is in it, its title's row, the gap under it, the two rows
-    /// of cards and the gap between them, and the room at its bottom.
+    /// round what is in it, its title's row, the gap under it, its rows of
+    /// cards and the gaps between them, and the room at its bottom.
     fn height(follows: bool) -> f32 {
-        window::PAD + window::TAB_HEIGHT + 1.2 + CARDS.len() as f32 * CARD_HEIGHT + CARD_GAP + bottom_room(follows)
+        let rows = shown().len() as f32;
+        window::PAD + window::TAB_HEIGHT + 1.2 + rows * CARD_HEIGHT + (rows - 1.0) * CARD_GAP + bottom_room(follows)
     }
 
     #[test]
-    fn six_cards_in_two_rows_fit_any_screen_lying_on_its_side() {
+    fn the_cards_in_two_rows_fit_any_screen_lying_on_its_side() {
         // Every game once: the six.
         let mut every: Vec<Minigame> = CARDS.iter().flatten().copied().collect();
         assert_eq!(every.len(), 6);
@@ -617,6 +666,16 @@ mod tests {
         for game in Minigame::TABLES {
             assert!(every.contains(&game), "{game:?}");
         }
+        // Bridge Race's and Last Stand's are turned off: four stand, two to
+        // a row, in the order they were in. With none off, the six as they
+        // stood; with one, three over two; with all, no row at all.
+        assert_eq!(shown(), [
+            vec![Minigame::BridgeWars, Minigame::BlendIn],
+            vec![Minigame::KnockOff, Minigame::HouseBuilder],
+        ]);
+        assert_eq!(laid(&[]), CARDS.map(|row| row.to_vec()));
+        assert_eq!(laid(&[Minigame::LastStand]).iter().map(Vec::len).collect::<Vec<_>>(), [3, 2]);
+        assert!(laid(&CARDS.concat()).is_empty());
         // As tall as the friends' panel, and with the leader's line no
         // taller than the screen leaves between its edges, on a tablet, a
         // monitor and a phone, the short side being the height.
@@ -630,7 +689,8 @@ mod tests {
         // And on each card its words: the name on one line, the line under
         // it on two at the most, and the price, with the room round them.
         // A letter of Inter is about half as wide as it is tall, a little
-        // more for a name's capitals.
+        // more for a name's capitals. Every game's, those turned off too,
+        // on a card at its narrowest, three to a row.
         let inside = (window::WIDTH - 2.0 * window::PAD - 2.0 * CARD_GAP) / 3.0 - 2.0 * CARD_PAD;
         for game in every {
             let name = name_of(game).chars().count() as f32 * CARD_TEXT * 0.55;

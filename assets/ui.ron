@@ -568,6 +568,31 @@
             // take the hit so its more satisfying").
             hit: "#ff2a1a",
         ),
+
+        // The land's: the words on the sign of a plot ("hajun's land").
+        land: (
+            sign: "#ffffff",
+        ),
+
+        // The bag's (the inventory and the shop, behind the bag button):
+        // the colour each rarity's name is written in, the rarest first;
+        // and how many of a thing there are, after its name ("x1").
+        bag: (
+            mythic: "#ff4500",
+            legendary: "#ffa500",
+            epic: "#800080",
+            rare: "#4169e1",
+            uncommon: "#32cd32",
+            common: "#d3d3d3",
+            count: "#ffffff",
+            // The two buttons on a thing in the shop, each lit under the
+            // pointer, and the words on them.
+            buy: "#18c71e",
+            buy_lit: "#3adb40",
+            sell: "#c34140",
+            sell_lit: "#d95a59",
+            on_deal: "#ffffff",
+        ),
     ),
     // The font is Inter (since 2026-11-13; Bevy's own, plain ASCII, until
     // then): Latin, with every letter Vietnamese has, Greek and Cyrillic,
@@ -1286,6 +1311,64 @@
             found: "+{count} {item}",
             found_sword: "{sword} Sword!",
             found_thing: "+1 {thing}",
+        ),
+
+        // The land's: what the sign of a plot says, {name} being whose it
+        // is. A \n begins a new line on the board; the words are drawn as
+        // big as fit it.
+        land: (
+            sign: "{name}'s\nland",
+        ),
+
+        // The bag: your inventory and the shop, behind the bag button.
+        bag: (
+            // The categories down the left: the shop's first is what you
+            // own, and the rest are the inventory's too.
+            owned: "Owned",
+            all: "All",
+            buildings: "Buildings",
+            vehicles: "Vehicles",
+            utilities: "Utilities",
+            cosmetics: "Cosmetics",
+            // After a thing's name, how many of it you have: {count}.
+            count: "x{count}",
+            // The two buttons on a thing in the shop, each followed by the
+            // coin and a price.
+            buy: "Buy",
+            sell: "Sell",
+            // In a category with nothing in it.
+            nothing: "Nothing here yet.",
+            // Along the top of the window, beside its tabs, why something
+            // cannot be done.
+            on_your_land: "Stand on your land to put this down.",
+            one_house: "One house to a plot.",
+            house_first: "Put a house down first.",
+            no_coins: "Not enough coins.",
+            // Across the screen, when a thing is put down off your land.
+            off_your_land: "It has to stand on your land.",
+            // What each thing is called: its kind in the game, and its name.
+            names: [
+                ("streetlamp", "Street Lamp"),
+                ("singlebed", "Single Bed"),
+                ("doublebed", "Double Bed"),
+                ("cafechair", "Cafe Chair"),
+                ("circletable", "Circle Table"),
+                ("cafedeskedge", "Cafe Desk Edge"),
+                ("cafedeskcorner", "Cafe Desk Corner"),
+                ("softcouch", "Soft Couch"),
+                ("square_house", "Square House"),
+                ("square_house_roofless", "Flat House"),
+                ("square_house_two_floor", "Two Floor House"),
+                ("square_house_roofless_two_floor", "Roof Terrace House"),
+                ("classic_door", "Classic Door"),
+                ("classic_door_with_window", "Classic Window Door"),
+                ("classic_double_door", "Classic Double Door"),
+                ("glass_door", "Glass Door"),
+                ("glass_double_door", "Glass Double Door"),
+                ("square_window", "Square Window"),
+                ("wide_window", "Wide Window"),
+                ("red_sports_car", "Red Sports Car"),
+            ],
         ),
     ),
     // The car you drive (the face button, or C on desktop): every number of

@@ -45,6 +45,16 @@
 //! expects of each; or, for what Hajun models by hand, in `assets/mybuilds/`,
 //! which they build to those same rules, so that the game loads them as they
 //! are.
+//!
+//! **The same pieces are put down on your own plot of the town** (`stand`,
+//! since 2026-11-21; Hajun: "it should close the panel and have the building
+//! item in front of the character in the map similar to how the building
+//! placing thing works in the house builder game"): out of your bag
+//! (`bag`) rather than the shop, the same ghost with the same menu, moved by
+//! the same rules. Where you are building is the [`Site`]: a plot of House
+//! Builder's, an island all your own, or your plot of the town, which is a
+//! square of the town's land ([`Yard`]) that whatever is put down has to
+//! stay inside, the whole of it.
 
 use std::collections::HashMap;
 
@@ -66,6 +76,7 @@ use crate::lobby::Seat;
 use crate::shop::Chosen;
 use crate::{EYE_HEIGHT, PLAYER_RADIUS, Player, ThirdPersonCamera, WATER_Y};
 
+pub(crate) mod stand;
 mod town;
 
 pub(crate) use town::TownHouse;
@@ -860,12 +871,124 @@ impl Wall {
 #[derive(Resource, Default)]
 struct Reshape(bool);
 
+/// Where you are building just now, if anywhere: on your plot in a game of
+/// House Builder while its time to build runs (`builder::Building`), an
+/// island all your own; or, in the town, on your own plot of it
+/// (`stand::Home`), a square of the town's land.
+#[derive(Resource, Default, Clone, Copy, PartialEq, Debug)]
+pub(crate) struct Site(pub Option<Ground>);
+
+/// Somewhere to build: the island it is on, and, where that island is not
+/// all yours, the square of it that is ([`Yard`]).
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub(crate) struct Ground {
+    pub venue: Venue,
+    pub yard: Option<Yard>,
+}
+
+/// A square of the town's land that is someone's to build on, their plot
+/// (`land::Plot`) as far as building goes: whatever is put down on it has to
+/// stand inside it, the whole of it. It is also the space that what stands
+/// there is kept in (`roundtown_net::bag::Standing`), so that it stands the
+/// same on whichever plot its owner has ([`Yard::place`]).
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub(crate) struct Yard {
+    /// Its middle, across the ground, and how high its ground is.
+    pub middle: Vec2,
+    pub ground: f32,
+    /// Which way its front looks, across the ground: out over the side its
+    /// sign stands on, a metre long.
+    pub front: Vec2,
+    /// How far each of its sides is from its middle, in metres.
+    pub half: f32,
+}
+
+/// How far out of its yard a piece's corner may be and the piece still be
+/// inside it, in metres: what a turn's rounding comes to.
+const YARD_SLACK: f32 = 0.002;
+
+impl Yard {
+    /// The yard's own space, placed in the world: its origin the middle of
+    /// the plot on its ground, and its -Z out over the plot's front.
+    pub(crate) fn place(&self) -> Transform {
+        Transform::from_translation(Vec3::new(self.middle.x, self.ground, self.middle.y))
+            .looking_to(Vec3::new(self.front.x, 0.0, self.front.y), Vec3::Y)
+    }
+
+    /// The two ways its sides run, across the ground.
+    fn axes(&self) -> [Vec2; 2] {
+        [self.front, Vec2::new(-self.front.y, self.front.x)]
+    }
+
+    /// Whether `at`, across the ground, is on it, or within `margin` of it.
+    pub(crate) fn holds(&self, at: Vec2, margin: f32) -> bool {
+        let off = at - self.middle;
+        self.axes().into_iter().all(|axis| off.dot(axis).abs() <= self.half + margin)
+    }
+
+    /// How far the footprint of a piece of `bounds`, turned by `turn`,
+    /// reaches from the piece's own origin along each of the yard's two
+    /// ways: the least and the most.
+    fn reach(&self, bounds: Bounds, turn: Quat) -> [(f32, f32); 2] {
+        let (low, high) = (bounds.low, bounds.high);
+        let corners = [(low.x, low.z), (high.x, low.z), (high.x, high.z), (low.x, high.z)]
+            .map(|(x, z)| (turn * Vec3::new(x, 0.0, z)).xz());
+        self.axes().map(|axis| {
+            corners
+                .iter()
+                .map(|corner| corner.dot(axis))
+                .fold((f32::INFINITY, f32::NEG_INFINITY), |(least, most), far| (least.min(far), most.max(far)))
+        })
+    }
+
+    /// Whether the whole footprint of a piece of `bounds`, turned by `turn`
+    /// and standing at `at`, is inside the yard.
+    fn holds_piece(&self, at: Vec3, bounds: Bounds, turn: Quat) -> bool {
+        let off = at.xz() - self.middle;
+        self.axes()
+            .into_iter()
+            .zip(self.reach(bounds, turn))
+            .all(|(axis, (least, most))| {
+                let along = off.dot(axis);
+                along + least >= -self.half - YARD_SLACK && along + most <= self.half + YARD_SLACK
+            })
+    }
+
+    /// Where a piece of `bounds`, turned by `turn`, that would stand at
+    /// `at` stands with the whole of it inside the yard: there, or as
+    /// little further in as it takes. One too big for the yard stands in
+    /// its middle.
+    fn pull_in(&self, at: Vec3, bounds: Bounds, turn: Quat) -> Vec3 {
+        let off = at.xz() - self.middle;
+        let mut inside = self.middle;
+        for (axis, (least, most)) in self.axes().into_iter().zip(self.reach(bounds, turn)) {
+            let (from, to) = (-self.half - least, self.half - most);
+            let along = if from <= to { off.dot(axis).clamp(from, to) } else { (from + to) * 0.5 };
+            inside += axis * along;
+        }
+        Vec3::new(inside.x, at.y, inside.y)
+    }
+}
+
+/// A piece asked to be put down, in the town, where it may not stand: not
+/// with the whole of it on your plot. It is a ghost still, with its menu
+/// open on it again (`stand` says why across the screen).
+#[derive(Message, Clone, Copy)]
+pub(crate) struct Misplaced;
+
+/// Everything that puts pieces down and keeps the plots' shapes, after the
+/// edit menu has said what was asked ([`editor::EditSystems`]).
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct BuildSystems;
+
 pub(crate) fn plugin(app: &mut App) {
     // The town's houses, with doors and windows put in them as here.
     town::plugin(app);
     app.init_resource::<Reshape>()
+        .init_resource::<Site>()
         .init_resource::<NextPieceId>()
         .init_resource::<Untold>()
+        .add_message::<Misplaced>()
         .add_observer(took)
         .add_observer(rebuilt)
         .add_observer(unbuilt)
@@ -875,6 +998,7 @@ pub(crate) fn plugin(app: &mut App) {
         .add_systems(
             Update,
             (
+                find_site,
                 take_chosen,
                 place_fresh,
                 edit_pieces,
@@ -886,8 +1010,28 @@ pub(crate) fn plugin(app: &mut App) {
                 want_pointer,
             )
                 .chain()
+                .in_set(BuildSystems)
                 .after(editor::EditSystems),
         );
+    // What stands on the town's plots, yours and everyone's (`stand`).
+    stand::plugin(app);
+}
+
+/// Says where you are building just now ([`Site`]): in a game of House
+/// Builder, on your plot there while its time to build runs; otherwise, in
+/// the town, on your own plot of it.
+fn find_site(building: Res<Building>, home: Res<stand::Home>, mut site: ResMut<Site>) {
+    let now = match building.0 {
+        Some(plot) => Some(Ground {
+            venue: Venue::Plot(plot),
+            yard: None,
+        }),
+        None => home.yard.map(|yard| Ground {
+            venue: Venue::Town,
+            yard: Some(yard),
+        }),
+    };
+    site.set_if_neq(Site(now));
 }
 
 fn stock_up(assets: Res<AssetServer>, mut commands: Commands) {
@@ -913,7 +1057,9 @@ fn take_chosen(
     building: Res<Building>,
     stock: Res<Stock>,
     me: Query<&Transform, With<Player>>,
-    pieces: Query<(Entity, &Piece), Without<Shadow>>,
+    // A game's own: what stands on your plot of the town is not this
+    // game's house (`stand`).
+    pieces: Query<(Entity, &Piece), (Without<Shadow>, With<InGame>)>,
     mut menu: ResMut<EditMenu>,
     mut commands: Commands,
 ) {
@@ -926,38 +1072,61 @@ fn take_chosen(
             .iter()
             .find(|(_, piece)| piece.def.mount == Mount::House)
             .map(|(house, _)| house);
-        let mut piece = commands.spawn((
-            Piece { def },
-            Ghost,
-            Fresh,
-            InGame,
-            WorldAssetRoot(stock.scene(def)),
-            // Until its size is known, a box a metre across.
-            Editable {
-                touch: Touch::Block {
-                    low: Vec3::splat(-0.5),
-                    high: Vec3::splat(0.5),
-                },
-                ring: 0.0,
-                turns: !def.on_wall(),
-                sticky: true,
-            },
-            Visibility::Inherited,
-        ));
-        if def.on_wall() {
-            let Some(house) = house else {
-                piece.despawn();
-                continue;
-            };
-            // Its house carries it, and says where it is drawn.
-            piece.insert((ChildOf(house), Transform::default()));
-        } else {
-            let at = me.single().map(|me| me.translation).unwrap_or_default();
-            piece.insert((Venue::Plot(plot), Transform::from_translation(at)));
-        }
-        piece.observe(piece_ready);
-        menu.open_on(piece.id());
+        let at = me.single().map(|me| me.translation).unwrap_or_default();
+        bring_out(&mut commands, &stock, &mut menu, def, house, Venue::Plot(plot), at, InGame);
     }
+}
+
+/// A piece of `def` just chosen, out of the shop or out of your bag: a
+/// ghost with the edit menu open on it, and `tag` on it. On `venue`, at
+/// `at` until its model has loaded and it is put where it comes up
+/// ([`place_fresh`]); or, for what goes in or on a wall, in `house`, and
+/// with no house, nothing.
+#[allow(clippy::too_many_arguments)]
+fn bring_out(
+    commands: &mut Commands,
+    stock: &Stock,
+    menu: &mut EditMenu,
+    def: &'static PieceDef,
+    house: Option<Entity>,
+    venue: Venue,
+    at: Vec3,
+    tag: impl Bundle,
+) -> Option<Entity> {
+    if def.on_wall() && house.is_none() {
+        return None;
+    }
+    let mut piece = commands.spawn((
+        Piece { def },
+        Ghost,
+        Fresh,
+        tag,
+        WorldAssetRoot(stock.scene(def)),
+        // Until its size is known, a box a metre across.
+        Editable {
+            touch: Touch::Block {
+                low: Vec3::splat(-0.5),
+                high: Vec3::splat(0.5),
+            },
+            ring: 0.0,
+            turns: !def.on_wall(),
+            sticky: true,
+        },
+        Visibility::Inherited,
+    ));
+    match house.filter(|_| def.on_wall()) {
+        // Its house carries it, and says where it is drawn.
+        Some(house) => {
+            piece.insert((ChildOf(house), Transform::default()));
+        }
+        None => {
+            piece.insert((venue, Transform::from_translation(at)));
+        }
+    }
+    piece.observe(piece_ready);
+    let piece = piece.id();
+    menu.open_on(piece);
+    Some(piece)
 }
 
 /// Once a piece's model has spawned: how big it is, which is what a tap on it
@@ -1203,14 +1372,13 @@ fn place_fresh(
     homes: Query<&GlobalTransform>,
     walls: Query<(Entity, &Wall, &ChildOf)>,
     hung: Hung,
-    building: Res<Building>,
+    site: Res<Site>,
     islands: Res<Islands>,
     mut commands: Commands,
 ) {
-    let (Some(plot), Ok(me), Ok(eye)) = (building.0, me.single(), eye.single()) else {
+    let (Some(Ground { venue, yard }), Ok(me), Ok(eye)) = (site.0, me.single(), eye.single()) else {
         return;
     };
-    let venue = Venue::Plot(plot);
     let ahead = crate::camera_ahead(eye);
     for (piece, kind, bounds, span, mut transform, house) in &mut fresh {
         commands.entity(piece).remove::<Fresh>();
@@ -1225,14 +1393,16 @@ fn place_fresh(
                     IN_FRONT
                 };
                 let spot = me.translation + ahead * (PLAYER_RADIUS + gap - bounds.low.z);
+                // On your plot of the town, nowhere but on it.
+                let spot = yard.map_or(spot, |yard| yard.pull_in(spot, *bounds, turn));
                 let at = if kind.def.mount == Mount::House {
                     islands
                         .ground(venue)
-                        .and_then(|ground| house_near(ground, *bounds, turn, spot.xz()))
+                        .and_then(|ground| house_near(ground, yard, *bounds, turn, spot.xz()))
                         .unwrap_or(spot)
                 } else {
                     islands.get(venue).map_or(spot, |island| {
-                        ahead_of(island, me.translation, spot, *bounds, turn)
+                        ahead_of(island, yard, me.translation, spot, *bounds, turn)
                     })
                 };
                 *transform = Transform::from_translation(at).with_rotation(turn);
@@ -1328,8 +1498,9 @@ fn others_on(hung: &Hung, wall: Entity, piece: Entity) -> Vec<(OnWall, Span, boo
 /// at `you` who would have it at `spot`: carried from them toward there as far
 /// as the floor goes and no walls are in the way, then back toward them until
 /// the whole of it is clear of the walls too — facing a wall, in the room
-/// rather than through it.
-fn ahead_of(island: &Island, you: Vec3, spot: Vec3, bounds: Bounds, turn: Quat) -> Vec3 {
+/// rather than through it. In a `yard`, the whole of it inside the yard
+/// besides: as near where it would have come up as that leaves it.
+fn ahead_of(island: &Island, yard: Option<Yard>, you: Vec3, spot: Vec3, bounds: Bounds, turn: Quat) -> Vec3 {
     let point = Bounds {
         low: Vec3::ZERO,
         high: Vec3::ZERO,
@@ -1337,6 +1508,7 @@ fn ahead_of(island: &Island, you: Vec3, spot: Vec3, bounds: Bounds, turn: Quat) 
     let reached = editor::carry(island, you, spot.xz(), turn, |at| {
         !walled(island, at, point, turn)
     });
+    let inside = |at: Vec3| yard.is_none_or(|yard| yard.holds_piece(at, bounds, turn));
     const TRIES: u32 = 12;
     (0..=TRIES)
         .map(|back| reached.xz().lerp(you.xz(), back as f32 / TRIES as f32))
@@ -1345,8 +1517,8 @@ fn ahead_of(island: &Island, you: Vec3, spot: Vec3, bounds: Bounds, turn: Quat) 
                 .floor(at, you.y + crate::LAND_STEP_UP)
                 .map(|y| Vec3::new(at.x, y, at.y))
         })
-        .find(|&at| !walled(island, at, bounds, turn))
-        .unwrap_or(reached)
+        .find(|&at| inside(at) && !walled(island, at, bounds, turn))
+        .unwrap_or_else(|| yard.map_or(reached, |yard| yard.pull_in(reached, bounds, turn)))
 }
 
 /// Whether a piece of `bounds`, turned by `turn` and standing at `at`, would
@@ -1390,11 +1562,21 @@ fn caught(island: &Island, at: Vec3, bounds: Bounds, turn: Quat) -> impl Iterato
 /// clear there; otherwise as near as it is clear, out of whatever it would be
 /// in, over the same floor and never through a wall, and snapped into line
 /// among `stops` as a drag would leave it. Where it is, in whatever it would
-/// be in, if there is nowhere near enough.
-fn turned_clear(island: &Island, at: Vec3, bounds: Bounds, turn: Quat, stops: &[Stop]) -> Vec3 {
-    let fits = |spot: Vec3| !walled(island, spot, bounds, turn);
+/// be in, if there is nowhere near enough. In a `yard`, it is clear only
+/// with the whole of it inside the yard.
+fn turned_clear(island: &Island, yard: Option<Yard>, at: Vec3, bounds: Bounds, turn: Quat, stops: &[Stop]) -> Vec3 {
+    let fits = |spot: Vec3| yard.is_none_or(|yard| yard.holds_piece(spot, bounds, turn)) && !walled(island, spot, bounds, turn);
     if fits(at) {
         return at;
+    }
+    // Turned out over the edge of its yard, and into nothing else: in.
+    if let Some(yard) = yard
+        && !walled(island, at, bounds, turn)
+    {
+        let pulled = yard.pull_in(at, bounds, turn);
+        if fits(pulled) {
+            return pulled;
+        }
     }
     // Every way round, the way out of what it would be in first: away from
     // the middle of where it meets it.
@@ -1638,16 +1820,18 @@ fn snaps(at: Vec3, turn: Quat, bounds: Bounds, stops: &[Stop]) -> Vec<Vec3> {
 /// Where a piece of `bounds`, turned by `turn`, dragged from `from` toward
 /// `goal` over `island`, ends up: carried as far toward there as it goes, and
 /// then snapped into line with whatever among `stops` it has come up to, if
-/// it is clear to stand there.
+/// it is clear to stand there. In a `yard`, it goes no further than the
+/// whole of it is inside the yard.
 fn drag_over_floor(
     island: &Island,
+    yard: Option<Yard>,
     from: Vec3,
     goal: Vec2,
     bounds: Bounds,
     turn: Quat,
     stops: &[Stop],
 ) -> Vec3 {
-    let fits = |at| !walled(island, at, bounds, turn);
+    let fits = |at| yard.is_none_or(|yard| yard.holds_piece(at, bounds, turn)) && !walled(island, at, bounds, turn);
     let carried = editor::carry(island, from, goal, turn, fits);
     snaps(carried, turn, bounds, stops)
         .into_iter()
@@ -1668,15 +1852,17 @@ fn facing(way: Vec3) -> Quat {
 
 /// Where near `spot` a house of `bounds`, turned by `turn`, fits: there, or
 /// failing that as little further in toward the middle of the plot as it
-/// takes.
-fn house_near(ground: &Island, bounds: Bounds, turn: Quat, spot: Vec2) -> Option<Vec3> {
-    let inward = (-spot).normalize_or_zero();
-    let reach = spot.length();
+/// takes: the middle of the island, or of the `yard`, where it fits only as
+/// [`house_fits_in`] has it.
+fn house_near(ground: &Island, yard: Option<Yard>, bounds: Bounds, turn: Quat, spot: Vec2) -> Option<Vec3> {
+    let middle = yard.map_or(Vec2::ZERO, |yard| yard.middle);
+    let inward = (middle - spot).normalize_or_zero();
+    let reach = middle.distance(spot);
     (0..)
         .map(|step| step as f32 * 0.5)
         .take_while(|&back| back <= reach)
         .map(|back| spot + inward * back)
-        .find_map(|at| house_fits(ground, bounds, turn, at).map(|y| Vec3::new(at.x, y, at.y)))
+        .find_map(|at| house_fits_in(ground, yard, bounds, turn, at).map(|y| Vec3::new(at.x, y, at.y)))
 }
 
 /// Where a house of `bounds`, turned by `turn`, dragged from `from` toward
@@ -1684,8 +1870,8 @@ fn house_near(ground: &Island, bounds: Bounds, turn: Quat, spot: Vec2) -> Option
 /// land, in short steps, sliding along the shore where it cannot go straight
 /// on. One that does not fit where it is follows the finger freely until it
 /// does.
-fn house_toward(ground: &Island, bounds: Bounds, turn: Quat, from: Vec3, goal: Vec2) -> Vec3 {
-    let fit = |at: Vec2| house_fits(ground, bounds, turn, at).map(|y| Vec3::new(at.x, y, at.y));
+fn house_toward(ground: &Island, yard: Option<Yard>, bounds: Bounds, turn: Quat, from: Vec3, goal: Vec2) -> Vec3 {
+    let fit = |at: Vec2| house_fits_in(ground, yard, bounds, turn, at).map(|y| Vec3::new(at.x, y, at.y));
     if fit(from.xz()).is_none() {
         return fit(goal).unwrap_or(from);
     }
@@ -1702,6 +1888,39 @@ fn house_toward(ground: &Island, bounds: Bounds, turn: Quat, from: Vec3, goal: V
     }
     at
 }
+
+/// The height a house of `bounds`, turned by `turn`, stands at on `at`, as
+/// [`house_fits`] has it; and in a `yard`, your plot of the town, only with
+/// the whole of it inside the yard and nothing else standing where it
+/// would: the plot's sign, or anything put down there already, which are
+/// part of the town's shape as `ground` has it (`Islands::lay_layer`) and
+/// are felt for all over its footprint ([`HOUSE_FEEL`]).
+fn house_fits_in(ground: &Island, yard: Option<Yard>, bounds: Bounds, turn: Quat, at: Vec2) -> Option<f32> {
+    let base = house_fits(ground, bounds, turn, at)?;
+    let Some(yard) = yard else {
+        return Some(base);
+    };
+    if !yard.holds_piece(Vec3::new(at.x, base, at.y), bounds, turn) {
+        return None;
+    }
+    let (low, high) = (bounds.low.xz(), bounds.high.xz());
+    let size = high - low;
+    let steps = (size / HOUSE_FEEL).ceil().max(Vec2::ONE);
+    let (bottom, top) = (base + crate::LAND_STEP_UP, base + crate::PLAYER_HEIGHT);
+    let clear = (0..=steps.x as u32).all(|i| {
+        (0..=steps.y as u32).all(|j| {
+            let spot = low + size * Vec2::new(i as f32 / steps.x, j as f32 / steps.y);
+            let under = at + (turn * Vec3::new(spot.x, 0.0, spot.y)).xz();
+            !ground.blocked(under, bottom, top)
+        })
+    });
+    clear.then_some(base)
+}
+
+/// How far apart the spots under a house are at which the ground is felt
+/// for anything standing there already, on a plot of the town, in metres:
+/// nearer than a chair is wide but for a hair, and than a sign is long.
+const HOUSE_FEEL: f32 = 0.75;
 
 /// The height a house of `bounds`, turned by `turn`, stands at on `at`, if the
 /// land under the whole of it is dry and level enough.
@@ -1773,9 +1992,15 @@ type Moving<'w, 's> = Query<
 
 /// Does what the edit menu asks of a piece: moves it, turns it, puts it down,
 /// throws it away, or, tapped once it is down, picks it back up.
+///
+/// On your plot of the town ([`Yard`]) nothing is moved or turned to where
+/// any of it would be off the plot; and asked to be put down where it may
+/// not stand, a piece stays a ghost, its menu open on it again
+/// ([`Misplaced`]).
+#[allow(clippy::too_many_arguments)]
 fn edit_pieces(
     mut edits: MessageReader<Edit>,
-    building: Res<Building>,
+    site: Res<Site>,
     islands: Res<Islands>,
     mut stock: ResMut<Stock>,
     mut materials: ResMut<Assets<StandardMaterial>>,
@@ -1786,14 +2011,13 @@ fn edit_pieces(
     children: Query<&Children>,
     looks: Query<(&MeshMaterial3d<StandardMaterial>, Has<Solid>)>,
     solids: Query<&Solid>,
-    mut reshape: ResMut<Reshape>,
+    (mut reshape, mut menu, mut misplaced): (ResMut<Reshape>, ResMut<EditMenu>, MessageWriter<Misplaced>),
     mut commands: Commands,
 ) {
-    let Some(plot) = building.0 else {
+    let Some(Ground { venue, yard }) = site.0 else {
         edits.clear();
         return;
     };
-    let venue = Venue::Plot(plot);
     for &edit in edits.read() {
         match edit {
             Edit::Opened(target) => {
@@ -1827,6 +2051,7 @@ fn edit_pieces(
                         };
                         let at = drag_over_floor(
                             island,
+                            yard,
                             transform.translation,
                             to.xz(),
                             bounds,
@@ -1845,6 +2070,7 @@ fn edit_pieces(
                         };
                         let at = house_toward(
                             ground,
+                            yard,
                             bounds,
                             transform.rotation,
                             transform.translation,
@@ -1957,7 +2183,7 @@ fn edit_pieces(
                     // A house turns only where it still fits on the land.
                     (Mount::House, Some(&bounds)) => {
                         let fits = islands.ground(venue).is_some_and(|ground| {
-                            house_fits(ground, bounds, turned, at.xz()).is_some()
+                            house_fits_in(ground, yard, bounds, turned, at.xz()).is_some()
                         });
                         if fits {
                             transform.rotation = turned;
@@ -1967,7 +2193,7 @@ fn edit_pieces(
                     // piece it would turn into.
                     (Mount::Floor, Some(&bounds)) => {
                         if let Some(island) = islands.get(venue) {
-                            transform.translation = turned_clear(island, at, bounds, turned, &stops);
+                            transform.translation = turned_clear(island, yard, at, bounds, turned, &stops);
                         }
                         transform.rotation = turned;
                     }
@@ -1976,11 +2202,29 @@ fn edit_pieces(
                 }
             }
             Edit::Confirm(target) => {
-                if pieces.contains(target) {
-                    unghost(target, &children, &solids, &mut commands);
-                    commands.entity(target).remove::<(Ghost, Fresh)>();
-                    reshape.0 = true;
+                let Ok((_, piece, transform, _, bounds, ..)) = pieces.get(target) else {
+                    continue;
+                };
+                // On your plot of the town, only with the whole of it on
+                // the plot, and a house only where a house fits.
+                let off_the_plot = yard.zip(bounds).is_some_and(|(yard, &bounds)| {
+                    let (at, turn) = (transform.translation, transform.rotation);
+                    match piece.def.mount {
+                        Mount::House => islands
+                            .ground(venue)
+                            .is_none_or(|ground| house_fits_in(ground, Some(yard), bounds, turn, at.xz()).is_none()),
+                        Mount::Floor => !yard.holds_piece(at, bounds, turn),
+                        Mount::Door | Mount::Window | Mount::Hanging => false,
+                    }
+                });
+                if off_the_plot {
+                    menu.open_on(target);
+                    misplaced.write(Misplaced);
+                    continue;
                 }
+                unghost(target, &children, &solids, &mut commands);
+                commands.entity(target).remove::<(Ghost, Fresh)>();
+                reshape.0 = true;
             }
             Edit::Trash(target) => {
                 if pieces.contains(target) {
@@ -2039,7 +2283,9 @@ fn unghost(
 /// it is, and nothing on the plot can be changed any more.
 fn finish_building(
     building: Res<Building>,
-    pieces: Query<(Entity, Has<Ghost>), (With<Piece>, With<Editable>)>,
+    // A game's own pieces: what stands on your plot of the town (`stand`)
+    // is yours to change whenever you are there.
+    pieces: Query<(Entity, Has<Ghost>), (With<Piece>, With<Editable>, With<InGame>)>,
     children: Query<&Children>,
     solids: Query<&Solid>,
     mut reshape: ResMut<Reshape>,
@@ -2066,8 +2312,14 @@ fn finish_building(
 /// one you are in on Blend In's venue too, which is the town as it stands
 /// (`island::scenery`, since 2026-11-18), and is see-through from inside
 /// there as in the town (`see_through`).
+///
+/// **Nor can a house be tapped from your car** (since 2026-11-22, when your
+/// own house came to stand on your plot of the town, `stand`): driving past
+/// it, a stray tap would pick it up. Whatever else of yours stands there is
+/// out of a tap's reach then too (`stand::hands_off_in_the_car`).
 fn untappable_from_inside(
     me: Query<(&Transform, &Venue), With<Player>>,
+    driving: Res<crate::drive::Driving>,
     houses: Query<(
         Entity,
         &Venue,
@@ -2075,19 +2327,27 @@ fn untappable_from_inside(
         &Rooms,
         &Bounds,
         Has<Untappable>,
+        Has<YouAreIn>,
     )>,
     mut commands: Commands,
 ) {
     let me = me.single().ok();
-    for (house, venue, place, rooms, bounds, untappable) in &houses {
+    let driving = driving.on();
+    for (house, venue, place, rooms, bounds, untappable, in_it) in &houses {
         let inside = me.is_some_and(|(me, &on)| {
             let at = place.affine().inverse().transform_point3(me.translation);
             (on == *venue || island::scenery(on) == *venue) && rooms.hold(at, bounds.high.y)
         });
-        if inside && !untappable {
-            commands.entity(house).insert((Untappable, YouAreIn));
-        } else if !inside && untappable {
-            commands.entity(house).remove::<(Untappable, YouAreIn)>();
+        let out_of_reach = inside || driving;
+        if out_of_reach && !untappable {
+            commands.entity(house).insert(Untappable);
+        } else if !out_of_reach && untappable {
+            commands.entity(house).remove::<Untappable>();
+        }
+        if inside && !in_it {
+            commands.entity(house).insert(YouAreIn);
+        } else if !inside && in_it {
+            commands.entity(house).remove::<YouAreIn>();
         }
     }
 }
@@ -2095,11 +2355,11 @@ fn untappable_from_inside(
 /// On desktop the cursor is let go for as long as something is being put
 /// down, to drag it with and to press its buttons.
 fn want_pointer(
-    building: Res<Building>,
+    site: Res<Site>,
     ghosts: Query<(), With<Ghost>>,
     mut wants: ResMut<WantsPointer>,
 ) {
-    wants.set_if_neq(WantsPointer(building.0.is_some() && !ghosts.is_empty()));
+    wants.set_if_neq(WantsPointer(site.0.is_some() && !ghosts.is_empty()));
 }
 
 // ---------------------------------------------------------------- the doors
@@ -2431,10 +2691,24 @@ fn reshape_plot(
             islands.build_on(venue, &[]);
         }
     }
+    // What stands on the town's plots is laid over the town's shape, a
+    // layer of its own beside the plots' signs (`land`), rather than read
+    // into it: the town is too big to read again each time anyone puts a
+    // chair down.
+    let mut town = None;
     for (venue, pieces) in plots {
-        islands.build_on(venue, &pieces);
+        if venue == Venue::Town {
+            town = Some(pieces);
+        } else {
+            islands.build_on(venue, &pieces);
+        }
     }
+    islands.lay_layer(Venue::Town, STOOD_LAYER, town);
 }
+
+/// The layer of the town's shape that what stands on its plots is
+/// (`Islands::lay_layer`).
+const STOOD_LAYER: &str = "stood";
 
 // ---------------------------------------------------------------- online
 
@@ -2486,7 +2760,9 @@ fn report_pieces(
             Option<&Reported>,
             Has<Ghost>,
         ),
-        Without<Shadow>,
+        // A game's own: what stands on your plot of the town is told of by
+        // `stand`.
+        (Without<Shadow>, With<InGame>),
     >,
     venues: Query<&Venue>,
     walls: Query<(Entity, &Wall, &ChildOf)>,
@@ -3230,11 +3506,11 @@ mod tests {
             lines_up: false,
         };
         for goal in [Vec2::new(10.0, 0.0), Vec2::new(10.0, 3.0), Vec2::new(1.35, 0.0)] {
-            let at = drag_over_floor(&island, Vec3::ZERO, goal, bounds, Quat::IDENTITY, &[wall]);
+            let at = drag_over_floor(&island, None, Vec3::ZERO, goal, bounds, Quat::IDENTITY, &[wall]);
             assert!((at.x - flush).abs() < 1e-4, "{goal}: {at}");
         }
         // Not from further off.
-        let at = drag_over_floor(&island, Vec3::ZERO, Vec2::new(1.2, 0.0), bounds, Quat::IDENTITY, &[wall]);
+        let at = drag_over_floor(&island, None, Vec3::ZERO, Vec2::new(1.2, 0.0), bounds, Quat::IDENTITY, &[wall]);
         assert!((at - Vec3::new(1.2, 0.0, 0.0)).length() < 1e-4, "{at}");
     }
 
@@ -3252,14 +3528,14 @@ mod tests {
         assert!(!walled(&island, at, DESK_EDGE, along));
         let turned = Quat::from_rotation_y(FRAC_PI_4) * along;
         assert!(walled(&island, at, DESK_EDGE, turned));
-        let out = turned_clear(&island, at, DESK_EDGE, turned, &[]);
+        let out = turned_clear(&island, None, at, DESK_EDGE, turned, &[]);
         assert!(!walled(&island, out, DESK_EDGE, turned), "{out}");
         let corner = FRAC_PI_4.cos() * 1.0 + FRAC_PI_4.sin() * 0.5;
         assert!((out.x - (2.0 - corner)).abs() < 0.005, "{out}");
         assert!(out.z.abs() < 1e-3 && out.y == 0.0, "{out}");
         // Clear where it is, it turns where it is.
         let free = Vec3::new(-3.0, 0.0, 0.0);
-        assert_eq!(turned_clear(&island, free, DESK_EDGE, turned, &[]), free);
+        assert_eq!(turned_clear(&island, None, free, DESK_EDGE, turned, &[]), free);
         // It never goes through a wall to get anywhere.
         assert!(open_between(&island, at, Vec3::new(1.0, 0.0, 4.0)));
         assert!(!open_between(&island, at, Vec3::new(3.0, 0.0, 0.0)));
@@ -3274,7 +3550,7 @@ mod tests {
         let at = Vec3::new(1.5, 0.0, 0.0);
         let turned = Quat::from_rotation_y(FRAC_PI_4);
         assert!(walled(&island, at, DESK_CORNER, turned));
-        let out = turned_clear(&island, at, DESK_CORNER, turned, &[desk]);
+        let out = turned_clear(&island, None, at, DESK_CORNER, turned, &[desk]);
         assert!(!walled(&island, out, DESK_CORNER, turned), "{out}");
         let corner = FRAC_PI_4.cos();
         assert!((out.x - (1.0 + corner)).abs() < 0.005 && out.z.abs() < 1e-3, "{out}");
@@ -3286,7 +3562,7 @@ mod tests {
         let corridor = Island::new_for_tests(&shape);
         let along = Quat::from_rotation_y(FRAC_PI_2);
         assert!(!walled(&corridor, Vec3::ZERO, DESK_EDGE, along));
-        let across = turned_clear(&corridor, Vec3::ZERO, DESK_EDGE, Quat::IDENTITY, &[]);
+        let across = turned_clear(&corridor, None, Vec3::ZERO, DESK_EDGE, Quat::IDENTITY, &[]);
         assert_eq!(across, Vec3::ZERO);
     }
 
@@ -3373,7 +3649,7 @@ mod tests {
     fn two_desks_go_together_flush_and_in_line() {
         let (island, desk) = desk_down(DESK_EDGE, Quat::IDENTITY, Vec3::ZERO);
         let drag = |from: Vec3, goal: Vec2, bounds: Bounds, turn: Quat| {
-            drag_over_floor(&island, from, goal, bounds, turn, &[desk])
+            drag_over_floor(&island, None, from, goal, bounds, turn, &[desk])
         };
         let near = |at: Vec3, want: Vec3| (at - want).length() < 1e-4;
         // The corner pushed into the end of the edge, a little off line: flush
@@ -3409,7 +3685,7 @@ mod tests {
         let slant = Quat::from_rotation_y(FRAC_PI_4);
         let (island, desk) = desk_down(DESK_EDGE, slant, Vec3::ZERO);
         let drag = |from: Vec3, goal: Vec2| {
-            drag_over_floor(&island, from, goal, DESK_CORNER, slant, &[desk])
+            drag_over_floor(&island, None, from, goal, DESK_CORNER, slant, &[desk])
         };
         // In the desks' own space: the corner out past the edge's end, pushed
         // in at it, and lined up with it.
