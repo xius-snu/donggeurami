@@ -561,10 +561,12 @@ pub(crate) struct Colours {
 /// The bag's colours (`bag`, since 2026-11-21): the colour each rarity's
 /// name is written in on the panel, the rarest first (Hajun's, with their
 /// prices: "u can see the names are colored, they indicate the rarity");
-/// how many of a thing there are, after its name ("x1"); and the shop's two
-/// buttons, Buy and Sell, each lit under the pointer, and the words on
-/// them, as their picture of it has them (`bagandinventorypanel2.png`: a
-/// brighter red than a window's no).
+/// how many of a thing there are, after its name ("x1"); what it costs,
+/// under its name in the shop; and the shop's two buttons, Buy and Sell,
+/// each lit under the pointer, and the words on them, as their picture of
+/// it has them (`bagandinventorypanel2.png`: a brighter red than a window's
+/// no, and a little see-through, the thing's picture behind them), with
+/// one that cannot be pressed and the words on that.
 #[derive(Deserialize, Clone, Copy, PartialEq, Debug)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct BagColours {
@@ -583,6 +585,8 @@ pub(crate) struct BagColours {
     #[serde(deserialize_with = "colour")]
     pub count: Color,
     #[serde(deserialize_with = "colour")]
+    pub price: Color,
+    #[serde(deserialize_with = "colour")]
     pub buy: Color,
     #[serde(deserialize_with = "colour")]
     pub buy_lit: Color,
@@ -592,6 +596,10 @@ pub(crate) struct BagColours {
     pub sell_lit: Color,
     #[serde(deserialize_with = "colour")]
     pub on_deal: Color,
+    #[serde(deserialize_with = "colour")]
+    pub deal_off: Color,
+    #[serde(deserialize_with = "colour")]
+    pub on_deal_off: Color,
 }
 
 impl BagColours {

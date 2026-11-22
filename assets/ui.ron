@@ -585,13 +585,23 @@
             uncommon: "#32cd32",
             common: "#d3d3d3",
             count: "#ffffff",
-            // The two buttons on a thing in the shop, each lit under the
-            // pointer, and the words on them.
-            buy: "#18c71e",
-            buy_lit: "#3adb40",
-            sell: "#c34140",
-            sell_lit: "#d95a59",
+            // In the shop, what a thing costs, under its name beside the
+            // coin.
+            price: "#ffffff",
+            // The two buttons on a thing in the shop, over its picture,
+            // each lit under the pointer, and the words on them. Each is
+            // as see-through as its last two digits say (00 is clear, ff
+            // solid), for the picture behind to show through a little.
+            buy: "#17d91dd0",
+            buy_lit: "#40ef46d0",
+            sell: "#d54645d0",
+            sell_lit: "#ec6261d0",
             on_deal: "#ffffff",
+            // One of the two that cannot be pressed (Sell with none of the
+            // thing in your bag, Buy without the coins for it), and the
+            // words on it.
+            deal_off: "#4d4d4dd0",
+            on_deal_off: "#ffffff73",
         ),
     ),
     // The font is Inter (since 2026-11-13; Bevy's own, plain ASCII, until

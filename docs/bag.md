@@ -7,7 +7,93 @@ that both sides play by (`roundtown_net::bag`), the server's side
 
 ## Contents
 
-1. 2026-11-22: the bag, its window, gems, and buildings on your plot that everyone sees; APK 45
+1. 2026-11-22, later: the shop after Hajun had looked at it (both buttons always, over the picture and see-through; the price under the name; All first shown; six categories with no scrolling); APK 46
+2. 2026-11-22: the bag, its window, gems, and buildings on your plot that everyone sees; APK 45
+
+## 2026-11-22, later: the shop after Hajun had looked at it; APK 46
+
+Hajun, the same day, having looked at the window of the night before:
+
+> in the item shop, when u press sth, it should always show both buy and
+> sell button even if u dont have the item, the sell button should just be
+> greyed out if there isnt any. also for the shop, the buy price should be
+> shown under the name of the item as (coin_icon + #,###) also i think the
+> default section for the shop should be the All rather than owned (keep
+> order the same tho) and also i dont like the fact that i need to scroll
+> the sections to see the cosmetics section. try to fit it by making the
+> panel tall enough so no scrolling is necessary. also i dont want the item
+> images to disappear when u press sth in the shop. and the buy/sell button
+> should be slightly transparent too like my design image, and should be
+> able to see the item image behind the button still kind of. then rebuild
+> apk
+
+All of it is the window's (`src/bag/panel.rs`) and the file's
+(`assets/ui.ron`, `src/ui.rs`). Nothing in `shared/` or `server/` changed:
+no deploy, protocol 24 still, and what the entry below says of the window
+stands but where this one says otherwise.
+
+- **Both buttons, always.** A thing pressed in the shop has Buy and Sell
+  on its card whether or not you have one. Sell is greyed with none of it
+  in your bag (so too for one that stands on your plot, which is out of
+  the bag), Buy without the coins for it ("Not enough coins." at a tap, as
+  before; a tap on a greyed Sell does nothing), and both while a purchase
+  or a sale is at the server (`can_deal`). One that is greyed is a grey of
+  its own with faint words and a dimmed coin (`colours.bag.deal_off`,
+  `on_deal_off`), not a window's `Look::Greyed`, whose dark box would be
+  lost over a picture.
+- **The picture stays.** The two buttons are laid over the card's picture
+  (a layer the size of the card with the two in its middle; a press on
+  the card beside them still puts them away), no longer in its place. I
+  had read the design wrongly the night before: in
+  `bagandinventorypanel2.png` the lamp's post shows between the two
+  buttons and, faintly, through the red one.
+- **A little see-through.** `colours.bag.buy`, `buy_lit`, `sell` and
+  `sell_lit` have an alpha now, `d0` (82 parts in a hundred solid). The
+  design's own red is about nine tenths solid (the post is 5 of 255
+  brighter through it where it is 47 brighter in the open) and its green
+  solid; `d0` is my number, for the picture to be seen "kind of" through
+  both. The colours were made brighter by what the alpha takes off, so
+  that over a card's own dark they come out as the design's: read off the
+  run, the green (30, 199, 34) for the design's (24, 199, 30), the red
+  (195, 67, 65) for (195, 65, 64). Bevy mixes in linear light, so a light
+  part of a picture shows through more than a dark one: a bed's sheets
+  plainly, the lamp's thin post barely.
+- **The price under the name**, in the shop alone: the coin and the number
+  as the balance writes it ("2,500", `hud::money`), in
+  `colours.bag.price`. A cell of the shop is that much taller (`NAME_LINE`
+  4.2 and `PRICE_ROW` 5.3, for the inventory's `NAME_ROW` 6.1).
+- **The shop opens on All**, Owned still the first of its categories
+  (`Panel::default`). Each tab still keeps the category it was left on
+  while the app runs.
+- **No scrolling to Cosmetics.** The window is 76 tall for 70 (`HEIGHT`):
+  the six categories' 62.4 under the tabs, with 2.2 to spare, and nothing
+  else moved. The categories can still be scrolled if there are ever more
+  of them. Two rows of the shop's cards with their names and prices show
+  whole (59 of 61.1), and a third begins.
+
+**Calls that were mine**: `d0`, and the colours brightened to come out as
+the design's; the grey of a button that is off; white for the price, at
+the name's size; the price under things you own too (it is what another
+costs); the window made taller, as he said, and by no more than the six
+take, rather than the rows shorter; nothing said at a tap on a greyed
+Sell.
+
+**Checked.** The game's 509 tests (the window's among them: six categories
+whole and the window no taller than they take, two rows with prices
+whole, the shop opening on All, `can_deal`, the buttons' alpha). Hidden
+runs of the desktop build, offline, scripted by the throwaway driver,
+which is out again: at 874 by 402 the inventory; the shop as it opens
+(All, six categories, a price under every name); the lamp pressed with
+one in the bag and 5,000 coins (both live); the bed pressed (Buy live,
+Sell grey); a bed bought with 200 coins (50 left, "x1", Sell live, Buy
+grey) and sold again (125, both grey); Buy pressed without the coins
+("Not enough coins."); Owned; the list dragged to its end (15,000 under
+the car's name). At 1024 by 768, a tablet's shape, the same, six
+categories whole. At night. The buttons were looked at three times their
+size, and their colours read off the picture.
+
+**Not checked**: on a phone (none attached). Online: the window asks the
+server as it did, by the same `Deal`, and no run was made against one.
 
 ## 2026-11-22: the bag, its window, gems, and buildings on your plot that everyone sees; APK 45
 

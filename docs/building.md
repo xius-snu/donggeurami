@@ -7,6 +7,38 @@
 > "above" or "below", or names another section in quotes, that section may be
 > in another file here: the table in `CLAUDE.md` says which.
 
+## APK 46: the shop as Hajun wanted it after seeing it
+
+2026-11-22, 12:16 here (03:16 UTC), at Hajun's "then rebuild apk"
+(`docs/bag.md`, the entry of that day marked "later"). From the main
+checkout, committed and pushed after it at their "push" (they had asked
+for the APK alone). What
+is new in it since 45 is the bag's window only: in the shop both Buy and
+Sell on a thing pressed, over its picture and a little see-through, the
+one that cannot be pressed greyed; each price under its name; the shop
+opening on All; the window tall enough for all six categories. Nothing in
+`shared/` or `server/` changed: **`PROTOCOL_VERSION` 24 still**, no
+deploy, and 43, 44 and 45 play on against the server of 15:59 UTC on the
+21st.
+
+- **Before it**: the game's 509 tests; hidden runs of the desktop build,
+  offline (`docs/bag.md` lists them).
+- **The APK**: 46 (`versionCode`). cargo ndk 6m30s, with no error of
+  Android's own; stripped from 201.1 MB to 109.6 MB with
+  `GameActivity_onCreate` and the six `MainActivity` methods in it;
+  Gradle 44 s; 127.3 MB, put over APK 45 with no copy kept. Checked:
+  `versionCode` read back with aapt; the library in it the same bytes as
+  the stripped one (sha1 `ca36ec5a`); all 93 of the game's files under
+  `assets/` the same as the tree's (the two others there are Gradle's own
+  `dexopt` profiles), the 277 of the tree hashed before cargo ndk and
+  after Gradle and unchanged; no `.blend`, no `ui.ron`, no
+  `itemrarities.txt`; the file's new colours in the library
+  (`17d91dd0`, `deal_off`).
+- **Not installed: no phone was attached** (`adb devices`, empty). Nothing
+  of the bag has been seen on one, in this APK or the last.
+- **The iPhone**: no tag pushed; not type-checked, nothing behind
+  `target_os = "ios"` touched.
+
 ## APK 45: the bag
 
 2026-11-22, 01:09 here (16:09 UTC on the 21st), at Hajun's "then build apk

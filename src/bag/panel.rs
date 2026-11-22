@@ -10,29 +10,39 @@
 //! cart for the shop, the one shown white over a white line, and a bare
 //! white cross in its corner. Down its left the categories, a line between
 //! each, the one shown white: All, Buildings, Vehicles, Utilities and
-//! Cosmetics, and in the shop Owned before them, which is what is shown
-//! there first, as drawn. On its right the things, three to a row, each a
-//! dark card with its picture and under it its name, in the colour of its
-//! rarity (`colours.bag`), and how many of it are in your bag ("x1").
+//! Cosmetics, and in the shop Owned before them; each tab opens on All
+//! (the shop's too, Owned still its first: Hajun, 2026-11-22, "the default
+//! section for the shop should be the All rather than owned (keep order the
+//! same tho)"). The window is tall enough for all six to show ("i dont like
+//! the fact that i need to scroll the sections to see the cosmetics
+//! section"). On its right the things, three to a row, each a dark card
+//! with its picture and under it its name, in the colour of its rarity
+//! (`colours.bag`), and how many of it are in your bag ("x1").
 //!
 //! **What you own** shows what is in your bag: what you own that does not
 //! stand on your plot. A tap on a building, standing on your own plot,
 //! shuts the window and brings the building up in front of you to be put
 //! down (`build::stand`); anywhere else, the window says why not along its
-//! bottom. A tap on your car shuts the window and puts you in it (`drive`).
+//! top. A tap on your car shuts the window and puts you in it (`drive`).
 //!
-//! **The shop** shows everything there is, or what of it you own. A tap on
-//! a thing puts two buttons on its card in place of its picture: Buy, in
-//! green, with the coin and its price, greyed without the coins for it; and
-//! Sell, in dark red, with half that, there while one is in your bag
-//! (Hajun: "when u tap an item in the owned category, it shows a buy button
-//! and a sell button"). Each is asked of `bag` ([`Deal`]): online the
-//! server's to do, and both buttons greyed until it has answered.
+//! **The shop** shows everything there is, or what of it you own, and
+//! under each thing's name the coin and what it costs. A tap on a thing
+//! puts two buttons over its picture, a little see-through, the picture
+//! still there behind them (Hajun: "i dont want the item images to
+//! disappear when u press sth in the shop", and the buttons "slightly
+//! transparent too like my design image"): Buy, in green, with the coin and
+//! its price; and Sell, in red, with half that. Both are always there
+//! ("even if u dont have the item, the sell button should just be greyed
+//! out if there isnt any"): Sell is greyed with none of the thing in your
+//! bag, Buy without the coins for it. Each is asked of `bag` ([`Deal`]):
+//! online the server's to do, and both buttons greyed until it has
+//! answered.
 //!
 //! The sizes are measured off the two pictures, 874 by 402, as shares of
-//! the short side of the screen (four of their pixels to a share), and
-//! every colour and word is `assets/ui.ron`'s. The window is drawn again
-//! whenever what it shows changes, each list where it was scrolled to.
+//! the short side of the screen (four of their pixels to a share), but its
+//! height, which is the six categories'; and every colour and word is
+//! `assets/ui.ron`'s. The window is drawn again whenever what it shows
+//! changes, each list where it was scrolled to.
 
 use bevy::prelude::*;
 use bevy::ui_widgets::ScrollArea;
@@ -46,7 +56,7 @@ use crate::hud::{self, BagButton, DialogUp, TakesPress};
 use crate::island::Venue;
 use crate::lobby::Balance;
 use crate::ui::{UiChanged, fill, ui};
-use crate::window::{self, Look};
+use crate::window;
 use crate::{CloseUp, Player};
 
 /// The picture of the car on its card, beside its model: rendered as the
@@ -55,9 +65,11 @@ pub(crate) const CAR_PICTURE: &str = "car1.png";
 
 /// The window: how wide and how tall it is, and how much of the screen's
 /// width it takes at the most, in parts of a hundred, on a screen as broad
-/// as a tablet's, where the first is more than there is.
+/// as a tablet's, where the first is more than there is. Taller than it was
+/// drawn, by six shares: tall enough for the shop's six categories to show
+/// with none scrolled to (Hajun, 2026-11-22).
 const WIDTH: f32 = 130.0;
-const HEIGHT: f32 = 70.0;
+const HEIGHT: f32 = 76.0;
 const MOST_WIDE: f32 = 93.0;
 /// The room over the tabs, and between the line under them and the
 /// categories; how far its cross's middle is in from its right and down
@@ -86,8 +98,19 @@ const CARD_GAP: f32 = 4.2;
 const NAME_ROW: f32 = 6.1;
 const NAME_TEXT: f32 = 2.7;
 const PICTURE: f32 = 88.0;
-/// The two buttons on a card in the shop: how wide and how tall each is,
-/// the gap between them, their words, and the coin beside the price.
+/// In the shop, where what a thing costs is under its name: how tall the
+/// name's own line is there, the row of the price with the room under it,
+/// the number's size, the coin's, how far down the coin is put to stand
+/// level with the number, and the gap between the two.
+const NAME_LINE: f32 = 4.2;
+const PRICE_ROW: f32 = 5.3;
+const PRICE_TEXT: f32 = 2.7;
+const PRICE_COIN: f32 = 2.7;
+const PRICE_COIN_DOWN: f32 = 0.3;
+const PRICE_GAP: f32 = 0.7;
+/// The two buttons over a card's picture in the shop: how wide and how
+/// tall each is, the gap between them, their words, and the coin beside
+/// the price.
 const DEAL_WIDE: f32 = 22.6;
 const DEAL_HIGH: f32 = 6.0;
 const DEAL_GAP: f32 = 1.7;
@@ -176,8 +199,9 @@ impl Default for Panel {
         Self {
             open: false,
             tab: Tab::Inventory,
-            // The first of each tab's, as drawn.
-            sorts: [Sort::All, Sort::Owned],
+            // Everything, in the shop too, where Owned comes before it
+            // (Hajun, 2026-11-22; Owned until then, as drawn).
+            sorts: [Sort::All, Sort::All],
             picked: None,
         }
     }
@@ -212,7 +236,7 @@ struct Pressed {
     dragged: f32,
 }
 
-/// The line along the window's bottom that says why something cannot be
+/// The line along the window's top that says why something cannot be
 /// done, and how long it has been up.
 #[derive(Resource, Default)]
 struct Notice(Option<(String, f32)>);
@@ -730,10 +754,8 @@ fn cards(commands: &mut Commands, body: Entity, view: &View) {
                 Node {
                     width: Val::Percent(100.0),
                     height: Val::VMin(CARD_HEIGHT),
-                    flex_direction: FlexDirection::Column,
                     justify_content: JustifyContent::Center,
                     align_items: AlignItems::Center,
-                    row_gap: Val::VMin(DEAL_GAP),
                     border_radius: BorderRadius::all(Val::VMin(window::CARD_ROUNDED)),
                     ..default()
                 },
@@ -741,30 +763,33 @@ fn cards(commands: &mut Commands, body: Entity, view: &View) {
                 fill,
             ))
             .id();
-        if view.panel.tab == Tab::Shop && view.panel.picked == Some(thing.kind) {
+        // Its picture, always: the two buttons of the thing picked in the
+        // shop go over it, not in its place.
+        commands.spawn((
+            ChildOf(card),
+            ImageNode::new(picture_of(view, thing)),
+            Node {
+                height: Val::Percent(PICTURE),
+                aspect_ratio: Some(1.0),
+                ..default()
+            },
+            Pickable::IGNORE,
+        ));
+        let shop = view.panel.tab == Tab::Shop;
+        if shop && view.panel.picked == Some(thing.kind) {
             deal_buttons(commands, card, view, thing, free);
-        } else {
-            commands.spawn((
-                ChildOf(card),
-                ImageNode::new(picture_of(view, thing)),
-                Node {
-                    height: Val::Percent(PICTURE),
-                    aspect_ratio: Some(1.0),
-                    ..default()
-                },
-                Pickable::IGNORE,
-            ));
         }
         // Its name, in its rarity's colour, and how many are in the bag.
         let name = commands
             .spawn((
                 ChildOf(cell),
                 Node {
-                    height: Val::VMin(NAME_ROW),
+                    height: Val::VMin(if shop { NAME_LINE } else { NAME_ROW }),
                     column_gap: Val::VMin(0.9),
                     padding: UiRect::top(Val::VMin(0.9)),
                     justify_content: JustifyContent::Center,
                     align_items: AlignItems::FlexStart,
+                    flex_shrink: 0.0,
                     ..default()
                 },
                 Pickable::IGNORE,
@@ -778,7 +803,44 @@ fn cards(commands: &mut Commands, body: Entity, view: &View) {
             let count = fill_count(free);
             commands.spawn((ChildOf(name), window::words(count, NAME_TEXT, ui.colours.bag.count)));
         }
+        // In the shop, under its name: the coin, and what it costs.
+        if shop {
+            commands.spawn((
+                ChildOf(cell),
+                Node {
+                    height: Val::VMin(PRICE_ROW),
+                    column_gap: Val::VMin(PRICE_GAP),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::FlexStart,
+                    flex_shrink: 0.0,
+                    ..default()
+                },
+                Pickable::IGNORE,
+                children![
+                    (
+                        ImageNode::new(view.assets.load(hud::COIN_ICON)),
+                        Node {
+                            width: Val::VMin(PRICE_COIN),
+                            height: Val::VMin(PRICE_COIN),
+                            // Level with the number beside it, whose line
+                            // is a little taller than its figures.
+                            margin: UiRect::top(Val::VMin(PRICE_COIN_DOWN)),
+                            ..default()
+                        },
+                        Pickable::IGNORE,
+                    ),
+                    window::words(hud::money(thing.price), PRICE_TEXT, ui.colours.bag.price),
+                ],
+            ));
+        }
     }
+}
+
+/// Which of the two buttons on a thing in the shop can be pressed, Buy and
+/// Sell: Buy with the coins for it, Sell with one of it in your bag, `free`
+/// of them, and neither while a purchase or a sale is on its way.
+fn can_deal(thing: &Thing, free: u16, balance: u32, waits: bool) -> (bool, bool) {
+    (!waits && balance >= thing.price, !waits && free > 0)
 }
 
 /// How many of a thing are in the bag, as the file's words have it: "x1".
@@ -786,36 +848,60 @@ fn fill_count(count: u16) -> String {
     fill(&ui().words.bag.count, &[("count", &count.to_string())])
 }
 
-/// The two buttons on the card of the thing picked in the shop, in place
-/// of its picture: Buy, with the coin and its price, green, and greyed
-/// without the coins for it or while a purchase or a sale is on its way;
-/// and Sell, with half that, dark red, there while one of it is in your
-/// bag, `free` of them.
+/// The two buttons on the card of the thing picked in the shop, over its
+/// picture and a little see-through, the picture there behind them: Buy,
+/// with the coin and its price, green; and Sell, with half that, red. Both
+/// are always there, and one that cannot be pressed is greyed
+/// ([`can_deal`]).
 fn deal_buttons(commands: &mut Commands, card: Entity, view: &View, thing: &'static Thing, free: u16) {
     let ui = ui();
     let colours = ui.colours.bag;
-    let waits = view.bag.waits();
-    let greyed = Look::Greyed.colours();
+    let (buys, sells) = can_deal(thing, free, view.balance, view.bag.waits());
+    let greyed = (
+        Fill {
+            idle: colours.deal_off,
+            lit: colours.deal_off,
+        },
+        colours.on_deal_off,
+    );
     let buy = Fill {
         idle: colours.buy,
         lit: colours.buy_lit,
     };
-    let look = if waits || view.balance < thing.price { greyed } else { (buy, colours.on_deal) };
-    deal_button(commands, card, view, Tap::Buy(thing.kind), look, &ui.words.bag.buy, thing.price);
-    if free > 0 {
-        let sell = Fill {
-            idle: colours.sell,
-            lit: colours.sell_lit,
-        };
-        let look = if waits { greyed } else { (sell, colours.on_deal) };
-        deal_button(commands, card, view, Tap::Sell(thing.kind), look, &ui.words.bag.sell, thing.resale());
-    }
+    let sell = Fill {
+        idle: colours.sell,
+        lit: colours.sell_lit,
+    };
+    // Over the whole card, the two in its middle; a press between them is
+    // the card's own, which puts them away.
+    let over = commands
+        .spawn((
+            ChildOf(card),
+            Node {
+                position_type: PositionType::Absolute,
+                left: Val::ZERO,
+                right: Val::ZERO,
+                top: Val::ZERO,
+                bottom: Val::ZERO,
+                flex_direction: FlexDirection::Column,
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                row_gap: Val::VMin(DEAL_GAP),
+                ..default()
+            },
+            Pickable::IGNORE,
+        ))
+        .id();
+    let look = if buys { (buy, colours.on_deal) } else { greyed };
+    deal_button(commands, over, view, Tap::Buy(thing.kind), look, &ui.words.bag.buy, thing.price);
+    let look = if sells { (sell, colours.on_deal) } else { greyed };
+    deal_button(commands, over, view, Tap::Sell(thing.kind), look, &ui.words.bag.sell, thing.resale());
 }
 
 /// One of the two: its word, the coin, and how many coins.
-fn deal_button(commands: &mut Commands, card: Entity, view: &View, tap: Tap, (fill, ink): (Fill, Color), word: &str, coins: u32) {
+fn deal_button(commands: &mut Commands, over: Entity, view: &View, tap: Tap, (fill, ink): (Fill, Color), word: &str, coins: u32) {
     commands.spawn((
-        ChildOf(card),
+        ChildOf(over),
         tap,
         TakesPress,
         Button,
@@ -910,16 +996,23 @@ mod tests {
         let cards = WIDTH - window::PAD - SORTS_WIDE - BETWEEN - RIGHT;
         let card = (cards - 2.0 * CARD_GAP) / 3.0;
         assert!((card - 30.1).abs() < 0.2, "{card}");
-        // Two rows of cards and their names show whole under the tabs.
+        // Two rows of cards and their names show whole under the tabs, and
+        // in the shop their prices under those.
         let room = HEIGHT - OVER_TABS - window::TAB_HEIGHT - UNDER_TABS - OVER_CARDS;
         assert!(2.0 * (CARD_HEIGHT + NAME_ROW) <= room, "{room}");
+        assert!(2.0 * (CARD_HEIGHT + NAME_LINE + PRICE_ROW) <= room, "{room}");
         // The two buttons fit a card, on a tablet too, where a card is
         // narrower.
         assert!(2.0 * DEAL_HIGH + DEAL_GAP < CARD_HEIGHT);
         assert!(DEAL_WIDE < card);
-        // Five categories show whole, as drawn, and a sixth begins.
+        // Every category shows whole with none scrolled to, the shop's six
+        // too (Hajun, 2026-11-22: "try to fit it by making the panel tall
+        // enough so no scrolling is necessary"), and the window is no
+        // taller than that takes.
         let sorts = HEIGHT - OVER_TABS - window::TAB_HEIGHT - UNDER_TABS;
-        assert!(5.0 * SORT_ROW <= sorts && sorts < 6.0 * SORT_ROW, "{sorts}");
+        let all = Sort::of(Tab::Shop).len() as f32 * SORT_ROW;
+        assert_eq!(Sort::of(Tab::Shop).len(), 6);
+        assert!(all <= sorts && sorts < all + 0.5 * SORT_ROW, "{sorts} for {all}");
         // Every line that says why something cannot be done fits between
         // the tabs and the cross: a letter of Inter is a little under half
         // as wide as its size, taken over a line of words (the longest of
@@ -940,10 +1033,12 @@ mod tests {
         assert_eq!(bag.len(), 5);
         assert_eq!(shop[0], Sort::Owned);
         assert_eq!(shop[1..], bag[..]);
-        // The first of each is the one shown as the window opens.
+        // Each opens on everything: the shop too, though Owned is its first
+        // (Hajun, 2026-11-22: "the default section for the shop should be
+        // the All rather than owned (keep order the same tho)").
         let panel = Panel::default();
         assert_eq!((panel.tab, panel.sort()), (Tab::Inventory, Sort::All));
-        assert_eq!(panel.sorts[Tab::Shop as usize], Sort::Owned);
+        assert_eq!(panel.sorts[Tab::Shop as usize], Sort::All);
         // And each has its words.
         for sort in shop {
             assert!(!sort.title().is_empty(), "{sort:?}");
@@ -975,6 +1070,34 @@ mod tests {
         bag.buy("singlebed", 1_000).unwrap();
         bag.buy("singlebed", 1_000).unwrap();
         assert_eq!(kinds(shown(Tab::Inventory, Sort::All, &bag)), [("singlebed", 2), (CAR, 1)]);
+    }
+
+    #[test]
+    fn both_buttons_are_on_a_thing_picked_in_the_shop_and_the_one_that_cannot_be_pressed_is_greyed() {
+        let lamp = roundtown_net::bag::thing(LAMP).unwrap();
+        let bed = roundtown_net::bag::thing("singlebed").unwrap();
+        // (Buy, Sell). A lamp in the bag and no coins: it can be sold and
+        // not bought.
+        assert_eq!(can_deal(lamp, 1, 0, false), (false, true));
+        // No bed, and the coins for one to the coin: bought, and not sold
+        // (Hajun: "the sell button should just be greyed out if there isnt
+        // any").
+        assert_eq!(can_deal(bed, 0, bed.price, false), (true, false));
+        assert_eq!(can_deal(bed, 0, bed.price - 1, false), (false, false));
+        assert_eq!(can_deal(bed, 2, 10_000, false), (true, true));
+        // Neither while the server has a purchase or a sale to answer.
+        assert_eq!(can_deal(bed, 2, 10_000, true), (false, false));
+        // The buttons are a little see-through, for the thing's picture
+        // behind them to show ("slightly transparent too like my design
+        // image"), and the one that cannot be pressed is another colour
+        // than either.
+        let colours = crate::ui::Ui::built_in().colours.bag;
+        for colour in [colours.buy, colours.buy_lit, colours.sell, colours.sell_lit, colours.deal_off] {
+            assert!((0.6..1.0).contains(&colour.alpha()), "{colour:?}");
+        }
+        assert_ne!(colours.deal_off, colours.sell);
+        assert_ne!(colours.deal_off, colours.buy);
+        assert!(colours.on_deal_off.alpha() < colours.on_deal.alpha());
     }
 
     #[test]

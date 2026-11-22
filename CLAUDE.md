@@ -17,12 +17,13 @@ Race's and Last Stand's cards turned off (`games::OFF`, since APK 44):
 spend nothing on those two unasked.
 
 As of 2026-11-22: `PROTOCOL_VERSION` 24 (since 2026-11-18, so APK 43 and
-44 play on, without what came after them), **APK 45** (`versionCode`,
+44 play on, without what came after them), **APK 46** (`versionCode`,
 built 2026-11-22, not put on a phone from here, `docs/building.md`), the
 server deployed at 15:59 UTC on 2026-11-21 with everything in `server/` and
 `shared/`, **all of it committed and pushed**: the land (`docs/land.md`),
 everyone's signs and cars, the town's slower buses, and the bag
-(`docs/bag.md`). The iPhone's last tag,
+(`docs/bag.md`), with what APK 46 has over 45, the shop's window as Hajun
+wanted it after seeing it, the device's side only. The iPhone's last tag,
 `ios-1.0.2-18`, pushed in the first hour of 2026-11-16 (whether Codemagic
 built it is not known here), is protocol 18: its build is told to update
 and stays offline until `ios-1.0.2-19` is built, whose tag is Hajun's to
@@ -389,8 +390,12 @@ to try again.
 - **The bag** (`src/bag.rs`, `src/bag/panel.rs`, since 2026-11-22, APK
   45; not seen on a phone; drawn from Hajun's `bagandinventorypanel1.png`
   and `2`): a window of two tabs, what you own and the shop, categories
-  down the left, cards three to a row, each thing's name in its rarity's
-  colour (`colours.bag`). Twenty things, House Builder's nineteen pieces
+  down the left, all of them in sight with none scrolled to, cards three
+  to a row, each thing's name in its rarity's colour (`colours.bag`). The
+  shop opens on All, has each thing's price under its name, and a thing
+  pressed there has Buy and Sell over its picture, a little see-through,
+  both always there and the one that cannot be pressed greyed (Hajun's,
+  later that day, APK 46). Twenty things, House Builder's nineteen pieces
   and the car, each with a rarity and a price that is its rarity's for
   now, sold back for half (`roundtown_net::bag`, written from Hajun's
   `assets/itemrarities.txt`: **change a rarity or a price there and in
