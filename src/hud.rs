@@ -49,10 +49,14 @@
 //! ([`cube`]; a sack for its first day, [`SACK`]: "i dont like the bag icon
 //! for that inventory panel. just reuse the box icon u used for the
 //! inventory tab"). The car the face used to put you in is in the bag now,
-//! to be tapped there; and in the car a door stands half way down the left
-//! edge of the screen ([`ExitButton`]; "a new ui button around left side
-//! center of your screen that is like a leave door icon and u press that to
-//! get off ur car"), with the bag's button put away until you are out. And
+//! to be tapped there; and in the car a door gets you out of it
+//! ([`ExitButton`]; "a new ui button ... that is like a leave door icon and
+//! u press that to get off ur car"): half way down the left edge of the
+//! screen for a day, and since 2026-11-22 where your bag's button is out
+//! of the car, which is put away in it ("the leave door/car button instead
+//! of left center, just put it where the inventory ui supposed to be cuz rn
+//! that slot is empty"). By the left edge now is what changes your plot
+//! ([`LeftEdge`], `customize`). And
 //! under your coins, your gems ([`GemsText`]; "i added gems below the
 //! coin"), the gem itself as wide as the coin itself and the two numbers
 //! one size ([`GEM_WIDE`], [`BALANCE_TEXT`]).
@@ -140,11 +144,22 @@ pub(crate) const SMALL_BUTTON: f32 = 8.0;
 const SIDE_BUTTON: f32 = 10.5;
 const SIDE_INSET: f32 = 1.5;
 pub(crate) const ACTION_BUTTON: f32 = 14.0;
-/// The door that gets you out of your car, half way down the left edge of
-/// the screen ([`ExitButton`]): between the buttons down the right edge and
-/// those round the jump button for size (mine), and as far in from the
-/// edge as your name is.
-const EXIT_BUTTON: f32 = 12.0;
+/// The buttons by the left edge of the screen ([`LeftEdge`]), which are
+/// `customize`'s: how big each is, the gap between two of them, one over
+/// the other, and how far down the screen the lowest of them ends, in
+/// parts of a hundred of its height. Three of them, one over the other,
+/// begin 26.5 down, under your gems, which end 24, and end over the stick,
+/// whose disc begins 64 down; the one that is there alone is where the
+/// middle of the three is, from 38.75 to 49.75 (Hajun, 2026-11-22: "a bit
+/// too down, i think u can move it up a bit": where the lowest is until
+/// then, under the chat's lines, which are by that edge from 38.5 to 48.6
+/// and step aside of them now, `chat::Aside`).
+pub(crate) const LEFT_BUTTON: f32 = 11.0;
+pub(crate) const LEFT_GAP: f32 = 1.25;
+const LEFT_FOOT: f32 = 62.0;
+/// Where your bag's button is among those round the jump button, from the
+/// corner of their box: and, in your car, the door out of it.
+const BAG_PLACE: (f32, f32) = (18.5, 18.5);
 /// Whether the gift is there, at the top of the right edge, and the person
 /// beside your name. Neither since 2026-11-14 (Hajun: "there is too many
 /// lobby ui buttons now. i think we can get rid of the gift icon for now,
@@ -308,7 +323,7 @@ const BRIDGE_COUNT_TEXT: f32 = 2.8;
 const BRIDGE_PLANK_UP: f32 = 13.0;
 const BRIDGE_COUNT_TOP: f32 = 52.0;
 /// How much of a round button its picture takes up, as a share of it.
-const PICTURE: f32 = 58.0;
+pub(crate) const PICTURE: f32 = 58.0;
 pub(crate) const HEADLINE: f32 = 8.0;
 pub(crate) const CAPTION: f32 = 4.5;
 /// How far in from the top and the sides of the screen the balance sits:
@@ -663,20 +678,23 @@ pub(crate) struct PunchButton {
 #[derive(Component)]
 pub(crate) struct BagButton;
 
-/// The door half way down the left edge of the screen, there while you are
-/// in your car, which gets you out of it (`drive`; Hajun, 2026-11-21: "when
-/// ur in the car riding mode, a new ui button around left side center of
-/// your screen that is like a leave door icon and u press that to get off
-/// ur car").
+/// The door, there while you are in your car, which gets you out of it
+/// (`drive`; Hajun, 2026-11-21: "when ur in the car riding mode, a new ui
+/// button ... that is like a leave door icon and u press that to get off ur
+/// car"): where your bag's button is out of the car ([`BAG_PLACE`]; half
+/// way down the left edge until 2026-11-22).
 #[derive(Component)]
 struct ExitButton;
 
-/// What stands by the left edge of the screen, half way down it: the door
-/// out of your car. Taken down and put up with the bar ([`relayout`],
-/// [`restyle`]), and put away while the camera is on someone you talk to,
-/// as the buttons round the jump button are.
+/// What stands by the left edge of the screen, about half way down it: a
+/// column, empty here, which `customize` puts its buttons in, the one that
+/// begins changing what stands on your plot and, while you do, its three
+/// (Hajun, 2026-11-22: "i want the left center spot to be a ui button that
+/// only appears while you are in ur plot"). Taken down and put up with the
+/// bar ([`relayout`], [`restyle`]), and put away while the camera is on
+/// someone you talk to, as the buttons round the jump button are.
 #[derive(Component)]
-struct LeftEdge;
+pub(crate) struct LeftEdge;
 
 /// The gift, down the right edge, which in the car, held, is the gun
 /// (`drive::shoot`; Hajun, 2026-11-06: "make the gift icon, while riding a
@@ -834,9 +852,9 @@ fn hide_round_the_jump(
 /// are up at home and in House Builder's lobby and plots too, where it
 /// would be a button that does nothing, and there it is put away, the
 /// others staying where they are. **In your car it is put away too, and
-/// the door out of the car is there instead**, half way down the left
-/// edge: the bag is not opened from the car (mine: Hajun asked for the
-/// door, and said nothing of the bag there). Written only as it changes.
+/// the door out of the car is there instead**, in its place: the bag is
+/// not opened from the car (mine: Hajun asked for the door, and said
+/// nothing of the bag there). Written only as it changes.
 fn show_car_buttons(
     me: Query<&Venue, With<Player>>,
     driving: Res<Driving>,
@@ -1593,7 +1611,8 @@ fn spawn_town_bar(commands: &mut Commands, assets: &AssetServer, images: &mut As
         // On your bag's button, the box that is on its window's first tab.
         let pack = images.add(if SACK { bag() } else { cube() });
         let (quick_right, quick_bottom, _) = QUICK_BUTTON;
-        for (name, right, bottom) in [("bag", 18.5, 18.5), ("social", quick_right, quick_bottom), ("punch", 24.3, 1.2)] {
+        let (bag_right, bag_bottom) = BAG_PLACE;
+        for (name, right, bottom) in [("bag", bag_right, bag_bottom), ("social", quick_right, quick_bottom), ("punch", 24.3, 1.2)] {
             let picture = match name {
                 "punch" => fist.clone(),
                 "bag" => pack.clone(),
@@ -1622,28 +1641,30 @@ fn spawn_town_bar(commands: &mut Commands, assets: &AssetServer, images: &mut As
         // The chat: a line to type (`chat`).
         let (right, bottom, size) = CHAT_BUTTON;
         round.spawn((ChatButton, chat_steps_in(), round_button(images.add(keyboard()), size, beside_the_jump(right, bottom))));
+        // The door out of your car, there while you are in it, where your
+        // bag's button is while you are not ([`show_car_buttons`]).
+        round.spawn((
+            ExitButton,
+            Visibility::Hidden,
+            round_button(icon("leave"), ACTION_BUTTON, beside_the_jump(bag_right, bag_bottom)),
+        ));
     });
-    // Half way down the left edge, as far in as your name and kept clear
-    // of a camera's hole as it is: the door out of your car, there while
-    // you are in it ([`show_car_buttons`]).
+    // By the left edge, as far in as your name and kept clear of a
+    // camera's hole as it is: the column `customize` puts its buttons in,
+    // which grows up from its foot.
     commands.spawn((
         LeftEdge,
         KeepsClear,
         Node {
             position_type: PositionType::Absolute,
             left: Val::VMin(EDGE),
-            top: Val::ZERO,
-            bottom: Val::ZERO,
+            bottom: Val::Vh(100.0 - LEFT_FOOT),
             flex_direction: FlexDirection::Column,
-            justify_content: JustifyContent::Center,
+            align_items: AlignItems::FlexStart,
+            row_gap: Val::VMin(LEFT_GAP),
             ..default()
         },
         Pickable::IGNORE,
-        children![(
-            ExitButton,
-            Visibility::Hidden,
-            round_button(icon("leave"), EXIT_BUTTON, Node::default()),
-        )],
     ));
 }
 
@@ -2910,6 +2931,77 @@ pub(crate) fn cube() -> Image {
     })
 }
 
+/// A house with a pencil across its corner, for the button that begins
+/// changing what stands on your plot (`customize`; Hajun, 2026-11-22: "a
+/// 'customize icon' maybe an icon that looks like editinghouse/sign/
+/// customize icon"): the house in outline, as the box on the bag's button
+/// is, and the pencil solid, leaning as the settings' does, with a little
+/// clear round it where it crosses the house.
+pub(crate) fn customize() -> Image {
+    const LINE: f32 = 0.065;
+    const CLEAR: f32 = 0.11;
+    let house = [
+        Vec2::new(-0.74, 0.08),
+        Vec2::new(-0.16, 0.78),
+        Vec2::new(0.42, 0.08),
+        Vec2::new(0.42, -0.74),
+        Vec2::new(-0.74, -0.74),
+    ];
+    drawn(move |at| {
+        let pencil = pencil_distance(at, Vec2::new(0.42, -0.2), 0.62, 0.13);
+        let outline = polygon_distance(at, &house).abs() - LINE;
+        outline.max(CLEAR - pencil).min(pencil)
+    })
+}
+
+/// How far `at` is from the edge of a pencil that leans 45 degrees to the
+/// upper right about `middle`, reaching `reach` each way along itself and
+/// `half` either side of its line, its point at the lower left.
+fn pencil_distance(at: Vec2, middle: Vec2, reach: f32, half: f32) -> f32 {
+    const ROUND: f32 = 0.03;
+    let (sin, cos) = std::f32::consts::FRAC_PI_4.sin_cos();
+    let from = at - middle;
+    // As the pencil sees it: along itself up its own y.
+    let local = Vec2::new(from.x * cos - from.y * sin, from.x * sin + from.y * cos);
+    // The point takes the lowest third of it.
+    let base = -reach + reach * 0.62;
+    let shaft = box_distance(local - Vec2::new(0.0, (reach + base) * 0.5), Vec2::new(half - ROUND, (reach - base) * 0.5 - ROUND));
+    let point = triangle_distance(local, Vec2::new(0.0, -reach + ROUND), Vec2::new(-half + ROUND, base), Vec2::new(half - ROUND, base));
+    shaft.min(point) - ROUND
+}
+
+/// A paintbrush, for the tool that paints what stands on your plot
+/// (`customize`): a thin handle leaning to the upper right, a band where
+/// the bristles are held, and the bristles, broad and coming to a point at
+/// the lower left, with a line cut between the band and them.
+pub(crate) fn brush() -> Image {
+    const ROUND: f32 = 0.035;
+    let bristles = [
+        Vec2::new(-0.2, -0.26),
+        Vec2::new(0.2, -0.26),
+        Vec2::new(0.26, -0.5),
+        Vec2::new(0.0, -0.9),
+        Vec2::new(-0.26, -0.5),
+    ];
+    let (sin, cos) = std::f32::consts::FRAC_PI_4.sin_cos();
+    drawn(move |at| {
+        // As the brush sees it: along itself up its own y.
+        let local = Vec2::new(at.x * cos - at.y * sin, at.x * sin + at.y * cos);
+        let handle = box_distance(local - Vec2::new(0.0, 0.5), Vec2::new(0.085 - ROUND, 0.42 - ROUND));
+        let band = box_distance(local - Vec2::new(0.0, -0.06), Vec2::new(0.2 - ROUND, 0.14 - ROUND));
+        let hair = polygon_distance(local, &bristles);
+        handle.min(band).min(hair) - ROUND
+    })
+}
+
+/// A tick, for the button that ends changing your plot (`customize`): a
+/// short stroke down and a long one up, as the edit menu's is.
+pub(crate) fn tick() -> Image {
+    const LINE: f32 = 0.13;
+    let (from, turn, to) = (Vec2::new(-0.64, 0.02), Vec2::new(-0.2, -0.44), Vec2::new(0.68, 0.5));
+    drawn(move |at| line_distance(at, from, turn).min(line_distance(at, turn, to)) - LINE)
+}
+
 /// A shopping cart, in outline: the picture on the bag's second tab, the
 /// shop (`bag::panel`; Hajun's `bagandinventorypanel2.png`). Its handle
 /// from the left, its basket, and two wheels under it.
@@ -3117,18 +3209,26 @@ mod tests {
     }
 
     #[test]
-    fn the_door_out_of_the_car_stands_half_way_down_the_left_edge_clear_of_the_stick_and_of_your_coins() {
-        // On a phone lying on its side the short side is the height: the
-        // door's middle is half way down it, 50 shares.
-        let (top, bottom) = (50.0 - EXIT_BUTTON * 0.5, 50.0 + EXIT_BUTTON * 0.5);
+    fn the_buttons_by_the_left_edge_stand_under_your_gems_and_over_the_stick_the_lowest_under_the_chat() {
+        // On a phone lying on its side the short side is the height. Three
+        // of them, one over the other, grow up from their foot.
+        let three = 3.0 * LEFT_BUTTON + 2.0 * LEFT_GAP;
+        let (top, bottom) = (LEFT_FOOT - three, LEFT_FOOT);
         // The stick's top is its bottom margin and its size up from the
         // bottom of the screen.
         let stick_top = 100.0 - crate::STICK_BOTTOM_VH - crate::STICK_SIZE_VMIN;
-        assert!(bottom + 1.5 < stick_top, "the door ends {bottom} down and the stick begins {stick_top} down");
-        // Your name, your coins and your gems end well over it.
+        assert!(bottom + 1.5 < stick_top, "they end {bottom} down and the stick begins {stick_top} down");
+        // Your name, your coins and your gems end over them.
         let line = BALANCE_TEXT * 1.3;
         let rows = EDGE + (NAME_TEXT * 1.3 + 2.0) + 1.4 + BALANCE_ICON.max(line) + 1.4 + (GEM_WIDE * GEM_SHAPE).max(line);
-        assert!(rows + 1.5 < top, "the gems end {rows} down and the door begins {top} down");
+        assert!(rows + 1.5 < top, "the gems end {rows} down and they begin {top} down");
+        // The one that is there alone is the middle of the three, about
+        // half way down the screen, where the chat's lines begin: they
+        // step aside of it (`customize::aside`).
+        let alone = (bottom - LEFT_BUTTON - LEFT_GAP - LEFT_BUTTON, bottom - LEFT_BUTTON - LEFT_GAP);
+        assert!((alone.0 + alone.1) * 0.5 > 40.0 && (alone.0 + alone.1) * 0.5 < 50.0, "{alone:?}");
+        let chat = (crate::chat::TOP, crate::chat::TOP + crate::chat::LOG_HEIGHT);
+        assert!(alone.0 < chat.1 && chat.0 < alone.1, "{alone:?} and {chat:?}");
     }
 
     #[test]
@@ -3175,7 +3275,15 @@ mod tests {
 
     #[test]
     fn the_pictures_on_the_bag_s_tabs_are_drawn_white_on_clear_and_are_not_empty() {
-        for (name, image) in [("the box", cube()), ("the cart", cart()), ("the bag", bag())] {
+        let all = [
+            ("the box", cube()),
+            ("the cart", cart()),
+            ("the bag", bag()),
+            ("the house and pencil", customize()),
+            ("the brush", brush()),
+            ("the tick", tick()),
+        ];
+        for (name, image) in all {
             let data = image.data.as_ref().expect("a picture's bytes");
             assert!(data.chunks(4).all(|pixel| pixel[..3] == [255, 255, 255]), "{name}");
             let covered = data.chunks(4).filter(|pixel| pixel[3] > 127).count() as f32 / (data.len() / 4) as f32;

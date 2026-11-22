@@ -39,16 +39,38 @@
 //! All of it is part of the town's shape as House Builder's pieces are part
 //! of their plot's (`super::reshape_plot`), laid over it beside the plots'
 //! signs.
+//!
+//! **A thing of yours answers a tap only in edit mode, with the hand**
+//! (since 2026-11-22, `customize`; Hajun: "with edit mode off, tapping
+//! objects should do nothing"): [`hands_off`]. Bringing something out of
+//! your bag turns edit mode on ("when u open invetory and tap an object to
+//! place it, then edit mode gets toggled on until u turn it off"), and
+//! leaving it, or taking up the brush, puts away whatever was in your hand
+//! ([`leave`]). **What of each thing is painted** is hung on it as the bags
+//! have it ([`keep_colours`], `paint::Colours`), for `paint` to draw.
+//!
+//! **A house picked up takes what stands in it along** ([`Rides`],
+//! [`ride_along`]; Hajun, 2026-11-22: "everything inside the house obj
+//! including the doors and windows should move together if u decide to move
+//! the house"): its doors and windows are its own, in its walls, and the
+//! furniture standing on its floors is carried where the house goes and
+//! turned as it turns, in nobody's way meanwhile, and put down with it,
+//! the bag told where each has come to. **Let go of by a tap somewhere
+//! else** (`editor::Edit::Away`), a thing is put down where it is if it can
+//! stand there (`super::edit_pieces`) and otherwise put back where it
+//! stood ([`PutBack`], [`put_back`]), and a house with all that was in it.
 
 use bevy::prelude::*;
 use roundtown_net::{Ask, At};
 
+use super::paint::Colours;
 use super::{
     BuildSystems, Ghost, Misplaced, Mount, OnWall, PIECES, Piece, PieceDef, Reshape, Rooms, Solid, Stock, Wall, Yard,
     bring_out, piece_ready, unghost, wall_index, walls_of,
 };
 use crate::Player;
-use crate::bag::{Bag, BagSystems, Standing, Theirs};
+use crate::bag::{Bag, BagSystems, Standing, TheirPaints, Theirs};
+use crate::customize::{self, Customize};
 use crate::drive::Driving;
 use crate::editor::{self, Edit, EditMenu, Editable, Touch, Untappable};
 use crate::hud;
@@ -65,12 +87,14 @@ const SAME: f32 = 1e-3;
 const SAID_SECS: f32 = 2.5;
 
 /// Your own plot of the town, while you are in the town and its plots have
-/// been read: the square of it, whether you are standing on it, and whether
-/// a house of yours stands there, and is down with its walls made.
+/// been read: the square of it, whether you are standing on it, or within
+/// a few steps of it (`customize::NEAR`), and whether a house of yours
+/// stands there, and is down with its walls made.
 #[derive(Resource, Default, Clone, Copy, PartialEq, Debug)]
 pub(crate) struct Home {
     pub yard: Option<Yard>,
     pub on_it: bool,
+    pub near: bool,
     house: Option<bool>,
 }
 
@@ -87,6 +111,17 @@ pub(crate) enum Why {
 }
 
 impl Home {
+    /// A plot there is nothing known of but whether you are on it or near
+    /// it.
+    #[cfg(test)]
+    pub(crate) fn for_tests(on_it: bool, near: bool) -> Self {
+        Self {
+            on_it,
+            near,
+            ..default()
+        }
+    }
+
     /// Whether a piece of `def` may be taken out of your bag to put down
     /// now, or why not.
     pub(crate) fn may_stand(&self, def: &PieceDef) -> Result<(), Why> {
@@ -112,10 +147,30 @@ pub(crate) struct Mine;
 /// One of yours that stands, as far as the bag goes: its number there, and
 /// where the bag has it.
 #[derive(Component, Clone, Copy, PartialEq, Debug)]
-struct Stood {
-    id: u32,
+pub(super) struct Stood {
+    pub(super) id: u32,
     at: At,
 }
+
+/// One of your things that stands in your house, carried along while the
+/// house is in your hand: which house, and where in the house's own space
+/// it stands.
+#[derive(Component, Clone, Copy)]
+pub(super) struct Rides {
+    house: Entity,
+    at: Transform,
+}
+
+/// A thing of yours let go of where it cannot stand (`editor::Edit::Away`,
+/// `super::edit_pieces`): it is to go back where it stood, or into the bag
+/// if it never had.
+#[derive(Message, Clone, Copy)]
+pub(super) struct PutBack(pub Entity);
+
+/// Saying what of each thing that stands is painted ([`keep_colours`]):
+/// `paint` draws it after.
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(super) struct Painting;
 
 /// One of yours that has been picked up, or just brought out: the bag is
 /// told where it stands once it is down ([`report`]).
@@ -145,6 +200,7 @@ struct Said;
 pub(super) fn plugin(app: &mut App) {
     app.init_resource::<Home>()
         .add_message::<Stand>()
+        .add_message::<PutBack>()
         .add_systems(
             Update,
             (
@@ -153,8 +209,10 @@ pub(super) fn plugin(app: &mut App) {
                     .after(editor::EditSystems)
                     .after(BagSystems)
                     .before(BuildSystems),
-                hands_off_in_the_car.before(editor::EditSystems),
-                (report, keep_mine, keep_theirs, say_misplaced).chain().after(BuildSystems),
+                hands_off.before(editor::EditSystems),
+                (put_back, ride_along, report, keep_mine, keep_theirs, keep_colours.in_set(Painting), say_misplaced)
+                    .chain()
+                    .after(BuildSystems),
             ),
         );
 }
@@ -210,22 +268,25 @@ fn same_place(a: &At, b: &At) -> bool {
     }
 }
 
-/// In your car, nothing of yours is picked up by a tap: driving across your
-/// plot, a stray one would have a bed in your hand. Everything of yours
-/// there but a house, which `super::untappable_from_inside` puts out of
-/// reach the same way with the houses you stand in. Written only as you
-/// get in and out.
+/// Nothing of yours is picked up by a tap but in edit mode, with the hand
+/// (`customize`; Hajun, 2026-11-22: "with edit mode off, tapping objects
+/// should do nothing"): not with the brush, which paints what it taps
+/// (`paint`), and never in your car, where a stray tap driving across your
+/// plot would have a bed in your hand. Everything of yours there but a
+/// house, which `super::untappable_from_inside` puts out of reach the same
+/// way with the houses you stand in. Written only as it changes.
 #[allow(clippy::type_complexity)]
-fn hands_off_in_the_car(
+fn hands_off(
     driving: Res<Driving>,
+    customize: Res<Customize>,
     pieces: Query<(Entity, Has<Untappable>), (With<Mine>, Without<Rooms>)>,
     mut commands: Commands,
 ) {
-    let driving = driving.on();
+    let out_of_reach = driving.on() || !customize.moving();
     for (piece, untappable) in &pieces {
-        if driving && !untappable {
+        if out_of_reach && !untappable {
             commands.entity(piece).insert(Untappable);
-        } else if !driving && untappable {
+        } else if !out_of_reach && untappable {
             commands.entity(piece).remove::<Untappable>();
         }
     }
@@ -241,28 +302,34 @@ fn find_home(
 ) {
     let mine = me.single().ok().filter(|(.., venue)| **venue == Venue::Town).and_then(|(at, seat, _)| {
         let yard = yard_of(plots.all.get(*plots.of_seat.get(seat.0)?)?);
-        Some((yard, yard.holds(at.translation.xz(), 0.0)))
+        let at = at.translation.xz();
+        Some((yard, yard.holds(at, 0.0), yard.holds(at, customize::NEAR)))
     });
     let house = houses
         .iter()
         .find(|(piece, ..)| piece.def.mount == Mount::House)
         .map(|(_, ghost, walled)| !ghost && walled);
     home.set_if_neq(Home {
-        yard: mine.map(|(yard, _)| yard),
-        on_it: mine.is_some_and(|(_, on_it)| on_it),
+        yard: mine.map(|(yard, ..)| yard),
+        on_it: mine.is_some_and(|(_, on_it, _)| on_it),
+        near: mine.is_some_and(|(.., near)| near),
         house,
     });
 }
 
 /// What the edit menu asks of one of your pieces that the bag has to hear
 /// of: picked back up, it is marked, to be told of once it is down again
-/// ([`report`]); thrown away, it is back in the bag, and with a house,
-/// whatever was in its walls, which goes with it. Before the menu's asks
-/// are done (`super::edit_pieces`), which takes what is thrown away out of
-/// the world.
+/// ([`report`]), and a house with it whatever of yours stands on its
+/// floors, which rides along from here ([`Rides`]); thrown away, it is back
+/// in the bag, and with a house, whatever was in its walls, which goes with
+/// it. Before the menu's asks are done (`super::edit_pieces`), which takes
+/// what is thrown away out of the world.
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn note_edits(
     mut edits: MessageReader<Edit>,
     mine: Query<(&Piece, Option<&Stood>), With<Mine>>,
+    houses: Query<(&Transform, &Rooms, &super::Bounds), With<Mine>>,
+    furniture: Query<(Entity, &Piece, &Transform, Has<Ghost>), (With<Mine>, With<Stood>, Without<Rooms>)>,
     online: Res<Online>,
     mut bag: ResMut<Bag>,
     mut asks: MessageWriter<Ask>,
@@ -272,6 +339,18 @@ fn note_edits(
         match edit {
             Edit::Opened(target) if mine.contains(target) => {
                 commands.entity(target).insert(Lifted);
+                let Ok((house, rooms, bounds)) = houses.get(target) else {
+                    continue;
+                };
+                // A house: what stands on its floors goes where it goes.
+                let into = house.compute_affine().inverse();
+                for (thing, piece, place, ghost) in &furniture {
+                    if ghost || piece.def.on_wall() || !rooms.hold(into.transform_point3(place.translation), bounds.high.y) {
+                        continue;
+                    }
+                    let at = Transform::from_matrix(Mat4::from(into * place.compute_affine()));
+                    commands.entity(thing).insert((Ghost, Lifted, Rides { house: target, at }));
+                }
             }
             Edit::Trash(target) => {
                 let Ok((piece, stood)) = mine.get(target) else {
@@ -309,13 +388,70 @@ fn settle(
         return;
     }
     unghost(ghost, children, solids, commands);
-    commands.entity(ghost).remove::<(Ghost, super::Fresh, Lifted)>().insert(Displaced);
+    commands
+        .entity(ghost)
+        .remove::<(Ghost, super::Fresh, Lifted, Rides, editor::CannotStand)>()
+        .insert(Displaced);
     reshape.0 = true;
+}
+
+/// Puts back a thing let go of where it cannot stand ([`PutBack`]): its
+/// menu away, and it back where the bag has it, or into the bag if it never
+/// stood ([`settle`]); and with a house, whatever was riding in it.
+#[allow(clippy::type_complexity)]
+fn put_back(
+    mut asked: MessageReader<PutBack>,
+    ghosts: Query<(Entity, Has<Stood>, Option<&Rides>), (With<Mine>, With<Ghost>)>,
+    (children, solids): (Query<&Children>, Query<&Solid>),
+    (mut reshape, mut menu): (ResMut<Reshape>, ResMut<EditMenu>),
+    mut commands: Commands,
+) {
+    for &PutBack(target) in asked.read() {
+        for (ghost, stood, rides) in &ghosts {
+            if ghost == target || rides.is_some_and(|rides| rides.house == target) {
+                menu.let_go_of(ghost);
+                settle(ghost, stood, &children, &solids, &mut reshape, &mut commands);
+            }
+        }
+    }
+}
+
+/// Carries what stands in a house along with it while the house is in your
+/// hand ([`Rides`]): where it stood in the house, wherever the house now is
+/// and whichever way it is turned. Once the house is down, so is what was
+/// in it, where it has come to, and the bag is told of each ([`report`]);
+/// and a house that has gone from your hand any other way, binned, leaves
+/// what was in it where it stood. Only what has moved is written.
+#[allow(clippy::type_complexity)]
+fn ride_along(
+    houses: Query<(&Transform, Has<Ghost>), (With<Mine>, With<Rooms>)>,
+    mut riders: Query<(Entity, &Rides, &mut Transform), Without<Rooms>>,
+    mut reshape: ResMut<Reshape>,
+    mut commands: Commands,
+) {
+    for (rider, rides, mut place) in &mut riders {
+        let Ok((house, in_hand)) = houses.get(rides.house) else {
+            commands.entity(rider).remove::<(Ghost, Lifted, Rides)>().insert(Displaced);
+            reshape.0 = true;
+            continue;
+        };
+        let wanted = Transform::from_matrix(Mat4::from(house.compute_affine() * rides.at.compute_affine()));
+        if *place != wanted {
+            *place = wanted;
+        }
+        if !in_hand {
+            commands.entity(rider).remove::<(Ghost, Rides)>();
+            reshape.0 = true;
+        }
+    }
 }
 
 /// Brings a building out of your bag onto your plot, in front of you, as a
 /// ghost with the edit menu open on it. Whatever was a ghost already is
-/// put away first ([`settle`]): one thing is put down at a time.
+/// put away first ([`settle`]): one thing is put down at a time. **And
+/// edit mode is on from here**, with the hand, until it is turned off
+/// (`customize`; Hajun: "when u open invetory and tap an object to place
+/// it, then edit mode gets toggled on until u turn it off").
 #[allow(clippy::too_many_arguments)]
 fn bring(
     mut stands: MessageReader<Stand>,
@@ -324,7 +460,7 @@ fn bring(
     me: Query<&Transform, With<Player>>,
     mine: Query<(Entity, &Piece, Has<Stood>, Has<Ghost>), With<Mine>>,
     (children, solids): (Query<&Children>, Query<&Solid>),
-    mut menu: ResMut<EditMenu>,
+    (mut menu, mut customize): (ResMut<EditMenu>, ResMut<Customize>),
     mut reshape: ResMut<Reshape>,
     mut commands: Commands,
 ) {
@@ -342,23 +478,36 @@ fn bring(
             .iter()
             .find(|(_, piece, stood, _)| *stood && piece.def.mount == Mount::House)
             .map(|(house, ..)| house);
-        bring_out(&mut commands, &stock, &mut menu, def, house, Venue::Town, me.translation, (Mine, Lifted));
+        let tag = (Mine, Lifted, Colours::default());
+        if bring_out(&mut commands, &stock, &mut menu, def, house, Venue::Town, me.translation, tag).is_some() && !customize.moving() {
+            customize.begin();
+        }
     }
 }
 
 /// Leaving the town, whatever of yours was a ghost is put away
-/// ([`settle`]): the menu on it has gone (`editor::put_away`).
+/// ([`settle`]): the menu on it has gone (`editor::put_away`). And so it is
+/// as the hand is put down with something still in it, edit mode left for
+/// being no longer by your plot, or in your car (`customize`): its menu
+/// goes with it. (The tick and the brush put what is in your hand down
+/// where it is first, and are not done if that cannot be:
+/// `customize::settle`.)
 fn leave(
     me: Query<&Venue, (With<Player>, Changed<Venue>)>,
+    customize: Res<Customize>,
     ghosts: Query<(Entity, Has<Stood>), (With<Mine>, With<Ghost>)>,
     (children, solids): (Query<&Children>, Query<&Solid>),
-    mut reshape: ResMut<Reshape>,
+    (mut reshape, mut menu): (ResMut<Reshape>, ResMut<EditMenu>),
     mut commands: Commands,
 ) {
-    if me.single().is_ok_and(|&venue| venue != Venue::Town) {
-        for (ghost, stood) in &ghosts {
-            settle(ghost, stood, &children, &solids, &mut reshape, &mut commands);
-        }
+    let gone = me.single().is_ok_and(|&venue| venue != Venue::Town);
+    let hand_down = customize.is_changed() && !customize.is_added() && !customize.moving();
+    if !(gone || hand_down) {
+        return;
+    }
+    for (ghost, stood) in &ghosts {
+        menu.let_go_of(ghost);
+        settle(ghost, stood, &children, &solids, &mut reshape, &mut commands);
     }
 }
 
@@ -453,7 +602,7 @@ fn raise(
         }
         _ => return None,
     };
-    piece.insert((Piece { def }, tag, WorldAssetRoot(stock.scene(def))));
+    piece.insert((Piece { def }, tag, Colours::default(), WorldAssetRoot(stock.scene(def))));
     piece.observe(piece_ready);
     Some(piece.id())
 }
@@ -667,17 +816,49 @@ fn keep_theirs(
     }
 }
 
+/// Hangs on each thing that stands what of it is painted, as the bags have
+/// it (`paint::Colours`): yours out of your own bag, by its number there;
+/// everyone else's as the server said of their plot. As either changes,
+/// and as a thing is stood. Only what differs is written, and `paint`
+/// draws whatever is.
+#[allow(clippy::type_complexity)]
+fn keep_colours(
+    bag: Res<Bag>,
+    their_paints: Res<TheirPaints>,
+    stood: Query<(), Or<(Added<Stood>, Added<TheirPiece>)>>,
+    mut mine: Query<(&Stood, &mut Colours), (With<Mine>, Without<TheirPiece>)>,
+    mut theirs: Query<(&TheirPiece, &mut Colours), Without<Mine>>,
+) {
+    if !(bag.is_changed() || their_paints.is_changed() || !stood.is_empty()) {
+        return;
+    }
+    for (stood, mut colours) in &mut mine {
+        let wanted = Colours::of(bag.paints.of(stood.id));
+        if *colours != wanted {
+            *colours = wanted;
+        }
+    }
+    for (piece, mut colours) in &mut theirs {
+        let painted = their_paints.0.get(&piece.who).map(Vec::as_slice).unwrap_or_default();
+        let wanted = Colours::of(painted.iter().filter(|paint| paint.id == piece.id).map(|paint| (paint.part.as_str(), paint.colour)));
+        if *colours != wanted {
+            *colours = wanted;
+        }
+    }
+}
+
 /// Says why a piece asked to be put down has not been
 /// (`super::Misplaced`): across the screen, one line at a time.
 fn say_misplaced(mut misplaced: MessageReader<Misplaced>, said: Query<Entity, With<Said>>, mut commands: Commands) {
-    if misplaced.read().count() == 0 {
+    let Some(&why) = misplaced.read().last() else {
         return;
-    }
+    };
     for line in &said {
         commands.entity(line).despawn();
     }
     let ui = ui();
-    hud::announce(&mut commands, None, &ui.words.bag.off_your_land, hud::CAPTION, SAID_SECS).insert(Said);
+    let words = if why.in_the_way { &ui.words.bag.in_the_way } else { &ui.words.bag.off_your_land };
+    hud::announce(&mut commands, None, words, hud::CAPTION, SAID_SECS).insert(Said);
 }
 
 #[cfg(test)]
@@ -782,6 +963,7 @@ mod tests {
         let on_it = Home {
             yard: Some(yard(Vec2::NEG_Y)),
             on_it: true,
+            near: true,
             house: None,
         };
         let (lamp, house, door, window) = (def("streetlamp"), def("square_house"), def("classic_door"), def("wide_window"));
@@ -807,6 +989,196 @@ mod tests {
         assert_eq!(housed.may_stand(door), Ok(()));
         assert_eq!(housed.may_stand(window), Ok(()));
         assert_eq!(housed.may_stand(house), Err(Why::OneHouse));
+    }
+
+    #[test]
+    fn a_house_picked_up_takes_what_stands_in_it_along_and_puts_it_down_where_it_comes_to() {
+        use std::f32::consts::FRAC_PI_2;
+
+        use bevy::ecs::system::RunSystemOnce;
+
+        use super::super::Rooms;
+        let mut world = World::new();
+        world.init_resource::<Messages<Edit>>();
+        world.init_resource::<Messages<Ask>>();
+        world.init_resource::<Bag>();
+        world.init_resource::<Reshape>();
+        world.insert_resource(Online::default());
+        let here = At::Ground { x: 0.0, y: 0.0, z: 0.0, yaw: 0.0 };
+        let stood = |id: u32| Stood { id, at: here };
+        // A house 8 by 6 with one floor, a bed standing on that floor, and a
+        // lamp out on the plot.
+        let bounds = Bounds {
+            low: Vec3::new(-4.0, 0.0, -3.0),
+            high: Vec3::new(4.0, 5.0, 3.0),
+        };
+        let floor = Rooms(vec![(Vec3::new(-4.0, 0.0, -3.0), Vec3::new(4.0, 0.1, 3.0))]);
+        let house = world
+            .spawn((Mine, Piece { def: def("square_house") }, stood(1), Transform::from_xyz(10.0, 0.0, 10.0), floor, bounds))
+            .id();
+        let bed = world.spawn((Mine, Piece { def: def("singlebed") }, stood(2), Transform::from_xyz(12.0, 0.1, 11.0))).id();
+        let lamp = world.spawn((Mine, Piece { def: def("streetlamp") }, stood(3), Transform::from_xyz(20.0, 0.0, 10.0))).id();
+        let pick_up = |world: &mut World| {
+            world.write_message(Edit::Opened(house));
+            world.run_system_once(note_edits).unwrap();
+            world.resource_mut::<Messages<Edit>>().clear();
+            // (`super::edit_pieces` makes the house itself a ghost.)
+            world.entity_mut(house).insert(Ghost);
+        };
+        // Picked up: the bed rides in it from here, in nobody's way and to
+        // be told of to the bag once it is down; the lamp stays where it is.
+        pick_up(&mut world);
+        assert!(world.get::<Lifted>(house).is_some());
+        assert!(world.get::<Rides>(bed).is_some() && world.get::<Ghost>(bed).is_some() && world.get::<Lifted>(bed).is_some());
+        assert!(world.get::<Rides>(lamp).is_none() && world.get::<Ghost>(lamp).is_none());
+        // The house five metres on and turned a quarter: the bed where it
+        // stood in the house, two metres to its right and one behind its
+        // middle, turned with it (Hajun: "everything inside the house obj
+        // ... should move together if u decide to move the house").
+        *world.get_mut::<Transform>(house).unwrap() = Transform::from_xyz(15.0, 0.0, 10.0).with_rotation(Quat::from_rotation_y(FRAC_PI_2));
+        world.run_system_once(ride_along).unwrap();
+        let rode = *world.get::<Transform>(bed).unwrap();
+        assert!(rode.translation.distance(Vec3::new(16.0, 0.1, 8.0)) < 1e-4, "{}", rode.translation);
+        assert!(rode.rotation.angle_between(Quat::from_rotation_y(FRAC_PI_2)) < 1e-2);
+        assert!(world.get::<Ghost>(bed).is_some());
+        assert_eq!(world.get::<Transform>(lamp).unwrap().translation, Vec3::new(20.0, 0.0, 10.0));
+        // Put down: so is the bed, there, and the bag is to hear of it.
+        world.entity_mut(house).remove::<Ghost>();
+        world.resource_mut::<Reshape>().0 = false;
+        world.run_system_once(ride_along).unwrap();
+        assert!(world.get::<Rides>(bed).is_none() && world.get::<Ghost>(bed).is_none());
+        assert!(world.get::<Lifted>(bed).is_some());
+        assert!(world.resource::<Reshape>().0);
+        assert!(world.get::<Transform>(bed).unwrap().translation.distance(Vec3::new(16.0, 0.1, 8.0)) < 1e-4);
+        // Picked up again and binned: the bed is left where the bag has it.
+        world.entity_mut(bed).remove::<Lifted>();
+        pick_up(&mut world);
+        assert!(world.get::<Rides>(bed).is_some());
+        world.entity_mut(house).despawn();
+        world.run_system_once(ride_along).unwrap();
+        assert!(world.get::<Rides>(bed).is_none() && world.get::<Ghost>(bed).is_none() && world.get::<Lifted>(bed).is_none());
+        assert!(world.get::<Displaced>(bed).is_some());
+    }
+
+    #[test]
+    fn a_thing_let_go_of_where_it_cannot_stand_goes_back_and_a_house_with_all_that_rode_in_it() {
+        use bevy::ecs::system::RunSystemOnce;
+        let mut world = World::new();
+        world.init_resource::<Messages<PutBack>>();
+        world.init_resource::<Reshape>();
+        world.init_resource::<EditMenu>();
+        let here = At::Ground { x: 0.0, y: 0.0, z: 0.0, yaw: 0.0 };
+        // A house in your hand with a bed riding in it, and a lamp that is
+        // down.
+        let house = world.spawn((Mine, Ghost, Lifted, Stood { id: 1, at: here })).id();
+        let rides = Rides {
+            house,
+            at: Transform::IDENTITY,
+        };
+        let bed = world.spawn((Mine, Ghost, Lifted, Stood { id: 2, at: here }, rides)).id();
+        let lamp = world.spawn((Mine, Stood { id: 3, at: here })).id();
+        world.resource_mut::<EditMenu>().open_on(house);
+        world.write_message(PutBack(house));
+        world.run_system_once(put_back).unwrap();
+        world.resource_mut::<Messages<PutBack>>().clear();
+        // Both back where the bag has them, to be stood there again, and
+        // the menu away; the lamp as it was.
+        for thing in [house, bed] {
+            assert!(world.get::<Ghost>(thing).is_none() && world.get::<Lifted>(thing).is_none(), "{thing}");
+            assert!(world.get::<Displaced>(thing).is_some(), "{thing}");
+        }
+        assert!(world.get::<Rides>(bed).is_none());
+        assert!(!world.resource::<EditMenu>().is_open());
+        assert!(world.get::<Displaced>(lamp).is_none());
+        // One just out of the bag, which never stood: back into the bag.
+        let fresh = world.spawn((Mine, Ghost, Lifted)).id();
+        world.write_message(PutBack(fresh));
+        world.run_system_once(put_back).unwrap();
+        assert!(world.get_entity(fresh).is_err());
+    }
+
+    #[test]
+    fn nothing_of_yours_answers_a_tap_but_in_edit_mode_with_the_hand_and_never_in_your_car() {
+        use bevy::ecs::system::RunSystemOnce;
+        let mut world = World::new();
+        world.insert_resource(Driving::for_tests(false));
+        world.insert_resource(Customize::default());
+        let bed = world.spawn(Mine).id();
+        let out_of_reach = |world: &mut World| {
+            world.run_system_once(hands_off).unwrap();
+            world.get::<Untappable>(bed).is_some()
+        };
+        // Edit mode off (Hajun: "with edit mode off, tapping objects should
+        // do nothing").
+        assert!(out_of_reach(&mut world));
+        // On, with the hand: a tap picks it up.
+        world.resource_mut::<Customize>().begin();
+        assert!(!out_of_reach(&mut world));
+        // In your car, not even then.
+        world.insert_resource(Driving::for_tests(true));
+        assert!(out_of_reach(&mut world));
+        world.insert_resource(Driving::for_tests(false));
+        assert!(!out_of_reach(&mut world));
+        // With the brush a tap paints it, and does not pick it up.
+        world.insert_resource(Customize::with_the_brush());
+        assert!(out_of_reach(&mut world));
+        // Something brought out of the bag: the hand again.
+        world.resource_mut::<Customize>().begin();
+        assert!(!out_of_reach(&mut world));
+    }
+
+    #[test]
+    fn what_is_painted_of_each_thing_is_hung_on_it_as_the_bags_have_it() {
+        use bevy::ecs::system::RunSystemOnce;
+        use crate::bag::Paint;
+        let here = At::Ground { x: 1.0, y: 0.0, z: 2.0, yaw: 0.0 };
+        let mut world = World::new();
+        world.init_resource::<Bag>();
+        world.init_resource::<TheirPaints>();
+        {
+            let mut bag = world.resource_mut::<Bag>();
+            bag.has.buy("singlebed", 1_000).unwrap();
+            bag.has.buy("singlebed", 1_000).unwrap();
+            bag.has.put(2, "singlebed", here).unwrap();
+            bag.has.put(3, "singlebed", here).unwrap();
+            let stands = bag.has.stands.clone();
+            bag.paints.set(&stands, 2, "blanket", [0, 0, 255]).unwrap();
+        }
+        // Two beds of yours, one painted; and someone else's bed, which
+        // goes by the same number in their bag, painted red.
+        let painted = world.spawn((Mine, Stood { id: 2, at: here }, Colours::default())).id();
+        let plain = world.spawn((Mine, Stood { id: 3, at: here }, Colours::default())).id();
+        let whose = TheirPiece {
+            who: 9,
+            id: 2,
+            at: here,
+            plot: 0,
+        };
+        let theirs = world.spawn((whose, Colours::default())).id();
+        let red = Paint {
+            id: 2,
+            part: "blanket".into(),
+            colour: [255, 0, 0],
+        };
+        world.resource_mut::<TheirPaints>().0.insert(9, vec![red]);
+        let colours = |world: &World, thing: Entity| world.get::<Colours>(thing).unwrap().0.clone();
+        world.run_system_once(keep_colours).unwrap();
+        assert_eq!(colours(&world, painted), [("blanket".to_string(), [0, 0, 255])]);
+        assert!(colours(&world, plain).is_empty());
+        assert_eq!(colours(&world, theirs), [("blanket".to_string(), [255, 0, 0])]);
+        // Yours taken back and stood again under its number is as it was
+        // made; and theirs is whatever the server says next, nothing here.
+        {
+            let mut bag = world.resource_mut::<Bag>();
+            bag.has.take(2).unwrap();
+            let stands = bag.has.stands.clone();
+            bag.paints.fit(&stands);
+            bag.has.put(2, "singlebed", here).unwrap();
+        }
+        world.resource_mut::<TheirPaints>().0.insert(9, Vec::new());
+        world.run_system_once(keep_colours).unwrap();
+        assert!(colours(&world, painted).is_empty());
+        assert!(colours(&world, theirs).is_empty());
     }
 
     #[test]

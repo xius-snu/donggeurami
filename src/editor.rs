@@ -44,10 +44,26 @@ use crate::hud;
 
 /// How far a press may travel and still count as a tap rather than a look drag.
 pub(crate) const TAP_SLOP: f32 = 16.0;
-/// Where the four buttons sit around the thing, and how big they are, as
-/// shares of the short side of the screen — the same units the touch HUD uses.
-const MENU_RADIUS_VMIN: f32 = 15.0;
-const MENU_BUTTON_VMIN: f32 = 13.0;
+/// How big the four buttons are, as a share of the short side of the screen,
+/// the units the touch HUD uses: as big as the buttons down the right edge
+/// of the screen, the two people and the gamepad (Hajun, 2026-11-22: "can be
+/// slightly smaller, similar size as the current top right corner icons
+/// like the social/minigame icons"; 13 until then).
+const MENU_BUTTON_VMIN: f32 = 10.5;
+/// Where they sit round the thing, in the same units: each just clear of
+/// the thing as it is drawn, by this much room, the bin over its top, the
+/// tick under its foot and a turn either side of it, so that they close in
+/// on a small thing or one far off and open out round a big one or one
+/// zoomed in on ("more better/accurate in where the buttons are relative to
+/// the cam angle/zoom and object"; they stood 15 from one point on the
+/// thing, whatever its size, until then). But never nearer the point they
+/// are round than [`MENU_NEAR_VMIN`], which keeps them clear of each
+/// other, nor further from it than [`MENU_FAR_VMIN`], sideways and up or
+/// down: round a house that fills the screen they are still on the house,
+/// and in sight.
+const MENU_GAP_VMIN: f32 = 1.5;
+const MENU_NEAR_VMIN: f32 = 9.0;
+const MENU_FAR_VMIN: (f32, f32) = (26.0, 26.0);
 /// The buttons go no higher on a thing that is big on the screen than this
 /// much of the top of it, where the balance, House Builder's time and theme,
 /// and the hammer top right are: a tap on the time skips the wait.
@@ -164,6 +180,13 @@ pub(crate) struct Editable {
     pub sticky: bool,
 }
 
+/// Where it is, it cannot be put down: on the thing the menu is open on,
+/// the tick is greyed for as long as this is on it (since 2026-11-22;
+/// Hajun: "it will just grey out the check mark if its colliding/cant be
+/// applied"). Whatever looks after that kind of thing says when.
+#[derive(Component)]
+pub(crate) struct CannotStand;
+
 /// Out of a tap's reach for now, though still [`Editable`]: a tap goes through
 /// it to whatever is behind, or to nothing. Whatever looks after that kind of
 /// thing says when; a menu already open on it stays open.
@@ -240,6 +263,18 @@ pub(crate) enum Edit {
     Trash(Entity),
     /// Where it is, it is to stay.
     Confirm(Entity),
+    /// A tap somewhere else, with the menu open on it and waiting for it to
+    /// be put down: it is to be let go of. Whatever looks after it says
+    /// what that is, and puts the menu away ([`EditMenu::let_go_of`]): what
+    /// stands on your plot of the town is put down where it is if it can
+    /// stand there, and put back where it stood if not (Hajun, 2026-11-22:
+    /// "when u tap somewhere that is not the object, it should 'cancel' so
+    /// it closes the 4 button menu, and if the position is valid/not
+    /// colliding it will apply it, but if the position is invalid, will
+    /// just 'cancel' and set it back to the previous applied position"). A
+    /// piece of a house being built in House Builder waits for its tick, as
+    /// it did.
+    Away(Entity),
 }
 
 #[derive(Component, Clone, Copy, PartialEq, Eq, Debug)]
@@ -258,22 +293,17 @@ impl EditButton {
         Self::RotateLeft,
     ];
 
-    /// Which way out from the thing this button sits, in screen directions.
-    fn offset(self) -> Vec2 {
-        match self {
-            Self::Trash => Vec2::new(0.0, -1.0),
-            Self::Confirm => Vec2::new(0.0, 1.0),
-            Self::RotateRight => Vec2::new(1.0, 0.0),
-            Self::RotateLeft => Vec2::new(-1.0, 0.0),
-        }
-    }
-
     fn turns(self) -> bool {
         matches!(self, Self::RotateRight | Self::RotateLeft)
     }
 
-    fn fill(self, held: bool) -> Color {
+    /// Its fill: `held`, under a finger; and `off`, the tick on a thing
+    /// that cannot be put down where it is ([`CannotStand`]).
+    fn fill(self, held: bool, off: bool) -> Color {
         let colours = crate::ui::ui().colours.edit_menu;
+        if off && self == Self::Confirm {
+            return colours.confirm_off;
+        }
         match (self, held) {
             (Self::Trash, false) => colours.trash,
             (Self::Trash, true) => colours.trash_held,
@@ -284,8 +314,11 @@ impl EditButton {
         }
     }
 
-    fn edge(self) -> Color {
+    fn edge(self, off: bool) -> Color {
         let colours = crate::ui::ui().colours.edit_menu;
+        if off && self == Self::Confirm {
+            return colours.confirm_off_rim;
+        }
         match self {
             Self::Trash => colours.trash_rim,
             Self::Confirm => colours.confirm_rim,
@@ -325,6 +358,9 @@ pub(crate) struct EditMenu {
     /// enough to it that they reach on to the screen. Out of view they are
     /// neither drawn nor pressable, and `anchor` is out of date.
     shown: bool,
+    /// How far from `anchor` each button is, in logical window pixels: as
+    /// far as takes it clear of the thing as it is drawn ([`Reach`]).
+    reach: Reach,
     /// Where the thing is on the screen, for a press on it to drag it by.
     grip: Option<Rect>,
     /// Whether the thing has turn buttons.
@@ -337,9 +373,40 @@ pub(crate) struct EditMenu {
     swallow_release: bool,
 }
 
+/// How far from the point they are round the menu's buttons are, in logical
+/// window pixels: a turn to the left and one to the right, the bin up, and
+/// the tick down. Each its own, the point being seldom the middle of the
+/// thing as it is drawn: it is low on it, and seen from one side a thing
+/// reaches further across the screen one way than the other.
+#[derive(Clone, Copy, Default, PartialEq, Debug)]
+struct Reach {
+    left: f32,
+    right: f32,
+    up: f32,
+    down: f32,
+}
+
+impl Reach {
+    /// The furthest of them.
+    fn furthest(self) -> f32 {
+        self.left.max(self.right).max(self.up).max(self.down)
+    }
+}
+
 impl EditMenu {
     pub(crate) fn is_open(&self) -> bool {
         self.target.is_some()
+    }
+
+    /// Where `button` is from the point the buttons are round, across and
+    /// down the screen.
+    fn offset(&self, button: EditButton) -> Vec2 {
+        match button {
+            EditButton::Trash => Vec2::new(0.0, -self.reach.up),
+            EditButton::Confirm => Vec2::new(0.0, self.reach.down),
+            EditButton::RotateRight => Vec2::new(self.reach.right, 0.0),
+            EditButton::RotateLeft => Vec2::new(-self.reach.left, 0.0),
+        }
     }
 
     /// What the menu is open on, if it is open.
@@ -370,14 +437,26 @@ impl EditMenu {
             return None;
         }
         let metrics = Metrics::of(window);
-        EditButton::ALL.into_iter().find(|button| {
-            (self.turns || !button.turns())
-                && pos.distance(self.anchor + button.offset() * metrics.ring)
-                    <= metrics.button * 0.59
+        EditButton::ALL.into_iter().find(|&button| {
+            (self.turns || !button.turns()) && pos.distance(self.anchor + self.offset(button)) <= metrics.button * 0.59
         })
     }
 
     /// Opens the menu on `target`, wherever it is on the screen.
+    /// The tick, pressed from somewhere else (`customize`): whatever the
+    /// menu is open on is to stay where it is, and the menu goes.
+    pub(crate) fn confirm(&mut self, edits: &mut MessageWriter<Edit>) {
+        press(EditButton::Confirm, self, edits);
+    }
+
+    /// Puts the menu away, if it is open on `target`: that has been put
+    /// down, or put away, by something else.
+    pub(crate) fn let_go_of(&mut self, target: Entity) {
+        if self.target == Some(target) {
+            self.close();
+        }
+    }
+
     pub(crate) fn open_on(&mut self, target: Entity) {
         self.target = Some(target);
         self.shown = false;
@@ -435,47 +514,68 @@ impl EditMenu {
             let screen = Rect::new(0.0, 0.0, window.width(), window.height());
             visible_middle(shown, screen)
         });
+        let Some(at) = at else {
+            self.shown = false;
+            return;
+        };
+        // Each button just clear of the thing as it is drawn: the bin over
+        // its top, a turn either side of it.
+        let clear = metrics.gap + metrics.button * 0.5;
+        let up = (at.y - shown.min.y + clear).clamp(metrics.near, metrics.far.y);
+        let left = (at.x - shown.min.x + clear).clamp(metrics.near, metrics.far.x);
+        let right = (shown.max.x - at.x + clear).clamp(metrics.near, metrics.far.x);
         // A house up the screen would have its bin over the time, so it is
         // ringed lower down, but only as far down as the house itself goes:
         // one that has gone up off the screen is not held down where it has
-        // gone from, nor pulled across, and its buttons go with it.
-        let clear_of_the_top = metrics.below_the_top(window).min(shown.max.y);
-        let at = at.map(|at| Vec2::new(at.x, at.y.max(clear_of_the_top)));
-        self.shown = at.is_some_and(|at| metrics.reaches_screen(window, at));
-        if let Some(at) = at {
-            self.anchor = at;
-        }
+        // gone from, nor pulled across, and its buttons go with it. And
+        // where that is not far enough down for a bin over the house's top,
+        // the bin comes down on to the house: under the time comes first.
+        let clear_of_the_top = metrics.below_the_top(window, up).min(shown.max.y);
+        let at = Vec2::new(at.x, at.y.max(clear_of_the_top));
+        let up = up.min(at.y - metrics.below_the_top(window, 0.0)).max(metrics.near);
+        // And the tick under its foot, from wherever that has left them.
+        let down = (shown.max.y - at.y + clear).clamp(metrics.near, metrics.far.y);
+        self.reach = Reach { left, right, up, down };
+        self.shown = metrics.reaches_screen(window, at, self.reach);
+        self.anchor = at;
     }
 }
 
-/// The menu's size for this window, in pixels.
+/// The menu's sizes for this window, in pixels.
 struct Metrics {
-    /// How far each button sits from the anchor.
-    ring: f32,
     /// A button's width and height.
     button: f32,
+    /// The room between the thing and a button; the nearest a button is to
+    /// the point the buttons are round; and the furthest, sideways and up or
+    /// down.
+    gap: f32,
+    near: f32,
+    far: Vec2,
 }
 
 impl Metrics {
     fn of(window: &Window) -> Self {
-        let vmin = window.width().min(window.height());
+        let vmin = window.width().min(window.height()) / 100.0;
         Self {
-            ring: vmin * (MENU_RADIUS_VMIN / 100.0),
-            button: vmin * (MENU_BUTTON_VMIN / 100.0),
+            button: vmin * MENU_BUTTON_VMIN,
+            gap: vmin * MENU_GAP_VMIN,
+            near: vmin * MENU_NEAR_VMIN,
+            far: Vec2::new(MENU_FAR_VMIN.0, MENU_FAR_VMIN.1) * vmin,
         }
     }
 
     /// How far down the screen the middle of the buttons is to be for the
-    /// bin, above it, to be below the balance, the time and the theme.
-    fn below_the_top(&self, window: &Window) -> f32 {
+    /// bin, `up` above it, to be below the balance, the time and the theme.
+    fn below_the_top(&self, window: &Window, up: f32) -> f32 {
         let vmin = window.width().min(window.height()) / 100.0;
-        MENU_BELOW_VMIN * vmin + self.ring + self.button * 0.5
+        MENU_BELOW_VMIN * vmin + up + self.button * 0.5
     }
 
-    /// Whether buttons round `anchor` reach on to the screen at all. Past that
-    /// they are out of sight, however far off `anchor` is.
-    fn reaches_screen(&self, window: &Window, anchor: Vec2) -> bool {
-        let reach = self.ring + self.button * 0.5;
+    /// Whether buttons round `anchor`, as far out as `reach`, reach on to
+    /// the screen at all. Past that they are out of sight, however far off
+    /// `anchor` is.
+    fn reaches_screen(&self, window: &Window, anchor: Vec2, reach: Reach) -> bool {
+        let reach = reach.furthest() + self.button * 0.5;
         anchor.x > -reach
             && anchor.x < window.width() + reach
             && anchor.y > -reach
@@ -736,6 +836,14 @@ fn drive_menu(
             {
                 menu.open_on(target);
                 edits.write(Edit::Opened(target));
+            }
+        }
+        // A tap anywhere else, on a menu that waits for its thing to be put
+        // down: the thing is let go of, if whatever looks after it lets it
+        // be ([`Edit::Away`]).
+        None if !swallowed && !pointer.lost && pointer.travel <= TAP_SLOP && menu.sticky => {
+            if let Some(target) = menu.target {
+                edits.write(Edit::Away(target));
             }
         }
         None => {}
@@ -1110,8 +1218,8 @@ fn setup_menu(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
                         border_radius: BorderRadius::all(Val::Percent(50.0)),
                         ..default()
                     },
-                    BackgroundColor(button.fill(false)),
-                    BorderColor::all(button.edge()),
+                    BackgroundColor(button.fill(false, false)),
+                    BorderColor::all(button.edge(false)),
                 ))
                 .with_children(|icon| match button {
                     EditButton::Trash => {
@@ -1121,8 +1229,8 @@ fn setup_menu(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
                     }
                     // A tick: a short stroke down and a long one up.
                     EditButton::Confirm => {
-                        icon.spawn(icon_part(24.0, 53.0, 24.0, 11.0, 50.0, 45.0));
-                        icon.spawn(icon_part(33.0, 44.0, 46.0, 11.0, 50.0, -50.0));
+                        icon.spawn((TickPart, icon_part(24.0, 53.0, 24.0, 11.0, 50.0, 45.0)));
+                        icon.spawn((TickPart, icon_part(33.0, 44.0, 46.0, 11.0, 50.0, -50.0)));
                     }
                     // The usual circular arrow, clockwise for the right button
                     // and its mirror image for the left.
@@ -1136,6 +1244,11 @@ fn setup_menu(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
             }
         });
 }
+
+/// One of the tick's two strokes, which are greyed with their button on a
+/// thing that cannot be put down where it is.
+#[derive(Component)]
+struct TickPart;
 
 /// One white shape inside a button, in percentages of the button's own box —
 /// the same way the jump arrow on the touch HUD is drawn. `rotation` is
@@ -1257,11 +1370,14 @@ fn triangle_distance(at: Vec2, a: Vec2, b: Vec2, c: Vec2) -> f32 {
     -nearest.x.sqrt() * nearest.y.signum()
 }
 
+#[allow(clippy::type_complexity)]
 fn layout_menu(
     menu: Res<EditMenu>,
     windows: Query<&Window>,
+    cannot: Query<(), With<CannotStand>>,
     mut root: Query<&mut Node, (With<EditMenuRoot>, Without<EditButton>)>,
-    mut buttons: Query<(&EditButton, &mut Node, &mut BackgroundColor), Without<EditMenuRoot>>,
+    mut buttons: Query<(&EditButton, &mut Node, &mut BackgroundColor, &mut BorderColor), Without<EditMenuRoot>>,
+    mut tick: Query<&mut BackgroundColor, (With<TickPart>, Without<EditButton>)>,
 ) {
     let Ok(window) = windows.single() else {
         return;
@@ -1284,8 +1400,15 @@ fn layout_menu(
         Some(Held::Button(button)) => Some(button),
         _ => None,
     };
-    for (button, mut node, mut color) in &mut buttons {
-        let centre = button.offset() * metrics.ring;
+    // The tick is greyed on a thing that cannot be put down where it is.
+    let off = menu.target.is_some_and(|target| cannot.contains(target));
+    let colours = crate::ui::ui().colours.edit_menu;
+    let stroke = BackgroundColor(if off { colours.confirm_off_rim } else { colours.icon });
+    for mut part in &mut tick {
+        part.set_if_neq(stroke);
+    }
+    for (button, mut node, mut color, mut rim) in &mut buttons {
+        let centre = menu.offset(*button);
         edit_node(&mut node, |node| {
             node.display = if menu.turns || !button.turns() {
                 Display::Flex
@@ -1297,7 +1420,8 @@ fn layout_menu(
             node.width = Val::Px(metrics.button);
             node.height = Val::Px(metrics.button);
         });
-        color.set_if_neq(BackgroundColor(button.fill(held == Some(*button))));
+        color.set_if_neq(BackgroundColor(button.fill(held == Some(*button), off)));
+        rim.set_if_neq(BorderColor::all(button.edge(off)));
     }
 }
 
@@ -1371,7 +1495,7 @@ mod tests {
         let screen = Rect::new(0.0, 0.0, window.width(), window.height());
         let reach = Vec2::splat(metrics.button * 0.5);
         EditButton::ALL.into_iter().all(|button| {
-            let centre = menu.anchor + button.offset() * metrics.ring;
+            let centre = menu.anchor + menu.offset(button);
             screen.contains(centre - reach) && screen.contains(centre + reach)
         })
     }
@@ -1472,15 +1596,65 @@ mod tests {
         assert!(focus.y < window.height() * 0.3, "{focus}");
         assert!(menu.shown);
         assert!(menu.grip.is_some_and(|grip| grip.contains(menu.anchor)));
-        let clear = Metrics::of(&window).below_the_top(&window);
-        assert!(menu.anchor.y < clear - 50.0, "{}", menu.anchor);
+        let clear = Metrics::of(&window).below_the_top(&window, menu.reach.up);
+        assert!(menu.anchor.y < clear - 20.0, "{}", menu.anchor);
+        // And they have closed in on it, small as it is there, and are
+        // still clear of each other.
+        let metrics = Metrics::of(&window);
+        assert!(menu.reach.up < metrics.far.y && menu.reach.left.max(menu.reach.right) < metrics.far.x, "{:?}", menu.reach);
+        let (bin, turn) = (menu.offset(EditButton::Trash), menu.offset(EditButton::RotateRight));
+        assert!(bin.distance(turn) > metrics.button, "{bin} {turn}");
+        // However small a thing is, they come no nearer than that.
+        let speck = menu_on(&window, &camera, &eye, Vec3::new(0.0, 0.0, -900.0));
+        let near = metrics.near;
+        assert_eq!(speck.reach, Reach { left: near, right: near, up: near, down: near });
+        let (bin, turn) = (speck.offset(EditButton::Trash), speck.offset(EditButton::RotateRight));
+        assert!(bin.distance(turn) > metrics.button, "{bin} {turn}");
+    }
+
+    #[test]
+    fn the_buttons_stand_just_clear_of_the_thing_as_it_is_drawn() {
+        let window = window();
+        let (camera, eye) = first_person(&window);
+        let metrics = Metrics::of(&window);
+        let clear = metrics.gap + metrics.button * 0.5;
+        // The cottage a good way off: all of it in sight, and bigger on the
+        // screen than the buttons need at the least.
+        let near = menu_on(&window, &camera, &eye, Vec3::new(0.0, 0.0, -22.0));
+        let grip = near.grip.expect("on the screen");
+        // A turn either side of it, by the room between and half a button.
+        let side = near.offset(EditButton::RotateRight).x;
+        assert!((side - (grip.width() * 0.5 + clear)).abs() < 1.0, "{side} for {}", grip.width());
+        assert!((near.offset(EditButton::RotateLeft).x + side).abs() < 1.0);
+        // Off to one side of you it is seen from its corner, and reaches
+        // further across the screen one way than the other: each turn is
+        // clear of its own side of it all the same.
+        let aside = menu_on(&window, &camera, &eye, Vec3::new(18.0, 0.0, -44.0));
+        let grip = aside.grip.expect("on the screen");
+        let (left, right) = (aside.anchor.x + aside.offset(EditButton::RotateLeft).x, aside.anchor.x + aside.offset(EditButton::RotateRight).x);
+        assert!((left - (grip.min.x - clear)).abs() < 1.0, "{left} by {}", grip.min.x);
+        assert!((right - (grip.max.x + clear)).abs() < 1.0, "{right} by {}", grip.max.x);
+        assert!((aside.reach.left - aside.reach.right).abs() > 1.0, "{:?}", aside.reach);
+        // The tick under its foot.
+        let tick = near.anchor.y + near.offset(EditButton::Confirm).y;
+        assert!((tick - (grip.max.y + clear)).abs() < 1.0 || near.reach.down == metrics.near, "{tick} under {}", grip.max.y);
+        // Twice as far off it is half the size, and they have closed in.
+        let far = menu_on(&window, &camera, &eye, Vec3::new(0.0, 0.0, -44.0));
+        assert!(far.offset(EditButton::RotateRight).x < side);
+        // Right in front of you it fills the screen, and they go no
+        // further out than they may: on it, and in sight.
+        let close = menu_on(&window, &camera, &eye, Vec3::new(0.0, 0.0, -4.4));
+        assert_eq!(close.offset(EditButton::RotateRight).x, metrics.far.x);
+        assert!(close.reach.up <= metrics.far.y && close.reach.down <= metrics.far.y);
+        // They are as big as the buttons down the right edge of the screen.
+        assert_eq!(MENU_BUTTON_VMIN, 10.5);
     }
 
     /// The bin's top edge is below the balance, the time and the theme.
     fn bin_clear_of_the_top(menu: &EditMenu, window: &Window) -> bool {
         let metrics = Metrics::of(window);
         let vmin = window.width().min(window.height()) / 100.0;
-        menu.anchor.y - metrics.ring - metrics.button * 0.5 >= MENU_BELOW_VMIN * vmin - 0.5
+        menu.anchor.y - menu.reach.up - metrics.button * 0.5 >= MENU_BELOW_VMIN * vmin - 0.5
     }
 
     #[test]

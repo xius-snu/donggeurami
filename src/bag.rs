@@ -26,8 +26,19 @@
 //! this connection's asks it has answered, and one that answers fewer than
 //! have been sent is passed over for the one behind it ([`Bag::heard`]).
 //!
+//! **What you have painted** of what stands on your plot ([`Bag::paints`],
+//! since 2026-11-22; Hajun: "u can tap objects and it will paint it to that
+//! color ... color gets reset if u trash that item and place it back, but
+//! stays if u leave it and also the new color should be visible to other
+//! players") is beside the bag, by the same rules (`rules::Paints`): done
+//! here at once and told to the server ([`Bag::paint`]), whose word comes
+//! after each of its answers about the bag ([`Bag::heard_paints`]) to an
+//! app that has asked for colours (`rules::Ask::Colours`), and kept in the
+//! same file.
+//!
 //! What stands on the plots of the others in your channel of the town is
-//! here too ([`Theirs`]), as the server says it, for `build::stand` to draw.
+//! here too ([`Theirs`]), and what of it they have painted
+//! ([`TheirPaints`]), as the server says it, for `build::stand` to draw.
 //! The window itself is [`panel`]; your gems are on the bar across the top
 //! (`hud`).
 
@@ -44,7 +55,7 @@ use crate::net::Online;
 
 pub(crate) mod panel;
 
-pub(crate) use rules::{Group, Standing, THINGS, Thing};
+pub(crate) use rules::{Group, Paint, Paints, Standing, THINGS, Thing};
 
 /// The file your bag is kept in, beside the town's save, and its version.
 const FILE: &str = "bag.json";
@@ -56,6 +67,9 @@ pub(crate) struct Bag {
     /// What you own, as last known: the server's word online, this
     /// device's own offline.
     pub has: rules::Bag,
+    /// What you have painted of what stands on your plot, as last known
+    /// the same way.
+    pub paints: Paints,
     /// How many things this connection has asked of the server about the
     /// bag, the highest number of them it has said it has answered, and
     /// which of them was the last purchase or sale, if one is still on its
@@ -67,14 +81,15 @@ pub(crate) struct Bag {
 
 impl Default for Bag {
     fn default() -> Self {
-        Self::holding(rules::Bag::new())
+        Self::holding(rules::Bag::new(), Paints::default())
     }
 }
 
 impl Bag {
-    fn holding(has: rules::Bag) -> Self {
+    fn holding(has: rules::Bag, paints: Paints) -> Self {
         Self {
             has,
+            paints,
             sent: 0,
             answered: 0,
             dealing: None,
@@ -111,13 +126,50 @@ impl Bag {
     }
 
     /// Takes what stands under the number `id` back into the bag, the same
-    /// way.
+    /// way: as it was made, whatever colour any of it was painted.
     pub(crate) fn take(&mut self, online: bool, asks: &mut MessageWriter<Ask>, id: u32) -> bool {
         if self.has.take(id).is_err() {
             return false;
         }
+        self.paints.fit(&self.has.stands);
         if online {
             self.ask(asks, rules::Ask::Take { id });
+        }
+        true
+    }
+
+    /// Paints `part` of what stands under the number `id` this colour, the
+    /// same way: here at once, and, `online`, told to the server. Whether
+    /// it was done; and nothing is said of a part that is that colour
+    /// already.
+    pub(crate) fn paint(&mut self, online: bool, asks: &mut MessageWriter<Ask>, id: u32, part: &str, colour: [u8; 3]) -> bool {
+        if self.paints.colour(id, part) == Some(colour) {
+            return true;
+        }
+        if self.paints.set(&self.has.stands, id, part, colour).is_err() {
+            return false;
+        }
+        if online {
+            self.ask(asks, rules::Ask::Paint {
+                id,
+                part: part.to_string(),
+                colour,
+            });
+        }
+        true
+    }
+
+    /// Takes the paint off `part` of what stands under the number `id`,
+    /// the same way: as its model has it again. Whether it was painted.
+    pub(crate) fn unpaint(&mut self, online: bool, asks: &mut MessageWriter<Ask>, id: u32, part: &str) -> bool {
+        if !self.paints.clear(id, part) {
+            return false;
+        }
+        if online {
+            self.ask(asks, rules::Ask::Unpaint {
+                id,
+                part: part.to_string(),
+            });
         }
         true
     }
@@ -136,6 +188,22 @@ impl Bag {
         }
         if self.has != *bag {
             self.has = bag.clone().sane();
+            // Until the server says what is painted, or if it never does:
+            // nothing of what no longer stands.
+            self.paints.fit(&self.has.stands);
+        }
+        true
+    }
+
+    /// The server has said what is painted on your plot, having answered
+    /// `asked` of this connection's asks: it is that now, unless more have
+    /// been sent since. Whether it was taken.
+    fn heard_paints(&mut self, asked: u32, paints: &[Paint]) -> bool {
+        if asked < self.sent {
+            return false;
+        }
+        if self.paints.0 != paints {
+            self.paints = Paints(paints.to_vec()).sane(&self.has.stands);
         }
         true
     }
@@ -150,6 +218,7 @@ impl Bag {
     /// with, until the server says what the new account has.
     pub(crate) fn forget(&mut self) {
         self.has = rules::Bag::new();
+        self.paints = Paints::default();
         self.begin();
     }
 }
@@ -160,6 +229,11 @@ impl Bag {
 #[derive(Resource, Default, Debug)]
 pub(crate) struct Theirs(pub HashMap<u64, Vec<Standing>>);
 
+/// What each of them has painted of what stands on their plot, the same
+/// way (`bag::Tell::Painted`).
+#[derive(Resource, Default, Debug)]
+pub(crate) struct TheirPaints(pub HashMap<u64, Vec<Paint>>);
+
 /// A purchase or a sale, asked for on the panel.
 #[derive(Message, Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Deal {
@@ -167,11 +241,14 @@ pub(crate) enum Deal {
     Sell(&'static str),
 }
 
-/// The file as written.
+/// The file as written: the bag, and what is painted of what stands
+/// (nothing, in a file written before 2026-11-22).
 #[derive(Serialize, Deserialize)]
 struct Saved {
     version: u32,
     bag: rules::Bag,
+    #[serde(default)]
+    paints: Paints,
 }
 
 /// Hearing what the server says of bags and doing what the panel asked:
@@ -180,50 +257,63 @@ struct Saved {
 pub(crate) struct BagSystems;
 
 pub(crate) fn plugin(app: &mut App) {
-    app.insert_resource(Bag::holding(load()))
+    let (has, paints) = load();
+    app.insert_resource(Bag::holding(has, paints))
         .init_resource::<Theirs>()
+        .init_resource::<TheirPaints>()
         .add_message::<Deal>()
         .add_systems(Update, (come_and_go, hear, deal, save).chain().in_set(BagSystems));
     panel::plugin(app);
 }
 
-/// The bag kept from the last run, put right if it was kept wrongly; with
-/// none, or one that will not read, what everyone begins with.
-fn load() -> rules::Bag {
+/// The bag kept from the last run, and what was painted of what stood, put
+/// right if they were kept wrongly; with none, or one that will not read,
+/// what everyone begins with.
+fn load() -> (rules::Bag, Paints) {
+    let fresh = || (rules::Bag::new(), Paints::default());
     let Some(path) = crate::map::data_file(FILE) else {
-        return rules::Bag::new();
+        return fresh();
     };
     let Ok(text) = std::fs::read_to_string(&path) else {
-        return rules::Bag::new();
+        return fresh();
     };
     match serde_json::from_str::<Saved>(&text) {
-        Ok(saved) if saved.version == VERSION => saved.bag.sane(),
-        Ok(_) => rules::Bag::new(),
+        Ok(saved) if saved.version == VERSION => kept_right(saved),
+        Ok(_) => fresh(),
         Err(error) => {
             warn!("{} is not a bag ({error}): begun afresh", path.display());
-            rules::Bag::new()
+            fresh()
         }
     }
 }
 
-/// Keeps the bag for the next run whenever what is in it changes: written
-/// beside the file and renamed over it, as the profile is.
-fn save(bag: Res<Bag>, mut kept: Local<Option<rules::Bag>>) {
-    if !bag.is_changed() || kept.as_ref() == Some(&bag.has) {
+/// What a file held, as it may be.
+fn kept_right(saved: Saved) -> (rules::Bag, Paints) {
+    let bag = saved.bag.sane();
+    let paints = saved.paints.sane(&bag.stands);
+    (bag, paints)
+}
+
+/// Keeps the bag for the next run whenever what is in it changes, or what
+/// is painted: written beside the file and renamed over it, as the profile
+/// is.
+fn save(bag: Res<Bag>, mut kept: Local<Option<(rules::Bag, Paints)>>) {
+    if !bag.is_changed() || kept.as_ref().is_some_and(|(has, paints)| *has == bag.has && *paints == bag.paints) {
         return;
     }
     // What it was loaded as is what the file has.
-    if kept.is_none() && bag.is_added() {
-        *kept = Some(bag.has.clone());
+    let loaded = kept.is_none() && bag.is_added();
+    *kept = Some((bag.has.clone(), bag.paints.clone()));
+    if loaded {
         return;
     }
-    *kept = Some(bag.has.clone());
     let Some(path) = crate::map::data_file(FILE) else {
         return;
     };
     let saved = Saved {
         version: VERSION,
         bag: bag.has.clone(),
+        paints: bag.paints.clone(),
     };
     let written = path
         .parent()
@@ -240,17 +330,17 @@ fn save(bag: Res<Bag>, mut kept: Local<Option<rules::Bag>>) {
 }
 
 /// As this device comes online, asks the server to tell it of bags from
-/// here on, its own first ([`rules::Ask::Watch`]); and as it goes offline,
-/// forgets what stood on everyone else's plot, there being nobody else.
-/// And lets go of whoever is no longer in your channel, as the server says
-/// who is: what it said of their plot is not said again when they are
-/// gone.
+/// here on, its own first ([`rules::Ask::Watch`]), and of colours with
+/// them ([`rules::Ask::Colours`]); and as it goes offline, forgets what
+/// stood on everyone else's plot, there being nobody else. And lets go of
+/// whoever is no longer in your channel, as the server says who is: what
+/// it said of their plot is not said again when they are gone.
 fn come_and_go(
     online: Res<Online>,
     channel: Res<Channel>,
     mut was: Local<bool>,
     mut bag: ResMut<Bag>,
-    mut theirs: ResMut<Theirs>,
+    (mut theirs, mut their_paints): (ResMut<Theirs>, ResMut<TheirPaints>),
     mut asks: MessageWriter<Ask>,
 ) {
     let now = online.is();
@@ -259,8 +349,14 @@ fn come_and_go(
         bag.begin();
         if now {
             bag.ask(&mut asks, rules::Ask::Watch);
-        } else if !theirs.0.is_empty() {
-            theirs.0.clear();
+            bag.ask(&mut asks, rules::Ask::Colours);
+        } else {
+            if !theirs.0.is_empty() {
+                theirs.0.clear();
+            }
+            if !their_paints.0.is_empty() {
+                their_paints.0.clear();
+            }
         }
     }
     if now && channel.is_changed() && !channel.0.is_empty() {
@@ -268,12 +364,21 @@ fn come_and_go(
         if theirs.0.keys().any(|who| !here(who)) {
             theirs.0.retain(|who, _| here(who));
         }
+        if their_paints.0.keys().any(|who| !here(who)) {
+            their_paints.0.retain(|who, _| here(who));
+        }
     }
 }
 
-/// What the server says of bags: your own, and what stands on the plots of
-/// the others in your channel.
-fn hear(mut tells: MessageReader<Tell>, mut bag: ResMut<Bag>, mut theirs: ResMut<Theirs>) {
+/// What the server says of bags: your own, what stands on the plots of the
+/// others in your channel, and what is painted of either.
+fn hear(
+    mut tells: MessageReader<Tell>,
+    online: Res<Online>,
+    mut bag: ResMut<Bag>,
+    (mut theirs, mut their_paints): (ResMut<Theirs>, ResMut<TheirPaints>),
+) {
+    let me = online.me().map(|me| me.id);
     for tell in tells.read() {
         let Tell::Bag(told) = tell else {
             continue;
@@ -285,6 +390,17 @@ fn hear(mut tells: MessageReader<Tell>, mut bag: ResMut<Bag>, mut theirs: ResMut
             rules::Tell::Theirs { who, stands } => {
                 if theirs.0.get(who) != Some(stands) {
                     theirs.0.insert(*who, stands.clone());
+                }
+            }
+            rules::Tell::Painted { who, asked, paints } if Some(*who) == me => {
+                // Only where it differs: the bag is watched for changes.
+                if *asked >= bag.sent && bag.paints.0 != *paints {
+                    bag.heard_paints(*asked, paints);
+                }
+            }
+            rules::Tell::Painted { who, paints, .. } => {
+                if their_paints.0.get(who) != Some(paints) {
+                    their_paints.0.insert(*who, paints.clone());
                 }
             }
         }
@@ -351,6 +467,7 @@ mod tests {
         world.init_resource::<Messages<Deal>>();
         world.init_resource::<Bag>();
         world.init_resource::<Theirs>();
+        world.init_resource::<TheirPaints>();
         world.init_resource::<Channel>();
         let me = Member {
             id: 7,
@@ -401,7 +518,7 @@ mod tests {
     fn online_a_purchase_is_asked_of_the_server_one_at_a_time_and_done_when_it_answers() {
         let mut world = world(true);
         world.run_system_once(come_and_go).unwrap();
-        assert_eq!(asked(&mut world), [rules::Ask::Watch]);
+        assert_eq!(asked(&mut world), [rules::Ask::Watch, rules::Ask::Colours]);
         world.write_message(Deal::Buy("singlebed"));
         world.write_message(Deal::Buy("cafechair"));
         world.run_system_once(deal).unwrap();
@@ -411,14 +528,15 @@ mod tests {
         assert_eq!(asked(&mut world), [rules::Ask::Buy("singlebed".into())]);
         assert!(world.resource::<Bag>().waits());
         assert_eq!((world.resource::<Bag>().has.count("singlebed"), balance(&mut world)), (0, 1_000));
-        // The server's answer to the first thing sent, the watch, is not
-        // the purchase's: still waiting, and its bag passed over.
+        // The server's answer to the first things sent, the watch and the
+        // ask for colours, is not the purchase's: still waiting, and its
+        // bag passed over.
         let mut bought = rules::Bag::new();
         bought.buy("singlebed", 1_000).unwrap();
-        assert!(!world.resource_mut::<Bag>().heard(1, &rules::Bag::new()));
+        assert!(!world.resource_mut::<Bag>().heard(2, &rules::Bag::new()));
         assert!(world.resource::<Bag>().waits());
         // Its answer to the purchase is.
-        assert!(world.resource_mut::<Bag>().heard(2, &bought));
+        assert!(world.resource_mut::<Bag>().heard(3, &bought));
         assert!(!world.resource::<Bag>().waits());
         assert_eq!(world.resource::<Bag>().has.count("singlebed"), 1);
     }
@@ -440,11 +558,11 @@ mod tests {
         assert_eq!(world.resource::<Bag>().has.free(LAMP), 0);
         // The answer to the watch, sent before the lamp was stood, has the
         // plot bare: passed over.
-        assert!(!world.resource_mut::<Bag>().heard(1, &rules::Bag::new()));
+        assert!(!world.resource_mut::<Bag>().heard(2, &rules::Bag::new()));
         assert_eq!(world.resource::<Bag>().has.stands.len(), 1);
         // The answer to the lamp itself is the server's word: here, that it
         // would not have it.
-        assert!(world.resource_mut::<Bag>().heard(2, &rules::Bag::new()));
+        assert!(world.resource_mut::<Bag>().heard(3, &rules::Bag::new()));
         assert!(world.resource::<Bag>().has.stands.is_empty());
         // Taken back offline, nothing is asked.
         world.insert_resource(Online::default());
@@ -494,8 +612,93 @@ mod tests {
         let mut bag = rules::Bag::new();
         bag.buy("doublebed", 1_000).unwrap();
         bag.put(3, LAMP, here()).unwrap();
-        let text = serde_json::to_string(&Saved { version: VERSION, bag: bag.clone() }).unwrap();
+        let mut paints = Paints::default();
+        paints.set(&bag.stands, 3, "lampostbody", [200, 30, 30]).unwrap();
+        let saved = Saved {
+            version: VERSION,
+            bag: bag.clone(),
+            paints: paints.clone(),
+        };
+        let text = serde_json::to_string(&saved).unwrap();
         let back: Saved = serde_json::from_str(&text).unwrap();
-        assert_eq!((back.version, back.bag.sane()), (VERSION, bag));
+        assert_eq!(back.version, VERSION);
+        assert_eq!(kept_right(back), (bag.clone(), paints));
+        // A file from before there were colours reads as it did, with
+        // nothing painted.
+        let before = format!(r#"{{"version":{VERSION},"bag":{}}}"#, serde_json::to_string(&bag).unwrap());
+        let back: Saved = serde_json::from_str(&before).unwrap();
+        assert_eq!(kept_right(back), (bag, Paints::default()));
+    }
+
+    #[test]
+    fn a_part_is_painted_at_once_and_told_and_the_server_s_word_is_what_it_is() {
+        let mut world = world(true);
+        world.run_system_once(come_and_go).unwrap();
+        asked(&mut world);
+        let blue = [0, 0, 255];
+        world
+            .run_system_once(move |mut bag: ResMut<Bag>, mut asks: MessageWriter<Ask>| {
+                assert!(bag.put(true, &mut asks, 1, LAMP, here()));
+                assert!(bag.paint(true, &mut asks, 1, "lampostbody", blue));
+                // The same colour again is nothing to say; a thing that
+                // does not stand is not painted.
+                assert!(bag.paint(true, &mut asks, 1, "lampostbody", blue));
+                assert!(!bag.paint(true, &mut asks, 8, "lampostbody", blue));
+            })
+            .unwrap();
+        let paint = rules::Ask::Paint { id: 1, part: "lampostbody".into(), colour: blue };
+        assert_eq!(asked(&mut world), [rules::Ask::Put { id: 1, kind: LAMP.into(), at: here() }, paint]);
+        assert_eq!(world.resource::<Bag>().paints.colour(1, "lampostbody"), Some(blue));
+        // The server's answer to the lamp, the third thing asked, has no
+        // colour yet: passed over, a newer one being on its way.
+        let mut stood = rules::Bag::new();
+        stood.put(1, LAMP, here()).unwrap();
+        let said = |asked, paints: Vec<Paint>| Tell::Bag(rules::Tell::Painted { who: 7, asked, paints });
+        world.write_message(Tell::Bag(rules::Tell::Yours { asked: 3, bag: stood.clone() }));
+        world.write_message(said(3, Vec::new()));
+        world.run_system_once(hear).unwrap();
+        world.resource_mut::<Messages<Tell>>().clear();
+        assert_eq!(world.resource::<Bag>().paints.colour(1, "lampostbody"), Some(blue));
+        // Its answer to the paint is its word: here, another colour.
+        let green = Paint { id: 1, part: "lampostbody".into(), colour: [0, 255, 0] };
+        world.write_message(Tell::Bag(rules::Tell::Yours { asked: 4, bag: stood }));
+        world.write_message(said(4, vec![green.clone()]));
+        // And someone else's plot is theirs.
+        world.write_message(Tell::Bag(rules::Tell::Painted { who: 8, asked: 0, paints: vec![green.clone()] }));
+        world.run_system_once(hear).unwrap();
+        assert_eq!(world.resource::<Bag>().paints.0, [green.clone()]);
+        assert_eq!(world.resource::<TheirPaints>().0[&8], [green]);
+        // The paint taken off: at once, and asked; and nothing to ask
+        // where there is none.
+        asked(&mut world);
+        world
+            .run_system_once(|mut bag: ResMut<Bag>, mut asks: MessageWriter<Ask>| {
+                assert!(bag.unpaint(true, &mut asks, 1, "lampostbody"));
+                assert!(!bag.unpaint(true, &mut asks, 1, "lampostbody"));
+                assert!(bag.paint(true, &mut asks, 1, "lightbulb", [1, 2, 3]));
+            })
+            .unwrap();
+        let unpaint = rules::Ask::Unpaint { id: 1, part: "lampostbody".into() };
+        let bulb = rules::Ask::Paint { id: 1, part: "lightbulb".into(), colour: [1, 2, 3] };
+        assert_eq!(asked(&mut world), [unpaint, bulb]);
+        assert_eq!(world.resource::<Bag>().paints.colour(1, "lampostbody"), None);
+        // Taken back into the bag, it is as it was made.
+        world
+            .run_system_once(|mut bag: ResMut<Bag>, mut asks: MessageWriter<Ask>| {
+                assert!(bag.take(true, &mut asks, 1));
+            })
+            .unwrap();
+        assert!(world.resource::<Bag>().paints.0.is_empty());
+        // Offline it is painted here alone, and nothing is asked.
+        asked(&mut world);
+        world.insert_resource(Online::default());
+        world
+            .run_system_once(move |mut bag: ResMut<Bag>, mut asks: MessageWriter<Ask>| {
+                assert!(bag.put(false, &mut asks, 2, LAMP, here()));
+                assert!(bag.paint(false, &mut asks, 2, "lightbulb", blue));
+            })
+            .unwrap();
+        assert!(asked(&mut world).is_empty());
+        assert_eq!(world.resource::<Bag>().paints.colour(2, "lightbulb"), Some(blue));
     }
 }

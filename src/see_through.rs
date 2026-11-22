@@ -40,7 +40,8 @@
 //! in the way of you takes the house's ceiling with it ([`over_your_head`]),
 //! and the ceiling in the way of a camera looking down into the room at a
 //! slant takes the walls on the camera's side ([`on_the_camera_side`]).
-//! Bodies never fade, nor water and any other glass for being in the way, as
+//! Bodies never fade, nor the eyes and the mouth hung on a head, which are
+//! meshes of their own ([`of_a_body`]), nor water and any other glass for being in the way, as
 //! they are see-through already, nor a piece being put down, nor whatever
 //! the edit menu is open on, nor the ground ([`ground`]).
 //!
@@ -149,7 +150,7 @@ pub(crate) struct InTheWay;
 /// A part drawn see-through, while it is in the way of you or fading back now
 /// that it is not.
 #[derive(Component)]
-struct SeeThrough {
+pub(crate) struct SeeThrough {
     /// Its own material, which it is drawn with again once it is solid.
     solid: Handle<StandardMaterial>,
     /// The see-through copy of it that it is drawn with meanwhile.
@@ -225,6 +226,7 @@ fn find_what_hides_you(
     on_walls: Query<(Entity, &OnWall)>,
     walls: Query<(Entity, &ChildOf, &Wall)>,
     house_you_are_in: Query<(Entity, &GlobalTransform, Has<TownHouse>), (With<YouAreIn>, Without<Ghost>)>,
+    bodies: Query<(), With<crate::lobby::Seat>>,
     menu: Res<EditMenu>,
     meshes: Res<Assets<Mesh>>,
     materials: Res<Assets<StandardMaterial>>,
@@ -299,6 +301,11 @@ fn find_what_hides_you(
                 .filter(|&to| line_meets_box(from, to, low, high)),
         );
         if near.is_empty() {
+            continue;
+        }
+        // Nor anything of a body: its eyes and its mouth are meshes of
+        // their own, hung on its head, and hid your own face from you.
+        if of_a_body(part, &lineage, &bodies) {
             continue;
         }
         let Some(shape) = shape_of(mesh, &meshes, &mut shapes) else {
@@ -518,7 +525,6 @@ fn fade_what_hides_you(
     // its own material back. However little of it that is, it takes
     // [`FADE_SECS`] to fade, and as long to come back.
     for (part, mut see) in &mut fading {
-        out_of_reach.extend(see.owner);
         let goal = match hiding.0.get(&part) {
             Some(&(_, seen)) => {
                 see.seen = seen;
@@ -532,18 +538,30 @@ fn fade_what_hides_you(
         } else {
             (see.shown - step).max(goal)
         };
-        if shown == see.shown {
-            continue;
-        }
-        see.shown = shown;
-        if shown >= 1.0 {
+        // All of it, and no longer in the way: its own material back, and
+        // within a tap's reach again. **Whether or not it had begun to
+        // fade**: in the way for a single frame, it is all there still the
+        // frame after, when it is in the way no more, and until 2026-11-22
+        // was left like that for good, never its own material again and
+        // whatever it is part of out of a tap's reach until the app was
+        // opened again (Hajun: "some objects become unclickable (like a
+        // sofa) ... the seat part of the chair suddenly disappear + become
+        // an unclickale chair until i reopen the app").
+        if shown >= 1.0 && goal >= 1.0 {
             let mut solid = commands.entity(part);
             // Unless something else has given it a material of its own since.
             if looks.get(part).is_ok_and(|drawn| drawn.0 == see.look) {
                 solid.try_insert(MeshMaterial3d(see.solid.clone()));
             }
             solid.try_remove::<SeeThrough>();
-        } else if let Some(mut look) = materials.get_mut(&see.look) {
+            continue;
+        }
+        out_of_reach.extend(see.owner);
+        if shown == see.shown {
+            continue;
+        }
+        see.shown = shown;
+        if let Some(mut look) = materials.get_mut(&see.look) {
             look.base_color.set_alpha(see.alpha * shown);
         }
     }
@@ -676,6 +694,24 @@ fn of_the_car(part: Entity, lineage: &Lineage) -> bool {
             return true;
         }
         at = parent.map(ChildOf::parent);
+    }
+    false
+}
+
+/// Whether `part` is part of someone's body, yours or anyone's. A body is
+/// one skinned mesh, which is never a part that fades at all; but its eyes
+/// and its mouth are meshes of their own, hung rigid on its head
+/// (`lobby`), and so were in the way of you like anything else: standing
+/// in a house you had no face (Hajun, 2026-11-22: "when the player is in
+/// the house, the eye becomes transparent i think thats a bug. eyes and
+/// mouth shouldnt become transparent").
+fn of_a_body(part: Entity, lineage: &Lineage, bodies: &Query<(), With<crate::lobby::Seat>>) -> bool {
+    let mut at = Some(part);
+    while let Some(entity) = at {
+        if bodies.contains(entity) {
+            return true;
+        }
+        at = lineage.get(entity).ok().and_then(|(parent, ..)| parent.map(ChildOf::parent));
     }
     false
 }
@@ -1087,6 +1123,74 @@ mod tests {
         }
         // See-through, but less than anything else in the way.
         assert!(SEEN < BUS_SEEN && BUS_SEEN < 1.0);
+    }
+
+    #[test]
+    fn no_part_of_a_body_is_in_the_way_of_you() {
+        use bevy::ecs::system::RunSystemOnce;
+        let mut world = World::new();
+        // You, with an eye hung on a bone of your head; and a chair, with
+        // its seat.
+        let you = world.spawn(crate::lobby::Seat(0)).id();
+        let bone = world.spawn(ChildOf(you)).id();
+        let eye = world.spawn(ChildOf(bone)).id();
+        let chair = world.spawn_empty().id();
+        let seat = world.spawn(ChildOf(chair)).id();
+        world
+            .run_system_once(move |lineage: Lineage, bodies: Query<(), With<crate::lobby::Seat>>| {
+                assert!(of_a_body(eye, &lineage, &bodies));
+                assert!(of_a_body(you, &lineage, &bodies));
+                assert!(!of_a_body(seat, &lineage, &bodies));
+                assert!(!of_a_body(chair, &lineage, &bodies));
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn what_was_in_the_way_for_one_frame_is_itself_again_the_frame_after() {
+        use bevy::ecs::system::RunSystemOnce;
+        let mut world = World::new();
+        world.init_resource::<Hiding>();
+        world.init_resource::<Assets<StandardMaterial>>();
+        let mut time = Time::<()>::default();
+        time.advance_by(std::time::Duration::from_millis(8));
+        world.insert_resource(time);
+        let own = world.resource_mut::<Assets<StandardMaterial>>().add(StandardMaterial::default());
+        // A sofa, which a tap can reach, and a part of it.
+        let sofa = world.spawn_empty().id();
+        let part = world.spawn(MeshMaterial3d(own.clone())).id();
+        let drawn = |world: &World| world.get::<MeshMaterial3d<StandardMaterial>>(part).unwrap().0.clone();
+        // In the way: drawn with a copy of its own material from here, and
+        // the sofa out of a tap's reach.
+        world.resource_mut::<Hiding>().0.insert(part, (Some(sofa), SEEN));
+        world.run_system_once(fade_what_hides_you).unwrap();
+        assert!(world.get::<SeeThrough>(part).is_some());
+        assert_ne!(drawn(&world), own);
+        assert!(world.get::<InTheWay>(sofa).is_some());
+        // The very next frame it is in the way no more, having not begun to
+        // fade: its own material again, at once, and the sofa in reach.
+        world.resource_mut::<Hiding>().0.clear();
+        world.run_system_once(fade_what_hides_you).unwrap();
+        assert!(world.get::<SeeThrough>(part).is_none(), "left see-through for good");
+        assert_eq!(drawn(&world), own);
+        assert!(world.get::<InTheWay>(sofa).is_none(), "left out of a tap's reach for good");
+        // In the way for longer, it fades, and comes back as it did: a step
+        // at a time, and then its own material and in reach.
+        world.resource_mut::<Hiding>().0.insert(part, (Some(sofa), SEEN));
+        for _ in 0..4 {
+            world.run_system_once(fade_what_hides_you).unwrap();
+        }
+        let faded = world.get::<SeeThrough>(part).unwrap().shown;
+        assert!(faded < 1.0, "{faded}");
+        world.resource_mut::<Hiding>().0.clear();
+        world.run_system_once(fade_what_hides_you).unwrap();
+        assert!(world.get::<SeeThrough>(part).is_some() && world.get::<InTheWay>(sofa).is_some());
+        for _ in 0..60 {
+            world.run_system_once(fade_what_hides_you).unwrap();
+        }
+        assert!(world.get::<SeeThrough>(part).is_none());
+        assert_eq!(drawn(&world), own);
+        assert!(world.get::<InTheWay>(sofa).is_none());
     }
 
     #[test]

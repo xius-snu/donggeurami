@@ -7,6 +7,52 @@
 > "above" or "below", or names another section in quotes, that section may be
 > in another file here: the table in `CLAUDE.md` says which.
 
+## Paint taken off: one more variant at the end
+
+2026-11-22, night (`docs/bag.md`, the entry marked "night").
+`PROTOCOL_VERSION` is 24 still, and APK 45 to 49 play on.
+
+- **`bag::Ask::Unpaint { id, part }`** at the end of `bag::Ask`, after
+  `Paint` (the eighth, number 7 on the wire; a test of the rules holds
+  the order). The server takes that part's paint off
+  (`bag::Paints::clear`), keeps the document, and tells `Painted` to the
+  device and to everyone in its channel who asked for colours, as it does
+  of paint; of a part that had none it says nothing.
+- An app from before never says it. APK 50 against the server from
+  before would have had it passed over: the server was deployed first.
+- **Deployed** at 09:37:47 UTC on 2026-11-22, nobody being connected (the
+  last had left at 08:03:58); the binary before it kept as
+  `roundtown-server.prev-2026-11-22c`, which is the one with paint and
+  without this. Checked after with this PC's own account, hidden: a lamp
+  stood, painted, cleared and taken back, and its bag in the database as
+  it was.
+
+## Paint: three more variants at the end, told only to who asked
+
+2026-11-22, evening (`docs/bag.md` has what paint is). `PROTOCOL_VERSION`
+is 24 still, and APK 45 to 48 play on.
+
+- **`bag::Ask::Colours`** and **`bag::Ask::Paint { id, part, colour }`**
+  at the end of `bag::Ask`, and **`bag::Tell::Painted { who, asked,
+  paints }`** at the end of `bag::Tell`. `bag::Bag` and `bag::Standing`
+  are as they were on the wire: what is painted is kept beside the bag
+  (`bag::Paints`) and said in a message of its own, because a field
+  added to either would be read wrongly by an app from before.
+- **Only to a device that asked.** A device that knows of colours says
+  `Colours` once, after `Watch`, as it comes online (`server/src/bag.rs`,
+  `Colourers`). It is then told `Painted` after each `Yours` (its own
+  plot, with the same `asked`: it passes over one that answers fewer of
+  its asks than it has sent, as it does a bag) and after each `Theirs`,
+  and whenever someone in its channel paints. An app from before never
+  asks and is told what it always was.
+- **Kept** in `players.bag`, the bag's own document, as one more list in
+  it (`Kept::paints`, read as empty where there is none): no change to
+  the table. The binary before this one reads such a document and keeps
+  no colours: rolled back, it would write them away.
+- **Deployed** at 07:08:18 UTC on 2026-11-22, nobody being connected; the
+  binary before it is `roundtown-server.prev-2026-11-22b`. This PC's own
+  account connected after, and its bag was read.
+
 ## Bags: asked and told with no new protocol, and kept with the account
 
 2026-11-22 (`docs/bag.md` has what a bag is). What goes over the wire for

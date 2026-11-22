@@ -30,12 +30,24 @@
 //! whose is the seat's, which the channel is told of already
 //! (`players::tell_channels`); where on it a thing stands is in the plot's
 //! own space, and the server, which has no map, only keeps it.
+//!
+//! **Colours** (since 2026-11-22; Hajun: "u can tap objects and it will
+//! paint it to that color ... color gets reset if u trash that item and
+//! place it back, but stays if u leave it and also the new color should be
+//! visible to other players"): what a person has painted of what stands on
+//! their plot ([`bag::Paints`]) is on their body beside the bag, kept in the
+//! same document, changed by [`bag::Ask::Paint`], and let go of for whatever
+//! is taken back into the bag. It is told ([`bag::Tell::Painted`]) only to a
+//! device that has asked for colours too ([`bag::Ask::Colours`],
+//! [`Colourers`]): after its own bag, each time that is said, and after
+//! what stands on anyone else's plot, and whenever they paint. An app from
+//! before there were colours never asks, and is told what it always was.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use bevy::prelude::*;
 use bevy_replicon::prelude::*;
-use roundtown_net::bag::{self, Bag, Standing};
+use roundtown_net::bag::{self, Bag, Paint, Paints, Standing};
 use roundtown_net::{Ask, Member, Tell};
 use serde::{Deserialize, Serialize};
 
@@ -43,46 +55,57 @@ use crate::accounts::{Bank, Dealt, Record};
 use crate::players::{Body, Everyone, Plays, Who, tell};
 use crate::rooms::{Room, Towns};
 
-/// A bag as it is kept with its account (`players.bag`): what is owned, and
-/// what of it stands on the plot. The gems are a column of their own.
+/// A bag as it is kept with its account (`players.bag`): what is owned,
+/// what of it stands on the plot, and what of that is painted (nothing, in
+/// a bag kept before 2026-11-22). The gems are a column of their own.
 #[derive(Serialize, Deserialize, Default)]
 struct Kept {
     owned: Vec<(String, u16)>,
     stands: Vec<Standing>,
+    #[serde(default)]
+    paints: Paints,
 }
 
-/// `bag` as it is kept with its account.
-pub(crate) fn kept(bag: &Bag) -> String {
+/// `bag`, and the colours on its plot, as they are kept with their account.
+pub(crate) fn kept(bag: &Bag, paints: &Paints) -> String {
     let kept = Kept {
         owned: bag.owned.clone(),
         stands: bag.stands.clone(),
+        paints: paints.clone(),
     };
     serde_json::to_string(&kept).unwrap_or_default()
 }
 
-/// The bag of an account with `gems` gems that keeps `kept` (`players.bag`):
-/// with nothing kept, what everyone begins with; and whatever was kept
-/// wrongly, or cannot be read, put right ([`Bag::sane`]).
-fn read(gems: u32, kept: Option<&str>) -> Bag {
-    let bag = match kept.map(serde_json::from_str::<Kept>) {
-        Some(Ok(kept)) => Bag {
-            gems,
-            owned: kept.owned,
-            stands: kept.stands,
-        },
+/// The bag of an account with `gems` gems that keeps `kept` (`players.bag`),
+/// and the colours on its plot: with nothing kept, what everyone begins
+/// with; and whatever was kept wrongly, or cannot be read, put right
+/// ([`Bag::sane`], [`Paints::sane`]).
+fn read(gems: u32, kept: Option<&str>) -> (Bag, Paints) {
+    let (bag, paints) = match kept.map(serde_json::from_str::<Kept>) {
+        Some(Ok(kept)) => (
+            Bag {
+                gems,
+                owned: kept.owned,
+                stands: kept.stands,
+            },
+            kept.paints,
+        ),
         Some(Err(error)) => {
             warn!("a bag that will not read ({error}): begun afresh");
-            Bag { gems, ..Bag::new() }
+            (Bag { gems, ..Bag::new() }, Paints::default())
         }
-        None => Bag { gems, ..Bag::new() },
+        None => (Bag { gems, ..Bag::new() }, Paints::default()),
     };
-    bag.sane()
+    let bag = bag.sane();
+    let paints = paints.sane(&bag.stands);
+    (bag, paints)
 }
 
-/// A person's bag, on their body.
+/// A person's bag, on their body, and the colours on their plot.
 #[derive(Component)]
 pub(crate) struct Holds {
     pub bag: Bag,
+    pub paints: Paints,
     /// A purchase or a sale on its way to the database.
     dealing: Option<Dealing>,
     /// What was asked of the bag while that was on its way, in order, each
@@ -100,12 +123,14 @@ struct Dealing {
 impl Holds {
     /// The bag the account `record` was loaded with.
     pub(crate) fn of(record: &Record) -> Self {
-        Self::holding(read(record.gems, record.bag.as_deref()))
+        let (bag, paints) = read(record.gems, record.bag.as_deref());
+        Self { paints, ..Self::holding(bag) }
     }
 
     fn holding(bag: Bag) -> Self {
         Self {
             bag,
+            paints: Paints::default(),
             dealing: None,
             waiting: VecDeque::new(),
         }
@@ -118,13 +143,20 @@ impl Holds {
 #[derive(Resource, Default)]
 pub(crate) struct Watchers(HashMap<Entity, u32>);
 
-/// With no database: everyone's bag for as long as the server runs, by
-/// their account, so that someone who drops and comes back finds theirs.
+/// The devices among them that have asked to be told of colours too
+/// ([`bag::Ask::Colours`]): those whose app knows how to read them.
 #[derive(Resource, Default)]
-struct Remembered(HashMap<u64, Bag>);
+pub(crate) struct Colourers(HashSet<Entity>);
+
+/// With no database: everyone's bag and colours for as long as the server
+/// runs, by their account, so that someone who drops and comes back finds
+/// theirs.
+#[derive(Resource, Default)]
+struct Remembered(HashMap<u64, (Bag, Paints)>);
 
 pub(crate) fn plugin(app: &mut App) {
     app.init_resource::<Watchers>()
+        .init_resource::<Colourers>()
         .init_resource::<Remembered>()
         .add_observer(forget)
         .add_systems(
@@ -146,8 +178,9 @@ pub(crate) fn plugin(app: &mut App) {
 }
 
 /// A device has gone: it is told nothing more.
-fn forget(remove: On<Remove, ConnectedClient>, mut watchers: ResMut<Watchers>) {
+fn forget(remove: On<Remove, ConnectedClient>, mut watchers: ResMut<Watchers>, mut colourers: ResMut<Colourers>) {
     watchers.0.remove(&remove.entity);
+    colourers.0.remove(&remove.entity);
 }
 
 /// With no database, gives a body just made the bag its account had when it
@@ -157,8 +190,9 @@ fn recall(bank: Res<Bank>, remembered: Res<Remembered>, mut bodies: Query<(&Body
         return;
     }
     for (body, mut holds) in &mut bodies {
-        if let Some(bag) = remembered.0.get(&body.who.0) {
+        if let Some((bag, paints)) = remembered.0.get(&body.who.0) {
             holds.bag = bag.clone();
+            holds.paints = paints.clone();
         }
     }
 }
@@ -170,6 +204,8 @@ enum Came {
     Nothing,
     /// What stands on the plot changed.
     Plot,
+    /// What stands there is as it was, and painted another colour.
+    Paint,
     /// A purchase or a sale has gone to the database: answered when it has.
     Waits,
 }
@@ -185,12 +221,12 @@ fn act(
     holds: &mut Holds,
     bank: &Bank,
     remembered: &mut Remembered,
-    watchers: &mut Watchers,
+    (watchers, colourers): (&mut Watchers, &Colourers),
     tells: &mut MessageWriter<ToClients<Tell>>,
 ) -> Came {
     let who = body.who.0;
     let came = match ask {
-        bag::Ask::Watch => Came::Nothing,
+        bag::Ask::Watch | bag::Ask::Colours => Came::Nothing,
         bag::Ask::Buy(kind) | bag::Ask::Sell(kind) => {
             let buying = matches!(ask, bag::Ask::Buy(_));
             let mut after = holds.bag.clone();
@@ -199,7 +235,7 @@ fn act(
                 Ok(left) if bank.kept() => {
                     let amount = i64::from(left) - i64::from(body.coins);
                     let why = if buying { "bought a thing" } else { "sold a thing" };
-                    bank.deal(who, amount, why, kept(&after));
+                    bank.deal(who, amount, why, kept(&after, &holds.paints));
                     holds.dealing = Some(Dealing { after, by });
                     return Came::Waits;
                 }
@@ -222,35 +258,112 @@ fn act(
             }
         },
         bag::Ask::Take { id } => match holds.bag.take(*id) {
-            Ok(()) => Came::Plot,
+            // Back in the bag, it is as it was made: its colours go.
+            Ok(()) => {
+                holds.paints.fit(&holds.bag.stands);
+                Came::Plot
+            }
             Err(_) => Came::Nothing,
         },
+        bag::Ask::Paint { id, part, colour } => match holds.paints.set(&holds.bag.stands, *id, part, *colour) {
+            Ok(()) => Came::Paint,
+            Err(no) => {
+                debug!("{who}: {ask:?} was not done: {no:?}");
+                Came::Nothing
+            }
+        },
+        bag::Ask::Unpaint { id, part } => {
+            if holds.paints.clear(*id, part) {
+                Came::Paint
+            } else {
+                Came::Nothing
+            }
+        }
     };
-    if came == Came::Plot {
-        bank.keep_bag(who, kept(&holds.bag));
+    if matches!(came, Came::Plot | Came::Paint) {
+        bank.keep_bag(who, kept(&holds.bag, &holds.paints));
     }
     if !bank.kept() {
-        remembered.0.insert(who, holds.bag.clone());
+        remembered.0.insert(who, (holds.bag.clone(), holds.paints.clone()));
     }
-    answer(by, body, holds, watchers, tells);
+    answer(by, body, holds, watchers, colourers, tells);
     came
 }
 
 /// Tells the device `by` its bag as it stands, in answer to something it
-/// asked: one more of its asks answered. Not if it has gone, or is no
-/// longer the device playing this body.
-fn answer(by: Entity, body: &Body, holds: &Holds, watchers: &mut Watchers, tells: &mut MessageWriter<ToClients<Tell>>) {
+/// asked: one more of its asks answered; and, if it asked for colours, the
+/// colours on its plot after it. Not if it has gone, or is no longer the
+/// device playing this body.
+fn answer(
+    by: Entity,
+    body: &Body,
+    holds: &Holds,
+    watchers: &mut Watchers,
+    colourers: &Colourers,
+    tells: &mut MessageWriter<ToClients<Tell>>,
+) {
     let Some(asked) = watchers.0.get_mut(&by) else {
         return;
     };
     *asked += 1;
     if body.client == Some(by) {
+        tell_its_own(by, *asked, body.who.0, holds, colourers, tells);
+    }
+}
+
+/// Tells `device` its own bag as it stands, with `asked` of its asks
+/// answered, and after it, if it asked for colours, the colours on its
+/// plot, which is `who`'s.
+fn tell_its_own(device: Entity, asked: u32, who: u64, holds: &Holds, colourers: &Colourers, tells: &mut MessageWriter<ToClients<Tell>>) {
+    tell(
+        tells,
+        device,
+        Tell::Bag(bag::Tell::Yours {
+            asked,
+            bag: holds.bag.clone(),
+        }),
+    );
+    if colourers.0.contains(&device) {
         tell(
             tells,
-            by,
-            Tell::Bag(bag::Tell::Yours {
-                asked: *asked,
-                bag: holds.bag.clone(),
+            device,
+            Tell::Bag(bag::Tell::Painted {
+                who,
+                asked,
+                paints: holds.paints.0.clone(),
+            }),
+        );
+    }
+}
+
+/// Tells `device` what stands on `who`'s plot, if `stands` says, and, if it
+/// asked for colours, what of it is painted.
+fn tell_of_a_plot(
+    device: Entity,
+    who: u64,
+    stands: Option<&[Standing]>,
+    paints: &[Paint],
+    colourers: &Colourers,
+    tells: &mut MessageWriter<ToClients<Tell>>,
+) {
+    if let Some(stands) = stands {
+        tell(
+            tells,
+            device,
+            Tell::Bag(bag::Tell::Theirs {
+                who,
+                stands: stands.to_vec(),
+            }),
+        );
+    }
+    if colourers.0.contains(&device) {
+        tell(
+            tells,
+            device,
+            Tell::Bag(bag::Tell::Painted {
+                who,
+                asked: 0,
+                paints: paints.to_vec(),
             }),
         );
     }
@@ -283,7 +396,7 @@ fn hear(
     mut towns: ResMut<Towns>,
     bank: Res<Bank>,
     mut remembered: ResMut<Remembered>,
-    mut watchers: ResMut<Watchers>,
+    (mut watchers, mut colourers): (ResMut<Watchers>, ResMut<Colourers>),
     mut tells: MessageWriter<ToClients<Tell>>,
 ) {
     for ask in asks.read() {
@@ -296,10 +409,14 @@ fn hear(
         let Ok(plays) = clients.get(client) else {
             continue;
         };
-        if *asked == bag::Ask::Watch {
+        if matches!(asked, bag::Ask::Watch | bag::Ask::Colours) {
             // Told from here on: its own bag and its channel's plots as it
-            // sits down, which is now if it sits there already.
+            // sits down, which is now if it sits there already; and, having
+            // asked for them, their colours.
             *watchers.0.entry(client).or_insert(0) += 1;
+            if *asked == bag::Ask::Colours {
+                colourers.0.insert(client);
+            }
             if let Some(&Plays(body)) = plays
                 && let Ok((body_of, ..)) = bodies.get(body)
                 && let Room::Town(channel) = body_of.room
@@ -326,24 +443,28 @@ fn hear(
             continue;
         }
         let (who, room) = (member.id, body_of.room);
-        let came = act(asked, client, &mut body_of, &mut holds, &bank, &mut remembered, &mut watchers, &mut tells);
-        if came == Came::Plot {
-            let stands = holds.bag.stands.clone();
-            tell_the_channel(&towns, room, body, who, stands, &watchers, &bodies, &mut tells);
+        let came = act(asked, client, &mut body_of, &mut holds, &bank, &mut remembered, (&mut watchers, &colourers), &mut tells);
+        if matches!(came, Came::Plot | Came::Paint) {
+            let stands = (came == Came::Plot).then(|| holds.bag.stands.clone());
+            let paints = holds.paints.0.clone();
+            tell_the_channel(&towns, room, body, who, stands, paints, (&watchers, &colourers), &bodies, &mut tells);
         }
     }
 }
 
 /// Tells everyone else seated with `body` in a channel of the town, whose
-/// device asked to be told, what stands on its plot now.
+/// device asked to be told, what stands on its plot now, if `stands` says
+/// (it has changed), and those that asked for colours what of it is
+/// painted.
 #[allow(clippy::too_many_arguments)]
 fn tell_the_channel(
     towns: &Towns,
     room: Room,
     body: Entity,
     who: u64,
-    stands: Vec<Standing>,
-    watchers: &Watchers,
+    stands: Option<Vec<Standing>>,
+    paints: Vec<Paint>,
+    (watchers, colourers): (&Watchers, &Colourers),
     bodies: &Query<(&mut Body, &mut Holds, &Member)>,
     tells: &mut MessageWriter<ToClients<Tell>>,
 ) {
@@ -352,14 +473,7 @@ fn tell_the_channel(
     };
     let client_of = |other: Entity| bodies.get(other).ok().and_then(|(other, ..)| other.client);
     for device in others_watching(towns, channel, body, watchers, client_of) {
-        tell(
-            tells,
-            device,
-            Tell::Bag(bag::Tell::Theirs {
-                who,
-                stands: stands.clone(),
-            }),
-        );
+        tell_of_a_plot(device, who, stands.as_deref(), &paints, colourers, tells);
     }
 }
 
@@ -376,7 +490,7 @@ fn dealt(
     towns: Res<Towns>,
     bank: Res<Bank>,
     mut remembered: ResMut<Remembered>,
-    mut watchers: ResMut<Watchers>,
+    (mut watchers, colourers): (ResMut<Watchers>, Res<Colourers>),
     mut tells: MessageWriter<ToClients<Tell>>,
 ) {
     for answered in dealt.read() {
@@ -396,19 +510,21 @@ fn dealt(
                 tell(&mut tells, client, Tell::Balance(left));
             }
         }
-        answer(dealing.by, &body_of, &holds, &mut watchers, &mut tells);
+        answer(dealing.by, &body_of, &holds, &mut watchers, &colourers, &mut tells);
         let (who, room) = (member.id, body_of.room);
-        let mut moved = false;
+        let (mut moved, mut painted) = (false, false);
         while holds.dealing.is_none() {
             let Some((by, asked)) = holds.waiting.pop_front() else {
                 break;
             };
-            let came = act(&asked, by, &mut body_of, &mut holds, &bank, &mut remembered, &mut watchers, &mut tells);
+            let came = act(&asked, by, &mut body_of, &mut holds, &bank, &mut remembered, (&mut watchers, &colourers), &mut tells);
             moved |= came == Came::Plot;
+            painted |= came == Came::Paint;
         }
-        if moved {
-            let stands = holds.bag.stands.clone();
-            tell_the_channel(&towns, room, body, who, stands, &watchers, &bodies, &mut tells);
+        if moved || painted {
+            let stands = moved.then(|| holds.bag.stands.clone());
+            let paints = holds.paints.0.clone();
+            tell_the_channel(&towns, room, body, who, stands, paints, (&watchers, &colourers), &bodies, &mut tells);
         }
     }
 }
@@ -419,11 +535,12 @@ fn dealt(
 /// device asked is told what stands on the newcomer's, if anything does.
 /// Whoever has nothing standing is not spoken of: a device knows nothing of
 /// a plot until it is told, and lets go of what it was told of anyone who
-/// is no longer in its channel.
+/// is no longer in its channel. A device that asked for colours is told
+/// those of each plot it is told of, its own too, after what stands there.
 fn seat_news(
     mut towns: ResMut<Towns>,
     bodies: Query<(&Body, &Holds, &Member)>,
-    watchers: Res<Watchers>,
+    (watchers, colourers): (Res<Watchers>, Res<Colourers>),
     mut tells: MessageWriter<ToClients<Tell>>,
 ) {
     if !towns.has_sat() {
@@ -438,24 +555,10 @@ fn seat_news(
         if let Some(client) = body.client
             && let Some(&asked) = watchers.0.get(&client)
         {
-            tell(
-                &mut tells,
-                client,
-                Tell::Bag(bag::Tell::Yours {
-                    asked,
-                    bag: holds.bag.clone(),
-                }),
-            );
+            tell_its_own(client, asked, member.id, holds, &colourers, &mut tells);
             for (_, theirs, other) in others() {
                 if !theirs.bag.stands.is_empty() {
-                    tell(
-                        &mut tells,
-                        client,
-                        Tell::Bag(bag::Tell::Theirs {
-                            who: other.id,
-                            stands: theirs.bag.stands.clone(),
-                        }),
-                    );
+                    tell_of_a_plot(client, other.id, Some(&theirs.bag.stands), &theirs.paints.0, &colourers, &mut tells);
                 }
             }
         }
@@ -466,14 +569,7 @@ fn seat_news(
             if let Some(device) = other.client
                 && watchers.0.contains_key(&device)
             {
-                tell(
-                    &mut tells,
-                    device,
-                    Tell::Bag(bag::Tell::Theirs {
-                        who: member.id,
-                        stands: holds.bag.stands.clone(),
-                    }),
-                );
+                tell_of_a_plot(device, member.id, Some(&holds.bag.stands), &holds.paints.0, &colourers, &mut tells);
             }
         }
     }
@@ -502,22 +598,35 @@ mod tests {
         bag.buy("singlebed", 1_000).unwrap();
         bag.put(4, LAMP, here()).unwrap();
         bag.put(5, "singlebed", At::Wall { wall: 1, along: -2.5, up: 1.1, face: -1 }).unwrap();
-        let document = kept(&bag);
+        let mut paints = Paints::default();
+        paints.set(&bag.stands, 4, "lampostbody", [20, 40, 250]).unwrap();
+        paints.set(&bag.stands, 5, "blanket", [255, 255, 0]).unwrap();
+        let document = kept(&bag, &paints);
         assert!(document.contains("streetlamp") && !document.contains("gems"), "{document}");
-        assert_eq!(read(10, Some(&document)), bag);
+        assert!(document.contains("lampostbody"), "{document}");
+        assert_eq!(read(10, Some(&document)), (bag.clone(), paints));
         // The gems are the account's own column, whatever the document was
         // written with.
-        assert_eq!(read(3, Some(&document)).gems, 3);
+        assert_eq!(read(3, Some(&document)).0.gems, 3);
         // An account that has kept nothing has what everyone begins with.
-        assert_eq!(read(10, None), Bag::new());
-        assert_eq!(read(7, None), Bag { gems: 7, ..Bag::new() });
+        assert_eq!(read(10, None), (Bag::new(), Paints::default()));
+        assert_eq!(read(7, None).0, Bag { gems: 7, ..Bag::new() });
         // One that will not read is begun afresh, and one kept wrongly put
         // right.
-        assert_eq!(read(10, Some("{not json")), Bag::new());
+        assert_eq!(read(10, Some("{not json")).0, Bag::new());
         let wrong = r#"{"owned":[["a_castle",2],["streetlamp",1]],"stands":[{"id":1,"kind":"a_castle","at":{"Ground":{"x":0.0,"y":0.0,"z":0.0,"yaw":0.0}}}]}"#;
-        let put_right = read(10, Some(wrong));
+        let (put_right, painted) = read(10, Some(wrong));
         assert_eq!(put_right.owned, vec![(LAMP.to_string(), 1)]);
         assert!(put_right.stands.is_empty());
+        // A bag kept before there were colours has none, and reads as it
+        // did.
+        assert!(painted.0.is_empty());
+        let before = r#"{"owned":[["streetlamp",1]],"stands":[{"id":4,"kind":"streetlamp","at":{"Ground":{"x":3.25,"y":0.0,"z":-4.5,"yaw":0.785}}}]}"#;
+        let (old, none) = read(10, Some(before));
+        assert_eq!((old.stands.len(), none), (1, Paints::default()));
+        // And colours kept of what does not stand are let go of.
+        let stray = r#"{"owned":[["streetlamp",1]],"stands":[],"paints":[{"id":4,"part":"lampostbody","colour":[1,2,3]}]}"#;
+        assert_eq!(read(10, Some(stray)).1, Paints::default());
     }
 
     /// A server with no database, one channel of the town, and `people`
@@ -532,6 +641,7 @@ mod tests {
             .init_resource::<Towns>()
             .init_resource::<Everyone>()
             .init_resource::<Watchers>()
+            .init_resource::<Colourers>()
             .init_resource::<Remembered>();
         let (mut bodies, mut devices) = (Vec::new(), Vec::new());
         for n in 0..people {
@@ -661,7 +771,7 @@ mod tests {
         assert!(matches!(heard[0], Tell::Balance(8_350)), "{heard:?}");
         assert!(matches!(&heard[1], Tell::Bag(bag::Tell::Yours { asked: 4, .. })), "{heard:?}");
         // With no database the bag is remembered for when they are back.
-        assert!(!app.world().resource::<Remembered>().0[&100].has_car());
+        assert!(!app.world().resource::<Remembered>().0[&100].0.has_car());
     }
 
     #[test]
@@ -742,6 +852,146 @@ mod tests {
         let heard = told(&mut app, devices[0]);
         assert_eq!(heard.len(), 1, "{heard:?}");
         assert!(matches!(&heard[0], Tell::Bag(bag::Tell::Yours { asked: 5, .. })), "{heard:?}");
+    }
+
+    /// The colours a device has been told are on `who`'s plot, and with how
+    /// many of its asks answered, each time it was told, in order.
+    fn painted(told: &[Tell], who: u64) -> Vec<(u32, Vec<Paint>)> {
+        told.iter()
+            .filter_map(|tell| match tell {
+                Tell::Bag(bag::Tell::Painted { who: whose, asked, paints }) if *whose == who => Some((*asked, paints.clone())),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_part_painted_is_kept_and_told_to_whoever_asked_for_colours_and_to_nobody_else() {
+        let (mut app, bodies, devices) = town(3);
+        told(&mut app, devices[0]);
+        // The first and the second have apps that know of colours; the
+        // third's is from before them, and never asks.
+        ask(&mut app, devices[0], bag::Ask::Colours);
+        ask(&mut app, devices[1], bag::Ask::Colours);
+        assert!(app.world().resource::<Colourers>().0.contains(&devices[0]));
+        assert!(!app.world().resource::<Colourers>().0.contains(&devices[2]));
+        // Asking is one more thing asked, as a watch is, and whoever asks
+        // while seated is told as if it had just sat down: its bag, and
+        // the colours on its plot, none yet.
+        app.world_mut().run_system_once(seat_news).unwrap();
+        let first = told(&mut app, devices[0]);
+        assert!(matches!(&first[0], Tell::Bag(bag::Tell::Yours { asked: 2, .. })), "{first:?}");
+        assert_eq!(painted(&first, 100), [(2, Vec::new())]);
+        told(&mut app, devices[1]);
+        told(&mut app, devices[2]);
+        // The first stands its lamp and paints its post blue.
+        ask(&mut app, devices[0], bag::Ask::Put { id: 1, kind: LAMP.into(), at: here() });
+        told(&mut app, devices[0]);
+        told(&mut app, devices[1]);
+        told(&mut app, devices[2]);
+        ask(&mut app, devices[0], bag::Ask::Paint { id: 1, part: "lampostbody".into(), colour: [0, 0, 255] });
+        let blue = vec![Paint { id: 1, part: "lampostbody".into(), colour: [0, 0, 255] }];
+        assert_eq!(app.world().get::<Holds>(bodies[0]).unwrap().paints.0, blue);
+        // It is answered, its bag and then its colours, the fourth of its
+        // asks; the second is told the colours and not the plot again,
+        // which has not changed; the third nothing at all.
+        let first = told(&mut app, devices[0]);
+        assert!(matches!(&first[0], Tell::Bag(bag::Tell::Yours { asked: 4, bag }) if bag.stands.len() == 1), "{first:?}");
+        assert_eq!(painted(&first, 100), [(4, blue.clone())]);
+        let second = told(&mut app, devices[1]);
+        assert_eq!(painted(&second, 100), [(0, blue.clone())]);
+        assert_eq!(second.len(), 1, "{second:?}");
+        assert!(told(&mut app, devices[2]).is_empty());
+        // Painted again, it is the new colour, one to a part; what does not
+        // stand, or has no name, is not painted, and is answered all the
+        // same.
+        ask(&mut app, devices[0], bag::Ask::Paint { id: 1, part: "lampostbody".into(), colour: [9, 9, 9] });
+        ask(&mut app, devices[0], bag::Ask::Paint { id: 7, part: "lampostbody".into(), colour: [1, 1, 1] });
+        ask(&mut app, devices[0], bag::Ask::Paint { id: 1, part: String::new(), colour: [1, 1, 1] });
+        let grey = vec![Paint { id: 1, part: "lampostbody".into(), colour: [9, 9, 9] }];
+        let first = told(&mut app, devices[0]);
+        assert_eq!(painted(&first, 100), [(5, grey.clone()), (6, grey.clone()), (7, grey.clone())]);
+        assert_eq!(painted(&told(&mut app, devices[1]), 100), [(0, grey.clone())]);
+        // With no database it is remembered with the bag.
+        assert_eq!(app.world().resource::<Remembered>().0[&100].1.0, grey);
+        // The paint taken off, the part is as its model has it: the channel
+        // is told, and the device answered; and taken off again, there is
+        // nothing to tell.
+        ask(&mut app, devices[0], bag::Ask::Unpaint { id: 1, part: "lampostbody".into() });
+        assert!(app.world().get::<Holds>(bodies[0]).unwrap().paints.0.is_empty());
+        assert_eq!(painted(&told(&mut app, devices[0]), 100), [(8, Vec::new())]);
+        assert_eq!(painted(&told(&mut app, devices[1]), 100), [(0, Vec::new())]);
+        ask(&mut app, devices[0], bag::Ask::Unpaint { id: 1, part: "lampostbody".into() });
+        assert_eq!(painted(&told(&mut app, devices[0]), 100), [(9, Vec::new())]);
+        assert!(told(&mut app, devices[1]).is_empty());
+        ask(&mut app, devices[0], bag::Ask::Paint { id: 1, part: "lampostbody".into(), colour: [9, 9, 9] });
+        told(&mut app, devices[0]);
+        told(&mut app, devices[1]);
+        // Someone who sits down among them is told the plot and then its
+        // colours, if their app asked for colours; the third the plot
+        // alone.
+        app.world_mut().resource_mut::<Towns>().announce(0, bodies[1]);
+        app.world_mut().resource_mut::<Towns>().announce(0, bodies[2]);
+        app.world_mut().run_system_once(seat_news).unwrap();
+        let second = told(&mut app, devices[1]);
+        let plot = second.iter().position(|tell| matches!(tell, Tell::Bag(bag::Tell::Theirs { who: 100, .. }))).unwrap();
+        assert!(matches!(&second[plot + 1], Tell::Bag(bag::Tell::Painted { who: 100, asked: 0, paints }) if *paints == grey), "{second:?}");
+        let third = told(&mut app, devices[2]);
+        assert!(third.iter().any(|tell| matches!(tell, Tell::Bag(bag::Tell::Theirs { who: 100, .. }))), "{third:?}");
+        assert!(third.iter().all(|tell| !matches!(tell, Tell::Bag(bag::Tell::Painted { .. }))), "{third:?}");
+        told(&mut app, devices[0]);
+        // Taken back into the bag, the lamp is as it was made: its colours
+        // go, and the channel is told the plot and its colours, bare both.
+        ask(&mut app, devices[0], bag::Ask::Take { id: 1 });
+        assert!(app.world().get::<Holds>(bodies[0]).unwrap().paints.0.is_empty());
+        let second = told(&mut app, devices[1]);
+        assert!(matches!(&second[0], Tell::Bag(bag::Tell::Theirs { who: 100, stands }) if stands.is_empty()), "{second:?}");
+        assert_eq!(painted(&second, 100), [(0, Vec::new())]);
+        let third = told(&mut app, devices[2]);
+        assert_eq!(third.len(), 1, "{third:?}");
+        // Stood again under the same number, it is not the colour it was.
+        ask(&mut app, devices[0], bag::Ask::Put { id: 1, kind: LAMP.into(), at: here() });
+        assert!(app.world().get::<Holds>(bodies[0]).unwrap().paints.0.is_empty());
+        // A device that has gone is told nothing more, of colours either.
+        app.add_observer(forget);
+        app.world_mut().entity_mut(devices[1]).despawn();
+        app.world_mut().flush();
+        assert!(!app.world().resource::<Colourers>().0.contains(&devices[1]));
+    }
+
+    #[test]
+    fn a_purchase_keeps_the_colours_and_a_part_painted_meanwhile_waits_its_turn() {
+        let (mut app, bodies, devices) = town(2);
+        // A bank that keeps, its answers written by hand.
+        let (jobs, _sent) = std::sync::mpsc::channel();
+        let (_answers, done) = std::sync::mpsc::channel();
+        app.insert_resource(Bank::Database {
+            jobs,
+            done: std::sync::Mutex::new(done),
+        });
+        ask(&mut app, devices[0], bag::Ask::Colours);
+        ask(&mut app, devices[1], bag::Ask::Colours);
+        ask(&mut app, devices[0], bag::Ask::Put { id: 1, kind: LAMP.into(), at: here() });
+        ask(&mut app, devices[0], bag::Ask::Paint { id: 1, part: "lightbulb".into(), colour: [255, 0, 0] });
+        told(&mut app, devices[0]);
+        told(&mut app, devices[1]);
+        // A purchase is at the database: a part painted meanwhile waits
+        // behind it, and is done, kept and told once it has answered.
+        ask(&mut app, devices[0], bag::Ask::Buy("cafechair".into()));
+        ask(&mut app, devices[0], bag::Ask::Paint { id: 1, part: "lampostbody".into(), colour: [0, 255, 0] });
+        assert_eq!(app.world().get::<Holds>(bodies[0]).unwrap().paints.0.len(), 1);
+        assert!(told(&mut app, devices[1]).is_empty());
+        answer_the_deal(&mut app, Some(950));
+        let holds = app.world().get::<Holds>(bodies[0]).unwrap();
+        assert_eq!((holds.bag.count("cafechair"), holds.paints.0.len()), (1, 2));
+        let second = told(&mut app, devices[1]);
+        assert_eq!(painted(&second, 100).len(), 1, "{second:?}");
+        assert_eq!(painted(&second, 100)[0].1.len(), 2);
+        // The purchase's own answer and the paint's: the bag each time,
+        // and the colours after it.
+        let first = told(&mut app, devices[0]);
+        let answers: Vec<u32> = painted(&first, 100).iter().map(|(asked, _)| *asked).collect();
+        assert_eq!(answers, [5, 6], "{first:?}");
     }
 
     #[test]

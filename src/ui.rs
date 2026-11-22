@@ -1097,6 +1097,10 @@ pub(crate) struct EditMenuColours {
     #[serde(deserialize_with = "colour")]
     pub confirm_rim: Color,
     #[serde(deserialize_with = "colour")]
+    pub confirm_off: Color,
+    #[serde(deserialize_with = "colour")]
+    pub confirm_off_rim: Color,
+    #[serde(deserialize_with = "colour")]
     pub turn: Color,
     #[serde(deserialize_with = "colour")]
     pub turn_held: Color,
@@ -1387,6 +1391,10 @@ pub(crate) struct BagWords {
     pub house_first: String,
     pub no_coins: String,
     pub off_your_land: String,
+    /// Across the screen, when a thing is put down in something else.
+    pub in_the_way: String,
+    /// Over the window a colour to paint with is chosen in (`customize`).
+    pub paint_title: String,
     pub names: Vec<(String, String)>,
 }
 

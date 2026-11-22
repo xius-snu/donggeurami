@@ -153,8 +153,8 @@ use crate::{CloseUp, Player, Team};
 /// corners are. **The lowest line is where it was** in the town, 48.6
 /// shares down, and in a game, 49.6 ([`ARENA_TOP`]): the box is taller
 /// from its top.
-const TOP: f32 = 38.5;
-const LOG_HEIGHT: f32 = 10.1;
+pub(crate) const TOP: f32 = 38.5;
+pub(crate) const LOG_HEIGHT: f32 = 10.1;
 /// How wide it is, in shares of the short side: 80 since the night of
 /// 2026-11-14 (Hajun: "the width of the chatbox region could be
 /// wider/longer so more text fits in each line"), where it was 50: about
@@ -452,8 +452,30 @@ struct Drawn {
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct LetGo;
 
+/// How far the chat is stepped in from the left edge, in shares of the
+/// short side, for what stands by that edge in its way: the three buttons
+/// one over the other while you change what stands on your plot
+/// (`customize`), which reach up past its lines. Nothing otherwise: the
+/// one button there the rest of the time is under them.
+#[derive(Resource, Default, Clone, Copy, PartialEq, Debug)]
+pub(crate) struct Aside(pub f32);
+
+/// Steps the chat aside as [`Aside`] says, as that changes.
+fn step_aside(aside: Res<Aside>, mut roots: Query<&mut Node, With<ChatRoot>>) {
+    if !aside.is_changed() {
+        return;
+    }
+    let left = Val::VMin(hud::EDGE + aside.0);
+    for mut node in &mut roots {
+        if node.left != left {
+            node.left = left;
+        }
+    }
+}
+
 pub(crate) fn plugin(app: &mut App) {
     app.init_resource::<Log>()
+        .init_resource::<Aside>()
         .init_resource::<Typing>()
         .init_resource::<Pressed>()
         .init_resource::<Drawn>()
@@ -473,6 +495,7 @@ pub(crate) fn plugin(app: &mut App) {
                 show,
                 (write_input, dress).after(act),
                 wheel,
+                step_aside,
             ),
         );
 }

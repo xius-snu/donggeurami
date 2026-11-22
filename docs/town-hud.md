@@ -7,6 +7,49 @@
 > "above" or "below", or names another section in quotes, that section may be
 > in another file here: the table in `CLAUDE.md` says which.
 
+## The one button by the left edge moved up, and a cross beside the colour
+
+2026-11-22, night (`docs/bag.md`, the entry marked "night", has Hajun's
+words and what was checked). `src/hud.rs`, `src/customize.rs`.
+
+- **The one button**, the house and pencil while you stand on your plot,
+  is where the brush is among the three: from 38.75 to 49.75 of 100 down
+  ("a bit too down, i think u can move it up a bit ... the location
+  right now where the paint brush icon is, that is where the original
+  house edit button is"). The three are where they were: the house and
+  pencil over it, the tick under it.
+- **The chat's lines begin there**, and step aside of the one button as
+  they do of the three (`customize::aside`, `chat::Aside`).
+- **Beside the brush, two round buttons**: the colour, and a cross that
+  takes paint off; the one the brush paints with has a ring round it.
+- **The edit menu's four buttons** are 10.5 across, as the two people and
+  the gamepad are, and stand just clear of the thing as it is drawn
+  (`src/editor.rs`).
+
+## The door where the bag's button is, and edit mode's buttons by the left edge
+
+2026-11-22, evening (`docs/bag.md`, the entry marked "evening", has
+Hajun's words, all of it, and what was checked). `src/hud.rs`,
+`src/customize.rs`, `src/chat.rs`.
+
+- **The door out of your car** is among the buttons round the jump
+  button, where your bag's button is while you are out of it
+  (`hud::BAG_PLACE`), and as big: "the leave door/car button instead of
+  left center, just put it where the inventory ui supposed to be cuz rn
+  that slot is empty".
+- **By the left edge** (`hud::LeftEdge`, a column that grows up from 62
+  of 100 down, which `customize` fills): one button, 11 across, while you
+  stand on your plot, the house and pencil; and in edit mode three, the
+  house and pencil, the paintbrush and the tick, with a round button the
+  brush's colour beside the brush. **The one is from 51 to 62 down**, not
+  half way: the chat's lines are by that edge from 38.5 to 48.6, and the
+  stick from 64 (mine). The three reach up to 26.5, under your gems.
+- **The chat steps aside** to the right of the three for as long as they
+  are up (`chat::Aside`, 22.5 shares): they stand where its lines begin.
+- Three pictures drawn in code: `hud::customize`, `hud::brush`,
+  `hud::tick`.
+- **Not on a phone.**
+
 ## A box on the bag's button, and your coins and gems one size
 
 2026-11-22, afternoon, after Hajun had seen APK 46 (`docs/bag.md`, the

@@ -37,6 +37,7 @@ mod games;
 mod land;
 mod clock;
 mod compass;
+mod customize;
 mod drive;
 mod dynamite;
 mod editor;
@@ -1489,6 +1490,9 @@ pub fn main() {
     // and a list flicked going on by itself, which its window's do.
     flick::plugin(&mut app);
     bag::plugin(&mut app);
+    // Changing what stands on your plot: edit mode, its buttons by the left
+    // edge, and the window a colour to paint with is chosen in.
+    customize::plugin(&mut app);
     // The four games of 2026-11-18, on the selector too: the tables they
     // are played at, one way in and out for all four, and each game.
     table::plugin(&mut app);

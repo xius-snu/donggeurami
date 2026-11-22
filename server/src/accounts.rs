@@ -966,12 +966,12 @@ mod tests {
         };
         let mut bag = roundtown_net::bag::Bag::new();
         let left = bag.buy("singlebed", 1325).expect("a bed");
-        assert_eq!(dealt(&mut db, -150, "bought a thing", &crate::bag::kept(&bag)), Some(left));
+        assert_eq!(dealt(&mut db, -150, "bought a thing", &crate::bag::kept(&bag, &Default::default())), Some(left));
         assert_eq!(dealt(&mut db, -5_000, "bought a thing", "{}"), None);
         let after = bag.sell("streetlamp", left).expect("the lamp sold");
-        assert_eq!(dealt(&mut db, 1_250, "sold a thing", &crate::bag::kept(&bag)), Some(after));
+        assert_eq!(dealt(&mut db, 1_250, "sold a thing", &crate::bag::kept(&bag, &Default::default())), Some(after));
         bag.put(1, "singlebed", roundtown_net::At::Ground { x: 1.5, y: 0.0, z: -2.25, yaw: 0.785 }).expect("the bed stood");
-        done(&mut db, Job::Bag { id: c, bag: crate::bag::kept(&bag) });
+        done(&mut db, Job::Bag { id: c, bag: crate::bag::kept(&bag, &Default::default()) });
         let Some(Done::Loaded(loaded)) = done(&mut db, Job::Load(c)) else {
             panic!("no answer to a load");
         };

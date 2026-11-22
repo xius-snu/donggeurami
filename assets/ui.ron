@@ -139,6 +139,11 @@
             confirm: "#5cd6755c",
             confirm_held: "#5cd6759e",
             confirm_rim: "#99ffad9e",
+            // The tick on a thing that cannot be put down where it is (it
+            // is in something else): greyed, and its rim, which is the
+            // colour of the tick itself on it.
+            confirm_off: "#8080805c",
+            confirm_off_rim: "#c8c8c880",
             turn: "#5ca8ff5c",
             turn_held: "#5ca8ff9e",
             turn_rim: "#8cc7ff9e",
@@ -1355,8 +1360,13 @@
             one_house: "One house to a plot.",
             house_first: "Put a house down first.",
             no_coins: "Not enough coins.",
-            // Across the screen, when a thing is put down off your land.
+            // Across the screen, when a thing is put down off your land,
+            // and when it is put down in something else that stands there.
             off_your_land: "It has to stand on your land.",
+            in_the_way: "Something is in the way.",
+            // Over the window the colour to paint with is chosen in, which
+            // the round button beside the paintbrush opens.
+            paint_title: "Paint Color",
             // What each thing is called: its kind in the game, and its name.
             names: [
                 ("streetlamp", "Street Lamp"),

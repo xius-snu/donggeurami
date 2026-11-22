@@ -5037,6 +5037,110 @@ pub mod bag {
         }
     }
 
+    /// The most parts that are painted on one plot, and the longest name a
+    /// part goes by, in bytes.
+    pub const MOST_PAINTED: usize = 400;
+    pub const PART_NAME: usize = 40;
+
+    /// A colour a part of something standing on a plot has been painted
+    /// (since 2026-11-22; Hajun: "u can select a color there and then u can
+    /// tap objects and it will paint it to that color (so if u tap the
+    /// blanket of the red bed, it will just change that red color to the
+    /// color that u chose, or if u tap your house wall, it will just change
+    /// the color of the walls"). `id` is the standing thing's
+    /// ([`Standing::id`]); `part` which part of it, by the name its material
+    /// has in its model ("blanket", "plain_wall"): everything of the thing
+    /// that is drawn with that material is that part; and `colour` its red,
+    /// green and blue as a screen has them (sRGB). A part that is not
+    /// painted is as its model has it, and so is every part of a thing
+    /// taken back into the bag and stood again ("color gets reset if u
+    /// trash that item and place it back").
+    #[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug)]
+    pub struct Paint {
+        pub id: u32,
+        pub part: String,
+        pub colour: [u8; 3],
+    }
+
+    /// Whether `part` is a name a part may go by: something, no longer than
+    /// [`PART_NAME`], and nothing a line cannot hold.
+    pub fn part_named(part: &str) -> bool {
+        !part.is_empty() && part.len() <= PART_NAME && !part.chars().any(char::is_control)
+    }
+
+    /// The colours on one plot: what its owner has painted of what stands
+    /// there. Kept beside the bag rather than in it ([`Bag`] is said over
+    /// the wire as it was before there were colours, to apps from then).
+    #[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug, Default)]
+    pub struct Paints(pub Vec<Paint>);
+
+    impl Paints {
+        /// The colour `part` of the thing standing under `id` is painted,
+        /// if it is.
+        pub fn colour(&self, id: u32, part: &str) -> Option<[u8; 3]> {
+            self.0.iter().find(|paint| paint.id == id && paint.part == part).map(|paint| paint.colour)
+        }
+
+        /// What is painted of the thing standing under `id`: each part and
+        /// its colour.
+        pub fn of(&self, id: u32) -> impl Iterator<Item = (&str, [u8; 3])> {
+            self.0.iter().filter(move |paint| paint.id == id).map(|paint| (paint.part.as_str(), paint.colour))
+        }
+
+        /// Paints `part` of the thing standing under `id` among `stands`
+        /// this colour, over whatever colour it was.
+        pub fn set(&mut self, stands: &[Standing], id: u32, part: &str, colour: [u8; 3]) -> Result<(), No> {
+            if !part_named(part) {
+                return Err(No::Unknown);
+            }
+            if stands.iter().all(|stood| stood.id != id) {
+                return Err(No::None);
+            }
+            if let Some(paint) = self.0.iter_mut().find(|paint| paint.id == id && paint.part == part) {
+                paint.colour = colour;
+                return Ok(());
+            }
+            if self.0.len() >= MOST_PAINTED {
+                return Err(No::Full);
+            }
+            self.0.push(Paint {
+                id,
+                part: part.to_string(),
+                colour,
+            });
+            Ok(())
+        }
+
+        /// Takes the paint off `part` of the thing standing under `id`: it
+        /// is as its model has it again. Whether it was painted.
+        pub fn clear(&mut self, id: u32, part: &str) -> bool {
+            let before = self.0.len();
+            self.0.retain(|paint| !(paint.id == id && paint.part == part));
+            self.0.len() != before
+        }
+
+        /// Lets go of the colours of whatever no longer stands among
+        /// `stands`. Whether any went.
+        pub fn fit(&mut self, stands: &[Standing]) -> bool {
+            let before = self.0.len();
+            self.0.retain(|paint| stands.iter().any(|stood| stood.id == paint.id));
+            self.0.len() != before
+        }
+
+        /// The colours as they may be, with whatever was kept wrongly put
+        /// right: only of what stands among `stands`, one to a part, each
+        /// under a name a part may go by, and no more than a plot has.
+        pub fn sane(self, stands: &[Standing]) -> Self {
+            let mut sane = Paints::default();
+            for paint in self.0 {
+                if sane.colour(paint.id, &paint.part).is_none() {
+                    let _ = sane.set(stands, paint.id, &paint.part, paint.colour);
+                }
+            }
+            sane
+        }
+    }
+
     /// One person's bag: their gems, how many of each kind of thing they
     /// own, those standing on their plot among them, and what stands there.
     #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
@@ -5203,6 +5307,19 @@ pub mod bag {
         Put { id: u32, kind: String, at: At },
         /// Take this back off my plot, into my bag.
         Take { id: u32 },
+        /// Tell me of the colours things are painted too, on my plot and on
+        /// the plots of my channel ([`Tell::Painted`]). Said once, on
+        /// coming online, after [`Ask::Watch`], by an app that knows how to
+        /// read them (since 2026-11-22: one from before never says it, and
+        /// is never told).
+        Colours,
+        /// Paint this part of this thing of mine, which stands on my plot,
+        /// this colour ([`Paint`]).
+        Paint { id: u32, part: String, colour: [u8; 3] },
+        /// Take the paint off this part of this thing of mine: as its model
+        /// has it again (since later on 2026-11-22; Hajun: "if u paint sth
+        /// with the clear, it will clear that color to its original").
+        Unpaint { id: u32, part: String },
     }
 
     /// Something told about a bag.
@@ -5221,6 +5338,14 @@ pub mod bag {
         /// Which plot is theirs goes by their seat
         /// ([`Tell::Channel`](super::Tell::Channel)).
         Theirs { who: u64, stands: Vec<Standing> },
+        /// The colours on what stands on `who`'s plot, all of them
+        /// ([`Paints`]). Only to an app that asked ([`Ask::Colours`]). Of
+        /// your own plot, where `who` is you, it comes after each
+        /// [`Tell::Yours`] and `asked` is that one's; of the plot of anyone
+        /// else in your channel, after what stands there
+        /// ([`Tell::Theirs`]) and whenever they paint, and `asked` is
+        /// nothing.
+        Painted { who: u64, asked: u32, paints: Vec<Paint> },
     }
 }
 
@@ -8031,6 +8156,69 @@ mod tests {
     }
 
     #[test]
+    fn a_part_of_what_stands_is_painted_and_is_as_it_was_made_once_taken_back() {
+        use bag::{Bag, LAMP, No, Paint, Paints};
+        let here = At::Ground { x: 1.0, y: 0.0, z: -2.0, yaw: 0.0 };
+        let mut bag = Bag::new();
+        bag.buy("singlebed", 1_000).unwrap();
+        bag.put(1, LAMP, here).unwrap();
+        bag.put(2, "singlebed", here).unwrap();
+        let mut paints = Paints::default();
+        // The bed's blanket, blue; then green over it: one colour to a part.
+        assert_eq!(paints.set(&bag.stands, 2, "blanket", [0, 0, 255]), Ok(()));
+        assert_eq!(paints.set(&bag.stands, 2, "blanket", [0, 255, 0]), Ok(()));
+        assert_eq!(paints.set(&bag.stands, 2, "bedframe", [10, 20, 30]), Ok(()));
+        assert_eq!(paints.set(&bag.stands, 1, "lampostbody", [255, 255, 255]), Ok(()));
+        assert_eq!(paints.0.len(), 3);
+        assert_eq!(paints.colour(2, "blanket"), Some([0, 255, 0]));
+        assert_eq!(paints.colour(2, "mattress"), None);
+        assert_eq!(paints.of(2).collect::<Vec<_>>(), [("blanket", [0, 255, 0]), ("bedframe", [10, 20, 30])]);
+        // Nothing that does not stand, and no part with no name or one too
+        // long to be one.
+        assert_eq!(paints.set(&bag.stands, 9, "blanket", [1, 2, 3]), Err(No::None));
+        assert_eq!(paints.set(&bag.stands, 2, "", [1, 2, 3]), Err(No::Unknown));
+        assert_eq!(paints.set(&bag.stands, 2, &"x".repeat(bag::PART_NAME + 1), [1, 2, 3]), Err(No::Unknown));
+        assert_eq!(paints.set(&bag.stands, 2, "two\nlines", [1, 2, 3]), Err(No::Unknown));
+        assert_eq!(paints.0.len(), 3);
+        // The paint taken off a part: as its model has it, and the rest as
+        // they were; and nothing to take off a part that is not painted.
+        assert!(paints.clear(2, "bedframe"));
+        assert_eq!(paints.colour(2, "bedframe"), None);
+        assert!(!paints.clear(2, "bedframe"));
+        assert!(!paints.clear(1, "blanket"));
+        assert_eq!(paints.colour(2, "blanket"), Some([0, 255, 0]));
+        assert_eq!(paints.set(&bag.stands, 2, "bedframe", [10, 20, 30]), Ok(()));
+        // Moved, the bed keeps its colours: it is the same thing standing.
+        bag.put(2, "singlebed", At::Ground { x: 4.0, y: 0.0, z: 4.0, yaw: 1.0 }).unwrap();
+        assert!(!paints.fit(&bag.stands));
+        assert_eq!(paints.colour(2, "blanket"), Some([0, 255, 0]));
+        // Taken back into the bag, its colours go with it, and stood again
+        // it is as it was made (Hajun: "color gets reset if u trash that
+        // item and place it back, but stays if u leave it").
+        bag.take(2).unwrap();
+        assert!(paints.fit(&bag.stands));
+        assert_eq!(paints.0, [Paint { id: 1, part: "lampostbody".into(), colour: [255, 255, 255] }]);
+        bag.put(2, "singlebed", here).unwrap();
+        assert_eq!(paints.colour(2, "blanket"), None);
+        // No more than a plot has.
+        let mut full = Paints::default();
+        for n in 0..bag::MOST_PAINTED {
+            assert_eq!(full.set(&bag.stands, 1, &format!("part{n}"), [0; 3]), Ok(()));
+        }
+        assert_eq!(full.set(&bag.stands, 1, "one_more", [0; 3]), Err(No::Full));
+        assert_eq!(full.set(&bag.stands, 1, "part7", [9; 3]), Ok(()));
+        // Kept wrongly, it is put right as it is read: nothing of what does
+        // not stand, and one colour to a part, the first.
+        let wrong = Paints(vec![
+            Paint { id: 1, part: "lampostbody".into(), colour: [1, 1, 1] },
+            Paint { id: 1, part: "lampostbody".into(), colour: [2, 2, 2] },
+            Paint { id: 44, part: "door".into(), colour: [3, 3, 3] },
+            Paint { id: 1, part: String::new(), colour: [4, 4, 4] },
+        ]);
+        assert_eq!(wrong.sane(&bag.stands).0, [Paint { id: 1, part: "lampostbody".into(), colour: [1, 1, 1] }]);
+    }
+
+    #[test]
     fn what_is_said_of_a_bag_goes_over_the_wire_last_of_all() {
         use bag::{Bag, LAMP, Standing};
         let mut bag = Bag::new();
@@ -8046,13 +8234,41 @@ mod tests {
             panic!("an ask about a bag came back as something else");
         };
         assert_eq!(back, bag::Ask::Put { id: 1, kind: LAMP.into(), at: bag.stands[0].at });
-        for ask in [bag::Ask::Watch, bag::Ask::Buy("singlebed".into()), bag::Ask::Sell(LAMP.into()), bag::Ask::Take { id: 9 }] {
+        let paint = bag::Ask::Paint { id: 9, part: "blanket".into(), colour: [12, 200, 255] };
+        for ask in [bag::Ask::Watch, bag::Ask::Buy("singlebed".into()), bag::Ask::Sell(LAMP.into()), bag::Ask::Take { id: 9 }, bag::Ask::Colours, paint] {
             let bytes = postcard::to_allocvec(&Ask::Bag(ask.clone())).unwrap();
             let Ask::Bag(back) = postcard::from_bytes(&bytes).unwrap() else {
                 panic!("{ask:?} came back as something else");
             };
             assert_eq!(back, ask);
         }
+        // What an app from before colours asks is numbered as it was, and
+        // what came with them comes after: nothing an app from before
+        // sends reads as anything else, and it is never sent the new.
+        let number = |ask: bag::Ask| postcard::to_allocvec(&ask).unwrap()[0];
+        assert_eq!(number(bag::Ask::Watch), 0);
+        assert_eq!(number(bag::Ask::Take { id: 9 }), 4);
+        assert_eq!(number(bag::Ask::Colours), 5);
+        assert_eq!(number(bag::Ask::Paint { id: 9, part: "door".into(), colour: [0; 3] }), 6);
+        assert_eq!(number(bag::Ask::Unpaint { id: 9, part: "door".into() }), 7);
+        let unpaint = bag::Ask::Unpaint { id: 9, part: "door".into() };
+        let bytes = postcard::to_allocvec(&Ask::Bag(unpaint.clone())).unwrap();
+        assert!(matches!(postcard::from_bytes(&bytes).unwrap(), Ask::Bag(back) if back == unpaint));
+        let painted = bag::Tell::Painted {
+            who: 77,
+            asked: 4,
+            paints: vec![bag::Paint { id: 1, part: "lampostbody".into(), colour: [255, 0, 128] }],
+        };
+        let bytes = postcard::to_allocvec(&painted).unwrap();
+        assert_eq!(bytes[0], 2, "after Yours and Theirs");
+        assert_eq!(postcard::from_bytes::<bag::Tell>(&bytes).unwrap(), painted);
+        assert_eq!(postcard::to_allocvec(&bag::Tell::Theirs { who: 1, stands: Vec::new() }).unwrap()[0], 1);
+        // A plot painted as much as it may be is a few kilobytes too.
+        let most: Vec<bag::Paint> = (0..bag::MOST_PAINTED as u32)
+            .map(|n| bag::Paint { id: n + 1_000, part: "desktopedge".into(), colour: [200, 100, 50] })
+            .collect();
+        let bytes = postcard::to_allocvec(&Tell::Bag(bag::Tell::Painted { who: u64::MAX, asked: 0, paints: most })).unwrap();
+        assert!(bytes.len() < 8_000, "{} bytes", bytes.len());
         let tell = Tell::Bag(bag::Tell::Yours { asked: 3, bag: bag.clone() });
         let bytes = postcard::to_allocvec(&tell).unwrap();
         assert_eq!(bytes[0], 19, "Tell::Bag is the twentieth thing a device is told");

@@ -7,6 +7,60 @@
 > "above" or "below", or names another section in quotes, that section may be
 > in another file here: the table in `CLAUDE.md` says which.
 
+## APK 50: paint taken off, a tap away, things dragged through each other, a house with what is in it
+
+2026-11-22, 18:44 here (09:44 UTC). Asked for: "then rebuild apk and push
+to git" (`docs/bag.md`, the entry of that day marked "night", has all of
+it). From the main checkout, no other session at work in it. **Committed
+and pushed with it: APK 49's work too**, which had waited to be asked.
+
+- `versionCode` 50, read back with aapt. cargo ndk 4 m 22 s
+  (`release-android`), stripped from 202 MB to 110 MB, Gradle 5 s; the
+  library in the APK is the stripped one (`8265bd94`), with its seven
+  entry points; "Paint Color" and "Something is in the way." are in it.
+- 93 of the game's files in it, each the tree's own byte for byte
+  (`icons/close.png`, the cross beside the colour, among them); the
+  assets and `ui.ron` hashed before the library was built, after it and
+  after Gradle, the same each time. 128,015,409 bytes.
+- The server it plays against was deployed first (09:37 UTC,
+  `docs/online.md`).
+- **Not put on a phone**: none was attached. One APK kept, as ever.
+
+## APK 49: edit mode on your plot, the paintbrush, the door where the bag's button is
+
+2026-11-22, 16:16 here (07:16 UTC). **Not asked for**: Hajun's message
+(`docs/bag.md`, the entry of that day marked "evening") asked for the work
+and said nothing of an APK or of a push. Built all the same (mine: every
+round before it ended in one, and the phone shows none of this without
+it), and **nothing of it committed**. From the main checkout. What is new
+in it since 48: the door out of your car where the bag's button is; the
+button by the left edge and edit mode's three; the paintbrush and the
+window a colour is chosen in; paint, kept and seen by everyone.
+**`PROTOCOL_VERSION` 24 still**: the server, deployed at 07:08 UTC that
+day before it was built, speaks of colours only to an app that asks, and
+43 to 48 play on against it.
+
+- **Before it**: the three crates' tests (the game's 533, the rules' 259,
+  the server's 117); hidden runs of the desktop build, offline and two
+  copies against a server on this PC; the deploy and the check after it
+  (`docs/bag.md` lists them).
+- **The APK**: 49 (`versionCode`). cargo ndk 4m48s, with no error of
+  Android's own; stripped from 202.2 MB to 110.1 MB with
+  `GameActivity_onCreate` and the six `MainActivity` methods in it;
+  Gradle 5 s; 127.9 MB, put over APK 48 with no copy kept. Checked:
+  `versionCode` read back with aapt; the library in it the same bytes as
+  the stripped one (sha1 `627b13ee`); all 93 of the game's files under
+  `assets/` the same as the tree's (the two others there are Gradle's own
+  `dexopt` profiles), the 277 of the tree hashed before cargo ndk and
+  after Gradle and unchanged; no `.blend`, no `ui.ron`, no
+  `itemrarities.txt`; the file's new word in the library (`paint_title`);
+  no source newer than the build's beginning, and nothing of the scripted
+  runs' driver in the library.
+- **Not installed: no phone was attached** (`adb devices`, empty). None of
+  it has been seen on one.
+- **The iPhone**: no tag pushed; not type-checked, nothing behind
+  `target_os = "ios"` touched.
+
 ## APK 48: the bag's lists flicked as a phone's are, and its tabs swiped
 
 2026-11-22, 14:43 here (05:43 UTC), at Hajun's "rebuild apk and push"

@@ -17,14 +17,14 @@ Race's and Last Stand's cards turned off (`games::OFF`, since APK 44):
 spend nothing on those two unasked.
 
 As of 2026-11-22: `PROTOCOL_VERSION` 24 (since 2026-11-18, so APK 43 and
-44 play on, without what came after them), **APK 48** (`versionCode`,
+44 play on, without what came after them), **APK 50** (`versionCode`,
 built 2026-11-22, not put on a phone from here, `docs/building.md`), the
-server deployed at 15:59 UTC on 2026-11-21 with everything in `server/` and
-`shared/`, **all of it committed and pushed**: the land (`docs/land.md`),
-everyone's signs and cars, the town's slower buses, and the bag
-(`docs/bag.md`), with what APK 46 to 48 have over 45, the bag's window,
-its button and how it is scrolled as Hajun wanted them after seeing them,
-the device's side only. The iPhone's last tag,
+server deployed at 09:37 UTC on 2026-11-22 with everything in `server/` and
+`shared/`. **All of it committed and pushed, up to APK 50**: the land
+(`docs/land.md`), everyone's signs and cars, the town's slower buses, the
+bag (`docs/bag.md`) with its window, its button and how it is scrolled,
+and edit mode on your plot and paint (the entries marked "evening" and
+"night"). The iPhone's last tag,
 `ios-1.0.2-18`, pushed in the first hour of 2026-11-16 (whether Codemagic
 built it is not known here), is protocol 18: its build is told to update
 and stays offline until `ios-1.0.2-19` is built, whose tag is Hajun's to
@@ -62,7 +62,7 @@ heading in one of these:
 | netcode, the login, the town's clock | `docs/online.md`, `SERVER.md`, `MULTIPLAYER.md` | "Playing online" |
 | a map's model, collision | `docs/maps-and-collision.md` | "The islands are Blender models" |
 | the town's plots, whose they are, the sign on yours | `docs/land.md` | |
-| the bag: what you own, the shop, gems, buildings put down on your plot, a list flicked (`bag`, `build::stand`, `flick`, `server/src/bag.rs`) | `docs/bag.md` | |
+| the bag: what you own, the shop, gems, buildings put down on your plot, a list flicked, edit mode and paint (`bag`, `build::stand`, `build::paint`, `customize`, `flick`, `server/src/bag.rs`) | `docs/bag.md` | |
 | fountain, music, town houses, town objects and their editor, AIs, talking | `docs/town.md` | "The fountain runs", "The town has music", "The town's houses", "The town is data", "The town holds 32 players", "You can talk to anyone" |
 | the buses, the car you drive | `docs/vehicles.md` | "The town's buses", "The car you drive" |
 | the camera | `docs/camera.md` | "The camera stands where you zoomed it" |
@@ -144,7 +144,10 @@ to try again.
   street lamps' `lightbulb`, Bridge Wars' anchors' `spawn`. At most 24 point
   lights (`MOST_LIT`), none by day.
 - See-through walls (`see_through.rs`) happen only inside a house, with
-  alpha to coverage; never seen on the phone.
+  alpha to coverage; never seen on a phone from here. Nothing of a body
+  fades (`of_a_body`: five looks have eyes and a mouth that are meshes of
+  their own), and a part no longer in the way has its own material back
+  the frame after.
 - The fountain's water is the one custom shader (`fountain.wgsl`, built in).
 - A mesh with no vertices must not go into `Assets<Mesh>` (Bevy logs a
   use-after-free for each).
@@ -386,8 +389,13 @@ to try again.
   at a press, `src/quick.rs`, `words.chat.quick`), a small keyboard over
   it (the chat's box) and a fist (a punch; the car's reverse); the stick,
   whose middle is set where the finger first goes down, within half its
-  radius. In your car the bag's button is put away and a door stands half
-  way down the left edge, which gets you out (`hud::ExitButton`). Under
+  radius. In your car the bag's button is put away and a door stands in
+  its place, which gets you out (`hud::ExitButton`; half way down the
+  left edge until APK 49). By the left edge, just above half way
+  down, where the chat's lines begin, which step aside of it: a house and
+  pencil while you stand on your plot, which begins changing it, and in
+  edit mode three, the house and pencil over that place, the brush in it
+  and the tick under it (`hud::LeftEdge`, `src/customize.rs`, below). Under
   your balance, your gems, the two numbers one size and the gem as wide
   as the coin (Hajun's, APK 47). On Windows the stick and the jump button
   take the mouse.
@@ -443,8 +451,35 @@ to try again.
   the plot, one house to a plot), is out of your bag until it is tapped
   and binned, is kept by the server in the plot's own space, so that it
   stands the same on whichever plot your seat has, and is seen and bumped
-  into by everyone in your channel (`bag::Tell::Theirs`). Where the land
-  is going is Hajun's to say (`docs/land.md`).
+  into by everyone in your channel (`bag::Tell::Theirs`). **Nothing of
+  yours answers a tap but in edit mode** (`src/customize.rs`, since APK
+  49, Hajun's; not seen on a phone): on by the button by the left edge,
+  or by bringing a thing out of your bag, and off by its tick, or by
+  going more than 3 m off your plot, into your car or out of the town.
+  Its three buttons are the hand (a tap picks a thing up, as before), the
+  paintbrush, and the tick. **With the hand** (since APK 50, Hajun's) a
+  thing goes where the finger takes it, through whatever stands there,
+  and the tick of its menu is grey where it cannot stand
+  (`build::drag_freely`, `mark_misfits`; House Builder's pieces are
+  carried as they were); a tap anywhere else lets go of it, put down if
+  it can stand there and put back where it stood if not
+  (`editor::Edit::Away`, `stand::PutBack`); and a house picked up takes
+  what stands in it along (`stand::Rides`). **With the brush a tap paints
+  the part under it** (`src/build/paint.rs`): a part is a material of
+  Hajun's model, by its name in Blender (a bed's `blanket`, a house's
+  `plain_wall`), the colour chosen in a window behind the round button
+  beside the brush ("Paint Color", `customize::picker`: a wheel, white in
+  its middle, a bar for how bright, and a row of the last seven colours
+  painted with, kept on the device in `paint.json`); with the cross
+  beside that button in hand, a tap takes the paint off. What is painted
+  is kept beside the bag (`roundtown_net::bag::Paints`), by the server in
+  the bag's own document, is let go of when the thing is taken back into
+  the bag, and is told to everyone in your channel whose app asked for
+  colours (`bag::Ask::Colours`, `Paint`, `Unpaint`, `Tell::Painted`:
+  variants at the end, protocol 24 still, so an older app plays on and
+  sees none). **A new
+  material name in a model is a new part; one renamed loses its paint.**
+  Where the land is going is Hajun's to say (`docs/land.md`).
 - You can talk to any AI (`src/talk.rs`), ride the four buses that go
   round the roads by the clock (`car.rs`, `roads.rs`: the way is read off
   the road's paint; 5.25 m/s, 10.5 on the open road, three quarters of
@@ -459,7 +494,8 @@ to try again.
   overhead.
 - Town objects are data (`src/map.rs`, a catalogue and `town.json`), edited
   by tapping (`src/editor.rs`), offline only. The edit menu's buttons stay
-  on the object: never clamp them to the screen.
+  on the object, each just clear of it as it is drawn (`editor::Reach`):
+  never clamp them to the screen.
 - The balance is the server's online (Postgres); the games' fees and
   prizes change it, and the bag's shop. The music is turned off
   (`sound::PLAYING`), and Bevy's audio with it.

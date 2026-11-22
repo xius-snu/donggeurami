@@ -3,15 +3,371 @@
 Your bag (`src/bag.rs`), its window (`src/bag/panel.rs`), the rules of it
 that both sides play by (`roundtown_net::bag`), the server's side
 (`server/src/bag.rs`), the buildings put down on a plot of the town
-(`src/build/stand.rs`), and how its window's lists are scrolled
-(`src/flick.rs`). Dated entries, newest first.
+(`src/build/stand.rs`), how its window's lists are scrolled
+(`src/flick.rs`), and changing what stands on your plot: edit mode and
+paint (`src/customize.rs`, `src/build/paint.rs`). Dated entries, newest
+first.
 
 ## Contents
 
-1. 2026-11-22, after that: a list flicked goes on by itself as a phone's does, and a swipe across the window changes its tab; APK 48
-2. 2026-11-22, afternoon: the coins' number the gems' size and the gem the coin's; a price you cannot afford in red; the box on the bag's button; APK 47
-3. 2026-11-22, later: the shop after Hajun had looked at it (both buttons always, over the picture and see-through; the price under the name; All first shown; six categories with no scrolling); APK 46
-4. 2026-11-22: the bag, its window, gems, and buildings on your plot that everyone sees; APK 45
+1. 2026-11-22, night: paint taken off with a cross, the colours used along the window's foot, the one button moved up, a tap away letting go, things dragged through each other with a grey tick, a house taking what is in it along, smaller menu buttons set by the thing as drawn, and two faults of see-through (things deaf to a tap, eyes fading); server deployed, APK 50
+2. 2026-11-22, evening: edit mode and its three buttons by the left edge, the paintbrush and the colour window, paint kept by the server and seen by everyone, the car's door where the bag's button is; server deployed, APK 49
+3. 2026-11-22, after that: a list flicked goes on by itself as a phone's does, and a swipe across the window changes its tab; APK 48
+4. 2026-11-22, afternoon: the coins' number the gems' size and the gem the coin's; a price you cannot afford in red; the box on the bag's button; APK 47
+5. 2026-11-22, later: the shop after Hajun had looked at it (both buttons always, over the picture and see-through; the price under the name; All first shown; six categories with no scrolling); APK 46
+6. 2026-11-22: the bag, its window, gems, and buildings on your plot that everyone sees; APK 45
+
+## 2026-11-22, night: paint taken off, the colours used, a tap away, things dragged through each other, a house with what is in it, the menu's buttons, and two faults of see-through; APK 50
+
+Hajun, having tried APK 49, in five messages:
+
+> i think for the painting mode, on the right side of the rgb color icon,
+> it should be an x/clear icon and u can select between the color or the
+> clear, and if u paint sth with the clear, it will clear that color to
+> its original. also, right now the house edit button, is a bit too down,
+> i think u can move it up a bit, and when it flanels out to the 3
+> buttons, the middle one can be the location of the original house edit
+> button, so i guess the location right now where the paint brush icon
+> is, that is where the original house edit button is, and when u press
+> the house edit button, that location becomes the paint brush, and above
+> it is the house edit, and below is the check. also in the color
+> selector, instead of "Color" have "Paint Color" and on the bottom of
+> hat panel, it should be like one row of the previous used color history
+> (in the beginning it can be empty) also i think for the editing mode,
+> when u tap an object and brings up the 4 buttons (trash,rotates,check)
+> there is no feature for "cancel" and so i think when u tap somewhere
+> that is not the object, it should "cancel" so it closes the 4 button
+> menu, and if the position is valid/not colliding it will apply it, but
+> if the position is invalid, will just "cancel" and set it back to the
+> previous applied position. also when ur moving around the furnitures,
+> it seems like moving it around is a puzzle cuz u cant move it through
+> other objects due to collision, but i think it should be freely able to
+> move around even through other objects but it will just grey out the
+> check mark if its colliding/cant be applied. then rebuild apk and push
+> to git.
+
+> also right now, when u try to move your house object that has
+> furnitures inside + doors and windows, and i try to click check, it
+> says it has to stand on land. i think everything inside the house obj
+> including the doors and windows should move together if u decide to
+> move the house.
+
+> also i noticed sometimes, not always, some objects become unclickable
+> (like a sofa) or like part of the chair (the seat part of the chair
+> suddenly disappear + become an unclickale chair until i reopen the app)
+> see if there is a solution to that error.
+
+> also i think the 4 buttons during edit mode (trash,rotates,check) can
+> be slightly smaller, similar size as the current top right corner icons
+> like the social/minigame icons and make it more better/accurate in
+> where the buttons are relative to the cam angle/zoom and object
+
+> also right now, when the player is in the house, the eye becomes
+> transparent i think thats a bug. eyes and mouth shouldnt become
+> transparent
+
+**What was built.**
+
+- **The cross beside the colour** (`customize::Ink`, `customize::clear`):
+  with the brush, two round buttons beside it, the colour and a cross
+  (`icons/close.png`, the windows' own), the one the brush paints with
+  ringed. With the cross a tap takes the paint off the part under it, and
+  it is as its model has it (`paint::tap`, `Bag::unpaint`,
+  `roundtown_net::bag::Paints::clear`). Online that is asked of the
+  server (`bag::Ask::Unpaint { id, part }`, one more variant at the end,
+  `docs/online.md`), which tells everyone in the channel who asked for
+  colours, as it does of paint.
+- **Where the buttons are.** The one button is where the brush is among
+  the three, from 38.75 to 49.75 of 100 down (it was from 51 to 62, where
+  the tick is); the three are as they were, the house and pencil over it
+  and the tick under. That is where the chat's lines begin, so they step
+  aside of the one button too (`customize::aside`).
+- **"Paint Color"**, the window's title (`words.bag.paint_title`), and
+  along its foot **a row of the colours painted with**, the last seven,
+  newest first, each once, none to begin with (`Customize::used`,
+  `note_used`, `picker::Past`): a tap on one chooses it again. They and
+  the colour chosen are kept on the device for the next time the app is
+  opened (`paint.json`, beside `bag.json`; `customize::keep`), written
+  once the window is shut, not as a finger is dragged over the wheel.
+- **A tap somewhere else lets go** (`editor::Edit::Away`, from
+  `editor::drive_menu`; `build::edit_pieces`): with the four buttons up
+  on a thing of yours, a tap that is on neither the thing, nor its
+  buttons, nor a button of the screen, puts the thing down where it is
+  if it can stand there, and puts it back where it stood if it cannot
+  (`stand::PutBack`, `stand::put_back`); the menu goes either way.
+- **A thing goes where the finger takes it, through whatever stands
+  there** (`build::drag_freely`), and turns where it is. Whether it can
+  be put down where it is, is said on it every frame it is in your hand
+  (`build::mark_misfits`, `build::misfit`, `editor::CannotStand`): the
+  whole of it on the plot, in nothing else that stands there
+  (`build::overlapping`: the two boxes, each turned as it is, by more
+  than a touch), a house where a house fits. **The tick is grey while it
+  cannot** (`colours.edit_menu.confirm_off`, `confirm_off_rim`), and
+  pressed all the same says why: "Something is in the way."
+  (`words.bag.in_the_way`) or "It has to stand on your land.". Brought up
+  to another thing it still goes flush against it and in line, as it did.
+- **A house takes what is in it along** (`stand::Rides`,
+  `stand::ride_along`, marked in `stand::note_edits`): whatever of yours
+  stands on its floors as it is picked up is carried where it stood in
+  the house, wherever the house goes and whichever way it is turned, is
+  in nobody's way meanwhile, and is put down with it, the bag told of
+  each. Its doors and windows always went with it, being parts of it.
+  That was the "it has to stand on land": the beds in a house were in
+  the way of the house.
+- **The menu's four buttons** (`src/editor.rs`): 10.5 of the screen's
+  short side across, the size of the two people and the gamepad down the
+  right edge (13 until now). Each stands just clear of the thing as it is
+  drawn (`editor::Reach`, in `EditMenu::follow`): the bin over its top,
+  the tick under its foot, a turn to each side of it, by 1.5 of room; so
+  they close in on a small thing or one far off, and open out round a big
+  one or one zoomed in on, where they stood 15 from one point of the
+  thing whatever its size. No nearer that point than 9, which keeps them
+  clear of each other, and no further than 26; the bin under the time and
+  the balance first. Never held to the screen, as before.
+- **Things that could not be tapped, and the chair's seat that went.**
+  One fault (`see_through::fade_what_hides_you`): a part in the way of
+  the camera for a single frame, standing in a house, was given its
+  see-through copy and, being all there still the frame after, was left
+  with it for good. That copy is drawn from one side only, so a part
+  modelled facing the other way, the cafe chair's seat, was gone; and
+  what the part belongs to was out of a tap's reach (`InTheWay`), until
+  the app was opened again. Now it is its own material again the frame
+  after.
+- **Eyes and mouths** (`see_through::of_a_body`): on every look but the
+  first boy's, whose face is a picture, the eyes and the mouth are
+  meshes of their own hung on the head, and so were in the way of the
+  camera like a chair, and drawn at a quarter while you stood in a house
+  facing it. Nothing of a body is in the way now, yours or anyone's.
+
+**Calls that were mine.**
+
+- **The round colour button** takes the colour up when the cross is in
+  hand, and opens the window when the colour is in hand already.
+- **A colour is used when something is painted with it**, not when it is
+  chosen in the window. Seven, a row; on the device, not with the
+  account.
+- **Just out of the bag and let go of where it cannot stand, a thing goes
+  back into the bag**, having no place to go back to.
+- **A tap on another thing of yours lets go of the one in hand**; a
+  second tap picks the other up. A finger dragged, to look round, lets go
+  of nothing.
+- **Through each other on your plot only.** A piece in House Builder is
+  carried up to what is in its way and no further, and waits for its
+  tick, as it always did: that game is stalled, and nothing was spent on
+  it.
+- **A thing dragged keeps to the floor it is on** (`build::floor_under`):
+  off the land onto a house's ground floor, a step up; off the edge of an
+  upper floor, down. It no longer climbs stairs under the finger: to have
+  a thing upstairs, bring it out of the bag standing there.
+- **What rides in a house** is what stands on its floors, not what stands
+  on the land beside it, which is in its way.
+- **The numbers of the menu's buttons**: 1.5 of room, 9 at the nearest,
+  26 at the furthest, each side's turn by its own side of the thing.
+- **Nobody's eyes fade**, not only yours.
+
+**Checked.** The three crates' tests (the game's 543, the rules' 259, the
+server's 117); new among them: paint taken off (the rules, the wire's
+order, the server, the device), the colours used and their file, where
+the buttons are and what the chat steps aside of, a thing dragged through
+another and what is in the way, the floor under a thing dragged, a house
+carrying what stands in it and putting it down, a thing put back, the
+menu's buttons by the thing as drawn, a part in the way for one frame,
+no part of a body. The desktop build run hidden at 874 by 402, by day,
+offline: the one button in its new place and the three; the chat's lines
+beside each; a bed out of the bag onto the lamp (the tick grey), let go
+of there (back in the bag), dragged clear (green) and let go of (down),
+dragged back on to the lamp (grey), the grey tick pressed ("Something is
+in the way."), let go of (back where it stood); a house with a bed, a
+chair, a door and a window in it picked up, dragged 5.5 m and turned,
+all five where they should be and put down by the tick; a roof painted,
+cleared with the cross, a colour chosen on the wheel, painted, the
+window's row with both colours, the older one tapped and chosen,
+`paint.json` written. **Both faults seen before and after**, by a switch
+for the old way taken out again: the girl's eyes and mouth drawn at a
+quarter in the house and solid now, at 42 places of the camera; the
+chair's seat gone and the chair deaf to a tap after one frame of it in
+the way, and whole and picked up now. Two copies against a server on
+this PC: one painted its lamp and cleared it, the other was told of each.
+**The deploy**: nobody connected by the VM's journal (the last had left
+at 08:03:58 UTC); the running binary kept as
+`roundtown-server.prev-2026-11-22c`; up at 09:37:47 UTC on 2026-11-22,
+the VM's binary the same as the one built here (`fe58c3de`); this PC's
+own account in, hidden: its lamp stood, painted, cleared and taken back,
+its bag in the database as it was before, the journal clean.
+
+**Not checked.** On a phone: APK 50 was built and not installed, none
+being attached. Both faults were found and put right on the desktop
+alone; whether they were all of what Hajun saw on the phone is his to
+say. By night; a tablet's shape; a house of two floors; a house with
+things in it moved online (each thing's place is told as a thing moved by
+itself is, which was); an app from before against this server, by the
+tests alone. iOS: not type-checked, nothing behind `target_os = "ios"`
+touched, no tag asked for.
+
+## 2026-11-22, evening: edit mode, the paintbrush, and the door in the bag's place; APK 49
+
+(Changed that night, the entry above: where the one button is, the
+window's title, the colour kept when the app is closed, and a thing in
+the way of another. Committed with it.)
+
+Hajun, after APK 48:
+
+> also for when ur on the car, i think the leave door/car button instead of
+> left center, just put it where the inventory ui supposed to be cuz rn
+> that slot is empty. also i want the left center spot to be a ui button
+> that only appears while you are in ur plot, and its a "customize icon"
+> maybe an icon that looks like editinghouse/sign/customize icon, and only
+> when u press it, it toggles on the edit mode, which alllows u to tap any
+> object in ur plot to move it around - with edit mode off, tapping objects
+> should do nothing, and also when u open invetory and tap an object to
+> place it, then edit mode gets toggled on until u turn it off. and i think
+> when edit mode is off, its just one ui button, but when its on, it
+> switches to three buttons in a column on the left middle, the top one
+> being a normal edit/customize icon, the second one being a paintbrush
+> icon (which will be a button for coloring/texturing the objects/house so
+> when the paintbrush icon is selected, u also get a circular icon on the
+> right side of it that just shows a color, and u tap that color button and
+> it opens a rgb selector panel, and u can select a color there and then u
+> can tap objects and it will paint it to that color (so if u tap the
+> blanket of the red bed, it will just change that red color to the color
+> that u chose, or if u tap your house wall, it will just change the color
+> of the walls, and if u tap the roof, it will just color the roof, if u
+> tap the floor, it will just color the floor, so its like a modular
+> colorer (color gets reset if u trash that item and place it back, but
+> stays if u leave it and also the new color should be visible to other
+> players), and the third one being a check mark button (which is the edit
+> mode off button). the rgb selector should be a circular color selector
+> with white in the middle, and also on the right it should have a
+> brightness (whiter/darker) bar selector, no transparency selector.
+
+They asked for neither an APK nor a push this time. The server was
+deployed, as the rule for a change to `shared/` has it; APK 49 was built
+(mine: every round before ended in one, and the phone shows none of this
+without it); **nothing is committed**.
+
+**What was built.**
+
+- **The door** out of your car is where your bag's button is out of it
+  (`hud::BAG_PLACE`), among the buttons round the jump button, and as big
+  as they are; no longer half way down the left edge.
+- **The button by the left edge** (`hud::LeftEdge`, filled by
+  `customize::draw`): a house with a pencil across its corner
+  (`hud::customize`, drawn in code), there while you stand on your plot
+  in the town, out of your car. A press turns **edit mode** on
+  (`customize::Customize`).
+- **Edit mode**: three buttons, one over the other, in its place: the
+  house and pencil, which is the hand; a paintbrush (`hud::brush`); and a
+  tick (`hud::tick`), which is edit mode off. The tool in hand has a ring
+  round it and its picture white. With the hand a tap on a thing of yours
+  picks it up, to be moved, turned or binned, as before; with edit mode
+  off, or with the brush, nothing of yours is picked up by a tap
+  (`stand::hands_off`, `build::untappable_from_inside` for your house).
+  Bringing a thing out of the bag turns edit mode on, with the hand, and
+  it stays on (`stand::bring`).
+- **The paintbrush**: beside it a round button the colour it paints
+  (`customize::swatch`). A tap on a part of a thing of yours paints that
+  part (`build::paint::tap`): the nearest of your parts under the finger,
+  found on the meshes themselves (`MeshRayCast`). **A part is a material
+  of the model**, by its name in Blender (`paint::Part`): a bed's
+  `blanket`, `bedframe` and `mattress`; a house's `plain_wall`,
+  `plain_roof` and `plain_floor`; a door's `door`, `doorframe`,
+  `doorhandle` and `glass`; a lamp's `lampostbody` and `lightbulb`.
+  Everything of one thing drawn with one material is painted together.
+  What is painted is drawn with a copy of the part's own material in
+  that colour (`paint::Looks`), as see-through as it was.
+- **The colour window** (`customize::picker`), behind the round button: a
+  window as every window is, "Color" along its top (`words.bag.
+  paint_title`), a wheel with white in its middle and every colour round
+  its rim, and to its right a bar from that colour at its top down to
+  black. A finger put on either, or dragged over it, chooses; a ring on
+  each marks the choice, and the round button by the brush is that colour
+  as it changes. No see-through to choose.
+- **Kept, and seen by everyone.** What you have painted is beside your bag
+  (`bag::Bag::paints`, `roundtown_net::bag::Paints`: the thing's number,
+  the part's name, three bytes of colour), in `bag.json` offline and with
+  your account online, in the same document as the bag
+  (`server/src/bag.rs`, `Kept::paints`). Taking a thing back into the bag
+  lets its colours go; moving it keeps them. Everyone in your channel is
+  told (`bag::Tell::Painted`) and draws it (`stand::keep_colours`,
+  `paint::colour_parts`).
+- **Over the wire** (`docs/online.md`): `bag::Ask::Colours` and
+  `bag::Ask::Paint`, and `bag::Tell::Painted`, each added at the end. The
+  server tells of colours only a device that asked (`Colourers`).
+  **`PROTOCOL_VERSION` is 24 still**: APK 45 to 48 play on, and see
+  everything as its model has it.
+
+**Calls that were mine.**
+
+- **Where the buttons are.** The left edge is taken above by your name,
+  coins and gems (to 24 of 100 down), in the middle by the chat's lines
+  (38.5 to 48.6), and below by the stick (from 64). So the one button is
+  a little under half way, 51 to 62, under the chat's lowest line; and
+  the three grow up from there, the tick where the one was. The three
+  reach up past the chat's lines, which step aside to the right of them
+  for as long as edit mode is on (`chat::Aside`). The door, when it stood
+  half way down, stood on the chat's lowest line.
+- **Edit mode ends by itself** when you are more than 3 m off your plot
+  (`customize::NEAR`), in your car, or out of the town. Whatever was in
+  your hand then goes back where it stood, or into the bag if it never
+  had.
+- **The tick, or the brush, with a thing in your hand** puts it down where
+  it is first, as its own tick does; if it cannot stand there ("It has to
+  stand on your land.") the hand stays, and the menu on it.
+- **Paint is at once**, with nothing to undo it but painting again, or
+  taking the thing back into the bag.
+- **Glass stays glass** painted, and a thing with a pattern (the couch,
+  one material with a picture on it) is tinted over its pattern. A lamp's
+  bulb can be painted.
+- **A house's gables and stairs are its walls**, being of that material.
+- **The brush begins blue**, and the colour chosen is not kept when the
+  app is closed.
+- **The bar is how bright**, to black at its foot; the wheel is always as
+  bright as it goes ("white in the middle").
+- **No more than 400 painted parts to a plot** (`MOST_PAINTED`), and a
+  part's name no longer than 40 bytes.
+- **Only colour**: "coloring/texturing" was Hajun's word for what the
+  brush will be; no textures were made.
+- **On desktop the cursor is let go for as long as edit mode is on**, to
+  tap with (`build::want_pointer`).
+- The town's own objects, tapped offline to edit the map, are as they
+  were.
+
+**Checked.** The three crates' tests (the game's 533, the rules' 259,
+the server's 117): the rules of paint, its order on the wire, the
+server's part (kept, told to those that asked and to nobody else, a
+purchase keeping it, a thing taken back losing it, a bag kept before
+colours reading as it did), the device's (painted at once, the server's
+word, kept in the file), the materials (every mesh of a part, nothing
+else, a door hung on a house its own thing, a ghost), the edit mode's
+rules, the colour's arithmetic and the window's. The desktop build run
+hidden at 874 by 402, by day, offline: the one button; the three; the
+brush and the round button; the window, a tap on the wheel, on the bar,
+and a drag; a bed out of the bag (edit mode on by itself), put down, its
+blanket painted blue, frame and mattress as they were; the bed and its
+colour there again on the next run, out of `bag.json`; the bed picked up
+and binned, its colour gone; a house's walls (red), roof (blue) and,
+from inside through the wall drawn see-through, floor (green); the
+painted house picked up, a ghost in its colours, and put down by the
+tick; the brush taken with the house in hand; a step off the plot (still
+on) and well off it (off); the car, its door where the bag's button was,
+and out by it. Two copies against a server on this PC: one stood its lamp
+and painted its post; the other, another account in the same channel,
+was told and drew it blue, and red when it was painted again; and the
+first, coming back, had its lamp and its colour from the server. **The
+deploy**: nobody connected by the VM's journal (the last had left at
+05:50 UTC); the running binary kept as `roundtown-server.prev-2026-11-22b`;
+up at 07:08:18 UTC on 2026-11-22; this PC's own account in, its clock set
+and its bag as the server has it (a lamp and a car, nothing standing,
+nothing painted), with nothing amiss in the VM's journal.
+
+**Not checked.** On a phone: APK 49 was built and not installed. The
+buttons by night and on a tablet's shape (looked at by day at 874 by 402
+alone). Paint on a door, a window's glass, the couch or a lamp's bulb by
+night: the same code, not looked at. Paint against the real database:
+I did not paint on Hajun's account; the document it is kept in is the
+bag's, which is written there the same way. An app from before against
+this server: by the tests alone. iOS: not type-checked, nothing behind
+`target_os = "ios"` touched, no tag asked for.
 
 ## 2026-11-22, after that: a flicked list goes on, and a swipe changes the tab; APK 48
 

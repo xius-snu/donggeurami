@@ -7,6 +7,45 @@
 > "above" or "below", or names another section in quotes, that section may be
 > in another file here: the table in `CLAUDE.md` says which.
 
+## Two faults of see-through put right (2026-11-22)
+
+Hajun, of his plot's house on the phone: "some objects become unclickable
+(like a sofa) or like part of the chair (the seat part of the chair
+suddenly disappear + become an unclickale chair until i reopen the app)",
+and "when the player is in the house, the eye becomes transparent i think
+thats a bug. eyes and mouth shouldnt become transparent". Both are
+`src/see_through.rs`; `docs/bag.md`, the entry of that day marked
+"night", has the rest of that round.
+
+- **A part in the way for one frame was left see-through for good**
+  (`fade_what_hides_you`). It is given its see-through copy the frame it
+  is found in the way, as solid as it was; the frame after, in the way no
+  more, it was "as much of it as should be drawn" already, and the code
+  went on to the next part before it came to giving its own material
+  back. So it kept the copy, which is drawn from its front alone
+  (`cull_mode` back, not two-sided): a part modelled facing the other
+  way, the cafe chair's seat, was not drawn at all, and whatever the part
+  belongs to stayed out of a tap's reach (`InTheWay`). Only being in the
+  way again, long enough to fade, put it right. Now a part that is all
+  there and not in the way has its own material back whether or not it
+  had begun to fade.
+- **No part of a body is in the way** (`of_a_body`: anything under what
+  `lobby` spawns, by its `Seat`). A body's skinned meshes never were; but
+  five of the six looks have eyes and a mouth that are meshes of their
+  own on the head bone (`Sphere`, `Sphere.001`, `Cylinder`), solid, and
+  those were found in the way of the lines from the camera to your head
+  and drawn at a quarter whenever you stood in a house facing it. The
+  first boy's face is one blended picture (`facemat`), which never was.
+- **Seen on the desktop before and after**, by a switch for the old way
+  that was taken out again: the girl's eyes and mouth at a quarter in a
+  house, and solid, from 42 places of the camera; the chair's three
+  parts stuck after you were put beside it, its seat gone from above and
+  the chair deaf to a tap, and whole and picked up with the fix.
+- **What this says of the phone**: Hajun saw eyes go see-through on his,
+  so alpha to coverage is drawn there, which nothing here had shown
+  (below, "never drawn alpha to coverage for this game"). Not seen from
+  here on a phone, before or after.
+
 ## Less work for the same picture: a cooler phone (2026-11-15)
 
 Hajun: "When i play the game for a long time on my phone, my phone becomes
