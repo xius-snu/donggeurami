@@ -1,4 +1,4 @@
-//! The bag's window, behind the bag button among those round the jump
+//! The bag's window, behind the bag's button among those round the jump
 //! button (`hud::BagButton`), as Hajun drew it (`bagandinventorypanel1.png`
 //! and `2`, 2026-11-21: "the first tab is a inventory tab and the second tab
 //! is the shop tab. and on the left, you can select the categories
@@ -26,7 +26,9 @@
 //! top. A tap on your car shuts the window and puts you in it (`drive`).
 //!
 //! **The shop** shows everything there is, or what of it you own, and
-//! under each thing's name the coin and what it costs. A tap on a thing
+//! under each thing's name the coin and what it costs, white with the
+//! coins for it and red without ("it should be red if u cant afford it rn,
+//! and white if u can afford it"). A tap on a thing
 //! puts two buttons over its picture, a little see-through, the picture
 //! still there behind them (Hajun: "i dont want the item images to
 //! disappear when u press sth in the shop", and the buttons "slightly
@@ -55,7 +57,7 @@ use crate::drive::{CarPressed, Driving};
 use crate::hud::{self, BagButton, DialogUp, TakesPress};
 use crate::island::Venue;
 use crate::lobby::Balance;
-use crate::ui::{UiChanged, fill, ui};
+use crate::ui::{BagColours, UiChanged, fill, ui};
 use crate::window;
 use crate::{CloseUp, Player};
 
@@ -829,11 +831,21 @@ fn cards(commands: &mut Commands, body: Entity, view: &View) {
                         },
                         Pickable::IGNORE,
                     ),
-                    window::words(hud::money(thing.price), PRICE_TEXT, ui.colours.bag.price),
+                    window::words(hud::money(thing.price), PRICE_TEXT, price_ink(&ui.colours.bag, thing.price, view.balance)),
                 ],
             ));
         }
     }
+}
+
+/// The colour a thing's price is written in under its name in the shop:
+/// white with the coins for it now, `balance` of them, and red without
+/// (Hajun, 2026-11-22: "the coin price number text is white right now, but
+/// it should be red if u cant afford it rn, and white if u can afford it").
+/// By your coins alone: a thing's price is not red while a purchase is on
+/// its way, as its Buy is greyed ([`can_deal`]).
+fn price_ink(colours: &BagColours, price: u32, balance: u32) -> Color {
+    if balance >= price { colours.price } else { colours.price_cannot_afford }
 }
 
 /// Which of the two buttons on a thing in the shop can be pressed, Buy and
@@ -1098,6 +1110,28 @@ mod tests {
         assert_ne!(colours.deal_off, colours.sell);
         assert_ne!(colours.deal_off, colours.buy);
         assert!(colours.on_deal_off.alpha() < colours.on_deal.alpha());
+    }
+
+    #[test]
+    fn a_price_is_white_with_the_coins_for_the_thing_and_red_without() {
+        let colours = crate::ui::Ui::built_in().colours.bag;
+        assert_ne!(colours.price, colours.price_cannot_afford);
+        let bed = roundtown_net::bag::thing("singlebed").unwrap();
+        // To the coin.
+        assert_eq!(price_ink(&colours, bed.price, bed.price), colours.price);
+        assert_eq!(price_ink(&colours, bed.price, bed.price - 1), colours.price_cannot_afford);
+        assert_eq!(price_ink(&colours, bed.price, 0), colours.price_cannot_afford);
+        assert_eq!(price_ink(&colours, bed.price, 1_000_000), colours.price);
+        // Of everything there is: red wherever Buy would be greyed for want
+        // of the coins, and nowhere else, whether or not you have one.
+        for thing in THINGS {
+            for balance in [0, thing.price - 1, thing.price, thing.price + 1] {
+                for free in [0, 2] {
+                    let (buys, _) = can_deal(thing, free, balance, false);
+                    assert_eq!(price_ink(&colours, thing.price, balance) == colours.price, buys, "{} with {balance}", thing.kind);
+                }
+            }
+        }
     }
 
     #[test]

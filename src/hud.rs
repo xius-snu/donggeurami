@@ -42,15 +42,20 @@
 //! had it taken out. Your home (`testhomemap.glb`) is still loaded, with
 //! nothing that takes you there.
 //!
-//! **Since 2026-11-21 the face is a bag** ([`BagButton`]; Hajun: "im gonna
-//! change the emote button in the lobby to a inventory/shop panel"), which
-//! opens your bag (`bag::panel`): what you own, and the shop. The car it
-//! used to put you in is in the bag now, to be tapped there; and in the car
-//! a door stands half way down the left edge of the screen ([`ExitButton`];
-//! "a new ui button around left side center of your screen that is like a
-//! leave door icon and u press that to get off ur car"), with the bag put
-//! away until you are out. And under your coins, your gems ([`GemsText`];
-//! "i added gems below the coin").
+//! **Since 2026-11-21 the face is the button for your bag** ([`BagButton`];
+//! Hajun: "im gonna change the emote button in the lobby to a
+//! inventory/shop panel"), which opens your bag (`bag::panel`): what you
+//! own, and the shop. On it is the packed box of that window's first tab
+//! ([`cube`]; a sack for its first day, [`SACK`]: "i dont like the bag icon
+//! for that inventory panel. just reuse the box icon u used for the
+//! inventory tab"). The car the face used to put you in is in the bag now,
+//! to be tapped there; and in the car a door stands half way down the left
+//! edge of the screen ([`ExitButton`]; "a new ui button around left side
+//! center of your screen that is like a leave door icon and u press that to
+//! get off ur car"), with the bag's button put away until you are out. And
+//! under your coins, your gems ([`GemsText`]; "i added gems below the
+//! coin"), the gem itself as wide as the coin itself and the two numbers
+//! one size ([`GEM_WIDE`], [`BALANCE_TEXT`]).
 //!
 //! In a game of Bridge Wars (`arena`, since the night of 2026-11-07) the buttons are
 //! laid out as Hajun sketched them for it instead
@@ -89,11 +94,18 @@ use crate::signup::Signup;
 use crate::ui::{UiChanged, ui};
 
 pub(crate) const COIN_ICON: &str = "coin.png";
+/// How much of its picture's width the coin itself takes: Hajun's
+/// `assets/coin.png` is 512 across, and the coin in it 459, with clear
+/// round it.
+const COIN_FILLS: f32 = 459.0 / 512.0;
 /// The gem's picture, Hajun's (`assets/gems.png`, 288 by 269): beside how
 /// many you have, under your coins.
 pub(crate) const GEM_ICON: &str = "gems.png";
-/// How tall the gem's picture is for its width.
+/// How tall the gem's picture is for its width; and how much of its width
+/// the gem itself takes, 281 of the 288, which is nearly all of it where
+/// the coin has clear round it.
 const GEM_SHAPE: f32 = 269.0 / 288.0;
+const GEM_FILLS: f32 = 281.0 / 288.0;
 
 /// Sizes, as shares of the short side of the screen, so that a phone and a
 /// monitor show the same thing: your name on its plate and your balance
@@ -108,12 +120,19 @@ const NAME_TEXT: f32 = 4.2;
 /// as thin for the name's size as the stroke round the chat's words is for
 /// theirs (`chat`, 0.09 for words of 2.5).
 const NAME_STROKE: f32 = NAME_TEXT * 0.036;
-const BALANCE_TEXT: f32 = 5.0;
+/// How many coins you have and, under it, how many gems: one size (Hajun,
+/// 2026-11-22: "the coin number text is larger than the gem text. make the
+/// coin number text same size as the gem text size"; the coins' was 5.0
+/// until then, and the gems' this, three quarters of it, as drawn in
+/// `bagandinventorypanel1.png`).
+const BALANCE_TEXT: f32 = 3.8;
 const BALANCE_ICON: f32 = 5.0;
-/// How many gems you have, under your coins: smaller than the coins, as
-/// Hajun drew it (`bagandinventorypanel1.png`: its digits three quarters as
-/// tall), beside a gem as wide as the coin.
-const GEMS_TEXT: f32 = 3.8;
+/// How wide the gem's picture is drawn, for the gem itself to come out as
+/// wide as the coin itself ("the gems icon is slightly larger than the coin
+/// icon ... slightly decrease the gem icon size to match the coin icon
+/// size"). It was as wide as the coin's picture until then, and so the gem
+/// a twelfth wider than the coin, whose picture has clear round it.
+const GEM_WIDE: f32 = BALANCE_ICON * COIN_FILLS / GEM_FILLS;
 pub(crate) const SMALL_BUTTON: f32 = 8.0;
 /// The buttons down the right edge: 9.5 until Hajun asked for "very
 /// slightly" bigger (2026-11-01), and that much further in from the top
@@ -140,6 +159,12 @@ const EXIT_BUTTON: f32 = 12.0;
 /// button back.
 const GIFT: bool = false;
 const PERSON: bool = false;
+/// The button for your bag has the packed box of its window's first tab on
+/// it ([`cube`]; Hajun, 2026-11-22: "i dont like the bag icon for that
+/// inventory panel. just reuse the box icon u used for the inventory tab as
+/// the ui button for opening the inventory/shop panel"). The sack it had
+/// for its first day ([`bag`]) is still here: this word puts it back.
+const SACK: bool = false;
 /// Bridge Wars' layout ([`Layout::Arena`]): the health bar under your name,
 /// its rim; a resource's picture and its count, in a row wide enough for
 /// the pictures to line up down the right edge; and the small buttons
@@ -1557,25 +1582,26 @@ fn spawn_town_bar(commands: &mut Commands, assets: &AssetServer, images: &mut As
             });
         });
     // Round the jump button: a box where it is, and the three about it, each
-    // placed from the box's corner, in shares of the short side: the bag up
-    // and to the left of it, where the face was, the speech bubble over it
-    // and the fist beside it, each about 2.5 shares clear of it, as Hajun
+    // placed from the box's corner, in shares of the short side: your bag's
+    // up and to the left of it, where the face was, the speech bubble over
+    // it and the fist beside it, each about 2.5 shares clear of it, as Hajun
     // sketched them; and over the bubble, a little to the right, the chat's
     // small button.
     commands.spawn(round_the_jump()).with_children(|round| {
         let fist = images.add(fist());
         let arrow = images.add(jump_arrow());
-        let sack = images.add(bag());
+        // On your bag's button, the box that is on its window's first tab.
+        let pack = images.add(if SACK { bag() } else { cube() });
         let (quick_right, quick_bottom, _) = QUICK_BUTTON;
         for (name, right, bottom) in [("bag", 18.5, 18.5), ("social", quick_right, quick_bottom), ("punch", 24.3, 1.2)] {
             let picture = match name {
                 "punch" => fist.clone(),
-                "bag" => sack.clone(),
+                "bag" => pack.clone(),
                 name => icon(name),
             };
             let mut button = round.spawn(round_button(picture, ACTION_BUTTON, beside_the_jump(right, bottom)));
             // The fist throws a punch each time it is pressed, and the
-            // bag opens your bag (`bag::panel`); in the car the fist is
+            // box opens your bag (`bag::panel`); in the car the fist is
             // the reverse (`drive`).
             match name {
                 "punch" => {
@@ -1823,8 +1849,9 @@ fn balance(assets: &AssetServer) -> impl Bundle {
 }
 
 /// Your gems: the gem and how many, under your coins, as Hajun drew them
-/// (`bagandinventorypanel1.png`, 2026-11-21), the gem as wide as the coin
-/// and the number smaller ([`GEMS_TEXT`]).
+/// (`bagandinventorypanel1.png`, 2026-11-21), the gem itself as wide as
+/// the coin itself and under its middle ([`GEM_WIDE`]), and the number the
+/// coins' size, beginning where theirs does.
 fn gems(assets: &AssetServer) -> impl Bundle {
     (
         Node {
@@ -1838,13 +1865,15 @@ fn gems(assets: &AssetServer) -> impl Bundle {
             (
                 ImageNode::new(assets.load(GEM_ICON)),
                 Node {
-                    width: Val::VMin(BALANCE_ICON),
-                    height: Val::VMin(BALANCE_ICON * GEM_SHAPE),
+                    width: Val::VMin(GEM_WIDE),
+                    height: Val::VMin(GEM_WIDE * GEM_SHAPE),
+                    // In the room the coin's picture has over it.
+                    margin: UiRect::horizontal(Val::VMin((BALANCE_ICON - GEM_WIDE) * 0.5)),
                     ..default()
                 },
                 Pickable::IGNORE,
             ),
-            (GemsText, words(money(roundtown_net::bag::GEMS), GEMS_TEXT, ui().colours.text)),
+            (GemsText, words(money(roundtown_net::bag::GEMS), BALANCE_TEXT, ui().colours.text)),
         ],
     )
 }
@@ -2737,8 +2766,8 @@ impl Pictures {
 
 /// A bag: a round sack with its neck tied, flaring out over the tie. Drawn
 /// for Bridge Wars' inventory button, which went on 2026-11-09, for the
-/// minimap; since 2026-11-21 it is the town's button for your bag
-/// ([`BagButton`]).
+/// minimap; on 2026-11-21 it was the town's button for your bag
+/// ([`BagButton`]), which has the box on it since the day after ([`SACK`]).
 pub(crate) fn bag() -> Image {
     const ROUND: f32 = 0.03;
     let neck = [
@@ -2848,7 +2877,8 @@ pub(crate) fn dots() -> Image {
 
 /// A packed box seen from a corner, in outline: the picture on the bag's
 /// first tab, what you own (`bag::panel`; Hajun's
-/// `bagandinventorypanel1.png`). Six sides round it, and from its middle
+/// `bagandinventorypanel1.png`), and on the button that opens it
+/// ([`BagButton`], [`SACK`]). Six sides round it, and from its middle
 /// the three edges that meet at the corner nearest you, so that its top is
 /// a diamond; and a strip of tape over that top and a little way down its
 /// right face, as theirs has.
@@ -3096,10 +3126,51 @@ mod tests {
         let stick_top = 100.0 - crate::STICK_BOTTOM_VH - crate::STICK_SIZE_VMIN;
         assert!(bottom + 1.5 < stick_top, "the door ends {bottom} down and the stick begins {stick_top} down");
         // Your name, your coins and your gems end well over it.
-        let rows = EDGE + (NAME_TEXT * 1.3 + 2.0) + 1.4 + BALANCE_TEXT * 1.3 + 1.4 + BALANCE_ICON.max(GEMS_TEXT * 1.3);
+        let line = BALANCE_TEXT * 1.3;
+        let rows = EDGE + (NAME_TEXT * 1.3 + 2.0) + 1.4 + BALANCE_ICON.max(line) + 1.4 + (GEM_WIDE * GEM_SHAPE).max(line);
         assert!(rows + 1.5 < top, "the gems end {rows} down and the door begins {top} down");
-        // The gem is drawn no taller than the coin.
-        assert!(GEM_SHAPE <= 1.0);
+    }
+
+    #[test]
+    fn the_gem_is_drawn_as_wide_as_the_coin_and_under_its_middle() {
+        use bevy::image::{CompressedImageFormats, ImageSampler, ImageType};
+        // The first and the last column of a picture with anything solid
+        // in it, and how wide and how tall the picture is.
+        let drawn = |name: &str| {
+            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets").join(name);
+            let bytes = std::fs::read(&path).expect(name);
+            let image = Image::from_buffer(&bytes, ImageType::Extension("png"), CompressedImageFormats::NONE, true, ImageSampler::Default, RenderAssetUsages::default())
+                .expect(name);
+            let (wide, high) = (image.width() as usize, image.height() as usize);
+            let data = image.data.as_ref().expect("a picture's bytes");
+            assert_eq!(data.len(), wide * high * 4, "{name}: four bytes to a dot");
+            let solid = |column: usize| (0..high).any(|row| data[(row * wide + column) * 4 + 3] > 127);
+            let first = (0..wide).find(|&column| solid(column)).expect("something drawn");
+            let last = (0..wide).rev().find(|&column| solid(column)).expect("something drawn");
+            (first as f32, last as f32 + 1.0, wide as f32, high as f32)
+        };
+        // The numbers here are the pictures' own: Hajun's to draw again,
+        // and these to be measured again when they do.
+        let (coin_from, coin_to, coin_wide, coin_high) = drawn(COIN_ICON);
+        let (gem_from, gem_to, gem_wide, gem_high) = drawn(GEM_ICON);
+        assert_eq!(coin_wide, coin_high, "the coin's picture is drawn square");
+        assert!(((coin_to - coin_from) / coin_wide - COIN_FILLS).abs() < 0.004, "the coin is {} of {coin_wide}", coin_to - coin_from);
+        assert!(((gem_to - gem_from) / gem_wide - GEM_FILLS).abs() < 0.004, "the gem is {} of {gem_wide}", gem_to - gem_from);
+        assert!((gem_high / gem_wide - GEM_SHAPE).abs() < 1e-4);
+        // So the gem itself is as wide on the screen as the coin itself
+        // (Hajun, 2026-11-22: "slightly decrease the gem icon size to match
+        // the coin icon size"), a little smaller than it was and no more.
+        let (coin, gem) = (BALANCE_ICON * COIN_FILLS, GEM_WIDE * GEM_FILLS);
+        assert!((coin - gem).abs() < 1e-4, "the coin is {coin} across and the gem {gem}");
+        assert!((0.88..1.0).contains(&(GEM_WIDE / BALANCE_ICON)), "{GEM_WIDE}");
+        // Each is in the middle of its picture, to a hundredth of it, and
+        // the gem's picture in the middle of the room the coin's has: one
+        // is under the other, and their numbers begin at the same place.
+        for (name, from, to, wide) in [("coin", coin_from, coin_to, coin_wide), ("gem", gem_from, gem_to, gem_wide)] {
+            assert!(((from + to) * 0.5 / wide - 0.5).abs() < 0.01, "the {name} is from {from} to {to} of {wide}");
+        }
+        // No taller than the coin either.
+        assert!(GEM_WIDE * GEM_SHAPE <= BALANCE_ICON * COIN_FILLS);
     }
 
     #[test]

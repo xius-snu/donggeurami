@@ -562,7 +562,8 @@ pub(crate) struct Colours {
 /// name is written in on the panel, the rarest first (Hajun's, with their
 /// prices: "u can see the names are colored, they indicate the rarity");
 /// how many of a thing there are, after its name ("x1"); what it costs,
-/// under its name in the shop; and the shop's two buttons, Buy and Sell,
+/// under its name in the shop, with the coins for it and without them; and
+/// the shop's two buttons, Buy and Sell,
 /// each lit under the pointer, and the words on them, as their picture of
 /// it has them (`bagandinventorypanel2.png`: a brighter red than a window's
 /// no, and a little see-through, the thing's picture behind them), with
@@ -586,6 +587,8 @@ pub(crate) struct BagColours {
     pub count: Color,
     #[serde(deserialize_with = "colour")]
     pub price: Color,
+    #[serde(deserialize_with = "colour")]
+    pub price_cannot_afford: Color,
     #[serde(deserialize_with = "colour")]
     pub buy: Color,
     #[serde(deserialize_with = "colour")]

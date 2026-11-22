@@ -7,8 +7,78 @@ that both sides play by (`roundtown_net::bag`), the server's side
 
 ## Contents
 
-1. 2026-11-22, later: the shop after Hajun had looked at it (both buttons always, over the picture and see-through; the price under the name; All first shown; six categories with no scrolling); APK 46
-2. 2026-11-22: the bag, its window, gems, and buildings on your plot that everyone sees; APK 45
+1. 2026-11-22, afternoon: the coins' number the gems' size and the gem the coin's; a price you cannot afford in red; the box on the bag's button; APK 47
+2. 2026-11-22, later: the shop after Hajun had looked at it (both buttons always, over the picture and see-through; the price under the name; All first shown; six categories with no scrolling); APK 46
+3. 2026-11-22: the bag, its window, gems, and buildings on your plot that everyone sees; APK 45
+
+## 2026-11-22, afternoon: your coins and gems one size, a red price, the box on the button; APK 47
+
+Hajun, after APK 46:
+
+> right now, the gems icon is slightly larger than the coin icon, and also
+> the coin number text is larger than the gem text. make the coin number
+> text same size as the gem text size. and slightly decrease the gem icon
+> size to match the coin icon size. also in the shop, the coin price number
+> text is white right now, but it should be red if u cant afford it rn, and
+> white if u can afford it. also i dont like the bag icon for that
+> inventory panel. just reuse the box icon u used for the inventory tab as
+> the ui button for opening the inventory/shop panel. then rebuild apk and
+> push
+
+`src/hud.rs`, `src/bag/panel.rs`, `assets/ui.ron`, `src/ui.rs`. Nothing in
+`shared/` or `server/`: no deploy, protocol 24 still.
+
+- **Your coins' number is the gems' size.** One number for both now,
+  `hud::BALANCE_TEXT`, 3.8 (the coins' was 5.0; the gems' was 3.8, three
+  quarters of it, as drawn in `bagandinventorypanel1.png`).
+- **The gem is as wide as the coin.** Both pictures were drawn five shares
+  wide, but the coin's (`coin.png`, 512 across) has clear round the coin,
+  which is 459 of it, and the gem's (`gems.png`, 288) is nearly all gem,
+  281: so the gem came out 4.88 wide to the coin's 4.48, a twelfth wider.
+  The gem's picture is drawn `hud::GEM_WIDE` wide now, 4.59 (the coin's
+  five by 459/512 over 281/288), in the middle of the five the coin's
+  has, so that the gem is under the coin's middle and its number begins
+  where the coin's does. The coin is as it was. A test reads the two
+  pictures and says so if either is drawn again with other margins
+  (`COIN_FILLS`, `GEM_FILLS`).
+- **A price you cannot afford is red.** In the shop the number under a
+  thing's name is `colours.bag.price` with the coins for it and
+  `colours.bag.price_cannot_afford` without (`panel::price_ink`), to the
+  coin, and is drawn again as your coins change with the window up (the
+  window always was). Under a thing you own too.
+- **The box is on the bag's button.** `hud::cube`, the very picture the
+  window's first tab has, in place of the sack (`hud::bag`), which is
+  kept: `hud::SACK` puts it back.
+
+**Calls that were mine.**
+
+- The gem is matched to the coin by width: they stand one over the other,
+  and it is their sides that showed the difference. The gem is a wide
+  shape, so it comes out a little shorter than the coin (23 dots to 26 at
+  603 down).
+- The red, `#ff3b30`: the one a count that has run out already has
+  (Bridge Wars' metres of bridge, `arena.bridge_out`). A Mythic thing's
+  name is orange-red by Hajun's colours (`#ff4500`), so on the car, which
+  is the one Mythic thing, a red price is nearly its name's colour.
+- A price is red by your coins alone: not while a purchase is at the
+  server, when Buy is greyed for a moment. The number on the Buy button
+  is as it was, greyed with its button.
+
+**Checked.** The game's 511 tests (two new: which colour a price has for
+which coins, for all twenty things; the two pictures measured). The
+desktop build run hidden and offline: at 874 by 402 by day, the top left
+and the buttons round the jump button looked at four times enlarged and
+measured beside the run before (coin 26 by 26 dots, gem 26 by 23 where it
+was 28 by 25, the same middle); the shop with 300 coins (2,500 and 400
+red, 150 and 50 white), with none (all red) and with 20,000 (all white),
+the list scrolled meanwhile and staying where it was; the car with 14,999
+(red), with 15,000 (white, Buy lit) and picked with 100 (red, Buy
+greyed); the same by night; and at 1024 by 768.
+
+**Not checked.** On a phone: APK 47 was built and not installed, none
+being attached. Against a server: nothing it has a say in changed. iOS:
+not type-checked, nothing behind `target_os = "ios"` touched, no tag asked
+for.
 
 ## 2026-11-22, later: the shop after Hajun had looked at it; APK 46
 

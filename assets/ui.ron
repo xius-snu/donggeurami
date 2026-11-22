@@ -586,8 +586,9 @@
             common: "#d3d3d3",
             count: "#ffffff",
             // In the shop, what a thing costs, under its name beside the
-            // coin.
+            // coin: with the coins for it, and when you cannot afford it.
             price: "#ffffff",
+            price_cannot_afford: "#ff3b30",
             // The two buttons on a thing in the shop, over its picture,
             // each lit under the pointer, and the words on them. Each is
             // as see-through as its last two digits say (00 is clear, ff

@@ -7,6 +7,25 @@
 > "above" or "below", or names another section in quotes, that section may be
 > in another file here: the table in `CLAUDE.md` says which.
 
+## A box on the bag's button, and your coins and gems one size
+
+2026-11-22, afternoon, after Hajun had seen APK 46 (`docs/bag.md`, the
+entry marked "afternoon", has their words and what was checked).
+`src/hud.rs`.
+
+- **The button for your bag has the box of its window's first tab on it**
+  (`hud::cube`): "i dont like the bag icon for that inventory panel. just
+  reuse the box icon u used for the inventory tab". The sack is kept
+  (`hud::bag`, `hud::SACK`).
+- **Your coins' number is the gems' size**, 3.8 (`BALANCE_TEXT`; 5.0
+  until then), and **the gem is as wide as the coin** (`GEM_WIDE`): its
+  picture is nearly all gem where the coin's has clear round the coin, so
+  drawn the same width it came out a twelfth wider. With the smaller
+  number the row of your coins is as tall as the coin and no taller, so
+  the coin stands half a share higher than it did and the gem a share
+  higher (3 and 6 dots at 603 down, read off the runs before and after).
+- **Not on a phone.**
+
 ## The face is a bag, the car has a door, and your gems are under your coins
 
 2026-11-22, with the bag (`docs/bag.md` has Hajun's words and the whole of

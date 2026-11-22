@@ -17,13 +17,14 @@ Race's and Last Stand's cards turned off (`games::OFF`, since APK 44):
 spend nothing on those two unasked.
 
 As of 2026-11-22: `PROTOCOL_VERSION` 24 (since 2026-11-18, so APK 43 and
-44 play on, without what came after them), **APK 46** (`versionCode`,
+44 play on, without what came after them), **APK 47** (`versionCode`,
 built 2026-11-22, not put on a phone from here, `docs/building.md`), the
 server deployed at 15:59 UTC on 2026-11-21 with everything in `server/` and
 `shared/`, **all of it committed and pushed**: the land (`docs/land.md`),
 everyone's signs and cars, the town's slower buses, and the bag
-(`docs/bag.md`), with what APK 46 has over 45, the shop's window as Hajun
-wanted it after seeing it, the device's side only. The iPhone's last tag,
+(`docs/bag.md`), with what APK 46 and 47 have over 45, the shop's window
+and the bag's button as Hajun wanted them after seeing them, the device's
+side only. The iPhone's last tag,
 `ios-1.0.2-18`, pushed in the first hour of 2026-11-16 (whether Codemagic
 built it is not known here), is protocol 18: its build is told to update
 and stays offline until `ios-1.0.2-19` is built, whose tag is Hajun's to
@@ -378,21 +379,25 @@ to try again.
   car's gun, itself off since, `drive::GUN`) are turned off since
   2026-11-14, "too many lobby ui buttons" (`hud::PERSON`, `hud::GIFT`).
   Round the jump button a
-  bag (your bag, since 2026-11-22; a face until then, which put you in
+  box (your bag's button, since 2026-11-22, with the box of its window's
+  first tab on it since APK 47, Hajun not liking the sack, `hud::SACK`;
+  a face until then, which put you in
   the car), a speech bubble (a fan of things to say
   at a press, `src/quick.rs`, `words.chat.quick`), a small keyboard over
   it (the chat's box) and a fist (a punch; the car's reverse); the stick,
   whose middle is set where the finger first goes down, within half its
-  radius. In your car the bag is put away and a door stands half way down
-  the left edge, which gets you out (`hud::ExitButton`). Under your
-  balance, your gems. On Windows the stick and the jump button take the
-  mouse.
+  radius. In your car the bag's button is put away and a door stands half
+  way down the left edge, which gets you out (`hud::ExitButton`). Under
+  your balance, your gems, the two numbers one size and the gem as wide
+  as the coin (Hajun's, APK 47). On Windows the stick and the jump button
+  take the mouse.
 - **The bag** (`src/bag.rs`, `src/bag/panel.rs`, since 2026-11-22, APK
   45; not seen on a phone; drawn from Hajun's `bagandinventorypanel1.png`
   and `2`): a window of two tabs, what you own and the shop, categories
   down the left, all of them in sight with none scrolled to, cards three
   to a row, each thing's name in its rarity's colour (`colours.bag`). The
-  shop opens on All, has each thing's price under its name, and a thing
+  shop opens on All, has each thing's price under its name, red when you
+  cannot afford it (APK 47), and a thing
   pressed there has Buy and Sell over its picture, a little see-through,
   both always there and the one that cannot be pressed greyed (Hajun's,
   later that day, APK 46). Twenty things, House Builder's nineteen pieces

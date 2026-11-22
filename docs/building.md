@@ -7,6 +7,36 @@
 > "above" or "below", or names another section in quotes, that section may be
 > in another file here: the table in `CLAUDE.md` says which.
 
+## APK 47: your coins and gems one size, a red price, the box on the bag's button
+
+2026-11-22, 13:51 here (04:51 UTC), at Hajun's "then rebuild apk and push"
+(`docs/bag.md`, the entry of that day marked "afternoon"). From the main
+checkout, committed and pushed after it. What is new in it since 46: your
+coins' number the size of the gems' and the gem as wide as the coin; in
+the shop a price you cannot afford in red; the box of the window's first
+tab on the bag's button in place of the sack. Nothing in `shared/` or
+`server/` changed: **`PROTOCOL_VERSION` 24 still**, no deploy, and 43 to
+46 play on against the server of 15:59 UTC on the 21st.
+
+- **Before it**: the game's 511 tests; hidden runs of the desktop build,
+  offline (`docs/bag.md` lists them).
+- **The APK**: 47 (`versionCode`). cargo ndk 4m13s, with no error of
+  Android's own; stripped from 201.1 MB to 109.6 MB with
+  `GameActivity_onCreate` and the six `MainActivity` methods in it;
+  Gradle 4 s; 127.3 MB, put over APK 46 with no copy kept. Checked:
+  `versionCode` read back with aapt; the library in it the same bytes as
+  the stripped one (sha1 `868d3ce0`); all 93 of the game's files under
+  `assets/` the same as the tree's (the two others there are Gradle's own
+  `dexopt` profiles), the 277 of the tree hashed before cargo ndk and
+  after Gradle and unchanged; no `.blend`, no `ui.ron`, no
+  `itemrarities.txt`; the file's new colour in the library
+  (`price_cannot_afford`, `ff3b30`); no source newer than the build's
+  beginning.
+- **Not installed: no phone was attached** (`adb devices`, empty). Nothing
+  of the bag has been seen on one, in this APK or the two before.
+- **The iPhone**: no tag pushed; not type-checked, nothing behind
+  `target_os = "ios"` touched.
+
 ## APK 46: the shop as Hajun wanted it after seeing it
 
 2026-11-22, 12:16 here (03:16 UTC), at Hajun's "then rebuild apk"
