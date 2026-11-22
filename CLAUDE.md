@@ -17,14 +17,14 @@ Race's and Last Stand's cards turned off (`games::OFF`, since APK 44):
 spend nothing on those two unasked.
 
 As of 2026-11-22: `PROTOCOL_VERSION` 24 (since 2026-11-18, so APK 43 and
-44 play on, without what came after them), **APK 50** (`versionCode`,
+44 play on, without what came after them), **APK 51** (`versionCode`,
 built 2026-11-22, not put on a phone from here, `docs/building.md`), the
-server deployed at 09:37 UTC on 2026-11-22 with everything in `server/` and
-`shared/`. **All of it committed and pushed, up to APK 50**: the land
+server deployed at 13:09 UTC on 2026-11-22 with everything in `server/` and
+`shared/`. **All of it committed and pushed, up to APK 51**: the land
 (`docs/land.md`), everyone's signs and cars, the town's slower buses, the
 bag (`docs/bag.md`) with its window, its button and how it is scrolled,
-and edit mode on your plot and paint (the entries marked "evening" and
-"night"). The iPhone's last tag,
+edit mode on your plot and paint, and sitting and lying down
+(`docs/town.md`). The iPhone's last tag,
 `ios-1.0.2-18`, pushed in the first hour of 2026-11-16 (whether Codemagic
 built it is not known here), is protocol 18: its build is told to update
 and stays offline until `ios-1.0.2-19` is built, whose tag is Hajun's to
@@ -63,7 +63,7 @@ heading in one of these:
 | a map's model, collision | `docs/maps-and-collision.md` | "The islands are Blender models" |
 | the town's plots, whose they are, the sign on yours | `docs/land.md` | |
 | the bag: what you own, the shop, gems, buildings put down on your plot, a list flicked, edit mode and paint (`bag`, `build::stand`, `build::paint`, `customize`, `flick`, `server/src/bag.rs`) | `docs/bag.md` | |
-| fountain, music, town houses, town objects and their editor, AIs, talking | `docs/town.md` | "The fountain runs", "The town has music", "The town's houses", "The town is data", "The town holds 32 players", "You can talk to anyone" |
+| fountain, music, town houses, town objects and their editor, AIs, talking, the bubble in the world (`bubble`), sitting and lying down (`rest`) | `docs/town.md` | "The fountain runs", "The town has music", "The town's houses", "The town is data", "The town holds 32 players", "You can talk to anyone" |
 | the buses, the car you drive | `docs/vehicles.md` | "The town's buses", "The car you drive" |
 | the camera | `docs/camera.md` | "The camera stands where you zoomed it" |
 | House Builder, the shop's pieces, `assets/mybuilds/` | `docs/house-builder.md`, `homebuildersgameevent.md` | "House Builder", "Building your house" |
@@ -146,8 +146,10 @@ to try again.
 - See-through walls (`see_through.rs`) happen only inside a house, with
   alpha to coverage; never seen on a phone from here. Nothing of a body
   fades (`of_a_body`: five looks have eyes and a mouth that are meshes of
-  their own), and a part no longer in the way has its own material back
-  the frame after.
+  their own), nor what you sit or lie on, and a part no longer in the way
+  has its own material back the frame after. What is in the way is looked
+  for again only as you or the camera move, and five times a second
+  (`Looked`): every frame, it was a tenth of the world's thread.
 - The fountain's water is the one custom shader (`fountain.wgsl`, built in).
 - A mesh with no vertices must not go into `Assets<Mesh>` (Bevy logs a
   use-after-free for each).
@@ -479,7 +481,23 @@ to try again.
   variants at the end, protocol 24 still, so an older app plays on and
   sees none). **A new
   material name in a model is a new part; one renamed loses its paint.**
+  **A door or a window is kept as its wall's number**, the walls of its
+  house ordered by their corners to the millimetre, measured in the
+  house's own space (`build::wall_order`, `within`, since APK 51): never
+  work a model's parts out through the world, where the last bits of a
+  number differ by where it stands, which had a door in one wall on one
+  phone and in another on the next.
   Where the land is going is Hajun's to say (`docs/land.md`).
+- **You can sit and lie down** on a chair, a sofa or a bed on anyone's
+  plot (`src/rest.rs`, since APK 51, Hajun's; not seen on a phone): a
+  bubble over each place of one you stand within 1.5 m of, a tap, and you
+  are there in its pose in a fifth of a second (`roundtown_net::Pose`:
+  sat on a chair, sat back on a sofa, lying on a bed); the jump button
+  gets you up, where you stood before. Everyone in your channel sees it
+  (`Ask::Resting`, `Ask::Rest`, `Tell::Resting`, at the end, protocol 24
+  still). **Every such bubble is a thing in the world** (`src/bubble.rs`:
+  the one over someone to talk to as well): a sheet 0.62 m across turned
+  to the camera, not a button on the screen, which Hajun turned down.
 - You can talk to any AI (`src/talk.rs`), ride the four buses that go
   round the roads by the clock (`car.rs`, `roads.rs`: the way is read off
   the road's paint; 5.25 m/s, 10.5 on the open road, three quarters of

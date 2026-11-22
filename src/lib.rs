@@ -26,6 +26,7 @@ use bevy::world_serialization::WorldInstanceReady;
 mod ai;
 mod arena;
 mod bag;
+mod bubble;
 #[cfg(test)] mod blend_in_bake;
 mod bridge;
 mod build;
@@ -70,6 +71,7 @@ mod shop;
 mod signup;
 mod sky;
 mod sound;
+mod rest;
 mod tags;
 mod talk;
 mod trail;
@@ -1466,7 +1468,12 @@ pub fn main() {
     // The opening: the cover the town loads under, and your drop into it.
     intro::plugin(&mut app);
     // Talking to the town's AIs and the House Builder.
+    // The bubble that comes up by someone to talk to, or somewhere to sit:
+    // a thing in the world.
+    bubble::plugin(&mut app);
     talk::plugin(&mut app);
+    // Sitting and lying down on what stands on the town's plots.
+    rest::plugin(&mut app);
     // The House Builder in the town, and the game they ask you to play: the
     // shop to build with, and what is built.
     builder::plugin(&mut app);
@@ -3189,11 +3196,11 @@ fn read_player_input(
     (outfit, clock): (Res<arena::Outfit>, Res<arena::FightTime>),
     cameras: Query<&Transform, (With<ThirdPersonCamera>, Without<Player>)>,
     mut players: Query<
-        (&Transform, &Venue, &mut Intent, &mut WalkCycle, Has<Dead>, Has<Drinking>, Has<Squashed>, Has<Frozen>),
+        (&Transform, &Venue, &mut Intent, &mut WalkCycle, Has<Dead>, Has<Drinking>, Has<Squashed>, Has<Frozen>, Has<rest::Resting>),
         With<Player>,
     >,
 ) {
-    let Ok((transform, &venue, mut intent, mut walk, dead, drinking, squashed, frozen)) = players.single_mut() else {
+    let Ok((transform, &venue, mut intent, mut walk, dead, drinking, squashed, frozen, resting)) = players.single_mut() else {
         return;
     };
     // A dialog is up: you stand and wait for it to be answered. Dead, you
@@ -3202,6 +3209,16 @@ fn read_player_input(
     // where you stand ([`Frozen`]), you stand.
     if dialog.0 || dead || squashed || frozen {
         *intent = Intent::default();
+        walk.speed = 0.0;
+        return;
+    }
+    // Sat or lying on something (`rest`), you stay there whatever the stick
+    // says; the jump button alone is read, which gets you up.
+    if resting {
+        *intent = Intent {
+            jump: keyboard.just_pressed(KeyCode::Space) || controls.jump_just_pressed,
+            ..default()
+        };
         walk.speed = 0.0;
         return;
     }
@@ -3303,10 +3320,11 @@ type Bodies<'w, 's> = Query<
         &'static mut Riding,
         &'static mut Shove,
         Has<StaysAshore>,
-        // Dead, or lying flat where a bus ran it over ([`Squashed`]):
-        // neither moving nor in anyone's way. Held where a game puts it
-        // ([`Frozen`]), not moved here.
-        (Has<Dead>, Has<Squashed>, Option<&'static Frozen>),
+        // Dead, or lying flat where a bus ran it over ([`Squashed`]), or
+        // sat or lying on something (`rest::Resting`): neither moving nor
+        // in anyone's way. Held where a game puts it ([`Frozen`]), not
+        // moved here.
+        (Has<Dead>, Has<Squashed>, Option<&'static Frozen>, Has<rest::Resting>),
     ),
 >;
 
@@ -3340,7 +3358,7 @@ pub(crate) fn move_bodies(
     // moved, but stands in the way.
     let movers: Vec<(Entity, Venue)> = bodies
         .iter()
-        .filter(|(.., (dead, flat, frozen))| !dead && !flat && !frozen.is_some_and(|frozen| frozen.placed))
+        .filter(|(.., (dead, flat, frozen, resting))| !dead && !flat && !resting && !frozen.is_some_and(|frozen| frozen.placed))
         .map(|(entity, _, _, venue, ..)| (entity, *venue))
         .collect();
     for (mover, venue) in movers {
@@ -3361,7 +3379,7 @@ pub(crate) fn move_bodies(
         solids.extend(
             bodies
                 .iter()
-                .filter(|(other, _, _, at, .., (dead, flat, _))| *other != mover && **at == venue && !dead && !flat)
+                .filter(|(other, _, _, at, .., (dead, flat, _, resting))| *other != mover && **at == venue && !dead && !flat && !resting)
                 .map(|(_, other, collider, ..)| (other.translation, *collider)),
         );
         let Ok((_, mut body, _, _, intent, mut jump, mut riding, mut shove, stays_ashore, _)) = bodies.get_mut(mover)
@@ -3567,7 +3585,7 @@ fn start_punch(
     driving: Res<drive::Driving>,
     bridging: Res<bridge::Bridging>,
     me: Query<
-        (Entity, &Transform, &Venue, &Intent, Has<Dead>, Option<&Team>, Has<Drinking>, (Has<Squashed>, Has<Frozen>)),
+        (Entity, &Transform, &Venue, &Intent, Has<Dead>, Option<&Team>, Has<Drinking>, (Has<Squashed>, Has<Frozen>, Has<rest::Resting>)),
         With<Player>,
     >,
     others: Query<
@@ -3586,13 +3604,13 @@ fn start_punch(
     if !asked || dialog.0 || driving.on() || bridging.0 {
         return;
     }
-    let Ok((you, body, &venue, intent, dead, team, drinking, (squashed, frozen))) = me.single() else {
+    let Ok((you, body, &venue, intent, dead, team, drinking, (squashed, frozen, resting))) = me.single() else {
         return;
     };
     // Nor with a potion at your mouth (`utility`), nor flat on the road
     // under a bus's wheels (`arena::squash`), nor held where you stand by
-    // a game ([`Frozen`]).
-    if dead || drinking || squashed || frozen {
+    // a game ([`Frozen`]), nor sat or lying on something (`rest`).
+    if dead || drinking || squashed || frozen || resting {
         return;
     }
     commands.entity(you).insert(Punching::next());
@@ -3671,6 +3689,7 @@ pub(crate) fn animate_walk(
         Option<&arena::Wears>,
         Option<&Landing>,
         Has<Squashed>,
+        Option<&rest::Resting>,
     )>,
     mut bones: Query<(&WalkBone, &mut Transform)>,
     mut commands: Commands,
@@ -3695,7 +3714,7 @@ pub(crate) fn animate_walk(
         }
     }
     for (bone, mut transform) in &mut bones {
-        let Ok((_, walk, punch, carrying, drinking, wears, landing, squashed)) = walks.get(bone.owner) else {
+        let Ok((_, walk, punch, carrying, drinking, wears, landing, squashed, resting)) = walks.get(bone.owner) else {
             continue;
         };
         // Flat on the road where a bus ran it over, every limb is spread
@@ -3711,6 +3730,15 @@ pub(crate) fn animate_walk(
         // landing's (`intro`).
         if let Some(landing) = landing {
             let rotation = bone.turned(landing_offset(bone.kind, bone.stance, landing));
+            if transform.rotation != rotation {
+                transform.rotation = rotation;
+            }
+            continue;
+        }
+        // Sat or lying on something, every limb is the pose's, as far as
+        // they are into it (`rest`).
+        if let Some(resting) = resting {
+            let rotation = bone.turned(rest::limb(bone.kind, bone.stance, resting));
             if transform.rotation != rotation {
                 transform.rotation = rotation;
             }

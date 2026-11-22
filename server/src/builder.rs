@@ -588,7 +588,10 @@ fn hear(
             | Ask::Channel
             | Ask::Drive(_)
             // What is asked of a bag (`bag`).
-            | Ask::Bag(_) => {}
+            | Ask::Bag(_)
+            // Who rests on what, in the town (`players`).
+            | Ask::Resting
+            | Ask::Rest(_) => {}
         }
     }
 }

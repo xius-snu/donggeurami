@@ -783,7 +783,8 @@ fn hear(
             | Tell::Feed(_)
             | Tell::Entered { .. }
             | Tell::Channel(_)
-            | Tell::Bag(_) => {}
+            | Tell::Bag(_)
+            | Tell::Resting(_) => {}
         }
     }
 }

@@ -1364,6 +1364,9 @@
             // and when it is put down in something else that stands there.
             off_your_land: "It has to stand on your land.",
             in_the_way: "Something is in the way.",
+            // Across the screen, the first few times a thing of yours is
+            // tapped twice with edit mode off: how to move it.
+            edit_hint: "Tap the house edit button to move things.",
             // Over the window the colour to paint with is chosen in, which
             // the round button beside the paintbrush opens.
             paint_title: "Paint Color",

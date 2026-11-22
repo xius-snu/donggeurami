@@ -7,6 +7,59 @@
 > "above" or "below", or names another section in quotes, that section may be
 > in another file here: the table in `CLAUDE.md` says which.
 
+## Two furnished plots and a hot phone (2026-11-22)
+
+Hajun, having played twelve minutes with a friend on APK 50: "now the
+game is so hot on my phone, my phone becomes so hot - not sure what
+changed - maybe its because of the house models? or some optimization
+required? it just loads 2 real lands with house designs atm player
+"bunnihoho" and "bunnihihi" and it heats up the phone so much. think of a
+way to optimize."
+
+**What was looked at**, on the desktop, with the two plots as their
+owners have them (39 things and 13, read out of the database into
+scratch saves; a temporary driver, taken out again):
+
+- **What a frame costs**, in the processor's cycles (the dev build, 60
+  frames a second): an empty plot, 18.3 million, 8.2 of them on the
+  world's thread; stood in the house of the 39, 20.4 and 9.5 to 9.7;
+  outside it looking at it, 18.6 and 8.4. Two copies online against a
+  server on this PC, each with one of the plots, 21.5 and 10.9.
+  Run to run these differ by half a million or so.
+- **What is drawn**, the phone's way (no indirect draws): 173 kinds of
+  thing for 364 meshes on the empty plot; 206 for 514 with the 39 things,
+  and 31 see-through things for 24. A sixth more. The two plots are
+  31,000 triangles in all, where the town is 42,000 and its 32 people
+  120,000.
+- **What is written every frame**, counted over 240 of them standing
+  still, alone and with the second copy walking about: no part of the
+  screen laid out again, no words, no material, mesh or picture sent
+  again; 126 limbs and wheels turned, as on the empty plot. Nothing of
+  edit mode, paint or the plots runs away.
+- **One thing found: the see-through search** (`find_what_hides_you`).
+  Standing in a house it went through every drawn part of the town every
+  frame: 0.75 to 1.0 million cycles, a tenth of the world's thread. With
+  you and the camera where they were it finds what it found, so now it
+  looks again only as either moves, as the edit menu opens on something,
+  as a mesh changes, and five times a second besides for what moves by
+  itself, a door's leaf (`Looked::still_good`, `LOOK_AGAIN`). Standing
+  still: 0.08 to 0.12, with the same parts see-through. Walking, as
+  before.
+
+**What was not found.** Anything that explains a phone "so hot" by
+itself. What a phone's graphics chip does with these scenes cannot be
+measured on this PC, nor its heat. Two things that are heavier there
+than here and were not touched: walls drawn see-through with alpha to
+coverage while you stand in a house, and by night each lamp on a plot,
+which lights 40 m round it like the town's own, three more of them on
+these two plots.
+
+**Left for Hajun to say**, being things one can see: a choice of 60
+frames a second in Settings, Graphics, which is empty, or 60 by itself
+while the phone says it is hot (Android's thermal status, which needs
+the phone to try); lamps on plots lighting less far. And with a phone
+attached, the measuring in `RENDERING.md`, which says where the heat is.
+
 ## Two faults of see-through put right (2026-11-22)
 
 Hajun, of his plot's house on the phone: "some objects become unclickable

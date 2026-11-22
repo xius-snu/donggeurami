@@ -4,7 +4,10 @@
 //! Walk up to any of them and a small round chat bubble, three dots in it,
 //! comes up over their head: over one at a time, the nearest to you
 //! whichever way you face ([`choose`]), so that there is never one to pick
-//! from another and no aiming at it. Tap it, or on desktop press E, and the
+//! from another and no aiming at it. The bubble is a thing in the world
+//! since 2026-11-22 (`bubble`, [`show_bubble`]): as big there wherever the
+//! camera is, where until then it was a button on the screen, as big on it
+//! however far out the camera was. Tap it, or on desktop press E, and the
 //! camera comes in to their face from your eyes (`CloseUp`) as they stop and
 //! turn to you: what they say is along the bottom of the screen, and what you
 //! can say back is over it, on the right. A tap anywhere, or on what you say
@@ -17,14 +20,13 @@
 //! (`builder::pitch`): Play is House Builder's to deal with, and Later is
 //! goodbye.
 
-use bevy::asset::RenderAssetUsages;
 use bevy::prelude::*;
-use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 
 use roundtown_net::rules::ENTRY;
 
 use crate::ai::Steering;
 use crate::builder::{self, DIALOG_LAYER, Fill};
+use crate::bubble::{self, Bubble, Looks, Says, Tapped};
 use crate::hud::{self, DialogUp, TakesPress};
 use crate::island::{Island, Islands, Venue};
 use crate::lobby::Balance;
@@ -58,13 +60,6 @@ const FACE: f32 = 1.38;
 /// is. 1.95 until Hajun asked for it "slightly lower so its slightly more
 /// closer to the nametag" (2026-11-01).
 const OVER_HEAD: f32 = tags::OVER_HEAD;
-/// How wide the bubble is drawn, and how far round it a tap still lands on it,
-/// as shares of the short side of the screen: being the only one, it can
-/// take a tap well wide of it. 8 until Hajun asked for bigger (2026-10-31).
-const BUBBLE: f32 = 10.0;
-const BUBBLE_MARGIN: f32 = 3.0;
-/// How long the bubble takes to pop up over someone, in seconds.
-const POP_SECS: f32 = 0.18;
 /// How quickly whoever you talk to turns to you, and you to them: this share
 /// of the turn left, a second.
 const TURN_TO: f32 = 10.0;
@@ -127,16 +122,15 @@ pub(crate) struct Listening {
 #[derive(Component)]
 struct TurningBack(Quat);
 
-/// Who the bubble is over, if anyone, and how long it has been over them.
+/// Who the bubble is over, if anyone.
 #[derive(Resource, Default)]
 struct Prompt {
     over: Option<Entity>,
-    shown: f32,
 }
 
-/// The bubble.
+/// The bubble, a thing in the world (`bubble`): over this one.
 #[derive(Component)]
-struct PromptBubble;
+struct PromptBubble(Entity);
 
 /// Who you are talking to, if anyone; what a key says back to them; and the
 /// last thing an AI said, so that the next is something else.
@@ -181,7 +175,6 @@ pub(crate) fn plugin(app: &mut App) {
         .init_resource::<Prompt>()
         .init_resource::<Conversation>()
         .add_observer(press)
-        .add_systems(Startup, spawn_bubble)
         .add_systems(
             Update,
             (
@@ -193,55 +186,25 @@ pub(crate) fn plugin(app: &mut App) {
                 (turn_to_each_other, turn_back, point_camera)
                     .after(crate::move_bodies)
                     .before(crate::follow_camera),
-                // With everyone where they are this frame, and the camera.
-                (choose, place_bubble, rise)
+                // With everyone where they are this frame, and the camera;
+                // the bubble where it is to be before it is turned to the
+                // camera.
+                (choose, show_bubble.before(bubble::BubbleSystems), rise)
                     .chain()
                     .after(crate::follow_camera),
+                tapped.after(bubble::Taps),
             ),
         );
 }
 
 // ------------------------------------------------------------- the bubble
 
-/// The bubble, put away until there is someone to talk to. It is laid out top
-/// left, and moved over their head without being laid out again; a little
-/// over everything else that is not a dialog, so that the stick and the jump
-/// button are never over it.
-fn spawn_bubble(mut images: ResMut<Assets<Image>>, mut commands: Commands) {
-    let image = images.add(bubble_image());
-    commands.spawn((
-        PromptBubble,
-        TakesPress,
-        Button,
-        Node {
-            position_type: PositionType::Absolute,
-            left: Val::ZERO,
-            top: Val::ZERO,
-            padding: UiRect::all(Val::VMin(BUBBLE_MARGIN)),
-            ..default()
-        },
-        UiTransform::default(),
-        GlobalZIndex(1),
-        Visibility::Hidden,
-        children![(
-            ImageNode::new(image),
-            Node {
-                width: Val::VMin(BUBBLE),
-                height: Val::VMin(BUBBLE * BUBBLE_TALL),
-                ..default()
-            },
-            Pickable::IGNORE,
-        )],
-    ));
-}
-
 /// Who the bubble is over: the nearest of those you can talk to, whichever
 /// way you face, in the town, while nothing else is up and the camera is
 /// your own; or, on any island, the nearest thing there that [`Opens`].
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn choose(
-    time: Res<Time>,
-    me: Query<(&Transform, &Venue), (With<Player>, Without<crate::Dead>)>,
+    me: Query<(&Transform, &Venue, Has<crate::rest::Resting>), (With<Player>, Without<crate::Dead>)>,
     speakers: Query<(Entity, &GlobalTransform, &Venue, &InheritedVisibility, Has<Opens>), Or<(With<Speaker>, With<Opens>)>>,
     islands: Res<Islands>,
     up: Res<DialogUp>,
@@ -250,12 +213,13 @@ fn choose(
     driving: Res<crate::drive::Driving>,
     mut prompt: ResMut<Prompt>,
 ) {
-    // Nobody is spoken to from the car (`drive`), nor by the dead.
+    // Nobody is spoken to from the car (`drive`), nor by the dead, nor
+    // from a chair or a bed (`rest`), which talking would turn you on.
     let over = me
         .single()
         .ok()
-        .filter(|&(_, _)| !up.0 && !close_up.busy() && conversation.with.is_none() && !driving.on())
-        .and_then(|(you, &here)| {
+        .filter(|&(_, _, resting)| !resting && !up.0 && !close_up.busy() && conversation.with.is_none() && !driving.on())
+        .and_then(|(you, &here, _)| {
             let island = islands.get(here)?;
             let them = speakers
                 .iter()
@@ -265,9 +229,6 @@ fn choose(
         });
     if prompt.over != over {
         prompt.over = over;
-        prompt.shown = 0.0;
-    } else if over.is_some() {
-        prompt.shown += time.delta_secs();
     }
 }
 
@@ -314,69 +275,83 @@ fn in_sight(island: &Island, from: Vec3, to: Vec3) -> bool {
     island.sweep(from, to, 0.05).is_none()
 }
 
-/// Keeps the bubble over the head of whoever it is over, wherever the camera
-/// goes, its point on them, and over their name if they have one. Never off
-/// the screen, so that it can always be tapped: with the camera pulled in
-/// close, their head can be over the top of it. It pops up as it comes.
-fn place_bubble(
+/// Keeps the bubble over the head of whoever it is over, its point on
+/// them, and over their name if they have one: a thing in the world
+/// (`bubble`), as big there wherever the camera is, put up as someone
+/// comes within reach and taken away as they go, or another does.
+///
+/// A name is written on the screen, as big on it however far off its owner
+/// is, so over one the bubble's point is a name and a half's height over
+/// the name's foot as the screen has it ([`over_a_name`]): further over
+/// their head, in the world, the further out the camera is.
+fn show_bubble(
     prompt: Res<Prompt>,
-    speakers: Query<(&GlobalTransform, Has<Tagged>)>,
+    speakers: Query<(&GlobalTransform, &Venue, Has<Tagged>)>,
     windows: Query<&Window>,
     cameras: Query<(&Camera, &Transform), With<ThirdPersonCamera>>,
-    mut bubbles: Query<(&mut Visibility, &mut UiTransform, &ComputedNode), With<PromptBubble>>,
+    looks: Option<Res<Looks>>,
+    mut bubbles: Query<(Entity, &PromptBubble, &mut Bubble)>,
+    mut commands: Commands,
 ) {
-    let Ok((mut shown, mut place, node)) = bubbles.single_mut() else {
-        return;
-    };
-    let on_screen = prompt.over.and_then(|over| {
-        let (at, tagged) = speakers.get(over).ok()?;
-        let (camera, eye) = cameras.single().ok()?;
-        // The camera has no parent, so its transform is its global one, and
-        // `follow_camera` has just set it for this frame.
-        let point = camera
-            .world_to_viewport(&GlobalTransform::from(*eye), at.translation() + Vec3::Y * OVER_HEAD)
-            .ok()?;
-        Some((point, tagged))
+    let over = prompt.over.and_then(|over| {
+        let (at, &venue, tagged) = speakers.get(over).ok()?;
+        let head = at.translation() + Vec3::Y * OVER_HEAD;
+        let tip = match (tagged, cameras.single(), windows.single()) {
+            // The camera has no parent, so its transform is its global one,
+            // and `follow_camera` has just set it for this frame.
+            (true, Ok((camera, eye)), Ok(window)) => over_a_name(camera, &GlobalTransform::from(*eye), window, head).unwrap_or(head),
+            _ => head,
+        };
+        Some((over, tip, venue))
     });
-    let (Some((point, tagged)), Ok(window)) = (on_screen, windows.single()) else {
-        shown.set_if_neq(Visibility::Hidden);
-        return;
-    };
+    let mut up = false;
+    for (entity, of, mut bubble) in &mut bubbles {
+        match over {
+            Some((over, tip, _)) if of.0 == over => {
+                up = true;
+                if bubble.tip != tip {
+                    bubble.tip = tip;
+                }
+            }
+            _ => commands.entity(entity).despawn(),
+        }
+    }
+    if let (false, Some((over, tip, venue)), Some(looks)) = (up, over, looks) {
+        commands.spawn((PromptBubble(over), looks.bubble(Says::Dots, tip, venue)));
+    }
+}
+
+/// Where the point of a bubble is over someone whose name is written over
+/// `head`: a name and a half's height (`tags::TAG_TEXT`) up the screen from
+/// there, as far off as `head` is. Nowhere, with `head` out of the
+/// camera's sight.
+fn over_a_name(camera: &Camera, eye: &GlobalTransform, window: &Window, head: Vec3) -> Option<Vec3> {
     let vmin = window.width().min(window.height()) / 100.0;
-    let size = node.size() * node.inverse_scale_factor();
-    let lift = if tagged { tags::TAG_TEXT * 1.5 * vmin } else { 0.0 };
-    let tip = Vec2::splat(BUBBLE_MARGIN * vmin) + BUBBLE_TIP * Vec2::new(BUBBLE, BUBBLE * BUBBLE_TALL) * vmin;
-    let lowest = Vec2::splat(hud::EDGE * vmin);
-    let highest = (window.size() - size - lowest).max(lowest);
-    let corner = (point - Vec2::Y * lift - tip).clamp(lowest, highest);
-    let popped = (prompt.shown / POP_SECS).min(1.0);
-    // Overshooting a little before it settles.
-    let scale = 0.6 + 0.4 * (1.0 + 2.7 * (popped - 1.0).powi(3) + 1.7 * (popped - 1.0).powi(2));
-    place.set_if_neq(UiTransform {
-        translation: Val2::px(corner.x, corner.y),
-        scale: Vec2::splat(scale),
-        ..default()
-    });
-    shown.set_if_neq(Visibility::Inherited);
+    let foot = camera.world_to_viewport(eye, head).ok()?;
+    let ray = camera.viewport_to_world(eye, foot - Vec2::Y * (tags::TAG_TEXT * 1.5 * vmin)).ok()?;
+    let ahead = eye.forward();
+    let (far, along) = ((head - ray.origin).dot(*ahead), ray.direction.dot(*ahead));
+    (along > 1e-4 && far > 0.0).then(|| ray.origin + *ray.direction * (far / along))
+}
+
+/// A tap on the bubble, in the world (`bubble::tap`): as E is.
+fn tapped(mut taps: MessageReader<Tapped>, bubbles: Query<(), With<PromptBubble>>, mut asks: MessageWriter<Ask>) {
+    if taps.read().any(|&Tapped(bubble)| bubbles.contains(bubble)) {
+        asks.write(Ask::Start);
+    }
 }
 
 // ------------------------------------------------------------ asking
 
-/// A tap or a click on the bubble, or on any part of a conversation: what it
-/// says, or, anywhere but a reply, goodbye. Only what the press landed on,
-/// not what the click passed up through on its way out.
-fn press(
-    click: On<Pointer<Click>>,
-    bubbles: Query<(), With<PromptBubble>>,
-    replies: Query<&Reply>,
-    mut asks: MessageWriter<Ask>,
-) {
+/// A tap or a click on any part of a conversation: what it says, or,
+/// anywhere but a reply, goodbye. Only what the press landed on, not what
+/// the click passed up through on its way out. (The bubble is in the
+/// world: [`tapped`].)
+fn press(click: On<Pointer<Click>>, replies: Query<&Reply>, mut asks: MessageWriter<Ask>) {
     if click.button != PointerButton::Primary || click.original_event_target() != click.entity {
         return;
     }
-    if bubbles.contains(click.entity) {
-        asks.write(Ask::Start);
-    } else if let Ok(&reply) = replies.get(click.entity) {
+    if let Ok(&reply) = replies.get(click.entity) {
         asks.write(Ask::Say(reply));
     }
 }
@@ -825,91 +800,6 @@ fn rise(
     }
 }
 
-// ------------------------------------------------------------- the picture
-
-/// How tall the bubble's picture is, as a share of how wide.
-const BUBBLE_TALL: f32 = (BUBBLE_TOP - BUBBLE_BOTTOM) / (BUBBLE_RIGHT - BUBBLE_LEFT);
-/// Where the bubble's point is in its picture, as shares of its width from
-/// the left and of its height from the top.
-const BUBBLE_TIP: Vec2 = Vec2::new(
-    (TAIL_TIP.x - BUBBLE_LEFT) / (BUBBLE_RIGHT - BUBBLE_LEFT),
-    (BUBBLE_TOP - TAIL_TIP.y) / (BUBBLE_TOP - BUBBLE_BOTTOM),
-);
-/// The bubble, in shares of the radius of its circle, from the middle of it,
-/// y up: the edges of its picture, and its tail's point, down and to the left,
-/// and the two corners where it meets the circle, inside it.
-const BUBBLE_LEFT: f32 = -1.06;
-const BUBBLE_RIGHT: f32 = 1.06;
-const BUBBLE_TOP: f32 = 1.06;
-const BUBBLE_BOTTOM: f32 = -1.4;
-const TAIL_TIP: Vec2 = Vec2::new(-0.74, -1.3);
-const TAIL_FROM: Vec2 = Vec2::new(-0.75, -0.35);
-const TAIL_TO: Vec2 = Vec2::new(-0.12, -0.8);
-/// How much the tail's point is rounded off, how smoothly it runs into the
-/// circle, how thick the outline is, and the three dots: how far apart and
-/// how big.
-const TAIL_ROUND: f32 = 0.06;
-const TAIL_JOIN: f32 = 0.22;
-const BUBBLE_OUTLINE: f32 = 0.1;
-const DOT_APART: f32 = 0.42;
-const DOT: f32 = 0.13;
-
-/// The bubble: a white circle with a black outline, a short tail down and to
-/// the left, and three black dots across the middle (Hajun, 2026-10-31: "small
-/// minimalistic black outline, white inner, circular chatbubble with 3 black
-/// dots"). Drawn, as the rating star is, and edged by how far each pixel is
-/// from each edge, so that it is smooth at whatever size a screen shows it.
-fn bubble_image() -> Image {
-    /// How many pixels across the circle's radius is.
-    const RADIUS: f32 = 64.0;
-    // The outline's and the dots' shade of grey, the ink's red: it is drawn
-    // grey on white, and the file's ink gives it its darkness.
-    let ink = ui().colours.talk.ink.to_srgba().red;
-    let width = ((BUBBLE_RIGHT - BUBBLE_LEFT) * RADIUS).round() as u32;
-    let height = ((BUBBLE_TOP - BUBBLE_BOTTOM) * RADIUS).round() as u32;
-    let pixel = 1.0 / RADIUS;
-    let mut data = Vec::with_capacity((width * height * 4) as usize);
-    for row in 0..height {
-        for column in 0..width {
-            let at = Vec2::new(
-                BUBBLE_LEFT + (column as f32 + 0.5) * pixel,
-                BUBBLE_TOP - (row as f32 + 0.5) * pixel,
-            );
-            let edge = bubble_distance(at);
-            let dot = [-DOT_APART, 0.0, DOT_APART]
-                .into_iter()
-                .map(|x| at.distance(Vec2::new(x, 0.0)) - DOT)
-                .fold(f32::INFINITY, f32::min);
-            let cover = |distance: f32| (0.5 - distance / pixel).clamp(0.0, 1.0);
-            let white = cover(edge + BUBBLE_OUTLINE) * (1.0 - cover(dot));
-            let shade = ink + (1.0 - ink) * white;
-            let value = (shade * 255.0).round() as u8;
-            data.extend_from_slice(&[value, value, value, (cover(edge) * 255.0).round() as u8]);
-        }
-    }
-    Image::new(
-        Extent3d {
-            width,
-            height,
-            depth_or_array_layers: 1,
-        },
-        TextureDimension::D2,
-        data,
-        TextureFormat::Rgba8UnormSrgb,
-        RenderAssetUsages::default(),
-    )
-}
-
-/// How far `at` is from the edge of the bubble, its circle and its tail, in
-/// shares of the circle's radius: less than nothing inside it.
-fn bubble_distance(at: Vec2) -> f32 {
-    let circle = at.length() - 1.0;
-    let tail = hud::triangle_distance(at, TAIL_FROM, TAIL_TIP, TAIL_TO) - TAIL_ROUND;
-    // The two run into each other smoothly, rather than meeting at a corner.
-    let h = (0.5 + 0.5 * (tail - circle) / TAIL_JOIN).clamp(0.0, 1.0);
-    tail + (circle - tail) * h - TAIL_JOIN * h * (1.0 - h)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1004,36 +894,5 @@ mod tests {
         }
         assert!(drawn(&builder::pitch(false)));
         assert!(builder::pitch(false).contains("100 coins"));
-    }
-
-    #[test]
-    fn the_bubble_is_a_white_circle_outlined_in_black_with_three_dots() {
-        let image = bubble_image();
-        let (width, height) = (image.width(), image.height());
-        let pixel = |x: f32, y: f32| {
-            // From shares of the circle's radius, y up, to the pixel there.
-            let column = ((x - BUBBLE_LEFT) / (BUBBLE_RIGHT - BUBBLE_LEFT) * width as f32) as u32;
-            let row = ((BUBBLE_TOP - y) / (BUBBLE_TOP - BUBBLE_BOTTOM) * height as f32) as u32;
-            let i = ((row.min(height - 1) * width + column.min(width - 1)) * 4) as usize;
-            let data = image.data.as_ref().unwrap();
-            [data[i], data[i + 1], data[i + 2], data[i + 3]]
-        };
-        // White inside, between the dots.
-        assert_eq!(pixel(0.0, 0.5), [255, 255, 255, 255]);
-        assert_eq!(pixel(-0.21, 0.0), [255, 255, 255, 255]);
-        // Black on the dots and round the edge.
-        for x in [-DOT_APART, 0.0, DOT_APART] {
-            assert!(pixel(x, 0.0)[0] < 30, "{x}");
-        }
-        let rim = pixel(0.0, 1.0 - BUBBLE_OUTLINE * 0.5);
-        assert!(rim[0] < 30 && rim[3] == 255, "{rim:?}");
-        // Nothing in the corners, nor right of the tail.
-        assert_eq!(pixel(0.95, 0.95)[3], 0);
-        assert_eq!(pixel(0.95, -1.3)[3], 0);
-        // The tail reaches down to its point, and no further.
-        assert_eq!(pixel(TAIL_TIP.x + 0.02, TAIL_TIP.y + 0.08)[3], 255);
-        assert_eq!(pixel(TAIL_TIP.x, TAIL_TIP.y - 0.08)[3], 0);
-        // Its point is where the bubble is put, inside the picture.
-        assert!(BUBBLE_TIP.x > 0.0 && BUBBLE_TIP.x < 0.5 && BUBBLE_TIP.y > 0.9 && BUBBLE_TIP.y < 1.0);
     }
 }

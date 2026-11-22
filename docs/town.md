@@ -7,6 +7,114 @@
 > "above" or "below", or names another section in quotes, that section may be
 > in another file here: the table in `CLAUDE.md` says which.
 
+## Sitting and lying down, and the bubble a thing in the world (2026-11-22)
+
+Hajun, after APK 50:
+
+> i want players to be able to sit, and lie down on chairs, sofas, and
+> beds. i think the proximitybubble thing can work here, but reduce the
+> activation distance so u need to go closer to the chairs/sofas and make
+> the icon instead of ... to be a chair_sit icon, and lie_down icon and i
+> dont want proximity bubbles in general to scale when u zoom the camera
+> out, the scale should stay the same, so instead of a screen based ui
+> button, make it a in-world ui button that just rotates according to
+> camera viewing angle, similar to how the text in the "player's land"
+> sign is made, and make the sitting animation and the lying down
+> animation&pose, so for the sofa there should be 2 places u can sit so 2
+> proximity bubbles, chair just 1, and single bed just 1, and double bed
+> 2. and it will do a very quick animation to get to that pose and stay
+> that pose and both animation + the pose should be visible to other
+> players. and jump to leave that pose and go back to normal.
+
+**The bubble** (`src/bubble.rs`; `talk`'s was a button on the screen
+since 2026-10-31, below, "You can talk to anyone").
+
+- It is a flat sheet in the world with its picture on it, as the words on
+  a plot's sign are (`docs/land.md`): its circle 0.62 m across wherever
+  the camera is, the point of its tail on a point of the world
+  (`Bubble::tip`), turned every frame to face the camera squarely
+  (`face_the_camera`); unlit, blended, behind whatever stands in front of
+  it. It pops up as it comes, as it did. So zoomed out it is small, as a
+  head is, and no longer grows over the town.
+- **A tap on it** (`bubble::tap`): a tap on the world, read from the
+  editor's pointer, that lands on it, or within 5 of the screen's short
+  side of its middle where it is smaller than that; the nearest, with
+  two in reach. It is told to whoever put the bubble up (`Tapped`), and
+  nothing else answers that tap (`EditMenu::swallow`, `TookTap`).
+- **What is in it** (`Says`): three dots, someone sat on a chair, or
+  someone lying on a bed, drawn in code as the dots always were, and
+  drawn again at each smaller size the picture is kept at.
+- **Talking** (`talk::show_bubble`, `tapped`) is as it was but for that:
+  over the nearest within 4.5 m, one at a time, E on desktop. Over
+  someone with a name it is still a name and a half's height over the
+  name's foot as the screen has it, so further over their head the
+  further out the camera is (`over_a_name`). Last Stand's chests have the
+  same bubble.
+
+**Sitting and lying** (`src/rest.rs`).
+
+- **Where** (`rest::spots`, by a piece's name): the cafe chair, one place
+  to sit; the soft couch, two to sit back on; the single bed, one to lie
+  on; the double bed, two. Measured off Hajun's models: the chair's seat
+  0.77 m up, the couch's cushion 0.62, the beds 0.95 with a pillow 0.22
+  over that. In the town alone, on anyone's plot.
+- **The bubbles** (`rest::offer`): within 1.5 m of the edge of such a
+  thing (to 1.9 once up), on its floor, a bubble over each of its places
+  that is free, in sight of your eyes, and no further than 3.7 m (a body
+  is put no further in one go than the server lets one move, 4 m). Not
+  in edit mode, nor in your car, nor with anything else up.
+- **Down** (`rest::sit`): a tap on one, or E on desktop for the nearest,
+  puts your body on the place, facing as the thing does, and in a fifth
+  of a second it is in the pose (`roundtown_net::Pose`): **sat**, the
+  hips on the seat and the knees bent over its front (the chair); **sat
+  back**, leant a little, the legs out along the cushion (the couch,
+  which is deep for a body this size); **lying**, on the back with the
+  head on the pillow and the body a little up toward it. The model is
+  moved under the body (`rest::settle`, as `arena::squash` lays one
+  flat) and the limbs turned by `animate_walk` (`rest::limb`).
+- **Up** (`rest::leave`): the jump button, or Space, and you are on your
+  feet where you stood before, jumping. By itself, with no jump, as what
+  you rest on is picked up, moved or taken away, and as you get into
+  your car or leave the town.
+- Meanwhile nothing moves you and you are in nobody's way
+  (`move_bodies`), you throw no punch, nobody is talked to, and what you
+  rest on does not fade from under you (`see_through`).
+- **Everyone sees it**: your body is where it rests, which your moves say
+  as ever, and how you rest is said to the server (`Ask::Rest`) and told
+  to everyone in your channel whose app asked (`Ask::Resting`,
+  `Tell::Resting`; `docs/online.md`). Who rests is drawn so
+  (`rest::their_poses`), getting into the pose as you do, their name
+  lower over them (`rest::lower`).
+
+**Calls that were mine.** The bubble's size (a little more than a head
+across) and the tap's least reach. A sofa is sat back on with the legs
+out, a chair with the knees bent: the couch's cushion is 1.2 m deep, and
+sat on its front edge a body is a metre from its back. Up where you
+stood before, not on the seat: got up on the seat and gone forward, a
+body sat at a table landed on the table. A second place of a bed too far
+to be put on in one go has no bubble until you come round to it. No sit
+or lie pictures were in `assets/icons`: both are drawn in code. In first
+person the camera is still where your eyes would be standing. The town's
+people do not sit.
+
+**Checked.** The three crates' tests (555, 260, 118). The desktop build
+run hidden at 874 by 402 by day, on a copy of a real plot (39 things, its
+owner's): the two bubbles over a sofa from a metre off and none from
+1.7; a tap, sat back, seen from the front and the side, the sofa solid
+under you; Space, back on the floor where you stood; the one bubble of
+the double bed's nearer place, a tap, lying with the head on the pillow,
+seen from the side and from over it; a chair at a table, sat, from the
+front and from behind, and up again to the floor and not the table; the
+bubble over one of the town's people near the pond, small from far off,
+and a tap on it starting the talk. Two copies against a server on this
+PC, each with one of two real plots: one sat on its sofa and got up, and
+the other had it sat back there and on its feet again.
+
+**Not checked.** On a phone: APK 51 was built and not installed, none
+being attached. How someone else looks sat, from their side (the same
+code draws them; only that they were so was read off the second copy).
+By night. The single bed. First person.
+
 ## The fountain runs
 
 Water wells out of the top of the fountain's tower into its top bowl, spills

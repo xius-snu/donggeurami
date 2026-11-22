@@ -471,6 +471,13 @@ impl EditMenu {
         self.held = None;
     }
 
+    /// The press that comes up this frame was something else's, a bubble's
+    /// in the world (`bubble::tap`): it picks nothing up here and lets go
+    /// of nothing.
+    pub(crate) fn swallow(&mut self) {
+        self.swallow_release = true;
+    }
+
     /// Keeps the menu on `thing`, which stands at `place`, wherever it is on
     /// the screen.
     fn follow(

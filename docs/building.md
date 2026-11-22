@@ -7,6 +7,27 @@
 > "above" or "below", or names another section in quotes, that section may be
 > in another file here: the table in `CLAUDE.md` says which.
 
+## APK 51: sitting and lying down, bubbles in the world, doors in the same wall for everyone
+
+2026-11-22, 22:18 here (13:18 UTC). Asked for: "then rebuild apk and
+push" (`docs/town.md`'s first entry, and those of that day in
+`docs/bag.md` and `docs/rendering-and-frame-rate.md`). From the main
+checkout, no other session at work in it.
+
+- `versionCode` 51, read back with aapt. cargo ndk 7 m 47 s
+  (`release-android`; `shared/` had changed), stripped from 203 MB to 110
+  MB, Gradle 51 s; the library in the APK is the stripped one
+  (`caff3177`), with its seven entry points; "Tap the house edit button"
+  is in it.
+- 93 of the game's files in it, each the tree's own byte for byte; the
+  assets and `ui.ron` hashed before the library was built and after
+  Gradle, the same. 128,201,585 bytes.
+- The server it plays against was deployed first (13:09 UTC,
+  `docs/online.md`). The iPhone's build was type-checked on this PC
+  (`mobile/ios/check_on_windows.sh`): one line of this is for phones
+  alone (`bubble::plugin`, after the touch controls). No tag.
+- **Not put on a phone**: none was attached. One APK kept, as ever.
+
 ## APK 50: paint taken off, a tap away, things dragged through each other, a house with what is in it
 
 2026-11-22, 18:44 here (09:44 UTC). Asked for: "then rebuild apk and push

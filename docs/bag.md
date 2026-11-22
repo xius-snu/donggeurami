@@ -10,12 +10,86 @@ first.
 
 ## Contents
 
-1. 2026-11-22, night: paint taken off with a cross, the colours used along the window's foot, the one button moved up, a tap away letting go, things dragged through each other with a grey tick, a house taking what is in it along, smaller menu buttons set by the thing as drawn, and two faults of see-through (things deaf to a tap, eyes fading); server deployed, APK 50
-2. 2026-11-22, evening: edit mode and its three buttons by the left edge, the paintbrush and the colour window, paint kept by the server and seen by everyone, the car's door where the bag's button is; server deployed, APK 49
-3. 2026-11-22, after that: a list flicked goes on by itself as a phone's does, and a swipe across the window changes its tab; APK 48
-4. 2026-11-22, afternoon: the coins' number the gems' size and the gem the coin's; a price you cannot afford in red; the box on the bag's button; APK 47
-5. 2026-11-22, later: the shop after Hajun had looked at it (both buttons always, over the picture and see-through; the price under the name; All first shown; six categories with no scrolling); APK 46
-6. 2026-11-22: the bag, its window, gems, and buildings on your plot that everyone sees; APK 45
+1. 2026-11-22, late: a spot of the colour chosen in its window, a hint at edit mode for someone tapping at a thing, and a house's walls numbered the same on every device, so that its doors are in the same wall for everyone; APK 51
+2. 2026-11-22, night: paint taken off with a cross, the colours used along the window's foot, the one button moved up, a tap away letting go, things dragged through each other with a grey tick, a house taking what is in it along, smaller menu buttons set by the thing as drawn, and two faults of see-through (things deaf to a tap, eyes fading); server deployed, APK 50
+3. 2026-11-22, evening: edit mode and its three buttons by the left edge, the paintbrush and the colour window, paint kept by the server and seen by everyone, the car's door where the bag's button is; server deployed, APK 49
+4. 2026-11-22, after that: a list flicked goes on by itself as a phone's does, and a swipe across the window changes its tab; APK 48
+5. 2026-11-22, afternoon: the coins' number the gems' size and the gem the coin's; a price you cannot afford in red; the box on the bag's button; APK 47
+6. 2026-11-22, later: the shop after Hajun had looked at it (both buttons always, over the picture and see-through; the price under the name; All first shown; six categories with no scrolling); APK 46
+7. 2026-11-22: the bag, its window, gems, and buildings on your plot that everyone sees; APK 45
+
+## 2026-11-22, late: the colour chosen shown in its window, a hint at edit mode, and a house's doors in the same wall on every device; APK 51
+
+Three more of Hajun's that evening (sitting and lying down, asked with the
+first of them, is `docs/town.md`'s; the hot phone, `docs/rendering-and-
+frame-rate.md`'s):
+
+> also in the paint color palette i want another circle that shows the
+> current color maybe in the gap between the top right corner of the rgb
+> circle, and the right bar, u could sneak a circle current indicator
+> without resizing or moving any other elements in that panel - just so
+> its easier for ppl to tell what is the current color without having to
+> look the left edge of ur screen.
+
+> also the house rotation is different for another person like the door
+> was on the wrong wall on my friend's screen, but in my screen he jumped
+> through my window. make it consistent
+
+> also for a small userfriendly way for users, just for the first few
+> times, if they repeatedly tap on an object without being on house edit
+> mode, give small text like "Press the edit house mode to move objects"
+> sth like that as a hint. cuz i think some ppl after placing an object
+> and they try to press the object to move again, but dont know they have
+> to be in house edit mode to do it.
+
+- **The colour chosen, in its window** (`picker::Now`): a round spot 8.8
+  across in the corner the wheel leaves at its top right, out over the
+  gap to the bar, as far clear of the one as of the other; the colour as
+  it is, as a finger moves. Nothing else of the window is moved.
+- **The hint** (`stand::hint_at_edit_mode`): with edit mode off, a second
+  tap on a thing of yours within four seconds of the first says "Tap the
+  house edit button to move things." (`words.bag.edit_hint`) across the
+  screen for three and a half. Three times ever on a device
+  (`Customize::may_hint`, kept in `paint.json`), and it takes two more
+  taps each time. A tap a bubble took is not one.
+- **A house's walls are numbered the same everywhere** (`build::within`,
+  `wall_order`). A door or a window is kept as which wall of its house it
+  is in, the walls counted in order of their low corners. Those corners
+  were worked out through the world, the wall's place there in the
+  house's place there, and came out a few millionths of a metre off, by
+  a different few wherever the house stood. Three walls of Hajun's
+  houses begin at the same place across, so which counted first hung on
+  those millionths: on one plot the order was front, right, back, left,
+  and for a house on another, right, back, front, left (logged, with
+  the old way put back for the purpose). A plot is whichever your seat
+  has, so the order could change from one visit to the next, and
+  between the device that put a door in and everyone else's. Now each
+  part is measured in the house's own space, by how each node stands in
+  the one above, the same to the last bit anywhere; and the walls are
+  ordered by their corners to the millimetre: front, right, back, left.
+  House Builder's houses are numbered by the same code.
+- **What this does to doors and windows already in**: each is kept by a
+  number that meant whichever wall was so numbered where the house stood
+  when it went in. From APK 51 the number means one wall for good. A door
+  put in while the order was another will stand in another wall now, on
+  its owner's screen as on everyone's: it is to be moved once, and stays.
+  There is no telling from what is kept which wall was meant.
+
+**Calls that were mine.** Where the spot is and how big; its rim the
+window's line. The hint's words (Hajun's "sth like that"), three times,
+two taps four seconds apart. Not moving anyone's doors for them.
+
+**Checked.** The tests (the spot clear of the wheel and the bar; two
+taps, and never more than three times, kept in the file; the walls'
+order with their corners a little off, and the old order that came of
+it). Hidden on the desktop: the window with its spot; two taps on a sofa
+and the words across the screen, `paint.json` saying once. Two copies
+against a server on this PC with the two real plots: every one of the 39
+things of the one and the 13 of the other, their 17 doors and windows
+among them, stood on the other copy where its owner's had it.
+
+**Not checked.** On a phone. A door put in before this, on the device
+that put it in.
 
 ## 2026-11-22, night: paint taken off, the colours used, a tap away, things dragged through each other, a house with what is in it, the menu's buttons, and two faults of see-through; APK 50
 

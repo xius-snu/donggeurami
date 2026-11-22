@@ -208,7 +208,7 @@ fn colour_parts(
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn tap(
     mut customize: ResMut<Customize>,
-    pointer: Res<EditPointer>,
+    (pointer, took): (Res<EditPointer>, Res<crate::bubble::TookTap>),
     dialog: Res<DialogUp>,
     cameras: Query<(&Camera, &Transform), With<ThirdPersonCamera>>,
     mine: Query<(Entity, &Stood, &InheritedVisibility), (With<Mine>, Without<Ghost>)>,
@@ -219,7 +219,9 @@ fn tap(
     mut bag: ResMut<Bag>,
     mut asks: MessageWriter<Ask>,
 ) {
-    if !customize.painting() || dialog.0 || !pointer.released || pointer.lost || pointer.travel > editor::TAP_SLOP {
+    // (A tap a bubble took, someone to talk to beside what you paint, is
+    // the bubble's.)
+    if !customize.painting() || dialog.0 || !pointer.released || pointer.lost || pointer.travel > editor::TAP_SLOP || took.0 {
         return;
     }
     let Ok((camera, place)) = cameras.single() else {

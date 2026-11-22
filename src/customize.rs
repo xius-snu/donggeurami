@@ -83,6 +83,10 @@ pub(crate) const USED: usize = 7;
 /// the bag's, and its version.
 const FILE: &str = "paint.json";
 const VERSION: u32 = 1;
+/// How many times, ever, someone tapping at a thing of theirs with edit
+/// mode off is told how to move it (`stand::hint_at_edit_mode`; Hajun: "just
+/// for the first few times"). Mine.
+const HINTS: u8 = 3;
 
 /// What a tap on a thing of yours does in edit mode.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -171,6 +175,8 @@ pub(crate) struct Customize {
     ink: Ink,
     colour: Hsv,
     used: [Option<Hsv>; USED],
+    /// How many times it has been said how a thing is moved.
+    hinted: u8,
     wants: Option<Wants>,
 }
 
@@ -187,17 +193,22 @@ impl Default for Customize {
                 bright: 0.9,
             },
             used: [None; USED],
+            hinted: 0,
             wants: None,
         }
     }
 }
 
-/// The colour chosen and those painted with, as they are kept in the file.
+/// The colour chosen and those painted with, as they are kept in the file,
+/// and how many times it has been said how a thing is moved (nothing, in a
+/// file from before that was).
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
 struct Kept {
     version: u32,
     colour: Hsv,
     used: Vec<Hsv>,
+    #[serde(default)]
+    hinted: u8,
 }
 
 impl Customize {
@@ -253,6 +264,17 @@ impl Customize {
         self.used = used;
     }
 
+    /// Whether it is still to be said how a thing is moved: the first few
+    /// times only.
+    pub(crate) fn may_hint(&self) -> bool {
+        self.hinted < HINTS
+    }
+
+    /// It has been said once more.
+    pub(crate) fn note_hint(&mut self) {
+        self.hinted = self.hinted.saturating_add(1);
+    }
+
     /// As it was kept, if it was.
     fn remembering(kept: Option<Kept>) -> Self {
         let Some(kept) = kept.filter(|kept| kept.version == VERSION) else {
@@ -265,6 +287,7 @@ impl Customize {
         Self {
             colour: kept.colour.sane(),
             used,
+            hinted: kept.hinted,
             ..default()
         }
     }
@@ -274,6 +297,7 @@ impl Customize {
             version: VERSION,
             colour: self.colour,
             used: self.used().collect(),
+            hinted: self.hinted,
         }
     }
 
@@ -842,9 +866,26 @@ mod tests {
                 bright: -1.0,
             },
             used: Vec::new(),
+            hinted: 0,
         };
         let put_right = Customize::remembering(Some(nonsense)).chosen();
         assert_eq!((put_right.hue, put_right.out, put_right.bright), (0.0, 1.0, 0.0));
+    }
+
+    #[test]
+    fn how_a_thing_is_moved_is_said_a_few_times_and_never_again() {
+        let mut customize = Customize::default();
+        for _ in 0..HINTS {
+            assert!(customize.may_hint());
+            customize.note_hint();
+        }
+        assert!(!customize.may_hint());
+        // Kept with the colours, so that it is never again on this device;
+        // and a file from before it was kept reads as never said.
+        let back = Customize::remembering(serde_json::from_str(&serde_json::to_string(&customize.to_keep()).unwrap()).ok());
+        assert!(!back.may_hint());
+        let before: Kept = serde_json::from_str(r#"{"version":1,"colour":{"hue":0.6,"out":0.7,"bright":0.9},"used":[]}"#).unwrap();
+        assert!(Customize::remembering(Some(before)).may_hint());
     }
 
     #[test]

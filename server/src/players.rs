@@ -45,7 +45,7 @@ use bevy::prelude::*;
 use bevy_replicon::prelude::*;
 use bevy_replicon::shared::backend::connected_client::NetworkId;
 use bevy_replicon_renet::netcode::NetcodeServerTransport;
-use roundtown_net::{Ask, Member, Moved, Refusal, Seated, Spot, Tell, Venue, arrival_of_a_person, cars, land, profile};
+use roundtown_net::{Ask, Member, Moved, Posed, Pose, Refusal, Seated, Spot, Tell, Venue, arrival_of_a_person, cars, land, profile};
 use sha2::{Digest, Sha256};
 
 use crate::accounts::{Bank, Loaded, Record};
@@ -128,6 +128,12 @@ pub(crate) fn plugin(app: &mut App) {
 #[derive(Component)]
 pub(crate) struct Watching;
 
+/// A device that has asked to be told who in its channel of the town sits
+/// or lies on something ([`Ask::Resting`], since 2026-11-22): one whose app
+/// knows how to draw it.
+#[derive(Component)]
+pub(crate) struct Posing;
+
 /// Who a player is: their account, in secure mode, or the hash of the
 /// device's own sixteen bytes without it. The id everyone else sees them by.
 #[derive(Component, Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -182,6 +188,10 @@ pub(crate) struct Body {
     /// In its own car, in the town, as its device last said ([`Ask::Drive`],
     /// since 2026-11-21): for the rest of its channel to see the car.
     pub driving: bool,
+    /// Sitting or lying on something in the town, as its device last said
+    /// ([`Ask::Rest`], since 2026-11-22): for the rest of its channel to
+    /// see it so.
+    pub pose: Option<Pose>,
     pace: Pace,
 }
 
@@ -197,6 +207,7 @@ impl Body {
             town: None,
             coins: 0,
             driving: false,
+            pose: None,
             pace: Pace::new(now),
         }
     }
@@ -213,6 +224,7 @@ impl Body {
             town,
             coins,
             driving: false,
+            pose: None,
             pace: Pace::new(now),
         }
     }
@@ -591,6 +603,33 @@ fn hear(
                     towns.stir(channel);
                 }
             }
+            // An app that draws who sits and who lies: told from here on
+            // ([`tell_channels`]), and at once if it is in a channel
+            // already, as of the channel itself.
+            (Ask::Resting, plays) => {
+                commands.entity(client).insert(Posing);
+                if let Some(&Plays(body)) = plays
+                    && let Ok((body_of, ..)) = bodies.get(body)
+                    && let Room::Town(channel) = body_of.room
+                {
+                    towns.stir(channel);
+                }
+            }
+            // Sat or lain down on something, or up again: in the town
+            // alone, where there is anything to rest on, and the rest of
+            // its channel is told. Where it rests is where its body is,
+            // which its moves say as they always did.
+            (Ask::Rest(pose), Some(&Plays(body))) => {
+                let Ok((mut body_of, ..)) = bodies.get_mut(body) else {
+                    continue;
+                };
+                if let Room::Town(channel) = body_of.room
+                    && body_of.pose != *pose
+                {
+                    body_of.pose = *pose;
+                    towns.stir(channel);
+                }
+            }
             _ => {}
         }
     }
@@ -599,11 +638,14 @@ fn hear(
 /// Tells every device in a channel of the town that something has changed
 /// in, and that asked to be told ([`Watching`]), of everyone in it: who
 /// sits in which seat, and who is in their own car ([`Tell::Channel`]). The
-/// whole channel each time, sixteen at the most.
+/// whole channel each time, sixteen at the most. And each that asked that
+/// too ([`Posing`]), who in it sits or lies on something
+/// ([`Tell::Resting`], [`resting_in`]).
 pub(crate) fn tell_channels(
     mut towns: ResMut<Towns>,
     bodies: Query<(&Body, &Member)>,
     watching: Query<(), With<Watching>>,
+    posing: Query<(), With<Posing>>,
     mut tells: MessageWriter<ToClients<Tell>>,
 ) {
     // Looked at before it is taken: nothing is written on a tick nothing
@@ -612,13 +654,29 @@ pub(crate) fn tell_channels(
         return;
     }
     for channel in towns.take_stirred() {
-        let (everyone, devices) = channel_of(&towns.seated(channel), |body| bodies.get(body).ok());
+        let seated = towns.seated(channel);
+        let (everyone, devices) = channel_of(&seated, |body| bodies.get(body).ok());
+        let resting = resting_in(&seated, |body| bodies.get(body).ok());
         for device in devices {
             if watching.contains(device) {
                 tell(&mut tells, device, Tell::Channel(everyone.clone()));
             }
+            if posing.contains(device) {
+                tell(&mut tells, device, Tell::Resting(resting.clone()));
+            }
         }
     }
+}
+
+/// Everyone seated in a channel who sits or lies on something, as they are
+/// told of ([`Posed`]), given each taken seat and the body in it and what
+/// is known of a body. Nobody, most of the time.
+fn resting_in<'a>(seated: &[(u8, Entity)], known: impl Fn(Entity) -> Option<(&'a Body, &'a Member)>) -> Vec<Posed> {
+    seated
+        .iter()
+        .filter_map(|&(_, body)| known(body))
+        .filter_map(|(body, member)| Some(Posed { who: member.id, pose: body.pose? }))
+        .collect()
 }
 
 /// Everyone seated in a channel, as they are told of ([`Seated`]), and the
@@ -688,10 +746,12 @@ pub(crate) fn place(
         body.room = room;
         // Out of its own car, which is the town's alone and which its
         // device gets out of as it is sent to any other island; from one
-        // channel of the town to another it stays in it.
+        // channel of the town to another it stays in it. And up from
+        // whatever it sat or lay on, which stayed where it was.
         if !matches!(room, Room::Town(_)) {
             body.driving = false;
         }
+        body.pose = None;
         commands.entity(entity).insert(InRoom(room));
         if let Some(client) = body.client {
             commands.entity(client).insert(ClientRoom(room));
@@ -1203,6 +1263,41 @@ mod tests {
         );
         assert_eq!(devices, [entity(11), entity(12)]);
         assert_eq!(channel_of(&[], known), (Vec::new(), Vec::new()));
+        // Nobody rests, and nobody is told of.
+        assert_eq!(resting_in(&[(0, entity(1)), (2, entity(9)), (3, entity(2))], known), Vec::new());
+    }
+
+    #[test]
+    fn a_channel_is_told_who_rests_and_how() {
+        let entity = |n: u32| Entity::from_raw_u32(n).unwrap();
+        let member = |id: u64| Member {
+            id,
+            name: format!("Person {id}"),
+            look: "girl".into(),
+            ai: false,
+        };
+        let body = |client: u32, who: u64, seat: u8, pose: Option<Pose>| {
+            let mut body = Body::person(entity(client), Who(who), Room::Town(0), seat, Some(0), 0, 0.0);
+            body.pose = pose;
+            body
+        };
+        let people = [
+            (entity(1), body(11, 7, 0, Some(Pose::Lie)), member(7)),
+            (entity(2), body(12, 8, 3, None), member(8)),
+            (entity(3), body(13, 9, 5, Some(Pose::Sit)), member(9)),
+        ];
+        let known = |body: Entity| {
+            people
+                .iter()
+                .find(|(entity, ..)| *entity == body)
+                .map(|(_, body, member)| (body, member))
+        };
+        // Those who rest, each as they do; one on their feet is left out,
+        // and so is a body that has gone.
+        let resting = resting_in(&[(0, entity(1)), (2, entity(9)), (3, entity(2)), (5, entity(3))], known);
+        assert_eq!(resting, [Posed { who: 7, pose: Pose::Lie }, Posed { who: 9, pose: Pose::Sit }]);
+        // Someone the server puts anywhere is on their feet.
+        assert_eq!(Body::person(entity(11), Who(7), Room::Town(0), 0, Some(0), 0, 0.0).pose, None);
     }
 
     fn spot(x: f32, y: f32, z: f32) -> Spot {

@@ -1393,6 +1393,9 @@ pub(crate) struct BagWords {
     pub off_your_land: String,
     /// Across the screen, when a thing is put down in something else.
     pub in_the_way: String,
+    /// Across the screen, the first few times a thing of yours is tapped
+    /// again and again with edit mode off (`stand::hint_at_edit_mode`).
+    pub edit_hint: String,
     /// Over the window a colour to paint with is chosen in (`customize`).
     pub paint_title: String,
     pub names: Vec<(String, String)>,

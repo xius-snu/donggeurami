@@ -7,6 +7,36 @@
 > "above" or "below", or names another section in quotes, that section may be
 > in another file here: the table in `CLAUDE.md` says which.
 
+## Who sits and who lies: three more at the end
+
+2026-11-22, late (`docs/town.md` has what sitting and lying are).
+`PROTOCOL_VERSION` is 24 still, and APK 45 to 50 play on, and see
+everyone on their feet.
+
+- **`Ask::Resting`** (number 29) and **`Ask::Rest(Option<Pose>)`** (30)
+  at the end of `Ask`, after `Bag`; **`Tell::Resting(Vec<Posed>)`** at
+  the end of `Tell`; and the two things they carry, `Pose` (`Sit`,
+  `Lounge`, `Lie`) and `Posed { who, pose }`. A test of the rules holds
+  the numbers.
+- **The server** (`players`): a body has its pose (`Body::pose`), set by
+  `Rest` in the town alone and let go of as it changes room. A device
+  that says `Resting` is told from then on (`Posing`), with the channel
+  as that is told (`tell_channels`, on the same stir): everyone in it
+  who rests, all of them each time, usually nobody.
+- **Where someone rests is where their body is**, said by their moves as
+  ever; nothing of the chair is said. Sitting down puts a body up to 3.7
+  m across and a metre up in one move, inside what the server lets one
+  be (`BURST`, 4 m).
+- A device says `Resting` once as it comes online, and `Rest` again then
+  if it is resting (`rest::say_so_on_coming_online`), a phone's
+  connection going whenever its app is put away.
+- **Deployed** at 13:09:04 UTC on 2026-11-22, nobody having been
+  connected since 10:39; the binary before it kept as
+  `roundtown-server.prev-2026-11-22d` (paint taken off, nobody resting).
+  After: the VM's binary the one built here (`b4f39103`), this PC's own
+  account in, hidden, and out, the journal clean. It owns no chair: who
+  rests was seen told between two copies on this PC.
+
 ## Paint taken off: one more variant at the end
 
 2026-11-22, night (`docs/bag.md`, the entry marked "night").

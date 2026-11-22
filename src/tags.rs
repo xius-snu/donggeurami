@@ -189,7 +189,7 @@ fn scale_at(from: f32) -> f32 {
 fn place_tags(
     me: Query<(&Transform, &Venue), With<Player>>,
     cameras: Query<(&Camera, &Transform), With<ThirdPersonCamera>>,
-    bodies: Query<(&Transform, &Venue), With<Tagged>>,
+    bodies: Query<(&Transform, &Venue, Option<&crate::rest::Resting>), With<Tagged>>,
     windows: Query<&Window>,
     in_a_game: Res<OnlinePlot>,
     hiding: Query<(&ComputedNode, &UiGlobalTransform, &InheritedVisibility), With<HidesNames>>,
@@ -228,13 +228,15 @@ fn place_tags(
         let head = bodies
             .get(tag.0)
             .ok()
-            .filter(|&(body, &venue)| {
+            .filter(|&(body, &venue, _)| {
                 venue == here
                     && !island::fights(here)
                     && here != Venue::KnockOff
                     && body.translation.distance(you.translation) <= READ_RANGE
             })
-            .map(|(body, _)| body.translation + Vec3::Y * OVER_HEAD);
+            // Sat or lying on something, their head is lower over where
+            // their body is (`rest`).
+            .map(|(body, _, resting)| body.translation + Vec3::Y * (OVER_HEAD - crate::rest::lower(resting)));
         let point = head
             .and_then(|head| camera.world_to_viewport(&eye, head).ok())
             .filter(|point| {

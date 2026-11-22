@@ -60,6 +60,9 @@
 //! stand there (`super::edit_pieces`) and otherwise put back where it
 //! stood ([`PutBack`], [`put_back`]), and a house with all that was in it.
 
+use std::collections::HashSet;
+
+use bevy::picking::mesh_picking::ray_cast::{MeshRayCast, MeshRayCastSettings};
 use bevy::prelude::*;
 use roundtown_net::{Ask, At};
 
@@ -72,7 +75,7 @@ use crate::Player;
 use crate::bag::{Bag, BagSystems, Standing, TheirPaints, Theirs};
 use crate::customize::{self, Customize};
 use crate::drive::Driving;
-use crate::editor::{self, Edit, EditMenu, Editable, Touch, Untappable};
+use crate::editor::{self, Edit, EditMenu, EditPointer, Editable, Touch, Untappable};
 use crate::hud;
 use crate::island::Venue;
 use crate::land::{Plot, Plots};
@@ -197,6 +200,12 @@ struct TheirPiece {
 #[derive(Component)]
 struct Said;
 
+/// How soon after a tap on a thing of yours another has to come, with edit
+/// mode off, for it to be someone trying to move it, in seconds; and how
+/// long they are told how.
+const TRIES_WITHIN: f32 = 4.0;
+const HINT_SECS: f32 = 3.5;
+
 pub(super) fn plugin(app: &mut App) {
     app.init_resource::<Home>()
         .add_message::<Stand>()
@@ -213,6 +222,7 @@ pub(super) fn plugin(app: &mut App) {
                 (put_back, ride_along, report, keep_mine, keep_theirs, keep_colours.in_set(Painting), say_misplaced)
                     .chain()
                     .after(BuildSystems),
+                hint_at_edit_mode.after(crate::bubble::Taps),
             ),
         );
 }
@@ -847,6 +857,74 @@ fn keep_colours(
     }
 }
 
+/// Whether a tap on a thing of yours with edit mode off, `now`, is someone
+/// trying to move it: the second within [`TRIES_WITHIN`] of the one before
+/// (`last`), which is then forgotten, so that it takes two more to be told
+/// again.
+fn tried_again(last: &mut Option<f32>, now: f32) -> bool {
+    match last.take() {
+        Some(then) if now - then <= TRIES_WITHIN => true,
+        _ => {
+            *last = Some(now);
+            false
+        }
+    }
+}
+
+/// Tells someone who taps at a thing of theirs again and again with edit
+/// mode off how it is moved, the first few times ever
+/// (`Customize::may_hint`; Hajun, 2026-11-22: "if they repeatedly tap on an
+/// object without being on house edit mode, give small text like "Press
+/// the edit house mode to move objects" sth like that as a hint. cuz i
+/// think some ppl after placing an object and they try to press the
+/// object to move again, but dont know they have to be in house edit mode
+/// to do it"). A tap is on a thing of yours if the ray through the finger
+/// meets one of its meshes first of all of yours; a tap a bubble took is
+/// not one, nor a tap in your car.
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+fn hint_at_edit_mode(
+    time: Res<Time>,
+    (pointer, took, dialog): (Res<EditPointer>, Res<crate::bubble::TookTap>, Res<hud::DialogUp>),
+    (home, driving): (Res<Home>, Res<Driving>),
+    mut customize: ResMut<Customize>,
+    cameras: Query<(&Camera, &Transform), With<crate::ThirdPersonCamera>>,
+    mine: Query<(Entity, &InheritedVisibility), (With<Mine>, Without<Ghost>)>,
+    children: Query<&Children>,
+    mut ray_cast: MeshRayCast,
+    said: Query<Entity, With<Said>>,
+    mut last: Local<Option<f32>>,
+    mut commands: Commands,
+) {
+    if !pointer.released || pointer.lost || pointer.travel > editor::TAP_SLOP || took.0 || dialog.0 {
+        return;
+    }
+    if customize.on() || !customize.may_hint() || !home.on_it || driving.on() {
+        return;
+    }
+    let Ok((camera, place)) = cameras.single() else {
+        return;
+    };
+    // The camera has no parent: this is where it is this frame.
+    let Ok(ray) = camera.viewport_to_world(&GlobalTransform::from(*place), pointer.pos) else {
+        return;
+    };
+    let parts: HashSet<Entity> = mine
+        .iter()
+        .filter(|(_, shown)| shown.get())
+        .flat_map(|(thing, _)| children.iter_descendants(thing))
+        .collect();
+    let within = |entity: Entity| parts.contains(&entity);
+    let settings = MeshRayCastSettings::default().with_filter(&within);
+    if ray_cast.cast_ray(ray, &settings).is_empty() || !tried_again(&mut last, time.elapsed_secs()) {
+        return;
+    }
+    for line in &said {
+        commands.entity(line).despawn();
+    }
+    hud::announce(&mut commands, None, &ui().words.bag.edit_hint, hud::CAPTION, HINT_SECS).insert(Said);
+    customize.note_hint();
+}
+
 /// Says why a piece asked to be put down has not been
 /// (`super::Misplaced`): across the screen, one line at a time.
 fn say_misplaced(mut misplaced: MessageReader<Misplaced>, said: Query<Entity, With<Said>>, mut commands: Commands) {
@@ -1095,6 +1173,21 @@ mod tests {
         world.write_message(PutBack(fresh));
         world.run_system_once(put_back).unwrap();
         assert!(world.get_entity(fresh).is_err());
+    }
+
+    #[test]
+    fn two_taps_close_together_are_someone_trying_to_move_a_thing() {
+        let mut last = None;
+        // One tap is a tap; a second soon after is a try, and told of; and
+        // it takes two more to be told again.
+        assert!(!tried_again(&mut last, 10.0));
+        assert!(tried_again(&mut last, 11.5));
+        assert!(!tried_again(&mut last, 12.0));
+        assert!(tried_again(&mut last, 13.0));
+        // Long after the one before, a tap is the first again.
+        assert!(!tried_again(&mut last, 20.0));
+        assert!(!tried_again(&mut last, 20.0 + TRIES_WITHIN + 0.1));
+        assert!(tried_again(&mut last, 25.0));
     }
 
     #[test]

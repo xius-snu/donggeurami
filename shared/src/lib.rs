@@ -5484,9 +5484,40 @@ pub enum Ask {
     Drive(bool),
     /// Something about my bag: what I own, buying and selling, and what of
     /// it stands on my plot of the town ([`bag::Ask`], since 2026-11-21).
-    /// Last, with no new protocol, as [`Ask::Channel`] is: an app from
+    /// With no new protocol, as [`Ask::Channel`] is: an app from
     /// before never says it, and a server from before ignores it.
     Bag(bag::Ask),
+    /// Tell me who in my channel of the town sits or lies on something
+    /// ([`Tell::Resting`]), now and whenever that changes. Said once, on
+    /// coming online, by an app that knows how to draw it. Last but one,
+    /// since 2026-11-22, with no new protocol, as [`Ask::Channel`] is.
+    Resting,
+    /// I have sat or lain down on something in the town, like this
+    /// ([`Pose`]), or am up again (`None`): for everyone else in my
+    /// channel to see me so, where my body is. Last, since 2026-11-22, as
+    /// [`Ask::Resting`] is.
+    Rest(Option<Pose>),
+}
+
+/// How someone rests on a chair, a sofa or a bed in the town (the game's
+/// `rest`, since 2026-11-22): what everyone else has to know of it to draw
+/// them so, where their body is and facing the way it faces.
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum Pose {
+    /// Sat, the knees bent over the front of the seat.
+    Sit,
+    /// Sat back, the legs out along the seat, as on a sofa.
+    Lounge,
+    /// Lying on the back, the head a little raised, as on a pillow.
+    Lie,
+}
+
+/// Someone in a channel of the town who rests, as [`Tell::Resting`] has
+/// them: who, by their [`Member::id`], and how.
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Posed {
+    pub who: u64,
+    pub pose: Pose,
 }
 
 /// One person in a channel of the town, as [`Tell::Channel`] has them: who,
@@ -5579,9 +5610,15 @@ pub enum Tell {
     Channel(Vec<Seated>),
     /// Something about a bag: your own, or what stands on the plot of
     /// someone else in your channel of the town ([`bag::Tell`], since
-    /// 2026-11-21). Only to an app that asked ([`bag::Ask::Watch`]). Last,
-    /// with no new protocol.
+    /// 2026-11-21). Only to an app that asked ([`bag::Ask::Watch`]). With
+    /// no new protocol.
     Bag(bag::Tell),
+    /// Everyone in your channel of the town who sits or lies on something,
+    /// you among them, and how ([`Posed`]): all of them, as you come into
+    /// the channel and whenever any of it changes. Only to an app that
+    /// asked ([`Ask::Resting`]). Last, since 2026-11-22, with no new
+    /// protocol.
+    Resting(Vec<Posed>),
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
@@ -8216,6 +8253,32 @@ mod tests {
             Paint { id: 1, part: String::new(), colour: [4, 4, 4] },
         ]);
         assert_eq!(wrong.sane(&bag.stands).0, [Paint { id: 1, part: "lampostbody".into(), colour: [1, 1, 1] }]);
+    }
+
+    #[test]
+    fn who_rests_goes_over_the_wire_after_everything_an_app_from_before_knows() {
+        // Appended after the bag's, which was last: a variant's number is
+        // all postcard writes of which it is, so nothing an app from
+        // before sends or is sent reads as anything else.
+        assert_eq!(postcard::to_allocvec(&Ask::Bag(bag::Ask::Watch)).unwrap()[0], 28);
+        assert_eq!(postcard::to_allocvec(&Ask::Resting).unwrap(), [29]);
+        for (pose, number) in [(Pose::Sit, 0), (Pose::Lounge, 1), (Pose::Lie, 2)] {
+            let bytes = postcard::to_allocvec(&Ask::Rest(Some(pose))).unwrap();
+            assert_eq!(bytes, [30, 1, number]);
+            assert!(matches!(postcard::from_bytes(&bytes).unwrap(), Ask::Rest(Some(back)) if back == pose));
+        }
+        assert_eq!(postcard::to_allocvec(&Ask::Rest(None)).unwrap(), [30, 0]);
+        let bag_tell = postcard::to_allocvec(&Tell::Bag(bag::Tell::Theirs { who: 1, stands: Vec::new() })).unwrap()[0];
+        let resting = Tell::Resting(vec![Posed { who: 7, pose: Pose::Lie }, Posed { who: u64::MAX, pose: Pose::Sit }]);
+        let bytes = postcard::to_allocvec(&resting).unwrap();
+        assert_eq!(bytes[0], bag_tell + 1, "after the bag's, the last an app from before is told");
+        let Tell::Resting(back) = postcard::from_bytes(&bytes).unwrap() else {
+            panic!("who rests came back as something else");
+        };
+        assert_eq!(back, [Posed { who: 7, pose: Pose::Lie }, Posed { who: u64::MAX, pose: Pose::Sit }]);
+        // A whole channel of sixteen resting is a few bytes each.
+        let all: Vec<Posed> = (0..16).map(|n| Posed { who: u64::MAX - n, pose: Pose::Lounge }).collect();
+        assert!(postcard::to_allocvec(&Tell::Resting(all)).unwrap().len() < 200);
     }
 
     #[test]

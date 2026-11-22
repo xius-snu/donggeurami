@@ -76,3 +76,12 @@ Blender and re-exported rather than scaled at spawn time (`map::ObjectDef`).
   you talk (`talk::FACE`, 1.38). Names and the chat bubble still stand
   1.85 m up (`tags::OVER_HEAD`), 0.21 m over this head where they were
   0.14 over the old. Not yet on a phone.
+- **Sat and lying** (`src/rest.rs`, since 2026-11-22; `docs/town.md`):
+  the model is moved under its body, as it is laid flat under a bus
+  (`arena::squash`), and its limbs turned by `animate_walk`
+  (`rest::limb`). Sat, it is let down 0.61 m, its hips, 0.68 up, onto
+  the seat; the thighs forward 1.5 rad and the shins back down 1.45, the
+  arms a little forward. Sat back, leant 0.16 rad with the legs out
+  level. Lying, turned back about its middle (0.82 up) to 0.32 rad short
+  of flat, head end up, which puts the back of a head 0.53 across on a
+  pillow 0.22 over the heels. Got into over a fifth of a second.

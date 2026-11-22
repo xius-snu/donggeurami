@@ -468,9 +468,9 @@ struct Fresh;
 
 /// The box a piece's model fills, in its own space.
 #[derive(Component, Clone, Copy)]
-struct Bounds {
-    low: Vec3,
-    high: Vec3,
+pub(crate) struct Bounds {
+    pub(crate) low: Vec3,
+    pub(crate) high: Vec3,
 }
 
 /// A mesh of a ghost, and the material it has once it is down.
@@ -1316,10 +1316,6 @@ fn piece_ready(
     let Ok((piece, editable, ghost, painted)) = pieces.get(root) else {
         return;
     };
-    let Ok(root_place) = placement.compute_global_transform(root) else {
-        return;
-    };
-    let into_root = root_place.affine().inverse();
     let is_house = piece.def.mount == Mount::House;
     // A mesh belongs to what its node is called in Blender.
     let called = |part: Entity, prefix: &str| {
@@ -1354,10 +1350,13 @@ fn piece_ready(
         // On a plot of the town, each mesh is a part that can be painted:
         // the part its material is called (`paint`).
         let paint_part = material.zip(named).filter(|_| painted).map(|(material, named)| paint::Part::new(&named.0, material.0.clone()));
+        // In the piece's own space, by how each node of it stands in the
+        // one above ([`within`]): the same to the last bit wherever the
+        // piece itself stands, which a house's walls are numbered by.
         let Some((low, high)) = meshes
             .get(&mesh.0)
-            .zip(placement.compute_global_transform(part).ok())
-            .and_then(|(mesh, place)| extent(mesh, into_root * place.affine()))
+            .zip(within(part, root, &parents, &turns))
+            .and_then(|(mesh, place)| extent(mesh, place))
         else {
             continue;
         };
@@ -1512,6 +1511,30 @@ fn doorway(
         through: 0.0,
         wanted: false,
     })
+}
+
+/// Where `part` is in the space of `root`, which it is under: how each node
+/// from it up to `root` stands in the one above, one after another.
+///
+/// Until 2026-11-22 this was worked out through the world, the part's
+/// place there in the root's place there, which comes out a few millionths
+/// of a metre off, by a different few wherever the root stands and
+/// whichever way it is turned. Three walls of Hajun's houses begin at the
+/// same x, and which of them counted as the first, by which a door or a
+/// window in one is kept ([`walls_of`]), hung on those millionths: so a
+/// door stood in one wall on the device that had put it there, and in
+/// another on everyone else's, who met the house already where it stands
+/// (Hajun: "the house rotation is different for another person like the
+/// door was on the wrong wall on my friend's screen, but in my screen he
+/// jumped through my window").
+fn within(part: Entity, root: Entity, parents: &Query<&ChildOf>, turns: &Query<&Transform>) -> Option<Affine3A> {
+    let mut place = Affine3A::IDENTITY;
+    let mut at = part;
+    while at != root {
+        place = turns.get(at).ok()?.compute_affine() * place;
+        at = parents.get(at).ok()?.parent();
+    }
+    Some(place)
 }
 
 /// The box round every corner of `mesh`, placed by `place`.
@@ -3225,20 +3248,28 @@ fn unbuilt(remove: On<Remove, Built>, shadowed: Query<&Shadowed>, mut commands: 
 }
 
 /// A house's walls, in order of where they stand in it: the same order on
-/// every device, which their entities are not.
+/// every device, which their entities are not. By each one's low corner to
+/// the millimetre ([`wall_order`]), across the house, then front to back,
+/// then up: of Hajun's square houses, the front wall, the right, the back
+/// and the left.
 fn walls_of(house: Entity, walls: &Query<(Entity, &Wall, &ChildOf)>) -> Vec<Entity> {
-    let mut of: Vec<(Entity, Vec3)> = walls
+    let mut of: Vec<(Entity, [i64; 3])> = walls
         .iter()
         .filter(|(.., parent)| parent.parent() == house)
-        .map(|(entity, wall, _)| (entity, wall.low))
+        .map(|(entity, wall, _)| (entity, wall_order(wall.low)))
         .collect();
-    of.sort_by(|a, b| {
-        a.1.x
-            .total_cmp(&b.1.x)
-            .then(a.1.z.total_cmp(&b.1.z))
-            .then(a.1.y.total_cmp(&b.1.y))
-    });
+    of.sort_by_key(|&(_, order)| order);
     of.into_iter().map(|(entity, _)| entity).collect()
+}
+
+/// What a wall whose low corner is `low`, in its house's own space, is
+/// ordered by among the house's walls: the corner to the millimetre,
+/// across, front to back and up. To the millimetre, so that two walls
+/// that begin at the same place across the house are told apart by where
+/// they begin front to back, and never by the last bits of a number
+/// ([`within`]).
+fn wall_order(low: Vec3) -> [i64; 3] {
+    [low.x, low.z, low.y].map(|metres| (f64::from(metres) * 1000.0).round() as i64)
 }
 
 /// Where `wall` comes among its house's walls ([`walls_of`]).
@@ -4046,6 +4077,38 @@ mod tests {
         assert!(close(under(in_house(2.0, 0.0), 3.37), 0.37));
         // And out of the house from in it: the land again.
         assert!(close(under(Vec2::new(-9.0, 9.0), 0.37), 0.27));
+    }
+
+    #[test]
+    fn a_house_s_walls_are_numbered_the_same_however_little_their_corners_are_off() {
+        // Hajun's square house, the low corner of each wall: three of them
+        // begin at the same place across it.
+        let walls = [
+            ("back", Vec3::new(-6.0, 0.1, 5.5)),
+            ("front", Vec3::new(-6.0, 0.1, -6.0)),
+            ("left", Vec3::new(5.5, 0.1, -5.5)),
+            ("right", Vec3::new(-6.0, 0.1, -5.5)),
+        ];
+        let numbered = |off: [f32; 4]| {
+            let mut walls: Vec<(&str, Vec3)> = walls.iter().zip(off).map(|(&(name, low), off)| (name, low + Vec3::X * off)).collect();
+            walls.sort_by_key(|&(_, low)| wall_order(low));
+            walls.into_iter().map(|(name, _)| name).collect::<Vec<_>>()
+        };
+        // As it is modelled, and with each corner a few millionths of a
+        // metre off this way or that, as it came out worked through the
+        // world: the front wall, the right, the back and the left.
+        let offs = [[0.0; 4], [0.0, 2e-6, 0.0, 0.0], [-5e-7, 0.0, 0.0, -5e-7], [3e-6, -2e-6, 1e-6, 4e-6], [-4e-5, 5e-5, 0.0, -3e-5]];
+        for off in offs {
+            assert_eq!(numbered(off), ["front", "right", "back", "left"], "{off:?}");
+        }
+        // By the numbers to their last bit, as they were until 2026-11-22,
+        // the front wall of the house on one plot of the town, its corner
+        // -5.999998 across, came after the two beside it: a door kept as
+        // in the first wall was in the front one on one device and in the
+        // right-hand one on another.
+        let mut by_bits: Vec<(&str, Vec3)> = walls.iter().map(|&(name, low)| (name, low + Vec3::X * if name == "front" { 2e-6 } else { 0.0 })).collect();
+        by_bits.sort_by(|a, b| a.1.x.total_cmp(&b.1.x).then(a.1.z.total_cmp(&b.1.z)));
+        assert_eq!(by_bits.iter().map(|(name, _)| *name).collect::<Vec<_>>(), ["right", "back", "front", "left"]);
     }
 
     #[test]

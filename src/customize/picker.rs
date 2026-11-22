@@ -17,6 +17,14 @@
 //! The cross, a tap outside the window, or `Escape`, puts it away, and the
 //! brush paints that colour from then.
 //!
+//! And in the corner the wheel leaves at its top right, between it and the
+//! bar, a round spot of the colour chosen as it is ([`Now`]; Hajun, later
+//! again: "another circle that shows the current color maybe in the gap
+//! between the top right corner of the rgb circle, and the right bar ...
+//! just so its easier for ppl to tell what is the current color without
+//! having to look the left edge of ur screen"): nothing else of the window
+//! is moved or made smaller for it.
+//!
 //! Along its foot, the colours painted with before, the last seven, newest
 //! first (`Customize::used`; Hajun, later that day: "on the bottom of hat
 //! panel, it should be like one row of the previous used color history (in
@@ -50,6 +58,12 @@ const RING_LINE: f32 = 0.5;
 /// two of them, which is what spreads a full row of them from under the
 /// wheel's left side to under the bar's right.
 const PAST: f32 = 6.4;
+/// The spot of the colour chosen, in the corner at the wheel's top right:
+/// how big it is, and how far its middle is to the right of the wheel's
+/// right side. Its top is the wheel's top. It is as far clear of the wheel
+/// as of the bar, a little under two each.
+const NOW: f32 = 8.8;
+const NOW_PAST_WHEEL: f32 = -0.4;
 const OVER_PAST: f32 = 3.2;
 const PAST_GAP: f32 = (WHEEL + BETWEEN + BAR - super::USED as f32 * PAST) / (super::USED as f32 - 1.0);
 /// How many dots the wheel's picture is across, and the bar's is tall.
@@ -79,6 +93,10 @@ impl Picker {
 /// One of the colours painted with before, along the window's foot.
 #[derive(Component, Clone, Copy)]
 struct Past(Hsv);
+
+/// The spot of the colour chosen, as it is, between the wheel and the bar.
+#[derive(Component)]
+struct Now;
 
 /// The root of the window, over the whole screen.
 #[derive(Component)]
@@ -386,7 +404,28 @@ fn redraw(
                 flex_shrink: 0.0,
                 ..default()
             },
-            children![(WheelRing, ring(Color::NONE))],
+            children![
+                (WheelRing, ring(Color::NONE)),
+                // In the corner of the wheel's own square that the wheel
+                // leaves, and out over the gap to the bar: a press on it
+                // is the wheel's, as a press there was.
+                (
+                    Now,
+                    Node {
+                        position_type: PositionType::Absolute,
+                        left: Val::VMin(WHEEL + NOW_PAST_WHEEL - NOW * 0.5),
+                        top: Val::ZERO,
+                        width: Val::VMin(NOW),
+                        height: Val::VMin(NOW),
+                        border: UiRect::all(Val::VMin(RING_LINE * 0.7)),
+                        border_radius: BorderRadius::all(Val::Percent(50.0)),
+                        ..default()
+                    },
+                    BackgroundColor(customize.chosen().color()),
+                    BorderColor::all(colours.line),
+                    Pickable::IGNORE,
+                ),
+            ],
         ))
         .observe(press_wheel)
         .observe(drag_wheel);
@@ -483,6 +522,7 @@ fn show_choice(
     mut wheel_rings: Query<&mut Node, (With<WheelRing>, Without<BarRing>)>,
     mut bar_rings: Query<(&mut Node, &mut BackgroundColor), (With<BarRing>, Without<WheelRing>)>,
     mut bars: Query<&mut ImageNode, With<Bar>>,
+    mut nows: Query<&mut BackgroundColor, (With<Now>, Without<BarRing>)>,
 ) {
     if !customize.is_changed() && fresh.is_empty() {
         return;
@@ -509,6 +549,11 @@ fn show_choice(
     for mut bar in &mut bars {
         if bar.color != full {
             bar.color = full;
+        }
+    }
+    for mut fill in &mut nows {
+        if fill.0 != colour.color() {
+            fill.0 = colour.color();
         }
     }
 }
@@ -564,6 +609,24 @@ mod tests {
         // lying on its side with room over and under.
         let tall = OVER_TITLE + window::TAB_HEIGHT + UNDER_TITLE + WHEEL + OVER_PAST + PAST + UNDER;
         assert!(tall < 100.0 - 2.0 * crate::hud::EDGE, "{tall}");
+    }
+
+    #[test]
+    fn the_spot_of_the_colour_chosen_is_clear_of_the_wheel_and_of_the_bar() {
+        // From the middle of the wheel, across and up, in the units
+        // everything here is laid out in.
+        let (wheel, spot) = (WHEEL * 0.5, NOW * 0.5);
+        let middle = Vec2::new(wheel + NOW_PAST_WHEEL, wheel - spot);
+        // Outside the wheel's colours, with room between; short of the bar,
+        // with as much; and no higher than the wheel's top, which is the
+        // bar's.
+        let off_the_wheel = middle.length() - wheel - spot;
+        let off_the_bar = wheel + BETWEEN - (middle.x + spot);
+        assert!(off_the_wheel > 1.5 && off_the_bar > 1.5, "{off_the_wheel} {off_the_bar}");
+        assert!((off_the_wheel - off_the_bar).abs() < 0.5, "{off_the_wheel} {off_the_bar}");
+        assert!((middle.y + spot - wheel).abs() < 1e-5);
+        // Big enough to read a colour off: bigger than one of the row.
+        assert!(NOW > PAST);
     }
 
     #[test]

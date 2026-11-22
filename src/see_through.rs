@@ -181,6 +181,36 @@ pub(crate) fn plugin(app: &mut App) {
     );
 }
 
+/// How long what was found in the way of you is taken as found, with you
+/// and the camera where they were, in seconds: what moves by itself, a
+/// door's leaf, is seen to be in the way, or out of it, no later than this.
+/// A part fades in [`FADE_SECS`], a little less.
+const LOOK_AGAIN: f32 = 0.2;
+
+/// What the camera's sight of you was last looked along for: the house you
+/// stood in, where you and the camera were, what the edit menu was open
+/// on, and when.
+#[derive(Clone, Copy, PartialEq, Debug)]
+struct Looked {
+    house: Entity,
+    you: Transform,
+    eye: Transform,
+    target: Option<Entity>,
+    at: f32,
+}
+
+impl Looked {
+    /// Whether what was found then still holds `now`: nothing of it has
+    /// changed, and it is not long since.
+    fn still_good(&self, now: &Looked) -> bool {
+        self.house == now.house
+            && self.you == now.you
+            && self.eye == now.eye
+            && self.target == now.target
+            && (0.0..LOOK_AGAIN).contains(&(now.at - self.at))
+    }
+}
+
 /// Every part of the world that is drawn and might be in the way: everything
 /// with a mesh and a material of its own, but a body.
 type Parts<'w, 's> = Query<
@@ -218,7 +248,7 @@ type Lineage<'w, 's> = Query<
 /// and what fades along with it. Anywhere else, nothing.
 #[allow(clippy::too_many_arguments)]
 fn find_what_hides_you(
-    me: Query<(&Transform, &Visibility), With<Player>>,
+    me: Query<(&Transform, &Visibility, Option<&crate::rest::Resting>), With<Player>>,
     cameras: Query<&Transform, (With<ThirdPersonCamera>, Without<Player>)>,
     parts: Parts,
     lineage: Lineage,
@@ -227,36 +257,52 @@ fn find_what_hides_you(
     walls: Query<(Entity, &ChildOf, &Wall)>,
     house_you_are_in: Query<(Entity, &GlobalTransform, Has<TownHouse>), (With<YouAreIn>, Without<Ghost>)>,
     bodies: Query<(), With<crate::lobby::Seat>>,
-    menu: Res<EditMenu>,
+    (menu, time): (Res<EditMenu>, Res<Time>),
     meshes: Res<Assets<Mesh>>,
     materials: Res<Assets<StandardMaterial>>,
     mut changed: MessageReader<AssetEvent<Mesh>>,
-    mut shapes: Local<HashMap<AssetId<Mesh>, Faces>>,
-    mut inside: Local<HashMap<Entity, Vec<Entity>>>,
+    (mut shapes, mut inside, mut last): (Local<HashMap<AssetId<Mesh>, Faces>>, Local<HashMap<Entity, Vec<Entity>>>, Local<Option<Looked>>),
     mut hiding: ResMut<Hiding>,
 ) {
+    let mut stale = false;
     // A mesh changed since it was read, like a wall with a new hole in it, is
     // read again the next time it is asked about.
     for event in changed.read() {
         if let AssetEvent::Modified { id } | AssetEvent::Removed { id } = *event {
             shapes.remove(&id);
+            stale = true;
         }
     }
-    hiding.0.clear();
     // Only in a house that is down, not one still a ghost: anywhere else,
     // whatever is between the camera and you hides you, and what was faded
-    // comes back.
-    let Ok((house, house_place, in_town)) = house_you_are_in.single() else {
+    // comes back. Through your eyes, or so near them that you are not
+    // drawn, there is nothing between the camera and you.
+    let looked_from = house_you_are_in.single().ok().zip(me.single().ok().zip(cameras.single().ok()));
+    let Some(((house, house_place, in_town), ((you, _, resting), eye))) = looked_from.filter(|(_, ((_, drawn, _), _))| **drawn != Visibility::Hidden)
+    else {
+        hiding.0.clear();
+        *last = None;
         return;
     };
-    // Through your eyes, or so near them that you are not drawn, there is
-    // nothing between the camera and you.
-    let (Ok((you, drawn)), Ok(eye)) = (me.single(), cameras.single()) else {
-        return;
+    // With you and the camera where they were, in the house you were in,
+    // what was in the way still is, but for what has itself moved since, a
+    // door swinging, a chair being carried: so it is looked for again only
+    // every so often ([`Looked::still_good`]). Standing in a house, which is
+    // where people stand and talk, it was looked for every frame, through
+    // every part of the town, a tenth of all the world's thread did.
+    let now = Looked {
+        house,
+        you: *you,
+        eye: *eye,
+        target: menu.target(),
+        at: time.elapsed_secs(),
     };
-    if *drawn == Visibility::Hidden {
+    if !stale && last.as_ref().is_some_and(|then| then.still_good(&now)) {
         return;
     }
+    *last = Some(now);
+    hiding.0.clear();
+    let resting_on = resting.and_then(crate::rest::Resting::on);
     let from = eye.translation;
     let points = points_on(you);
     // The box round every line, which nearly everything is nowhere near.
@@ -306,6 +352,12 @@ fn find_what_hides_you(
         // Nor anything of a body: its eyes and its mouth are meshes of
         // their own, hung on its head, and hid your own face from you.
         if of_a_body(part, &lineage, &bodies) {
+            continue;
+        }
+        // Nor the chair, the sofa or the bed you rest on (`rest`): sat in
+        // it, its back and its arms are round you, and it is not to fade
+        // from under you.
+        if resting_on.is_some_and(|on| model_of(part, &lineage) == on) {
             continue;
         }
         let Some(shape) = shape_of(mesh, &meshes, &mut shapes) else {
@@ -870,6 +922,7 @@ mod tests {
         let mut world = World::new();
         world.init_resource::<Hiding>();
         world.init_resource::<EditMenu>();
+        world.init_resource::<Time>();
         world.init_resource::<Assets<Mesh>>();
         world.init_resource::<Assets<StandardMaterial>>();
         world.init_resource::<Messages<AssetEvent<Mesh>>>();
@@ -1123,6 +1176,40 @@ mod tests {
         }
         // See-through, but less than anything else in the way.
         assert!(SEEN < BUS_SEEN && BUS_SEEN < 1.0);
+    }
+
+    #[test]
+    fn standing_still_what_is_in_the_way_is_looked_for_only_now_and_then() {
+        let mut world = World::new();
+        let [house, other, chair] = [(); 3].map(|_| world.spawn_empty().id());
+        let then = Looked {
+            house,
+            you: Transform::from_xyz(1.0, 0.4, 2.0),
+            eye: Transform::from_xyz(1.0, 3.0, 8.0),
+            target: None,
+            at: 10.0,
+        };
+        // The frame after, and for a fifth of a second, with nothing
+        // moved: as it was found.
+        assert!(then.still_good(&Looked { at: 10.008, ..then }));
+        assert!(then.still_good(&Looked { at: 10.19, ..then }));
+        // Then looked for again, for what may have moved by itself.
+        assert!(!then.still_good(&Looked { at: 10.21, ..then }));
+        // And at once as you take a step or turn, as the camera moves or
+        // turns, in another house, or with the menu open on something.
+        let moved = [
+            Looked { you: Transform::from_xyz(1.01, 0.4, 2.0), ..then },
+            Looked { you: then.you.with_rotation(Quat::from_rotation_y(0.01)), ..then },
+            Looked { eye: Transform::from_xyz(1.0, 3.0, 8.01), ..then },
+            Looked { eye: then.eye.with_rotation(Quat::from_rotation_x(-0.01)), ..then },
+            Looked { house: other, ..then },
+            Looked { target: Some(chair), ..then },
+        ];
+        for now in moved {
+            assert!(!then.still_good(&Looked { at: 10.008, ..now }));
+        }
+        // A clock set back, as the game's is not: looked for again.
+        assert!(!then.still_good(&Looked { at: 9.0, ..then }));
     }
 
     #[test]
