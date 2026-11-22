@@ -45,7 +45,21 @@
 //! height, which is the six categories'; and every colour and word is
 //! `assets/ui.ron`'s. The window is drawn again whenever what it shows
 //! changes, each list where it was scrolled to.
+//!
+//! **A list is scrolled as a list on the phone is** (Hajun, 2026-11-22: "do
+//! it the way samsung settings page scrolls on mobile touch input"): it
+//! follows a finger dragged along it, stops where a finger that has
+//! stopped lets it go, and flicked, goes on by itself and slows to a stop
+//! (`flick`, which has Android's own numbers for it). A finger put on a
+//! list that is going stops it, and is no tap on what is under it. **A
+//! swipe across the window goes to its other tab** ("i want it so u can
+//! swipe left/right to move between inventory/shop tabs"): a finger going
+//! left brings the shop, going right what you own, as the tab is changed
+//! when the finger comes up ([`swiped`]). A press goes one way or the
+//! other once it has moved further than a touch does, and keeps to it
+//! (`flick::way`): a swipe scrolls nothing, and a scroll changes no tab.
 
+use bevy::picking::pointer::PointerId;
 use bevy::prelude::*;
 use bevy::ui_widgets::ScrollArea;
 
@@ -54,6 +68,7 @@ use crate::build::stand::{Home, Stand, Why};
 use crate::build::{PIECES, Stock};
 use crate::builder::{self, DIALOG_LAYER, Fill};
 use crate::drive::{CarPressed, Driving};
+use crate::flick::{self, Coasting, Throw, Track, Way};
 use crate::hud::{self, BagButton, DialogUp, TakesPress};
 use crate::island::Venue;
 use crate::lobby::Balance;
@@ -123,6 +138,14 @@ const DEAL_COIN: f32 = 2.8;
 /// bottom stays up, in seconds.
 const TAP_SLOP: f32 = 16.0;
 const NOTICE_SECS: f32 = 3.0;
+/// A swipe across the window, to its other tab, in logical pixels (a
+/// phone's dp): how far across a flick has to have gone, and how fast it
+/// has to be going as it comes up, a second, which are Android's own for
+/// the pages of a `ViewPager`; and how far across is a swipe however
+/// slowly it went (mine: a centimetre).
+const SWIPE_FLICKED: f32 = 25.0;
+const SWIPE_SPEED: f32 = 400.0;
+const SWIPE_FAR: f32 = 64.0;
 /// The line that says why something cannot be done, along the window's top
 /// between its tabs and its cross: its words, and the room either side of
 /// it.
@@ -228,14 +251,48 @@ enum Tap {
 }
 
 /// The presses on the window since they were last acted on ([`act`]); that
-/// the bag button was pressed; and how far the press now down has been
+/// the bag button was pressed; and the press now down: how far it has been
 /// dragged, so that a drag to scroll a list is not also a tap on what it
-/// began on.
+/// began on; which finger it is, or the mouse; which way it is going, once
+/// it has gone far enough to say; for one going along a list, how far it
+/// had gone when the list took it up, and how far the list has followed it
+/// since; whether it went down on a list that was going on by itself, and
+/// stopped it; and where it has been, for how fast it is going as it comes
+/// up.
 #[derive(Resource, Default)]
 struct Pressed {
     taps: Vec<Tap>,
     open: bool,
     dragged: f32,
+    pointer: Option<PointerId>,
+    way: Way,
+    slack: f32,
+    followed: f32,
+    caught: bool,
+    track: Track,
+}
+
+impl Pressed {
+    /// Which way the press now down is going, now that it is `gone` from
+    /// where it went down: said once, and kept to.
+    fn feel(&mut self, gone: Vec2) -> Way {
+        if self.way == Way::Unsure {
+            self.way = flick::way(gone);
+            if self.way == Way::Along {
+                // The list takes it up from here, as Android's does: it
+                // does not jump by what the finger had gone already.
+                self.slack = flick::SLOP.copysign(gone.y);
+                self.followed = 0.0;
+            }
+        }
+        self.way
+    }
+
+    /// Whether the press that has come up was a tap: it went no way, nor
+    /// far, and did not go down to stop a list.
+    fn tapped(&self) -> bool {
+        self.way == Way::Unsure && self.dragged <= TAP_SLOP && !self.caught
+    }
 }
 
 /// The line along the window's top that says why something cannot be
@@ -286,8 +343,11 @@ pub(super) fn plugin(app: &mut App) {
         .add_systems(Startup, draw_icons)
         .add_systems(
             Update,
-            (act, redraw, show_notice, remember_scroll)
+            // Where each list has got to, by a finger or by itself, is
+            // remembered before the window is drawn again there.
+            (remember_scroll, act, redraw, show_notice)
                 .chain()
+                .after(flick::coast)
                 .after(super::BagSystems)
                 // Before whatever a tap in it sets going is read: the car
                 // (`drive::toggle`), and a building brought out
@@ -305,15 +365,36 @@ fn draw_icons(mut images: ResMut<Assets<Image>>, assets: Res<AssetServer>, mut c
     });
 }
 
-/// A new press: nothing dragged yet.
-fn start_press(_press: On<Pointer<Press>>, mut pressed: ResMut<Pressed>) {
+/// A new press, wherever it lands: nothing dragged yet, and going no way
+/// yet. One that goes down on a list that is going on by itself stops it
+/// there, and is then no tap on what is under it, as a finger put on a
+/// list on the phone is not.
+fn start_press(
+    press: On<Pointer<Press>>,
+    time: Res<Time<Real>>,
+    parents: Query<&ChildOf>,
+    coasting: Query<(), With<Coasting>>,
+    mut pressed: ResMut<Pressed>,
+    mut commands: Commands,
+) {
+    if press.button != PointerButton::Primary || press.original_event_target() != press.entity {
+        return;
+    }
+    let held = std::iter::successors(Some(press.entity), |&entity| parents.get(entity).ok().map(ChildOf::parent)).find(|&entity| coasting.contains(entity));
+    if let Some(list) = held {
+        commands.entity(list).try_remove::<Coasting>();
+    }
     pressed.dragged = 0.0;
+    pressed.pointer = Some(press.pointer_id);
+    pressed.way = Way::Unsure;
+    pressed.caught = held.is_some();
+    pressed.track.begin(time.elapsed_secs_f64());
 }
 
 /// Whatever of the window's was tapped or clicked, or the bag button, to
 /// be acted on ([`act`]). Only what the press landed on, not what the click
 /// passed up through on its way out; and not a press dragged to scroll a
-/// list.
+/// list or swiped across the window, nor one that stopped a list.
 fn press(click: On<Pointer<Click>>, taps: Query<&Tap>, bags: Query<(), With<BagButton>>, mut pressed: ResMut<Pressed>) {
     if click.button != PointerButton::Primary || click.original_event_target() != click.entity {
         return;
@@ -322,25 +403,93 @@ fn press(click: On<Pointer<Click>>, taps: Query<&Tap>, bags: Query<(), With<BagB
         pressed.open = true;
     }
     if let Ok(&tap) = taps.get(click.entity)
-        && pressed.dragged <= TAP_SLOP
+        && pressed.tapped()
     {
         pressed.taps.push(tap);
     }
 }
 
-/// Scrolls a list with a finger, or a mouse held down, dragged over it.
-fn drag_list(drag: On<Pointer<Drag>>, mut lists: Query<(&ComputedNode, &mut ScrollPosition), With<List>>, mut pressed: ResMut<Pressed>) {
+/// A press dragged anywhere on the window: how far it has gone, which way
+/// it is going, and where it has been. (A list it began on has heard of it
+/// first, the window being round the list: [`drag_list`].)
+fn drag_pane(drag: On<Pointer<Drag>>, time: Res<Time<Real>>, mut pressed: ResMut<Pressed>) {
+    if Some(drag.pointer_id) != pressed.pointer {
+        return;
+    }
     pressed.dragged = pressed.dragged.max(drag.distance.length());
+    pressed.feel(drag.distance);
+    pressed.track.moved(time.elapsed_secs_f64(), time.delta_secs_f64(), drag.distance);
+}
+
+/// Scrolls a list with a finger, or a mouse held down, dragged along it:
+/// once the press is going that way, by as far as it goes from there.
+fn drag_list(drag: On<Pointer<Drag>>, mut lists: Query<(&ComputedNode, &mut ScrollPosition), With<List>>, mut pressed: ResMut<Pressed>) {
+    if Some(drag.pointer_id) != pressed.pointer || pressed.feel(drag.distance) != Way::Along {
+        return;
+    }
     let Ok((node, mut scroll)) = lists.get_mut(drag.entity) else {
         return;
     };
-    let shown = node.size().y * node.inverse_scale_factor();
-    let whole = node.content_size().y * node.inverse_scale_factor();
-    let most = (whole - shown).max(0.0);
-    let to = (scroll.y - drag.delta.y).clamp(0.0, most);
+    let wanted = drag.distance.y - pressed.slack;
+    let by = wanted - pressed.followed;
+    pressed.followed = wanted;
+    let to = (scroll.y - by).clamp(0.0, flick::room(node));
     if scroll.y != to {
         scroll.y = to;
     }
+}
+
+/// A list let go: flicked, it goes on by itself, the way the finger was
+/// taking it and as fast, and slows to a stop (`flick::coast`). Let go by
+/// a finger that had stopped, it stays where it is.
+fn let_go_of_list(end: On<Pointer<DragEnd>>, time: Res<Time<Real>>, lists: Query<&ComputedNode, With<List>>, pressed: Res<Pressed>, mut commands: Commands) {
+    if Some(end.pointer_id) != pressed.pointer || pressed.way != Way::Along {
+        return;
+    }
+    let Ok(node) = lists.get(end.entity) else {
+        return;
+    };
+    if flick::room(node) <= 0.0 {
+        return;
+    }
+    // A finger going up the screen takes the list further down.
+    let now = time.elapsed_secs_f64();
+    let speed = -pressed.track.speed(now, time.delta_secs_f64()).y;
+    if let Some(throw) = Throw::at(speed) {
+        commands.entity(end.entity).insert(Coasting::new(throw, now));
+    }
+}
+
+/// A press let go that went across the window: a swipe, if it went far
+/// enough or fast enough ([`swiped`]), to the tab on that side, as a tap on
+/// that tab is.
+fn let_go_of_pane(end: On<Pointer<DragEnd>>, time: Res<Time<Real>>, panel: Res<Panel>, mut pressed: ResMut<Pressed>) {
+    if Some(end.pointer_id) != pressed.pointer || pressed.way != Way::Across {
+        return;
+    }
+    let speed = pressed.track.speed(time.elapsed_secs_f64(), time.delta_secs_f64()).x;
+    if let Some(tab) = swiped(panel.tab, end.distance.x, speed) {
+        pressed.taps.push(Tap::Show(tab));
+    }
+}
+
+/// The tab a press that went across the window goes to, if it was a swipe
+/// and that tab is not the one shown: `across` is how far to the right it
+/// had gone by the time it came up, `speed` how fast it was going that way
+/// then, a second. A finger going left brings the tab on the right, the
+/// shop; one going right, what you own. A flick is a swipe, and so is a
+/// press dragged a long way however slowly; one that was going back the
+/// other way as it came up is not.
+fn swiped(from: Tab, across: f32, speed: f32) -> Option<Tab> {
+    let fast = speed.abs() >= SWIPE_SPEED;
+    let with_it = (speed > 0.0) == (across > 0.0);
+    let flicked = fast && with_it && across.abs() >= SWIPE_FLICKED;
+    let dragged = across.abs() >= SWIPE_FAR && !(fast && !with_it);
+    if !(flicked || dragged) {
+        return None;
+    }
+    let to = if across < 0.0 { Tab::Shop } else { Tab::Inventory };
+    (to != from).then_some(to)
 }
 
 /// Why a building cannot be brought out of the bag just now, in words.
@@ -577,6 +726,10 @@ fn draw(commands: &mut Commands, view: &View) {
                 ..default()
             }),
         ))
+        // A press dragged anywhere on it, and let go: a swipe across it
+        // is to its other tab.
+        .observe(drag_pane)
+        .observe(let_go_of_pane)
         .id();
     // The tabs, from where the cards begin.
     let tabs = commands
@@ -668,6 +821,7 @@ fn sorts(commands: &mut Commands, body: Entity, view: &View) {
             ScrollPosition(Vec2::new(0.0, view.scrolled.sorts[view.panel.tab as usize])),
         ))
         .observe(drag_list)
+        .observe(let_go_of_list)
         .id();
     for (index, &sort) in all.iter().enumerate() {
         let shown = sort == view.panel.sort();
@@ -717,6 +871,7 @@ fn cards(commands: &mut Commands, body: Entity, view: &View) {
             ScrollPosition(Vec2::new(0.0, view.scrolled.cards)),
         ))
         .observe(drag_list)
+        .observe(let_go_of_list)
         .id();
     let things = shown(view.panel.tab, view.panel.sort(), &view.bag.has);
     if things.is_empty() {
@@ -978,8 +1133,8 @@ fn show_notice(
     }
 }
 
-/// Remembers how far each list is scrolled, for when the window is drawn
-/// again.
+/// Remembers how far each list is scrolled, by a finger or going on by
+/// itself, for when the window is drawn again.
 fn remember_scroll(panel: Res<Panel>, lists: Query<(&List, &ScrollPosition), Changed<ScrollPosition>>, mut scrolled: ResMut<Scrolled>) {
     for (list, scroll) in &lists {
         match list {
@@ -1036,6 +1191,55 @@ mod tests {
             let wide = line.chars().count() as f32 * NOTICE_TEXT * 0.5;
             assert!(wide <= room, "{line:?} is about {wide} wide, and there is room for {room}");
         }
+    }
+
+    #[test]
+    fn a_swipe_across_the_window_goes_to_its_other_tab() {
+        // A finger flicked to the left brings the shop, which is on the
+        // right; flicked to the right, what you own (Hajun, 2026-11-22: "u
+        // can swipe left/right to move between inventory/shop tabs").
+        assert_eq!(swiped(Tab::Inventory, -40.0, -900.0), Some(Tab::Shop));
+        assert_eq!(swiped(Tab::Shop, 40.0, 900.0), Some(Tab::Inventory));
+        // Nothing further that way.
+        assert_eq!(swiped(Tab::Shop, -40.0, -900.0), None);
+        assert_eq!(swiped(Tab::Inventory, 40.0, 900.0), None);
+        // Not far enough, or a short way slowly: no swipe.
+        assert_eq!(swiped(Tab::Inventory, -20.0, -900.0), None);
+        assert_eq!(swiped(Tab::Inventory, -40.0, -300.0), None);
+        // A long way, however slowly, and a finger that had stopped: one.
+        assert_eq!(swiped(Tab::Inventory, -70.0, -100.0), Some(Tab::Shop));
+        assert_eq!(swiped(Tab::Inventory, -70.0, 0.0), Some(Tab::Shop));
+        assert_eq!(swiped(Tab::Shop, 64.0, 0.0), Some(Tab::Inventory));
+        // Dragged across and flicked back: not one.
+        assert_eq!(swiped(Tab::Inventory, -70.0, 900.0), None);
+        assert_eq!(swiped(Tab::Inventory, -40.0, 900.0), None);
+    }
+
+    #[test]
+    fn a_press_goes_one_way_and_is_a_tap_only_if_it_went_none() {
+        // A touch that hardly moves is a tap.
+        let mut pressed = Pressed::default();
+        assert!(pressed.tapped());
+        assert_eq!(pressed.feel(Vec2::new(3.0, -4.0)), Way::Unsure);
+        pressed.dragged = 5.0;
+        assert!(pressed.tapped());
+        // Dragged up a list: the list's from there, less what it had gone
+        // when the list took it up, and a tap no more. It stays the list's
+        // though it then goes across.
+        assert_eq!(pressed.feel(Vec2::new(1.0, -12.0)), Way::Along);
+        assert_eq!((pressed.slack, pressed.followed), (-flick::SLOP, 0.0));
+        assert_eq!(pressed.feel(Vec2::new(90.0, -12.0)), Way::Along);
+        assert!(!pressed.tapped());
+        // Dragged across: a swipe from there, though it then goes down.
+        let mut pressed = Pressed::default();
+        assert_eq!(pressed.feel(Vec2::new(-14.0, 3.0)), Way::Across);
+        assert_eq!(pressed.feel(Vec2::new(-14.0, 80.0)), Way::Across);
+        assert!(!pressed.tapped());
+        // A finger put on a list that was going stops it, and is no tap.
+        let mut pressed = Pressed { caught: true, ..default() };
+        assert!(!pressed.tapped());
+        pressed.caught = false;
+        assert!(pressed.tapped());
     }
 
     #[test]

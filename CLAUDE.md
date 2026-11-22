@@ -17,14 +17,14 @@ Race's and Last Stand's cards turned off (`games::OFF`, since APK 44):
 spend nothing on those two unasked.
 
 As of 2026-11-22: `PROTOCOL_VERSION` 24 (since 2026-11-18, so APK 43 and
-44 play on, without what came after them), **APK 47** (`versionCode`,
+44 play on, without what came after them), **APK 48** (`versionCode`,
 built 2026-11-22, not put on a phone from here, `docs/building.md`), the
 server deployed at 15:59 UTC on 2026-11-21 with everything in `server/` and
 `shared/`, **all of it committed and pushed**: the land (`docs/land.md`),
 everyone's signs and cars, the town's slower buses, and the bag
-(`docs/bag.md`), with what APK 46 and 47 have over 45, the shop's window
-and the bag's button as Hajun wanted them after seeing them, the device's
-side only. The iPhone's last tag,
+(`docs/bag.md`), with what APK 46 to 48 have over 45, the bag's window,
+its button and how it is scrolled as Hajun wanted them after seeing them,
+the device's side only. The iPhone's last tag,
 `ios-1.0.2-18`, pushed in the first hour of 2026-11-16 (whether Codemagic
 built it is not known here), is protocol 18: its build is told to update
 and stays offline until `ios-1.0.2-19` is built, whose tag is Hajun's to
@@ -62,7 +62,7 @@ heading in one of these:
 | netcode, the login, the town's clock | `docs/online.md`, `SERVER.md`, `MULTIPLAYER.md` | "Playing online" |
 | a map's model, collision | `docs/maps-and-collision.md` | "The islands are Blender models" |
 | the town's plots, whose they are, the sign on yours | `docs/land.md` | |
-| the bag: what you own, the shop, gems, buildings put down on your plot (`bag`, `build::stand`, `server/src/bag.rs`) | `docs/bag.md` | |
+| the bag: what you own, the shop, gems, buildings put down on your plot, a list flicked (`bag`, `build::stand`, `flick`, `server/src/bag.rs`) | `docs/bag.md` | |
 | fountain, music, town houses, town objects and their editor, AIs, talking | `docs/town.md` | "The fountain runs", "The town has music", "The town's houses", "The town is data", "The town holds 32 players", "You can talk to anyone" |
 | the buses, the car you drive | `docs/vehicles.md` | "The town's buses", "The car you drive" |
 | the camera | `docs/camera.md` | "The camera stands where you zoomed it" |
@@ -400,7 +400,10 @@ to try again.
   cannot afford it (APK 47), and a thing
   pressed there has Buy and Sell over its picture, a little see-through,
   both always there and the one that cannot be pressed greyed (Hajun's,
-  later that day, APK 46). Twenty things, House Builder's nineteen pieces
+  later that day, APK 46). Its lists are scrolled as a phone's are: a
+  flick goes on and slows to a stop, by Android's own arithmetic
+  (`src/flick.rs`; the bag's lists alone so far), and a swipe across the
+  window changes its tab (Hajun's, APK 48). Twenty things, House Builder's nineteen pieces
   and the car, each with a rarity and a price that is its rarity's for
   now, sold back for half (`roundtown_net::bag`, written from Hajun's
   `assets/itemrarities.txt`: **change a rarity or a price there and in

@@ -2,14 +2,119 @@
 
 Your bag (`src/bag.rs`), its window (`src/bag/panel.rs`), the rules of it
 that both sides play by (`roundtown_net::bag`), the server's side
-(`server/src/bag.rs`), and the buildings put down on a plot of the town
-(`src/build/stand.rs`). Dated entries, newest first.
+(`server/src/bag.rs`), the buildings put down on a plot of the town
+(`src/build/stand.rs`), and how its window's lists are scrolled
+(`src/flick.rs`). Dated entries, newest first.
 
 ## Contents
 
-1. 2026-11-22, afternoon: the coins' number the gems' size and the gem the coin's; a price you cannot afford in red; the box on the bag's button; APK 47
-2. 2026-11-22, later: the shop after Hajun had looked at it (both buttons always, over the picture and see-through; the price under the name; All first shown; six categories with no scrolling); APK 46
-3. 2026-11-22: the bag, its window, gems, and buildings on your plot that everyone sees; APK 45
+1. 2026-11-22, after that: a list flicked goes on by itself as a phone's does, and a swipe across the window changes its tab; APK 48
+2. 2026-11-22, afternoon: the coins' number the gems' size and the gem the coin's; a price you cannot afford in red; the box on the bag's button; APK 47
+3. 2026-11-22, later: the shop after Hajun had looked at it (both buttons always, over the picture and see-through; the price under the name; All first shown; six categories with no scrolling); APK 46
+4. 2026-11-22: the bag, its window, gems, and buildings on your plot that everyone sees; APK 45
+
+## 2026-11-22, after that: a flicked list goes on, and a swipe changes the tab; APK 48
+
+Hajun, after APK 47:
+
+> also right now, scrolling in the shop/inventory is like as soon as u take
+> ur finger out, it stops the scroll. i want it so if its like a strong
+> flick scroll then it shouldnt stop scroll right away there should be some
+> like velocity and friction slowing it down kind of like if u scroll on
+> youtube scrolling or samsung settings page scrolling like if u scroll it
+> like with ur finger pressed down or sth it just stops right when u take
+> ur finger out but if u like finger flick upward to scroll down then it
+> doesnt stop right away but like has velocity that accelerates downward so
+> it goes a bit more than the amount u scrolled down so u can like scroll a
+> lot with a minimal effort by flicking motion, or if u want precise scroll
+> u just scroll with ur finger pressed down sth like that - i dont know how
+> to explain it but just do it the way samsung settings page scrolls on
+> mobile touch input.
+
+and, while that was being done: "also i want it so u can swipe left/right
+to move between inventory/shop tabs." Then "rebuild apk and push".
+
+`src/flick.rs` (new), `src/bag/panel.rs`. Nothing in `shared/` or
+`server/`, nor in `ui.ron`: no deploy, protocol 24 still.
+
+**A list is scrolled as a list on an Android phone is** (`src/flick.rs`,
+which has the arithmetic and says where each number is Android's):
+
+- It follows the finger. A finger that has stopped lets it go where it is.
+- A finger still moving as it comes up throws it: it goes on the way it
+  was going, as fast, and slows to a stop. How fast the finger was going
+  is read as Android's `VelocityTracker` reads it (a parabola fitted
+  through where the finger was over its last tenth of a second; a finger
+  still for 40 ms was going nowhere), and how far and how long the list
+  then goes on is Android's `OverScroller`'s (`flick::Throw`): 1,500 a
+  second goes 393 on in three quarters of a second, 3,000 goes 1,309 in a
+  second and a quarter, and 200, a list barely moving as it is let go,
+  drifts 12. No slower than 50 a second is a throw, and none is faster
+  than 8,000. The lengths are Android's `dp`, which a logical pixel of the
+  window is on a phone, so the same flick goes as far here as there: on a
+  phone the shop's whole list is 520 to 600 of them, by the phone, which
+  one good flick covers.
+- A finger put on a list that is going stops it there, and is no tap on
+  the card under it.
+- At its end a list stops.
+
+**A swipe across the window goes to its other tab** (`panel::swiped`): a
+finger going left brings the shop, going right what you own, from
+anywhere on the window (the cards, the categories, the tabs). It is a
+swipe if it was flicked (25 across and going 400 a second as it came up,
+Android's own for the pages of a `ViewPager`) or dragged 64 across however
+slowly; not if it was going back the other way as it came up. The tab
+changes as the finger comes up, as by a tap on that tab.
+
+**A press goes one way** (`flick::way`, `panel::Pressed`): nothing until
+it has moved 8, further than a touch does; then across, if it has gone
+twice as far across as up or down, and along the list otherwise; and it
+keeps to that. A swipe scrolls nothing and a scroll changes no tab. So a
+list no longer moves with the first dot of a drag: it takes the finger up
+after those 8, as Android's does, and a press that has gone a way is no
+tap.
+
+**Calls that were mine.**
+
+- The numbers are stock Android's, written out from what I know of its
+  `OverScroller`, `ViewConfiguration` and `VelocityTracker`, with no
+  Android source or phone here to hold them against but one figure a test
+  has (a list let go at 4,000 dots a second on a three-dot screen goes
+  961 dots in 686 ms). Samsung's settings page is an Android list;
+  whether Samsung has tuned its own differently I do not know.
+- At its end a list stops dead: nothing stretches or bounces, as a
+  Samsung list does a little.
+- A second flick does not add to the first: each is its own.
+- The pages do not slide with the finger in a swipe: the tab changes when
+  the finger comes up. The 64 for a slow swipe is mine (a centimetre).
+- A swipe begins the other tab's list at its top, as a tap on the tab
+  does.
+- Only the bag's window. The friends' lists, the chat and House Builder's
+  shop stop where they are let go, as they did: `flick` is there for them
+  to take up if Hajun wants it everywhere.
+
+**Checked.** The game's 519 tests (eight new: a throw as far and as long
+as Android's, its curve, how fast a finger was going from where it was,
+a finger that stopped, which way a press goes, a list carried to its end
+and no further, which tab a swipe goes to, what is a tap). The desktop
+build run hidden and offline at 874 by 402, at about sixty frames a
+second, with fingers made by a script: a flick of 1,500 a second carried
+the shop's list 392.9 on in 0.750 s, where the arithmetic says 392.9 in
+0.748; one of 3,000 the other way ran it to its top, where it stopped;
+one of 200 drifted 11.9; a drag held and let go left it where it was (92
+for a drag of 100); a finger put on it as it went stopped it there and
+picked nothing, and the next tap picked the card. Swipes: a
+flick left to the shop and right back; nothing further right; 80 slowly
+left, to the shop; 30 slowly right, nothing; a flick across one card in
+the shop, nothing picked; from the categories and from the tabs' row; a
+slanting flick down the list, no tab changed. The same with the mouse
+held down: a swipe, a flick that went on, a slow drag, a click on a card.
+
+**Not checked.** On a phone: APK 48 was built and not installed, none
+being attached, so a real finger has not flicked it. A real finger's
+touches come unevenly, where the script's are exact. Against a server:
+nothing it has a say in changed. iOS: not type-checked, nothing behind
+`target_os = "ios"` touched, no tag asked for.
 
 ## 2026-11-22, afternoon: your coins and gems one size, a red price, the box on the button; APK 47
 

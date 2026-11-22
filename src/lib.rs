@@ -51,6 +51,7 @@ mod log_file;
 mod lobby;
 mod login;
 mod fire;
+mod flick;
 mod loot;
 mod map;
 mod market;
@@ -1484,7 +1485,9 @@ pub fn main() {
     minimap::plugin(&mut app);
     games::plugin(&mut app);
     land::plugin(&mut app);
-    // Your bag: what you own, the shop, and what stands on your plot.
+    // Your bag: what you own, the shop, and what stands on your plot;
+    // and a list flicked going on by itself, which its window's do.
+    flick::plugin(&mut app);
     bag::plugin(&mut app);
     // The four games of 2026-11-18, on the selector too: the tables they
     // are played at, one way in and out for all four, and each game.

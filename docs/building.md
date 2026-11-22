@@ -7,6 +7,36 @@
 > "above" or "below", or names another section in quotes, that section may be
 > in another file here: the table in `CLAUDE.md` says which.
 
+## APK 48: the bag's lists flicked as a phone's are, and its tabs swiped
+
+2026-11-22, 14:43 here (05:43 UTC), at Hajun's "rebuild apk and push"
+(`docs/bag.md`, the entry of that day marked "after that"). From the main
+checkout, committed and pushed after it. What is new in it since 47: a
+list of the bag's window flicked goes on by itself and slows to a stop, as
+a list on an Android phone does (`src/flick.rs`), and a swipe across the
+window goes to its other tab. Nothing in `shared/`, `server/` or `ui.ron`
+changed: **`PROTOCOL_VERSION` 24 still**, no deploy, and 43 to 47 play on
+against the server of 15:59 UTC on the 21st.
+
+- **Before it**: the game's 519 tests; hidden runs of the desktop build,
+  offline, with scripted fingers and the mouse (`docs/bag.md` lists them).
+- **The APK**: 48 (`versionCode`). cargo ndk 3m33s, with no error of
+  Android's own; stripped from 201.4 MB to 109.7 MB with
+  `GameActivity_onCreate` and the six `MainActivity` methods in it;
+  Gradle 4 s; 127.4 MB, put over APK 47 with no copy kept. Checked:
+  `versionCode` read back with aapt; the library in it the same bytes as
+  the stripped one (sha1 `68be2570`); all 93 of the game's files under
+  `assets/` the same as the tree's (the two others there are Gradle's own
+  `dexopt` profiles), the 277 of the tree hashed before cargo ndk and
+  after Gradle and unchanged; no `.blend`, no `ui.ron`, no
+  `itemrarities.txt`; no source newer than the build's beginning, and
+  nothing of the scripted runs' driver in the library.
+- **Not installed: no phone was attached** (`adb devices`, empty). A real
+  finger has not flicked a list or swiped a tab; nothing of the bag has
+  been seen on a phone, in this APK or the three before.
+- **The iPhone**: no tag pushed; not type-checked, nothing behind
+  `target_os = "ios"` touched.
+
 ## APK 47: your coins and gems one size, a red price, the box on the bag's button
 
 2026-11-22, 13:51 here (04:51 UTC), at Hajun's "then rebuild apk and push"
