@@ -29,7 +29,8 @@
 //! be your friend, who has asked you into their group, and what your
 //! friends have written, each with its answer beside it; how many wait
 //! there is counted in gold on its corner, and on the speech bubble's
-//! ([`hang_badge`]).
+//! ([`hang_badge`]). A message is seen off by its OK, and by a reply to it
+//! as that is sent ([`sent`], since 2026-11-23).
 //!
 //! It is a dialog (`hud::DialogUp`): you stand still, and a press on it is
 //! its own. The cross or Escape shuts it, and so does a press anywhere off
@@ -174,8 +175,10 @@ enum Over {
     Menu(u64, Vec2),
     /// "Remove ... from your friends?"
     Remove(u64),
-    /// A message being written to this friend.
-    Write(u64),
+    /// A message being written to the friend `to`; and, written in reply to
+    /// one of theirs that waits in your inbox, that one's number there
+    /// (`answers`), which is seen off as the reply is sent ([`sent`]).
+    Write { to: u64, answers: Option<u64> },
 }
 
 /// What a press on something of the panel's does.
@@ -194,7 +197,10 @@ enum Tap {
     AskInvite(u64),
     Invite(u64),
     Menu(u64),
-    Write(u64),
+    /// Begins a message to the friend `to`: from the gear's menu, one that
+    /// answers nothing; from Reply beside a message in your inbox, one
+    /// that answers it (`answers`, its number there).
+    Write { to: u64, answers: Option<u64> },
     Send,
     AskRemove(u64),
     Remove(u64),
@@ -346,6 +352,9 @@ fn hear(
                 // Left behind, the panel is as likely shut: said across the
                 // screen.
                 News::Said(Outcome::LeftBehind) => said = Some(words.said.left_behind.clone()),
+                // Moved to the channel your group is in, your land with
+                // you (since 2026-11-23): the same.
+                News::Said(Outcome::Gathered) => said = Some(words.said.gathered.clone()),
                 News::Said(outcome) => notice.0 = Some((said_in_words(*outcome), 0.0)),
             },
             // Seated in a game without having asked: the leader of your
@@ -444,6 +453,7 @@ fn said_in_words(said: Outcome) -> String {
         Outcome::InboxFull => &words.inbox_full,
         Outcome::NotAMessage => &words.not_a_message,
         Outcome::LeftBehind => &words.left_behind,
+        Outcome::Gathered => &words.gathered,
     }
     .clone()
 }
@@ -568,7 +578,7 @@ fn shut_under_a_press(
 
 /// Puts the panel away.
 fn shut(panel: &mut Panel, up: &mut DialogUp, name_box: &mut NameBox) {
-    if matches!(panel.over, Some(Over::Add | Over::Write(_))) {
+    if matches!(panel.over, Some(Over::Add | Over::Write { .. })) {
         name_box.close();
     }
     panel.open = false;
@@ -582,6 +592,8 @@ fn shut(panel: &mut Panel, up: &mut DialogUp, name_box: &mut NameBox) {
 /// panel's own buttons go on from there, asking the server for whatever is
 /// its to do. On desktop `Escape` backs out of what is up over the panel,
 /// or shuts it, and `Enter` looks for the name typed, or sends the message.
+/// A message sent in reply to one in your inbox sees that one off as well
+/// ([`sent`]).
 #[allow(clippy::too_many_arguments)]
 fn act(
     mut pressed: ResMut<Pressed>,
@@ -611,7 +623,7 @@ fn act(
     if keyboard.just_pressed(KeyCode::Escape) {
         taps.push((if panel.over.is_some() { Tap::Back } else { Tap::Close }, Vec2::ZERO));
     }
-    let typing = matches!(panel.over, Some(Over::Add | Over::Write(_)));
+    let typing = matches!(panel.over, Some(Over::Add | Over::Write { .. }));
     if typing && (name_box.entered() || keyboard.any_just_pressed([KeyCode::Enter, KeyCode::NumpadEnter])) {
         let tap = if panel.over == Some(Over::Add) { Tap::Search } else { Tap::Send };
         taps.push((tap, Vec2::ZERO));
@@ -622,7 +634,7 @@ fn act(
     for (tap, at) in taps {
         // Whatever is typed into goes with the box it was typed in.
         let leaves_typing = !matches!(tap, Tap::Search | Tap::Send | Tap::Befriend(_) | Tap::Copy | Tap::Nothing);
-        if leaves_typing && matches!(panel.over, Some(Over::Add | Over::Write(_))) {
+        if leaves_typing && matches!(panel.over, Some(Over::Add | Over::Write { .. })) {
             name_box.close();
         }
         match tap {
@@ -666,13 +678,21 @@ fn act(
                 panel.over = None;
             }
             Tap::Menu(id) => panel.over = Some(Over::Menu(id, at)),
-            Tap::Write(id) => {
-                panel.over = Some(Over::Write(id));
+            Tap::Write { to, answers } => {
+                panel.over = Some(Over::Write { to, answers });
                 name_box.open_for("", MESSAGE_LONGEST);
             }
+            // With something typed that is a message, it is sent; and a
+            // reply sees off the message it answers ([`sent`]), if that
+            // still waits in your inbox: one gone from it while the reply
+            // was typed has nothing left to see off, and asking would only
+            // be told it is stale.
             Tap::Send => {
-                if let (Some(Over::Write(to)), Some(text)) = (panel.over, message(&name_box.shown())) {
-                    ask(Act::Write { to, text });
+                if let (Some(Over::Write { to, answers }), Some(text)) = (panel.over, message(&name_box.shown())) {
+                    let waits = |mail: &u64| friends.inbox.iter().any(|waiting| waiting.id == *mail);
+                    for asked in sent(to, text, answers.filter(waits)) {
+                        ask(asked);
+                    }
                     name_box.close();
                     panel.over = None;
                 }
@@ -687,6 +707,20 @@ fn act(
             Tap::Kick(id) => ask(Act::Kick(id)),
         }
     }
+}
+
+/// What sending `text` to the friend `to` asks of the server, in order: the
+/// message; and, written in reply to one that waits in your inbox, numbered
+/// `answers`, that one seen off right after it, as its OK sees it off
+/// (Hajun, 2026-11-23: "replying to message should automatically count as
+/// pressing "Ok" so the 1 notification disappears"). It is out of your
+/// inbox then, and off the count on the envelope and on the two people's
+/// button. Only a reply that is sent does it: Reply pressed and the box
+/// then put away sends nothing, and a message begun from a friend's gear
+/// answers none.
+fn sent(to: u64, text: String, answers: Option<u64>) -> impl Iterator<Item = Act> {
+    let seen = answers.map(|mail| Act::Answer { mail, yes: true });
+    [Some(Act::Write { to, text }), seen].into_iter().flatten()
 }
 
 /// What is to be copied to an Android phone's clipboard, until its
@@ -1011,7 +1045,7 @@ fn draw(commands: &mut Commands, assets: &AssetServer, view: &View) -> Entity {
         Some(Over::Add) => add_friend(commands, assets, panel, view),
         Some(Over::Invite(id)) => question(commands, panel, view, id, true),
         Some(Over::Remove(id)) => question(commands, panel, view, id, false),
-        Some(Over::Write(id)) => writing(commands, panel, view, id),
+        Some(Over::Write { to, .. }) => writing(commands, panel, view, to),
         Some(Over::Menu(id, at)) => menu(commands, root, view, id, at),
         None => {}
     }
@@ -1267,10 +1301,20 @@ fn mail_tab(commands: &mut Commands, assets: &AssetServer, panel: Entity, view: 
                 commands.spawn((ChildOf(row), choice(said.reject.clone(), Tap::Answer(mail.id, false), Look::No)));
             }
             Post::Message(_) => {
-                commands.spawn((ChildOf(row), choice(said.reply.clone(), Tap::Write(mail.from.id), Look::Yes)));
+                commands.spawn((ChildOf(row), choice(said.reply.clone(), reply_to(mail), Look::Yes)));
                 commands.spawn((ChildOf(row), choice(said.seen.clone(), Tap::Answer(mail.id, true), Look::Plain)));
             }
         }
+    }
+}
+
+/// What Reply beside the message `mail` in your inbox does: begins a
+/// message back to whoever wrote it, which answers that one, so that the
+/// reply sent sees it off ([`sent`]).
+fn reply_to(mail: &Mail) -> Tap {
+    Tap::Write {
+        to: mail.from.id,
+        answers: Some(mail.id),
     }
 }
 
@@ -1585,8 +1629,14 @@ fn menu(commands: &mut Commands, root: Entity, view: &View, id: u64, at: Vec2) {
             ..default()
         },
         Pickable::IGNORE,
-        children![entry(&said.message, Tap::Write(id)), entry(&said.remove, Tap::AskRemove(id))],
+        children![entry(&said.message, message_to(id)), entry(&said.remove, Tap::AskRemove(id))],
     ));
+}
+
+/// What Message under the gear of the friend whose account is `id` does:
+/// begins a message to them, which answers nothing in your inbox.
+fn message_to(id: u64) -> Tap {
+    Tap::Write { to: id, answers: None }
 }
 
 // ------------------------------------------------------ what stays in step
@@ -1780,6 +1830,7 @@ mod tests {
             Outcome::InboxFull,
             Outcome::NotAMessage,
             Outcome::LeftBehind,
+            Outcome::Gathered,
         ] {
             assert!(!said_in_words(said).is_empty(), "{said:?}");
         }
@@ -1914,5 +1965,113 @@ mod tests {
         assert_eq!(found_rows(Some(2)), 2);
         assert_eq!(found_rows(Some(FOUND_SHOWN)), FOUND_SHOWN);
         assert_eq!(found_rows(Some(20)), FOUND_SHOWN);
+    }
+
+    /// A message from the friend whose account is 2, numbered 31 in your
+    /// inbox.
+    fn letter() -> Mail {
+        Mail {
+            id: 31,
+            from: card(2, "Bobby", HERE),
+            what: Post::Message("play at 9?".into()),
+        }
+    }
+
+    #[test]
+    fn a_reply_asks_for_the_message_and_then_for_the_one_it_answers_to_be_seen_off() {
+        // A reply: the message, and right after it the one it answers seen
+        // off, as its OK sees it off (Hajun: "replying to message should
+        // automatically count as pressing "Ok"").
+        let reply: Vec<Act> = sent(2, "On my way".into(), Some(31)).collect();
+        assert_eq!(reply, [Act::Write { to: 2, text: "On my way".into() }, Act::Answer { mail: 31, yes: true }]);
+        // One that answers nothing: the message alone.
+        let plain: Vec<Act> = sent(2, "Hello".into(), None).collect();
+        assert_eq!(plain, [Act::Write { to: 2, text: "Hello".into() }]);
+        // Reply beside a message answers that message, to whoever wrote
+        // it; Message under a friend's gear answers none.
+        assert_eq!(reply_to(&letter()), Tap::Write { to: 2, answers: Some(31) });
+        assert_eq!(message_to(2), Tap::Write { to: 2, answers: None });
+    }
+
+    #[test]
+    fn only_a_reply_that_is_sent_sees_its_message_off() {
+        use bevy::ecs::system::RunSystemOnce;
+        let mut world = World::new();
+        world.init_resource::<Pressed>();
+        world.init_resource::<Friends>();
+        world.init_resource::<NameBox>();
+        world.init_resource::<Notice>();
+        world.init_resource::<CloseUp>();
+        world.init_resource::<ButtonInput<KeyCode>>();
+        world.init_resource::<Clipboard>();
+        world.init_resource::<Messages<Ask>>();
+        world.insert_resource(Online::default());
+        world.insert_resource(Panel {
+            open: true,
+            tab: Tab::Mail,
+            over: None,
+        });
+        world.insert_resource(DialogUp(true));
+        world.resource_mut::<Friends>().inbox = vec![letter()];
+        // What the panel asks of the server, acting on what was pressed.
+        let asked = |world: &mut World| -> Vec<Act> {
+            world.run_system_once(act).expect("acted");
+            let asks: Vec<Ask> = world.resource_mut::<Messages<Ask>>().drain().collect();
+            asks.into_iter()
+                .filter_map(|ask| match ask {
+                    Ask::Social(what) => Some(what),
+                    _ => None,
+                })
+                .collect()
+        };
+        let press = |world: &mut World, tap: Tap| -> Vec<Act> {
+            world.resource_mut::<Pressed>().taps.push((tap, Vec2::ZERO));
+            asked(world)
+        };
+        let typed = |world: &mut World, text: &str| world.resource_mut::<NameBox>().open_for(text, MESSAGE_LONGEST);
+        let reply = Some(Over::Write { to: 2, answers: Some(31) });
+        let both = [Act::Write { to: 2, text: "On my way".into() }, Act::Answer { mail: 31, yes: true }];
+        // Reply pressed: its box is up, and nothing is asked.
+        assert!(press(&mut world, reply_to(&letter())).is_empty());
+        assert_eq!(world.resource::<Panel>().over, reply);
+        // Send with nothing typed: nothing, and the box stays.
+        assert!(press(&mut world, Tap::Send).is_empty());
+        assert_eq!(world.resource::<Panel>().over, reply);
+        // Something typed and the box cancelled: nothing, and it has gone.
+        typed(&mut world, "On my way");
+        assert!(press(&mut world, Tap::Back).is_empty());
+        assert_eq!(world.resource::<Panel>().over, None);
+        assert!(!world.resource::<NameBox>().up());
+        // Reply, something typed, and the panel shut by its cross: nothing.
+        press(&mut world, reply_to(&letter()));
+        typed(&mut world, "On my way");
+        assert!(press(&mut world, Tap::Close).is_empty());
+        assert!(!world.resource::<Panel>().open);
+        world.resource_mut::<Panel>().open = true;
+        // Reply, something typed, and Send: the message, and then the one
+        // it answers seen off; the box away.
+        press(&mut world, reply_to(&letter()));
+        typed(&mut world, "On my way");
+        assert_eq!(press(&mut world, Tap::Send), both);
+        assert_eq!(world.resource::<Panel>().over, None);
+        assert!(!world.resource::<NameBox>().up());
+        // Enter in the box does as Send does.
+        press(&mut world, reply_to(&letter()));
+        typed(&mut world, "On my way");
+        world.resource_mut::<ButtonInput<KeyCode>>().press(KeyCode::Enter);
+        assert_eq!(asked(&mut world), both);
+        world.resource_mut::<ButtonInput<KeyCode>>().reset_all();
+        // A message begun from the friend's gear answers nothing: the
+        // message alone, with theirs still waiting.
+        press(&mut world, message_to(2));
+        assert_eq!(world.resource::<Panel>().over, Some(Over::Write { to: 2, answers: None }));
+        typed(&mut world, "Hello");
+        assert_eq!(press(&mut world, Tap::Send), [Act::Write { to: 2, text: "Hello".into() }]);
+        // A reply to one that has gone from your inbox while it was typed:
+        // the message alone, there being nothing left to see off.
+        press(&mut world, reply_to(&letter()));
+        typed(&mut world, "On my way");
+        world.resource_mut::<Friends>().inbox.clear();
+        assert_eq!(press(&mut world, Tap::Send), both[..1]);
     }
 }

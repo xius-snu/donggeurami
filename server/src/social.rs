@@ -132,6 +132,10 @@ pub(crate) struct Social {
     gone: HashMap<u64, f64>,
     /// The games already paid out for, each once.
     awarded: HashSet<(Minigame, u32)>,
+    /// The groups someone has come into since that was last asked
+    /// ([`Social::take_gathered`]): each is to be together in one channel
+    /// of the town (`players::gather`).
+    gathered: Vec<u32>,
     /// What is to be told, and to whom, until it has been ([`flush`]).
     told: Vec<(u64, News)>,
     /// What is to be written down, until it has been.
@@ -158,6 +162,7 @@ impl Social {
             here: HashMap::new(),
             gone: HashMap::new(),
             awarded: HashSet::new(),
+            gathered: Vec::new(),
             told: Vec::new(),
             kept: Vec::new(),
             dice,
@@ -806,6 +811,7 @@ impl Social {
                 self.groups.get_mut(&group)?.members.push(me);
                 self.grouped.insert(me, group);
                 self.tell_group(group);
+                self.gathered.push(group);
             }
             None => {
                 self.leave_group(me);
@@ -821,9 +827,39 @@ impl Social {
                 self.grouped.insert(asker, group);
                 self.grouped.insert(me, group);
                 self.tell_group(group);
+                self.gathered.push(group);
             }
         }
         None
+    }
+
+    /// The groups someone has come into since this was last asked, each
+    /// once: its leader, and everyone in it, the leader among them. They
+    /// are to be in one channel of the town (`players::gather`; Hajun,
+    /// 2026-11-23: "if u invite someone to ur group, they should move to
+    /// the same channel").
+    pub(crate) fn take_gathered(&mut self) -> Vec<(u64, Vec<u64>)> {
+        let mut groups = std::mem::take(&mut self.gathered);
+        groups.sort_unstable();
+        groups.dedup();
+        groups
+            .into_iter()
+            .filter_map(|group| self.groups.get(&group))
+            .map(|band| (band.leader, band.members.clone()))
+            .collect()
+    }
+
+    /// Everyone else in `id`'s group, if they are in one.
+    pub(crate) fn mates(&self, id: u64) -> Vec<u64> {
+        self.band_of(id)
+            .map(|band| band.members.iter().copied().filter(|&member| member != id).collect())
+            .unwrap_or_default()
+    }
+
+    /// `id` has been moved to the channel of the town their group is in:
+    /// they are told so.
+    pub(crate) fn gathered_to(&mut self, id: u64) {
+        self.say(id, Outcome::Gathered);
     }
 
     /// `id` is out of whatever group they were in. The leader gone, the
@@ -1044,7 +1080,7 @@ fn track(
 }
 
 /// The accounts the login has deleted are nobody's friends any more.
-fn forget_deleted(deleted: Res<Deleted>, mut social: ResMut<Social>) {
+fn forget_deleted(deleted: Res<Deleted>, mut social: ResMut<Social>, mut towns: ResMut<crate::rooms::Towns>) {
     let Some(deleted) = &deleted.0 else {
         return;
     };
@@ -1054,6 +1090,8 @@ fn forget_deleted(deleted: Res<Deleted>, mut social: ResMut<Social>) {
     while let Ok(id) = deleted.try_recv() {
         info!("account {id} was deleted: nobody's friend any more");
         social.forget(id);
+        // Nor does its land fill a plot of the town any more.
+        towns.forget(id);
     }
 }
 
@@ -1170,6 +1208,31 @@ mod tests {
             .expect("asked into the group");
         social.act(them, Act::Answer { mail, yes: true }, 0.0);
         social.told();
+    }
+
+    #[test]
+    fn a_group_someone_has_come_into_is_to_be_gathered_once_and_they_are_told_when_they_are_moved() {
+        let mut social = with(&["Hajooon", "Bobby", "Dongi"]);
+        befriended(&mut social, 1, 2);
+        befriended(&mut social, 1, 3);
+        assert!(social.take_gathered().is_empty() && social.mates(1).is_empty());
+        // The first to say yes makes the group: its leader and the two of
+        // them, to be brought together.
+        grouped(&mut social, 1, 2);
+        assert_eq!(social.take_gathered(), vec![(1, vec![1, 2])]);
+        assert!(social.take_gathered().is_empty());
+        assert_eq!((social.mates(1), social.mates(2), social.mates(3)), (vec![2], vec![1], vec![]));
+        // One more: all three, once, however it came about.
+        grouped(&mut social, 1, 3);
+        assert_eq!(social.take_gathered(), vec![(1, vec![1, 2, 3])]);
+        assert_eq!(social.mates(3), vec![1, 2]);
+        // Being asked and saying no gathers nobody, nor does leaving.
+        social.act(3, Act::LeaveGroup, 0.0);
+        assert!(social.take_gathered().is_empty());
+        // Whoever is moved is told so, to say across their screen.
+        social.told();
+        social.gathered_to(2);
+        assert_eq!(told(&mut social, 2), vec![News::Said(Outcome::Gathered)]);
     }
 
     #[test]
@@ -1788,6 +1851,7 @@ mod tests {
                 Letter { id: 40, from: 2, to: 1, text: "play at 9?".into() },
                 Letter { id: 41, from: 9, to: 1, text: "from nobody".into() },
             ],
+            lands: Vec::new(),
         };
         let mut social = Social::with(snapshot, fastrand::Rng::with_seed(1));
         // An account with no tag is given one, to be kept.

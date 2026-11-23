@@ -48,11 +48,12 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use bevy::prelude::*;
 use bevy_replicon::prelude::*;
 use roundtown_net::bag::{self, Bag, Paint, Paints, Standing};
+use roundtown_net::land::Lot;
 use roundtown_net::{Ask, Member, Tell};
 use serde::{Deserialize, Serialize};
 
 use crate::accounts::{Bank, Dealt, Record};
-use crate::players::{Body, Everyone, Plays, Who, tell};
+use crate::players::{Account, Body, Everyone, Plays, Who, tell};
 use crate::rooms::{Room, Towns};
 
 /// A bag as it is kept with its account (`players.bag`): what is owned,
@@ -80,7 +81,7 @@ pub(crate) fn kept(bag: &Bag, paints: &Paints) -> String {
 /// and the colours on its plot: with nothing kept, what everyone begins
 /// with; and whatever was kept wrongly, or cannot be read, put right
 /// ([`Bag::sane`], [`Paints::sane`]).
-fn read(gems: u32, kept: Option<&str>) -> (Bag, Paints) {
+pub(crate) fn read(gems: u32, kept: Option<&str>) -> (Bag, Paints) {
     let (bag, paints) = match kept.map(serde_json::from_str::<Kept>) {
         Some(Ok(kept)) => (
             Bag {
@@ -135,6 +136,33 @@ impl Holds {
             waiting: VecDeque::new(),
         }
     }
+
+    /// Their land as it stands now, `member` being who their account is:
+    /// what fills a plot of the town with it when they are not there
+    /// (`land::Lot`, `Towns`).
+    pub(crate) fn lot(&self, member: &Member) -> Lot {
+        Lot {
+            who: member.id,
+            name: member.name.clone(),
+            look: member.look.clone(),
+            stands: self.bag.stands.clone(),
+            paints: self.paints.0.clone(),
+        }
+    }
+}
+
+/// The land of an account as it is kept, read as the server starts
+/// (`accounts::Snapshot`): what fills a plot with it before its owner has
+/// ever been here this run.
+pub(crate) fn lot_kept(who: u64, name: &str, look: &str, kept: &str) -> Lot {
+    let (bag, paints) = read(0, Some(kept));
+    Lot {
+        who,
+        name: name.to_string(),
+        look: look.to_string(),
+        stands: bag.stands,
+        paints: paints.0,
+    }
 }
 
 /// The devices that have asked to be told of bags ([`bag::Ask::Watch`]):
@@ -161,7 +189,7 @@ pub(crate) fn plugin(app: &mut App) {
         .add_observer(forget)
         .add_systems(
             PreUpdate,
-            (recall, dealt, hear)
+            (recall, dealt, hear, register)
                 .chain()
                 .after(crate::players::PlayerSystems)
                 .after(crate::fees::credited)
@@ -194,6 +222,18 @@ fn recall(bank: Res<Bank>, remembered: Res<Remembered>, mut bodies: Query<(&Body
             holds.bag = bag.clone();
             holds.paints = paints.clone();
         }
+    }
+}
+
+/// Keeps what the town knows of everyone's land as their bags have it
+/// (`Towns::record`): as an account is let in, as what stands on its plot
+/// changes or is painted, and as it takes another name or look. It is what
+/// a channel's plots are filled with as it opens (`land::Estate`), whether
+/// or not its owner is here then.
+#[allow(clippy::type_complexity)]
+fn register(lands: Query<(&Account, &Holds), Or<(Changed<Holds>, Changed<Account>)>>, mut towns: ResMut<Towns>) {
+    for (account, holds) in &lands {
+        towns.record(holds.lot(&account.0));
     }
 }
 
@@ -529,47 +569,66 @@ fn dealt(
     }
 }
 
-/// As anyone sits down in a channel of the town: their device, if it asked
-/// to be told, is told its own bag and what stands on the plot of everyone
-/// else there who has anything standing; and everyone else there whose
-/// device asked is told what stands on the newcomer's, if anything does.
-/// Whoever has nothing standing is not spoken of: a device knows nothing of
-/// a plot until it is told, and lets go of what it was told of anyone who
-/// is no longer in its channel. A device that asked for colours is told
-/// those of each plot it is told of, its own too, after what stands there.
+/// As anyone sits down in a channel of the town, come new or back from a
+/// game: their device, if it asked to be told, is told its own bag, and
+/// what stands on every other plot of the channel: on those of everyone
+/// else of it, in the town or away, out of their own bags, and on those
+/// nobody of it has, as the land that fills each has it
+/// (`Towns::lots_in`). And everyone else who is in the town there, whose
+/// device asked, is told what stands on the newcomer's. Each plot is told
+/// of whether or not anything stands on it: a device may have been told
+/// otherwise of the same owner before, their land having filled a plot
+/// while they were not here. And as a plot is filled with something else
+/// (`Towns::take_news`), everyone in the town there is told what stands
+/// on it now. A device that asked for colours is told those of each plot
+/// it is told of, its own too, after what stands there. Whose each plot
+/// is has been said already this tick (`players::tell_channels`).
 fn seat_news(
     mut towns: ResMut<Towns>,
     bodies: Query<(&Body, &Holds, &Member)>,
     (watchers, colourers): (Res<Watchers>, Res<Colourers>),
     mut tells: MessageWriter<ToClients<Tell>>,
 ) {
-    if !towns.has_sat() {
+    if !towns.has_sat() && !towns.has_news() {
         return;
     }
     for (channel, newcomer) in towns.take_sat() {
         let Ok((body, holds, member)) = bodies.get(newcomer) else {
             continue;
         };
-        let seated = towns.seated(channel);
-        let others = || seated.iter().filter(|&&(_, other)| other != newcomer).filter_map(|&(_, other)| bodies.get(other).ok());
+        let held = towns.held_in(channel);
+        let others = || {
+            held.iter()
+                .filter(|&&(_, other, _)| other != newcomer)
+                .filter_map(|&(_, other, away)| Some((bodies.get(other).ok()?, away)))
+        };
         if let Some(client) = body.client
             && let Some(&asked) = watchers.0.get(&client)
         {
             tell_its_own(client, asked, member.id, holds, &colourers, &mut tells);
-            for (_, theirs, other) in others() {
-                if !theirs.bag.stands.is_empty() {
-                    tell_of_a_plot(client, other.id, Some(&theirs.bag.stands), &theirs.paints.0, &colourers, &mut tells);
-                }
+            for ((_, theirs, other), _) in others() {
+                tell_of_a_plot(client, other.id, Some(&theirs.bag.stands), &theirs.paints.0, &colourers, &mut tells);
+            }
+            for lot in towns.lots_in(channel) {
+                tell_of_a_plot(client, lot.who, Some(&lot.stands), &lot.paints, &colourers, &mut tells);
             }
         }
-        if holds.bag.stands.is_empty() {
-            continue;
-        }
-        for (other, ..) in others() {
-            if let Some(device) = other.client
+        for ((other, ..), away) in others() {
+            if !away
+                && let Some(device) = other.client
                 && watchers.0.contains_key(&device)
             {
                 tell_of_a_plot(device, member.id, Some(&holds.bag.stands), &holds.paints.0, &colourers, &mut tells);
+            }
+        }
+    }
+    for (channel, lot) in towns.take_news() {
+        for (_, body) in towns.seated(channel) {
+            if let Ok((body, ..)) = bodies.get(body)
+                && let Some(device) = body.client
+                && watchers.0.contains_key(&device)
+            {
+                tell_of_a_plot(device, lot.who, Some(&lot.stands), &lot.paints, &colourers, &mut tells);
             }
         }
     }
@@ -647,8 +706,8 @@ mod tests {
         for n in 0..people {
             let body = app.world_mut().spawn_empty().id();
             let device = app.world_mut().spawn((ConnectedClient { max_size: 1_200 }, Plays(body))).id();
-            let (channel, seat) = app.world_mut().resource_mut::<Towns>().sit(body, None);
             let who = Who(100 + n);
+            let (channel, seat) = app.world_mut().resource_mut::<Towns>().sit(body, who.0, None);
             app.world_mut().entity_mut(body).insert((
                 Body::person(device, who, Room::Town(channel), seat, Some(channel), 1_000, 0.0),
                 Holds::holding(Bag::new()),
@@ -706,44 +765,94 @@ mod tests {
         app.world().get::<Holds>(body).unwrap().bag.clone()
     }
 
+    /// What a device has been told stands on plots, each owner and how
+    /// many things, in order: those of the channel's own people, and how
+    /// many plots filled with made-up land beside.
+    fn plots_told(told: &[Tell]) -> (Vec<(u64, usize)>, usize) {
+        let all: Vec<(u64, usize)> = told
+            .iter()
+            .filter_map(|tell| match tell {
+                Tell::Bag(bag::Tell::Theirs { who, stands }) => Some((*who, stands.len())),
+                _ => None,
+            })
+            .collect();
+        let made_up = all.iter().filter(|(who, _)| roundtown_net::land::is_premade(*who)).count();
+        (all.into_iter().filter(|(who, _)| !roundtown_net::land::is_premade(*who)).collect(), made_up)
+    }
+
     #[test]
-    fn whoever_sits_down_is_told_their_bag_and_the_plots_about_them_and_they_of_theirs() {
+    fn whoever_sits_down_is_told_their_bag_and_every_plot_about_them_and_they_of_theirs() {
+        use roundtown_net::land::PLOTS;
         let (mut app, bodies, devices) = town(3);
         // The second has a lamp standing; nobody else anything.
         app.world_mut().get_mut::<Holds>(bodies[1]).unwrap().bag.put(1, LAMP, here()).unwrap();
         app.world_mut().run_system_once(seat_news).unwrap();
-        // The first: its own bag, and the second's plot; nothing of the
-        // third's, which is empty.
+        // The first: its own bag; then, as it sat among them, the plots of
+        // the other two, the bare one too, and of the 45 that made-up land
+        // fills; and once more of each of the two, as each sat down in
+        // turn: all three sat in the one tick here.
         let first = told(&mut app, devices[0]);
-        assert!(matches!(&first[0], Tell::Bag(bag::Tell::Yours { asked: 1, bag }) if *bag == Bag::new()), "{first:?}");
-        let plots: Vec<u64> = first
-            .iter()
-            .filter_map(|tell| match tell {
-                Tell::Bag(bag::Tell::Theirs { who, stands }) if stands.len() == 1 => Some(*who),
-                _ => None,
-            })
-            .collect();
-        // Once as the first sat among them, and once as the second sat
-        // down: all three sat in the one tick here.
-        assert!(!plots.is_empty() && plots.iter().all(|&who| who == 101), "{first:?}");
-        // The second: its own bag, the lamp standing, and no plot.
+        assert!(matches!(&first[0], Tell::Bag(bag::Tell::Yours { asked: 1, bag }) if *bag == Bag::new()), "{:?}", first[0]);
+        assert_eq!(plots_told(&first), (vec![(101, 1), (102, 0), (101, 1), (102, 0)], PLOTS - 3));
+        // The second: its own bag, the lamp standing, and everyone else's
+        // plot, never its own.
         let second = told(&mut app, devices[1]);
-        assert!(matches!(&second[0], Tell::Bag(bag::Tell::Yours { bag, .. }) if bag.stands.len() == 1), "{second:?}");
-        assert_eq!(second.len(), 1, "{second:?}");
-        // The third: its own bag, and the second's plot.
+        assert!(second.iter().any(|tell| matches!(tell, Tell::Bag(bag::Tell::Yours { bag, .. }) if bag.stands.len() == 1)));
+        assert_eq!(plots_told(&second), (vec![(100, 0), (100, 0), (102, 0), (102, 0)], PLOTS - 3));
+        // The third the same.
         let third = told(&mut app, devices[2]);
-        assert!(third.iter().any(|tell| matches!(tell, Tell::Bag(bag::Tell::Yours { bag, .. }) if *bag == Bag::new())), "{third:?}");
-        assert!(third.iter().any(|tell| matches!(tell, Tell::Bag(bag::Tell::Theirs { who: 101, .. }))), "{third:?}");
+        assert!(third.iter().any(|tell| matches!(tell, Tell::Bag(bag::Tell::Yours { bag, .. }) if *bag == Bag::new())));
+        assert_eq!(plots_told(&third), (vec![(100, 0), (101, 1), (100, 0), (101, 1)], PLOTS - 3));
         // Nothing more is said until someone sits down again.
         app.world_mut().run_system_once(seat_news).unwrap();
         assert!(told(&mut app, devices[0]).is_empty() && told(&mut app, devices[2]).is_empty());
-        // A device that never asked is told nothing of any of it.
+        // A device that never asked is told nothing of any of it; one that
+        // did is told of whoever sits down, whether or not they asked.
         app.world_mut().resource_mut::<Watchers>().0.remove(&devices[2]);
         app.world_mut().resource_mut::<Towns>().announce(0, bodies[1]);
         app.world_mut().resource_mut::<Towns>().announce(0, bodies[2]);
         app.world_mut().run_system_once(seat_news).unwrap();
         assert!(told(&mut app, devices[2]).is_empty());
-        assert_eq!(told(&mut app, devices[0]).len(), 1);
+        assert_eq!(plots_told(&told(&mut app, devices[0])), (vec![(101, 1), (102, 0)], 0));
+    }
+
+    #[test]
+    fn someone_away_in_a_game_keeps_their_plot_and_a_plot_filled_anew_is_told_to_whoever_is_in_the_town() {
+        use roundtown_net::land::{Lot, PLOTS};
+        let (mut app, bodies, devices) = town(3);
+        app.world_mut().get_mut::<Holds>(bodies[1]).unwrap().bag.put(1, LAMP, here()).unwrap();
+        app.world_mut().run_system_once(seat_news).unwrap();
+        for device in &devices {
+            told(&mut app, *device);
+        }
+        // The second goes into a game, and the third comes back from one:
+        // told of every plot again, the second's among them, out of the
+        // bag of whoever is away; and whoever is away is told nothing.
+        app.world_mut().resource_mut::<Towns>().away(bodies[1]);
+        app.world_mut().resource_mut::<Towns>().announce(0, bodies[2]);
+        app.world_mut().run_system_once(seat_news).unwrap();
+        assert_eq!(plots_told(&told(&mut app, devices[2])), (vec![(100, 0), (101, 1)], PLOTS - 3));
+        assert!(told(&mut app, devices[1]).is_empty());
+        assert_eq!(plots_told(&told(&mut app, devices[0])), (vec![(102, 0)], 0));
+        // The third's body is gone, their land with a lamp on it: kept on
+        // their plot as it was, which whoever sits down is told of with the
+        // rest.
+        let land = Lot {
+            who: 102,
+            name: "p2".into(),
+            look: "boy".into(),
+            stands: app.world().get::<Holds>(bodies[1]).unwrap().bag.stands.clone(),
+            paints: Vec::new(),
+        };
+        app.world_mut().resource_mut::<Towns>().leave(bodies[2], Some(land));
+        app.world_mut().resource_mut::<Towns>().announce(0, bodies[0]);
+        app.world_mut().run_system_once(seat_news).unwrap();
+        assert_eq!(plots_told(&told(&mut app, devices[0])), (vec![(101, 1), (102, 1)], PLOTS - 3));
+        // Someone new takes a plot that land of the town's own filled: no
+        // real land had to move, so nobody is told of a plot filled anew.
+        let newcomer = app.world_mut().spawn_empty().id();
+        app.world_mut().resource_mut::<Towns>().sit(newcomer, 500, None);
+        assert!(!app.world().resource::<Towns>().has_news());
     }
 
     #[test]

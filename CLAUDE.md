@@ -16,15 +16,16 @@ them (2026-11-19), Hajun likes Bridge Wars and Knock Off and had Bridge
 Race's and Last Stand's cards turned off (`games::OFF`, since APK 44):
 spend nothing on those two unasked.
 
-As of 2026-11-22: `PROTOCOL_VERSION` 24 (since 2026-11-18, so APK 43 and
-44 play on, without what came after them), **APK 51** (`versionCode`,
-built 2026-11-22, not put on a phone from here, `docs/building.md`), the
-server deployed at 13:09 UTC on 2026-11-22 with everything in `server/` and
-`shared/`. **All of it committed and pushed, up to APK 51**: the land
-(`docs/land.md`), everyone's signs and cars, the town's slower buses, the
-bag (`docs/bag.md`) with its window, its button and how it is scrolled,
-edit mode on your plot and paint, and sitting and lying down
-(`docs/town.md`). The iPhone's last tag,
+As of 2026-11-23: `PROTOCOL_VERSION` 25 (since 2026-11-23: a seat of the
+town is one of its 48 plots, so **APK 51 and older are told to update**),
+**APK 52** (`versionCode`, built 2026-11-23, not put on a phone from
+here, `docs/building.md`), the server deployed at 13:55 UTC on 2026-11-23
+with everything in `server/` and `shared/`. **All of it committed and
+pushed, up to APK 52**: the land (`docs/land.md`: all 48 plots always
+filled, in Hajun's order), everyone's signs and cars, the town's slower
+buses, the bag (`docs/bag.md`) with its window, its button and how it is
+scrolled, edit mode on your plot and paint, sitting and lying down, and
+the plots' residents (`docs/town.md`). The iPhone's last tag,
 `ios-1.0.2-18`, pushed in the first hour of 2026-11-16 (whether Codemagic
 built it is not known here), is protocol 18: its build is told to update
 and stays offline until `ios-1.0.2-19` is built, whose tag is Hajun's to
@@ -61,9 +62,9 @@ heading in one of these:
 | the chat, the quick chat, fonts, Korean and Vietnamese, the word filter | `docs/chat-and-text.md` | "The chat", "The font is Inter" |
 | netcode, the login, the town's clock | `docs/online.md`, `SERVER.md`, `MULTIPLAYER.md` | "Playing online" |
 | a map's model, collision | `docs/maps-and-collision.md` | "The islands are Blender models" |
-| the town's plots, whose they are, the sign on yours | `docs/land.md` | |
+| the town's 48 plots, whose each is and what fills the rest (`land`, `roundtown_net::land`, `premade`, `server/src/rooms.rs`), the signs | `docs/land.md` | |
 | the bag: what you own, the shop, gems, buildings put down on your plot, a list flicked, edit mode and paint (`bag`, `build::stand`, `build::paint`, `customize`, `flick`, `server/src/bag.rs`) | `docs/bag.md` | |
-| fountain, music, town houses, town objects and their editor, AIs, talking, the bubble in the world (`bubble`), sitting and lying down (`rest`) | `docs/town.md` | "The fountain runs", "The town has music", "The town's houses", "The town is data", "The town holds 32 players", "You can talk to anyone" |
+| fountain, music, town houses, town objects and their editor, the plots' residents (`resident`), talking, the bubble in the world (`bubble`), sitting and lying down (`rest`) | `docs/town.md` | "The fountain runs", "The town has music", "The town's houses", "The town is data", "The town holds 32 players", "You can talk to anyone" |
 | the buses, the car you drive | `docs/vehicles.md` | "The town's buses", "The car you drive" |
 | the camera | `docs/camera.md` | "The camera stands where you zoomed it" |
 | House Builder, the shop's pieces, `assets/mybuilds/` | `docs/house-builder.md`, `homebuildersgameevent.md` | "House Builder", "Building your house" |
@@ -94,7 +95,7 @@ rule or how things stand has changed, and then in a line or two. No logs here.
   attached; never let "built" read as "seen on the phone".
 - "Remove" usually means turn off: keep the mechanism behind a switch
   (`sound::PLAYING`, `hud::DOTS`, `hud::GIFT`, `drive::GUN`,
-  `utility::SECOND_ALWAYS`).
+  `utility::SECOND_ALWAYS`, `customize::HINTS`).
 - **Every window looks as the friends' panel does** (Hajun, 2026-11-14: "I
   want to use this same design style throughout the project"): friends,
   settings, the game selector, Bridge Wars' shops and its "You're out!" are
@@ -360,7 +361,10 @@ to try again.
 - Friends (`src/friends.rs`, `server/src/social.rs`) are the server's
   alone, none offline: a `#1000`-`#9999` tag after every name, requests,
   groups of up to four whose leader alone starts a game, messages that wait
-  in an inbox. The server reads the database once and goes by its own copy.
+  in an inbox (a reply sent sees the one it answers off). Whoever comes
+  into a group is moved to its leader's channel of the town, or the whole
+  group to one with room (`players::gather`). The server reads the
+  database once and goes by its own copy.
 
 ## The lobby, Round Town, as it stands
 
@@ -368,14 +372,21 @@ to try again.
   loaded (`src/intro.rs`, since 2026-11-17); the "Loading..." bar and the
   drop through a circle are turned off (`SAYS_LOADING`, `DROPS_IN`). No
   menu. You arrive in the middle of your plot, facing the fountain
-  (`roundtown_net::land`, since 2026-11-20, the server too); the town's
-  AIs on the path round the pond (`roundtown_net::arrival`).
-- The town holds 32 bodies: whoever is in your channel (16 people to one)
-  and this device's own AIs for the rest (`lobby.rs`, `ai.rs`). An AI is a
-  player whose `Intent` comes from `ai::Steering`; it never steps down what
-  it could not climb back. Bodies are spawned only by `lobby`'s own
-  functions (`spawn_player` and its kin). Names over heads (`src/tags.rs`)
-  are everyone's but your own.
+  (`roundtown_net::land`, since 2026-11-20, the server too).
+- **The town has sixteen people in it** (since 2026-11-23, Hajun's: "if
+  >= 16 players are online in a channel, then no NPCs"; 32 until then,
+  wanderers round the pond): whoever is in your channel (16 people to
+  one), each on their plot, and **a resident** of the computer's on each
+  of the first sixteen plots nobody of the channel has, under its
+  owner's name and in their look (`src/resident.rs`, `docs/town.md`).
+  Each device walks its own, and what each is about is worked out from
+  the town's clock and who they are (`resident::plan`), the same on
+  every device: about its plot, sat or lying in its house (`rest`), and
+  now and then over at the plot of someone real. Its way is found over
+  the town's shape a little each frame (`resident::Search`). Bodies are
+  spawned only by `lobby`'s own functions (`spawn_player` and its kin,
+  `spawn_resident`). Names over heads (`src/tags.rs`) are everyone's but
+  your own.
 - **The buttons** (`src/hud.rs`, as Hajun sketched them): top left your
   name on a plate (with its tag online), the gear (settings), and your
   balance under them; down the right edge two people (friends, with the
@@ -434,19 +445,32 @@ to try again.
   Last Stand's cards are turned off since 2026-11-19 (`games::OFF`: the
   cards alone, the games and their tables are as they were), and so is
   the card for one to come (`games::COMING_SOON`).
-- **Your plot** (`src/land.rs`, since 2026-11-20, APK 44; not seen on a
-  phone): the town's 48 plots are the map's `plot` planes,
-  read as it spawns. Your seat in the town has one of them, the twelve round the
-  pond first, and a sign (`plotsign.glb`) stands a metre and a half in
+- **All 48 plots are always filled** (`docs/land.md`, since 2026-11-23,
+  APK 52, Hajun's; not seen on a phone). The plots are the map's `plot`
+  planes, read as it spawns, **numbered as Hajun numbered them**
+  (`plotorder.png`, `roundtown_net::land::HOMES`: his plot 1 is at
+  (-90, 25) in the game), and **a seat of the town is a plot**. The
+  server says whose each is (`land::Estate`, `rooms::Towns`,
+  `Tell::Plots`, `land::Deeds` on a device): whoever is in your channel
+  has one of the first sixteen, the lowest numbered that nobody has or
+  stands on, and keeps it in a game and for five minutes after their
+  connection goes (`land::GRACE`); the rest are filled with real
+  people's land that has anything on it, the worthiest first by the
+  shop's prices, and then with each plot's own made-up land
+  (`roundtown_net::premade`, 48 furnished plots a test holds to the
+  game's building rules, `build::premade_check`). Offline every plot but
+  yours has its made-up land. **Change `HOMES` or a made-up lot and
+  deploy the server.**
+- **Your plot** (`src/land.rs`, since 2026-11-20): a sign
+  (`plotsign.glb`) stands on every plot, a metre and a half in
   from the right hand end of its front, the side with a street along it
   or toward the pond, saying "{name}'s land" (`words.land.sign`) on both
-  faces of its board. **The words are a thing in the world**, a picture
+  faces of its board, the words hung on it only within 45 m of the
+  camera (`land::word_the_near`). **The words are a thing in the world**, a picture
   of them drawn once with the game's fonts and hung on the board (since
   2026-11-21): never text on the screen laid over it, which Hajun turned
   down. The sign is solid, a box laid over the town's shape
-  (`Islands::lay_over`). One stands for everyone in your channel online
-  too, with their name (since 2026-11-21, APK 45: the server says
-  who sits where, `Tell::Channel`, `lobby::Channel`). **What you own
+  (`Islands::lay_over`). **What you own
   stands on it** (`src/build/stand.rs`, since 2026-11-22): a building out
   of your bag is put down as a piece is in House Builder, by the same
   code (`build::Site`, `Yard`: the same ghost and menu, nothing of it off
@@ -458,6 +482,11 @@ to try again.
   49, Hajun's; not seen on a phone): on by the button by the left edge,
   or by bringing a thing out of your bag, and off by its tick, or by
   going more than 3 m off your plot, into your car or out of the town.
+  **While it is on** (since APK 52, Hajun's) "Editing Mode Enabled"
+  stands on a plate top centre and the edges of your plot are lit; with
+  it off, a tap on a thing of yours makes the edit button beat
+  (`customize::Pointed`), and the words that hinted at it are turned off
+  (`customize::HINTS`).
   Its three buttons are the hand (a tap picks a thing up, as before), the
   paintbrush, and the tick. **With the hand** (since APK 50, Hajun's) a
   thing goes where the finger takes it, through whatever stands there,

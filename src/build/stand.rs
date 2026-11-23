@@ -78,8 +78,8 @@ use crate::drive::Driving;
 use crate::editor::{self, Edit, EditMenu, EditPointer, Editable, Touch, Untappable};
 use crate::hud;
 use crate::island::Venue;
-use crate::land::{Plot, Plots};
-use crate::lobby::{Channel, Seat};
+use crate::land::{Deeds, Plot, Plots};
+use crate::lobby::Seat;
 use crate::net::Online;
 use crate::ui::ui;
 
@@ -217,6 +217,7 @@ pub(super) fn plugin(app: &mut App) {
                     .chain()
                     .after(editor::EditSystems)
                     .after(BagSystems)
+                    .after(crate::land::DeedSystems)
                     .before(BuildSystems),
                 hands_off.before(editor::EditSystems),
                 (put_back, ride_along, report, keep_mine, keep_theirs, keep_colours.in_set(Painting), say_misplaced)
@@ -239,7 +240,7 @@ pub(crate) fn yard_of(plot: &Plot) -> Yard {
 
 /// Where a thing that stands at this place and turn in `yard`'s own space
 /// stands in the world.
-fn placed(yard: &Yard, x: f32, y: f32, z: f32, yaw: f32) -> Transform {
+pub(super) fn placed(yard: &Yard, x: f32, y: f32, z: f32, yaw: f32) -> Transform {
     yard.place() * Transform::from_xyz(x, y, z).with_rotation(Quat::from_rotation_y(yaw))
 }
 
@@ -747,17 +748,17 @@ fn keep_mine(
     }
 }
 
-/// Keeps what stands on the plots of the others in your channel of the
-/// town as the server has said it: for each of them who sits in a seat
-/// ([`Channel`]), what it said stands on their plot ([`Theirs`]), on the
-/// plot their seat has. As any of that changes, and for as long as
-/// something waits for its wall.
+/// Keeps what stands on every plot of the town but your own as it is
+/// said to: for each plot that is someone's (`land::Deeds`: whoever else
+/// is in your channel, and the land that fills the rest), what stands on
+/// their land ([`Theirs`], the server's word online and each made-up
+/// owner's own offline), on that plot. As any of that changes, and for as
+/// long as something waits for its wall.
 #[allow(clippy::too_many_arguments)]
 fn keep_theirs(
     theirs: Res<Theirs>,
-    channel: Res<Channel>,
+    deeds: Res<Deeds>,
     plots: Res<Plots>,
-    online: Res<Online>,
     stock: Res<Stock>,
     mut pieces: Query<(Entity, &Piece, &mut TheirPiece, &mut Transform)>,
     walls: Query<(Entity, &Wall, &ChildOf)>,
@@ -765,15 +766,13 @@ fn keep_theirs(
     mut reshape: ResMut<Reshape>,
     mut commands: Commands,
 ) {
-    if !(theirs.is_changed() || channel.is_changed() || plots.is_changed() || *waiting) {
+    if !(theirs.is_changed() || deeds.is_changed() || plots.is_changed() || *waiting) {
         return;
     }
     *waiting = false;
-    let me = online.me().map(|me| me.id);
-    // Whose plot is which: everyone seated but you.
+    // Whose plot is which: every one but yours, which no deed is for.
     let plot_of = |who: u64| -> Option<usize> {
-        let seated = channel.0.iter().find(|seated| seated.who == who && Some(who) != me)?;
-        plots.of_seat.get(usize::from(seated.seat)).copied().filter(|&plot| plot < plots.all.len())
+        plots.of_seat.get(deeds.plot_of(who)?).copied().filter(|&plot| plot < plots.all.len())
     };
     let wanted = |who: u64, id: u32, kind: &str| -> Option<(&Standing, usize)> {
         let plot = plot_of(who)?;
@@ -789,7 +788,9 @@ fn keep_theirs(
     let mut standing: Vec<(u64, u32)> = Vec::new();
     for (entity, piece, mut stood, mut place) in &mut pieces {
         let Some((wanted, plot)) = wanted(stood.who, stood.id, piece.def.kind) else {
-            commands.entity(entity).despawn();
+            // A house takes what is in its walls with it: those are gone
+            // already by the time their own turn comes.
+            commands.entity(entity).try_despawn();
             continue;
         };
         standing.push((stood.who, stood.id));
@@ -871,42 +872,37 @@ fn tried_again(last: &mut Option<f32>, now: f32) -> bool {
     }
 }
 
-/// Tells someone who taps at a thing of theirs again and again with edit
-/// mode off how it is moved, the first few times ever
-/// (`Customize::may_hint`; Hajun, 2026-11-22: "if they repeatedly tap on an
-/// object without being on house edit mode, give small text like "Press
-/// the edit house mode to move objects" sth like that as a hint. cuz i
-/// think some ppl after placing an object and they try to press the
-/// object to move again, but dont know they have to be in house edit mode
-/// to do it"). A tap is on a thing of yours if the ray through the finger
-/// meets one of its meshes first of all of yours; a tap a bubble took is
-/// not one, nor a tap in your car.
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
-fn hint_at_edit_mode(
-    time: Res<Time>,
-    (pointer, took, dialog): (Res<EditPointer>, Res<crate::bubble::TookTap>, Res<hud::DialogUp>),
-    (home, driving): (Res<Home>, Res<Driving>),
-    mut customize: ResMut<Customize>,
-    cameras: Query<(&Camera, &Transform), With<crate::ThirdPersonCamera>>,
-    mine: Query<(Entity, &InheritedVisibility), (With<Mine>, Without<Ghost>)>,
-    children: Query<&Children>,
-    mut ray_cast: MeshRayCast,
-    said: Query<Entity, With<Said>>,
-    mut last: Local<Option<f32>>,
-    mut commands: Commands,
-) {
-    if !pointer.released || pointer.lost || pointer.travel > editor::TAP_SLOP || took.0 || dialog.0 {
-        return;
-    }
-    if customize.on() || !customize.may_hint() || !home.on_it || driving.on() {
-        return;
-    }
+/// Whether the pointer has come up this frame from a tap on the world that
+/// is nobody else's: not a drag, which looks round; not a tap a bubble
+/// took; and not with a window up, which every press is then for.
+fn tapped(pointer: &EditPointer, took: bool, dialog: bool) -> bool {
+    pointer.released && !pointer.lost && pointer.travel <= editor::TAP_SLOP && !took && !dialog
+}
+
+/// Whether a tap at a thing of yours is someone's who may not know that
+/// edit mode is off: it is off, and they stand on their plot, where the
+/// button that turns it on is, and are not in their car, where nothing of
+/// theirs answers a tap whatever the mode ([`hands_off`]).
+fn at_a_loss(customize: &Customize, home: &Home, driving: bool) -> bool {
+    !customize.on() && home.on_it && !driving
+}
+
+/// Whether a tap at `at` on the screen is on a thing of yours: the ray
+/// through it meets a mesh of one that is down and showing. One ray, cast
+/// against yours alone.
+fn meets_mine(
+    at: Vec2,
+    cameras: &Query<(&Camera, &Transform), With<crate::ThirdPersonCamera>>,
+    mine: &Query<(Entity, &InheritedVisibility), (With<Mine>, Without<Ghost>)>,
+    children: &Query<&Children>,
+    ray_cast: &mut MeshRayCast,
+) -> bool {
     let Ok((camera, place)) = cameras.single() else {
-        return;
+        return false;
     };
     // The camera has no parent: this is where it is this frame.
-    let Ok(ray) = camera.viewport_to_world(&GlobalTransform::from(*place), pointer.pos) else {
-        return;
+    let Ok(ray) = camera.viewport_to_world(&GlobalTransform::from(*place), at) else {
+        return false;
     };
     let parts: HashSet<Entity> = mine
         .iter()
@@ -915,7 +911,59 @@ fn hint_at_edit_mode(
         .collect();
     let within = |entity: Entity| parts.contains(&entity);
     let settings = MeshRayCastSettings::default().with_filter(&within);
-    if ray_cast.cast_ray(ray, &settings).is_empty() || !tried_again(&mut last, time.elapsed_secs()) {
+    !ray_cast.cast_ray(ray, &settings).is_empty()
+}
+
+/// Whether the tap `now` at a thing of yours with edit mode off is answered
+/// in words as well as by the button: while the words are said at all
+/// (`on`, which is `customize::HINTS`), the first few times ever
+/// (`Customize::may_hint`), and at the second tap of two
+/// ([`tried_again`]).
+fn says_how(on: bool, customize: &Customize, last: &mut Option<f32>, now: f32) -> bool {
+    on && customize.may_hint() && tried_again(last, now)
+}
+
+/// Shows someone who taps at a thing of theirs with edit mode off where
+/// edit mode is: the button that turns it on, by the left edge, beats
+/// (`customize::Pointed`), every time, uncounted and without a word
+/// (since 2026-11-23; Hajun: "she was also confused why she couldnt move
+/// the object by tapping, but its because she was not in house edit mode").
+/// A tap is on a thing of yours if the ray through the finger meets one of
+/// its meshes ([`meets_mine`]); a tap a bubble took is not one, nor a tap
+/// in your car ([`tapped`], [`at_a_loss`]).
+///
+/// **It told them in words until then**, the first few times ever
+/// (`Customize::may_hint`), at the second tap of two ([`says_how`]; Hajun,
+/// 2026-11-22: "if they repeatedly tap on an object without being on house
+/// edit mode, give small text like "Press the edit house mode to move
+/// objects" sth like that as a hint. cuz i think some ppl after placing an
+/// object and they try to press the object to move again, but dont know
+/// they have to be in house edit mode to do it"). The words are turned off
+/// (`customize::HINTS`; "i think the tip notification to go into house edit
+/// mode is not the real fix - should delete that and use another way"), and
+/// still here: the same tap would say them, the one ray cast for both.
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+fn hint_at_edit_mode(
+    time: Res<Time>,
+    (pointer, took, dialog): (Res<EditPointer>, Res<crate::bubble::TookTap>, Res<hud::DialogUp>),
+    (home, driving): (Res<Home>, Res<Driving>),
+    (mut customize, mut pointed): (ResMut<Customize>, ResMut<customize::Pointed>),
+    cameras: Query<(&Camera, &Transform), With<crate::ThirdPersonCamera>>,
+    mine: Query<(Entity, &InheritedVisibility), (With<Mine>, Without<Ghost>)>,
+    children: Query<&Children>,
+    mut ray_cast: MeshRayCast,
+    said: Query<Entity, With<Said>>,
+    mut last: Local<Option<f32>>,
+    mut commands: Commands,
+) {
+    if !tapped(&pointer, took.0, dialog.0) || !at_a_loss(&customize, &home, driving.on()) {
+        return;
+    }
+    if !meets_mine(pointer.pos, &cameras, &mine, &children, &mut ray_cast) {
+        return;
+    }
+    pointed.begin();
+    if !says_how(customize::HINTS, &customize, &mut last, time.elapsed_secs()) {
         return;
     }
     for line in &said {
@@ -1188,6 +1236,78 @@ mod tests {
         assert!(!tried_again(&mut last, 20.0));
         assert!(!tried_again(&mut last, 20.0 + TRIES_WITHIN + 0.1));
         assert!(tried_again(&mut last, 25.0));
+    }
+
+    #[test]
+    fn a_tap_at_a_thing_of_yours_points_at_the_button_only_with_edit_mode_off_on_your_plot_and_out_of_your_car() {
+        // A finger that came up this frame, having hardly moved: a tap.
+        let up = EditPointer {
+            released: true,
+            travel: 3.0,
+            ..default()
+        };
+        assert!(tapped(&up, false, false));
+        // A bubble took it; a window is up; it was dragged, to look round;
+        // it has not come up; or there is no pointer at all: none of them.
+        assert!(!tapped(&up, true, false));
+        assert!(!tapped(&up, false, true));
+        let dragged = EditPointer {
+            released: true,
+            travel: editor::TAP_SLOP + 1.0,
+            ..default()
+        };
+        assert!(!tapped(&dragged, false, false));
+        assert!(!tapped(&EditPointer { held: true, ..default() }, false, false));
+        let lost = EditPointer {
+            released: true,
+            lost: true,
+            ..default()
+        };
+        assert!(!tapped(&lost, false, false));
+        // With edit mode off, on your plot, out of your car: someone who
+        // may not know it is off (Hajun: "she couldnt move the object by
+        // tapping, but its because she was not in house edit mode").
+        let off = Customize::default();
+        let (on_it, beside_it) = (Home::for_tests(true, true), Home::for_tests(false, true));
+        assert!(at_a_loss(&off, &on_it, false));
+        // In your car nothing answers a tap whatever the mode; and a step
+        // off your plot the button is not there to point at.
+        assert!(!at_a_loss(&off, &on_it, true));
+        assert!(!at_a_loss(&off, &beside_it, false));
+        // In edit mode a tap picks the thing up, or paints it.
+        let mut hand = Customize::default();
+        hand.begin();
+        assert!(!at_a_loss(&hand, &on_it, false));
+        assert!(!at_a_loss(&Customize::with_the_brush(), &on_it, false));
+    }
+
+    #[test]
+    fn how_a_thing_is_moved_is_said_in_words_only_while_they_are_turned_on() {
+        // Turned on, as they were for a day: nothing at the first tap, the
+        // words at the second, and after a few times never again.
+        let mut customize = Customize::default();
+        let mut last = None;
+        let mut said = 0;
+        for tap in 0..40 {
+            if says_how(true, &customize, &mut last, tap as f32) {
+                assert!(tap % 2 == 1, "at tap {tap}");
+                customize.note_hint();
+                said += 1;
+            }
+        }
+        assert!(said > 0 && !customize.may_hint(), "said {said} times");
+        // Turned off, never, however often a thing is tapped: nor is a tap
+        // counted toward the words meanwhile.
+        let (customize, mut last) = (Customize::default(), None);
+        for tap in 0..40 {
+            assert!(!says_how(false, &customize, &mut last, tap as f32));
+        }
+        assert_eq!(last, None);
+        // And off is how they stand (Hajun, 2026-11-23: "the tip
+        // notification to go into house edit mode is not the real fix -
+        // should delete that and use another way"): the button beats
+        // instead, every time (`customize::Pointed`).
+        assert!(!customize::HINTS);
     }
 
     #[test]

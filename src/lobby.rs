@@ -4,15 +4,19 @@
 //! whether a person or the computer is playing it, and [`Member::ai`] is the
 //! only thing that says which.
 //!
-//! Offline nobody else ever joins: you take the first seat, and the other
-//! seven go to AIs ([`crate::ai`]). Online (`crate::net`), the server sends
-//! whoever else is in your channel of the town, and this device keeps the
-//! town at [`TOWN_BODIES`] bodies with AIs of its own ([`fill_the_town`]):
-//! one leaves for each real player who arrives, and one comes back for each
-//! who goes (Hajun's choice, 2026-10-08). Each device runs its own, so two
-//! players see them in different places. A game of House Builder is a room
-//! of its own, seated the same way, one AI at a time ([`seat_ai`]), and its
-//! players are spawned by the same [`spawn_player`].
+//! Offline nobody else ever joins. Online (`crate::net`), the server sends
+//! whoever else is in your channel of the town. Either way the town has
+//! sixteen people in it (`roundtown_net::TOWN_BODIES`): one to each of its
+//! first sixteen plots, whoever is real on theirs and someone of the
+//! computer's on each of the rest, under its owner's name (`resident`,
+//! [`spawn_resident`]; since 2026-11-23, Hajun: "if >= 16 players are
+//! online in a channel, then no NPCs"). Until then this device kept the
+//! town at 32 bodies with wanderers of its own round the pond, one leaving
+//! for each real player who arrived (his choice, 2026-10-08; `ai`, whose
+//! wandering is still what a game of House Builder's computer players do).
+//! Each device runs its own, so two players see them a step apart. A game
+//! of House Builder is a room of its own, seated one AI at a time
+//! ([`seat_ai`]), and its players are spawned by the same [`spawn_player`].
 //!
 //! Two rules keep the server down to being where things come from:
 //!
@@ -24,8 +28,7 @@
 //!   the network carries for them: no speeds, no animation state.
 
 use bevy::prelude::*;
-use bevy_replicon::prelude::Remote;
-use roundtown_net::{Seated, TOWN_BODIES, Tell};
+use roundtown_net::{Seated, Tell};
 #[cfg(test)]
 use roundtown_net::{BOY_LOOKS, BOY_NAMES, GIRL_LOOKS, GIRL_NAMES, PEOPLE_LOOKS};
 
@@ -117,13 +120,6 @@ pub(crate) fn models() -> Vec<&'static str> {
     models
 }
 
-/// The most seats the town's arrivals have spots for that its AIs come in
-/// at: sixteen on the path round the pond and sixteen more on a ring 2 m
-/// further out (`roundtown_net::arrival`; for 2026-11-07, eight to each of
-/// the PvP map's four islands), for a town of [`TOWN_BODIES`] (16 until
-/// 2026-11-01, when the town went from 8 bodies to 32).
-const TOWN_SPOTS: usize = 32;
-
 /// The look a body wears when none has been chosen: the boy's. The House
 /// Builder's, and yours until you have signed up.
 pub(crate) fn default_look() -> &'static str {
@@ -192,10 +188,11 @@ impl Default for Balance {
 #[derive(Component)]
 pub(crate) struct Seat(pub usize);
 
-/// One of the town's own AIs, which this device runs to keep the town busy,
-/// and which you can talk to (`talk`): the member it plays, by id.
+/// One of the town's own people, which this device runs to keep the town
+/// busy, and which you can talk to (`talk`): the resident of a plot
+/// (`resident`), by whose land it is.
 #[derive(Component)]
-pub(crate) struct Townsfolk(u64);
+pub(crate) struct Townsfolk(#[allow(dead_code)] u64);
 
 /// A body whose walk is read off how far it goes each frame, rather than set
 /// from how fast it is trying to go.
@@ -227,7 +224,6 @@ pub(crate) fn plugin(app: &mut App) {
                 walk_from_motion
                     .after(crate::move_bodies)
                     .before(crate::animate_walk),
-                fill_the_town,
                 hear_of_the_channel,
             ),
         )
@@ -267,19 +263,13 @@ fn hear_of_the_channel(mut tells: MessageReader<Tell>, online: Res<Online>, mut 
     }
 }
 
-/// A room nobody else joined: you in the first seat, and the computer in every
-/// other.
+/// The town's room as this device has it: you, in its first seat. Everyone
+/// else in the town is the server's to send, or a plot's resident
+/// (`resident`), neither of whom is seated here.
 fn offline_room(profile: &Profile) -> Lobby {
-    let mut seats = vec![me(profile)];
-    fill_with_ai(&mut seats, &[]);
-    Lobby { seats, me: 1 }
-}
-
-/// Seats the computer in every seat of `seats` still empty, under names nobody
-/// there or in `elsewhere` has.
-fn fill_with_ai(seats: &mut Vec<Member>, elsewhere: &[Member]) {
-    while seats.len() < SEATS {
-        seat_ai(seats, elsewhere);
+    Lobby {
+        seats: vec![me(profile)],
+        me: 1,
     }
 }
 
@@ -299,8 +289,8 @@ pub(crate) fn seat_ai(seats: &mut Vec<Member>, elsewhere: &[Member]) {
 /// 50/50", "use variations of the colors", "use the more manly ai names
 /// for the boy ais and girly cute ai names for the girl ais"; by seat,
 /// red, yellow or purple in turn, under any of 48 names, until then). The
-/// names a town holds ([`TOWN_BODIES`], 32) are more than a side has, so
-/// some of a full town are "Bot". A room whose seats are not taken in
+/// names a room of many holds are more than a side has, so some of a full
+/// one are "Bot". A room whose seats are not taken in
 /// order seats its own with this (Bridge Wars offline, where which seat is
 /// yours is thrown, `arena`).
 pub(crate) fn ai_member(seat: usize, id: u64, seats: &[Member], elsewhere: &[Member]) -> Member {
@@ -324,8 +314,7 @@ pub(crate) fn ai_member(seat: usize, id: u64, seats: &[Member], elsewhere: &[Mem
     }
 }
 
-/// Everyone in the room, standing on the path round the pond in the middle of
-/// the town.
+/// You, standing in the middle of your plot of the town.
 fn spawn_players(
     mut commands: Commands,
     assets: Res<AssetServer>,
@@ -334,69 +323,37 @@ fn spawn_players(
 ) {
     for (seat, member) in lobby.seats.iter().enumerate() {
         let mine = member.id == lobby.me;
-        let body = spawn_player(&mut commands, &assets, member, seat, Venue::Town, mine);
-        if mine {
-            // Fixed over you, the camera is as it is wherever you arrive.
-            if !orbit.overhead {
-                *orbit = OrbitCamera::behind(&island::arrival_of_a_person(Venue::Town, seat));
-            }
-        } else {
-            commands.entity(body).insert((Townsfolk(member.id), Speaker::Townsfolk));
+        spawn_player(&mut commands, &assets, member, seat, Venue::Town, mine);
+        // Fixed over you, the camera is as it is wherever you arrive.
+        if mine && !orbit.overhead {
+            *orbit = OrbitCamera::behind(&island::arrival_of_a_person(Venue::Town, seat));
         }
     }
 }
 
-/// Keeps the town at [`TOWN_BODIES`] bodies: you, whoever else is in your
-/// channel of it online, and AIs of this device's own for the rest. Those
-/// furthest from you are the first to go, so that one is seldom seen
-/// vanishing. While you are away from the town online, who is there cannot be
-/// seen, and it is left as it was.
-fn fill_the_town(
-    online: Res<Online>,
-    me: Query<(&Transform, &Venue), With<Player>>,
-    others: Query<&Venue, (With<Member>, With<Remote>)>,
-    folk: Query<(Entity, &Townsfolk, &Transform, &Seat)>,
-    mut lobby: ResMut<Lobby>,
-    assets: Res<AssetServer>,
-    mut commands: Commands,
-) {
-    let Ok((you, &here)) = me.single() else {
-        return;
+/// The resident of the plot numbered `plot` of the town, standing `at`: a
+/// body as any of the computer's is, under `member`'s name and in their
+/// look, which is the plot's owner's (`resident`, which gives it its
+/// mind); to be talked to as the town's people are (`talk`), its name over
+/// it online or not (`tags::Named`: it is who the plot's sign says), and
+/// never down into water it could not climb out of. In nobody's seat: the
+/// town's room is yours alone.
+pub(crate) fn spawn_resident(commands: &mut Commands, assets: &AssetServer, member: &Member, plot: usize, at: Transform) -> Entity {
+    // Its mind is `resident`'s, not the wanderer's a member the computer
+    // plays is given.
+    let as_a_body = Member {
+        ai: false,
+        ..member.clone()
     };
-    let people = if online.is() {
-        if here != Venue::Town {
-            return;
-        }
-        1 + others.iter().filter(|&&venue| venue == Venue::Town).count()
-    } else {
-        1
-    };
-    let wanted = TOWN_BODIES.saturating_sub(people);
-    let have = folk.iter().count();
-    if have > wanted {
-        let mut leaving: Vec<(f32, Entity, u64)> = folk
-            .iter()
-            .map(|(body, folk, at, _)| (at.translation.distance(you.translation), body, folk.0))
-            .collect();
-        leaving.sort_by(|a, b| b.0.total_cmp(&a.0));
-        for (_, body, id) in leaving.into_iter().take(have - wanted) {
-            commands.entity(body).despawn();
-            lobby.seats.retain(|member| member.id != id);
-        }
-    } else if have < wanted {
-        let mut taken: Vec<usize> = folk.iter().map(|(.., seat)| seat.0).collect();
-        for _ in have..wanted {
-            let Some(seat) = (1..TOWN_SPOTS).find(|seat| !taken.contains(seat)) else {
-                break;
-            };
-            taken.push(seat);
-            let id = lobby.seats.iter().map(|member| member.id).max().unwrap_or(0) + 1;
-            let member = ai_member(seat, id, &lobby.seats, &[]);
-            lobby.seats.push(member.clone());
-            let body = spawn_player(&mut commands, &assets, &member, seat, Venue::Town, false);
-            commands.entity(body).insert((Townsfolk(id), Speaker::Townsfolk));
-        }
-    }
+    let body = spawn_player_at(commands, assets, &as_a_body, plot, Venue::Town, false, at);
+    commands.entity(body).insert((
+        Townsfolk(member.id),
+        Speaker::Townsfolk,
+        crate::tags::Named,
+        Intent::default(),
+        crate::StaysAshore,
+    ));
+    body
 }
 
 /// What every body is, whoever plays it: its name, its look, where it stands
@@ -721,6 +678,8 @@ mod tests {
         lobby.sign_up(&hajun);
         let mine = lobby.mine();
         assert_eq!((mine.id, mine.name.as_str(), mine.look.as_str(), mine.ai), (1, "Hajun", "girl", false));
-        assert_eq!(lobby.seats.len(), SEATS);
+        // The town's room is yours alone: its other people are the plots'
+        // residents and whoever the server sends.
+        assert_eq!(lobby.seats.len(), 1);
     }
 }

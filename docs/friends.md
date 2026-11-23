@@ -7,6 +7,52 @@
 > "above" or "below", or names another section in quotes, that section may be
 > in another file here: the table in `CLAUDE.md` says which.
 
+## A group is brought into one channel, and a reply sees a message off (2026-11-23)
+
+Hajun, with the town's plots (`docs/land.md`): "also need to think about
+what happens when u invite someone to your group. if u invite someone to
+ur group, they should move to the same channel (if they are already on
+the same channel it doesnt matter), but they should first try to move to
+the channel of the leader, but if its full with 16 players, then maybe it
+should go to another channel with 2+ empty spots so that they are on same
+channel." And: "replying to message should automatically count as
+pressing "Ok" so the 1 notification disappears."
+
+- **As someone comes into a group** (`Social::join`, `take_gathered`,
+  `players::gather`): whoever of it has a plot in another channel of the
+  town than its leader is moved to the leader's, their land with them
+  (`Towns::transfer`); or, that channel having no room for them, **all
+  of them, the leader too**, to the fullest channel with room for the
+  whole group, or a new one. Whoever is in the town is stood in the
+  middle of the plot they have there and told across their screen,
+  "Moved to your group's channel." (`Outcome::Gathered`,
+  `words.friends.said.gathered`); whoever is away in a game finds their
+  plot there when they are back. The land they leave fills the plot they
+  had, if anything stands on it, with someone of the computer's on it.
+- **Someone of a group who opens the app** is seated in the channel
+  their group is in, if it has room (`Social::mates`, in `admit`).
+- **A reply sent sees the message off** (`friends::sent`): the message
+  written in reply (`Act::Write`) is followed by the one it answers seen
+  off (`Act::Answer`), as OK sees it off, so it is out of the inbox and
+  off the count. Reply pressed and the box put away sends neither; a
+  message begun from a friend's gear answers none.
+
+**Mine.** That the whole group goes when the leader's channel is full,
+the leader with it (his "maybe"). That it happens as someone comes into
+the group, and as one of it opens the app: nobody is moved again later,
+should they end up apart (a group whose member was not connected as it
+was gathered, say). The words. That the message is seen off as the reply
+is sent, whether or not the server then takes the reply (their inbox
+full): it nearly always does.
+
+**Checked.** The server's tests: a group gathered once as someone comes
+into it; moved to its leader's channel, stood there and told, the leader
+left where they are; with no room there, both to where there is; away in
+a game, moved and not stood anywhere, and back to the plot kept for them.
+The game's tests: what sending a reply asks, and the panel's own press of
+Send end to end. **Not checked**: two real accounts on the VM; anything
+on a phone.
+
 ## Friends, groups and messages
 
 (Since the night of 2026-11-14 the panel's look is every window's: Hajun

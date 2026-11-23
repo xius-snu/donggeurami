@@ -603,6 +603,11 @@ pub(crate) struct BagColours {
     pub deal_off: Color,
     #[serde(deserialize_with = "colour")]
     pub on_deal_off: Color,
+    /// The line lit on the ground along the four edges of your plot while
+    /// edit mode is on (`customize`, since 2026-11-23), as see-through as
+    /// its alpha says.
+    #[serde(deserialize_with = "colour")]
+    pub editing_edge: Color,
 }
 
 impl BagColours {
@@ -1394,8 +1399,12 @@ pub(crate) struct BagWords {
     /// Across the screen, when a thing is put down in something else.
     pub in_the_way: String,
     /// Across the screen, the first few times a thing of yours is tapped
-    /// again and again with edit mode off (`stand::hint_at_edit_mode`).
+    /// again and again with edit mode off (`stand::hint_at_edit_mode`):
+    /// not said while `customize::HINTS` is off, as it is since 2026-11-23.
     pub edit_hint: String,
+    /// On the plate along the top of the screen while edit mode is on
+    /// (`customize`, since 2026-11-23; Hajun's words for it).
+    pub editing: String,
     /// Over the window a colour to paint with is chosen in (`customize`).
     pub paint_title: String,
     pub names: Vec<(String, String)>,
@@ -1796,6 +1805,9 @@ pub(crate) struct SaidWords {
     pub inbox_full: String,
     pub not_a_message: String,
     pub left_behind: String,
+    /// You have been moved to the channel of the town your group is in
+    /// (`roundtown_net::social::Outcome::Gathered`).
+    pub gathered: String,
 }
 
 /// The game selector (`games`): its title, and the games on it, each by its

@@ -608,6 +608,10 @@
             // words on it.
             deal_off: "#4d4d4dd0",
             on_deal_off: "#ffffff73",
+            // The line lit along the four edges of your plot, on the
+            // ground, for as long as edit mode is on: as see-through as
+            // its last two digits say.
+            editing_edge: "#ffffffb3",
         ),
     ),
     // The font is Inter (since 2026-11-13; Bevy's own, plain ASCII, until
@@ -970,6 +974,9 @@
                 inbox_full: "Their inbox is full.",
                 not_a_message: "That cannot be sent.",
                 left_behind: "Your group started a game without you.",
+                // Across the screen as you are moved to the channel of
+                // the town your group is in, your land with you.
+                gathered: "Moved to your group's channel.",
             ),
             // Across the screen as your group's leader takes you into a
             // game; and in the game selector, to anyone in a group who
@@ -1365,8 +1372,14 @@
             off_your_land: "It has to stand on your land.",
             in_the_way: "Something is in the way.",
             // Across the screen, the first few times a thing of yours is
-            // tapped twice with edit mode off: how to move it.
+            // tapped twice with edit mode off: how to move it. (Not said
+            // since 2026-11-23, when it was turned off in the code,
+            // `customize::HINTS`: the button that turns edit mode on beats
+            // instead. Kept for when it is turned back on.)
             edit_hint: "Tap the house edit button to move things.",
+            // On a plate along the top of the screen, in the middle, for
+            // as long as edit mode is on.
+            editing: "Editing Mode Enabled",
             // Over the window the colour to paint with is chosen in, which
             // the round button beside the paintbrush opens.
             paint_title: "Paint Color",

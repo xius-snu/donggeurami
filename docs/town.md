@@ -7,6 +7,104 @@
 > "above" or "below", or names another section in quotes, that section may be
 > in another file here: the table in `CLAUDE.md` says which.
 
+## Residents: someone of the computer's on each plot nobody here has (2026-11-23)
+
+Hajun, with the 48 plots always filled (`docs/land.md`):
+
+> if >= 16 players are online in a channel, then no NPCs. if < 16
+> players. for example, 3 players -> the 13 next plots will have an AI
+> NPC spawn in each plot with that plot owner's name, and they should
+> just stay on their plot/house and do random things to make them seem
+> like a real person, and maybe sometime go over to the plot of the real
+> player and go inside and do random things again like sit/sleep and
+> leave and go back to their own plot, etc. random based on random
+> personality/mbti assigned to each bot, kind of like bridge wars bots.
+
+**What there is** (`src/resident.rs`).
+
+- **One on each of the first sixteen plots that nobody of your channel
+  has** (`land::Deeds`, `Holder::Minded`: the server says which; offline
+  all but yours), under the plot's owner's name and in their look, a real
+  person's or a made-up one's. **They take the place of the wanderers
+  round the pond**: the town has sixteen people in it now, not 32
+  (`roundtown_net::TOWN_BODIES`), and `lobby::fill_the_town` is gone. One
+  goes as someone real comes to that plot, and comes as they go for good.
+- **Each device walks its own**, as it always has the town's people
+  (Hajun's choice of 2026-10-08), and nothing of them is sent. **But
+  what each is doing is worked out from the town's clock and from who
+  they are** (`resident::plan`, a sum with no chance in it but dice made
+  of those two, `dice`), so that every device has the resident of a plot
+  about the same thing at the same place: on the sofa, or on the way to
+  the same neighbour's. Two copies on one server had all fourteen about
+  the same thing, each at the same point to the centimetre.
+- **Who one is** (`Persona`): four leanings, each one of two ways and
+  then by how much within it: out among people or at home (a visit in 7
+  to 13 sessions of a hundred, or 2 to 5; how much of the time on their
+  feet is out of doors), on their feet or settled, a napper or a sitter,
+  steady or changeable (how often two blocks running are one thing; how
+  fast they walk, 45 to 75 parts in a hundred of a body's pace). Every
+  one a share the dice are thrown against, as his rule for Bridge Wars'
+  bots has it.
+- **The day**: blocks of 30 s, each resident's begun at its own moment,
+  and sessions of eight. At home a block is one thing: out on the lawn,
+  at the front of the plot looking out, about the house, sat on a chair
+  or a sofa, lying on a bed (`What`); where there is none of it, the
+  next best (no bed, a seat; no seat, about the house; no house, the
+  lawn). **A visit** is a session at the plot of someone real in your
+  channel, you among them: six blocks there, about their house and on
+  their chairs and beds as at home, and two for the way back and home.
+  Of fifteen residents about one person alone, one or so is at theirs at
+  a time (a test holds it between 0.3 and 1.3, and to seldom more than
+  three).
+- **Getting there** (`Search`, `Walkable`): over the town's own shape,
+  what stands on its plots with it, half a metre to a square, as a body
+  could walk it, through a door and round a table; found a little each
+  frame (40 squares nobody has looked at before, among all of them), and
+  what is found of a square kept until the town's shape changes. Between
+  plots: out by the plot's front, along the pavement 75 m out from the
+  middle, clear of the street lamps and the plots, the shorter way round,
+  and in by the other's front (`stages`). One that gets no nearer for 1.6
+  s looks for another way, and after two of those is put where it was
+  going.
+- **Sitting and lying are `rest`'s**, as yours are: a resident is put on
+  the place from beside it, within sight of it and 3.4 m (`beside`; a
+  bed's middle is further than a step from anywhere beside a bed), in
+  its pose; a place someone is on is left to them, and one who finds
+  theirs taken looks for another. Up again when it is time for something
+  else, or the thing is moved from under them.
+- **To be talked to** as the town's people were (`talk`), but not while
+  sitting or lying; **their names over them online or not**
+  (`tags::Named`: it is who the plot's sign says). Standing about, one
+  looks another way now and then, and the restless hop: those small
+  things are each device's own.
+- **While you are anywhere but the town they stand where they are.**
+
+**Calls that were mine.** That they take the wanderers' place. Worked out
+from the clock rather than sent or left to chance on each device. The
+four leanings and every number in them; 30 s and eight; how often a
+visit. That a visitor keeps to the house more than its owner does. No
+visiting each other, only someone real. The pavement ring for the way.
+Putting one that is stuck where it was going. Not to be talked to lying
+down.
+
+**Checked.** The tests (who one is, the same everywhere and no two
+alike; a day mostly at home, a visit one stretch at one plot, the same
+asked twice; a way round a wall and through a doorway, found a little a
+frame and the same way, nothing looked at twice; beside a bed and never
+through a wall; between plots by the gates and the ring). The desktop
+build, hidden: fifteen of them about their plots offline, several sat
+and lying in their own houses; four sent to a furnished plot of mine by a
+switch since taken out, one on the chair at the table, one on the sofa,
+two on the two places of the double bed, seen from in the house and from
+over it; frame times with way-finding as it is now (a way took up to 157
+ms in one frame before it was shared out; since, the longest frame of
+thirty seconds was 28 ms, `docs/rendering-and-frame-rate.md`). Two hidden copies on a server on this PC: the same plans
+and places on both.
+
+**Not checked.** On a phone, where looking for a way costs more. A
+resident through a real person's house upstairs (a place more than 2.2 m
+over the plot is left alone). By night. A resident and a bus.
+
 ## Sitting and lying down, and the bubble a thing in the world (2026-11-22)
 
 Hajun, after APK 50:
@@ -316,6 +414,9 @@ tap-to-edit menu that writes to it.
   only the player's own back is ever under it. On a phone you just tap.
 
 ## The town holds 32 players; offline, 31 of them are AI
+
+(Until 2026-11-23: sixteen since, a resident to each plot nobody here
+has, the first entry of this file.)
 
 (For the day of 2026-11-07 the 32 arrived on the four islands of the PvP
 map, eight to each, by seat; since that night that is Bridge Wars'

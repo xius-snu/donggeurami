@@ -2466,7 +2466,7 @@ fn seat_together(
             old.leave(seat);
         }
         tables.walk_out(body_of.room, body);
-        towns.stand(body);
+        towns.away(body);
     }
     let game = arenas.filling(commands, old_bots, going.len());
     let Some(seats) = game.seats_for(going.len()) else {
@@ -2770,7 +2770,7 @@ fn hear(
                 let Ok((mut body_of, spot, venue, _)) = bodies.get_mut(body) else {
                     continue;
                 };
-                let (channel, town_seat) = towns.sit(body, body_of.town);
+                let (channel, town_seat) = towns.sit(body, body_of.who.0, body_of.town);
                 body_of.town = Some(channel);
                 move_to(
                     &mut commands,
@@ -3731,7 +3731,7 @@ fn end(
             commands.entity(body).despawn();
             continue;
         }
-        let (channel, town_seat) = towns.sit(body, body_of.town);
+        let (channel, town_seat) = towns.sit(body, body_of.who.0, body_of.town);
         body_of.town = Some(channel);
         move_to(
             commands,

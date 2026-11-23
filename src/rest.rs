@@ -154,7 +154,7 @@ fn lift(pose: Pose) -> f32 {
 
 /// Where a body rests on `place` of a piece that stands as `piece` does:
 /// there, facing as the piece does.
-fn rests_at(piece: &Transform, place: &Spot) -> Transform {
+pub(crate) fn rests_at(piece: &Transform, place: &Spot) -> Transform {
     Transform {
         translation: piece.transform_point(place.at) + Vec3::Y * lift(place.pose),
         rotation: piece.rotation,
@@ -371,7 +371,7 @@ fn off_the_edge(piece: &Transform, bounds: &Bounds, at: Vec3) -> f32 {
 /// where each of them is) and in sight (`clear`, from your eyes to where
 /// its bubble is). `held`, its bubbles are up already, and stay to a
 /// little further off.
-fn offered<'a>(
+pub(crate) fn offered<'a>(
     you: Vec3,
     piece: &'a Transform,
     bounds: &Bounds,

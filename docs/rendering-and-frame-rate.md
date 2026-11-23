@@ -7,6 +7,43 @@
 > "above" or "below", or names another section in quotes, that section may be
 > in another file here: the table in `CLAUDE.md` says which.
 
+## Forty-eight furnished plots: what was done about their cost (2026-11-23)
+
+With every plot of the town filled (`docs/land.md`), and someone walking
+sixteen of them (`docs/town.md`), there is three times as much standing
+in the town as the day before, the day a phone ran hot with two plots.
+**Nothing here was measured on a phone**; these are what the desktop
+showed and what was done about it.
+
+- **What there is to draw**, all of it, were it all in view: the made-up
+  land 184,000 triangles (a test holds it under 190,000, and each plot
+  under 5,000), 48 signs 309,000 (one is 6,434, nearly all of it chain),
+  sixteen bodies 61,000 (32 were 122,000), the map 42,000. About 600,000,
+  where the town of the day before was about 225,000. Things that are
+  the same model are drawn together; what is not in view is not drawn.
+- **A sign's words are hung on it only within 45 m of the camera**
+  (`land::word_the_near`): 48 pictures were a megabyte each, kept on both
+  sides, and two see-through draws each, for words that are less than a
+  dot from across the town. Drawing one takes a third of a millisecond.
+- **The town's stood shape is read no oftener than every 0.35 s**
+  (`build::RESHAPE_REST`): some 180,000 triangles are gone through each
+  time, and as the app opens a piece's model loads nearly every frame.
+  The first eight seconds, hidden on the desktop: 35 frames over 20 ms
+  before, 8 after, the mean 13.4 ms and then 9.1.
+- **A resident's way is found a little each frame** (`resident::Search`,
+  `Walkable`): one way over a quarter-metre lattice took up to 157 ms in
+  a single frame (timed, with fifteen of them about). It is looked for
+  over half-metre squares now, what is found of each square kept until
+  the town's shape changes, and no more than 40 new squares looked at a
+  frame by all of them together.
+- **Settled**, hidden on the desktop at its cap of 120, with that: 8.5 ms
+  a frame over thirty seconds standing on a plot, the longest 28 ms, 14
+  frames of 3,529 over 20 ms. What the 14 were was not looked for.
+- **If a phone does not keep up**, in the order I would try: a plain
+  sign from far off (four boxes for 6,434 triangles); nothing drawn of
+  what stands inside a house across the town; fewer than sixteen bodies.
+  Each changes what is seen, and is Hajun's to say.
+
 ## Two furnished plots and a hot phone (2026-11-22)
 
 Hajun, having played twelve minutes with a friend on APK 50: "now the

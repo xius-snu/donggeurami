@@ -24,17 +24,23 @@
 //! hand end of that side, as someone on the street, or at the pond,
 //! looking at the plot has it, and faces them.
 //!
-//! **Whose plot is whose** goes by the seat each has in the town
-//! ([`seat_plots`]): each seat the plot whose sign is nearest where the
-//! seat used to arrive, the ring nearest the pond first. A channel's
-//! sixteen seats take the twelve plots of the inner ring and four of the
-//! next. A sign stands on your own, and on that of everyone else in your
-//! channel online ([`holders`]; since 2026-11-21, Hajun: "it seems like
-//! only your sign shows, and you dont see other player's signs"): the
-//! server says who sits where (`roundtown_net::Tell::Channel`,
-//! `lobby::Channel`), and each one's name is their body's, as it is sent.
-//! The town's AIs have none. `RT_LAND_SIGNS=all` on desktop stands one on
-//! every plot, to look at them.
+//! **Whose plot is whose** (since 2026-11-23; Hajun: "i want to change it
+//! so that at all times, there are 48 plots filled"): a seat of the town
+//! is one of its 48 plots, numbered as Hajun numbered them
+//! (`plotorder.png`, `roundtown_net::land::HOMES`, [`in_order`]), and the
+//! seat the server gives you is your plot. Every other plot is someone's
+//! too ([`Deeds`]): online as the server says (`roundtown_net::Tell::
+//! Plots`: whoever else is in your channel, in the town or away in a game,
+//! and the land of people who are not here, real and made up, that fills
+//! the rest); offline each plot's own made-up owner
+//! (`roundtown_net::premade`). A sign stands on every one, with its
+//! owner's name ([`holders`]), and what they own stands there
+//! (`build::stand`); someone of the computer's walks each of the first
+//! sixteen that nobody here has (`resident`). Until then a seat was one of
+//! sixteen, each device working a plot out for it, and only the plots of
+//! whoever was in your channel had anything on them. `RT_LAND_SIGNS=all`
+//! on desktop stands a sign with your own name on every plot, to look at
+//! them.
 //!
 //! **The words** ("{name}'s land", `words.land.sign`, in
 //! `colours.land.sign`) are a thing in the world, on both faces of the
@@ -75,14 +81,14 @@ use bevy::mesh::skinning::SkinnedMesh;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use bevy::world_serialization::WorldInstanceReady;
-use bevy_replicon::prelude::Remote;
-use roundtown_net::{Member, Seated, TOWN_SEATS};
+use roundtown_net::Tell;
+use roundtown_net::land::{Deed, HOMES};
 use swash::scale::{Render, ScaleContext, Source};
 use swash::zeno::{Format, Vector};
 
 use crate::Player;
 use crate::island::{self, Islands, Land, Venue, is_material};
-use crate::lobby::{Channel, Seat};
+use crate::lobby::Seat;
 use crate::net::Online;
 use crate::ui::{UiChanged, fill, ui};
 
@@ -148,6 +154,14 @@ const WORDS_FILL: (f32, f32) = (0.94, 0.92);
 const PIXELS_A_METRE: f32 = 640.0;
 const PICTURE_PAD: f32 = 0.12;
 const WORDS_GAIN: f32 = 2.5;
+/// How near the camera a sign has to come for its words to be hung on it,
+/// how far it has to go for them to be taken off again, in metres, and how
+/// often that is looked at, in seconds. The words of the shortest name are
+/// 0.22 m to the em: 45 m off they are two dots tall on a phone, and
+/// further off they are nothing that can be read. The numbers are mine.
+const WORDS_NEAR: f32 = 45.0;
+const WORDS_FAR: f32 = 60.0;
+const WORDS_EVERY: f32 = 0.25;
 
 /// One of the town's plots, as the map has it.
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -185,17 +199,56 @@ fn right_of(ahead: Vec2) -> Vec2 {
 }
 
 /// The town's plots, ring by ring out from the pond and round each ring,
-/// and which of them each seat of the town has ([`seat_plots`]). Empty
-/// until the town's map has spawned.
+/// and which of them each seat of the town is ([`in_order`]: a seat is a
+/// plot by Hajun's number for it, less one). Empty until the town's map
+/// has spawned.
 #[derive(Resource, Default)]
 pub(crate) struct Plots {
     pub all: Vec<Plot>,
     pub of_seat: Vec<usize>,
 }
 
+impl Plots {
+    /// The plot that goes by the number `seat`, if the map has it.
+    pub(crate) fn of(&self, seat: usize) -> Option<&Plot> {
+        self.all.get(*self.of_seat.get(seat)?)
+    }
+}
+
+/// Whose every plot of the town is but your own: its number
+/// (`roundtown_net::land::HOMES`), its owner, the name on its sign, the
+/// look of whoever walks it, and who is on it. Online as the server last
+/// said ([`roundtown_net::Tell::Plots`]); offline, and until it has said,
+/// each plot's own made-up owner (`roundtown_net::land::offline_deeds`).
+#[derive(Resource, Default, PartialEq, Debug)]
+pub(crate) struct Deeds(pub Vec<Deed>);
+
+impl Deeds {
+    /// The plot `who` has, by its number, if they have one here.
+    pub(crate) fn plot_of(&self, who: u64) -> Option<usize> {
+        self.0.iter().find(|deed| deed.who == who).map(|deed| usize::from(deed.plot))
+    }
+
+    /// Whether `who` has a plot here.
+    pub(crate) fn has(&self, who: u64) -> bool {
+        self.0.iter().any(|deed| deed.who == who)
+    }
+}
+
+/// Hearing whose each plot is: whatever stands anything on them comes
+/// after it.
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct DeedSystems;
+
+/// One of the two sheets a sign's words hang on, while they do
+/// ([`word_the_near`]).
+#[derive(Component)]
+struct Sheet;
+
 /// A sign standing on a plot: which, and what it says.
 #[derive(Component)]
 struct Sign {
+
     plot: usize,
     says: String,
 }
@@ -208,9 +261,51 @@ struct Everywhere(bool);
 pub(crate) fn plugin(app: &mut App) {
     let everywhere = std::env::var("RT_LAND_SIGNS").is_ok_and(|said| said.trim() == "all");
     app.init_resource::<Plots>()
+        .init_resource::<Deeds>()
         .insert_resource(Everywhere(everywhere))
         .add_observer(read_map)
-        .add_systems(Update, keep_signs);
+        .add_systems(Update, (keep_deeds.in_set(DeedSystems), keep_signs, word_the_near).chain());
+}
+
+/// Keeps [`Deeds`]: online, what the server says of your channel's plots,
+/// yours left out; offline, and until it has said anything, every plot but
+/// yours with its own made-up owner. Your plot being the seat you have in
+/// the town, which a game changes for its own while you are in one, the
+/// plots are left as they were anywhere but the town. Written only as it
+/// changes.
+fn keep_deeds(
+    mut tells: MessageReader<Tell>,
+    online: Res<Online>,
+    me: Query<(&Seat, &Venue), With<Player>>,
+    mut said: Local<Option<Vec<Deed>>>,
+    mut deeds: ResMut<Deeds>,
+) {
+    for tell in tells.read() {
+        if let Tell::Plots(all) = tell {
+            *said = Some(all.clone());
+        }
+    }
+    if !online.is() {
+        *said = None;
+    }
+    let Ok((seat, venue)) = me.single() else {
+        return;
+    };
+    if *venue != Venue::Town {
+        return;
+    }
+    let mine = online.me().map(|me| me.id);
+    let wanted = match said.as_ref() {
+        Some(all) => all
+            .iter()
+            .filter(|deed| Some(deed.who) != mine && usize::from(deed.plot) != seat.0)
+            .cloned()
+            .collect(),
+        None => roundtown_net::land::offline_deeds(seat.0),
+    };
+    if deeds.0 != wanted {
+        deeds.0 = wanted;
+    }
 }
 
 /// How high `triangle` is over or under `at`, across the ground, if it
@@ -375,29 +470,17 @@ pub(crate) fn read_plots(plot: &[[Vec3; 3]], streets: &[[Vec3; 3]], rest: &[[Vec
     plots
 }
 
-/// Which of `plots` each seat of the town has, seat by seat: the plot
-/// whose sign is nearest where the seat arrives (`roundtown_net::arrival`),
-/// of those left in the ring nearest the pond that has any left. Fewer
-/// than the town's seats if there are fewer plots.
-pub(crate) fn seat_plots(plots: &[Plot]) -> Vec<usize> {
-    let mut taken = vec![false; plots.len()];
-    let mut of_seat = Vec::new();
-    for seat in 0..TOWN_SEATS {
-        let arrives = roundtown_net::arrival(Venue::Town, seat).0.xz();
-        let free = || (0..plots.len()).filter(|&plot| !taken[plot]);
-        let Some(ring) = free().map(|plot| plots[plot].ring).min() else {
-            break;
-        };
-        let Some(plot) = free()
-            .filter(|&plot| plots[plot].ring == ring)
-            .min_by(|&a, &b| plots[a].sign.distance(arrives).total_cmp(&plots[b].sign.distance(arrives)))
-        else {
-            break;
-        };
-        taken[plot] = true;
-        of_seat.push(plot);
-    }
-    of_seat
+/// Which of `plots` each seat of the town is: a seat is a plot by Hajun's
+/// number for it less one, and its middle is written for the server, which
+/// has no map (`roundtown_net::land::HOMES`): each written middle's plot
+/// is the one of the map that stands there. As many as are found, in
+/// order, up to the first that is not: a map whose plots have moved from
+/// where they are written has to have them written again (a test says so).
+pub(crate) fn in_order(plots: &[Plot]) -> Vec<usize> {
+    HOMES
+        .iter()
+        .map_while(|&home| plots.iter().position(|plot| plot.middle.distance(Vec2::from(home)) < 0.5))
+        .collect()
 }
 
 /// Reads the plots off the town's map once it has spawned.
@@ -436,7 +519,7 @@ fn read_map(
         island::add_mesh(into, mesh, &place);
     }
     plots.all = read_plots(&plot, &streets, &rest);
-    plots.of_seat = seat_plots(&plots.all);
+    plots.of_seat = in_order(&plots.all);
     if plots.all.is_empty() {
         warn!("the town's map has no plots: nothing in it is of the material {PLOT_MATERIAL:?}");
         return;
@@ -450,34 +533,21 @@ fn read_map(
 }
 
 /// Whose sign stands on which plot: each of `plots` (a seat's plot, seat
-/// by seat) that someone has, with their name. Online, with the server
-/// having said who is in your channel of the town (`seated`,
-/// `lobby::Channel`), everyone it names whose name is known here (`named`,
-/// by their id: whoever of them this device has been sent), and you, who
-/// are `me` there, by your own name, whether or not it names you. Offline,
-/// or with a server that says nothing of the channel, you alone, in
-/// `seat`. In the order of the plots.
-fn holders(
-    plots: &[usize],
-    (me, seat, name): (Option<u64>, usize, &str),
-    seated: &[Seated],
-    named: impl Fn(u64) -> Option<String>,
-) -> Vec<(usize, String)> {
-    let mut held: Vec<(usize, String)> = Vec::new();
-    if let Some(me) = me {
-        for person in seated.iter().filter(|person| person.who != me) {
-            if let (Some(&plot), Some(name)) = (plots.get(usize::from(person.seat)), named(person.who)) {
-                held.push((plot, name));
-            }
-        }
-    }
-    // You, in the seat this device was given, which is the one the server
-    // names you in.
+/// by seat) with the name on it. Yours, in `seat`, by your own `name`; and
+/// every other plot there is a deed for (`deeds`), by its owner's. A plot
+/// said to be someone else's that is the one this device has you on is
+/// yours here. In the order of the plots.
+fn holders(plots: &[usize], (seat, name): (usize, &str), deeds: &[Deed]) -> Vec<(usize, String)> {
+    let mut held: Vec<(usize, String)> = deeds
+        .iter()
+        .filter_map(|deed| Some((*plots.get(usize::from(deed.plot))?, deed.name.clone())))
+        .collect();
     if let Some(&plot) = plots.get(seat) {
         held.retain(|(theirs, _)| *theirs != plot);
         held.push((plot, name.to_string()));
     }
     held.sort();
+    held.dedup_by_key(|(plot, _)| *plot);
     held
 }
 
@@ -493,32 +563,28 @@ fn staying(standing: &[(usize, String)], wanted: &[(usize, String)]) -> Vec<bool
     stays
 }
 
-/// Stands a sign on the plot of everyone in your channel of the town, and
-/// on yours, each saying whose land it is on both faces of its board, and
-/// takes them away again as that changes: as the plots are read, as you are
-/// seated or named, as the server says who else is there, as one of them
-/// comes into sight or is named anew, and as the file of colours and words
-/// changes on desktop. Nothing is touched otherwise, nor while you are
-/// anywhere but the town, where no sign is drawn. Each is solid too
-/// ([`solid`]).
+/// Stands a sign on every plot of the town, yours and everyone else's
+/// ([`Deeds`]), each to say whose land it is on both faces of its board,
+/// and takes them away again as that changes: as the plots are read, as
+/// you are seated or named, as whose a plot is changes, and as the file of
+/// colours and words changes on desktop. Nothing is touched otherwise, nor
+/// while you are anywhere but the town, where no sign is drawn. Each is
+/// solid too ([`solid`]).
 ///
-/// The words are a picture of them ([`draw_words`], [`words_picture`]) on
-/// two flat sheets as big as it, one hung just clear of each face of the
-/// board and looking out from it: children of the sign, so that they stand,
-/// turn and are hidden with it. Unlit, their own colour wherever the sun
-/// is, and drawn over the board where the two are too near to tell apart
-/// from far off.
+/// The words are a picture of them on two flat sheets, children of the
+/// sign, so that they stand, turn and are hidden with it: unlit, their own
+/// colour wherever the sun is, and drawn over the board where the two are
+/// too near to tell apart from far off. They are hung on a sign only while
+/// the camera is near it ([`word_the_near`]).
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn keep_signs(
     plots: Res<Plots>,
     file: Res<UiChanged>,
     everywhere: Res<Everywhere>,
-    (online, channel): (Res<Online>, Res<Channel>),
+    deeds: Res<Deeds>,
     me: Query<(Ref<Name>, Ref<Seat>, Ref<Venue>), With<Player>>,
-    others: Query<Ref<Member>, With<Remote>>,
     signs: Query<(Entity, &Sign)>,
     assets: Res<AssetServer>,
-    (mut images, mut meshes, mut materials): (ResMut<Assets<Image>>, ResMut<Assets<Mesh>>, ResMut<Assets<StandardMaterial>>),
     mut islands: ResMut<Islands>,
     mut commands: Commands,
 ) {
@@ -531,9 +597,7 @@ fn keep_signs(
         || name.is_changed()
         || seat.is_changed()
         || venue.is_changed()
-        || online.is_changed()
-        || channel.is_changed()
-        || others.iter().any(|member| member.is_changed());
+        || deeds.is_changed();
     if !stirred {
         return;
     }
@@ -545,9 +609,7 @@ fn keep_signs(
     let wanted: Vec<(usize, String)> = if everywhere.0 {
         (0..plots.all.len()).map(|plot| (plot, says(name.as_str()))).collect()
     } else {
-        let me = online.me().map(|me| me.id);
-        let named = |who: u64| others.iter().find(|member| member.id == who).map(|member| member.name.clone());
-        holders(&plots.of_seat, (me, seat.0, name.as_str()), &channel.0, named)
+        holders(&plots.of_seat, (seat.0, name.as_str()), &deeds.0)
             .into_iter()
             .map(|(plot, name)| (plot, says(&name)))
             .collect()
@@ -571,63 +633,110 @@ fn keep_signs(
     // now, in place of those that stood.
     let solids: Vec<Vec<[Vec3; 3]>> = wanted.iter().map(|&(index, _)| solid(&plots.all[index])).collect();
     islands.lay_over(Venue::Town, (!solids.is_empty()).then_some(solids));
-    // One picture of the words, one sheet as big as it and one paint for
-    // every sign that says the same.
-    let ink = ui.colours.land.sign.to_linear();
-    let mut painted: Vec<(String, Handle<Mesh>, Handle<StandardMaterial>)> = Vec::new();
+    // Each stands bare: its words are hung on it while anyone is near
+    // enough to read them ([`word_the_near`]).
     for (index, says) in wanted.iter().filter(|sign| !kept.contains(sign)).cloned() {
-        let (sheet, paint) = match painted.iter().find(|(said, ..)| *said == says) {
-            Some((_, sheet, paint)) => (sheet.clone(), paint.clone()),
-            None => {
-                let words = draw_words(&says);
-                let sheet = meshes.add(Rectangle::from_size(words.metres()));
-                let paint = materials.add(StandardMaterial {
-                    base_color: Color::linear_rgba(ink.red * WORDS_GAIN, ink.green * WORDS_GAIN, ink.blue * WORDS_GAIN, ink.alpha),
-                    base_color_texture: Some(images.add(words_picture(&words))),
-                    // Their own colour on either face, in sun and in shade,
-                    // by day and by night, as words on the screen are.
-                    unlit: true,
-                    alpha_mode: AlphaMode::Blend,
-                    // In front of the board it hangs on, however far off
-                    // the two are seen from.
-                    depth_bias: 4.0,
-                    ..default()
-                });
-                painted.push((says.clone(), sheet.clone(), paint.clone()));
-                (sheet, paint)
-            }
-        };
         let plot = &plots.all[index];
         let foot = Vec3::new(plot.sign.x, plot.ground, plot.sign.y);
         let front = Vec3::new(plot.front.x, 0.0, plot.front.y);
-        let sign = commands
-            .spawn((
-                Sign { plot: index, says },
-                Name::new("Plot sign"),
-                // On the town, and drawn only there (`island::show_where_i_am`).
-                Venue::Town,
-                WorldAssetRoot(assets.load(GltfAssetLabel::Scene(0).from_asset(MODEL))),
-                // A model's front is its -Z as the loader has it.
-                Transform::from_translation(foot).looking_to(front, Vec3::Y),
-                Visibility::Hidden,
-            ))
-            .id();
-        // A sheet looks out along its own +Z and reads along its own +X:
-        // on the back of the board as it is, on the front turned half
-        // round, which is right to whoever stands in front of the sign.
-        let faces = [
-            Transform::from_xyz(0.0, BOARD_UP, -FRONT_OUT).with_rotation(Quat::from_rotation_y(std::f32::consts::PI)),
-            Transform::from_xyz(0.0, BOARD_UP, BACK_OUT),
-        ];
-        for face in faces {
-            commands.spawn((
-                ChildOf(sign),
-                Mesh3d(sheet.clone()),
-                MeshMaterial3d(paint.clone()),
-                face,
-                NotShadowCaster,
-            ));
+        commands.spawn((
+            Sign { plot: index, says },
+            Name::new("Plot sign"),
+            // On the town, and drawn only there (`island::show_where_i_am`).
+            Venue::Town,
+            WorldAssetRoot(assets.load(GltfAssetLabel::Scene(0).from_asset(MODEL))),
+            // A model's front is its -Z as the loader has it.
+            Transform::from_translation(foot).looking_to(front, Vec3::Y),
+            Visibility::Hidden,
+        ));
+    }
+}
+
+/// Whether a sign `far` metres from the camera is to have its words on it,
+/// having them now or not (`worded`): once it comes within [`WORDS_NEAR`],
+/// until it is further than [`WORDS_FAR`].
+fn words_wanted(far: f32, worded: bool) -> bool {
+    far <= if worded { WORDS_FAR } else { WORDS_NEAR }
+}
+
+/// Hangs its words on each sign the camera is near, and takes them off
+/// those it has gone far from ([`words_wanted`]), looked at
+/// [`WORDS_EVERY`] seconds: a picture of them ([`draw_words`],
+/// [`words_picture`]) on two flat sheets as big as it, one just clear of
+/// each face of the board and looking out from it, children of the sign.
+/// Since 2026-11-23, when every plot of the town came to have a sign: a
+/// picture is a megabyte, kept here and on the graphics card, and each
+/// sheet a draw of its own, where the words of a sign across the town are
+/// smaller than a dot of the screen. One picture is drawn a look, the
+/// nearest sign's first.
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+fn word_the_near(
+    time: Res<Time>,
+    mut since: Local<f32>,
+    cameras: Query<&GlobalTransform, With<crate::ThirdPersonCamera>>,
+    me: Query<&Venue, With<Player>>,
+    signs: Query<(Entity, &Sign, &Transform)>,
+    words: Query<(Entity, &ChildOf), With<Sheet>>,
+    (mut images, mut meshes, mut materials): (ResMut<Assets<Image>>, ResMut<Assets<Mesh>>, ResMut<Assets<StandardMaterial>>),
+    mut commands: Commands,
+) {
+    *since += time.delta_secs();
+    if *since < WORDS_EVERY {
+        return;
+    }
+    *since = 0.0;
+    let (Ok(camera), Ok(&Venue::Town)) = (cameras.single(), me.single()) else {
+        return;
+    };
+    let eye = camera.translation();
+    let mut bare: Option<(f32, Entity, &Sign)> = None;
+    for (sign, of, at) in &signs {
+        let far = at.translation.distance(eye);
+        let worded = words.iter().any(|(_, on)| on.parent() == sign);
+        match (worded, words_wanted(far, worded)) {
+            (true, false) => {
+                for (sheet, _) in words.iter().filter(|(_, on)| on.parent() == sign) {
+                    commands.entity(sheet).despawn();
+                }
+            }
+            (false, true) if bare.is_none_or(|(nearest, ..)| far < nearest) => bare = Some((far, sign, of)),
+            _ => {}
         }
+    }
+    let Some((_, sign, of)) = bare else {
+        return;
+    };
+    let ink = ui().colours.land.sign.to_linear();
+    let drawn = draw_words(&of.says);
+    let sheet = meshes.add(Rectangle::from_size(drawn.metres()));
+    let paint = materials.add(StandardMaterial {
+        base_color: Color::linear_rgba(ink.red * WORDS_GAIN, ink.green * WORDS_GAIN, ink.blue * WORDS_GAIN, ink.alpha),
+        base_color_texture: Some(images.add(words_picture(&drawn))),
+        // Their own colour on either face, in sun and in shade, by day and
+        // by night, as words on the screen are.
+        unlit: true,
+        alpha_mode: AlphaMode::Blend,
+        // In front of the board it hangs on, however far off the two are
+        // seen from.
+        depth_bias: 4.0,
+        ..default()
+    });
+    // A sheet looks out along its own +Z and reads along its own +X: on
+    // the back of the board as it is, on the front turned half round,
+    // which is right to whoever stands in front of the sign.
+    let faces = [
+        Transform::from_xyz(0.0, BOARD_UP, -FRONT_OUT).with_rotation(Quat::from_rotation_y(std::f32::consts::PI)),
+        Transform::from_xyz(0.0, BOARD_UP, BACK_OUT),
+    ];
+    for face in faces {
+        commands.spawn((
+            Sheet,
+            ChildOf(sign),
+            Mesh3d(sheet.clone()),
+            MeshMaterial3d(paint.clone()),
+            face,
+            NotShadowCaster,
+        ));
     }
 }
 
@@ -637,7 +746,7 @@ fn keep_signs(
 /// through and [`SIGN_HIGH`] tall, its foot a little under the ground so
 /// that nothing is left open beneath it. Every face looks outward, its top
 /// up, as a solid's have to (`island`).
-fn solid(plot: &Plot) -> Vec<[Vec3; 3]> {
+pub(crate) fn solid(plot: &Plot) -> Vec<[Vec3; 3]> {
     let across = right_of(-plot.front) * (SIGN_WIDE * 0.5);
     let through = plot.front * (SIGN_DEEP * 0.5);
     let (low, high) = (plot.ground - 0.1, plot.ground + SIGN_HIGH);
@@ -835,7 +944,7 @@ fn draw_words(says: &str) -> Words {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::island::glb;
 
@@ -859,7 +968,7 @@ mod tests {
         (plot, streets, rest)
     }
 
-    fn plots() -> Vec<Plot> {
+    pub(crate) fn plots() -> Vec<Plot> {
         let (plot, streets, rest) = town();
         read_plots(&plot, &streets, &rest)
     }
@@ -963,35 +1072,35 @@ mod tests {
     }
 
     #[test]
-    fn each_seat_of_the_town_has_a_plot_of_its_own_the_inner_ring_first() {
+    fn a_seat_of_the_town_is_a_plot_by_hajun_s_number_for_it() {
         let plots = plots();
-        let of_seat = seat_plots(&plots);
-        assert_eq!(of_seat.len(), TOWN_SEATS);
+        let of_seat = in_order(&plots);
+        // Every plot of the map is one of them, each once.
+        assert_eq!(of_seat.len(), roundtown_net::land::PLOTS);
         let mut distinct = of_seat.clone();
         distinct.sort_unstable();
         distinct.dedup();
-        assert_eq!(distinct.len(), TOWN_SEATS);
-        // The twelve round the pond, then four of the next ring.
+        assert_eq!(distinct.len(), plots.len());
+        // His first twelve are the twelve round the pond, his next sixteen
+        // the ring behind them, and the rest the outer one.
         assert!(of_seat[..12].iter().all(|&plot| plots[plot].ring == 0));
-        assert!(of_seat[12..].iter().all(|&plot| plots[plot].ring == 1));
-        // The first seat arrives south of the pond (the game's +Z), facing
-        // it: its plot is the one behind it whose sign is nearest, at the
-        // corner by the street that runs out from the pond there.
+        assert!(of_seat[12..28].iter().all(|&plot| plots[plot].ring == 1));
+        assert!(of_seat[28..].iter().all(|&plot| plots[plot].ring == 2));
+        // His plot 1: west of the pond as the game has it, just south of
+        // the street that runs out from it there, looking at the pond.
         let first = &plots[of_seat[0]];
-        assert!(first.middle.distance(Vec2::new(25.0, 90.0)) < 0.1, "{:?}", first.middle);
-        assert!(first.sign.distance(Vec2::new(13.0 + FROM_CORNER + SIGN_WIDE * 0.5, 78.0 + FROM_EDGE)) < 0.05, "{:?}", first.sign);
-        // The first eight seats arrive spread round the pond, and each has
-        // its sign behind it, across the ring road. (The four after them
-        // arrive between them, on one half of the pond, where two find the
-        // plots near them taken: theirs are across it.)
-        for (seat, &plot) in of_seat.iter().enumerate() {
-            let arrives = roundtown_net::arrival(Venue::Town, seat).0.xz();
-            let far = plots[plot].sign.distance(arrives);
-            assert!(seat >= 8 || far < 60.0, "seat {seat}: {far} m to its sign");
-        }
-        // Fewer plots than seats: as many seats as there are plots.
-        assert_eq!(seat_plots(&plots[..5]).len(), 5);
-        assert!(seat_plots(&[]).is_empty());
+        assert!(first.middle.distance(Vec2::new(-90.0, 25.0)) < 0.1, "{:?}", first.middle);
+        assert!(first.front.distance(Vec2::new(1.0, 0.0)) < 1e-3, "{:?}", first.front);
+        // Whoever is in a channel has one of the first sixteen: the twelve
+        // round the pond and the four behind his 1 to 4.
+        assert!(of_seat[12..roundtown_net::land::FRONT].iter().all(|&plot| plots[plot].middle.x.abs().min(plots[plot].middle.y.abs()) < 26.0));
+        // A map with a plot somewhere else than it is written: as far as
+        // the first that is not found.
+        assert_eq!(in_order(&plots[..0]).len(), 0);
+        let mut moved = plots.clone();
+        let third = of_seat[2];
+        moved[third].middle += Vec2::splat(3.0);
+        assert_eq!(in_order(&moved).len(), 2);
     }
 
     #[test]
@@ -1134,41 +1243,52 @@ mod tests {
     }
 
     #[test]
-    fn a_sign_for_everyone_in_the_channel_and_for_you() {
+    fn a_sign_for_every_plot_and_for_yours() {
+        use roundtown_net::land::Holder;
         let plots = [10, 11, 12, 13];
-        let seated = |who: u64, seat: u8| Seated {
+        let deed = |plot: u8, who: u64, name: &str| Deed {
+            plot,
             who,
-            seat,
-            driving: false,
+            name: name.into(),
+            look: "boy".into(),
+            holder: Holder::Here,
         };
-        let named = |who: u64| match who {
-            7 => Some("Mina".to_string()),
-            8 => Some("Dubu".to_string()),
-            _ => None,
-        };
-        // Offline, or with a server that says nothing of the channel: you
-        // alone, in the seat you have.
-        assert_eq!(holders(&plots, (None, 0, "Hajun"), &[], named), [(10, "Hajun".to_string())]);
-        assert_eq!(holders(&plots, (Some(5), 2, "Hajun"), &[], named), [(12, "Hajun".to_string())]);
-        // Offline what the server once said counts for nothing.
-        assert_eq!(holders(&plots, (None, 0, "Hajun"), &[seated(7, 1)], named), [(10, "Hajun".to_string())]);
-        // Online: everyone it names, by the name their body has here, and
-        // you by your own, in the order of the plots.
-        let channel = [seated(8, 3), seated(5, 0), seated(7, 1)];
+        // With nothing known of anyone else: you alone, on the plot you
+        // have.
+        assert_eq!(holders(&plots, (0, "Hajun"), &[]), [(10, "Hajun".to_string())]);
+        assert_eq!(holders(&plots, (2, "Hajun"), &[]), [(12, "Hajun".to_string())]);
+        // Everyone a deed names, by the name on it, and you by your own,
+        // in the order of the plots.
+        let deeds = [deed(3, 8, "Dubu"), deed(1, 7, "Mina")];
         assert_eq!(
-            holders(&plots, (Some(5), 0, "Hajun"), &channel, named),
+            holders(&plots, (0, "Hajun"), &deeds),
             [(10, "Hajun".to_string()), (11, "Mina".to_string()), (13, "Dubu".to_string())]
         );
-        // Someone whose body has not been sent yet has no sign until it is;
-        // nor has anyone in a seat past the plots there are.
-        let channel = [seated(5, 0), seated(9, 1), seated(7, 9)];
-        assert_eq!(holders(&plots, (Some(5), 0, "Hajun"), &channel, named), [(10, "Hajun".to_string())]);
-        // You have yours whether or not it has named you yet; and a seat it
-        // has someone else in still, as you are given it, is yours here.
-        assert_eq!(
-            holders(&plots, (Some(5), 1, "Hajun"), &[seated(7, 1), seated(8, 2)], named),
-            [(11, "Hajun".to_string()), (12, "Dubu".to_string())]
-        );
+        // A plot past those the map has has no sign; and the plot this
+        // device has you on is yours here, whoever else is said to have it.
+        let deeds = [deed(9, 9, "Bora"), deed(1, 7, "Mina"), deed(2, 8, "Dubu")];
+        assert_eq!(holders(&plots, (1, "Hajun"), &deeds), [(11, "Hajun".to_string()), (12, "Dubu".to_string())]);
+        // Whose a plot is, by who they are.
+        let deeds = Deeds(deeds.to_vec());
+        assert_eq!((deeds.plot_of(8), deeds.plot_of(5)), (Some(2), None));
+        assert!(deeds.has(7) && !deeds.has(5));
+    }
+
+    #[test]
+    fn a_sign_has_its_words_while_the_camera_is_near_it() {
+        // They come as it comes near, and stay until it is well away, so
+        // that a step either way at the edge changes nothing.
+        assert!(words_wanted(10.0, false) && words_wanted(WORDS_NEAR, false));
+        assert!(!words_wanted(WORDS_NEAR + 1.0, false));
+        assert!(words_wanted(WORDS_NEAR + 1.0, true) && words_wanted(WORDS_FAR, true));
+        assert!(!words_wanted(WORDS_FAR + 1.0, true));
+        // The smallest words there are, the longest name's, are still a
+        // few dots tall on a phone where they come: a phone's screen is
+        // about 400 dots tall, and the view 60 degrees up and down.
+        let dots = |metres: f32, far: f32| metres / (2.0 * far * (30.0f32).to_radians().tan()) * 400.0;
+        let short = draw_words("hajun's\nland");
+        let line = short.metres().y / 2.0;
+        assert!(dots(line, WORDS_NEAR) < 3.5 && dots(line, WORDS_NEAR) > 1.0, "{}", dots(line, WORDS_NEAR));
     }
 
     #[test]
@@ -1247,11 +1367,11 @@ mod tests {
     }
 
     #[test]
-    fn a_person_arrives_in_the_middle_of_the_plot_their_seat_has() {
+    fn a_person_arrives_in_the_middle_of_the_plot_their_seat_is() {
         // What the server goes by, having no map (`roundtown_net::land`),
         // is what the map says.
         let plots = plots();
-        let of_seat = seat_plots(&plots);
+        let of_seat = in_order(&plots);
         assert_eq!(of_seat.len(), roundtown_net::land::HOMES.len());
         for (seat, &plot) in of_seat.iter().enumerate() {
             let plot = &plots[plot];
@@ -1264,16 +1384,23 @@ mod tests {
             assert!((plot.ground - arrives.translation.y).abs() < crate::LAND_STEP_UP, "seat {seat}");
             let ahead = (arrives.rotation * Vec3::NEG_Z).xz();
             assert!(ahead.distance(-plot.middle.normalize()) < 1e-3, "seat {seat} faces {ahead}");
-            // Clear of its own sign, and of everyone else's plot.
+            // Clear of its own sign, and on no plot but its own.
             assert!(plot.sign.distance(plot.middle) > 5.0);
             assert!(roundtown_net::land::just_arrived(arrives.translation.xz()));
+            assert_eq!(roundtown_net::land::plot_at(arrives.translation.xz()), Some(seat));
+            // Anywhere on the plot is on it, as far as the server can
+            // tell, and nowhere on it is on another.
+            for corner in plot.corners {
+                assert_eq!(roundtown_net::land::plot_at(corner.lerp(plot.middle, 0.01)), Some(seat));
+            }
         }
-        // The town's own crowd arrives round the pond as ever, and so does
-        // a person anywhere but the town.
+        // The path round the pond is on nobody's plot, and so is a person
+        // anywhere but the town where they always were.
         assert!(island::arrival(Venue::Town, 0).translation.xz().length() < 40.0);
         assert!(!roundtown_net::land::just_arrived(island::arrival(Venue::Town, 0).translation.xz()));
+        assert_eq!(roundtown_net::land::plot_at(island::arrival(Venue::Town, 0).translation.xz()), None);
         assert_eq!(island::arrival_of_a_person(Venue::Arena, 3), island::arrival(Venue::Arena, 3));
-        assert_eq!(island::arrival_of_a_person(Venue::Town, 20), island::arrival(Venue::Town, 20));
+        assert_eq!(island::arrival_of_a_person(Venue::Town, 60), island::arrival(Venue::Town, 60));
     }
 
     #[test]

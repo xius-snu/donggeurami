@@ -71,6 +71,7 @@ mod shop;
 mod signup;
 mod sky;
 mod sound;
+mod resident;
 mod rest;
 mod tags;
 mod talk;
@@ -1474,6 +1475,7 @@ pub fn main() {
     talk::plugin(&mut app);
     // Sitting and lying down on what stands on the town's plots.
     rest::plugin(&mut app);
+    resident::plugin(&mut app);
     // The House Builder in the town, and the game they ask you to play: the
     // shop to build with, and what is built.
     builder::plugin(&mut app);

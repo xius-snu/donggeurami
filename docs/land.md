@@ -5,11 +5,226 @@ Dated entries, newest first.
 
 ## Contents
 
-1. 2026-11-22: what you own stands on your plot, and everyone sees it
-2. Later on 2026-11-21: everyone in your channel has their sign, and you see it
-3. 2026-11-21: the words are a thing in the world, a picture hung on the board; a metre and a half at the corner; the sign is solid; APK 44
-4. Later on 2026-11-20: you arrive on your plot; the words slant with the board, on both its faces; more room at the corner
-5. 2026-11-20: a plot for your seat, and the sign on it that says whose it is
+1. 2026-11-23: all 48 plots always filled, in Hajun's order: whoever is here on the first sixteen, everyone else's land and made-up land on the rest; protocol 25, APK 52
+2. 2026-11-22: what you own stands on your plot, and everyone sees it
+3. Later on 2026-11-21: everyone in your channel has their sign, and you see it
+4. 2026-11-21: the words are a thing in the world, a picture hung on the board; a metre and a half at the corner; the sign is solid; APK 44
+5. Later on 2026-11-20: you arrive on your plot; the words slant with the board, on both its faces; more room at the corner
+6. 2026-11-20: a plot for your seat, and the sign on it that says whose it is
+
+## 2026-11-23: all 48 plots always filled, in Hajun's order; protocol 25, APK 52
+
+Hajun, with a picture of the town from above in the repo's root
+(`plotorder.png`), each plot numbered by hand, 1 to 48:
+
+> right now there are 1~16 players online per channel, 48 total plots, so
+> 47~32 will be unfilled at the moment. i want to change it so that at all
+> times, there are 48 plots filled, but the exact way it is filled is
+> described below: first look at the image plotorder.png, i numbered the
+> plots in priority order so 1 is priority. fill remaining plots with
+> total, real ppl's (including offline), unempty plots first in order of
+> higher land valuation (total sum or placed asset's buy price) calculated
+> at the moment of first real user in the channel and remains fixed as
+> long as 1 real player is online in that channel. then, if there are
+> still unfilled plots, fill with fake plots that are premade. if >= 16
+> players are online in a channel, then no NPCs. if < 16 players. for
+> example, 3 players -> the 13 next plots will have an AI NPC spawn in
+> each plot with that plot owner's name [...] goal = always have all 48
+> plots filled, and always have plots 1~16 to have a character assigned to
+> it (whether its npc or real player - also if the real player joins and
+> there is an npc of them in that channel, then that real person should
+> just take that npc's plot location) Real online player take foremost
+> priority so their plot will replace the auto filled plots/characters
+> (unless there is a real player standing on that plot, then replace the
+> next number plot on the priority). Also plot placement should be server
+> authoritative, and a real online player's plot should not be moved as
+> long as they are online, and there should be no conflict between plot
+> position. also need to think about what happens when u invite someone to
+> your group. [...] also when u go to minigame, your house should remain
+> there and u should count as someone who is "on that channel" - with no
+> NPC spawned in ur place. tell me if there is some contradiction or
+> uncertainty between what should happen for some edge case that u
+> genuinely are unsure of, otherwise choose the optimal that u think.
+
+The people who walk the plots are `docs/town.md`'s first entry; a group
+brought into one channel is `docs/friends.md`'s; what is sent is
+`docs/online.md`'s.
+
+### What there is
+
+- **His order is written down** (`roundtown_net::land::HOMES`, the middle
+  of each plot, his plot 1 first). His picture is Blender's top view: the
+  ball of Blender's navigation gizmo in its corner, toward the map, is the
+  bare ring with a line that Blender draws for -X in a view down an axis
+  (read in its source, `view3d_gizmo_navigate_type.cc`), so +X is to the
+  right and +Y up, and a point (x, y) of the map in Blender is (-x, y)
+  across the game's ground. His plot 1, right of the pond and just over
+  the street that runs right, is at (-90, 25) in the game. His numbers go
+  round in fours, each plot a quarter turn on from the one before; a test
+  holds the table to that, and a test of the game's holds it to the map.
+  **If plot 1 is somewhere else in the game than he meant, the whole
+  table is to be turned half round, and nothing else changes.**
+- **A seat of the town is a plot** (`shared/src/land.rs`, a file of its
+  own now). The seat the server gives you (`Tell::Arrive`) is the number
+  of your plot, 0 to 47, and you arrive in the middle of it. Until today
+  it was one of sixteen, and each device worked a plot out for it
+  (`land::seat_plots`, gone; `land::in_order` matches each written middle
+  to the map's plot).
+- **One channel's plots are an `Estate`** (`roundtown_net::land`, rules
+  with no world in them, tested by themselves; the server keeps one a
+  channel, `rooms::Towns`):
+  - **Whoever is in the channel has one of the first sixteen**
+    (`FRONT`): the lowest numbered that nobody of the channel has and
+    that nobody stands on (the server looks every half second at who
+    stands on which plot, `players::mind_the_town`,
+    `land::plot_at`: within 17 m of its middle); or, if one of the
+    sixteen is filled with their own land, that one.
+  - **It is theirs until they are gone**: in the town (`Holder::Here`),
+    away in a game or at home (`Away`: `Towns::away` where the games
+    used to stand them up, and `sit` gives them back the plot they
+    had), and for five minutes after their connection has gone
+    (`land::GRACE`, `Estate::leave`, `tick`), as they left it, with
+    nobody on it. Their land is read off their body as it goes
+    (`players::body_gone`, an observer, so that every way a body goes
+    is covered).
+  - **The rest are filled** (`Lot`: whose, the name, the look, what
+    stands, what is painted, as it stood when taken up): real people's
+    land that has anything on it, the worthiest first (`land::worth`,
+    the shop's price of each thing standing), then each plot's own
+    made-up lot (`roundtown_net::premade`, below). Worked out as the
+    first person comes into an empty channel (`Estate::open`), from what
+    the server knows of everyone's land (`Towns::record`: read from the
+    database as the server starts, `accounts::Snapshot::lands`, and kept
+    up as bags change, `bag::register`), and as it is until nobody is
+    left.
+  - **One thing moves when someone comes**: what filled the plot they
+    take goes to the first plot a made-up lot fills (`Estate::settle`),
+    so that real land is always shown before made-up land, and nothing
+    else shifts. With no made-up lot left to give way, it takes the
+    place of the least worth shown, if it is worth more.
+  - **Someone whose land has anything on it and who is gone for good**
+    (past the five minutes, or moved to another channel with their
+    group) leaves it filling their plot, with someone of the computer's
+    on it under their name; back, they have that plot. With nothing on
+    it, the plot is filled with something else.
+  - **Someone of the computer's walks each of the first sixteen that
+    nobody of the channel has** (`Holder::Minded`), and nobody the other
+    32 (`Nobody`). Sixteen real people, and there are none.
+- **The server says whose every plot is** (`Tell::Plots`, a `Deed` to
+  each of the 48: its number, whose, the name, the look, and who is on
+  it), to everyone in the town of a channel whenever any of it changes;
+  and what stands on each as it always said what stood on anyone's
+  (`bag::Tell::Theirs`, `Painted`, by the deed's `who`): to whoever sits
+  down, all 47 others, and to everyone as a plot is filled with something
+  else (`bag::seat_news`).
+- **On a device** (`src/land.rs`): `Deeds` is whose every plot but yours
+  is, as the server said, and offline every plot's own made-up owner
+  (`land::offline_deeds`). A sign stands on all 48 (`holders`), what
+  stands on each is stood by the code that stood your neighbours'
+  (`stand::keep_theirs`, by deed now), and offline the made-up land is
+  the device's own to stand (`bag::made_up`): the same land the server
+  fills a plot with, so that going online changes only the plots real
+  people have to do with.
+- **The made-up land** (`shared/src/premade.rs`): 48 furnished plots, one
+  to each plot, written by hand in tables: one of the four houses,
+  standing somewhere on the plot and turned some way, a door and windows,
+  a bed, a couch and more on its ground floor, on some a lamp or
+  somewhere to sit outside, and its own colours. Owners go by the
+  computer's names, a boy on the even plots and a girl on the odd.
+  183,690 triangles in all, 4,896 on the heaviest. **A test stands every
+  one of them on the town's map by the game's own rules**
+  (`src/build/premade_check.rs`: the house where a house fits, doors and
+  windows where their walls have room, nothing in anything else, a way on
+  foot from the door to the bed and every seat, every painted part a part
+  of its model): change a number there and run it.
+- **A sign's words are hung on it only near the camera**
+  (`land::word_the_near`: within 45 m, until 60 m): with 48 signs a
+  picture each was a megabyte kept twice and two draws, for words smaller
+  than a dot across the town. And **the town's stood shape is read no
+  oftener than every 0.35 s** (`build::RESHAPE_REST`): at the app's
+  opening a piece's model loads nearly every frame for a few seconds, and
+  each reading goes through some 180,000 triangles.
+
+### Where his words did not settle it (told to him)
+
+- **"3 players -> the 13 next plots" and "always have plots 1~16 to have
+  a character"** agree only if real people are always among the first
+  sixteen. They are: someone whose own land fills a plot further out
+  (nobody walks those) comes to the front like anyone, and that plot is
+  filled with something else.
+- **"remains fixed as long as 1 real player is online"** and someone
+  leaving: their land stays on the plot they had, as above, rather than
+  the plot going back to what the first ranking had there. It keeps a
+  phone that only put the app away on its plot (the server's journal has
+  one such account gone and back four seconds later, three times in ten
+  minutes).
+- **"unless there is a real player standing on that plot"** is taken both
+  ways: a plot someone of the channel has is never taken, and nor is one
+  someone is standing on.
+- **Real land with nothing on it fills nothing** ("unempty plots first"):
+  after the real land that has something come the made-up ones.
+
+### Mine
+
+The five minutes. That a plot is kept for someone at home as for someone
+in a game. One thing moving, to the first made-up plot, rather than every
+filling shifting along. A leaver's land staying. The worth of land as it
+was when the channel opened, or its owner left: not kept up after. Someone
+real who is in another channel can have their land fill a plot of this
+one, with someone walking it under their name. 48 made-up lots, one to a
+plot, and what is in each. Forty-five metres for a sign's words. A new
+protocol number, below.
+
+### What it costs
+
+- **`PROTOCOL_VERSION` 25** (`docs/online.md`): a seat means something
+  else, so APK 51 and older are told to update and stay offline, and so
+  is the iPhone's build, which already was.
+- **More to draw**: the made-up land is 184,000 triangles and 48 signs
+  are 309,000 (one is 6,434, most of it chain), where a town of 32
+  wanderers and two furnished plots was about 225,000 in all; the sixteen
+  bodies there are now are 61,000 where 32 were 122,000. Only what is in
+  view is drawn. **Not measured on a phone**; the desktop build, hidden,
+  held its 120 frames a second with all of it (below). If a phone does
+  not: the signs are the first thing to make cheaper (a plain one from
+  far off), then what stands in houses across the town.
+
+### Checked
+
+- **Tests**: the rules' 276 (the table's order and quarter turns; an
+  estate opened, come into, left, kept and let go of; real land before
+  made-up, the worthiest shown; `Tell::Plots` last on the wire; every
+  made-up lot sound), the server's 126 (`Towns` with estates; whoever
+  sits down told every plot; a body gone keeping its plot; `Tell::Plots`
+  by the names accounts go by), the game's 577 (the map's plots in his
+  order, signs for every deed, offline land, the 48 lots by the game's
+  own building rules).
+- **The database** on the VM, on scratch copies dropped after
+  (`SERVER.md`'s recipe): the new reading of everyone's land ("3 accounts
+  keep a bag, 2 of them with something standing on their land").
+- **The desktop build, hidden**, offline: 48 signs, 365 things standing,
+  15 residents; pictures from above and from the ground looked at; frame
+  times over the first 8 s (mean 9.1 ms, 8 frames over 20 ms; 35 before
+  the stood shape was read less often) and settled (8.5 ms, the cap).
+- **Two hidden copies against a server on this PC**: each on its own
+  plot (0 and 1), each with the other's deed and 46 made-up ones, 354
+  things standing on each; the one who left kept as away on the other's
+  screen.
+- **The VM after the deploy** (13:55 UTC, `docs/online.md`): this PC's
+  own account in, hidden: the two real accounts' land filling plots 2
+  and 3 by Hajun's numbers, each with someone walking it under its
+  owner's name, made-up land on the rest; out again, the journal clean.
+
+### Not checked
+
+- **Anything on a phone.** How it runs there most of all.
+- Two real accounts in one channel on the VM; someone gone for five
+  minutes and back; a full channel; a second channel.
+- Someone going into a game online and back (the tests have the plot
+  kept and given back; no run was made).
+- **Whether plot 1 is where Hajun meant it**: by the reasoning above, not
+  by his eye.
+
 
 ## 2026-11-22: what you own stands on your plot, and everyone sees it
 

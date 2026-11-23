@@ -164,9 +164,10 @@ fn main() {
     roundtown_net::protocol(&mut app);
     // Everything kept about who is whose friend comes back from setting
     // the accounts up, for `social` to go by from here on.
-    let friends = accounts::plugin(&mut app, config.db.clone());
+    let mut friends = accounts::plugin(&mut app, config.db.clone());
     fees::plugin(&mut app);
-    rooms::plugin(&mut app);
+    // And everyone's land, for the town's plots to be filled with.
+    rooms::plugin(&mut app, std::mem::take(&mut friends.lands));
     players::plugin(&mut app);
     bag::plugin(&mut app);
     tables::plugin(&mut app);

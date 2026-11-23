@@ -287,7 +287,7 @@ fn seat(
         old.gone[usize::from(seat)] = true;
     }
     tables.walk_out(room, body);
-    towns.stand(body);
+    towns.away(body);
     let game = match into.filter(|&id| games.has_room(id, 1)) {
         Some(id) => games.games.get_mut(&id).expect("it has room, so it is there"),
         None => games.filling(commands, 1),
@@ -506,7 +506,7 @@ fn hear(
                 let Ok((mut body_of, spot, venue, _)) = bodies.get_mut(body) else {
                     continue;
                 };
-                let (channel, town_seat) = towns.sit(body, body_of.town);
+                let (channel, town_seat) = towns.sit(body, body_of.who.0, body_of.town);
                 body_of.town = Some(channel);
                 move_to(
                     &mut commands,
@@ -926,7 +926,7 @@ fn end(
             commands.entity(body).despawn();
             continue;
         }
-        let (channel, town_seat) = towns.sit(body, body_of.town);
+        let (channel, town_seat) = towns.sit(body, body_of.who.0, body_of.town);
         body_of.town = Some(channel);
         move_to(
             commands,

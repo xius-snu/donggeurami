@@ -7,6 +7,36 @@
 > "above" or "below", or names another section in quotes, that section may be
 > in another file here: the table in `CLAUDE.md` says which.
 
+## APK 52: all 48 plots filled, residents, edit mode said; protocol 25
+
+2026-11-23, 23:12 here (14:12 UTC). Asked for: "build apk and push after
+completing all tasks" (`docs/land.md`'s first entry, and those of that
+day in `docs/town.md`, `docs/friends.md`, `docs/bag.md`,
+`docs/online.md` and `docs/rendering-and-frame-rate.md`). From the main
+checkout, no other session at work in it.
+
+- **It is the first that plays online**: `PROTOCOL_VERSION` 25, a seat of
+  the town being a plot now. APK 51 and older are told to update. The
+  server it plays against was deployed first (13:55 UTC,
+  `docs/online.md`).
+- `versionCode` 52, read back with aapt. cargo ndk 4 m 32 s
+  (`release-android`), stripped from 203 MB to 110.6 MB, Gradle 28 s; the
+  library in the APK is the stripped one (`4ada7cb1`), with its seven
+  entry points; "Editing Mode Enabled" and "Moved to your group's
+  channel." are in it.
+- 93 of the game's files in it, each the tree's own byte for byte; the
+  assets and `ui.ron` hashed before the library was built and after
+  Gradle, the same. 128,344,529 bytes.
+- Before it: the three crates' tests (the game's 577, the rules' 276, the
+  server's 126), the hidden runs, two copies against a server on this PC,
+  and this PC's own account on the VM (`docs/land.md` lists them).
+- The iPhone's build was type-checked on this PC
+  (`mobile/ios/check_on_windows.sh`, passed): nothing behind
+  `target_os = "ios"` was touched. No tag.
+- **Not put on a phone**: none was attached. How it runs on one with
+  every plot of the town filled is the first thing to look at
+  (`docs/rendering-and-frame-rate.md`). One APK kept, as ever.
+
 ## APK 51: sitting and lying down, bubbles in the world, doors in the same wall for everyone
 
 2026-11-22, 22:18 here (13:18 UTC). Asked for: "then rebuild apk and

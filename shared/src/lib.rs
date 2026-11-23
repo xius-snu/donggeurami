@@ -267,7 +267,15 @@ pub const PROTOCOL_ID: u64 = u64::from_be_bytes(*b"DGRMTOWN");
 /// [`bridge_race::RaceRound::next_sticks`]), its grants of a size thrown
 /// for each and coming every 12 s, and its blasts bringing the rest of the
 /// bridge down after them, which an app from before would not play by.
-pub const PROTOCOL_VERSION: u32 = 24;
+///
+/// 25 since 2026-11-23 (Hajun: "i want to change it so that at all times,
+/// there are 48 plots filled"): a seat of the town is one of its 48 plots
+/// now, in his own order ([`land::HOMES`]), where it was one of sixteen
+/// that each device worked a plot out for; so an app from before would
+/// stand everyone's land on another plot than the server has them on.
+/// And with it [`Tell::Plots`], whose every plot of the channel is, and a
+/// group gathered into one channel ([`social::Outcome::Gathered`]).
+pub const PROTOCOL_VERSION: u32 = 25;
 
 /// The UDP port the game server listens on. 443, where QUIC goes, because a
 /// network that lets any UDP through lets that through: school and office
@@ -294,12 +302,16 @@ pub const ARENA_SEATS: usize = 8;
 /// How many teams a game of Bridge Wars has: one to an island.
 pub const ARENA_TEAMS: usize = 4;
 
-/// The fewest bodies the town shows: below this, each device fills it out
-/// with AIs of its own (Hajun's choice, 2026-10-08), one leaving for each
-/// real player who arrives. 8 until 2026-11-01, when Hajun asked for "a
-/// total of 32 ppl in the map including ai, so each new player join
-/// replaces a ai". Not part of the protocol: the server never counts them.
-pub const TOWN_BODIES: usize = 32;
+/// How many people the town has in it, the computer's among them: one to
+/// each of its first sixteen plots ([`land::FRONT`]), whoever is in your
+/// channel on theirs and someone of the computer's on each of the rest,
+/// under its owner's name (the game's `resident`; Hajun, 2026-11-23: "if
+/// >= 16 players are online in a channel, then no NPCs"). Each device walks
+/// its own, as it always has (his choice, 2026-10-08). 32 from 2026-11-01
+/// until then, the computer's wandering round the pond ("a total of 32 ppl
+/// in the map including ai, so each new player join replaces a ai"), and 8
+/// before. Not part of the protocol: the server never counts them.
+pub const TOWN_BODIES: usize = TOWN_SEATS;
 
 /// The look a new account wears until its owner has chosen one of
 /// [`PEOPLE_LOOKS`] (the game's `signup`, [`Ask::Profile`]), which the game
@@ -1186,6 +1198,12 @@ pub struct Upgrades {
 pub mod bots;
 pub mod horde;
 pub mod nav;
+
+// The town's plots, whose each is, and what fills those nobody who is
+// here has (since 2026-11-23, a file of its own; in this one since
+// 2026-11-20), and the made-up land that fills what is left.
+pub mod land;
+pub mod premade;
 
 // The four games of 2026-11-18 (Hajun: "add these minigames: Blend In,
 // Knock Off, Bridge Race, Last Stand"): what they have in common, and each
@@ -3758,68 +3776,10 @@ pub fn arrival(venue: Venue, seat: usize) -> (Vec3, Quat) {
     (turn * Vec3::new(0.0, 0.0, radius), turn)
 }
 
-/// Land (the game's `land`, since 2026-11-20): each person in the town has
-/// a plot of its own, by their seat there, and arrives in the middle of it
-/// (Hajun: "u need to spawn on your plot in the center, facing toward the
-/// fountain"). The plots are the planes of the material `plot` in the
-/// town's map, which the game reads as the map spawns; the server has no
-/// map, and goes by what is written here.
-pub mod land {
-    use super::{Quat, TOWN_SEATS, Vec2, Vec3};
-
-    /// The middle of the plot each seat of the town has, across the ground
-    /// (x and z), in metres: the twelve plots round the pond, then four of
-    /// the next ring. Written from the map by the game's own rule (its
-    /// `land::seat_plots`: seat by seat, the plot whose sign is nearest
-    /// where the seat used to arrive, on the path round the pond), and a
-    /// test of the game's holds the two together: after an export of the
-    /// town's map that moves a plot, these have to be written again, and
-    /// the server deployed.
-    pub const HOMES: [[f32; 2]; TOWN_SEATS] = [
-        [25.0, 90.0],
-        [66.0, 66.0],
-        [90.0, -25.0],
-        [66.0, -66.0],
-        [-25.0, -90.0],
-        [-66.0, -66.0],
-        [-90.0, 25.0],
-        [-66.0, 66.0],
-        [90.0, 25.0],
-        [25.0, -90.0],
-        [-90.0, -25.0],
-        [-25.0, 90.0],
-        [-64.896, -107.387],
-        [-107.387, -64.896],
-        [-107.387, 64.896],
-        [-64.896, 107.387],
-    ];
-
-    /// How near the middle of a plot someone stands who has only just
-    /// arrived on one, and not walked off it yet, in metres.
-    pub const JUST_ARRIVED: f32 = 2.0;
-
-    /// Where the person in `seat` of the town stands on arriving there, and
-    /// which way they face: in the middle of their plot, facing the
-    /// fountain, which is the middle of the town. `None` past the town's
-    /// seats.
-    pub fn arrival(seat: usize) -> Option<(Vec3, Quat)> {
-        let [x, z] = *HOMES.get(seat)?;
-        // A turn of this much about the upright points -Z at the middle
-        // from where it puts +Z, as [`super::arrival`] has it.
-        Some((Vec3::new(x, 0.0, z), Quat::from_rotation_y(x.atan2(z))))
-    }
-
-    /// Whether someone standing `at`, across the ground, stands where a
-    /// seat of the town arrives, any seat's: a device that has only just
-    /// opened, which guessed at its seat before the server gave it one.
-    pub fn just_arrived(at: Vec2) -> bool {
-        HOMES.iter().any(|&home| Vec2::from(home).distance(at) <= JUST_ARRIVED)
-    }
-}
-
 /// Where the person in `seat` stands on arriving on `venue`: in the town,
-/// in the middle of their own plot ([`land::arrival`]); anywhere else, and
-/// in the town past its seats, where [`arrival`] has the seat. The town's
+/// where a seat is a plot ([`land::HOMES`]), in the middle of it
+/// ([`land::arrival`]); anywhere else, and in the town past its plots,
+/// where [`arrival`] has the seat. The town's
 /// own crowd, which each device runs for itself, arrives round the pond as
 /// it always has ([`arrival`]).
 pub fn arrival_of_a_person(venue: Venue, seat: usize) -> (Vec3, Quat) {
@@ -4701,6 +4661,10 @@ pub mod social {
         /// Your group has gone into a game without you: you were not free
         /// to go, or could not pay for it.
         LeftBehind,
+        /// You have been moved to the channel of the town your group is
+        /// in, your land with you (since 2026-11-23; Hajun: "if u invite
+        /// someone to ur group, they should move to the same channel").
+        Gathered,
     }
 }
 
@@ -5616,9 +5580,17 @@ pub enum Tell {
     /// Everyone in your channel of the town who sits or lies on something,
     /// you among them, and how ([`Posed`]): all of them, as you come into
     /// the channel and whenever any of it changes. Only to an app that
-    /// asked ([`Ask::Resting`]). Last, since 2026-11-22, with no new
-    /// protocol.
+    /// asked ([`Ask::Resting`]). Last but one, since 2026-11-22, with no
+    /// new protocol.
     Resting(Vec<Posed>),
+    /// Whose every plot of your channel of the town is ([`land::Deed`],
+    /// since 2026-11-23): all 48, your own among them, as you come into
+    /// the channel and whenever any of it changes: someone comes or goes,
+    /// into a game or back, takes another name, or a plot is filled with
+    /// something else. What stands on each comes as what stands on
+    /// anyone's does ([`bag::Tell::Theirs`], by the deed's `who`), after
+    /// this. Only to an app that asked of its channel ([`Ask::Channel`]).
+    Plots(Vec<land::Deed>),
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]

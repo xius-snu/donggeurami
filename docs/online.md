@@ -7,6 +7,55 @@
 > "above" or "below", or names another section in quotes, that section may be
 > in another file here: the table in `CLAUDE.md` says which.
 
+## Protocol 25: a seat of the town is a plot, and whose every plot is
+
+2026-11-23 (`docs/land.md` has what the plots are). **`PROTOCOL_VERSION`
+is 25**: APK 51 and older, and the iPhone's build, are told to update and
+stay offline; APK 52 is the first that plays online.
+
+- **Why a new number, where the last four changes had none.** A seat of
+  the town meant one of sixteen, for which each device worked a plot out;
+  it is the plot's own number now, 0 to 47 in Hajun's order
+  (`land::HOMES`), in `Tell::Arrive` and in `Seated`. An app from before
+  would stand everyone's land on another plot than the server has them
+  on. Something that means something else is a new number, as the rule
+  has it.
+- **`Tell::Plots(Vec<land::Deed>)`**, the last of `Tell` (number 21; a
+  test holds it): whose each of the 48 plots of your channel is, its
+  number, the owner's id (an account's, or a made-up owner's,
+  `land::PREMADE` and the plot's number), the name on its sign, the look
+  of whoever walks it, and who is on it (`Holder`: here, away, minded by
+  the computer, nobody). All 48 each time, about a kilobyte and a half,
+  to everyone in the town of a channel that asked of its channel
+  (`Ask::Channel`), with `Tell::Channel` and on the same stir: someone
+  comes or goes, into a game or back, takes another name, or a plot is
+  filled with something else. `Tell::Channel` is as it was, of whoever is
+  in the town now, each seat a plot.
+- **What stands on each plot** comes as it did for anyone's
+  (`bag::Tell::Theirs`, `Painted`, by `who`), after the deeds: to whoever
+  sits down, of all 47 others, land that fills a plot and the land of
+  someone away in a game among them, each whether or not anything stands
+  on it (a device may have been told otherwise of the same owner); and
+  to everyone in the town as a plot is filled with something else.
+- **`social::Outcome::Gathered`**, the last of its kind (17): you have
+  been moved to your group's channel (`docs/friends.md`).
+- **The server keeps everyone's land** with anything standing on it in
+  memory (`rooms::Towns::lots`), read as it starts
+  (`SELECT id, name, look, bag FROM players WHERE bag IS NOT NULL`) and
+  kept up from the bags of whoever is here. No table changed.
+- **Who is in a channel** is whoever has a plot of it: in the town, in a
+  game, at home, or gone within five minutes. The line of numbers the
+  server logs each minute counts them so.
+- **Deployed** at 13:55:16 UTC on 2026-11-23, nobody having been
+  connected since 09:29:51; the binary before it kept as
+  `roundtown-server.prev-2026-11-23` (`b4f39103`: who rests, protocol
+  24). Before: the database's new reading run on scratch copies on the
+  VM, dropped after. After: the VM's binary the one built here
+  (`1b7e5524`), "2 of 3 accounts with a bag have something standing on
+  their land", this PC's own account in, hidden, on plot 1 with the two
+  real accounts' land on plots 2 and 3 and made-up land on the rest, and
+  out, the journal clean.
+
 ## Who sits and who lies: three more at the end
 
 2026-11-22, late (`docs/town.md` has what sitting and lying are).

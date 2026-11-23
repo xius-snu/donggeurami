@@ -10,6 +10,7 @@ first.
 
 ## Contents
 
+0. 2026-11-23: edit mode said along the top and round the plot, the edit button beating at a tap on a thing, the hint turned off; APK 52
 1. 2026-11-22, late: a spot of the colour chosen in its window, a hint at edit mode for someone tapping at a thing, and a house's walls numbered the same on every device, so that its doors are in the same wall for everyone; APK 51
 2. 2026-11-22, night: paint taken off with a cross, the colours used along the window's foot, the one button moved up, a tap away letting go, things dragged through each other with a grey tick, a house taking what is in it along, smaller menu buttons set by the thing as drawn, and two faults of see-through (things deaf to a tap, eyes fading); server deployed, APK 50
 3. 2026-11-22, evening: edit mode and its three buttons by the left edge, the paintbrush and the colour window, paint kept by the server and seen by everyone, the car's door where the bag's button is; server deployed, APK 49
@@ -17,6 +18,55 @@ first.
 5. 2026-11-22, afternoon: the coins' number the gems' size and the gem the coin's; a price you cannot afford in red; the box on the bag's button; APK 47
 6. 2026-11-22, later: the shop after Hajun had looked at it (both buttons always, over the picture and see-through; the price under the name; All first shown; six categories with no scrolling); APK 46
 7. 2026-11-22: the bag, its window, gems, and buildings on your plot that everyone sees; APK 45
+
+## 2026-11-23: edit mode is said, and the hint is off; APK 52
+
+Hajun, with the town's plots (`docs/land.md`):
+
+> also i think its hard to tell if you are in house edit mode or not.
+> maybe make it obvious that you are in house edit mode somehow, maybe
+> adding a text "Editing Mode Enabled" on center top of your screen while
+> its active? not sure whats a good way to make it obvious between house
+> edit mode vs normal mode, because i need it to be obvious so that this
+> confusion doesnt happen: my friend was confused cuz she couldnt tap the
+> sleep button next to the bed, but its cuz she was in house edit mode.
+> she was also confused why she couldnt move the object by tapping, but
+> its because she was not in house edit mode. not sure what to fix about
+> this too cuz i think the tip notification to go into house edit mode is
+> not the real fix - should delete that and use another way.
+
+- **A plate along the top, in the middle, for as long as edit mode is
+  on** (`customize::say_so`, `editing_plate`): "Editing Mode Enabled"
+  (`words.bag.editing`), the house and pencil before it, in the grey of
+  your name's plate and on its line. It takes no press, and keeps clear
+  of a camera's hole as the bar does.
+- **The edges of your plot are lit on the ground meanwhile**
+  (`customize::light_the_plot`, `frame`): a white line a third of a metre
+  wide along its four edges, a thing in the world, unlit and see-through
+  as the punch's range is (`colours.bag.editing_edge`).
+- **The other way to say how a thing is moved**: with edit mode off, a
+  tap on a thing of yours makes the edit button by the left edge beat
+  (`customize::Pointed`, `beat`, `swell`): three times in 1.2 s, to a
+  third again its size, a white ring round it. Every time, with no
+  words.
+- **The hint is turned off** (`customize::HINTS`): "Tap the house edit
+  button to move things." is said no more. Its words, its count and its
+  code are kept behind the switch, as what he has taken out before is.
+
+**Mine.** The lit edges, which he did not ask for: the plate says it on
+the screen, and this says it on the land that is being changed. The beat
+in place of the hint. Where the plate is and how big. That the sit and
+lie bubbles stay away in edit mode, as before: a tap there is the
+hand's.
+
+**Checked.** The tests (the plate up only with edit mode on; the beat
+from 1 to 1.35 and back to exactly 1, three times; the frame's four
+strips on the edges of a plot facing any way; the hint said only with
+the switch on). The desktop build, hidden, at 874 by 402 by day: the
+plate, the lit edges from the ground and from over the plot, the button
+mid-beat. **Not checked**: on a phone; by night, when the line is as
+bright as by day; a real tap starting the beat (the switch for it was
+thrown by the script).
 
 ## 2026-11-22, late: the colour chosen shown in its window, a hint at edit mode, and a house's doors in the same wall on every device; APK 51
 

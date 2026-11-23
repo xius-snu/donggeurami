@@ -78,6 +78,8 @@ use crate::shop::Chosen;
 use crate::{EYE_HEIGHT, PLAYER_RADIUS, Player, ThirdPersonCamera, WATER_Y};
 
 pub(crate) mod paint;
+#[cfg(test)]
+mod premade_check;
 pub(crate) mod stand;
 mod town;
 
@@ -2908,10 +2910,19 @@ fn nearest_free(want: f32, (low, high): (f32, f32), taken: &[(f32, f32)]) -> Opt
 
 // ---------------------------------------------------------------- the plot
 
+/// How long after reading the shape of what stands it is before it is read
+/// again, in seconds (since 2026-11-23, when every plot of the town came
+/// to have something on it: some 180,000 triangles are gone through each
+/// time, and at the app's opening a piece's model loads nearly every frame
+/// for a few seconds).
+const RESHAPE_REST: f32 = 0.35;
+
 /// Reads the plot's shape again when something on it has been put down,
 /// picked up or thrown away: the island, and every piece that is down on it
 /// and solid, with its walls as they are cut now.
 fn reshape_plot(
+    time: Res<Time>,
+    mut rested: Local<Option<f32>>,
     mut reshape: ResMut<Reshape>,
     mut gone: RemovedComponents<Piece>,
     tops: Query<(Entity, &Piece, &Venue), Without<Ghost>>,
@@ -2928,9 +2939,15 @@ fn reshape_plot(
     if gone.read().count() > 0 {
         reshape.0 = true;
     }
-    if !std::mem::take(&mut reshape.0) {
+    // No oftener than every [`RESHAPE_REST`]: one thing put down is read
+    // at once, and a town's worth of plots coming in over a few seconds,
+    // each piece as its model loads, a few times and not once a frame.
+    let since = rested.map(|since| since + time.delta_secs());
+    if !reshape.0 || since.is_some_and(|since| since < RESHAPE_REST) {
+        *rested = since;
         return;
     }
+    (*rested, reshape.0) = (Some(0.0), false);
     // Each plot's triangles, a list to each piece.
     let mut plots: Vec<(Venue, Vec<Vec<[Vec3; 3]>>)> = Vec::new();
     for (root, piece, &venue) in &tops {

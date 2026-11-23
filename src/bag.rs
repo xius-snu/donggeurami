@@ -50,7 +50,8 @@ use roundtown_net::{Ask, At, Tell};
 use serde::{Deserialize, Serialize};
 
 use crate::Player;
-use crate::lobby::{Balance, Channel};
+use crate::land::Deeds;
+use crate::lobby::Balance;
 use crate::net::Online;
 
 pub(crate) mod panel;
@@ -262,7 +263,7 @@ pub(crate) fn plugin(app: &mut App) {
         .init_resource::<Theirs>()
         .init_resource::<TheirPaints>()
         .add_message::<Deal>()
-        .add_systems(Update, (come_and_go, hear, deal, save).chain().in_set(BagSystems));
+        .add_systems(Update, (come_and_go, hear, deal, save).chain().in_set(BagSystems).after(crate::land::DeedSystems));
     panel::plugin(app);
 }
 
@@ -331,43 +332,69 @@ fn save(bag: Res<Bag>, mut kept: Local<Option<(rules::Bag, Paints)>>) {
 
 /// As this device comes online, asks the server to tell it of bags from
 /// here on, its own first ([`rules::Ask::Watch`]), and of colours with
-/// them ([`rules::Ask::Colours`]); and as it goes offline, forgets what
-/// stood on everyone else's plot, there being nobody else. And lets go of
-/// whoever is no longer in your channel, as the server says who is: what
-/// it said of their plot is not said again when they are gone.
+/// them ([`rules::Ask::Colours`]). Lets go of the land of whoever has no
+/// plot here any more, as whose each plot is changes (`land::Deeds`): what
+/// the server said of it is not said again when they are gone. And
+/// offline, where nobody says anything, stands on every plot but yours its
+/// own made-up land (`roundtown_net::premade`: the very land the server
+/// fills a plot with when no real person's does, so that a plot filled
+/// here is the same once it has spoken).
 fn come_and_go(
     online: Res<Online>,
-    channel: Res<Channel>,
+    deeds: Res<Deeds>,
     mut was: Local<bool>,
     mut bag: ResMut<Bag>,
     (mut theirs, mut their_paints): (ResMut<Theirs>, ResMut<TheirPaints>),
     mut asks: MessageWriter<Ask>,
 ) {
     let now = online.is();
-    if now != *was {
+    let turned = now != *was;
+    if turned {
         *was = now;
         bag.begin();
         if now {
             bag.ask(&mut asks, rules::Ask::Watch);
             bag.ask(&mut asks, rules::Ask::Colours);
-        } else {
-            if !theirs.0.is_empty() {
-                theirs.0.clear();
-            }
-            if !their_paints.0.is_empty() {
-                their_paints.0.clear();
-            }
         }
     }
-    if now && channel.is_changed() && !channel.0.is_empty() {
-        let here = |who: &u64| channel.0.iter().any(|seated| seated.who == *who);
-        if theirs.0.keys().any(|who| !here(who)) {
-            theirs.0.retain(|who, _| here(who));
-        }
-        if their_paints.0.keys().any(|who| !here(who)) {
-            their_paints.0.retain(|who, _| here(who));
-        }
+    if !(turned || deeds.is_changed()) {
+        return;
     }
+    if now {
+        if deeds.0.is_empty() {
+            return;
+        }
+        if theirs.0.keys().any(|who| !deeds.has(*who)) {
+            theirs.0.retain(|who, _| deeds.has(*who));
+        }
+        if their_paints.0.keys().any(|who| !deeds.has(*who)) {
+            their_paints.0.retain(|who, _| deeds.has(*who));
+        }
+        return;
+    }
+    let (stands, paints) = made_up(&deeds);
+    if theirs.0 != stands {
+        theirs.0 = stands;
+    }
+    if their_paints.0 != paints {
+        their_paints.0 = paints;
+    }
+}
+
+/// What stands on each plot `deeds` gives a made-up owner, and what of it
+/// is painted, by that owner: the plot's own made-up land.
+fn made_up(deeds: &Deeds) -> (HashMap<u64, Vec<Standing>>, HashMap<u64, Vec<Paint>>) {
+    let lots = deeds
+        .0
+        .iter()
+        .filter(|deed| roundtown_net::land::is_premade(deed.who))
+        .map(|deed| roundtown_net::premade::lot(usize::from(deed.plot)));
+    let (mut stands, mut paints) = (HashMap::new(), HashMap::new());
+    for lot in lots {
+        paints.insert(lot.who, lot.paints);
+        stands.insert(lot.who, lot.stands);
+    }
+    (stands, paints)
 }
 
 /// What the server says of bags: your own, what stands on the plots of the
@@ -468,7 +495,7 @@ mod tests {
         world.init_resource::<Bag>();
         world.init_resource::<Theirs>();
         world.init_resource::<TheirPaints>();
-        world.init_resource::<Channel>();
+        world.init_resource::<Deeds>();
         let me = Member {
             id: 7,
             name: "me".into(),
@@ -577,8 +604,8 @@ mod tests {
     }
 
     #[test]
-    fn what_stands_on_someone_s_plot_is_kept_while_they_are_in_your_channel() {
-        use roundtown_net::Seated;
+    fn what_stands_on_someone_s_plot_is_kept_while_they_have_a_plot_here_and_offline_every_plot_has_its_own() {
+        use roundtown_net::land::{Deed, Holder, PLOTS, PREMADE, offline_deeds};
         let mut world = world(true);
         // The one system throughout: it remembers whether it was online.
         let come_and_go = world.register_system(come_and_go);
@@ -596,15 +623,43 @@ mod tests {
         }
         world.run_system_once(hear).unwrap();
         assert_eq!(world.resource::<Theirs>().0.len(), 2);
-        // The server says who is in the channel: 9 has gone.
-        let seated = |who, seat| Seated { who, seat, driving: false };
-        world.resource_mut::<Channel>().0 = vec![seated(7, 0), seated(8, 1)];
+        // The server says whose each plot is: 9 has none any more.
+        let deed = |who, plot| Deed {
+            plot,
+            who,
+            name: "someone".into(),
+            look: "boy".into(),
+            holder: Holder::Here,
+        };
+        world.resource_mut::<Deeds>().0 = vec![deed(8, 1), deed(PREMADE + 2, 2)];
         world.run_system(come_and_go).unwrap();
         assert_eq!(world.resource::<Theirs>().0.keys().copied().collect::<Vec<_>>(), [8]);
-        // Offline there is nobody else.
+        // Offline every plot but yours has its made-up owner, and what
+        // stands on each is that owner's own land, with what of it is
+        // painted.
         world.insert_resource(Online::default());
+        world.resource_mut::<Deeds>().0 = offline_deeds(0);
         world.run_system(come_and_go).unwrap();
-        assert!(world.resource::<Theirs>().0.is_empty());
+        let theirs = world.resource::<Theirs>();
+        assert_eq!(theirs.0.len(), PLOTS - 1);
+        for plot in 1..PLOTS {
+            let lot = roundtown_net::premade::lot(plot);
+            assert_eq!(theirs.0.get(&lot.who), Some(&lot.stands), "plot {plot}");
+            assert_eq!(world.resource::<TheirPaints>().0.get(&lot.who), Some(&lot.paints), "plot {plot}");
+        }
+        assert!(!theirs.0.contains_key(&PREMADE));
+        // Nothing is written again while nothing changes.
+        world.run_system(come_and_go).unwrap();
+        // Online again, what the server has not spoken of yet stays as it
+        // was until it says whose each plot is.
+        world.insert_resource(Online::for_tests(Member {
+            id: 7,
+            name: "me".into(),
+            look: "boy".into(),
+            ai: false,
+        }));
+        world.run_system(come_and_go).unwrap();
+        assert_eq!(world.resource::<Theirs>().0.len(), PLOTS - 1);
     }
 
     #[test]

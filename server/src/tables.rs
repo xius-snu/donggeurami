@@ -1265,7 +1265,7 @@ fn sit(
         Room::Town(_) | Room::Home(_) => {}
     }
     undisguise(ctx.commands, body, ctx.accounts);
-    towns.stand(body);
+    towns.away(body);
     let (Some(table), Some(rules)) = (tables.tables.get_mut(&(game, id)), tables.games.get_mut(&(game, id))) else {
         return;
     };
@@ -1425,7 +1425,7 @@ fn hear(
                 let Ok((mut body_of, spot, venue, _)) = ctx.bodies.get_mut(body) else {
                     continue;
                 };
-                let (channel, town_seat) = towns.sit(body, body_of.town);
+                let (channel, town_seat) = towns.sit(body, body_of.who.0, body_of.town);
                 body_of.town = Some(channel);
                 move_to(
                     ctx.commands,
@@ -2154,7 +2154,7 @@ fn end(ctx: &mut Ctx, table: &Table, everyone: &mut Everyone, towns: &mut Towns)
         let Ok((mut body_of, spot, venue, _)) = ctx.bodies.get_mut(body) else {
             continue;
         };
-        let (channel, town_seat) = towns.sit(body, body_of.town);
+        let (channel, town_seat) = towns.sit(body, body_of.who.0, body_of.town);
         body_of.town = Some(channel);
         move_to(
             ctx.commands,
@@ -2271,7 +2271,7 @@ mod tests {
         fn person(&mut self, id: u64, coins: u32) -> (Entity, Entity) {
             let client = self.world.spawn_empty().id();
             let body = self.world.spawn_empty().id();
-            let (channel, seat) = self.world.resource_mut::<Towns>().sit(body, None);
+            let (channel, seat) = self.world.resource_mut::<Towns>().sit(body, id, None);
             let room = Room::Town(channel);
             let member = Member {
                 id,

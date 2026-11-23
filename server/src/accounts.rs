@@ -166,11 +166,12 @@ pub(crate) fn set_up(db: &mut Client) -> Result<Snapshot, postgres::Error> {
     db.batch_execute(SCHEMA_AFTER)?;
     let snapshot = Snapshot::read(db)?;
     info!(
-        "{} accounts, {} friendships, {} requests and {} messages waiting",
+        "{} accounts, {} friendships, {} requests and {} messages waiting, {} bags kept",
         snapshot.people.len(),
         snapshot.friends.len(),
         snapshot.requests.len(),
-        snapshot.letters.len()
+        snapshot.letters.len(),
+        snapshot.lands.len()
     );
     Ok(snapshot)
 }
@@ -230,6 +231,21 @@ pub(crate) struct Snapshot {
     /// Who asked, and whom.
     pub requests: Vec<(u64, u64)>,
     pub letters: Vec<Letter>,
+    /// Every account that has ever changed its bag, and so may have land
+    /// with something standing on it: what the town's plots are filled
+    /// with when their owners are not there (`rooms::Towns`, since
+    /// 2026-11-23).
+    pub lands: Vec<Land>,
+}
+
+/// One account's land as it is kept: who, what they go by and how they
+/// look, and their bag's own document (`players.bag`).
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct Land {
+    pub id: u64,
+    pub name: String,
+    pub look: String,
+    pub bag: String,
 }
 
 /// One account, as far as its friends are concerned.
@@ -295,11 +311,22 @@ impl Snapshot {
                 text: row.get(3),
             })
             .collect();
+        let lands = db
+            .query("SELECT id, name, look, bag FROM players WHERE bag IS NOT NULL ORDER BY id", &[])?
+            .iter()
+            .map(|row| Land {
+                id: account(row.get(0)),
+                name: row.get(1),
+                look: row.get(2),
+                bag: row.get(3),
+            })
+            .collect();
         Ok(Self {
             people,
             friends,
             requests,
             letters,
+            lands,
         })
     }
 }
@@ -1048,6 +1075,17 @@ mod tests {
         assert_eq!(count(&mut db, "devices"), devices, "a device came or went");
         assert_eq!(count(&mut db, "coin_changes"), changes, "a coin change came or went");
         assert_eq!(first.people.len(), before.len());
+        // Everyone's land comes with them, for the town's plots to be
+        // filled with (since 2026-11-23): every account that keeps a bag,
+        // each of which reads. It says how many, and nothing of whose.
+        let bags: i64 = db.query_one("SELECT count(*) FROM players WHERE bag IS NOT NULL", &[]).expect("bags").get(0);
+        assert_eq!(first.lands.len() as i64, bags);
+        let standing = first
+            .lands
+            .iter()
+            .filter(|land| !crate::bag::lot_kept(land.id, &land.name, &land.look, &land.bag).stands.is_empty())
+            .count();
+        println!("{bags} accounts keep a bag, {standing} of them with something standing on their land");
         // Every account has its gems, ten for one from before there were
         // any, and no bag kept that was not kept before.
         let gems: i64 = db.query_one("SELECT count(*) FROM players WHERE gems IS NULL OR gems < 0", &[]).expect("gems").get(0);

@@ -784,7 +784,8 @@ fn hear(
             | Tell::Entered { .. }
             | Tell::Channel(_)
             | Tell::Bag(_)
-            | Tell::Resting(_) => {}
+            | Tell::Resting(_)
+            | Tell::Plots(_) => {}
         }
     }
 }

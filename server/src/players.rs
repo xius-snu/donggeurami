@@ -91,6 +91,10 @@ const NAMES: &[&str] = &[
     "Podo", "Sagwa", "Gyul", "Hobak", "Bam", "Dalgi", "Haru", "Byeol", "Nuri",
 ];
 
+/// How often the town's channels are looked over, in seconds
+/// ([`mind_the_town`]).
+const MIND_EVERY: f32 = 0.5;
+
 /// A new player's name: "Mochi 482".
 pub(crate) fn new_name() -> String {
     format!(
@@ -109,6 +113,8 @@ pub(crate) struct PlayerSystems;
 pub(crate) fn plugin(app: &mut App) {
     app.init_resource::<Everyone>()
         .add_observer(gone)
+        .add_observer(body_gone)
+        .add_systems(Update, (mind_the_town, gather).chain().run_if(in_state(ServerState::Running)))
         .add_systems(
             PreUpdate,
             (hear, admit, moves)
@@ -440,12 +446,12 @@ fn hear(
                     (_, Room::Arena(_) | Room::Table(..)) => continue,
                     // Home: a room of your own.
                     (Venue::Home, Room::Town(_)) => {
-                        towns.stand(body);
+                        towns.away(body);
                         (Room::Home(member.id), 0)
                     }
                     (Venue::Home, Room::Home(_)) => (Room::Home(member.id), 0),
                     (Venue::Town, Room::Home(_)) => {
-                        let (channel, seat) = towns.sit(body, body_of.town);
+                        let (channel, seat) = towns.sit(body, body_of.who.0, body_of.town);
                         body_of.town = Some(channel);
                         (Room::Town(channel), seat)
                     }
@@ -499,6 +505,11 @@ fn hear(
                 commands.entity(body).insert(Account(member.clone()));
                 if !disguised {
                     commands.entity(body).insert(member.clone());
+                }
+                // The name on their plot's sign is to be the new one
+                // ([`Tell::Plots`], once the body has it).
+                if let Some(channel) = towns.channel_of(body) {
+                    towns.stir(channel);
                 }
                 tell(&mut tells, client, Tell::Welcome { me: member });
             }
@@ -637,13 +648,17 @@ fn hear(
 
 /// Tells every device in a channel of the town that something has changed
 /// in, and that asked to be told ([`Watching`]), of everyone in it: who
-/// sits in which seat, and who is in their own car ([`Tell::Channel`]). The
-/// whole channel each time, sixteen at the most. And each that asked that
+/// is in the town on which plot, and who is in their own car
+/// ([`Tell::Channel`]), the whole channel each time, sixteen at the most;
+/// and whose every plot of the channel is ([`Tell::Plots`], since
+/// 2026-11-23: all 48, those away in a game and those nobody here has
+/// among them, by the name each account goes by). And each that asked that
 /// too ([`Posing`]), who in it sits or lies on something
 /// ([`Tell::Resting`], [`resting_in`]).
 pub(crate) fn tell_channels(
     mut towns: ResMut<Towns>,
     bodies: Query<(&Body, &Member)>,
+    accounts: Query<&Account>,
     watching: Query<(), With<Watching>>,
     posing: Query<(), With<Posing>>,
     mut tells: MessageWriter<ToClients<Tell>>,
@@ -657,9 +672,12 @@ pub(crate) fn tell_channels(
         let seated = towns.seated(channel);
         let (everyone, devices) = channel_of(&seated, |body| bodies.get(body).ok());
         let resting = resting_in(&seated, |body| bodies.get(body).ok());
+        let named = |body: Entity| accounts.get(body).ok().map(|account| (account.0.name.clone(), account.0.look.clone()));
+        let deeds = towns.deeds(channel, named);
         for device in devices {
             if watching.contains(device) {
                 tell(&mut tells, device, Tell::Channel(everyone.clone()));
+                tell(&mut tells, device, Tell::Plots(deeds.clone()));
             }
             if posing.contains(device) {
                 tell(&mut tells, device, Tell::Resting(resting.clone()));
@@ -795,7 +813,7 @@ fn room_for(
         | Venue::KnockOff
         | Venue::BridgeRace
         | Venue::LastStand => {
-            let (channel, seat) = towns.sit(body, rather);
+            let (channel, seat) = towns.sit(body, id, rather);
             (Room::Town(channel), Venue::Town, seat, venue == Venue::Town)
         }
     }
@@ -1068,7 +1086,13 @@ fn admit(
             ai: false,
         };
         let body = commands.spawn_empty().id();
-        let (room, venue, seat, keeps) = room_for(hello.venue, who.0, body, None, &mut towns);
+        // To the channel their group is in, if they are in one and it has
+        // room (Hajun, 2026-11-23: "they should move to the same channel").
+        let with = social
+            .mates(who.0)
+            .into_iter()
+            .find_map(|mate| everyone.0.get(&Who(mate)).and_then(|&mate| towns.channel_of(mate)));
+        let (room, venue, seat, keeps) = room_for(hello.venue, who.0, body, with, &mut towns);
         let town = match room {
             Room::Town(channel) => Some(channel),
             _ => None,
@@ -1177,7 +1201,6 @@ fn gone(
     clients: Query<&Plays>,
     mut bodies: Query<(&mut Body, &Member)>,
     mut everyone: ResMut<Everyone>,
-    mut towns: ResMut<Towns>,
     mut arenas: ResMut<Arenas>,
     mut tables: ResMut<Tables>,
     mut commands: Commands,
@@ -1207,13 +1230,121 @@ fn gone(
             if let Room::Table(..) = body.room {
                 tables.walk_out(body.room, entity);
             }
-            towns.stand(entity);
+            // Its plot of the town is kept a while ([`body_gone`]).
             everyone.0.remove(&body.who);
             commands.entity(entity).despawn();
             info!("{} left", member.name);
         }
         Room::Game(_) => {
             info!("{} dropped out of {:?}", member.name, body.room);
+        }
+    }
+}
+
+/// A body is gone, however it went: whatever plot of the town it had is
+/// kept as it leaves it for a while (`Towns::leave`, `land::GRACE`), with
+/// what stands on it as its bag has it now, so that someone whose phone
+/// only put the app away finds their land where it was, and so does
+/// everyone else in the channel meanwhile.
+fn body_gone(
+    remove: On<Remove, Body>,
+    bodies: Query<(Option<&Account>, Option<&crate::bag::Holds>)>,
+    mut towns: ResMut<Towns>,
+) {
+    let lot = bodies
+        .get(remove.entity)
+        .ok()
+        .and_then(|(account, holds)| Some(holds?.lot(&account?.0)));
+    towns.leave(remove.entity, lot);
+}
+
+/// Looks the town's channels over, [`MIND_EVERY`] seconds: lets go of the
+/// plots kept long enough for someone who went (`Towns::tick`), and says
+/// which plots someone is standing on, none of which whoever comes next
+/// takes from under them (Hajun, 2026-11-23: "unless there is a real
+/// player standing on that plot, then replace the next number plot on the
+/// priority").
+fn mind_the_town(time: Res<Time>, mut since: Local<f32>, mut towns: ResMut<Towns>, bodies: Query<(&Body, &Spot, &Venue)>) {
+    *since += time.delta_secs();
+    if *since < MIND_EVERY {
+        return;
+    }
+    *since = 0.0;
+    towns.tick(time.elapsed_secs_f64());
+    let standing = bodies
+        .iter()
+        .filter_map(|(body, spot, venue)| {
+            let Room::Town(channel) = body.room else {
+                return None;
+            };
+            if *venue != Venue::Town || spot.aboard.is_some() {
+                return None;
+            }
+            Some((channel, land::plot_at(spot.translation().xz())?))
+        })
+        .collect();
+    towns.stood_on(standing);
+}
+
+/// Brings a group together in one channel of the town as someone comes
+/// into it (`Social::take_gathered`; Hajun, 2026-11-23: "if u invite
+/// someone to ur group, they should move to the same channel (if they are
+/// already on the same channel it doesnt matter), but they should first
+/// try to move to the channel of the leader, but if its full with 16
+/// players, then maybe it should go to another channel with 2+ empty spots
+/// so that they are on same channel"): whoever of it has a plot in another
+/// channel than its leader is moved to the leader's, their land with them;
+/// or, that one having no room for them, all of them, the leader too, to
+/// the fullest channel that has room for the whole group, or a new one.
+/// Whoever is in the town is stood on their new plot and told; whoever is
+/// away in a game finds theirs there when they are back.
+#[allow(clippy::too_many_arguments)]
+fn gather(
+    mut social: ResMut<Social>,
+    everyone: Res<Everyone>,
+    mut towns: ResMut<Towns>,
+    mut bodies: Query<(&mut Body, &mut Spot, &mut Venue)>,
+    lots: Query<(&Account, &crate::bag::Holds)>,
+    time: Res<Time>,
+    mut tells: MessageWriter<ToClients<Tell>>,
+    mut commands: Commands,
+) {
+    let now = time.elapsed_secs_f64();
+    for (leader, members) in social.take_gathered() {
+        let body_of = |who: u64| everyone.0.get(&Who(who)).copied();
+        let Some(target) = body_of(leader).and_then(|body| towns.channel_of(body)) else {
+            continue;
+        };
+        // Everyone of the group who has a plot anywhere, and those of them
+        // who have it somewhere else than the leader.
+        let with_plots: Vec<(u64, Entity)> = members
+            .iter()
+            .filter_map(|&who| Some((who, body_of(who)?)))
+            .filter(|&(_, body)| towns.channel_of(body).is_some())
+            .collect();
+        let apart = with_plots.iter().filter(|&&(_, body)| towns.channel_of(body) != Some(target)).count();
+        if apart == 0 {
+            continue;
+        }
+        let to = if towns.room_in(target) >= apart {
+            target
+        } else {
+            towns.roomy(with_plots.len(), target).unwrap_or(towns.channels())
+        };
+        for (who, body) in with_plots {
+            let lot = lots.get(body).ok().map(|(account, holds)| holds.lot(&account.0));
+            let Some(plot) = towns.transfer(body, to, lot) else {
+                continue;
+            };
+            let Ok((mut body_of, spot, venue)) = bodies.get_mut(body) else {
+                continue;
+            };
+            body_of.town = Some(to);
+            info!("{who} is moved to channel {to} of the town, with their group");
+            if matches!(body_of.room, Room::Town(_)) {
+                place(&mut commands, &mut tells, body, (body_of, spot, venue), Room::Town(to), Venue::Town, plot, None, now);
+                social.gathered_to(who);
+            }
         }
     }
 }
@@ -1298,6 +1429,194 @@ mod tests {
         assert_eq!(resting, [Posed { who: 7, pose: Pose::Lie }, Posed { who: 9, pose: Pose::Sit }]);
         // Someone the server puts anywhere is on their feet.
         assert_eq!(Body::person(entity(11), Who(7), Room::Town(0), 0, Some(0), 0, 0.0).pose, None);
+    }
+
+    /// A bare world with the town in it, to seat people in and gather
+    /// their groups; and someone seated in it, in the channel asked for:
+    /// their body and their device.
+    fn town() -> World {
+        let mut world = World::new();
+        world.init_resource::<Messages<ToClients<Tell>>>();
+        world.init_resource::<Everyone>();
+        world.init_resource::<Towns>();
+        world.init_resource::<Time>();
+        world.insert_resource(Social::new(crate::accounts::Snapshot::default()));
+        world
+    }
+
+    fn seated(world: &mut World, id: u64, rather: Option<u16>) -> (Entity, Entity) {
+        use roundtown_net::social::Presence;
+        let (client, body) = (world.spawn_empty().id(), world.spawn_empty().id());
+        let (channel, plot) = world.resource_mut::<Towns>().sit(body, id, rather);
+        let member = Member {
+            id,
+            name: format!("Person {id}"),
+            look: "boy".into(),
+            ai: false,
+        };
+        world.entity_mut(body).insert((
+            Body::person(client, Who(id), Room::Town(channel), plot, Some(channel), 0, 0.0),
+            Spot::default(),
+            Venue::Town,
+            member.clone(),
+            Account(member),
+            crate::bag::Holds::of(&crate::accounts::Record::made_up()),
+        ));
+        world.resource_mut::<Everyone>().0.insert(Who(id), body);
+        let mut social = world.resource_mut::<Social>();
+        social.enroll(id, &format!("Person {id}"), None, 0);
+        social.saw(id, Presence::Town { channel });
+        (body, client)
+    }
+
+    /// Has `them` come into `leader`'s group: friends first, then asked,
+    /// and their yes.
+    fn grouped(world: &mut World, leader: u64, them: u64) {
+        use roundtown_net::social::{Act, News, Post};
+        let mut social = world.resource_mut::<Social>();
+        social.act(leader, Act::Befriend(them), 0.0);
+        social.act(them, Act::Befriend(leader), 0.0);
+        social.told();
+        social.act(leader, Act::Invite(them), 0.0);
+        let mail = social
+            .told()
+            .into_iter()
+            .find_map(|(to, news)| match news {
+                News::Inbox(mail) if to == them => mail.into_iter().find(|mail| mail.what == Post::Invite).map(|mail| mail.id),
+                _ => None,
+            })
+            .expect("asked into the group");
+        social.act(them, Act::Answer { mail, yes: true }, 0.0);
+        social.told();
+    }
+
+    /// Where the server has told `device` to stand since this was last
+    /// asked: each plot of the town it was put on.
+    fn put_on(world: &mut World, device: Entity) -> Vec<u8> {
+        let mut all = world.resource_mut::<Messages<ToClients<Tell>>>();
+        all.drain()
+            .filter(|told| matches!(told.targets, SendTargets::Single(ClientId::Client(to)) if to == device))
+            .filter_map(|told| match told.message {
+                Tell::Arrive {
+                    venue: Venue::Town,
+                    seat,
+                    spot: None,
+                    ..
+                } => Some(seat),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn someone_who_comes_into_a_group_is_moved_to_its_leader_s_channel_their_land_with_them() {
+        use bevy::ecs::system::RunSystemOnce;
+        use roundtown_net::social::{News, Outcome};
+        let mut world = town();
+        let (leader, leaders) = seated(&mut world, 1, None);
+        let (them, theirs) = seated(&mut world, 2, Some(1));
+        let (other, _) = seated(&mut world, 3, Some(1));
+        assert_eq!(world.resource::<Towns>().counts(), vec![1, 2]);
+        // In one channel already: nobody is moved.
+        grouped(&mut world, 2, 3);
+        world.run_system_once(gather).unwrap();
+        assert_eq!(world.resource::<Towns>().counts(), vec![1, 2]);
+        // Into the leader's group from another channel: moved to the
+        // leader's, stood on the plot they have there and told; the leader
+        // stays where they are, and whoever is left where they were.
+        grouped(&mut world, 1, 2);
+        world.run_system_once(gather).unwrap();
+        world.flush();
+        let towns = world.resource::<Towns>();
+        assert_eq!((towns.channel_of(leader), towns.channel_of(them), towns.channel_of(other)), (Some(0), Some(0), Some(1)));
+        assert_eq!(towns.counts(), vec![2, 1]);
+        let body = world.get::<Body>(them).unwrap();
+        assert_eq!((body.room, body.seat, body.town), (Room::Town(0), 1, Some(0)));
+        assert_eq!(world.get::<crate::rooms::InRoom>(them).map(|room| room.0), Some(Room::Town(0)));
+        assert_eq!(put_on(&mut world, theirs), [1]);
+        assert!(put_on(&mut world, leaders).is_empty());
+        let said: Vec<(u64, News)> = world.resource_mut::<Social>().told();
+        assert!(said.contains(&(2, News::Said(Outcome::Gathered))), "{said:?}");
+        assert!(!said.contains(&(1, News::Said(Outcome::Gathered))));
+    }
+
+    #[test]
+    fn with_no_room_in_its_leader_s_channel_the_whole_group_goes_where_there_is_room_for_it() {
+        use bevy::ecs::system::RunSystemOnce;
+        let mut world = town();
+        // The leader in a full channel, and whoever comes into their group
+        // in another with a few in it.
+        let (leader, leaders) = seated(&mut world, 1, None);
+        for id in 10..10 + roundtown_net::TOWN_SEATS as u64 - 1 {
+            seated(&mut world, id, None);
+        }
+        let (them, theirs) = seated(&mut world, 2, None);
+        seated(&mut world, 3, None);
+        assert_eq!(world.resource::<Towns>().counts(), vec![roundtown_net::TOWN_SEATS, 2]);
+        grouped(&mut world, 1, 2);
+        world.run_system_once(gather).unwrap();
+        world.flush();
+        // Both in the other channel now: the leader moved to it, and stood
+        // on their plot there; the one already there is as they were.
+        let towns = world.resource::<Towns>();
+        assert_eq!((towns.channel_of(leader), towns.channel_of(them)), (Some(1), Some(1)));
+        assert_eq!(towns.counts(), vec![roundtown_net::TOWN_SEATS - 1, 3]);
+        assert_eq!(put_on(&mut world, leaders), [2]);
+        assert!(put_on(&mut world, theirs).is_empty());
+        // Away in a game, someone is moved without being stood anywhere:
+        // their plot is in the channel they come back to.
+        let mut world = town();
+        let (leader, _) = seated(&mut world, 1, None);
+        let (them, theirs) = seated(&mut world, 2, Some(1));
+        world.resource_mut::<Towns>().away(them);
+        world.get_mut::<Body>(them).unwrap().room = Room::Table(roundtown_net::Minigame::KnockOff, 0);
+        grouped(&mut world, 1, 2);
+        world.run_system_once(gather).unwrap();
+        world.flush();
+        let towns = world.resource::<Towns>();
+        assert_eq!((towns.channel_of(leader), towns.channel_of(them)), (Some(0), Some(0)));
+        assert_eq!(towns.held_in(0), [(0, leader, false), (1, them, true)]);
+        assert!(put_on(&mut world, theirs).is_empty());
+        assert_eq!(world.get::<Body>(them).unwrap().town, Some(0));
+        // Back from the game, they sit down where they are kept.
+        assert_eq!(world.resource_mut::<Towns>().sit(them, 2, Some(1)), (0, 1));
+    }
+
+    #[test]
+    fn a_body_that_is_gone_leaves_its_plot_kept_as_it_was_and_everyone_is_told_whose_each_is() {
+        use bevy::ecs::system::RunSystemOnce;
+        use roundtown_net::land::{Holder, PLOTS};
+        let mut world = town();
+        world.add_observer(body_gone);
+        let (_, first) = seated(&mut world, 1, None);
+        let (them, _) = seated(&mut world, 2, None);
+        world.entity_mut(first).insert(Watching);
+        // Everyone in the town who asked is told whose every plot is, by
+        // the names their accounts go by.
+        world.run_system_once(tell_channels).unwrap();
+        let plots = |world: &mut World| {
+            let mut all = world.resource_mut::<Messages<ToClients<Tell>>>();
+            all.drain()
+                .filter_map(|told| match told.message {
+                    Tell::Plots(deeds) => Some(deeds),
+                    _ => None,
+                })
+                .last()
+        };
+        let deeds = plots(&mut world).expect("told of the plots");
+        assert_eq!(deeds.len(), PLOTS);
+        assert_eq!((deeds[1].who, deeds[1].name.as_str(), deeds[1].holder), (2, "Person 2", Holder::Here));
+        assert_eq!(deeds[2].holder, Holder::Minded);
+        // Their body despawned, however: the plot is theirs still, with
+        // nobody on it, and the channel is told so.
+        world.entity_mut(them).despawn();
+        world.run_system_once(tell_channels).unwrap();
+        let deeds = plots(&mut world).expect("told again");
+        assert_eq!((deeds[1].who, deeds[1].name.as_str(), deeds[1].holder), (2, "Person 2", Holder::Away));
+        assert_eq!(world.resource::<Towns>().counts(), vec![2]);
+        // Nothing is told while nothing changes.
+        world.run_system_once(tell_channels).unwrap();
+        assert!(plots(&mut world).is_none());
     }
 
     fn spot(x: f32, y: f32, z: f32) -> Spot {
