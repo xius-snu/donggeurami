@@ -10,18 +10,89 @@ first.
 
 ## Contents
 
-0. 2026-11-25, later: everything on his list in the shop, 118 things: the cars, 17 houses, 59 things for a house; prices in gems; a seventh rarity; what hangs from a ceiling, and two things that light a room; the gifts to two accounts; server deployed, APK 55
-1. 2026-11-25: Hajun's list of rarities filled in with the 22 other cars, the 56 downloaded things and his cabinet, bathtub and end table; the list alone, nothing in the game (all of it in the game the same night, above)
-2. 2026-11-23: edit mode said along the top and round the plot, the edit button beating at a tap on a thing, the hint turned off; APK 52
-3. 2026-11-22, late: a spot of the colour chosen in its window, a hint at edit mode for someone tapping at a thing, and a house's walls numbered the same on every device, so that its doors are in the same wall for everyone; APK 51
-4. 2026-11-22, night: paint taken off with a cross, the colours used along the window's foot, the one button moved up, a tap away letting go, things dragged through each other with a grey tick, a house taking what is in it along, smaller menu buttons set by the thing as drawn, and two faults of see-through (things deaf to a tap, eyes fading); server deployed, APK 50
-5. 2026-11-22, evening: edit mode and its three buttons by the left edge, the paintbrush and the colour window, paint kept by the server and seen by everyone, the car's door where the bag's button is; server deployed, APK 49
-6. 2026-11-22, after that: a list flicked goes on by itself as a phone's does, and a swipe across the window changes its tab; APK 48
-7. 2026-11-22, afternoon: the coins' number the gems' size and the gem the coin's; a price you cannot afford in red; the box on the bag's button; APK 47
-8. 2026-11-22, later: the shop after Hajun had looked at it (both buttons always, over the picture and see-through; the price under the name; All first shown; six categories with no scrolling); APK 46
-9. 2026-11-22: the bag, its window, gems, and buildings on your plot that everyone sees; APK 45
+1. 2026-11-25, that night: the bin takes what is in a house, small things onto tops, what is in the way by its shape, the painting on a wall; APK 56
+2. 2026-11-25, later: everything on Hajun's list in the shop, 118 things: the cars, 17 houses, 59 things for a house; prices in gems; a seventh rarity; what hangs from a ceiling, and two things that light a room; the gifts to two accounts; server deployed, APK 55
+3. 2026-11-25: Hajun's list of rarities filled in with the 22 other cars, the 56 downloaded things and Hajun's cabinet, bathtub and end table; the list alone, nothing in the game (all of it in the game the same night, above)
+4. 2026-11-23: edit mode said along the top and round the plot, the edit button beating at a tap on a thing, the hint turned off; APK 52
+5. 2026-11-22, late: a spot of the colour chosen in its window, a hint at edit mode for someone tapping at a thing, and a house's walls numbered the same on every device, so that its doors are in the same wall for everyone; APK 51
+6. 2026-11-22, night: paint taken off with a cross, the colours used along the window's foot, the one button moved up, a tap away letting go, things dragged through each other with a grey tick, a house taking what is in it along, smaller menu buttons set by the thing as drawn, and two faults of see-through (things deaf to a tap, eyes fading); server deployed, APK 50
+7. 2026-11-22, evening: edit mode and its three buttons by the left edge, the paintbrush and the colour window, paint kept by the server and seen by everyone, the car's door where the bag's button is; server deployed, APK 49
+8. 2026-11-22, after that: a list flicked goes on by itself as a phone's does, and a swipe across the window changes its tab; APK 48
+9. 2026-11-22, afternoon: the coins' number the gems' size and the gem the coin's; a price you cannot afford in red; the box on the bag's button; APK 47
+10. 2026-11-22, later: the shop after Hajun had looked at it (both buttons always, over the picture and see-through; the price under the name; All first shown; six categories with no scrolling); APK 46
+11. 2026-11-22: the bag, its window, gems, and buildings on your plot that everyone sees; APK 45
 
-## 2026-11-25, later: everything on his list in the shop; server deployed, APK 55
+## 2026-11-25, that night: the bin takes what is in a house; small things on tops; what is in the way by its shape; the painting on a wall; APK 56
+
+Hajun, in messages as the work went: "when u delete a 2 floor house, and
+there is a furniture on the 2nd floor, the 2nd floor furniture disappears
+but reappers when u place another house. when u delete a house all the
+furnitures in that house should disappear. just fix, dont rebuild yt";
+"also the things like hamburger, mug with office tool, etc. the desk
+gadgets - they are supposed to be easy to be placed on desks and
+tables,etc on other surfaces that may be different level from where ur
+standing but when i drag it over to a desk it doesnt go on top of the
+desk, but rather on the floor or somewhere so far down in the building";
+"and make sure that those small asset like hamburger, etc. can stand on
+top of the cabinet/table like asset even dragged around. it need to be
+easy to place them on top of other object even if it started on the
+ground or a different level"; "also i think right now, the collision for
+preventing the placement of objects over each other is tooo strong so
+even they are not touching each other or the wall, the checkmark
+disappear and i cannot place it next to each other. loosen the
+sensitivity of that a bit"; "also painting is supposed to go on the wall,
+not the ground. rotate the blender asset for that one and make it go on
+walls".
+
+- **The bin takes what is in a house** (`stand::note_edits`): binning a
+  house takes into the bag, with it and its doors and windows, whatever
+  stood on its floors, upstairs or down, and the small things on those,
+  and out of the world at once. Until now what was in it was left
+  standing where the bag had it: upstairs, in the air, unseen, and in the
+  next house put down. Nothing of the server's: the device asks for each
+  thing back, as it did for the doors.
+- **Small things** (`PieceDef::small`, 29 of the 59 that came that day,
+  mine to choose: what one would put on a desk, a table or a shelf, and
+  none of what stands on a floor however small, the stool, the bin, the
+  gas bottle): **dragged over the top of something on your plot, one goes
+  up onto it** (`build::top_under`): the finger's ray is cast against the
+  meshes of what stands on your plot, and where it meets a top (a face
+  within 25 degrees of level) the thing stands there; where it meets a
+  side, as a finger over a table's front edge does from the camera's low
+  angle, on the top straight down from just inside it. Off a top, it goes
+  where the finger meets the floor under it, not the top's level. It is
+  in nothing it stands on (`stops_on` gives a small thing only the walls).
+  **Anything picked up takes the small things on it** (`stand::Rides`, a
+  house's whatever is in it as before, and the small things on those):
+  a desk carries its computer, and binned, takes it into the bag.
+- **What is in the way is judged by shapes** (`build::in_anything`, for
+  everything that stands on a floor): over the whole footprint, a point
+  each 20 cm, from 5 cm over its foot (`FOOTING`) to its own top, against
+  the shapes of what stands there. It was by the boxes round things, and
+  between a step over the foot and a body's height: a box is bigger than
+  the couch, the chair's legs, the L shaped couch's empty corner in it, so
+  that things that did not touch would not go together, and a stool would
+  not go under a table. Now a stool goes under a table top, and what is
+  no more than 5 cm high is stood over; a chair whose back would be in
+  the table top still may not go there. What hangs from a ceiling keeps
+  to boxes, among what else hangs.
+- **The painting hangs on a wall** (`Mount::Hanging`, a Decoration): stood
+  up in its `.blend` by `blender/stand_painting.py`, a quarter turn about
+  X, its back at its origin, facing out, as `make_build_items.py` made the
+  script's; its picture in the shop rendered again. It is as small on a
+  house's wall as it came (its size is Hajun's to say).
+- **Checked**: unit tests for each (the bin with a bed upstairs, a
+  chandelier and a lamp outside; a desk carrying a box and a mug on the
+  box, a hamburger under it left; the L shaped desk's empty corner, the
+  stool under a slab, the chair that is not; what is a top); in the
+  desktop build, hidden: a hamburger brought out on the ground and dragged
+  by the mouse onto a desk, on its top at 1.35 m and put down (it first
+  met the desk's front edge: the side rule is from that); the painting
+  brought out in a house and put down on a wall, upright, facing into the
+  room, seen close; the made-up lots' rooms, which the checker holds to
+  all of it. **Not checked**: a phone; a finger, rather than the mouse.
+
+## 2026-11-25, later: everything on Hajun's list in the shop; server deployed, APK 55
 
 Hajun, that night, one after another: "add all the new cars in assets/cars
 to the itemshop, and use the assets/cars/previews images as the item shop
@@ -44,7 +115,7 @@ push".
 - **The things there are** (`roundtown_net::bag::THINGS`) are every line
   of `assets/itemrarities.txt`, in its order, at its rarities, 118 where
   there were twenty: 95 buildings (the street lamp, his ten pieces of
-  furniture and seven doors and windows, the 56 downloads and his cabinet,
+  furniture and seven doors and windows, the 56 downloads and Hajun's cabinet,
   bathtub and end table, and 21 houses) and 23 cars. A test reads the file
   and holds every line to a thing, its rarity and its "(gem)", and every
   thing to a line (`bag::panel`, `every_line_of_hajun_s_list...`): change

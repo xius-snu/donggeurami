@@ -504,7 +504,9 @@ fn faults(lot: &Lot, plot: &Plot, town: &mut Island, models: &[Model]) -> Vec<St
             model,
             place,
             part: model.triangles.iter().map(|triangle| triangle.map(|corner| place.transform_point(corner))).collect(),
-            inside: rooms.hold(into_house.transform_point3(place.translation), house.bounds.high.y),
+            // In the house: over a floor of it, its roof terrace and what is
+            // on things there too.
+            inside: rooms.hold(into_house.transform_point3(place.translation), house.bounds.high.y + 2.0),
         })
         .collect();
     let storeys: Vec<Storey> = house
@@ -561,8 +563,20 @@ fn faults(lot: &Lot, plot: &Plot, town: &mut Island, models: &[Model]) -> Vec<St
     // -------------------------------------- what stands on the floors
     for (index, thing) in things.iter().enumerate() {
         // The town's shape with everything else down, as it is while this
-        // one is in someone's hand.
-        let others = things.iter().enumerate().filter(|&(other, _)| other != index).map(|(_, other)| other);
+        // one is in someone's hand: but for the small things on it, which
+        // are carried with it (`stand::Rides`).
+        let on_it = |other: &Down| {
+            let own = thing.place.compute_affine().inverse().transform_point3(other.place.translation);
+            let (low, high) = (thing.model.bounds.low, thing.model.bounds.high);
+            other.model.def.small
+                && own.x >= low.x
+                && own.x <= high.x
+                && own.z >= low.z
+                && own.z <= high.z
+                && own.y > low.y + 0.1
+                && own.y <= high.y + 0.05
+        };
+        let others = things.iter().enumerate().filter(|&(other, down)| other != index && !on_it(down)).map(|(_, other)| other);
         let parts: Vec<&[[Vec3; 3]]> = std::iter::once(sign.as_slice())
             .chain(house_parts.iter().map(Vec::as_slice))
             .chain(others.clone().map(|other| other.part.as_slice()))
@@ -588,9 +602,27 @@ fn faults(lot: &Lot, plot: &Plot, town: &mut Island, models: &[Model]) -> Vec<St
         if let Some(why) = misfit(&*town, &*town, yard, Mount::Floor, at, turn, bounds, &stops) {
             faults.push(format!("{} may not be put down where it is: {why:?}", called(thing.stood)));
         }
-        let floor = floor_under(yard, &storeys, at.xz(), at.y + LAND_STEP_UP);
-        if (floor - at.y).abs() > SAME {
-            faults.push(format!("{} stands {} up, where the floor under it is {floor} up", called(thing.stood), at.y));
+        // On its floor; or a small thing (`PieceDef::small`), on the top
+        // of something else that stands there, as a finger dragging it over
+        // that puts it (`super::top_under`).
+        if thing.model.def.small {
+            let others: Vec<&[[Vec3; 3]]> = things
+                .iter()
+                .enumerate()
+                .filter(|&(other, _)| other != index)
+                .map(|(_, other)| other.part.as_slice())
+                .collect();
+            let tops = Island::of_parts_for_tests(&others);
+            let floor = floor_under(yard, &storeys, at.xz(), at.y + LAND_STEP_UP);
+            let top = tops.floor(at.xz(), at.y + SAME).unwrap_or(f32::NEG_INFINITY).max(floor);
+            if (top - at.y).abs() > 0.02 {
+                faults.push(format!("{} stands {} up, where what is under it is {top} up", called(thing.stood), at.y));
+            }
+        } else {
+            let floor = floor_under(yard, &storeys, at.xz(), at.y + LAND_STEP_UP);
+            if (floor - at.y).abs() > SAME {
+                faults.push(format!("{} stands {} up, where the floor under it is {floor} up", called(thing.stood), at.y));
+            }
         }
         let shape = footprint(&thing.place, bounds);
         let from_the_sign = apart(&shape, &sign_shape);
@@ -732,18 +764,9 @@ fn faults(lot: &Lot, plot: &Plot, town: &mut Island, models: &[Model]) -> Vec<St
         })
     };
     let clear = |from: Vec3, to: Vec3| town.sweep(from, to, 0.05).is_none();
-    let (mut beds, mut seats, mut fronted) = (0, 0, 0);
-    for thing in &things {
-        let places = rest::spots(thing.kind());
-        if places.is_empty() {
-            continue;
-        }
-        let bounds = thing.model.bounds;
-        let is_bed = places.iter().any(|place| place.pose == roundtown_net::Pose::Lie);
-        // In the house, on its ground floor.
-        let housed = thing.inside && thing.place.translation.y - home.translation.y < 1.0;
-        // The game offers each of its places to someone who has walked up
-        // to it (`rest::offered`): from some square walked to.
+    // Which of a thing's places the game offers to someone who has walked
+    // up to it (`rest::offered`): from some square walked to.
+    let offered_somewhere = |thing: &Down, places: &[rest::Spot]| {
         let mut offered = vec![false; places.len()];
         for row in 0..across {
             for column in 0..across {
@@ -755,11 +778,38 @@ fn faults(lot: &Lot, plot: &Plot, town: &mut Island, models: &[Model]) -> Vec<St
                     continue;
                 }
                 let you = Vec3::new(at.x, feet, at.y);
-                for place in rest::offered(you, &thing.place, &bounds, places, false, &[], &clear) {
+                for place in rest::offered(you, &thing.place, &thing.model.bounds, places, false, &[], &clear) {
                     offered[place] = true;
                 }
             }
         }
+        offered
+    };
+    let (mut beds, mut seats, mut fronted) = (0, 0, 0);
+    for thing in &things {
+        let places = rest::spots(thing.kind());
+        if places.is_empty() {
+            continue;
+        }
+        let bounds = thing.model.bounds;
+        let lain_in = places.iter().any(|place| place.pose == roundtown_net::Pose::Lie);
+        // The bathtub is lain in, along it, and is no bed: floor beside one
+        // of its long sides, and it counts as neither a bed nor a seat.
+        if thing.kind() == "bathtub" {
+            if offered_somewhere(thing, places).contains(&false) {
+                faults.push(format!("nobody gets into {}", called(thing.stood)));
+            }
+            if !(floor_beside(thing, (0.0, bounds.low.z), (0.0, -1.0)) || floor_beside(thing, (0.0, bounds.high.z), (0.0, 1.0))) {
+                faults.push(format!("there is no floor beside {}", called(thing.stood)));
+            }
+            continue;
+        }
+        let is_bed = lain_in;
+        // In the house, on its ground floor.
+        let housed = thing.inside && thing.place.translation.y - home.translation.y < 1.0;
+        // The game offers each of its places to someone who has walked up
+        // to it (`rest::offered`): from some square walked to.
+        let offered = offered_somewhere(thing, places);
         if offered.contains(&false) {
             faults.push(format!("nobody gets to rest on {}: of its places, the game offers {offered:?}", called(thing.stood)));
         }
@@ -783,7 +833,7 @@ fn faults(lot: &Lot, plot: &Plot, town: &mut Island, models: &[Model]) -> Vec<St
         let at_a_table = things.iter().any(|other| {
             let own = other.place.compute_affine().inverse().transform_point3(Vec3::new(before.x, other.place.translation.y, before.y));
             let (low, high) = (other.model.bounds.low, other.model.bounds.high);
-            other.kind() == "circletable" && own.x > low.x && own.x < high.x && own.z > low.z && own.z < high.z
+            ["circletable", "table", "table_large_circular", "desk"].contains(&other.kind()) && own.x > low.x && own.x < high.x && own.z > low.z && own.z < high.z
         });
         let about = floor_beside(thing, (0.0, bounds.high.z), (0.0, 1.0))
             || floor_beside(thing, (bounds.high.x, 0.0), (1.0, 0.0))
@@ -912,9 +962,9 @@ fn a_lot_the_game_would_not_let_stand_is_found_out() {
     assert!(said(&moved("doublebed", on_the_ground(-4.0, 0.1, 3.9))).contains("may not be put down"));
     assert!(said(&moved("doublebed", on_the_ground(3.95, 0.6, 7.72))).contains("where the floor under it is"));
     assert!(said(&moved("doublebed", on_the_ground(-8.0, 0.0, 0.0))).contains("0 beds stand in the house"));
-    // The lamp against the sign, and at the foot of the door.
-    assert!(said(&moved("streetlamp", on_the_ground(-6.0, 0.0, -10.5))).contains("from the sign"));
-    assert!(said(&moved("streetlamp", on_the_ground(-2.6, 0.0, -2.5))).contains("in front of"));
+    // The barbecue on its lawn against the sign, and at the foot of the door.
+    assert!(said(&moved("barbecue", on_the_ground(-6.0, 0.0, -10.5))).contains("from the sign"));
+    assert!(said(&moved("barbecue", on_the_ground(-2.6, 0.0, -2.5))).contains("in front of"));
     // The door where the window is, half out of the end of its wall, and
     // in a wall there is not; and a window off its sill.
     let in_a_wall = |wall: u8, along: f32, up: f32| At::Wall { wall, along, up, face: 1 };
@@ -1025,7 +1075,8 @@ fn all_the_made_up_lots_together_are_light_to_draw_and_no_two_alike() {
     // No two alike, whoever they are, and each unlike the one before it in
     // at least three ways: its house, where the house stands, which way it
     // is turned, its door, and its walls' colour.
-    let house = |lot: &Lot| lot.stands.iter().find(|stood| stood.kind.starts_with("square_house")).cloned();
+    let is_house = |kind: &str| PIECES.iter().any(|def| def.kind == kind && def.mount == Mount::House);
+    let house = |lot: &Lot| lot.stands.iter().find(|stood| is_house(&stood.kind)).cloned();
     let door = |lot: &Lot| lot.stands.iter().find(|stood| stood.kind.contains("door")).map(|stood| stood.kind.clone());
     let walls = |lot: &Lot| lot.paints.iter().find(|paint| paint.part == "plain_wall").map(|paint| paint.colour);
     let (mut flat, mut eighths) = (0, 0);

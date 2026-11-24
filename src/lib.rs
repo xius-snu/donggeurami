@@ -87,6 +87,7 @@ mod blend_in;
 mod knock_off;
 mod bridge_race;
 mod last_stand;
+mod working;
 #[cfg(test)] mod race_bake;
 use island::{Island, Islands, Venue};
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
@@ -1476,6 +1477,7 @@ pub fn main() {
     talk::plugin(&mut app);
     // Sitting and lying down on what stands on the town's plots.
     rest::plugin(&mut app);
+    working::plugin(&mut app);
     resident::plugin(&mut app);
     // The House Builder in the town, and the game they ask you to play: the
     // shop to build with, and what is built.

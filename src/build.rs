@@ -56,13 +56,14 @@
 //! square of the town's land ([`Yard`]) that whatever is put down has to
 //! stay inside, the whole of it.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use bevy::asset::RenderAssetUsages;
 use bevy::gltf::GltfMaterialName;
 use bevy::light::NotShadowCaster;
 use bevy::math::Affine3A;
 use bevy::mesh::{PrimitiveTopology, VertexAttributeValues};
+use bevy::picking::mesh_picking::ray_cast::{MeshRayCast, MeshRayCastSettings};
 use bevy::prelude::*;
 use bevy::world_serialization::{WorldAsset, WorldInstanceReady};
 
@@ -136,48 +137,48 @@ pub(crate) const PIECES: &[PieceDef] = &[
     new_one("end_table", "end_table", "End Table"),
     new_one("cabinet", "cabinet", "Cabinet"),
     new_one("bathtub", "bathtub", "Bathtub"),
-    new_one("alarm_clock", "Alarm Clock", "Alarm Clock"),
+    new_small("alarm_clock", "Alarm Clock", "Alarm Clock"),
     new_one("chair", "Chair", "Chair"),
     new_one("closed_umbrella", "Closed Umbrella", "Closed Umbrella"),
-    new_one("computer_mouse", "Computer Mouse", "Computer Mouse"),
-    new_one("cup_of_tea", "Cup Of Tea", "Cup Of Tea"),
-    new_one("dumbbell", "Dumbbell", "Dumbbell"),
-    new_one("empty_box", "Empty Box", "Empty Box"),
-    new_one("frying_pan", "Frying Pan", "Frying Pan"),
-    new_one("hair_dryer", "Hair Dryer", "Hair Dryer"),
-    new_one("hamburger", "Hamburger", "Hamburger"),
+    new_small("computer_mouse", "Computer Mouse", "Computer Mouse"),
+    new_small("cup_of_tea", "Cup Of Tea", "Cup Of Tea"),
+    new_small("dumbbell", "Dumbbell", "Dumbbell"),
+    new_small("empty_box", "Empty Box", "Empty Box"),
+    new_small("frying_pan", "Frying Pan", "Frying Pan"),
+    new_small("hair_dryer", "Hair Dryer", "Hair Dryer"),
+    new_small("hamburger", "Hamburger", "Hamburger"),
     new_one("hand_rake", "Hand Rake", "Hand Rake"),
-    new_one("mug_with_office_tool", "Mug With Office Tool", "Mug With Office Tool"),
-    new_one("screwdriver", "Screwdriver", "Screwdriver"),
-    new_one("stapler", "Stapler", "Stapler"),
+    new_small("mug_with_office_tool", "Mug With Office Tool", "Mug With Office Tool"),
+    new_small("screwdriver", "Screwdriver", "Screwdriver"),
+    new_small("stapler", "Stapler", "Stapler"),
     new_one("stool", "Stool", "Stool"),
     new_one("table", "Table", "Table"),
-    new_one("tissue_box", "Tissue Box", "Tissue Box"),
+    new_small("tissue_box", "Tissue Box", "Tissue Box"),
     new_one("trash_bin", "Trash Bin", "Trash Bin"),
-    new_one("watering_can", "Watering Can", "Watering Can"),
-    new_one("wine_glass", "Wine Glass", "Wine Glass"),
+    new_small("watering_can", "Watering Can", "Watering Can"),
+    new_small("wine_glass", "Wine Glass", "Wine Glass"),
     new_one("armchair", "Armchair", "Armchair"),
     new_one("bathroom_sink", "Bathroom Sink", "Bathroom Sink"),
     new_one("coat_rack", "Coat Rack", "Coat Rack"),
     new_one("desk", "Desk", "Desk"),
-    new_one("desk_fan", "Desk Fan", "Desk Fan"),
-    new_one("doll", "Doll", "Doll"),
+    new_small("desk_fan", "Desk Fan", "Desk Fan"),
+    new_small("doll", "Doll", "Doll"),
     new_one("dresser", "Dresser", "Dresser"),
-    new_one("flowers", "Flowers", "Flowers"),
-    new_one("fruit_bowl", "Fruit Bowl", "Fruit Bowl"),
-    new_one("globe", "Globe", "Globe"),
-    new_one("headphones", "Headphones", "Headphones"),
+    new_small("flowers", "Flowers", "Flowers"),
+    new_small("fruit_bowl", "Fruit Bowl", "Fruit Bowl"),
+    new_small("globe", "Globe", "Globe"),
+    new_small("headphones", "Headphones", "Headphones"),
     // Lit at night (`lamps::BY_KIND`).
-    new_one("lamp_with_shade", "Lamp With Shade", "Lamp With Shade"),
+    new_small("lamp_with_shade", "Lamp With Shade", "Lamp With Shade"),
     new_one("mailbox", "Mailbox", "Mailbox"),
-    new_one("monitor", "Monitor", "Monitor"),
-    new_one("painting", "Painting", "Painting"),
-    new_one("piggy_bank", "Piggy Bank", "Piggy Bank"),
-    new_one("potted_plant", "Potted Plant", "Potted Plant"),
-    new_one("present", "Present", "Present"),
-    new_one("printer", "Printer", "Printer"),
+    new_small("monitor", "Monitor", "Monitor"),
+    new_hanging("painting", "Painting", "Painting"),
+    new_small("piggy_bank", "Piggy Bank", "Piggy Bank"),
+    new_small("potted_plant", "Potted Plant", "Potted Plant"),
+    new_small("present", "Present", "Present"),
+    new_small("printer", "Printer", "Printer"),
     new_one("propane_tank", "Propane Tank", "Propane Tank"),
-    new_one("rubber_duck", "Rubber Duck", "Rubber Duck"),
+    new_small("rubber_duck", "Rubber Duck", "Rubber Duck"),
     new_one("table_large_circular", "Table Large Circular", "Table Large Circular"),
     new_one("toilet", "Toilet", "Toilet"),
     new_one("barbecue", "Barbecue", "Barbecue"),
@@ -186,7 +187,7 @@ pub(crate) const PIECES: &[PieceDef] = &[
     // "chandelier should only be placeable on ceiling, and ceiling fan also
     // only on ceiling").
     new_ceiling("ceiling_fan", "Ceiling Fan", "Ceiling Fan"),
-    new_one("computer", "Computer", "Computer"),
+    new_small("computer", "Computer", "Computer"),
     new_one("couch", "Couch", "Couch"),
     // The file keeps the download's spelling.
     new_one("refrigerator", "Refrigirator", "Refrigerator"),
@@ -194,7 +195,7 @@ pub(crate) const PIECES: &[PieceDef] = &[
     new_one("stove", "Stove", "Stove"),
     new_one("treadmill", "Treadmill", "Treadmill"),
     new_one("grandfathers_clock", "Grandfathers Clock", "Grandfathers Clock"),
-    new_one("safe", "Safe", "Safe"),
+    new_small("safe", "Safe", "Safe"),
     new_one("telescope", "Telescope", "Telescope"),
     // Hung from a ceiling, and lit at night (`lamps::BY_KIND`; Hajun:
     // "chandelier should emit light").
@@ -290,6 +291,16 @@ pub(crate) struct PieceDef {
     /// Whether House Builder's shop sells it: the nineteen it always has,
     /// and none of what came for the town's plots alone on 2026-11-25.
     pub house_builder: bool,
+    /// Whether it is a small thing that goes on top of others, a desk, a
+    /// table, a shelf, a bed, as well as on a floor (since 2026-11-25; Hajun:
+    /// "the things like hamburger, mug with office tool, etc. the desk
+    /// gadgets - they are supposed to be easy to be placed on desks and
+    /// tables,etc on other surfaces"): dragged over the top of something of
+    /// yours, it goes up onto it ([`top_under`]), and it is in nothing it
+    /// stands on ([`stops_on`]). Which they are is mine: what one would put
+    /// on a desk or a table, and none of what stands on a floor however
+    /// small (a stool, a bin, a gas bottle).
+    pub small: bool,
 }
 
 /// A door's leaves that swing open by themselves as someone comes up to the
@@ -364,6 +375,7 @@ const fn house(kind: &'static str, name: &'static str) -> PieceDef {
         mount: Mount::House,
         swing: None,
         house_builder: true,
+        small: false,
     }
 }
 
@@ -392,6 +404,28 @@ const fn new_one(kind: &'static str, file: &'static str, name: &'static str) -> 
         file,
         house_builder: false,
         ..floor(kind, name, Tab::Furniture)
+    }
+}
+
+/// The same, a small thing that goes on top of others as well
+/// ([`PieceDef::small`]).
+const fn new_small(kind: &'static str, file: &'static str, name: &'static str) -> PieceDef {
+    PieceDef {
+        small: true,
+        ..new_one(kind, file, name)
+    }
+}
+
+/// The same, hung on a wall of the house ([`Mount::Hanging`]): the painting,
+/// which came lying down, its picture up, and was stood up in its `.blend`
+/// to hang as the script's did (Hajun, 2026-11-25: "painting is supposed to
+/// go on the wall, not the ground. rotate the blender asset for that one
+/// and make it go on walls").
+const fn new_hanging(kind: &'static str, file: &'static str, name: &'static str) -> PieceDef {
+    PieceDef {
+        tab: Tab::Decorations,
+        mount: Mount::Hanging,
+        ..new_one(kind, file, name)
     }
 }
 
@@ -438,6 +472,7 @@ const fn opening(kind: &'static str, name: &'static str, mount: Mount) -> PieceD
         mount,
         swing: None,
         house_builder: true,
+        small: false,
     }
 }
 
@@ -456,6 +491,7 @@ const fn my_hanging(kind: &'static str, name: &'static str) -> PieceDef {
         mount: Mount::Hanging,
         swing: None,
         house_builder: true,
+        small: false,
     }
 }
 
@@ -469,6 +505,7 @@ const fn floor(kind: &'static str, name: &'static str, tab: Tab) -> PieceDef {
         mount: Mount::Floor,
         swing: None,
         house_builder: true,
+        small: false,
     }
 }
 
@@ -1160,11 +1197,12 @@ const AGAINST: f32 = 0.05;
 
 /// Whether a piece on the plot `yard` can be put down where it is, standing
 /// at `at` turned by `turn`: `None`, or why not. The whole of it on the
-/// plot; furniture in no wall and in nothing else that stands there (a
-/// wall, or anything it could not be carried onto, as [`walled`] feels for
-/// on `island`; and any other furniture among `stops` at all, however low);
-/// a house only where a house fits ([`house_fits_in`], on `ground`). What
-/// goes in a wall is put where it fits as it is dragged.
+/// plot; furniture in no wall and in nothing else that stands there, by
+/// their shapes on `island` ([`in_anything`]; by the boxes round them,
+/// `stops`, until 2026-11-25); what hangs from a ceiling in nothing else
+/// that hangs, by their boxes; a house only where a house fits
+/// ([`house_fits_in`], on `ground`). What goes in a wall is put where it
+/// fits as it is dragged.
 #[allow(clippy::too_many_arguments)]
 fn misfit(
     island: &Island,
@@ -1181,10 +1219,43 @@ fn misfit(
         Mount::Door | Mount::Window | Mount::Hanging => None,
         _ if !yard.holds_piece(at, bounds, turn) => Some(Misfit::OffTheLand),
         Mount::House => house_fits_in(ground, Some(yard), bounds, turn, at.xz()).is_none().then_some(Misfit::InTheWay),
-        Mount::Floor => (walled(island, at, bounds, turn) || in_furniture()).then_some(Misfit::InTheWay),
+        Mount::Floor => in_anything(island, at, bounds, turn).then_some(Misfit::InTheWay),
         Mount::Ceiling if !hangs(island, at, bounds, turn) => Some(Misfit::NoCeiling),
         Mount::Ceiling => in_furniture().then_some(Misfit::InTheWay),
     }
+}
+
+/// How far over its foot something standing may have something else under
+/// it, in metres: a rug, a mat, the seam of a floor. What is no higher it
+/// stands over, or on.
+const FOOTING: f32 = 0.05;
+
+/// Whether a piece of `bounds`, turned by `turn` and standing at `at`, would
+/// be in a wall or in anything else that stands there: by their shapes on
+/// `island`, all over its footprint ([`EDGE_STEP`] apart, [`TOUCH`] in from
+/// its edge), from just over its foot ([`FOOTING`]) to its own top.
+///
+/// **By the shapes since 2026-11-25** (Hajun: "the collision for preventing
+/// the placement of objects over each other is tooo strong so even they are
+/// not touching each other or the wall, the checkmark disappear and i cannot
+/// place it next to each other. loosen the sensitivity of that a bit"): it
+/// was by the boxes round things, and a box is bigger than what is in it,
+/// a couch's round arms, a chair's legs, the empty corner of the L shaped
+/// couch, so that two things that did not touch would not go together; and
+/// between a step over its foot and a body's height, so that a stool would
+/// not go under a table. What is on the floor inside its footprint and
+/// between the points, as small as a pen, it may stand over.
+fn in_anything(island: &Island, at: Vec3, bounds: Bounds, turn: Quat) -> bool {
+    let margin = Vec2::splat(TOUCH);
+    let low = bounds.low.xz() + margin;
+    let size = (bounds.high.xz() - margin - low).max(Vec2::ZERO);
+    let steps = (size / EDGE_STEP).ceil().max(Vec2::ONE).as_uvec2();
+    let (bottom, top) = (at.y + FOOTING, at.y + bounds.high.y.max(2.0 * FOOTING));
+    (0..=steps.x)
+        .flat_map(|i| (0..=steps.y).map(move |j| (i, j)))
+        .map(|(i, j)| low + size * Vec2::new(i as f32 / steps.x as f32, j as f32 / steps.y as f32))
+        .map(|spot| at.xz() + (turn * Vec3::new(spot.x, 0.0, spot.y)).xz())
+        .any(|spot| island.blocked(spot, bottom, top))
 }
 
 /// The middle of a piece of `bounds`, turned by `turn` and standing at
@@ -1319,6 +1390,40 @@ fn storeys_on(pieces: &Moving, rooms: &Query<&Rooms>, venue: Venue) -> Vec<Store
             })
         })
         .collect()
+}
+
+/// How far up a face has to point to be a top a small thing can stand on:
+/// the cosine of its slope, 25 degrees at most.
+const TOP_UP: f32 = 0.9;
+
+/// Where a small thing of `bounds` stands on the top of whatever of yours
+/// the finger's `ray` meets first, among the meshes `tops`: on the point it
+/// meets, if that faces up ([`onto`]); or, met on its side, as a finger
+/// over the front edge of a table meets it from the camera's low angle, on
+/// its top straight down from a little way in from there. None, over
+/// nothing of yours, where it goes on the floor as anything does.
+fn top_under(ray_cast: &mut MeshRayCast, ray: Ray3d, tops: &HashSet<Entity>, bounds: Bounds) -> Option<Vec3> {
+    if tops.is_empty() {
+        return None;
+    }
+    let within = |entity: Entity| tops.contains(&entity);
+    let settings = MeshRayCastSettings::default().with_filter(&within);
+    let hit = ray_cast.cast_ray(ray, &settings).first().map(|(_, hit)| (hit.point, hit.normal))?;
+    if let Some(at) = onto(hit.0, hit.1, bounds) {
+        return Some(at);
+    }
+    const IN: f32 = 0.08;
+    const OVER: f32 = 3.0;
+    let inside = hit.0 + ray.direction * IN;
+    let down = Ray3d::new(inside.with_y(hit.0.y + OVER), Dir3::NEG_Y);
+    let (_, top) = ray_cast.cast_ray(down, &settings).first()?;
+    onto(top.point, top.normal, bounds)
+}
+
+/// Where a thing of `bounds` stands on a surface met at `point`, facing
+/// `normal`: its foot there, if the surface is a top ([`TOP_UP`]).
+fn onto(point: Vec3, normal: Vec3, bounds: Bounds) -> Option<Vec3> {
+    (normal.normalize_or_zero().y >= TOP_UP).then(|| point - Vec3::Y * bounds.low.y)
 }
 
 /// The floor under `spot` on the plot `yard`: the highest of the plot's own
@@ -2106,7 +2211,8 @@ struct Stop {
 
 /// What a piece carried over the floor of `venue` can be pushed flush
 /// against: every other piece down there that stands on the floor, and the
-/// walls of the house there, if it is down.
+/// walls of the house there, if it is down. A small thing, the walls alone:
+/// it goes up onto the rest ([`PieceDef::small`]), and is in none of them.
 fn stops_on(
     pieces: &Moving,
     walls: &Query<(Entity, &Wall, &ChildOf)>,
@@ -2116,12 +2222,14 @@ fn stops_on(
     let down = |on: Option<&Venue>, ghost: bool| !ghost && on == Some(&venue);
     // What hangs from a ceiling goes against what else does; anything else,
     // against what stands on a floor.
-    let hung = pieces.get(carried).is_ok_and(|(_, piece, ..)| piece.def.mount == Mount::Ceiling);
+    let of = pieces.get(carried).ok().map(|(_, piece, ..)| piece.def);
+    let hung = of.is_some_and(|def| def.mount == Mount::Ceiling);
+    let small = of.is_some_and(|def| def.small);
     let like = if hung { Mount::Ceiling } else { Mount::Floor };
     let furniture = pieces
         .iter()
         .filter(|&(entity, piece, .., on, ghost)| {
-            entity != carried && piece.def.mount == like && down(on, ghost)
+            !small && entity != carried && piece.def.mount == like && down(on, ghost)
         })
         .filter_map(|(_, _, place, _, bounds, ..)| {
             let bounds = bounds?;
@@ -2477,6 +2585,7 @@ fn edit_pieces(
         MessageWriter<Misplaced>,
         MessageWriter<stand::PutBack>,
     ),
+    mut ray_cast: MeshRayCast,
     mut commands: Commands,
 ) {
     let Some(Ground { venue, yard }) = site.0 else {
@@ -2506,6 +2615,25 @@ fn edit_pieces(
                 // dragged freely stands on, and what hangs from a ceiling
                 // hangs over.
                 let storeys = yard.map(|_| storeys_on(&pieces, &rooms, venue)).unwrap_or_default();
+                // And for a small thing, the meshes of what else stands
+                // there on a floor, whose tops it may go up onto.
+                let tops: HashSet<Entity> = pieces
+                    .get(target)
+                    .is_ok_and(|(_, piece, ..)| piece.def.small)
+                    .then(|| {
+                        pieces
+                            .iter()
+                            .filter(|&(entity, piece, place, .., on, ghost)| {
+                                entity != target
+                                    && !ghost
+                                    && on == Some(&venue)
+                                    && piece.def.mount == Mount::Floor
+                                    && yard.is_some_and(|yard| yard.holds(place.translation.xz(), 1.0))
+                            })
+                            .flat_map(|(entity, ..)| children.iter_descendants(entity))
+                            .collect()
+                    })
+                    .unwrap_or_default();
                 let Ok((_, piece, mut transform, house, bounds, span, grip, ..)) =
                     pieces.get_mut(target)
                 else {
@@ -2513,18 +2641,37 @@ fn edit_pieces(
                 };
                 match piece.def.mount {
                     Mount::Floor => {
-                        let (Some(to), Some(island), Some(&bounds)) =
-                            (to, islands.get(venue), bounds)
-                        else {
+                        let (Some(island), Some(&bounds)) = (islands.get(venue), bounds) else {
                             continue;
                         };
                         let (from, turn) = (transform.translation, transform.rotation);
-                        let at = match yard {
-                            Some(yard) => {
+                        // A small thing, on your plot, onto the top of what
+                        // the finger is over, the whole of it on the plot.
+                        let top = yard
+                            .filter(|_| piece.def.small)
+                            .and_then(|yard| top_under(&mut ray_cast, ray, &tops, bounds).filter(|&at| yard.holds_piece(at, bounds, turn)));
+                        let at = match (top, to, yard) {
+                            (Some(top), ..) => top,
+                            (None, Some(to), Some(yard)) => {
+                                // A small thing off a top goes where the
+                                // finger meets the floor under it, not the
+                                // level it was taken hold of at, which was the
+                                // top's.
+                                let goal = piece
+                                    .def
+                                    .small
+                                    .then(|| {
+                                        let floor = floor_under(yard, &storeys, from.xz(), from.y + crate::LAND_STEP_UP);
+                                        let far = ray.intersect_plane(Vec3::Y * floor, InfinitePlane3d::new(Vec3::Y))?;
+                                        Some(ray.get_point(far).xz())
+                                    })
+                                    .flatten()
+                                    .unwrap_or(to.xz());
                                 let clear = |spot| misfit(island, island, yard, Mount::Floor, spot, turn, bounds, &stops).is_none();
-                                drag_freely(yard, from, to.xz(), bounds, turn, &stops, &storeys, clear)
+                                drag_freely(yard, from, goal, bounds, turn, &stops, &storeys, clear)
                             }
-                            None => drag_over_floor(island, yard, from, to.xz(), bounds, turn, &stops),
+                            (None, Some(to), None) => drag_over_floor(island, yard, from, to.xz(), bounds, turn, &stops),
+                            (None, None, _) => continue,
                         };
                         if transform.translation != at {
                             transform.translation = at;
@@ -4306,6 +4453,84 @@ mod tests {
         // What goes in a wall is put where it fits as it is dragged: never
         // in the way.
         assert_eq!(misfit(&island, &island, yard, Mount::Door, Vec3::ZERO, Quat::IDENTITY, TABLE, &[desk]), None);
+    }
+
+    #[test]
+    fn a_thing_is_in_the_way_of_another_only_where_their_shapes_meet() {
+        // Hajun, 2026-11-25: "even they are not touching each other or the
+        // wall, the checkmark disappear". An L shaped desk, two blocks 0.8
+        // high: one 3 m along x, and one 1 m wide coming 2 m forward from
+        // its left end; the box round it is 3 by 3 m, and empty at its
+        // front right.
+        let ground = block(Vec3::new(-20.0, -1.0, -20.0), Vec3::new(20.0, 0.0, 20.0));
+        let along = block(Vec3::new(-1.5, 0.0, 0.5), Vec3::new(1.5, 0.8, 1.5));
+        let forward = block(Vec3::new(-1.5, 0.0, -1.5), Vec3::new(-0.5, 0.8, 0.5));
+        let island = Island::new_for_tests(&[ground, along, forward].concat());
+        let yard = plot();
+        let why = |at: Vec3, bounds: Bounds| misfit(&island, &island, yard, Mount::Floor, at, Quat::IDENTITY, bounds, &[]);
+        // A table a metre square in the empty corner, inside the box round
+        // the desk and touching none of it: it goes down.
+        assert_eq!(why(Vec3::new(0.5, 0.0, -0.5), TABLE), None);
+        // Pushed half into the desk: not.
+        assert_eq!(why(Vec3::new(0.0, 0.0, 0.5), TABLE), Some(Misfit::InTheWay));
+        // Flush against it, in the corner of the L and beside its end: it goes
+        // down.
+        assert_eq!(why(Vec3::new(0.0, 0.0, 0.0), TABLE), None);
+        assert_eq!(why(Vec3::new(0.0, 0.0, -1.0), TABLE), None);
+        // A table top on its own, a slab 0.9 to 1.0 m up on no legs, and a
+        // stool 0.6 m high under it: it goes down; a chair 1.5 m high, whose
+        // back would be in the top, does not.
+        let slab = block(Vec3::new(-1.0, 0.9, -1.0), Vec3::new(1.0, 1.0, 1.0));
+        let island = Island::new_for_tests(&[block(Vec3::new(-20.0, -1.0, -20.0), Vec3::new(20.0, 0.0, 20.0)), slab].concat());
+        let stool = Bounds {
+            low: Vec3::new(-0.25, 0.0, -0.25),
+            high: Vec3::new(0.25, 0.6, 0.25),
+        };
+        let chair = Bounds {
+            low: Vec3::new(-0.4, 0.0, -0.4),
+            high: Vec3::new(0.4, 1.5, 0.4),
+        };
+        let why = |bounds: Bounds| misfit(&island, &island, yard, Mount::Floor, Vec3::ZERO, Quat::IDENTITY, bounds, &[]);
+        assert_eq!((why(stool), why(chair)), (None, Some(Misfit::InTheWay)));
+        // And on the slab, a mug: on it, not in it.
+        let mug = Bounds {
+            low: Vec3::new(-0.1, 0.0, -0.1),
+            high: Vec3::new(0.1, 0.3, 0.1),
+        };
+        let on_it = misfit(&island, &island, yard, Mount::Floor, Vec3::new(0.2, 1.0, 0.3), Quat::IDENTITY, mug, &[]);
+        assert_eq!(on_it, None);
+    }
+
+    #[test]
+    fn a_top_is_what_a_small_thing_goes_up_onto_and_a_side_is_not() {
+        let mug = Bounds {
+            low: Vec3::new(-0.1, 0.0, -0.1),
+            high: Vec3::new(0.1, 0.3, 0.1),
+        };
+        // A desk's top, met at (1, 1.08, 2): the mug's foot there.
+        assert_eq!(onto(Vec3::new(1.0, 1.08, 2.0), Vec3::Y, mug), Some(Vec3::new(1.0, 1.08, 2.0)));
+        // A slope of 20 degrees is a top; its front, or a slope of 40, not.
+        let tilted = |degrees: f32| Quat::from_rotation_x(degrees.to_radians()) * Vec3::Y;
+        assert!(onto(Vec3::ONE, tilted(20.0), mug).is_some());
+        assert!(onto(Vec3::ONE, tilted(40.0), mug).is_none());
+        assert!(onto(Vec3::ONE, Vec3::NEG_Z, mug).is_none());
+        // One whose origin is under its foot stands with its foot there.
+        let sunk = Bounds {
+            low: Vec3::new(-0.1, 0.11, -0.1),
+            high: Vec3::new(0.1, 0.4, 0.1),
+        };
+        assert_eq!(onto(Vec3::new(0.0, 1.0, 0.0), Vec3::Y, sunk), Some(Vec3::new(0.0, 0.89, 0.0)));
+        // Which they are: only things from the town's plots of 2026-11-25,
+        // and none that stands on a floor however small.
+        let small: Vec<&str> = PIECES.iter().filter(|def| def.small).map(|def| def.kind).collect();
+        assert_eq!(small.len(), 29);
+        for kind in ["hamburger", "mug_with_office_tool", "lamp_with_shade", "monitor", "computer", "cup_of_tea"] {
+            assert!(small.contains(&kind), "{kind}");
+        }
+        for kind in ["stool", "trash_bin", "propane_tank", "closed_umbrella", "desk", "chair", "streetlamp"] {
+            assert!(!small.contains(&kind), "{kind}");
+        }
+        assert!(PIECES.iter().filter(|def| def.small).all(|def| def.mount == Mount::Floor && !def.house_builder));
     }
 
     #[test]

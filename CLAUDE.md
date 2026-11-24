@@ -18,16 +18,18 @@ spend nothing on those two unasked.
 
 As of 2026-11-25: `PROTOCOL_VERSION` 25 (since 2026-11-23: a seat of the
 town is one of its 48 plots, so **APK 51 and older are told to update**;
-APK 52 to 54 play on), **APK 55** (`versionCode`, built 2026-11-25, not
-put on a phone from here, `docs/building.md`), the server deployed at
-16:43 UTC on 2026-11-24 with everything in `server/` and `shared/`. **All
-of it committed and pushed, up to APK 55**: the land (`docs/land.md`: all 48
+APK 52 to 55 play on, those before 55 without the new things on the
+made-up land), **APK 56** (`versionCode`, built 2026-11-25, not put on a
+phone from here, `docs/building.md`), the server deployed at 19:44 UTC on
+2026-11-24 with everything in `server/` and `shared/`. **All of it
+committed and pushed, up to APK 56**: the land (`docs/land.md`: all 48
 plots always filled, where each is thrown afresh as a channel opens,
-someone walking every one), everyone's signs and cars, the town's slower
-buses, the bag (`docs/bag.md`) with its window, its button and how it is
-scrolled and its 118 things, the 23 cars (`docs/vehicles.md`), edit mode
-on your plot and paint, sitting and lying down, and the plots' residents
-(`docs/town.md`). The iPhone's last tag,
+someone walking every one, each made-up owner of a taste), everyone's
+signs and cars, the town's slower buses, the bag (`docs/bag.md`) with its
+window, its button and how it is scrolled and its 118 things, small
+things on tops, the 23 cars (`docs/vehicles.md`), edit mode on your plot
+and paint, sitting and lying down, the plots' residents and the things
+that work (`docs/town.md`). The iPhone's last tag,
 `ios-1.0.2-18`, pushed in the first hour of 2026-11-16 (whether Codemagic
 built it is not known here), is protocol 18: its build is told to update
 and stays offline until `ios-1.0.2-19` is built, whose tag is Hajun's to
@@ -66,7 +68,7 @@ heading in one of these:
 | a map's model, collision | `docs/maps-and-collision.md` | "The islands are Blender models" |
 | the town's 48 plots, whose each is and what fills the rest (`land`, `roundtown_net::land`, `premade`, `server/src/rooms.rs`), the signs | `docs/land.md` | |
 | the bag: what you own, the shop, gems, buildings put down on your plot, a list flicked, edit mode and paint (`bag`, `build::stand`, `build::paint`, `customize`, `flick`, `server/src/bag.rs`) | `docs/bag.md` | |
-| fountain, music, town houses, town objects and their editor, the plots' residents (`resident`), talking, the bubble in the world (`bubble`), sitting and lying down (`rest`) | `docs/town.md` | "The fountain runs", "The town has music", "The town's houses", "The town is data", "The town holds 32 players", "You can talk to anyone" |
+| fountain, music, town houses, town objects and their editor, the plots' residents (`resident`), talking, the bubble in the world (`bubble`), sitting and lying down (`rest`), what works (`working`) | `docs/town.md` | "The fountain runs", "The town has music", "The town's houses", "The town is data", "The town holds 32 players", "You can talk to anyone" |
 | the buses, the car you drive | `docs/vehicles.md` | "The town's buses", "The car you drive" |
 | the camera | `docs/camera.md` | "The camera stands where you zoomed it" |
 | House Builder, the shop's pieces, `assets/mybuilds/` | `docs/house-builder.md`, `homebuildersgameevent.md` | "House Builder", "Building your house" |
@@ -458,7 +460,10 @@ to try again.
   and `.bag`): buying and selling are the server's; offline the device's
   own, kept in `bag.json`. A tap on a car in it drives that one; a tap on a
   building, standing on your plot, puts it down. The Chandelier and the
-  Ceiling Fan hang only from a ceiling (`build::Mount::Ceiling`).
+  Ceiling Fan hang only from a ceiling (`build::Mount::Ceiling`), the
+  Painting on a wall (since APK 56). **Small things** (`PieceDef::small`,
+  29: what goes on a desk or a table) dragged over a top go up onto it
+  (`build::top_under`), and ride what they stand on (`stand::Rides`).
 - The top bar and the chat keep clear of the camera's hole and an
   iPhone's island (`src/safe.rs`: Android's cutout, by `MainActivity`,
   seen working on Hajun's phone; an iPhone's safe area, read off its
@@ -487,7 +492,9 @@ to try again.
   (`land::GRACE`); the rest are filled with real people's land that has
   anything on it, the worthiest first by the shop's prices, and then
   with made-up land (`roundtown_net::premade`, 48 furnished plots a test
-  holds to the game's building rules, `build::premade_check`). **Nobody's
+  holds to the game's building rules, `build::premade_check`; since APK
+  56 each owner of one of sixteen tastes, two thirds of the houses one
+  floor and none over three). **Nobody's
   land is in two channels at once**: whoever comes goes to the channel
   their land fills a plot of (after their group's), and has nothing left
   in any other. Offline the device throws its own order (`land::thrown`).
@@ -508,7 +515,10 @@ to try again.
   the plot, one house to a plot), is out of your bag until it is tapped
   and binned, is kept by the server in the plot's own space, so that it
   stands the same on whichever plot your seat has, and is seen and bumped
-  into by everyone in your channel (`bag::Tell::Theirs`). **Nothing of
+  into by everyone in your channel (`bag::Tell::Theirs`). A house binned
+  takes what is in it into the bag, and what is in the way is the
+  shapes of things, not the boxes round them (`build::in_anything`;
+  both since APK 56, Hajun's). **Nothing of
   yours answers a tap but in edit mode** (`src/customize.rs`, since APK
   49, Hajun's; not seen on a phone): on by the button by the left edge,
   or by bringing a thing out of your bag, and off by its tick, or by
@@ -549,7 +559,8 @@ to try again.
   phone and in another on the next.
   Where the land is going is Hajun's to say (`docs/land.md`).
 - **You can sit and lie down** on a chair, a sofa or a bed on anyone's
-  plot (`src/rest.rs`, since APK 51, Hajun's; not seen on a phone): a
+  plot, and lie in the bath (`src/rest.rs`, since APK 51, Hajun's; the
+  things of 2026-11-25 since APK 56; not seen on a phone): a
   bubble over each place of one you stand within 1.5 m of, a tap, and you
   are there in its pose in a fifth of a second (`roundtown_net::Pose`:
   sat on a chair, sat back on a sofa, lying on a bed); the jump button
@@ -558,6 +569,9 @@ to try again.
   still). **Every such bubble is a thing in the world** (`src/bubble.rs`:
   the one over someone to talk to as well): a sheet 0.62 m across turned
   to the camera, not a button on the screen, which Hajun turned down.
+- **Some things work** (`src/working.rs`, since APK 56, Hajun's ask, my
+  numbers): a treadmill's belt carries whoever stands on it toward its
+  open end at 5 m/s, and the ceiling fan turns.
 - You can talk to any AI (`src/talk.rs`), ride the four buses that go
   round the roads by the clock (`car.rs`, `roads.rs`: the way is read off
   the road's paint; 5.25 m/s, 10.5 on the open road, three quarters of

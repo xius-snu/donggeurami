@@ -7,6 +7,50 @@
 > "above" or "below", or names another section in quotes, that section may be
 > in another file here: the table in `CLAUDE.md` says which.
 
+## Sitting on what came on 2026-11-25, lying in the bath, and things that work (2026-11-25)
+
+Hajun, that night: "also the bed, chair, sofas, couch need the
+interactability with the sitting/lying down. also the bathtub could be
+lyind down animation, and the l shaped couch can have maybe 3 seating
+places"; "and make the npc bots to work with the new models too"; "oh and
+also make some of the assets "functional" for the ones u can for example
+the treadmill could actually move the player backward when they get on it
+like a real treadmill so that they need to keep walking forward to stay on
+it".
+
+- **Places to rest** (`rest::spots`), measured off each model as the game
+  has it: the wooden chair, the rocking chair and the bar stool one each
+  to sit on, the armchair one to sit back in, the L shaped couch three
+  (two along it and one on the end that comes forward, all facing its
+  front), the big bed two to lie on, the head against its pillows, and
+  the bathtub one, **lying along it**, the head toward its left end: a
+  place may be turned from the way its piece faces (`Spot::turn`, the
+  bathtub's a quarter). A test reads each model and holds every place to
+  its top there, to a few centimetres, its bubble over it, and someone
+  lying to have their heels on what they lie on. The toilet has none
+  (mine: not asked for).
+- **The residents** go by the same places (`resident` asks `rest::spots`
+  and `rests_at`): they sit on the new chairs, sit back on the couches and
+  lie on the big bed, and in the bath, on whatever plot has them. They do
+  not use the treadmill: one that stood on it would be carried off its
+  end, there being no walking on the spot yet for them (mine, left out).
+- **The treadmill's belt carries whoever stands on it** toward its open
+  end at 5 m/s, under a walk's 7 (`working::run_belts`, my number):
+  walking toward its handles keeps you on it, standing still takes you
+  off in half a second. Its model was 11 cm over its origin, and so stood
+  in the air, its belt's far end more than a step up: set on its origin
+  (`blender/set_on_origin.py`). **The ceiling fan turns** about its rod,
+  once in two seconds (`working::turn_fans`), its model turned under the
+  piece. Nothing else of what came that day can move by itself: each is one
+  mesh (the desk fan's blades are its stand).
+- **Checked**: tests; in the desktop build, hidden: sat on the L shaped
+  couch, the armchair, the rocking chair and the stool, lain on the big
+  bed and in the bath, each at the height its place says (the wooden
+  chair by the test alone); stood on a treadmill's belt, on my plot and on
+  a made-up one, and carried off its open end in under a second. **Not checked**: a phone; walking on
+  the belt (a body walks faster than it, by the numbers); the fan turning
+  (a picture is still).
+
 ## Residents: one on every plot, and "X's bot" on a real person's land (2026-11-24)
 
 Hajun, the day after the entry below:

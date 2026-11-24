@@ -7,6 +7,31 @@
 > "above" or "below", or names another section in quotes, that section may be
 > in another file here: the table in `CLAUDE.md` says which.
 
+## APK 56: what is in a house binned with it, small things on tops, places to rest, the made-up owners' tastes
+
+2026-11-25, 04:56 here (19:56 UTC on the 24th). Asked for: "and make the
+npc bots to work with the new models too. then build apk and push to
+git", and, going to sleep, "do everything that u can and push and build"
+(`docs/bag.md`, `docs/town.md`, `docs/land.md` and
+`docs/house-builder.md`, at the top of each). From the main checkout with
+no other session running (`ListAgents`).
+
+- **Protocol 25 still**: it plays against the server deployed at 19:44
+  UTC on 2026-11-24 (`ce0188aa`), as APK 52 to 55 do; an app before APK
+  55 shows the made-up land without the new houses and things in it.
+- `versionCode` 56, read back from Gradle's `output-metadata.json`.
+  cargo ndk 4 m 37 s (`release-android`), stripped from 203.6 MB to
+  111.0 MB with `GameActivity_onCreate` and the six `MainActivity`
+  methods in it, Gradle 18 s. 134,971,846 bytes: 291 files under
+  `assets/`, 30.2 MB, 289 of them the game's, each the same to the byte
+  as the tree's (the Painting and the Treadmill as they were changed
+  that night), and Android's two baseline profiles. Every asset hashed
+  before Gradle and after, the same; `ui.ron` the same before the
+  library was built and after.
+- Before it: the game's tests (591), `roundtown_net`'s (282) and the
+  server's (129); the hidden desktop runs the entries say. **Not put on
+  a phone.**
+
 ## APK 55: the shop's 118 things, 23 cars, ceilings and lights
 
 2026-11-25, 01:51 here (16:51 UTC on the 24th). Asked for: "when ur done,

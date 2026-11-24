@@ -5,13 +5,86 @@ Dated entries, newest first.
 
 ## Contents
 
-1. 2026-11-24: where everything is, is thrown as a channel opens (the numbers only say which plot); 48 to a channel, someone walking every plot nobody has; nobody's land in two channels; APK 53
-2. 2026-11-23: all 48 plots always filled, in Hajun's order: whoever is here on the first sixteen, everyone else's land and made-up land on the rest; protocol 25, APK 52
-3. 2026-11-22: what you own stands on your plot, and everyone sees it
-4. Later on 2026-11-21: everyone in your channel has their sign, and you see it
-5. 2026-11-21: the words are a thing in the world, a picture hung on the board; a metre and a half at the corner; the sign is solid; APK 44
-6. Later on 2026-11-20: you arrive on your plot; the words slant with the board, on both its faces; more room at the corner
-7. 2026-11-20: a plot for your seat, and the sign on it that says whose it is
+1. 2026-11-25: the made-up owners' tastes, sixteen of them, three owners each, in the new houses and with the new things, mostly one floor; server deployed, APK 56
+2. 2026-11-24: where everything is, is thrown as a channel opens (the numbers only say which plot); 48 to a channel, someone walking every plot nobody has; nobody's land in two channels; APK 53
+3. 2026-11-23: all 48 plots always filled, in Hajun's order: whoever is here on the first sixteen, everyone else's land and made-up land on the rest; protocol 25, APK 52
+4. 2026-11-22: what you own stands on your plot, and everyone sees it
+5. Later on 2026-11-21: everyone in your channel has their sign, and you see it
+6. 2026-11-21: the words are a thing in the world, a picture hung on the board; a metre and a half at the corner; the sign is solid; APK 44
+7. Later on 2026-11-20: you arrive on your plot; the words slant with the board, on both its faces; more room at the corner
+8. 2026-11-20: a plot for your seat, and the sign on it that says whose it is
+
+## 2026-11-25: the made-up owners' tastes, and the new houses and things on their land; server deployed, APK 56
+
+Hajun, that night: "also make the npc plots to use the new house types and
+furnitures, keep it not to rich so its not like 10 floor buildings but
+pretty diverse and different from each other. floor height should be
+biased towards lower heights for the npc plots."; and "oh and make each
+npc's plot have a coherent theme/personality for each one so that its not
+just "diverse" randomly but its like the owner's design taste is
+"diverse" so the each of the entire owner's creation should be coherent
+with their personality and each npc is different from each other."
+
+- **Sixteen tastes, three owners each** (`roundtown_net::premade::TASTES`,
+  mine): the cook (a stove and a fridge where the counters were, a pan on
+  the stove, a barbecue on the lawn), the bookworm (an armchair, a reading
+  lamp, tea, a grandfather's clock), the gamer (a computer, its screen and
+  mouse, headphones), the gardener (cupboards, flowers, plants inside and
+  a garden out), the stargazer (a globe, and a telescope on the roof
+  terrace), the one who never grew up (a stool, a doll, a present, a box
+  of toys), the tea drinker (tea and a rocking chair), the tinkerer (tools
+  on the workbench, a stool, a box and a bin), the one who loves a bath
+  (the bathhouse, or a bath in the room), the night owl (an armchair, a
+  lamp in and a lamp out), the traveller (a globe, a coat rack, an
+  umbrella, a mailbox), the athlete (a treadmill and dumbbells), the party
+  host (a glass and a burger on the table, a barbecue, a big table on the
+  roof terrace),
+  the minimalist (next to nothing), the office worker (a computer, a
+  printer, a stapler, tissues, a bin) and the collector (a globe, a clock,
+  a grandfather's clock and a safe). Each owner's colours go with their
+  taste (`COATS`): the cook's warm, the gardener's greens, the tea
+  drinker's rose, the stargazer's night blues. Two owners numbered one
+  after the other never share a taste, and whatever a taste brings is on
+  the lot of at least one of its owners (a test).
+- **How it is put together** (`furnished`): each plot keeps the room it
+  had, whose places were already held to the rules, and its owner's taste
+  puts its own things in them: swapped in at the back and middle of what
+  was there (a chair at its front, at its table), small things on the
+  room's tables and counters, and what it adds at the spots each room
+  leaves for it; and things on the roof of a roof terrace. A room turned
+  the other way round puts each thing's middle where the other's was,
+  which a thing whose origin is not its middle needs.
+- **The houses**: two thirds of one floor (14 Square Houses, 12 Flat
+  Houses, 8 Wide Roof Houses, with three rooms of their own: a bathhouse,
+  a party room, a study), 10 of two floors, and 4 of three (the Square
+  House and the Roof Terrace of three floors); none higher. A test holds
+  that. A window of a house of three floors goes in its storey's wall as
+  the game numbers them (`wall_of`).
+- **Lighter**: lighter things where the heaviest stood (a plain chair for
+  the cafe chair), and fewer street lamps on the lawns: the lots are
+  189,122 triangles in all, under the 190,000 the checker allows, none
+  over 5,000.
+- **The checker** (`build::premade_check`) holds every lot, on its own plot
+  and on plots turned other ways, to the game's rules as they now are: a
+  small thing on what it stands on, the bathtub as no bed but with floor
+  beside it, a chair at any of the tables, things on a roof terrace in the
+  house, and what is carried on a thing not in its way.
+- **Old apps**: protocol 25 still. An app before APK 55 does not know the
+  new houses and things, and shows the made-up land without them (a room
+  of floating furniture, some plots without their house) until it is
+  updated; APK 55 and 56 show it all. The server deployed with it.
+- **The server** deployed at 19:44 UTC on 2026-11-24 (`ce0188aa`, after
+  one at 19:41 with a colour in it left unused), the binary before kept
+  as `roundtown-server.prev-2026-11-25b` (`613d35f0`): nobody connected
+  since 17:41. After: the VM's binary the same as the one built here,
+  and this PC's account online, hidden, its join in the VM's journal and
+  the town's clock the server's. No table changed.
+- **Checked**: the made-up lots' own tests and the game's checker, as
+  above; in the desktop build, hidden, nine lots looked at from above
+  (Flat Houses, Square Houses, the Wide Roof House's rooms, a roof
+  terrace, a house of three floors): what is in each stands on its floor
+  and in nothing else, and goes together. **Not checked**: a phone;
+  online, by two devices.
 
 ## 2026-11-24: where everything is, is thrown as a channel opens; 48 to a channel; nobody's land in two channels; APK 53
 

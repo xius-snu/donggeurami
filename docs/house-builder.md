@@ -7,6 +7,17 @@
 > "above" or "below", or names another section in quotes, that section may be
 > in another file here: the table in `CLAUDE.md` says which.
 
+## The painting stood up, the treadmill set on its origin (2026-11-25, later)
+
+Two of the downloads changed in their `.blend` files and exported again,
+for the town's plots (`docs/bag.md` and `docs/town.md`, at the top of
+each): the Painting a quarter turn about X, to hang on a wall facing out
+(`blender/stand_painting.py`), and its shop picture rendered again; the
+Treadmill lowered 0.109 m, which it stood over its origin by
+(`blender/set_on_origin.py`). Their triangles are as they were. The
+painting is a `Mount::Hanging` now, and 29 of the 59 are small things that
+go on tops (`PieceDef::small`).
+
 ## The pieces grow by 76, which House Builder does not sell (2026-11-25)
 
 What Hajun asked for the town's plots that night (`docs/bag.md`, at the

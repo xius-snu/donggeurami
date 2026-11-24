@@ -21,7 +21,8 @@
 //! `bag::Bag::put`); tapped again it is picked back up, to be moved, or,
 //! by the bin, taken back into the bag ([`note_edits`], `bag::Bag::take`).
 //! One house to a plot, and doors and windows go in its walls, as in House
-//! Builder; a house taken back takes what was in its walls with it.
+//! Builder; a house taken back takes what was in its walls with it, and
+//! what stood on its floors (since 2026-11-25).
 //!
 //! **What stands is what the bag says stands** ([`keep_mine`]): each thing
 //! by its number, where the bag has it, in the plot's own space
@@ -55,7 +56,9 @@
 //! the house"): its doors and windows are its own, in its walls, and the
 //! furniture standing on its floors is carried where the house goes and
 //! turned as it turns, in nobody's way meanwhile, and put down with it,
-//! the bag told where each has come to. **Let go of by a tap somewhere
+//! the bag told where each has come to. **So does anything picked up take
+//! the small things that stand on it** (since 2026-11-25,
+//! `PieceDef::small`): a mug on a desk, and the pen on the mug's box. **Let go of by a tap somewhere
 //! else** (`editor::Edit::Away`), a thing is put down where it is if it can
 //! stand there (`super::edit_pieces`) and otherwise put back where it
 //! stood ([`PutBack`], [`put_back`]), and a house with all that was in it.
@@ -155,13 +158,27 @@ pub(super) struct Stood {
     at: At,
 }
 
-/// One of your things that stands in your house, carried along while the
-/// house is in your hand: which house, and where in the house's own space
-/// it stands.
+/// One of your things that stands in your house, or a small thing on
+/// something else of yours, carried along while that is in your hand: what
+/// carries it, and where it stands in that one's own space.
 #[derive(Component, Clone, Copy)]
 pub(super) struct Rides {
-    house: Entity,
+    host: Entity,
     at: Transform,
+}
+
+/// Whether a small thing standing at `at` stands on a piece that stands as
+/// `host` does and fills `bounds`: over it, and on it, its foot higher than
+/// a little over the floor under the piece and no higher than its top. A
+/// thing on the floor between a table's legs is not on the table.
+fn stands_on(host: &Transform, bounds: &super::Bounds, at: Vec3) -> bool {
+    let own = host.compute_affine().inverse().transform_point3(at);
+    own.x >= bounds.low.x
+        && own.x <= bounds.high.x
+        && own.z >= bounds.low.z
+        && own.z <= bounds.high.z
+        && own.y > bounds.low.y + 0.1
+        && own.y <= bounds.high.y + 0.05
 }
 
 /// A thing of yours let go of where it cannot stand (`editor::Edit::Away`,
@@ -333,14 +350,19 @@ fn find_home(
 /// ([`report`]), and a house with it whatever of yours stands on its
 /// floors, which rides along from here ([`Rides`]); thrown away, it is back
 /// in the bag, and with a house, whatever was in its walls, which goes with
-/// it. Before the menu's asks are done (`super::edit_pieces`), which takes
-/// what is thrown away out of the world.
+/// it, and whatever stood on its floors, which goes out of the world here
+/// and now (Hajun, 2026-11-25: "when u delete a house all the furnitures in
+/// that house should disappear": left standing, what had been upstairs
+/// stood in the air unseen, and in the next house put down). Before the
+/// menu's asks are done (`super::edit_pieces`), which takes what is thrown
+/// away out of the world.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn note_edits(
     mut edits: MessageReader<Edit>,
     mine: Query<(&Piece, Option<&Stood>), With<Mine>>,
     houses: Query<(&Transform, &Rooms, &super::Bounds), With<Mine>>,
-    furniture: Query<(Entity, &Piece, &Transform, Has<Ghost>), (With<Mine>, With<Stood>, Without<Rooms>)>,
+    sizes: Query<(&Transform, &super::Bounds), With<Mine>>,
+    furniture: Query<(Entity, &Piece, &Transform, Has<Ghost>, &Stood, Option<&Rides>), (With<Mine>, Without<Rooms>)>,
     online: Res<Online>,
     mut bag: ResMut<Bag>,
     mut asks: MessageWriter<Ask>,
@@ -350,17 +372,39 @@ fn note_edits(
         match edit {
             Edit::Opened(target) if mine.contains(target) => {
                 commands.entity(target).insert(Lifted);
-                let Ok((house, rooms, bounds)) = houses.get(target) else {
+                let Ok((carried, _)) = sizes.get(target) else {
                     continue;
                 };
-                // A house: what stands on its floors goes where it goes.
-                let into = house.compute_affine().inverse();
-                for (thing, piece, place, ghost) in &furniture {
-                    if ghost || piece.def.on_wall() || !rooms.hold(into.transform_point3(place.translation), bounds.high.y) {
-                        continue;
+                let into = carried.compute_affine().inverse();
+                let (mut hosts, mut riding) = (vec![target], HashSet::new());
+                if let Ok((_, rooms, bounds)) = houses.get(target) {
+                    // A house: what stands on its floors goes where it goes,
+                    // and what is on that ([`stands_on`], below).
+                    for (thing, piece, place, ghost, ..) in &furniture {
+                        if ghost || piece.def.on_wall() || !rooms.hold(into.transform_point3(place.translation), bounds.high.y) {
+                            continue;
+                        }
+                        let at = Transform::from_matrix(Mat4::from(into * place.compute_affine()));
+                        commands.entity(thing).insert((Ghost, Lifted, Rides { host: target, at }));
+                        riding.insert(thing);
+                        hosts.push(thing);
                     }
-                    let at = Transform::from_matrix(Mat4::from(into * place.compute_affine()));
-                    commands.entity(thing).insert((Ghost, Lifted, Rides { house: target, at }));
+                }
+                // The small things that stand on it, and on those, each
+                // where it stands in its own space.
+                while let Some(host) = hosts.pop() {
+                    let Ok((under, bounds)) = sizes.get(host) else {
+                        continue;
+                    };
+                    for (thing, piece, place, ghost, ..) in &furniture {
+                        if thing == target || ghost || !piece.def.small || riding.contains(&thing) || !stands_on(under, bounds, place.translation) {
+                            continue;
+                        }
+                        riding.insert(thing);
+                        hosts.push(thing);
+                        let at = Transform::from_matrix(Mat4::from(into * place.compute_affine()));
+                        commands.entity(thing).insert((Ghost, Lifted, Rides { host: target, at }));
+                    }
                 }
             }
             Edit::Trash(target) => {
@@ -370,12 +414,31 @@ fn note_edits(
                 if let Some(stood) = stood {
                     bag.take(online.is(), &mut asks, stood.id);
                 }
-                if piece.def.mount == Mount::House {
+                let house = piece.def.mount == Mount::House;
+                if house {
                     for (other, stood) in &mine {
                         if let Some(stood) = stood.filter(|_| other.def.on_wall()) {
                             bag.take(online.is(), &mut asks, stood.id);
                         }
                     }
+                }
+                // And what stood on its floors, upstairs or down, or on it:
+                // what rides in or on it, it having been picked up to be
+                // binned, and whatever stands in a house all the same. Into
+                // the bag, and out of the world at once, as it is.
+                let inside = houses
+                    .get(target)
+                    .ok()
+                    .filter(|_| house)
+                    .map(|(house, rooms, bounds)| (house.compute_affine().inverse(), rooms, bounds.high.y));
+                for (thing, other, place, ghost, stood, rides) in &furniture {
+                    let rode = rides.is_some_and(|rides| rides.host == target);
+                    let stands_in = !ghost && inside.is_some_and(|(into, rooms, top)| rooms.hold(into.transform_point3(place.translation), top));
+                    if thing == target || other.def.on_wall() || !(rode || stands_in) {
+                        continue;
+                    }
+                    bag.take(online.is(), &mut asks, stood.id);
+                    commands.entity(thing).despawn();
                 }
             }
             _ => {}
@@ -419,7 +482,7 @@ fn put_back(
 ) {
     for &PutBack(target) in asked.read() {
         for (ghost, stood, rides) in &ghosts {
-            if ghost == target || rides.is_some_and(|rides| rides.house == target) {
+            if ghost == target || rides.is_some_and(|rides| rides.host == target) {
                 menu.let_go_of(ghost);
                 settle(ghost, stood, &children, &solids, &mut reshape, &mut commands);
             }
@@ -427,21 +490,23 @@ fn put_back(
     }
 }
 
-/// Carries what stands in a house along with it while the house is in your
-/// hand ([`Rides`]): where it stood in the house, wherever the house now is
-/// and whichever way it is turned. Once the house is down, so is what was
-/// in it, where it has come to, and the bag is told of each ([`report`]);
-/// and a house that has gone from your hand any other way, binned, leaves
-/// what was in it where it stood. Only what has moved is written.
+/// Carries what stands in a house, or on something else, along with it
+/// while that is in your hand ([`Rides`]): where it stood in or on it,
+/// wherever that now is and whichever way it is turned. Once that is down,
+/// so is what was in or on it, where it has come to, and the bag is told of
+/// each ([`report`]); and one that has gone from your hand any other way
+/// than the bin (which takes what was in or on it into the bag,
+/// [`note_edits`]) leaves what was there where it stood. Only what has
+/// moved is written.
 #[allow(clippy::type_complexity)]
 fn ride_along(
-    houses: Query<(&Transform, Has<Ghost>), (With<Mine>, With<Rooms>)>,
-    mut riders: Query<(Entity, &Rides, &mut Transform), Without<Rooms>>,
+    hosts: Query<(&Transform, Has<Ghost>), (With<Mine>, Without<Rides>)>,
+    mut riders: Query<(Entity, &Rides, &mut Transform)>,
     mut reshape: ResMut<Reshape>,
     mut commands: Commands,
 ) {
     for (rider, rides, mut place) in &mut riders {
-        let Ok((house, in_hand)) = houses.get(rides.house) else {
+        let Ok((house, in_hand)) = hosts.get(rides.host) else {
             commands.entity(rider).remove::<(Ghost, Lifted, Rides)>().insert(Displaced);
             reshape.0 = true;
             continue;
@@ -1180,7 +1245,9 @@ mod tests {
         assert!(world.get::<Lifted>(bed).is_some());
         assert!(world.resource::<Reshape>().0);
         assert!(world.get::<Transform>(bed).unwrap().translation.distance(Vec3::new(16.0, 0.1, 8.0)) < 1e-4);
-        // Picked up again and binned: the bed is left where the bag has it.
+        // Picked up again, and the house gone some other way than the bin
+        // (which takes the bed into the bag with it, the test below): the
+        // bed is left where the bag has it.
         world.entity_mut(bed).remove::<Lifted>();
         pick_up(&mut world);
         assert!(world.get::<Rides>(bed).is_some());
@@ -1188,6 +1255,165 @@ mod tests {
         world.run_system_once(ride_along).unwrap();
         assert!(world.get::<Rides>(bed).is_none() && world.get::<Ghost>(bed).is_none() && world.get::<Lifted>(bed).is_none());
         assert!(world.get::<Displaced>(bed).is_some());
+    }
+
+    #[test]
+    fn a_house_binned_takes_what_stood_on_its_floors_into_the_bag_with_it() {
+        use bevy::ecs::system::RunSystemOnce;
+
+        use super::super::Rooms;
+        // Hajun, 2026-11-25: "when u delete a house all the furnitures in
+        // that house should disappear": a bed left upstairs stood in the
+        // air, unseen, and in the next house put down.
+        let ground = |x: f32, y: f32, z: f32| At::Ground { x, y, z, yaw: 0.0 };
+        let door_at = At::Wall { wall: 0, along: 1.0, up: 0.0, face: 1 };
+        // A house of two floors, 8 by 6, with a door in its wall, a bed on
+        // each floor and a chandelier under the upper one; and a lamp out on
+        // the plot. Twice over: the house picked up and then binned, as the
+        // menu does it, and binned with nothing picked up.
+        for picked_up in [true, false] {
+            let mut world = World::new();
+            world.init_resource::<Messages<Edit>>();
+            world.init_resource::<Messages<Ask>>();
+            world.init_resource::<Bag>();
+            world.init_resource::<Reshape>();
+            world.insert_resource(Online::default());
+            {
+                let mut bag = world.resource_mut::<Bag>();
+                for kind in ["square_house_two_floor", "classic_door", "singlebed", "singlebed", "chandelier"] {
+                    bag.has.buy(kind, 1_000_000).unwrap();
+                }
+                // Where the bag has each, in the plot's own space: the plot's
+                // middle is (10, 0, 10) in the world here.
+                for (id, kind, at) in [
+                    (1, "square_house_two_floor", ground(0.0, 0.0, 0.0)),
+                    (2, "classic_door", door_at),
+                    (3, "singlebed", ground(2.0, 0.1, 1.0)),
+                    (4, "singlebed", ground(-1.0, 5.1, -1.0)),
+                    (5, "chandelier", ground(0.0, 3.0, 0.0)),
+                    (6, "streetlamp", ground(10.0, 0.0, 0.0)),
+                ] {
+                    bag.has.put(id, kind, at).unwrap();
+                }
+            }
+            let bounds = Bounds {
+                low: Vec3::new(-4.0, 0.0, -3.0),
+                high: Vec3::new(4.0, 10.0, 3.0),
+            };
+            let floors = Rooms(vec![
+                (Vec3::new(-4.0, 0.0, -3.0), Vec3::new(4.0, 0.1, 3.0)),
+                (Vec3::new(-4.0, 5.0, -3.0), Vec3::new(4.0, 5.1, 3.0)),
+            ]);
+            let spawn = |world: &mut World, id: u32, kind: &str, at: At, place: Vec3| {
+                world.spawn((Mine, Piece { def: def(kind) }, Stood { id, at }, Transform::from_translation(place))).id()
+            };
+            let house = spawn(&mut world, 1, "square_house_two_floor", ground(0.0, 0.0, 0.0), Vec3::new(10.0, 0.0, 10.0));
+            world.entity_mut(house).insert((floors, bounds));
+            let door = spawn(&mut world, 2, "classic_door", door_at, Vec3::new(10.0, 0.1, 7.0));
+            world.entity_mut(door).insert(ChildOf(house));
+            let below = spawn(&mut world, 3, "singlebed", ground(2.0, 0.1, 1.0), Vec3::new(12.0, 0.1, 11.0));
+            let upstairs = spawn(&mut world, 4, "singlebed", ground(-1.0, 5.1, -1.0), Vec3::new(9.0, 5.1, 9.0));
+            let hung = spawn(&mut world, 5, "chandelier", ground(0.0, 3.0, 0.0), Vec3::new(10.0, 3.0, 10.0));
+            let lamp = spawn(&mut world, 6, "streetlamp", ground(10.0, 0.0, 0.0), Vec3::new(20.0, 0.0, 10.0));
+            if picked_up {
+                world.write_message(Edit::Opened(house));
+                world.run_system_once(note_edits).unwrap();
+                world.resource_mut::<Messages<Edit>>().clear();
+                world.entity_mut(house).insert(Ghost);
+                assert!([below, upstairs, hung].iter().all(|&thing| world.get::<Rides>(thing).is_some()));
+            }
+            world.write_message(Edit::Trash(house));
+            world.run_system_once(note_edits).unwrap();
+            // Everything of the house's in the bag, the lamp outside it as it
+            // was; what was on its floors gone from the world at once (the
+            // house and its door go as the menu's asks are done).
+            let standing: Vec<u32> = world.resource::<Bag>().has.stands.iter().map(|stood| stood.id).collect();
+            assert_eq!(standing, [6], "picked up first: {picked_up}");
+            for thing in [below, upstairs, hung] {
+                assert!(world.get_entity(thing).is_err(), "{thing}, picked up first: {picked_up}");
+            }
+            assert!(world.get_entity(lamp).is_ok() && world.get::<Displaced>(lamp).is_none());
+            // In the bag still, every one of them, to be brought out again.
+            let bag = world.resource::<Bag>();
+            assert_eq!(bag.has.count("singlebed"), 2);
+            assert_eq!(bag.has.count("chandelier"), 1);
+        }
+    }
+
+    #[test]
+    fn a_desk_picked_up_takes_the_small_things_on_it_along_and_binned_into_the_bag() {
+        use bevy::ecs::system::RunSystemOnce;
+        let ground = |x: f32, y: f32, z: f32| At::Ground { x, y, z, yaw: 0.0 };
+        // A desk 3.1 by 1.6 and 1.08 high at (10, 0, 10); on it a box, and on
+        // the box a mug; a hamburger on the floor between its legs; and a
+        // street lamp beside it, which is not small.
+        for binned in [false, true] {
+            let mut world = World::new();
+            world.init_resource::<Messages<Edit>>();
+            world.init_resource::<Messages<Ask>>();
+            world.init_resource::<Bag>();
+            world.init_resource::<Reshape>();
+            world.insert_resource(Online::default());
+            {
+                let mut bag = world.resource_mut::<Bag>();
+                for kind in ["desk", "empty_box", "mug_with_office_tool", "hamburger"] {
+                    bag.has.buy(kind, 1_000_000).unwrap();
+                }
+                for (id, kind, at) in [
+                    (1, "desk", ground(0.0, 0.0, 0.0)),
+                    (2, "empty_box", ground(0.5, 1.08, 0.0)),
+                    (3, "mug_with_office_tool", ground(0.5, 1.79, 0.1)),
+                    (4, "hamburger", ground(-1.0, 0.0, 0.0)),
+                    (5, "streetlamp", ground(0.0, 0.0, 1.0)),
+                ] {
+                    bag.has.put(id, kind, at).unwrap();
+                }
+            }
+            let size = |x: f32, y: f32, z: f32| super::super::Bounds {
+                low: Vec3::new(-x, 0.0, -z),
+                high: Vec3::new(x, y, z),
+            };
+            let mut spawn = |id: u32, kind: &str, at: Vec3, bounds: super::super::Bounds| {
+                let stood = Stood { id, at: ground(0.0, 0.0, 0.0) };
+                world.spawn((Mine, Piece { def: def(kind) }, stood, Transform::from_translation(at), bounds)).id()
+            };
+            let desk = spawn(1, "desk", Vec3::new(10.0, 0.0, 10.0), size(1.55, 1.08, 0.78));
+            let boxed = spawn(2, "empty_box", Vec3::new(10.5, 1.08, 10.0), size(0.59, 0.71, 0.59));
+            let mug = spawn(3, "mug_with_office_tool", Vec3::new(10.5, 1.79, 10.1), size(0.13, 0.5, 0.12));
+            let under = spawn(4, "hamburger", Vec3::new(9.0, 0.0, 10.0), size(0.14, 0.18, 0.14));
+            let lamp = spawn(5, "streetlamp", Vec3::new(10.0, 0.0, 10.6), size(0.3, 4.0, 0.3));
+            world.write_message(Edit::Opened(desk));
+            world.run_system_once(note_edits).unwrap();
+            world.resource_mut::<Messages<Edit>>().clear();
+            // The box and the mug ride on the desk, the mug where it is in
+            // the desk's own space; the hamburger under it and the lamp stay.
+            for thing in [boxed, mug] {
+                let rides = *world.get::<Rides>(thing).unwrap();
+                assert_eq!(rides.host, desk);
+                assert!(world.get::<Ghost>(thing).is_some());
+            }
+            let mug_in_desk = world.get::<Rides>(mug).unwrap().at.translation;
+            assert!(mug_in_desk.distance(Vec3::new(0.5, 1.79, 0.1)) < 1e-5, "{mug_in_desk}");
+            for thing in [under, lamp] {
+                assert!(world.get::<Rides>(thing).is_none() && world.get::<Ghost>(thing).is_none());
+            }
+            if !binned {
+                // Carried a metre on: the mug with it.
+                world.entity_mut(desk).insert(Ghost);
+                world.get_mut::<Transform>(desk).unwrap().translation.x += 1.0;
+                world.run_system_once(ride_along).unwrap();
+                assert!(world.get::<Transform>(mug).unwrap().translation.distance(Vec3::new(11.5, 1.79, 10.1)) < 1e-5);
+                continue;
+            }
+            // Binned: the desk, the box and the mug into the bag, the box and
+            // the mug out of the world at once; the rest as they were.
+            world.write_message(Edit::Trash(desk));
+            world.run_system_once(note_edits).unwrap();
+            let standing: Vec<u32> = world.resource::<Bag>().has.stands.iter().map(|stood| stood.id).collect();
+            assert_eq!(standing, [4, 5]);
+            assert!(world.get_entity(boxed).is_err() && world.get_entity(mug).is_err());
+            assert!(world.get_entity(under).is_ok() && world.get_entity(lamp).is_ok());
+        }
     }
 
     #[test]
@@ -1202,7 +1428,7 @@ mod tests {
         // down.
         let house = world.spawn((Mine, Ghost, Lifted, Stood { id: 1, at: here })).id();
         let rides = Rides {
-            house,
+            host: house,
             at: Transform::IDENTITY,
         };
         let bed = world.spawn((Mine, Ghost, Lifted, Stood { id: 2, at: here }, rides)).id();

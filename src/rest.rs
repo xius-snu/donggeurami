@@ -13,7 +13,15 @@
 //! places, in its own space, by its name: the cafe chair one to sit, the
 //! soft couch two to sit back on, the single bed one to lie on and the
 //! double bed two. Yours and everyone's in your channel alike, and only in
-//! the town: a piece in House Builder is being built with.
+//! the town: a piece in House Builder is being built with. **And since
+//! 2026-11-25 what came for the plots that day** (Hajun: "also the bed,
+//! chair, sofas, couch need the interactability with the sitting/lying
+//! down. also the bathtub could be lyind down animation, and the l shaped
+//! couch can have maybe 3 seating places"): the chair, the rocking chair
+//! and the stool one to sit on, the armchair one to sit back in, the L
+//! shaped couch three, two along it and one on the end that comes forward,
+//! the bed two to lie on, and the bathtub one, lying along it
+//! ([`Spot::turn`]: each body faces as its piece does, but there).
 //!
 //! **The bubbles** ([`offer`]): come within [`REACH`] of such a thing, on
 //! its floor, and a bubble stands over each of its places that is free and
@@ -100,17 +108,20 @@ const LIE_MID: f32 = 0.82;
 
 /// Somewhere to rest on a piece, in the piece's own space (its front is
 /// its -Z): how, where the body is put (the hips' place on the seat, or
-/// under the middle of someone lying), and where the point of its bubble
-/// is.
+/// under the middle of someone lying), where the point of its bubble is,
+/// and how far the body there is turned about the upright from the way the
+/// piece faces, in radians (to its left, as the engine turns): nothing, but
+/// in the bathtub, which is lain along.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub(crate) struct Spot {
     pub(crate) pose: Pose,
     pub(crate) at: Vec3,
     pub(crate) tip: Vec3,
+    pub(crate) turn: f32,
 }
 
 const fn spot(pose: Pose, at: Vec3, tip: Vec3) -> Spot {
-    Spot { pose, at, tip }
+    Spot { pose, at, tip, turn: 0.0 }
 }
 
 /// The cafe chair, a round stool 0.77 m high with a back round the far
@@ -131,6 +142,45 @@ const DOUBLE_BED: [Spot; 2] = [
     spot(Pose::Lie, Vec3::new(0.62, 0.95, 0.98), Vec3::new(0.62, 1.5, 1.1)),
 ];
 
+// What came for the plots on 2026-11-25 (`mybuilds/newones`), each as its
+// model is in the game, measured off it (a test holds each place to its
+// surfaces); all but the bathtub face their own -Z as the game has them.
+
+/// The wooden chair: a seat 0.66 m high and 0.66 deep, its back behind it.
+const WOODEN_CHAIR: [Spot; 1] = [spot(Pose::Sit, Vec3::new(0.0, 0.66, 0.08), Vec3::new(0.0, 1.75, 0.08))];
+/// The rocking chair: a seat that slopes back from 0.77 m to 0.68, between
+/// its arms; sat on 0.35 m in from its front, as the others.
+const ROCKING_CHAIR: [Spot; 1] = [spot(Pose::Sit, Vec3::new(0.0, 0.75, -0.40), Vec3::new(0.0, 1.9, -0.40))];
+/// The bar stool: a round seat 0.54 m across and 0.9 high.
+const STOOL: [Spot; 1] = [spot(Pose::Sit, Vec3::new(0.0, 0.9, 0.0), Vec3::new(0.0, 1.65, 0.0))];
+/// The armchair: a cushion 0.78 m high between its arms, a deep one, its
+/// back rising 0.35 m behind its middle: sat back in, as on a sofa. Its
+/// origin is 0.18 m right of its middle.
+const ARMCHAIR: [Spot; 1] = [spot(Pose::Lounge, Vec3::new(-0.18, 0.78, 0.2), Vec3::new(-0.18, 1.95, 0.2))];
+/// The L shaped couch: cushions 0.72 m high, its back rising 0.33 m behind
+/// its origin all along it, and its left end coming forward 2 m: two along
+/// it and one on that end, the legs out along it.
+const L_COUCH: [Spot; 3] = [
+    spot(Pose::Lounge, Vec3::new(-1.15, 0.72, 0.18), Vec3::new(-1.15, 1.75, 0.18)),
+    spot(Pose::Lounge, Vec3::new(-0.03, 0.72, 0.18), Vec3::new(-0.03, 1.75, 0.18)),
+    spot(Pose::Lounge, Vec3::new(1.3, 0.72, 0.18), Vec3::new(1.3, 1.75, 0.18)),
+];
+/// The big bed: a blanket 1.26 m high, its two pillows rising from 1.55 m
+/// behind its origin, which is 0.7 m right of its middle: one lying on each
+/// side, the head against the pillow.
+const BIG_BED: [Spot; 2] = [
+    spot(Pose::Lie, Vec3::new(-0.12, 1.26, 1.03), Vec3::new(-0.12, 2.3, 1.03)),
+    spot(Pose::Lie, Vec3::new(1.47, 1.26, 1.03), Vec3::new(1.47, 2.3, 1.03)),
+];
+/// Hajun's bathtub, lain in along its length, the head toward its left end
+/// (its -X), which slopes up from 1.4 m out: on its floor, 0.17 m up.
+const BATHTUB: [Spot; 1] = [Spot {
+    pose: Pose::Lie,
+    at: Vec3::new(-0.73, 0.17, 0.0),
+    tip: Vec3::new(-0.73, 1.95, 0.0),
+    turn: -FRAC_PI_2,
+}];
+
 /// Where one can rest on a piece of this kind (`build::PieceDef::kind`):
 /// nowhere, on most.
 pub(crate) fn spots(kind: &str) -> &'static [Spot] {
@@ -139,6 +189,13 @@ pub(crate) fn spots(kind: &str) -> &'static [Spot] {
         "softcouch" => &SOFA,
         "singlebed" => &SINGLE_BED,
         "doublebed" => &DOUBLE_BED,
+        "chair" => &WOODEN_CHAIR,
+        "rocking_chair" => &ROCKING_CHAIR,
+        "stool" => &STOOL,
+        "armchair" => &ARMCHAIR,
+        "couch" => &L_COUCH,
+        "bed" => &BIG_BED,
+        "bathtub" => &BATHTUB,
         _ => &[],
     }
 }
@@ -153,11 +210,11 @@ fn lift(pose: Pose) -> f32 {
 }
 
 /// Where a body rests on `place` of a piece that stands as `piece` does:
-/// there, facing as the piece does.
+/// there, facing as the piece does, turned as the place is.
 pub(crate) fn rests_at(piece: &Transform, place: &Spot) -> Transform {
     Transform {
         translation: piece.transform_point(place.at) + Vec3::Y * lift(place.pose),
-        rotation: piece.rotation,
+        rotation: piece.rotation * Quat::from_rotation_y(place.turn),
         scale: Vec3::ONE,
     }
 }
@@ -636,30 +693,112 @@ mod tests {
         Bounds { low, high }
     }
 
+    /// Every piece with somewhere to rest, how many places each, and how
+    /// one rests there.
+    const RESTED_ON: [(&str, usize, Pose); 11] = [
+        ("cafechair", 1, Pose::Sit),
+        ("softcouch", 2, Pose::Lounge),
+        ("singlebed", 1, Pose::Lie),
+        ("doublebed", 2, Pose::Lie),
+        ("chair", 1, Pose::Sit),
+        ("rocking_chair", 1, Pose::Sit),
+        ("stool", 1, Pose::Sit),
+        ("armchair", 1, Pose::Lounge),
+        ("couch", 3, Pose::Lounge),
+        ("bed", 2, Pose::Lie),
+        ("bathtub", 1, Pose::Lie),
+    ];
+
     #[test]
     fn a_chair_has_one_place_a_sofa_two_a_single_bed_one_and_a_double_bed_two() {
         let count = |kind: &str, pose: Pose| spots(kind).iter().filter(|spot| spot.pose == pose).count();
-        assert_eq!((spots("cafechair").len(), count("cafechair", Pose::Sit)), (1, 1));
-        assert_eq!((spots("softcouch").len(), count("softcouch", Pose::Lounge)), (2, 2));
-        assert_eq!((spots("singlebed").len(), count("singlebed", Pose::Lie)), (1, 1));
-        assert_eq!((spots("doublebed").len(), count("doublebed", Pose::Lie)), (2, 2));
-        // Each of them a piece there is, and nothing else has any: a table,
-        // a house, a door.
-        for kind in ["cafechair", "softcouch", "singlebed", "doublebed"] {
+        for (kind, places, pose) in RESTED_ON {
+            assert_eq!((spots(kind).len(), count(kind, pose)), (places, places), "{kind}");
+            // Each of them a piece there is.
             assert!(PIECES.iter().any(|def| def.kind == kind), "{kind}");
         }
+        // And nothing else has any: a table, a house, a door.
         let with_places = PIECES.iter().filter(|def| !spots(def.kind).is_empty()).count();
-        assert_eq!(with_places, 4);
-        // Every place is on its piece, its bubble over it, and two on one
-        // piece are far enough apart for two to rest side by side.
-        for kind in ["cafechair", "softcouch", "singlebed", "doublebed"] {
-            let size = bounds(kind);
-            for spot in spots(kind) {
-                assert!(spot.at.cmpgt(size.low).all() && spot.at.cmplt(size.high).all(), "{kind}: {}", spot.at);
-                assert!(spot.tip.y > spot.at.y + 0.4 && spot.tip.y > size.high.y, "{kind}: {}", spot.tip);
+        assert_eq!(with_places, RESTED_ON.len());
+        // Two places on one piece far enough apart for two to rest side by
+        // side; the L shaped couch's three each a metre from the next.
+        for (kind, ..) in RESTED_ON {
+            let places = spots(kind);
+            for (nth, one) in places.iter().enumerate() {
+                for other in &places[nth + 1..] {
+                    assert!(one.at.distance(other.at) > 1.0, "{kind}");
+                }
             }
-            if let [left, right] = spots(kind) {
-                assert!(left.at.distance(right.at) > 1.0 && left.at.x < 0.0 && right.at.x > 0.0, "{kind}");
+        }
+        // All but the bathtub's face as their piece does; in it, lying along
+        // it, the head to its left.
+        for (kind, ..) in RESTED_ON {
+            for place in spots(kind) {
+                let head = Quat::from_rotation_y(place.turn) * Vec3::Z;
+                if kind == "bathtub" {
+                    assert!(head.distance(Vec3::NEG_X) < 1e-5, "{head}");
+                } else {
+                    assert_eq!(place.turn, 0.0, "{kind}");
+                }
+            }
+        }
+    }
+
+    /// The highest surface of `triangles` over the point (`x`, `z`), if any
+    /// is: what a vertical line down through it meets first.
+    fn top_of(triangles: &[[Vec3; 3]], x: f32, z: f32) -> Option<f32> {
+        let at = Vec2::new(x, z);
+        triangles
+            .iter()
+            .filter_map(|[a, b, c]| {
+                let (a2, b2, c2) = (a.xz(), b.xz(), c.xz());
+                let area = (b2 - a2).perp_dot(c2 - a2);
+                if area.abs() < 1e-9 {
+                    return None;
+                }
+                let u = (b2 - at).perp_dot(c2 - at) / area;
+                let v = (c2 - at).perp_dot(a2 - at) / area;
+                let w = 1.0 - u - v;
+                (u >= -1e-6 && v >= -1e-6 && w >= -1e-6).then(|| u * a.y + v * b.y + w * c.y)
+            })
+            .reduce(f32::max)
+    }
+
+    #[test]
+    fn every_place_to_rest_is_on_its_piece_as_its_model_is() {
+        // Each read off its model as the game has it: where the body goes is
+        // on the top of what is under it there (a seat, a blanket, the
+        // bathtub's floor) to a few centimetres; its bubble over the piece,
+        // clear of what is under it and well over the place; and someone
+        // lying has their heels on what they lie on, and their head within
+        // the piece.
+        for (kind, ..) in RESTED_ON {
+            let def = PIECES.iter().find(|def| def.kind == kind).unwrap();
+            let triangles: Vec<[Vec3; 3]> = crate::island::glb::read(&format!("{}/{}.glb", def.dir, def.file))
+                .into_iter()
+                .flat_map(|part| part.triangles)
+                .collect();
+            let (low, high) = triangles
+                .iter()
+                .flatten()
+                .fold((Vec3::INFINITY, Vec3::NEG_INFINITY), |(low, high), &corner| (low.min(corner), high.max(corner)));
+            let inside = |at: Vec3| at.xz().cmpgt(low.xz()).all() && at.xz().cmplt(high.xz()).all();
+            for place in spots(kind) {
+                let (at, tip) = (place.at, place.tip);
+                assert!(inside(at) && inside(tip), "{kind}: {at} {tip}, its model {low} to {high}");
+                let under = top_of(&triangles, at.x, at.z).unwrap_or_else(|| panic!("{kind}: nothing under {at}"));
+                assert!((under - at.y).abs() < 0.05, "{kind}: {at} over a top {under} m up");
+                let below_tip = top_of(&triangles, tip.x, tip.z).unwrap_or(0.0);
+                assert!(tip.y > at.y + 0.4 && tip.y > below_tip + 0.3, "{kind}: bubble {tip} over {below_tip}");
+                if place.pose == Pose::Lie {
+                    // Heels 0.78 m and head 0.52 m from the middle, along the
+                    // way the head points.
+                    let toward = Quat::from_rotation_y(place.turn) * Vec3::Z;
+                    let (heels, head) = (at - toward * 0.78, at + toward * 0.52);
+                    let feet = top_of(&triangles, heels.x, heels.z).unwrap_or_else(|| panic!("{kind}: nothing under the heels"));
+                    assert!((feet - at.y).abs() < 0.1, "{kind}: heels at {heels} on a top {feet} m up");
+                    assert!(inside(head), "{kind}: head at {head}");
+                }
             }
         }
     }
@@ -697,6 +836,19 @@ mod tests {
         let at_the_foot = offered(Vec3::new(0.0, 0.0, -3.2), &bed, &bed_size, &SINGLE_BED, false, &[], open).count();
         let by_the_side = offered(Vec3::new(2.0, 0.0, 0.0), &bed, &bed_size, &SINGLE_BED, false, &[], open).count();
         assert_eq!((at_the_foot, by_the_side), (0, 1));
+    }
+
+    #[test]
+    fn someone_in_the_bathtub_lies_along_it_with_the_head_toward_its_left_end() {
+        // The bathtub turned a quarter in the world: the body turned with it
+        // and a quarter more, so that its head (behind it, lying) is toward
+        // the tub's own -X, wherever that is.
+        let tub = Transform::from_xyz(3.0, 0.27, -1.0).with_rotation(Quat::from_rotation_y(FRAC_PI_2));
+        let lain = rests_at(&tub, &BATHTUB[0]);
+        let head = lain.rotation * Vec3::Z;
+        let tubs_left = tub.rotation * Vec3::NEG_X;
+        assert!(head.distance(tubs_left) < 1e-5, "{head} {tubs_left}");
+        assert!((lain.translation.y - (0.27 + 0.17 + LIE_LIFT)).abs() < 1e-5);
     }
 
     #[test]
