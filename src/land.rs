@@ -238,6 +238,12 @@ impl Deeds {
     }
 }
 
+/// Whether what [`Deeds`] has is the server's saying
+/// (`roundtown_net::Tell::Plots`), and not this device's own filling of a
+/// town with no server: the opening's cover waits for it (`intro`).
+#[derive(Resource, Default, PartialEq, Clone, Copy, Debug)]
+pub(crate) struct Told(pub bool);
+
 /// The order this device has thrown for the town it fills by itself,
 /// with no server to say: once, as the app opens, so that you and every
 /// made-up owner are on other plots each time it is opened (Hajun,
@@ -281,6 +287,7 @@ pub(crate) fn plugin(app: &mut App) {
     let everywhere = std::env::var("RT_LAND_SIGNS").is_ok_and(|said| said.trim() == "all");
     app.init_resource::<Plots>()
         .init_resource::<Deeds>()
+        .init_resource::<Told>()
         .insert_resource(Everywhere(everywhere))
         .add_observer(read_map)
         .add_systems(Update, (keep_deeds.in_set(DeedSystems), keep_signs, word_the_near).chain());
@@ -298,6 +305,7 @@ fn keep_deeds(
     me: Query<(&Seat, &Venue), With<Player>>,
     mut said: Local<Option<Vec<Deed>>>,
     mut deeds: ResMut<Deeds>,
+    mut told: ResMut<Told>,
 ) {
     for tell in tells.read() {
         if let Tell::Plots(all) = tell {
@@ -307,6 +315,7 @@ fn keep_deeds(
     if !online.is() {
         *said = None;
     }
+    told.set_if_neq(Told(said.is_some()));
     let Ok((seat, venue)) = me.single() else {
         return;
     };

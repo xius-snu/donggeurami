@@ -133,7 +133,9 @@ app already out makes of it is `docs/online.md`'s.
   now. Not waiting for the network is a rule of the app (`CLAUDE.md`,
   "Playing online"), so nothing is held back for it. If it reads badly on
   a phone, the cover could stay until the server has spoken or two
-  seconds have gone: his to say.
+  seconds have gone: his to say. **He said it that evening** ("yeah hold
+  black cover until the server answers"), and since APK 54 the cover
+  stays (`docs/town-hud.md`'s first entry).
 - Real land that fills no plot of a channel with more of it than plots
   (`Estate::spare`) is not kept out of another channel: it would take 48
   people's furnished land to matter.

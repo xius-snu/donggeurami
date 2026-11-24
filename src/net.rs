@@ -188,6 +188,13 @@ impl Online {
 }
 
 impl Online {
+    /// Whether the server has put you somewhere other than the town: back
+    /// in the game of Bridge Wars your seat waited in, say. The opening's
+    /// cover does not wait to hear of a town you are not in (`intro`).
+    pub(crate) fn elsewhere(&self) -> bool {
+        self.venue.is_some_and(|venue| venue != Venue::Town)
+    }
+
     /// Who you are online, while you are.
     #[allow(dead_code)]
     pub(crate) fn me(&self) -> Option<&Member> {
@@ -294,6 +301,21 @@ impl Link {
             })
             .ok()?;
         Some(answered)
+    }
+
+    /// Whether the server may yet say what the town is: it is being tried
+    /// for the first time, or it is connected. Not with no server to try,
+    /// with one newer than this app, in the background, nor once every
+    /// address has failed and it rests before trying again: the opening's
+    /// cover waits for the server only while this is so (`intro`, since
+    /// 2026-11-24).
+    pub(crate) fn hopeful(&self) -> bool {
+        match self.state {
+            LinkState::Off | LinkState::Asleep | LinkState::Outdated => false,
+            // Not begun yet, as the app opens: about to.
+            LinkState::Resting { until } => until <= 0.0,
+            LinkState::Asking { .. } | LinkState::Trying { .. } | LinkState::Linked => true,
+        }
     }
 
     /// The account is gone: this device forgets its secret, makes up a new

@@ -7,6 +7,82 @@
 > "above" or "below", or names another section in quotes, that section may be
 > in another file here: the table in `CLAUDE.md` says which.
 
+## The cover stays until the server has said what the town is
+
+2026-11-24, late, after APK 53 (`docs/land.md`'s first entry). Where
+everything in the town stands is thrown afresh as a channel opens, and
+the town the device fills by itself with no server is in another order:
+so with the cover gone before the server had spoken, you were stood on
+another plot and every other plot filled again, in sight, a second or two
+after the town came up. That was put to Hajun with the way round it
+(holding the cover until the server answers, or two seconds pass), and
+he: "yeah hold black cover until the server answers, rebuild apk an
+dpush." `src/intro.rs`, with a word each from `net` and `land`. The app's
+own: APK 54 is the first with it.
+
+- **The cover waits for one thing more** (`Loading::answered`,
+  `Wait::step`): the server's word on the town, which is whose every plot
+  is (`land::Told`: `Tell::Plots` has come) and what stands on each
+  (`bag::Theirs` has every one of those owners in it; the server says it
+  of every plot, with something on it or not). What then stands on the
+  plots is a model like any other, and the cover waits for those as it
+  always waited for every model (`Loading::there`), and for the GPU's
+  eight quiet frames after.
+- **Only while there is a server that may answer** (`net::Link::hopeful`):
+  it is being tried for the first time, or it is connected. Not with no
+  server at all (`RT_SERVER=off`), not once every address has failed (no
+  network: the login fails at once, and it rests before trying again),
+  not with a server newer than the app, nor once the server has put you
+  somewhere that is not the town (`net::Online::elsewhere`: back in a
+  game of Bridge Wars your seat waited in).
+- **And no longer than two seconds once everything else is there**
+  (`SERVER_WAIT`): a slow network shows the town as the device has it and
+  changes it when the server answers, as before. The cover's own most, ten
+  seconds, is as it was.
+- **This bends "the app never waits for the network"** (`CLAUDE.md`,
+  "Playing online"), by those two seconds at the most, at his word. With
+  no network the app opens exactly as it did.
+
+**Calls that were mine.** Two seconds, counted from when everything else
+is there and not from when the app opened (a phone takes longer than that
+to load the town, and an answer comes in tenths of a second where there
+is a network: it is nearly always there first). Not waiting again once
+every address has failed, though it tries again four seconds on: someone
+with no network is not to look at black for two seconds each time they
+open the app. Not waiting for a town you are not in.
+
+**Checked**, in the desktop build, hidden, by a throwaway that logged
+every fifth of a second how solid the cover was, which plot you had and
+whose the plots were, taken out again:
+
+- **The VM**, this PC's own account: the server's word 1.67 s in, under
+  the cover (from the device's plot 31 to the server's plot 15, the two
+  real people's land come); the cover opened at 3.71 s, the buses' way
+  being the last thing there, and nothing moved after it. Not a moment
+  was spent waiting for the server alone.
+- **No server** (`RT_SERVER=off`): covered 3.73 s, as it was.
+- **A server that refuses at once** (nothing listening on this PC's
+  port): no wait, covered as long as with none.
+- **An address that swallows everything and says nothing**: everything
+  else there at 2.77 s, the cover open at 4.97 s, having waited for the
+  server alone its two seconds and the quiet frames after.
+- **A server held still until after everything else was there** (one on
+  this PC, its process stopped and let go): everything else at 3.67 s,
+  the server's word at 4.38 s, the cover solid while you were moved from
+  the device's plot 34 to the server's 38 and the plots became the
+  server's, open at 4.90 s. Without this it would have opened at 3.8 s
+  and the move been seen.
+- The tests: the cover stays for the server past the frames it would have
+  opened in, through the loading of what the server says stands, and
+  opens after; never answered, it opens two seconds after everything
+  else, and none of the time the town took counts; with none to wait for,
+  as it always did.
+
+**Not checked.** On a phone, where the town takes longer to load than on
+this PC and the wait should matter less. The sign-up's pages, the first
+time the app is run (the wait is theirs while they are up, as before). A
+seat waiting in a game of Bridge Wars.
+
 ## The one button by the left edge moved up, and a cross beside the colour
 
 2026-11-22, night (`docs/bag.md`, the entry marked "night", has Hajun's

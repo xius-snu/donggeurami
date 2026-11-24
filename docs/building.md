@@ -7,6 +7,33 @@
 > "above" or "below", or names another section in quotes, that section may be
 > in another file here: the table in `CLAUDE.md` says which.
 
+## APK 54: the cover stays until the server has said what the town is
+
+2026-11-24, 17:05 here (08:05 UTC). Asked for: "yeah hold black cover
+until the server answers, rebuild apk an dpush" (`docs/town-hud.md`'s
+first entry). From the main checkout, with another session at work in it
+on the website (`roundtown-2b`: `MULTIPLAYER.md`, parts of `CLAUDE.md` and
+`docs/online.md`), told what was being built and asked to leave `src/`,
+`shared/`, `assets/` and `mobile/` alone meanwhile; its changes were left
+out of the commit.
+
+- **The app's side only**: protocol 25 still, nothing of `shared/` or
+  `server/` touched, no deploy. It plays against the server of 06:07 UTC.
+- `versionCode` 54, read back with aapt. cargo ndk 7 m 32 s
+  (`release-android`), stripped from 203 MB to 110.6 MB, Gradle 13 s; the
+  library in the APK is the stripped one (`9b75186f`), with its seven
+  entry points; "the server's word, or none to wait for" (the opening's
+  line in the log) is in it.
+- 93 of the game's files in it, each the tree's own byte for byte; the
+  assets and `ui.ron` hashed before the library was built and after
+  Gradle, the same. 128,352,817 bytes.
+- Before it: the game's tests (578), and the hidden runs of the opening
+  against the VM, no server, a server that refuses, one that says
+  nothing, and one that answers late (`docs/town-hud.md` lists them).
+- Nothing behind `target_os = "ios"` was touched; the iPhone's
+  type-check was not run. No tag.
+- **Not put on a phone**: none was attached. One APK kept, as ever.
+
 ## APK 53: plots thrown as a channel opens, someone on every plot, "X's bot"; protocol 25 still
 
 2026-11-24, 15:49 here (06:49 UTC). Hajun's three messages of that day

@@ -18,10 +18,10 @@ spend nothing on those two unasked.
 
 As of 2026-11-24: `PROTOCOL_VERSION` 25 (since 2026-11-23: a seat of the
 town is one of its 48 plots, so **APK 51 and older are told to update**;
-APK 52 plays on), **APK 53** (`versionCode`, built 2026-11-24, not put on
-a phone from here, `docs/building.md`), the server deployed at 06:07 UTC
-on 2026-11-24 with everything in `server/` and `shared/`. **All of it
-committed and pushed, up to APK 53**: the land (`docs/land.md`: all 48
+APK 52 and 53 play on), **APK 54** (`versionCode`, built 2026-11-24, not
+put on a phone from here, `docs/building.md`), the server deployed at
+06:07 UTC on 2026-11-24 with everything in `server/` and `shared/`. **All
+of it committed and pushed, up to APK 54**: the land (`docs/land.md`: all 48
 plots always filled, where each is thrown afresh as a channel opens,
 someone walking every one), everyone's signs and cars, the town's slower
 buses, the bag (`docs/bag.md`) with its window, its button and how it is
@@ -249,7 +249,10 @@ to try again.
 
 - **The app never waits for the network.** It opens offline and connects
   in the background (`src/net.rs`, `src/login.rs`); with no server it is
-  the offline game exactly.
+  the offline game exactly. **But the opening's cover** (Hajun's,
+  2026-11-24, since APK 54): it stays until the server has said what the
+  town is, while there is one that may answer (`Link::hopeful`) and no
+  longer than two seconds once all else is there (`intro::SERVER_WAIT`).
 - Three crates: the game (root), `shared/` (`roundtown_net`: every message,
   registered in one order by `protocol`, and every rule both sides go by),
   `server/` (headless Bevy, replicon and renet over UDP 443).
@@ -372,7 +375,10 @@ to try again.
 ## The lobby, Round Town, as it stands
 
 - The app opens under a plain black cover that fades once the town is
-  loaded (`src/intro.rs`, since 2026-11-17); the "Loading..." bar and the
+  loaded (`src/intro.rs`, since 2026-11-17) and the server has said whose
+  the plots are and what stands on them (since APK 54: you are on your
+  plot and the town is the server's before any of it is seen; "Playing
+  online" has the limits); the "Loading..." bar and the
   drop through a circle are turned off (`SAYS_LOADING`, `DROPS_IN`). No
   menu. You arrive in the middle of your plot, facing the fountain
   (`roundtown_net::land`, since 2026-11-20, the server too).

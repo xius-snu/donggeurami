@@ -35,6 +35,12 @@ is 25 still**: nothing that is sent is anything else, and APK 52 plays on.
   stands on the plot instead.
 - **A second channel** now opens only with 48 in the first, or for a
   group moved from a full one.
+- **The opening's cover waits for the server's word on the town**, since
+  APK 54 later that day (Hajun: "yeah hold black cover until the server
+  answers"; `docs/town-hud.md`'s first entry): while the server is being
+  tried for the first time or is connected (`Link::hopeful`), and no
+  longer than two seconds once everything else is there. The one place
+  the app waits for the network; with none it opens as it did.
 - **Deployed** at 06:07:22 UTC on 2026-11-24, nobody having been
   connected since 04:23:56 (`bunnihoho`, on APK 52); the binary before it
   kept as `roundtown-server.prev-2026-11-24` (`1b7e5524`: plots in his

@@ -60,6 +60,21 @@
 //! opening with the drop are turned off, not gone ([`SAYS_LOADING`],
 //! [`DROPS_IN`]). The town's name comes up as the cover goes, as it did.
 //!
+//! **Since 2026-11-24 the cover stays until the server has said what the
+//! town is** (Hajun: "yeah hold black cover until the server answers"):
+//! where everything stands is thrown afresh as a channel opens
+//! (`roundtown_net::land::Order`), the device's own town with no server
+//! is in another order, and with the cover gone before the server spoke
+//! you were stood on another plot and every other plot filled again in
+//! sight. So it waits for whose every plot is and what stands on each
+//! ([`Loading::answered`]), and then, as it always did, for those models
+//! to be there. **Only while there is a server that may answer**
+//! (`net::Link::hopeful`: not with none, not with one that has failed to,
+//! not with one newer than this app), **and no longer than
+//! [`SERVER_WAIT`] seconds once all else is there**: with no network the
+//! app opens as it did, and a slow one shows the town as the device has it
+//! and changes it when it answers, as before.
+//!
 //! `RT_INTRO_SLOW=<times>` on desktop plays the opening that many times
 //! slower, for looking at it; `RT_INTRO=off` leaves all of it out, cover
 //! and all, for a scripted run that presses or looks from its first
@@ -119,6 +134,13 @@ const TITLE_OUT: f32 = 0.8;
 const QUIET_FRAMES: u32 = 8;
 const HITCH: f32 = 0.05;
 const MOST_COVERED: f32 = 10.0;
+
+/// How long the cover waits for the server to say what the town is, at
+/// the most, with everything else there, in seconds: an answer comes in a
+/// few tenths of a second where there is a network, long before the town
+/// has loaded on a phone; this only waits out one that is slow, or never
+/// will. Mine (two seconds is what was put to Hajun).
+const SERVER_WAIT: f32 = 2.0;
 
 /// The most of the opening one frame plays, in seconds, and the most the
 /// bar on the cover fills by: a frame that hung is not that much of
@@ -301,23 +323,36 @@ struct Wait {
     frame: u32,
     /// When each thing waited for was first there ([`There`]), for the log.
     since: [Option<f32>; 4],
+    /// Seconds waited for the server alone, everything else there
+    /// ([`SERVER_WAIT`]); and when it had answered, or there was none to
+    /// wait for, for the log.
+    unanswered: f32,
+    answered: Option<f32>,
     /// Everything has come, and the cover is only waiting for its bar to
     /// have filled ([`loaded`]).
     done: bool,
 }
 
 impl Wait {
-    /// Counts a frame of `dt` seconds: whether everything is `there`, how
-    /// many pipelines the GPU still had to `compile` as of the frame drawn
-    /// last, number `frame`. Whether the cover is to open now.
-    fn step(&mut self, there: There, compiling: usize, frame: u32, dt: f32) -> bool {
+    /// Counts a frame of `dt` seconds: whether everything is `there`,
+    /// whether the server has `answered` (or there is none to wait for),
+    /// how many pipelines the GPU still had to `compile` as of the frame
+    /// drawn last, number `frame`. Whether the cover is to open now.
+    fn step(&mut self, there: There, answered: bool, compiling: usize, frame: u32, dt: f32) -> bool {
         self.secs += dt;
         for (since, there) in self.since.iter_mut().zip(there.0) {
             if there && since.is_none() {
                 *since = Some(self.secs);
             }
         }
-        if there.all() && compiling == 0 {
+        // The server is waited for only so long, with all else there.
+        if answered {
+            self.answered.get_or_insert(self.secs);
+        } else if there.all() {
+            self.unanswered += dt;
+        }
+        let server = answered || self.unanswered >= SERVER_WAIT;
+        if there.all() && server && compiling == 0 {
             if frame != self.frame {
                 self.quiet += 1;
             }
@@ -349,9 +384,26 @@ struct Loading<'w, 's> {
     cars: car::Planned<'w>,
     me: Query<'w, 's, Entity, With<Player>>,
     limbs: Query<'w, 's, &'static WalkBone>,
+    link: Res<'w, crate::net::Link>,
+    online: Res<'w, crate::net::Online>,
+    told: Res<'w, crate::land::Told>,
+    deeds: Res<'w, crate::land::Deeds>,
+    theirs: Res<'w, crate::bag::Theirs>,
 }
 
 impl Loading<'_, '_> {
+    /// Whether the server has said what the town is: whose every plot is
+    /// (`land::Told`), and what stands on each of them (`bag::Theirs`,
+    /// which it says of every plot, with something on it or not). What
+    /// stands is then a model like any other, waited for with the rest
+    /// ([`Loading::there`]). Or whether there is no server to wait for
+    /// (`net::Link::hopeful`), or it has put you somewhere that is not the
+    /// town (`net::Online::elsewhere`: back in a game your seat waited in).
+    fn answered(&self) -> bool {
+        let said = self.told.0 && self.deeds.0.iter().all(|deed| self.theirs.0.contains_key(&deed.who));
+        said || !self.link.hopeful() || self.online.elsewhere()
+    }
+
     fn there(&self) -> There {
         let town = self.islands.get(Venue::Town).is_some();
         // Every model anything is drawn with: the islands, the buses,
@@ -673,7 +725,7 @@ fn play(
             // before the cover opens: a moment more, a quarter of a second
             // at the very most ([`BAR_ENDS`]).
             if !intro.wait.done {
-                intro.wait.done = intro.wait.step(there, waiting, frame, dt);
+                intro.wait.done = intro.wait.step(there, loading.answered(), waiting, frame, dt);
             }
             let come = if intro.wait.done { 1.0 } else { loading.share(there, intro.wait.quiet) };
             let filled = loaded(intro.loaded, come, step);
@@ -690,12 +742,15 @@ fn play(
             let since = intro.wait.since;
             info!(
                 "the opening: covered for {:.2} s (the town there at {}, every model at {}, the buses' way at {}, \
-                 your body at {}; {waiting} pipelines still compiling){}",
+                 your body at {}; the server's word, or none to wait for, at {}, waited for alone {:.2} s; \
+                 {waiting} pipelines still compiling){}",
                 intro.wait.secs,
                 at(since[0]),
                 at(since[1]),
                 at(since[2]),
                 at(since[3]),
+                at(intro.wait.answered),
+                intro.wait.unanswered,
                 if there.all() && waiting == 0 { "" } else { ": not all there, the wait ran out" },
             );
             // Your model, to drop: with none yet, or no drop, the cover
@@ -1360,47 +1415,103 @@ mod tests {
         // Nothing there: it stays, however quiet the GPU is.
         let mut wait = Wait::default();
         for drawn in 1..=100 {
-            assert!(!wait.step(none, 0, drawn, frame));
+            assert!(!wait.step(none, true, 0, drawn, frame));
         }
         // Everything but the buses' way: it stays.
         for drawn in 101..=200 {
-            assert!(!wait.step(There([true, true, false, true]), 0, drawn, frame));
+            assert!(!wait.step(There([true, true, false, true]), true, 0, drawn, frame));
         }
         // All there, the GPU still compiling: it stays.
         for drawn in 201..=300 {
-            assert!(!wait.step(all, 3, drawn, frame));
+            assert!(!wait.step(all, true, 3, drawn, frame));
         }
         // Quiet: it opens once that many frames have been drawn so, and
         // not on the same frame counted twice.
         for _ in 0..50 {
-            assert!(!wait.step(all, 0, 301, frame));
+            assert!(!wait.step(all, true, 0, 301, frame));
         }
         for drawn in 302..(300 + QUIET_FRAMES) {
-            assert!(!wait.step(all, 0, drawn, frame), "frame {drawn}");
+            assert!(!wait.step(all, true, 0, drawn, frame), "frame {drawn}");
         }
-        assert!(wait.step(all, 0, 300 + QUIET_FRAMES, frame));
+        assert!(wait.step(all, true, 0, 300 + QUIET_FRAMES, frame));
         assert_eq!(wait.since.map(|since| since.is_some()), [true; 4]);
         // Something to compile again starts the count over; and it does
         // not open on a frame that hung, but on the next that did not.
         let mut wait = Wait::default();
         for drawn in 1..=QUIET_FRAMES - 1 {
-            assert!(!wait.step(all, 0, drawn, frame));
+            assert!(!wait.step(all, true, 0, drawn, frame));
         }
-        assert!(!wait.step(all, 1, QUIET_FRAMES, frame));
+        assert!(!wait.step(all, true, 1, QUIET_FRAMES, frame));
         for drawn in 1..QUIET_FRAMES {
-            assert!(!wait.step(all, 0, QUIET_FRAMES + drawn, frame));
+            assert!(!wait.step(all, true, 0, QUIET_FRAMES + drawn, frame));
         }
-        assert!(!wait.step(all, 0, 2 * QUIET_FRAMES, 0.3));
-        assert!(wait.step(all, 0, 2 * QUIET_FRAMES + 1, frame));
+        assert!(!wait.step(all, true, 0, 2 * QUIET_FRAMES, 0.3));
+        assert!(wait.step(all, true, 0, 2 * QUIET_FRAMES + 1, frame));
         // And with something never coming, it opens anyway in the end.
         let mut wait = Wait::default();
         let mut opened = None;
         for drawn in 1..=3000 {
-            if wait.step(none, 5, drawn, frame) {
+            if wait.step(none, true, 5, drawn, frame) {
                 opened = Some(wait.secs);
                 break;
             }
         }
         assert!(opened.is_some_and(|secs| (secs - MOST_COVERED).abs() < 0.05), "{opened:?}");
+    }
+
+    #[test]
+    fn the_cover_waits_for_the_server_s_word_but_only_so_long() {
+        let frame = 1.0 / 120.0;
+        let (all, none) = (There([true; 4]), There([false; 4]));
+        // Everything there and the GPU quiet, the server yet to answer: it
+        // stays, well past the frames it would have opened in.
+        let mut wait = Wait::default();
+        let mut drawn = 0;
+        for _ in 0..100 {
+            drawn += 1;
+            assert!(!wait.step(all, false, 0, drawn, frame));
+        }
+        // It answers, and what stands on the plots loads: it stays while
+        // that comes, and opens once it has, the GPU quiet again.
+        for _ in 0..30 {
+            drawn += 1;
+            assert!(!wait.step(There([true, false, true, true]), true, 0, drawn, frame));
+        }
+        for _ in 1..QUIET_FRAMES {
+            drawn += 1;
+            assert!(!wait.step(all, true, 0, drawn, frame));
+        }
+        drawn += 1;
+        assert!(wait.step(all, true, 0, drawn, frame));
+        assert!(wait.answered.is_some_and(|at| (at - 101.0 * frame).abs() < 1e-3) && wait.secs < 1.5);
+
+        // It never answers: no longer than so long once all else is there,
+        // and none of the time the town itself took counts toward that.
+        let mut wait = Wait::default();
+        let mut drawn = 0;
+        for _ in 0..240 {
+            drawn += 1;
+            assert!(!wait.step(none, false, 0, drawn, frame));
+        }
+        assert_eq!(wait.unanswered, 0.0);
+        let mut opened = None;
+        for _ in 0..1_000 {
+            drawn += 1;
+            if wait.step(all, false, 0, drawn, frame) {
+                opened = Some(wait.secs);
+                break;
+            }
+        }
+        let most = 2.0 + SERVER_WAIT + QUIET_FRAMES as f32 * frame;
+        assert!(opened.is_some_and(|secs| (secs - most).abs() < 0.05), "{opened:?}");
+        assert!(wait.answered.is_none());
+
+        // With no server to wait for it opens as it always did.
+        let mut wait = Wait::default();
+        for drawn in 1..QUIET_FRAMES {
+            assert!(!wait.step(all, true, 0, drawn, frame));
+        }
+        assert!(wait.step(all, true, 0, QUIET_FRAMES, frame));
+        assert_eq!(wait.unanswered, 0.0);
     }
 }
