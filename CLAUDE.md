@@ -16,13 +16,14 @@ them (2026-11-19), Hajun likes Bridge Wars and Knock Off and had Bridge
 Race's and Last Stand's cards turned off (`games::OFF`, since APK 44):
 spend nothing on those two unasked.
 
-As of 2026-11-23: `PROTOCOL_VERSION` 25 (since 2026-11-23: a seat of the
-town is one of its 48 plots, so **APK 51 and older are told to update**),
-**APK 52** (`versionCode`, built 2026-11-23, not put on a phone from
-here, `docs/building.md`), the server deployed at 13:55 UTC on 2026-11-23
-with everything in `server/` and `shared/`. **All of it committed and
-pushed, up to APK 52**: the land (`docs/land.md`: all 48 plots always
-filled, in Hajun's order), everyone's signs and cars, the town's slower
+As of 2026-11-24: `PROTOCOL_VERSION` 25 (since 2026-11-23: a seat of the
+town is one of its 48 plots, so **APK 51 and older are told to update**;
+APK 52 plays on), **APK 53** (`versionCode`, built 2026-11-24, not put on
+a phone from here, `docs/building.md`), the server deployed at 06:07 UTC
+on 2026-11-24 with everything in `server/` and `shared/`. **All of it
+committed and pushed, up to APK 53**: the land (`docs/land.md`: all 48
+plots always filled, where each is thrown afresh as a channel opens,
+someone walking every one), everyone's signs and cars, the town's slower
 buses, the bag (`docs/bag.md`) with its window, its button and how it is
 scrolled, edit mode on your plot and paint, sitting and lying down, and
 the plots' residents (`docs/town.md`). The iPhone's last tag,
@@ -227,6 +228,8 @@ to try again.
   `RT_STAND_WAVE=<n>`, `RT_STAND_PURSE=<count>` (Last Stand from a later
   wave, with coins to spend; offline, and the server's own),
   `RT_LAND_SIGNS=all` (a sign on every plot of the town, to look at),
+  `RT_LAND_ORDER=numbered` (offline: you on Hajun's plot 1 and every
+  made-up owner on the plot of their number, not thrown),
   `RT_BACKGROUND=1` (below). Two copies need
   their own `APPDATA`. A server on this PC: `RT_PORT=5443
   RT_ALLOW_SKIP=1 target/debug/roundtown-server.exe`, and the copies with
@@ -373,12 +376,14 @@ to try again.
   drop through a circle are turned off (`SAYS_LOADING`, `DROPS_IN`). No
   menu. You arrive in the middle of your plot, facing the fountain
   (`roundtown_net::land`, since 2026-11-20, the server too).
-- **The town has sixteen people in it** (since 2026-11-23, Hajun's: "if
-  >= 16 players are online in a channel, then no NPCs"; 32 until then,
-  wanderers round the pond): whoever is in your channel (16 people to
-  one), each on their plot, and **a resident** of the computer's on each
-  of the first sixteen plots nobody of the channel has, under its
-  owner's name and in their look (`src/resident.rs`, `docs/town.md`).
+- **The town has 48 people in it** (since 2026-11-24, Hajun's: "there
+  should be a character for all 48 plot ... if theres just 1 real player
+  online in a channel, then there should be 47 npcs"; sixteen for the day
+  before, 32 until then, wanderers round the pond): whoever is in your
+  channel (48 people to one), each on their plot, and **a resident** of
+  the computer's on every plot nobody of the channel has, in its owner's
+  look: under a made-up owner's own name, and on a real person's land
+  "{name}'s bot" (`words.land.bot`; `src/resident.rs`, `docs/town.md`).
   Each device walks its own, and what each is about is worked out from
   the town's clock and who they are (`resident::plan`), the same on
   every device: about its plot, sat or lying in its house (`rest`), and
@@ -446,21 +451,26 @@ to try again.
   cards alone, the games and their tables are as they were), and so is
   the card for one to come (`games::COMING_SOON`).
 - **All 48 plots are always filled** (`docs/land.md`, since 2026-11-23,
-  APK 52, Hajun's; not seen on a phone). The plots are the map's `plot`
-  planes, read as it spawns, **numbered as Hajun numbered them**
-  (`plotorder.png`, `roundtown_net::land::HOMES`: his plot 1 is at
-  (-90, 25) in the game), and **a seat of the town is a plot**. The
-  server says whose each is (`land::Estate`, `rooms::Towns`,
-  `Tell::Plots`, `land::Deeds` on a device): whoever is in your channel
-  has one of the first sixteen, the lowest numbered that nobody has or
-  stands on, and keeps it in a game and for five minutes after their
-  connection goes (`land::GRACE`); the rest are filled with real
-  people's land that has anything on it, the worthiest first by the
-  shop's prices, and then with each plot's own made-up land
-  (`roundtown_net::premade`, 48 furnished plots a test holds to the
-  game's building rules, `build::premade_check`). Offline every plot but
-  yours has its made-up land. **Change `HOMES` or a made-up lot and
-  deploy the server.**
+  Hajun's; not seen on a phone). The plots are the map's `plot` planes,
+  read as it spawns, **numbered as Hajun numbered them** (`plotorder.png`,
+  `roundtown_net::land::HOMES`: his plot 1 is at (-90, 25) in the game),
+  and **a seat of the town is a plot**. **A number only says which plot**
+  (his, 2026-11-24, to point at one by): **where anything is, is thrown
+  as a channel opens** (`land::Order`, since APK 53), you, real people's
+  land and each made-up lot on another plot every time, and as it is
+  until the channel has been empty five minutes. The server says whose
+  each is (`land::Estate`, `rooms::Towns`, `Tell::Plots`, `land::Deeds`
+  on a device): whoever is in your channel has a plot, the one their own
+  land fills or else a made-up lot's, one nobody stands on first, and
+  keeps it in a game and for five minutes after their connection goes
+  (`land::GRACE`); the rest are filled with real people's land that has
+  anything on it, the worthiest first by the shop's prices, and then
+  with made-up land (`roundtown_net::premade`, 48 furnished plots a test
+  holds to the game's building rules, `build::premade_check`). **Nobody's
+  land is in two channels at once**: whoever comes goes to the channel
+  their land fills a plot of (after their group's), and has nothing left
+  in any other. Offline the device throws its own order (`land::thrown`).
+  **Change `HOMES` or a made-up lot and deploy the server.**
 - **Your plot** (`src/land.rs`, since 2026-11-20): a sign
   (`plotsign.glb`) stands on every plot, a metre and a half in
   from the right hand end of its front, the side with a street along it

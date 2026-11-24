@@ -1,18 +1,21 @@
 //! The made-up land: what fills a plot of the town when no real person's
 //! land does (Hajun, 2026-11-23: "then, if there are still unfilled plots,
-//! fill with fake plots that are premade"). One to each of the town's 48
-//! plots, the same on every device and on the server, so that a plot
-//! filled offline is filled the same online. Each has an owner of its own,
-//! by a name of the computer's ([`crate::BOY_NAMES`], [`crate::GIRL_NAMES`])
-//! and in a look of that side, whom someone of the computer's walks as on
-//! the first sixteen plots ([`crate::land::Holder::Minded`]).
+//! fill with fake plots that are premade"). Forty-eight of them, as many
+//! as the town has plots, the same on every device and on the server; which
+//! plot each is on is thrown as a channel opens (since 2026-11-24,
+//! [`crate::land::Order`]; each plot had its own for the day before). Each
+//! has an owner of its own, by a name of the computer's
+//! ([`crate::BOY_NAMES`], [`crate::GIRL_NAMES`]) and in a look of that
+//! side, whom someone of the computer's walks the land as
+//! ([`crate::land::Holder::Minded`]).
 //!
 //! **Each is a furnished plot**, as someone might have left theirs: one of
 //! Hajun's four houses, standing somewhere on the plot and turned some way
 //! ([`Plan`]), with a door and windows in its walls and a bed, a couch and
 //! more on its ground floor ([`Room`]), on some a lamp or somewhere to sit
 //! out on the lawn ([`LAWNS`]), and its own colours ([`Coat`]). No two are
-//! the same, and the sixteen someone walks have the most in them.
+//! the same, and the first sixteen have the most in them: they were the
+//! ones someone walked when these were made.
 //!
 //! **All of it is written here by hand, in tables**, and put together by
 //! sums that come out the same on every machine ([`made`]): a turn is so
@@ -57,12 +60,20 @@ use crate::At;
 use crate::bag::{LAMP, Paint, Standing};
 use crate::land::{Lot, PLOTS, PREMADE};
 
-/// The made-up lot of the plot numbered `plot` (of [`PLOTS`], round and
-/// round past them). All of them are put together the first time one is
-/// asked for, and every one handed out is a copy.
+/// The made-up lot numbered `plot` (of [`PLOTS`], round and round past
+/// them): the one of that place of a channel
+/// ([`Order`](crate::land::Order)), which is on another plot of the town
+/// each time a channel opens (since 2026-11-24; the plot of that number's
+/// own for the day before). All of them are put together the first time
+/// one is asked for, and every one handed out is a copy.
 pub fn lot(plot: usize) -> Lot {
     static LOTS: OnceLock<Vec<Lot>> = OnceLock::new();
     LOTS.get_or_init(|| (0..PLOTS).map(made).collect())[plot % PLOTS].clone()
+}
+
+/// The made-up lot that is `who`'s, if they are one of the made-up owners.
+pub fn of(who: u64) -> Option<Lot> {
+    crate::land::is_premade(who).then(|| lot((who - PREMADE) as usize))
 }
 
 /// Who the made-up lot of `plot` belongs to: a boy on the even plots and a

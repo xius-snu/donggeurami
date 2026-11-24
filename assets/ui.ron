@@ -1338,9 +1338,11 @@
 
         // The land's: what the sign of a plot says, {name} being whose it
         // is. A \n begins a new line on the board; the words are drawn as
-        // big as fit it.
+        // big as fit it. And the name over the computer's person who walks
+        // the land of someone real who is not here, {name} being theirs.
         land: (
             sign: "{name}'s\nland",
+            bot: "{name}'s bot",
         ),
 
         // The bag: your inventory and the shop, behind the bag button.

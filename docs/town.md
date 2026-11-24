@@ -7,6 +7,62 @@
 > "above" or "below", or names another section in quotes, that section may be
 > in another file here: the table in `CLAUDE.md` says which.
 
+## Residents: one on every plot, and "X's bot" on a real person's land (2026-11-24)
+
+Hajun, the day after the entry below:
+
+> i think if the npc is named after a real person, it should say like
+> "bunnihihi's bot". but if its a fake house owner's npc then just keep
+> their name like "Sagwa" like now. also i think there should be a
+> character for all 48 plot not just the first 16, and channel size for
+> real players should be increased from 16 to 48, so if theres just 1 real
+> player online in a channel, then there should be 47 npcs, each on their
+> plot
+
+Where each plot is, and whose, is `docs/land.md`'s first entry: thrown
+afresh as a channel opens.
+
+**What there is** (`src/resident.rs`).
+
+- **One on every plot nobody of your channel has**: 47 with you alone,
+  none with 48 people (`roundtown_net::TOWN_BODIES` is 48). The server
+  says `Holder::Minded` of every filled plot, and offline every plot but
+  yours has one. The town has 48 people in it, where it had sixteen for a
+  day and 32 before that.
+- **Named for what they are** (`resident::called`): someone on a made-up
+  owner's land goes by that owner's name, as before; someone on the land
+  of a real person who is not here goes by "{name}'s bot"
+  (`words.land.bot` in `ui.ron`, his to change), over their head and when
+  talked to. The sign still says whose the land is, "{name}'s land". A
+  resident whose words change (the file read again on the desktop) is
+  made again under the new ones.
+- **A visit is as rare a thing at your plot as it was**
+  (`resident::CALLERS`, 15): with more residents to each real person than
+  fifteen, each visits that much less often, so that someone alone with
+  47 of them has one or so at theirs at a time, as with fifteen, and not
+  three times as many. With sixteen people about and 32 residents,
+  everyone visits as often as they lean to. A test holds both.
+
+**Calls that were mine.** Thinning the visits; that the sign keeps the
+owner's plain name; that the name is a word of `ui.ron`.
+
+**Checked.** The game's tests (a day of 47 residents about one person:
+between 0.3 and 1.3 guests at a time, seldom more than three; sixteen
+people and 32 residents: a guest at each some of the time). The desktop
+build, hidden: 47 residents offline, about twenty of them sat or lying
+at any moment, one of them over at my plot; two copies against a server
+on this PC with all 46 about the same thing within a metre on both. On
+the VM with this PC's own account: "bunnihihi's bot" over the girl who
+walks bunnihihi's land, in her house, "bunnihoho's bot" over the one on
+bunnihoho's, and "Sagwa" plain over a made-up owner's, each stood beside
+under the game's own camera and looked at in a picture. Frame times are
+`docs/rendering-and-frame-rate.md`'s first entry.
+
+**Not checked.** On a phone. An app from before this (APK 52) beside a
+new one: it walks 47 too, under plain names, visiting three times as
+often, and what its residents are about at a moment is no longer what a
+newer app's are.
+
 ## Residents: someone of the computer's on each plot nobody here has (2026-11-23)
 
 Hajun, with the 48 plots always filled (`docs/land.md`):

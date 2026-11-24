@@ -3,69 +3,98 @@
 //!
 //! **The plots** are the planes of the material `plot` in the town's map,
 //! which the game reads as the map spawns; the server has no map, and goes
-//! by their middles as they are written here ([`HOMES`]), **in the order
-//! Hajun numbered them** (`plotorder.png`, 2026-11-23: "i numbered the
-//! plots in priority order so 1 is priority"): the twelve round the pond
-//! first, then the next ring, then the outer one, each number a quarter of
-//! a turn on from the one before. A plot's number here is that number less
-//! one, and **a seat of the town is a plot**: the seat the server gives
-//! you ([`Tell::Arrive`](crate::Tell::Arrive)) is the number of your plot,
-//! and you arrive in the middle of it, facing the fountain (Hajun,
-//! 2026-11-20: "u need to spawn on your plot in the center, facing toward
-//! the fountain").
+//! by their middles as they are written here ([`HOMES`]), **numbered as
+//! Hajun numbered them** (`plotorder.png`, 2026-11-23): the twelve round
+//! the pond first, then the next ring, then the outer one, each number a
+//! quarter of a turn on from the one before. A plot's number here is that
+//! number less one, and **a seat of the town is a plot**: the seat the
+//! server gives you ([`Tell::Arrive`](crate::Tell::Arrive)) is the number
+//! of your plot, and you arrive in the middle of it, facing the fountain
+//! (Hajun, 2026-11-20: "u need to spawn on your plot in the center, facing
+//! toward the fountain").
+//!
+//! **A number says which plot, and nothing of who gets it** (Hajun,
+//! 2026-11-24: "for the plot numbers, just keep them as a reference number
+//! rather than a player joined order placement or land value order ... i
+//! just need the numbers so i can later tell you oh plot number ## should
+//! be fixed like blah blah, not necessarily for fixed placement"; the day
+//! before they were "priority order", and whoever came had the lowest).
+//! **Where anything is, is thrown as a channel opens** ("every time, its
+//! random location on all the plots, whether its a real player or an npc
+//! or a offline real player ... every time a channel is created/launched
+//! the plot order is gona be shuffled so the player who joined gona be
+//! placed in a random plot location. and their plot location lasts until
+//! the channel is closed due to no real player on that channel after a
+//! time. and it shuffles on another launch"): an [`Order`], the 48 plots
+//! shuffled, and everything below is said of a **place** in it, the plot
+//! of the first place being any of the 48.
 //!
 //! **All 48 are always filled** (Hajun, 2026-11-23: "i want to change it so
 //! that at all times, there are 48 plots filled"), which is what an
 //! [`Estate`] keeps for one channel of the town:
 //!
-//! * **Whoever is in the channel has one of the first sixteen**
-//!   ([`FRONT`]): the lowest numbered that nobody of the channel has, and
-//!   that nobody is standing on ("unless there is a real player standing
-//!   on that plot, then replace the next number plot on the priority");
-//!   or, if a plot among them is filled with their own land, with someone
-//!   of the computer's walking it under their name, that one ("if the real
-//!   player joins and there is an npc of them in that channel, then that
-//!   real person should just take that npc's plot location"). **It is
-//!   theirs for as long as they are in the channel**, wherever they go
-//!   from it: into a game ("when u go to minigame, your house should
-//!   remain there and u should count as someone who is on that channel"),
-//!   and for [`GRACE`] seconds after their connection has gone, a phone's
-//!   going whenever its app is put away.
+//! * **Whoever is in the channel has a plot**, a channel holding as many
+//!   people as there are plots (since 2026-11-24; Hajun: "channel size for
+//!   real players should be increased from 16 to 48"; one of the first
+//!   sixteen for the day before). Whoever opens it has the first place.
+//!   Whoever comes after has the place their own land fills, if it fills
+//!   one, with someone of the computer's walking it ("if the real player
+//!   joins and there is an npc of them in that channel, then that real
+//!   person should just take that npc's plot location"); otherwise the
+//!   first place a made-up lot fills, so that no real person's land is
+//!   moved for them, and with none of those left the first that real land
+//!   fills; and of those, one that nobody is standing on before one that
+//!   someone is ("unless there is a real player standing on that plot,
+//!   then replace the next"). **It is theirs for as long as they are in
+//!   the channel**, wherever they go from it: into a game ("when u go to
+//!   minigame, your house should remain there and u should count as
+//!   someone who is on that channel"), and for [`GRACE`] seconds after
+//!   their connection has gone, a phone's going whenever its app is put
+//!   away.
 //! * **The rest are filled with the land of people who are not here**,
-//!   each as it stood when it was taken up ([`Lot`]): real people's first,
-//!   the worthiest first, by what stands on it at the shop's prices
-//!   ([`worth`]: "unempty plots first in order of higher land valuation
-//!   (total sum or placed asset's buy price) calculated at the moment of
-//!   first real user in the channel and remains fixed as long as 1 real
-//!   player is online in that channel"), and then the made-up ones
-//!   ([`crate::premade`]: "if there are still unfilled plots, fill with
-//!   fake plots that are premade"), each plot its own.
-//! * **Someone of the computer's walks each of the first sixteen that
-//!   nobody of the channel has** ([`Holder::Minded`]), under its owner's
-//!   name and in their look ("if < 16 players. for example, 3 players ->
-//!   the 13 next plots will have an AI NPC spawn in each plot with that
-//!   plot owner's name"): every device walks its own (the game's
-//!   `resident`), the server only says which plots.
+//!   each as it stood when it was taken up ([`Lot`]): real people's in
+//!   the places after the first, the worthiest first by what stands on it
+//!   at the shop's prices ([`worth`]: which of it is shown, when there is
+//!   more of it than there are plots, and no longer where), and then the
+//!   made-up ones ([`crate::premade`]: "if there are still unfilled plots,
+//!   fill with fake plots that are premade"), each place its own.
+//! * **Someone of the computer's walks every plot that nobody of the
+//!   channel has** ([`Holder::Minded`]), in its owner's look (since
+//!   2026-11-24: "there should be a character for all 48 plot not just the
+//!   first 16 ... if theres just 1 real player online in a channel, then
+//!   there should be 47 npcs, each on their plot"; the first sixteen for
+//!   the day before): every device walks its own (the game's `resident`),
+//!   the server only says which plots.
 //!
-//! A filling stays where it is put: someone coming into the channel takes
-//! one plot, and what filled it goes to the first plot a made-up one
-//! fills, so that real people's land is always shown before any made-up
-//! one, and one thing moves.
+//! A filling stays where it is put for as long as the channel is open:
+//! the made-up lot of the place someone takes is gone until they are, and
+//! nothing else moves. The channel is closed when the last of it has been
+//! gone for [`GRACE`], and whoever opens it next throws the order again.
+//!
+//! **Nobody's land is in two channels at once** (Hajun, 2026-11-24: "what
+//! matters is that there is no duplicate plots across channels (Npc plot
+//! duplicates are ok) and thats solveable by when u first join u first
+//! check if your plot is present in a certain channel due to another
+//! person being on a channel that summoned ur plot, and if its present,
+//! just go to that channel and take that land plot"). Whoever keeps the
+//! channels sees to it with what an estate says and does: someone coming
+//! into the town goes to the channel their land fills a plot of
+//! ([`Estate::shows`]) and takes that plot; a channel opens with no land
+//! that is in another already, filling a plot or its owner's own
+//! ([`Estate::has`]); and whoever is in one channel has nothing in any
+//! other ([`Estate::forget`], and [`Estate::leave`] without `kept`),
+//! which their group's being elsewhere can make of them. A made-up lot
+//! may be in every channel.
 
 use bevy::math::{Quat, Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 
-use crate::TOWN_SEATS;
 use crate::bag::{Paint, Standing, thing};
 
-/// How many plots the town has.
+/// How many plots the town has, which is how many people a channel of it
+/// holds ([`TOWN_SEATS`](crate::TOWN_SEATS)): a plot each. Every one that
+/// nobody of the channel has is walked by someone of the computer's.
 pub const PLOTS: usize = 48;
-
-/// How many of them, the first by Hajun's numbers, are for whoever is in a
-/// channel of the town: one each, a channel holding as many people
-/// ([`TOWN_SEATS`]). Each of them that nobody of the channel has is walked
-/// by someone of the computer's.
-pub const FRONT: usize = TOWN_SEATS;
 
 /// The middle of each plot across the ground (x and z), in metres, in
 /// Hajun's order (`plotorder.png`): his plot 1 is the first. His picture is
@@ -227,7 +256,10 @@ pub enum Holder {
     /// Nobody who is here: someone of the computer's walks it under its
     /// owner's name, each device its own (the game's `resident`).
     Minded,
-    /// Nobody at all: what stands on it, and its sign.
+    /// Nobody at all: what stands on it, and its sign. Said of nothing
+    /// since 2026-11-24, every plot having someone; the plots past the
+    /// first sixteen that nobody of the channel had, for the day before.
+    /// Kept for the apps that know it.
     Nobody,
 }
 
@@ -246,26 +278,71 @@ pub struct Deed {
     pub holder: Holder,
 }
 
-/// The plots this device fills by itself, with no server to say: every one
-/// but `mine`, each with its own made-up lot ([`crate::premade::lot`]),
-/// and someone walking each of the first sixteen.
-pub fn offline_deeds(mine: usize) -> Vec<Deed> {
-    (0..PLOTS)
-        .filter(|&plot| plot != mine)
-        .map(|plot| {
-            let lot = crate::premade::lot(plot);
+/// The order the plots of a channel are taken in, thrown afresh as the
+/// channel opens (the module's own account has Hajun's words): `place`,
+/// counted from 0, has the plot [`Order::plot`] says. Whoever opens the
+/// channel has the first place, real people's land the places after it,
+/// and each made-up lot its own place, so that every one of them stands
+/// somewhere else from one opening of a channel to the next.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct Order([u8; PLOTS]);
+
+impl Order {
+    /// The plots by their numbers, the first place plot 1's: what the
+    /// tests go by, and a scripted run of the game.
+    pub fn numbered() -> Self {
+        Self(std::array::from_fn(|place| place as u8))
+    }
+
+    /// The plots shuffled by `seed`, every plot as likely as any other in
+    /// every place.
+    pub fn thrown(seed: u64) -> Self {
+        let mut order = Self::numbered();
+        let mut state = seed;
+        for last in (1..PLOTS).rev() {
+            state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+            let mut dice = state;
+            dice = (dice ^ (dice >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+            dice = (dice ^ (dice >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+            dice ^= dice >> 31;
+            order.0.swap(last, (dice % (last as u64 + 1)) as usize);
+        }
+        order
+    }
+
+    /// The plot of `place`.
+    pub fn plot(&self, place: usize) -> usize {
+        usize::from(self.0[place % PLOTS])
+    }
+
+    /// The place `plot` has.
+    pub fn place(&self, plot: usize) -> Option<usize> {
+        self.0.iter().position(|&has| usize::from(has) == plot)
+    }
+}
+
+/// The plots this device fills by itself, with no server to say, in the
+/// `order` it has thrown: every one but `mine`, each place with its own
+/// made-up lot ([`crate::premade::lot`]) and someone walking it.
+pub fn offline_deeds(mine: usize, order: &Order) -> Vec<Deed> {
+    let mut deeds: Vec<Deed> = (0..PLOTS)
+        .filter(|&place| order.plot(place) != mine)
+        .map(|place| {
+            let lot = crate::premade::lot(place);
             Deed {
-                plot: plot as u8,
+                plot: order.plot(place) as u8,
                 who: lot.who,
                 name: lot.name,
                 look: lot.look,
-                holder: if plot < FRONT { Holder::Minded } else { Holder::Nobody },
+                holder: Holder::Minded,
             }
         })
-        .collect()
+        .collect();
+    deeds.sort_by_key(|deed| deed.plot);
+    deeds
 }
 
-/// What is on one plot of a channel.
+/// What is on one place of a channel.
 #[derive(Clone, PartialEq, Debug)]
 enum Slot {
     /// Someone's who is in the channel: in the town, or `away` from it in
@@ -282,25 +359,30 @@ enum Slot {
 /// nothing of the world: whoever keeps one says who comes and goes, and
 /// when ([`Estate::join`], [`Estate::away`], [`Estate::leave`],
 /// [`Estate::tick`]), and asks whose each plot is ([`Estate::deeds`]) and
-/// what stands on those nobody here has ([`Estate::lot`]).
+/// what stands on those nobody here has ([`Estate::lot`]). **What it is
+/// asked and what it answers is always a plot, by its number; what it
+/// keeps is by place** ([`Order`]).
 #[derive(Clone, PartialEq, Debug)]
 pub struct Estate {
+    /// What is on each place.
     slots: Vec<Slot>,
     /// Real people's land that fills no plot just now, the worthiest
     /// first.
     spare: Vec<Lot>,
-    /// The plots that have been filled with something else since that was
-    /// last asked ([`Estate::take_news`]).
+    /// The places that have been filled with something else since that
+    /// was last asked ([`Estate::take_news`]).
     news: Vec<usize>,
+    /// Which plot each place is, as thrown when the channel opened.
+    order: Order,
 }
 
 impl Estate {
-    /// A channel as `first` comes into it, with nobody else in it: theirs
-    /// is the first plot, and the rest are filled with `lots`, real
-    /// people's land that has anything standing on it, the worthiest
-    /// first, and then with the made-up ones. Worked out now, and as it is
-    /// for as long as anyone is in the channel.
-    pub fn open(first: u64, lots: Vec<Lot>) -> Self {
+    /// A channel as `first` comes into it, with nobody else in it, its
+    /// plots taken in `order`: theirs is the first place, and the rest are
+    /// filled with `lots`, real people's land that has anything standing
+    /// on it, the worthiest first, and then with the made-up ones. Worked
+    /// out now, and as it is for as long as anyone is in the channel.
+    pub fn open(first: u64, lots: Vec<Lot>, order: Order) -> Self {
         let mut spare: Vec<Lot> = Vec::new();
         for lot in lots {
             let known = spare.iter().any(|other| other.who == lot.who);
@@ -311,20 +393,21 @@ impl Estate {
         spare.sort_by_key(rank);
         let mut filling = spare.into_iter();
         let slots = (0..PLOTS)
-            .map(|plot| match plot {
+            .map(|place| match place {
                 0 => Slot::Held { who: first, away: false },
-                _ => Slot::Filled(filling.next().unwrap_or_else(|| crate::premade::lot(plot))),
+                _ => Slot::Filled(filling.next().unwrap_or_else(|| crate::premade::lot(place))),
             })
             .collect();
         Self {
             slots,
             spare: filling.collect(),
             news: Vec::new(),
+            order,
         }
     }
 
-    /// The plot `who` has, in the channel or gone from it a moment ago.
-    pub fn plot_of(&self, who: u64) -> Option<usize> {
+    /// The place `who` has, in the channel or gone from it a moment ago.
+    fn place_of(&self, who: u64) -> Option<usize> {
         self.slots.iter().position(|slot| match slot {
             Slot::Held { who: holder, .. } => *holder == who,
             Slot::Left { lot, .. } => lot.who == who,
@@ -332,61 +415,76 @@ impl Estate {
         })
     }
 
+    /// The plot `who` has, in the channel or gone from it a moment ago.
+    pub fn plot_of(&self, who: u64) -> Option<usize> {
+        self.place_of(who).map(|place| self.order.plot(place))
+    }
+
     /// How many are in the channel, those gone a moment ago among them.
     pub fn count(&self) -> usize {
         self.slots.iter().filter(|slot| !matches!(slot, Slot::Filled(_))).count()
     }
 
-    /// How many more it has room for.
+    /// How many more it has room for: someone to every plot.
     pub fn room(&self) -> usize {
-        FRONT.saturating_sub(self.count())
+        PLOTS.saturating_sub(self.count())
     }
 
     /// Whether nobody is left in it, nor anyone it is kept for: a channel
-    /// to be worked out afresh by whoever comes into it next.
+    /// to be worked out afresh, in an order thrown again, by whoever comes
+    /// into it next.
     pub fn deserted(&self) -> bool {
         self.count() == 0
     }
 
+    /// Whether the land of `who` fills a plot here, someone of the
+    /// computer's walking it: the plot that is theirs if they come.
+    pub fn shows(&self, who: u64) -> bool {
+        self.slots.iter().any(|slot| matches!(slot, Slot::Filled(lot) if lot.who == who))
+    }
+
+    /// Whether anything of `who` is here: a plot they have, or one kept
+    /// for them, or their land filling one.
+    pub fn has(&self, who: u64) -> bool {
+        self.place_of(who).is_some() || self.shows(who)
+    }
+
     /// `who` comes into the channel, or back to it: the plot they have.
     /// The one they had, if they never left, or left a moment ago; else
-    /// the one of the first sixteen their own land fills, if it does; else
-    /// the first of them that nobody of the channel has and nobody stands
-    /// on (`busy`), or, with someone on every one, the first nobody has.
-    /// What filled it goes to the first plot a made-up lot fills. `None`
-    /// with the channel full.
+    /// the one their own land fills, if it fills one; else the first place
+    /// a made-up lot fills, which is gone until they are, and with none of
+    /// those the first that real land fills, which goes among the spare;
+    /// and a plot nobody stands on (`busy`) before one somebody does.
+    /// `None` with the channel full.
     pub fn join(&mut self, who: u64, busy: impl Fn(usize) -> bool) -> Option<usize> {
-        if let Some(plot) = self.plot_of(who) {
-            self.slots[plot] = Slot::Held { who, away: false };
-            return Some(plot);
+        if let Some(place) = self.place_of(who) {
+            self.slots[place] = Slot::Held { who, away: false };
+            return Some(self.order.plot(place));
         }
         if self.room() == 0 {
             return None;
         }
         let theirs = |slot: &Slot| matches!(slot, Slot::Filled(lot) if lot.who == who);
-        let own = self.slots.iter().position(theirs);
-        let filled = |plot: &usize| matches!(self.slots[*plot], Slot::Filled(_));
-        let plot = match own {
-            Some(plot) if plot < FRONT => plot,
-            _ => (0..FRONT)
-                .filter(filled)
-                .find(|&plot| !busy(plot))
-                .or_else(|| (0..FRONT).find(filled))?,
+        let place = match self.slots.iter().position(theirs) {
+            Some(own) => own,
+            None => {
+                let free = |place: usize| match &self.slots[place] {
+                    Slot::Filled(lot) => Some((busy(self.order.plot(place)), !lot.premade(), place)),
+                    _ => None,
+                };
+                (0..PLOTS).filter_map(free).min()?.2
+            }
         };
         // Their own land fills nothing while they are here themselves.
         self.spare.retain(|lot| lot.who != who);
-        let mut bare = Vec::new();
-        if let Some(further) = own.filter(|&further| further != plot) {
-            bare.push(further);
-        }
-        let was = std::mem::replace(&mut self.slots[plot], Slot::Held { who, away: false });
+        let was = std::mem::replace(&mut self.slots[place], Slot::Held { who, away: false });
         if let Slot::Filled(lot) = was
             && lot.who != who
         {
             self.set_aside(lot);
         }
-        self.settle(bare);
-        Some(plot)
+        self.settle(Vec::new());
+        Some(self.order.plot(place))
     }
 
     /// `who`, of the channel, has gone from the town into a game or home
@@ -408,20 +506,16 @@ impl Estate {
     /// `who` is gone from the channel at `now`, their land as they leave
     /// it being `lot`. With `kept`, their connection has gone: the plot is
     /// kept as it is for [`GRACE`] ([`Estate::tick`]). Without, they are
-    /// in another channel now: the plot is filled with their land at once,
-    /// if anything stands on it, and with something else if not. The plot
-    /// it was.
+    /// in another channel now, and nothing of theirs is in two at once:
+    /// the plot is filled with something else straight away (with their
+    /// own land, for the day before 2026-11-24). The plot it was.
     pub fn leave(&mut self, who: u64, lot: Option<Lot>, now: f64, kept: bool) -> Option<usize> {
-        let plot = self.slots.iter().position(|slot| matches!(slot, Slot::Held { who: holder, .. } if *holder == who))?;
+        let place = self.slots.iter().position(|slot| matches!(slot, Slot::Held { who: holder, .. } if *holder == who))?;
         match lot {
-            Some(lot) if kept => self.slots[plot] = Slot::Left { lot, since: now },
-            Some(lot) if !lot.stands.is_empty() => {
-                self.slots[plot] = Slot::Filled(lot);
-                self.news.push(plot);
-            }
-            _ => self.settle(vec![plot]),
+            Some(lot) if kept => self.slots[place] = Slot::Left { lot, since: now },
+            _ => self.settle(vec![place]),
         }
-        Some(plot)
+        Some(self.order.plot(place))
     }
 
     /// Lets go, at `now`, of every plot kept longer than [`GRACE`] for
@@ -431,7 +525,7 @@ impl Estate {
     pub fn tick(&mut self, now: f64) -> bool {
         let mut bare = Vec::new();
         let mut changed = false;
-        for (plot, slot) in self.slots.iter_mut().enumerate() {
+        for (place, slot) in self.slots.iter_mut().enumerate() {
             let Slot::Left { lot, since } = slot else {
                 continue;
             };
@@ -440,32 +534,37 @@ impl Estate {
             }
             changed = true;
             if lot.stands.is_empty() {
-                bare.push(plot);
+                bare.push(place);
             } else {
                 *slot = Slot::Filled(lot.clone());
             }
         }
         // Still theirs to look at until something else is put there.
-        for &plot in &bare {
-            self.slots[plot] = Slot::Filled(crate::premade::lot(plot));
+        for &place in &bare {
+            self.slots[place] = Slot::Filled(crate::premade::lot(place));
         }
         self.settle(bare);
         changed
     }
 
-    /// The account `who` is no more: its land fills nothing from here on.
-    pub fn forget(&mut self, who: u64) {
+    /// The account `who` is no more, or they are in another channel now:
+    /// their land fills nothing here from here on, and no plot is kept
+    /// for them. Whether that changed anything.
+    pub fn forget(&mut self, who: u64) -> bool {
+        let spare = self.spare.len();
         self.spare.retain(|lot| lot.who != who);
         let bare: Vec<usize> = (0..self.slots.len())
-            .filter(|&plot| match &self.slots[plot] {
+            .filter(|&place| match &self.slots[place] {
                 Slot::Left { lot, .. } | Slot::Filled(lot) => lot.who == who,
                 Slot::Held { .. } => false,
             })
             .collect();
-        for &plot in &bare {
-            self.slots[plot] = Slot::Filled(crate::premade::lot(plot));
+        for &place in &bare {
+            self.slots[place] = Slot::Filled(crate::premade::lot(place));
         }
+        let changed = !bare.is_empty() || self.spare.len() != spare;
         self.settle(bare);
+        changed
     }
 
     /// Puts `lot`, real land that fills nothing now, among the spare, the
@@ -478,58 +577,60 @@ impl Estate {
         self.spare.insert(at, lot);
     }
 
-    /// Fills each of the `bare` plots, with the worthiest spare land or,
-    /// with none, the plot's own made-up lot; then has real people's land
+    /// Fills each of the `bare` places, with the worthiest spare land or,
+    /// with none, the place's own made-up lot; then has real people's land
     /// shown before any made-up one, the worthiest spare going to the
-    /// first plot a made-up one fills; and, with no made-up one left to
+    /// first place a made-up one fills; and, with no made-up one left to
     /// give way, has the worthiest shown, a spare one taking the place of
-    /// the least of those that fill a plot if it is worth more.
+    /// the least of those that fill one if it is worth more.
     fn settle(&mut self, mut bare: Vec<usize>) {
         bare.sort_unstable();
-        for plot in bare {
-            let lot = if self.spare.is_empty() { crate::premade::lot(plot) } else { self.spare.remove(0) };
-            self.slots[plot] = Slot::Filled(lot);
-            self.news.push(plot);
+        for place in bare {
+            let lot = if self.spare.is_empty() { crate::premade::lot(place) } else { self.spare.remove(0) };
+            self.slots[place] = Slot::Filled(lot);
+            self.news.push(place);
         }
         while !self.spare.is_empty() {
             let made_up = self.slots.iter().position(|slot| matches!(slot, Slot::Filled(lot) if lot.premade()));
-            let Some(plot) = made_up else {
+            let Some(place) = made_up else {
                 break;
             };
-            self.slots[plot] = Slot::Filled(self.spare.remove(0));
-            self.news.push(plot);
+            self.slots[place] = Slot::Filled(self.spare.remove(0));
+            self.news.push(place);
         }
         loop {
             let least = self
                 .slots
                 .iter()
                 .enumerate()
-                .filter_map(|(plot, slot)| match slot {
-                    Slot::Filled(lot) => Some((plot, lot.worth())),
+                .filter_map(|(place, slot)| match slot {
+                    Slot::Filled(lot) => Some((place, lot.worth())),
                     _ => None,
                 })
-                .min_by_key(|&(plot, worth)| (worth, std::cmp::Reverse(plot)));
-            let (Some(best), Some((plot, worth))) = (self.spare.first(), least) else {
+                .min_by_key(|&(place, worth)| (worth, std::cmp::Reverse(place)));
+            let (Some(best), Some((place, worth))) = (self.spare.first(), least) else {
                 break;
             };
             if best.worth() <= worth {
                 break;
             }
-            let was = std::mem::replace(&mut self.slots[plot], Slot::Filled(self.spare.remove(0)));
+            let was = std::mem::replace(&mut self.slots[place], Slot::Filled(self.spare.remove(0)));
             if let Slot::Filled(lot) = was {
                 self.set_aside(lot);
             }
-            self.news.push(plot);
+            self.news.push(place);
         }
         self.news.sort_unstable();
         self.news.dedup();
     }
 
     /// The plots filled with something else since this was last asked,
-    /// each once, in order: whoever is in the channel is to be told what
+    /// each once, by number: whoever is in the channel is to be told what
     /// stands on each now ([`Estate::lot`]).
     pub fn take_news(&mut self) -> Vec<usize> {
-        std::mem::take(&mut self.news)
+        let mut plots: Vec<usize> = std::mem::take(&mut self.news).into_iter().map(|place| self.order.plot(place)).collect();
+        plots.sort_unstable();
+        plots
     }
 
     /// Whether any plot has been filled with something else since that was
@@ -542,7 +643,7 @@ impl Estate {
     /// moment ago: none on a plot someone of the channel has, whose own
     /// bag says what stands there.
     pub fn lot(&self, plot: usize) -> Option<&Lot> {
-        match self.slots.get(plot)? {
+        match self.slots.get(self.order.place(plot)?)? {
             Slot::Left { lot, .. } | Slot::Filled(lot) => Some(lot),
             Slot::Held { .. } => None,
         }
@@ -551,37 +652,37 @@ impl Estate {
     /// Everyone of the channel who has a plot and has not gone: each
     /// plot, whose, and whether they are away from the town.
     pub fn held(&self) -> impl Iterator<Item = (usize, u64, bool)> + '_ {
-        self.slots.iter().enumerate().filter_map(|(plot, slot)| match slot {
-            Slot::Held { who, away } => Some((plot, *who, *away)),
+        self.slots.iter().enumerate().filter_map(|(place, slot)| match slot {
+            Slot::Held { who, away } => Some((self.order.plot(place), *who, *away)),
             _ => None,
         })
     }
 
-    /// Whose every plot is, as a device is told ([`Deed`]), given the name
-    /// and the look of someone of the channel (`known`: whoever is not is
-    /// left out until they are).
+    /// Whose every plot is, as a device is told ([`Deed`]), by the plots'
+    /// numbers, given the name and the look of someone of the channel
+    /// (`known`: whoever is not is left out until they are).
     pub fn deeds(&self, known: impl Fn(u64) -> Option<(String, String)>) -> Vec<Deed> {
-        self.slots
+        let mut deeds: Vec<Deed> = self
+            .slots
             .iter()
             .enumerate()
-            .filter_map(|(plot, slot)| {
+            .filter_map(|(place, slot)| {
                 let (who, (name, look), holder) = match slot {
                     Slot::Held { who, away } => (*who, known(*who)?, if *away { Holder::Away } else { Holder::Here }),
                     Slot::Left { lot, .. } => (lot.who, (lot.name.clone(), lot.look.clone()), Holder::Away),
-                    Slot::Filled(lot) => {
-                        let holder = if plot < FRONT { Holder::Minded } else { Holder::Nobody };
-                        (lot.who, (lot.name.clone(), lot.look.clone()), holder)
-                    }
+                    Slot::Filled(lot) => (lot.who, (lot.name.clone(), lot.look.clone()), Holder::Minded),
                 };
                 Some(Deed {
-                    plot: plot as u8,
+                    plot: self.order.plot(place) as u8,
                     who,
                     name,
                     look,
                     holder,
                 })
             })
-            .collect()
+            .collect();
+        deeds.sort_by_key(|deed| deed.plot);
+        deeds
     }
 }
 
@@ -677,25 +778,24 @@ mod tests {
     }
 
     #[test]
-    fn a_channel_opens_with_its_first_on_plot_one_and_the_worthiest_land_after() {
+    fn a_channel_opens_with_its_first_in_the_first_place_and_the_worthiest_land_after() {
         // Land with nothing on it fills nothing, nor the newcomer's own.
         let lots = vec![land(5, 1), land(6, 4), land(7, 0), land(8, 2), land(9, 4), land(1, 30)];
-        let estate = Estate::open(1, lots);
+        let estate = Estate::open(1, lots, Order::numbered());
         let whose = whose(&estate);
         assert_eq!(whose.len(), PLOTS);
         // The worthiest first, the older account of two worth the same.
         assert_eq!(&whose[..5], &[1, 6, 9, 8, 5]);
-        // Then the made-up ones, each plot its own.
+        // Then the made-up ones, each place its own.
         for (plot, who) in whose.iter().enumerate().skip(5) {
             assert_eq!(*who, PREMADE + plot as u64);
         }
-        assert_eq!((estate.count(), estate.room()), (1, FRONT - 1));
-        // Someone walks each of the first sixteen that nobody here has, and
-        // none of the rest.
+        assert_eq!((estate.count(), estate.room()), (1, PLOTS - 1));
+        // Someone walks every plot that nobody here has: 47 of them, with
+        // one person in the channel.
         let deeds = estate.deeds(|_| Some(("Hajun".into(), "boy".into())));
         assert_eq!(deeds[0].holder, Holder::Here);
-        assert!(deeds[1..FRONT].iter().all(|deed| deed.holder == Holder::Minded));
-        assert!(deeds[FRONT..].iter().all(|deed| deed.holder == Holder::Nobody));
+        assert!(deeds[1..].iter().all(|deed| deed.holder == Holder::Minded));
         assert_eq!((deeds[1].name.as_str(), deeds[1].look.as_str()), ("Person 6", "girl"));
         // Someone of the channel whose name is not known yet is left out.
         assert_eq!(estate.deeds(|_| None).len(), PLOTS - 1);
@@ -705,120 +805,197 @@ mod tests {
     }
 
     #[test]
-    fn whoever_comes_takes_the_first_plot_nobody_has_and_what_filled_it_moves_once() {
-        let mut estate = Estate::open(1, vec![land(6, 4), land(8, 2)]);
+    fn where_everything_is_is_thrown_as_a_channel_opens() {
+        // An order is every plot once, and no two seeds' alike.
+        let (one, other) = (Order::thrown(1), Order::thrown(2));
+        for order in [&one, &other] {
+            let mut plots: Vec<usize> = (0..PLOTS).map(|place| order.plot(place)).collect();
+            assert!((0..PLOTS).all(|place| order.place(order.plot(place)) == Some(place)));
+            plots.sort_unstable();
+            assert_eq!(plots, (0..PLOTS).collect::<Vec<_>>());
+        }
+        assert_ne!(one, other);
+        assert_eq!(one, Order::thrown(1));
+        assert_ne!(one, Order::numbered());
+        // Thrown many times, whoever opens a channel is on every plot
+        // about as often as on any other.
+        let mut first = [0u32; PLOTS];
+        for seed in 0..4_800 {
+            first[Order::thrown(seed).plot(0)] += 1;
+        }
+        assert!(first.iter().all(|&times| (50..=150).contains(&times)), "{first:?}");
+
+        // A channel in a thrown order: the same rules, said of other plots.
+        let order = Order::thrown(7);
+        let mut estate = Estate::open(1, vec![land(6, 4), land(8, 2)], order.clone());
+        assert_eq!(estate.plot_of(1), Some(order.plot(0)));
+        let deeds = estate.deeds(|who| Some((format!("Person {who}"), "boy".into())));
+        // Told by the plots' numbers, every plot once.
+        assert!(deeds.iter().enumerate().all(|(plot, deed)| usize::from(deed.plot) == plot));
+        let on = |estate: &Estate, plot: usize| estate.deeds(|_| Some(("x".into(), "boy".into())))[plot].who;
+        assert_eq!((on(&estate, order.plot(0)), on(&estate, order.plot(1)), on(&estate, order.plot(2))), (1, 6, 8));
+        // A made-up lot is its place's, wherever that is this time.
+        for place in 3..PLOTS {
+            assert_eq!(on(&estate, order.plot(place)), PREMADE + place as u64);
+            assert_eq!(estate.lot(order.plot(place)).map(|lot| lot.who), Some(PREMADE + place as u64));
+        }
+        assert!(estate.lot(order.plot(0)).is_none());
+        // Whoever comes is asked about, and given, a plot by its number.
+        assert_eq!(estate.join(2, |plot| plot == order.plot(3)), Some(order.plot(4)));
+        assert_eq!(estate.plot_of(2), Some(order.plot(4)));
+        let mut held: Vec<(usize, u64, bool)> = estate.held().collect();
+        held.sort_unstable();
+        let mut wanted = vec![(order.plot(0), 1, false), (order.plot(4), 2, false)];
+        wanted.sort_unstable();
+        assert_eq!(held, wanted);
+        // Gone, and the while over: their land fills it, where it was.
+        assert_eq!(estate.leave(2, Some(land(2, 1)), 0.0, true), Some(order.plot(4)));
+        assert!(estate.tick(GRACE + 1.0));
+        assert_eq!((on(&estate, order.plot(4)), estate.shows(2)), (2, true));
+        assert_eq!(estate.lot(order.plot(4)).map(|lot| lot.who), Some(2));
+        // Withdrawn, the channel is told of that plot by its number.
+        assert!(estate.forget(2));
+        assert_eq!(estate.take_news(), [order.plot(4)]);
+        assert_eq!(on(&estate, order.plot(4)), PREMADE + 4);
+    }
+
+    #[test]
+    fn whoever_comes_takes_a_made_up_lot_s_place_and_no_real_land_moves() {
+        let mut estate = Estate::open(1, vec![land(6, 4), land(8, 2)], Order::numbered());
         assert_eq!(&whose(&estate)[..4], &[1, 6, 8, PREMADE + 3]);
-        // The second: plot two, and the land that filled it goes to the
-        // first plot a made-up one fills. Everyone is told of that plot.
-        assert_eq!(estate.join(2, nobody_standing), Some(1));
-        assert_eq!(&whose(&estate)[..5], &[1, 2, 8, 6, PREMADE + 4]);
-        assert_eq!(estate.take_news(), [3]);
-        assert!(!estate.has_news());
+        // The second: the first place a made-up lot fills. Nothing else
+        // is anywhere else for it, and nobody is told of any plot.
+        assert_eq!(estate.join(2, nobody_standing), Some(3));
+        assert_eq!(&whose(&estate)[..5], &[1, 6, 8, 2, PREMADE + 4]);
+        assert!(estate.take_news().is_empty());
         // Come again, they have what they had.
-        assert_eq!(estate.join(2, nobody_standing), Some(1));
+        assert_eq!(estate.join(2, nobody_standing), Some(3));
         assert!(estate.take_news().is_empty());
         // With someone standing on the next, the one after it.
-        assert_eq!(estate.join(3, |plot| plot == 2), Some(3));
-        assert_eq!(&whose(&estate)[..6], &[1, 2, 8, 3, 6, PREMADE + 5]);
-        // With someone on every one of them, the first all the same.
-        assert_eq!(estate.join(4, |_| true), Some(2));
-        assert_eq!(&whose(&estate)[..6], &[1, 2, 4, 3, 6, 8]);
+        assert_eq!(estate.join(3, |plot| plot == 4), Some(5));
+        assert_eq!(&whose(&estate)[..7], &[1, 6, 8, 2, PREMADE + 4, 3, PREMADE + 6]);
+        // With someone standing on every made-up one, a plot real land
+        // fills, which goes to the first place a made-up one fills.
+        assert_eq!(estate.join(4, |plot| plot > 2), Some(1));
+        assert_eq!(&whose(&estate)[..7], &[1, 4, 8, 2, 6, 3, PREMADE + 6]);
+        assert_eq!(estate.take_news(), [4]);
+        // With someone on every one of them, the first made-up one all
+        // the same.
+        assert_eq!(estate.join(5, |_| true), Some(6));
+        assert_eq!(&whose(&estate)[..8], &[1, 4, 8, 2, 6, 3, 5, PREMADE + 7]);
     }
 
     #[test]
     fn someone_whose_own_land_fills_a_plot_takes_that_plot() {
-        // Among the first sixteen, where someone walks it under their name.
-        let mut estate = Estate::open(1, vec![land(6, 4), land(8, 2), land(9, 1)]);
+        // Someone walks it under their name, and they come in its place.
+        let mut estate = Estate::open(1, vec![land(6, 4), land(8, 2), land(9, 1)], Order::numbered());
         assert_eq!(estate.join(8, nobody_standing), Some(2));
         assert_eq!(&whose(&estate)[..5], &[1, 6, 8, 9, PREMADE + 4]);
         assert!(estate.take_news().is_empty());
-        // Further out, nobody walks it: they come to the front like anyone,
-        // and the plot it filled is filled with something else.
+        // Wherever it is, with someone standing on it too.
         let lots: Vec<Lot> = (0..20).map(|n| land(100 + n, 30 - n as usize)).collect();
-        let mut estate = Estate::open(1, lots);
+        let mut estate = Estate::open(1, lots, Order::numbered());
         assert_eq!(whose(&estate)[18], 117);
-        assert_eq!(estate.join(117, nobody_standing), Some(1));
-        let whose = whose(&estate);
-        assert_eq!(whose.iter().filter(|who| **who == 117).count(), 1);
-        // The land they took the place of went where theirs stood.
-        assert_eq!((whose[1], whose[18]), (117, 100));
+        let before = whose(&estate);
+        assert_eq!(estate.join(117, |plot| plot == 18), Some(18));
+        assert_eq!(whose(&estate), before);
+        assert!(estate.take_news().is_empty());
+        assert_eq!(estate.deeds(|_| Some(("x".into(), "boy".into())))[18].holder, Holder::Here);
     }
 
     #[test]
     fn a_plot_is_its_holder_s_in_a_game_and_for_a_while_after_their_connection_goes() {
-        let mut estate = Estate::open(1, vec![land(6, 4)]);
-        estate.join(2, nobody_standing);
+        let mut estate = Estate::open(1, vec![land(6, 4)], Order::numbered());
+        assert_eq!(estate.join(2, nobody_standing), Some(2));
         estate.take_news();
         let holder = |estate: &Estate, plot: usize| estate.deeds(|_| Some(("x".into(), "boy".into())))[plot].holder;
         // Into a game: theirs, nobody walking it.
         assert!(estate.away(2, true));
         assert!(!estate.away(2, true));
-        assert_eq!(holder(&estate, 1), Holder::Away);
-        assert_eq!((estate.count(), estate.plot_of(2)), (2, Some(1)));
+        assert_eq!(holder(&estate, 2), Holder::Away);
+        assert_eq!((estate.count(), estate.plot_of(2)), (2, Some(2)));
         // Back: here.
-        assert_eq!(estate.join(2, nobody_standing), Some(1));
-        assert_eq!(holder(&estate, 1), Holder::Here);
+        assert_eq!(estate.join(2, nobody_standing), Some(2));
+        assert_eq!(holder(&estate, 2), Holder::Here);
         // Their connection gone: kept as they left it, nobody on it, and
         // counted in the channel.
-        assert_eq!(estate.leave(2, Some(land(2, 3)), 100.0, true), Some(1));
-        assert_eq!(holder(&estate, 1), Holder::Away);
-        assert_eq!((estate.count(), estate.lot(1).map(Lot::worth)), (2, Some(150)));
+        assert_eq!(estate.leave(2, Some(land(2, 3)), 100.0, true), Some(2));
+        assert_eq!(holder(&estate, 2), Holder::Away);
+        assert_eq!((estate.count(), estate.lot(2).map(Lot::worth)), (2, Some(150)));
         assert!(!estate.tick(100.0 + GRACE));
         // Back within that: theirs again, where it was.
-        assert_eq!(estate.join(2, nobody_standing), Some(1));
-        assert_eq!((holder(&estate, 1), estate.lot(1)), (Holder::Here, None));
+        assert_eq!(estate.join(2, nobody_standing), Some(2));
+        assert_eq!((holder(&estate, 2), estate.lot(2)), (Holder::Here, None));
         // Gone for longer: their land fills the plot from here on, and
         // someone walks it under their name.
         estate.leave(2, Some(land(2, 3)), 200.0, true);
         assert!(estate.tick(200.1 + GRACE));
-        assert_eq!((holder(&estate, 1), estate.count()), (Holder::Minded, 1));
-        assert_eq!(whose(&estate)[1], 2);
+        assert_eq!((holder(&estate, 2), estate.count()), (Holder::Minded, 1));
+        assert_eq!(whose(&estate)[2], 2);
         // And back after that, they take it where it stands.
-        assert_eq!(estate.join(2, |_| true), Some(1));
+        assert_eq!(estate.join(2, |_| true), Some(2));
         // With nothing standing on it, the plot goes to something else.
         estate.leave(2, Some(land(2, 0)), 900.0, true);
         assert!(estate.tick(901.0 + GRACE));
-        assert_eq!(whose(&estate)[1], PREMADE + 1);
-        assert_eq!(estate.take_news(), [1]);
+        assert_eq!(whose(&estate)[2], PREMADE + 2);
+        assert_eq!(estate.take_news(), [2]);
         // The last of them gone, and the while over, nobody is left.
         estate.leave(1, None, 2_000.0, true);
         assert!(estate.deserted());
     }
 
     #[test]
-    fn someone_gone_to_another_channel_leaves_their_land_filling_the_plot_at_once() {
-        let mut estate = Estate::open(1, Vec::new());
-        estate.join(2, nobody_standing);
+    fn nobody_s_land_is_in_two_channels_at_once() {
+        let mut estate = Estate::open(1, vec![land(6, 4)], Order::numbered());
+        assert_eq!(estate.join(2, nobody_standing), Some(2));
         estate.take_news();
-        estate.leave(2, Some(land(2, 2)), 0.0, false);
-        assert_eq!((whose(&estate)[1], estate.count()), (2, 1));
-        assert_eq!(estate.take_news(), [1]);
-        // Whoever comes next has that plot all the same, the first nobody
-        // of the channel has, and the land that filled it moves along.
-        estate.join(3, nobody_standing);
-        assert_eq!((estate.plot_of(3), whose(&estate)[2]), (Some(1), 2));
-        // With nothing on it, the plot's own made-up lot.
-        estate.leave(3, Some(land(3, 0)), 0.0, false);
-        assert_eq!(&whose(&estate)[..3], &[1, PREMADE + 1, 2]);
+        // Gone to another channel, with land: none of it stays here, and
+        // the place has its own made-up lot again.
+        assert_eq!(estate.leave(2, Some(land(2, 2)), 0.0, false), Some(2));
+        assert_eq!((whose(&estate)[2], estate.count()), (PREMADE + 2, 1));
+        assert!(!estate.shows(2));
+        assert_eq!(estate.take_news(), [2]);
+        // Someone whose land fills a plot here: theirs to come to. Come
+        // into another channel instead, it fills nothing here, and the
+        // channel is told of that plot once.
+        assert!(estate.shows(6) && !estate.shows(7) && !estate.shows(1));
+        assert!(estate.forget(6));
+        assert!(!estate.shows(6));
+        assert_eq!((whose(&estate)[1], estate.take_news()), (PREMADE + 1, vec![1]));
+        assert!(!estate.forget(6));
+        assert!(estate.take_news().is_empty());
+        // And one whose connection went a moment ago, in another channel
+        // now: no plot is kept for them here.
+        assert_eq!(estate.join(3, nobody_standing), Some(1));
+        estate.leave(3, Some(land(3, 2)), 10.0, true);
+        assert!(estate.has(1) && estate.has(3) && !estate.shows(3) && !estate.has(6));
+        assert!(estate.forget(3));
+        assert_eq!((estate.count(), estate.plot_of(3), estate.has(3)), (1, None, false));
+        // Land that is only spare is forgotten too.
+        let lots: Vec<Lot> = (0..50).map(|n| land(100 + n, 60 - n as usize)).collect();
+        let mut estate = Estate::open(1, lots, Order::numbered());
+        assert!(!estate.shows(149) && estate.forget(149) && !estate.forget(149));
     }
 
     #[test]
-    fn a_channel_holds_sixteen_and_all_of_them_at_the_front() {
-        let mut estate = Estate::open(1, Vec::new());
-        for who in 2..=16 {
+    fn a_channel_holds_as_many_as_there_are_plots() {
+        let mut estate = Estate::open(1, Vec::new(), Order::numbered());
+        for who in 2..=PLOTS as u64 {
             assert_eq!(estate.join(who, nobody_standing), Some(who as usize - 1));
         }
-        assert_eq!((estate.count(), estate.room()), (FRONT, 0));
-        assert_eq!(estate.join(17, nobody_standing), None);
+        assert_eq!((estate.count(), estate.room()), (PLOTS, 0));
+        assert_eq!(estate.join(100, nobody_standing), None);
         // Nobody of the computer's walks anywhere.
         let deeds = estate.deeds(|_| Some(("x".into(), "boy".into())));
-        assert!(deeds.iter().all(|deed| deed.holder != Holder::Minded));
-        // One in a game is still one of the sixteen.
+        assert!(deeds.iter().all(|deed| deed.holder == Holder::Here));
+        // One in a game is still one of them.
         estate.away(5, true);
-        assert_eq!(estate.join(17, nobody_standing), None);
-        // One gone to another channel makes room.
+        assert_eq!(estate.join(100, nobody_standing), None);
+        // One gone to another channel makes room, and someone walks their
+        // plot until the next person has it.
         estate.leave(5, None, 0.0, false);
-        assert_eq!(estate.join(17, nobody_standing), Some(4));
+        assert_eq!(estate.deeds(|_| Some(("x".into(), "boy".into())))[4].holder, Holder::Minded);
+        assert_eq!(estate.join(100, nobody_standing), Some(4));
     }
 
     #[test]
@@ -826,12 +1003,13 @@ mod tests {
         // More real land than plots to fill: the least of it is spare, and
         // comes when a plot is free.
         let lots: Vec<Lot> = (0..50).map(|n| land(100 + n, 60 - n as usize)).collect();
-        let mut estate = Estate::open(1, lots);
+        let mut estate = Estate::open(1, lots, Order::numbered());
         let shown = whose(&estate);
         assert!(shown.iter().all(|who| !is_premade(*who)));
         assert_eq!((shown[1], shown[47]), (100, 146));
-        // Someone comes: what they took the place of, worth more than the
-        // least shown, takes its place.
+        // Someone comes, with no made-up lot to take the place of: what
+        // they took the place of, worth more than the least shown, takes
+        // its place.
         estate.join(2, nobody_standing);
         let shown = whose(&estate);
         assert_eq!((shown[1], shown[47]), (2, 100));
@@ -846,7 +1024,7 @@ mod tests {
     fn whose_each_plot_is_goes_last_of_what_is_told_and_all_of_them_in_a_couple_of_kilobytes() {
         use crate::Tell;
         use crate::social::Outcome;
-        let deeds = Estate::open(1, vec![land(6, 4)]).deeds(|_| Some(("Hajooon".into(), "boy_whitejeans".into())));
+        let deeds = Estate::open(1, vec![land(6, 4)], Order::numbered()).deeds(|_| Some(("Hajooon".into(), "boy_whitejeans".into())));
         let bytes = postcard::to_allocvec(&Tell::Plots(deeds.clone())).unwrap();
         // After everything an app from before this was told: who rests
         // was the twenty-first, numbered 20.
@@ -863,17 +1041,29 @@ mod tests {
     }
 
     #[test]
-    fn offline_every_plot_but_yours_has_its_made_up_owner() {
-        let deeds = offline_deeds(0);
+    fn offline_every_plot_but_yours_has_a_made_up_owner() {
+        let deeds = offline_deeds(0, &Order::numbered());
         assert_eq!(deeds.len(), PLOTS - 1);
         assert!(deeds.iter().all(|deed| deed.plot != 0 && is_premade(deed.who)));
-        assert_eq!(deeds.iter().filter(|deed| deed.holder == Holder::Minded).count(), FRONT - 1);
-        let elsewhere = offline_deeds(5);
+        assert!(deeds.iter().all(|deed| deed.holder == Holder::Minded));
+        let elsewhere = offline_deeds(5, &Order::numbered());
         assert!(elsewhere.iter().any(|deed| deed.plot == 0) && elsewhere.iter().all(|deed| deed.plot != 5));
         // No two of them go by one name.
         let mut names: Vec<&str> = deeds.iter().map(|deed| deed.name.as_str()).collect();
         names.sort_unstable();
         names.dedup();
         assert_eq!(names.len(), PLOTS - 1);
+        // In an order the device has thrown, you on the plot of its first
+        // place: each made-up owner on the plot of their own place, said
+        // by the plots' numbers.
+        let order = Order::thrown(3);
+        let thrown = offline_deeds(order.plot(0), &order);
+        assert_eq!(thrown.len(), PLOTS - 1);
+        assert!(thrown.windows(2).all(|pair| pair[0].plot < pair[1].plot));
+        for deed in &thrown {
+            assert_eq!(order.place(usize::from(deed.plot)).map(|place| PREMADE + place as u64), Some(deed.who));
+            assert_eq!(crate::premade::of(deed.who).map(|lot| lot.name), Some(deed.name.clone()));
+        }
+        assert!(crate::premade::of(7).is_none());
     }
 }

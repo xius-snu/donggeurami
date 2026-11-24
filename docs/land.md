@@ -5,12 +5,173 @@ Dated entries, newest first.
 
 ## Contents
 
-1. 2026-11-23: all 48 plots always filled, in Hajun's order: whoever is here on the first sixteen, everyone else's land and made-up land on the rest; protocol 25, APK 52
-2. 2026-11-22: what you own stands on your plot, and everyone sees it
-3. Later on 2026-11-21: everyone in your channel has their sign, and you see it
-4. 2026-11-21: the words are a thing in the world, a picture hung on the board; a metre and a half at the corner; the sign is solid; APK 44
-5. Later on 2026-11-20: you arrive on your plot; the words slant with the board, on both its faces; more room at the corner
-6. 2026-11-20: a plot for your seat, and the sign on it that says whose it is
+1. 2026-11-24: where everything is, is thrown as a channel opens (the numbers only say which plot); 48 to a channel, someone walking every plot nobody has; nobody's land in two channels; APK 53
+2. 2026-11-23: all 48 plots always filled, in Hajun's order: whoever is here on the first sixteen, everyone else's land and made-up land on the rest; protocol 25, APK 52
+3. 2026-11-22: what you own stands on your plot, and everyone sees it
+4. Later on 2026-11-21: everyone in your channel has their sign, and you see it
+5. 2026-11-21: the words are a thing in the world, a picture hung on the board; a metre and a half at the corner; the sign is solid; APK 44
+6. Later on 2026-11-20: you arrive on your plot; the words slant with the board, on both its faces; more room at the corner
+7. 2026-11-20: a plot for your seat, and the sign on it that says whose it is
+
+## 2026-11-24: where everything is, is thrown as a channel opens; 48 to a channel; nobody's land in two channels; APK 53
+
+Hajun, the day after the entry below, in three messages as the work went:
+
+> i think if the npc is named after a real person, it should say like
+> "bunnihihi's bot". but if its a fake house owner's npc then just keep
+> their name like "Sagwa" like now. also i think there should be a
+> character for all 48 plot not just the first 16, and channel size for
+> real players should be increased from 16 to 48, so if theres just 1 real
+> player online in a channel, then there should be 47 npcs, each on their
+> plot
+
+> also for the plot numbers, just keep them as a reference number rather
+> than a player joined order placement or land value order. i want it so
+> every time, its random location on all the plots, whether its a real
+> player or an npc or a offline real player. i just need the numbers so i
+> can later tell you oh plot number ## should be fixed like blah blah, not
+> necessarily for fixed placement. so every time a channel is
+> "created/launched" a the plot order is gona be shuffled so the player
+> who joined gona be placed in a random plot location. and their plot
+> location lasts until the channel is "closed" due to no real player on
+> that channel after a time. and it shuffles on another launch.
+
+> so what matters is that there is no duplicate plots across channels (Npc
+> plot duplicates are ok) and thats solveable by when u first join u first
+> check if your plot is present in a certain channel due to another person
+> being on a channel that "summoned" ur plot, and if its present, just go
+> to that channel and take that land plot.
+
+The names and the 47 residents are `docs/town.md`'s first entry; what an
+app already out makes of it is `docs/online.md`'s.
+
+### What there is
+
+- **A plot's number says which plot, and nothing of who gets it.**
+  `HOMES` is as it was, his numbers, for him to point at a plot by. What
+  the entry below calls priority is gone: no plot is the first to be
+  given, and none is kept for the worthiest land.
+- **An order is thrown as a channel opens** (`roundtown_net::land::Order`:
+  the 48 plots shuffled, `Order::thrown(seed)`; the server throws one with
+  `fastrand` in `Towns::sit` as it opens a channel's `Estate`). Everything
+  an estate keeps is by **place** in that order, and everything it is
+  asked or answers is a plot by its number (`Order::plot`, `place`): the
+  rules of the entry below are what they were, said of places, and where
+  each place is in the town is different every time. Whoever opens the
+  channel has the first place, which is any plot of the 48; real people's
+  land has the places after it; **each made-up lot is its place's**
+  (`premade::lot(place)`, where it was the plot's own), so that the
+  made-up houses are somewhere else each time too.
+- **It lasts as long as the channel does**: nobody's plot moves while
+  anyone is in the channel, and the channel is shut when the last of it
+  has been gone five minutes (`land::GRACE`, as before:
+  `Estate::deserted`, `Towns::tick`). Whoever opens it next has an order
+  thrown again. A server begun again (a deploy) is every channel opened
+  again.
+- **48 to a channel** (`roundtown_net::TOWN_SEATS` is `land::PLOTS`; 16
+  until today). `land::FRONT`, the sixteen plots people were kept to, is
+  gone: whoever comes has any place. What arrives sixteen to a ring round
+  the middle of an island (`roundtown_net::arrival`, which the town's own
+  people have not used since they arrive on their plots, and which Blend
+  In's crowd's grid is still walked from) has a number of its own,
+  `RING_SPOTS`.
+- **Someone walks every plot nobody of the channel has**: `Holder::Minded`
+  is said of every filled plot, and `Holder::Nobody` of none (kept in the
+  list: an app that knows it is told nothing new).
+- **Whoever comes takes a made-up lot's place** (`Estate::join`): the one
+  their own land fills, if it fills one; otherwise the first place a
+  made-up lot fills, and only with none of those left one that real land
+  fills (which then goes where the entry below says); and a plot nobody
+  stands on before one somebody does, whatever fills it. Until today they
+  took the lowest numbered plot, which was the worthiest real land's, and
+  that land moved: there being no best plot now, nobody's house is moved
+  for a newcomer.
+- **Nobody's land is in two channels at once** (his third message):
+  - **Whoever comes into the town goes to the channel their land fills a
+    plot of, and takes that plot** (`Towns::sit`, `Estate::shows`): after
+    the channel they have a plot in already (back from a game), the one
+    their group is in, and the one that keeps their plot for them (gone a
+    moment ago); before the fullest with room.
+  - **A channel opens with no land that is in another already**
+    (`Estate::has`: filling a plot there, or its owner's own plot).
+  - **Whoever is in one channel has nothing in any other**: someone
+    seated has their land taken off every other channel's plots, and any
+    plot kept for them there let go (`Estate::forget`, which says whether
+    anything changed; that channel is told what stands there instead, as
+    it is of any plot filled with something else); and someone moved to
+    another channel with their group leaves the place's own made-up lot
+    behind, not their land (`Estate::leave` without `kept`; their land
+    filled the plot they left until today).
+  - A made-up lot may be in every channel, as he says.
+- **Offline the device throws its own** (`land::thrown`, once as the app
+  opens, `fastrand`): you are on the plot of its first place
+  (`lobby::spawn_players`), and each made-up owner on the plot of theirs
+  (`land::offline_deeds(mine, order)`; `bag::made_up` goes by owner now,
+  not by plot, `premade::of`). `RT_LAND_ORDER=numbered` on the desktop
+  keeps the plots by their numbers, you on his plot 1, as the tests have
+  it.
+- **Still protocol 25**: nothing that is sent is anything else
+  (`docs/online.md`).
+
+### What was mine
+
+- **Whoever comes takes a made-up lot's place first**, so that no real
+  person's house moves for them; and being stood on counts before what
+  fills a plot.
+- **The group before the plot.** Someone whose group is in one channel
+  while their land fills a plot of another goes to their group, and the
+  land is taken off the other. His words have them go to the plot; with
+  the plot first, someone invited into a group would be parted from it by
+  where their house happened to be shown.
+- **Offline is thrown too**, a town with no server being the device's own
+  channel, opened as the app is.
+- **On connecting, the town is another town.** The app opens offline in
+  its own order and the server's is another, so as the connection is made
+  (a second or two after the town is in sight, if the cover has gone by
+  then) you are stood on another plot and all 47 others are filled again.
+  It was so before whenever your plot was not the first; it is always so
+  now. Not waiting for the network is a rule of the app (`CLAUDE.md`,
+  "Playing online"), so nothing is held back for it. If it reads badly on
+  a phone, the cover could stay until the server has spoken or two
+  seconds have gone: his to say.
+- Real land that fills no plot of a channel with more of it than plots
+  (`Estate::spare`) is not kept out of another channel: it would take 48
+  people's furnished land to matter.
+
+### Checked
+
+- **The tests**: the rules' 277 (an order is every plot once, no two
+  seeds alike, the first place on every plot about as often over 4,800
+  throws; a channel in a thrown order asked and answering by plot;
+  whoever comes takes a made-up lot's place and no real land moves, the
+  one after it with someone standing there, real land only with every
+  made-up one stood on; 48 to a channel, the 49th turned away; nothing of
+  someone gone to another channel left behind; land withdrawn, and a kept
+  plot let go, told once), the server's 128 (opened 200 times over, the
+  first person on more than half the town's plots; someone comes to the
+  channel their land fills a plot of though another is fuller; land in
+  one channel is in none that opens after; someone seated with their
+  group has their land taken off the other channel, which is told; back
+  after five minutes, the same plot), the game's 577.
+- **The desktop build, hidden.** Offline: on his plot 40 one time, each
+  made-up owner somewhere else than their number, 47 residents; with
+  `RT_LAND_ORDER=numbered`, on his plot 1. Two copies against a server on
+  this PC: plots 23 and 22, the same owner on every plot on both, all 46
+  residents about the same thing within a metre on both.
+- **The VM**, after the deploy (06:07 UTC): this PC's own account, three
+  times some minutes apart, on his plot 39, then 37, then 21, with
+  `bunnihoho`'s land on 5, 45, 10 and `bunnihihi`'s on 15, 25, 19: the
+  channel had shut between each (more than five minutes), and was thrown
+  again. The journal clean.
+
+### Not checked
+
+- **On a phone**, any of it: none was attached.
+- Two real accounts in a channel on the VM; more than one channel there,
+  which now takes 49 people or a group moved from a full one (the tests
+  alone say what happens across channels).
+- APK 52 against this server: it should play on, by what is sent
+  (`docs/online.md`); not run.
 
 ## 2026-11-23: all 48 plots always filled, in Hajun's order; protocol 25, APK 52
 

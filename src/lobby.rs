@@ -6,11 +6,13 @@
 //!
 //! Offline nobody else ever joins. Online (`crate::net`), the server sends
 //! whoever else is in your channel of the town. Either way the town has
-//! sixteen people in it (`roundtown_net::TOWN_BODIES`): one to each of its
-//! first sixteen plots, whoever is real on theirs and someone of the
-//! computer's on each of the rest, under its owner's name (`resident`,
-//! [`spawn_resident`]; since 2026-11-23, Hajun: "if >= 16 players are
-//! online in a channel, then no NPCs"). Until then this device kept the
+//! 48 people in it (`roundtown_net::TOWN_BODIES`): one to each of its
+//! plots, whoever is real on theirs and someone of the computer's on each
+//! of the rest (`resident`, [`spawn_resident`]; since 2026-11-24, Hajun:
+//! "there should be a character for all 48 plot not just the first 16";
+//! sixteen, one to each of the first sixteen plots, for the day before:
+//! "if >= 16 players are online in a channel, then no NPCs"). Until
+//! 2026-11-23 this device kept the
 //! town at 32 bodies with wanderers of its own round the pond, one leaving
 //! for each real player who arrived (his choice, 2026-10-08; `ai`, whose
 //! wandering is still what a game of House Builder's computer players do).
@@ -314,7 +316,9 @@ pub(crate) fn ai_member(seat: usize, id: u64, seats: &[Member], elsewhere: &[Mem
     }
 }
 
-/// You, standing in the middle of your plot of the town.
+/// You, standing in the middle of your plot of the town: with no server
+/// to say which yet, the plot of the first place of the order this device
+/// has thrown (`land::thrown`), another each time the app is opened.
 fn spawn_players(
     mut commands: Commands,
     assets: Res<AssetServer>,
@@ -323,6 +327,7 @@ fn spawn_players(
 ) {
     for (seat, member) in lobby.seats.iter().enumerate() {
         let mine = member.id == lobby.me;
+        let seat = if mine { crate::land::thrown().plot(0) } else { seat };
         spawn_player(&mut commands, &assets, member, seat, Venue::Town, mine);
         // Fixed over you, the camera is as it is wherever you arrive.
         if mine && !orbit.overhead {

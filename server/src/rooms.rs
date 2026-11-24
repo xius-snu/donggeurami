@@ -22,14 +22,17 @@ use std::collections::{HashMap, HashSet};
 
 use bevy::prelude::*;
 use bevy_replicon::prelude::*;
-use roundtown_net::land::{Deed, Estate, Lot};
+use roundtown_net::land::{Deed, Estate, Lot, Order};
 use roundtown_net::{Minigame, TOWN_SEATS};
 
 /// The rooms, the town's channels knowing the land of every account that
 /// has kept any (`lands`, read as the server starts): what its plots are
 /// filled with when their owners are not there.
 pub(crate) fn plugin(app: &mut App, lands: Vec<crate::accounts::Land>) {
-    let mut towns = Towns::default();
+    let mut towns = Towns {
+        thrown: true,
+        ..default()
+    };
     for land in &lands {
         towns.record(crate::bag::lot_kept(land.id, &land.name, &land.look, &land.bag));
     }
@@ -117,11 +120,13 @@ impl Channel {
 /// The town's channels, and whose each plot of each is. **A seat of the
 /// town is a plot** (`roundtown_net::land::HOMES`, in Hajun's order, since
 /// 2026-11-23): it says where its holder arrives and which land is theirs.
-/// Whoever sits down in a channel ([`Towns::sit`]) has a plot of its first
-/// sixteen until their body is gone ([`Towns::leave`]), whether they are in
-/// the town or away from it in a game ([`Towns::away`]), and for a while
-/// after; every other plot is filled with the land of someone who is not
-/// here, which is told to whoever is ([`Towns::deeds`], [`Towns::lot`]).
+/// Whoever sits down in a channel ([`Towns::sit`]) has a plot of it until
+/// their body is gone ([`Towns::leave`]), whether they are in the town or
+/// away from it in a game ([`Towns::away`]), and for a while after; every
+/// other plot is filled with the land of someone who is not here, which is
+/// told to whoever is ([`Towns::deeds`], [`Towns::lots_in`]). A channel
+/// holds as many people as the town has plots, 48 (since 2026-11-24,
+/// Hajun's; 16 until then).
 #[derive(Resource, Default)]
 pub(crate) struct Towns {
     channels: Vec<Channel>,
@@ -135,6 +140,11 @@ pub(crate) struct Towns {
     standing: HashSet<(u16, usize)>,
     /// The server's own seconds, as last said ([`Towns::tick`]).
     now: f64,
+    /// Whether the order a channel's plots are taken in is thrown as it
+    /// opens (`roundtown_net::land::Order`; Hajun, 2026-11-24: "every time
+    /// a channel is created/launched the plot order is gona be shuffled"),
+    /// as it is for the server that runs; a test's are by their numbers.
+    thrown: bool,
     /// The channels something has changed in that the devices in them are
     /// told of (`players::tell_channels`, since 2026-11-21): someone has
     /// sat down or gone, got into their car or out of it, or a plot is
@@ -152,19 +162,30 @@ impl Towns {
     /// a plot in already, if they have, back from a game; otherwise in the
     /// channel `rather` if it has room (their group's, or the one a group
     /// is moved to), otherwise in the one that keeps their plot for them,
-    /// their connection having gone a moment ago, otherwise in the fullest
-    /// that has room, otherwise in a new one. Returns the channel and the
-    /// plot (`roundtown_net::land`: their own, as a channel has it).
+    /// their connection having gone a moment ago, otherwise in the one
+    /// their land fills a plot of, which is theirs (Hajun, 2026-11-24:
+    /// "when u first join u first check if your plot is present in a
+    /// certain channel due to another person being on a channel that
+    /// summoned ur plot, and if its present, just go to that channel and
+    /// take that land plot"), otherwise in the fullest that has room,
+    /// otherwise in a new one. **Nothing of theirs is left in any other
+    /// channel** ("what matters is that there is no duplicate plots across
+    /// channels"): no land of theirs filling a plot, no plot kept for
+    /// them, and a channel opens with no land that is in another already.
+    /// Returns the channel and the plot (`roundtown_net::land`: their own,
+    /// as a channel has it).
     pub(crate) fn sit(&mut self, player: Entity, who: u64, rather: Option<u16>) -> (u16, u8) {
         let kept = self.held.get(&player).map(|&(_, channel)| channel);
         let open = |channel: usize| self.channels.get(channel).is_some_and(|channel| channel.room() > 0);
         // The channel asked for may be the next there is none of yet.
         let asked = |channel: &usize| open(*channel) || *channel == self.channels.len();
         let waits = |channel: &usize| self.channels[*channel].estate.as_ref().is_some_and(|estate| estate.plot_of(who).is_some());
+        let shown = |channel: &usize| self.channels[*channel].estate.as_ref().is_some_and(|estate| estate.shows(who));
         let channel = kept
             .map(usize::from)
             .or_else(|| rather.map(usize::from).filter(asked))
             .or_else(|| (0..self.channels.len()).find(waits))
+            .or_else(|| (0..self.channels.len()).find(shown))
             .or_else(|| {
                 (0..self.channels.len())
                     .filter(|&channel| open(channel))
@@ -175,20 +196,40 @@ impl Towns {
             self.channels.push(Channel::default());
         }
         let number = channel as u16;
+        // What a channel that opens is filled with: the land of whoever
+        // has nothing in any channel yet, neither a plot of their own nor
+        // their land filling one.
+        let elsewhere = |who: u64| self.channels.iter().filter_map(|channel| channel.estate.as_ref()).any(|estate| estate.has(who));
+        let lots: Vec<Lot> = match self.channels[channel].estate {
+            Some(_) => Vec::new(),
+            None => self.lots.values().filter(|lot| !elsewhere(lot.who)).cloned().collect(),
+        };
         let standing = &self.standing;
-        let lots = &self.lots;
+        let thrown = self.thrown;
         let seats = &mut self.channels[channel];
         let plot = match &mut seats.estate {
             Some(estate) => estate.join(who, |plot| standing.contains(&(number, plot))),
+            // Nobody in it, nor anyone it is kept for: opened, everything
+            // in it somewhere else than the last time.
             closed => {
-                *closed = Some(Estate::open(who, lots.values().cloned().collect()));
-                Some(0)
+                let order = if thrown { Order::thrown(fastrand::u64(..)) } else { Order::numbered() };
+                closed.insert(Estate::open(who, lots, order)).plot_of(who)
             }
         }
         .expect("only a channel with room is chosen");
         seats.bodies.insert(who, player);
         self.held.insert(player, (who, number));
-        self.stir(number);
+        // Here, they have nothing anywhere else: the channels it was in
+        // are told what is there instead.
+        let mut stirred = vec![number];
+        for (other, seats) in self.channels.iter_mut().enumerate() {
+            if other != channel && seats.estate.as_mut().is_some_and(|estate| estate.forget(who)) {
+                stirred.push(other as u16);
+            }
+        }
+        for channel in stirred {
+            self.stir(channel);
+        }
         self.announce(number, player);
         (number, plot as u8)
     }
@@ -225,11 +266,12 @@ impl Towns {
         self.stir(channel);
     }
 
-    /// Moves `player`, who has a plot in one channel, to `to`: their land
-    /// as it is, `lot`, fills the plot they leave, if anything stands on
-    /// it. Away from the town they stay away. The plot they have there;
-    /// none, and nothing changed, if they have none to leave, are there
-    /// already, or it has no room.
+    /// Moves `player`, who has a plot in one channel, to `to`: the plot
+    /// they leave is filled with something else at once, their land (`lot`)
+    /// being in no two channels (it filled the plot they left, for the day
+    /// before 2026-11-24). Away from the town they stay away. The plot
+    /// they have there; none, and nothing changed, if they have none to
+    /// leave, are there already, or it has no room.
     pub(crate) fn transfer(&mut self, player: Entity, to: u16, lot: Option<Lot>) -> Option<u8> {
         let &(who, from) = self.held.get(&player)?;
         if from == to || self.room_in(to) == 0 {
@@ -299,8 +341,7 @@ impl Towns {
         self.lots.remove(&who);
         let mut stirred = Vec::new();
         for (number, channel) in self.channels.iter_mut().enumerate() {
-            if let Some(estate) = &mut channel.estate {
-                estate.forget(who);
+            if channel.estate.as_mut().is_some_and(|estate| estate.forget(who)) {
                 stirred.push(number as u16);
             }
         }
@@ -314,7 +355,7 @@ impl Towns {
         self.held.get(&player).map(|&(_, channel)| channel)
     }
 
-    /// How many more `channel` has room for: sixteen, for one there is not
+    /// How many more `channel` has room for: all of it, for one there is not
     /// yet.
     pub(crate) fn room_in(&self, channel: u16) -> usize {
         self.channels.get(usize::from(channel)).map_or(TOWN_SEATS, Channel::room)
@@ -459,7 +500,7 @@ impl Towns {
 mod tests {
     use roundtown_net::At;
     use roundtown_net::bag::{LAMP, Standing};
-    use roundtown_net::land::{FRONT, GRACE, Holder, PLOTS};
+    use roundtown_net::land::{GRACE, Holder, PLOTS};
 
     use super::*;
 
@@ -513,7 +554,7 @@ mod tests {
         assert_eq!(sit(&mut towns, 103, Some(0)).0, 1);
         assert_eq!(towns.counts(), vec![TOWN_SEATS, 4]);
         assert_eq!((towns.room_in(0), towns.room_in(1), towns.room_in(7)), (0, TOWN_SEATS - 4, TOWN_SEATS));
-        assert_eq!((towns.roomy(2, 0), towns.roomy(2, 1), towns.roomy(13, 0)), (Some(1), None, None));
+        assert_eq!((towns.roomy(2, 0), towns.roomy(2, 1), towns.roomy(TOWN_SEATS - 3, 0)), (Some(1), None, None));
     }
 
     #[test]
@@ -571,26 +612,57 @@ mod tests {
         let deeds = towns.deeds(0, known);
         assert_eq!(deeds.len(), PLOTS);
         assert_eq!((deeds[0].holder, deeds[1].who, deeds[1].holder), (Holder::Here, 40, Holder::Minded));
-        assert!(deeds[2..FRONT].iter().all(|deed| deed.holder == Holder::Minded));
+        assert!(deeds[2..].iter().all(|deed| deed.holder == Holder::Minded));
         assert!(!towns.has_news());
-        // Someone comes and takes the plot it filled: it goes to the next,
-        // and the channel is told of that one.
-        assert_eq!(sit(&mut towns, 1, None), (0, 1));
-        assert!(towns.has_news());
-        let news = towns.take_news();
-        assert_eq!(news.len(), 1);
-        assert_eq!((news[0].0, news[0].1.who), (0, 40));
+        // Someone comes: the first plot a made-up lot fills. The land of
+        // whoever is not here stays where it is, and nobody is told of any
+        // plot.
+        assert_eq!(sit(&mut towns, 1, None), (0, 2));
         assert!(!towns.has_news() && towns.take_news().is_empty());
-        assert_eq!(towns.deeds(0, known)[2].who, 40);
+        assert_eq!(towns.deeds(0, known)[1].who, 40);
         // With someone standing on the next plot, the one after it.
-        towns.stood_on(HashSet::from([(0, 2)]));
-        assert_eq!(sit(&mut towns, 2, None), (0, 3));
+        towns.stood_on(HashSet::from([(0, 3)]));
+        assert_eq!(sit(&mut towns, 2, None), (0, 4));
         // The owner of that land comes: theirs is the plot it fills.
-        assert_eq!(towns.sit(player(7), 40, None), (0, 2));
-        // An account that is no more fills nothing.
+        assert_eq!(towns.sit(player(7), 40, None), (0, 1));
+        // An account that is no more fills nothing, and the channel is
+        // told once of the plot it filled.
         towns.leave(player(7), Some(land(40)));
         towns.forget(40);
         assert!(towns.deeds(0, known).iter().all(|deed| deed.who != 40));
+        assert!(towns.has_news());
+        let news = towns.take_news();
+        assert_eq!(news.len(), 1);
+        assert_eq!((news[0].0, news[0].1.who), (0, roundtown_net::land::PREMADE + 1));
+        assert!(!towns.has_news() && towns.take_news().is_empty());
+    }
+
+    #[test]
+    fn the_server_that_runs_throws_where_everything_is_as_a_channel_opens() {
+        // Opened many times over, whoever opens a channel has been on most
+        // of the town's plots, and is on the one they are told.
+        let mut plots = HashSet::new();
+        for _ in 0..200 {
+            let mut towns = Towns {
+                thrown: true,
+                ..default()
+            };
+            towns.record(land(40));
+            let (channel, plot) = sit(&mut towns, 0, None);
+            let deeds = towns.deeds(0, known);
+            assert_eq!((channel, deeds.len()), (0, PLOTS));
+            assert_eq!((deeds[usize::from(plot)].who, deeds[usize::from(plot)].holder), (1, Holder::Here));
+            // Come again, and back from a game, it is theirs still.
+            assert_eq!(sit(&mut towns, 0, None), (0, plot));
+            // Whoever comes after has another, and the land of someone
+            // who is not here is where it was.
+            let land_on = deeds.iter().position(|deed| deed.who == 40);
+            let (_, other) = sit(&mut towns, 1, None);
+            assert_ne!(other, plot);
+            assert_eq!(towns.deeds(0, known).iter().position(|deed| deed.who == 40), land_on);
+            plots.insert(plot);
+        }
+        assert!(plots.len() > PLOTS / 2, "{} plots", plots.len());
     }
 
     #[test]
@@ -657,7 +729,7 @@ mod tests {
     }
 
     #[test]
-    fn someone_moved_to_another_channel_leaves_their_land_behind_and_stays_away_if_they_were() {
+    fn someone_moved_to_another_channel_leaves_nothing_behind_and_stays_away_if_they_were() {
         let mut towns = Towns::default();
         sit(&mut towns, 0, None);
         sit(&mut towns, 1, None);
@@ -672,11 +744,63 @@ mod tests {
         assert_eq!(towns.transfer(player(1), 1, Some(land(2))), Some(1));
         assert_eq!((towns.counts(), towns.channel_of(player(1))), (vec![1, 2], Some(1)));
         assert_eq!(towns.held_in(1), [(0, player(2), false), (1, player(1), true)]);
-        // Their land fills the plot they left, someone walking it.
+        // Nothing of theirs is on the plot they left, their land being in
+        // no two channels: its own made-up lot, someone walking it.
         let deeds = towns.deeds(0, known);
-        assert_eq!((deeds[1].who, deeds[1].holder), (2, Holder::Minded));
+        assert_eq!((deeds[1].who, deeds[1].holder), (roundtown_net::land::PREMADE + 1, Holder::Minded));
         // The last one out of a channel shuts it at once.
         assert_eq!(towns.transfer(player(0), 1, None), Some(2));
         assert_eq!(towns.counts(), vec![0, 3]);
+    }
+
+    #[test]
+    fn whoever_comes_goes_to_the_channel_their_land_fills_a_plot_of_and_nobody_s_land_is_in_two() {
+        use roundtown_net::land::PREMADE;
+        let shown = |towns: &Towns, channel: u16, who: u64| towns.deeds(channel, known).iter().position(|deed| deed.who == who);
+        let mut towns = Towns::default();
+        towns.record(land(40));
+        towns.record(land(41));
+        // The first channel opens with both, someone walking each.
+        assert_eq!(sit(&mut towns, 0, None), (0, 0));
+        assert_eq!((shown(&towns, 0, 40), shown(&towns, 0, 41)), (Some(1), Some(2)));
+        // Another channel opens, and has more people in it: neither is
+        // there too.
+        assert_eq!(sit(&mut towns, 1, Some(1)), (1, 0));
+        assert_eq!(sit(&mut towns, 2, Some(1)), (1, 1));
+        assert_eq!((shown(&towns, 1, 40), shown(&towns, 1, 41)), (None, None));
+        assert!(towns.deeds(1, known)[2..].iter().all(|deed| roundtown_net::land::is_premade(deed.who)));
+        towns.take_news();
+        // The owner of one comes: to the channel it is in, fuller or not,
+        // and to the plot it fills.
+        assert_eq!(towns.sit(player(7), 40, None), (0, 1));
+        assert_eq!(towns.deeds(0, known)[1].holder, Holder::Here);
+        assert!(!towns.has_news());
+        // The owner of the other comes to where their group is: nothing of
+        // theirs is left in the first, which is told what is there now.
+        assert_eq!(towns.sit(player(8), 41, Some(1)), (1, 2));
+        assert_eq!((shown(&towns, 0, 41), towns.deeds(0, known)[2].who), (None, PREMADE + 2));
+        let news = towns.take_news();
+        assert_eq!(news.len(), 1);
+        assert_eq!((news[0].0, news[0].1.who), (0, PREMADE + 2));
+        // Gone, and the while over: their land fills that plot of the
+        // channel they were in, and of no other.
+        towns.leave(player(8), Some(land(41)));
+        towns.tick(1.0 + GRACE);
+        assert_eq!((shown(&towns, 1, 41), shown(&towns, 0, 41)), (Some(2), None));
+        assert_eq!(towns.deeds(1, known)[2].holder, Holder::Minded);
+        // Nor of one that opens after: not theirs, nor that of someone who
+        // has a plot in another.
+        assert_eq!(sit(&mut towns, 3, Some(2)), (2, 0));
+        assert_eq!((shown(&towns, 2, 41), shown(&towns, 2, 40)), (None, None));
+        // Back, with no group to go to: to the channel it is in, the same
+        // plot.
+        assert_eq!(towns.sit(player(9), 41, None), (1, 2));
+        // One whose connection went a moment ago and who comes back into
+        // another channel, their group's: no plot is kept for them in the
+        // one they were in.
+        towns.leave(player(7), Some(land(40)));
+        assert_eq!(towns.counts(), vec![2, 3, 1]);
+        assert_eq!(towns.sit(player(10), 40, Some(2)), (2, 1));
+        assert_eq!((towns.counts(), shown(&towns, 0, 40)), (vec![1, 3, 2], None));
     }
 }

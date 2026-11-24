@@ -286,9 +286,17 @@ pub const GAME_PORT: u16 = 443;
 /// times a second a device sends its own position while it moves.
 pub const TICK_HZ: f64 = 15.0;
 
-/// How many players a town channel holds (`MULTIPLAYER.md`, "How many to a
-/// room": 16 to start).
-pub const TOWN_SEATS: usize = 16;
+/// How many players a town channel holds: one to each of the town's plots
+/// ([`land::PLOTS`], 48) since 2026-11-24 (Hajun: "channel size for real
+/// players should be increased from 16 to 48"); 16 until then
+/// (`MULTIPLAYER.md`, "How many to a room": 16 to start).
+pub const TOWN_SEATS: usize = land::PLOTS;
+
+/// How many arrive on one ring round the middle of an island ([`arrival`]):
+/// the seventeenth is on a ring further out. The town's own people arrive
+/// on their plots ([`land::arrival`]); the path round its pond is where
+/// Blend In's crowd is walked from.
+pub const RING_SPOTS: usize = 16;
 
 /// How many players a game of House Builder holds, bots included.
 pub const GAME_SEATS: usize = 8;
@@ -303,14 +311,16 @@ pub const ARENA_SEATS: usize = 8;
 pub const ARENA_TEAMS: usize = 4;
 
 /// How many people the town has in it, the computer's among them: one to
-/// each of its first sixteen plots ([`land::FRONT`]), whoever is in your
-/// channel on theirs and someone of the computer's on each of the rest,
-/// under its owner's name (the game's `resident`; Hajun, 2026-11-23: "if
-/// >= 16 players are online in a channel, then no NPCs"). Each device walks
-/// its own, as it always has (his choice, 2026-10-08). 32 from 2026-11-01
-/// until then, the computer's wandering round the pond ("a total of 32 ppl
-/// in the map including ai, so each new player join replaces a ai"), and 8
-/// before. Not part of the protocol: the server never counts them.
+/// each of its 48 plots ([`land::PLOTS`]), whoever is in your channel on
+/// theirs and someone of the computer's on each of the rest, under its
+/// owner's name (the game's `resident`; Hajun, 2026-11-24: "there should
+/// be a character for all 48 plot not just the first 16 ... if theres just
+/// 1 real player online in a channel, then there should be 47 npcs, each
+/// on their plot"). Each device walks its own, as it always has (his
+/// choice, 2026-10-08). Sixteen for the day before, one to each of the
+/// first sixteen plots; 32 from 2026-11-01 until 2026-11-23, the
+/// computer's wandering round the pond; 8 before. Not part of the
+/// protocol: the server never counts them.
 pub const TOWN_BODIES: usize = TOWN_SEATS;
 
 /// The look a new account wears until its owner has chosen one of
@@ -6071,7 +6081,7 @@ mod tests {
         }
         // Past them, on the islands too, near the middle, each on the
         // island its seat says: the second of each team beside the first.
-        for seat in ARENA_TEAMS..TOWN_SEATS * 2 {
+        for seat in ARENA_TEAMS..RING_SPOTS * 2 {
             let (at, _) = arrival(Venue::Arena, seat);
             let island = ARENA_ISLANDS[arena_island(seat)];
             let out = at.xz().distance(island);
@@ -6122,7 +6132,7 @@ mod tests {
 
     #[test]
     fn in_the_town_everyone_arrives_on_the_path_round_the_pond_facing_in() {
-        for seat in 0..TOWN_SEATS * 2 {
+        for seat in 0..RING_SPOTS * 2 {
             let (at, turn) = arrival(Venue::Town, seat);
             let out = at.xz().length();
             let ring = if seat < 16 { TOWN_ARRIVAL_RADIUS } else { TOWN_ARRIVAL_RADIUS + 2.0 };
@@ -6136,7 +6146,7 @@ mod tests {
     #[test]
     fn a_full_town_arrives_apart() {
         for venue in [Venue::Town, Venue::Lobby, Venue::Arena] {
-            let spots: Vec<Vec3> = (0..TOWN_SEATS * 2).map(|seat| arrival(venue, seat).0).collect();
+            let spots: Vec<Vec3> = (0..RING_SPOTS * 2).map(|seat| arrival(venue, seat).0).collect();
             for (i, a) in spots.iter().enumerate() {
                 for b in &spots[i + 1..] {
                     assert!(a.distance(*b) > 2.0, "{venue:?}: {a} and {b}");

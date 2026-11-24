@@ -7,6 +7,37 @@
 > "above" or "below", or names another section in quotes, that section may be
 > in another file here: the table in `CLAUDE.md` says which.
 
+## APK 53: plots thrown as a channel opens, someone on every plot, "X's bot"; protocol 25 still
+
+2026-11-24, 15:49 here (06:49 UTC). Hajun's three messages of that day
+(`docs/land.md`'s first entry, and that day's in `docs/town.md`,
+`docs/online.md` and `docs/rendering-and-frame-rate.md`) did not ask for
+one; his of the day before, "build apk and push after completing all
+tasks", was taken to cover what he added to that work, the names and the
+order thrown offline being the device's to draw. From the main checkout,
+no other session at work in it.
+
+- **Protocol 25 still**: it plays against the same server APK 52 does,
+  deployed first (06:07 UTC, `docs/online.md`). What is the app's alone
+  in it: a resident on a real person's land goes by "{name}'s bot"; the
+  town it fills by itself, offline, is in an order thrown as it opens;
+  residents visit a third as often with 47 of them about.
+- `versionCode` 53, read back with aapt. cargo ndk 9 m 45 s
+  (`release-android`; `shared/` had changed), stripped from 203 MB to
+  110.6 MB, Gradle 58 s; the library in the APK is the stripped one
+  (`ea35f1a5`), with its seven entry points; "{name}'s bot" is in it.
+- 93 of the game's files in it, each the tree's own byte for byte; the
+  assets and `ui.ron` hashed before the library was built and after
+  Gradle, the same. 128,354,833 bytes.
+- Before it: the three crates' tests (the game's 577, the rules' 277, the
+  server's 128), the hidden runs, two copies against a server on this PC,
+  and this PC's own account on the VM (`docs/land.md` lists them).
+- Nothing behind `target_os = "ios"` was touched; the iPhone's
+  type-check was not run. No tag.
+- **Not put on a phone**: none was attached. How it runs with 48 people
+  in the town is the first thing to look at
+  (`docs/rendering-and-frame-rate.md`). One APK kept, as ever.
+
 ## APK 52: all 48 plots filled, residents, edit mode said; protocol 25
 
 2026-11-23, 23:12 here (14:12 UTC). Asked for: "build apk and push after

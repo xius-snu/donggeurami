@@ -7,6 +7,44 @@
 > "above" or "below", or names another section in quotes, that section may be
 > in another file here: the table in `CLAUDE.md` says which.
 
+## Still protocol 25: 48 to a channel, an order thrown as it opens, nobody's land in two
+
+2026-11-24 (`docs/land.md`'s first entry has the rules). **`PROTOCOL_VERSION`
+is 25 still**: nothing that is sent is anything else, and APK 52 plays on.
+
+- **What changed is the server's alone, and which numbers it says.** A
+  seat in `Tell::Arrive` and `Seated` was already any of the 48 plots to
+  an app; it is any of them now for whoever comes, where it was one of
+  the first sixteen. A `Deed`'s `Holder` was already `Minded` or
+  `Nobody`; it is `Minded` of every filled plot now. A channel holds 48
+  (`TOWN_SEATS`, which nothing sent is sized by: `Tell::Channel` is a
+  list).
+- **What APK 52 makes of it**: it is given a plot anywhere in the town and
+  stands on it; it walks someone on every plot nobody has (it walks
+  whatever is `Minded`), 47 with one person in the channel, under the
+  owners' plain names, not "X's bot" (the name is the device's to make,
+  `words.land.bot`), and visiting as often as fifteen did; what its
+  residents are about is no longer what a newer app's are at the same
+  moment, each device walking its own. Nothing else differs. Reasoned
+  from what is sent; not run.
+- **Where a channel's people sit** (`rooms::Towns::sit`): the channel they
+  have a plot in already; their group's, with room; the one keeping
+  their plot for them; **the one their land fills a plot of**; the
+  fullest with room; a new one. And whoever sits has nothing of theirs
+  left in any other channel: that channel is stirred, and told what
+  stands on the plot instead.
+- **A second channel** now opens only with 48 in the first, or for a
+  group moved from a full one.
+- **Deployed** at 06:07:22 UTC on 2026-11-24, nobody having been
+  connected since 04:23:56 (`bunnihoho`, on APK 52); the binary before it
+  kept as `roundtown-server.prev-2026-11-24` (`1b7e5524`: plots in his
+  order, sixteen to a channel). After: the VM's binary the one built here
+  (`d6f499a8`), "2 of 3 accounts with a bag have something standing on
+  their land", this PC's own account in, hidden, three times some minutes
+  apart, on another plot each time with the two real accounts' land on
+  other plots each time and their bots under "bunnihihi's bot" and
+  "bunnihoho's bot", and out; the journal clean.
+
 ## Protocol 25: a seat of the town is a plot, and whose every plot is
 
 2026-11-23 (`docs/land.md` has what the plots are). **`PROTOCOL_VERSION`

@@ -1,18 +1,25 @@
-//! Residents: the computer's people, one to each of the town's first
-//! sixteen plots that nobody of your channel has, under its owner's name
-//! and in their look (Hajun, 2026-11-23: "if < 16 players. for example, 3
-//! players -> the 13 next plots will have an AI NPC spawn in each plot with
-//! that plot owner's name, and they should just stay on their plot/house
-//! and do random things to make them seem like a real person, and maybe
-//! sometime go over to the plot of the real player and go inside and do
-//! random things again like sit/sleep and leave and go back to their own
-//! plot, etc. random based on random personality/mbti assigned to each
-//! bot, kind of like bridge wars bots"). They take the place of the town's
-//! wanderers round the pond, of which there were enough to make 32 bodies
-//! ("if >= 16 players are online in a channel, then no NPCs").
+//! Residents: the computer's people, one to each plot of the town that
+//! nobody of your channel has, in its owner's look (Hajun, 2026-11-23: "if
+//! < 16 players. for example, 3 players -> the 13 next plots will have an
+//! AI NPC spawn in each plot with that plot owner's name, and they should
+//! just stay on their plot/house and do random things to make them seem
+//! like a real person, and maybe sometime go over to the plot of the real
+//! player and go inside and do random things again like sit/sleep and
+//! leave and go back to their own plot, etc. random based on random
+//! personality/mbti assigned to each bot, kind of like bridge wars bots").
+//! **On every plot** since 2026-11-24, where it was the first sixteen
+//! ("there should be a character for all 48 plot not just the first 16 ...
+//! if theres just 1 real player online in a channel, then there should be
+//! 47 npcs, each on their plot"), and **named for what they are**
+//! ([`called`]): on a made-up owner's land that owner's name, and on the
+//! land of someone real who is not here "{name}'s bot" (`words.land.bot`;
+//! "if the npc is named after a real person, it should say like
+//! "bunnihihi's bot". but if its a fake house owner's npc then just keep
+//! their name like "Sagwa" like now"). They take the place of the town's
+//! wanderers round the pond, of which there were enough to make 32 bodies.
 //!
 //! **Which plots have one is the server's to say** (`land::Deeds`,
-//! `Holder::Minded`); offline, every one of the first sixteen but yours.
+//! `Holder::Minded`); offline, every one but yours.
 //! **Each device walks its own**, as it always has the town's people
 //! (Hajun's choice, 2026-10-08), and nothing of them is sent. But **what
 //! each is doing is worked out from the town's clock and from who they
@@ -36,7 +43,10 @@
 //! the house, sat on a chair or a sofa, or lying on a bed. A visit is to
 //! the plot of someone real in your channel, you among them: there for
 //! most of the session, about their house and on their chairs and beds as
-//! at home, and back for the end of it.
+//! at home, and back for the end of it. With more residents to each real
+//! person than [`CALLERS`], each visits that much less often, so that
+//! someone alone in a channel with 47 of them has about as many at theirs
+//! as with fifteen: one or so at a time.
 //!
 //! **Getting there** ([`Search`]): over the town's own shape, what stands on
 //! its plots with it, half a metre to a square, as a body could walk it:
@@ -64,6 +74,7 @@ use crate::land::{Deeds, Plot, Plots};
 use crate::lobby::{self, Member, Seat};
 use crate::rest::{self, Resting};
 use crate::talk::{Listening, Speaker};
+use crate::ui::{UiChanged, fill, ui};
 use crate::{Intent, LAND_STEP_UP, PLAYER_HEIGHT, PLAYER_RADIUS, Player};
 
 /// How long one thing is kept at, in seconds, and how many of those make a
@@ -73,6 +84,10 @@ const SESSION: i64 = 8;
 /// How many blocks of a visit are spent at the other's plot, the walk
 /// there among them: the rest is the way home, and home.
 const STAY: i64 = 6;
+/// How many residents to each real person of the channel visit as often
+/// as each leans to ([`Persona::visits`]): with more of them to each than
+/// that, every one visits that much less often.
+const CALLERS: f32 = 15.0;
 /// How far out from the middle of the town the pavement between its ring
 /// road and its first plots is walked along, in metres: clear of the
 /// street lamps that stand 72.4 m out and of the plots' fronts, 79 m out
@@ -132,7 +147,8 @@ const UNDERFOOT: f32 = 0.15;
 /// share from 0 to 1 that the dice are thrown against.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub(crate) struct Persona {
-    /// How likely a session is a visit.
+    /// How likely a session is a visit, with no more residents to each
+    /// real person than [`CALLERS`].
     visits: f32,
     /// Of the time on their feet at home, how much is out of doors.
     outdoors: f32,
@@ -212,7 +228,11 @@ pub(crate) fn plan(who: u64, persona: &Persona, home: usize, hosts: &[usize], no
     // Each begins its blocks at its own moment.
     let block = ((now + f64::from(dice(who, 2, 11)) * BLOCK) / BLOCK).floor() as i64;
     let session = block.div_euclid(SESSION);
-    let visiting = !hosts.is_empty() && dice(who, session, 12) < persona.visits && block.rem_euclid(SESSION) < STAY;
+    // Every plot nobody real has has a resident: so many of them to each
+    // real person, and each visits the less often the more there are.
+    let residents = roundtown_net::land::PLOTS.saturating_sub(hosts.len()).max(1) as f32;
+    let often = persona.visits * (CALLERS * hosts.len() as f32 / residents).min(1.0);
+    let visiting = !hosts.is_empty() && dice(who, session, 12) < often && block.rem_euclid(SESSION) < STAY;
     let plot = if visiting {
         hosts[((dice(who, session, 13) * hosts.len() as f32) as usize).min(hosts.len() - 1)]
     } else {
@@ -346,40 +366,60 @@ pub(crate) fn plugin(app: &mut App) {
     );
 }
 
+/// What the resident of the land `deed` says of goes by: a made-up owner's
+/// own name, the land being theirs and they nobody else; on the land of
+/// someone real who is not here, "{name}'s bot" (`words.land.bot`), which
+/// nobody takes for that person come online (Hajun, 2026-11-24; the plain
+/// name for the day before). The sign says whose the land is either way.
+fn called(deed: &Deed) -> String {
+    if roundtown_net::land::is_premade(deed.who) {
+        deed.name.clone()
+    } else {
+        fill(&ui().words.land.bot, &[("name", &deed.name)])
+    }
+}
+
 /// Keeps a resident on every plot that is to have one (`land::Deeds`), as
 /// whose each plot is changes, and takes away those of plots that are not:
 /// someone real has come to theirs, or the land that fills it is someone
-/// else's now.
+/// else's now, or what they go by is other words.
 fn keep(
     deeds: Res<Deeds>,
     plots: Res<Plots>,
+    words: Res<UiChanged>,
     residents: Query<(Entity, &Resident, &Name)>,
     assets: Res<AssetServer>,
     mut commands: Commands,
 ) {
-    if !(deeds.is_changed() || plots.is_changed()) || plots.all.is_empty() {
+    if !(deeds.is_changed() || plots.is_changed() || words.is_changed()) || plots.all.is_empty() {
         return;
     }
-    let wanted: Vec<&Deed> = deeds.0.iter().filter(|deed| deed.holder == Holder::Minded).collect();
-    let is = |deed: &Deed, resident: &Resident, name: &Name| {
-        deed.who == resident.who && usize::from(deed.plot) == resident.home && deed.name == name.as_str()
+    let wanted: Vec<(&Deed, String)> = deeds
+        .0
+        .iter()
+        .filter(|deed| deed.holder == Holder::Minded)
+        .map(|deed| (deed, called(deed)))
+        .collect();
+    let is = |(deed, called): &(&Deed, String), resident: &Resident, name: &Name| {
+        deed.who == resident.who && usize::from(deed.plot) == resident.home && called.as_str() == name.as_str()
     };
     for (body, resident, name) in &residents {
-        if !wanted.iter().any(|deed| is(deed, resident, name)) {
+        if !wanted.iter().any(|one| is(one, resident, name)) {
             commands.entity(body).despawn();
         }
     }
-    for deed in wanted {
-        if residents.iter().any(|(_, resident, name)| is(deed, resident, name)) {
+    for one in &wanted {
+        if residents.iter().any(|(_, resident, name)| is(one, resident, name)) {
             continue;
         }
+        let (deed, called) = one;
         let home = usize::from(deed.plot);
         let Some(plot) = plots.of(home) else {
             continue;
         };
         let member = Member {
             id: deed.who,
-            name: deed.name.clone(),
+            name: called.clone(),
             look: deed.look.clone(),
             ai: true,
         };
@@ -1052,10 +1092,10 @@ mod tests {
                 assert!(plots.iter().all(|&plot| plot == host || plot == 4), "{plots:?}");
             }
         }
-        // Of the fifteen who would be about one person alone in a channel,
-        // one or so is at theirs at a time, taken over a day, and seldom
-        // more than a few at once.
-        let people: Vec<(u64, Persona)> = (1..16u64).map(|n| (roundtown_net::land::PREMADE + n, Persona::of(roundtown_net::land::PREMADE + n))).collect();
+        // Of the 47 who are about one person alone in a channel, one or so
+        // is at theirs at a time, taken over a day, and seldom more than a
+        // few at once.
+        let people: Vec<(u64, Persona)> = (1..48u64).map(|n| (roundtown_net::land::PREMADE + n, Persona::of(roundtown_net::land::PREMADE + n))).collect();
         let at_yours = |block: i32| {
             people
                 .iter()
@@ -1068,6 +1108,15 @@ mod tests {
         let crowded = guests.iter().filter(|&&at_once| at_once > 3).count();
         assert!((0.3..1.3).contains(&mean), "{mean} guests at a time");
         assert!(crowded < guests.len() / 20, "more than three at once in {crowded} blocks of {}", guests.len());
+        // And as many at each of sixteen people's, were there so many: no
+        // more than fifteen residents to each, everyone visits as often as
+        // they lean to.
+        let hosts: Vec<usize> = (0..16).collect();
+        let about: Vec<(usize, u64, Persona)> = (16..48usize).map(|n| (n, roundtown_net::land::PREMADE + n as u64, Persona::of(roundtown_net::land::PREMADE + n as u64))).collect();
+        let out = |block: i32| about.iter().filter(|(home, who, persona)| plan(*who, persona, *home, &hosts, f64::from(block) * BLOCK).plot != *home).count();
+        let mean = (0..2_880).map(out).sum::<usize>() as f32 / 2_880.0 / 16.0;
+        assert!((0.03..0.2).contains(&mean), "{mean} guests at a time at each of sixteen");
+        let hosts = [0, 2];
         // With nobody real about, never away.
         assert!((0..2_880).all(|block| plan(who, &persona, 4, &[], f64::from(block) * BLOCK).plot == 4));
         // Everything there is to be about is, in a day, by someone.

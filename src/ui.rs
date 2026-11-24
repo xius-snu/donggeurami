@@ -1420,11 +1420,16 @@ impl BagWords {
 
 /// The land's words (`land`, since 2026-11-20): what the sign of a plot
 /// says, `{name}` being whose it is (Hajun: "the plotsign should just say
-/// "hajun's land""). A `\n` in it begins a new line on the board.
+/// "hajun's land""). A `\n` in it begins a new line on the board. And
+/// what someone of the computer's goes by who walks the land of a real
+/// person who is not here (`resident`, since 2026-11-24; Hajun: "if the
+/// npc is named after a real person, it should say like "bunnihihi's
+/// bot""), `{name}` being that person.
 #[derive(Deserialize, PartialEq, Debug)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct LandWords {
     pub sign: String,
+    pub bot: String,
 }
 
 /// The tables the four games of 2026-11-18 are played at (`table`): what

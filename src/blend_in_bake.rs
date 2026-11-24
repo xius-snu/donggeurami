@@ -33,7 +33,7 @@ use std::time::Duration;
 
 use roundtown_net::blend_in::{self, APART, Crowd, RING};
 use roundtown_net::nav::{CELL, Grid, Region};
-use roundtown_net::{TOWN_SEATS, profile};
+use roundtown_net::{RING_SPOTS, profile};
 
 use crate::island::{self, Island, Islands, LATTICE, Venue, WATER_MATERIAL, glb, is_material};
 use crate::{Intent, LAND_STEP_UP, MOVE_SPEED, PLAYER_HEIGHT, PLAYER_RADIUS, WATER_Y, dry_ground};
@@ -145,7 +145,7 @@ fn bake_parts(parts: &[glb::Part]) -> Grid {
     // path round the pond.
     let mut walked: Vec<Option<f32>> = vec![None; side * side];
     let mut waiting: VecDeque<usize> = VecDeque::new();
-    for seat in 0..TOWN_SEATS {
+    for seat in 0..RING_SPOTS {
         let at = island::arrival(Venue::Town, seat).translation.xz();
         let index = index_of(at);
         let middle = grid.centre(index);
@@ -282,7 +282,7 @@ fn the_town_baked_is_the_ground_round_the_pond_out_to_the_ring() {
     // Where everyone arrives, and the path round the pond, the grass, the
     // road round the outside: all walked. The pond is not, nor the
     // fountain, nor the lamps.
-    for seat in 0..TOWN_SEATS {
+    for seat in 0..RING_SPOTS {
         let at = island::arrival(Venue::Town, seat).translation.xz();
         assert!(grid.clear(at), "seat {seat} arrives at {at}, which is not walked");
     }

@@ -32,11 +32,13 @@
 //! too ([`Deeds`]): online as the server says (`roundtown_net::Tell::
 //! Plots`: whoever else is in your channel, in the town or away in a game,
 //! and the land of people who are not here, real and made up, that fills
-//! the rest); offline each plot's own made-up owner
-//! (`roundtown_net::premade`). A sign stands on every one, with its
-//! owner's name ([`holders`]), and what they own stands there
-//! (`build::stand`); someone of the computer's walks each of the first
-//! sixteen that nobody here has (`resident`). Until then a seat was one of
+//! the rest); offline a made-up owner on each
+//! (`roundtown_net::premade`), in an order this device throws as the app
+//! opens ([`thrown`], since 2026-11-24: where anything is, is thrown as a
+//! channel opens, and his numbers only say which plot). A sign stands on
+//! every one, with its owner's name ([`holders`]), and what they own
+//! stands there (`build::stand`); someone of the computer's walks each
+//! that nobody here has (`resident`). Until 2026-11-23 a seat was one of
 //! sixteen, each device working a plot out for it, and only the plots of
 //! whoever was in your channel had anything on them. `RT_LAND_SIGNS=all`
 //! on desktop stands a sign with your own name on every plot, to look at
@@ -82,7 +84,7 @@ use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use bevy::world_serialization::WorldInstanceReady;
 use roundtown_net::Tell;
-use roundtown_net::land::{Deed, HOMES};
+use roundtown_net::land::{Deed, HOMES, Order};
 use swash::scale::{Render, ScaleContext, Source};
 use swash::zeno::{Format, Vector};
 
@@ -219,7 +221,8 @@ impl Plots {
 /// (`roundtown_net::land::HOMES`), its owner, the name on its sign, the
 /// look of whoever walks it, and who is on it. Online as the server last
 /// said ([`roundtown_net::Tell::Plots`]); offline, and until it has said,
-/// each plot's own made-up owner (`roundtown_net::land::offline_deeds`).
+/// a made-up owner on each, in the order this device has thrown
+/// ([`thrown`], `roundtown_net::land::offline_deeds`).
 #[derive(Resource, Default, PartialEq, Debug)]
 pub(crate) struct Deeds(pub Vec<Deed>);
 
@@ -233,6 +236,22 @@ impl Deeds {
     pub(crate) fn has(&self, who: u64) -> bool {
         self.0.iter().any(|deed| deed.who == who)
     }
+}
+
+/// The order this device has thrown for the town it fills by itself,
+/// with no server to say: once, as the app opens, so that you and every
+/// made-up owner are on other plots each time it is opened (Hajun,
+/// 2026-11-24: "every time, its random location on all the plots ... it
+/// shuffles on another launch"; `roundtown_net::land::Order`). You are on
+/// the plot of its first place (`lobby`), each made-up owner on the plot
+/// of their own. By the plots' numbers in a test, and in a run on the
+/// desktop with `RT_LAND_ORDER=numbered`, which is then on Hajun's plot 1.
+pub(crate) fn thrown() -> &'static Order {
+    static ORDER: std::sync::OnceLock<Order> = std::sync::OnceLock::new();
+    ORDER.get_or_init(|| {
+        let numbered = cfg!(test) || std::env::var("RT_LAND_ORDER").is_ok_and(|said| said.trim() == "numbered");
+        if numbered { Order::numbered() } else { Order::thrown(fastrand::u64(..)) }
+    })
 }
 
 /// Hearing whose each plot is: whatever stands anything on them comes
@@ -301,7 +320,7 @@ fn keep_deeds(
             .filter(|deed| Some(deed.who) != mine && usize::from(deed.plot) != seat.0)
             .cloned()
             .collect(),
-        None => roundtown_net::land::offline_deeds(seat.0),
+        None => roundtown_net::land::offline_deeds(seat.0, thrown()),
     };
     if deeds.0 != wanted {
         deeds.0 = wanted;
@@ -1091,9 +1110,8 @@ pub(crate) mod tests {
         let first = &plots[of_seat[0]];
         assert!(first.middle.distance(Vec2::new(-90.0, 25.0)) < 0.1, "{:?}", first.middle);
         assert!(first.front.distance(Vec2::new(1.0, 0.0)) < 1e-3, "{:?}", first.front);
-        // Whoever is in a channel has one of the first sixteen: the twelve
-        // round the pond and the four behind his 1 to 4.
-        assert!(of_seat[12..roundtown_net::land::FRONT].iter().all(|&plot| plots[plot].middle.x.abs().min(plots[plot].middle.y.abs()) < 26.0));
+        // His 13 to 16 are the four behind his 1 to 4.
+        assert!(of_seat[12..16].iter().all(|&plot| plots[plot].middle.x.abs().min(plots[plot].middle.y.abs()) < 26.0));
         // A map with a plot somewhere else than it is written: as far as
         // the first that is not found.
         assert_eq!(in_order(&plots[..0]).len(), 0);

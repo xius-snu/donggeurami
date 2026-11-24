@@ -649,7 +649,7 @@ fn hear(
 /// Tells every device in a channel of the town that something has changed
 /// in, and that asked to be told ([`Watching`]), of everyone in it: who
 /// is in the town on which plot, and who is in their own car
-/// ([`Tell::Channel`]), the whole channel each time, sixteen at the most;
+/// ([`Tell::Channel`]), the whole channel each time, 48 at the most;
 /// and whose every plot of the channel is ([`Tell::Plots`], since
 /// 2026-11-23: all 48, those away in a game and those nobody here has
 /// among them, by the name each account goes by). And each that asked that

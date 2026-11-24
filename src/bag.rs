@@ -382,13 +382,10 @@ fn come_and_go(
 }
 
 /// What stands on each plot `deeds` gives a made-up owner, and what of it
-/// is painted, by that owner: the plot's own made-up land.
+/// is painted, by that owner: their own made-up land, whichever plot it is
+/// on this time.
 fn made_up(deeds: &Deeds) -> (HashMap<u64, Vec<Standing>>, HashMap<u64, Vec<Paint>>) {
-    let lots = deeds
-        .0
-        .iter()
-        .filter(|deed| roundtown_net::land::is_premade(deed.who))
-        .map(|deed| roundtown_net::premade::lot(usize::from(deed.plot)));
+    let lots = deeds.0.iter().filter_map(|deed| roundtown_net::premade::of(deed.who));
     let (mut stands, mut paints) = (HashMap::new(), HashMap::new());
     for lot in lots {
         paints.insert(lot.who, lot.paints);
@@ -605,7 +602,7 @@ mod tests {
 
     #[test]
     fn what_stands_on_someone_s_plot_is_kept_while_they_have_a_plot_here_and_offline_every_plot_has_its_own() {
-        use roundtown_net::land::{Deed, Holder, PLOTS, PREMADE, offline_deeds};
+        use roundtown_net::land::{Deed, Holder, Order, PLOTS, PREMADE, offline_deeds};
         let mut world = world(true);
         // The one system throughout: it remembers whether it was online.
         let come_and_go = world.register_system(come_and_go);
@@ -638,7 +635,7 @@ mod tests {
         // stands on each is that owner's own land, with what of it is
         // painted.
         world.insert_resource(Online::default());
-        world.resource_mut::<Deeds>().0 = offline_deeds(0);
+        world.resource_mut::<Deeds>().0 = offline_deeds(0, &Order::numbered());
         world.run_system(come_and_go).unwrap();
         let theirs = world.resource::<Theirs>();
         assert_eq!(theirs.0.len(), PLOTS - 1);
@@ -646,6 +643,18 @@ mod tests {
             let lot = roundtown_net::premade::lot(plot);
             assert_eq!(theirs.0.get(&lot.who), Some(&lot.stands), "plot {plot}");
             assert_eq!(world.resource::<TheirPaints>().0.get(&lot.who), Some(&lot.paints), "plot {plot}");
+        }
+        assert!(!theirs.0.contains_key(&PREMADE));
+        // In an order the device has thrown, each owner's land is their
+        // own all the same, on whichever plot they are.
+        let order = Order::thrown(11);
+        world.resource_mut::<Deeds>().0 = offline_deeds(order.plot(0), &order);
+        world.run_system(come_and_go).unwrap();
+        let theirs = world.resource::<Theirs>();
+        assert_eq!(theirs.0.len(), PLOTS - 1);
+        for deed in &world.resource::<Deeds>().0 {
+            let lot = roundtown_net::premade::of(deed.who).unwrap();
+            assert_eq!(theirs.0.get(&deed.who), Some(&lot.stands), "plot {}", deed.plot);
         }
         assert!(!theirs.0.contains_key(&PREMADE));
         // Nothing is written again while nothing changes.

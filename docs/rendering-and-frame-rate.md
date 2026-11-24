@@ -7,6 +7,35 @@
 > "above" or "below", or names another section in quotes, that section may be
 > in another file here: the table in `CLAUDE.md` says which.
 
+## Forty-eight people in the town (2026-11-24)
+
+Someone walks every plot nobody real has (`docs/town.md`): 47 bodies of
+the computer's with one person in a channel, where there were fifteen the
+day before and 31 wanderers until the day before that. **Nothing here was
+measured on a phone either.**
+
+- **What there is to draw**, were it all in view: 48 bodies are 183,000
+  triangles (sixteen were 61,000), so the town is about 720,000 where it
+  was about 600,000 the day before and 225,000 before every plot was
+  filled. A body out of view is not drawn; each that is in view is a
+  skeleton posed on the processor.
+- **What 47 of them cost to mind** was not something this PC could say.
+  It was on its battery with its screen at 60 frames a second, so frames
+  were held to that; let run as fast as they would (a switch in the
+  throwaway driver, the window's `PresentMode::AutoNoVsync`), twenty
+  seconds standing on a plot with all 47 about came to 2.97 ms a frame
+  (the longest 12.7 ms, none over 20), and the same run with all but
+  fifteen taken away, and then all of them, came to 4.69 and 3.90: the
+  machine drifting by more than the residents weigh. No sign of a cost on
+  the desktop, and no measure of it.
+- Nothing new was done about cost. A resident's way is still found within
+  the 40 new squares a frame that all of them share, so 47 looking for
+  ways take longer to find them, not more of a frame.
+- **If a phone does not keep up**, what yesterday's entry lists still
+  stands, and its last is the first to try now: fewer bodies than 48
+  (walking only the plots near you, or near the pond). It changes what is
+  seen, and is Hajun's to say: 47 is his number.
+
 ## Forty-eight furnished plots: what was done about their cost (2026-11-23)
 
 With every plot of the town filled (`docs/land.md`), and someone walking

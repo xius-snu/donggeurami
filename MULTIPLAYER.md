@@ -266,6 +266,12 @@ and a nametag.
 still has room, so the town feels busy rather than spread thin. A channel
 picker, or joining a friend, can come later.
 
+**48 since 2026-11-24** (Hajun: "channel size for real players should be
+increased from 16 to 48"): one to each plot of the town, the computer
+walking every plot nobody real has, so the town has 48 bodies in it
+however many are real (`docs/land.md`, `docs/town.md`). Not measured on a
+phone.
+
 **Measure before settling it** (Step 0, below). If crowds turn out costly,
 try these in order:
 1. Merge the player model's meshes.
