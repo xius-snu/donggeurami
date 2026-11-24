@@ -766,8 +766,9 @@ fn press_buttons(
         punches.write(crate::PunchPressed);
         held.fist = Some(press.pointer_id);
     }
+    // The door out of the car: no car named.
     if faces.contains(press.entity) {
-        cars.write(CarPressed);
+        cars.write(CarPressed(None));
     }
     if guns.contains(press.entity) {
         held.gun = Some(press.pointer_id);

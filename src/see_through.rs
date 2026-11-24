@@ -24,6 +24,16 @@
 //! (2026-10-09). Zoomed all the way in, through your own eyes, there is
 //! nothing between.
 //!
+//! **Furniture does not fade** (Hajun, 2026-11-24: "i dont think the
+//! furnitures need to be turned invisible, like couch, chair, bed, etc. they
+//! can remain solid even if it hides the player from view"): whatever of the
+//! shop's stands on the floor ([`furniture`]: a bed, a chair, a table, a
+//! desk, the couch, a lamp) stays as it is between the camera and you, hides
+//! of you what it hides, and is tapped like anything else in sight. It is
+//! the house that opens: its walls, with the doors, windows and hangings in
+//! them, and its ceiling. What is said of furniture below is how it faded
+//! from 2026-10-09 until then, kept behind a switch ([`FURNITURE`]).
+//!
 //! A piece of furniture, a door, a window, a town object or one of the
 //! town's buses fades whole, the bus to three quarters of itself rather than
 //! a quarter ([`BUS_SEEN`]); what is said here of the town, its objects and
@@ -91,6 +101,14 @@ const SEEN: f32 = 0.25;
 /// the town fades, a bus with it ("not on the bus"): this is how much of one
 /// would be drawn, should that come back.
 const BUS_SEEN: f32 = 0.75;
+/// Whether furniture in the way of you fades, as a wall does: turned off on
+/// 2026-11-24 (Hajun: "i dont think the furnitures need to be turned
+/// invisible, like couch, chair, bed, etc. they can remain solid even if it
+/// hides the player from view"). Off, a piece that stands on the floor
+/// ([`furniture`]) is never looked at for being in the way, so it is drawn
+/// as it is and a tap lands on it; on, it fades whole and a tap goes through
+/// it, as from 2026-10-09 until then.
+const FURNITURE: bool = false;
 /// How long something takes to fade, and to come back, in seconds.
 const FADE_SECS: f32 = 0.15;
 /// What of you the camera has to see: rings round you at these heights over
@@ -354,9 +372,15 @@ fn find_what_hides_you(
         if of_a_body(part, &lineage, &bodies) {
             continue;
         }
+        // Nor furniture (Hajun, 2026-11-24): a bed, a chair or the couch
+        // between the camera and you stays as it is, and hides you.
+        if !FURNITURE && furniture(part, &lineage) {
+            continue;
+        }
         // Nor the chair, the sofa or the bed you rest on (`rest`): sat in
         // it, its back and its arms are round you, and it is not to fade
-        // from under you.
+        // from under you. (With no furniture fading, [`FURNITURE`], that is
+        // so of all of it already.)
         if resting_on.is_some_and(|on| model_of(part, &lineage) == on) {
             continue;
         }
@@ -530,6 +554,17 @@ fn model_of(part: Entity, lineage: &Lineage) -> Entity {
     }
 }
 
+/// Whether `part` is part of a piece of furniture: something of the shop's
+/// that stands on the floor (`Mount::Floor`), a bed, a chair, a table, a
+/// desk, the couch, a street lamp. Not a house, and not a door, a window or
+/// a hanging, which are in a wall and go see-through with it. Furniture in
+/// the way of you stays as it is ([`FURNITURE`]).
+fn furniture(part: Entity, lineage: &Lineage) -> bool {
+    lineage
+        .get(model_of(part, lineage))
+        .is_ok_and(|(_, _, piece, ..)| piece.is_some_and(|piece| piece.def.mount == Mount::Floor))
+}
+
 /// Fades out what has come between the camera and you, and back in what has
 /// gone from between, and puts out of a tap's reach whatever any of that is
 /// part of, for as long as any of it is see-through.
@@ -661,7 +696,8 @@ fn own_alpha(material: &StandardMaterial) -> Option<f32> {
 /// Hajun found dirty. Glass and water stay blended, as they are drawn, and
 /// so does anything with a texture, whose alpha Bevy sharpens to all or
 /// nothing under alpha to coverage (`pbr_fragment.wgsl`): of the shop's
-/// pieces, the Soft Couch, which is one mesh.
+/// pieces, the Soft Couch was the one, until its palette picture was taken
+/// out of its model for a plain blue on 2026-11-24, and none is now.
 fn see_through(mut look: StandardMaterial, alpha: f32) -> StandardMaterial {
     look.alpha_mode = if look.alpha_mode == AlphaMode::Blend || look.base_color_texture.is_some() {
         AlphaMode::Blend
@@ -831,7 +867,8 @@ fn line_meets_box(from: Vec3, to: Vec3, low: Vec3, high: Vec3) -> bool {
 /// as it is, as part of a piece being put down or of whatever the edit menu
 /// is open on (`menu`).
 ///
-/// A piece of furniture, a door, a window, a town object or a bus fades
+/// A piece of furniture (were any found in the way: none is, [`FURNITURE`]),
+/// a door, a window, a town object or a bus fades
 /// whole, and so do the door and each wall's window frames of one of the
 /// town's houses (`build::OnWall`). A house, and the island, fade a part at a
 /// time: the meshes the glTF loader made of one object in Blender, one for
@@ -962,6 +999,68 @@ mod tests {
     }
 
     #[test]
+    fn furniture_in_the_way_stays_as_it_is_and_the_wall_behind_it_fades() {
+        use bevy::ecs::message::Messages;
+        use bevy::ecs::system::RunSystemOnce;
+        use crate::build::PIECES;
+        let mut world = World::new();
+        world.init_resource::<Hiding>();
+        world.init_resource::<EditMenu>();
+        world.init_resource::<Time>();
+        world.init_resource::<Assets<Mesh>>();
+        world.init_resource::<Assets<StandardMaterial>>();
+        world.init_resource::<Messages<AssetEvent<Mesh>>>();
+        let material = world
+            .resource_mut::<Assets<StandardMaterial>>()
+            .add(StandardMaterial::default());
+        // Something drawn, filling a box.
+        let drawn = |world: &mut World, (low, high): (Vec3, Vec3)| {
+            let mesh = Mesh::from(Cuboid::from_corners(low, high)).translated_by((low + high) * 0.5);
+            let mesh = world.resource_mut::<Assets<Mesh>>().add(mesh);
+            world
+                .spawn((
+                    Mesh3d(mesh),
+                    MeshMaterial3d(material.clone()),
+                    Aabb::from_min_max(low, high),
+                    GlobalTransform::IDENTITY,
+                    InheritedVisibility::VISIBLE,
+                ))
+                .id()
+        };
+        let of = |mount: Mount| PIECES.iter().find(|def| def.mount == mount).expect("the shop sells one");
+        // You in the middle of a house that is down, the camera out through
+        // its front wall and nearly level with you, and a bed between you
+        // and that wall: both hide some of you.
+        let eye = Vec3::new(0.0, 2.0, 10.0);
+        assert!(hides(eye, FRONT) && hides(eye, BED));
+        world.spawn((Player, Transform::IDENTITY, Visibility::Visible));
+        world.spawn((ThirdPersonCamera, Transform::from_translation(eye)));
+        let house = world.spawn((YouAreIn, Piece { def: of(Mount::House) }, GlobalTransform::IDENTITY)).id();
+        let wall = drawn(&mut world, FRONT);
+        world.entity_mut(wall).insert(ChildOf(house));
+        let bed = world.spawn(Piece { def: of(Mount::Floor) }).id();
+        let frame = drawn(&mut world, BED);
+        world.entity_mut(frame).insert(ChildOf(bed));
+        // A door is a piece of the shop's too, and no furniture.
+        let door = world.spawn(Piece { def: of(Mount::Door) }).id();
+        let leaf = world.spawn(ChildOf(door)).id();
+        world.run_system_once(find_what_hides_you).expect("it runs");
+        let hiding = &world.resource::<Hiding>().0;
+        // The wall goes see-through. The bed stays, and hides your legs,
+        // for as long as furniture does not fade.
+        assert!(hiding.contains_key(&wall));
+        assert_eq!(hiding.contains_key(&frame), FURNITURE);
+        world
+            .run_system_once(move |lineage: Lineage| {
+                assert!(furniture(frame, &lineage) && furniture(bed, &lineage));
+                for not in [wall, house, door, leaf] {
+                    assert!(!furniture(not, &lineage));
+                }
+            })
+            .unwrap();
+    }
+
+    #[test]
     fn from_outside_a_house_the_near_wall_and_the_roof_are_in_the_way() {
         // Zoomed out behind you, level and from high up: out through the
         // front wall, and up through the roof.
@@ -977,7 +1076,8 @@ mod tests {
             }
         }
         // A bed in front of you hides your legs from a camera nearly level
-        // with you, and is in the way; from high up it hides nothing.
+        // with you (and, being furniture, stays as it is: `FURNITURE`); from
+        // high up it hides nothing.
         assert!(hides(level, BED));
         assert!(!hides(high, BED));
         // From in the room with you, only the bed, which you stand behind:

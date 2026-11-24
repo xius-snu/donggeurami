@@ -248,10 +248,12 @@ fn spawn_window(commands: &mut Commands, stock: &Stock, tab: Tab, house: bool) -
 
     let able = |def: &PieceDef| match def.mount {
         Mount::House => !house,
-        Mount::Door | Mount::Window | Mount::Hanging => house,
+        Mount::Door | Mount::Window | Mount::Hanging | Mount::Ceiling => house,
         Mount::Floor => true,
     };
-    let offered: Vec<&'static PieceDef> = PIECES.iter().filter(|def| def.tab == tab).collect();
+    // Its own nineteen: what came for the town's plots alone on 2026-11-25
+    // is not sold here (`PieceDef::house_builder`).
+    let offered: Vec<&'static PieceDef> = PIECES.iter().filter(|def| def.tab == tab && def.house_builder).collect();
     if let Some(why) = note(tab, house, offered.iter().any(|def| !able(def))) {
         commands.spawn((ChildOf(panel), hud::words(why, NOTE_TEXT, ui().colours.shop.note)));
     }

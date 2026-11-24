@@ -7,6 +7,51 @@
 > "above" or "below", or names another section in quotes, that section may be
 > in another file here: the table in `CLAUDE.md` says which.
 
+## The website: a support page and a privacy policy, on GitHub Pages
+
+2026-11-24. Hajun's: "i need a quick privacy policy and or support page
+maybe i can use github pages. guide me through how to setup the page on
+github, and make a simple site for it while i setitup".
+
+- **Where**: a repository of its own, `xius-snu/donggeurami-town`, which
+  Hajun made (public), in a folder beside this one,
+  `Desktop\donggeurami-town`; pushed there as `d201f07`. Served, since
+  he turned Pages on in its settings that day (the `main` branch, its
+  root), at `https://xius-snu.github.io/donggeurami-town/`:
+  `support.html`, `privacy.html`, and `support.html#delete-account`, the
+  link Google Play asks for. Not this repository's `docs/`, which is this
+  log.
+- **What it is**: three plain pages and one stylesheet with the app's
+  icon, nothing fetched from anywhere else, light or dark as the device
+  is set. English only.
+- **The policy is written from the code as it stood that day**: the
+  tables (`accounts::SCHEMA`), only a hash of a device's secret kept
+  (`server/src/login.rs`), chat kept nowhere, the journal with names and
+  what happened in games, Caddy writing no requests down
+  (`server/ops/Caddyfile`), fourteen nightly dumps, `INTERNET` the app's
+  one permission, no advertising, analytics or purchase code anywhere in
+  the tree (searched), an account deleted in the app (`/delete`), a plot
+  standing in the town under its owner's name while they are away.
+- **A rule from it: change `privacy.html`, and the date at its top, with
+  anything the server newly keeps, writes down or hands to anyone**: a
+  sign-in, anything sold for money, analytics, a report or a block.
+- **Hajun's answers**: the address the pages give, and that the policy
+  names him as who makes and runs the game.
+- **My calls, for him to change**: "gone from the backups within 30
+  days" (the dumps are fourteen nights; whether Vultr's own backups are
+  on, and how long they keep, is not known here); the promises made in
+  his name (a question about someone's data answered within 30 days, an
+  account deleted by mail within 30 days, "We look into every report");
+  what is said of children, nothing here saying who the game is for (it
+  asks anyone under 14 to ask a parent first); Vultr named, and Seoul;
+  where he lives not said. `MULTIPLAYER.md`'s list still wants a policy
+  in Korean that names a privacy officer before a release in Korea, and
+  a report and a block.
+- **Checked**: drawn by Chrome with no window, 1100 wide and 390 wide,
+  light and dark; and, once Pages was on, every page and file fetched
+  from GitHub, each answering 200 and the four text files the bytes that
+  were pushed. Not looked at on a phone.
+
 ## Still protocol 25: 48 to a channel, an order thrown as it opens, nobody's land in two
 
 2026-11-24 (`docs/land.md`'s first entry has the rules). **`PROTOCOL_VERSION`

@@ -92,8 +92,8 @@ pub(crate) use town::TownHouse;
 pub(crate) const PIECES: &[PieceDef] = &[
     my_house("square_house", "Square House"),
     my_house("square_house_roofless", "Flat House"),
-    my_house("square_house_two_floor", "Two Floor House"),
-    my_house("square_house_roofless_two_floor", "Roof Terrace House"),
+    my_house("square_house_two_floor", "Square House 2F"),
+    my_house("square_house_roofless_two_floor", "Roof Terrace 2F"),
     my_door("classic_door", "Classic Door", ONE_LEAF),
     my_door("classic_door_with_window", "Classic Window Door", ONE_LEAF),
     my_door("classic_double_door", "Classic Double Door", TWO_LEAVES),
@@ -110,6 +110,95 @@ pub(crate) const PIECES: &[PieceDef] = &[
     my_floor("softcouch", "Soft Couch", Tab::Furniture),
     // Lit at night like the town's, which it is the model of (`lamps`).
     my_floor("streetlamp", "Street Lamp", Tab::Furniture),
+    // For the town's plots alone, out of the bag (since 2026-11-25; Hajun:
+    // "add all the new house models ... add all the new furnitures to the
+    // item shop as well"): House Builder's shop sells none of what follows.
+    town_house("wide_roof_house", "Wide Roof House"),
+    town_house("square_house_three_floor", "Square House 3F"),
+    town_house("square_house_four_floor", "Square House 4F"),
+    town_house("square_house_five_floor", "Square House 5F"),
+    town_house("square_house_six_floor", "Square House 6F"),
+    town_house("square_house_seven_floor", "Square House 7F"),
+    town_house("square_house_eight_floor", "Square House 8F"),
+    town_house("square_house_nine_floor", "Square House 9F"),
+    town_house("square_house_ten_floor", "Square House 10F"),
+    town_house("square_house_roofless_three_floor", "Roof Terrace 3F"),
+    town_house("square_house_roofless_four_floor", "Roof Terrace 4F"),
+    town_house("square_house_roofless_five_floor", "Roof Terrace 5F"),
+    town_house("square_house_roofless_six_floor", "Roof Terrace 6F"),
+    town_house("square_house_roofless_seven_floor", "Roof Terrace 7F"),
+    town_house("square_house_roofless_eight_floor", "Roof Terrace 8F"),
+    town_house("square_house_roofless_nine_floor", "Roof Terrace 9F"),
+    town_house("square_house_roofless_ten_floor", "Roof Terrace 10F"),
+    // Hajun's own three, and the 56 he downloaded (by CreativeTrio, CC0),
+    // made two and a half times as big (`blender/scale_downloads.py`), each
+    // under the name its files have.
+    new_one("end_table", "end_table", "End Table"),
+    new_one("cabinet", "cabinet", "Cabinet"),
+    new_one("bathtub", "bathtub", "Bathtub"),
+    new_one("alarm_clock", "Alarm Clock", "Alarm Clock"),
+    new_one("chair", "Chair", "Chair"),
+    new_one("closed_umbrella", "Closed Umbrella", "Closed Umbrella"),
+    new_one("computer_mouse", "Computer Mouse", "Computer Mouse"),
+    new_one("cup_of_tea", "Cup Of Tea", "Cup Of Tea"),
+    new_one("dumbbell", "Dumbbell", "Dumbbell"),
+    new_one("empty_box", "Empty Box", "Empty Box"),
+    new_one("frying_pan", "Frying Pan", "Frying Pan"),
+    new_one("hair_dryer", "Hair Dryer", "Hair Dryer"),
+    new_one("hamburger", "Hamburger", "Hamburger"),
+    new_one("hand_rake", "Hand Rake", "Hand Rake"),
+    new_one("mug_with_office_tool", "Mug With Office Tool", "Mug With Office Tool"),
+    new_one("screwdriver", "Screwdriver", "Screwdriver"),
+    new_one("stapler", "Stapler", "Stapler"),
+    new_one("stool", "Stool", "Stool"),
+    new_one("table", "Table", "Table"),
+    new_one("tissue_box", "Tissue Box", "Tissue Box"),
+    new_one("trash_bin", "Trash Bin", "Trash Bin"),
+    new_one("watering_can", "Watering Can", "Watering Can"),
+    new_one("wine_glass", "Wine Glass", "Wine Glass"),
+    new_one("armchair", "Armchair", "Armchair"),
+    new_one("bathroom_sink", "Bathroom Sink", "Bathroom Sink"),
+    new_one("coat_rack", "Coat Rack", "Coat Rack"),
+    new_one("desk", "Desk", "Desk"),
+    new_one("desk_fan", "Desk Fan", "Desk Fan"),
+    new_one("doll", "Doll", "Doll"),
+    new_one("dresser", "Dresser", "Dresser"),
+    new_one("flowers", "Flowers", "Flowers"),
+    new_one("fruit_bowl", "Fruit Bowl", "Fruit Bowl"),
+    new_one("globe", "Globe", "Globe"),
+    new_one("headphones", "Headphones", "Headphones"),
+    // Lit at night (`lamps::BY_KIND`).
+    new_one("lamp_with_shade", "Lamp With Shade", "Lamp With Shade"),
+    new_one("mailbox", "Mailbox", "Mailbox"),
+    new_one("monitor", "Monitor", "Monitor"),
+    new_one("painting", "Painting", "Painting"),
+    new_one("piggy_bank", "Piggy Bank", "Piggy Bank"),
+    new_one("potted_plant", "Potted Plant", "Potted Plant"),
+    new_one("present", "Present", "Present"),
+    new_one("printer", "Printer", "Printer"),
+    new_one("propane_tank", "Propane Tank", "Propane Tank"),
+    new_one("rubber_duck", "Rubber Duck", "Rubber Duck"),
+    new_one("table_large_circular", "Table Large Circular", "Table Large Circular"),
+    new_one("toilet", "Toilet", "Toilet"),
+    new_one("barbecue", "Barbecue", "Barbecue"),
+    new_one("bed", "Bed", "Bed"),
+    // Hung from a ceiling, as the chandelier is (Hajun, 2026-11-25:
+    // "chandelier should only be placeable on ceiling, and ceiling fan also
+    // only on ceiling").
+    new_ceiling("ceiling_fan", "Ceiling Fan", "Ceiling Fan"),
+    new_one("computer", "Computer", "Computer"),
+    new_one("couch", "Couch", "Couch"),
+    // The file keeps the download's spelling.
+    new_one("refrigerator", "Refrigirator", "Refrigerator"),
+    new_one("rocking_chair", "Rocking Chair", "Rocking Chair"),
+    new_one("stove", "Stove", "Stove"),
+    new_one("treadmill", "Treadmill", "Treadmill"),
+    new_one("grandfathers_clock", "Grandfathers Clock", "Grandfathers Clock"),
+    new_one("safe", "Safe", "Safe"),
+    new_one("telescope", "Telescope", "Telescope"),
+    // Hung from a ceiling, and lit at night (`lamps::BY_KIND`; Hajun:
+    // "chandelier should emit light").
+    new_ceiling("chandelier", "Chandelier", "Chandelier"),
 ];
 
 /// How far up its storey a window's hole starts, as a share of the storey's
@@ -185,14 +274,22 @@ pub(crate) struct PieceDef {
     /// Where its files are, under `assets/`: [`MADE`] by the script, or
     /// [`MINE`], modelled by hand.
     pub dir: &'static str,
-    /// Its files: `<dir>/<kind>.glb` and, for the shop, `<dir>/<kind>.png`.
+    /// What it goes by, over the wire and in a bag (`roundtown_net::bag`):
+    /// never changed once anyone owns one.
     pub kind: &'static str,
+    /// Its files: `<dir>/<file>.glb` and, for the shop, `<dir>/<file>.png`.
+    /// Its kind, but for the 56 downloaded on 2026-11-24, which keep the
+    /// names they came with ("Alarm Clock").
+    pub file: &'static str,
     /// What the shop calls it. Plain ASCII: the built-in font has no more.
     pub name: &'static str,
     pub tab: Tab,
     pub mount: Mount,
     /// A part of it that swings open by itself, if one does.
     pub swing: Option<Swing>,
+    /// Whether House Builder's shop sells it: the nineteen it always has,
+    /// and none of what came for the town's plots alone on 2026-11-25.
+    pub house_builder: bool,
 }
 
 /// A door's leaves that swing open by themselves as someone comes up to the
@@ -224,11 +321,11 @@ const TWO_LEAVES: Swing = Swing {
 
 impl PieceDef {
     pub(crate) fn picture(&self) -> String {
-        format!("{}/{}.png", self.dir, self.kind)
+        format!("{}/{}.png", self.dir, self.file)
     }
 
     fn model(&self) -> String {
-        format!("{}/{}.glb", self.dir, self.kind)
+        format!("{}/{}.glb", self.dir, self.file)
     }
 
     /// Whether it goes on a wall of the house, so that there has to be one.
@@ -241,9 +338,11 @@ impl PieceDef {
         self.mount.holed()
     }
 
-    /// Whether, once down, it is part of what is stood on and bumped into.
+    /// Whether, once down, it is part of what is stood on and bumped into:
+    /// not what is in a wall, nor what hangs from a ceiling, which is over
+    /// everyone's heads and which no other thing is to hang from.
     fn solid(&self) -> bool {
-        !self.on_wall()
+        !self.on_wall() && self.mount != Mount::Ceiling
     }
 }
 
@@ -251,15 +350,20 @@ impl PieceDef {
 const MADE: &str = "build";
 /// Modelled by hand, to the rules the script's pieces keep.
 const MINE: &str = "mybuilds";
+/// What came to stand on the town's plots on 2026-11-25: Hajun's cabinet,
+/// bathtub and end table, and the 56 things he downloaded.
+const NEW_ONES: &str = "mybuilds/newones";
 
 const fn house(kind: &'static str, name: &'static str) -> PieceDef {
     PieceDef {
         dir: MADE,
         kind,
+        file: kind,
         name,
         tab: Tab::Foundation,
         mount: Mount::House,
         swing: None,
+        house_builder: true,
     }
 }
 
@@ -268,6 +372,34 @@ const fn my_house(kind: &'static str, name: &'static str) -> PieceDef {
     PieceDef {
         dir: MINE,
         ..house(kind, name)
+    }
+}
+
+/// A house Hajun modelled for the town's plots alone (since 2026-11-25), in
+/// `assets/mybuilds/`: House Builder's shop does not sell it.
+const fn town_house(kind: &'static str, name: &'static str) -> PieceDef {
+    PieceDef {
+        house_builder: false,
+        ..my_house(kind, name)
+    }
+}
+
+/// Furniture or a decoration for the town's plots alone (since 2026-11-25),
+/// in `assets/mybuilds/newones/`, under the name its files have.
+const fn new_one(kind: &'static str, file: &'static str, name: &'static str) -> PieceDef {
+    PieceDef {
+        dir: NEW_ONES,
+        file,
+        house_builder: false,
+        ..floor(kind, name, Tab::Furniture)
+    }
+}
+
+/// The same, hung from a ceiling ([`Mount::Ceiling`]).
+const fn new_ceiling(kind: &'static str, file: &'static str, name: &'static str) -> PieceDef {
+    PieceDef {
+        mount: Mount::Ceiling,
+        ..new_one(kind, file, name)
     }
 }
 
@@ -300,10 +432,12 @@ const fn opening(kind: &'static str, name: &'static str, mount: Mount) -> PieceD
     PieceDef {
         dir: MADE,
         kind,
+        file: kind,
         name,
         tab: Tab::Openings,
         mount,
         swing: None,
+        house_builder: true,
     }
 }
 
@@ -316,10 +450,12 @@ const fn my_hanging(kind: &'static str, name: &'static str) -> PieceDef {
     PieceDef {
         dir: MINE,
         kind,
+        file: kind,
         name,
         tab: Tab::Decorations,
         mount: Mount::Hanging,
         swing: None,
+        house_builder: true,
     }
 }
 
@@ -327,10 +463,12 @@ const fn floor(kind: &'static str, name: &'static str, tab: Tab) -> PieceDef {
     PieceDef {
         dir: MADE,
         kind,
+        file: kind,
         name,
         tab,
         mount: Mount::Floor,
         swing: None,
+        house_builder: true,
     }
 }
 
@@ -361,10 +499,11 @@ impl Tab {
         }
     }
 
-    /// Whether the shop sells anything under it. One that sells nothing is
-    /// not shown, as Decorations is not while none of Hajun's pieces is one.
+    /// Whether House Builder's shop sells anything under it. One that sells
+    /// nothing is not shown, as Decorations is not while none of Hajun's
+    /// pieces is one.
     pub(crate) fn sold(self) -> bool {
-        PIECES.iter().any(|def| def.tab == self)
+        PIECES.iter().any(|def| def.tab == self && def.house_builder)
     }
 }
 
@@ -386,6 +525,14 @@ pub(crate) enum Mount {
     Hanging,
     /// Standing on whatever is under it.
     Floor,
+    /// Hung from the ceiling of a room of a house (since 2026-11-25; Hajun:
+    /// "chandelier should only be placeable on ceiling, and ceiling fan also
+    /// only on ceiling"): its top against the underside of what is over the
+    /// floor of the storey it is in, the floor upstairs or the roof, at least
+    /// [`HEADROOM`] over that floor; carried along under it wherever the
+    /// finger takes it, the whole of it on your plot, and put down only
+    /// under a ceiling ([`hangs`]). In the town alone.
+    Ceiling,
 }
 
 impl Mount {
@@ -984,21 +1131,32 @@ impl Yard {
     }
 }
 
-/// A piece asked to be put down, in the town, where it may not stand: not
-/// with the whole of it on your plot, or, `in_the_way`, in something else
-/// that stands there. It is a ghost still, with its menu open on it again
-/// (`stand` says why across the screen).
+/// A piece asked to be put down, in the town, where it may not stand, and
+/// why: not with the whole of it on your plot, in something else that
+/// stands there, or, hung from a ceiling, under none. It is a ghost still,
+/// with its menu open on it again (`stand` says why across the screen).
 #[derive(Message, Clone, Copy)]
 pub(crate) struct Misplaced {
-    pub in_the_way: bool,
+    pub why: Misfit,
 }
 
 /// Why a piece cannot be put down where it is on a plot of the town.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum Misfit {
+pub(crate) enum Misfit {
     OffTheLand,
     InTheWay,
+    /// Something hung from a ceiling, under no ceiling ([`hangs`]).
+    NoCeiling,
 }
+
+/// How far over the floor under it a ceiling has to be for something to
+/// hang from it, in metres: over a body's head (mine, 2026-11-25). What is
+/// lower is a table's underside or a sign's board, and nothing hangs from
+/// those.
+const HEADROOM: f32 = 2.0;
+/// How near the ceiling the top of what hangs from it is, in metres: it is
+/// against it.
+const AGAINST: f32 = 0.05;
 
 /// Whether a piece on the plot `yard` can be put down where it is, standing
 /// at `at` turned by `turn`: `None`, or why not. The whole of it on the
@@ -1018,15 +1176,62 @@ fn misfit(
     bounds: Bounds,
     stops: &[Stop],
 ) -> Option<Misfit> {
+    let in_furniture = || stops.iter().filter(|stop| stop.lines_up).any(|stop| overlapping(at, turn, bounds, stop));
     match mount {
         Mount::Door | Mount::Window | Mount::Hanging => None,
         _ if !yard.holds_piece(at, bounds, turn) => Some(Misfit::OffTheLand),
         Mount::House => house_fits_in(ground, Some(yard), bounds, turn, at.xz()).is_none().then_some(Misfit::InTheWay),
-        Mount::Floor => {
-            let in_furniture = || stops.iter().filter(|stop| stop.lines_up).any(|stop| overlapping(at, turn, bounds, stop));
-            (walled(island, at, bounds, turn) || in_furniture()).then_some(Misfit::InTheWay)
-        }
+        Mount::Floor => (walled(island, at, bounds, turn) || in_furniture()).then_some(Misfit::InTheWay),
+        Mount::Ceiling if !hangs(island, at, bounds, turn) => Some(Misfit::NoCeiling),
+        Mount::Ceiling => in_furniture().then_some(Misfit::InTheWay),
     }
+}
+
+/// The middle of a piece of `bounds`, turned by `turn` and standing at
+/// `at`, across the ground.
+fn middle_of(at: Vec3, bounds: Bounds, turn: Quat) -> Vec2 {
+    let middle = (bounds.low + bounds.high) * 0.5;
+    at.xz() + (turn * Vec3::new(middle.x, 0.0, middle.z)).xz()
+}
+
+/// Whether a piece of `bounds`, turned by `turn` with its origin at `at`,
+/// hangs from a ceiling there ([`Mount::Ceiling`]): over its middle, its top
+/// against an underside of something on `island` ([`AGAINST`]) that is at
+/// least [`HEADROOM`] over the floor under it; and none of it, round its
+/// edge and at its middle, in a wall or in anything else between its foot
+/// and a little under its top.
+fn hangs(island: &Island, at: Vec3, bounds: Bounds, turn: Quat) -> bool {
+    let (foot, top) = (at.y + bounds.low.y, at.y + bounds.high.y);
+    let middle = middle_of(at, bounds, turn);
+    let against = island.ceiling(middle, top - AGAINST).is_some_and(|ceiling| ceiling <= top + AGAINST);
+    let room = island.floor(middle, foot).is_some_and(|floor| top - floor >= HEADROOM);
+    against && room && caught_between(island, at, bounds, turn, foot + AGAINST, top - AGAINST).next().is_none()
+}
+
+/// Where the ceiling is that something hangs from over `spot`, in the house
+/// whose floors are `storeys`: the lowest underside on `island` over the
+/// floor there no higher than `reach`, and at least [`HEADROOM`] over it.
+/// None, over no floor of a house or under open sky: nothing hangs over the
+/// plot's own ground, nor from a roof terrace's open top.
+fn ceiling_over(island: &Island, storeys: &[Storey], spot: Vec2, reach: f32) -> Option<f32> {
+    let floor = storeys
+        .iter()
+        .filter(|storey| {
+            let at = storey.into.transform_point3(Vec3::new(spot.x, 0.0, spot.y));
+            at.x >= storey.low.x && at.x <= storey.high.x && at.z >= storey.low.z && at.z <= storey.high.z
+        })
+        .map(|storey| storey.top)
+        .filter(|&top| top <= reach)
+        .reduce(f32::max)?;
+    island.ceiling(spot, floor + HEADROOM)
+}
+
+/// Where a piece of `bounds`, turned by `turn`, hung over `spot` hangs: its
+/// top against the ceiling over its middle ([`ceiling_over`], over the floor
+/// no higher than `reach` there). None, with nothing over it there.
+fn hang_at(island: &Island, storeys: &[Storey], spot: Vec3, bounds: Bounds, turn: Quat, reach: f32) -> Option<Vec3> {
+    let ceiling = ceiling_over(island, storeys, middle_of(spot, bounds, turn), reach)?;
+    Some(spot.with_y(ceiling - bounds.high.y))
 }
 
 /// Whether a piece of `bounds`, turned by `turn` and standing at `at`, is in
@@ -1073,6 +1278,29 @@ struct Storey {
     low: Vec3,
     high: Vec3,
     top: f32,
+}
+
+/// Every house that is down or being put down, with its floors: where it
+/// stands, its floors, where it is and whether it is a ghost.
+type Houses<'w, 's> = Query<'w, 's, (&'static GlobalTransform, &'static Rooms, Option<&'static Venue>, Has<Ghost>)>;
+
+/// The floors of the houses down on `venue`, from where each stands in the
+/// world: for what comes up out of the bag before anything is moved
+/// ([`place_fresh`]).
+fn storeys_in(houses: &Houses, venue: Venue) -> Vec<Storey> {
+    houses
+        .iter()
+        .filter(|&(_, _, on, ghost)| !ghost && on == Some(&venue))
+        .flat_map(|(place, rooms, ..)| {
+            let (into, lift) = (place.affine().inverse(), place.translation().y);
+            rooms.0.iter().map(move |&(low, high)| Storey {
+                into,
+                low,
+                high,
+                top: lift + high.y,
+            })
+        })
+        .collect()
 }
 
 /// The floors of the houses down on `venue`.
@@ -1572,6 +1800,7 @@ fn place_fresh(
     homes: Query<&GlobalTransform>,
     walls: Query<(Entity, &Wall, &ChildOf)>,
     hung: Hung,
+    houses: Houses,
     site: Res<Site>,
     islands: Res<Islands>,
     mut commands: Commands,
@@ -1605,6 +1834,21 @@ fn place_fresh(
                         ahead_of(island, yard, me.translation, spot, *bounds, turn)
                     })
                 };
+                *transform = Transform::from_translation(at).with_rotation(turn);
+            }
+            // A step out in front of you, its front toward you, hung from
+            // the ceiling over the floor you stand on; with none there,
+            // where you stand, for its tick to be grey.
+            Mount::Ceiling => {
+                let turn = facing(-ahead);
+                let spot = me.translation + ahead * (PLAYER_RADIUS + IN_FRONT - bounds.low.z);
+                let spot = yard.map_or(spot, |yard| yard.pull_in(spot, *bounds, turn));
+                let storeys = storeys_in(&houses, venue);
+                let reach = me.translation.y + crate::LAND_STEP_UP;
+                let at = islands
+                    .get(venue)
+                    .and_then(|island| hang_at(island, &storeys, spot, *bounds, turn, reach))
+                    .unwrap_or(spot);
                 *transform = Transform::from_translation(at).with_rotation(turn);
             }
             Mount::Door | Mount::Window | Mount::Hanging => {
@@ -1736,6 +1980,12 @@ fn walled(island: &Island, at: Vec3, bounds: Bounds, turn: Quat) -> bool {
 /// at `at`, and at its middle, it would be in a wall or in anything else it
 /// could not be carried onto, as [`walled`] tests it, on the ground.
 fn caught(island: &Island, at: Vec3, bounds: Bounds, turn: Quat) -> impl Iterator<Item = Vec2> {
+    caught_between(island, at, bounds, turn, at.y + crate::LAND_STEP_UP, at.y + crate::PLAYER_HEIGHT)
+}
+
+/// The same, between the heights `bottom` and `top`: for what hangs from a
+/// ceiling, from its foot to just under the ceiling ([`hangs`]).
+fn caught_between(island: &Island, at: Vec3, bounds: Bounds, turn: Quat, bottom: f32, top: f32) -> impl Iterator<Item = Vec2> {
     let margin = Vec2::splat(TOUCH);
     let (low, high) = (bounds.low.xz() + margin, bounds.high.xz() - margin);
     let size = high - low;
@@ -1748,7 +1998,6 @@ fn caught(island: &Island, at: Vec3, bounds: Bounds, turn: Quat) -> impl Iterato
         let z = low.y + size.y * j as f32 / steps.y;
         [Vec2::new(low.x, z), Vec2::new(high.x, z)]
     });
-    let (bottom, top) = (at.y + crate::LAND_STEP_UP, at.y + crate::PLAYER_HEIGHT);
     across
         .chain(along)
         .chain(std::iter::once((low + high) * 0.5))
@@ -1865,10 +2114,14 @@ fn stops_on(
     carried: Entity,
 ) -> Vec<Stop> {
     let down = |on: Option<&Venue>, ghost: bool| !ghost && on == Some(&venue);
+    // What hangs from a ceiling goes against what else does; anything else,
+    // against what stands on a floor.
+    let hung = pieces.get(carried).is_ok_and(|(_, piece, ..)| piece.def.mount == Mount::Ceiling);
+    let like = if hung { Mount::Ceiling } else { Mount::Floor };
     let furniture = pieces
         .iter()
         .filter(|&(entity, piece, .., on, ghost)| {
-            entity != carried && piece.def.mount == Mount::Floor && down(on, ghost)
+            entity != carried && piece.def.mount == like && down(on, ghost)
         })
         .filter_map(|(_, _, place, _, bounds, ..)| {
             let bounds = bounds?;
@@ -2246,11 +2499,12 @@ fn edit_pieces(
                 // found before it is taken hold of to be moved.
                 let stops = pieces
                     .get(target)
-                    .is_ok_and(|(_, piece, ..)| piece.def.mount == Mount::Floor)
+                    .is_ok_and(|(_, piece, ..)| matches!(piece.def.mount, Mount::Floor | Mount::Ceiling))
                     .then(|| stops_on(&pieces, &walls, venue, target))
                     .unwrap_or_default();
                 // On your plot, the floors of the house there: what a thing
-                // dragged freely stands on.
+                // dragged freely stands on, and what hangs from a ceiling
+                // hangs over.
                 let storeys = yard.map(|_| storeys_on(&pieces, &rooms, venue)).unwrap_or_default();
                 let Ok((_, piece, mut transform, house, bounds, span, grip, ..)) =
                     pieces.get_mut(target)
@@ -2272,6 +2526,27 @@ fn edit_pieces(
                             }
                             None => drag_over_floor(island, yard, from, to.xz(), bounds, turn, &stops),
                         };
+                        if transform.translation != at {
+                            transform.translation = at;
+                        }
+                    }
+                    // Where the finger takes it, the whole of it on your
+                    // plot, its top against the ceiling there; with no
+                    // ceiling there, at the height it was, for its tick to
+                    // be grey (`mark_misfits`). Under the ceiling of the
+                    // storey it is in: the floor under its foot, or a step
+                    // up from it, as a house's lowest floor is from the
+                    // ground it came out over, and never over its own top,
+                    // which would be the floor over the ceiling it hangs
+                    // from.
+                    Mount::Ceiling => {
+                        let (Some(to), Some(island), Some(&bounds), Some(yard)) = (to, islands.get(venue), bounds, yard) else {
+                            continue;
+                        };
+                        let (from, turn) = (transform.translation, transform.rotation);
+                        let spot = yard.pull_in(Vec3::new(to.x, from.y, to.z), bounds, turn);
+                        let reach = (from.y + bounds.low.y + crate::LAND_STEP_UP).min(from.y + bounds.high.y);
+                        let at = hang_at(island, &storeys, spot, bounds, turn, reach).unwrap_or(spot);
                         if transform.translation != at {
                             transform.translation = at;
                         }
@@ -2402,7 +2677,7 @@ fn edit_pieces(
                 match (piece.def.mount, bounds, yard) {
                     // On your plot it turns where it is, the whole of it
                     // kept on the plot, into whatever stands there.
-                    (Mount::House | Mount::Floor, Some(&bounds), Some(yard)) => {
+                    (Mount::House | Mount::Floor | Mount::Ceiling, Some(&bounds), Some(yard)) => {
                         transform.rotation = turned;
                         transform.translation = yard.pull_in(at, bounds, turned);
                     }
@@ -2423,7 +2698,7 @@ fn edit_pieces(
                         }
                         transform.rotation = turned;
                     }
-                    (Mount::House | Mount::Floor, None, _) => transform.rotation = turned,
+                    (Mount::House | Mount::Floor | Mount::Ceiling, None, _) => transform.rotation = turned,
                     _ => {}
                 }
             }
@@ -2453,9 +2728,7 @@ fn edit_pieces(
                     // By its tick: it stays in your hand, and why is said.
                     Some(why) if !away => {
                         menu.open_on(target);
-                        misplaced.write(Misplaced {
-                            in_the_way: why == Misfit::InTheWay,
-                        });
+                        misplaced.write(Misplaced { why });
                         continue;
                     }
                     // Let go of where it cannot stand, or before its model
@@ -4321,14 +4594,17 @@ mod tests {
                 }
             }
         }
-        // Nor the car you drive.
-        for name in crate::drive::MODEL.split('/') {
-            if let Some(pattern) = patterns.iter().find(|pattern| matches(pattern, name)) {
-                panic!(
-                    "{} is the car you drive, but `{pattern}` in \
-                     mobile/android/app/assets-left-out.txt leaves it out of the APK",
-                    crate::drive::MODEL
-                );
+        // Nor any car you drive, nor its picture in the shop.
+        for car in crate::drive::CARS {
+            for path in [car.model, car.picture] {
+                for name in path.split('/') {
+                    if let Some(pattern) = patterns.iter().find(|pattern| matches(pattern, name)) {
+                        panic!(
+                            "{path} is a car you drive, but `{pattern}` in \
+                             mobile/android/app/assets-left-out.txt leaves it out of the APK"
+                        );
+                    }
+                }
             }
         }
         // Nor the model every body is drawn with.

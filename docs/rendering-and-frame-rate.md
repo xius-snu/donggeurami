@@ -7,6 +7,47 @@
 > "above" or "below", or names another section in quotes, that section may be
 > in another file here: the table in `CLAUDE.md` says which.
 
+## Furniture in the way stays as it is (2026-11-24)
+
+Hajun: "i dont think the furnitures need to be turned invisible, like
+couch, chair, bed, etc. they can remain solid even if it hides the player
+from view. change, but no need to rebuild apk or push".
+
+- **What**: standing in a house, a piece that stands on the floor
+  (`build::Mount::Floor`: the two beds, the cafe chair, the circle table,
+  the two cafe desks, the soft couch, the street lamp) is no longer looked
+  at for being between the camera and you (`see_through::furniture`, in
+  `find_what_hides_you`). It is drawn as it is and hides of you what it
+  hides. The house opens as it did: its walls in the way, with the doors,
+  windows and hangings in them, and its ceiling.
+- **Turned off, not taken out**: `see_through::FURNITURE`, false. On,
+  furniture fades whole to a quarter, as it did from 2026-10-09 until now.
+- **A tap** lands on furniture that is in the way, where it went through
+  it for as long as it was see-through (`InTheWay`): what is solid on the
+  screen is what a tap takes, and what the brush paints.
+- **My calls**: furniture is everything of the shop's that stands on the
+  floor, so the tables, the desks and the lamp with the couch, chair and
+  bed he named; it is so in House Builder's houses too, the code being
+  the one; a door or a window still goes with its wall.
+- **Checked**: unit tests, a new one among them that fails with the
+  check bypassed
+  (`furniture_in_the_way_stays_as_it_is_and_the_wall_behind_it_fades`),
+  and the desktop build, hidden and offline, by a throwaway driver taken out
+  again: in the furnished house of a made-up plot, behind its couch from
+  outside the far wall, and behind its table and chair, each with a
+  switch for the old way and without. The old way: the couch, the chair's
+  three parts and the table's two see-through, you seen through them.
+  Now: none of them, the couch hiding all of you but your head, and the
+  house's four parts see-through as before. **Not seen on a phone; no
+  APK built** (his word), nothing in `shared/` or `server/` touched.
+- **Seen by the way, and left as it is**: from inside a house on a plot,
+  the plot's own sign fades when it is between the camera and you (three
+  to five of its parts, from one camera angle of the eight tried at 18
+  m). Only in one of the map's own houses is the rest of the town left
+  alone (`in_town`); in a house that stands on a plot, whatever of the
+  town is in the way fades, as it does in House Builder. His to say
+  whether signs and the like should stay solid as furniture does.
+
 ## Forty-eight people in the town (2026-11-24)
 
 Someone walks every plot nobody real has (`docs/town.md`): 47 bodies of

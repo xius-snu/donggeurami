@@ -7,6 +7,181 @@
 > "above" or "below", or names another section in quotes, that section may be
 > in another file here: the table in `CLAUDE.md` says which.
 
+## Twenty-three cars to drive, each at its rarity's pace (2026-11-25)
+
+Hajun: "add all the new cars in assets/cars to the itemshop, and use the
+assets/cars/previews images as the item shop image - even for the red
+sports car (italia) thats already in the game change it to that preview
+image."; and "make rare cars be slow and slow accel, epic cars a bit
+faster, legendary a bit more faster, mythic more more faster, and yang
+even faster. the current car speed is like epic~legendary level i would
+say."; and "i updated the tiers of the cars on the itemrarities txt file
+if u didnt notice".
+
+- **Every car of the pack is one of the bag's** (`drive::CARS`, in the
+  order of `roundtown_net::bag::THINGS`): the red sports car,
+  `car1.glb`, and the other 22 as `assets/cars/<name>.glb`, made its
+  size the day before (the entry below). Each is sold in the shop
+  at its rarity (`docs/bag.md`, at the top) with the pack's own picture
+  of it, and **a tap on one you own gets you into that one**
+  (`CarPressed(Some(kind))`); C on desktop into the one you were last in,
+  or the first you own (`YourCar`). A car this app has no model of is
+  drawn as the red sports car (`car_def`).
+- **Into another car**, the car you were in goes and one of the other's
+  model is made where it stood (`spawn_your_car`), and its shape is read
+  off its model as before (`read_my_car`: its wheels, the length between
+  them, its box): the Yang is 6.76 m long on 3.96 m between its axles,
+  the Gen 6.12 on 3.60. The models of the cars you own are loaded as you
+  come to own them (`Garage`), so that the one tapped is there at once.
+- **The rarer, the faster** (`assets/ui.ron`, `car.speed` and
+  `car.pickup`, each rarity's share of the file's numbers; `Car::of`):
+  the top speeds (cruise, boost and reverse) by `speed`, Rare 0.7, Epic
+  0.9, Legendary 1.05, Mythic 1.15, Transcendent 1.3, and how quickly it
+  gets there (both accelerations) by `pickup`, 0.6, 0.85, 1.05, 1.2,
+  1.4; braking and steering as they were. Common and Uncommon, which no
+  car is, a little under Rare. **My numbers**, with the file's own as
+  they were, 1.0, between Epic and Legendary, as he put it. **So the red
+  sports car, Mythic on his list, goes 1.15 times as fast as it did**
+  (cruise 17.25 m/s, boost 34.5) and gets there 1.2 times as quickly; the
+  Yang boosts at 39 m/s, under the 40 a test holds the file to
+  (`DRIVEN_TOP_SPEED`, the server letting a body go 52). Measured on
+  the desktop from a standstill, W held a second: the Yang 15.1 m, the
+  Gen 7.5.
+- **Everyone else in your channel sees the car you are in**: getting in,
+  the device says which (`Ask::Car`, before `Ask::Drive`), and a device
+  that has said it knows the cars (`Ask::Cars`, as it comes online) is
+  told which car each driver is in (`Tell::Cars`, `players::Garaging`)
+  whenever that changes, and draws each in it (`TheirCars`,
+  `their_cars`, which makes a car again when its driver changes cars).
+  All three at the end of what is said: **protocol 25 still**. An app
+  before APK 55 says nothing of it and is seen in the red sports car, and
+  sees everyone in it. The server lets you drive only a car you own
+  (`Body::car`, the red sports car for an app that says none).
+- **Checked**: the unit tests (every car one of the bag's with a model
+  and a 256 square picture; every model four wheels, two ahead, its front
+  Blender's, 5 to 7.2 m long; the rarer the faster; the fastest under the
+  server's limit); in the desktop build, hidden: into the Yang and the Gen
+  from the bag, each drawn from overhead in its own model, out by the
+  door and back in by C; **two copies against a server on this PC**, one
+  buying a Gen from the server and driving it and then the red sports
+  car, the other drawing it in `cars/gen.glb` and then `car1.glb`. The
+  server deployed with it (16:43 UTC, 2026-11-24). **Not checked**: a
+  phone (APK 55 built, not installed); two real devices on the VM.
+- **The pack as downloaded and its previews stay out of git**
+  (`.gitignore`, mine): the repository is public, and the pack's licence
+  ("You may modify the assets and integrate them into larger works. You
+  may not redistribute, resell, or repackage the assets (or minor
+  modifications of them) as standalone content.") lets its cars be built
+  into the game, not handed on as they came. The game's 23 cars and
+  their pictures are committed, as `car1.glb` always was; the pack and
+  its previews are on this PC alone, and `blender/scale_pack_cars.py` and
+  `car_pictures.py` need them to run again.
+
+## Twenty-three cars the size of the game's (2026-11-24)
+
+Hajun: "go through each car in assets/cars/lowpoly_cars_premium and i need
+you to resize each car to the same size as the car i have ingame and
+export each as its own glb so that i can use it in game. the car i have is
+a repeat of the car 'italia' in the file probably. so scale each car by
+the same amount so that it is same size as how i scaled the italia car
+already".
+
+- **The game's car is the pack's `italia`, 1.25 times as big.**
+  `assets/car1.glb` has the pack's node and mesh names (`italia`,
+  `wheels.022`, `Cube.072`), its 2,258 triangles, its four materials and
+  its palette picture, and its box is the pack's `GLTF/italia.glb`'s times
+  1.25 on every axis about the middle of the world, to the fourth
+  decimal, with every part's place written into its points ("Apply All
+  Transforms": no node of `car1.glb` has a place of its own). The pack is
+  "Low Poly Cars" by Cosmo: 23 cars, each as `.fbx`, `.obj` and `.glb`,
+  and all of them in one `.blend`. Its licence lets them be changed and
+  used in a game, and not handed on as they are (`License.txt`).
+- **What there is now**: `assets/cars/<name>.glb`, 23 of them, 4 MB in
+  all: armor, chiron, cilo, coupe, fenyr, gen, ghini, imola, italia, jeep,
+  kamaro, lamb, mobil, police, poly, ponche, rally, sedan, sportrs, suv,
+  tronco, van, yang. Each is the pack's own `.glb` made 1.25 times as big
+  about the middle of the world with every part's place written in, as
+  `car1.glb` is; `cars/italia.glb` is `car1.glb` again (the same nodes,
+  materials and picture, its points within a millionth of a metre).
+  **Nothing loads them yet**: the game's one car is still `car1.glb`
+  (`drive::MODEL`).
+- **Made in the files themselves, not through Blender**
+  (`blender/scale_pack_cars.py`, kept, run from the repository's root;
+  needs numpy). Through Blender was tried first, as Hajun made `car1.glb`,
+  and for `italia` it gives `car1.glb` but for float rounding; but
+  Blender's importer makes two materials of one wherever only some of a
+  car's parts carry colours on their corners (`metallic` and
+  `metallic.001`, in seven of the cars) and gives a part that has no
+  material one called `DefaultMaterial` (in three). Paint goes by a material's name
+  (`docs/bag.md`). In the file, the materials, pictures, normals, UVs and
+  triangles are the pack's to the byte.
+- **Three things besides the size, each because the game needs it**
+  (mine):
+  - **Wheels by name.** A wheel is a part with "wheel" in its name
+    (`car::is_wheel`). The pack calls tronco's `Cube.001`... and yang's
+    `Cylinder.001`...: both have theirs as `wheels.001` to `.004`. Without
+    wheels a car has no axles to steer by.
+  - **No colours on the corners.** Ten of the cars carry `COLOR_0` (some
+    `_1`, `_2`) that no material of the pack's uses; the game multiplies
+    the first into the picture, and on yang it is black over part of the
+    body. Left out of all of them.
+  - **Tronco's tyres.** Their knobs are loose pieces of their own, sixteen
+    to a wheel, and the game takes a wheel's pieces in the order their
+    triangles come, each to the first lot whose middle it is near
+    (`car::split_wheels`, `gather`): with the knobs before the tyre it
+    counted 22 wheels, 4.29 m between the axles. Its wheels' triangles are
+    in another order, biggest piece first: four wheels, 3.77 m. The same
+    triangles. (`gather` taking the biggest first would mend it for any
+    model; not done, being the game's code and no build wanted.)
+- **Left as the pack has them**: five cars have one small part with no
+  material (cilo, mobil, ponche and yang a thin strip across the car a
+  metre up, 24 triangles; poly a part 2 m long over its back, 44), which
+  loads near black in the game;
+  tronco's wheels stand 7 cm lower than its origin, yang's 3 and sedan's
+  2, which the game stands a car by (`Shape::lowest`); the heavier ones
+  are tronco 5,084 triangles, yang 4,452, ponche 3,614 and cilo 3,542,
+  where the rest are 1,900 to 3,000.
+- **Checked**: each file against its source (its box 1.25 times the
+  source's on every axis, the same triangles, materials and picture, four
+  wheels, no place left on a node, every accessor and view read and in
+  its place); every one opened in Blender and all 23 rendered from above
+  beside `car1.glb`, all facing the one way, Blender's front; and **each
+  loaded by the game**, the desktop build already on disk run hidden with
+  the car put in `car1.glb`'s place in a scratch copy of `assets/`
+  (`BEVY_ASSET_ROOT`), for what `drive::read_my_car` logs: no error or
+  warning from any, four wheels each, and its length, width and axles as
+  the table has them (italia's line the same as `car1.glb`'s: 4 wheels,
+  3.83 m, 6.54 m, 3.13 m). **Not driven, and not seen drawn by the game**:
+  that takes the game loading them, which is to come. Not on a phone.
+
+  | car | long | wide | high | axles | | car | long | wide | high | axles |
+  |---|---|---|---|---|---|---|---|---|---|---|
+  | armor | 6.44 | 3.09 | 2.46 | 3.97 | | mobil | 6.68 | 2.71 | 1.88 | 4.03 |
+  | chiron | 6.14 | 2.94 | 1.65 | 3.68 | | police | 7.15 | 2.81 | 2.09 | 3.93 |
+  | cilo | 6.76 | 3.18 | 1.88 | 3.83 | | poly | 6.66 | 2.94 | 2.12 | 4.30 |
+  | coupe | 6.42 | 2.94 | 2.18 | 3.90 | | ponche | 6.89 | 2.91 | 1.97 | 4.04 |
+  | fenyr | 6.10 | 2.78 | 1.63 | 3.62 | | rally | 5.02 | 2.47 | 2.03 | 3.20 |
+  | gen | 6.12 | 2.68 | 1.82 | 3.60 | | sedan | 6.26 | 2.81 | 1.96 | 3.73 |
+  | ghini | 5.99 | 2.46 | 1.72 | 3.59 | | sportrs | 5.84 | 2.51 | 1.48 | 3.40 |
+  | imola | 6.43 | 2.79 | 1.60 | 3.84 | | suv | 6.10 | 2.88 | 2.35 | 3.64 |
+  | italia | 6.54 | 3.13 | 1.68 | 3.83 | | tronco | 6.24 | 2.83 | 2.67 | 3.77 |
+  | jeep | 5.57 | 2.85 | 2.54 | 3.35 | | van | 6.23 | 2.65 | 2.45 | 3.78 |
+  | kamaro | 6.09 | 2.51 | 1.70 | 3.63 | | yang | 6.76 | 3.03 | 1.83 | 3.96 |
+  | lamb | 5.77 | 2.58 | 1.66 | 3.03 | | | | | | |
+
+- **The pack itself stays out of the APK** (`<dir>lowpoly_cars_premium`
+  in `assets-left-out.txt`, mine: 15 MB the game reads nothing of); the
+  23 cars go in, 4 MB, used or not. Nothing is committed: the pack is
+  not to be handed on as it is, so whether its folder goes into the
+  repository is Hajun's to say.
+- **When they are put in the game**, what is there to mind: the car's
+  numbers in `ui.ron` (`car`: `end_radius`, `end_back`, the turning) were
+  set by italia, and a car's shape is read off its model as it spawns
+  (`Shape`), so a shorter or longer one drives by its own axles; the
+  server knows a car only as "driving" (`Ask::Drive`), so which car
+  someone drives would be something new to say; and each wants a picture
+  for the bag, which the pack's `previews/` have.
+
 ## The car is in your bag, and a door gets you out of it
 
 2026-11-22, with the bag (`docs/bag.md`). Hajun: "for the vehicle section

@@ -342,9 +342,78 @@ pub(crate) struct Car {
     pub bullet_every: f32,
     pub bullet_range: f32,
     pub bullet_radius: f32,
+    /// How fast a car of each rarity goes, and how quickly it gets there,
+    /// as so many times the speeds and the gains above (since 2026-11-25;
+    /// Hajun: "make rare cars be slow and slow accel, epic cars a bit
+    /// faster, legendary a bit more faster, mythic more more faster, and
+    /// yang even faster. the current car speed is like epic~legendary
+    /// level"): `cruise`, `boost` and `reverse` by `speed`, `accel` and
+    /// `boost_accel` by `pickup` ([`Car::of`]).
+    pub speed: ByRarity,
+    pub pickup: ByRarity,
+}
+
+/// A number for each rarity of thing (`roundtown_net::bag::Rarity`).
+#[derive(Deserialize, Clone, Copy, PartialEq, Debug)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ByRarity {
+    pub common: f32,
+    pub uncommon: f32,
+    pub rare: f32,
+    pub epic: f32,
+    pub legendary: f32,
+    pub mythic: f32,
+    pub transcendent: f32,
+}
+
+impl ByRarity {
+    pub(crate) fn of(&self, rarity: roundtown_net::bag::Rarity) -> f32 {
+        use roundtown_net::bag::Rarity;
+        match rarity {
+            Rarity::Common => self.common,
+            Rarity::Uncommon => self.uncommon,
+            Rarity::Rare => self.rare,
+            Rarity::Epic => self.epic,
+            Rarity::Legendary => self.legendary,
+            Rarity::Mythic => self.mythic,
+            Rarity::Transcendent => self.transcendent,
+        }
+    }
+
+    fn all(&self) -> [(&'static str, f32); 7] {
+        [
+            ("common", self.common),
+            ("uncommon", self.uncommon),
+            ("rare", self.rare),
+            ("epic", self.epic),
+            ("legendary", self.legendary),
+            ("mythic", self.mythic),
+            ("transcendent", self.transcendent),
+        ]
+    }
+
+    /// The most of them.
+    pub(crate) fn most(&self) -> f32 {
+        self.all().into_iter().map(|(_, value)| value).fold(0.0, f32::max)
+    }
 }
 
 impl Car {
+    /// These numbers for a car of `rarity`: its speeds by
+    /// [`Car::speed`], how fast it gains them by [`Car::pickup`], and the
+    /// rest as they are.
+    pub(crate) fn of(&self, rarity: roundtown_net::bag::Rarity) -> Car {
+        let (speed, pickup) = (self.speed.of(rarity), self.pickup.of(rarity));
+        Car {
+            cruise: self.cruise * speed,
+            boost: self.boost * speed,
+            reverse: self.reverse * speed,
+            accel: self.accel * pickup,
+            boost_accel: self.boost_accel * pickup,
+            ..*self
+        }
+    }
+
     /// What is wrong with these numbers, if anything: one that is not a
     /// number, or less than nothing (a rate under 0 would panic a clamp),
     /// one the car divides by at 0, or a range inside out.
@@ -389,6 +458,13 @@ impl Car {
         ] {
             if value <= 0.0 {
                 return Err(format!("car.{name} is {value}: it has to be more than 0"));
+            }
+        }
+        for (list, by) in [("speed", &self.speed), ("pickup", &self.pickup)] {
+            for (name, value) in by.all() {
+                if !value.is_finite() || value <= 0.0 {
+                    return Err(format!("car.{list}.{name} is {value}: it has to be a number more than 0"));
+                }
             }
         }
         if !(self.overhead_nearest <= self.overhead && self.overhead <= self.overhead_furthest) {
@@ -571,6 +647,9 @@ pub(crate) struct Colours {
 #[derive(Deserialize, Clone, Copy, PartialEq, Debug)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct BagColours {
+    /// Over Mythic (since 2026-11-25): the ten-floor houses and the Yang.
+    #[serde(deserialize_with = "colour")]
+    pub transcendent: Color,
     #[serde(deserialize_with = "colour")]
     pub mythic: Color,
     #[serde(deserialize_with = "colour")]
@@ -615,6 +694,7 @@ impl BagColours {
     pub(crate) fn rarity(&self, rarity: roundtown_net::bag::Rarity) -> Color {
         use roundtown_net::bag::Rarity;
         match rarity {
+            Rarity::Transcendent => self.transcendent,
             Rarity::Mythic => self.mythic,
             Rarity::Legendary => self.legendary,
             Rarity::Epic => self.epic,
@@ -1395,9 +1475,14 @@ pub(crate) struct BagWords {
     pub one_house: String,
     pub house_first: String,
     pub no_coins: String,
+    /// The same, for a thing sold for gems (since 2026-11-25).
+    pub no_gems: String,
     pub off_your_land: String,
     /// Across the screen, when a thing is put down in something else.
     pub in_the_way: String,
+    /// Across the screen, when a thing that hangs from a ceiling is put
+    /// down under none (since 2026-11-25).
+    pub no_ceiling: String,
     /// Across the screen, the first few times a thing of yours is tapped
     /// again and again with edit mode off (`stand::hint_at_edit_mode`):
     /// not said while `customize::HINTS` is off, as it is since 2026-11-23.

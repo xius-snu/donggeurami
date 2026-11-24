@@ -7,6 +7,128 @@
 > "above" or "below", or names another section in quotes, that section may be
 > in another file here: the table in `CLAUDE.md` says which.
 
+## The pieces grow by 76, which House Builder does not sell (2026-11-25)
+
+What Hajun asked for the town's plots that night (`docs/bag.md`, at the
+top) made `build::PIECES` 95 where it was 19: the houses of three to ten
+floors and the Wide Roof House in `assets/mybuilds/`, and the 59 things
+in `assets/mybuilds/newones/` (his downloads, `PieceDef::file` being the
+file's name where it is not the kind's). House Builder being stalled, its
+shop sells what it sold (`PieceDef::house_builder`, false for all 76;
+`shop::offered`, `Tab::sold`), and its made-up lots keep to its pieces.
+Two names changed in its shop with the bag's: the Two Floor House is
+"Square House 2F" and the Roof Terrace House "Roof Terrace 2F", a test
+holding a building's name in the bag to its piece's. What hangs from a
+ceiling (`Mount::Ceiling`) is in `docs/bag.md`. The roof terrace of two
+floors was exported again by Hajun on 2026-11-24 (22:14): 532 triangles,
+where `premade_check::TRIANGLES` had 508; its table has every piece's
+count now, and a house holds to four walls a storey but the roof
+terrace's two lowest (`the_pieces_are_drawn_with_as_many_triangles_as_counted`).
+
+## Fifty-six downloaded things, two and a half times as big (2026-11-24)
+
+Hajun: "in mybuilds folder, in resizeneeded folder. there are a bunch of
+cc0 assets i downloaded. they all need to be scaled 2.5x. make blender
+file for each one, name the both the blender and rename the glb files
+without the 'by CreativeTrio aodfoskof' in the same folder."
+
+- **What they were**: 56 `.glb` files in `assets/mybuilds/resizeneeded/`,
+  each `<name> by CreativeTrio - <id>.glb` as poly.pizza hands them out
+  (made by FBX2glTF): one mesh under an empty called `RootNode`, the mesh
+  a hundred times too small with a scale of 100 on its node, one material
+  called `Material` (metal 0.4, rough 0.27) coloured by one picture, the
+  same 128 square palette in all 56 (`House_Props_Diffuse.png`). Real
+  sizes: the chair 0.63 m high, the fridge 1.2.
+- **What there is now**, in the same folder: `<name>.blend` and
+  `<name>.glb` for each, 112 files, the name the download's up to " by
+  CreativeTrio" as it was, spaces, capitals and its own spelling
+  ("Refrigirator") with it. The downloads under their long names are
+  gone, as asked ("rename").
+- **In each Blender file**: the one object, out from under `RootNode`,
+  2.5 times as big about the middle of the world, **every transform
+  applied**: at the origin, unturned, scale 1, a metre a metre. Its
+  material and picture as they came, the picture packed into the file.
+  Nothing else in the scene. The `.glb` is exported from it with the
+  exporter as it comes. Made by `blender/scale_downloads.py`, kept, which
+  does a whole folder of such downloads at a scale given.
+- **Left as they came** (mine to say, his to change): each object's own
+  name, which is not always the file's (`Mouse` in "Computer Mouse",
+  `Potted_Plant.000`, `doll`); where each has its origin, which for many
+  is not its middle (the bed's is 0.7 m off the middle of its width, the
+  desk's and the dresser's near one end) and for the treadmill 11 cm under
+  it, where a piece of the shop's has its origin at the ground in its
+  middle; which way each faces; and the palette, which is the kind of
+  material the Soft Couch had until today (below): paint would tint these
+  and not colour them, and each is many colours on one material, so a
+  plain material apiece would be several.
+- **Checked**: each `.glb` against its download (its box 2.5 times the
+  download's on every axis, the same triangles, the material's numbers,
+  the picture byte for byte, one node with no transform); every `.blend`
+  opened again (one mesh object at rest, one material, the picture in
+  it); all 56 rendered on one sheet, each with its colours. **Nothing
+  loads them**: not in the shop, not seen in the game. They go into an
+  APK as they lie (2 MB of `.glb`; the `.blend` files never do).
+- **Sizes now**, some of them: the bed 3.7 by 4.9 m and 2.1 high, the
+  couch 4.2 by 3.1, the fridge 3.0 high, the grandfather's clock 3.4, the
+  coat rack 3.1, the chair 1.6, the armchair 1.8, the table 3.0 by 1.6
+  and 1.2 high, the round table 3.2 across, the toilet 1.4; the small
+  ones a mouse 20 cm long, a stapler 29, a wine glass 37 high. The hand
+  rake is 3.6 m long.
+
+## The Soft Couch's material is a plain one (2026-11-24)
+
+Hajun: "also the couch model. i think its not a normal material in the
+blend file. change it to a normal material with similar blueish color
+instead of using whatever its using and reexport that blend model".
+
+- **What it was**: the couch (`assets/mybuilds/softcouch.blend`, one mesh,
+  one material, `furniture_texture`) took its colour from a picture, the
+  asset pack's 1,024 square palette (`furniturebits_texture`, packed in
+  the file), each face a spot on a strip of blues from `#467bbc` at the
+  foot to `#7cc3e2` on the cushions' tops. The one piece of the shop's
+  with a texture. Paint multiplies a texture ("textured as it was, so
+  that a pattern is tinted", `build::paint`), so a couch painted any
+  colour came out that colour times these blues, never the colour chosen.
+- **What it is**: the same material, its picture taken out, its Base
+  Color one blue, `#68a7d4` (linear 0.1381, 0.3864, 0.655): the mean of
+  the blues over the faces that can be seen, by area, the undersides left
+  out. Roughness 0.5 and no metal, as before; the viewport's colour set to
+  it too. The picture is gone from the file. Saved with no `.blend1`.
+- **Exported** with the exporter as it comes
+  (`export_scene.gltf(export_format='GLB')`): the same node, mesh,
+  accessors and 636 triangles to the byte count (the file as it was,
+  exported the same way first, came out byte for byte the `.glb` the game
+  had), the material a `baseColorFactor` and no texture, image or
+  sampler; 23 KB where it was 39.
+- **The shop's picture** (`softcouch.png`) rendered again from the file's
+  own rig. The old one was rendered under the sky alone (found by trying:
+  the rig's sun is in `glTF_not_exported`, which is hidden from renders,
+  and with the file's lamp kept out too the old picture comes out pixel
+  for pixel); under that a couch of one colour is a flat shape with no
+  cushions to be seen, so this one has a little of the rig's sun, 1.2 of
+  its 3.5, for the render alone, not saved in the file. **Mine.**
+- **My calls**: one blue, where the old couch was a little lighter above
+  and darker below (it is lit by the game's own light now, as every other
+  piece is); **the material keeps its name**, `furniture_texture`, wrong
+  as it now is, because paint is kept by a part's name and a couch
+  already painted would lose its paint with another: a painted couch
+  now shows the colour that was chosen. Renaming it (`couch`) is one
+  word and that loss; his to say. The mesh keeps its UV map, unused.
+- **Checked**: the file opened again (a Principled BSDF and its output,
+  no image); the `.glb` read back; in the desktop build, hidden and
+  offline, by a throwaway driver taken out again: the 64 couches of the
+  made-up plots are drawn `#68a7d4`, no texture, opaque, where they were
+  white times the picture, and old and new side by side from three places
+  in a furnished house are within 9 of 255 in any channel wherever
+  measured (the arm, a cushion, the seat, the front, the back). The unit
+  tests as built before pass with the new file (the pieces' triangles are
+  counted from the files). **Not seen on a phone, no APK built**: APK 54
+  and older have the couch with its picture in them, and draw a painted
+  couch tinted as before.
+- Blender was open the while on another file of his
+  (`square_house_roofless.blend`); the couch's was not, checked before
+  each write.
+
 ## House Builder
 
 One of the two games, in `src/builder.rs` (the other, Bridge Wars, is in
@@ -293,7 +415,8 @@ it, or `Escape` shuts it.
   2026-10-04 a grey strip along the top's edge (`desktopedge`); and, since
   2026-10-13, their Soft Couch (`softcouch`, blue, 3.75 m; the name on the
   card mine), coloured by a palette texture embedded in its glb, the only
-  texture in the game; and since 2026-10-16 ("add streetlamp as one of the
+  texture in the game (a plain blue since 2026-11-24: the entry of that
+  day, at the top); and since 2026-10-16 ("add streetlamp as one of the
   furnitures"), their Street Lamp (`streetlamp`, the name on the card mine),
   the lamp the town's are, 7.4 m tall, lit at night as they are (`lamps`).
   Its `.blend` was a copy of the town's with everything but the lamp taken

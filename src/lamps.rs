@@ -42,6 +42,15 @@
 //! material is ([`glow`]), each material looked at once, and the light is
 //! this module's, recoloured there. [`ANCHOR_COLOR`] is what a pillar's
 //! light is until it has been painted, a frame or so.
+//!
+//! **The chandelier and the lamp with shade give off light too** (since
+//! 2026-11-25; Hajun: "chandelier should emit light btw, and so does lamp
+//! with shade"): each is one material on a picture of many colours, with
+//! no part of it a bulb to find, so each is lit by what it is
+//! ([`BY_KIND`]): a light inside the box its model fills, a third of the way
+//! up a chandelier and in a lamp's shade, from dusk to dawn as every lamp
+//! is, and among the [`MOST_LIT`] nearest the camera as every lamp is.
+//! Nothing of either glows.
 
 use bevy::gltf::GltfMaterialName;
 use bevy::light::cluster::ClusterConfig;
@@ -153,6 +162,36 @@ const SOURCES: [Source; 2] = [
     },
 ];
 
+/// What gives off light by what it is rather than by a part of it
+/// ([`BY_KIND`]): a piece of the shop's, by its kind; how much light, in
+/// lumens, how far it reaches, in metres, and where in the box its model
+/// fills the light is: in its middle across, and this share of the way up.
+pub(crate) struct Lit {
+    pub kind: &'static str,
+    lumens: f32,
+    range: f32,
+    up: f32,
+}
+
+/// The chandelier, hung from a ceiling, lights the room under it, a fifth
+/// of a street lamp's light and reaching 15 m, about a room and a half
+/// across; the lamp with shade a corner of one, from its shade. My numbers
+/// (2026-11-25).
+pub(crate) const BY_KIND: [Lit; 2] = [
+    Lit {
+        kind: "chandelier",
+        lumens: 1_000_000.0,
+        range: 15.0,
+        up: 0.35,
+    },
+    Lit {
+        kind: "lamp_with_shade",
+        lumens: 250_000.0,
+        range: 8.0,
+        up: 0.75,
+    },
+];
+
 /// A lamp's light, and how much of it there is when it is on, in lumens.
 #[derive(Component)]
 struct Lamp {
@@ -171,15 +210,53 @@ pub(crate) fn plugin(app: &mut App) {
 }
 
 /// Finds every bulb in a model once it has spawned, and gives each lamp its
-/// light, out until the lamps come on.
+/// light, out until the lamps come on; and gives a piece that gives off
+/// light by what it is ([`BY_KIND`]) its own.
+#[allow(clippy::too_many_arguments)]
 fn find_bulbs(
     ready: On<WorldInstanceReady>,
     children: Query<&Children>,
     parts: Query<(&Mesh3d, &GltfMaterialName)>,
+    pieces: Query<&crate::build::Piece>,
     placement: TransformHelper,
     meshes: Res<Assets<Mesh>>,
     mut commands: Commands,
 ) {
+    if let Ok(piece) = pieces.get(ready.entity)
+        && let Some(lit) = BY_KIND.iter().find(|lit| lit.kind == piece.def.kind)
+        && let Ok(root) = placement.compute_global_transform(ready.entity)
+    {
+        // The box its model fills, in its own space.
+        let into = root.affine().inverse();
+        let mut corners = Vec::new();
+        for part in children.iter_descendants(ready.entity) {
+            let Ok((mesh, _)) = parts.get(part) else {
+                continue;
+            };
+            let (Some(mesh), Ok(place)) = (meshes.get(&mesh.0), placement.compute_global_transform(part)) else {
+                continue;
+            };
+            if let Some(VertexAttributeValues::Float32x3(points)) = mesh.attribute(Mesh::ATTRIBUTE_POSITION) {
+                let own = into * place.affine();
+                corners.extend(points.iter().map(|&point| own.transform_point3(Vec3::from(point))));
+            }
+        }
+        if let Some(at) = light_in(&corners, lit.up) {
+            commands.spawn((
+                ChildOf(ready.entity),
+                Lamp { lumens: lit.lumens },
+                PointLight {
+                    color: LAMP_COLOR,
+                    intensity: 0.0,
+                    range: lit.range,
+                    shadow_maps_enabled: false,
+                    ..default()
+                },
+                Transform::from_translation(at),
+                Visibility::Hidden,
+            ));
+        }
+    }
     for part in children.iter_descendants(ready.entity) {
         let Ok((mesh, material)) = parts.get(part) else {
             continue;
@@ -223,6 +300,17 @@ fn find_bulbs(
             ));
         }
     }
+}
+
+/// Where the light of something lit by what it is goes, among the corners
+/// of its model, `corners`: in the middle of the box round them across, and
+/// `up` of the way up it. None, for a model with nothing in it.
+fn light_in(corners: &[Vec3], up: f32) -> Option<Vec3> {
+    let (low, high) = corners
+        .iter()
+        .fold(None, |sum: Option<(Vec3, Vec3)>, &corner| Some(sum.map_or((corner, corner), |(low, high)| (low.min(corner), high.max(corner)))))?;
+    let middle = (low + high) * 0.5;
+    Some(Vec3::new(middle.x, low.y + (high.y - low.y) * up, middle.z))
 }
 
 /// Where each lamp's light goes, among the corners of its bulbs, `bulbs`:
@@ -379,6 +467,20 @@ mod tests {
         // The first lamp lit brings Bevy's own back, the frame it is lit.
         assert!(matches!(cells(1, &ClusterConfig::Single), Some(ClusterConfig::FixedZ { .. })));
         assert!(cells(MOST_LIT, &many).is_none());
+    }
+
+    #[test]
+    fn the_chandelier_and_the_lamp_with_shade_are_lit_inside_their_boxes() {
+        // Both are pieces there are, each lit a share of the way up the box
+        // its model fills, in its middle across.
+        for lit in BY_KIND {
+            assert!(crate::build::PIECES.iter().any(|def| def.kind == lit.kind), "{}", lit.kind);
+            assert!((0.0..=1.0).contains(&lit.up) && lit.lumens < LAMP_LUMENS && lit.range < LAMP_RANGE, "{}", lit.kind);
+        }
+        let corners = [Vec3::new(-1.0, 0.0, -0.5), Vec3::new(1.0, 2.0, 0.5), Vec3::new(0.0, 1.0, 0.0)];
+        assert_eq!(light_in(&corners, 0.35), Some(Vec3::new(0.0, 0.7, 0.0)));
+        assert_eq!(light_in(&corners, 0.75), Some(Vec3::new(0.0, 1.5, 0.0)));
+        assert_eq!(light_in(&[], 0.5), None);
     }
 
     #[test]

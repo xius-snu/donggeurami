@@ -589,9 +589,12 @@ fn hear(
             | Ask::Drive(_)
             // What is asked of a bag (`bag`).
             | Ask::Bag(_)
-            // Who rests on what, in the town (`players`).
+            // Who rests on what, and which car each driver is in, in the
+            // town (`players`).
             | Ask::Resting
-            | Ask::Rest(_) => {}
+            | Ask::Rest(_)
+            | Ask::Cars
+            | Ask::Car(_) => {}
         }
     }
 }

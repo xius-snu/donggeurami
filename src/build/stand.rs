@@ -68,7 +68,7 @@ use roundtown_net::{Ask, At};
 
 use super::paint::Colours;
 use super::{
-    BuildSystems, Ghost, Misplaced, Mount, OnWall, PIECES, Piece, PieceDef, Reshape, Rooms, Solid, Stock, Wall, Yard,
+    BuildSystems, Ghost, Misfit, Misplaced, Mount, OnWall, PIECES, Piece, PieceDef, Reshape, Rooms, Solid, Stock, Wall, Yard,
     bring_out, piece_ready, unghost, wall_index, walls_of,
 };
 use crate::Player;
@@ -133,7 +133,7 @@ impl Home {
         }
         match def.mount {
             Mount::House if self.house.is_some() => Err(Why::OneHouse),
-            Mount::Door | Mount::Window | Mount::Hanging if self.house != Some(true) => Err(Why::HouseFirst),
+            Mount::Door | Mount::Window | Mount::Hanging | Mount::Ceiling if self.house != Some(true) => Err(Why::HouseFirst),
             _ => Ok(()),
         }
     }
@@ -983,7 +983,11 @@ fn say_misplaced(mut misplaced: MessageReader<Misplaced>, said: Query<Entity, Wi
         commands.entity(line).despawn();
     }
     let ui = ui();
-    let words = if why.in_the_way { &ui.words.bag.in_the_way } else { &ui.words.bag.off_your_land };
+    let words = match why.why {
+        Misfit::InTheWay => &ui.words.bag.in_the_way,
+        Misfit::OffTheLand => &ui.words.bag.off_your_land,
+        Misfit::NoCeiling => &ui.words.bag.no_ceiling,
+    };
     hud::announce(&mut commands, None, words, hud::CAPTION, SAID_SECS).insert(Said);
 }
 

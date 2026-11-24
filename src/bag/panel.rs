@@ -23,7 +23,14 @@
 //! stand on your plot. A tap on a building, standing on your own plot,
 //! shuts the window and brings the building up in front of you to be put
 //! down (`build::stand`); anywhere else, the window says why not along its
-//! top. A tap on your car shuts the window and puts you in it (`drive`).
+//! top. A tap on one of your cars shuts the window and puts you in that one
+//! (`drive`).
+//!
+//! **A thing sold for gems** (since 2026-11-25: the houses of five, seven
+//! and nine floors, as Hajun's list has them) has the gem where another
+//! has the coin, under its name and on its two buttons, and is red, and
+//! its Buy greyed, without the gems for it ("Not enough gems."). Every
+//! car's picture is the pack's own of it (`drive::CARS`).
 //!
 //! **The shop** shows everything there is, or what of it you own, and
 //! under each thing's name the coin and what it costs, white with the
@@ -64,10 +71,11 @@ use bevy::prelude::*;
 use bevy::ui_widgets::ScrollArea;
 
 use super::{Bag, Deal, Group, THINGS, Thing};
+use roundtown_net::bag::Money;
 use crate::build::stand::{Home, Stand, Why};
 use crate::build::{PIECES, Stock};
 use crate::builder::{self, DIALOG_LAYER, Fill};
-use crate::drive::{CarPressed, Driving};
+use crate::drive::{CARS, CarPressed, Driving, car_def};
 use crate::flick::{self, Coasting, Throw, Track, Way};
 use crate::hud::{self, BagButton, DialogUp, TakesPress};
 use crate::island::Venue;
@@ -75,10 +83,6 @@ use crate::lobby::Balance;
 use crate::ui::{BagColours, UiChanged, fill, ui};
 use crate::window;
 use crate::{CloseUp, Player};
-
-/// The picture of the car on its card, beside its model: rendered as the
-/// buildings' are (`blender/render_thing.py`).
-pub(crate) const CAR_PICTURE: &str = "car1.png";
 
 /// The window: how wide and how tall it is, and how much of the screen's
 /// width it takes at the most, in parts of a hundred, on a screen as broad
@@ -316,13 +320,13 @@ enum List {
 }
 
 /// The pictures on the window's two tabs, drawn once (`hud::cube`,
-/// `hud::cart`); and the car's, read as the app opens and kept, as every
-/// building's is (`build::Stock`), so that its card is never up empty.
+/// `hud::cart`); and every car's, read as the app opens and kept, as every
+/// building's is (`build::Stock`), so that a card is never up empty.
 #[derive(Resource)]
 struct Icons {
     cube: Handle<Image>,
     cart: Handle<Image>,
-    car: Handle<Image>,
+    cars: Vec<(&'static str, Handle<Image>)>,
 }
 
 /// The root of the window, over the whole screen.
@@ -361,7 +365,7 @@ fn draw_icons(mut images: ResMut<Assets<Image>>, assets: Res<AssetServer>, mut c
     commands.insert_resource(Icons {
         cube: images.add(hud::cube()),
         cart: images.add(hud::cart()),
-        car: assets.load(CAR_PICTURE),
+        cars: CARS.iter().map(|car| (car.kind, assets.load(car.picture))).collect(),
     });
 }
 
@@ -582,7 +586,7 @@ fn act(
                 match thing.group {
                     Group::Vehicles => {
                         shut(&mut panel, &mut up);
-                        cars.write(CarPressed);
+                        cars.write(CarPressed(Some(thing.kind)));
                         break;
                     }
                     Group::Buildings => {
@@ -608,8 +612,13 @@ fn act(
                 if bag.waits() {
                     continue;
                 }
-                if balance.0 < thing.price {
-                    notice.0 = Some((ui().words.bag.no_coins.clone(), 0.0));
+                if !affords(thing, balance.0, bag.has.gems) {
+                    let ui = ui();
+                    let words = match thing.money {
+                        Money::Coins => &ui.words.bag.no_coins,
+                        Money::Gems => &ui.words.bag.no_gems,
+                    };
+                    notice.0 = Some((words.clone(), 0.0));
                     continue;
                 }
                 deals.write(Deal::Buy(thing.kind));
@@ -659,6 +668,7 @@ fn redraw(
         panel: &panel,
         bag: &bag,
         balance: balance.0,
+        gems: bag.has.gems,
         scrolled: &scrolled,
         assets: &assets,
         stock: &stock,
@@ -672,6 +682,7 @@ struct View<'a> {
     panel: &'a Panel,
     bag: &'a Bag,
     balance: u32,
+    gems: u32,
     scrolled: &'a Scrolled,
     assets: &'a AssetServer,
     stock: &'a Stock,
@@ -679,12 +690,23 @@ struct View<'a> {
 }
 
 /// The picture of `thing` on its card: a building's is its piece's, the
-/// one House Builder's shop shows; the car's its own.
+/// one House Builder's shop shows; a car's its own (`drive::CARS`).
 fn picture_of(view: &View, thing: &Thing) -> Handle<Image> {
     match PIECES.iter().find(|def| def.kind == thing.kind) {
         Some(def) => view.stock.picture(def),
-        None => view.icons.car.clone(),
+        None => {
+            let kind = car_def(thing.kind).kind;
+            view.icons.cars.iter().find(|(car, _)| *car == kind).map(|(_, picture)| picture.clone()).unwrap_or_default()
+        }
     }
+}
+
+/// The picture of what `thing` is paid for with: the coin, or the gem.
+fn money_icon(view: &View, thing: &Thing) -> Handle<Image> {
+    view.assets.load(match thing.money {
+        Money::Coins => hud::COIN_ICON,
+        Money::Gems => hud::GEM_ICON,
+    })
 }
 
 /// The window as things stand: its root, over the whole screen, which a
@@ -960,7 +982,8 @@ fn cards(commands: &mut Commands, body: Entity, view: &View) {
             let count = fill_count(free);
             commands.spawn((ChildOf(name), window::words(count, NAME_TEXT, ui.colours.bag.count)));
         }
-        // In the shop, under its name: the coin, and what it costs.
+        // In the shop, under its name: the coin, or the gem, and what it
+        // costs.
         if shop {
             commands.spawn((
                 ChildOf(cell),
@@ -975,7 +998,7 @@ fn cards(commands: &mut Commands, body: Entity, view: &View) {
                 Pickable::IGNORE,
                 children![
                     (
-                        ImageNode::new(view.assets.load(hud::COIN_ICON)),
+                        ImageNode::new(money_icon(view, thing)),
                         Node {
                             width: Val::VMin(PRICE_COIN),
                             height: Val::VMin(PRICE_COIN),
@@ -986,28 +1009,39 @@ fn cards(commands: &mut Commands, body: Entity, view: &View) {
                         },
                         Pickable::IGNORE,
                     ),
-                    window::words(hud::money(thing.price), PRICE_TEXT, price_ink(&ui.colours.bag, thing.price, view.balance)),
+                    window::words(hud::money(thing.price), PRICE_TEXT, price_ink(&ui.colours.bag, affords(thing, view.balance, view.gems))),
                 ],
             ));
         }
     }
 }
 
+/// Whether you have what `thing` costs: its coins, of `balance`; or for one
+/// sold for gems, its gems, of `gems`.
+fn affords(thing: &Thing, balance: u32, gems: u32) -> bool {
+    match thing.money {
+        Money::Coins => balance >= thing.price,
+        Money::Gems => gems >= thing.price,
+    }
+}
+
 /// The colour a thing's price is written in under its name in the shop:
-/// white with the coins for it now, `balance` of them, and red without
-/// (Hajun, 2026-11-22: "the coin price number text is white right now, but
-/// it should be red if u cant afford it rn, and white if u can afford it").
-/// By your coins alone: a thing's price is not red while a purchase is on
-/// its way, as its Buy is greyed ([`can_deal`]).
-fn price_ink(colours: &BagColours, price: u32, balance: u32) -> Color {
-    if balance >= price { colours.price } else { colours.price_cannot_afford }
+/// white with the coins for it now, or the gems for one sold for gems
+/// ([`affords`]), and red without (Hajun, 2026-11-22: "the coin price
+/// number text is white right now, but it should be red if u cant afford
+/// it rn, and white if u can afford it"). By what you have alone: a
+/// thing's price is not red while a purchase is on its way, as its Buy is
+/// greyed ([`can_deal`]).
+fn price_ink(colours: &BagColours, affordable: bool) -> Color {
+    if affordable { colours.price } else { colours.price_cannot_afford }
 }
 
 /// Which of the two buttons on a thing in the shop can be pressed, Buy and
-/// Sell: Buy with the coins for it, Sell with one of it in your bag, `free`
-/// of them, and neither while a purchase or a sale is on its way.
-fn can_deal(thing: &Thing, free: u16, balance: u32, waits: bool) -> (bool, bool) {
-    (!waits && balance >= thing.price, !waits && free > 0)
+/// Sell: Buy with what it costs in hand ([`affords`], `balance` coins and
+/// `gems`), Sell with one of it in your bag, `free` of them, and neither
+/// while a purchase or a sale is on its way.
+fn can_deal(thing: &Thing, free: u16, (balance, gems): (u32, u32), waits: bool) -> (bool, bool) {
+    (!waits && affords(thing, balance, gems), !waits && free > 0)
 }
 
 /// How many of a thing are in the bag, as the file's words have it: "x1".
@@ -1023,7 +1057,8 @@ fn fill_count(count: u16) -> String {
 fn deal_buttons(commands: &mut Commands, card: Entity, view: &View, thing: &'static Thing, free: u16) {
     let ui = ui();
     let colours = ui.colours.bag;
-    let (buys, sells) = can_deal(thing, free, view.balance, view.bag.waits());
+    let (buys, sells) = can_deal(thing, free, (view.balance, view.gems), view.bag.waits());
+    let money = money_icon(view, thing);
     let greyed = (
         Fill {
             idle: colours.deal_off,
@@ -1060,13 +1095,13 @@ fn deal_buttons(commands: &mut Commands, card: Entity, view: &View, thing: &'sta
         ))
         .id();
     let look = if buys { (buy, colours.on_deal) } else { greyed };
-    deal_button(commands, over, view, Tap::Buy(thing.kind), look, &ui.words.bag.buy, thing.price);
+    deal_button(commands, over, Tap::Buy(thing.kind), look, &ui.words.bag.buy, (money.clone(), thing.price));
     let look = if sells { (sell, colours.on_deal) } else { greyed };
-    deal_button(commands, over, view, Tap::Sell(thing.kind), look, &ui.words.bag.sell, thing.resale());
+    deal_button(commands, over, Tap::Sell(thing.kind), look, &ui.words.bag.sell, (money, thing.resale()));
 }
 
-/// One of the two: its word, the coin, and how many coins.
-fn deal_button(commands: &mut Commands, over: Entity, view: &View, tap: Tap, (fill, ink): (Fill, Color), word: &str, coins: u32) {
+/// One of the two: its word, the coin or the gem, and how many.
+fn deal_button(commands: &mut Commands, over: Entity, tap: Tap, (fill, ink): (Fill, Color), word: &str, (icon, coins): (Handle<Image>, u32)) {
     commands.spawn((
         ChildOf(over),
         tap,
@@ -1089,7 +1124,7 @@ fn deal_button(commands: &mut Commands, over: Entity, view: &View, tap: Tap, (fi
             builder::label(word.to_string(), DEAL_TEXT, ink),
             (
                 // Dimmed with the words on a button that cannot be pressed.
-                ImageNode::new(view.assets.load(hud::COIN_ICON)).with_color(Color::WHITE.with_alpha(ink.alpha())),
+                ImageNode::new(icon).with_color(Color::WHITE.with_alpha(ink.alpha())),
                 Node {
                     width: Val::VMin(DEAL_COIN),
                     height: Val::VMin(DEAL_COIN),
@@ -1187,7 +1222,7 @@ mod tests {
         let room = WIDTH - (window::PAD + SORTS_WIDE + BETWEEN + 2.0 * window::TAB_WIDTH + TAB_GAP + NOTICE_GAP) - (CROSS_IN + window::CLOSE * 0.5 + NOTICE_GAP);
         let ui = ui();
         let words = &ui.words.bag;
-        for line in [&words.on_your_land, &words.one_house, &words.house_first, &words.no_coins] {
+        for line in [&words.on_your_land, &words.one_house, &words.house_first, &words.no_coins, &words.no_gems] {
             let wide = line.chars().count() as f32 * NOTICE_TEXT * 0.5;
             assert!(wide <= room, "{line:?} is about {wide} wide, and there is room for {room}");
         }
@@ -1270,9 +1305,11 @@ mod tests {
         assert_eq!(kinds(shown(Tab::Inventory, Sort::Of(Group::Buildings), &bag)), [(LAMP, 1)]);
         assert_eq!(kinds(shown(Tab::Inventory, Sort::Of(Group::Vehicles), &bag)), [(CAR, 1)]);
         assert!(shown(Tab::Inventory, Sort::Of(Group::Cosmetics), &bag).is_empty());
-        // The shop: everything there is, twenty things, and what is owned.
+        // The shop: everything there is, 118 things since 2026-11-25, and
+        // what is owned.
         assert_eq!(shown(Tab::Shop, Sort::All, &bag).len(), THINGS.len());
-        assert_eq!(shown(Tab::Shop, Sort::Of(Group::Buildings), &bag).len(), 19);
+        assert_eq!(shown(Tab::Shop, Sort::Of(Group::Buildings), &bag).len(), 95);
+        assert_eq!(shown(Tab::Shop, Sort::Of(Group::Vehicles), &bag).len(), 23);
         assert_eq!(kinds(shown(Tab::Shop, Sort::Owned, &bag)), [(LAMP, 1), (CAR, 1)]);
         assert!(shown(Tab::Shop, Sort::Of(Group::Utilities), &bag).is_empty());
         // The lamp stood on the plot is out of the bag: gone from the
@@ -1294,15 +1331,20 @@ mod tests {
         let bed = roundtown_net::bag::thing("singlebed").unwrap();
         // (Buy, Sell). A lamp in the bag and no coins: it can be sold and
         // not bought.
-        assert_eq!(can_deal(lamp, 1, 0, false), (false, true));
+        assert_eq!(can_deal(lamp, 1, (0, 10), false), (false, true));
         // No bed, and the coins for one to the coin: bought, and not sold
         // (Hajun: "the sell button should just be greyed out if there isnt
         // any").
-        assert_eq!(can_deal(bed, 0, bed.price, false), (true, false));
-        assert_eq!(can_deal(bed, 0, bed.price - 1, false), (false, false));
-        assert_eq!(can_deal(bed, 2, 10_000, false), (true, true));
+        assert_eq!(can_deal(bed, 0, (bed.price, 0), false), (true, false));
+        assert_eq!(can_deal(bed, 0, (bed.price - 1, 10_000), false), (false, false));
+        assert_eq!(can_deal(bed, 2, (10_000, 0), false), (true, true));
         // Neither while the server has a purchase or a sale to answer.
-        assert_eq!(can_deal(bed, 2, 10_000, true), (false, false));
+        assert_eq!(can_deal(bed, 2, (10_000, 0), true), (false, false));
+        // A house sold for gems, 50 of them: by the gems, whatever the coins.
+        let house = roundtown_net::bag::thing("square_house_five_floor").unwrap();
+        assert_eq!(house.price, 50);
+        assert_eq!(can_deal(house, 0, (1_000_000, 10), false), (false, false));
+        assert_eq!(can_deal(house, 1, (0, 50), false), (true, true));
         // The buttons are a little see-through, for the thing's picture
         // behind them to show ("slightly transparent too like my design
         // image"), and the one that cannot be pressed is another colour
@@ -1322,17 +1364,23 @@ mod tests {
         assert_ne!(colours.price, colours.price_cannot_afford);
         let bed = roundtown_net::bag::thing("singlebed").unwrap();
         // To the coin.
-        assert_eq!(price_ink(&colours, bed.price, bed.price), colours.price);
-        assert_eq!(price_ink(&colours, bed.price, bed.price - 1), colours.price_cannot_afford);
-        assert_eq!(price_ink(&colours, bed.price, 0), colours.price_cannot_afford);
-        assert_eq!(price_ink(&colours, bed.price, 1_000_000), colours.price);
+        let ink = |thing: &Thing, coins: u32, gems: u32| price_ink(&colours, affords(thing, coins, gems));
+        assert_eq!(ink(bed, bed.price, 0), colours.price);
+        assert_eq!(ink(bed, bed.price - 1, 10_000), colours.price_cannot_afford);
+        assert_eq!(ink(bed, 0, 0), colours.price_cannot_afford);
+        assert_eq!(ink(bed, 1_000_000, 0), colours.price);
+        // A house sold for gems: to the gem.
+        let house = roundtown_net::bag::thing("square_house_nine_floor").unwrap();
+        assert_eq!((house.price, ink(house, 0, 750), ink(house, 1_000_000, 749)), (750, colours.price, colours.price_cannot_afford));
         // Of everything there is: red wherever Buy would be greyed for want
-        // of the coins, and nowhere else, whether or not you have one.
+        // of what it costs, and nowhere else, whether or not you have one.
         for thing in THINGS {
-            for balance in [0, thing.price - 1, thing.price, thing.price + 1] {
-                for free in [0, 2] {
-                    let (buys, _) = can_deal(thing, free, balance, false);
-                    assert_eq!(price_ink(&colours, thing.price, balance) == colours.price, buys, "{} with {balance}", thing.kind);
+            for have in [0, thing.price - 1, thing.price, thing.price + 1] {
+                for (coins, gems) in [(have, 10), (1_000_000, have), (have, have)] {
+                    for free in [0, 2] {
+                        let (buys, _) = can_deal(thing, free, (coins, gems), false);
+                        assert_eq!(ink(thing, coins, gems) == colours.price, buys, "{} with {coins} coins and {gems} gems", thing.kind);
+                    }
                 }
             }
         }
@@ -1347,7 +1395,7 @@ mod tests {
             assert_ne!(name, thing.kind, "{} has no name in ui.ron", thing.kind);
             let picture = match PIECES.iter().find(|def| def.kind == thing.kind) {
                 Some(def) => def.picture(),
-                None => CAR_PICTURE.to_string(),
+                None => car_def(thing.kind).picture.to_string(),
             };
             assert!(root.join(&picture).is_file(), "{}: no picture, {picture}", thing.kind);
         }
@@ -1363,6 +1411,7 @@ mod tests {
         };
         let colours = crate::ui::Ui::built_in().colours.bag;
         let given = [
+            (Rarity::Transcendent, "9E0915"),
             (Rarity::Mythic, "FF4500"),
             (Rarity::Legendary, "FFA500"),
             (Rarity::Epic, "800080"),
@@ -1377,6 +1426,45 @@ mod tests {
     }
 
     #[test]
+    fn every_line_of_hajun_s_list_of_rarities_is_a_thing_there_is_as_the_list_has_it() {
+        // `assets/itemrarities.txt`, Hajun's: a thing to a line, "Name -
+        // Rarity", and " (gem)" after one sold for gems. Each is the thing
+        // whose name, kind or file reads the same once only its letters and
+        // figures are kept, the list's "Roof Terrace House" being the
+        // game's `square_house_roofless`; and every thing there is is on it.
+        use roundtown_net::bag::Rarity;
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let list = std::fs::read_to_string(root.join("assets/itemrarities.txt")).expect("Hajun's list of rarities");
+        let plain = |name: &str| name.chars().filter(char::is_ascii_alphanumeric).collect::<String>().to_lowercase();
+        let ui = ui();
+        let mut seen = Vec::new();
+        for line in list.lines() {
+            let Some((name, rarity)) = line.trim().rsplit_once(" - ") else {
+                continue;
+            };
+            let (rarity, gems) = match rarity.strip_suffix(" (gem)") {
+                Some(rarity) => (rarity, true),
+                None => (rarity, false),
+            };
+            let wanted = plain(name).replace("roofterracehouse", "squarehouseroofless");
+            let thing = THINGS
+                .iter()
+                .find(|thing| {
+                    let file = PIECES.iter().find(|def| def.kind == thing.kind).map(|def| def.file).unwrap_or(thing.kind);
+                    [ui.words.bag.name(thing.kind), thing.kind, file].into_iter().any(|said| plain(said) == wanted)
+                })
+                .unwrap_or_else(|| panic!("{name:?} in the list is no thing there is"));
+            let as_listed = Rarity::ALL.into_iter().find(|each| format!("{each:?}") == rarity).unwrap_or_else(|| panic!("{rarity:?}"));
+            assert_eq!((thing.rarity, thing.money == Money::Gems), (as_listed, gems), "{name}");
+            seen.push(thing.kind);
+        }
+        for thing in THINGS {
+            assert!(seen.contains(&thing.kind), "{} is not in the list", thing.kind);
+        }
+        assert_eq!(seen.len(), THINGS.len());
+    }
+
+    #[test]
     fn the_car_s_picture_and_the_gem_s_are_in_the_apk() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let list = std::fs::read_to_string(root.join("mobile/android/app/assets-left-out.txt")).expect("the APK's list of what it leaves out");
@@ -1386,7 +1474,7 @@ mod tests {
             .filter(|line| !line.is_empty() && !line.starts_with('#'))
             .map(|line| line.trim_start_matches("<dir>").trim_start_matches("<file>"))
             .collect();
-        for picture in [CAR_PICTURE, hud::GEM_ICON] {
+        for picture in CARS.iter().map(|car| car.picture).chain([hud::GEM_ICON]) {
             let bytes = std::fs::read(root.join("assets").join(picture)).expect(picture);
             assert_eq!(&bytes[1..4], b"PNG", "{picture}");
             let left_out = patterns.iter().find(|pattern| match (pattern.strip_prefix('*'), pattern.strip_suffix('*')) {

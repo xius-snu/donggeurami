@@ -23,3 +23,10 @@ mobile/ios/DerivedData/
 # CI output
 /build/
 /screenshots/
+
+# The car pack "Low Poly Cars" by Cosmo as Hajun downloaded it, and its own
+# pictures of its cars (2026-11-25): its licence lets the cars be changed and
+# built into the game, which assets/cars/<name>.glb and .png are, and not handed
+# on as they came, which this repository being public would do. Kept on this PC.
+assets/cars/lowpoly_cars_premium/
+assets/cars/previews/

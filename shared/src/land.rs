@@ -202,12 +202,13 @@ pub fn plot_at(at: Vec2) -> Option<usize> {
 
 /// What a plot is worth: what stands on it, each thing at what the shop
 /// sells one for (Hajun, 2026-11-23: "land valuation (total sum or placed
-/// asset's buy price)"). Nothing, for nothing standing.
+/// asset's buy price)"), in coins: one sold for gems at what its rarity
+/// costs in coins (`Thing::worth`). Nothing, for nothing standing.
 pub fn worth(stands: &[Standing]) -> u32 {
     stands
         .iter()
         .filter_map(|stood| thing(&stood.kind))
-        .fold(0u32, |sum, thing| sum.saturating_add(thing.price))
+        .fold(0u32, |sum, thing| sum.saturating_add(thing.worth()))
 }
 
 /// The accounts the made-up lots go under ([`crate::premade`]): this and

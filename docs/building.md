@@ -7,6 +7,33 @@
 > "above" or "below", or names another section in quotes, that section may be
 > in another file here: the table in `CLAUDE.md` says which.
 
+## APK 55: the shop's 118 things, 23 cars, ceilings and lights
+
+2026-11-25, 01:51 here (16:51 UTC on the 24th). Asked for: "when ur done,
+build apk and push", after the cars, houses and things for the shop
+(`docs/bag.md` and `docs/vehicles.md`, at the top of each). From the
+main checkout with no other session running (`ListAgents`).
+
+- **Protocol 25 still**: it plays against the server deployed at 16:43
+  UTC on 2026-11-24 (`613d35f0`), as APK 52 to 54 do.
+- `versionCode` 55, read back from Gradle's `output-metadata.json`.
+  cargo ndk 2 m 33 s (`release-android`), stripped from 203 MB to 110.9
+  MB with `GameActivity_onCreate` in it, Gradle 18 s; then Gradle again
+  (2 s) once `cars/italia.glb`, the pack's italia at the game's size,
+  which is `car1.glb` again and which nothing loads, was left out
+  (`assets-left-out.txt`, with the pack, its previews and the old
+  `car1.png`). 134,880,514 bytes: 291 of the game's files, 30 MB, with
+  the 22 cars of `assets/cars/` and their 23 pictures, and the 59 things
+  of `mybuilds/newones/` and their pictures. The models hashed before the
+  library was built and after Gradle, the same.
+- Also in it, from earlier that night: furniture in a house stays solid
+  in the way (`see_through::FURNITURE`, `docs/rendering-and-frame-rate.md`),
+  no double tap swinging the camera in edit mode (`docs/camera.md`), and
+  the Soft Couch's plain blue (`docs/house-builder.md`).
+- Before it: the game's tests (583), `roundtown_net`'s (279) and the
+  server's (129); the hidden desktop runs and two copies against a
+  server on this PC that the two entries say. **Not put on a phone.**
+
 ## APK 54: the cover stays until the server has said what the town is
 
 2026-11-24, 17:05 here (08:05 UTC). Asked for: "yeah hold black cover

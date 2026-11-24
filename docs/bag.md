@@ -10,14 +10,181 @@ first.
 
 ## Contents
 
-0. 2026-11-23: edit mode said along the top and round the plot, the edit button beating at a tap on a thing, the hint turned off; APK 52
-1. 2026-11-22, late: a spot of the colour chosen in its window, a hint at edit mode for someone tapping at a thing, and a house's walls numbered the same on every device, so that its doors are in the same wall for everyone; APK 51
-2. 2026-11-22, night: paint taken off with a cross, the colours used along the window's foot, the one button moved up, a tap away letting go, things dragged through each other with a grey tick, a house taking what is in it along, smaller menu buttons set by the thing as drawn, and two faults of see-through (things deaf to a tap, eyes fading); server deployed, APK 50
-3. 2026-11-22, evening: edit mode and its three buttons by the left edge, the paintbrush and the colour window, paint kept by the server and seen by everyone, the car's door where the bag's button is; server deployed, APK 49
-4. 2026-11-22, after that: a list flicked goes on by itself as a phone's does, and a swipe across the window changes its tab; APK 48
-5. 2026-11-22, afternoon: the coins' number the gems' size and the gem the coin's; a price you cannot afford in red; the box on the bag's button; APK 47
-6. 2026-11-22, later: the shop after Hajun had looked at it (both buttons always, over the picture and see-through; the price under the name; All first shown; six categories with no scrolling); APK 46
-7. 2026-11-22: the bag, its window, gems, and buildings on your plot that everyone sees; APK 45
+0. 2026-11-25, later: everything on his list in the shop, 118 things: the cars, 17 houses, 59 things for a house; prices in gems; a seventh rarity; what hangs from a ceiling, and two things that light a room; the gifts to two accounts; server deployed, APK 55
+1. 2026-11-25: Hajun's list of rarities filled in with the 22 other cars, the 56 downloaded things and his cabinet, bathtub and end table; the list alone, nothing in the game (all of it in the game the same night, above)
+2. 2026-11-23: edit mode said along the top and round the plot, the edit button beating at a tap on a thing, the hint turned off; APK 52
+3. 2026-11-22, late: a spot of the colour chosen in its window, a hint at edit mode for someone tapping at a thing, and a house's walls numbered the same on every device, so that its doors are in the same wall for everyone; APK 51
+4. 2026-11-22, night: paint taken off with a cross, the colours used along the window's foot, the one button moved up, a tap away letting go, things dragged through each other with a grey tick, a house taking what is in it along, smaller menu buttons set by the thing as drawn, and two faults of see-through (things deaf to a tap, eyes fading); server deployed, APK 50
+5. 2026-11-22, evening: edit mode and its three buttons by the left edge, the paintbrush and the colour window, paint kept by the server and seen by everyone, the car's door where the bag's button is; server deployed, APK 49
+6. 2026-11-22, after that: a list flicked goes on by itself as a phone's does, and a swipe across the window changes its tab; APK 48
+7. 2026-11-22, afternoon: the coins' number the gems' size and the gem the coin's; a price you cannot afford in red; the box on the bag's button; APK 47
+8. 2026-11-22, later: the shop after Hajun had looked at it (both buttons always, over the picture and see-through; the price under the name; All first shown; six categories with no scrolling); APK 46
+9. 2026-11-22: the bag, its window, gems, and buildings on your plot that everyone sees; APK 45
+
+## 2026-11-25, later: everything on his list in the shop; server deployed, APK 55
+
+Hajun, that night, one after another: "add all the new cars in assets/cars
+to the itemshop, and use the assets/cars/previews images as the item shop
+image - even for the red sports car (italia) thats already in the game
+change it to that preview image."; "then add all the new house models Wide
+Roof House, Square House Three~Ten Floor, Roof Terrace House Three~Ten
+floor. the rarity is listed in itemrarities.txt for these and the cars
+btw"; "then add all the new furnitures to the item shop as well they are
+in itemrarities.txt. they are in the mybuilds/newones folder"; "chandelier
+should emit light btw, and so does lamp with shade, and chandelier should
+only be placeable on ceiling, and ceiling fan also only on ceiling"; "make
+rare cars be slow and slow accel, epic cars a bit faster, legendary a bit
+more faster, mythic more more faster, and yang even faster. the current
+car speed is like epic~legendary level i would say."; "i updated the tiers
+of the cars on the itemrarities txt file if u didnt notice"; "also for
+now, after ur done just give 1 of each vehicle to bunnihihi and bunnihajun
+players", "and give each of them like $200k"; "when ur done, build apk and
+push".
+
+- **The things there are** (`roundtown_net::bag::THINGS`) are every line
+  of `assets/itemrarities.txt`, in its order, at its rarities, 118 where
+  there were twenty: 95 buildings (the street lamp, his ten pieces of
+  furniture and seven doors and windows, the 56 downloads and his cabinet,
+  bathtub and end table, and 21 houses) and 23 cars. A test reads the file
+  and holds every line to a thing, its rarity and its "(gem)", and every
+  thing to a line (`bag::panel`, `every_line_of_hajun_s_list...`): change
+  the list and the game says so. His cars' tiers are as he changed them
+  that evening (Gen to Suv Rare, Jeep to Tronco Epic, Armor to Sportrs
+  Legendary, Chiron, Fenyr, Imola and the Red Sports Car Mythic, Yang
+  Transcendent). **The Flat House is Common** as his list has it: it was
+  Epic, 1,000 coins; whoever has one sells it back for 25 now.
+- **A seventh rarity**, Transcendent, his: `#9e0915` (`colours.bag`),
+  100,000 coins. Every rarity has a price in gems as his list says (3, 8,
+  20, 50, 125, 750, 5,000), and **six houses are sold for gems**, the ones
+  his list marks: the Square House and the Roof Terrace of five floors (50
+  gems), seven (125) and nine (750). A thing sold for gems is bought with
+  the account's gems (`players.gems`), and **sold back for half its gems**
+  (mine: as a thing sold for coins comes back for half its coins). On its
+  card the gem stands where the coin does, under its name and on Buy and
+  Sell, red without the gems for it, and "Not enough gems." at a press
+  (`words.bag.no_gems`). The server's deal changes the coins and the gems
+  together or neither, never either below nothing; a deal in gems writes
+  no line to `coin_changes`, which are of coins (`accounts::Job::Deal`).
+  Land is reckoned the worthier by what a gem thing would cost in coins
+  (`Thing::worth`).
+- **The names** are his list's, but the houses': "Square House Three
+  Floor" is wider than a card's line, which holds about "Classic Window
+  Door", so they are **"Square House 2F" to "10F" and "Roof Terrace 2F" to
+  "10F"** (mine), and the two of two floors are called so in House
+  Builder's shop too (a test holds the bag's name of a building to the
+  piece's). "Refrigerator" is spelt right on its card; its file keeps the
+  download's "Refrigirator". "SUV" in capitals.
+- **Pictures**: each car's is cut from the pack's own (`assets/cars/
+  previews`, which stay out of the APK and out of git, below) by
+  `blender/car_pictures.py`, the red sports car's the pack's `italia`'s as
+  asked; the 17 new houses and 59 things are rendered as the shop's
+  pictures always were, under the sky alone and fitted to the 256 square
+  (`blender/render_pictures.py`).
+- **The new things stand on your plot only**: they are pieces
+  (`build::PIECES`, from `mybuilds/newones/` and `mybuilds/`) put down by
+  the same code as the others, and **House Builder's shop does not sell
+  them** (`PieceDef::house_builder`), it being stalled. Each is placed as
+  it was downloaded: where its origin is (off the middle of some: the
+  bed's 0.7 m to one side, the desk's and the dresser's near an end, the
+  ceiling fan's 0.4 m), its size, and **the Painting lies flat**, a board
+  3 cm thick, a floor piece: to hang on a wall it would have to stand up
+  in its `.blend` and be a wall piece (his to say). None of them is in the
+  made-up lots.
+- **What hangs from a ceiling** (`build::Mount::Ceiling`, the Chandelier
+  and the Ceiling Fan): brought out of the bag it hangs a step in front
+  of you, its top against the ceiling over the floor you stand on; dragged,
+  it stays under the ceiling of the storey it is in; anywhere else its
+  tick is grey and it says "It has to hang from a ceiling."
+  (`words.bag.no_ceiling`, `build::Misfit::NoCeiling`). A ceiling is the
+  underside of anything at least 2 m over the floor under it (`HEADROOM`,
+  mine: nothing hangs from a table's underside), so in a house and never
+  from the sky; nothing of it in a wall; not in another thing that hangs
+  (what stands on the floor under it does not matter); and it is not
+  solid, so nobody bumps their head.
+- **Light**: the Chandelier and the Lamp With Shade give off light from
+  dusk to dawn as the street lamps do, among the 24 lit nearest the
+  camera (`lamps::BY_KIND`, by kind, each being one material on a palette
+  with no bulb to find): the chandelier a third of the way up it, a fifth
+  of a street lamp's light, reaching 15 m; the lamp in its shade, a
+  twentieth, reaching 8 m (my numbers). Nothing of either glows: the
+  chandelier's dark iron stays dark against the ceiling it lights.
+- **The cars**: `docs/vehicles.md`, at the top.
+- **The gifts** (asked: "give 1 of each vehicle", "like $200k"): with
+  the server stopped for it, after a dump of the database
+  (`/var/backups/roundtown/before-gifts-2026-11-25.dump`), `bunnihihi`
+  (#1642) and `bunnihajun` (#2435), who had no car between them, each got
+  all 23, one apiece, and 200,000 coins, a line "a gift from Hajun" in
+  `coin_changes` each (6,450 to 206,450 and 2,565 to 202,565), at 16:45
+  UTC; their plots and paint as they were. **An app before APK 55 does not
+  show the new cars** (it drops what it does not know): they are there in
+  the account for APK 55.
+- **Old apps**: protocol 25 still. Nothing that was sent means anything
+  else; the new kinds are only strings an old app leaves out of its bag
+  and its plots; prices and rarities are the server's when it deals.
+- **Nothing newly kept about anyone** (`privacy.html` as it was): the
+  gems were kept already, nothing is sold for money, and which car
+  someone is in is told to their channel alone, as their car was.
+- **Checked**: `cargo test --lib` (583), `-p roundtown_net` (279), `-p
+  roundtown_server` (129); the database's tests on scratch copies on the
+  VM before the deploy (SERVER.md: a gem deal on an empty database, and a
+  copy of the live one starting up unchanged); in the desktop build,
+  hidden: the shop's cars, houses (the gem and its red) and things with
+  their pictures, a chandelier hung in a Square House 2F at 3.60 to 5.27 m
+  under a ceiling 4.9 m up, a ceiling fan refused on open ground with its
+  words, and by night the chandelier and the lamp lit; two copies against
+  a server on this PC, one buying a Gen from it (1,000 coins to 600).
+  **Not checked**: a phone (APK 55 built, not installed); a purchase in
+  gems on the live database; whether 59 more models and 23 cars weigh on
+  a phone's memory when many are on a plot.
+- **Kept out of git**: the car pack as downloaded and its previews
+  (`.gitignore`): the repository is public and the pack's licence lets its
+  cars be built into the game, not handed on as they came. The 23 cars and
+  their pictures are in, as `car1.glb` always was.
+
+## 2026-11-25: the list of rarities filled in; the list alone
+
+Hajun: "fill itemrarities.txt with the new cars as well as those new 56
+modles as well as the cabinet, bathtub, end_table. just choose appropriate
+rarity for all of them", and while it was being done: "i think yang car
+should be highest rarity btw".
+
+- **`assets/itemrarities.txt` only.** It is his list, which the game's own
+  is written from (`roundtown_net::bag::THINGS`) and reads nothing of. He
+  had been at it the evening before: a seventh rarity over Mythic
+  (Transcendent, $100,000 or 5,000 gems), a price in gems beside every
+  rarity's coins, "(gem)" after some things, and 22 houses of two to ten
+  floors where there were four. **None of that, and nothing added now, is
+  in the game**: `THINGS` has the twenty things of 2026-11-22 at their
+  rarities of then (the Flat House Epic, which his list now has Common),
+  there is no Transcendent in `Rarity`, and nothing is sold for gems but
+  as it was. Putting any of it in is `THINGS`, the shop's pieces
+  (`build::PIECES`) or the cars, and a deploy of the server.
+- **Added, 82 lines, nothing of his changed**: his three new models
+  after the Soft Couch (End Table Common, Cabinet Uncommon, Bathtub
+  Rare); the 56 downloaded things (`docs/house-builder.md`) in a block of
+  their own after the doors and windows, by their files' names, the
+  commonest first as his houses are: 20 Common, 23 Uncommon, 9 Rare, 3
+  Epic (Grandfathers Clock, Safe, Telescope), 1 Legendary (Chandelier);
+  and under Vehicles the 22 cars of `assets/cars/` that are not the one
+  he has (`docs/vehicles.md`; `italia` is his "Red sports car", Mythic,
+  and is not listed again), by their files' names: Gen, Sedan and Van
+  Common; Coupe and Suv Uncommon; Jeep, Mobil, Police, Rally and Tronco
+  Rare; Armor, Cilo, Kamaro and Ponche Epic; Ghini, Lamb, Poly and
+  Sportrs Legendary; Chiron, Fenyr and Imola Mythic; **Yang
+  Transcendent, which is his**.
+- **Every rarity but Yang's is mine**, by what the thing is and by his
+  own: a bed and a couch Rare as his Double Bed and Soft Couch are, a
+  chair and a table Common as his, small things one holds Common, what
+  furnishes a room Uncommon, the big appliances Rare, a chandelier
+  Legendary as his Street Lamp is; the cars from an ordinary saloon to
+  the three that are his Red sports car's peers. None marked "(gem)",
+  which is his to give. The download's own spelling is kept
+  ("Refrigirator"), being the file's name.
+- **Checked** as the lines were written, by the throwaway script that
+  wrote them: each of the 56 names is a file of the folder's and each of
+  them is listed once, the 22 cars likewise, the three models are there,
+  and no line of his is changed. Nothing reads the file: no build, no
+  test, no deploy.
 
 ## 2026-11-23: edit mode is said, and the hint is off; APK 52
 

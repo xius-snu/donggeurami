@@ -73,6 +73,20 @@ you.
 - **In the car it is fixed straight down over you** (since 2026-11-05,
   `OrbitCamera::overhead`; above, "The car you drive"): it zooms and
   nothing turns it, and getting out it is back exactly where you had it.
+- **In edit mode a double tap leaves it where it is, since 2026-11-24**
+  (Hajun: "also while ur in house edit mode, doubletapping shouldnt do
+  the camera auto front facing thingy"). Changing your plot is taps: on a
+  thing and then away from it to let go, on one part to paint and then
+  the next; two of them on nothing within 0.3 s swung the camera round
+  behind you, off what you were at. While `customize::Customize::on`, the
+  second tap swings nothing (`read_touch_controls`, the phone's alone);
+  the taps are counted all the same, so the first tap after edit mode is
+  a first tap. The stick's recentering is as it was there: he asked of
+  the double tap. **Checked**: type-checked for the iPhone
+  (`mobile/ios/check_on_windows.sh`), which compiles the phone's touch
+  code as no desktop build or test does. **Not run**: it is a phone's
+  code alone, so not in the desktop build, no unit test reaches it, and
+  no APK was built (his word that day: "dont need to rebuild the game").
 - **On a phone, walking with the stick brings it round behind you, a
   double tap swings it there, and riding a bus brings it round behind the
   way the bus faces** (`assist_camera`; Hajun, 2026-10-31: "Soft
@@ -177,6 +191,14 @@ you.
   Hajun found that "a bit too much". Glass and water stay blended, and so
   does anything with a texture, which alpha to coverage would show all or
   nothing (`RENDERING.md`): the Soft Couch.
+- **Furniture does not fade, since 2026-11-24** (Hajun: "i dont think the
+  furnitures need to be turned invisible, like couch, chair, bed, etc. they
+  can remain solid even if it hides the player from view"): a piece that
+  stands on the floor stays as it is between the camera and you, hides you,
+  and takes a tap (`see_through::FURNITURE`, off;
+  `docs/rendering-and-frame-rate.md`, the entry of that day). What the
+  bullets here say of furniture, the bed you stand behind and the table
+  that faded, is how it was until then.
 - **What fades:** a piece of furniture, a door, a window, a town object or
   a bus fades whole; a house and the island a part at a time, each as modelled in
   Blender: a wall, the roof, a floor, a tree's trunk or its leaves. Whatever

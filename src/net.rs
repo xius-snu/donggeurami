@@ -793,8 +793,8 @@ fn hear(
             // What it says of your friends is `friends`' to hear, and what
             // is said in your room, or happens in your game, `chat`'s and
             // `arena`'s; that you are at a table, `table`'s; who is in
-            // your channel of the town, `lobby`'s; and what is said of
-            // bags, `bag`'s.
+            // your channel of the town, `lobby`'s; what is said of bags,
+            // `bag`'s; and which car each driver is in, `drive`'s.
             Tell::Joined { .. }
             | Tell::Seated { .. }
             | Tell::Back { .. }
@@ -807,7 +807,8 @@ fn hear(
             | Tell::Channel(_)
             | Tell::Bag(_)
             | Tell::Resting(_)
-            | Tell::Plots(_) => {}
+            | Tell::Plots(_)
+            | Tell::Cars(_) => {}
         }
     }
 }

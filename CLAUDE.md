@@ -16,17 +16,18 @@ them (2026-11-19), Hajun likes Bridge Wars and Knock Off and had Bridge
 Race's and Last Stand's cards turned off (`games::OFF`, since APK 44):
 spend nothing on those two unasked.
 
-As of 2026-11-24: `PROTOCOL_VERSION` 25 (since 2026-11-23: a seat of the
+As of 2026-11-25: `PROTOCOL_VERSION` 25 (since 2026-11-23: a seat of the
 town is one of its 48 plots, so **APK 51 and older are told to update**;
-APK 52 and 53 play on), **APK 54** (`versionCode`, built 2026-11-24, not
+APK 52 to 54 play on), **APK 55** (`versionCode`, built 2026-11-25, not
 put on a phone from here, `docs/building.md`), the server deployed at
-06:07 UTC on 2026-11-24 with everything in `server/` and `shared/`. **All
-of it committed and pushed, up to APK 54**: the land (`docs/land.md`: all 48
+16:43 UTC on 2026-11-24 with everything in `server/` and `shared/`. **All
+of it committed and pushed, up to APK 55**: the land (`docs/land.md`: all 48
 plots always filled, where each is thrown afresh as a channel opens,
 someone walking every one), everyone's signs and cars, the town's slower
 buses, the bag (`docs/bag.md`) with its window, its button and how it is
-scrolled, edit mode on your plot and paint, sitting and lying down, and
-the plots' residents (`docs/town.md`). The iPhone's last tag,
+scrolled and its 118 things, the 23 cars (`docs/vehicles.md`), edit mode
+on your plot and paint, sitting and lying down, and the plots' residents
+(`docs/town.md`). The iPhone's last tag,
 `ios-1.0.2-18`, pushed in the first hour of 2026-11-16 (whether Codemagic
 built it is not known here), is protocol 18: its build is told to update
 and stays offline until `ios-1.0.2-19` is built, whose tag is Hajun's to
@@ -96,7 +97,7 @@ rule or how things stand has changed, and then in a line or two. No logs here.
   attached; never let "built" read as "seen on the phone".
 - "Remove" usually means turn off: keep the mechanism behind a switch
   (`sound::PLAYING`, `hud::DOTS`, `hud::GIFT`, `drive::GUN`,
-  `utility::SECOND_ALWAYS`, `customize::HINTS`).
+  `utility::SECOND_ALWAYS`, `customize::HINTS`, `see_through::FURNITURE`).
 - **Every window looks as the friends' panel does** (Hajun, 2026-11-14: "I
   want to use this same design style throughout the project"): friends,
   settings, the game selector, Bridge Wars' shops and its "You're out!" are
@@ -143,12 +144,16 @@ to try again.
   directional light is sun and moon. The sky hangs from a `SkyDome` that
   follows the camera.
 - What gives off light at night is a list by material (`lamps::SOURCES`):
-  street lamps' `lightbulb`, Bridge Wars' anchors' `spawn`. At most 24 point
+  street lamps' `lightbulb`, Bridge Wars' anchors' `spawn`; and two of the
+  shop's things by kind, the Chandelier and the Lamp With Shade
+  (`lamps::BY_KIND`, since 2026-11-25). At most 24 point
   lights (`MOST_LIT`), none by day.
 - See-through walls (`see_through.rs`) happen only inside a house, with
   alpha to coverage; never seen on a phone from here. Nothing of a body
   fades (`of_a_body`: five looks have eyes and a mouth that are meshes of
-  their own), nor what you sit or lie on, and a part no longer in the way
+  their own), nor furniture (Hajun's, 2026-11-24: a bed, a chair or the
+  couch in the way stays solid and hides you; `see_through::FURNITURE`,
+  off), and a part no longer in the way
   has its own material back the frame after. What is in the way is looked
   for again only as you or the camera move, and five times a second
   (`Looked`): every frame, it was a tenth of the world's thread.
@@ -285,6 +290,12 @@ to try again.
   connected; with nobody connected a game goes on a minute.
 - The VM allows the tap that skips waits (`RT_ALLOW_SKIP=1`): take it out
   before real players come.
+- **The website** is a repository of its own, `xius-snu/donggeurami-town`
+  (GitHub Pages, since 2026-11-24; a folder beside this one): the support
+  page and the privacy policy, which lists what the server keeps. **Change
+  `privacy.html`, and its date, with anything newly kept, written down or
+  handed to anyone** (a sign-in, anything sold, a report): `docs/online.md`,
+  "The website".
 
 ## Maps and models
 
@@ -435,15 +446,19 @@ to try again.
   later that day, APK 46). Its lists are scrolled as a phone's are: a
   flick goes on and slows to a stop, by Android's own arithmetic
   (`src/flick.rs`; the bag's lists alone so far), and a swipe across the
-  window changes its tab (Hajun's, APK 48). Twenty things, House Builder's nineteen pieces
-  and the car, each with a rarity and a price that is its rarity's for
-  now, sold back for half (`roundtown_net::bag`, written from Hajun's
-  `assets/itemrarities.txt`: **change a rarity or a price there and in
-  `THINGS`, and deploy the server**). Everyone begins with ten gems, a car
+  window changes its tab (Hajun's, APK 48). **118 things** (since
+  2026-11-25, APK 55): every line of Hajun's `assets/itemrarities.txt` in
+  its order, 95 buildings (House Builder's sell only their nineteen,
+  `PieceDef::house_builder`) and 23 cars, each at its rarity's price, of
+  seven rarities, Transcendent the highest, sold back for half; the six
+  houses his list marks "(gem)" are bought with gems and sold back for half
+  of them (`roundtown_net::bag`: **a test holds the file and `THINGS`
+  together: change both, and deploy the server**). Everyone begins with ten gems, a car
   and a street lamp. Online it is the account's (Postgres, `players.gems`
   and `.bag`): buying and selling are the server's; offline the device's
-  own, kept in `bag.json`. A tap on your car in it drives; a tap on a
-  building, standing on your plot, puts it down.
+  own, kept in `bag.json`. A tap on a car in it drives that one; a tap on a
+  building, standing on your plot, puts it down. The Chandelier and the
+  Ceiling Fan hang only from a ceiling (`build::Mount::Ceiling`).
 - The top bar and the chat keep clear of the camera's hole and an
   iPhone's island (`src/safe.rs`: Android's cutout, by `MainActivity`,
   seen working on Hajun's phone; an iPhone's safe area, read off its
@@ -548,13 +563,19 @@ to try again.
   the road's paint; 5.25 m/s, 10.5 on the open road, three quarters of
   what they were, since 2026-11-21), drive a car of your own (`drive.rs`,
   out of your bag, its numbers in `ui.ron`; everyone else in your channel
-  sees the car since 2026-11-21, `Ask::Drive`), and be thrown by the
-  fountain's jet.
+  sees the car since 2026-11-21, `Ask::Drive`, and which since 2026-11-25,
+  `Ask::Car`, `Tell::Cars`), and be thrown by the fountain's jet. **There
+  are 23 cars** (`drive::CARS`, since 2026-11-25): `car1.glb`, the
+  `italia` of a pack made 1.25 times as big, and the pack's other 22 in
+  `assets/cars/` at that size, each as fast as its rarity (`car.speed`,
+  `car.pickup`). The pack as downloaded and its previews stay out of git
+  (`.gitignore`: the repository is public and its licence forbids handing
+  it on; `docs/vehicles.md`).
 - The camera orbits you 1.5 to 18 m out, and zoomed all the way in is your
   eyes. **Nothing in the world moves it**: walls never bring it nearer. On
   a phone the stick brings it round behind you after 1.5 s, and a double
-  tap swings it there. In the car and in Bridge Wars it is fixed straight
-  overhead.
+  tap swings it there (not in edit mode, Hajun's, 2026-11-24). In the car
+  and in Bridge Wars it is fixed straight overhead.
 - Town objects are data (`src/map.rs`, a catalogue and `town.json`), edited
   by tapping (`src/editor.rs`), offline only. The edit menu's buttons stay
   on the object, each just clear of it as it is drawn (`editor::Reach`):

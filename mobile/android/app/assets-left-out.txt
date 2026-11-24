@@ -84,3 +84,24 @@ itemrarities.txt
 # from poly.pizza: it is in pvptownmap.glb, and the game reads nothing from
 # this folder.
 <dir>polypizza
+
+# The pack of cars Hajun put under assets/cars/ (2026-11-24: "Low Poly Cars"
+# by Cosmo, its .blend, FBX, OBJ, its own .glb files, tyres and pictures, 15
+# MB). The game reads none of it: what it can load are the cars made the
+# game's size beside this folder, assets/cars/<name>.glb
+# (blender/scale_pack_cars.py), which go in.
+<dir>lowpoly_cars_premium
+
+# The pack's own pictures of its cars, which Hajun put in assets/cars/previews
+# (2026-11-25): 1,260 by 1,000, some WebP, a megabyte or more each once read.
+# The shop shows each made 256 px square beside its model
+# (assets/cars/<name>.png, blender/car_pictures.py), which go in.
+<dir>previews
+
+# The red sports car's picture until 2026-11-25, rendered from car1.blend:
+# since then the shop shows the pack's own picture of it (cars/italia.png).
+car1.png
+
+# The pack's italia made the game's size, which is car1.glb again: the red sports
+# car is drawn from car1.glb (drive::CARS), and nothing loads this one.
+italia.glb

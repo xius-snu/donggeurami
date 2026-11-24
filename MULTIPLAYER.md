@@ -690,7 +690,8 @@ a nightly backup, restored.
   compiles with all of it.
 - **Before real players:** take `RT_ALLOW_SKIP` off the VM; a privacy policy
   and a web page for deletion requests (Google Play), which want a URL, and
-  so likely the domain; the store forms redone (App Privacy, Data safety, age
+  so likely the domain (both written on 2026-11-24, on GitHub Pages with
+  no domain: `docs/online.md`, "The website"); the store forms redone (App Privacy, Data safety, age
   ratings); `ITSAppUsesNonExemptEncryption` revisited (`IOS.md`); a test on
   an IPv6-only network (NAT64); everything else under *Before a public online
   release*.

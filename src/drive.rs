@@ -3,7 +3,7 @@
 //! button to be a toggle on/off switch for car. when on, the player model
 //! disappears and u are suddenly now a 'car'"). Press the face among the
 //! buttons round the jump button, or C on desktop, and your body is gone
-//! and you are the car, Hajun's `car1.glb` ([`MODEL`]), where you stood,
+//! and you are the car, Hajun's `car1.glb` ([`CARS`]), where you stood,
 //! facing the way you faced; press it again and you are back on your feet
 //! where the car was ([`toggle`]).
 //!
@@ -94,14 +94,33 @@
 //! and nothing on a phone, and Hajun, told so: "ye u can remove the car's
 //! gun feature". All of it is still here, its numbers in the file and its
 //! tests too, and that one word puts it back.
+//!
+//! **There are 23 cars** ([`CARS`], since 2026-11-25; Hajun: "add all the
+//! new cars in assets/cars to the itemshop"): the red sports car everyone
+//! begins with, `car1.glb`, which is the `italia` of a pack of low-poly
+//! cars made 1.25 times as big, and the pack's other 22 made the same size
+//! (`assets/cars`, `blender/scale_pack_cars.py`), each sold in the bag's
+//! shop at its rarity (`roundtown_net::bag::THINGS`). You get into the one
+//! tapped in your bag ([`CarPressed`]); C on desktop, into the one you
+//! were last in, or the first you own ([`YourCar`]). Each goes by the
+//! file's numbers made faster or slower by its rarity (the file's
+//! `speed` and `pickup`, `Car::of`; Hajun: "make rare cars be slow and
+//! slow accel ... yang even faster"), and its shape is read off its own
+//! model, so a long car turns wider. The models of the cars you own are
+//! loaded as you come to own them ([`Garage`]), for the one you tap to be
+//! there at once. **Everyone else in your channel sees the car you are in**:
+//! which, the server is told as you get in (`Ask::Car`, before
+//! `Ask::Drive`) and tells everyone whose app asked (`Ask::Cars`,
+//! `Tell::Cars`, [`TheirCars`]); an app from before says none, and is seen
+//! in the red sports car, as it sees everyone.
 
 use std::f32::consts::TAU;
 
 use bevy::mesh::skinning::SkinnedMesh;
 use bevy::prelude::*;
-use bevy::world_serialization::WorldInstanceReady;
+use bevy::world_serialization::{WorldAsset, WorldInstanceReady};
 use bevy_replicon::prelude::Remote;
-use roundtown_net::{Ask, Member, Seated};
+use roundtown_net::{Ask, Member, Seated, Tell};
 
 use crate::bag::Bag;
 use crate::car::{self, Turns, WheelPart};
@@ -114,13 +133,79 @@ use crate::{
     camera_ahead, decks_on, hud,
 };
 
-/// Hajun's car, under `assets/`: a red sports car 6.5 m long and 3.1 m wide
-/// on four wheels, facing Blender's front, with 3.84 m between its axles.
-pub(crate) const MODEL: &str = "car1.glb";
+/// One of the cars there are ([`CARS`]): what the bag has it by
+/// (`roundtown_net::bag::THINGS`, a vehicle), its model and its picture in
+/// the bag's shop, under `assets/`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) struct CarDef {
+    pub kind: &'static str,
+    pub model: &'static str,
+    pub picture: &'static str,
+}
+
+/// One of the pack's cars, by its name: `assets/cars/<name>.glb`, and its
+/// picture beside it.
+macro_rules! pack {
+    ($kind:literal) => {
+        CarDef {
+            kind: $kind,
+            model: concat!("cars/", $kind, ".glb"),
+            picture: concat!("cars/", $kind, ".png"),
+        }
+    };
+}
+
+/// Every car there is, in the order of the things there are: Hajun's red
+/// sports car, `car1.glb`, a red sports car 6.5 m long and 3.1 m wide on
+/// four wheels, facing Blender's front, with 3.84 m between its axles (the
+/// pack's `italia`, 1.25 times as big, whose picture it has); and the
+/// pack's other 22, the same size.
+pub(crate) const CARS: &[CarDef] = &[
+    CarDef {
+        kind: roundtown_net::bag::CAR,
+        model: "car1.glb",
+        picture: "cars/italia.png",
+    },
+    pack!("gen"),
+    pack!("sedan"),
+    pack!("van"),
+    pack!("coupe"),
+    pack!("suv"),
+    pack!("jeep"),
+    pack!("mobil"),
+    pack!("police"),
+    pack!("rally"),
+    pack!("tronco"),
+    pack!("armor"),
+    pack!("cilo"),
+    pack!("kamaro"),
+    pack!("ponche"),
+    pack!("ghini"),
+    pack!("lamb"),
+    pack!("poly"),
+    pack!("sportrs"),
+    pack!("chiron"),
+    pack!("fenyr"),
+    pack!("imola"),
+    pack!("yang"),
+];
+
+/// The car that goes by `kind`, or, for one this app has no model of, the
+/// red sports car.
+pub(crate) fn car_def(kind: &str) -> &'static CarDef {
+    CARS.iter().find(|car| car.kind == kind).unwrap_or(&CARS[0])
+}
 
 /// The car's numbers as the file has them now (`assets/ui.ron`, `car`).
 fn tuning() -> Car {
     ui().car
+}
+
+/// The numbers a car of `kind` goes by: the file's, made faster or slower
+/// by its rarity (`Car::of`).
+fn tuning_of(kind: &str) -> Car {
+    let rarity = roundtown_net::bag::thing(kind).map_or(roundtown_net::bag::Rarity::Mythic, |thing| thing.rarity);
+    tuning().of(rarity)
 }
 
 /// The car's shape, read off its model once it has spawned ([`read_my_car`])
@@ -163,6 +248,32 @@ impl Default for Shape {
 #[derive(Component)]
 pub(crate) struct MyCar;
 
+/// Which car a car in the world is ([`CARS`]), yours or someone else's.
+#[derive(Component, Clone, Copy, PartialEq, Eq, Debug)]
+struct CarKind(&'static str);
+
+/// The car you are in, or were last in: the one C on desktop gets you into
+/// again. The red sports car until you have got into another.
+#[derive(Resource, Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) struct YourCar(pub &'static str);
+
+impl Default for YourCar {
+    fn default() -> Self {
+        Self(roundtown_net::bag::CAR)
+    }
+}
+
+/// The models of the cars you own, loaded as you come to own them, so that
+/// the one you get into is there at once ([`keep_the_garage`]).
+#[derive(Resource, Default)]
+struct Garage(Vec<(&'static str, Handle<WorldAsset>)>);
+
+/// Which car each of the others in your channel of the town who are in
+/// theirs is in, as the server says (`Tell::Cars`): whoever is not here is
+/// in the red sports car. Nobody's offline.
+#[derive(Resource, Default, PartialEq, Debug)]
+struct TheirCars(std::collections::HashMap<u64, &'static str>);
+
 /// Someone else's car, in your channel of the town online: the body it
 /// carries, how far it has rolled, for its wheels, and where that body
 /// stood when that was last counted.
@@ -178,11 +289,12 @@ struct TheirCar {
 #[derive(Component)]
 pub(crate) struct InCar;
 
-/// Into the car, or out of it: your car tapped in your bag (`bag::panel`),
-/// or the door pressed that stands by the left of the screen while you are
-/// in it (`hud`); the face button, until 2026-11-21.
+/// Into a car, or out of it: one of your cars tapped in your bag
+/// (`bag::panel`), which it names; or the door pressed that stands by the
+/// left of the screen while you are in it (`hud`), which names none. The
+/// face button, until 2026-11-21.
 #[derive(Message, Default)]
-pub(crate) struct CarPressed;
+pub(crate) struct CarPressed(pub Option<&'static str>);
 
 /// Whether you are in the car, and, in it, how it goes.
 #[derive(Resource, Default)]
@@ -403,17 +515,22 @@ const GUN: bool = false;
 pub(crate) fn plugin(app: &mut App) {
     app.init_resource::<Driving>()
         .init_resource::<Gun>()
+        .init_resource::<YourCar>()
+        .init_resource::<Garage>()
+        .init_resource::<TheirCars>()
         .add_message::<CarPressed>()
         .add_systems(Startup, spawn_my_car)
         .add_systems(
             Update,
             (
-                toggle.before(crate::read_player_input),
+                keep_the_garage,
+                toggle.before(crate::read_player_input).after(keep_the_garage),
                 retune,
                 say_so_on_coming_online,
+                hear_their_cars,
                 // Once everyone else's bodies are where they are this frame
                 // (`net::smooth`, before it).
-                their_cars.after(crate::move_bodies),
+                their_cars.after(crate::move_bodies).after(hear_their_cars),
             ),
         );
     if GUN {
@@ -522,18 +639,50 @@ fn retune(changed: Res<UiChanged>, driving: Res<Driving>, mut orbit: ResMut<Orbi
     orbit.distance = orbit.distance.clamp(car.overhead_nearest, car.overhead_furthest);
 }
 
-/// The car, from the start: nowhere and hidden, until you get in.
-fn spawn_my_car(assets: Res<AssetServer>, mut commands: Commands) {
+/// The car, from the start: nowhere and hidden, until you get in. The red
+/// sports car, until you get into another ([`toggle`]).
+fn spawn_my_car(assets: Res<AssetServer>, yours: Res<YourCar>, mut commands: Commands) {
+    let scene = assets.load(GltfAssetLabel::Scene(0).from_asset(car_def(yours.0).model));
+    spawn_your_car(&mut commands, yours.0, scene, false);
+}
+
+/// Your car, `kind`, of the model `scene`: shown, or hidden until you get
+/// in. Its shape is read off its model once that has spawned.
+fn spawn_your_car(commands: &mut Commands, kind: &'static str, scene: Handle<WorldAsset>, shown: bool) {
     commands
         .spawn((
             Name::new("Your car"),
             MyCar,
+            CarKind(kind),
             Shape::default(),
-            WorldAssetRoot(assets.load(GltfAssetLabel::Scene(0).from_asset(MODEL))),
+            WorldAssetRoot(scene),
             Transform::default(),
-            Visibility::Hidden,
+            if shown { Visibility::Inherited } else { Visibility::Hidden },
         ))
         .observe(read_my_car);
+}
+
+/// Loads the model of every car you own, as you come to own it, and lets
+/// go of one you no longer do: so that whichever you tap in your bag is
+/// there to get into at once. A few at most; each is a car's model and its
+/// colours, a few megabytes drawn.
+fn keep_the_garage(bag: Res<Bag>, assets: Res<AssetServer>, mut garage: ResMut<Garage>) {
+    if !bag.is_changed() {
+        return;
+    }
+    let owned: Vec<&'static str> = bag.has.cars().collect();
+    if garage.0.iter().map(|(kind, _)| *kind).eq(owned.iter().copied()) {
+        return;
+    }
+    garage.0.retain(|(kind, _)| owned.contains(kind));
+    for kind in owned {
+        if !garage.0.iter().any(|(had, _)| *had == kind) {
+            let scene = assets.load(GltfAssetLabel::Scene(0).from_asset(car_def(kind).model));
+            garage.0.push((kind, scene));
+        }
+    }
+    let order = |kind: &str| roundtown_net::bag::THINGS.iter().position(|thing| thing.kind == kind);
+    garage.0.sort_by_key(|(kind, _)| order(kind));
 }
 
 /// Reads the car's shape off its model once it has spawned, in the car's own
@@ -548,13 +697,14 @@ fn read_my_car(
     names: Query<&Name>,
     placement: TransformHelper,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut cars: Query<&mut Shape>,
+    mut cars: Query<(&mut Shape, &CarKind)>,
     mut commands: Commands,
 ) {
     let car = ready.entity;
-    let (Ok(mut shape), Ok(root)) = (cars.get_mut(car), placement.compute_global_transform(car)) else {
+    let (Ok((mut shape, &CarKind(kind))), Ok(root)) = (cars.get_mut(car), placement.compute_global_transform(car)) else {
         return;
     };
+    let model = car_def(kind).model;
     let into_car = root.affine().inverse();
     let mut corners: Vec<[Vec3; 3]> = Vec::new();
     let mut wheels: Vec<WheelPart> = Vec::new();
@@ -568,7 +718,7 @@ fn read_my_car(
         let in_car = GlobalTransform::from(into_car * place.affine());
         let read = meshes.get(&mesh.0).is_some_and(|asset| island::add_mesh(&mut corners, asset, &in_car));
         if !read {
-            warn!("{MODEL}: could not read one of its meshes");
+            warn!("{model}: could not read one of its meshes");
             continue;
         }
         let object = parents.get(part).ok().map(ChildOf::parent);
@@ -581,7 +731,7 @@ fn read_my_car(
         }
     }
     if corners.is_empty() {
-        warn!("{MODEL}: nothing in it to drive");
+        warn!("{model}: nothing in it to drive");
         return;
     }
     let (low, high) = corners
@@ -602,7 +752,7 @@ fn read_my_car(
         rear: base * 0.5 - mid,
     };
     info!(
-        "{MODEL}: {} wheels, {:.2} m between the axles, {:.2} m long, {:.2} m wide",
+        "{model}: {} wheels, {:.2} m between the axles, {:.2} m long, {:.2} m wide",
         turning.len(),
         base,
         shape.ahead + shape.behind,
@@ -623,15 +773,17 @@ pub(crate) fn drivable(venue: Venue) -> bool {
     venue == Venue::Town
 }
 
-/// Into the car, at a tap on it in your bag or C, where you stand and
-/// facing the way you face, with the camera fixed over you; or out of it,
-/// at the press of its door or C, standing where the car is, with the
-/// camera back as you had it. Not while a dialog is up or the camera is on
-/// someone you talk to; and out of it, whatever is pressed, once you are
-/// sent to another island, or once the car is no longer yours, sold out
-/// from under you. Into it only where it is to be had ([`drivable`]), and
-/// only with one in your bag (`bag`, since 2026-11-21: everyone begins
-/// with one, and may sell it).
+/// Into a car, at a tap on it in your bag or C, where you stand and facing
+/// the way you face, with the camera fixed over you; or out of it, at the
+/// press of its door or C, standing where the car is, with the camera back
+/// as you had it. Not while a dialog is up or the camera is on someone you
+/// talk to; and out of it, whatever is pressed, once you are sent to
+/// another island, or once the car is no longer yours, sold out from under
+/// you. Into it only where it is to be had ([`drivable`]), and only one you
+/// own (`bag`, since 2026-11-21: everyone begins with one, and may sell
+/// it): the one tapped, or with C the one you were last in, or else the
+/// first you own ([`YourCar`]). Into another than your car was, a car of
+/// that model is made where it was ([`spawn_your_car`]).
 #[allow(clippy::too_many_arguments)]
 fn toggle(
     mut pressed: MessageReader<CarPressed>,
@@ -640,22 +792,31 @@ fn toggle(
     close_up: Res<CloseUp>,
     bag: Res<Bag>,
     me: Query<(&Transform, &Venue), With<Player>>,
-    mut cars: Query<&mut Visibility, With<MyCar>>,
-    mut driving: ResMut<Driving>,
+    mut cars: Query<(Entity, &CarKind, &mut Visibility), With<MyCar>>,
+    (mut driving, mut yours, garage): (ResMut<Driving>, ResMut<YourCar>, Res<Garage>),
     mut orbit: ResMut<OrbitCamera>,
-    online: Res<Online>,
+    (online, assets): (Res<Online>, Res<AssetServer>),
     mut asks: MessageWriter<Ask>,
+    mut commands: Commands,
 ) {
-    let asked = pressed.read().count() > 0 || keyboard.just_pressed(KeyCode::KeyC);
+    let tapped = pressed.read().last().map(|pressed| pressed.0);
+    let asked = tapped.is_some() || keyboard.just_pressed(KeyCode::KeyC);
     let Ok((body, &venue)) = me.single() else {
         return;
     };
-    let owned = bag.has.has_car();
-    let sent = driving.0.as_ref().is_some_and(|drive| drive.venue != Some(venue)) || (driving.on() && !owned);
+    let owns = |kind: &str| bag.has.count(kind) > 0;
+    let sent = driving.0.as_ref().is_some_and(|drive| drive.venue != Some(venue)) || (driving.on() && !owns(yours.0));
     if !sent && !(asked && !dialog.0 && !close_up.busy()) {
         return;
     }
-    if !sent && driving.0.is_none() && !(drivable(venue) && owned) {
+    // Which car, getting in: the one tapped, the one you were last in, or
+    // the first you own.
+    let wanted = tapped
+        .flatten()
+        .filter(|kind| owns(kind))
+        .or_else(|| owns(yours.0).then_some(yours.0))
+        .or_else(|| bag.has.cars().next());
+    if !sent && driving.0.is_none() && !(drivable(venue) && wanted.is_some()) {
         return;
     }
     let shown = match driving.0.take() {
@@ -681,24 +842,82 @@ fn toggle(
             true
         }
     };
-    for mut visibility in &mut cars {
-        visibility.set_if_neq(if shown { Visibility::Inherited } else { Visibility::Hidden });
+    // Into another car than yours was: that car, made afresh where yours
+    // was, shown; its shape read off its model as that spawns, which is at
+    // once for a car you own (`Garage`).
+    let into = wanted.filter(|_| shown).unwrap_or(yours.0);
+    let other = cars.iter().any(|(_, &CarKind(kind), _)| kind != into);
+    if other {
+        for (car, ..) in &cars {
+            commands.entity(car).despawn();
+        }
+        let scene = garage
+            .0
+            .iter()
+            .find(|(kind, _)| *kind == into)
+            .map(|(_, scene)| scene.clone())
+            .unwrap_or_else(|| assets.load(GltfAssetLabel::Scene(0).from_asset(car_def(into).model)));
+        spawn_your_car(&mut commands, into, scene, shown);
+    } else {
+        for (.., mut visibility) in &mut cars {
+            visibility.set_if_neq(if shown { Visibility::Inherited } else { Visibility::Hidden });
+        }
     }
-    // For everyone else in your channel of the town to see the car, or you
-    // on your feet again.
+    if yours.0 != into {
+        yours.0 = into;
+    }
+    // For everyone else in your channel of the town to see the car, which
+    // one, or you on your feet again.
     if online.is() {
+        if shown {
+            asks.write(Ask::Car(into.to_string()));
+        }
         asks.write(Ask::Drive(shown));
     }
 }
 
-/// Tells a server this device has just come online with that you are in the
-/// car, if you are: it was got into offline, or before the connection went.
-fn say_so_on_coming_online(online: Res<Online>, driving: Res<Driving>, mut was: Local<bool>, mut asks: MessageWriter<Ask>) {
+/// Tells a server this device has just come online with that it knows the
+/// cars there are, to be told which car everyone is in (`Ask::Cars`); and
+/// that you are in yours, if you are, and which: it was got into offline,
+/// or before the connection went.
+fn say_so_on_coming_online(
+    online: Res<Online>,
+    driving: Res<Driving>,
+    yours: Res<YourCar>,
+    mut was: Local<bool>,
+    mut asks: MessageWriter<Ask>,
+) {
     let now = online.is();
-    if now && !*was && driving.on() {
-        asks.write(Ask::Drive(true));
+    if now && !*was {
+        asks.write(Ask::Cars);
+        if driving.on() {
+            asks.write(Ask::Car(yours.0.to_string()));
+            asks.write(Ask::Drive(true));
+        }
     }
     *was = now;
+}
+
+/// Keeps which car each of the others in your channel is in as the server
+/// says (`Tell::Cars`), and forgets it offline. A car this app has no model
+/// of is the red sports car.
+fn hear_their_cars(mut tells: MessageReader<Tell>, online: Res<Online>, mut theirs: ResMut<TheirCars>) {
+    let mut said = None;
+    for tell in tells.read() {
+        if let Tell::Cars(drivers) = tell {
+            said = Some(drivers);
+        }
+    }
+    match said {
+        Some(drivers) => {
+            let now = drivers.iter().map(|driver| (driver.who, car_def(&driver.car).kind)).collect();
+            if theirs.0 != now {
+                theirs.0 = now;
+            }
+        }
+        None if !online.is() && !theirs.0.is_empty() => theirs.0.clear(),
+        None => {}
+    }
 }
 
 /// Whether the person `who` is in their own car, as the server has said of
@@ -715,10 +934,10 @@ fn in_their_car(everyone: &[Seated], me: Option<u64>, who: u64) -> bool {
 /// leave. Only what has changed is written.
 #[allow(clippy::type_complexity)]
 fn their_cars(
-    (online, channel): (Res<Online>, Res<Channel>),
+    (online, channel, kinds): (Res<Online>, Res<Channel>, Res<TheirCars>),
     bodies: Query<(Entity, &Member, &Transform, &Venue, Has<InCar>), With<Remote>>,
     mut cars: Query<
-        (Entity, &mut TheirCar, &Shape, &mut Transform, Option<&Children>),
+        (Entity, &mut TheirCar, &CarKind, &Shape, &mut Transform, Option<&Children>),
         (Without<Remote>, Without<MyCar>, Without<Player>),
     >,
     mut wheels: Query<(&Turns, &mut Transform), (Without<TheirCar>, Without<Remote>, Without<MyCar>, Without<Player>)>,
@@ -730,10 +949,16 @@ fn their_cars(
     }
     let me = online.me().map(|me| me.id);
     let drives = |member: &Member, venue: &Venue| *venue == Venue::Town && in_their_car(&channel.0, me, member.id);
-    for (car, mut theirs, shape, mut transform, children) in &mut cars {
-        let Some((_, _, body, ..)) = bodies.get(theirs.body).ok().filter(|(_, member, _, venue, _)| drives(member, venue)) else {
-            // Out of it, or gone: the car goes, and whoever is still here
-            // is drawn again.
+    // Which car someone is in: as the server said, or the red sports car.
+    let kind_of = |member: &Member| kinds.0.get(&member.id).copied().unwrap_or(roundtown_net::bag::CAR);
+    for (car, mut theirs, &CarKind(kind), shape, mut transform, children) in &mut cars {
+        let in_it = bodies
+            .get(theirs.body)
+            .ok()
+            .filter(|(_, member, _, venue, _)| drives(member, venue) && kind_of(member) == kind);
+        let Some((_, _, body, ..)) = in_it else {
+            // Out of it, gone, or in another car: the car goes, and whoever
+            // is still here is drawn again, or in the other car next.
             commands.entity(car).despawn();
             commands.entity(theirs.body).try_remove::<InCar>();
             continue;
@@ -760,6 +985,7 @@ fn their_cars(
         if in_car || !drives(member, venue) {
             continue;
         }
+        let kind = kind_of(member);
         commands.entity(body).try_insert(InCar);
         commands
             .spawn((
@@ -769,10 +995,11 @@ fn their_cars(
                     rolled: 0.0,
                     last: at.translation,
                 },
+                CarKind(kind),
                 Shape::default(),
                 // On the town, and drawn only there (`island::show_where_i_am`).
                 Venue::Town,
-                WorldAssetRoot(assets.load(GltfAssetLabel::Scene(0).from_asset(MODEL))),
+                WorldAssetRoot(assets.load(GltfAssetLabel::Scene(0).from_asset(car_def(kind).model))),
                 Transform::from_translation(at.translation),
                 Visibility::Hidden,
             ))
@@ -795,6 +1022,7 @@ pub(crate) fn steer(
     cars: Query<&Shape, With<MyCar>>,
     mut me: Query<(&Transform, &mut Intent), With<Player>>,
     mut driving: ResMut<Driving>,
+    yours: Res<YourCar>,
 ) {
     let Some(drive) = driving.0.as_mut() else {
         return;
@@ -807,7 +1035,8 @@ pub(crate) fn steer(
         return;
     }
     let shape = cars.single().copied().unwrap_or_default();
-    let car = tuning();
+    // The file's numbers, made faster or slower by the car's rarity.
+    let car = tuning_of(yours.0);
     let (wanted, strength, boosting, reversing) = if dialog.0 {
         (None, 0.0, false, false)
     } else {
@@ -999,12 +1228,76 @@ mod tests {
         // server.
         let car = tuning();
         let most = roundtown_net::cars::DRIVEN_TOP_SPEED;
+        // The fastest car there is, by its rarity (`car.speed`, since
+        // 2026-11-25).
         for (name, speed) in [("cruise", car.cruise), ("boost", car.boost), ("reverse", car.reverse)] {
+            let fastest = speed * car.speed.most();
             assert!(
-                speed <= most,
-                "assets/ui.ron: car.{name} is {speed} m/s, faster than the server lets a body go ({most}): \
-                 raise roundtown_net::cars::DRIVEN_TOP_SPEED with it and deploy the server"
+                fastest <= most,
+                "assets/ui.ron: car.{name} is {speed} m/s, and the fastest car's {fastest}, faster than the server lets \
+                 a body go ({most}): raise roundtown_net::cars::DRIVEN_TOP_SPEED with it and deploy the server"
             );
+        }
+        // The rarer a car, the faster it goes and the quicker it gets
+        // there (Hajun: "make rare cars be slow and slow accel, epic cars a
+        // bit faster, legendary a bit more faster, mythic more more faster,
+        // and yang even faster").
+        use roundtown_net::bag::Rarity;
+        let rarities = [Rarity::Rare, Rarity::Epic, Rarity::Legendary, Rarity::Mythic, Rarity::Transcendent];
+        for pair in rarities.windows(2) {
+            let (slower, faster) = (car.of(pair[0]), car.of(pair[1]));
+            assert!(slower.cruise < faster.cruise && slower.boost < faster.boost && slower.reverse < faster.reverse, "{pair:?}");
+            assert!(slower.accel < faster.accel && slower.boost_accel < faster.boost_accel, "{pair:?}");
+            assert_eq!((slower.brake, slower.tightest), (car.brake, car.tightest));
+        }
+        // Each car by its own: the Yang the fastest, the red sports car
+        // Mythic's.
+        assert_eq!(tuning_of("yang"), car.of(Rarity::Transcendent));
+        assert_eq!(tuning_of(roundtown_net::bag::CAR), car.of(Rarity::Mythic));
+        assert_eq!(tuning_of("gen"), car.of(Rarity::Rare));
+    }
+
+    #[test]
+    fn every_car_there_is_is_one_of_the_bag_s_with_a_model_and_a_picture() {
+        use roundtown_net::bag::{Group, THINGS};
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets");
+        let vehicles: Vec<&str> = THINGS.iter().filter(|thing| thing.group == Group::Vehicles).map(|thing| thing.kind).collect();
+        let cars: Vec<&str> = CARS.iter().map(|car| car.kind).collect();
+        assert_eq!(cars, vehicles, "every car the bag has, in its order, and no other");
+        for car in CARS {
+            assert!(root.join(car.model).is_file(), "{}: no model, {}", car.kind, car.model);
+            let picture = std::fs::read(root.join(car.picture)).unwrap_or_else(|_| panic!("{}: no picture, {}", car.kind, car.picture));
+            // A PNG, 256 by 256, as every picture in the shop is.
+            assert_eq!(&picture[1..4], b"PNG", "{}", car.picture);
+            let side = |at: usize| u32::from_be_bytes(picture[at..at + 4].try_into().unwrap());
+            assert_eq!((side(16), side(20)), (256, 256), "{}", car.picture);
+        }
+        // The red sports car is the pack's italia, and has its picture; and
+        // a car this app has no model of is drawn as it.
+        assert_eq!(car_def(roundtown_net::bag::CAR).picture, "cars/italia.png");
+        assert_eq!(car_def("a_hovercraft").kind, roundtown_net::bag::CAR);
+    }
+
+    #[test]
+    fn every_car_stands_on_four_wheels_facing_blender_s_front() {
+        // As the game reads each ([`read_my_car`]): its front along its
+        // longer side, Blender's front; four wheels, two of them ahead of
+        // the middle of the four; and its wheels a hair from its origin's
+        // height, which it stands by (`Shape::lowest`). The pack's tronco
+        // had its tyres' knobs read as eighteen more wheels until its
+        // triangles were put in another order (`blender/scale_pack_cars.py`).
+        for car in CARS {
+            let (_, low, high) = car::tests::hajuns_car(car.model);
+            assert_eq!(car::front(low, high), Vec2::NEG_Y, "{}", car.kind);
+            let wheels = car::tests::wheels_of(car.model);
+            assert_eq!(wheels.len(), 4, "{}: {wheels:?}", car.kind);
+            let (base, mid) = car::axles(wheels.iter().map(|&(low, high)| ((low + high) * 0.5).xz().dot(Vec2::NEG_Y)));
+            assert!((3.0..4.5).contains(&base), "{}: {base} m between the axles", car.kind);
+            let ahead = wheels.iter().filter(|&&(l, h)| ((l + h) * 0.5).xz().dot(Vec2::NEG_Y) > mid).count();
+            assert_eq!(ahead, 2, "{}", car.kind);
+            assert!(low.y.abs() < 0.1, "{}: its lowest {} m from its origin", car.kind, low.y);
+            // And about the red sports car's size: 5 to 7.2 m long.
+            assert!((5.0..7.2).contains(&(high.z - low.z)), "{}: {} m long", car.kind, high.z - low.z);
         }
     }
 
@@ -1167,9 +1460,10 @@ mod tests {
 
     #[test]
     fn the_model_is_what_the_shape_says_with_four_wheels_facing_blender_s_front() {
-        let (pieces, low, high) = car::tests::hajuns_car(MODEL);
+        let model = car_def(roundtown_net::bag::CAR).model;
+        let (pieces, low, high) = car::tests::hajuns_car(model);
         assert_eq!(car::front(low, high), Vec2::NEG_Y);
-        let wheels = car::tests::wheels_of(MODEL);
+        let wheels = car::tests::wheels_of(model);
         assert_eq!(wheels.len(), 4, "{wheels:?}");
         let front = Vec2::NEG_Y;
         let (base, mid) = car::axles(wheels.iter().map(|&(low, high)| ((low + high) * 0.5).xz().dot(front)));

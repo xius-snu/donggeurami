@@ -45,7 +45,7 @@ use bevy::prelude::*;
 use bevy_replicon::prelude::*;
 use bevy_replicon::shared::backend::connected_client::NetworkId;
 use bevy_replicon_renet::netcode::NetcodeServerTransport;
-use roundtown_net::{Ask, Member, Moved, Posed, Pose, Refusal, Seated, Spot, Tell, Venue, arrival_of_a_person, cars, land, profile};
+use roundtown_net::{Ask, Driver, Member, Moved, Posed, Pose, Refusal, Seated, Spot, Tell, Venue, arrival_of_a_person, bag, cars, land, profile};
 use sha2::{Digest, Sha256};
 
 use crate::accounts::{Bank, Loaded, Record};
@@ -140,6 +140,12 @@ pub(crate) struct Watching;
 #[derive(Component)]
 pub(crate) struct Posing;
 
+/// A device that has asked to be told which car each of those in its
+/// channel of the town who are in theirs is in ([`Ask::Cars`], since
+/// 2026-11-25): one whose app knows the cars there are.
+#[derive(Component)]
+pub(crate) struct Garaging;
+
 /// Who a player is: their account, in secure mode, or the hash of the
 /// device's own sixteen bytes without it. The id everyone else sees them by.
 #[derive(Component, Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -194,6 +200,9 @@ pub(crate) struct Body {
     /// In its own car, in the town, as its device last said ([`Ask::Drive`],
     /// since 2026-11-21): for the rest of its channel to see the car.
     pub driving: bool,
+    /// Which of its cars that is, as its device last said ([`Ask::Car`],
+    /// since 2026-11-25): with none said, the one everyone begins with.
+    pub car: Option<String>,
     /// Sitting or lying on something in the town, as its device last said
     /// ([`Ask::Rest`], since 2026-11-22): for the rest of its channel to
     /// see it so.
@@ -213,6 +222,7 @@ impl Body {
             town: None,
             coins: 0,
             driving: false,
+            car: None,
             pose: None,
             pace: Pace::new(now),
         }
@@ -230,6 +240,7 @@ impl Body {
             town,
             coins,
             driving: false,
+            car: None,
             pose: None,
             pace: Pace::new(now),
         }
@@ -598,13 +609,15 @@ fn hear(
             }
             // Into its own car, or out of it: in the town alone, where the
             // car is to be had, and the rest of its channel is told. Into
-            // it only if it owns one (`bag`, since 2026-11-21), which
-            // everyone does who has not sold theirs.
+            // it only if it owns that car (`bag`, since 2026-11-21): the one
+            // it said ([`Ask::Car`]), or the one everyone begins with, which
+            // everyone has who has not sold it.
             (Ask::Drive(on), Some(&Plays(body))) => {
                 let Ok((mut body_of, ..)) = bodies.get_mut(body) else {
                     continue;
                 };
-                if *on && bags.get(body).is_ok_and(|holds| !holds.bag.has_car()) {
+                let car = body_of.car.clone().unwrap_or_else(|| bag::CAR.to_string());
+                if *on && bags.get(body).is_ok_and(|holds| holds.bag.count(&car) == 0) {
                     continue;
                 }
                 if let Room::Town(channel) = body_of.room
@@ -641,6 +654,37 @@ fn hear(
                     towns.stir(channel);
                 }
             }
+            // An app that knows the cars there are: told from here on which
+            // car each driver in its channel is in ([`tell_channels`]), and
+            // at once if it is in a channel already.
+            (Ask::Cars, plays) => {
+                commands.entity(client).insert(Garaging);
+                if let Some(&Plays(body)) = plays
+                    && let Ok((body_of, ..)) = bodies.get(body)
+                    && let Room::Town(channel) = body_of.room
+                {
+                    towns.stir(channel);
+                }
+            }
+            // Which car it is in, or is getting into: a car there is, and
+            // the rest of its channel is told if it is in it now. Whether
+            // it owns it is asked as it gets in ([`Ask::Drive`]).
+            (Ask::Car(car), Some(&Plays(body))) => {
+                let Ok((mut body_of, ..)) = bodies.get_mut(body) else {
+                    continue;
+                };
+                if bag::thing(car).is_none_or(|thing| thing.group != bag::Group::Vehicles) {
+                    continue;
+                }
+                if body_of.car.as_deref() != Some(car.as_str()) {
+                    body_of.car = Some(car.clone());
+                    if body_of.driving
+                        && let Room::Town(channel) = body_of.room
+                    {
+                        towns.stir(channel);
+                    }
+                }
+            }
             _ => {}
         }
     }
@@ -654,13 +698,17 @@ fn hear(
 /// 2026-11-23: all 48, those away in a game and those nobody here has
 /// among them, by the name each account goes by). And each that asked that
 /// too ([`Posing`]), who in it sits or lies on something
-/// ([`Tell::Resting`], [`resting_in`]).
+/// ([`Tell::Resting`], [`resting_in`]); and each that asked that
+/// ([`Garaging`], since 2026-11-25), which car each driver is in
+/// ([`Tell::Cars`], [`cars_in`]).
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn tell_channels(
     mut towns: ResMut<Towns>,
     bodies: Query<(&Body, &Member)>,
     accounts: Query<&Account>,
     watching: Query<(), With<Watching>>,
     posing: Query<(), With<Posing>>,
+    garaging: Query<(), With<Garaging>>,
     mut tells: MessageWriter<ToClients<Tell>>,
 ) {
     // Looked at before it is taken: nothing is written on a tick nothing
@@ -672,6 +720,7 @@ pub(crate) fn tell_channels(
         let seated = towns.seated(channel);
         let (everyone, devices) = channel_of(&seated, |body| bodies.get(body).ok());
         let resting = resting_in(&seated, |body| bodies.get(body).ok());
+        let cars = cars_in(&seated, |body| bodies.get(body).ok());
         let named = |body: Entity| accounts.get(body).ok().map(|account| (account.0.name.clone(), account.0.look.clone()));
         let deeds = towns.deeds(channel, named);
         for device in devices {
@@ -682,8 +731,27 @@ pub(crate) fn tell_channels(
             if posing.contains(device) {
                 tell(&mut tells, device, Tell::Resting(resting.clone()));
             }
+            if garaging.contains(device) {
+                tell(&mut tells, device, Tell::Cars(cars.clone()));
+            }
         }
     }
+}
+
+/// Everyone seated in a channel who is in their own car, and which, as
+/// they are told of ([`Driver`]), given each taken seat and the body in it
+/// and what is known of a body: the car each said, or the one everyone
+/// begins with.
+fn cars_in<'a>(seated: &[(u8, Entity)], known: impl Fn(Entity) -> Option<(&'a Body, &'a Member)>) -> Vec<Driver> {
+    seated
+        .iter()
+        .filter_map(|&(_, body)| known(body))
+        .filter(|(body, _)| body.driving)
+        .map(|(body, member)| Driver {
+            who: member.id,
+            car: body.car.clone().unwrap_or_else(|| bag::CAR.to_string()),
+        })
+        .collect()
 }
 
 /// Everyone seated in a channel who sits or lies on something, as they are
@@ -1429,6 +1497,44 @@ mod tests {
         assert_eq!(resting, [Posed { who: 7, pose: Pose::Lie }, Posed { who: 9, pose: Pose::Sit }]);
         // Someone the server puts anywhere is on their feet.
         assert_eq!(Body::person(entity(11), Who(7), Room::Town(0), 0, Some(0), 0, 0.0).pose, None);
+    }
+
+    #[test]
+    fn a_channel_is_told_which_car_each_driver_is_in() {
+        let entity = |n: u32| Entity::from_raw_u32(n).unwrap();
+        let member = |id: u64| Member {
+            id,
+            name: format!("Person {id}"),
+            look: "boy".into(),
+            ai: false,
+        };
+        let body = |client: u32, who: u64, driving: bool, car: Option<&str>| {
+            let mut body = Body::person(entity(client), Who(who), Room::Town(0), 0, Some(0), 0, 0.0);
+            body.driving = driving;
+            body.car = car.map(str::to_string);
+            body
+        };
+        let people = [
+            // In the car it said; in a car, having said none (an app from
+            // before); out of the one it said; and on foot.
+            (entity(1), body(11, 7, true, Some("yang")), member(7)),
+            (entity(2), body(12, 8, true, None), member(8)),
+            (entity(3), body(13, 9, false, Some("van")), member(9)),
+            (entity(4), body(14, 10, false, None), member(10)),
+        ];
+        let known = |body: Entity| {
+            people
+                .iter()
+                .find(|(entity, ..)| *entity == body)
+                .map(|(_, body, member)| (body, member))
+        };
+        let seated = [(0, entity(1)), (1, entity(2)), (2, entity(3)), (3, entity(4)), (4, entity(99))];
+        assert_eq!(
+            cars_in(&seated, known),
+            [Driver { who: 7, car: "yang".into() }, Driver { who: 8, car: bag::CAR.into() }]
+        );
+        // Someone the server makes says no car until their device does.
+        assert_eq!(Body::person(entity(11), Who(7), Room::Town(0), 0, Some(0), 0, 0.0).car, None);
     }
 
     /// A bare world with the town in it, to seat people in and gather

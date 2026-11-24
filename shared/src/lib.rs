@@ -4789,20 +4789,25 @@ pub mod chat {
 /// in the lobby to a inventory/shop panel ... the first tab is a inventory
 /// tab and the second tab is the shop tab").
 ///
-/// **Things** ([`THINGS`]) are what there is to own: every piece House
-/// Builder's shop sells, by its name there (the game's `build::PIECES`), and
-/// the car anyone drives. Each is of a [`Group`], which the panel sorts them
-/// by, and of a [`Rarity`], which is the colour its name is written in; and
-/// each has its price, which for now is its rarity's (Hajun: "rarity is
-/// tied to the color, but is not tied to the price. but for now, set the
-/// price for each rarity items to this"). Sold back, a thing fetches half of
-/// it ("sell price should be 50% of buy price").
+/// **Things** ([`THINGS`]) are what there is to own: every piece the game
+/// stands on a plot (the game's `build::PIECES`: House Builder's nineteen,
+/// and since 2026-11-25 Hajun's cabinet, bathtub and end table, 56
+/// downloaded things and seventeen more houses), by its name there, and
+/// the cars anyone drives, 23 since 2026-11-25. Each is of a [`Group`],
+/// which the panel sorts them by, and of a [`Rarity`], which is the colour
+/// its name is written in; and each has its price, which for now is its
+/// rarity's (Hajun: "rarity is tied to the color, but is not tied to the
+/// price. but for now, set the price for each rarity items to this"), in
+/// coins, or for those his list marks "(gem)" in gems ([`Money`]). Sold
+/// back, a thing fetches half of it ("sell price should be 50% of buy
+/// price"), in what it is sold for.
 ///
 /// **A bag** ([`Bag`]) is one person's: their gems, how many of each thing
 /// they own, and which of those stand on their plot and where. Everyone
 /// begins with ten gems, one car and one street lamp ([`Bag::new`]; Hajun:
 /// "make the default gem count to be 10 ... make every player own 1 car and
-/// 1 street lamp by default"). Nothing earns or spends a gem yet.
+/// 1 street lamp by default"). Nothing earns a gem yet; a thing sold for
+/// gems spends them.
 ///
 /// **A thing that stands on the plot is out of the bag** until it is taken
 /// back ([`Bag::free`]): it cannot be sold, nor stood there twice. Where it
@@ -4821,7 +4826,9 @@ pub mod bag {
 
     /// How rare a thing is, the commonest first: the colour its name is
     /// written in (the game's `colours.bag`), and for now what it costs
-    /// ([`Rarity::price`]).
+    /// ([`Rarity::price`], or in gems [`Rarity::gems`]). Transcendent, over
+    /// Mythic, since 2026-11-25 (Hajun's list: the ten-floor houses and the
+    /// Yang, "i think yang car should be highest rarity").
     #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
     pub enum Rarity {
         Common,
@@ -4830,21 +4837,23 @@ pub mod bag {
         Epic,
         Legendary,
         Mythic,
+        Transcendent,
     }
 
     impl Rarity {
-        pub const ALL: [Rarity; 6] = [
+        pub const ALL: [Rarity; 7] = [
             Rarity::Common,
             Rarity::Uncommon,
             Rarity::Rare,
             Rarity::Epic,
             Rarity::Legendary,
             Rarity::Mythic,
+            Rarity::Transcendent,
         ];
 
         /// What a thing of this rarity costs for now, in coins (Hajun's
-        /// numbers, 2026-11-21). A thing's price is its own ([`Thing::price`])
-        /// and only begins as this.
+        /// numbers, 2026-11-21, and Transcendent's 2026-11-25). A thing's
+        /// price is its own ([`Thing::price`]) and only begins as this.
         pub const fn price(self) -> u32 {
             match self {
                 Rarity::Common => 50,
@@ -4853,8 +4862,33 @@ pub mod bag {
                 Rarity::Epic => 1_000,
                 Rarity::Legendary => 2_500,
                 Rarity::Mythic => 15_000,
+                Rarity::Transcendent => 100_000,
             }
         }
+
+        /// What a thing of this rarity costs for now if it is sold for
+        /// gems ([`Money::Gems`]; Hajun's list, 2026-11-25: "$1,000 or 50
+        /// gem" for Epic, and so on).
+        pub const fn gems(self) -> u32 {
+            match self {
+                Rarity::Common => 3,
+                Rarity::Uncommon => 8,
+                Rarity::Rare => 20,
+                Rarity::Epic => 50,
+                Rarity::Legendary => 125,
+                Rarity::Mythic => 750,
+                Rarity::Transcendent => 5_000,
+            }
+        }
+    }
+
+    /// What a thing is sold for: coins, as most things are, or gems, as
+    /// those marked "(gem)" in Hajun's list are (since 2026-11-25: the
+    /// houses of five, seven and nine floors).
+    #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+    pub enum Money {
+        Coins,
+        Gems,
     }
 
     /// What kind of thing something is: what the panel's list down its left
@@ -4880,12 +4914,14 @@ pub mod bag {
         pub kind: &'static str,
         pub group: Group,
         pub rarity: Rarity,
-        /// What the shop sells one for, in coins.
+        /// What the shop sells one for: so many of `money`.
         pub price: u32,
+        pub money: Money,
     }
 
     impl Thing {
-        /// What the shop gives for one sold back: half its price.
+        /// What the shop gives for one sold back: half its price, in the
+        /// money it is sold for.
         pub const fn resale(&self) -> u32 {
             self.price / 2
         }
@@ -4893,6 +4929,16 @@ pub mod bag {
         /// Whether it is something that stands on a plot.
         pub const fn stands(&self) -> bool {
             matches!(self.group, Group::Buildings)
+        }
+
+        /// What one is worth in coins, whatever it is sold for: its price,
+        /// or for one sold for gems what its rarity costs in coins. What a
+        /// plot is ranked by (`land::worth`).
+        pub const fn worth(&self) -> u32 {
+            match self.money {
+                Money::Coins => self.price,
+                Money::Gems => self.rarity.price(),
+            }
         }
     }
 
@@ -4902,6 +4948,16 @@ pub mod bag {
             group: Group::Buildings,
             rarity,
             price: rarity.price(),
+            money: Money::Coins,
+        }
+    }
+
+    /// A building sold for gems, at its rarity's price in them.
+    const fn gem_building(kind: &'static str, rarity: Rarity) -> Thing {
+        Thing {
+            price: rarity.gems(),
+            money: Money::Gems,
+            ..building(kind, rarity)
         }
     }
 
@@ -4911,6 +4967,7 @@ pub mod bag {
             group: Group::Vehicles,
             rarity,
             price: rarity.price(),
+            money: Money::Coins,
         }
     }
 
@@ -4920,8 +4977,10 @@ pub mod bag {
     pub const CAR: &str = "red_sports_car";
 
     /// Everything there is to own, in the order Hajun listed it with its
-    /// rarity (`assets/itemrarities.txt`, 2026-11-21), which is the order
-    /// the shop shows it in.
+    /// rarity (`assets/itemrarities.txt`: 2026-11-21, and as he had it on
+    /// 2026-11-25, with his new furniture, the 56 downloaded things, the
+    /// houses of three to ten floors, the Wide Roof House and the pack's
+    /// cars), which is the order the shop shows it in.
     pub const THINGS: &[Thing] = &[
         building(LAMP, Rarity::Legendary),
         building("singlebed", Rarity::Uncommon),
@@ -4931,11 +4990,9 @@ pub mod bag {
         building("cafedeskedge", Rarity::Common),
         building("cafedeskcorner", Rarity::Common),
         building("softcouch", Rarity::Rare),
-        building("square_house", Rarity::Common),
-        // The Flat House, the Two Floor House and the Roof Terrace House.
-        building("square_house_roofless", Rarity::Epic),
-        building("square_house_two_floor", Rarity::Uncommon),
-        building("square_house_roofless_two_floor", Rarity::Uncommon),
+        building("end_table", Rarity::Common),
+        building("cabinet", Rarity::Uncommon),
+        building("bathtub", Rarity::Rare),
         building("classic_door", Rarity::Common),
         building("classic_door_with_window", Rarity::Common),
         building("classic_double_door", Rarity::Common),
@@ -4943,7 +5000,114 @@ pub mod bag {
         building("glass_double_door", Rarity::Common),
         building("square_window", Rarity::Common),
         building("wide_window", Rarity::Common),
+        // The 56 things downloaded on 2026-11-24 (the game's
+        // `mybuilds/newones`), the commonest first.
+        building("alarm_clock", Rarity::Common),
+        building("chair", Rarity::Common),
+        building("closed_umbrella", Rarity::Common),
+        building("computer_mouse", Rarity::Common),
+        building("cup_of_tea", Rarity::Common),
+        building("dumbbell", Rarity::Common),
+        building("empty_box", Rarity::Common),
+        building("frying_pan", Rarity::Common),
+        building("hair_dryer", Rarity::Common),
+        building("hamburger", Rarity::Common),
+        building("hand_rake", Rarity::Common),
+        building("mug_with_office_tool", Rarity::Common),
+        building("screwdriver", Rarity::Common),
+        building("stapler", Rarity::Common),
+        building("stool", Rarity::Common),
+        building("table", Rarity::Common),
+        building("tissue_box", Rarity::Common),
+        building("trash_bin", Rarity::Common),
+        building("watering_can", Rarity::Common),
+        building("wine_glass", Rarity::Common),
+        building("armchair", Rarity::Uncommon),
+        building("bathroom_sink", Rarity::Uncommon),
+        building("coat_rack", Rarity::Uncommon),
+        building("desk", Rarity::Uncommon),
+        building("desk_fan", Rarity::Uncommon),
+        building("doll", Rarity::Uncommon),
+        building("dresser", Rarity::Uncommon),
+        building("flowers", Rarity::Uncommon),
+        building("fruit_bowl", Rarity::Uncommon),
+        building("globe", Rarity::Uncommon),
+        building("headphones", Rarity::Uncommon),
+        building("lamp_with_shade", Rarity::Uncommon),
+        building("mailbox", Rarity::Uncommon),
+        building("monitor", Rarity::Uncommon),
+        building("painting", Rarity::Uncommon),
+        building("piggy_bank", Rarity::Uncommon),
+        building("potted_plant", Rarity::Uncommon),
+        building("present", Rarity::Uncommon),
+        building("printer", Rarity::Uncommon),
+        building("propane_tank", Rarity::Uncommon),
+        building("rubber_duck", Rarity::Uncommon),
+        building("table_large_circular", Rarity::Uncommon),
+        building("toilet", Rarity::Uncommon),
+        building("barbecue", Rarity::Rare),
+        building("bed", Rarity::Rare),
+        building("ceiling_fan", Rarity::Rare),
+        building("computer", Rarity::Rare),
+        building("couch", Rarity::Rare),
+        building("refrigerator", Rarity::Rare),
+        building("rocking_chair", Rarity::Rare),
+        building("stove", Rarity::Rare),
+        building("treadmill", Rarity::Rare),
+        building("grandfathers_clock", Rarity::Epic),
+        building("safe", Rarity::Epic),
+        building("telescope", Rarity::Epic),
+        building("chandelier", Rarity::Legendary),
+        // The houses: the Square House, the Flat House (Epic until
+        // 2026-11-25, when his list had it Common) and the Wide Roof
+        // House; and the Square House and the Roof Terrace House of two
+        // floors to ten, those of five, seven and nine sold for gems.
+        building("square_house", Rarity::Common),
+        building("square_house_roofless", Rarity::Common),
+        building("wide_roof_house", Rarity::Common),
+        building("square_house_two_floor", Rarity::Uncommon),
+        building("square_house_three_floor", Rarity::Rare),
+        building("square_house_four_floor", Rarity::Epic),
+        gem_building("square_house_five_floor", Rarity::Epic),
+        building("square_house_six_floor", Rarity::Legendary),
+        gem_building("square_house_seven_floor", Rarity::Legendary),
+        building("square_house_eight_floor", Rarity::Mythic),
+        gem_building("square_house_nine_floor", Rarity::Mythic),
+        building("square_house_ten_floor", Rarity::Transcendent),
+        building("square_house_roofless_two_floor", Rarity::Uncommon),
+        building("square_house_roofless_three_floor", Rarity::Rare),
+        building("square_house_roofless_four_floor", Rarity::Epic),
+        gem_building("square_house_roofless_five_floor", Rarity::Epic),
+        building("square_house_roofless_six_floor", Rarity::Legendary),
+        gem_building("square_house_roofless_seven_floor", Rarity::Legendary),
+        building("square_house_roofless_eight_floor", Rarity::Mythic),
+        gem_building("square_house_roofless_nine_floor", Rarity::Mythic),
+        building("square_house_roofless_ten_floor", Rarity::Transcendent),
+        // The car everyone begins with (the pack's `italia`), and the
+        // pack's other 22 (the game's `assets/cars`).
         vehicle(CAR, Rarity::Mythic),
+        vehicle("gen", Rarity::Rare),
+        vehicle("sedan", Rarity::Rare),
+        vehicle("van", Rarity::Rare),
+        vehicle("coupe", Rarity::Rare),
+        vehicle("suv", Rarity::Rare),
+        vehicle("jeep", Rarity::Epic),
+        vehicle("mobil", Rarity::Epic),
+        vehicle("police", Rarity::Epic),
+        vehicle("rally", Rarity::Epic),
+        vehicle("tronco", Rarity::Epic),
+        vehicle("armor", Rarity::Legendary),
+        vehicle("cilo", Rarity::Legendary),
+        vehicle("kamaro", Rarity::Legendary),
+        vehicle("ponche", Rarity::Legendary),
+        vehicle("ghini", Rarity::Legendary),
+        vehicle("lamb", Rarity::Legendary),
+        vehicle("poly", Rarity::Legendary),
+        vehicle("sportrs", Rarity::Legendary),
+        vehicle("chiron", Rarity::Mythic),
+        vehicle("fenyr", Rarity::Mythic),
+        vehicle("imola", Rarity::Mythic),
+        vehicle("yang", Rarity::Transcendent),
     ];
 
     /// The thing that goes by `kind`, if there is one.
@@ -4960,10 +5124,12 @@ pub mod bag {
     /// How far from the middle of its plot a thing's own middle may stand,
     /// across the ground, in metres: half a plot, 24 m square, and a little
     /// (the game keeps the whole of it inside the plot; this only keeps
-    /// what is said sane); and how far under and over the plot's ground.
+    /// what is said sane); and how far under and over the plot's ground:
+    /// over the roof terrace of a house of ten floors, 45 m up (since
+    /// 2026-11-25; 40 m until then).
     pub const REACH: f32 = 12.5;
     pub const DEEP: f32 = 2.0;
-    pub const HIGH: f32 = 40.0;
+    pub const HIGH: f32 = 60.0;
 
     /// Something standing on its owner's plot: `id` is its owner's number
     /// for it, the same for as long as it stands; `kind` what it is
@@ -4987,6 +5153,8 @@ pub mod bag {
         Unknown,
         /// Not the coins for it.
         Coins,
+        /// Not the gems for it, sold for gems.
+        Gems,
         /// As many of it as anyone may own, or as many things as may stand
         /// on a plot.
         Full,
@@ -5158,9 +5326,17 @@ pub mod bag {
             self.count(kind).saturating_sub(self.standing(kind))
         }
 
-        /// Whether the car is owned, to drive.
+        /// Whether a car is owned, any of them, to drive.
         pub fn has_car(&self) -> bool {
-            self.count(CAR) > 0
+            self.cars().next().is_some()
+        }
+
+        /// The cars owned, in the order of the things there are.
+        pub fn cars(&self) -> impl Iterator<Item = &'static str> + '_ {
+            THINGS
+                .iter()
+                .filter(|thing| thing.group == Group::Vehicles && self.count(thing.kind) > 0)
+                .map(|thing| thing.kind)
         }
 
         fn set(&mut self, kind: &str, count: u16) {
@@ -5175,27 +5351,43 @@ pub mod bag {
         }
 
         /// Buys one of `kind` with `coins` in hand: what is left of them.
+        /// One sold for gems is paid for out of the bag's own gems, and
+        /// leaves the coins as they were.
         pub fn buy(&mut self, kind: &str, coins: u32) -> Result<u32, No> {
             let thing = thing(kind).ok_or(No::Unknown)?;
             let count = self.count(kind);
             if count >= MOST_OF_A_KIND {
                 return Err(No::Full);
             }
-            let left = coins.checked_sub(thing.price).ok_or(No::Coins)?;
+            let left = match thing.money {
+                Money::Coins => coins.checked_sub(thing.price).ok_or(No::Coins)?,
+                Money::Gems => {
+                    self.gems = self.gems.checked_sub(thing.price).ok_or(No::Gems)?;
+                    coins
+                }
+            };
             self.set(kind, count + 1);
             Ok(left)
         }
 
         /// Sells one of `kind` out of the bag, with `coins` in hand: what
         /// there is of them after. One that stands on the plot is not in
-        /// the bag to be sold.
+        /// the bag to be sold. One sold for gems fetches gems, half its
+        /// price of them, into the bag (mine, 2026-11-25: what it was
+        /// bought with).
         pub fn sell(&mut self, kind: &str, coins: u32) -> Result<u32, No> {
             let thing = thing(kind).ok_or(No::Unknown)?;
             if self.free(kind) == 0 {
                 return Err(No::None);
             }
             self.set(kind, self.count(kind) - 1);
-            Ok(coins.saturating_add(thing.resale()))
+            match thing.money {
+                Money::Coins => Ok(coins.saturating_add(thing.resale())),
+                Money::Gems => {
+                    self.gems = self.gems.saturating_add(thing.resale());
+                    Ok(coins)
+                }
+            }
         }
 
         /// Stands one of `kind` on the plot at `at`, under the number `id`;
@@ -5468,9 +5660,31 @@ pub enum Ask {
     Resting,
     /// I have sat or lain down on something in the town, like this
     /// ([`Pose`]), or am up again (`None`): for everyone else in my
-    /// channel to see me so, where my body is. Last, since 2026-11-22, as
+    /// channel to see me so, where my body is. Since 2026-11-22, as
     /// [`Ask::Resting`] is.
     Rest(Option<Pose>),
+    /// Tell me which car each of those in my channel of the town who are in
+    /// theirs is in ([`Tell::Cars`]), now and whenever that changes. Said
+    /// once, on coming online, by an app that knows the cars there are
+    /// (since 2026-11-25, when the shop came to sell 22 more). With no new
+    /// protocol, as [`Ask::Channel`] is: an app from before never says it,
+    /// and is never told.
+    Cars,
+    /// The car I am in, or am getting into: one of mine, by its kind
+    /// ([`bag::THINGS`], a vehicle). Said before [`Ask::Drive`]`(true)`, and
+    /// as I come online in it. Last, since 2026-11-25. Until it is said, and
+    /// from an app from before, which never says it, the car is the one
+    /// everyone begins with ([`bag::CAR`]).
+    Car(String),
+}
+
+/// Someone in a channel of the town who is in their own car, as
+/// [`Tell::Cars`] has them: who, by their [`Member::id`], and which car, by
+/// its kind ([`bag::THINGS`]).
+#[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug)]
+pub struct Driver {
+    pub who: u64,
+    pub car: String,
 }
 
 /// How someone rests on a chair, a sofa or a bed in the town (the game's
@@ -5601,6 +5815,12 @@ pub enum Tell {
     /// anyone's does ([`bag::Tell::Theirs`], by the deed's `who`), after
     /// this. Only to an app that asked of its channel ([`Ask::Channel`]).
     Plots(Vec<land::Deed>),
+    /// Which car everyone in your channel of the town who is in theirs is
+    /// in ([`Driver`]), you among them: all of them, as you come into the
+    /// channel and whenever any of it changes. Whoever is in theirs and not
+    /// here is in the one everyone begins with. Only to an app that asked
+    /// ([`Ask::Cars`]). Last, since 2026-11-25, with no new protocol.
+    Cars(Vec<Driver>),
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
@@ -8007,36 +8227,74 @@ mod tests {
 
     #[test]
     fn a_thing_costs_what_its_rarity_does_for_now_and_sells_back_for_half() {
-        use bag::{Group, Rarity, THINGS, thing};
-        // Hajun's numbers, 2026-11-21.
-        let prices = [50, 150, 400, 1_000, 2_500, 15_000];
-        for (rarity, price) in Rarity::ALL.into_iter().zip(prices) {
-            assert_eq!(rarity.price(), price, "{rarity:?}");
+        use bag::{Group, Money, Rarity, THINGS, thing};
+        // Hajun's numbers, 2026-11-21, and Transcendent's and those in gems
+        // with his list of 2026-11-25.
+        let prices = [50, 150, 400, 1_000, 2_500, 15_000, 100_000];
+        let gems = [3, 8, 20, 50, 125, 750, 5_000];
+        for ((rarity, price), gem) in Rarity::ALL.into_iter().zip(prices).zip(gems) {
+            assert_eq!((rarity.price(), rarity.gems()), (price, gem), "{rarity:?}");
         }
         for thing in THINGS {
-            assert_eq!(thing.price, thing.rarity.price(), "{}", thing.kind);
-            assert_eq!(thing.resale() * 2, thing.price, "{}", thing.kind);
+            let own = match thing.money {
+                Money::Coins => thing.rarity.price(),
+                Money::Gems => thing.rarity.gems(),
+            };
+            assert_eq!(thing.price, own, "{}", thing.kind);
+            assert_eq!(thing.resale(), thing.price / 2, "{}", thing.kind);
+            assert_eq!(thing.worth(), thing.rarity.price(), "{}", thing.kind);
             assert_eq!(bag::thing(thing.kind), Some(thing));
             assert_eq!(THINGS.iter().filter(|other| other.kind == thing.kind).count(), 1, "{} twice", thing.kind);
+            // A kind is said over the wire and kept: plain, short, lower case.
+            assert!(thing.kind.len() <= 40 && thing.kind.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_'), "{}", thing.kind);
         }
-        // As their file has them (`assets/itemrarities.txt`).
-        let rare = |kind: &str| thing(kind).map(|thing| thing.rarity);
-        assert_eq!(rare("streetlamp"), Some(Rarity::Legendary));
-        assert_eq!(rare("singlebed"), Some(Rarity::Uncommon));
-        assert_eq!(rare("doublebed"), Some(Rarity::Rare));
-        assert_eq!(rare("softcouch"), Some(Rarity::Rare));
-        assert_eq!(rare("square_house"), Some(Rarity::Common));
-        assert_eq!(rare("square_house_roofless"), Some(Rarity::Epic));
-        assert_eq!(rare("square_house_two_floor"), Some(Rarity::Uncommon));
-        assert_eq!(rare("square_house_roofless_two_floor"), Some(Rarity::Uncommon));
-        assert_eq!(rare("red_sports_car"), Some(Rarity::Mythic));
-        let common = THINGS.iter().filter(|thing| thing.rarity == Rarity::Common).count();
-        assert_eq!((THINGS.len(), common), (20, 12));
-        // Nineteen buildings, which stand on a plot, and one car, which
-        // does not.
-        assert_eq!(THINGS.iter().filter(|thing| thing.group == Group::Buildings && thing.stands()).count(), 19);
-        assert_eq!(THINGS.iter().filter(|thing| thing.group == Group::Vehicles && !thing.stands()).count(), 1);
+        // As their file has them (`assets/itemrarities.txt`; the game's
+        // `bag::panel` holds every line of it to these).
+        let rare = |kind: &str| thing(kind).map(|thing| (thing.rarity, thing.money));
+        assert_eq!(rare("streetlamp"), Some((Rarity::Legendary, Money::Coins)));
+        assert_eq!(rare("singlebed"), Some((Rarity::Uncommon, Money::Coins)));
+        assert_eq!(rare("square_house_roofless"), Some((Rarity::Common, Money::Coins)));
+        assert_eq!(rare("square_house_five_floor"), Some((Rarity::Epic, Money::Gems)));
+        assert_eq!(rare("square_house_roofless_nine_floor"), Some((Rarity::Mythic, Money::Gems)));
+        assert_eq!(rare("square_house_ten_floor"), Some((Rarity::Transcendent, Money::Coins)));
+        assert_eq!(rare("chandelier"), Some((Rarity::Legendary, Money::Coins)));
+        assert_eq!(rare("red_sports_car"), Some((Rarity::Mythic, Money::Coins)));
+        assert_eq!(rare("gen"), Some((Rarity::Rare, Money::Coins)));
+        assert_eq!(rare("yang"), Some((Rarity::Transcendent, Money::Coins)));
+        let sold_for_gems = THINGS.iter().filter(|thing| thing.money == Money::Gems).count();
+        assert_eq!((THINGS.len(), sold_for_gems), (118, 6));
+        // 95 buildings, which stand on a plot, and 23 cars, which do not.
+        assert_eq!(THINGS.iter().filter(|thing| thing.group == Group::Buildings && thing.stands()).count(), 95);
+        assert_eq!(THINGS.iter().filter(|thing| thing.group == Group::Vehicles && !thing.stands()).count(), 23);
         assert_eq!(thing("a_castle"), None);
+    }
+
+    #[test]
+    fn a_thing_sold_for_gems_is_paid_for_in_gems_and_sells_back_for_half_of_them() {
+        use bag::{Bag, No};
+        let house = "square_house_five_floor";
+        // Ten gems, as everyone has: not enough for 50, whatever the coins.
+        let mut bag = Bag::new();
+        assert_eq!(bag.buy(house, 1_000_000), Err(No::Gems));
+        assert_eq!((bag.gems, bag.count(house)), (10, 0));
+        // With 60: bought for 50 of them, and the coins left as they were.
+        bag.gems = 60;
+        assert_eq!(bag.buy(house, 7), Ok(7));
+        assert_eq!((bag.gems, bag.count(house)), (10, 1));
+        // Sold back for 25 gems; the coins as they were again.
+        assert_eq!(bag.sell(house, 7), Ok(7));
+        assert_eq!((bag.gems, bag.count(house)), (35, 0));
+        // Half of 125 is 62.
+        let mut bag = Bag { gems: 125, ..Bag::new() };
+        bag.buy("square_house_seven_floor", 0).unwrap();
+        assert_eq!(bag.gems, 0);
+        assert_eq!(bag.sell("square_house_seven_floor", 0), Ok(0));
+        assert_eq!(bag.gems, 62);
+        // And what is sold for coins spends no gems.
+        let mut bag = Bag::new();
+        assert_eq!(bag.buy("yang", 100_000), Ok(0));
+        assert_eq!(bag.gems, 10);
+        assert_eq!(bag.cars().collect::<Vec<_>>(), [bag::CAR, "yang"]);
     }
 
     #[test]
@@ -8261,6 +8519,28 @@ mod tests {
         // A whole channel of sixteen resting is a few bytes each.
         let all: Vec<Posed> = (0..16).map(|n| Posed { who: u64::MAX - n, pose: Pose::Lounge }).collect();
         assert!(postcard::to_allocvec(&Tell::Resting(all)).unwrap().len() < 200);
+    }
+
+    #[test]
+    fn which_car_goes_over_the_wire_after_everything_an_app_from_before_knows() {
+        // Appended after the last of those, which was who rests: nothing
+        // an app from before sends or is sent reads as anything else.
+        assert_eq!(postcard::to_allocvec(&Ask::Rest(None)).unwrap()[0], 30);
+        assert_eq!(postcard::to_allocvec(&Ask::Cars).unwrap(), [31]);
+        let bytes = postcard::to_allocvec(&Ask::Car("yang".into())).unwrap();
+        assert_eq!(bytes[0], 32);
+        assert!(matches!(postcard::from_bytes(&bytes).unwrap(), Ask::Car(car) if car == "yang"));
+        let plots = postcard::to_allocvec(&Tell::Plots(Vec::new())).unwrap()[0];
+        let cars = Tell::Cars(vec![Driver { who: 7, car: "yang".into() }, Driver { who: u64::MAX, car: bag::CAR.into() }]);
+        let bytes = postcard::to_allocvec(&cars).unwrap();
+        assert_eq!(bytes[0], plots + 1, "after whose the plots are, the last an app from before is told");
+        let Tell::Cars(back) = postcard::from_bytes(&bytes).unwrap() else {
+            panic!("which car came back as something else");
+        };
+        assert_eq!(back, [Driver { who: 7, car: "yang".into() }, Driver { who: u64::MAX, car: bag::CAR.into() }]);
+        // A whole channel of 48 in their cars is under two kilobytes.
+        let all: Vec<Driver> = (0..48).map(|n| Driver { who: u64::MAX - n, car: "square_house_roofless_nine".into() }).collect();
+        assert!(postcard::to_allocvec(&Tell::Cars(all)).unwrap().len() < 2_000);
     }
 
     #[test]

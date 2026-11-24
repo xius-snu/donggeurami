@@ -1288,8 +1288,9 @@ fn turn_round(off: f32, strength: f32) -> f32 {
 /// goes without turning the camera yourself as it goes round. And a double
 /// tap on nothing swings it straight round behind you as you stood at the
 /// tap ([`CameraAssist::snap_behind`]), tipped as it is when the app opens,
-/// or looking straight ahead from your eyes. A finger on the camera stops
-/// any of them at once (`read_touch_controls`).
+/// or looking straight ahead from your eyes; but not while you change what
+/// stands on your plot (edit mode, `customize`: since 2026-11-24). A finger
+/// on the camera stops any of them at once (`read_touch_controls`).
 ///
 /// The stick and the double tap are a phone's alone: on desktop the keys
 /// walk you and the mouse turns the camera, and neither brings it round.
@@ -1936,6 +1937,7 @@ fn read_touch_controls(
     presses: hud::Presses,
     mut pointer: ResMut<editor::EditPointer>,
     buttons: Res<hud::Layout>,
+    customize: Res<customize::Customize>,
 ) {
     controls.jump_just_pressed = false;
     pointer.clear_edges();
@@ -1963,11 +1965,19 @@ fn read_touch_controls(
     {
         controls.look_id = None;
         // A tap on nothing, and the second of two: the camera swings round
-        // behind you, as you stand at this moment.
+        // behind you, as you stand at this moment. **Not in edit mode**
+        // (`customize`; Hajun, 2026-11-24: "while ur in house edit mode,
+        // doubletapping shouldnt do the camera auto front facing thingy"):
+        // changing your plot is taps, on a thing and then away from it, on
+        // one part to paint and then the next, and two of them close
+        // together swung the camera off what you were at. The taps are
+        // counted all the same, so that the first tap after edit mode is a
+        // first tap.
         let near = window.width().min(window.height()) * DOUBLE_TAP_NEAR;
         if let Some((down, at)) = controls.look_tap.take()
             && now - down <= TAP_SECS
             && controls.taps.tap(down, now, at, near)
+            && !customize.on()
             && let Ok(body) = me.single()
         {
             assist.snap_behind(body);

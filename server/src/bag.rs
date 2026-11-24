@@ -273,9 +273,12 @@ fn act(
             let deal = if buying { after.buy(kind, body.coins) } else { after.sell(kind, body.coins) };
             match deal {
                 Ok(left) if bank.kept() => {
+                    // In coins, or for a thing sold for gems in gems, which
+                    // are a column of their own (`Bank::deal`).
                     let amount = i64::from(left) - i64::from(body.coins);
+                    let gems = i64::from(after.gems) - i64::from(holds.bag.gems);
                     let why = if buying { "bought a thing" } else { "sold a thing" };
-                    bank.deal(who, amount, why, kept(&after, &holds.paints));
+                    bank.deal(who, amount, gems, why, kept(&after, &holds.paints));
                     holds.dealing = Some(Dealing { after, by });
                     return Came::Waits;
                 }
@@ -881,6 +884,18 @@ mod tests {
         assert!(matches!(&heard[1], Tell::Bag(bag::Tell::Yours { asked: 4, .. })), "{heard:?}");
         // With no database the bag is remembered for when they are back.
         assert!(!app.world().resource::<Remembered>().0[&100].0.has_car());
+        // A house sold for gems (since 2026-11-25): not with ten gems; with
+        // sixty, for fifty of them, the coins as they were.
+        let house = "square_house_five_floor";
+        ask(&mut app, devices[0], bag::Ask::Buy(house.into()));
+        assert_eq!((bag_of(&app, bodies[0]).count(house), bag_of(&app, bodies[0]).gems), (0, 10));
+        app.world_mut().get_mut::<Holds>(bodies[0]).unwrap().bag.gems = 60;
+        let _ = told(&mut app, devices[0]);
+        ask(&mut app, devices[0], bag::Ask::Buy(house.into()));
+        assert_eq!((bag_of(&app, bodies[0]).count(house), bag_of(&app, bodies[0]).gems), (1, 10));
+        assert_eq!(app.world().get::<Body>(bodies[0]).unwrap().coins, 8_350);
+        let heard = told(&mut app, devices[0]);
+        assert!(matches!(&heard[..], [Tell::Balance(8_350), Tell::Bag(bag::Tell::Yours { bag, .. })] if bag.gems == 10), "{heard:?}");
     }
 
     #[test]

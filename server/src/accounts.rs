@@ -433,13 +433,15 @@ impl Bank {
     }
 
     /// A purchase or a sale (`bag`): changes the account `id`'s coins by
-    /// `amount`, less than nothing for something bought, if that leaves
-    /// them no less than nothing, and with them keeps its bag as it is
-    /// after, `bag`, and a line saying `why`: all of it or none. The answer
-    /// comes as [`Dealt`].
-    pub(crate) fn deal(&self, id: u64, amount: i64, why: &'static str, bag: String) {
+    /// `amount` and its gems by `gems`, less than nothing for something
+    /// bought, if that leaves neither less than nothing, and with them keeps
+    /// its bag as it is after, `bag`, and, if the coins changed, a line
+    /// saying `why`: all of it or none. (A thing sold for gems, since
+    /// 2026-11-25, changes the gems alone, and no line is written: the
+    /// lines are of coins.) The answer comes as [`Dealt`].
+    pub(crate) fn deal(&self, id: u64, amount: i64, gems: i64, why: &'static str, bag: String) {
         if let Self::Database { jobs, .. } = self {
-            let _ = jobs.send(Job::Deal { id, amount, why, bag });
+            let _ = jobs.send(Job::Deal { id, amount, gems, why, bag });
         }
     }
 
@@ -545,6 +547,7 @@ pub(crate) enum Job {
     Deal {
         id: u64,
         amount: i64,
+        gems: i64,
         why: &'static str,
         bag: String,
     },
@@ -714,23 +717,27 @@ fn run(db: &mut Client, job: &Job) -> Result<Option<Done>, postgres::Error> {
         Job::Deal {
             id,
             amount,
+            gems,
             why,
             ref bag,
         } => {
-            // The coins, the bag and the line saying why change together,
-            // or not at all; and the coins never below nothing.
+            // The coins, the gems, the bag and the line saying why change
+            // together, or not at all; and neither the coins nor the gems
+            // below nothing.
             let mut transaction = db.transaction()?;
             let left = transaction.query_opt(
-                "UPDATE players SET coins = coins + $2, bag = $3 WHERE id = $1 AND coins + $2 >= 0 RETURNING coins",
-                &[&(id as i64), &amount, bag],
+                "UPDATE players SET coins = coins + $2, gems = gems + $4, bag = $3 WHERE id = $1 AND coins + $2 >= 0 AND gems + $4 >= 0 RETURNING coins",
+                &[&(id as i64), &amount, bag, &gems],
             )?;
             let Some(left) = left else {
                 return Ok(Some(Done::Dealt(Dealt { id, left: None })));
             };
-            transaction.execute(
-                "INSERT INTO coin_changes (player, amount, reason) VALUES ($1, $2, $3)",
-                &[&(id as i64), &amount, &why],
-            )?;
+            if amount != 0 {
+                transaction.execute(
+                    "INSERT INTO coin_changes (player, amount, reason) VALUES ($1, $2, $3)",
+                    &[&(id as i64), &amount, &why],
+                )?;
+            }
             transaction.commit()?;
             Ok(Some(Done::Dealt(Dealt {
                 id,
@@ -987,7 +994,7 @@ mod tests {
         // with a line saying why; one there are not the coins for changes
         // nothing; a sale gives; and what only moves about the plot is
         // kept by itself.
-        let dealt = |db: &mut Client, amount: i64, why: &'static str, bag: &str| match done(db, Job::Deal { id: c, amount, why, bag: bag.into() }) {
+        let dealt = |db: &mut Client, amount: i64, why: &'static str, bag: &str| match done(db, Job::Deal { id: c, amount, gems: 0, why, bag: bag.into() }) {
             Some(Done::Dealt(dealt)) => dealt.left,
             _ => panic!("no answer to a deal"),
         };
@@ -1012,8 +1019,22 @@ mod tests {
             .map(|row| (row.get(0), row.get(1)))
             .collect();
         assert_eq!(lines, vec![(-150, "bought a thing".to_string()), (1_250, "sold a thing".to_string())]);
+        // A thing sold for gems (since 2026-11-25): the gems change and the
+        // coins do not, and no line is written; more gems than there are
+        // changes nothing.
+        let gem_deal = |db: &mut Client, gems: i64| match done(db, Job::Deal { id: c, amount: 0, gems, why: "bought a thing", bag: "{}".into() }) {
+            Some(Done::Dealt(dealt)) => dealt.left,
+            _ => panic!("no answer to a deal"),
+        };
+        assert_eq!(gem_deal(&mut db, -50), None);
+        assert_eq!(gem_deal(&mut db, -8), Some(2_425));
+        assert_eq!(gem_deal(&mut db, 4), Some(2_425));
+        let row = db.query_one("SELECT coins, gems FROM players WHERE id = $1", &[&(c as i64)]).expect("the account");
+        assert_eq!((row.get::<_, i64>(0), row.get::<_, i64>(1)), (2_425, 6));
+        let count: i64 = db.query_one("SELECT count(*) FROM coin_changes WHERE player = $1", &[&(c as i64)]).expect("the lines").get(0);
+        assert_eq!(count, 2);
         // A deal for an account that is not there changes nothing.
-        assert!(matches!(done(&mut db, Job::Deal { id: 999_999, amount: 5, why: "sold a thing", bag: "{}".into() }), Some(Done::Dealt(Dealt { left: None, .. }))));
+        assert!(matches!(done(&mut db, Job::Deal { id: 999_999, amount: 5, gems: 0, why: "sold a thing", bag: "{}".into() }), Some(Done::Dealt(Dealt { left: None, .. }))));
         // An account deleted takes its friends, what it asked and what was
         // written to and by it with it.
         db.execute("DELETE FROM players WHERE id = $1", &[&(c as i64)]).expect("delete");

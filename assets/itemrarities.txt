@@ -1,9 +1,10 @@
-Mythic FF4500 $15,000
-Legendary FFA500 $2,500
-Epic 800080 $1,000
-Rare 4169E1 $400
-Uncommon 32CD32 $150
-Common D3D3D3 $50
+Transcendent 9E0915 $100,000 or 5000 gem
+Mythic FF4500 $15,000 or 750 gem
+Legendary FFA500 $2,500 or 125 gem
+Epic 800080 $1,000 or 50 gem
+Rare 4169E1 $400 or 20 gem
+Uncommon 32CD32 $150 or 8 gem
+Common D3D3D3 $50 or 3 gem
 
 Buildings:
 Street Lamp - Legendary
@@ -14,10 +15,9 @@ Circle Table - Common
 Cafe Desk Edge - Common
 Cafe Desk Corner - Common
 Soft Couch - Rare
-Square House - Common
-Flat House - Epic
-Two Floor House - Uncommon
-Roof Terrace House - Uncommon
+End Table - Common
+Cabinet - Uncommon
+Bathtub - Rare
 Classic Door - Common
 Classic Window Door - Common
 Classic Double Door - Common
@@ -26,6 +26,108 @@ Glass Double Door - Common
 Square Window - Common
 Wide Window - Common
 
+Alarm Clock - Common
+Chair - Common
+Closed Umbrella - Common
+Computer Mouse - Common
+Cup Of Tea - Common
+Dumbbell - Common
+Empty Box - Common
+Frying Pan - Common
+Hair Dryer - Common
+Hamburger - Common
+Hand Rake - Common
+Mug With Office Tool - Common
+Screwdriver - Common
+Stapler - Common
+Stool - Common
+Table - Common
+Tissue Box - Common
+Trash Bin - Common
+Watering Can - Common
+Wine Glass - Common
+Armchair - Uncommon
+Bathroom Sink - Uncommon
+Coat Rack - Uncommon
+Desk - Uncommon
+Desk Fan - Uncommon
+Doll - Uncommon
+Dresser - Uncommon
+Flowers - Uncommon
+Fruit Bowl - Uncommon
+Globe - Uncommon
+Headphones - Uncommon
+Lamp With Shade - Uncommon
+Mailbox - Uncommon
+Monitor - Uncommon
+Painting - Uncommon
+Piggy Bank - Uncommon
+Potted Plant - Uncommon
+Present - Uncommon
+Printer - Uncommon
+Propane Tank - Uncommon
+Rubber Duck - Uncommon
+Table Large Circular - Uncommon
+Toilet - Uncommon
+Barbecue - Rare
+Bed - Rare
+Ceiling Fan - Rare
+Computer - Rare
+Couch - Rare
+Refrigirator - Rare
+Rocking Chair - Rare
+Stove - Rare
+Treadmill - Rare
+Grandfathers Clock - Epic
+Safe - Epic
+Telescope - Epic
+Chandelier - Legendary
+
+Square House - Common
+Flat House - Common
+Wide Roof House - Common
+Square House Two Floor - Uncommon
+Square House Three Floor - Rare
+Square House Four Floor - Epic
+Square House Five Floor - Epic (gem)
+Square House Six Floor - Legendary
+Square House Seven Floor - Legendary (gem)
+Square House Eight Floor - Mythic
+Square House Nine Floor - Mythic (gem)
+Square House Ten Floor - Transcendent
+
+Roof Terrace House Two Floor - Uncommon
+Roof Terrace House Three Floor - Rare
+Roof Terrace House Four Floor - Epic
+Roof Terrace House Five Floor - Epic (gem)
+Roof Terrace House Six Floor - Legendary
+Roof Terrace House Seven Floor - Legendary (gem)
+Roof Terrace House Eight Floor - Mythic
+Roof Terrace House Nine Floor - Mythic (gem)
+Roof Terrace House Ten Floor - Transcendent
+
 Vehicles:
 
 Red sports car - Mythic
+Gen - Rare
+Sedan - Rare
+Van - Rare
+Coupe - Rare
+Suv - Rare
+Jeep - Epic
+Mobil - Epic
+Police - Epic
+Rally - Epic
+Tronco - Epic
+Armor - Legendary
+Cilo - Legendary
+Kamaro - Legendary
+Ponche - Legendary
+Ghini - Legendary
+Lamb - Legendary
+Poly - Legendary
+Sportrs - Legendary
+Chiron - Mythic
+Fenyr - Mythic
+Imola - Mythic
+Yang - Transcendent

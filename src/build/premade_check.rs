@@ -64,12 +64,15 @@ use crate::{LAND_STEP_UP, PLAYER_HEIGHT, PLAYER_RADIUS, rest};
 /// How many triangles each piece is drawn with, which is what it costs a
 /// phone that draws the town 120 times a second: a chair and a lamp are
 /// the dear ones. [`the_pieces_are_drawn_with_as_many_triangles_as_counted`]
-/// holds these to the models.
-const TRIANGLES: [(&str, usize); 19] = [
+/// holds these to the models. The houses of three floors and more, and the
+/// furniture and things that came on 2026-11-25, are the town's plots'
+/// alone: nothing made-up stands any of them (an eight-floor house is
+/// 3,400 triangles).
+const TRIANGLES: [(&str, usize); 95] = [
     ("square_house", 144),
     ("square_house_roofless", 72),
     ("square_house_two_floor", 544),
-    ("square_house_roofless_two_floor", 508),
+    ("square_house_roofless_two_floor", 532),
     ("classic_door", 240),
     ("classic_door_with_window", 328),
     ("classic_double_door", 446),
@@ -85,6 +88,82 @@ const TRIANGLES: [(&str, usize); 19] = [
     ("cafedeskcorner", 84),
     ("softcouch", 636),
     ("streetlamp", 1680),
+    ("wide_roof_house", 144),
+    ("square_house_three_floor", 1076),
+    ("square_house_four_floor", 1542),
+    ("square_house_five_floor", 2008),
+    ("square_house_six_floor", 2474),
+    ("square_house_seven_floor", 2940),
+    ("square_house_eight_floor", 3406),
+    ("square_house_nine_floor", 3872),
+    ("square_house_ten_floor", 4338),
+    ("square_house_roofless_three_floor", 1004),
+    ("square_house_roofless_four_floor", 1476),
+    ("square_house_roofless_five_floor", 1948),
+    ("square_house_roofless_six_floor", 2420),
+    ("square_house_roofless_seven_floor", 2892),
+    ("square_house_roofless_eight_floor", 3364),
+    ("square_house_roofless_nine_floor", 3836),
+    ("square_house_roofless_ten_floor", 4308),
+    ("end_table", 162),
+    ("cabinet", 324),
+    ("bathtub", 474),
+    ("alarm_clock", 458),
+    ("chair", 88),
+    ("closed_umbrella", 436),
+    ("computer_mouse", 100),
+    ("cup_of_tea", 436),
+    ("dumbbell", 492),
+    ("empty_box", 76),
+    ("frying_pan", 500),
+    ("hair_dryer", 480),
+    ("hamburger", 404),
+    ("hand_rake", 356),
+    ("mug_with_office_tool", 610),
+    ("screwdriver", 344),
+    ("stapler", 162),
+    ("stool", 610),
+    ("table", 86),
+    ("tissue_box", 102),
+    ("trash_bin", 238),
+    ("watering_can", 554),
+    ("wine_glass", 336),
+    ("armchair", 162),
+    ("bathroom_sink", 162),
+    ("coat_rack", 378),
+    ("desk", 166),
+    ("desk_fan", 294),
+    ("doll", 1234),
+    ("dresser", 430),
+    ("flowers", 496),
+    ("fruit_bowl", 806),
+    ("globe", 478),
+    ("headphones", 472),
+    ("lamp_with_shade", 786),
+    ("mailbox", 242),
+    ("monitor", 84),
+    ("painting", 164),
+    ("piggy_bank", 626),
+    ("potted_plant", 390),
+    ("present", 228),
+    ("printer", 182),
+    ("propane_tank", 1008),
+    ("rubber_duck", 710),
+    ("table_large_circular", 298),
+    ("toilet", 404),
+    ("barbecue", 655),
+    ("bed", 726),
+    ("ceiling_fan", 188),
+    ("computer", 324),
+    ("couch", 268),
+    ("refrigerator", 190),
+    ("rocking_chair", 668),
+    ("stove", 858),
+    ("treadmill", 220),
+    ("grandfathers_clock", 547),
+    ("safe", 222),
+    ("telescope", 734),
+    ("chandelier", 1204),
 ];
 /// The most triangles one made-up plot is drawn with, and all 48 together.
 const MOST_ON_A_PLOT: usize = 5_000;
@@ -912,9 +991,13 @@ fn the_pieces_are_drawn_with_as_many_triangles_as_counted() {
         let model = read(def);
         let counted = TRIANGLES.iter().find(|(kind, _)| *kind == def.kind).map(|&(_, count)| count);
         assert_eq!(Some(model.triangles.len()), counted, "{}", def.kind);
-        // A house has four walls, each a box of its own, and a floor.
+        // A house has four walls, each a box of its own, and a floor: four
+        // to a storey, in the houses of three floors and more (Hajun's own,
+        // 2026-11-24), but for the roof terrace's two lowest storeys, which
+        // are walled as one, as in the Roof Terrace House of two.
         if def.mount == Mount::House {
-            assert_eq!((model.walls.len(), model.floors.is_empty()), (4, false), "{}", def.kind);
+            let (walls, floors) = (model.walls.len(), model.floors.len());
+            assert!(walls >= 4 && walls % 4 == 0 && walls <= 4 * floors && floors > 0, "{}: {walls} walls, {floors} floors", def.kind);
         }
         assert_eq!(model.span.is_some(), def.on_wall(), "{}", def.kind);
     }
@@ -934,8 +1017,9 @@ fn all_the_made_up_lots_together_are_light_to_draw_and_no_two_alike() {
     let lit = lots.iter().filter(|lot| has(lot, bag::LAMP)).count();
     assert!(lit <= MOST_LIT, "{lit} plots with a lamp");
     // Every house, door and window there is stands somewhere, and so does
-    // every other piece.
-    for def in PIECES {
+    // every other piece of House Builder's: what came for the town's plots
+    // alone on 2026-11-25 stands on nobody's made-up land.
+    for def in PIECES.iter().filter(|def| def.house_builder) {
         assert!(lots.iter().any(|lot| has(lot, def.kind)), "no made-up lot has a {}", def.kind);
     }
     // No two alike, whoever they are, and each unlike the one before it in

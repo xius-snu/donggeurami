@@ -124,9 +124,14 @@ without sorting, and where two such surfaces overlap only the nearer shows.
 MSAA off it is `Mask(0.5)`, all or nothing; and with a base colour texture
 Bevy sharpens the alpha (`pbr_fragment.wgsl`, "Sharpen alpha edges"), so a
 material-wide alpha goes all or nothing too, so a textured material fades
-blended instead: of the shop's pieces, the Soft Couch, which has a palette
+blended instead: of the shop's pieces, the Soft Couch, which had a palette
 texture (2026-10-13; the Cabinet had one too, until it was taken out of the
-game on 2026-10-16). Not yet seen on the Adreno.
+game on 2026-10-16) until 2026-11-24, when its model was given a plain
+material. The 59 things the shop has sold since 2026-11-25 (Hajun's
+downloads, `assets/mybuilds/newones/`) are each coloured by a palette
+picture, and the pack's cars too, but none of them fades: furniture stays
+as it is in the way since 2026-11-24 (`see_through::FURNITURE`), and a car
+is never in a house. Not yet seen on the Adreno.
 
 **`AlphaMode::Add` is premultiplied blending, not a separate blend state.** It
 compiles to `BlendState::PREMULTIPLIED_ALPHA_BLENDING` and the shader writes
