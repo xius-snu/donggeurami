@@ -46,6 +46,7 @@ mod font;
 mod fountain;
 mod friends;
 mod hud;
+mod indoors;
 mod intro;
 mod island;
 mod lamps;
@@ -181,8 +182,14 @@ const CAMERA_DISTANCE: f32 = 10.0;
 /// The nearest the camera stands behind you, in metres. Zoomed in nearer, it
 /// goes into your eyes ([`SWAP_ZOOM`]). 2.5 until 2026-11-01, when Hajun
 /// found "the max zoom in is not zoomed in enough" and asked for the camera
-/// to come closer before it goes into your eyes.
-const CAMERA_DISTANCE_MIN: f32 = 1.5;
+/// to come closer before it goes into your eyes; 1.5 until 2026-11-25, when
+/// they found "the gap between the max zoom in to the player and the switch
+/// to first person is too big". About as near as it can come at every tilt
+/// with you still drawn: the top edge of what [`inside_you`] takes for you
+/// is 0.81 m from the point it circles. From here your head is 0.4 m off at
+/// the nearest, looking straight down on it, twice as far as the corners of
+/// the near plane reach ([`CAMERA_RADIUS`]).
+const CAMERA_DISTANCE_MIN: f32 = 0.85;
 /// The nearest it stands looking up past you, in metres: looking up it comes
 /// in to a share of how far out it stands ([`CAMERA_LOOK_UP_DISTANCE`] of
 /// [`CAMERA_DISTANCE`]), which from [`CAMERA_DISTANCE_MIN`] would put it
@@ -1419,6 +1426,7 @@ pub fn main() {
         .init_resource::<CloseUp>()
         .init_resource::<Lookout>()
         .init_resource::<HeldCamera>()
+        .init_resource::<indoors::Indoors>()
         .add_message::<PunchPressed>()
         .add_message::<Hit>()
         .add_message::<Landed>()
@@ -1584,6 +1592,8 @@ pub fn main() {
             // A game holding the camera where it says: whatever turned
             // it meanwhile is undone.
             hold_the_orbit,
+            // In a house in the town, how far out the camera may stand.
+            indoors::mind,
             follow_camera,
         )
             .chain(),
@@ -3821,6 +3831,10 @@ fn hold_the_orbit(held: Res<HeldCamera>, mut orbit: ResMut<OrbitCamera>, mut kep
 ///
 /// Held by a game where it says ([`HeldCamera`], Knock Off's view of its
 /// island), it is there and nowhere else.
+///
+/// In a house in the town, it is kept in the house with you (`indoors`,
+/// since 2026-11-25): nearer than you zoomed it on the same line, or in
+/// your eyes where there is no room for it behind you.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn follow_camera(
     time: Res<Time>,
@@ -3830,6 +3844,7 @@ pub(crate) fn follow_camera(
     cars: Decks,
     driving: Res<drive::Driving>,
     (lookout, held): (Res<Lookout>, Res<HeldCamera>),
+    indoors: Res<indoors::Indoors>,
     mut players: Query<(&Transform, &Venue, &mut Visibility, Has<Dead>), With<Player>>,
     mut cameras: Query<&mut Transform, (With<ThirdPersonCamera>, Without<Player>)>,
 ) {
@@ -3849,7 +3864,8 @@ pub(crate) fn follow_camera(
         decks: &decks,
         bottomless: island::bottomless(venue),
     });
-    let mut view = camera_view(&orbit, player, ground);
+    // In a house in the town, kept in it with you (`indoors`).
+    let mut view = camera_view_kept(&orbit, player, ground, indoors.keep());
     let blend = close_up.step(time.delta_secs());
     if blend > 0.0 {
         let near = close_up_view(player, close_up.face, ground);
@@ -3888,12 +3904,90 @@ fn camera_view(orbit: &OrbitCamera, player: &Transform, ground: Option<Ground>) 
     if orbit.distance <= 0.0 {
         return eye_view(orbit, player, ground);
     }
-    let look_up = if orbit.pitch < 0.0 {
+    behind_you(orbit, player, looking_up(orbit), orbit.distance)
+}
+
+/// [`camera_view`], kept as the house you are in keeps it (`indoors`): where
+/// you turned and zoomed it, no further out along its line than so far, as
+/// it would stand zoomed in to there, or in your eyes.
+fn camera_view_kept(orbit: &OrbitCamera, player: &Transform, ground: Option<Ground>, keep: indoors::Keep) -> Transform {
+    match keep {
+        indoors::Keep::Free => camera_view(orbit, player, ground),
+        indoors::Keep::Within(reach) if orbit.distance > 0.0 => {
+            behind_you_within(orbit, player, looking_up(orbit), orbit.distance, reach)
+        }
+        indoors::Keep::Within(_) | indoors::Keep::Eyes => eye_view(orbit, player, ground),
+    }
+}
+
+/// How far the camera looks up past you, turned as `orbit` is: 0 looking
+/// level or down, 1 as far up as it looks ([`PITCH_MIN`]).
+fn looking_up(orbit: &OrbitCamera) -> f32 {
+    if orbit.pitch < 0.0 {
         (orbit.pitch / PITCH_MIN).clamp(0.0, 1.0)
     } else {
         0.0
-    };
-    behind_you(orbit, player, look_up, orbit.distance)
+    }
+}
+
+/// The line the camera stands on behind you, turned as `orbit` is round
+/// `player` ([`behind_you`]): from where it would stand zoomed in to
+/// nothing, out the way it goes from there, a metre long. Zoomed out as far
+/// as some distance, it stands [`CameraLine::out`] along it; kept nearer
+/// ([`behind_you_within`]), it stands nearer on the same line, looking as it
+/// would zoomed in to there. Looking level or down at you, the line goes
+/// out from the point it circles; looking up past you, out level from
+/// under it, at the camera's height.
+#[derive(Clone, Copy, Debug)]
+struct CameraLine {
+    from: Vec3,
+    way: Vec3,
+    /// How far it looks up past you ([`looking_up`]), or `None` looking
+    /// level or down.
+    up: Option<f32>,
+}
+
+impl CameraLine {
+    fn of(orbit: &OrbitCamera, player: &Transform) -> Self {
+        let yaw = Quat::from_rotation_y(orbit.yaw);
+        if orbit.pitch >= 0.0 {
+            let turn = yaw * Quat::from_rotation_x(-orbit.pitch);
+            return Self {
+                from: player.translation + Vec3::Y * LOOK_HEIGHT,
+                way: turn * Vec3::Z,
+                up: None,
+            };
+        }
+        let look_up = looking_up(orbit);
+        let mut from = player.translation + Vec3::Y * (LOOK_HEIGHT + (CAMERA_LOOK_UP_HEIGHT - LOOK_HEIGHT) * look_up);
+        from.y = from.y.max(player.translation.y + CAMERA_LOOK_UP_HEIGHT);
+        Self {
+            from,
+            way: yaw * Vec3::Z,
+            up: Some(look_up),
+        }
+    }
+
+    /// How far out along it the camera stands zoomed out as far as
+    /// `distance`.
+    fn out(&self, distance: f32) -> f32 {
+        match self.up {
+            None => distance,
+            Some(look_up) => out_looking_up(distance, look_up),
+        }
+    }
+}
+
+/// How far out behind you the camera stands looking up past you, `look_up`
+/// of the way from level to as far up as it looks ([`looking_up`]), zoomed
+/// out as far as `distance`: nearer the more it looks up, to a share of that
+/// ([`CAMERA_LOOK_UP_DISTANCE`] of [`CAMERA_DISTANCE`]), but no nearer than
+/// [`CAMERA_LOOK_UP_NEAREST`].
+fn out_looking_up(distance: f32, look_up: f32) -> f32 {
+    let look_up_distance = (distance * (CAMERA_LOOK_UP_DISTANCE / CAMERA_DISTANCE))
+        .max(CAMERA_LOOK_UP_NEAREST)
+        .min(distance);
+    distance + (look_up_distance - distance) * look_up
 }
 
 /// Your own eyes, inside your head, looking the way `orbit` is turned: the
@@ -3939,6 +4033,14 @@ fn rise(at: Vec3, up: f32, ground: Option<Ground>) -> Vec3 {
 /// from right over it at the most, or, looking up, from low behind you and
 /// nearer, up past you.
 fn behind_you(orbit: &OrbitCamera, player: &Transform, look_up: f32, distance: f32) -> Transform {
+    behind_you_within(orbit, player, look_up, distance, f32::INFINITY)
+}
+
+/// [`behind_you`], no further out along the camera's line ([`CameraLine`])
+/// than `reach`: where it would stand zoomed in to there, and looking as it
+/// would there. With no end to `reach`, as [`behind_you`] has it to the last
+/// bit.
+fn behind_you_within(orbit: &OrbitCamera, player: &Transform, look_up: f32, distance: f32, reach: f32) -> Transform {
     let mut camera = Transform::default();
     let yaw = Quat::from_rotation_y(orbit.yaw);
     if orbit.pitch >= 0.0 {
@@ -3946,17 +4048,14 @@ fn behind_you(orbit: &OrbitCamera, player: &Transform, look_up: f32, distance: f
         // out here, and still says which way is ahead looking straight down.
         let turn = yaw * Quat::from_rotation_x(-orbit.pitch);
         let look_at = player.translation + Vec3::Y * LOOK_HEIGHT;
-        camera.translation = look_at + turn * Vec3::new(0.0, 0.0, distance);
+        camera.translation = look_at + turn * Vec3::new(0.0, 0.0, distance.min(reach));
         camera.rotation = turn;
         return camera;
     }
 
     let back = yaw * Vec3::Z;
     let cam_height = LOOK_HEIGHT + (CAMERA_LOOK_UP_HEIGHT - LOOK_HEIGHT) * look_up;
-    let look_up_distance = (distance * (CAMERA_LOOK_UP_DISTANCE / CAMERA_DISTANCE))
-        .max(CAMERA_LOOK_UP_NEAREST)
-        .min(distance);
-    let distance = distance + (look_up_distance - distance) * look_up;
+    let distance = out_looking_up(distance, look_up).min(reach);
     let focus_height = LOOK_HEIGHT + (LOOK_UP_FOCUS_HEIGHT - LOOK_HEIGHT) * look_up;
     camera.translation = player.translation + back * distance + Vec3::Y * cam_height;
     camera.translation.y = camera.translation.y.max(player.translation.y + CAMERA_LOOK_UP_HEIGHT);
@@ -4082,13 +4181,56 @@ mod camera_tests {
 
     #[test]
     fn behind_you_you_are_always_in_sight() {
-        // As near as it stands, looking up past you and down at you, as far
-        // as straight down.
-        let player = Transform::default();
-        for pitch in [PITCH_MIN, -0.6, 0.0, 0.38, 1.2, PITCH_MAX] {
+        // As near as it stands, at every tilt from looking up past you to
+        // straight down: never where you would not be drawn, and never so
+        // near your head, playercharacter.glb's, 0.53 m across round your
+        // eyes, that the corners of the near plane would cut into it.
+        let player = Transform::from_xyz(2.0, 0.5, -1.0);
+        let head = player.translation + Vec3::Y * EYE_HEIGHT;
+        let steps = 500;
+        for step in 0..=steps {
+            let pitch = PITCH_MIN + (PITCH_MAX - PITCH_MIN) * step as f32 / steps as f32;
             let you = orbit(0.3, pitch, CAMERA_DISTANCE_MIN);
             let view = camera_view(&you, &player, None);
             assert!(!inside_you(view.translation, &player), "pitch {pitch}");
+            let off = view.translation.distance(head);
+            assert!(off > 0.265 + CAMERA_RADIUS, "pitch {pitch}: {off} m from the middle of your head");
+        }
+    }
+
+    #[test]
+    fn kept_nearer_it_stands_on_its_own_line_looking_the_same_way() {
+        // At every tilt and however far out: where the camera stands is on
+        // its line (`CameraLine`, which a house keeps it in by, `indoors`),
+        // as far out as the line says; kept nearer, it is nearer on the same
+        // line, and looking level or down it looks exactly the same way.
+        let player = Transform::from_xyz(3.0, 0.5, -2.0);
+        let steps = 60;
+        for step in 0..=steps {
+            let pitch = PITCH_MIN + (PITCH_MAX - PITCH_MIN) * step as f32 / steps as f32;
+            for distance in [CAMERA_DISTANCE_MIN, 2.0, 7.5, CAMERA_DISTANCE_MAX] {
+                let you = orbit(0.8, pitch, distance);
+                let line = CameraLine::of(&you, &player);
+                let view = camera_view(&you, &player, None);
+                let on = line.from + line.way * line.out(distance);
+                assert!(view.translation.distance(on) < 1e-4, "pitch {pitch}, {distance} out");
+                assert!((line.way.length() - 1.0).abs() < 1e-5);
+                for reach in [0.5, 1.0, 3.0, 40.0] {
+                    let kept = camera_view_kept(&you, &player, None, indoors::Keep::Within(reach));
+                    let on = line.from + line.way * line.out(distance).min(reach);
+                    assert!(kept.translation.distance(on) < 1e-4, "pitch {pitch}, {distance} out, within {reach}");
+                    if pitch >= 0.0 {
+                        assert_eq!(kept.rotation, view.rotation, "pitch {pitch}");
+                    }
+                }
+                // Free, it is where you turned and zoomed it; in your eyes,
+                // your eyes.
+                assert_eq!(camera_view_kept(&you, &player, None, indoors::Keep::Free), view);
+                assert_eq!(
+                    camera_view_kept(&you, &player, None, indoors::Keep::Eyes),
+                    eye_view(&you, &player, None)
+                );
+            }
         }
     }
 

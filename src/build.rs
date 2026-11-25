@@ -976,6 +976,14 @@ impl Wall {
         self.inside
     }
 
+    /// The box it was modelled as, in the house's own space, with none of
+    /// the holes its doors and windows have cut in it: what the camera
+    /// stands clear of in the house you are in (`indoors`), so that it never
+    /// goes out through a doorway or a window.
+    pub(crate) fn whole(&self) -> (Vec3, Vec3) {
+        (self.low, self.high)
+    }
+
     /// Which way into the house is, along [`Self::across`]: toward the side
     /// with floor beside it, or failing that toward the house's middle.
     fn inward(&self, floors: &[(Vec3, Vec3)]) -> f32 {

@@ -16,9 +16,12 @@ that night it is so only in a game of Bridge Wars, `OrbitCamera::top_down`,
 says.)
 
 There is one view (Hajun, 2026-10-09): the camera orbits you as you turn and
-zoom it (`OrbitCamera`, `follow_camera` in `src/lib.rs`), 1.5 to 18 m out
-behind you, and zoomed all the way in it is your own eyes. Nothing in the
-world moves it: walls, ceilings and trees never bring it in nearer you.
+zoom it (`OrbitCamera`, `follow_camera` in `src/lib.rs`), 0.85 to 18 m out
+behind you (1.5 to 18 until 2026-11-25), and zoomed all the way in it is
+your own eyes. Nothing in the
+world moves it: walls, ceilings and trees never bring it in nearer you
+(but for a house in the town you are in, which keeps it in there with
+you, since 2026-11-25: below).
 That is Hajun's call (2026-10-09): "at all times u should be able to zoom
 out to the current max zoom out even when ur inside a room or covered by
 some wall and the camera should not automatically go near the player".
@@ -28,6 +31,121 @@ zoomed out, the camera is outside the house looking in, and you tap what is
 in there with you through its wall. Anywhere else, what stands between hides
 you.
 
+- **Nothing in the town is see-through, since 2026-11-25** (Hajun: "turn
+  off autotransparency for everything in the main lobby", the first step
+  of reworking "the camera & auto transparency thing for when the player
+  is inside a house, cuz i think it doesnt rly make sense for your camera
+  to be outside the building when you are inside the house, and
+  transparency doesnt rly make sense either for when ur inside the house.
+  but lets go step by step"). Standing in one of the map's own houses or
+  in a house on a plot, whatever is between the camera and you stays as
+  it is and hides you, as everywhere else in the town, and a tap lands on
+  what is drawn. Turned off, not taken out: `see_through::IN_THE_TOWN`,
+  false, by your venue being the town. **My call**: "the main lobby" is
+  the town, so Blend In's venue (the town's own map, its houses and all)
+  and House Builder's houses go see-through as they did. What the bullets
+  below say of the town's houses and of houses on plots is how it was
+  until then. **What it left, for the next step** (taken the same day,
+  next bullet): standing in a house zoomed out, the camera was outside
+  it and its walls hid you; and in edit mode in your own house a tap
+  went through its walls, the house you stand in being out of a tap's
+  reach (`build::untappable_from_inside`), to whatever was behind them,
+  unseen. **Checked**: the unit tests,
+  `nothing_is_in_the_way_but_in_a_house_of_house_builder` with the town
+  and Blend In's venue added to it, and the desktop build started for
+  Hajun to look at. In APK 60, not seen on a phone; nothing in
+  `shared/` or `server/`.
+- **The camera comes in to 0.85 m, since 2026-11-25**
+  (`CAMERA_DISTANCE_MIN`, 1.5 until then; Hajun: "the gap between the max
+  zoom in to the player and the switch to first person is too big - i
+  need more zoomableness so u can zoom more closer to the player").
+  Zoomed in past it, it goes into your eyes as before (`SWAP_ZOOM`).
+  **My number**: about as near as it can come at every tilt with you
+  still drawn. What `inside_you` takes for you, which is not drawn while
+  the camera is in it, is a column 0.6 m round where you stand and 1.75
+  m high, whose top edge is 0.81 m from the point the camera circles (1.2
+  m up, `LOOK_HEIGHT`): from any nearer there is a tilt, about 42° down,
+  at which you would vanish. From 0.85 the top of your head is 0.4 m
+  off, looking straight down on it, twice as far as the corners of the
+  near plane reach. Looking up past you it stands 0.8 m out, as it did
+  (`CAMERA_LOOK_UP_NEAREST`). Nearer would need `inside_you` made the
+  body's own shape, and from under about 0.65 m the near plane cuts into
+  the top of your head looking straight down. The camera circling a point
+  in your head, at the nearest your head fills the upper middle of the
+  screen. **Checked**: the unit tests, `behind_you_you_are_always_in_sight`
+  now trying 501 tilts for both, and the desktop build started for Hajun
+  to look at. In APK 60, not seen on a phone.
+- **In a house in the town the camera stays in the house with you, since
+  2026-11-25, to be tried** (`src/indoors.rs`; Hajun, that morning: "it
+  doesnt rly make sense for your camera to be outside the building when
+  you are inside the house"; asked for ideas for "a natural, smooth, easy
+  way for camera to stay inside the house when ur inside it without
+  glitchy or stuttering", and offered four, Hajun chose "the zoom indoors
+  version": "lets try it safely so we can go back if we dont like it").
+  It is Roblox's own way with walls, which it calls Zoom (its Invisicam
+  fades them, as `see_through` did), in a house alone and against that
+  house alone. Turned off, not taken out: `indoors::STAYS_IN`, true; off,
+  the camera is exactly as it was the moment before, which a test holds
+  (`kept_nearer_it_stands_on_its_own_line_looking_the_same_way`: kept
+  `Free` it is `camera_view` to the last bit). How it goes:
+  - **Only how far out it stands changes, never which way it looks**: it
+    comes in on its own line (`CameraLine`, the line `behind_you` stands
+    it on), looking as it would zoomed in to there, so that a swipe turns
+    it by as much as ever (the camera that slid along walls and climbed
+    them was "glitchy", 2026-09-27, above).
+  - **Only the house stops it**, as a ball as big as the near plane's
+    reach (`CAMERA_RADIUS`, 0.2 m): each of its walls as the box it was
+    modelled as, with no holes for its doors and windows, so that it
+    never goes out through either (`build::Wall::whole`); and every other
+    part of the house, its floors, ceilings, roof, gables and stairs, as
+    modelled. Not furniture, nor a door, a window or a painting in a wall
+    (pieces of their own), nor anyone, nor anything outside. The house's
+    shape is read once as you go in (and again should a piece be added
+    to it or taken from it meanwhile), and tried once a frame.
+  - **In at once, out slowly**: a wall come between, it is in front of
+    it that frame; with room again it eases back out, as a zoom is
+    measured, by how many times further, two thirds of the way in a
+    tenth of a second and all but a twentieth in three (`OUT_SECS`), and
+    stops dead within a millimetre of where it is going.
+  - **Your zoom is kept**: it is only held nearer, and goes back out to
+    it as there is room, or once you are out of the house.
+  - **With no room for it behind you**, nearer than it ever stands (0.85
+    m), **it is your eyes**, until there is a tenth more room than that,
+    as a zoom comes out of them (`SWAP_ZOOM`).
+  - **Through a doorway it waits a moment on its side** (`WAIT`, 0.4 s):
+    coming in, it stays outside where it was until there is room for it
+    behind you in there, and then it is there; going out, it stays in
+    there until there is room behind you outside, then it is there and
+    keeps off the house (`indoors::Side::Clear`) until it stands clear of
+    it, as far out as you zoomed it. With no room once the moment is
+    over, it is your eyes. Walking through, room comes about a metre in,
+    a sixth of a second at a walk.
+  **My calls**, all of them Hajun's to change: the numbers (0.1 s, 0.4 s, the
+  0.2 m ball); the town alone, as with the see-through of that morning
+  (House Builder and Blend In's venue keep their see-through and the
+  camera where you put it); walls taken whole, so that it never looks in
+  from outside through a doorway or a window; stairs and the floor
+  upstairs counting as the house; your eyes rather than nearer than 0.85
+  m with your head filling the screen; the moment's wait in a doorway
+  rather than first person for that moment and out again, two cuts; and
+  keeping off the house you just left until clear, so that walking out
+  of the door the camera does not come round behind the house with the
+  house hiding you. **Checked**: the unit tests (six new, on how it goes
+  and on the ball against a room's wall and ceiling), and the desktop
+  build, hidden and offline, by a throwaway driver taken out again, on
+  plot 1 with a Square House 2F on it: from the middle of its ground
+  floor, zoomed 10 m out, the camera stood 5.6 to 5.9 m back at each of
+  four turns, inside the room with you in sight; looking steeply and
+  straight down, 0.2 m under the floor upstairs; turned toward the stairs,
+  in front of them at 3.5 m; backed 0.47 m from a wall, your eyes; a
+  metre further in, out at 2.48 m; put outside facing the house, 0.2 m
+  off its wall, between you and it; far off, as far out as zoomed;
+  upstairs, under the roof, up to 13.75 m looking straight down at you.
+  **Not checked**: walking in and out through a door (the house had
+  none), the per-frame cost (one ball against one house), a phone (it is
+  in APK 60, put on none from here), online. **Seen by the way**: arriving on your plot in the middle of it,
+  where that is inside your house and near a wall with the camera
+  turned to it, you start in your eyes.
 - **Only in a house in House Builder, or in one of the town's houses, is
   anything see-through** (Hajun, 2026-10-25: "i want that effect to only
   happen when the player is inside the home in the home build battle game,
@@ -46,9 +164,9 @@ you.
   keeps it so (`nothing_is_in_the_way_but_in_a_house_of_house_builder`);
   not yet tried by hand or on a phone.
 - **It always points exactly the way you turned it, and stands as far out as
-  you zoomed it**: 1.5 to 18 m (`CAMERA_DISTANCE_MIN`, `_MAX`; 2.5 at the
+  you zoomed it**: 0.85 to 18 m (`CAMERA_DISTANCE_MIN`, `_MAX`; 2.5 at the
   nearest until 2026-11-01, when Hajun found "the max zoom in is not zoomed
-  in enough"; looking up past you it comes no nearer than 0.8 m,
+  in enough", and 1.5 until 2026-11-25, above; looking up past you it comes no nearer than 0.8 m,
   `CAMERA_LOOK_UP_NEAREST`, which keeps it out of your body; 15 m at most
   until Hajun asked for "a slight bit more", 2026-10-09). It tips down as far
   as straight down (`PITCH_MAX`, a right angle; about 69° until Hajun asked,
@@ -272,8 +390,9 @@ you.
 - **Zoomed all the way in, it is your eyes, and that is as far in as it
   zooms** (Hajun, 2026-10-09: "the max zoom point is the point at which it
   becomes first person view ... as soon as you zoom out u are back to third
-  person view"). Zoomed in past 1.5 m it goes into them, and zoomed out of
-  them it is straight back behind you at 1.5 m; either way it takes a tenth
+  person view"). Zoomed in past 0.85 m (1.5 until 2026-11-25) it goes
+  into them, and zoomed out of them it is straight back behind you at
+  0.85 m; either way it takes a tenth
   more zoom than the camera can follow (`SWAP_ZOOM`), a notch of the wheel,
   so that fingers that waver as a pinch ends do not swap it back and forth.
   There is no view button any more (from 2026-09-29 it swapped first and

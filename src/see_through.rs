@@ -34,6 +34,13 @@
 //! them, and its ceiling. What is said of furniture below is how it faded
 //! from 2026-10-09 until then, kept behind a switch ([`FURNITURE`]).
 //!
+//! **Nothing in the town is see-through, since 2026-11-25** (Hajun: "turn
+//! off autotransparency for everything in the main lobby"): neither in one
+//! of its own houses nor in a house on a plot, where what is said here of
+//! them was so until then, kept behind a switch ([`IN_THE_TOWN`]). A house
+//! of House Builder, and the town's houses on Blend In's venue, are as
+//! they were.
+//!
 //! A piece of furniture, a door, a window, a town object or one of the
 //! town's buses fades whole, the bus to three quarters of itself rather than
 //! a quarter ([`BUS_SEEN`]); what is said here of the town, its objects and
@@ -75,7 +82,7 @@ use bevy::render::render_resource::Face;
 use crate::build::{Ghost, Mount, OnWall, Piece, TownHouse, Wall, YouAreIn};
 use crate::car::Car;
 use crate::editor::{EditMenu, EditSystems, Editable};
-use crate::island::{self, Faces};
+use crate::island::{self, Faces, Venue};
 use crate::map::MapObject;
 use crate::{Player, ThirdPersonCamera};
 
@@ -109,6 +116,19 @@ const BUS_SEEN: f32 = 0.75;
 /// as it is and a tap lands on it; on, it fades whole and a tap goes through
 /// it, as from 2026-10-09 until then.
 const FURNITURE: bool = false;
+/// Whether anything goes see-through in the main lobby, Round Town: in one
+/// of the map's own houses (`build::TownHouse`) or in a house on a plot
+/// (`stand`). Turned off on 2026-11-25 (Hajun: "turn off autotransparency for
+/// everything in the main lobby", the first step of a rework of the camera
+/// in a house: "it doesnt rly make sense for your camera to be outside the
+/// building when you are inside the house, and transparency doesnt rly make
+/// sense either for when ur inside the house"). Off, whatever stands between
+/// the camera and you in the town stays as it is and hides you, in a house
+/// as out of one, and a tap lands on what is drawn; on, it is as from
+/// 2026-10-30 until then. Off the town nothing changes: a house of House
+/// Builder, and the town's houses on Blend In's venue, go see-through as
+/// they did.
+const IN_THE_TOWN: bool = false;
 /// How long something takes to fade, and to come back, in seconds.
 const FADE_SECS: f32 = 0.15;
 /// What of you the camera has to see: rings round you at these heights over
@@ -266,7 +286,7 @@ type Lineage<'w, 's> = Query<
 /// and what fades along with it. Anywhere else, nothing.
 #[allow(clippy::too_many_arguments)]
 fn find_what_hides_you(
-    me: Query<(&Transform, &Visibility, Option<&crate::rest::Resting>), With<Player>>,
+    me: Query<(&Transform, &Visibility, Option<&crate::rest::Resting>, &Venue), With<Player>>,
     cameras: Query<&Transform, (With<ThirdPersonCamera>, Without<Player>)>,
     parts: Parts,
     lineage: Lineage,
@@ -291,13 +311,15 @@ fn find_what_hides_you(
             stale = true;
         }
     }
-    // Only in a house that is down, not one still a ghost: anywhere else,
-    // whatever is between the camera and you hides you, and what was faded
-    // comes back. Through your eyes, or so near them that you are not
-    // drawn, there is nothing between the camera and you.
+    // Only in a house that is down, not one still a ghost, and not in the
+    // town ([`IN_THE_TOWN`]): anywhere else, whatever is between the camera
+    // and you hides you, and what was faded comes back. Through your eyes,
+    // or so near them that you are not drawn, there is nothing between the
+    // camera and you.
     let looked_from = house_you_are_in.single().ok().zip(me.single().ok().zip(cameras.single().ok()));
-    let Some(((house, house_place, in_town), ((you, _, resting), eye))) = looked_from.filter(|(_, ((_, drawn, _), _))| **drawn != Visibility::Hidden)
-    else {
+    let Some(((house, house_place, in_town), ((you, _, resting, _), eye))) = looked_from.filter(|(_, ((_, drawn, _, venue), _))| {
+        **drawn != Visibility::Hidden && (IN_THE_TOWN || **venue != Venue::Town)
+    }) else {
         hiding.0.clear();
         *last = None;
         return;
@@ -970,7 +992,7 @@ mod tests {
         let material = world
             .resource_mut::<Assets<StandardMaterial>>()
             .add(StandardMaterial::default());
-        world.spawn((Player, Transform::IDENTITY, Visibility::Visible));
+        let me = world.spawn((Player, Transform::IDENTITY, Visibility::Visible, Venue::Plot(0))).id();
         world.spawn((ThirdPersonCamera, Transform::from_xyz(0.0, 2.0, 10.0)));
         let wall = world
             .spawn((
@@ -994,6 +1016,14 @@ mod tests {
         // In a house that is down, it fades; and out of it again, it does not.
         world.entity_mut(house).remove::<Ghost>();
         assert!(in_the_way(&mut world));
+        // But not in a house in the town, the main lobby, for as long as
+        // that is turned off (Hajun, 2026-11-25); on Blend In's venue, the
+        // town's own map, as before.
+        world.entity_mut(me).insert(Venue::Town);
+        assert_eq!(in_the_way(&mut world), IN_THE_TOWN);
+        world.entity_mut(me).insert(Venue::BlendIn);
+        assert!(in_the_way(&mut world));
+        world.entity_mut(me).insert(Venue::Plot(0));
         world.entity_mut(house).remove::<YouAreIn>();
         assert!(!in_the_way(&mut world));
     }
@@ -1033,7 +1063,7 @@ mod tests {
         // and that wall: both hide some of you.
         let eye = Vec3::new(0.0, 2.0, 10.0);
         assert!(hides(eye, FRONT) && hides(eye, BED));
-        world.spawn((Player, Transform::IDENTITY, Visibility::Visible));
+        world.spawn((Player, Transform::IDENTITY, Visibility::Visible, Venue::Plot(0)));
         world.spawn((ThirdPersonCamera, Transform::from_translation(eye)));
         let house = world.spawn((YouAreIn, Piece { def: of(Mount::House) }, GlobalTransform::IDENTITY)).id();
         let wall = drawn(&mut world, FRONT);

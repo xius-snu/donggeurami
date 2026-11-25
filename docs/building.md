@@ -7,6 +7,34 @@
 > "above" or "below", or names another section in quotes, that section may be
 > in another file here: the table in `CLAUDE.md` says which.
 
+## APK 60: the camera kept in a house; each floor painted by itself; the bag by kind and rarity
+
+2026-11-25, 23:36 here (14:36 UTC). Asked for: "build apk and push",
+after the camera's two steps of that day (nothing see-through in the
+town, the camera nearer, and then kept in the house you are in:
+`docs/camera.md`, its bullets of the day). The tree held another
+session's work as well, finished and its harness out (its asks of the
+day, each floor of a house painted by itself and the bag's window by
+kind and rarity: `docs/bag.md`, at the top), which it confirmed by
+message before the build; Hajun had been told it was in the build.
+Two commits, its first.
+
+- **Protocol 25 still**, nothing of `server/` changed and of `shared/` a
+  comment alone, so no deploy: it plays against the server deployed at
+  06:32 UTC that day, as APK 52 to 59 do.
+- `versionCode` 60, read back with `aapt dump badging`. cargo ndk 3 m 11
+  s (`release-android`), stripped from 203.7 MB to 111.0 MB, with
+  `GameActivity_onCreate` and the six `MainActivity` methods in it;
+  Gradle 19 s. 134,989,394 bytes: 289 of the game's files under
+  `assets/`, each the same to the byte as the tree's, and Android's two
+  baseline profiles; the library in it the same as the stripped one.
+  Every file under `assets/` (596) hashed before the library was built
+  and after Gradle: the same. `ui.ron` baked in as it was.
+- Before it: `cargo test --lib` (598) and `-p roundtown_net` (284) on
+  the tree as built. The build's five warnings are the five there were
+  before.
+- **Not put on a phone.**
+
 ## No `.blend1` in the repository
 
 2026-11-25, after APK 59. Hajun: "delete the blend1 files", then "ye

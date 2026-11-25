@@ -18,10 +18,14 @@ spend nothing on those two unasked.
 
 As of 2026-11-25: `PROTOCOL_VERSION` 25 (since 2026-11-23: a seat of the
 town is one of its 48 plots, so **APK 51 and older are told to update**;
-APK 52 and later play on), **APK 59** (`versionCode`, built 2026-11-25,
+APK 52 and later play on), **APK 60** (`versionCode`, built 2026-11-25,
 not put on a phone from here, `docs/building.md`), the server deployed at
-06:32 UTC on 2026-11-25 with everything in `server/` and `shared/`.
-**All of it committed and pushed, up to APK 59**: the land (`docs/land.md`: whoever is here and real people's
+06:32 UTC on 2026-11-25 with everything in `server/` and `shared/` (since
+changed by a comment in `shared/` alone).
+**All of it committed and pushed, up to APK 60**: the camera kept in a
+house in the town with you, nothing see-through there, and nearer
+(`docs/camera.md`); each floor of a house painted by itself, and the bag
+by kind and rarity (`docs/bag.md`); the land (`docs/land.md`: whoever is here and real people's
 land on the plots, where each is thrown afresh as a channel opens, a bot
 walking the land of each who is not here, every other plot bare since
 APK 59), everyone's
@@ -150,7 +154,9 @@ to try again.
   shop's things by kind, the Chandelier and the Lamp With Shade
   (`lamps::BY_KIND`, since 2026-11-25). At most 24 point
   lights (`MOST_LIT`), none by day.
-- See-through walls (`see_through.rs`) happen only inside a house, with
+- See-through walls (`see_through.rs`) happen only inside a house, and
+  never in the town since 2026-11-25 (Hajun's, `see_through::IN_THE_TOWN`,
+  off: House Builder and Blend In only), with
   alpha to coverage; never seen on a phone from here. Nothing of a body
   fades (`of_a_body`: five looks have eyes and a mouth that are meshes of
   their own), nor furniture (Hajun's, 2026-11-24: a bed, a chair or the
@@ -596,8 +602,12 @@ to try again.
   `car.pickup`). The pack as downloaded and its previews stay out of git
   (`.gitignore`: the repository is public and its licence forbids handing
   it on; `docs/vehicles.md`).
-- The camera orbits you 1.5 to 18 m out, and zoomed all the way in is your
-  eyes. **Nothing in the world moves it**: walls never bring it nearer. On
+- The camera orbits you 0.85 to 18 m out (1.5 until 2026-11-25, Hajun
+  wanting it nearer), and zoomed all the way in is your eyes. **Nothing in the world moves it**: walls never bring it nearer,
+  but for **a house in the town you are in, which keeps it in there with
+  you** (since 2026-11-25, Hajun's, to be tried; `src/indoors.rs`,
+  `indoors::STAYS_IN`: in front of the house's walls, whole, and under its
+  ceilings, your eyes where there is no room; `docs/camera.md`). On
   a phone the stick brings it round behind you after 1.5 s, and a double
   tap swings it there (not in edit mode, Hajun's, 2026-11-24). In the car
   and in Bridge Wars it is fixed straight overhead.

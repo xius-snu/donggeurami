@@ -928,7 +928,10 @@ impl Faces {
         from.distance_squared(to) > 1e-12 && self.sweep(from, to, 0.0).is_some()
     }
 
-    fn sweep(&self, from: Vec3, to: Vec3, radius: f32) -> Option<f32> {
+    /// How far a ball of `radius` gets from `from` toward `to` before it
+    /// touches any face, or `None` if it gets all the way. A face it starts
+    /// off touching only stops it going further in.
+    pub(crate) fn sweep(&self, from: Vec3, to: Vec3, radius: f32) -> Option<f32> {
         let (way, length) = (to - from).normalize_and_length();
         // Along the line, one over how far it goes each way per metre: huge,
         // rather than infinite, where it does not go that way at all.

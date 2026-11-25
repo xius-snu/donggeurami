@@ -7,6 +7,19 @@
 > "above" or "below", or names another section in quotes, that section may be
 > in another file here: the table in `CLAUDE.md` says which.
 
+## Nothing see-through in the town (2026-11-25)
+
+Hajun: "turn off autotransparency for everything in the main lobby", the
+first step of a rework of the camera in a house. In the town, in one of
+the map's own houses or in a house on a plot, nothing between the camera
+and you is drawn see-through any more (`see_through::IN_THE_TOWN`, off):
+no see-through copies of materials, no alpha to coverage, nothing looked
+for along the lines to you. Blend In's venue and House Builder's houses
+are as they were. The full account, my calls and what was checked are in
+`docs/camera.md` (its bullet of the day). This answers what the entry
+below left open: from a house on a plot, the plot's sign no longer fades,
+nor anything else of the town.
+
 ## Furniture in the way stays as it is (2026-11-24)
 
 Hajun: "i dont think the furnitures need to be turned invisible, like
