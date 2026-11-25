@@ -5,14 +5,111 @@ Dated entries, newest first.
 
 ## Contents
 
-1. 2026-11-25: the made-up owners' tastes, sixteen of them, three owners each, in the new houses and with the new things, mostly one floor; server deployed, APK 56
-2. 2026-11-24: where everything is, is thrown as a channel opens (the numbers only say which plot); 48 to a channel, someone walking every plot nobody has; nobody's land in two channels; APK 53
-3. 2026-11-23: all 48 plots always filled, in Hajun's order: whoever is here on the first sixteen, everyone else's land and made-up land on the rest; protocol 25, APK 52
-4. 2026-11-22: what you own stands on your plot, and everyone sees it
-5. Later on 2026-11-21: everyone in your channel has their sign, and you see it
-6. 2026-11-21: the words are a thing in the world, a picture hung on the board; a metre and a half at the corner; the sign is solid; APK 44
-7. Later on 2026-11-20: you arrive on your plot; the words slant with the board, on both its faces; more room at the corner
-8. 2026-11-20: a plot for your seat, and the sign on it that says whose it is
+1. 2026-11-25, morning: furniture upstairs in the made-up houses, every roof terrace somewhere to sit, the checker up the stairs, and the Square Houses of three to ten floors climbed again; server deployed, APK 58
+2. 2026-11-25: the made-up owners' tastes, sixteen of them, three owners each, in the new houses and with the new things, mostly one floor; server deployed, APK 56
+3. 2026-11-24: where everything is, is thrown as a channel opens (the numbers only say which plot); 48 to a channel, someone walking every plot nobody has; nobody's land in two channels; APK 53
+4. 2026-11-23: all 48 plots always filled, in Hajun's order: whoever is here on the first sixteen, everyone else's land and made-up land on the rest; protocol 25, APK 52
+5. 2026-11-22: what you own stands on your plot, and everyone sees it
+6. Later on 2026-11-21: everyone in your channel has their sign, and you see it
+7. 2026-11-21: the words are a thing in the world, a picture hung on the board; a metre and a half at the corner; the sign is solid; APK 44
+8. Later on 2026-11-20: you arrive on your plot; the words slant with the board, on both its faces; more room at the corner
+9. 2026-11-20: a plot for your seat, and the sign on it that says whose it is
+
+## 2026-11-25, morning: furniture upstairs in the made-up houses, and stairs that can be climbed; server deployed, APK 58
+
+Hajun: "also i want the premade npc plots that have atleast 2 floor to also
+have furnitures on its 2nd floor. right now the 2nd floor+ are all empty";
+and "and then build and push to git".
+
+- **Every floor over a ground floor has a room of its owner's taste**
+  (`roundtown_net::premade`, `Taste::upstairs`; twelve rooms, mine): the
+  three gamers' a game room, a bedroom with a desk under the windows and a
+  streaming corner (a desk with a screen, a computer and a mouse; the L
+  shaped couch); the bookworms' a library (a chest of drawers, a cupboard,
+  an armchair with an end table, a desk), and in the house of three floors
+  a reading room with a guest room over it; the night owls' a lounge with a
+  lamp on an end table, and a desk with a lamp on it; the office worker's,
+  of three floors, an office (a desk with its screen, computer and mouse, a
+  cupboard with the printer on it, a bin) and over it a meeting room (the
+  big round table, a chair on each side); the stargazer's, in the Roof
+  Terrace of three, a study with a globe on the desk; the party host's a
+  lounge with a table set for a party. The owners of a taste who have
+  floors over the ground floor have its rooms in turn, in the order of the
+  plans. Two houses have a second bed upstairs (plots 8 and 35); every lot
+  still has its one bed on the ground floor.
+- **Every roof terrace has somewhere to sit**: a chair by each
+  stargazer's telescope, three chairs round each party host's big table,
+  and on the collector's (plot 39, bare until now) a table, two chairs and
+  a plant.
+- What stands upstairs keeps the stairs' way clear: the floor where they
+  come out at the back, and in a house of three floors a way along them to
+  the next flight, which goes up from the front. No house with stairs has
+  its room turned the other way round (a test).
+- **Lighter things**: plain chairs, desks, the L shaped couch (268
+  triangles; the soft couch is 636), cupboards. Two reading lamps, the
+  night owls', light their rooms at night (`lamps::BY_KIND`). 202,938
+  triangles in all, where there were 187,442; the most on a plot 6,260
+  (plot 18, both its floors furnished). **The checker's limits raised,
+  mine**: 6,500 triangles to a plot (5,000), 205,000 in all (190,000), 40
+  things to a lot (30).
+- **The checker climbs the stairs** (`build::premade_check`): the way on
+  foot from the middle of a plot is looked for on every floor, a square at
+  a time, at every height a body has room at, over the house's floors and
+  stairs (not over what stands on them); a seat or a bed upstairs is
+  offered from somewhere walked to, with floor in front of it or beside it
+  at its own height; whatever stands upstairs is walked up to; and nothing
+  stands out over no floor (the box of a floor, which `floor_under` goes
+  by, takes in the hole the stairs come up through). Its own test hangs
+  the couch over the stairwell and blocks the top of the stairs with a
+  desk, and finds out both. The rule that the first sixteen plots hold the
+  most things is gone: since 2026-11-24 someone walks every plot, and
+  where each lot stands is thrown.
+- **Nobody could climb the stairs of a Square House of three to ten
+  floors**, found by that walk, which never got onto them: over the foot
+  of the stairs, each upper floor had a piece whose underside looked up,
+  and the game took the room under it for the inside of something solid.
+  Turned out in Hajun's eight `.blend` files and exported again
+  (`docs/house-builder.md`, at the top), which mends the shop's houses
+  too; the roofless ones were right.
+- **Old apps**: protocol 25 still. An app fills the made-up lots from its
+  own copy of the lists, online as well (`bag::made_up`), so APK 56 and 57
+  show the upper floors bare as before, and cannot climb a Square House of
+  three floors or more; APK 58 has both. The server deployed all the same
+  (03:06 UTC, 2026-11-25; `f36b58f1`, the one before kept as
+  `roundtown-server.prev-2026-11-25c`, `ce0188aa`): nobody connected,
+  Hajun's bunnihajun having left at 02:06. After: the VM's binary the same
+  as the one built here, this PC's account online, hidden, "joined, in
+  Town(0)" in the journal, the town's clock the server's.
+
+### Checked
+
+- **Tests**: the made-up lots' own nine (every floor over a ground floor
+  with three things at least, every roof terrace two, each taste's rooms
+  all somebody's, no house with stairs turned the other way round, one bed
+  to a ground floor); the checker, every lot on its own plot and on five
+  plots turned other ways; a new test that no house has a flat face
+  looking into itself, which fails on Hajun's old three-floor model; all
+  593 of the game's, 283 of `roundtown_net`'s, 129 of the server's.
+- **In the desktop build**, hidden, offline with the plots numbered: every
+  floor over a ground floor and every roof terrace of the fourteen houses
+  seen from above (what is upstairs on its floor and in nothing, the guest
+  beds in their owners' blanket colour); and, walked with the keys, from
+  the foot of the stairs to the top floor in both Square Houses of three
+  floors (plots 18 and 35: 0.1 m, 5.1 at the top of the first flight,
+  along the floor to the front, 10.1 at the top of the second, onto the
+  top floor), and up the Roof Terrace of three and the Two Floor House.
+
+### Not checked
+
+- A phone. Two devices online.
+
+### Mine
+
+The twelve rooms and what is in each; which owner has which; a second bed
+in two houses; the limits raised; mending all eight Square Houses, where
+the made-up land uses only the one of three floors. The residents stay
+downstairs: places more than 2.2 m over the plot are left alone
+(`resident.rs`), as they were.
 
 ## 2026-11-25: the made-up owners' tastes, and the new houses and things on their land; server deployed, APK 56
 

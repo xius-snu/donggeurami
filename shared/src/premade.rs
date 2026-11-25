@@ -27,6 +27,13 @@
 //! nothing. Their houses are low: two thirds of one floor, six of three, none
 //! higher ("keep it not to rich so its not like 10 floor buildings").
 //!
+//! **Upstairs too** (since 2026-11-25, morning; Hajun: "i want the premade
+//! npc plots that have atleast 2 floor to also have furnitures on its 2nd
+//! floor. right now the 2nd floor+ are all empty"): every floor over a
+//! ground floor has a room of its owner's taste ([`Taste::upstairs`]), the
+//! gamer's screens, the bookworm's shelves, the office worker's office and
+//! a meeting room over it, and every roof terrace something to sit on.
+//!
 //! **All of it is written here by hand, in tables**, and put together by
 //! sums that come out the same on every machine ([`made`]): a turn is so
 //! many eighths of a whole one, which is what a tap on one of the game's
@@ -42,8 +49,10 @@
 //! for it; nothing in a wall or in anything else; the middle of the plot,
 //! where its owner arrives, on free floor; a way on foot from there out of
 //! the door, to the bed and to every seat; every painted part a part of
-//! its model; and no more triangles than a phone draws easily (5,000 to a
-//! plot, 190,000 in all). **Change a number here and run that test.**
+//! its model; and no more triangles than a phone draws easily (6,500 to a
+//! plot, 205,000 in all). The way on foot goes up the stairs too, to every
+//! seat and bed upstairs and to whatever else stands there.
+//! **Change a number here and run that test.**
 //!
 //! Two things about the game's shapes that the rooms keep clear of, for
 //! whoever changes one. The Square House's front gable is modelled inside
@@ -61,7 +70,9 @@
 //! wall. The rooms are 11 m square inside walls half a metre thick. A
 //! house of two floors has its stairs up the wall at x = -5.5, from 4.25 m
 //! in front of the middle to the back wall, which leaves 9 m of floor
-//! across.
+//! across. Upstairs they come out at the back of that strip, onto the
+//! floor at x = -3.5; in a house of three floors the next flight goes up
+//! from the front of the strip, over the first ([`Taste::upstairs`]).
 
 use std::f32::consts::{FRAC_1_SQRT_2, FRAC_PI_2, FRAC_PI_4, PI};
 use std::sync::OnceLock;
@@ -283,6 +294,12 @@ const fn top_floor(kind: &'static str, side: u8, along: f32) -> Opening {
 /// (`build::walls_of`): one a side, or a side's storeys one after another.
 fn wall_of(house: usize, side: u8, storey: u8) -> u8 {
     if STACKED[house] { side * STOREYS[house] + storey } else { side }
+}
+
+/// How many floors with walls round them a house has over its ground
+/// floor: none, but in the Two Floor House and the houses of three floors.
+fn floors_over(house: usize) -> usize {
+    usize::from(STOREYS[house] - 1)
 }
 
 /// What is in a house: the door and windows in its walls, and what
@@ -668,6 +685,98 @@ const LAWNS: [&[Thing]; 25] = [
     &[thing("potted_plant", 10.1, -3.6, 0), thing("flowers", 10.1, -2.3, 0)],
 ];
 
+// ------------------------------------------------------------- upstairs
+
+// The rooms of the floors over a ground floor ([`Taste::upstairs`]), each
+// a list of what stands on that floor, in its house's own space with the
+// floor at nothing (and what stands on a table at that table's top, as
+// [`up`] has it on the ground floor): the Two Floor House's floor over its
+// ground floor, both of the Square House of three floors and the indoor one
+// of the Roof Terrace of three. All of them are 9 m across, from the stairs
+// to the wall at x = 5.5. The stairs come up at the back of the strip along
+// the wall at x = -5.5, onto the floor at x = -3.5: the floor from there to
+// the back wall, 2 m in and from 3 m behind the middle, is left clear, and
+// so is a way 1.6 m wide along the strip from the back to the front, where
+// in a house of three floors the next flight goes up. Tall things keep off
+// a wall where a window is.
+
+/// How high over its foot the top of a desk, an end table, a cupboard
+/// and a table is ([`TOPS`]).
+const DESK_TOP: f32 = FLOOR + 1.082;
+const END_TABLE_TOP: f32 = FLOOR + 1.421;
+const CUPBOARD_TOP: f32 = FLOOR + 1.477;
+const TABLE_TOP: f32 = FLOOR + 1.186;
+/// The gamer's: a desk at the back with a chair at it, a screen, a computer
+/// and a mouse on it and a bin beside it; the L shaped couch by the wall on
+/// the right.
+const GAME_ROOM: &[Thing] = &[
+    thing("desk", 1.2, 4.71, 0), thing("chair", 0.4, 3.6, 4), up("monitor", 0.4, DESK_TOP, 5.15, 0), up("computer", 1.45, DESK_TOP, 4.75, 0),
+    up("computer_mouse", 0.95, DESK_TOP, 4.35, 0), thing("couch", 4.38, -1.6, 2), thing("trash_bin", 2.3, 4.6, 0),
+];
+/// Another gamer's: a bed in the back right corner, a desk under the front
+/// windows with its screen and computer, and an armchair by the stairs.
+const GAMER_S_BEDROOM: &[Thing] = &[
+    thing(SINGLE_BED, 4.33, 3.22, 0), thing("desk", 0.2, -4.71, 4), thing("chair", 1.0, -3.6, 0), up("monitor", 1.0, DESK_TOP, -5.1, 4),
+    up("computer", 0.0, DESK_TOP, -4.7, 4), up("computer_mouse", 1.55, DESK_TOP, -4.3, 4), thing("armchair", -2.6, -1.0, 6),
+];
+/// The third gamer's: a desk down the wall on the right, the couch along
+/// the back, and a box of games.
+const STREAMER_S_CORNER: &[Thing] = &[
+    thing("desk", 4.71, -2.5, 2), thing("chair", 3.6, -1.7, 6), up("monitor", 5.1, DESK_TOP, -1.7, 2), up("computer", 4.8, DESK_TOP, -2.8, 2),
+    up("computer_mouse", 4.3, DESK_TOP, -1.0, 2), thing("couch", 0.6, 4.38, 0), thing("empty_box", -0.8, -4.9, 0),
+];
+/// The bookworm's: a chest of drawers and a cupboard down the wall on the
+/// right, an armchair turned to them with a table beside it, and a desk at
+/// the back to write at.
+const LIBRARY: &[Thing] = &[
+    thing("dresser", 5.05, -3.0, 2), thing("cabinet", 4.61, 0.2, 2), thing("armchair", 2.3, -2.0, 6), thing("end_table", 2.3, -0.6, 6),
+    thing("desk", 1.2, 4.71, 0), thing("chair", 0.4, 3.6, 4),
+];
+/// Another bookworm's, on the floor over the ground floor: two cupboards
+/// along the back, and an armchair turned to them with a table beside it.
+const READING_ROOM: &[Thing] = &[
+    thing("cabinet", -0.6, 4.61, 0), thing("cabinet", 0.95, 4.61, 0), thing("armchair", 0.3, 2.6, 4), thing("end_table", 1.9, 2.6, 4),
+];
+/// And over that: a bed for whoever comes to stay, and a desk.
+const GUEST_ROOM: &[Thing] = &[thing(SINGLE_BED, 4.33, 3.22, 0), thing("desk", 0.2, -4.71, 4), thing("chair", 1.0, -3.6, 0)];
+/// The night owl's: the couch along the back, a table at its end with a
+/// lamp on it, and an armchair.
+const LATE_LOUNGE: &[Thing] = &[
+    thing("couch", 1.2, 4.38, 0), thing("end_table", 4.6, 4.6, 0), up("lamp_with_shade", 4.35, END_TABLE_TOP, 4.6, 0),
+    thing("armchair", 4.6, -0.8, 2),
+];
+/// Another night owl's: a desk at the back with a lamp on it, an armchair
+/// and a cupboard down the wall on the right.
+const NIGHT_DESK: &[Thing] = &[
+    thing("desk", 1.2, 4.71, 0), thing("chair", 0.4, 3.6, 4), up("lamp_with_shade", 1.6, DESK_TOP, 5.0, 0), thing("armchair", 4.6, 0.0, 2),
+    thing("cabinet", 4.61, -3.0, 2),
+];
+/// The office worker's: a desk down the wall on the right with its screen,
+/// computer and mouse, a cupboard at the back with the printer on it, and a
+/// bin.
+const HOME_OFFICE: &[Thing] = &[
+    thing("desk", 4.71, -2.5, 2), thing("chair", 3.6, -1.7, 6), up("monitor", 5.1, DESK_TOP, -1.7, 2), up("computer", 4.8, DESK_TOP, -2.8, 2),
+    up("computer_mouse", 4.3, DESK_TOP, -1.0, 2), thing("cabinet", 0.5, 4.61, 0), up("printer", 0.5, CUPBOARD_TOP, 5.02, 2),
+    thing("trash_bin", 2.6, -4.9, 0),
+];
+/// And over that, a big round table with a chair on each side.
+const MEETING_ROOM: &[Thing] = &[
+    thing("table_large_circular", 1.5, -0.5, 0), thing("chair", 1.5, 1.41, 0), thing("chair", 1.5, -2.41, 4), thing("chair", 3.41, -0.5, 2),
+    thing("chair", -0.41, -0.5, 6),
+];
+/// The stargazer's: a desk at the back with a globe on it, an armchair and
+/// a cupboard down the wall on the right.
+const STARGAZER_S_STUDY: &[Thing] = &[
+    thing("desk", 1.2, 4.71, 0), thing("chair", 0.4, 3.6, 4), up("globe", 1.4, DESK_TOP, 4.9, 0), thing("armchair", 4.6, -1.5, 2),
+    thing("cabinet", 4.61, 1.5, 2),
+];
+/// The party host's: the couch along the back, and a table with a chair
+/// either side and a present and a glass on it.
+const PARTY_LOUNGE: &[Thing] = &[
+    thing("couch", 1.2, 4.38, 0), thing("table", 2.0, -2.5, 0), thing("chair", 2.0, -1.4, 0), thing("chair", 2.0, -3.6, 4),
+    up("present", 1.4, TABLE_TOP, -2.4, 0), up("wine_glass", 2.6, TABLE_TOP, -2.7, 0),
+];
+
 // -------------------------------------------------------------- the tastes
 
 /// A small thing a taste puts on top of something its room has: on the
@@ -700,13 +809,16 @@ const fn on_counter(nth: usize, kind: &'static str, x: f32, z: f32, turn: u8) ->
 /// at its back and its middle; `None` to have nothing there), what small
 /// things they keep on its tables and counters, what they add at the spots
 /// the room leaves, and what stands on their roof terrace, if they have
-/// one. Their colours are their plot's coat ([`COATS`]), and their lawn
-/// their plan's.
+/// one; and the rooms of their floors over the ground floor
+/// ([`UPSTAIRS`]), one a floor, its owners of a house of more than one
+/// floor having them in turn, in the order of the plans. Their colours are
+/// their plot's coat ([`COATS`]), and their lawn their plan's.
 struct Taste {
     swaps: &'static [(&'static str, &'static [Option<&'static str>])],
     tops: &'static [Top],
     extra: &'static [&'static str],
     roof: &'static [Thing],
+    upstairs: &'static [&'static [Thing]],
 }
 
 /// The sixteen tastes, three owners each ([`PLANS`]).
@@ -718,17 +830,20 @@ const TASTES: [Taste; 16] = [
         tops: &[on_counter(0, "frying_pan", 0.0, -0.12, 0)],
         extra: &[],
         roof: &[],
+        upstairs: &[],
     },
     // 1, the bookworm: an armchair for the couch, a reading lamp on a counter,
-    // a cup of tea on the table, a grandfather's clock.
+    // a cup of tea on the table, a grandfather's clock; upstairs, shelves and
+    // an armchair.
     Taste {
         swaps: &[(COUCH, &[Some("armchair")]), (CHAIR, &[Some("chair")])],
         tops: &[on_counter(0, "lamp_with_shade", 0.5, 0.1, 0), on_table(0, "cup_of_tea", -0.45, -0.3, 0)],
         extra: &["grandfathers_clock"],
         roof: &[],
+        upstairs: &[LIBRARY, READING_ROOM, GUEST_ROOM],
     },
     // 2, the gamer: a computer, its screen and mouse on a counter, headphones
-    // on the next.
+    // on the next; upstairs, another screen, or two.
     Taste {
         swaps: &[(CHAIR, &[Some("chair")])],
         tops: &[
@@ -737,6 +852,7 @@ const TASTES: [Taste; 16] = [
         ],
         extra: &["trash_bin"],
         roof: &[],
+        upstairs: &[GAME_ROOM, GAMER_S_BEDROOM, STREAMER_S_CORNER],
     },
     // 3, the gardener: cupboards for the counters, flowers on the table, a
     // plant on the floor, and a garden out on the lawn.
@@ -745,14 +861,17 @@ const TASTES: [Taste; 16] = [
         tops: &[on_table(0, "flowers", -0.35, -0.3, 0)],
         extra: &["potted_plant"],
         roof: &[],
+        upstairs: &[],
     },
     // 4, the stargazer: a globe on the table, and a telescope up on the roof
-    // terrace.
+    // terrace with a chair beside it; upstairs, a study with a globe on the
+    // desk.
     Taste {
         swaps: &[(CHAIR, &[Some("chair")])],
         tops: &[on_table(0, "globe", 0.0, 0.1, 0)],
         extra: &[],
-        roof: &[thing("telescope", 1.5, 1.0, 4)],
+        roof: &[thing("telescope", 1.5, 1.0, 4), thing("chair", 3.0, 0.6, 4)],
+        upstairs: &[STARGAZER_S_STUDY],
     },
     // 5, the one who never grew up: a stool, a doll and a present on the
     // table, a box of toys.
@@ -761,6 +880,7 @@ const TASTES: [Taste; 16] = [
         tops: &[on_table(0, "doll", 0.35, 0.2, 0), on_table(0, "present", -0.4, -0.3, 0)],
         extra: &["empty_box"],
         roof: &[],
+        upstairs: &[],
     },
     // 6, the tea drinker: a cupboard, tea on the table, and a rocking chair.
     Taste {
@@ -768,6 +888,7 @@ const TASTES: [Taste; 16] = [
         tops: &[on_table(0, "cup_of_tea", 0.45, -0.3, 0)],
         extra: &["rocking_chair"],
         roof: &[],
+        upstairs: &[],
     },
     // 7, the tinkerer: a stool, tools on the workbench, a bin and a box.
     Taste {
@@ -775,6 +896,7 @@ const TASTES: [Taste; 16] = [
         tops: &[on_counter(0, "screwdriver", 0.3, 0.0, 2), on_counter(0, "stapler", -0.45, 0.1, 0)],
         extra: &["empty_box", "trash_bin"],
         roof: &[],
+        upstairs: &[],
     },
     // 8, the one who loves a bath: in the bathhouse, a duck in the tub and
     // flowers; anywhere else an armchair, a bath at the front and a sink.
@@ -783,14 +905,16 @@ const TASTES: [Taste; 16] = [
         tops: &[on_table(0, "flowers", 0.0, 0.0, 0), on_counter(0, "tissue_box", 0.3, 0.2, 0)],
         extra: &["bathtub"],
         roof: &[],
+        upstairs: &[],
     },
     // 9, the night owl, who reads late: an armchair for the couch, a lamp on a
-    // counter, and a lamp out on the lawn.
+    // counter, and a lamp out on the lawn; upstairs, another lamp.
     Taste {
         swaps: &[(COUCH, &[Some("armchair")]), (CHAIR, &[Some("chair")])],
         tops: &[on_counter(0, "lamp_with_shade", 0.4, 0.1, 0)],
         extra: &[],
         roof: &[],
+        upstairs: &[LATE_LOUNGE, NIGHT_DESK],
     },
     // 10, the traveller: a globe, a coat rack and an umbrella by the wall, a
     // mailbox out front.
@@ -799,6 +923,7 @@ const TASTES: [Taste; 16] = [
         tops: &[on_table(0, "globe", 0.0, 0.0, 0)],
         extra: &["coat_rack", "closed_umbrella"],
         roof: &[],
+        upstairs: &[],
     },
     // 11, the athlete: a treadmill, dumbbells on the floor, tea on the table.
     Taste {
@@ -806,14 +931,20 @@ const TASTES: [Taste; 16] = [
         tops: &[on_table(0, "cup_of_tea", 0.0, 0.0, 0)],
         extra: &["treadmill", "dumbbell"],
         roof: &[],
+        upstairs: &[],
     },
     // 12, the party host: a glass and a burger on the table, a barbecue out on
-    // the lawn, and up on the roof terrace a big table with a present on it.
+    // the lawn, and up on the roof terrace a big table with a present on it
+    // and chairs round it; upstairs, a lounge with a table set for a party.
     Taste {
         swaps: &[(CHAIR, &[Some("chair")])],
         tops: &[on_table(0, "wine_glass", 0.45, 0.35, 0), on_table(0, "hamburger", -0.4, -0.4, 0)],
         extra: &[],
-        roof: &[thing("table_large_circular", 1.0, 0.5, 0), up("present", 1.0, FLOOR + 1.129, 0.0, 0)],
+        roof: &[
+            thing("table_large_circular", 1.0, 0.5, 0), up("present", 1.0, FLOOR + 1.129, 0.0, 0), thing("chair", 2.91, 0.5, 2),
+            thing("chair", 1.0, -1.41, 4), thing("chair", 1.0, 2.41, 0),
+        ],
+        upstairs: &[PARTY_LOUNGE],
     },
     // 13, the minimalist: as little as will do, and nothing on it.
     Taste {
@@ -821,9 +952,11 @@ const TASTES: [Taste; 16] = [
         tops: &[],
         extra: &[],
         roof: &[],
+        upstairs: &[],
     },
     // 14, the office worker: a computer, its screen and a mouse on one counter,
-    // a printer and a stapler on the next, tissues on the table, and a bin.
+    // a printer and a stapler on the next, tissues on the table, and a bin;
+    // upstairs, an office, and over that a meeting room.
     Taste {
         swaps: &[(CHAIR, &[Some("chair"), Some("chair")])],
         tops: &[
@@ -833,14 +966,17 @@ const TASTES: [Taste; 16] = [
         ],
         extra: &["trash_bin"],
         roof: &[],
+        upstairs: &[HOME_OFFICE, MEETING_ROOM],
     },
     // 15, the collector: a cupboard, a globe on the table, a clock on the
-    // cupboard, a grandfather's clock and a safe.
+    // cupboard, a grandfather's clock and a safe; on a roof terrace, a table,
+    // two chairs and a plant.
     Taste {
         swaps: &[(DESK, &[Some("cabinet")]), (CHAIR, &[Some("chair")])],
         tops: &[on_table(0, "globe", 0.2, 0.0, 0), on_counter(0, "alarm_clock", 0.3, 0.42, 0)],
         extra: &["grandfathers_clock", "safe"],
-        roof: &[],
+        roof: &[thing("table", 1.5, 0.0, 0), thing("chair", 1.5, 1.1, 0), thing("chair", 1.5, -1.1, 4), thing("potted_plant", 4.9, 4.9, 0)],
+        upstairs: &[],
     },
 ];
 const COOK: usize = 0;
@@ -1261,10 +1397,22 @@ fn made(plot: usize) -> Lot {
             face: 1,
         });
     }
-    // What stands on its floor and on its roof, where the house's place and
-    // turn bring each thing's place in the room.
-    let roof = ROOF_TOP[plan.house].map_or(&[][..], |_| TASTES[plan.taste].roof);
-    let things = furnished(plan).into_iter().map(|thing| (thing, FLOOR)).chain(roof.iter().map(|&thing| (thing, ROOF_TOP[plan.house].unwrap_or(FLOOR))));
+    // What stands on its floor, on each floor over that and on its roof,
+    // where the house's place and turn bring each thing's place in the
+    // room. Each floor over the ground floor has the next of its owner's
+    // taste's rooms, after those its owners before have.
+    let taste = &TASTES[plan.taste];
+    let roof = ROOF_TOP[plan.house].map_or(&[][..], |_| taste.roof);
+    let before: usize = PLANS[..plot].iter().filter(|other| other.taste == plan.taste).map(|other| floors_over(other.house)).sum();
+    let upstairs = (0..floors_over(plan.house)).filter(|_| !taste.upstairs.is_empty()).flat_map(|storey| {
+        let floor = FLOOR + STOREY * (storey + 1) as f32;
+        taste.upstairs[(before + storey) % taste.upstairs.len()].iter().map(move |&thing| (thing, floor))
+    });
+    let things = furnished(plan)
+        .into_iter()
+        .map(|thing| (thing, FLOOR))
+        .chain(upstairs)
+        .chain(roof.iter().map(|&thing| (thing, ROOF_TOP[plan.house].unwrap_or(FLOOR))));
     for (thing, floor) in things {
         // The other way round, left for right: its middle where the
         // middle of the other was, mirrored, facing the mirrored way.
@@ -1351,12 +1499,14 @@ mod tests {
             // than a plot is told of easily.
             let ids: Vec<u32> = made.stands.iter().map(|stood| stood.id).collect();
             assert_eq!(ids, (1..=made.stands.len() as u32).collect::<Vec<_>>(), "plot {plot}");
-            assert!(made.stands.len() <= 30, "plot {plot}: {} things", made.stands.len());
+            assert!(made.stands.len() <= 40, "plot {plot}: {} things", made.stands.len());
             assert_eq!(count(made, &HOUSES), 1, "plot {plot}");
             assert!(HOUSES.contains(&made.stands[0].kind.as_str()), "plot {plot}");
             assert!(count(made, &DOORS) >= 1, "plot {plot}");
             assert!((1..=8).contains(&count(made, &[SQUARE_WINDOW, WIDE_WINDOW])), "plot {plot}");
-            assert_eq!(count(made, &BEDS), 1, "plot {plot}");
+            // One bed on the ground floor, and on some another upstairs.
+            let downstairs = made.stands.iter().filter(|stood| BEDS.contains(&stood.kind.as_str()) && matches!(stood.at, At::Ground { y, .. } if y < 1.0));
+            assert_eq!(downstairs.count(), 1, "plot {plot}");
             assert!(count(made, &SEATS) >= 1, "plot {plot}");
             // What goes in a wall is in one of the house's, and everything
             // else stands on the ground.
@@ -1409,6 +1559,40 @@ mod tests {
         assert!(one * 3 >= PLOTS * 2 && three <= 6, "{one} of one floor, {three} of three");
         for house in 0..HOUSES.len() {
             assert!(PLANS.iter().any(|plan| plan.house == house), "nobody has a {}", HOUSES[house]);
+        }
+    }
+
+    #[test]
+    fn every_floor_over_a_ground_floor_is_furnished_and_every_roof_terrace() {
+        // Hajun, 2026-11-25: "i want the premade npc plots that have atleast
+        // 2 floor to also have furnitures on its 2nd floor. right now the
+        // 2nd floor+ are all empty".
+        let lots: Vec<Lot> = (0..PLOTS).map(lot).collect();
+        let on = |made: &Lot, floor: f32| made.stands.iter().filter(|stood| matches!(stood.at, At::Ground { y, .. } if (y - floor).abs() < 1e-3)).count();
+        let mut used: Vec<(usize, usize)> = Vec::new();
+        for (plot, (plan, made)) in PLANS.iter().zip(&lots).enumerate() {
+            for storey in 1..=floors_over(plan.house) {
+                assert!(on(made, FLOOR + STOREY * storey as f32) >= 3, "plot {plot}: floor {} is bare", storey + 1);
+            }
+            // A roof terrace, up the stairs: not the Flat House's top, which
+            // nobody gets up to.
+            let stairs = [TALL, TERRACE, TALL3, TERRACE3].contains(&plan.house);
+            if let Some(roof) = ROOF_TOP[plan.house].filter(|_| stairs) {
+                assert!(on(made, roof) >= 2, "plot {plot}: its roof terrace is bare");
+            }
+            // The stairs are on one side, and what is in a house that has
+            // them is not turned the other way round, left for right, into
+            // them.
+            assert!(!(stairs && plan.flipped), "plot {plot}");
+            let before: usize = PLANS[..plot].iter().filter(|other| other.taste == plan.taste).map(|other| floors_over(other.house)).sum();
+            let rooms = TASTES[plan.taste].upstairs.len();
+            used.extend((0..floors_over(plan.house)).map(|storey| (plan.taste, (before + storey) % rooms.max(1))));
+        }
+        // Every room upstairs of every taste is somebody's.
+        for (taste, of) in TASTES.iter().enumerate() {
+            for room in 0..of.upstairs.len() {
+                assert!(used.contains(&(taste, room)), "room {room} upstairs of taste {taste} is nobody's");
+            }
         }
     }
 

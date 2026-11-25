@@ -7,6 +7,31 @@
 > "above" or "below", or names another section in quotes, that section may be
 > in another file here: the table in `CLAUDE.md` says which.
 
+## The Square Houses of three to ten floors: an underside turned out (2026-11-25, morning)
+
+Found while the made-up houses were furnished upstairs (`docs/land.md`, at
+the top): in each of Hajun's Square Houses of three to ten floors, every
+floor over the ground floor (`Floor_2`, `Floor_2.001`, ...) had a piece over
+the foot of the stairs, 2 m by 1.25, whose underside looked up. The game
+takes the room under a face that looks up for the inside of something solid
+(`island::buried`), so that nobody could stand at the foot of either flight
+and nobody got upstairs in any of them. The roofless ones of three to ten
+floors were right.
+
+- `blender/turn_floors_out.py` turns round, in each `Floor_2*` object, the
+  flat faces of its underside that look up and of its top that look down,
+  and nothing else, saves the `.blend` without leaving a `.blend1` beside it
+  (the repository keeps Hajun's own) and exports the `.glb`. One face a
+  floor: 4 triangles in the house of three floors, 18 in the house of ten.
+- Each new `.glb` was compared with Hajun's before it took its place (a dry
+  run to the scratchpad first): the same JSON but the buffers, the same
+  nodes, placements, materials and triangles, the winding of those faces
+  alone turned. No object has a modifier.
+- Held by `premade_check::no_house_has_a_floor_or_a_ceiling_facing_into_itself`
+  (every flat face of every part of every house looks out), which fails on
+  the old model of three floors. Seen in the desktop build: walked up both
+  flights of the Square House of three floors, and onto its top floor.
+
 ## The painting stood up, the treadmill set on its origin (2026-11-25, later)
 
 Two of the downloads changed in their `.blend` files and exported again,

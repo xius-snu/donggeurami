@@ -18,13 +18,15 @@ spend nothing on those two unasked.
 
 As of 2026-11-25: `PROTOCOL_VERSION` 25 (since 2026-11-23: a seat of the
 town is one of its 48 plots, so **APK 51 and older are told to update**;
-APK 52 to 55 play on, those before 55 without the new things on the
-made-up land), **APK 57** (`versionCode`, built 2026-11-25, not put on a
-phone from here, `docs/building.md`), the server deployed at 19:44 UTC on
-2026-11-24 with everything in `server/` and `shared/`. **All of it
-committed and pushed, up to APK 57**: the land (`docs/land.md`: all 48
+APK 52 and later play on, those before 55 without the new things on the
+made-up land and those before 58 with its upper floors bare), **APK 58**
+(`versionCode`, built 2026-11-25, not put on a phone from here,
+`docs/building.md`), the server deployed at 03:06 UTC on 2026-11-25 with
+everything in `server/` and `shared/`. **All of it
+committed and pushed, up to APK 58**: the land (`docs/land.md`: all 48
 plots always filled, where each is thrown afresh as a channel opens,
-someone walking every one, each made-up owner of a taste), everyone's
+someone walking every one, each made-up owner of a taste, furnished
+upstairs too), everyone's
 signs and cars, the town's slower buses, the bag (`docs/bag.md`) with its
 window, its button and how it is scrolled and its 118 things, small
 things on tops, the 23 cars (`docs/vehicles.md`), edit mode on your plot
@@ -496,7 +498,8 @@ to try again.
   with made-up land (`roundtown_net::premade`, 48 furnished plots a test
   holds to the game's building rules, `build::premade_check`; since APK
   56 each owner of one of sixteen tastes, two thirds of the houses one
-  floor and none over three). **Nobody's
+  floor and none over three; since APK 58 a room of their taste on every
+  floor over a ground floor, which the test walks up the stairs to). **Nobody's
   land is in two channels at once**: whoever comes goes to the channel
   their land fills a plot of (after their group's), and has nothing left
   in any other. Offline the device throws its own order (`land::thrown`).

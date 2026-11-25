@@ -7,6 +7,31 @@
 > "above" or "below", or names another section in quotes, that section may be
 > in another file here: the table in `CLAUDE.md` says which.
 
+## APK 58: furniture upstairs in the made-up houses; the Square Houses of three floors and more climbed again
+
+2026-11-25, 12:11 here (03:11 UTC). Asked for: "also i want the premade
+npc plots that have atleast 2 floor to also have furnitures on its 2nd
+floor ... and then build and push to git" (`docs/land.md` and
+`docs/house-builder.md`, at the top of each). From the main checkout with
+no other session running (`ListAgents`).
+
+- **Protocol 25 still**: it plays against the server deployed at 03:06 UTC
+  on 2026-11-25 (`f36b58f1`), as APK 52 to 57 do; an app before 58 shows
+  the made-up houses bare upstairs, and cannot climb a Square House of
+  three floors or more.
+- `versionCode` 58, read back from Gradle's `output-metadata.json`.
+  cargo ndk 2 m 35 s (`release-android`), stripped from 203.4 MB to
+  110.9 MB with `GameActivity_onCreate` and the six `MainActivity`
+  methods in it, Gradle 4 s. 134,931,962 bytes: 289 of the game's files
+  under `assets/`, each the same to the byte as the tree's (the eight
+  Square Houses of three to ten floors as they were mended that morning),
+  and Android's two baseline profiles; the library in it the same as the
+  stripped one. Every model, picture and `ui.ron` hashed before the
+  library was built and after Gradle, the same.
+- Before it: the game's tests (593), `roundtown_net`'s (283) and the
+  server's (129); the hidden desktop runs the entries say. **Not put on a
+  phone.**
+
 ## APK 57: a new thing comes up square to its plot
 
 2026-11-25, 11:05 here (02:05 UTC). Asked for: "then build apk and

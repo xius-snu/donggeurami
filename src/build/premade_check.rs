@@ -165,11 +165,15 @@ const TRIANGLES: [(&str, usize); 95] = [
     ("telescope", 734),
     ("chandelier", 1204),
 ];
-/// The most triangles one made-up plot is drawn with, and all 48 together.
-const MOST_ON_A_PLOT: usize = 5_000;
-const MOST_IN_ALL: usize = 190_000;
-/// The most things on one of them, and the most plots with a lamp.
-const MOST_THINGS: usize = 30;
+/// The most triangles one made-up plot is drawn with, and all 48 together:
+/// 5,000 and 190,000 until 2026-11-25, when the floors over the ground
+/// floors were furnished, which the houses of two and three floors need
+/// room for (mine).
+const MOST_ON_A_PLOT: usize = 6_500;
+const MOST_IN_ALL: usize = 205_000;
+/// The most things on one of them (30 until then), and the most plots with
+/// a lamp.
+const MOST_THINGS: usize = 40;
 const MOST_LIT: usize = 20;
 
 /// How near two places have to be to be the same, in metres, as `stand`
@@ -189,6 +193,10 @@ const BESIDE: f32 = 0.8;
 /// metres: as fine as a body is tested against the town
 /// (`island::LATTICE`).
 const CELL: f32 = 0.25;
+/// How far in from the edge of what a thing takes up its corners are
+/// looked under for floor, in metres: what a model's box has round its
+/// legs and its edges.
+const OVER_FLOOR_INSET: f32 = 0.05;
 
 /// One of the pieces as its model has it, read as the game reads it once
 /// it has spawned (`super::piece_ready`): the box it fills; for what goes
@@ -496,6 +504,12 @@ fn faults(lot: &Lot, plot: &Plot, town: &mut Island, models: &[Model]) -> Vec<St
         island::add_mesh(&mut part, &wall_mesh(wall), &GlobalTransform::from(home));
         house_parts.push(part);
     }
+    // What feet go on: the plot's own ground, and the house's floors and
+    // its stairs, at no more than `reach`. Not what stands on them: a body
+    // steps up onto a low thing as it walks, and nobody is counted on to.
+    let house_only: Vec<&[[Vec3; 3]]> = house_parts.iter().map(Vec::as_slice).collect();
+    let underfoot = Island::of_parts_for_tests(&house_only);
+    let feet_on = |at: Vec2, reach: f32| underfoot.floor(at, reach).map_or(yard.ground, |floor| floor.max(yard.ground));
     let rooms = Rooms(house.floors.clone());
     let things: Vec<Down> = standing
         .into_iter()
@@ -623,6 +637,16 @@ fn faults(lot: &Lot, plot: &Plot, town: &mut Island, models: &[Model]) -> Vec<St
             if (floor - at.y).abs() > SAME {
                 faults.push(format!("{} stands {} up, where the floor under it is {floor} up", called(thing.stood), at.y));
             }
+            // And the whole of it over that floor, at its corners and its
+            // middle: none of it out over a stairwell, or over the hole in a
+            // floor that the stairs come up through (since 2026-11-25, when
+            // things first stood upstairs: a floor's box, which
+            // `floor_under` goes by, takes in its holes).
+            let (low, high) = (bounds.low + OVER_FLOOR_INSET, bounds.high - OVER_FLOOR_INSET);
+            let over = [(low.x, low.z), (high.x, low.z), (high.x, high.z), (low.x, high.z), ((low.x + high.x) * 0.5, (low.z + high.z) * 0.5)];
+            if over.iter().any(|&(x, z)| (feet_on(thing.point(x, z), at.y + 0.02) - at.y).abs() > 0.02) {
+                faults.push(format!("{} stands out over no floor", called(thing.stood)));
+            }
         }
         let shape = footprint(&thing.place, bounds);
         let from_the_sign = apart(&shape, &sign_shape);
@@ -643,18 +667,22 @@ fn faults(lot: &Lot, plot: &Plot, town: &mut Island, models: &[Model]) -> Vec<St
         .collect();
     town.lay_over(Some(Island::of_parts_for_tests(&parts)));
     let town = &*town;
-    // Where someone at `at` has their feet, if a body has room there: on
-    // the land, or on the ground floor of the house.
-    let stands = |at: Vec2| {
-        let feet = floor_under(yard, &storeys, at, yard.ground + LAND_STEP_UP);
-        let body = [(PLAYER_RADIUS, feet + LAND_STEP_UP, feet + PLAYER_HEIGHT)];
-        town.walls_round(at, &body).is_empty().then_some(feet)
+    // Whether a body with its feet at `feet` has room at `at`.
+    let room = |at: Vec2, feet: f32| town.walls_round(at, &[(PLAYER_RADIUS, feet + LAND_STEP_UP, feet + PLAYER_HEIGHT)]).is_empty();
+    // Where someone whose feet were at `from` has their feet at `at`, if
+    // that is no more than a step up or down and a body has room there: on
+    // the land, on a floor of the house or on its stairs.
+    let stands_from = |at: Vec2, from: f32| {
+        let feet = feet_on(at, from + LAND_STEP_UP);
+        ((feet - from).abs() <= LAND_STEP_UP && room(at, feet)).then_some(feet)
     };
+    let stands = |at: Vec2| stands_from(at, yard.ground);
     if stands(yard.middle).is_none() {
         faults.push("the middle of the plot, where its owner arrives, is in something".into());
     }
     // Everywhere on the plot that is walked to from its middle, a square
-    // at a time: each square's middle, where a body has room.
+    // at a time, up the stairs too: each square's middle, at the height of
+    // each floor a body is walked to there, where it has room.
     let across = (2.0 * yard.half / CELL).round() as usize;
     let own = yard.place();
     let into_plot = own.compute_affine().inverse();
@@ -668,39 +696,47 @@ fn faults(lot: &Lot, plot: &Plot, town: &mut Island, models: &[Model]) -> Vec<St
         let (column, row) = (nth(here.x), nth(here.z));
         (column >= 0.0 && row >= 0.0 && column < across as f32 && row < across as f32).then_some((column as usize, row as usize))
     };
-    let mut walked: Vec<Option<f32>> = vec![None; across * across];
-    let mut tried = vec![false; across * across];
-    let mut next: Vec<(usize, usize)> = Vec::new();
+    // The heights each square has been walked to at, and whether a body
+    // has room at a square at a height, asked once of each.
+    let mut walked: Vec<Vec<f32>> = vec![Vec::new(); across * across];
+    let mut roomy: std::collections::HashMap<(usize, i32), bool> = std::collections::HashMap::new();
+    let mut next: Vec<(usize, usize, f32)> = Vec::new();
+    let level = |feet: f32| (feet * 100.0).round() as i32;
+    let had = |levels: &[f32], feet: f32| levels.iter().any(|&was| level(was) == level(feet));
     for (column, row) in [(across / 2 - 1, across / 2 - 1), (across / 2, across / 2 - 1), (across / 2 - 1, across / 2), (across / 2, across / 2)] {
-        tried[row * across + column] = true;
-        if let Some(feet) = stands(spot(column, row)) {
-            walked[row * across + column] = Some(feet);
-            next.push((column, row));
+        if let Some(feet) = stands(spot(column, row))
+            && !had(&walked[row * across + column], feet)
+        {
+            walked[row * across + column].push(feet);
+            next.push((column, row, feet));
         }
     }
-    while let Some((column, row)) = next.pop() {
-        let from = walked[row * across + column].unwrap_or(yard.ground);
+    while let Some((column, row, from)) = next.pop() {
         let beside = [(column.wrapping_sub(1), row), (column + 1, row), (column, row.wrapping_sub(1)), (column, row + 1)];
         for (column, row) in beside.into_iter().filter(|&(column, row)| column < across && row < across) {
-            if std::mem::replace(&mut tried[row * across + column], true) {
+            let index = row * across + column;
+            let at = spot(column, row);
+            let feet = feet_on(at, from + LAND_STEP_UP);
+            if (feet - from).abs() > LAND_STEP_UP || had(&walked[index], feet) {
                 continue;
             }
-            if let Some(feet) = stands(spot(column, row)).filter(|feet| (feet - from).abs() <= LAND_STEP_UP) {
-                walked[row * across + column] = Some(feet);
-                next.push((column, row));
+            if *roomy.entry((index, level(feet))).or_insert_with(|| room(at, feet)) {
+                walked[index].push(feet);
+                next.push((column, row, feet));
             }
         }
     }
     // Most of a plot is lawn: a walk that got nowhere would say nothing.
-    let afoot = walked.iter().flatten().count();
+    let afoot = walked.iter().filter(|levels| !levels.is_empty()).count();
     if afoot < across * across / 4 {
         faults.push(format!("only {afoot} squares of the plot are walked to from its middle"));
     }
-    // Whether the square `at` is in has been walked to, or one beside it.
-    let walked_to = |at: Vec2| {
+    // Whether the square `at` is in has been walked to with feet within a
+    // step of `feet`, or one beside it.
+    let walked_to = |at: Vec2, feet: f32| {
         square(at).is_some_and(|(column, row)| {
             let about = |nth: usize| nth.saturating_sub(1)..=(nth + 1).min(across - 1);
-            about(row).any(|row| about(column).any(|column| walked[row * across + column].is_some()))
+            about(row).any(|row| about(column).any(|column| walked[row * across + column].iter().any(|&was| (was - feet).abs() <= LAND_STEP_UP)))
         })
     };
     // Out of every door, over ground that is clear and the plot's own; and
@@ -722,7 +758,7 @@ fn faults(lot: &Lot, plot: &Plot, town: &mut Island, models: &[Model]) -> Vec<St
             let at = out(door.on.along, far);
             if !yard.holds(at, -PLAYER_RADIUS) {
                 faults.push(format!("{} opens off the plot", called(door.stood)));
-            } else if !walked_to(at) {
+            } else if !walked_to(at, yard.ground) {
                 faults.push(format!("nobody walks from the middle of the plot to {far} m out of {}", called(door.stood)));
             }
         }
@@ -737,7 +773,7 @@ fn faults(lot: &Lot, plot: &Plot, town: &mut Island, models: &[Model]) -> Vec<St
             faults.push(format!("the sign stands in front of {}", called(door.stood)));
         }
     }
-    if !(0..across).any(|column| walked[column].is_some()) {
+    if !(0..across).any(|column| !walked[column].is_empty()) {
         faults.push("nobody walks from the middle of the plot to its front edge".into());
     }
     // Nothing stands between the sign and the front edge it is read from.
@@ -752,15 +788,31 @@ fn faults(lot: &Lot, plot: &Plot, town: &mut Island, models: &[Model]) -> Vec<St
         }
     }
 
+    // Whatever stands upstairs, on a floor over the ground floor or on a
+    // roof terrace, is walked up to: up the stairs, to floor beside it.
+    for thing in things.iter().filter(|thing| !thing.model.def.small && thing.inside && thing.place.translation.y - home.translation.y >= 1.0) {
+        let shape = footprint(&thing.place, thing.model.bounds);
+        let middle = shape.iter().copied().sum::<Vec2>() / 4.0;
+        let near = shape.iter().map(|corner| corner.distance(middle)).fold(0.0, f32::max) + 1.0;
+        let floor = thing.place.translation.y;
+        let reached = (0..across * across).any(|index| {
+            walked[index].iter().any(|&feet| (feet - floor).abs() <= LAND_STEP_UP) && spot(index % across, index / across).distance(middle) <= near
+        });
+        if !reached {
+            faults.push(format!("nobody walks up to {}", called(thing.stood)));
+        }
+    }
+
     // --------------------------------------------- resting, and floor
     // Whether there is floor beside a thing for someone who has walked
     // there to stand on: out from the point (`x`, `z`) of its edge, in its
     // own space, the way `out`, with their middle from just clear of it to
     // [`BESIDE`] out.
     let floor_beside = |thing: &Down, (x, z): (f32, f32), out: (f32, f32)| {
+        let floor = thing.place.translation.y;
         (1..=7).map(|step| PLAYER_RADIUS + 0.05 * step as f32).take_while(|far| *far <= BESIDE + 1e-4).any(|far| {
             let at = thing.point(x + out.0 * far, z + out.1 * far);
-            stands(at).is_some() && walked_to(at)
+            stands_from(at, floor).is_some() && walked_to(at, floor)
         })
     };
     let clear = |from: Vec3, to: Vec3| town.sweep(from, to, 0.05).is_none();
@@ -770,16 +822,15 @@ fn faults(lot: &Lot, plot: &Plot, town: &mut Island, models: &[Model]) -> Vec<St
         let mut offered = vec![false; places.len()];
         for row in 0..across {
             for column in 0..across {
-                let Some(feet) = walked[row * across + column] else {
-                    continue;
-                };
                 let at = spot(column, row);
                 if at.distance(thing.place.translation.xz()) > 6.0 {
                     continue;
                 }
-                let you = Vec3::new(at.x, feet, at.y);
-                for place in rest::offered(you, &thing.place, &thing.model.bounds, places, false, &[], &clear) {
-                    offered[place] = true;
+                for &feet in &walked[row * across + column] {
+                    let you = Vec3::new(at.x, feet, at.y);
+                    for place in rest::offered(you, &thing.place, &thing.model.bounds, places, false, &[], &clear) {
+                        offered[place] = true;
+                    }
                 }
             }
         }
@@ -993,7 +1044,7 @@ fn a_lot_the_game_would_not_let_stand_is_found_out() {
     });
     assert!(said(&painted).contains("no part called"));
     let mut crowded = good.clone();
-    for nth in 0..2 {
+    for nth in 0..3 {
         let id = crowded.stands.len() as u32 + 1;
         crowded.stands.push(Standing {
             id,
@@ -1002,6 +1053,25 @@ fn a_lot_the_game_would_not_let_stand_is_found_out() {
         });
     }
     assert!(said(&crowded).contains("triangles are drawn"));
+
+    // Upstairs, in the Two Floor House of plot 3, which stands 4.5 m to the
+    // right of the middle and 4.5 m behind it, unturned: the couch over the
+    // edge of the stairwell, and the desk across the top of the stairs, so
+    // that nobody gets up to the rest.
+    let upstairs = premade::lot(2);
+    let mut said = |lot: &Lot| faults(lot, &town.plots[2], &mut town.island, &town.models).join("; ");
+    assert_eq!(said(&upstairs), "");
+    let moved = |kind: &str, to: At| {
+        let mut lot = upstairs.clone();
+        let which = lot.stands.iter().position(|stood| stood.kind == kind).unwrap_or_else(|| panic!("plot 2 has no {kind}"));
+        lot.stands[which].at = to;
+        lot
+    };
+    let (x, z) = (4.5, 4.5);
+    let over = said(&moved("couch", At::Ground { x: x - 2.5, y: 5.1, z, yaw: std::f32::consts::FRAC_PI_2 }));
+    assert!(over.contains("couch") && over.contains("out over no floor"), "{over}");
+    let blocked = said(&moved("desk", At::Ground { x: x - 2.7, y: 5.1, z: z + 3.0, yaw: std::f32::consts::FRAC_PI_2 }));
+    assert!(blocked.contains("nobody walks up to couch") && blocked.contains("nobody gets to rest on chair"), "{blocked}");
 }
 
 #[test]
@@ -1105,7 +1175,57 @@ fn all_the_made_up_lots_together_are_light_to_draw_and_no_two_alike() {
     // most of them.
     let square = lots.iter().filter(|lot| has(lot, "square_house")).count();
     assert!(eighths >= 4 && square >= 14 && flat >= 12, "{eighths} turned an eighth, {square} Square Houses, {flat} Flat Houses");
-    // The sixteen someone walks have the most in them.
-    let things = |lots: &[Lot]| lots.iter().map(|lot| lot.stands.len()).sum::<usize>() as f32 / lots.len() as f32;
-    assert!(things(&lots[..16]) > things(&lots[16..]), "{} things a plot at the front, {} behind", things(&lots[..16]), things(&lots[16..]));
+    // Until 2026-11-25 the first sixteen had the most in them, someone of
+    // the computer's walking those alone; since the day before someone walks
+    // every plot, and where each lot stands is thrown as a channel opens, so
+    // that no lot is at the front.
 }
+
+#[test]
+fn no_house_has_a_floor_or_a_ceiling_facing_into_itself() {
+    // The game takes the space under a face that looks up for the inside
+    // of something solid (`island::buried`). Each upper floor of the Square
+    // Houses of three to ten floors had a piece over the foot of the stairs
+    // whose underside looked up, and nobody could stand at the foot of the
+    // stairs, nor go upstairs (found 2026-11-25, turned out in their .blend
+    // files by `blender/turn_floors_out.py`). Of every part of every house:
+    // over a flat face that looks up, the nearest face of the part, if any,
+    // looks down; over one that looks down, the nearest looks up.
+    let normal = |corners: &[Vec3; 3]| (corners[1] - corners[0]).cross(corners[2] - corners[0]).normalize_or_zero();
+    let mut wrong: Vec<String> = Vec::new();
+    for def in PIECES.iter().filter(|def| def.mount == Mount::House) {
+        for part in glb::read(&def.model()) {
+            for face in part.triangles.iter().filter(|face| normal(face).y.abs() > 0.99) {
+                let middle = (face[0] + face[1] + face[2]) / 3.0;
+                // The nearest face of the part straight over its middle, and
+                // which way that one looks.
+                let over = part
+                    .triangles
+                    .iter()
+                    .filter(|other| normal(other).y.abs() > 0.01)
+                    .filter_map(|other| {
+                        let (a, b, c) = (other[0], other[1], other[2]);
+                        let (along, across, to) = ((b - a).xz(), (c - a).xz(), (middle - a).xz());
+                        let det = along.perp_dot(across);
+                        let (u, v) = (to.perp_dot(across) / det, along.perp_dot(to) / det);
+                        let inside = det.abs() > 1e-9 && u >= -1e-4 && v >= -1e-4 && u + v <= 1.0 + 1e-4;
+                        let height = a.y + u * (b.y - a.y) + v * (c.y - a.y);
+                        (inside && height > middle.y + 1e-3).then_some((height, normal(other).y > 0.0))
+                    })
+                    .min_by(|a, b| a.0.total_cmp(&b.0));
+                let looks_up = normal(face).y > 0.0;
+                let faces_in = match over {
+                    Some((_, up)) => up == looks_up,
+                    None => !looks_up,
+                };
+                if faces_in {
+                    wrong.push(format!("{}: {} at {middle}, looking {}", def.kind, part.node, if looks_up { "up" } else { "down" }));
+                }
+            }
+        }
+    }
+    assert!(wrong.is_empty(), "faces looking into what they are faces of:
+{}", wrong.join("
+"));
+}
+
