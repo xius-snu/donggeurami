@@ -61,7 +61,7 @@ if folder:
     bpy.ops.export_scene.gltf(filepath=os.path.join(folder, name), export_format="GLB")
     print("EXPORTED", os.path.join(folder, name), "turning", turned)
 elif turned:
-    # No .blend1 left beside it: the repository keeps Hajun's own.
+    # No .blend1 left beside it (none is kept since 2026-11-25: .gitignore).
     bpy.context.preferences.filepaths.save_version = 0
     bpy.ops.wm.save_mainfile(filepath=blend)
     bpy.ops.export_scene.gltf(filepath=os.path.join(os.path.dirname(blend), name), export_format="GLB")

@@ -30,3 +30,7 @@ mobile/ios/DerivedData/
 # on as they came, which this repository being public would do. Kept on this PC.
 assets/cars/lowpoly_cars_premium/
 assets/cars/previews/
+
+# Blender's copy of a .blend as it was before its last save: never kept
+# (2026-11-25, Hajun: "ye remove them and ignore blend1").
+*.blend1

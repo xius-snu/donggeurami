@@ -7,6 +7,18 @@
 > "above" or "below", or names another section in quotes, that section may be
 > in another file here: the table in `CLAUDE.md` says which.
 
+## No `.blend1` in the repository
+
+2026-11-25, after APK 59. Hajun: "delete the blend1 files", then "ye
+remove them and ignore blend1". The 40 Blender left beside the downloads
+grown that day were deleted, never committed; the 58 the repository kept
+(18 in `assets/`, 22 in `assets/mybuilds/`, 17 in its `newones/`, 1 in
+`blender/`) were taken out of it and off this PC, and `.gitignore` has
+`*.blend1`. Each is still in the history before this commit. None was in
+an APK (`assets-left-out.txt` has had `*.blend1`), nor loaded by anything.
+Where the docs say a `.blend` was saved "without a `.blend1`" so that
+Hajun's own was kept, there is none to keep now.
+
 ## APK 59: the 56 downloads three times their size; no made-up land
 
 2026-11-25, 15:37 here (06:37 UTC). Asked for: "ye do that and adjust the
