@@ -13,8 +13,26 @@
 //! `bedframe` and `mattress`, a house's `plain_wall`, `plain_roof` and
 //! `plain_floor`. Everything of one thing that is drawn with one material
 //! is one part of it ([`Part`], given to each mesh as its model spawns,
-//! `super::piece_ready`), and is painted together: a tap on any wall of
-//! your house paints its walls.
+//! `super::piece_ready`), and is painted together: a tap on a bed's blanket
+//! paints all of its blanket.
+//!
+//! **In a house, a part is a material on one floor** (since 2026-11-25;
+//! Hajun: "each floor need to be its own color/material when painting"):
+//! a tap on a wall of the ground floor paints the ground floor's walls,
+//! and its stairs, which are in the walls' material; one upstairs, that
+//! floor's. Which floor a mesh is on goes by the tops of the house's
+//! floors ([`Levels`]), and what it is called by [`parts`]: the lowest
+//! floor a material is on keeps the material's own name, so that a house
+//! of one floor, the ground floor of a taller one and every roof are
+//! painted under the names they always were, and each floor over that is
+//! the material and its number, `plain_wall@2` (an app from before sees
+//! the ground floor's colour all the way up). Blender's ".001" after a
+//! copy of a material is no new material in a house: the roof terrace
+//! houses' upper stairs are `plain_wall.001`, and are painted with their
+//! floor's walls. The Square House 2F's four walls are each modelled whole
+//! from the ground to the roof: each is drawn in two bands, cut at the top
+//! of the upper floor, a part to each (`super::Banded`). A floor and the
+//! ceiling under it are one slab, and painted together.
 //!
 //! **A tap paints** ([`tap`]) while the paintbrush is the tool
 //! (`customize`): the part of yours under the finger, the nearest of them
@@ -117,6 +135,113 @@ impl Looks {
 /// `colour` on something that was `plain`: as see-through as it was.
 fn painted(plain: Color, colour: [u8; 3]) -> Color {
     Color::srgb_u8(colour[0], colour[1], colour[2]).with_alpha(plain.alpha())
+}
+
+/// How far under the top of a floor the foot of something may be and it
+/// still be on that floor, and how near a floor's top a wall may end and
+/// not run up past it, in metres: Hajun's walls stand on a floor's top,
+/// give or take the last bits of a number.
+const ON_A_FLOOR: f32 = 0.05;
+
+/// What a mesh of a thing is, for naming it ([`parts`]): a floor of a
+/// house, a wall of one, or anything else.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum Shape {
+    Floor,
+    Wall,
+    Other,
+}
+
+/// One mesh of a thing that can be painted, as its model has it: what its
+/// material is called, how high its foot and its top are in the thing's
+/// own space, and what it is.
+pub(super) type Drawn<'a> = (&'a str, f32, f32, Shape);
+
+/// The floors of a house, to tell what is on one of them from what is on
+/// another: the top of each, bottom to top, each height once. Of anything
+/// that is no house, none: all of it is on the one floor.
+#[derive(Default, Debug, PartialEq)]
+pub(super) struct Levels(Vec<f32>);
+
+impl Levels {
+    /// Of a house whose floors, its `Floor` objects, fill the boxes
+    /// `floors`, in its own space.
+    pub(super) fn of(floors: &[(Vec3, Vec3)]) -> Self {
+        let mut tops: Vec<f32> = floors.iter().map(|(_, high)| high.y).collect();
+        tops.sort_by(f32::total_cmp);
+        tops.dedup_by(|above, below| *above - *below < ON_A_FLOOR);
+        Self(tops)
+    }
+
+    /// Which floor something standing from `foot` up is on, the ground
+    /// floor 1: the floor whose top it stands on, the highest under it. A
+    /// floor is the floor it is the top of (its top as `foot`).
+    pub(super) fn storey(&self, foot: f32) -> u32 {
+        let under = self.0.iter().filter(|&&top| top <= foot + ON_A_FLOOR).count();
+        u32::try_from(under).unwrap_or(u32::MAX).max(1)
+    }
+
+    /// Where a wall from `bottom` up to `top` goes from one floor to the
+    /// next: the tops of the floors it runs up past, which it is cut at to
+    /// be painted a floor at a time. None for a wall of one floor.
+    pub(super) fn cuts(&self, bottom: f32, top: f32) -> Vec<f32> {
+        self.0
+            .iter()
+            .copied()
+            .filter(|&level| level > bottom + ON_A_FLOOR && level < top - ON_A_FLOOR)
+            .collect()
+    }
+}
+
+/// The material a part of a house is drawn with: its name in Blender, less
+/// the ".001" Blender puts after the name of a copy of one.
+pub(super) fn material_of(name: &str) -> &str {
+    match name.rsplit_once('.') {
+        Some((material, copy)) if !material.is_empty() && copy.len() == 3 && copy.bytes().all(|b| b.is_ascii_digit()) => material,
+        _ => name,
+    }
+}
+
+/// The names the parts of a thing are painted by ([`Part`]), and where a
+/// house's walls are cut to be painted a floor at a time: of each of its
+/// meshes, `drawn`, the bands it is drawn in, bottom first, each with how
+/// high up it begins and its name. A mesh is one band, the whole of it,
+/// but for a wall of a house that runs up past a floor, which is a band to
+/// each floor it is on. A part is a material on a floor: the lowest floor
+/// of the thing that material is on keeps the material's own name, and
+/// each over it is called by the material and its floor (`plain_wall@2`).
+/// Of anything but a house, every part is on the one floor, and called by
+/// its material's name as its model has it.
+pub(super) fn parts(house: bool, floors: &[(Vec3, Vec3)], drawn: &[Drawn]) -> Vec<Vec<(f32, String)>> {
+    let levels = if house { Levels::of(floors) } else { Levels::default() };
+    // Each mesh's bands, each with its material and the floor it is on.
+    let bands: Vec<Vec<(f32, &str, u32)>> = drawn
+        .iter()
+        .map(|&(named, foot, top, shape)| {
+            let material = if house { material_of(named) } else { named };
+            match shape {
+                Shape::Wall => std::iter::once(foot)
+                    .chain(levels.cuts(foot, top))
+                    .map(|bottom| (bottom, material, levels.storey(bottom)))
+                    .collect(),
+                Shape::Floor => vec![(foot, material, levels.storey(top))],
+                Shape::Other => vec![(foot, material, levels.storey(foot))],
+            }
+        })
+        .collect();
+    // The lowest floor each material is on.
+    let mut lowest: HashMap<&str, u32> = HashMap::new();
+    for &(_, material, storey) in bands.iter().flatten() {
+        lowest.entry(material).and_modify(|low| *low = (*low).min(storey)).or_insert(storey);
+    }
+    let name = |material: &str, storey: u32| match lowest.get(material) {
+        Some(&low) if storey > low => format!("{material}@{storey}"),
+        _ => material.to_string(),
+    };
+    bands
+        .into_iter()
+        .map(|bands| bands.into_iter().map(|(bottom, material, storey)| (bottom, name(material, storey))).collect())
+        .collect()
 }
 
 pub(super) fn plugin(app: &mut App) {
@@ -356,6 +481,162 @@ mod tests {
         assert_eq!(drawn_with(&world, blanket), red);
         assert_eq!(drawn_with(&world, frame), grey);
         assert!(world.get::<Coloured>(blanket).is_none());
+    }
+
+    /// The names of each mesh's bands, in order.
+    fn names(named: &[Vec<(f32, String)>]) -> Vec<Vec<&str>> {
+        named.iter().map(|bands| bands.iter().map(|(_, name)| name.as_str()).collect()).collect()
+    }
+
+    #[test]
+    fn a_house_is_painted_a_floor_at_a_time() {
+        // Hajun, 2026-11-25: "each floor need to be its own color/material
+        // when painting". The Square House 2F as he modelled it: its walls
+        // whole from the ground to the roof, the stairs in the walls'
+        // material, the upper floor 5 m up, the roof and its gables.
+        let v = Vec3::new;
+        let floors = [(v(-6.0, 0.0, -6.0), v(6.0, 0.1, 6.0)), (v(-5.5, 5.0, -5.5), v(3.5, 5.1, 5.5))];
+        let drawn: Vec<Drawn> = vec![
+            ("plain_floor", 0.0, 0.1, Shape::Floor),
+            ("plain_wall", 0.1, 10.1, Shape::Wall),
+            ("plain_wall", 0.1, 5.1, Shape::Other),
+            ("plain_floor", 5.0, 5.1, Shape::Floor),
+            ("plain_roof", 9.61, 14.79, Shape::Other),
+            ("plain_wall", 10.1, 14.1, Shape::Other),
+        ];
+        let named = parts(true, &floors, &drawn);
+        assert_eq!(
+            names(&named),
+            [
+                vec!["plain_floor"],
+                vec!["plain_wall", "plain_wall@2"],
+                vec!["plain_wall"],
+                vec!["plain_floor@2"],
+                vec!["plain_roof"],
+                vec!["plain_wall@2"],
+            ]
+        );
+        // The wall is cut at the top of the upper floor.
+        assert_eq!(named[1].iter().map(|&(bottom, _)| bottom).collect::<Vec<_>>(), [0.1, 5.1]);
+        // The Roof Terrace 3F: a wall to each floor, the upper stairs in a
+        // copy of the walls' material, and the terrace's parapet. Of its
+        // floors only the terrace is drawn here: the lowest floor its
+        // material is on, it keeps the material's own name.
+        let floors = [(v(-6.0, 0.0, -6.0), v(6.0, 0.1, 6.0)), (v(-5.5, 5.0, -5.5), v(5.5, 5.1, 5.5)), (v(-5.5, 10.0, -5.5), v(5.5, 10.1, 5.5))];
+        let drawn: Vec<Drawn> = vec![
+            ("plain_wall", 0.1, 5.1, Shape::Wall),
+            ("plain_wall", 0.1, 5.1, Shape::Other),
+            ("plain_wall", 5.1, 10.1, Shape::Wall),
+            ("plain_wall.001", 5.1, 10.1, Shape::Other),
+            ("plain_floor", 10.0, 10.1, Shape::Floor),
+            ("plain_wall", 10.1, 11.1, Shape::Other),
+        ];
+        assert_eq!(
+            names(&parts(true, &floors, &drawn)),
+            [vec!["plain_wall"], vec!["plain_wall"], vec!["plain_wall@2"], vec!["plain_wall@2"], vec!["plain_floor"], vec!["plain_wall@3"]]
+        );
+        // A house of one floor is painted as it always was.
+        let floors = [(v(-6.0, 0.0, -6.0), v(6.0, 0.1, 6.0))];
+        let drawn: Vec<Drawn> = vec![
+            ("plain_floor", 0.0, 0.1, Shape::Floor),
+            ("plain_wall", 0.1, 5.1, Shape::Wall),
+            ("plain_roof", 4.61, 9.79, Shape::Other),
+            ("plain_wall", 5.1, 9.1, Shape::Other),
+        ];
+        assert_eq!(names(&parts(true, &floors, &drawn)), [vec!["plain_floor"], vec!["plain_wall"], vec!["plain_roof"], vec!["plain_wall"]]);
+        // Anything but a house: every part its material, as its model names
+        // it, a copy's ".001" and all.
+        let drawn: Vec<Drawn> = vec![("blanket", 0.3, 0.7, Shape::Other), ("bedframe.001", 0.0, 0.5, Shape::Other), ("blanket", 0.9, 1.2, Shape::Other)];
+        assert_eq!(names(&parts(false, &[], &drawn)), [vec!["blanket"], vec!["bedframe.001"], vec!["blanket"]]);
+        assert_eq!((material_of("plain_wall.001"), material_of("plain_wall"), material_of("v1.5"), material_of(".001")), ("plain_wall", "plain_wall", "v1.5", ".001"));
+    }
+
+    #[test]
+    fn every_floor_of_every_house_hajun_modelled_is_painted_by_itself() {
+        use crate::build::{Mount, PIECES};
+        use crate::island::glb;
+        let words = ["one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"];
+        let mut seen = 0;
+        for def in PIECES.iter().filter(|def| def.mount == Mount::House) {
+            // Each mesh as the game reads it (`super::piece_ready`): a wall,
+            // a floor or anything else by the object it is a mesh of.
+            let model = glb::read(&def.model());
+            let mut floors = Vec::new();
+            let mut meshes: Vec<(&str, &str, f32, f32, Shape)> = Vec::new();
+            for part in &model {
+                let Some(material) = &part.material else {
+                    continue;
+                };
+                let corners = part.triangles.iter().flatten();
+                let low = corners.clone().fold(Vec3::INFINITY, |low, &corner| low.min(corner));
+                let high = corners.fold(Vec3::NEG_INFINITY, |high, &corner| high.max(corner));
+                let shape = if part.node.starts_with("Wall") {
+                    Shape::Wall
+                } else if part.node.starts_with("Floor") {
+                    floors.push((low, high));
+                    Shape::Floor
+                } else {
+                    Shape::Other
+                };
+                meshes.push((part.node.as_str(), material.as_str(), low.y, high.y, shape));
+            }
+            let drawn: Vec<Drawn> = meshes.iter().map(|&(_, material, foot, top, shape)| (material, foot, top, shape)).collect();
+            let named = parts(true, &floors, &drawn);
+            let levels = Levels::of(&floors);
+            // Every band of every mesh: what it is a band of, its material,
+            // the floor it is on, and its name.
+            let mut bands: Vec<(&str, &str, u32, &str)> = Vec::new();
+            for (&(node, material, _, top, shape), mesh) in meshes.iter().zip(&named) {
+                for (bottom, name) in mesh {
+                    // A floor is on the floor it is the top of.
+                    let storey = levels.storey(if shape == Shape::Floor { top } else { *bottom });
+                    bands.push((node, material_of(material), storey, name.as_str()));
+                }
+            }
+            // Two parts have one name if, and only if, they are of one
+            // material on one floor.
+            for &(node, material, storey, name) in &bands {
+                assert!(roundtown_net::bag::part_named(name), "{}: {name:?}", def.kind);
+                for &(other, other_material, other_storey, other_name) in &bands {
+                    let alike = material == other_material && storey == other_storey;
+                    assert_eq!(alike, name == other_name, "{}: {node} ({name}) and {other} ({other_name})", def.kind);
+                }
+            }
+            // The lowest floor of each material keeps the material's own
+            // name: the roof, and all of a house of one floor, as before.
+            for &(node, material, storey, name) in &bands {
+                let lowest = bands.iter().filter(|each| each.1 == material).map(|each| each.2).min().unwrap();
+                assert_eq!(name == material, storey == lowest, "{}: {node} ({name}) on floor {storey}", def.kind);
+                if node.starts_with("Roof") {
+                    assert_eq!(name, "plain_roof", "{}", def.kind);
+                }
+            }
+            // As many floors to paint as the house has floors.
+            let floors_named: Vec<&str> = bands.iter().filter(|each| each.0.starts_with("Floor")).map(|each| each.3).collect();
+            let mut distinct = floors_named.clone();
+            distinct.sort_unstable();
+            distinct.dedup();
+            if let Some(count) = words.iter().position(|word| def.kind.ends_with(&format!("_{word}_floor"))) {
+                assert_eq!(distinct.len(), count + 1, "{}: {floors_named:?}", def.kind);
+                assert_eq!(levels.0.len(), count + 1, "{}", def.kind);
+            }
+            // Of every house of more than one floor, the walls of each floor
+            // that has walls of its own are a part of their own: the Square
+            // House 2F's whole walls each cut in two.
+            if def.kind == "square_house_two_floor" {
+                for (&(node, ..), mesh) in meshes.iter().zip(&named) {
+                    if node.starts_with("Wall") {
+                        assert_eq!(mesh.iter().map(|(_, name)| name.as_str()).collect::<Vec<_>>(), ["plain_wall", "plain_wall@2"], "{node}");
+                    }
+                }
+            } else {
+                for mesh in &named {
+                    assert_eq!(mesh.len(), 1, "{}: a wall cut that runs up one floor", def.kind);
+                }
+            }
+            seen += 1;
+        }
+        assert_eq!(seen, 21, "every house there is");
     }
 
     #[test]

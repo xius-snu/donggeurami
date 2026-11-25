@@ -790,6 +790,28 @@ pub(crate) struct Wall {
     joins: Vec<[f32; 4]>,
 }
 
+/// A wall of a house on a plot of the town that runs up past one of its
+/// floors (each of the Square House 2F's four, modelled whole from the
+/// ground to the roof), drawn in bands, a floor to each, so that each
+/// floor's walls are painted by themselves (`paint`; since 2026-11-25):
+/// the heights it is cut at, the tops of the floors it runs up past, and
+/// the meshes of the bands over the first, each drawn by a [`Band`] under
+/// it. The wall draws the band from its foot to the first cut itself, and
+/// is the one wall to everything else, as it was: what its doors and
+/// windows are in, and where it comes among its house's walls
+/// ([`walls_of`]). A hole is cut in whichever band it is in
+/// ([`carve_walls`]).
+#[derive(Component)]
+struct Banded {
+    cuts: Vec<f32>,
+    upper: Vec<Handle<Mesh>>,
+}
+
+/// A band of a [`Banded`] wall over its first, drawn by itself: as solid
+/// as a wall is, its triangles a list of their own ([`reshape_plot`]).
+#[derive(Component)]
+struct Band;
+
 impl Wall {
     /// The wall modelled as the box from `low` to `high`, in a house with
     /// `floors`, and walls and whatever else stands `against` them, this wall
@@ -1679,13 +1701,16 @@ fn piece_ready(
     // Whatever else is built into a house, like its staircase: no door,
     // window or hanging goes where one stands against a wall.
     let mut fixtures = Vec::new();
+    // On a plot of the town, what can be painted (`paint`): each mesh but a
+    // house's walls, with the material it is drawn with, what that is
+    // called, from how high to how high it runs and what it is; named once
+    // all of a house's floors are known.
+    let mut paintable = Vec::new();
     for part in children.iter_descendants(root) {
         let Ok((mesh, material, named)) = parts.get(part) else {
             continue;
         };
-        // On a plot of the town, each mesh is a part that can be painted:
-        // the part its material is called (`paint`).
-        let paint_part = material.zip(named).filter(|_| painted).map(|(material, named)| paint::Part::new(&named.0, material.0.clone()));
+        let paint = material.zip(named).filter(|_| painted).map(|(material, named)| (material.0.clone(), named.0.clone()));
         // In the piece's own space, by how each node of it stands in the
         // one above ([`within`]): the same to the last bit wherever the
         // piece itself stands, which a house's walls are numbered by.
@@ -1702,13 +1727,15 @@ fn piece_ready(
             frame = grow(frame, low, high);
         }
         if is_house && called(part, "Wall") {
-            walls.push((part, low, high, material.map(|material| material.0.clone()), paint_part));
+            walls.push((part, low, high, material.map(|material| material.0.clone()), paint));
             continue;
         }
-        if let Some(paint_part) = paint_part {
-            commands.entity(part).insert(paint_part);
+        let floor = is_house && called(part, "Floor");
+        if let Some((plain, named)) = paint {
+            let shape = if floor { paint::Shape::Floor } else { paint::Shape::Other };
+            paintable.push((part, plain, named, low.y, high.y, shape));
         }
-        if is_house && called(part, "Floor") {
+        if floor {
             floors.push((low, high));
         } else if is_house && !called(part, "Roof") && !called(part, "Gable") {
             fixtures.push((low, high));
@@ -1722,6 +1749,23 @@ fn piece_ready(
         }
     }
 
+    // The parts to paint, named: in a house a material on a floor, and each
+    // of its walls a band to each floor it runs up (`paint::parts`); the
+    // walls' after the rest, in the order they were found.
+    let drawn: Vec<paint::Drawn> = paintable
+        .iter()
+        .map(|(_, _, named, foot, top, shape)| (named.as_str(), *foot, *top, *shape))
+        .chain(walls.iter().filter_map(|(_, low, high, _, paint)| {
+            paint.as_ref().map(|(_, named)| (named.as_str(), low.y, high.y, paint::Shape::Wall))
+        }))
+        .collect();
+    let mut named = paint::parts(is_house, &floors, &drawn).into_iter();
+    for (part, plain, ..) in paintable {
+        if let Some((_, name)) = named.next().and_then(|bands| bands.into_iter().next()) {
+            commands.entity(part).insert(paint::Part::new(&name, plain));
+        }
+    }
+
     // Each wall again, as a box of the same size that holes can be cut in, in
     // the house's own space.
     let against: Vec<(Vec3, Vec3)> = walls
@@ -1729,25 +1773,49 @@ fn piece_ready(
         .map(|(_, low, high, ..)| (*low, *high))
         .chain(fixtures)
         .collect();
-    for (part, low, high, material, paint_part) in walls {
+    for (part, low, high, material, paint) in walls {
         commands.entity(part).despawn();
         let mut wall = Wall::new(low, high, &floors, &against);
-        let mesh = meshes.add(wall_mesh(&wall));
+        // Painted, a band to each floor it runs up, cut at the top of each
+        // floor it runs past ([`Banded`]); otherwise the whole of it.
+        let bands = match paint {
+            Some(_) => named.next().unwrap_or_default(),
+            None => Vec::new(),
+        };
+        let cuts: Vec<f32> = bands.iter().skip(1).map(|&(bottom, _)| bottom).collect();
+        let mut shapes = wall_meshes(&wall, &cuts).into_iter().map(|mesh| meshes.add(mesh));
+        let Some(mesh) = shapes.next() else {
+            continue;
+        };
+        let upper: Vec<Handle<Mesh>> = shapes.collect();
         wall.mesh = mesh.clone();
         let material = material.unwrap_or_default();
-        let mut made = commands.spawn((ChildOf(root), wall, Mesh3d(mesh), Transform::IDENTITY));
-        // The wall made in its place is the part the wall was.
-        if let Some(paint_part) = paint_part {
-            made.insert(paint_part);
+        let made = commands.spawn((ChildOf(root), wall, Mesh3d(mesh), Transform::IDENTITY)).id();
+        // What draws it: the wall itself, and a band under it for each
+        // floor it runs up past.
+        let mut drawers = vec![made];
+        if !cuts.is_empty() {
+            for mesh in &upper {
+                drawers.push(commands.spawn((ChildOf(made), Band, Mesh3d(mesh.clone()), Transform::IDENTITY)).id());
+            }
+            commands.entity(made).insert(Banded { cuts, upper });
         }
-        if ghost {
-            made.insert((
-                MeshMaterial3d(stock.ghost_of(&material, &mut materials)),
-                Solid(material),
-                NotShadowCaster,
-            ));
-        } else {
-            made.insert(MeshMaterial3d(material));
+        for (band, drawer) in drawers.into_iter().enumerate() {
+            let mut drawer = commands.entity(drawer);
+            // What is made in its place is the part, or the parts, the wall
+            // was.
+            if let (Some((plain, _)), Some((_, name))) = (&paint, bands.get(band)) {
+                drawer.insert(paint::Part::new(name, plain.clone()));
+            }
+            if ghost {
+                drawer.insert((
+                    MeshMaterial3d(stock.ghost_of(&material, &mut materials)),
+                    Solid(material.clone()),
+                    NotShadowCaster,
+                ));
+            } else {
+                drawer.insert(MeshMaterial3d(material.clone()));
+            }
         }
     }
     if is_house {
@@ -3198,11 +3266,11 @@ fn opens(at: Vec3, middle: Vec3, inward: Vec3, high: f32, hold: f32) -> bool {
 /// Cuts the holes the doors and windows in each wall need, whenever they
 /// change: a house's built in House Builder, not one of the town's, cut once.
 fn carve_walls(
-    mut walls: Query<(Entity, &mut Wall), Without<town::TownWall>>,
+    mut walls: Query<(Entity, &mut Wall, Option<&Banded>), Without<town::TownWall>>,
     openings: Query<(&OnWall, &Span, &Piece)>,
     mut meshes: ResMut<Assets<Mesh>>,
 ) {
-    for (entity, mut wall) in &mut walls {
+    for (entity, mut wall, banded) in &mut walls {
         let mut holes: Vec<[f32; 4]> = openings
             .iter()
             .filter(|(on, _, piece)| on.wall == entity && piece.def.holed())
@@ -3220,7 +3288,15 @@ fn carve_walls(
             continue;
         }
         wall.holes = holes;
-        let _ = meshes.insert(&wall.mesh, wall_mesh(&wall));
+        // A wall drawn in bands, each band cut round the holes in it.
+        let Some(banded) = banded else {
+            let _ = meshes.insert(&wall.mesh, wall_mesh(&wall));
+            continue;
+        };
+        let drawn = std::iter::once(&wall.mesh).chain(&banded.upper);
+        for (mesh, made) in drawn.zip(wall_meshes(&wall, &banded.cuts)) {
+            let _ = meshes.insert(mesh, made);
+        }
     }
 }
 
@@ -3237,8 +3313,23 @@ fn pane(span: Span, wall: &Wall) -> Mesh {
 
 /// A wall as a mesh: the boxes [`carve`] leaves of it.
 fn wall_mesh(wall: &Wall) -> Mesh {
+    wall_band(wall, wall.low.y, wall.high.y)
+}
+
+/// A wall as meshes, bottom first, cut at the heights `cuts` ([`Banded`]):
+/// a band from its foot to the first, from each to the next, and from the
+/// last to its top; with none, the whole of it.
+fn wall_meshes(wall: &Wall, cuts: &[f32]) -> Vec<Mesh> {
+    let edges: Vec<f32> = std::iter::once(wall.low.y).chain(cuts.iter().copied()).chain([wall.high.y]).collect();
+    edges.windows(2).map(|band| wall_band(wall, band[0], band[1])).collect()
+}
+
+/// What of a wall is from `bottom` up to `top`, as a mesh: the boxes
+/// [`carve`] leaves of that much of its face.
+fn wall_band(wall: &Wall, bottom: f32, top: f32) -> Mesh {
     let (middle, half) = wall.thin();
-    let parts = carve(wall.face(), &wall.holes);
+    let [start, _, end, _] = wall.face();
+    let parts = carve([start, bottom, end, top], &wall.holes);
     let mut mesh = Mesh::new(
         PrimitiveTopology::TriangleList,
         RenderAssetUsages::default(),
@@ -3360,7 +3451,7 @@ fn reshape_plot(
     kinds: Query<&Piece>,
     panes: Query<(&OnWall, &Span)>,
     walls: Query<&Wall>,
-    parts: Query<&Mesh3d>,
+    parts: Query<(&Mesh3d, Has<Band>)>,
     placement: TransformHelper,
     meshes: Res<Assets<Mesh>>,
     mut islands: ResMut<Islands>,
@@ -3421,11 +3512,12 @@ fn reshape_plot(
                 }
                 continue;
             }
-            if let Ok(part) = parts.get(entity)
+            if let Ok((part, band)) = parts.get(entity)
                 && let Some(mesh) = meshes.get(&part.0)
                 && let Ok(place) = placement.compute_global_transform(entity)
             {
-                if walls.contains(entity) {
+                // A band of a wall drawn in bands is as much a wall.
+                if walls.contains(entity) || band {
                     let mut wall = Vec::new();
                     island::add_mesh(&mut wall, mesh, &place);
                     own.push(wall);
@@ -4067,6 +4159,53 @@ mod tests {
         assert!((up - (12.1 - EDGE - PAINTING.above)).abs() < 1e-4, "{up}");
         // One house with one floor is one storey, the whole wall.
         assert_eq!(front_wall().storeys, vec![(0.0, 2.8)]);
+    }
+
+    /// How high the corners of `mesh` go, from the lowest to the highest,
+    /// and how many corners it has.
+    fn heights(mesh: &Mesh) -> (f32, f32, usize) {
+        let Some(VertexAttributeValues::Float32x3(corners)) = mesh.attribute(Mesh::ATTRIBUTE_POSITION) else {
+            panic!("no corners");
+        };
+        let low = corners.iter().map(|corner| corner[1]).fold(f32::INFINITY, f32::min);
+        let high = corners.iter().map(|corner| corner[1]).fold(f32::NEG_INFINITY, f32::max);
+        (low, high, corners.len())
+    }
+
+    #[test]
+    fn a_wall_up_two_floors_is_drawn_a_floor_at_a_time_and_cut_where_its_holes_are() {
+        // The Square House 2F's walls run whole from the ground to the roof
+        // (Hajun, 2026-11-25: "each floor need to be its own color/material
+        // when painting"): cut at the top of the upper floor, a band below
+        // and a band above, which together are the whole wall.
+        let mut wall = two_floor_wall(12.1);
+        let levels = paint::Levels::of(&[
+            (Vec3::new(-6.0, 0.0, -6.0), Vec3::new(6.0, 0.1, 6.0)),
+            (Vec3::new(-5.5, 6.0, -5.5), Vec3::new(3.5, 6.1, 5.5)),
+        ]);
+        let cuts = levels.cuts(wall.low.y, wall.high.y);
+        assert_eq!(cuts, vec![6.1]);
+        // From how high to how high, and whether one box, of a band.
+        let is = |mesh: &Mesh, low: f32, high: f32| {
+            let (from, to, corners) = heights(mesh);
+            (from - low).abs() < 1e-4 && (to - high).abs() < 1e-4 && corners == 24
+        };
+        let bands = wall_meshes(&wall, &cuts);
+        assert_eq!(bands.len(), 2);
+        assert!(is(&bands[0], 0.1, 6.1) && is(&bands[1], 6.1, 12.1));
+        assert!(is(&wall_meshes(&wall, &[])[0], 0.1, 12.1) && is(&wall_mesh(&wall), 0.1, 12.1));
+        // A door upstairs is a hole in the band above alone, and the band
+        // below is as it was.
+        wall.holes = vec![[-0.6, 6.1, 0.6, 8.2]];
+        let bands = wall_meshes(&wall, &cuts);
+        assert!(is(&bands[0], 0.1, 6.1));
+        let (low, high, corners) = heights(&bands[1]);
+        assert!((low - 6.1).abs() < 1e-4 && (high - 12.1).abs() < 1e-4, "{low} to {high}");
+        assert!(corners > 24, "{corners}: no hole cut");
+        // A wall of one floor, every wall of a house of three or more, is
+        // not cut.
+        assert!(levels.cuts(0.1, 6.1).is_empty());
+        assert!(levels.cuts(6.1, 12.1).is_empty());
     }
 
     #[test]

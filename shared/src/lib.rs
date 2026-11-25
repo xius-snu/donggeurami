@@ -4980,7 +4980,9 @@ pub mod bag {
     /// rarity (`assets/itemrarities.txt`: 2026-11-21, and as he had it on
     /// 2026-11-25, with his new furniture, the 56 downloaded things, the
     /// houses of three to ten floors, the Wide Roof House and the pack's
-    /// cars), which is the order the shop shows it in.
+    /// cars). The game's bag window shows them kind by kind and by rarity,
+    /// in this order only among things alike (its `bag::panel::shown`,
+    /// since 2026-11-25).
     pub const THINGS: &[Thing] = &[
         building(LAMP, Rarity::Legendary),
         building("singlebed", Rarity::Uncommon),

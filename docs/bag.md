@@ -10,18 +10,107 @@ first.
 
 ## Contents
 
-1. 2026-11-25, morning: a new thing comes up square to its plot, however the plot is turned; APK 57
-2. 2026-11-25, that night: the bin takes what is in a house, small things onto tops, what is in the way by its shape, the painting on a wall; APK 56
-3. 2026-11-25, later: everything on Hajun's list in the shop, 118 things: the cars, 17 houses, 59 things for a house; prices in gems; a seventh rarity; what hangs from a ceiling, and two things that light a room; the gifts to two accounts; server deployed, APK 55
-4. 2026-11-25: Hajun's list of rarities filled in with the 22 other cars, the 56 downloaded things and Hajun's cabinet, bathtub and end table; the list alone, nothing in the game (all of it in the game the same night, above)
-5. 2026-11-23: edit mode said along the top and round the plot, the edit button beating at a tap on a thing, the hint turned off; APK 52
-6. 2026-11-22, late: a spot of the colour chosen in its window, a hint at edit mode for someone tapping at a thing, and a house's walls numbered the same on every device, so that its doors are in the same wall for everyone; APK 51
-7. 2026-11-22, night: paint taken off with a cross, the colours used along the window's foot, the one button moved up, a tap away letting go, things dragged through each other with a grey tick, a house taking what is in it along, smaller menu buttons set by the thing as drawn, and two faults of see-through (things deaf to a tap, eyes fading); server deployed, APK 50
-8. 2026-11-22, evening: edit mode and its three buttons by the left edge, the paintbrush and the colour window, paint kept by the server and seen by everyone, the car's door where the bag's button is; server deployed, APK 49
-9. 2026-11-22, after that: a list flicked goes on by itself as a phone's does, and a swipe across the window changes its tab; APK 48
-10. 2026-11-22, afternoon: the coins' number the gems' size and the gem the coin's; a price you cannot afford in red; the box on the bag's button; APK 47
-11. 2026-11-22, later: the shop after Hajun had looked at it (both buttons always, over the picture and see-through; the price under the name; All first shown; six categories with no scrolling); APK 46
-12. 2026-11-22: the bag, its window, gems, and buildings on your plot that everyone sees; APK 45
+1. 2026-11-25, evening: each floor of a house painted by itself; the shop's things kind by kind, the commonest first, and yours the rarest first; APK 60
+2. 2026-11-25, morning: a new thing comes up square to its plot, however the plot is turned; APK 57
+3. 2026-11-25, that night: the bin takes what is in a house, small things onto tops, what is in the way by its shape, the painting on a wall; APK 56
+4. 2026-11-25, later: everything on Hajun's list in the shop, 118 things: the cars, 17 houses, 59 things for a house; prices in gems; a seventh rarity; what hangs from a ceiling, and two things that light a room; the gifts to two accounts; server deployed, APK 55
+5. 2026-11-25: Hajun's list of rarities filled in with the 22 other cars, the 56 downloaded things and Hajun's cabinet, bathtub and end table; the list alone, nothing in the game (all of it in the game the same night, above)
+6. 2026-11-23: edit mode said along the top and round the plot, the edit button beating at a tap on a thing, the hint turned off; APK 52
+7. 2026-11-22, late: a spot of the colour chosen in its window, a hint at edit mode for someone tapping at a thing, and a house's walls numbered the same on every device, so that its doors are in the same wall for everyone; APK 51
+8. 2026-11-22, night: paint taken off with a cross, the colours used along the window's foot, the one button moved up, a tap away letting go, things dragged through each other with a grey tick, a house taking what is in it along, smaller menu buttons set by the thing as drawn, and two faults of see-through (things deaf to a tap, eyes fading); server deployed, APK 50
+9. 2026-11-22, evening: edit mode and its three buttons by the left edge, the paintbrush and the colour window, paint kept by the server and seen by everyone, the car's door where the bag's button is; server deployed, APK 49
+10. 2026-11-22, after that: a list flicked goes on by itself as a phone's does, and a swipe across the window changes its tab; APK 48
+11. 2026-11-22, afternoon: the coins' number the gems' size and the gem the coin's; a price you cannot afford in red; the box on the bag's button; APK 47
+12. 2026-11-22, later: the shop after Hajun had looked at it (both buttons always, over the picture and see-through; the price under the name; All first shown; six categories with no scrolling); APK 46
+13. 2026-11-22: the bag, its window, gems, and buildings on your plot that everyone sees; APK 45
+
+## 2026-11-25, evening: each floor painted by itself; the shop's order; APK 60
+
+Hajun, in `todotasks.txt`, under "things claude needs to do", and the
+same words in the session: "each floor need to be its own color/material
+when painting."; "order of shop items should be order of rarity, with
+common being first, obviously grouped by category first like furnitures
+together, foundation (house models) together, cars together. so each
+category group should be sorted from order of rarity. and for "All"
+furniture should come first. order of inventory items should be same
+category order (furniture, then house models, then cars), but high rarity
+is first so transcendent is first."; and "dont rebuild or push after
+making these changes". Built and pushed later that night, at his "build
+apk and push" to the session doing the camera: APK 60 has both.
+
+**Each floor of a house is painted by itself** (`build::paint`). A part
+was a material, everything of a thing drawn with it, so that a tap on any
+wall of a house of ten floors painted every floor's walls, its stairs and
+its gables. **In a house a part is now a material on one floor**
+(`paint::parts`): which floor a mesh is on goes by the tops of the house's
+`Floor` objects (`paint::Levels`): a floor slab is the floor it is the top
+of, and anything else is on the floor whose top its foot stands on (5 cm
+in hand), so that a floor's walls, its stairs and, on the top floor, the
+gables and a roof terrace's parapet are one part.
+
+- **Names**: the lowest floor a material is on keeps the material's own
+  name, and every floor over it is the material and its number,
+  `plain_wall@2`, `plain_floor@10` (mine). So nothing changes for a house
+  of one floor, nor for furniture; the ground floor of a taller house
+  keeps the paint it had, and so does a roof, being on one floor; what
+  was painted upstairs before this is as its model has it again (it was
+  the ground floor's colour). The names are strings as they always were:
+  nothing for the server, protocol 25 still, no deploy. **An app from
+  before** knows only the ground floor's names, and shows that floor's
+  colour all the way up.
+- **Blender's `.001`**: the Roof Terrace houses' upper stairs are drawn in
+  `plain_wall.001`, Blender's copy of `plain_wall`, which made them a
+  part of their own. In a house the copy's number is no new material
+  (`paint::material_of`), so they are painted with their floor's walls
+  (mine; furniture keeps its materials' names as they are).
+- **The Square House 2F's walls** are each one object from the ground to
+  the roof (the houses of three floors and more have a wall to each
+  floor), so on a plot of the town each is drawn in two bands, cut at the
+  top of the upper floor (`build::Banded`): the wall draws the lower band
+  itself and a `Band` under it the upper, each a part of its own, each cut
+  round the holes that are in it (`carve_walls`), each solid as a wall is
+  (`reshape_plot`). To everything else it is still the one wall, so a
+  door's wall number (`walls_of`) means what it did and no door moves.
+  House Builder's houses, which nobody paints, are drawn whole as before.
+- **Not done**: a floor's slab is the ceiling of the floor under it, and
+  they are painted together; painting a ceiling apart would need the slab
+  cut in two as the walls are. The made-up land's colours (off,
+  `premade::FILLS`) are as they were, ground floors only.
+
+**The shop's order** (`bag::panel::shown`): things come kind by kind,
+furniture first (the painting and the street lamp among it), then the
+houses, then the doors and windows, then the cars; of each kind by rarity,
+in the shop the commonest first and among what you own the rarest first,
+Transcendent first; things as rare as each other in the order of his list.
+The same in every category down the left: All, Owned, Buildings and
+Vehicles. The doors and windows after the houses are mine, as House
+Builder's shop has them (Foundation, then Doors & Windows): his words name
+furniture, houses and cars. Nothing else changed: the list (`THINGS`),
+the prices, the server.
+
+**Checked**: unit tests: `paint::tests::a_house_is_painted_a_floor_at_a_time`
+(the Square House 2F, the Roof Terrace 3F, a house of one floor, a bed),
+`every_floor_of_every_house_hajun_modelled_is_painted_by_itself` (all 21
+houses read out of their files: two parts share a name exactly when they
+are of one material on one floor, the lowest floor of each material and
+every roof keep their names, each house of N floors has N floors to paint,
+and the Square House 2F's walls alone are cut), `build::tests::a_wall_up_two_floors_is_drawn_a_floor_at_a_time_and_cut_where_its_holes_are`,
+`bag::panel::tests::things_come_kind_by_kind_the_commonest_first_in_the_shop_and_the_rarest_first_in_the_bag`;
+the game's whole suite (`cargo test --lib`, 598) and `-p roundtown_net`
+(284). In the desktop build, hidden and offline, from a copy of the exe:
+a Square House 2F put down on the plot and a tap with the brush on its
+front wall upstairs painted `plain_wall@2`, the upper floor and its gable
+blue and the ground floor grey, the line between them at the upper
+floor, clean; a Square House 3F, its middle floor alone; the bag window
+with a lamp, chandelier, two beds, the painting, a chair, two houses, a
+door and three cars in it: what you own from the Street Lamp and the
+Chandelier down to the Cafe Chair, then the houses and the door, its
+Vehicles the Yang, the Red Sports Car and the Gen; the shop's All from the
+Cafe Chair, Circle Table and Cafe Desk Edge, its Vehicles the five Rare
+cars and then the Jeep. **Not checked**: a phone (APK 60 not put on one
+from here);
+online, someone else seeing a floor's colour (the names are only strings
+to the server, as before); the inside of a painted floor, by eye.
 
 ## 2026-11-25, morning: a new thing comes up square to its plot; APK 57
 

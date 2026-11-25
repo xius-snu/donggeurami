@@ -440,7 +440,10 @@ to try again.
   45; not seen on a phone; drawn from Hajun's `bagandinventorypanel1.png`
   and `2`): a window of two tabs, what you own and the shop, categories
   down the left, all of them in sight with none scrolled to, cards three
-  to a row, each thing's name in its rarity's colour (`colours.bag`). The
+  to a row, each thing's name in its rarity's colour (`colours.bag`),
+  kind by kind (furniture, houses, doors and windows, cars), the shop's
+  commonest first and yours rarest first (`panel::shown`, Hajun's,
+  2026-11-25, APK 60). The
   shop opens on All, has each thing's price under its name, red when you
   cannot afford it (APK 47), and a thing
   pressed there has Buy and Sell over its picture, a little see-through,
@@ -545,7 +548,9 @@ to try again.
   what stands in it along (`stand::Rides`). **With the brush a tap paints
   the part under it** (`src/build/paint.rs`): a part is a material of
   Hajun's model, by its name in Blender (a bed's `blanket`, a house's
-  `plain_wall`), the colour chosen in a window behind the round button
+  `plain_wall`), and in a house a material on one floor, `plain_wall@2`
+  over the lowest (Hajun's, 2026-11-25, APK 60; the Square
+  House 2F's whole walls drawn in two bands, `build::Banded`), the colour chosen in a window behind the round button
   beside the brush ("Paint Color", `customize::picker`: a wheel, white in
   its middle, a bar for how bright, and a row of the last seven colours
   painted with, kept on the device in `paint.json`); with the cross

@@ -17,7 +17,10 @@
 //! the fact that i need to scroll the sections to see the cosmetics
 //! section"). On its right the things, three to a row, each a dark card
 //! with its picture and under it its name, in the colour of its rarity
-//! (`colours.bag`), and how many of it are in your bag ("x1").
+//! (`colours.bag`), and how many of it are in your bag ("x1"). They come
+//! kind by kind, furniture first, then the houses, the doors and windows
+//! and the cars, and of each kind by rarity: in the shop the commonest
+//! first, of what you own the rarest (since 2026-11-25, [`shown`]).
 //!
 //! **What you own** shows what is in your bag: what you own that does not
 //! stand on your plot. A tap on a building, standing on your own plot,
@@ -73,7 +76,7 @@ use bevy::ui_widgets::ScrollArea;
 use super::{Bag, Deal, Group, THINGS, Thing};
 use roundtown_net::bag::Money;
 use crate::build::stand::{Home, Stand, Why};
-use crate::build::{PIECES, Stock};
+use crate::build::{PIECES, Stock, Tab as BuildTab};
 use crate::builder::{self, DIALOG_LAYER, Fill};
 use crate::drive::{CARS, CarPressed, Driving, car_def};
 use crate::flick::{self, Coasting, Throw, Track, Way};
@@ -196,12 +199,47 @@ impl Sort {
     }
 }
 
+/// What kind of thing something is, in the order the window shows the
+/// kinds in (Hajun, 2026-11-25: "grouped by category first like furnitures
+/// together, foundation (house models) together, cars together ... for
+/// "All" furniture should come first", and what you own "same category
+/// order (furniture, then house models, then cars)"): furniture, the
+/// painting and the street lamp among it; the houses, House Builder's
+/// Foundation; the doors and windows that go in them, after them as in
+/// House Builder's shop (mine: his list does not say); and the cars.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+enum Kind {
+    Furniture,
+    Houses,
+    Openings,
+    Cars,
+    Other,
+}
+
+impl Kind {
+    fn of(thing: &Thing) -> Self {
+        match thing.group {
+            Group::Vehicles => Kind::Cars,
+            Group::Buildings => match PIECES.iter().find(|def| def.kind == thing.kind).map(|def| def.tab) {
+                Some(BuildTab::Foundation) => Kind::Houses,
+                Some(BuildTab::Openings) => Kind::Openings,
+                _ => Kind::Furniture,
+            },
+            Group::Utilities | Group::Cosmetics => Kind::Other,
+        }
+    }
+}
+
 /// The things `tab` shows under `sort`, each with how many of it are in
-/// the bag `has`, in the order of the things there are. What you own shows
-/// only what is in your bag, and so does the shop's Owned; the rest of the
-/// shop shows everything of its category.
+/// the bag `has`. What you own shows only what is in your bag, and so does
+/// the shop's Owned; the rest of the shop shows everything of its category.
+/// Kind by kind ([`Kind`]), and of each kind by rarity: in the shop the
+/// commonest first, and of what you own the rarest (Hajun: "order of shop
+/// items should be order of rarity, with common being first", and of the
+/// inventory "high rarity is first so transcendent is first"); things as
+/// rare as each other in the order of his list.
 fn shown(tab: Tab, sort: Sort, has: &roundtown_net::bag::Bag) -> Vec<(&'static Thing, u16)> {
-    THINGS
+    let mut shown: Vec<(&'static Thing, u16)> = THINGS
         .iter()
         .map(|thing| (thing, has.free(thing.kind)))
         .filter(|&(thing, free)| match sort {
@@ -210,7 +248,15 @@ fn shown(tab: Tab, sort: Sort, has: &roundtown_net::bag::Bag) -> Vec<(&'static T
             Sort::Of(group) => thing.group == group,
         })
         .filter(|&(_, free)| tab == Tab::Shop || free > 0)
-        .collect()
+        .collect();
+    // Stable: the list's order among those alike.
+    shown.sort_by(|(a, _), (b, _)| {
+        Kind::of(a).cmp(&Kind::of(b)).then_with(|| match tab {
+            Tab::Shop => a.rarity.cmp(&b.rarity),
+            Tab::Inventory => b.rarity.cmp(&a.rarity),
+        })
+    });
+    shown
 }
 
 /// The window: whether it is up, which tab, which category of each tab,
@@ -1318,11 +1364,90 @@ mod tests {
         bag.put(1, LAMP, here).unwrap();
         assert_eq!(kinds(shown(Tab::Inventory, Sort::All, &bag)), [(CAR, 1)]);
         assert_eq!(kinds(shown(Tab::Shop, Sort::Owned, &bag)), [(CAR, 1)]);
-        assert_eq!(shown(Tab::Shop, Sort::All, &bag)[0], (&THINGS[0], 0));
+        assert!(shown(Tab::Shop, Sort::All, &bag).iter().any(|&(thing, free)| (thing.kind, free) == (LAMP, 0)));
         // Two beds bought: two in the bag.
         bag.buy("singlebed", 1_000).unwrap();
         bag.buy("singlebed", 1_000).unwrap();
         assert_eq!(kinds(shown(Tab::Inventory, Sort::All, &bag)), [("singlebed", 2), (CAR, 1)]);
+    }
+
+    #[test]
+    fn things_come_kind_by_kind_the_commonest_first_in_the_shop_and_the_rarest_first_in_the_bag() {
+        // Hajun, 2026-11-25: "order of shop items should be order of
+        // rarity, with common being first, obviously grouped by category
+        // first like furnitures together, foundation (house models)
+        // together, cars together ... and for "All" furniture should come
+        // first. order of inventory items should be same category order
+        // (furniture, then house models, then cars), but high rarity is
+        // first so transcendent is first."
+        use roundtown_net::bag::Rarity;
+        let mut everything = Rules::new();
+        for thing in THINGS {
+            everything.owned.retain(|(kind, _)| kind != thing.kind);
+            everything.owned.push((thing.kind.to_string(), 1));
+        }
+        let place = |kind: &str| THINGS.iter().position(|thing| thing.kind == kind).unwrap();
+        for (tab, rarer_first) in [(Tab::Shop, false), (Tab::Inventory, true)] {
+            for sort in Sort::of(tab) {
+                let things = shown(tab, sort, &everything);
+                // Kind by kind, and of each by rarity, the list's order
+                // among things as rare as each other.
+                for pair in things.windows(2) {
+                    let (a, b) = (pair[0].0, pair[1].0);
+                    let (kinds, rarities) = ((Kind::of(a), Kind::of(b)), if rarer_first { (b.rarity, a.rarity) } else { (a.rarity, b.rarity) });
+                    assert!(kinds.0 <= kinds.1, "{tab:?} {sort:?}: {} before {}", a.kind, b.kind);
+                    if kinds.0 == kinds.1 {
+                        assert!(rarities.0 <= rarities.1, "{tab:?} {sort:?}: {} before {}", a.kind, b.kind);
+                        if a.rarity == b.rarity {
+                            assert!(place(a.kind) < place(b.kind), "{tab:?} {sort:?}: {} before {}", a.kind, b.kind);
+                        }
+                    }
+                }
+                // Nothing left out, nothing twice.
+                let mut kinds: Vec<&str> = things.iter().map(|(thing, _)| thing.kind).collect();
+                kinds.sort_unstable();
+                kinds.dedup();
+                assert_eq!(kinds.len(), things.len());
+            }
+        }
+        // Everything, in the shop: furniture first, a common thing the
+        // first of all; the houses after the last of the furniture, from
+        // the Square House to those of ten floors; the doors and windows;
+        // and the cars, ending with the Yang.
+        let shop: Vec<&Thing> = shown(Tab::Shop, Sort::All, &everything).into_iter().map(|(thing, _)| thing).collect();
+        let kinds: Vec<Kind> = shop.iter().map(|thing| Kind::of(thing)).collect();
+        let first = |kind: Kind| kinds.iter().position(|&each| each == kind).unwrap();
+        assert_eq!((shop[0].kind, shop[0].rarity), ("cafechair", Rarity::Common));
+        assert_eq!(kinds[0], Kind::Furniture);
+        assert!(first(Kind::Furniture) < first(Kind::Houses) && first(Kind::Houses) < first(Kind::Openings) && first(Kind::Openings) < first(Kind::Cars));
+        assert_eq!(shop[first(Kind::Houses)].kind, "square_house");
+        assert_eq!(shop[first(Kind::Houses) - 1].rarity, Rarity::Legendary, "the chandelier or the street lamp, the rarest furniture");
+        assert_eq!(shop[first(Kind::Openings) - 1].rarity, Rarity::Transcendent, "a house of ten floors");
+        assert_eq!(shop[first(Kind::Openings)].kind, "classic_door");
+        assert_eq!(shop.last().map(|thing| thing.kind), Some("yang"));
+        assert_eq!(shop[first(Kind::Cars)].rarity, Rarity::Rare);
+        assert!(shop.iter().any(|thing| thing.kind == "painting" && Kind::of(thing) == Kind::Furniture));
+        assert_eq!(Kind::of(roundtown_net::bag::thing(LAMP).unwrap()), Kind::Furniture);
+        // Everything, in the bag: the same kinds in the same order, each
+        // from its rarest; the Yang the first of the cars.
+        let bag: Vec<&Thing> = shown(Tab::Inventory, Sort::All, &everything).into_iter().map(|(thing, _)| thing).collect();
+        assert_eq!(bag.iter().map(|thing| Kind::of(thing)).collect::<Vec<_>>(), {
+            let mut sorted = kinds.clone();
+            sorted.sort();
+            sorted
+        });
+        assert_eq!(bag[0].rarity, Rarity::Legendary, "the rarest furniture");
+        let houses = bag.iter().position(|thing| Kind::of(thing) == Kind::Houses).unwrap();
+        assert_eq!(bag[houses].rarity, Rarity::Transcendent);
+        assert_eq!(bag[houses].kind, "square_house_ten_floor");
+        let cars = bag.iter().position(|thing| Kind::of(thing) == Kind::Cars).unwrap();
+        assert_eq!(bag[cars].kind, "yang");
+        assert_eq!(bag.last().map(|thing| thing.rarity), Some(Rarity::Rare));
+        // Of the vehicles alone, the same.
+        let vehicles = shown(Tab::Shop, Sort::Of(Group::Vehicles), &everything);
+        assert_eq!((vehicles[0].0.kind, vehicles.last().unwrap().0.kind), ("gen", "yang"));
+        let vehicles = shown(Tab::Inventory, Sort::Of(Group::Vehicles), &everything);
+        assert_eq!((vehicles[0].0.kind, vehicles.last().unwrap().0.kind), ("yang", "suv"));
     }
 
     #[test]
