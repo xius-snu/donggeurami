@@ -603,6 +603,28 @@ mod tests {
     #[test]
     fn what_stands_on_someone_s_plot_is_kept_while_they_have_a_plot_here_and_offline_every_plot_has_its_own() {
         use roundtown_net::land::{Deed, Holder, Order, PLOTS, PREMADE, offline_deeds};
+        // Every plot but `mine` with its made-up owner, as the land's own
+        // offline deeds are while the made-up land fills plots
+        // (`roundtown_net::premade::FILLS`, off since 2026-11-25, when
+        // offline every plot but yours is bare).
+        assert!(offline_deeds(0, &Order::numbered()).is_empty());
+        let made_up = |mine: usize, order: &Order| -> Vec<Deed> {
+            let mut deeds: Vec<Deed> = (0..PLOTS)
+                .filter(|&place| order.plot(place) != mine)
+                .map(|place| {
+                    let lot = roundtown_net::premade::lot(place);
+                    Deed {
+                        plot: order.plot(place) as u8,
+                        who: lot.who,
+                        name: lot.name,
+                        look: lot.look,
+                        holder: Holder::Minded,
+                    }
+                })
+                .collect();
+            deeds.sort_by_key(|deed| deed.plot);
+            deeds
+        };
         let mut world = world(true);
         // The one system throughout: it remembers whether it was online.
         let come_and_go = world.register_system(come_and_go);
@@ -635,7 +657,7 @@ mod tests {
         // stands on each is that owner's own land, with what of it is
         // painted.
         world.insert_resource(Online::default());
-        world.resource_mut::<Deeds>().0 = offline_deeds(0, &Order::numbered());
+        world.resource_mut::<Deeds>().0 = made_up(0, &Order::numbered());
         world.run_system(come_and_go).unwrap();
         let theirs = world.resource::<Theirs>();
         assert_eq!(theirs.0.len(), PLOTS - 1);
@@ -648,7 +670,7 @@ mod tests {
         // In an order the device has thrown, each owner's land is their
         // own all the same, on whichever plot they are.
         let order = Order::thrown(11);
-        world.resource_mut::<Deeds>().0 = offline_deeds(order.plot(0), &order);
+        world.resource_mut::<Deeds>().0 = made_up(order.plot(0), &order);
         world.run_system(come_and_go).unwrap();
         let theirs = world.resource::<Theirs>();
         assert_eq!(theirs.0.len(), PLOTS - 1);

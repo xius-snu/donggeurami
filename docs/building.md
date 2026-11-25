@@ -7,6 +7,30 @@
 > "above" or "below", or names another section in quotes, that section may be
 > in another file here: the table in `CLAUDE.md` says which.
 
+## APK 59: the 56 downloads three times their size; no made-up land
+
+2026-11-25, 15:37 here (06:37 UTC). Asked for: "ye do that and adjust the
+seats and treadmill area, and also for the npc plots just remove all npc
+plots and their npcs. keep the ai bots for the offline players tho, and
+keep offline player plots. then rebuild apk" (`docs/house-builder.md`,
+`docs/land.md` and `docs/town.md`, at the top of each). From the main
+checkout with no other session running (`ListAgents`).
+
+- **Protocol 25 still**: it plays against the server deployed at 06:32 UTC
+  on 2026-11-25 (`2d857b5d`), as APK 52 to 58 do; those show the plots
+  nobody's land fills bare too, and the downloads at two and a half times
+  their size.
+- `versionCode` 59, read back with `aapt dump badging`. cargo ndk 3 m 51 s
+  (`release-android`), stripped from 203.5 MB to 110.9 MB, with
+  `GameActivity_onCreate` and the six `MainActivity` methods in it;
+  Gradle 19 s. 134,917,010 bytes: 289 of the game's files under
+  `assets/`, each the same to the byte as the tree's (the 56 grown
+  `.glb` files among them), and Android's two baseline profiles; the
+  library in it the same as the stripped one. Every file under `assets/`
+  hashed before the library was built and after Gradle: the same.
+- The build's five warnings are the five there were before.
+- **Not put on a phone.**
+
 ## APK 58: furniture upstairs in the made-up houses; the Square Houses of three floors and more climbed again
 
 2026-11-25, 12:11 here (03:11 UTC). Asked for: "also i want the premade

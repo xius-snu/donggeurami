@@ -81,6 +81,23 @@ use crate::At;
 use crate::bag::{LAMP, Paint, Standing};
 use crate::land::{Lot, PLOTS, PREMADE};
 
+/// Whether the made-up land fills the plots that no real person's land
+/// does. **Off since 2026-11-25** (Hajun: "for the npc plots just remove all
+/// npc plots and their npcs. keep the ai bots for the offline players tho,
+/// and keep offline player plots"; "empty plots shouldnt have signs on them
+/// either"): such a plot is bare, with no sign, nothing standing on it and
+/// nobody walking it, online and offline alike. Whoever is in a channel
+/// has a plot as before, and real people's land that is not here fills
+/// the others, someone of the computer's walking each under "{name}'s
+/// bot"; the made-up lots are still worked out, as the places nobody's
+/// land fills, and are told to no device ([`Lot::shown`]).
+///
+/// Kept, to be turned on again; but the lots were laid out for the
+/// downloaded things at two and a half times their size, and they were
+/// made three times it that day: before this is turned on, run
+/// `build::premade_check`, which says what no longer fits.
+pub const FILLS: bool = false;
+
 /// The made-up lot numbered `plot` (of [`PLOTS`], round and round past
 /// them): the one of that place of a channel
 /// ([`Order`](crate::land::Order)), which is on another plot of the town

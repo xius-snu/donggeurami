@@ -28,17 +28,18 @@
 //! so that at all times, there are 48 plots filled"): a seat of the town
 //! is one of its 48 plots, numbered as Hajun numbered them
 //! (`plotorder.png`, `roundtown_net::land::HOMES`, [`in_order`]), and the
-//! seat the server gives you is your plot. Every other plot is someone's
-//! too ([`Deeds`]): online as the server says (`roundtown_net::Tell::
-//! Plots`: whoever else is in your channel, in the town or away in a game,
-//! and the land of people who are not here, real and made up, that fills
-//! the rest); offline a made-up owner on each
-//! (`roundtown_net::premade`), in an order this device throws as the app
-//! opens ([`thrown`], since 2026-11-24: where anything is, is thrown as a
-//! channel opens, and his numbers only say which plot). A sign stands on
-//! every one, with its owner's name ([`holders`]), and what they own
-//! stands there (`build::stand`); someone of the computer's walks each
-//! that nobody here has (`resident`). Until 2026-11-23 a seat was one of
+//! seat the server gives you is your plot. The other plots are whose the
+//! server says ([`Deeds`], `roundtown_net::Tell::Plots`): whoever else is
+//! in your channel, in the town or away in a game, and the land of real
+//! people who are not here; offline, nobody's but yours. **A plot that is
+//! nobody's is bare** (since 2026-11-25, Hajun: "just remove all npc plots
+//! and their npcs ... and empty plots shouldnt have signs on them either";
+//! until then made-up land filled every one, `roundtown_net::premade::
+//! FILLS`, offline too, in an order this device throws as the app opens,
+//! [`thrown`]). A sign stands on every plot that is someone's, with their
+//! name ([`holders`]), and what they own stands there (`build::stand`);
+//! someone of the computer's walks each that nobody here has, under
+//! "{name}'s bot" (`resident`). Until 2026-11-23 a seat was one of
 //! sixteen, each device working a plot out for it, and only the plots of
 //! whoever was in your channel had anything on them. `RT_LAND_SIGNS=all`
 //! on desktop stands a sign with your own name on every plot, to look at
@@ -221,8 +222,9 @@ impl Plots {
 /// (`roundtown_net::land::HOMES`), its owner, the name on its sign, the
 /// look of whoever walks it, and who is on it. Online as the server last
 /// said ([`roundtown_net::Tell::Plots`]); offline, and until it has said,
-/// a made-up owner on each, in the order this device has thrown
-/// ([`thrown`], `roundtown_net::land::offline_deeds`).
+/// none (`roundtown_net::land::offline_deeds`; a made-up owner on each, in
+/// the order this device has thrown, [`thrown`], while the made-up land
+/// filled plots). A plot nobody has is bare: no sign stands on it.
 #[derive(Resource, Default, PartialEq, Debug)]
 pub(crate) struct Deeds(pub Vec<Deed>);
 
@@ -294,8 +296,9 @@ pub(crate) fn plugin(app: &mut App) {
 }
 
 /// Keeps [`Deeds`]: online, what the server says of your channel's plots,
-/// yours left out; offline, and until it has said anything, every plot but
-/// yours with its own made-up owner. Your plot being the seat you have in
+/// yours left out; offline, and until it has said anything, nobody's but
+/// yours, every other plot bare (with its own made-up owner on each while
+/// the made-up land filled plots, until 2026-11-25). Your plot being the seat you have in
 /// the town, which a game changes for its own while you are in one, the
 /// plots are left as they were anywhere but the town. Written only as it
 /// changes.
@@ -323,10 +326,15 @@ fn keep_deeds(
         return;
     }
     let mine = online.me().map(|me| me.id);
+    // A made-up owner's plot is bare while the made-up land fills nothing,
+    // whatever a server from before that says (`roundtown_net::premade::
+    // FILLS`): no sign, nothing standing, nobody walking it.
+    let shown = |deed: &&Deed| roundtown_net::premade::FILLS || !roundtown_net::land::is_premade(deed.who);
     let wanted = match said.as_ref() {
         Some(all) => all
             .iter()
             .filter(|deed| Some(deed.who) != mine && usize::from(deed.plot) != seat.0)
+            .filter(shown)
             .cloned()
             .collect(),
         None => roundtown_net::land::offline_deeds(seat.0, thrown()),

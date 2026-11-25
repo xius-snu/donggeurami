@@ -33,12 +33,18 @@ const BELT_SPEED: f32 = 5.0;
 /// The belt, in the treadmill's own space (`mybuilds/newones/Treadmill.glb`,
 /// set on its origin): between its side rails, from its open end at its
 /// front (-Z) to its handles; and how far over its origin feet on it are, it
-/// being 0.28 m up at its open end and 0.40 at its handles.
-const BELT_HALF_WIDTH: f32 = 0.55;
-const BELT_FROM: f32 = -1.52;
-const BELT_TO: f32 = 1.06;
-const BELT_LOW: f32 = 0.15;
-const BELT_HIGH: f32 = 0.6;
+/// being 0.32 m up at its open end and 0.49 at its handles. Measured again
+/// with the treadmill three times its download's size (2026-11-25, Hajun:
+/// "i meant 3x"), each 1.2 times what it was at two and a half. Its open
+/// end is at -1.84: the belt reaches a body's legs past it, so that whoever
+/// it has carried to the lip, and stands on it by the edge of their legs,
+/// is carried on off it, down to the floor; nobody on the floor in front
+/// stands at its height.
+const BELT_HALF_WIDTH: f32 = 0.66;
+const BELT_FROM: f32 = -1.84 - crate::LEG_RADIUS;
+const BELT_TO: f32 = 1.27;
+const BELT_LOW: f32 = 0.18;
+const BELT_HIGH: f32 = 0.72;
 /// How fast the ceiling fan turns, in radians a second: about once in two
 /// seconds. Mine.
 const FAN_TURN: f32 = 3.0;
@@ -129,13 +135,17 @@ mod tests {
     #[test]
     fn the_belt_is_between_its_rails_from_its_open_end_to_its_handles() {
         // On it, anywhere along it, at its height.
-        for at in [Vec3::new(0.0, 0.3, -1.4), Vec3::new(0.5, 0.4, 1.0), Vec3::new(-0.5, 0.35, 0.0)] {
+        for at in [Vec3::new(0.0, 0.36, -1.68), Vec3::new(0.6, 0.48, 1.2), Vec3::new(-0.6, 0.42, 0.0)] {
             assert!(on_the_belt(at), "{at}");
         }
         // Beside it, past its ends, on the floor by it, or jumping over it.
-        for at in [Vec3::new(0.7, 0.35, 0.0), Vec3::new(0.0, 0.3, -1.7), Vec3::new(0.0, 0.4, 1.2), Vec3::new(0.0, 0.0, 0.0), Vec3::new(0.0, 1.2, 0.0)] {
+        for at in [Vec3::new(0.84, 0.42, 0.0), Vec3::new(0.0, 0.36, -2.2), Vec3::new(0.0, 0.48, 1.44), Vec3::new(0.0, 0.0, 0.0), Vec3::new(0.0, 1.44, 0.0)] {
             assert!(!on_the_belt(at), "{at}");
         }
+        // Stood on its open end's lip by the edge of the legs, just past
+        // it: still carried, off it; on the floor there, not.
+        assert!(on_the_belt(Vec3::new(0.0, 0.31, -1.95)));
+        assert!(!on_the_belt(Vec3::new(0.0, 0.0, -1.95)));
         // Slower than a walk, so that walking on it gets one on.
         assert!(BELT_SPEED < 7.0 && BELT_SPEED > 3.0);
     }

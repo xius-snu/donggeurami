@@ -7,6 +7,47 @@
 > "above" or "below", or names another section in quotes, that section may be
 > in another file here: the table in `CLAUDE.md` says which.
 
+## The places to rest and the treadmill's belt measured again, three times as big; only real people's bots (2026-11-25, afternoon)
+
+Hajun, having had the 56 downloads made three times their size, not two
+and a half (`docs/house-builder.md`, at the top): "ye do that and adjust
+the seats and treadmill area"; and the made-up land turned off
+(`docs/land.md`, at the top): "remove all npc plots and their npcs. keep
+the ai bots for the offline players tho".
+
+- **Places to rest** (`rest::spots`), each read again off its model. A
+  body is the size it was, so each place keeps the body where it was on
+  its seat, not 1.2 times as far out (mine): sat on 0.35 m in from the
+  front of the wooden chair (now 0.8 m high), the rocking chair (0.9) and
+  in the middle of the bar stool (1.09); sat back in 0.2 m out from the
+  back of the armchair (0.93) and the L shaped couch (0.87), its three
+  places spread along it as before, 1.2 times as far apart; lying on the
+  big bed (1.52, its blanket 1.56 under the pillows' end) with the head at
+  the foot of the pillows, which rise from 1.82 m behind its origin. Each
+  bubble 1.2 times as high. The bathtub is Hajun's and did not change.
+  Held by the same test (`every_place_to_rest_is_on_its_piece_as_its_model_is`).
+- **The treadmill's belt** (`working.rs`) is 1.2 times what it was, every
+  number: 0.66 m each side of the middle, from its open end to its
+  handles at 1.27 m, feet 0.18 to 0.72 m over its origin. **And a fault
+  found as it was looked at**: carried to the open end, a body stood on
+  the lip by the edge of its legs, just past the belt, and stayed there.
+  The belt now reaches a leg's width past the lip (`BELT_FROM`, -1.84 m
+  less `LEG_RADIUS`), so whoever it carries goes down to the floor;
+  nobody on the floor in front stands at the belt's height.
+- **The residents**: with no made-up land there are no made-up owners to
+  walk it. On the plots of real people who are not here their bots walk
+  as before ("{name}'s bot"); a bare plot has nobody. Offline there are
+  none. `resident.rs` did not change.
+- **Checked**: unit tests; the desktop build, hidden, offline, on your own
+  plot: sat on the wooden chair (body at 1.07 m on ground 0.27), the
+  rocking chair and the stool, sat back on the L shaped couch and the
+  armchair, lay on the big bed (2.09), each in its pose in the picture;
+  stood on the treadmill and carried off its open end to the floor in
+  under half a second. On the VM: the two real players' bots there,
+  nobody else.
+- **Not checked**: a phone; a bot sitting on the new sizes (they use the
+  same places).
+
 ## Sitting on what came on 2026-11-25, lying in the bath, and things that work (2026-11-25)
 
 Hajun, that night: "also the bed, chair, sofas, couch need the

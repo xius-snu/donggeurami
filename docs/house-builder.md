@@ -7,6 +7,37 @@
 > "above" or "below", or names another section in quotes, that section may be
 > in another file here: the table in `CLAUDE.md` says which.
 
+## The 56 downloads three times their size (2026-11-25, afternoon)
+
+Hajun: "i think i told u to scale some of the models in mybuilds/newones by
+2.5x, but i meant 3x. check which ones u scaled in that folder"; told which
+(all 56 of `mybuilds/newones` but their own `bathtub`, `cabinet` and
+`end_table`), "ye do that and adjust the seats and treadmill area".
+
+- **Made 1.2 times as big again** in their own `.blend` files, about the
+  middle of the world, which is each one's origin, and exported as before
+  (`blender/grow_downloads.py`): as if `scale_downloads.py` had been run
+  at 3 in the first place. So what stood on its origin still does, the
+  Painting stood up and the Treadmill set on its origin are as they were
+  but bigger, and each keeps its object's name, material and picture.
+  Their three are untouched.
+- **Checked against the files before** (kept in the scratchpad): each new
+  `.glb`'s box 1.2 times the old one's on every axis, to a millimetre; the
+  same triangles, materials and pictures byte for byte; one node with no
+  transform. The shop's pictures are framed to fit the model
+  (`render_thing.py`), so they were not rendered again.
+- **Sizes now**, some of them: the bed 4.4 by 5.9 m and 2.5 high, the
+  couch 5.0 by 3.7, the fridge 3.6 high, the grandfather's clock 4.1, the
+  coat rack 3.7, the chair 1.9, the stool 1.1, the table 3.6 by 1.9, the
+  round table 3.8 across, the treadmill 1.9 by 3.7; a hamburger 32 cm.
+- **The places to rest on them were measured again** (`rest.rs`, and
+  `docs/town.md`), and **the treadmill's belt** (`working.rs`).
+- **The made-up lots no longer fit** with them, and are turned off the
+  same afternoon (`docs/land.md`, at the top).
+- **Not checked**: what was put down before on anyone's plot grows where
+  it stands, and is not checked again: two things that stood close may
+  now overlap, and a tall thing by a wall may reach into it.
+
 ## The Square Houses of three to ten floors: an underside turned out (2026-11-25, morning)
 
 Found while the made-up houses were furnished upstairs (`docs/land.md`, at

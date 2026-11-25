@@ -1691,7 +1691,7 @@ mod tests {
     #[test]
     fn a_body_that_is_gone_leaves_its_plot_kept_as_it_was_and_everyone_is_told_whose_each_is() {
         use bevy::ecs::system::RunSystemOnce;
-        use roundtown_net::land::{Holder, PLOTS};
+        use roundtown_net::land::Holder;
         let mut world = town();
         world.add_observer(body_gone);
         let (_, first) = seated(&mut world, 1, None);
@@ -1710,9 +1710,10 @@ mod tests {
                 .last()
         };
         let deeds = plots(&mut world).expect("told of the plots");
-        assert_eq!(deeds.len(), PLOTS);
+        // The two of them; every other plot bare, nobody's, no made-up
+        // land filling it (`premade::FILLS`).
+        assert_eq!(deeds.len(), 2);
         assert_eq!((deeds[1].who, deeds[1].name.as_str(), deeds[1].holder), (2, "Person 2", Holder::Here));
-        assert_eq!(deeds[2].holder, Holder::Minded);
         // Their body despawned, however: the plot is theirs still, with
         // nobody on it, and the channel is told so.
         world.entity_mut(them).despawn();

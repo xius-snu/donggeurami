@@ -145,32 +145,39 @@ const DOUBLE_BED: [Spot; 2] = [
 // What came for the plots on 2026-11-25 (`mybuilds/newones`), each as its
 // model is in the game, measured off it (a test holds each place to its
 // surfaces); all but the bathtub face their own -Z as the game has them.
+// Measured again that afternoon, the 56 downloads made three times their
+// size where they had been two and a half (Hajun: "i meant 3x"): a body
+// being the size it was, each sits as far in from the front of a seat,
+// and as far out from the back of a sofa, and lies with the head at the
+// pillow, as before; the heights and the bubbles are the models'.
 
-/// The wooden chair: a seat 0.66 m high and 0.66 deep, its back behind it.
-const WOODEN_CHAIR: [Spot; 1] = [spot(Pose::Sit, Vec3::new(0.0, 0.66, 0.08), Vec3::new(0.0, 1.75, 0.08))];
-/// The rocking chair: a seat that slopes back from 0.77 m to 0.68, between
-/// its arms; sat on 0.35 m in from its front, as the others.
-const ROCKING_CHAIR: [Spot; 1] = [spot(Pose::Sit, Vec3::new(0.0, 0.75, -0.40), Vec3::new(0.0, 1.9, -0.40))];
-/// The bar stool: a round seat 0.54 m across and 0.9 high.
-const STOOL: [Spot; 1] = [spot(Pose::Sit, Vec3::new(0.0, 0.9, 0.0), Vec3::new(0.0, 1.65, 0.0))];
-/// The armchair: a cushion 0.78 m high between its arms, a deep one, its
-/// back rising 0.35 m behind its middle: sat back in, as on a sofa. Its
-/// origin is 0.18 m right of its middle.
-const ARMCHAIR: [Spot; 1] = [spot(Pose::Lounge, Vec3::new(-0.18, 0.78, 0.2), Vec3::new(-0.18, 1.95, 0.2))];
-/// The L shaped couch: cushions 0.72 m high, its back rising 0.33 m behind
-/// its origin all along it, and its left end coming forward 2 m: two along
-/// it and one on that end, the legs out along it.
+/// The wooden chair: a seat 0.8 m high and 0.82 deep, its back behind it;
+/// sat on 0.35 m in from its front, as the others.
+const WOODEN_CHAIR: [Spot; 1] = [spot(Pose::Sit, Vec3::new(0.0, 0.8, 0.02), Vec3::new(0.0, 2.1, 0.02))];
+/// The rocking chair: a seat that slopes back from 0.93 m to 0.84, between
+/// its arms; sat on 0.35 m in from its front.
+const ROCKING_CHAIR: [Spot; 1] = [spot(Pose::Sit, Vec3::new(0.0, 0.9, -0.55), Vec3::new(0.0, 2.28, -0.55))];
+/// The bar stool: a round seat 0.64 m across and 1.09 high.
+const STOOL: [Spot; 1] = [spot(Pose::Sit, Vec3::new(0.0, 1.09, 0.0), Vec3::new(0.0, 1.98, 0.0))];
+/// The armchair: a cushion 0.93 m high between its arms, a deep one, its
+/// back rising 0.45 m behind its origin: sat back in, as on a sofa, 0.2 m
+/// out from it. The middle of its seat is 0.22 m left of its origin.
+const ARMCHAIR: [Spot; 1] = [spot(Pose::Lounge, Vec3::new(-0.22, 0.93, 0.25), Vec3::new(-0.22, 2.34, 0.25))];
+/// The L shaped couch: cushions 0.87 m high, its back rising 0.4 m behind
+/// its origin all along it, and its left end coming forward 2.4 m: two
+/// along it and one on that end, the legs out along it.
 const L_COUCH: [Spot; 3] = [
-    spot(Pose::Lounge, Vec3::new(-1.15, 0.72, 0.18), Vec3::new(-1.15, 1.75, 0.18)),
-    spot(Pose::Lounge, Vec3::new(-0.03, 0.72, 0.18), Vec3::new(-0.03, 1.75, 0.18)),
-    spot(Pose::Lounge, Vec3::new(1.3, 0.72, 0.18), Vec3::new(1.3, 1.75, 0.18)),
+    spot(Pose::Lounge, Vec3::new(-1.38, 0.87, 0.22), Vec3::new(-1.38, 2.1, 0.22)),
+    spot(Pose::Lounge, Vec3::new(-0.04, 0.87, 0.22), Vec3::new(-0.04, 2.1, 0.22)),
+    spot(Pose::Lounge, Vec3::new(1.56, 0.87, 0.22), Vec3::new(1.56, 2.1, 0.22)),
 ];
-/// The big bed: a blanket 1.26 m high, its two pillows rising from 1.55 m
-/// behind its origin, which is 0.7 m right of its middle: one lying on each
-/// side, the head against the pillow.
+/// The big bed: a blanket 1.51 m high and 1.56 under the pillows' end of
+/// it, its two pillows rising from 1.82 m behind its origin, which is 0.8 m
+/// right of its middle: one lying on each side, the head against the
+/// pillow.
 const BIG_BED: [Spot; 2] = [
-    spot(Pose::Lie, Vec3::new(-0.12, 1.26, 1.03), Vec3::new(-0.12, 2.3, 1.03)),
-    spot(Pose::Lie, Vec3::new(1.47, 1.26, 1.03), Vec3::new(1.47, 2.3, 1.03)),
+    spot(Pose::Lie, Vec3::new(-0.14, 1.52, 1.3), Vec3::new(-0.14, 2.76, 1.3)),
+    spot(Pose::Lie, Vec3::new(1.76, 1.52, 1.3), Vec3::new(1.76, 2.76, 1.3)),
 ];
 /// Hajun's bathtub, lain in along its length, the head toward its left end
 /// (its -X), which slopes up from 1.4 m out: on its floor, 0.17 m up.

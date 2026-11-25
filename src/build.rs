@@ -131,9 +131,10 @@ pub(crate) const PIECES: &[PieceDef] = &[
     town_house("square_house_roofless_eight_floor", "Roof Terrace 8F"),
     town_house("square_house_roofless_nine_floor", "Roof Terrace 9F"),
     town_house("square_house_roofless_ten_floor", "Roof Terrace 10F"),
-    // Hajun's own three, and the 56 he downloaded (by CreativeTrio, CC0),
-    // made two and a half times as big (`blender/scale_downloads.py`), each
-    // under the name its files have.
+    // Hajun's own three, and the 56 they downloaded (by CreativeTrio, CC0),
+    // made three times as big (two and a half by `blender/scale_downloads.py`,
+    // then 1.2 by `grow_downloads.py`: "i meant 3x"), each under the name
+    // its files have.
     new_one("end_table", "end_table", "End Table"),
     new_one("cabinet", "cabinet", "Cabinet"),
     new_one("bathtub", "bathtub", "Bathtub"),

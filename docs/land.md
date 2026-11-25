@@ -5,15 +5,79 @@ Dated entries, newest first.
 
 ## Contents
 
-1. 2026-11-25, morning: furniture upstairs in the made-up houses, every roof terrace somewhere to sit, the checker up the stairs, and the Square Houses of three to ten floors climbed again; server deployed, APK 58
-2. 2026-11-25: the made-up owners' tastes, sixteen of them, three owners each, in the new houses and with the new things, mostly one floor; server deployed, APK 56
-3. 2026-11-24: where everything is, is thrown as a channel opens (the numbers only say which plot); 48 to a channel, someone walking every plot nobody has; nobody's land in two channels; APK 53
-4. 2026-11-23: all 48 plots always filled, in Hajun's order: whoever is here on the first sixteen, everyone else's land and made-up land on the rest; protocol 25, APK 52
-5. 2026-11-22: what you own stands on your plot, and everyone sees it
-6. Later on 2026-11-21: everyone in your channel has their sign, and you see it
-7. 2026-11-21: the words are a thing in the world, a picture hung on the board; a metre and a half at the corner; the sign is solid; APK 44
-8. Later on 2026-11-20: you arrive on your plot; the words slant with the board, on both its faces; more room at the corner
-9. 2026-11-20: a plot for your seat, and the sign on it that says whose it is
+1. 2026-11-25, afternoon: no made-up land: a plot no real person's land fills is bare, with no sign and nobody on it; server deployed, APK 59
+2. 2026-11-25, morning: furniture upstairs in the made-up houses, every roof terrace somewhere to sit, the checker up the stairs, and the Square Houses of three to ten floors climbed again; server deployed, APK 58
+3. 2026-11-25: the made-up owners' tastes, sixteen of them, three owners each, in the new houses and with the new things, mostly one floor; server deployed, APK 56
+4. 2026-11-24: where everything is, is thrown as a channel opens (the numbers only say which plot); 48 to a channel, someone walking every plot nobody has; nobody's land in two channels; APK 53
+5. 2026-11-23: all 48 plots always filled, in Hajun's order: whoever is here on the first sixteen, everyone else's land and made-up land on the rest; protocol 25, APK 52
+6. 2026-11-22: what you own stands on your plot, and everyone sees it
+7. Later on 2026-11-21: everyone in your channel has their sign, and you see it
+8. 2026-11-21: the words are a thing in the world, a picture hung on the board; a metre and a half at the corner; the sign is solid; APK 44
+9. Later on 2026-11-20: you arrive on your plot; the words slant with the board, on both its faces; more room at the corner
+10. 2026-11-20: a plot for your seat, and the sign on it that says whose it is
+
+## 2026-11-25, afternoon: no made-up land, and a plot nobody's land fills is bare; server deployed, APK 59
+
+Hajun: "for the npc plots just remove all npc plots and their npcs. keep
+the ai bots for the offline players tho, and keep offline player plots.
+then rebuild apk"; and, while it was being done: "so that means there will
+be empty plots, and empty plots shouldnt have signs on them either btw."
+The same afternoon as the 56 downloads were made three times their size
+(`docs/house-builder.md`, at the top), which the made-up lots no longer
+fitted.
+
+- **The made-up land is turned off** (`roundtown_net::premade::FILLS`,
+  false), not taken out: the 48 lots, their owners and their tastes are
+  where they were, and the switch turns them on again. Turned off, a plot
+  no real person's land fills is **bare: nobody's**. No sign stands on it,
+  nothing stands on it and nobody walks it, because a device is told of
+  no deed for it (`Estate::deeds` leaves it out, `Lot::shown`) and is
+  told of nothing standing there (`Estate::lot`, so neither
+  `Towns::lots_in` nor `take_news` says anything of it). The device puts
+  a sign, the things and a resident only where a deed says someone owns
+  the plot (`land::holders`, `bag`, `resident`), so it needs nothing new
+  for that.
+- **What stays, as asked**: whoever is in your channel has their plot as
+  before, and the land of real people who are not here fills plots as
+  before, the worthiest first, each walked by someone of the computer's
+  under "{name}'s bot". Inside an `Estate` a bare plot is still its
+  place's made-up lot, unshown: whoever comes takes a bare plot before one
+  real land fills (so no real land moves for them), and spare real land
+  goes to a bare plot before anything else. The rules are as they were;
+  their tests are said of every lot, shown or not (`deeds_of`), and one
+  more holds what a device is told with the switch off
+  (`with_no_made_up_land_a_plot_nobody_s_land_fills_is_bare`).
+- **Offline** nobody's land is known, so every plot but yours is bare
+  (`land::offline_deeds` gives none). The opening's cover has nothing
+  more to wait for.
+- **A new app ignores made-up deeds** from a server that still sends them
+  (`land::keep_deeds`, mine): an APK 59 against the server before this
+  shows the plots bare all the same. Older apps against this server show
+  the plots bare too: they draw a sign, things and a resident only for a
+  deed. Offline an older app still fills its own made-up land.
+- **The made-up lots no longer fit as they are**: they were laid out for
+  the downloads at two and a half times their size, and at three times it
+  many things overlap (the checker counts 55 faults on the twelve plots
+  round the pond alone). The five tests that stand them on the town are
+  `#[ignore]`d, with the reason (`build::premade_check`): lay them out
+  again, and run those tests, before turning the switch back on.
+- `PROTOCOL_VERSION` 25 still: nothing sent changed its shape, only which
+  deeds and lots are sent.
+- **Checked**: unit tests (lib 588 with the 5 ignored, net 284, server
+  129). The desktop build hidden, offline: no deeds, no residents, one
+  sign (yours), the other 47 plots bare from above. Two copies against a
+  server on this PC: each sees only the other's plot and sign, every
+  other plot bare, nobody of the computer's; with one gone, its plot kept
+  as `Away`. **On the VM** after the deploy (06:32 UTC, `2d857b5d`;
+  `.prev-2026-11-25d` = `f36b58f1`, deployed at 03:06): this PC's account
+  saw `bunnihihi`'s and `bunnihajun`'s land on two plots with "bunnihihi's
+  bot" and "bunnihajun's bot" on them, three signs (theirs and its own),
+  and every other plot bare; journal clean.
+- **Not checked**: a phone; an older APK against the new server (reasoned
+  above, not run); a real player's bot sitting down on its own land since.
+- **My calls**: off by a switch and not deleted; a bare plot taken before
+  real land's; the new app ignoring made-up deeds; ignoring, not
+  rewriting, the made-up lots' tests.
 
 ## 2026-11-25, morning: furniture upstairs in the made-up houses, and stairs that can be climbed; server deployed, APK 58
 

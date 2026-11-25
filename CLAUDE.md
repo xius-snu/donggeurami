@@ -18,15 +18,13 @@ spend nothing on those two unasked.
 
 As of 2026-11-25: `PROTOCOL_VERSION` 25 (since 2026-11-23: a seat of the
 town is one of its 48 plots, so **APK 51 and older are told to update**;
-APK 52 and later play on, those before 55 without the new things on the
-made-up land and those before 58 with its upper floors bare), **APK 58**
-(`versionCode`, built 2026-11-25, not put on a phone from here,
-`docs/building.md`), the server deployed at 03:06 UTC on 2026-11-25 with
-everything in `server/` and `shared/`. **All of it
-committed and pushed, up to APK 58**: the land (`docs/land.md`: all 48
-plots always filled, where each is thrown afresh as a channel opens,
-someone walking every one, each made-up owner of a taste, furnished
-upstairs too), everyone's
+APK 52 and later play on), **APK 59** (`versionCode`, built 2026-11-25,
+not put on a phone from here, `docs/building.md`), the server deployed at
+06:32 UTC on 2026-11-25 with everything in `server/` and `shared/`.
+**All of it committed and pushed, up to APK 59**: the land (`docs/land.md`: whoever is here and real people's
+land on the plots, where each is thrown afresh as a channel opens, a bot
+walking the land of each who is not here, every other plot bare since
+APK 59), everyone's
 signs and cars, the town's slower buses, the bag (`docs/bag.md`) with its
 window, its button and how it is scrolled and its 118 things, small
 things on tops, the 23 cars (`docs/vehicles.md`), edit mode on your plot
@@ -237,8 +235,7 @@ to try again.
   `RT_STAND_WAVE=<n>`, `RT_STAND_PURSE=<count>` (Last Stand from a later
   wave, with coins to spend; offline, and the server's own),
   `RT_LAND_SIGNS=all` (a sign on every plot of the town, to look at),
-  `RT_LAND_ORDER=numbered` (offline: you on Hajun's plot 1 and every
-  made-up owner on the plot of their number, not thrown),
+  `RT_LAND_ORDER=numbered` (offline: you on Hajun's plot 1, not thrown),
   `RT_BACKGROUND=1` (below). Two copies need
   their own `APPDATA`. A server on this PC: `RT_PORT=5443
   RT_ALLOW_SKIP=1 target/debug/roundtown-server.exe`, and the copies with
@@ -397,14 +394,15 @@ to try again.
   drop through a circle are turned off (`SAYS_LOADING`, `DROPS_IN`). No
   menu. You arrive in the middle of your plot, facing the fountain
   (`roundtown_net::land`, since 2026-11-20, the server too).
-- **The town has 48 people in it** (since 2026-11-24, Hajun's: "there
-  should be a character for all 48 plot ... if theres just 1 real player
-  online in a channel, then there should be 47 npcs"; sixteen for the day
-  before, 32 until then, wanderers round the pond): whoever is in your
-  channel (48 people to one), each on their plot, and **a resident** of
-  the computer's on every plot nobody of the channel has, in its owner's
-  look: under a made-up owner's own name, and on a real person's land
-  "{name}'s bot" (`words.land.bot`; `src/resident.rs`, `docs/town.md`).
+- **The town's people** (since 2026-11-24, Hajun's: "there should be a
+  character for all 48 plot"; 32 wanderers round the pond until the 23rd):
+  whoever is in your channel (48 people to one), each on their plot, and
+  **a resident** of the computer's on the land of every real person who
+  is not here, in their look, "{name}'s bot" (`words.land.bot`;
+  `src/resident.rs`, `docs/town.md`). Made-up owners walked the rest
+  under their own names until the made-up land was turned off (Hajun,
+  2026-11-25: "remove all npc plots and their npcs. keep the ai bots for
+  the offline players tho"): a bare plot has nobody.
   Each device walks its own, and what each is about is worked out from
   the town's clock and who they are (`resident::plan`), the same on
   every device: about its plot, sat or lying in its house (`rest`), and
@@ -480,32 +478,35 @@ to try again.
   Last Stand's cards are turned off since 2026-11-19 (`games::OFF`: the
   cards alone, the games and their tables are as they were), and so is
   the card for one to come (`games::COMING_SOON`).
-- **All 48 plots are always filled** (`docs/land.md`, since 2026-11-23,
-  Hajun's; not seen on a phone). The plots are the map's `plot` planes,
+- **The plots** (`docs/land.md`, since 2026-11-23, Hajun's; not seen on a
+  phone). The plots are the map's `plot` planes,
   read as it spawns, **numbered as Hajun numbered them** (`plotorder.png`,
   `roundtown_net::land::HOMES`: his plot 1 is at (-90, 25) in the game),
   and **a seat of the town is a plot**. **A number only says which plot**
   (his, 2026-11-24, to point at one by): **where anything is, is thrown
-  as a channel opens** (`land::Order`, since APK 53), you, real people's
-  land and each made-up lot on another plot every time, and as it is
+  as a channel opens** (`land::Order`, since APK 53), you and real
+  people's land on another plot every time, and as it is
   until the channel has been empty five minutes. The server says whose
   each is (`land::Estate`, `rooms::Towns`, `Tell::Plots`, `land::Deeds`
   on a device): whoever is in your channel has a plot, the one their own
-  land fills or else a made-up lot's, one nobody stands on first, and
+  land fills or else a bare one, one nobody stands on first, and
   keeps it in a game and for five minutes after their connection goes
   (`land::GRACE`); the rest are filled with real people's land that has
-  anything on it, the worthiest first by the shop's prices, and then
-  with made-up land (`roundtown_net::premade`, 48 furnished plots a test
-  holds to the game's building rules, `build::premade_check`; since APK
-  56 each owner of one of sixteen tastes, two thirds of the houses one
-  floor and none over three; since APK 58 a room of their taste on every
-  floor over a ground floor, which the test walks up the stairs to). **Nobody's
+  anything on it, the worthiest first by the shop's prices. **Every other
+  plot is bare** (since APK 59, Hajun: "remove all npc plots ... empty
+  plots shouldnt have signs on them either"): nobody's, no sign, nothing
+  on it, nobody walking it, offline every plot but yours. The made-up land
+  that filled them (`roundtown_net::premade`, 48 furnished lots, each
+  owner of one of sixteen tastes) is turned off, not deleted
+  (`premade::FILLS`); laid out for the downloads at two and a half times
+  their size, it no longer fits, and its checker's tests are ignored
+  (`build::premade_check`): lay it out again before turning it on. **Nobody's
   land is in two channels at once**: whoever comes goes to the channel
   their land fills a plot of (after their group's), and has nothing left
-  in any other. Offline the device throws its own order (`land::thrown`).
-  **Change `HOMES` or a made-up lot and deploy the server.**
+  in any other. **Change `HOMES` or the made-up land and deploy the
+  server.**
 - **Your plot** (`src/land.rs`, since 2026-11-20): a sign
-  (`plotsign.glb`) stands on every plot, a metre and a half in
+  (`plotsign.glb`) stands on every plot that is someone's, a metre and a half in
   from the right hand end of its front, the side with a street along it
   or toward the pond, saying "{name}'s land" (`words.land.sign`) on both
   faces of its board, the words hung on it only within 45 m of the

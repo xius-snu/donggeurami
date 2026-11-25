@@ -785,27 +785,27 @@ mod tests {
 
     #[test]
     fn whoever_sits_down_is_told_their_bag_and_every_plot_about_them_and_they_of_theirs() {
-        use roundtown_net::land::PLOTS;
         let (mut app, bodies, devices) = town(3);
         // The second has a lamp standing; nobody else anything.
         app.world_mut().get_mut::<Holds>(bodies[1]).unwrap().bag.put(1, LAMP, here()).unwrap();
         app.world_mut().run_system_once(seat_news).unwrap();
         // The first: its own bag; then, as it sat among them, the plots of
-        // the other two, the bare one too, and of the 45 that made-up land
-        // fills; and once more of each of the two, as each sat down in
-        // turn: all three sat in the one tick here.
+        // the other two, the bare one too, and of none of the 45 others,
+        // which no made-up land fills (`premade::FILLS`); and once more of
+        // each of the two, as each sat down in turn: all three sat in the
+        // one tick here.
         let first = told(&mut app, devices[0]);
         assert!(matches!(&first[0], Tell::Bag(bag::Tell::Yours { asked: 1, bag }) if *bag == Bag::new()), "{:?}", first[0]);
-        assert_eq!(plots_told(&first), (vec![(101, 1), (102, 0), (101, 1), (102, 0)], PLOTS - 3));
+        assert_eq!(plots_told(&first), (vec![(101, 1), (102, 0), (101, 1), (102, 0)], 0));
         // The second: its own bag, the lamp standing, and everyone else's
         // plot, never its own.
         let second = told(&mut app, devices[1]);
         assert!(second.iter().any(|tell| matches!(tell, Tell::Bag(bag::Tell::Yours { bag, .. }) if bag.stands.len() == 1)));
-        assert_eq!(plots_told(&second), (vec![(100, 0), (100, 0), (102, 0), (102, 0)], PLOTS - 3));
+        assert_eq!(plots_told(&second), (vec![(100, 0), (100, 0), (102, 0), (102, 0)], 0));
         // The third the same.
         let third = told(&mut app, devices[2]);
         assert!(third.iter().any(|tell| matches!(tell, Tell::Bag(bag::Tell::Yours { bag, .. }) if *bag == Bag::new())));
-        assert_eq!(plots_told(&third), (vec![(100, 0), (101, 1), (100, 0), (101, 1)], PLOTS - 3));
+        assert_eq!(plots_told(&third), (vec![(100, 0), (101, 1), (100, 0), (101, 1)], 0));
         // Nothing more is said until someone sits down again.
         app.world_mut().run_system_once(seat_news).unwrap();
         assert!(told(&mut app, devices[0]).is_empty() && told(&mut app, devices[2]).is_empty());
@@ -821,7 +821,7 @@ mod tests {
 
     #[test]
     fn someone_away_in_a_game_keeps_their_plot_and_a_plot_filled_anew_is_told_to_whoever_is_in_the_town() {
-        use roundtown_net::land::{Lot, PLOTS};
+        use roundtown_net::land::Lot;
         let (mut app, bodies, devices) = town(3);
         app.world_mut().get_mut::<Holds>(bodies[1]).unwrap().bag.put(1, LAMP, here()).unwrap();
         app.world_mut().run_system_once(seat_news).unwrap();
@@ -834,7 +834,7 @@ mod tests {
         app.world_mut().resource_mut::<Towns>().away(bodies[1]);
         app.world_mut().resource_mut::<Towns>().announce(0, bodies[2]);
         app.world_mut().run_system_once(seat_news).unwrap();
-        assert_eq!(plots_told(&told(&mut app, devices[2])), (vec![(100, 0), (101, 1)], PLOTS - 3));
+        assert_eq!(plots_told(&told(&mut app, devices[2])), (vec![(100, 0), (101, 1)], 0));
         assert!(told(&mut app, devices[1]).is_empty());
         assert_eq!(plots_told(&told(&mut app, devices[0])), (vec![(102, 0)], 0));
         // The third's body is gone, their land with a lamp on it: kept on
@@ -850,9 +850,9 @@ mod tests {
         app.world_mut().resource_mut::<Towns>().leave(bodies[2], Some(land));
         app.world_mut().resource_mut::<Towns>().announce(0, bodies[0]);
         app.world_mut().run_system_once(seat_news).unwrap();
-        assert_eq!(plots_told(&told(&mut app, devices[0])), (vec![(101, 1), (102, 1)], PLOTS - 3));
-        // Someone new takes a plot that land of the town's own filled: no
-        // real land had to move, so nobody is told of a plot filled anew.
+        assert_eq!(plots_told(&told(&mut app, devices[0])), (vec![(101, 1), (102, 1)], 0));
+        // Someone new takes a bare plot: no real land had to move, so
+        // nobody is told of a plot filled anew.
         let newcomer = app.world_mut().spawn_empty().id();
         app.world_mut().resource_mut::<Towns>().sit(newcomer, 500, None);
         assert!(!app.world().resource::<Towns>().has_news());

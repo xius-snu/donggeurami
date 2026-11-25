@@ -29,9 +29,13 @@
 //! shuffled, and everything below is said of a **place** in it, the plot
 //! of the first place being any of the 48.
 //!
-//! **All 48 are always filled** (Hajun, 2026-11-23: "i want to change it so
-//! that at all times, there are 48 plots filled"), which is what an
-//! [`Estate`] keeps for one channel of the town:
+//! **All 48 were always filled** (Hajun, 2026-11-23: "i want to change it so
+//! that at all times, there are 48 plots filled"), until the made-up land
+//! was turned off (2026-11-25, [`crate::premade::FILLS`]: "just remove all
+//! npc plots and their npcs. keep the ai bots for the offline players tho,
+//! and keep offline player plots"): a plot no real person's land fills is
+//! bare now, nobody's, with no sign. An [`Estate`] keeps for one channel
+//! of the town:
 //!
 //! * **Whoever is in the channel has a plot**, a channel holding as many
 //!   people as there are plots (since 2026-11-24; Hajun: "channel size for
@@ -57,7 +61,8 @@
 //!   at the shop's prices ([`worth`]: which of it is shown, when there is
 //!   more of it than there are plots, and no longer where), and then the
 //!   made-up ones ([`crate::premade`]: "if there are still unfilled plots,
-//!   fill with fake plots that are premade"), each place its own.
+//!   fill with fake plots that are premade"), each place its own: bare
+//!   plots while those are turned off ([`Lot::shown`]).
 //! * **Someone of the computer's walks every plot that nobody of the
 //!   channel has** ([`Holder::Minded`]), in its owner's look (since
 //!   2026-11-24: "there should be a character for all 48 plot not just the
@@ -244,6 +249,14 @@ impl Lot {
     pub fn premade(&self) -> bool {
         is_premade(self.who)
     }
+
+    /// Whether a plot it fills is told of and shown: real land always, and
+    /// made-up land while that fills plots ([`crate::premade::FILLS`]).
+    /// A place filled with a made-up lot that is not shown is a bare plot,
+    /// nobody's: no sign on it, nothing standing and nobody walking it.
+    pub fn shown(&self) -> bool {
+        crate::premade::FILLS || !self.premade()
+    }
 }
 
 /// Who is on a plot, as a device is told of it ([`Deed`]).
@@ -323,9 +336,19 @@ impl Order {
 }
 
 /// The plots this device fills by itself, with no server to say, in the
-/// `order` it has thrown: every one but `mine`, each place with its own
-/// made-up lot ([`crate::premade::lot`]) and someone walking it.
+/// `order` it has thrown: none since the made-up land fills nothing
+/// ([`crate::premade::FILLS`]), there being no real person's land without
+/// a server; and while it does, every one but `mine` ([`made_up_deeds`]).
 pub fn offline_deeds(mine: usize, order: &Order) -> Vec<Deed> {
+    if !crate::premade::FILLS {
+        return Vec::new();
+    }
+    made_up_deeds(mine, order)
+}
+
+/// Every plot but `mine` in `order`, each place with its own made-up lot
+/// ([`crate::premade::lot`]) and someone walking it.
+fn made_up_deeds(mine: usize, order: &Order) -> Vec<Deed> {
     let mut deeds: Vec<Deed> = (0..PLOTS)
         .filter(|&place| order.plot(place) != mine)
         .map(|place| {
@@ -644,6 +667,12 @@ impl Estate {
     /// moment ago: none on a plot someone of the channel has, whose own
     /// bag says what stands there.
     pub fn lot(&self, plot: usize) -> Option<&Lot> {
+        self.any_lot(plot).filter(|lot| lot.shown())
+    }
+
+    /// The land that fills `plot`, as [`Estate::lot`], or the made-up lot
+    /// of its place where that is not shown ([`Lot::shown`]).
+    fn any_lot(&self, plot: usize) -> Option<&Lot> {
         match self.slots.get(self.order.place(plot)?)? {
             Slot::Left { lot, .. } | Slot::Filled(lot) => Some(lot),
             Slot::Held { .. } => None,
@@ -661,8 +690,16 @@ impl Estate {
 
     /// Whose every plot is, as a device is told ([`Deed`]), by the plots'
     /// numbers, given the name and the look of someone of the channel
-    /// (`known`: whoever is not is left out until they are).
+    /// (`known`: whoever is not is left out until they are). A bare plot,
+    /// one whose made-up lot is not shown ([`Lot::shown`]), is nobody's,
+    /// and left out: no sign stands on it and nobody walks it.
     pub fn deeds(&self, known: impl Fn(u64) -> Option<(String, String)>) -> Vec<Deed> {
+        self.deeds_of(known, Lot::shown)
+    }
+
+    /// Whose every plot is, as [`Estate::deeds`], the land that fills one
+    /// told of where `shown` says.
+    fn deeds_of(&self, known: impl Fn(u64) -> Option<(String, String)>, shown: impl Fn(&Lot) -> bool) -> Vec<Deed> {
         let mut deeds: Vec<Deed> = self
             .slots
             .iter()
@@ -671,7 +708,8 @@ impl Estate {
                 let (who, (name, look), holder) = match slot {
                     Slot::Held { who, away } => (*who, known(*who)?, if *away { Holder::Away } else { Holder::Here }),
                     Slot::Left { lot, .. } => (lot.who, (lot.name.clone(), lot.look.clone()), Holder::Away),
-                    Slot::Filled(lot) => (lot.who, (lot.name.clone(), lot.look.clone()), Holder::Minded),
+                    Slot::Filled(lot) if shown(lot) => (lot.who, (lot.name.clone(), lot.look.clone()), Holder::Minded),
+                    Slot::Filled(_) => return None,
                 };
                 Some(Deed {
                     plot: self.order.plot(place) as u8,
@@ -723,8 +761,15 @@ mod tests {
         }
     }
 
+    /// Whose every plot is, made-up land told of as if it filled plots
+    /// ([`crate::premade::FILLS`]), which is what the rules below are
+    /// said of: it is where nobody's land is, shown or not.
     fn whose(estate: &Estate) -> Vec<u64> {
-        estate.deeds(|who| Some((format!("Person {who}"), "boy".into()))).iter().map(|deed| deed.who).collect()
+        all_deeds(estate, |who| Some((format!("Person {who}"), "boy".into()))).iter().map(|deed| deed.who).collect()
+    }
+
+    fn all_deeds(estate: &Estate, known: impl Fn(u64) -> Option<(String, String)>) -> Vec<Deed> {
+        estate.deeds_of(known, |_| true)
     }
 
     fn nobody_standing(_: usize) -> bool {
@@ -794,12 +839,12 @@ mod tests {
         assert_eq!((estate.count(), estate.room()), (1, PLOTS - 1));
         // Someone walks every plot that nobody here has: 47 of them, with
         // one person in the channel.
-        let deeds = estate.deeds(|_| Some(("Hajun".into(), "boy".into())));
+        let deeds = all_deeds(&estate, |_| Some(("Hajun".into(), "boy".into())));
         assert_eq!(deeds[0].holder, Holder::Here);
         assert!(deeds[1..].iter().all(|deed| deed.holder == Holder::Minded));
         assert_eq!((deeds[1].name.as_str(), deeds[1].look.as_str()), ("Person 6", "girl"));
         // Someone of the channel whose name is not known yet is left out.
-        assert_eq!(estate.deeds(|_| None).len(), PLOTS - 1);
+        assert_eq!(all_deeds(&estate, |_| None).len(), PLOTS - 1);
         // What stands on a plot nobody here has is the land's own.
         assert_eq!(estate.lot(1).map(Lot::worth), Some(200));
         assert!(estate.lot(0).is_none());
@@ -830,15 +875,15 @@ mod tests {
         let order = Order::thrown(7);
         let mut estate = Estate::open(1, vec![land(6, 4), land(8, 2)], order.clone());
         assert_eq!(estate.plot_of(1), Some(order.plot(0)));
-        let deeds = estate.deeds(|who| Some((format!("Person {who}"), "boy".into())));
+        let deeds = all_deeds(&estate, |who| Some((format!("Person {who}"), "boy".into())));
         // Told by the plots' numbers, every plot once.
         assert!(deeds.iter().enumerate().all(|(plot, deed)| usize::from(deed.plot) == plot));
-        let on = |estate: &Estate, plot: usize| estate.deeds(|_| Some(("x".into(), "boy".into())))[plot].who;
+        let on = |estate: &Estate, plot: usize| all_deeds(&estate, |_| Some(("x".into(), "boy".into())))[plot].who;
         assert_eq!((on(&estate, order.plot(0)), on(&estate, order.plot(1)), on(&estate, order.plot(2))), (1, 6, 8));
         // A made-up lot is its place's, wherever that is this time.
         for place in 3..PLOTS {
             assert_eq!(on(&estate, order.plot(place)), PREMADE + place as u64);
-            assert_eq!(estate.lot(order.plot(place)).map(|lot| lot.who), Some(PREMADE + place as u64));
+            assert_eq!(estate.any_lot(order.plot(place)).map(|lot| lot.who), Some(PREMADE + place as u64));
         }
         assert!(estate.lot(order.plot(0)).is_none());
         // Whoever comes is asked about, and given, a plot by its number.
@@ -901,7 +946,7 @@ mod tests {
         assert_eq!(estate.join(117, |plot| plot == 18), Some(18));
         assert_eq!(whose(&estate), before);
         assert!(estate.take_news().is_empty());
-        assert_eq!(estate.deeds(|_| Some(("x".into(), "boy".into())))[18].holder, Holder::Here);
+        assert_eq!(all_deeds(&estate, |_| Some(("x".into(), "boy".into())))[18].holder, Holder::Here);
     }
 
     #[test]
@@ -909,7 +954,7 @@ mod tests {
         let mut estate = Estate::open(1, vec![land(6, 4)], Order::numbered());
         assert_eq!(estate.join(2, nobody_standing), Some(2));
         estate.take_news();
-        let holder = |estate: &Estate, plot: usize| estate.deeds(|_| Some(("x".into(), "boy".into())))[plot].holder;
+        let holder = |estate: &Estate, plot: usize| all_deeds(&estate, |_| Some(("x".into(), "boy".into())))[plot].holder;
         // Into a game: theirs, nobody walking it.
         assert!(estate.away(2, true));
         assert!(!estate.away(2, true));
@@ -987,7 +1032,7 @@ mod tests {
         assert_eq!((estate.count(), estate.room()), (PLOTS, 0));
         assert_eq!(estate.join(100, nobody_standing), None);
         // Nobody of the computer's walks anywhere.
-        let deeds = estate.deeds(|_| Some(("x".into(), "boy".into())));
+        let deeds = all_deeds(&estate, |_| Some(("x".into(), "boy".into())));
         assert!(deeds.iter().all(|deed| deed.holder == Holder::Here));
         // One in a game is still one of them.
         estate.away(5, true);
@@ -995,7 +1040,7 @@ mod tests {
         // One gone to another channel makes room, and someone walks their
         // plot until the next person has it.
         estate.leave(5, None, 0.0, false);
-        assert_eq!(estate.deeds(|_| Some(("x".into(), "boy".into())))[4].holder, Holder::Minded);
+        assert_eq!(all_deeds(&estate, |_| Some(("x".into(), "boy".into())))[4].holder, Holder::Minded);
         assert_eq!(estate.join(100, nobody_standing), Some(4));
     }
 
@@ -1025,7 +1070,7 @@ mod tests {
     fn whose_each_plot_is_goes_last_of_what_is_told_and_all_of_them_in_a_couple_of_kilobytes() {
         use crate::Tell;
         use crate::social::Outcome;
-        let deeds = Estate::open(1, vec![land(6, 4)], Order::numbered()).deeds(|_| Some(("Hajooon".into(), "boy_whitejeans".into())));
+        let deeds = all_deeds(&Estate::open(1, vec![land(6, 4)], Order::numbered()), |_| Some(("Hajooon".into(), "boy_whitejeans".into())));
         let bytes = postcard::to_allocvec(&Tell::Plots(deeds.clone())).unwrap();
         // After everything an app from before this was told: who rests
         // was the twenty-first, numbered 20.
@@ -1042,12 +1087,45 @@ mod tests {
     }
 
     #[test]
-    fn offline_every_plot_but_yours_has_a_made_up_owner() {
-        let deeds = offline_deeds(0, &Order::numbered());
+    fn with_no_made_up_land_a_plot_nobody_s_land_fills_is_bare() {
+        // Turned off (Hajun, 2026-11-25: "just remove all npc plots and
+        // their npcs"), which is what the town is now.
+        assert!(!crate::premade::FILLS);
+        // Two people's land, worth something, and one in the channel.
+        let mut estate = Estate::open(1, vec![land(6, 4), land(8, 2), land(9, 0)], Order::numbered());
+        let deeds = estate.deeds(|_| Some(("Hajun".into(), "boy".into())));
+        // Theirs, and each of the two walked under their own name ("keep
+        // the ai bots for the offline players"); nothing else is anybody's,
+        // so no sign stands on it, nor anybody on it, nor anything.
+        let whose: Vec<(u8, u64, Holder)> = deeds.iter().map(|deed| (deed.plot, deed.who, deed.holder)).collect();
+        assert_eq!(whose, [(0, 1, Holder::Here), (1, 6, Holder::Minded), (2, 8, Holder::Minded)]);
+        assert!((3..PLOTS).all(|plot| estate.lot(plot).is_none()));
+        assert_eq!(estate.lot(1).map(|lot| lot.who), Some(6));
+        // Whoever comes takes a bare plot, and no real land moves for them.
+        assert_eq!(estate.join(2, nobody_standing), Some(3));
+        assert!(estate.take_news().is_empty());
+        let whose: Vec<u64> = estate.deeds(|_| Some(("x".into(), "boy".into()))).iter().map(|deed| deed.who).collect();
+        assert_eq!(whose, [1, 6, 8, 2]);
+        // Gone to another channel: the plot is bare again, and the channel
+        // is told so; nothing is told of what stands there, there being
+        // nothing.
+        estate.leave(2, Some(land(2, 3)), 0.0, false);
+        assert_eq!(estate.take_news(), [3]);
+        assert!(estate.lot(3).is_none());
+        assert_eq!(estate.deeds(|_| Some(("x".into(), "boy".into()))).len(), 3);
+        // Offline, with no real person's land to fill anything, every plot
+        // but yours is bare.
+        assert!(offline_deeds(0, &Order::numbered()).is_empty());
+        assert!(offline_deeds(7, &Order::thrown(3)).is_empty());
+    }
+
+    #[test]
+    fn offline_every_plot_but_yours_has_a_made_up_owner_while_that_land_fills_plots() {
+        let deeds = made_up_deeds(0, &Order::numbered());
         assert_eq!(deeds.len(), PLOTS - 1);
         assert!(deeds.iter().all(|deed| deed.plot != 0 && is_premade(deed.who)));
         assert!(deeds.iter().all(|deed| deed.holder == Holder::Minded));
-        let elsewhere = offline_deeds(5, &Order::numbered());
+        let elsewhere = made_up_deeds(5, &Order::numbered());
         assert!(elsewhere.iter().any(|deed| deed.plot == 0) && elsewhere.iter().all(|deed| deed.plot != 5));
         // No two of them go by one name.
         let mut names: Vec<&str> = deeds.iter().map(|deed| deed.name.as_str()).collect();
@@ -1058,7 +1136,7 @@ mod tests {
         // place: each made-up owner on the plot of their own place, said
         // by the plots' numbers.
         let order = Order::thrown(3);
-        let thrown = offline_deeds(order.plot(0), &order);
+        let thrown = made_up_deeds(order.plot(0), &order);
         assert_eq!(thrown.len(), PLOTS - 1);
         assert!(thrown.windows(2).all(|pair| pair[0].plot < pair[1].plot));
         for deed in &thrown {

@@ -581,7 +581,9 @@ mod tests {
         assert_eq!((towns.counts(), towns.channel_of(player(1))), (vec![2], None));
         let deeds = towns.deeds(0, known);
         assert_eq!((deeds[1].who, deeds[1].holder, deeds[1].name.as_str()), (2, Holder::Away, "Person 2"));
-        assert_eq!(towns.lots_in(0).len(), PLOTS - 1);
+        // The one lot of the channel: no made-up land fills the rest
+        // (`premade::FILLS`).
+        assert_eq!(towns.lots_in(0).len(), 1);
         assert_eq!(towns.sit(player(9), 2, None), (0, 1));
         assert_eq!(towns.deeds(0, known)[1].holder, Holder::Here);
         // Gone for longer: their land fills the plot, someone of the
@@ -610,13 +612,14 @@ mod tests {
         towns.record(Lot { stands: Vec::new(), ..land(41) });
         assert_eq!(sit(&mut towns, 0, None), (0, 0));
         let deeds = towns.deeds(0, known);
-        assert_eq!(deeds.len(), PLOTS);
+        // Theirs, and the land, someone walking it; every other plot bare,
+        // nobody's, no made-up land filling it (`premade::FILLS`).
+        assert_eq!(deeds.len(), 2);
         assert_eq!((deeds[0].holder, deeds[1].who, deeds[1].holder), (Holder::Here, 40, Holder::Minded));
-        assert!(deeds[2..].iter().all(|deed| deed.holder == Holder::Minded));
+        assert_eq!(towns.lots_in(0).len(), 1);
         assert!(!towns.has_news());
-        // Someone comes: the first plot a made-up lot fills. The land of
-        // whoever is not here stays where it is, and nobody is told of any
-        // plot.
+        // Someone comes: the first bare plot. The land of whoever is not
+        // here stays where it is, and nobody is told of any plot.
         assert_eq!(sit(&mut towns, 1, None), (0, 2));
         assert!(!towns.has_news() && towns.take_news().is_empty());
         assert_eq!(towns.deeds(0, known)[1].who, 40);
@@ -625,16 +628,17 @@ mod tests {
         assert_eq!(sit(&mut towns, 2, None), (0, 4));
         // The owner of that land comes: theirs is the plot it fills.
         assert_eq!(towns.sit(player(7), 40, None), (0, 1));
-        // An account that is no more fills nothing, and the channel is
-        // told once of the plot it filled.
+        // An account that is no more fills nothing: the plot it filled is
+        // bare, which the channel is told as it is told whose each plot is,
+        // and nothing is told of what stands there, nothing standing.
         towns.leave(player(7), Some(land(40)));
+        towns.take_stirred();
         towns.forget(40);
-        assert!(towns.deeds(0, known).iter().all(|deed| deed.who != 40));
+        assert!(towns.deeds(0, known).iter().all(|deed| deed.who != 40 && deed.plot != 1));
+        assert_eq!(towns.take_stirred(), [0]);
         assert!(towns.has_news());
-        let news = towns.take_news();
-        assert_eq!(news.len(), 1);
-        assert_eq!((news[0].0, news[0].1.who), (0, roundtown_net::land::PREMADE + 1));
-        assert!(!towns.has_news() && towns.take_news().is_empty());
+        assert!(towns.take_news().is_empty());
+        assert!(!towns.has_news());
     }
 
     #[test]
@@ -650,16 +654,19 @@ mod tests {
             towns.record(land(40));
             let (channel, plot) = sit(&mut towns, 0, None);
             let deeds = towns.deeds(0, known);
-            assert_eq!((channel, deeds.len()), (0, PLOTS));
-            assert_eq!((deeds[usize::from(plot)].who, deeds[usize::from(plot)].holder), (1, Holder::Here));
+            // Theirs and the land; the rest bare (`premade::FILLS`).
+            assert_eq!((channel, deeds.len()), (0, 2));
+            let theirs = deeds.iter().find(|deed| deed.plot == plot).map(|deed| (deed.who, deed.holder));
+            assert_eq!(theirs, Some((1, Holder::Here)));
             // Come again, and back from a game, it is theirs still.
             assert_eq!(sit(&mut towns, 0, None), (0, plot));
             // Whoever comes after has another, and the land of someone
             // who is not here is where it was.
-            let land_on = deeds.iter().position(|deed| deed.who == 40);
+            let land_on = |deeds: &[Deed]| deeds.iter().find(|deed| deed.who == 40).map(|deed| deed.plot);
             let (_, other) = sit(&mut towns, 1, None);
             assert_ne!(other, plot);
-            assert_eq!(towns.deeds(0, known).iter().position(|deed| deed.who == 40), land_on);
+            assert_eq!(land_on(&towns.deeds(0, known)), land_on(&deeds));
+            assert!(land_on(&deeds).is_some());
             plots.insert(plot);
         }
         assert!(plots.len() > PLOTS / 2, "{} plots", plots.len());
@@ -745,9 +752,9 @@ mod tests {
         assert_eq!((towns.counts(), towns.channel_of(player(1))), (vec![1, 2], Some(1)));
         assert_eq!(towns.held_in(1), [(0, player(2), false), (1, player(1), true)]);
         // Nothing of theirs is on the plot they left, their land being in
-        // no two channels: its own made-up lot, someone walking it.
+        // no two channels: bare, nobody's (`premade::FILLS`).
         let deeds = towns.deeds(0, known);
-        assert_eq!((deeds[1].who, deeds[1].holder), (roundtown_net::land::PREMADE + 1, Holder::Minded));
+        assert!(deeds.iter().all(|deed| deed.plot != 1));
         // The last one out of a channel shuts it at once.
         assert_eq!(towns.transfer(player(0), 1, None), Some(2));
         assert_eq!(towns.counts(), vec![0, 3]);
@@ -755,7 +762,6 @@ mod tests {
 
     #[test]
     fn whoever_comes_goes_to_the_channel_their_land_fills_a_plot_of_and_nobody_s_land_is_in_two() {
-        use roundtown_net::land::PREMADE;
         let shown = |towns: &Towns, channel: u16, who: u64| towns.deeds(channel, known).iter().position(|deed| deed.who == who);
         let mut towns = Towns::default();
         towns.record(land(40));
@@ -768,7 +774,7 @@ mod tests {
         assert_eq!(sit(&mut towns, 1, Some(1)), (1, 0));
         assert_eq!(sit(&mut towns, 2, Some(1)), (1, 1));
         assert_eq!((shown(&towns, 1, 40), shown(&towns, 1, 41)), (None, None));
-        assert!(towns.deeds(1, known)[2..].iter().all(|deed| roundtown_net::land::is_premade(deed.who)));
+        assert_eq!(towns.deeds(1, known).len(), 2);
         towns.take_news();
         // The owner of one comes: to the channel it is in, fuller or not,
         // and to the plot it fills.
@@ -778,10 +784,11 @@ mod tests {
         // The owner of the other comes to where their group is: nothing of
         // theirs is left in the first, which is told what is there now.
         assert_eq!(towns.sit(player(8), 41, Some(1)), (1, 2));
-        assert_eq!((shown(&towns, 0, 41), towns.deeds(0, known)[2].who), (None, PREMADE + 2));
-        let news = towns.take_news();
-        assert_eq!(news.len(), 1);
-        assert_eq!((news[0].0, news[0].1.who), (0, PREMADE + 2));
+        // Bare there now (`premade::FILLS`): nothing stands on it to be told
+        // of, and whose each plot is says nobody's.
+        assert_eq!(shown(&towns, 0, 41), None);
+        assert!(towns.deeds(0, known).iter().all(|deed| deed.plot != 2));
+        assert!(towns.has_news() && towns.take_news().is_empty());
         // Gone, and the while over: their land fills that plot of the
         // channel they were in, and of no other.
         towns.leave(player(8), Some(land(41)));
