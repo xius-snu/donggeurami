@@ -10,17 +10,68 @@ first.
 
 ## Contents
 
-1. 2026-11-25, that night: the bin takes what is in a house, small things onto tops, what is in the way by its shape, the painting on a wall; APK 56
-2. 2026-11-25, later: everything on Hajun's list in the shop, 118 things: the cars, 17 houses, 59 things for a house; prices in gems; a seventh rarity; what hangs from a ceiling, and two things that light a room; the gifts to two accounts; server deployed, APK 55
-3. 2026-11-25: Hajun's list of rarities filled in with the 22 other cars, the 56 downloaded things and Hajun's cabinet, bathtub and end table; the list alone, nothing in the game (all of it in the game the same night, above)
-4. 2026-11-23: edit mode said along the top and round the plot, the edit button beating at a tap on a thing, the hint turned off; APK 52
-5. 2026-11-22, late: a spot of the colour chosen in its window, a hint at edit mode for someone tapping at a thing, and a house's walls numbered the same on every device, so that its doors are in the same wall for everyone; APK 51
-6. 2026-11-22, night: paint taken off with a cross, the colours used along the window's foot, the one button moved up, a tap away letting go, things dragged through each other with a grey tick, a house taking what is in it along, smaller menu buttons set by the thing as drawn, and two faults of see-through (things deaf to a tap, eyes fading); server deployed, APK 50
-7. 2026-11-22, evening: edit mode and its three buttons by the left edge, the paintbrush and the colour window, paint kept by the server and seen by everyone, the car's door where the bag's button is; server deployed, APK 49
-8. 2026-11-22, after that: a list flicked goes on by itself as a phone's does, and a swipe across the window changes its tab; APK 48
-9. 2026-11-22, afternoon: the coins' number the gems' size and the gem the coin's; a price you cannot afford in red; the box on the bag's button; APK 47
-10. 2026-11-22, later: the shop after Hajun had looked at it (both buttons always, over the picture and see-through; the price under the name; All first shown; six categories with no scrolling); APK 46
-11. 2026-11-22: the bag, its window, gems, and buildings on your plot that everyone sees; APK 45
+1. 2026-11-25, morning: a new thing comes up square to its plot, however the plot is turned; APK 57
+2. 2026-11-25, that night: the bin takes what is in a house, small things onto tops, what is in the way by its shape, the painting on a wall; APK 56
+3. 2026-11-25, later: everything on Hajun's list in the shop, 118 things: the cars, 17 houses, 59 things for a house; prices in gems; a seventh rarity; what hangs from a ceiling, and two things that light a room; the gifts to two accounts; server deployed, APK 55
+4. 2026-11-25: Hajun's list of rarities filled in with the 22 other cars, the 56 downloaded things and Hajun's cabinet, bathtub and end table; the list alone, nothing in the game (all of it in the game the same night, above)
+5. 2026-11-23: edit mode said along the top and round the plot, the edit button beating at a tap on a thing, the hint turned off; APK 52
+6. 2026-11-22, late: a spot of the colour chosen in its window, a hint at edit mode for someone tapping at a thing, and a house's walls numbered the same on every device, so that its doors are in the same wall for everyone; APK 51
+7. 2026-11-22, night: paint taken off with a cross, the colours used along the window's foot, the one button moved up, a tap away letting go, things dragged through each other with a grey tick, a house taking what is in it along, smaller menu buttons set by the thing as drawn, and two faults of see-through (things deaf to a tap, eyes fading); server deployed, APK 50
+8. 2026-11-22, evening: edit mode and its three buttons by the left edge, the paintbrush and the colour window, paint kept by the server and seen by everyone, the car's door where the bag's button is; server deployed, APK 49
+9. 2026-11-22, after that: a list flicked goes on by itself as a phone's does, and a swipe across the window changes its tab; APK 48
+10. 2026-11-22, afternoon: the coins' number the gems' size and the gem the coin's; a price you cannot afford in red; the box on the bag's button; APK 47
+11. 2026-11-22, later: the shop after Hajun had looked at it (both buttons always, over the picture and see-through; the price under the name; All first shown; six categories with no scrolling); APK 46
+12. 2026-11-22: the bag, its window, gems, and buildings on your plot that everyone sees; APK 45
+
+## 2026-11-25, morning: a new thing comes up square to its plot; APK 57
+
+Hajun: "when placing items, they are rotated by 45 degegrees right, and
+when they are first placed they are either 0, 45, 90, +45 +45, etcetc
+like that. butsome plots they are not a 0 or 90 or 45 degree plot
+relative to the center of the map. so i think. for the plots that are
+weird angled the items that u put on it should also be placed in an
+initial angle that makes it at that degree change so that it can be
+placed on a square plot/square house. right now, like if i am on plot 43
+for example, i cannnot place any object parallel to the edges of the
+plot. but the edges of the item liek for example the house edges or the
+couch's back need to be able to be parallel to the edge of that plot u
+understand?"; and, while it was being done, "so rotate button should
+stay as how it is right now, adding 45 degree each time".
+
+A thing brought out of the bag was turned to face you to the nearest 45°
+of the world's own axes (`build::facing`), and the turn button adds 45°
+to whatever it is at. Sixteen of the 48 plots are on no 45° of the
+world's (the test found them): Hajun's 21 to 28, in the ring behind the
+pond's, and 37 to 44, in the outer ring, plot 43 among them. On those
+nothing could be got square to the plot. **Now `facing` counts its 45°
+from the front of the plot the thing comes up on** (`Yard::place`'s
+turn): what it comes up at is the plot's 0, 45, 90..., the nearest of
+them to facing you, and every press of the turn button is 45° from
+there, unchanged, so that a house's walls and a couch's back can always
+run along the plot's edges. With no plot (House Builder) it is the
+world's 45° as before. Both what stands on the floor and what hangs from
+a ceiling; doors, windows and the painting go by their wall, as before.
+
+**Not changed, my call:** what was put down before this on one of those
+sixteen plots keeps the turn it had, and since what stands on a plot is
+kept in the plot's own space and stands on whichever plot your seat has
+(thrown afresh as a channel opens), such a thing now stands crooked on
+any plot. Taken back into the bag and put down again, it comes up
+square. Nothing turns what is already down by itself, nor does a press
+of the turn button straighten it (he wanted the button as it is). A
+house put down crooked before this has its walls off the plot's, so a
+new thing put into it is square to the plot and not to that house: put
+the house down again first.
+
+Checked: `build::tests::a_new_thing_comes_up_square_to_its_plot_however_the_plot_is_turned`,
+on all 48 plots as the town's map has them, from 72 ways of looking:
+every new thing's turn is a whole number of 45° in its plot's own space,
+its front within 22.5° of the way it was asked to face, its back along
+the plot's front edge when faced out of it, plot 43 among those the
+world's 45° miss, and with no plot the world's 45° as before; all 592 of
+the game's tests. Not checked: it was not looked at in the running game,
+on the desktop or on a phone. Device only, protocol 25 still, nothing
+for the server. APK 57 built, not put on a phone.
 
 ## 2026-11-25, that night: the bin takes what is in a house; small things on tops; what is in the way by its shape; the painting on a wall; APK 56
 

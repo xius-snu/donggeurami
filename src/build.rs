@@ -1920,7 +1920,7 @@ fn place_fresh(
             Mount::Floor | Mount::House => {
                 // Its front, Blender's -Y, toward you, and its near side a
                 // step out of your way; a house's, a good few steps.
-                let turn = facing(-ahead);
+                let turn = facing(-ahead, yard);
                 let gap = if kind.def.mount == Mount::House {
                     HOUSE_IN_FRONT
                 } else {
@@ -1945,7 +1945,7 @@ fn place_fresh(
             // the ceiling over the floor you stand on; with none there,
             // where you stand, for its tick to be grey.
             Mount::Ceiling => {
-                let turn = facing(-ahead);
+                let turn = facing(-ahead, yard);
                 let spot = me.translation + ahead * (PLAYER_RADIUS + IN_FRONT - bounds.low.z);
                 let spot = yard.map_or(spot, |yard| yard.pull_in(spot, *bounds, turn));
                 let storeys = storeys_in(&houses, venue);
@@ -2404,11 +2404,19 @@ fn drag_over_floor(
 }
 
 /// The turn that faces a piece's front, Blender's -Y, along `way`, to the
-/// nearest [`TURN_STEP_DEG`].
-fn facing(way: Vec3) -> Quat {
+/// nearest [`TURN_STEP_DEG`]: counted from the front of the plot it comes
+/// up on, `yard`, so that its sides run along the plot's however the plot
+/// is turned in the town (Hajun, 2026-11-25, of plot 43: "the edges of the
+/// item liek for example the house edges or the couch's back need to be
+/// able to be parallel to the edge of that plot"); and with none, as in
+/// House Builder, from the world's axes. The turn button adds its 45° to
+/// this, as it always has.
+pub(crate) fn facing(way: Vec3, yard: Option<Yard>) -> Quat {
+    let square = yard.map_or(Quat::IDENTITY, |yard| yard.place().rotation);
+    let way = square.inverse() * way;
     let step = TURN_STEP_DEG.to_radians();
     let yaw = (-way.x).atan2(-way.z);
-    Quat::from_rotation_y((yaw / step).round() * step)
+    square * Quat::from_rotation_y((yaw / step).round() * step)
 }
 
 /// Where near `spot` a house of `bounds`, turned by `turn`, fits: there, or
@@ -3726,6 +3734,51 @@ mod tests {
 
     fn area(parts: &[[f32; 4]]) -> f32 {
         parts.iter().map(|p| (p[2] - p[0]) * (p[3] - p[1])).sum()
+    }
+
+    /// How far off the nearest of `step`s `angle` is, in radians.
+    fn off_the_step(angle: f32, step: f32) -> f32 {
+        let over = angle.rem_euclid(step);
+        over.min(step - over)
+    }
+
+    #[test]
+    fn a_new_thing_comes_up_square_to_its_plot_however_the_plot_is_turned() {
+        // Every plot of the town, from every way you may be looking (Hajun,
+        // 2026-11-25: "if i am on plot 43 for example, i cannnot place any
+        // object parallel to the edges of the plot").
+        let step = TURN_STEP_DEG.to_radians();
+        let plots = crate::land::tests::plots();
+        assert_eq!(plots.len(), roundtown_net::land::PLOTS);
+        let mut crooked = Vec::new();
+        for plot in &plots {
+            let yard = stand::yard_of(plot);
+            let square = yard.place().rotation;
+            let plot_yaw = square.to_euler(EulerRot::YXZ).0;
+            if off_the_step(plot_yaw, step) > 1e-3 {
+                crooked.push(plot.middle);
+            }
+            for way in 0..72 {
+                let way = Vec3::new((way as f32 * 0.0873).sin(), 0.0, (way as f32 * 0.0873).cos());
+                let turn = facing(way, Some(yard));
+                // Turned in the plot's own space by a whole number of 45°.
+                let within = (square.inverse() * turn).to_euler(EulerRot::YXZ).0;
+                assert!(off_the_step(within, step) < 1e-4, "{:?}: {within}", plot.middle);
+                // And its front, Blender's -Y, the nearest of those to the way.
+                let front = turn * Vec3::NEG_Z;
+                assert!(front.angle_between(way) <= step * 0.5 + 1e-4, "{:?}: {front} for {way}", plot.middle);
+            }
+            // Its back along the plot's front edge, looking out of it.
+            let out = Vec3::new(yard.front.x, 0.0, yard.front.y);
+            assert!((facing(out, Some(yard)) * Vec3::NEG_Z).distance(out) < 1e-4, "{:?}", plot.middle);
+        }
+        // Some of the plots are on no 45° of the world's, plot 43 among
+        // them, which is what this is for.
+        let [x, z] = roundtown_net::land::HOMES[42];
+        assert!(crooked.iter().any(|middle| middle.distance(Vec2::new(x, z)) < 1.0), "{crooked:?}");
+        // With no plot, as in House Builder, to the world's own 45°.
+        let turn = facing(Vec3::new(0.3, 0.0, 1.0), None);
+        assert!(off_the_step(turn.to_euler(EulerRot::YXZ).0, step) < 1e-4);
     }
 
     #[test]

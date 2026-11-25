@@ -7,6 +7,24 @@
 > "above" or "below", or names another section in quotes, that section may be
 > in another file here: the table in `CLAUDE.md` says which.
 
+## APK 57: a new thing comes up square to its plot
+
+2026-11-25, 11:05 here (02:05 UTC). Asked for: "then build apk and
+push", after the fix of the morning's entry in `docs/bag.md`. From the
+main checkout with no other session running (`ListAgents`).
+
+- **Protocol 25 still**, the device's side alone: it plays against the
+  server deployed at 19:44 UTC on 2026-11-24, as APK 52 to 56 do.
+- `versionCode` 57, read back from Gradle's `output-metadata.json`.
+  cargo ndk 2 m 31 s (`release-android`), stripped from 203.5 MB to
+  110.9 MB with `GameActivity_onCreate` and the six `MainActivity`
+  methods in it, Gradle 16 s. 134,943,558 bytes: 289 of the game's
+  files under `assets/`, each the same to the byte as the tree's, and
+  Android's two baseline profiles; the library in it the same as the
+  stripped one. `ui.ron` and every model hashed before the library was
+  built and after Gradle, the same.
+- Before it: the game's tests (592). **Not put on a phone.**
+
 ## APK 56: what is in a house binned with it, small things on tops, places to rest, the made-up owners' tastes
 
 2026-11-25, 04:56 here (19:56 UTC on the 24th). Asked for: "and make the

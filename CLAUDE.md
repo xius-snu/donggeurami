@@ -19,10 +19,10 @@ spend nothing on those two unasked.
 As of 2026-11-25: `PROTOCOL_VERSION` 25 (since 2026-11-23: a seat of the
 town is one of its 48 plots, so **APK 51 and older are told to update**;
 APK 52 to 55 play on, those before 55 without the new things on the
-made-up land), **APK 56** (`versionCode`, built 2026-11-25, not put on a
+made-up land), **APK 57** (`versionCode`, built 2026-11-25, not put on a
 phone from here, `docs/building.md`), the server deployed at 19:44 UTC on
 2026-11-24 with everything in `server/` and `shared/`. **All of it
-committed and pushed, up to APK 56**: the land (`docs/land.md`: all 48
+committed and pushed, up to APK 57**: the land (`docs/land.md`: all 48
 plots always filled, where each is thrown afresh as a channel opens,
 someone walking every one, each made-up owner of a taste), everyone's
 signs and cars, the town's slower buses, the bag (`docs/bag.md`) with its
@@ -459,7 +459,9 @@ to try again.
   and a street lamp. Online it is the account's (Postgres, `players.gems`
   and `.bag`): buying and selling are the server's; offline the device's
   own, kept in `bag.json`. A tap on a car in it drives that one; a tap on a
-  building, standing on your plot, puts it down. The Chandelier and the
+  building, standing on your plot, puts it down, turned to the nearest
+  45° of its plot's own edges, not the world's (`build::facing`, APK 57:
+  sixteen plots are crooked to the world). The Chandelier and the
   Ceiling Fan hang only from a ceiling (`build::Mount::Ceiling`), the
   Painting on a wall (since APK 56). **Small things** (`PieceDef::small`,
   29: what goes on a desk or a table) dragged over a top go up onto it
