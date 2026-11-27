@@ -54,6 +54,13 @@ deployed; in APK 63.
   that the binary before this one, rolled back to, leaves it be.
 - **The bathtub's tap**: `Ask::Run` as the sink's, the server waiting
   `bag::runs` between runs (12 s for the sink, 20 for the tub).
+- **The website's privacy policy** (`../donggeurami-town/privacy.html`) is
+  changed for it, dated 28 November: what is kept in the things on a plot
+  that hold things, such as a cabinet or a piggy bank, which other players
+  in the town can open, put things and coins in and take them out of, and
+  coins into or out of a piggy bank among the lines of the coins' history
+  (what is kept in cabinets had gone out unmentioned with APK 62). Pushed
+  with APK 63 (`a199170`), at Hajun's "buuild apk and push".
 - **Checked.** The server's unit tests (144), among them a deposit and a
   withdrawal with a database answered and refused (a channel standing in
   for its thread). **The transaction itself on Postgres**, on scratch
