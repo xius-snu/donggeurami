@@ -7,6 +7,128 @@
 > "above" or "below", or names another section in quotes, that section may be
 > in another file here: the table in `CLAUDE.md` says which.
 
+## The chandelier always on, the bathtub's tap, and the piggy bank (2026-11-27, late, into the 28th)
+
+Hajun, in three messages, while the round below was being built and after
+it had gone out:
+
+> double tapping on the proximity icon button should not make ur camera
+> do the autoalign thingy. also remove the chandelier interactivity and
+> just make chandelier always on.
+
+> also also for the bathtub, instead of being a lie down proximity
+> button, make it similar to the sink -> it poors water until the tub is
+> full, and it stops pooring when its full, and then it drains after a
+> while.
+
+> also for the piggybank, make a proximity thing similar to the
+> cabinet/storage, but this time instead of items its coin. so u choose
+> how much coin to put in the piggy bank and anyone can take it out or put
+> more.
+
+**In APK 63** (built early on the 28th, not put on a phone), **and on
+the server deployed at 15:44:21 UTC on the 27th**, which added
+`players.banked` to the live database as it started (tried first on
+scratch copies on the VM, `docs/online.md`, at the top). Nothing sent
+changed for anyone else: no new protocol number.
+
+**The double tap** (`docs/camera.md`, "In edit mode a double tap..."): a
+double tap whose taps land on a bubble no longer swings the camera behind
+you.
+
+**The chandelier is always on** (`working::SWITCH_CHANDELIER`, off; the
+switch kept behind it). It has no bubble, and is lit by day and by night
+(`lamps::When::Always`); the lamp with shade is switched by hand as before.
+An app from before (APK 62) still shows a bulb over it and can switch it,
+and the server still keeps that (`bag::SWITCHED`): this app pays it no
+heed.
+
+**The bathtub's tap** (`working::BATH`, a `Tap` as the sink's now is). It
+is no longer lain in (`rest::LIE_IN_THE_BATH`, off), by you or by anyone of
+the computer's. A drop of water in its bubble; a tap runs its tap: water
+falls from the end of the spout, 2.14 m up at the middle of its back, and
+the tub fills from its floor, 0.17 m up, to 1.28 m, 30 cm under its rim,
+in eight seconds, the water rising more slowly as the tub widens
+(`tub_volume`); full, the tap is off, and it stands full eight seconds and
+drains in four, and only then can it be run again. Everyone in the
+channel sees it (`bag::Ask::Run`, the server waiting `bag::runs` between
+runs: the sink's 12 s, the tub's 20). **Its water is narrower the lower it
+stands** (`Tap::widths`): the tub's walls slope in toward its foot, outside
+as well as in, and the water drawn as wide as the tub full showed through
+its sides low down (seen in the first pictures). At each level it reaches
+from a quarter to nearly half way into the wall round it, measured off the
+model, between its inner face and its outer one; a test reads the model
+at 57 levels and finds the water's edge inside the wall at every one,
+and fails with the water drawn full size.
+
+**The piggy bank** (`roundtown_net::bag::Banked`, `deposit`, `withdraw`;
+`storage`, `working::Use::Bank`).
+
+- **A piggy bank in its bubble**, with a coin over its slot (a coin alone,
+  this small, read as a sign saying no entry); a tap opens the window
+  every window is: "Piggy Bank" top left, the cross top right, and under
+  them the coin and how many coins are in it, large, and two buttons, Put
+  in (green) and Take out, each greyed while there is nothing to put in or
+  take out.
+- **Either asks how many**, in the box things are counted in ("How many
+  coins?": the coin, "Coins", the minus, the number and the plus, the bar
+  from one to all of your balance or all that is in it), and OK does it
+  and goes back to the window, saying across the screen "501 coins have
+  been put in the piggy bank" or "488 coins have been added to your
+  balance".
+- **Anyone's, by anyone in the channel**, its owner here or not: the coins
+  in it belong to nobody until someone takes them. Online the server's, as
+  a purchase is, one transaction with the database that reads and writes
+  the piggy bank's coins with whoever's balance (`docs/bag.md`); offline
+  your own plot's alone, kept in `bag.json` beside what is kept in your
+  cabinets (and the balance offline, as ever, is 1,000 each time the app
+  opens).
+- **A piggy bank with coins in it is not taken back into the bag**, nor a
+  house with one in it: "Take the coins out of the piggy bank first."
+  (`rules::No::Banked`, `stand::note_edits`); it is stood again where it
+  was.
+
+**Checked.** Unit tests: `cargo test --lib` (633), `-p roundtown_net`
+(311), `-p roundtown_server` (144), among them the tub's water against
+its model, the coins conserved through every refusal, the server's deal
+with a database and without, and the bag file read back with and without
+coins. The two database tests on scratch databases on the VM (SERVER.md's
+recipe): an empty one, through deposits, withdrawals and refusals with
+their lines of `coin_changes`; and a copy of the live database through
+starting up, which added the column and changed nothing else (3 accounts
+with a bag). Clippy on the three crates: nothing new but constant
+assertions in tests. In the desktop build, hidden, offline, by a
+throwaway driver taken out again: a bathtub run through its twenty
+seconds, pictured from over it, low at its side and from its end, at
+1, 9 and 17 s; a piggy bank opened, 501 put in, 488 taken out, 3 put in,
+its window and the box pictured, the balance and what was in it adding up
+to 1,000 throughout, and its binning refused. Two copies against a server
+on this PC with no database: a guest put 250 coins into the owner's piggy
+bank and took 100 out, seen as it happened in the owner's open window
+(250, then 150), the guest's balance 1,000, 750, 850 with both lines said
+across their screen, the owner's untouched; the guest ran the owner's
+bathtub and both saw it fill; the owner's binning was refused.
+
+**Not checked**: a phone; the live server (not deployed); a piggy bank on
+an upper floor or on a table (it is one of the small things that go onto
+tops, and works wherever it stands, by the code).
+
+**Seen, not changed**: a Knock Off test of another session's
+(`a_hop_is_the_town_s_jump_where_hops_are_and_never_in_a_slide`) failed
+once in a full run and passed alone three times: its computer players'
+hops are thrown from `fastrand`, so now and then none hops in its two
+minutes.
+
+**Calls that were mine.** The bathtub's eight seconds filling, eight full
+and four draining, and how full it gets; nobody lying in it any more,
+the computer's people either; the piggy bank in the cabinet's window, the
+coin and the number, and the two buttons and their colours; taking out
+chosen by how many too, from one; the most a piggy bank keeps (a billion);
+a piggy bank with coins in it refused at the bin rather than its coins
+going into the balance of whoever binned it (which would be another
+transaction); the piggy bank drawn in its bubble; the chandelier's switch
+kept behind a switch of its own.
+
 ## What keeps things, the lights switched by hand, the toilet, the sink, and walking on the spot on the treadmill (2026-11-27)
 
 Hajun, in one message:

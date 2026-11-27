@@ -617,7 +617,7 @@ fn act(
     mut up: ResMut<DialogUp>,
     (online, close_up, keyboard): (Res<Online>, Res<CloseUp>, Res<ButtonInput<KeyCode>>),
     mut clipboard: ResMut<Clipboard>,
-    (mut notice, mut house): (ResMut<Notice>, ResMut<house::HouseView>),
+    (mut notice, mut house, mut scrolled): (ResMut<Notice>, ResMut<house::HouseView>, ResMut<Scrolled>),
     mut asks: MessageWriter<Ask>,
 ) {
     if pressed.open {
@@ -627,6 +627,14 @@ fn act(
         if !panel.open && !up.0 && !close_up.busy() {
             panel.open = true;
             panel.over = None;
+            // Always on Friends, its lists at their tops, and the House
+            // tab on your own house when it is gone to (Hajun, 2026-11-27:
+            // "each time u open the social panel, it should be the friends
+            // tab not the last tab u opened, and same for the tab in the
+            // house tab should be reset each time u go to the house tab").
+            panel.tab = Tab::Friends;
+            *scrolled = Scrolled::default();
+            house.tap(house::HouseTap::Show(house::Sub::Mine));
             up.0 = true;
         }
     }
@@ -656,6 +664,13 @@ fn act(
             Tap::Close => shut(&mut panel, &mut up, &mut name_box),
             Tap::Back => panel.over = None,
             Tap::Show(tab) => {
+                // The House tab gone to is on your own house, from its top,
+                // every time (Hajun's, as above).
+                if tab == Tab::House {
+                    house.tap(house::HouseTap::Show(house::Sub::Mine));
+                    scrolled.house = 0.0;
+                    scrolled.board = 0.0;
+                }
                 panel.tab = tab;
                 panel.over = None;
             }
@@ -2028,6 +2043,58 @@ mod tests {
     }
 
     #[test]
+    fn the_panel_opens_on_friends_and_the_house_tab_on_your_own_house() {
+        use bevy::ecs::system::RunSystemOnce;
+        let mut world = World::new();
+        world.init_resource::<Pressed>();
+        world.init_resource::<Friends>();
+        world.init_resource::<NameBox>();
+        world.init_resource::<Notice>();
+        world.init_resource::<house::HouseView>();
+        world.init_resource::<CloseUp>();
+        world.init_resource::<ButtonInput<KeyCode>>();
+        world.init_resource::<Clipboard>();
+        world.init_resource::<Messages<Ask>>();
+        world.insert_resource(Online::default());
+        world.insert_resource(DialogUp(false));
+        // Left on the house, on the board, looking at someone's, scrolled.
+        world.insert_resource(Panel {
+            open: false,
+            tab: Tab::House,
+            over: None,
+        });
+        world.insert_resource(Scrolled {
+            friends: 30.0,
+            board: 50.0,
+            ..default()
+        });
+        world.resource_mut::<house::HouseView>().tap(house::HouseTap::Look(7));
+        // Opened again: on Friends, at the top, the house on your own.
+        world.resource_mut::<Pressed>().open = true;
+        world.run_system_once(act).expect("acted");
+        assert!(world.resource::<Panel>().open);
+        assert_eq!(world.resource::<Panel>().tab, Tab::Friends);
+        assert_eq!((world.resource::<Scrolled>().friends, world.resource::<Scrolled>().board), (0.0, 0.0));
+        let view = world.resource::<house::HouseView>();
+        assert_eq!((view.sub, view.looking), (house::Sub::Mine, None));
+        // To the house, the board, someone's; to the envelope and back to
+        // the house: your own again.
+        for tap in [
+            Tap::Show(Tab::House),
+            Tap::House(house::HouseTap::Show(house::Sub::Board)),
+            Tap::House(house::HouseTap::Look(9)),
+            Tap::Show(Tab::Mail),
+            Tap::Show(Tab::House),
+        ] {
+            world.resource_mut::<Pressed>().taps.push((tap, Vec2::ZERO));
+        }
+        world.run_system_once(act).expect("acted");
+        assert_eq!(world.resource::<Panel>().tab, Tab::House);
+        let view = world.resource::<house::HouseView>();
+        assert_eq!((view.sub, view.looking), (house::Sub::Mine, None));
+    }
+
+    #[test]
     fn only_a_reply_that_is_sent_sees_its_message_off() {
         use bevy::ecs::system::RunSystemOnce;
         let mut world = World::new();
@@ -2036,6 +2103,7 @@ mod tests {
         world.init_resource::<NameBox>();
         world.init_resource::<Notice>();
         world.init_resource::<house::HouseView>();
+        world.init_resource::<Scrolled>();
         world.init_resource::<CloseUp>();
         world.init_resource::<ButtonInput<KeyCode>>();
         world.init_resource::<Clipboard>();

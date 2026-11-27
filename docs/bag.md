@@ -10,21 +10,57 @@ first.
 
 ## Contents
 
-0. 2026-11-27: what is kept in what keeps things, and the lights switched by hand, beside the bag; a thing binned brings what was kept in it, or is not binned; server deployed, APK 62
-1. 2026-11-26: a thing dragged upstairs stays upstairs, kept over its floor, sliding along the walls and stopping at the stairwell; what hangs from a ceiling, a small thing and what comes out of the bag too; APK 61
-2. 2026-11-25, evening: each floor of a house painted by itself; the shop's things kind by kind, the commonest first, and yours the rarest first; APK 60
-3. 2026-11-25, morning: a new thing comes up square to its plot, however the plot is turned; APK 57
-4. 2026-11-25, that night: the bin takes what is in a house, small things onto tops, what is in the way by its shape, the painting on a wall; APK 56
-5. 2026-11-25, later: everything on Hajun's list in the shop, 118 things: the cars, 17 houses, 59 things for a house; prices in gems; a seventh rarity; what hangs from a ceiling, and two things that light a room; the gifts to two accounts; server deployed, APK 55
-6. 2026-11-25: Hajun's list of rarities filled in with the 22 other cars, the 56 downloaded things and Hajun's cabinet, bathtub and end table; the list alone, nothing in the game (all of it in the game the same night, above)
-7. 2026-11-23: edit mode said along the top and round the plot, the edit button beating at a tap on a thing, the hint turned off; APK 52
-8. 2026-11-22, late: a spot of the colour chosen in its window, a hint at edit mode for someone tapping at a thing, and a house's walls numbered the same on every device, so that its doors are in the same wall for everyone; APK 51
-9. 2026-11-22, night: paint taken off with a cross, the colours used along the window's foot, the one button moved up, a tap away letting go, things dragged through each other with a grey tick, a house taking what is in it along, smaller menu buttons set by the thing as drawn, and two faults of see-through (things deaf to a tap, eyes fading); server deployed, APK 50
-10. 2026-11-22, evening: edit mode and its three buttons by the left edge, the paintbrush and the colour window, paint kept by the server and seen by everyone, the car's door where the bag's button is; server deployed, APK 49
-11. 2026-11-22, after that: a list flicked goes on by itself as a phone's does, and a swipe across the window changes its tab; APK 48
-12. 2026-11-22, afternoon: the coins' number the gems' size and the gem the coin's; a price you cannot afford in red; the box on the bag's button; APK 47
-13. 2026-11-22, later: the shop after Hajun had looked at it (both buttons always, over the picture and see-through; the price under the name; All first shown; six categories with no scrolling); APK 46
-14. 2026-11-22: the bag, its window, gems, and buildings on your plot that everyone sees; APK 45
+0. 2026-11-27, late: the coins in piggy banks beside the bag, put in and taken out by anyone, a deal with the database as a purchase is; a piggy bank with coins in it is not binned; server deployed, APK 63
+1. 2026-11-27: what is kept in what keeps things, and the lights switched by hand, beside the bag; a thing binned brings what was kept in it, or is not binned; server deployed, APK 62
+2. 2026-11-26: a thing dragged upstairs stays upstairs, kept over its floor, sliding along the walls and stopping at the stairwell; what hangs from a ceiling, a small thing and what comes out of the bag too; APK 61
+3. 2026-11-25, evening: each floor of a house painted by itself; the shop's things kind by kind, the commonest first, and yours the rarest first; APK 60
+4. 2026-11-25, morning: a new thing comes up square to its plot, however the plot is turned; APK 57
+5. 2026-11-25, that night: the bin takes what is in a house, small things onto tops, what is in the way by its shape, the painting on a wall; APK 56
+6. 2026-11-25, later: everything on Hajun's list in the shop, 118 things: the cars, 17 houses, 59 things for a house; prices in gems; a seventh rarity; what hangs from a ceiling, and two things that light a room; the gifts to two accounts; server deployed, APK 55
+7. 2026-11-25: Hajun's list of rarities filled in with the 22 other cars, the 56 downloaded things and Hajun's cabinet, bathtub and end table; the list alone, nothing in the game (all of it in the game the same night, above)
+8. 2026-11-23: edit mode said along the top and round the plot, the edit button beating at a tap on a thing, the hint turned off; APK 52
+9. 2026-11-22, late: a spot of the colour chosen in its window, a hint at edit mode for someone tapping at a thing, and a house's walls numbered the same on every device, so that its doors are in the same wall for everyone; APK 51
+10. 2026-11-22, night: paint taken off with a cross, the colours used along the window's foot, the one button moved up, a tap away letting go, things dragged through each other with a grey tick, a house taking what is in it along, smaller menu buttons set by the thing as drawn, and two faults of see-through (things deaf to a tap, eyes fading); server deployed, APK 50
+11. 2026-11-22, evening: edit mode and its three buttons by the left edge, the paintbrush and the colour window, paint kept by the server and seen by everyone, the car's door where the bag's button is; server deployed, APK 49
+12. 2026-11-22, after that: a list flicked goes on by itself as a phone's does, and a swipe across the window changes its tab; APK 48
+13. 2026-11-22, afternoon: the coins' number the gems' size and the gem the coin's; a price you cannot afford in red; the box on the bag's button; APK 47
+14. 2026-11-22, later: the shop after Hajun had looked at it (both buttons always, over the picture and see-through; the price under the name; All first shown; six categories with no scrolling); APK 46
+15. 2026-11-22: the bag, its window, gems, and buildings on your plot that everyone sees; APK 45
+
+## 2026-11-27, late: the coins in piggy banks, beside the bag
+
+Hajun: "for the piggybank, make a proximity thing similar to the
+cabinet/storage, but this time instead of items its coin. so u choose how
+much coin to put in the piggy bank and anyone can take it out or put
+more." What it is to play: `docs/town.md`, at the top; what is said and
+kept online: `docs/online.md`, at the top. The server deployed at 15:44
+UTC that day; in APK 63.
+
+- **The rules** (`roundtown_net::bag`): `PIGGY` (`piggy_bank`, one of the
+  small things), `Banked` (the coins in each piggy bank on a plot, by its
+  number: `of`, `set`, `sane`), `deposit` and `withdraw` (out of a balance
+  and into it: never under nothing, never past `PIGGY_MOST`, a billion, nor
+  out past what a balance holds), and `take_back`, which now takes the
+  plot's `Banked` and refuses a piggy bank with coins in it
+  (`No::Banked`).
+- **Beside the bag, not in it**, as what works is: `Bag::banked` (yours)
+  and `TheirBanked` (each of the others' in your channel), the server's
+  word online (`Tell::Banked`); offline yours alone, kept in `bag.json`
+  (`Saved::banked`, none in a file from before). `Bag::deposit`,
+  `Bag::withdraw`: online asked, offline done with the device's balance;
+  either way said by `Coined`, which `storage` puts across the screen.
+- **The bin** (`stand::note_edits`): nothing of what would be binned
+  together is binned while a piggy bank of it has coins in it ("Take the
+  coins out of the piggy bank first."), before the bag's room is asked
+  after; the server refuses it the same way, and while a deal with that
+  piggy bank is on its way to the database (`Workshop::banked_for_taking`).
+- **Checked**: unit tests of the rules (coins neither made nor lost
+  through every refusal; kept wrongly, put right), of the device's bag
+  (offline done here and said, online asked and heard, the file read back
+  with and without coins), and of the server (anyone in the channel, the
+  bin refused, a database's answer and refusal); the transaction on
+  scratch databases on the VM; the desktop build offline and two copies
+  online (`docs/town.md`). **Not checked**: a phone.
 
 ## 2026-11-27: what is kept in what keeps things, beside the bag
 

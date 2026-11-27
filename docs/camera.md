@@ -205,6 +205,22 @@ you.
   code as no desktop build or test does. **Not run**: it is a phone's
   code alone, so not in the desktop build, no unit test reaches it, and
   no APK was built (his word that day: "dont need to rebuild the game").
+- **Nor does a double tap on a bubble, since 2026-11-27** (Hajun:
+  "double tapping on the proximity icon button should not make ur camera
+  do the autoalign thingy"). A bubble over something to use or somewhere
+  to sit is a thing in the world (`bubble`), and its taps were counted
+  toward a double tap all the same: two quick taps on a sink's bubble ran
+  its tap and swung the camera round behind you. The second tap of a
+  double tap now only says the camera is to swing
+  (`TouchControls::swing`, `read_touch_controls`), and whether it does is
+  settled once the bubbles have had the tap (`swing_on_a_double_tap`,
+  after `bubble::Taps`): one a bubble took swings nothing, and is not
+  counted as the first of another double tap (`DoubleTap::forget`), so
+  that a tap on the bubble and one on the screen just after are not one
+  either. **Checked**: a unit test of the counting
+  (`two_quick_taps_near_each_other_are_a_double_tap`, the forgetting
+  added), and type-checked for the iPhone. **Not run**: it is the phone's
+  code alone, in no desktop build; in APK 63, not put on a phone.
 - **On a phone, walking with the stick brings it round behind you, a
   double tap swings it there, and riding a bus brings it round behind the
   way the bus faces** (`assist_camera`; Hajun, 2026-10-31: "Soft

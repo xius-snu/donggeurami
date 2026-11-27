@@ -7,6 +7,70 @@
 > "above" or "below", or names another section in quotes, that section may be
 > in another file here: the table in `CLAUDE.md` says which.
 
+## Piggy banks: three more asks and two more tells at the end of the bag's, and `players.banked`; the bathtub's tap (2026-11-27, late)
+
+What it is: `docs/town.md`, at the top (the bathtub's tap, the piggy
+bank). **Protocol 27 still. Deployed at 15:44:21 UTC on 2026-11-27**
+(sha1 `ffadb090`, the same on the VM; the binary before it, the 13:40
+one, kept as `roundtown-server.prev-2026-11-27c`), the server adding
+`players.banked` to the live database as it started; uncommitted when
+deployed; in APK 63.
+
+- **`bag::Ask`** gets `Banked` (13 on the wire: tell me of piggy banks),
+  `Deposit { who, id, coins }` (14) and `Withdraw { who, id, coins }`
+  (15); **`bag::Tell`** gets `Banked { who, banked }` (6: the coins in each
+  piggy bank on that plot, `bag::Banked`) and `Coins(i64)` (7: by how much
+  your balance went up out of a piggy bank, less than none into one,
+  after `Balance`). A test of the rules holds the numbers.
+- **Only to a device that asked**, as what works is: a device says
+  `Banked` once as it comes online, after `Workings`, and is told the coins
+  in the piggy banks of each plot it is told of, and the channel is told
+  whenever they change (`Workers::banks`). An app from before never asks
+  and is told nothing of it.
+- **Deploy the server before an app built from a tree with these asks goes
+  online**, as was done here: a server from before them drops `Banked`
+  unread (replicon ignores a message that will not deserialize, at debug),
+  and the app, which counts it among its asks about its bag, is then one
+  ahead of the server's count and takes none of its answers about the bag
+  for that connection.
+- **A deposit or a withdrawal is a deal**, as a purchase is: the server
+  checks the piggy bank stands on a plot of the asker's channel and that
+  the coins are there by its own copies, then sends the database one
+  transaction (`accounts::Job::Piggy`): the owner's `players.banked` read
+  `FOR UPDATE`, the piggy bank's coins changed (refused under nothing or
+  past `bag::PIGGY_MOST`), the asker's coins changed with `coins - $2 >= 0`
+  in the `UPDATE`, `banked` written, and a line of `coin_changes` ("put
+  coins in a piggy bank", "took coins out of a piggy bank"); answered as
+  `Dealt` with what is in the piggy bank after, which the server's copy
+  (`Workshop`) takes. So two people at one piggy bank at once are both
+  counted, and the asker's other asks about their bag wait behind it as
+  behind a purchase. Without a database it is done at once. A piggy bank
+  with coins in it, or a deal with it on its way, is not taken back into
+  the bag (`bag::take_back`, `No::Banked`).
+- **`players.banked`** (`ALTER TABLE ... ADD COLUMN IF NOT EXISTS banked
+  TEXT`): the plot's piggy banks' coins, JSON, `[[id, coins], ...]`; read
+  with everyone's land as the server starts, put right by what stands
+  (`Banked::sane`). A column of its own, and not in `players.workings`, so
+  that the binary before this one, rolled back to, leaves it be.
+- **The bathtub's tap**: `Ask::Run` as the sink's, the server waiting
+  `bag::runs` between runs (12 s for the sink, 20 for the tub).
+- **Checked.** The server's unit tests (144), among them a deposit and a
+  withdrawal with a database answered and refused (a channel standing in
+  for its thread). **The transaction itself on Postgres**, on scratch
+  databases on the VM (SERVER.md's recipe, `empty_piggy_scratch` and
+  `copy_piggy_scratch`, dropped after): the database test through
+  deposits by the owner and by someone else, a withdrawal, and refusals
+  (more than is in it, more than they have, a piggy bank of nobody), with
+  their lines and none for a refusal; and a copy of the live database
+  through starting up, which added the column and changed nothing else.
+  Two copies against a server on this PC with no database
+  (`docs/town.md`). **Before the deploy** nobody had been on since
+  14:22:19 (`bunnihajun`). **After**: "3 accounts ... 3 bags kept", the
+  column there; this PC's own account (`똥#3690`, a scratch `APPDATA` with
+  copies of `device.id` and `profile.json`, the same by sha1) online
+  hidden 60 s, the clock the server's within 7 ms, joined 15:49:59 and
+  left 15:51:11, the journal clean.
+
 ## Protocol 27: what is said is a number; houses; pushes (2026-11-27)
 
 - **`PROTOCOL_VERSION` 27**: `Tell::Said` carries a `chat::Said` (a line

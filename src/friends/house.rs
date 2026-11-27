@@ -175,6 +175,24 @@ fn counted(count: u32) -> String {
     }
 }
 
+/// What a house is worth as its card writes it (Hajun, 2026-11-27: "number
+/// in the net worth thing, make it like 28.2K or 29.3M"): as it is under a
+/// thousand, and past that in thousands, millions or billions to a tenth,
+/// in whichever keeps it under a thousand once rounded.
+fn worth(coins: u32) -> String {
+    let coins = f64::from(coins);
+    if coins < 1_000.0 {
+        return format!("{coins}");
+    }
+    for (unit, size) in [("K", 1e3), ("M", 1e6)] {
+        let tenths = (coins / size * 10.0).round() / 10.0;
+        if tenths < 1_000.0 {
+            return format!("{tenths:.1}{unit}");
+        }
+    }
+    format!("{:.1}B", (coins / 1e9 * 10.0).round() / 10.0)
+}
+
 /// Stars on average as the tab writes them: one figure after the point, a
 /// dash with none.
 fn stars(count: u32, sum: u32) -> String {
@@ -268,12 +286,25 @@ fn stats_page(commands: &mut Commands, assets: &AssetServer, panel: Entity, view
             ],
         ));
     }
+    // Over your own house's stats, as a list has its heading (Hajun,
+    // 2026-11-27: "in my house stat page, i need text above the stat boxes
+    // "My House:""); someone else's has its name and the chevron instead.
+    if !from_the_board {
+        let head = heading(commands, panel, said.my_house.clone());
+        commands.entity(head).insert(Node {
+            height: Val::VMin(window::SMALL_BUTTON + 0.8),
+            align_items: AlignItems::Center,
+            flex_shrink: 0.0,
+            margin: UiRect::top(Val::VMin(0.8)),
+            ..default()
+        });
+    }
     let Some(stats) = stats else {
         let list = list(commands, panel, List::House, 0.0);
         note(commands, list, &said.waiting);
         return;
     };
-    cards(commands, assets, panel, view, stats);
+    cards(commands, assets, panel, view, stats, if from_the_board { 1.4 } else { 0.2 });
     let list = list(commands, panel, List::House, view.scrolled.house);
     heading(commands, list, fill(&said.ratings_heading, &[("count", &stats.count.to_string())]));
     if stats.ratings.is_empty() {
@@ -286,7 +317,7 @@ fn stats_page(commands: &mut Commands, assets: &AssetServer, panel: Entity, view
 
 /// A house's six stats, each a card of its own in a row: a number over what
 /// it is.
-fn cards(commands: &mut Commands, assets: &AssetServer, panel: Entity, view: &View, stats: &Stats) {
+fn cards(commands: &mut Commands, assets: &AssetServer, panel: Entity, view: &View, stats: &Stats, above: f32) {
     let ui = ui();
     let (colours, said) = (ui.colours.window, &ui.words.house);
     let row = commands
@@ -295,7 +326,7 @@ fn cards(commands: &mut Commands, assets: &AssetServer, panel: Entity, view: &Vi
             Node {
                 column_gap: Val::VMin(CARD_GAP),
                 flex_shrink: 0.0,
-                margin: UiRect::top(Val::VMin(1.4)),
+                margin: UiRect::top(Val::VMin(above)),
                 ..default()
             },
             Pickable::IGNORE,
@@ -304,7 +335,7 @@ fn cards(commands: &mut Commands, assets: &AssetServer, panel: Entity, view: &Vi
     let coin = assets.load(COIN_ICON);
     let star = view.star.clone();
     let shown: [(Option<Handle<Image>>, String, &str); 6] = [
-        (Some(coin), counted(stats.worth), &said.worth),
+        (Some(coin), worth(stats.worth), &said.worth),
         (None, counted(stats.things), &said.things),
         (None, counted(stats.visits), &said.visitors),
         (None, counted(stats.visits_week), &said.visitors_week),
@@ -587,6 +618,16 @@ mod tests {
         assert_eq!(counted(99_999), "99,999");
         assert_eq!(counted(125_000), "125K");
         assert_eq!(counted(2_500_000), "2.5M");
+        // Worth in thousands and millions to a tenth.
+        assert_eq!(worth(0), "0");
+        assert_eq!(worth(950), "950");
+        assert_eq!(worth(1_000), "1.0K");
+        assert_eq!(worth(28_200), "28.2K");
+        assert_eq!(worth(28_249), "28.2K");
+        assert_eq!(worth(999_949), "999.9K");
+        assert_eq!(worth(999_950), "1.0M", "not 1000.0K");
+        assert_eq!(worth(29_300_000), "29.3M");
+        assert_eq!(worth(u32::MAX), "4.3B");
         assert_eq!(stars(0, 0), "-");
         assert_eq!(stars(2, 15), "3.8");
         assert_eq!(stars(1, 10), "5.0");

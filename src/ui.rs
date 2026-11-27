@@ -1534,6 +1534,8 @@ pub(crate) struct HouseWords {
     pub visiting: String,
     pub rated: String,
     pub whose: String,
+    /// Over your own house's stats (Hajun's, 2026-11-27: "My House:").
+    pub my_house: String,
     pub worth: String,
     pub things: String,
     pub visitors: String,
@@ -1622,6 +1624,13 @@ pub(crate) struct StorageWords {
     pub added: String,
     pub bag_full: String,
     pub no_room: String,
+    pub put_in: String,
+    pub take_out: String,
+    pub how_many_coins: String,
+    pub coins: String,
+    pub put: String,
+    pub took: String,
+    pub not_empty: String,
 }
 
 /// The land's words (`land`, since 2026-11-20): what the sign of a plot

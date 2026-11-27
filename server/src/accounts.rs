@@ -36,6 +36,12 @@
 //! sale changes the coins and the bag in one transaction, with its line of
 //! `coin_changes` ([`Bank::deal`]); what only moves about the plot is
 //! written after the fact ([`Bank::keep_bag`]).
+//!
+//! **The coins in piggy banks** (since later on 2026-11-27): those on an
+//! account's plot are one document (`players.banked`, `bag::Banked`), and
+//! whoever puts coins into one or takes them out, its owner or anyone else,
+//! does so in one transaction that reads and writes that document as well
+//! as their coins, with its line of `coin_changes` ([`Bank::piggy`]).
 
 use std::collections::{HashMap, HashSet};
 use std::sync::mpsc::{Receiver, Sender, channel};
@@ -102,6 +108,7 @@ CREATE INDEX IF NOT EXISTS messages_receiver ON messages (receiver);
 ALTER TABLE players ADD COLUMN IF NOT EXISTS gems BIGINT NOT NULL DEFAULT 10 CHECK (gems >= 0);
 ALTER TABLE players ADD COLUMN IF NOT EXISTS bag TEXT;
 ALTER TABLE players ADD COLUMN IF NOT EXISTS workings TEXT;
+ALTER TABLE players ADD COLUMN IF NOT EXISTS banked TEXT;
 ";
 
 /// What is made once every account has its tag ([`give_tags`]): no two
@@ -240,10 +247,11 @@ pub(crate) struct Snapshot {
 }
 
 /// One account's land as it is kept: who, what they go by and how they
-/// look, their bag's own document (`players.bag`), and what is at work
-/// among what stands on it (`players.workings`, since 2026-11-27: none
-/// until something is first put into something there or a light
-/// switched).
+/// look, their bag's own document (`players.bag`), what is at work among
+/// what stands on it (`players.workings`, since 2026-11-27: none until
+/// something is first put into something there or a light switched), and
+/// the coins in its piggy banks (`players.banked`, since later that day:
+/// none until some are first put in one).
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Land {
     pub id: u64,
@@ -251,6 +259,7 @@ pub(crate) struct Land {
     pub look: String,
     pub bag: String,
     pub workings: Option<String>,
+    pub banked: Option<String>,
 }
 
 /// One account, as far as its friends are concerned.
@@ -317,7 +326,7 @@ impl Snapshot {
             })
             .collect();
         let lands = db
-            .query("SELECT id, name, look, bag, workings FROM players WHERE bag IS NOT NULL ORDER BY id", &[])?
+            .query("SELECT id, name, look, bag, workings, banked FROM players WHERE bag IS NOT NULL ORDER BY id", &[])?
             .iter()
             .map(|row| Land {
                 id: account(row.get(0)),
@@ -325,6 +334,7 @@ impl Snapshot {
                 look: row.get(2),
                 bag: row.get(3),
                 workings: row.get(4),
+                banked: row.get(5),
             })
             .collect();
         Ok(Self {
@@ -460,6 +470,22 @@ impl Bank {
         }
     }
 
+    /// Coins into a piggy bank or out of one (`bag`, since later on
+    /// 2026-11-27): `into` coins of the account `id`'s into the piggy bank
+    /// standing under `bank` on the plot of the account `owner`, or, less
+    /// than none, out of it into `id`'s; if that leaves neither `id`'s coins
+    /// nor the piggy bank's less than nothing, nor the piggy bank's more
+    /// than the most (`bag::PIGGY_MOST`), with a line saying `why`: all of
+    /// it or none, the piggy bank's coins read and written in the same
+    /// transaction (`players.banked`), so that two people's at once are
+    /// both counted. The answer comes as [`Dealt`], with what is in the
+    /// piggy bank after.
+    pub(crate) fn piggy(&self, id: u64, owner: u64, bank: u32, into: i64, why: &'static str) {
+        if let Self::Database { jobs, .. } = self {
+            let _ = jobs.send(Job::Piggy { id, owner, bank, into, why });
+        }
+    }
+
     /// Keeps what is at work on the plot of the account `owner` as it is
     /// now, `workings` (`bag`, since 2026-11-27), and with it, if it is
     /// given, the bag of the account `bag.0` as it is now, `bag.1`: whoever
@@ -534,11 +560,14 @@ pub(crate) struct Credited {
 
 /// What a purchase or a sale left the account with ([`Bank::deal`]), its
 /// bag kept as it is after; or `None` if nothing was changed: it had not
-/// the coins, or there is no such account any more.
+/// the coins, or there is no such account any more. Coins into a piggy bank
+/// or out of one ([`Bank::piggy`]) are answered the same way, with how many
+/// are in the piggy bank after (`bank`).
 #[derive(Message)]
 pub(crate) struct Dealt {
     pub id: u64,
     pub left: Option<u32>,
+    pub bank: Option<u32>,
 }
 
 pub(crate) enum Job {
@@ -578,6 +607,13 @@ pub(crate) enum Job {
         owner: u64,
         workings: String,
         bag: Option<(u64, String)>,
+    },
+    Piggy {
+        id: u64,
+        owner: u64,
+        bank: u32,
+        into: i64,
+        why: &'static str,
     },
 }
 
@@ -683,7 +719,7 @@ fn work(url: &str, jobs: &Receiver<Job>, done: &Sender<Done>) {
                     error!("could not keep {keep:?}");
                     None
                 }
-                Job::Deal { id, .. } => Some(Done::Dealt(Dealt { id, left: None })),
+                Job::Deal { id, .. } | Job::Piggy { id, .. } => Some(Done::Dealt(Dealt { id, left: None, bank: None })),
                 Job::Bag { id, .. } => {
                     // As with friends: the game's loop holds it until the
                     // account is next loaded, and its next change is kept
@@ -760,7 +796,7 @@ fn run(db: &mut Client, job: &Job) -> Result<Option<Done>, postgres::Error> {
                 &[&(id as i64), &amount, bag, &gems],
             )?;
             let Some(left) = left else {
-                return Ok(Some(Done::Dealt(Dealt { id, left: None })));
+                return Ok(Some(Done::Dealt(Dealt { id, left: None, bank: None })));
             };
             if amount != 0 {
                 transaction.execute(
@@ -772,6 +808,44 @@ fn run(db: &mut Client, job: &Job) -> Result<Option<Done>, postgres::Error> {
             Ok(Some(Done::Dealt(Dealt {
                 id,
                 left: Some(left.get::<_, i64>(0).clamp(0, i64::from(u32::MAX)) as u32),
+                bank: None,
+            })))
+        }
+        Job::Piggy { id, owner, bank, into, why } => {
+            // The piggy bank's coins, read and locked; whoever's coins with
+            // them; and the line saying why: together or not at all.
+            let refused = Ok(Some(Done::Dealt(Dealt { id, left: None, bank: None })));
+            let mut transaction = db.transaction()?;
+            let Some(row) = transaction.query_opt("SELECT banked FROM players WHERE id = $1 FOR UPDATE", &[&(owner as i64)])? else {
+                return refused;
+            };
+            let mut banked = row
+                .get::<_, Option<String>>(0)
+                .and_then(|kept| serde_json::from_str::<roundtown_net::bag::Banked>(&kept).ok())
+                .unwrap_or_default();
+            let now = i64::from(banked.of(bank)) + into;
+            if !(0..=i64::from(roundtown_net::bag::PIGGY_MOST)).contains(&now) {
+                return refused;
+            }
+            let left = transaction.query_opt(
+                "UPDATE players SET coins = coins - $2 WHERE id = $1 AND coins - $2 >= 0 RETURNING coins",
+                &[&(id as i64), &into],
+            )?;
+            let Some(left) = left else {
+                return refused;
+            };
+            banked.set(bank, now as u32);
+            let kept = serde_json::to_string(&banked).unwrap_or_default();
+            transaction.execute("UPDATE players SET banked = $2 WHERE id = $1", &[&(owner as i64), &kept])?;
+            transaction.execute(
+                "INSERT INTO coin_changes (player, amount, reason) VALUES ($1, $2, $3)",
+                &[&(id as i64), &-into, &why],
+            )?;
+            transaction.commit()?;
+            Ok(Some(Done::Dealt(Dealt {
+                id,
+                left: Some(left.get::<_, i64>(0).clamp(0, i64::from(u32::MAX)) as u32),
+                bank: Some(now as u32),
             })))
         }
         Job::Bag { id, ref bag } => {
@@ -1078,6 +1152,44 @@ mod tests {
         assert_eq!((row.get::<_, i64>(0), row.get::<_, i64>(1)), (2_425, 6));
         let count: i64 = db.query_one("SELECT count(*) FROM coin_changes WHERE player = $1", &[&(c as i64)]).expect("the lines").get(0);
         assert_eq!(count, 2);
+        // Coins into a piggy bank on c's plot and out of it (since later on
+        // 2026-11-27), by c and by b: whoever's coins and the piggy bank's
+        // together, each with its line, and none of it where either would go
+        // under nothing; for an owner who is not there, nothing.
+        let coins_of = |db: &mut Client, id: u64| -> i64 { db.query_one("SELECT coins FROM players WHERE id = $1", &[&(id as i64)]).expect("the account").get(0) };
+        let banked_of = |db: &mut Client| -> Option<String> { db.query_one("SELECT banked FROM players WHERE id = $1", &[&(c as i64)]).expect("the account").get(0) };
+        let piggy = |db: &mut Client, id: u64, owner: u64, into: i64| {
+            let why = if into > 0 { "put coins in a piggy bank" } else { "took coins out of a piggy bank" };
+            match done(db, Job::Piggy { id, owner, bank: 3, into, why }) {
+                Some(Done::Dealt(dealt)) => (dealt.left, dealt.bank),
+                _ => panic!("no answer to a piggy bank"),
+            }
+        };
+        let b_had = coins_of(&mut db, b);
+        assert!(b_had >= 100, "b has {b_had}");
+        assert_eq!(banked_of(&mut db), None);
+        assert_eq!(piggy(&mut db, b, c, 100), (Some((b_had - 100) as u32), Some(100)));
+        assert_eq!(piggy(&mut db, c, c, 25), (Some(2_400), Some(125)));
+        assert_eq!(banked_of(&mut db).as_deref(), Some("[[3,125]]"));
+        let lands = Snapshot::read(&mut db).expect("read back").lands;
+        assert_eq!(lands.iter().find(|land| land.id == c).and_then(|land| land.banked.clone()).as_deref(), Some("[[3,125]]"));
+        // Out more than is in it, in more than b has, or into the piggy bank
+        // of nobody: nothing changes, and no line is written.
+        assert_eq!(piggy(&mut db, b, c, -126), (None, None));
+        assert_eq!(piggy(&mut db, b, c, b_had - 99), (None, None));
+        assert_eq!(piggy(&mut db, b, 999_999, 5), (None, None));
+        assert_eq!((coins_of(&mut db, b), coins_of(&mut db, c), banked_of(&mut db).as_deref()), (b_had - 100, 2_400, Some("[[3,125]]")));
+        assert_eq!(piggy(&mut db, b, c, -125), (Some((b_had + 25) as u32), Some(0)));
+        assert_eq!(banked_of(&mut db).as_deref(), Some("[]"));
+        let lines = |db: &mut Client, id: u64| -> Vec<(i64, String)> {
+            db.query("SELECT amount, reason FROM coin_changes WHERE player = $1 AND reason LIKE '%piggy bank' ORDER BY id", &[&(id as i64)])
+                .expect("the lines")
+                .iter()
+                .map(|row| (row.get(0), row.get(1)))
+                .collect()
+        };
+        assert_eq!(lines(&mut db, b), vec![(-100, "put coins in a piggy bank".to_string()), (125, "took coins out of a piggy bank".to_string())]);
+        assert_eq!(lines(&mut db, c), vec![(-25, "put coins in a piggy bank".to_string())]);
         // A deal for an account that is not there changes nothing.
         assert!(matches!(done(&mut db, Job::Deal { id: 999_999, amount: 5, gems: 0, why: "sold a thing", bag: "{}".into() }), Some(Done::Dealt(Dealt { left: None, .. }))));
         // An account deleted takes its friends, what it asked and what was

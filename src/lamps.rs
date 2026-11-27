@@ -49,14 +49,18 @@
 //! no part of it a bulb to find, so each is lit by what it is
 //! ([`BY_KIND`]): a light inside the box its model fills, a third of the way
 //! up a chandelier and in a lamp's shade, and among the [`MOST_LIT`]
-//! nearest the camera as every lamp is. Nothing of either glows. **Each is
-//! switched on and off by hand** (since 2026-11-27; Hajun: "lamp with shade
-//! (toggle light on off rather than day/night)", and the chandelier the
-//! same): lit while it is switched on, by day too, and dark while it is
-//! not, by night too (`working::Lit`, the bubble over it), off until
-//! someone switches it on. The street lamps and the anchors go by the time
-//! of day as they did; a lamp switched on by day is the one light there is
-//! then, and the day costs what it did until one is.
+//! nearest the camera as every lamp is. Nothing of either glows. **The lamp
+//! with shade is switched on and off by hand** (since 2026-11-27; Hajun:
+//! "lamp with shade (toggle light on off rather than day/night)"): lit while
+//! it is switched on, by day too, and dark while it is not, by night too
+//! (`working::Lit`, the bubble over it), off until someone switches it on.
+//! **The chandelier is always on**, by day and by night (later that night,
+//! having been switched by hand for an evening: "remove the chandelier
+//! interactivity and just make chandelier always on";
+//! `working::SWITCH_CHANDELIER`). The street lamps and the anchors go by the
+//! time of day as they did. A light on by day is the one light there is
+//! then: the day costs what it did until there is one in your channel's
+//! town (`cells`).
 
 use bevy::gltf::GltfMaterialName;
 use bevy::light::cluster::ClusterConfig;
@@ -199,12 +203,21 @@ pub(crate) const BY_KIND: [Lit; 2] = [
 ];
 
 /// A lamp's light, how much of it there is when it is on, in lumens, and
-/// whether it is switched by hand (`working::Lit`, on the piece it is in)
-/// rather than on by night.
+/// when it is on.
 #[derive(Component)]
 struct Lamp {
     lumens: f32,
-    by_hand: bool,
+    on: When,
+}
+
+/// When a lamp is on: from dusk to dawn, as the street lamps are; while it
+/// is switched on by hand (`working::Lit`, on the piece it is in); or
+/// always, as the chandelier is.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum When {
+    ByNight,
+    ByHand,
+    Always,
 }
 
 /// A mesh of bulbs, which glows while the lamps are on, this brightly.
@@ -251,12 +264,10 @@ fn find_bulbs(
             }
         }
         if let Some(at) = light_in(&corners, lit.up) {
+            let on = if crate::working::switched_by_hand(lit.kind) { When::ByHand } else { When::Always };
             commands.spawn((
                 ChildOf(ready.entity),
-                Lamp {
-                    lumens: lit.lumens,
-                    by_hand: true,
-                },
+                Lamp { lumens: lit.lumens, on },
                 PointLight {
                     color: LAMP_COLOR,
                     intensity: 0.0,
@@ -301,7 +312,7 @@ fn find_bulbs(
                 ChildOf(part),
                 Lamp {
                     lumens: source.lumens,
-                    by_hand: false,
+                    on: When::ByNight,
                 },
                 PointLight {
                     color: source.color,
@@ -364,23 +375,25 @@ fn lamps_of(bulbs: &[Vec3]) -> Vec<Vec3> {
     boxes.into_iter().map(|(low, high)| (low + high) * 0.5).collect()
 }
 
-/// How far on a lamp is, from 0 to 1: one switched by hand all the way
+/// How far on a lamp is, from 0 to 1: one on by night as far as the lamps
+/// are on at this time of day (`lamps`); one switched by hand all the way
 /// while it is switched on (`switched`, `None` for a piece that has not
-/// been said to be either yet, which is off), and the rest as far as the
-/// lamps are on at this time of day (`lamps`).
-fn strength(by_hand: bool, switched: Option<bool>, lamps: f32) -> f32 {
-    if by_hand {
-        if switched == Some(true) { 1.0 } else { 0.0 }
-    } else {
-        lamps
+/// been said to be either yet, which is off); and one always on, all the
+/// way.
+fn strength(on: When, switched: Option<bool>, lamps: f32) -> f32 {
+    match on {
+        When::ByNight => lamps,
+        When::ByHand if switched == Some(true) => 1.0,
+        When::ByHand => 0.0,
+        When::Always => 1.0,
     }
 }
 
 /// Turns the lamps on and off: each bulb's glow and the street lamps' and
-/// anchors' light with the time of day, the chandelier's and the lamp with
-/// shade's by their switches; the light of the nearest [`MOST_LIT`] lamps
-/// that are on to the camera on the island you are on. Only what has
-/// changed is written.
+/// anchors' light with the time of day, the lamp with shade's by its
+/// switch, and the chandelier's always; the light of the nearest
+/// [`MOST_LIT`] lamps that are on to the camera on the island you are on.
+/// Only what has changed is written.
 #[allow(clippy::too_many_arguments)]
 fn light_the_lamps(
     daylight: Res<Daylight>,
@@ -393,7 +406,7 @@ fn light_the_lamps(
     mut nearest: Local<Vec<(f32, Entity)>>,
 ) {
     let on = daylight.lamps;
-    let lamp_on = |lamp: &Lamp, parent: Entity| strength(lamp.by_hand, switches.get(parent).ok().map(|lit| lit.0), on);
+    let lamp_on = |lamp: &Lamp, parent: Entity| strength(lamp.on, switches.get(parent).ok().map(|lit| lit.0), on);
     nearest.clear();
     let eye = cameras.single().map(GlobalTransform::translation).unwrap_or_default();
     nearest.extend(
@@ -513,21 +526,25 @@ mod tests {
     }
 
     #[test]
-    fn the_chandelier_and_the_lamp_with_shade_go_by_their_switches_and_the_rest_by_the_time_of_day() {
+    fn the_lamp_with_shade_goes_by_its_switch_the_chandelier_is_always_on_and_the_rest_by_the_time_of_day() {
         // Switched on, lit by day; switched off, or never said to be
         // either, dark by night.
-        assert_eq!(strength(true, Some(true), 0.0), 1.0);
-        assert_eq!(strength(true, Some(false), 1.0), 0.0);
-        assert_eq!(strength(true, None, 1.0), 0.0);
+        assert_eq!(strength(When::ByHand, Some(true), 0.0), 1.0);
+        assert_eq!(strength(When::ByHand, Some(false), 1.0), 0.0);
+        assert_eq!(strength(When::ByHand, None, 1.0), 0.0);
+        // Always on: by day, and whatever it was switched to before.
+        assert_eq!(strength(When::Always, None, 0.0), 1.0);
+        assert_eq!(strength(When::Always, Some(false), 0.0), 1.0);
         // A street lamp as far on as the evening is.
-        assert_eq!(strength(false, None, 0.4), 0.4);
-        assert_eq!(strength(false, Some(true), 0.0), 0.0);
-        // The two lit by what they are are the two switched by hand.
-        let mut by_kind: Vec<&str> = BY_KIND.iter().map(|lit| lit.kind).collect();
-        let mut switched = roundtown_net::bag::SWITCHED.to_vec();
-        by_kind.sort_unstable();
-        switched.sort_unstable();
-        assert_eq!(by_kind, switched);
+        assert_eq!(strength(When::ByNight, None, 0.4), 0.4);
+        assert_eq!(strength(When::ByNight, Some(true), 0.0), 0.0);
+        // The two lit by what they are: the lamp with shade by hand, the
+        // chandelier always.
+        let on = |kind: &str| if crate::working::switched_by_hand(kind) { When::ByHand } else { When::Always };
+        for lit in BY_KIND {
+            assert!(roundtown_net::bag::switched(lit.kind), "{}", lit.kind);
+        }
+        assert_eq!((on("lamp_with_shade"), on("chandelier")), (When::ByHand, When::Always));
     }
 
     #[test]

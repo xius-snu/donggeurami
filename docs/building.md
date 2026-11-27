@@ -7,6 +7,40 @@
 > "above" or "below", or names another section in quotes, that section may be
 > in another file here: the table in `CLAUDE.md` says which.
 
+## APK 63: the bathtub's tap, the piggy bank, the chandelier always on; "My House:" and every panel on its first tab
+
+2026-11-28, 01:14 here (16:14 UTC on the 27th). Asked for: "buuild apk
+and push", after the bathtub's tap, the piggy bank, the chandelier always
+on and no camera swing on a double tap on a bubble (`docs/town.md`,
+`docs/bag.md`, `docs/camera.md`, at the top), and another session's
+"My House:" over your own house's stats, net worth as 28.2K or 29.3M,
+and the friends' panel, the House tab and settings each opening on its
+first tab (`docs/house.md`, `docs/friends.md`, `docs/town-hud.md`). Both
+in this build and in one commit; the other session held still while it
+was built.
+
+- **The server**: deployed at 15:44:21 UTC with everything in `server/`
+  and `shared/` (sha1 `ffadb090`; `docs/online.md`, at the top), protocol
+  27 still: APK 62 plays on against it, and APK 63 needs it (as it comes
+  online it asks to be told of piggy banks, which the server before it
+  dropped unread).
+- `versionCode` 63, read back with `aapt dump badging`. cargo ndk 2 m 52 s
+  (`release-android`), stripped from 208.5 MB to 115.2 MB,
+  `GameActivity_onCreate` and the ten `MainActivity` methods in it; Gradle
+  7 s. 140,560,162 bytes: 290 of the game's files under `assets/`, each the
+  same to the byte as the tree's (the two other entries there are
+  Android's own, `dexopt/baseline.prof` and `.profm`); the library in it
+  the same as the stripped one. Every file under `assets/` (597) hashed
+  before the library was built and after Gradle: the same. `ui.ron` baked
+  in as it was ("Take the coins out of the piggy bank first." and "My
+  House:" in the stripped library). Built without `google-services.json`,
+  as APK 62 was.
+- Before it: `cargo test -p roundtown_net` (311), `-p roundtown_server`
+  (144) and `--lib` (633) on the tree as built; clippy on the three
+  crates, nothing new in the new code but constant assertions in tests;
+  the iPhone's type-check.
+- **Not put on a phone.** No `ios-*` tag.
+
 ## APK 62: houses visited and rated, pushes, quick chat only; things used; Knock Off's jump; protocol 27
 
 2026-11-27, 22:38 here (13:38 UTC). Asked for: "build apk and push", after

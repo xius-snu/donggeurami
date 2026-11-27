@@ -237,6 +237,9 @@ fn choose(
     match choice {
         Choice::Open if !up.0 => {
             settings.over = None;
+            // Always on its first tab (Hajun, 2026-11-27, of the friends'
+            // panel: "this goes for the settings page too").
+            settings.tab = Tab::default();
             show(&mut commands, &assets, &mut settings, &dialogs, &online, &profile, &name_box);
             up.0 = true;
         }

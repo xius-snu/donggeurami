@@ -6,6 +6,28 @@
 > how things stand; the quick chat's half of the same day is in
 > `docs/chat-and-text.md`.
 
+## "My House:" over your stats, and net worth as 28.2K (later on 2026-11-27)
+
+Hajun, after APK 62: "in the house page, in my house stat page, i need text
+above the stat boxes "My House:" and also for the numbe rin" ... "number in
+the net worth thing, make it like 28.2K or 29.3M".
+
+- **"My House:"** (`words.house.my_house`) stands over the six cards on
+  the person's tab, in the panel's heading style, as "Ratings (n)" stands
+  over the ratings; someone else's house from the board keeps its name and
+  the chevron instead (mine: he asked of his own page).
+- **Net worth** (`friends::house::worth`): as it is under a thousand, and
+  past that in thousands, millions or billions to a tenth, in whichever
+  keeps it under a thousand once rounded: 28.2K, 29.3M, 1.0K, and 1.0M
+  where 999.95 thousand would round to 1000.0K. Always the tenth, as his
+  examples have it (mine: "1.0K" rather than "1K"). The other cards are as
+  they were.
+
+Checked: the game's tests (`friends::house`, the numbers' cases); the
+desktop build, hidden, against a server on this PC: the heading over the
+cards (a new account's, all nought). **Not in an APK; nothing for the
+server.**
+
 ## Visits, ratings, the House tab and pushes (2026-11-27)
 
 In APK 62, and on the server deployed at 13:40:57 UTC that day (protocol

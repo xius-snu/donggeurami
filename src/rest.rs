@@ -21,10 +21,12 @@
 //! and the stool one to sit on, the armchair one to sit back in, the L
 //! shaped couch three, two along it and one on the end that comes forward,
 //! the bed two to lie on, and the bathtub one, lying along it
-//! ([`Spot::turn`]: each body faces as its piece does, but there). **And
-//! the toilet one to sit on** (since 2026-11-27; Hajun: "toilet = sit on
-//! toilet like a chair"), on its lid, which is down; nobody of the
-//! computer's sits there ([`residents_sit_on`]).
+//! ([`Spot::turn`]: each body faces as its piece does, but there), until
+//! its tap came to be run instead (later on 2026-11-27, `working`;
+//! [`LIE_IN_THE_BATH`]). **And the toilet one to sit on** (since
+//! 2026-11-27; Hajun: "toilet = sit on toilet like a chair"), on its lid,
+//! which is down; nobody of the computer's sits there
+//! ([`residents_sit_on`]).
 //!
 //! **The bubbles** ([`offer`]): come within [`REACH`] of such a thing, on
 //! its floor, and a bubble stands over each of its places that is free and
@@ -186,6 +188,12 @@ const BIG_BED: [Spot; 2] = [
 /// its tank, which rises from 0.03 m behind its origin; sat on 0.35 m in
 /// from its front, as a chair is.
 const TOILET: [Spot; 1] = [spot(Pose::Sit, Vec3::new(0.0, 0.87, -0.585), Vec3::new(0.0, 2.1, -0.585))];
+/// Whether the bathtub is lain in: so it was from 2026-11-25 until later on
+/// 2026-11-27, when Hajun had its tap run instead ("for the bathtub, instead
+/// of being a lie down proximity button, make it similar to the sink";
+/// `working`): off, and nobody lies in it, you or anyone of the computer's.
+pub(crate) const LIE_IN_THE_BATH: bool = false;
+
 /// Hajun's bathtub, lain in along its length, the head toward its left end
 /// (its -X), which slopes up from 1.4 m out: on its floor, 0.17 m up.
 const BATHTUB: [Spot; 1] = [Spot {
@@ -209,7 +217,7 @@ pub(crate) fn spots(kind: &str) -> &'static [Spot] {
         "armchair" => &ARMCHAIR,
         "couch" => &L_COUCH,
         "bed" => &BIG_BED,
-        "bathtub" => &BATHTUB,
+        "bathtub" if LIE_IN_THE_BATH => &BATHTUB,
         "toilet" => &TOILET,
         _ => &[],
     }
@@ -708,8 +716,9 @@ mod tests {
     }
 
     /// Every piece with somewhere to rest, how many places each, and how
-    /// one rests there.
-    const RESTED_ON: [(&str, usize, Pose); 12] = [
+    /// one rests there. (The bathtub, while it is lain in:
+    /// [`LIE_IN_THE_BATH`].)
+    const RESTED_ON: [(&str, usize, Pose); 11] = [
         ("cafechair", 1, Pose::Sit),
         ("softcouch", 2, Pose::Lounge),
         ("singlebed", 1, Pose::Lie),
@@ -720,7 +729,6 @@ mod tests {
         ("armchair", 1, Pose::Lounge),
         ("couch", 3, Pose::Lounge),
         ("bed", 2, Pose::Lie),
-        ("bathtub", 1, Pose::Lie),
         ("toilet", 1, Pose::Sit),
     ];
 
@@ -745,6 +753,8 @@ mod tests {
                 }
             }
         }
+        // The bathtub's tap is run, and nobody lies in it.
+        assert!(!LIE_IN_THE_BATH && spots("bathtub").is_empty());
         // All but the bathtub's face as their piece does; in it, lying along
         // it, the head to its left.
         for (kind, ..) in RESTED_ON {

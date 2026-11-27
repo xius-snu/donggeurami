@@ -7,6 +7,14 @@
 > "above" or "below", or names another section in quotes, that section may be
 > in another file here: the table in `CLAUDE.md` says which.
 
+## The settings' window opens on its first tab (2026-11-27)
+
+Hajun, of the friends' panel: "each time u open the social panel, it
+should be the friends tab not the last tab u opened ... this goes for the
+settings page too". The gear opens the window on Graphics every time
+(`settings`, `Choice::Open`), where it opened on the tab last shown. The
+panel's half is in `docs/friends.md`, at the top. Not in an APK.
+
 ## The cover stays until the server has said what the town is
 
 2026-11-24, late, after APK 53 (`docs/land.md`'s first entry). Where

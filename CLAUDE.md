@@ -16,13 +16,16 @@ them (2026-11-19), Hajun likes Bridge Wars and Knock Off and had Bridge
 Race's and Last Stand's cards turned off (`games::OFF`, since APK 44):
 spend nothing on those two unasked.
 
-As of 2026-11-27: `PROTOCOL_VERSION` 27 (since that evening: what is
+As of 2026-11-28: `PROTOCOL_VERSION` 27 (since the 27th: what is
 said is a number, `chat::Said`, so **APK 61 and older are told to
-update**; APK 62 and later play on), **APK 62** (`versionCode`, built
-2026-11-27, not put on a phone from here, `docs/building.md`), the server
-deployed at 13:40:57 UTC on 2026-11-27 with everything in `server/` and
-`shared/`.
-**All of it committed and pushed, up to APK 62**: houses visited, rated
+update**; APK 62 and later play on), **APK 63** (`versionCode`, built
+2026-11-28, not put on a phone from here, `docs/building.md`), the server
+deployed at 15:44:21 UTC on 2026-11-27 with everything in `server/` and
+`shared/` (an app built from this tree needs it: `docs/online.md`).
+**All of it committed and pushed, up to APK 63**: the bathtub's tap, the
+piggy bank and the chandelier always on (`docs/town.md`); "My House:", net
+worth as 28.2K, and every panel opening on its first tab
+(`docs/house.md`); houses visited, rated
 and ranked, with pushes to phones (`docs/house.md`); quick chat only, with
 a bubble over the speaker's head (`docs/chat-and-text.md`); things used,
 storage, lights switched by hand, the sink (`docs/town.md`); Knock Off's
@@ -47,7 +50,7 @@ and stays offline until `ios-1.0.2-19` is built, whose tag is Hajun's to
 ask for. Apple warns that from April 2027 an upload needs Xcode 27
 (`docs/building.md`, APK 42).
 **Pushes need Hajun's keys first** (Firebase, Apple; `docs/house.md`,
-"Setting the pushes up": APK 62 was built without `google-services.json`,
+"Setting the pushes up": APKs 62 and 63 were built without `google-services.json`,
 and the VM has no keys), and **the next `ios-*` tag needs Push
 Notifications turned on for the App ID** (`IOS.md`, "Pushes").
 
@@ -164,8 +167,9 @@ to try again.
 - What gives off light at night is a list by material (`lamps::SOURCES`):
   street lamps' `lightbulb`, Bridge Wars' anchors' `spawn`; and two of the
   shop's things by kind, the Chandelier and the Lamp With Shade
-  (`lamps::BY_KIND`, since 2026-11-25), which since 2026-11-27 are
-  switched on and off by hand instead, by day too (`working::Lit`). At
+  (`lamps::BY_KIND`, since 2026-11-25): the lamp switched on and off by
+  hand since 2026-11-27, by day too (`working::Lit`), and the chandelier
+  always on since that night (`working::SWITCH_CHANDELIER`, off). At
   most 24 point lights (`MOST_LIT`), none by day but those switched on.
 - See-through walls (`see_through.rs`) happen only inside a house, and
   never in the town since 2026-11-25 (Hajun's, `see_through::IN_THE_TOWN`,
@@ -598,7 +602,8 @@ to try again.
   phone and in another on the next.
   Where the land is going is Hajun's to say (`docs/land.md`).
 - **You can sit and lie down** on a chair, a sofa or a bed on anyone's
-  plot, lie in the bath and sit on the toilet (`src/rest.rs`, since APK 51, Hajun's; the
+  plot, and sit on the toilet (`src/rest.rs`, since APK 51, Hajun's; the
+  bath no longer, `rest::LIE_IN_THE_BATH`; the
   things of 2026-11-25 since APK 56; not seen on a phone): a
   bubble over each place of one you stand within 1.5 m of, a tap, and you
   are there in its pose in a fifth of a second (`roundtown_net::Pose`:
@@ -617,9 +622,12 @@ to try again.
   safe, the end table and the barbecue opens a window of slots, anyone's,
   by anyone in the channel, the barbecue food alone (`src/storage.rs`,
   `roundtown_net::bag::Workings`, the server's `players.workings`); over
-  the lamp with shade and the chandelier it switches them; over the sink
-  it runs its tap for everyone to see; the toilet is sat on. E on desktop
-  is a tap on the nearest bubble.
+  the lamp with shade it switches it; over the sink and the bathtub it
+  runs the tap for everyone to see (`working::TAPS`; the tub since that
+  night); the toilet is sat on. **The piggy bank** (since that night, APK
+  63) keeps coins anyone in the channel puts in and takes out, a
+  deal with the database as a purchase is (`bag::Banked`, the server's
+  `players.banked`). E on desktop is a tap on the nearest bubble.
 - **Houses are visited and rated** (since 2026-11-27, Hajun's; APK 62,
   deployed; not seen on a phone; `docs/house.md`): ten seconds on the plot of
   someone else's land is a visit, told to its owner across their screen

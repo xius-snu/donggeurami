@@ -887,6 +887,10 @@ struct TouchControls {
     /// The taps on nothing, to tell a double tap by.
     #[cfg(any(target_os = "android", target_os = "ios"))]
     taps: DoubleTap,
+    /// A double tap this frame, its camera's swing waiting until the
+    /// bubbles in the world have had the tap ([`swing_on_a_double_tap`]).
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    swing: bool,
 }
 
 /// Two taps on nothing, the second soon after the first and near it: a
@@ -910,6 +914,12 @@ impl DoubleTap {
             .is_some_and(|(then, there)| down - then <= DOUBLE_TAP_SECS && at.distance(there) <= near);
         self.last = if second { None } else { Some((up, at)) };
         second
+    }
+
+    /// The last tap was no tap on nothing (a bubble's): it is not the first
+    /// of two.
+    fn forget(&mut self) {
+        self.last = None;
     }
 }
 
@@ -1565,9 +1575,12 @@ pub fn main() {
     #[cfg(any(target_os = "android", target_os = "ios"))]
     app.add_systems(
         Update,
-        // This is also where a touch is handed to the editor, so it has to
-        // land before the editor reads the pointer.
-        read_touch_controls.before(editor::EditSystems),
+        (
+            // This is also where a touch is handed to the editor, so it has
+            // to land before the editor reads the pointer.
+            read_touch_controls.before(editor::EditSystems),
+            swing_on_a_double_tap.after(bubble::Taps),
+        ),
     );
 
     #[cfg(target_os = "android")]
@@ -1965,7 +1978,6 @@ fn read_touch_controls(
     mut controls: ResMut<TouchControls>,
     mut orbit: ResMut<OrbitCamera>,
     mut assist: ResMut<CameraAssist>,
-    me: Query<&Transform, With<Player>>,
     menu: Res<editor::EditMenu>,
     presses: hud::Presses,
     mut pointer: ResMut<editor::EditPointer>,
@@ -2006,14 +2018,15 @@ fn read_touch_controls(
         // together swung the camera off what you were at. The taps are
         // counted all the same, so that the first tap after edit mode is a
         // first tap.
+        // And not on a bubble in the world, whose tap it is alone: which is
+        // known once the bubbles have had it (`swing_on_a_double_tap`).
         let near = window.width().min(window.height()) * DOUBLE_TAP_NEAR;
         if let Some((down, at)) = controls.look_tap.take()
             && now - down <= TAP_SECS
             && controls.taps.tap(down, now, at, near)
             && !customize.on()
-            && let Ok(body) = me.single()
         {
-            assist.snap_behind(body);
+            controls.swing = true;
         }
         if let Some(pinch_id) = controls.pinch_id
             && let Some(touch) = touches.get_pressed(pinch_id)
@@ -2148,6 +2161,29 @@ fn read_touch_controls(
     // A finger on the camera holds off its coming round behind you.
     if controls.look_id.is_some() || controls.pinch_id.is_some() {
         assist.touched();
+    }
+}
+
+/// Swings the camera round behind you on a double tap (`read_touch_controls`),
+/// once the bubbles in the world have had the tap (`bubble::tap`): a tap on
+/// a bubble is the bubble's alone, neither the second tap of two nor the
+/// first (since 2026-11-27; Hajun: "double tapping on the proximity icon
+/// button should not make ur camera do the autoalign thingy"). Switching a
+/// lamp on and off, or a sit and a tap where its bubble was, swung it.
+#[cfg(any(target_os = "android", target_os = "ios"))]
+fn swing_on_a_double_tap(
+    took: Res<bubble::TookTap>,
+    mut controls: ResMut<TouchControls>,
+    mut assist: ResMut<CameraAssist>,
+    me: Query<&Transform, With<Player>>,
+) {
+    let swing = std::mem::take(&mut controls.swing);
+    if took.0 {
+        controls.taps.forget();
+        return;
+    }
+    if swing && let Ok(body) = me.single() {
+        assist.snap_behind(body);
     }
 }
 
@@ -4829,6 +4865,12 @@ mod camera_tests {
         assert!(!taps.tap(2.0, 2.05, Vec2::new(120.0, 110.0), near));
         assert!(!taps.tap(2.2, 2.25, Vec2::new(300.0, 110.0), near));
         assert!(taps.tap(2.4, 2.45, Vec2::new(310.0, 100.0), near));
+        // A tap a bubble took is forgotten: the one after it, however soon
+        // and near, is a first (`swing_on_a_double_tap`).
+        assert!(!taps.tap(3.0, 3.05, Vec2::new(100.0, 100.0), near));
+        taps.forget();
+        assert!(!taps.tap(3.2, 3.25, Vec2::new(100.0, 100.0), near));
+        assert!(taps.tap(3.4, 3.45, Vec2::new(100.0, 100.0), near));
     }
 
     #[test]

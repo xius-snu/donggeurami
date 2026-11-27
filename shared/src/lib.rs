@@ -5237,6 +5237,9 @@ pub mod bag {
         Food,
         /// A slot with something else in it ([`stow`]).
         Taken,
+        /// A piggy bank with coins in it, which is not taken back into the
+        /// bag until they are taken out ([`take_back`]).
+        Banked,
     }
 
     /// Whether `at` is somewhere a thing may be said to stand: numbers, and
@@ -5417,6 +5420,109 @@ pub mod bag {
     /// the rest full and draining away (the game's `working` draws it so).
     pub const SINK: &str = "bathroom_sink";
     pub const SINK_SECS: f64 = 12.0;
+    /// The bathtub, whose tap is run as the sink's is (later on 2026-11-27,
+    /// where it had been lain in; Hajun: "for the bathtub, instead of being
+    /// a lie down proximity button, make it similar to the sink -> it poors
+    /// water until the tub is full, and it stops pooring when its full, and
+    /// then it drains after a while"), and how long from its tap being run
+    /// until it can be run again: eight filling, eight full, four draining
+    /// (mine).
+    pub const BATH: &str = "bathtub";
+    pub const BATH_SECS: f64 = 20.0;
+
+    /// How long from the tap of a thing of `kind` being run until it can be
+    /// run again, if it has a tap: the sink's and the bathtub's.
+    pub fn runs(kind: &str) -> Option<f64> {
+        match kind {
+            SINK => Some(SINK_SECS),
+            BATH => Some(BATH_SECS),
+            _ => None,
+        }
+    }
+
+    /// The piggy bank, which keeps coins (since later on 2026-11-27; Hajun:
+    /// "for the piggybank, make a proximity thing similar to the
+    /// cabinet/storage, but this time instead of items its coin. so u
+    /// choose how much coin to put in the piggy bank and anyone can take it
+    /// out or put more"), and the most one keeps: a billion, so that taken
+    /// out with a balance besides, it never runs past what a balance holds.
+    pub const PIGGY: &str = "piggy_bank";
+    pub const PIGGY_MOST: u32 = 1_000_000_000;
+
+    /// The coins in each piggy bank standing on one plot, by its number
+    /// ([`Standing::id`]): none, for one that has never had any. Kept beside
+    /// what works there, and by the server in a table of its own
+    /// (`piggy_banks`), each change one transaction with the balance of
+    /// whoever made it. Anyone in the channel may put coins in and take
+    /// them out, as with what is kept in a cabinet.
+    #[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug, Default)]
+    pub struct Banked(pub Vec<(u32, u32)>);
+
+    impl Banked {
+        /// The coins in the piggy bank standing under `id`.
+        pub fn of(&self, id: u32) -> u32 {
+            self.0.iter().find(|(bank, _)| *bank == id).map_or(0, |(_, coins)| *coins)
+        }
+
+        /// The piggy bank under `id` holds `coins` now: with none, nothing
+        /// is kept of it.
+        pub fn set(&mut self, id: u32, coins: u32) {
+            self.0.retain(|(bank, _)| *bank != id);
+            if coins > 0 {
+                self.0.push((id, coins));
+                self.0.sort_unstable();
+            }
+        }
+
+        /// Whether no piggy bank of these has any coins in it.
+        pub fn is_empty(&self) -> bool {
+            self.0.is_empty()
+        }
+
+        /// The coins as they may be: only in piggy banks among `stands`, one
+        /// entry each, none empty, none over the most.
+        pub fn sane(self, stands: &[Standing]) -> Self {
+            let mut sane = Banked::default();
+            for (id, coins) in self.0 {
+                let banks = stands.iter().any(|stood| stood.id == id && stood.kind == PIGGY);
+                if banks && sane.of(id) == 0 {
+                    sane.set(id, coins.min(PIGGY_MOST));
+                }
+            }
+            sane
+        }
+    }
+
+    /// Whether the thing standing under `id` among `stands` is a piggy bank.
+    fn piggy(stands: &[Standing], id: u32) -> Result<(), No> {
+        let stood = stands.iter().find(|stood| stood.id == id).ok_or(No::None)?;
+        if stood.kind == PIGGY { Ok(()) } else { Err(No::Place) }
+    }
+
+    /// Puts `coins` of `balance` into the piggy bank standing under `id`
+    /// among `stands`, whose plot's coins are `banked`: what is left of the
+    /// balance. Not more than there is of it, nor so much that the piggy
+    /// bank would hold more than the most.
+    pub fn deposit(balance: u32, banked: &mut Banked, stands: &[Standing], id: u32, coins: u32) -> Result<u32, No> {
+        piggy(stands, id)?;
+        if coins == 0 {
+            return Err(No::None);
+        }
+        let left = balance.checked_sub(coins).ok_or(No::Coins)?;
+        let now = banked.of(id).checked_add(coins).filter(|&now| now <= PIGGY_MOST).ok_or(No::Full)?;
+        banked.set(id, now);
+        Ok(left)
+    }
+
+    /// Takes `coins` out of the piggy bank standing under `id` into
+    /// `balance`: what the balance is then. Not more than it holds.
+    pub fn withdraw(balance: u32, banked: &mut Banked, stands: &[Standing], id: u32, coins: u32) -> Result<u32, No> {
+        piggy(stands, id)?;
+        let now = banked.of(id).checked_sub(coins).filter(|_| coins > 0).ok_or(No::None)?;
+        let after = balance.checked_add(coins).ok_or(No::Full)?;
+        banked.set(id, now);
+        Ok(after)
+    }
 
     /// So many of one kind of thing, in one slot of something that keeps
     /// things.
@@ -5646,8 +5752,14 @@ pub mod bag {
     /// ([`Bag::take`]), and whatever is kept in it with it, if the bag has
     /// room for all of that; its light, if it is one, goes out. Refused
     /// ([`No::Full`]) with too much of a kind in it to fit, and nothing is
-    /// changed: what was kept in it is never lost.
-    pub fn take_back(bag: &mut Bag, workings: &mut Workings, id: u32) -> Result<(), No> {
+    /// changed: what was kept in it is never lost. A piggy bank with coins
+    /// in it, by `banked`, is refused too ([`No::Banked`]), until they are
+    /// taken out (mine: rather than its coins coming into the balance of
+    /// whoever took it back, which would be a transaction of its own).
+    pub fn take_back(bag: &mut Bag, workings: &mut Workings, banked: &Banked, id: u32) -> Result<(), No> {
+        if banked.of(id) > 0 {
+            return Err(No::Banked);
+        }
         let mut kept: Vec<(&str, u32)> = Vec::new();
         for stack in workings.slots(id).iter().flatten() {
             match kept.iter_mut().find(|(kind, _)| *kind == stack.kind) {
@@ -5920,6 +6032,16 @@ pub mod bag {
         /// ([`SINK`]): everyone in the channel is to see it fill
         /// ([`Tell::Ran`]).
         Run { who: u64, id: u32 },
+        /// Tell me what is in the piggy banks on my plot and on the plots of
+        /// my channel ([`Tell::Banked`]). Said once, on coming online, after
+        /// [`Ask::Workings`], by an app that knows how to show it (since
+        /// later on 2026-11-27).
+        Banked,
+        /// Put this many of my coins into the piggy bank standing under `id`
+        /// on `who`'s plot ([`deposit`]).
+        Deposit { who: u64, id: u32, coins: u32 },
+        /// Take this many coins out of it, into my balance ([`withdraw`]).
+        Withdraw { who: u64, id: u32, coins: u32 },
     }
 
     /// Something told about a bag.
@@ -5961,6 +6083,15 @@ pub mod bag {
         /// run, by you or anyone else in your channel ([`Ask::Run`]): it
         /// fills from now.
         Ran { who: u64, id: u32 },
+        /// The coins in the piggy banks on `who`'s plot, you or anyone else
+        /// in your channel, all of them ([`Banked`]): after what works
+        /// there, as that is told, and whenever anyone puts coins in or takes
+        /// them out. Only to an app that asked ([`Ask::Banked`]).
+        Banked { who: u64, banked: Banked },
+        /// So many coins have come into your balance out of a piggy bank, or,
+        /// less than none, gone into one ([`Ask::Deposit`],
+        /// [`Ask::Withdraw`]): for the game to say so. After the balance.
+        Coins(i64),
     }
 
     #[cfg(test)]
@@ -6050,10 +6181,10 @@ pub mod bag {
             stow(&mut owner, &mut works, &stands, 1, 11, "cup_of_tea", 3).unwrap();
             assert!(works.switch(&stands, 2, true).unwrap());
             assert_eq!(owner.count("cup_of_tea"), 0);
-            take_back(&mut owner, &mut works, 1).unwrap();
+            take_back(&mut owner, &mut works, &Banked::default(), 1).unwrap();
             assert_eq!((owner.count("cup_of_tea"), owner.free("dresser")), (3, 1));
             assert!(works.held.is_empty() && works.is_lit(2));
-            take_back(&mut owner, &mut works, 2).unwrap();
+            take_back(&mut owner, &mut works, &Banked::default(), 2).unwrap();
             assert!(works.is_empty());
             // A safe with four cups in it and a bag with as many cups as
             // may be owned: refused, and nothing changed.
@@ -6063,8 +6194,18 @@ pub mod bag {
             stow(&mut owner, &mut works, &stands, 1, 0, "cup_of_tea", 4).unwrap();
             owner.take_in("cup_of_tea", 4).unwrap();
             let (before, kept) = (owner.clone(), works.clone());
-            assert_eq!(take_back(&mut owner, &mut works, 1), Err(No::Full));
+            assert_eq!(take_back(&mut owner, &mut works, &Banked::default(), 1), Err(No::Full));
             assert_eq!((owner, works), (before, kept));
+            // A piggy bank with coins in it: refused until they are out.
+            let mut owner = bag_with(&[(PIGGY, 1)], &[PIGGY]);
+            let mut banked = Banked::default();
+            deposit(10, &mut banked, &owner.stands.clone(), 1, 4).unwrap();
+            let mut works = Workings::default();
+            assert_eq!(take_back(&mut owner, &mut works, &banked, 1), Err(No::Banked));
+            assert_eq!(owner.stands.len(), 1);
+            withdraw(6, &mut banked, &owner.stands.clone(), 1, 4).unwrap();
+            take_back(&mut owner, &mut works, &banked, 1).unwrap();
+            assert_eq!((owner.stands.len(), owner.free(PIGGY)), (0, 1));
         }
 
         #[test]
@@ -6118,6 +6259,40 @@ pub mod bag {
         }
 
         #[test]
+        fn coins_go_into_a_piggy_bank_and_come_out_of_it_and_none_are_made_or_lost() {
+            let bag = bag_with(&[(PIGGY, 1), ("cabinet", 1)], &[PIGGY, "cabinet"]);
+            let mut banked = Banked::default();
+            // A hundred of a thousand in: nine hundred left, a hundred in it.
+            assert_eq!(deposit(1_000, &mut banked, &bag.stands, 1, 100), Ok(900));
+            assert_eq!(banked.of(1), 100);
+            // Anyone takes thirty out: their balance thirty more.
+            assert_eq!(withdraw(5, &mut banked, &bag.stands, 1, 30), Ok(35));
+            assert_eq!((banked.of(1), banked.clone().0), (70, vec![(1, 70)]));
+            // Not more than there is, either way; nothing into a cabinet or
+            // a piggy bank that is not there; nothing of nothing.
+            assert_eq!(deposit(50, &mut banked, &bag.stands, 1, 51), Err(No::Coins));
+            assert_eq!(withdraw(0, &mut banked, &bag.stands, 1, 71), Err(No::None));
+            assert_eq!(deposit(50, &mut banked, &bag.stands, 2, 10), Err(No::Place));
+            assert_eq!(deposit(50, &mut banked, &bag.stands, 9, 10), Err(No::None));
+            assert_eq!(deposit(50, &mut banked, &bag.stands, 1, 0), Err(No::None));
+            assert_eq!(withdraw(50, &mut banked, &bag.stands, 1, 0), Err(No::None));
+            // Not past the most, and taken out, never past what a balance
+            // holds.
+            assert_eq!(deposit(u32::MAX, &mut banked, &bag.stands, 1, PIGGY_MOST), Err(No::Full));
+            assert_eq!(withdraw(u32::MAX, &mut banked, &bag.stands, 1, 70), Err(No::Full));
+            assert_eq!(banked.of(1), 70);
+            // All of it out: nothing kept of it.
+            assert_eq!(withdraw(0, &mut banked, &bag.stands, 1, 70), Ok(70));
+            assert!(banked.0.is_empty());
+            // Kept wrongly, put right: only standing piggy banks, none twice,
+            // none empty, none past the most.
+            let kept = Banked(vec![(1, 5), (1, 9), (2, 40), (7, 3), (1, 0)]);
+            assert_eq!(kept.sane(&bag.stands), Banked(vec![(1, 5)]));
+            assert_eq!(Banked(vec![(1, u32::MAX)]).sane(&bag.stands).of(1), PIGGY_MOST);
+            assert!(thing(PIGGY).is_some());
+        }
+
+        #[test]
         fn what_works_goes_over_the_wire_after_everything_an_app_from_before_knows() {
             let number = |ask: Ask| postcard::to_allocvec(&ask).unwrap()[0];
             assert_eq!(number(Ask::Unpaint { id: 1, part: "x".into() }), 7);
@@ -6126,6 +6301,9 @@ pub mod bag {
             assert_eq!(number(Ask::Unstow { who: 1, id: 2, slot: 3 }), 10);
             assert_eq!(number(Ask::Switch { who: 1, id: 2, on: true }), 11);
             assert_eq!(number(Ask::Run { who: 1, id: 2 }), 12);
+            assert_eq!(number(Ask::Banked), 13);
+            assert_eq!(number(Ask::Deposit { who: 1, id: 2, coins: 3 }), 14);
+            assert_eq!(number(Ask::Withdraw { who: 1, id: 2, coins: 3 }), 15);
             let told = |tell: Tell| postcard::to_allocvec(&tell).unwrap()[0];
             assert_eq!(told(Tell::Painted { who: 1, asked: 0, paints: Vec::new() }), 2);
             let workings = Workings {
@@ -6137,6 +6315,10 @@ pub mod bag {
             assert_eq!(postcard::from_bytes::<Tell>(&postcard::to_allocvec(&tell).unwrap()).unwrap(), tell);
             assert_eq!(told(Tell::Got(Stack { kind: "doll".into(), count: 1 })), 4);
             assert_eq!(told(Tell::Ran { who: 1, id: 2 }), 5);
+            assert_eq!(told(Tell::Banked { who: 1, banked: Banked(vec![(2, 3)]) }), 6);
+            assert_eq!(told(Tell::Coins(-50)), 7);
+            let banked = Tell::Banked { who: u64::MAX, banked: Banked(vec![(1, PIGGY_MOST), (9, 1)]) };
+            assert_eq!(postcard::from_bytes::<Tell>(&postcard::to_allocvec(&banked).unwrap()).unwrap(), banked);
             for ask in [
                 Ask::Workings,
                 Ask::Stow { who: u64::MAX, id: 2, slot: 11, kind: "square_house_ten_floor".into(), count: 99 },

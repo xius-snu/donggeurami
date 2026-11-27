@@ -7,6 +7,30 @@
 > "above" or "below", or names another section in quotes, that section may be
 > in another file here: the table in `CLAUDE.md` says which.
 
+## The panel opens on Friends, the House tab on your own house (later on 2026-11-27)
+
+Hajun, after APK 62: "also each time u open the social panel, it should be
+the friends tab not the last tab u opened, and same for the tab in the
+house tab should be reset each time u go to the house tab. this goes for
+the settings page too".
+
+- **The panel opens on Friends** every time (`act`, as `Pressed::open`
+  opens it), where it opened on whichever tab was last shown; **its lists
+  from their tops** as well (`Scrolled` emptied: mine, a list left
+  scrolled down being no fresh panel).
+- **The House tab gone to is on your own house** ("My House:", the person),
+  from the top, every time it is pressed and every time the panel opens
+  (`house::HouseView::tap`, `HouseTap::Show(Sub::Mine)`): never on the board,
+  nor on someone's house, as it was left.
+- **The settings' window opens on its first tab** (`settings`,
+  `Choice::Open`: Graphics), where it opened on the last.
+
+Checked: a test of the panel's (`the_panel_opens_on_friends_and_the_house_
+tab_on_your_own_house`: left on the house, the board and someone's, opened
+on Friends at the top; to the house, the board, someone's, the envelope
+and back to the house, on your own). The settings' one line by reading it.
+**Not in an APK.**
+
 ## The House tab (2026-11-27)
 
 A third tab along the panel's top, Material's house (`assets/icons/

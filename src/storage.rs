@@ -44,6 +44,19 @@
 //! What is done is `bag`'s (`Bag::stow`, `Bag::unstow`): online the
 //! server's to do and to say, and the window shows what it says is in
 //! there, whoever put it there; offline on your own plot alone, at once.
+//!
+//! **The piggy bank** (since later on 2026-11-27; Hajun: "for the
+//! piggybank, make a proximity thing similar to the cabinet/storage, but
+//! this time instead of items its coin. so u choose how much coin to put in
+//! the piggy bank and anyone can take it out or put more"): the coin in its
+//! bubble opens the same window, its name along its top, and under it the
+//! coin and how many coins are in it, and two buttons, Put in and Take out,
+//! each greyed while there is nothing to put in or take out (mine: the
+//! window, the buttons, and that taking out is chosen by how many too).
+//! Either opens the box that asks how many, from one to all of your
+//! balance or all that is in it, as for a thing (the coin and "Coins" over
+//! the number), and OK does it and goes back to the window, saying across
+//! the screen how many went in or came out (`bag::Coined`).
 
 use bevy::asset::RenderAssetUsages;
 use bevy::picking::pointer::PointerId;
@@ -53,7 +66,7 @@ use bevy::ui_widgets::ScrollArea;
 use roundtown_net::Ask;
 use roundtown_net::bag as rules;
 
-use crate::bag::{Bag, BagSystems, Stack, Taken, TheirWorkings, Thing, Workings};
+use crate::bag::{Bag, BagSystems, Coined, Stack, Taken, TheirBanked, TheirWorkings, Thing, Workings};
 use crate::build::stand::{Stood, TheirPiece, owner_of};
 use crate::build::{PIECES, Piece, Stock};
 use crate::builder::{DIALOG_LAYER, Fill};
@@ -62,6 +75,7 @@ use crate::drive::{Driving, car_def};
 use crate::flick::{self, Coasting, Throw, Track, Way};
 use crate::hud::{self, DialogUp, TakesPress};
 use crate::island::Venue;
+use crate::lobby::Balance;
 use crate::net::Online;
 use crate::ui::{UiChanged, fill, ui};
 use crate::window::{self, Look};
@@ -110,6 +124,13 @@ const SAID_TEXT: f32 = 4.0;
 /// How long something asked of the server is waited for before the slots
 /// answer a tap again, in seconds, if it has said nothing.
 const WAIT_SECS: f32 = 1.5;
+/// The piggy bank's window, in shares of the short side of the screen: how
+/// wide what is under its title is, how big the coin there, and the number
+/// beside it, and how far under that its two buttons are.
+const PIGGY_WIDE: f32 = 52.0;
+const PIGGY_COIN: f32 = 11.0;
+const PIGGY_TEXT: f32 = 7.0;
+const PIGGY_GAP: f32 = 3.0;
 
 /// How the slots of a thing of `kind` are laid out: so many rows, so many
 /// slots across each side of it, and one side or two. Numbered along the
@@ -134,13 +155,23 @@ pub(crate) struct Open(pub(crate) Entity);
 /// Which box is up over the window.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 enum Step {
-    /// None: the slots.
+    /// None: the slots, or the piggy bank's coins.
     #[default]
     Slots,
     /// What to put into this slot is being chosen.
     Choosing { slot: usize },
     /// How many of this to put into this slot.
     Counting { slot: usize, kind: &'static str, count: u16 },
+    /// How many coins to put into the piggy bank, `into`, or take out.
+    Coins { into: bool, count: u32 },
+}
+
+/// What was in there as something was asked of the server: in the slots of
+/// what keeps things, or in the piggy bank, with your balance.
+#[derive(Clone, PartialEq, Debug)]
+enum Before {
+    Held(Workings),
+    Coins(u32, u32),
 }
 
 /// The window: the piece it is of, if it is up; which box is up over it;
@@ -150,7 +181,7 @@ enum Step {
 struct Chest {
     open: Option<Entity>,
     step: Step,
-    asked: Option<(f32, Workings)>,
+    asked: Option<(f32, Before)>,
 }
 
 /// What a press on something of the window's does.
@@ -159,6 +190,9 @@ pub(crate) enum Tap {
     Close,
     Slot(usize),
     Choose(&'static str),
+    /// Coins into the piggy bank, and out of it: how many is asked next.
+    Put,
+    Out,
     Less,
     More,
     Ok,
@@ -210,11 +244,13 @@ struct List;
 pub(crate) struct Bar;
 
 /// The pictures drawn for the window: the plus in an empty slot, and the
-/// minus and the plus either side of how many.
+/// minus and the plus either side of how many; and the coin, the balance's
+/// own (`hud::COIN_ICON`).
 #[derive(Resource)]
 struct Pictures {
     plus: Handle<Image>,
     minus: Handle<Image>,
+    coin: Handle<Image>,
 }
 
 /// A line across the screen saying what has come into your bag, and how
@@ -235,7 +271,7 @@ pub(crate) fn plugin(app: &mut App) {
         // window comes up the frame after.)
         .add_systems(
             Update,
-            (open, act, shut_when_gone, redraw, say_taken, clear_said)
+            (open, act, shut_when_gone, redraw, say_taken, say_coined, clear_said)
                 .chain()
                 .after(BagSystems)
                 .after(flick::coast)
@@ -243,10 +279,11 @@ pub(crate) fn plugin(app: &mut App) {
         );
 }
 
-fn draw_pictures(mut images: ResMut<Assets<Image>>, mut commands: Commands) {
+fn draw_pictures(mut images: ResMut<Assets<Image>>, assets: Res<AssetServer>, mut commands: Commands) {
     commands.insert_resource(Pictures {
         plus: images.add(sign(true)),
         minus: images.add(sign(false)),
+        coin: assets.load(hud::COIN_ICON),
     });
 }
 
@@ -406,16 +443,26 @@ fn most_of(has: &rules::Bag, kind: &str) -> u16 {
 }
 
 /// How many the bar says, at `share` along it, of from one to `most`.
-fn count_along(share: f32, most: u16) -> u16 {
+fn count_along(share: f32, most: u32) -> u32 {
     if most <= 1 {
         return 1;
     }
-    (1.0 + share.clamp(0.0, 1.0) * f32::from(most - 1)).round() as u16
+    (1.0 + f64::from(share.clamp(0.0, 1.0)) * f64::from(most - 1)).round() as u32
 }
 
 /// How far along the bar `count` of from one to `most` is.
-fn share_of(count: u16, most: u16) -> f32 {
-    if most <= 1 { 1.0 } else { f32::from(count.saturating_sub(1)) / f32::from(most - 1) }
+fn share_of(count: u32, most: u32) -> f32 {
+    if most <= 1 { 1.0 } else { (f64::from(count.saturating_sub(1)) / f64::from(most - 1)) as f32 }
+}
+
+/// The most coins that can go into a piggy bank with `banked` in it out of
+/// a balance of `balance`, `into`, or come out of it into that balance.
+fn most_coins(into: bool, banked: u32, balance: u32) -> u32 {
+    if into {
+        balance.min(rules::PIGGY_MOST.saturating_sub(banked))
+    } else {
+        banked.min(u32::MAX - balance)
+    }
 }
 
 /// Opens the window of what keeps things that was asked for, with nothing
@@ -424,7 +471,8 @@ fn open(mut opens: MessageReader<Open>, mut chest: ResMut<Chest>, mut up: ResMut
     let Some(&Open(piece)) = opens.read().last() else {
         return;
     };
-    if chest.open.is_some() || up.0 || !pieces.get(piece).is_ok_and(|of| rules::keeps(of.def.kind).is_some()) {
+    let opens = |kind: &str| rules::keeps(kind).is_some() || kind == rules::PIGGY;
+    if chest.open.is_some() || up.0 || !pieces.get(piece).is_ok_and(|of| opens(of.def.kind)) {
         return;
     }
     *chest = Chest {
@@ -452,9 +500,10 @@ fn act(
     mut chest: ResMut<Chest>,
     mut up: ResMut<DialogUp>,
     online: Res<Online>,
-    (mut bag, theirs): (ResMut<Bag>, Res<TheirWorkings>),
+    (mut bag, theirs, banks): (ResMut<Bag>, Res<TheirWorkings>, Res<TheirBanked>),
     pieces: Query<(&Piece, Option<&Stood>, Option<&TheirPiece>)>,
-    (mut asks, mut taken): (MessageWriter<Ask>, MessageWriter<Taken>),
+    mut balance: Query<&mut Balance, With<Player>>,
+    (mut asks, mut taken, mut coined): (MessageWriter<Ask>, MessageWriter<Taken>, MessageWriter<Coined>),
     mut commands: Commands,
 ) {
     let Some(piece) = chest.open else {
@@ -465,16 +514,11 @@ fn act(
     let Ok((of, mine, their)) = pieces.get(piece) else {
         return;
     };
-    let (Some((who, id)), Some(keeps)) = (owner_of(mine, their), rules::keeps(of.def.kind)) else {
+    let Some((who, id)) = owner_of(mine, their) else {
         return;
     };
     let now = time.elapsed_secs();
-    let held = theirs.of(&bag, who).cloned().unwrap_or_default();
-    // Something asked of the server is answered once what is in there has
-    // changed, or has been waited for long enough.
-    if chest.asked.as_ref().is_some_and(|(since, before)| *before != held || now - since > WAIT_SECS) {
-        chest.asked = None;
-    }
+    let me = online.me().map(|me| me.id);
     let mut taps = std::mem::take(&mut pressed.taps);
     if keyboard.just_pressed(KeyCode::Escape) {
         taps.push(match chest.step {
@@ -482,14 +526,69 @@ fn act(
             _ => Tap::Back,
         });
     }
+    if of.def.kind == rules::PIGGY {
+        let Ok(mut balance) = balance.single_mut() else {
+            return;
+        };
+        let banked = banks.of(&bag, who).of(id);
+        let before = Before::Coins(banked, balance.0);
+        if chest.asked.as_ref().is_some_and(|(since, was)| *was != before || now - since > WAIT_SECS) {
+            chest.asked = None;
+        }
+        // The bar, dragged: that many.
+        if let (Some(share), Step::Coins { into, count }) = (pressed.bar.take(), chest.step) {
+            let now = count_along(share, most_coins(into, banked, balance.0));
+            if now != count {
+                chest.step = Step::Coins { into, count: now };
+            }
+        }
+        for tap in taps {
+            let most = |into: bool| most_coins(into, banked, balance.0);
+            match (tap, chest.step) {
+                (Tap::Close, _) => {
+                    shut(&mut chest, &mut up);
+                    return;
+                }
+                (Tap::Back, Step::Coins { .. }) => chest.step = Step::Slots,
+                (Tap::Put, Step::Slots) if chest.asked.is_none() && most(true) > 0 => chest.step = Step::Coins { into: true, count: 1 },
+                (Tap::Out, Step::Slots) if chest.asked.is_none() && most(false) > 0 => chest.step = Step::Coins { into: false, count: 1 },
+                (Tap::Less, Step::Coins { into, count }) if count > 1 => chest.step = Step::Coins { into, count: count - 1 },
+                (Tap::More, Step::Coins { into, count }) if count < most(into) => chest.step = Step::Coins { into, count: count + 1 },
+                (Tap::Ok, Step::Coins { into, count }) => {
+                    let count = count.min(most(into));
+                    let done = count > 0
+                        && if into {
+                            bag.deposit(me, &mut asks, &mut coined, &mut balance, who, id, count)
+                        } else {
+                            bag.withdraw(me, &mut asks, &mut coined, &mut balance, who, id, count)
+                        };
+                    if done && me.is_some() {
+                        chest.asked = Some((now, before.clone()));
+                    }
+                    chest.step = Step::Slots;
+                }
+                _ => {}
+            }
+        }
+        return;
+    }
+    let Some(keeps) = rules::keeps(of.def.kind) else {
+        return;
+    };
+    let held = theirs.of(&bag, who).cloned().unwrap_or_default();
+    // Something asked of the server is answered once what is in there has
+    // changed, or has been waited for long enough.
+    let before = Before::Held(held.clone());
+    if chest.asked.as_ref().is_some_and(|(since, was)| *was != before || now - since > WAIT_SECS) {
+        chest.asked = None;
+    }
     // The bar, dragged: that many.
     if let (Some(share), Step::Counting { slot, kind, count }) = (pressed.bar.take(), chest.step) {
-        let now = count_along(share, most_of(&bag.has, kind));
+        let now = count_along(share, u32::from(most_of(&bag.has, kind))) as u16;
         if now != count {
             chest.step = Step::Counting { slot, kind, count: now };
         }
     }
-    let me = online.me().map(|me| me.id);
     for tap in taps {
         match (tap, chest.step) {
             (Tap::Close, _) => {
@@ -509,7 +608,7 @@ fn act(
                         Ok(Some(came)) => {
                             taken.write(Taken(came));
                         }
-                        Ok(None) => chest.asked = Some((now, held.clone())),
+                        Ok(None) => chest.asked = Some((now, before.clone())),
                         Err(_) => {}
                     }
                 }
@@ -529,7 +628,7 @@ fn act(
             (Tap::Ok, Step::Counting { slot, kind, count }) => {
                 let count = count.min(most_of(&bag.has, kind));
                 if count > 0 && bag.stow(me, &mut asks, who, id, slot, kind, count) && me.is_some() {
-                    chest.asked = Some((now, held.clone()));
+                    chest.asked = Some((now, before.clone()));
                 }
                 chest.step = Step::Slots;
             }
@@ -569,6 +668,7 @@ struct Shown {
     slots: Vec<Option<Stack>>,
     step: Step,
     offered: Vec<(&'static str, u16)>,
+    coins: Option<(u32, u32)>,
 }
 
 /// Puts the window up while it is open, and draws it again whenever what
@@ -577,10 +677,11 @@ struct Shown {
 #[allow(clippy::too_many_arguments)]
 fn redraw(
     chest: Res<Chest>,
-    (bag, theirs): (Res<Bag>, Res<TheirWorkings>),
+    (bag, theirs, banks): (Res<Bag>, Res<TheirWorkings>, Res<TheirBanked>),
     changed: Res<UiChanged>,
     roots: Query<Entity, With<Root>>,
     pieces: Query<(&Piece, Option<&Stood>, Option<&TheirPiece>)>,
+    balance: Query<&Balance, With<Player>>,
     (assets, stock, pictures): (Res<AssetServer>, Res<Stock>, Res<Pictures>),
     mut drawn: Local<Option<Shown>>,
     mut commands: Commands,
@@ -588,9 +689,10 @@ fn redraw(
     let open = chest.open.and_then(|piece| {
         let (of, mine, their) = pieces.get(piece).ok()?;
         let (who, id) = owner_of(mine, their)?;
-        Some((of.def.kind, theirs.of(&bag, who).cloned().unwrap_or_default(), id))
+        let coins = (of.def.kind == rules::PIGGY).then(|| (banks.of(&bag, who).of(id), balance.single().map_or(0, |balance| balance.0)));
+        Some((of.def.kind, theirs.of(&bag, who).cloned().unwrap_or_default(), id, coins))
     });
-    let Some((kind, held, id)) = open else {
+    let Some((kind, held, id, coins)) = open else {
         for root in &roots {
             commands.entity(root).despawn();
         }
@@ -604,12 +706,14 @@ fn redraw(
             choosable(&bag.has, food_only).into_iter().map(|(thing, count)| (thing.kind, count)).collect()
         }
         Step::Counting { kind, .. } => vec![(kind, most_of(&bag.has, kind))],
+        Step::Coins { .. } => Vec::new(),
     };
     let shown = Shown {
         kind,
         slots: held.slots(id).to_vec(),
         step: chest.step,
         offered,
+        coins,
     };
     let restyled = changed.is_changed() && !changed.is_added();
     if !restyled && !roots.is_empty() && drawn.as_ref() == Some(&shown) {
@@ -624,6 +728,7 @@ fn redraw(
         slots: held.slots(id),
         step: chest.step,
         has: &bag.has,
+        coins,
         assets: &assets,
         stock: &stock,
         pictures: &pictures,
@@ -631,12 +736,14 @@ fn redraw(
     draw(&mut commands, &view);
 }
 
-/// What the window is drawn from.
+/// What the window is drawn from; for a piggy bank, the coins in it and
+/// your balance.
 struct View<'a> {
     kind: &'static str,
     slots: &'a [Option<Stack>],
     step: Step,
     has: &'a rules::Bag,
+    coins: Option<(u32, u32)>,
     assets: &'a AssetServer,
     stock: &'a Stock,
     pictures: &'a Pictures,
@@ -706,6 +813,21 @@ fn draw(commands: &mut Commands, view: &View) {
         children![window::words(ui.words.bag.name(view.kind).to_string(), window::TITLE, colours.title)],
     ));
     commands.spawn((ChildOf(pane), window::cross(view.assets.load("icons/close.png"), Tap::Close)));
+    if let Some((banked, balance)) = view.coins {
+        piggy(commands, pane, view, banked, balance);
+        if let Step::Coins { into, count } = view.step {
+            let counted = Counted {
+                title: ui.words.storage.how_many_coins.clone(),
+                picture: view.pictures.coin.clone(),
+                name: ui.words.storage.coins.clone(),
+                ink: ui.colours.window.name,
+                count,
+                most: most_coins(into, banked, balance),
+            };
+            counting(commands, root, view, &counted);
+        }
+        return;
+    }
     let (rows, across, sides) = layout(view.kind).unwrap_or((1, 3, 1));
     let grid = commands
         .spawn((
@@ -748,10 +870,59 @@ fn draw(commands: &mut Commands, view: &View) {
         }
     }
     match view.step {
-        Step::Slots => {}
+        Step::Slots | Step::Coins { .. } => {}
         Step::Choosing { .. } => choosing(commands, root, view),
-        Step::Counting { kind, count, .. } => counting(commands, root, view, kind, count),
+        Step::Counting { kind, count, .. } => {
+            let counted = Counted {
+                title: ui.words.storage.how_many.clone(),
+                picture: picture_of(view, kind),
+                name: ui.words.bag.name(kind).to_string(),
+                ink: rules::thing(kind).map_or(ui.colours.window.name, |thing| ui.colours.bag.rarity(thing.rarity)),
+                count: u32::from(count),
+                most: u32::from(most_of(view.has, kind)),
+            };
+            counting(commands, root, view, &counted);
+        }
     }
+}
+
+/// What is under a piggy bank's title: the coin and how many coins are in
+/// it, large, and its two buttons, Put in, green, and Take out, each greyed
+/// while there is nothing to put in or take out.
+fn piggy(commands: &mut Commands, pane: Entity, view: &View, banked: u32, balance: u32) {
+    let ui = ui();
+    let words = &ui.words.storage;
+    commands.spawn((
+        ChildOf(pane),
+        Node {
+            min_width: Val::VMin(PIGGY_WIDE),
+            margin: UiRect::vertical(Val::VMin(UNDER_TITLE)),
+            column_gap: Val::VMin(2.0),
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            ..default()
+        },
+        Pickable::IGNORE,
+        children![
+            window::picture(view.pictures.coin.clone(), Val::VMin(PIGGY_COIN), Color::WHITE),
+            window::words(hud::money(banked), PIGGY_TEXT, ui.colours.window.name),
+        ],
+    ));
+    let able = |into: bool| most_coins(into, banked, balance) > 0;
+    commands.spawn((
+        ChildOf(pane),
+        Node {
+            justify_content: JustifyContent::Center,
+            column_gap: Val::VMin(PIGGY_GAP),
+            margin: UiRect::top(Val::VMin(PIGGY_GAP * 0.5)),
+            ..default()
+        },
+        Pickable::IGNORE,
+        children![
+            (Tap::Put, window::choice(words.put_in.clone(), if able(true) { Look::Yes } else { Look::Greyed })),
+            (Tap::Out, window::choice(words.take_out.clone(), if able(false) { Look::Plain } else { Look::Greyed })),
+        ],
+    ));
 }
 
 /// One slot: a square card, with a plus in it if it is empty, and the
@@ -954,16 +1125,28 @@ fn choosing(commands: &mut Commands, root: Entity, view: &View) {
     }
 }
 
-/// The box that asks how many ("How many?"): the thing's picture and its
-/// name in its rarity's colour; the number, a minus to its left and a plus
-/// to its right; the bar under them, as far along as the number is of
-/// all you have, to drag; and OK.
-fn counting(commands: &mut Commands, root: Entity, view: &View, kind: &'static str, count: u16) {
+/// What a box that asks how many is of: its title, the picture over the
+/// number and the name beside it, in its colour; and the number, of from
+/// one to the most.
+struct Counted {
+    title: String,
+    picture: Handle<Image>,
+    name: String,
+    ink: Color,
+    count: u32,
+    most: u32,
+}
+
+/// The box that asks how many ("How many?", "How many coins?"): the
+/// thing's picture and its name in its rarity's colour, or the coin and
+/// "Coins"; the number, a minus to its left and a plus to its right; the bar
+/// under them, as far along as the number is of all there is, to drag; and
+/// OK.
+fn counting(commands: &mut Commands, root: Entity, view: &View, counted: &Counted) {
     let ui = ui();
     let colours = ui.colours.window;
-    let inside = a_box(commands, root, 2, COUNT_WIDE, ui.words.storage.how_many.clone(), colours.title);
-    let most = most_of(view.has, kind);
-    let rarity = rules::thing(kind).map_or(colours.name, |thing| ui.colours.bag.rarity(thing.rarity));
+    let inside = a_box(commands, root, 2, COUNT_WIDE, counted.title.clone(), colours.title);
+    let (count, most) = (counted.count, counted.most);
     commands.spawn((
         ChildOf(inside),
         Node {
@@ -973,8 +1156,8 @@ fn counting(commands: &mut Commands, root: Entity, view: &View, kind: &'static s
         },
         Pickable::IGNORE,
         children![
-            window::picture(picture_of(view, kind), Val::VMin(COUNT_PICTURE), Color::WHITE),
-            window::words(ui.words.bag.name(kind).to_string(), window::NAME, rarity),
+            window::picture(counted.picture.clone(), Val::VMin(COUNT_PICTURE), Color::WHITE),
+            window::words(counted.name.clone(), window::NAME, counted.ink),
         ],
     ));
     let step = |commands: &mut Commands, row: Entity, tap: Tap, image: Handle<Image>, able: bool| {
@@ -1001,7 +1184,7 @@ fn counting(commands: &mut Commands, root: Entity, view: &View, kind: &'static s
             ..default()
         },
         Pickable::IGNORE,
-        children![window::words(count.to_string(), NUMBER_TEXT, colours.name)],
+        children![window::words(hud::money(count), NUMBER_TEXT, colours.name)],
     ));
     step(commands, row, Tap::More, view.pictures.plus.clone(), count < most);
     // The bar: its whole length, how far along the number is, and a knob
@@ -1075,6 +1258,19 @@ fn say_taken(mut taken: MessageReader<Taken>, mut commands: Commands) {
         let ui = ui();
         let words = fill(&ui.words.storage.added, &[("name", ui.words.bag.name(&stack.kind)), ("count", &stack.count.to_string())]);
         say(&mut commands, &words);
+    }
+}
+
+/// Says across the screen how many coins have gone into a piggy bank, or
+/// come out of one into your balance.
+fn say_coined(mut coined: MessageReader<Coined>, mut commands: Commands) {
+    for &Coined(by) in coined.read() {
+        let words = &ui().words.storage;
+        let (said, count) = if by < 0 { (&words.put, by.unsigned_abs()) } else { (&words.took, by.unsigned_abs()) };
+        if count > 0 {
+            let count = hud::money(u32::try_from(count).unwrap_or(u32::MAX));
+            say(&mut commands, &fill(said, &[("count", &count)]));
+        }
     }
 }
 

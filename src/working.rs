@@ -28,8 +28,9 @@
 //! over somewhere to sit (`rest`), a thing in the world (`bubble`): a chest
 //! over what keeps things (the cabinet, the dresser, the safe, the end table
 //! and the barbecue), which a tap opens (`storage`); a bulb over the lamp
-//! with shade and the chandelier, which a tap switches on or off ("toggle
-//! light on off rather than day/night"; `lamps`); and a drop of water over
+//! with shade, which a tap switches on or off ("toggle light on off rather
+//! than day/night"; `lamps`; the chandelier too, that evening, until Hajun
+//! had it always on: [`SWITCH_CHANDELIER`]); and a drop of water over
 //! the bathroom sink, which a tap runs ("turn faucet on for 5 second, water
 //! comes down the faucet, and water in the sink goes up and up until its
 //! full, and then the faucet turns off automatically"; [`fill_sinks`]).
@@ -93,6 +94,20 @@ const BELT_FRONT: f32 = 0.75;
 /// seconds. Mine.
 const FAN_TURN: f32 = 3.0;
 
+/// Whether the chandelier is switched on and off by hand, as the lamp with
+/// shade is: so it was the evening of 2026-11-27, at Hajun's ask, until he
+/// had it otherwise that night ("remove the chandelier interactivity and
+/// just make chandelier always on"): off, no bubble over it, and its light
+/// on, day and night (`lamps`). The rules still let it be switched
+/// (`roundtown_net::bag::SWITCHED`), and nothing asks to.
+pub(crate) const SWITCH_CHANDELIER: bool = false;
+
+/// Whether a light of `kind` is switched on and off by hand here: the lamp
+/// with shade, and the chandelier while [`SWITCH_CHANDELIER`] is on.
+pub(crate) fn switched_by_hand(kind: &str) -> bool {
+    rules::switched(kind) && (SWITCH_CHANDELIER || kind != "chandelier")
+}
+
 /// How near something there is a use for you have to be for its bubble to
 /// come up, in metres from the nearest edge of it along the ground, as near
 /// as somewhere to sit (`rest`); how near to keep it, so that it does not
@@ -118,7 +133,7 @@ const UNDER_THE_FOOT: f32 = 0.85;
 /// its back, under a rim 1.028 m up. Its floor is the hollow round the
 /// drain, 0.763 m up and 0.352 by 0.313 m, the flat back of the floor at
 /// 0.817 m from its back to 0.083 m behind its middle, and from there
-/// sloping up to 0.922 m at its front. It is full 2.8 cm under the rim.
+/// sloping up to 0.922 m at its front.
 const BASIN_X: (f32, f32) = (-1.426, -0.370);
 const BASIN_Z: (f32, f32) = (-0.659, 0.396);
 const HOLLOW: f32 = 0.763;
@@ -126,22 +141,131 @@ const HOLLOW_AREA: f32 = 0.352 * 0.313;
 const FLAT: f32 = 0.817;
 const FLAT_FROM: f32 = 0.083;
 const SLOPE_TOP: f32 = 0.922;
-const FULL: f32 = 1.0;
-/// Where the water comes out of the tap, under the end of its spout, and
-/// how thick it comes: as thick as three quarters of the spout (a third
-/// was a thin line from a step away).
-const SPOUT: Vec3 = Vec3::new(-0.898, 1.2786, 0.145);
-const STREAM_RADIUS: f32 = 0.024;
-/// How long the tap runs, filling the basin (Hajun's five seconds); how
-/// long it stands full; and how long it takes to drain away, so that it may
-/// be run again (mine, as is that it drains at all). The three are the
-/// server's [`rules::SINK_SECS`], one run at a time being told.
-const FILL_SECS: f32 = 5.0;
-const HOLD_SECS: f32 = 4.0;
-const DRAIN_SECS: f32 = 3.0;
+/// The bathtub's (`mybuilds/newones/bathtub.glb`, Hajun's, measured off
+/// it): its floor 0.17 m up, and the walls and its two ends sloping out
+/// from it to a rim 1.58 m up, so that over the floor the water is about
+/// 3 square metres across, and 4.6 nearly full.
+const TUB_FLOOR: f32 = 0.17;
+const TUB_AREA: f32 = 3.0;
+const TUB_WIDENS: f32 = 1.5;
 /// How fast water falls, in metres a second, every second: the last of it
 /// out of the tap as it is turned off, and the first as it is turned on.
 const FALLS: f32 = 9.8;
+
+/// Something whose tap is run (`rules::runs`), as its model is: the water's
+/// sheet, its middle and how far it reaches each way across and from front
+/// to back, its corners rounded so much, as big as the basin full and no
+/// bigger than the thing round it, so that the basin's own floor and walls
+/// hide whatever of it is not over water; and, where the walls round it are
+/// nearer the lower the water is, how far it reaches at each of some levels
+/// (`widths`, level by level, across and from front to back: between them
+/// as far as the levels between, and as big as the basin full with none);
+/// how high the water stands in the lowest of its floor and full; where the
+/// water comes out of the tap, under the end of its spout, and how thick it
+/// comes; how long the tap runs, filling it, how long it stands full and
+/// how long it drains, which together are the server's while for it
+/// (`rules::runs`); and how much water it holds up to a level, in cubic
+/// metres.
+struct Tap {
+    kind: &'static str,
+    middle: Vec2,
+    reach: Vec2,
+    round: f32,
+    widths: &'static [(f32, Vec2)],
+    empty: f32,
+    full: f32,
+    spout: Vec3,
+    stream: f32,
+    fill: f32,
+    hold: f32,
+    drain: f32,
+    volume: fn(f32) -> f32,
+}
+
+/// The sink: full 2.8 cm under its rim; its stream as thick as three
+/// quarters of the spout (a third was a thin line from a step away); five
+/// seconds running (Hajun's), four full and three draining (mine, as is that
+/// it drains at all).
+const SINK: Tap = Tap {
+    kind: rules::SINK,
+    middle: Vec2::new((BASIN_X.0 + BASIN_X.1) * 0.5, (BASIN_Z.0 + BASIN_Z.1) * 0.5),
+    reach: Vec2::new((BASIN_X.1 - BASIN_X.0) * 0.5, (BASIN_Z.1 - BASIN_Z.0) * 0.5),
+    round: 0.0,
+    widths: &[],
+    empty: HOLLOW,
+    full: 1.0,
+    spout: Vec3::new(-0.898, 1.2786, 0.145),
+    stream: 0.024,
+    fill: 5.0,
+    hold: 4.0,
+    drain: 3.0,
+    volume: sink_volume,
+};
+
+/// The bathtub (since later on 2026-11-27; Hajun: "make it similar to the
+/// sink -> it poors water until the tub is full, and it stops pooring when
+/// its full, and then it drains after a while"): its tap at the middle of
+/// its back, 2.14 m up over its floor; full 30 cm under its rim; eight
+/// seconds running, eight full and four draining (mine). Its walls slope in
+/// toward its floor, inside and out, so that the water is narrower the
+/// lower it is: at each level, as far as a third of the way into the wall
+/// round it from its inner face, or nearer, measured off the model (drawn
+/// as big as it is full, it showed through the tub's sides low down).
+const BATH: Tap = Tap {
+    kind: rules::BATH,
+    middle: Vec2::new(0.12, 0.0),
+    reach: Vec2::new(1.9, 0.76),
+    round: 0.6,
+    widths: &[
+        (0.175, Vec2::new(1.43, 0.66)),
+        (0.2, Vec2::new(1.6, 0.64)),
+        (0.25, Vec2::new(1.62, 0.64)),
+        (0.35, Vec2::new(1.65, 0.65)),
+        (0.5, Vec2::new(1.69, 0.67)),
+        (0.7, Vec2::new(1.75, 0.69)),
+        (0.9, Vec2::new(1.8, 0.72)),
+        (1.1, Vec2::new(1.86, 0.74)),
+        (1.28, Vec2::new(1.91, 0.76)),
+    ],
+    empty: TUB_FLOOR,
+    full: 1.28,
+    spout: Vec3::new(0.106, 2.142, 0.43),
+    stream: 0.028,
+    fill: 8.0,
+    hold: 8.0,
+    drain: 4.0,
+    volume: tub_volume,
+};
+
+/// Everything there is whose tap is run.
+const TAPS: [&Tap; 2] = [&SINK, &BATH];
+
+/// The tap of a thing of `kind`, if it has one.
+fn tap_of(kind: &str) -> Option<&'static Tap> {
+    TAPS.into_iter().find(|tap| tap.kind == kind)
+}
+
+impl Tap {
+    /// How far the water reaches each way with it up to `level`, as a share
+    /// of how far its sheet reaches drawn as it is made ([`Tap::widths`]).
+    fn spread_at(&self, level: f32) -> Vec2 {
+        let (Some(&(first, low)), Some(&(_, high))) = (self.widths.first(), self.widths.last()) else {
+            return Vec2::ONE;
+        };
+        let reach = if level <= first {
+            low
+        } else {
+            self.widths
+                .windows(2)
+                .find(|pair| level <= pair[1].0)
+                .map_or(high, |pair| {
+                    let share = (level - pair[0].0) / (pair[1].0 - pair[0].0);
+                    pair[0].1.lerp(pair[1].1, share)
+                })
+        };
+        reach / self.reach
+    }
+}
 
 pub(crate) fn plugin(app: &mut App) {
     app.add_systems(Startup, make_water).add_systems(
@@ -289,8 +413,11 @@ pub(crate) enum Use {
     Open,
     /// Switched on or off: a light.
     Switch,
-    /// Its tap run: the sink.
+    /// Its tap run: the sink and the bathtub.
     Run,
+    /// Opened, to put coins in and take them out: the piggy bank
+    /// (`storage`, since later on 2026-11-27).
+    Bank,
 }
 
 impl Use {
@@ -298,9 +425,11 @@ impl Use {
     pub(crate) fn of(kind: &str) -> Option<Self> {
         if rules::keeps(kind).is_some() {
             Some(Use::Open)
-        } else if rules::switched(kind) {
+        } else if kind == rules::PIGGY {
+            Some(Use::Bank)
+        } else if switched_by_hand(kind) {
             Some(Use::Switch)
-        } else if kind == rules::SINK {
+        } else if rules::runs(kind).is_some() {
             Some(Use::Run)
         } else {
             None
@@ -313,6 +442,7 @@ impl Use {
             Use::Open => Says::Store,
             Use::Switch => Says::Light,
             Use::Run => Says::Water,
+            Use::Bank => Says::Piggy,
         }
     }
 }
@@ -343,7 +473,7 @@ fn keep_switches(
         return;
     }
     for (light, piece, mine, their, lit) in &mut lights {
-        if !rules::switched(piece.def.kind) {
+        if !switched_by_hand(piece.def.kind) {
             continue;
         }
         let on = owner_of(mine, their).is_some_and(|(who, id)| theirs.of(&bag, who).is_some_and(|works| works.is_lit(id)));
@@ -475,7 +605,7 @@ fn use_it(
             continue;
         };
         match Use::of(of.def.kind) {
-            Some(Use::Open) => {
+            Some(Use::Open | Use::Bank) => {
                 opens.write(crate::storage::Open(piece));
             }
             Some(Use::Switch) => {
@@ -512,12 +642,13 @@ struct Basin;
 #[derive(Component)]
 struct Stream;
 
-/// What the water is drawn with: a square, laid flat and made as big as the
-/// basin, and a round stick, made as long as the stream and as thick, each
-/// see-through; made once.
+/// What the water is drawn with: a sheet for each thing whose tap is run,
+/// laid flat and as big as its basin full ([`TAPS`], in their order), and a
+/// round stick, made as long as the stream and as thick, each see-through;
+/// made once.
 #[derive(Resource)]
 struct WaterLooks {
-    flat: Handle<Mesh>,
+    sheets: Vec<Handle<Mesh>>,
     stick: Handle<Mesh>,
     still: Handle<StandardMaterial>,
     falling: Handle<StandardMaterial>,
@@ -534,17 +665,61 @@ fn make_water(mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<Sta
         ..default()
     };
     commands.insert_resource(WaterLooks {
-        flat: meshes.add(Plane3d::new(Vec3::Y, Vec2::splat(0.5))),
+        sheets: TAPS.iter().map(|tap| meshes.add(sheet(tap.reach, tap.round))).collect(),
         stick: meshes.add(Cylinder::new(1.0, 1.0)),
         still: materials.add(water(0.55, 0.78, 0.95, 0.62)),
         falling: materials.add(water(0.85, 0.94, 1.0, 0.85)),
     });
 }
 
+/// The corners of a flat sheet reaching `reach` each way from its middle,
+/// across and from front to back, its corners rounded by `round`, in order
+/// round it.
+fn sheet_outline(reach: Vec2, round: f32) -> Vec<Vec2> {
+    const STEPS: usize = 8;
+    let round = round.min(reach.x).min(reach.y).max(0.0);
+    let inner = reach - Vec2::splat(round);
+    let mut outline = Vec::new();
+    for (corner, from) in [(Vec2::new(1.0, 1.0), 0.0), (Vec2::new(-1.0, 1.0), 90.0), (Vec2::new(-1.0, -1.0), 180.0), (Vec2::new(1.0, -1.0), 270.0)] {
+        let middle = inner * corner;
+        if round <= 0.0 {
+            outline.push(reach * corner);
+            continue;
+        }
+        for step in 0..=STEPS {
+            let turn = (from + 90.0 * step as f32 / STEPS as f32).to_radians();
+            outline.push(middle + Vec2::from_angle(turn) * round);
+        }
+    }
+    outline
+}
+
+/// A flat sheet facing up, as [`sheet_outline`] has it: a fan of triangles
+/// from its middle.
+fn sheet(reach: Vec2, round: f32) -> Mesh {
+    let outline = sheet_outline(reach, round);
+    let mut positions = vec![[0.0, 0.0, 0.0]];
+    positions.extend(outline.iter().map(|corner| [corner.x, 0.0, corner.y]));
+    let count = positions.len();
+    let normals = vec![[0.0, 1.0, 0.0]; count];
+    let uvs: Vec<[f32; 2]> = positions.iter().map(|at| [at[0] / reach.x * 0.5 + 0.5, at[2] / reach.y * 0.5 + 0.5]).collect();
+    let mut indices = Vec::new();
+    for at in 1..count as u32 {
+        let next = if at + 1 == count as u32 { 1 } else { at + 1 };
+        // Wound to face up.
+        indices.extend_from_slice(&[0, next, at]);
+    }
+    Mesh::new(bevy::mesh::PrimitiveTopology::TriangleList, bevy::asset::RenderAssetUsages::default())
+        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
+        .with_inserted_indices(bevy::mesh::Indices::U32(indices))
+}
+
 /// How much water there is in the sink's basin with it up to `level`, in
 /// cubic metres: in the hollow round the drain, then over the flat back of
 /// its floor and up the slope to its front, then over all of it.
-fn volume(level: f32) -> f32 {
+fn sink_volume(level: f32) -> f32 {
     let wide = BASIN_X.1 - BASIN_X.0;
     let hollow = HOLLOW_AREA * (level.min(FLAT) - HOLLOW).max(0.0);
     if level <= FLAT {
@@ -558,15 +733,23 @@ fn volume(level: f32) -> f32 {
     hollow + up_the_slope + over_all
 }
 
-/// How high the water stands with `share` of a full basin in it: as the
-/// tap runs at the one rate, it rises quickly in the hollow and slowly once
-/// it is over the whole floor.
-fn level_at(share: f32) -> f32 {
-    let wanted = volume(FULL) * share.clamp(0.0, 1.0);
-    let (mut low, mut high) = (HOLLOW, FULL);
+/// How much water there is in the bathtub up to `level`, in cubic metres:
+/// the water as wide as its floor at first and wider the higher it stands,
+/// the walls sloping out.
+fn tub_volume(level: f32) -> f32 {
+    let deep = (level - TUB_FLOOR).max(0.0);
+    TUB_AREA * deep + 0.5 * TUB_WIDENS * deep * deep
+}
+
+/// How high the water stands in what `tap` is of with `share` of it full:
+/// as the tap runs at the one rate, it rises quickly where its floor is
+/// narrow and slowly where it is wide.
+fn level_at(tap: &Tap, share: f32) -> f32 {
+    let wanted = (tap.volume)(tap.full) * share.clamp(0.0, 1.0);
+    let (mut low, mut high) = (tap.empty, tap.full);
     for _ in 0..24 {
         let middle = (low + high) * 0.5;
-        if volume(middle) < wanted {
+        if (tap.volume)(middle) < wanted {
             low = middle;
         } else {
             high = middle;
@@ -575,28 +758,29 @@ fn level_at(share: f32) -> f32 {
     (low + high) * 0.5
 }
 
-/// How a sink is, `secs` after its tap was run: how high the water stands,
-/// and where the water coming out of the tap reaches between, top and
-/// bottom, if any is: running five seconds and filling the basin; the last
-/// of it falling as it is turned off; full; draining away.
-fn sink_at(secs: f32) -> (f32, Option<(f32, f32)>) {
-    if secs < FILL_SECS {
-        let level = level_at(secs / FILL_SECS);
+/// How what `tap` is of is, `secs` after its tap was run: how high the
+/// water stands, and where the water coming out of the tap reaches between,
+/// top and bottom, if any is: running and filling it; the last of it
+/// falling as it is turned off; full; draining away.
+fn run_at(tap: &Tap, secs: f32) -> (f32, Option<(f32, f32)>) {
+    if secs < tap.fill {
+        let level = level_at(tap, secs / tap.fill);
         // The first of it falls from the tap.
-        let head = SPOUT.y - 0.5 * FALLS * secs * secs;
-        return (level, Some((SPOUT.y, head.max(level.max(HOLLOW)))));
+        let head = tap.spout.y - 0.5 * FALLS * secs * secs;
+        return (level, Some((tap.spout.y, head.max(level.max(tap.empty)))));
     }
-    let after = secs - FILL_SECS;
-    if after < HOLD_SECS {
-        let tail = SPOUT.y - 0.5 * FALLS * after * after;
-        return (FULL, (tail > FULL).then_some((tail, FULL)));
+    let after = secs - tap.fill;
+    if after < tap.hold {
+        let tail = tap.spout.y - 0.5 * FALLS * after * after;
+        return (tap.full, (tail > tap.full).then_some((tail, tap.full)));
     }
-    let draining = ((after - HOLD_SECS) / DRAIN_SECS).clamp(0.0, 1.0);
-    (level_at(1.0 - draining), None)
+    let draining = ((after - tap.hold) / tap.drain).clamp(0.0, 1.0);
+    (level_at(tap, 1.0 - draining), None)
 }
 
-/// A sink run by anyone in your channel, as the server says (`bag::Ran`):
-/// filling from now, unless it is already, run here a moment ago.
+/// A sink or a bathtub run by anyone in your channel, as the server says
+/// (`bag::Ran`): filling from now, unless it is already, run here a moment
+/// ago.
 #[allow(clippy::type_complexity)]
 fn hear_runs(
     mut ran: MessageReader<Ran>,
@@ -607,24 +791,24 @@ fn hear_runs(
     for &Ran { who, id } in ran.read() {
         let found = sinks
             .iter()
-            .find(|(_, piece, mine, theirs, _)| piece.def.kind == rules::SINK && owner_of(*mine, *theirs) == Some((who, id)));
+            .find(|(_, piece, mine, theirs, _)| tap_of(piece.def.kind).is_some() && owner_of(*mine, *theirs) == Some((who, id)));
         if let Some((sink, .., false)) = found {
             commands.entity(sink).insert(Running { since: time.elapsed_secs() });
         }
     }
 }
 
-/// Fills every sink whose tap has been run, as far as it has got
-/// ([`sink_at`]): the water in its basin a flat sheet over the whole of it,
-/// as high as it stands, the basin's floor and walls hiding what of it is
-/// under them; and the water from its tap a stick from the spout down to
-/// it. Gone once the sink has drained, or is gone itself. Only what has
-/// changed is written.
+/// Fills every sink and bathtub whose tap has been run, as far as it has
+/// got ([`run_at`]): the water in its basin a flat sheet over the whole of
+/// it, as high as it stands, the basin's floor and walls hiding what of it
+/// is under them; and the water from its tap a stick from the spout down to
+/// it. Gone once it has drained, or is gone itself. Only what has changed is
+/// written.
 #[allow(clippy::type_complexity)]
 fn fill_sinks(
     time: Res<Time>,
     looks: Option<Res<WaterLooks>>,
-    sinks: Query<(Entity, &Transform, &Running), Without<Water>>,
+    sinks: Query<(Entity, &Piece, &Transform, &Running), Without<Water>>,
     mut waters: Query<(Entity, &Water, &mut Transform, &Children), Without<Running>>,
     mut basins: Query<(&mut Transform, &mut Visibility), (With<Basin>, Without<Water>, Without<Stream>, Without<Running>)>,
     mut streams: Query<(&mut Transform, &mut Visibility), (With<Stream>, Without<Water>, Without<Basin>, Without<Running>)>,
@@ -640,19 +824,22 @@ fn fill_sinks(
             commands.entity(water).despawn();
         }
     }
-    for (sink, place, running) in &sinks {
+    for (sink, piece, place, running) in &sinks {
+        let (Some(tap), Some(sheet_of)) = (tap_of(piece.def.kind), TAPS.iter().position(|tap| tap.kind == piece.def.kind)) else {
+            commands.entity(sink).remove::<Running>();
+            continue;
+        };
         let secs = now - running.since;
-        if secs >= rules::SINK_SECS as f32 {
+        if secs >= tap.fill + tap.hold + tap.drain {
             commands.entity(sink).remove::<Running>();
             continue;
         }
-        let (level, falling) = sink_at(secs);
-        let middle = Vec3::new((BASIN_X.0 + BASIN_X.1) * 0.5, level, (BASIN_Z.0 + BASIN_Z.1) * 0.5);
-        let size = Vec3::new(BASIN_X.1 - BASIN_X.0, 1.0, BASIN_Z.1 - BASIN_Z.0);
-        let sheet = Transform::from_translation(middle).with_scale(size);
+        let (level, falling) = run_at(tap, secs);
+        let spread = tap.spread_at(level);
+        let sheet = Transform::from_xyz(tap.middle.x, level, tap.middle.y).with_scale(Vec3::new(spread.x, 1.0, spread.y));
         let stick = falling.map(|(top, bottom)| {
             let long = (top - bottom).max(0.001);
-            Transform::from_translation(SPOUT.with_y((top + bottom) * 0.5)).with_scale(Vec3::new(STREAM_RADIUS, long, STREAM_RADIUS))
+            Transform::from_translation(tap.spout.with_y((top + bottom) * 0.5)).with_scale(Vec3::new(tap.stream, long, tap.stream))
         });
         let shown = |seen: bool| if seen { Visibility::Inherited } else { Visibility::Hidden };
         let Some((_, _, mut at, children)) = waters.iter_mut().find(|(_, water, ..)| water.0 == sink) else {
@@ -663,7 +850,7 @@ fn fill_sinks(
                 *place,
                 Visibility::Hidden,
                 children![
-                    (Basin, Mesh3d(looks.flat.clone()), MeshMaterial3d(looks.still.clone()), sheet, Visibility::Hidden, NotShadowCaster),
+                    (Basin, Mesh3d(looks.sheets[sheet_of].clone()), MeshMaterial3d(looks.still.clone()), sheet, Visibility::Hidden, NotShadowCaster),
                     (Stream, Mesh3d(looks.stick.clone()), MeshMaterial3d(looks.falling.clone()), stick.unwrap_or_default(), Visibility::Hidden, NotShadowCaster),
                 ],
             ));
@@ -673,7 +860,7 @@ fn fill_sinks(
         for &part in children {
             if let Ok((mut at, mut seen)) = basins.get_mut(part) {
                 at.set_if_neq(sheet);
-                seen.set_if_neq(shown(level > HOLLOW + 0.002));
+                seen.set_if_neq(shown(level > tap.empty + 0.002));
             }
             if let Ok((mut at, mut seen)) = streams.get_mut(part) {
                 if let Some(stick) = stick {
@@ -759,12 +946,19 @@ mod tests {
     }
 
     #[test]
-    fn what_is_used_is_what_keeps_things_the_two_lights_and_the_sink() {
+    fn what_is_used_is_what_keeps_things_the_lamp_with_shade_and_the_sink() {
         for kind in ["cabinet", "dresser", "safe", "end_table", "barbecue"] {
             assert_eq!(Use::of(kind), Some(Use::Open), "{kind}");
         }
+        // The piggy bank keeps coins, in a window of its own.
+        assert_eq!(Use::of(rules::PIGGY), Some(Use::Bank));
+        assert_eq!(Use::Bank.says(), Says::Piggy);
         assert_eq!(Use::of("lamp_with_shade"), Some(Use::Switch));
-        assert_eq!(Use::of("chandelier"), Some(Use::Switch));
+        // The chandelier is always on, with nothing to use it for (Hajun:
+        // "remove the chandelier interactivity").
+        assert!(!SWITCH_CHANDELIER);
+        assert_eq!(Use::of("chandelier"), None);
+        assert!(!switched_by_hand("chandelier") && switched_by_hand("lamp_with_shade"));
         assert_eq!(Use::of("bathroom_sink"), Some(Use::Run));
         assert_eq!(Use::of("treadmill"), None);
         assert_eq!(Use::of("streetlamp"), None);
@@ -811,79 +1005,174 @@ mod tests {
     }
 
     #[test]
-    fn the_sink_fills_in_five_seconds_stands_full_and_drains_and_its_tap_runs_while_it_fills() {
-        // The three together are what the server waits before telling of
-        // another run.
-        assert!((FILL_SECS + HOLD_SECS + DRAIN_SECS - rules::SINK_SECS as f32).abs() < 1e-6);
-        // Empty to begin with, and full at the end of the five seconds,
-        // rising all the while.
-        assert!((level_at(0.0) - HOLLOW).abs() < 1e-3 && (level_at(1.0) - FULL).abs() < 1e-3);
-        let mut last = 0.0;
-        for step in 0..=50 {
-            let (level, falling) = sink_at(step as f32 * 0.1);
-            assert!(level >= last - 1e-4, "{step}");
-            last = level;
-            // The tap runs from the spout down to the water, or the floor,
-            // the first of it falling from the spout as it is turned on.
-            let (top, bottom) = falling.unwrap();
-            assert_eq!(top, SPOUT.y);
-            assert!(bottom >= level.max(HOLLOW) - 1e-4 && bottom <= top, "{step}: {bottom} {top}");
-            // It falls the half metre to the basin in three tenths of a
-            // second.
-            if step > 3 {
-                assert!((bottom - level.max(HOLLOW)).abs() < 1e-4, "{step}: reaches the water");
+    fn what_has_a_tap_fills_stands_full_and_drains_and_its_tap_runs_while_it_fills() {
+        // The sink in Hajun's five seconds, the bathtub in eight; each as
+        // long in all as the server waits before telling of another run.
+        assert_eq!((SINK.fill, BATH.fill), (5.0, 8.0));
+        for tap in TAPS {
+            let whole = tap.fill + tap.hold + tap.drain;
+            assert_eq!(rules::runs(tap.kind), Some(f64::from(whole)), "{}", tap.kind);
+            assert!(tap_of(tap.kind).is_some() && Use::of(tap.kind) == Some(Use::Run));
+            // Empty to begin with, and full at the end of its fill, rising
+            // all the while.
+            assert!((level_at(tap, 0.0) - tap.empty).abs() < 1e-3 && (level_at(tap, 1.0) - tap.full).abs() < 1e-3, "{}", tap.kind);
+            let mut last = 0.0;
+            let steps = (tap.fill * 10.0) as u32;
+            for step in 0..=steps {
+                let (level, falling) = run_at(tap, step as f32 * 0.1);
+                assert!(level >= last - 1e-4, "{}: {step}", tap.kind);
+                last = level;
+                // The tap runs from the spout down to the water, or the
+                // floor, the first of it falling from the spout as it is
+                // turned on, and there within seven tenths of a second.
+                let (top, bottom) = falling.unwrap();
+                assert_eq!(top, tap.spout.y);
+                assert!(bottom >= level.max(tap.empty) - 1e-4 && bottom <= top, "{}: {step}: {bottom} {top}", tap.kind);
+                if step > 7 {
+                    assert!((bottom - level.max(tap.empty)).abs() < 1e-4, "{}: {step}: reaches the water", tap.kind);
+                }
             }
+            // As it is turned off the last of the water falls, and it is gone
+            // in a moment; full meanwhile.
+            let (level, tail) = run_at(tap, tap.fill + 0.05);
+            assert_eq!(level, tap.full);
+            assert!(tail.is_some_and(|(top, bottom)| top < tap.spout.y && bottom == tap.full));
+            assert_eq!(run_at(tap, tap.fill + 1.0), (tap.full, None));
+            // Draining, lower and lower, until there is none.
+            let half = run_at(tap, tap.fill + tap.hold + tap.drain * 0.5);
+            let none = run_at(tap, whole - 0.001);
+            assert!(half.0 < tap.full && half.0 > tap.empty && half.1.is_none(), "{}", tap.kind);
+            assert!(none.0 < tap.empty + 0.01, "{}", tap.kind);
         }
-        // It rises fastest in the hollow round the drain, and slowest over
-        // the whole floor.
-        let rise = |at: f32| sink_at(at + 0.1).0 - sink_at(at).0;
+        // The sink rises fastest in the hollow round its drain, and slowest
+        // over its whole floor.
+        let rise = |at: f32| run_at(&SINK, at + 0.1).0 - run_at(&SINK, at).0;
         assert!(rise(0.0) > rise(4.5));
-        // As it is turned off the last of the water falls, and it is gone
-        // in a moment; full meanwhile.
-        let (level, tail) = sink_at(FILL_SECS + 0.05);
-        assert_eq!(level, FULL);
-        assert!(tail.is_some_and(|(top, bottom)| top < SPOUT.y && bottom == FULL));
-        assert_eq!(sink_at(FILL_SECS + 1.0), (FULL, None));
-        // Draining, lower and lower, until there is none.
-        let (half, none) = (sink_at(FILL_SECS + HOLD_SECS + DRAIN_SECS * 0.5), sink_at(rules::SINK_SECS as f32 - 0.001));
-        assert!(half.0 < FULL && half.0 > HOLLOW && half.1.is_none());
-        assert!(none.0 < HOLLOW + 0.01);
-        // Full is under the basin's rim, which is 1.028 m up.
-        assert!(FULL < 1.028);
+        // The sheet the water is drawn on: as many corners as it needs, the
+        // sink's square and the bathtub's rounded, reaching as far as each
+        // is said to.
+        assert_eq!(sheet_outline(SINK.reach, SINK.round).len(), 4);
+        let rounded = sheet_outline(BATH.reach, BATH.round);
+        assert!(rounded.len() > 20);
+        for corner in &rounded {
+            assert!(corner.x.abs() <= BATH.reach.x + 1e-4 && corner.y.abs() <= BATH.reach.y + 1e-4, "{corner}");
+        }
+        let faces_up = sheet(BATH.reach, BATH.round);
+        assert_eq!(faces_up.count_vertices(), rounded.len() + 1);
+    }
+
+    /// The model of `kind` as the game has it: its triangles.
+    fn model(kind: &str) -> Vec<[Vec3; 3]> {
+        let def = crate::build::PIECES.iter().find(|def| def.kind == kind).unwrap();
+        crate::island::glb::read(&format!("{}/{}.glb", def.dir, def.file)).into_iter().flat_map(|part| part.triangles).collect()
+    }
+
+    /// The highest surface of `triangles` over (`x`, `z`), if any.
+    fn top_of(triangles: &[[Vec3; 3]], x: f32, z: f32) -> Option<f32> {
+        triangles
+            .iter()
+            .filter_map(|[a, b, c]| {
+                let (a2, b2, c2, at) = (a.xz(), b.xz(), c.xz(), Vec2::new(x, z));
+                let area = (b2 - a2).perp_dot(c2 - a2);
+                if area.abs() < 1e-9 {
+                    return None;
+                }
+                let u = (b2 - at).perp_dot(c2 - at) / area;
+                let v = (c2 - at).perp_dot(a2 - at) / area;
+                let w = 1.0 - u - v;
+                (u >= -1e-6 && v >= -1e-6 && w >= -1e-6).then_some(u * a.y + v * b.y + w * c.y)
+            })
+            .reduce(f32::max)
     }
 
     #[test]
     fn the_basin_and_the_tap_are_where_the_sink_s_model_has_them() {
         // Read off the model as the game has it: the basin's floor under its
         // middle, its rim round it, and the spout's end over the hollow.
-        let def = crate::build::PIECES.iter().find(|def| def.kind == rules::SINK).unwrap();
-        let triangles: Vec<[Vec3; 3]> = crate::island::glb::read(&format!("{}/{}.glb", def.dir, def.file))
-            .into_iter()
-            .flat_map(|part| part.triangles)
-            .collect();
-        let top = |x: f32, z: f32| {
-            triangles
-                .iter()
-                .filter_map(|[a, b, c]| {
-                    let (a2, b2, c2, at) = (a.xz(), b.xz(), c.xz(), Vec2::new(x, z));
-                    let area = (b2 - a2).perp_dot(c2 - a2);
-                    if area.abs() < 1e-9 {
-                        return None;
-                    }
-                    let u = (b2 - at).perp_dot(c2 - at) / area;
-                    let v = (c2 - at).perp_dot(a2 - at) / area;
-                    let w = 1.0 - u - v;
-                    (u >= -1e-6 && v >= -1e-6 && w >= -1e-6).then(|| u * a.y + v * b.y + w * c.y)
-                })
-                .reduce(f32::max)
-        };
+        let triangles = model(rules::SINK);
+        let top = |x: f32, z: f32| top_of(&triangles, x, z);
         // The rim, just outside the basin, and its floor inside it.
         assert!(top(BASIN_X.0 - 0.05, 0.0).is_some_and(|rim| (rim - 1.028).abs() < 0.01));
         let floor = top((BASIN_X.0 + BASIN_X.1) * 0.5, BASIN_Z.0 + 0.02).unwrap();
         assert!((floor - SLOPE_TOP).abs() < 0.02, "{floor}");
         assert!(top(-0.8, 0.3).is_some_and(|back| (back - FLAT).abs() < 0.01 || (back - HOLLOW).abs() < 0.01));
-        // The spout's end, over the hollow round the drain.
-        let spout = top(SPOUT.x, SPOUT.z).unwrap();
-        assert!(spout > SPOUT.y && spout < SPOUT.y + 0.1, "{spout}");
+        // The spout's end, over the hollow round the drain; full under the
+        // rim.
+        let spout = top(SINK.spout.x, SINK.spout.z).unwrap();
+        assert!(spout > SINK.spout.y && spout < SINK.spout.y + 0.1, "{spout}");
+        assert!(SINK.full < 1.028);
+    }
+
+    /// Every surface of `triangles` over (`x`, `z`), as high as each is.
+    fn surfaces_over(triangles: &[[Vec3; 3]], x: f32, z: f32) -> Vec<f32> {
+        triangles
+            .iter()
+            .filter_map(|[a, b, c]| {
+                let (a2, b2, c2, at) = (a.xz(), b.xz(), c.xz(), Vec2::new(x, z));
+                let area = (b2 - a2).perp_dot(c2 - a2);
+                if area.abs() < 1e-9 {
+                    return None;
+                }
+                let u = (b2 - at).perp_dot(c2 - at) / area;
+                let v = (c2 - at).perp_dot(a2 - at) / area;
+                let w = 1.0 - u - v;
+                (u >= -1e-6 && v >= -1e-6 && w >= -1e-6).then_some(u * a.y + v * b.y + w * c.y)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_bathtub_s_water_is_inside_its_walls_at_every_level_and_its_tap_over_its_floor() {
+        let triangles = model(rules::BATH);
+        let top = |at: Vec2| top_of(&triangles, at.x, at.y);
+        // Whether a point is inside the tub's solid: an odd number of its
+        // surfaces over it.
+        let solid = |at: Vec2, level: f32| surfaces_over(&triangles, at.x, at.y).iter().filter(|&&y| y > level).count() % 2 == 1;
+        // The edge of the water, at every level it stands at, is inside the
+        // tub's walls, never short of their inner face nor out past their
+        // outer one: hidden in them from in front, from above and from the
+        // side. Looked at all the way round, but toward the tap, whose pipe
+        // is in the way, along the way out of the middle to each corner of
+        // the outline as it is drawn there.
+        let outline = sheet_outline(BATH.reach, BATH.round);
+        for step in 0..=56 {
+            let level = BATH.empty + 0.005 + step as f32 * 0.02;
+            let level = level.min(BATH.full);
+            let spread = BATH.spread_at(level);
+            for corner in &outline {
+                let edge = *corner * spread;
+                let way = edge.normalize();
+                if way.y > 0.5 {
+                    continue;
+                }
+                // Just in from the edge is in the wall; and so is just out
+                // from it, the wall going on further out.
+                let (inside, outside) = (BATH.middle + way * (edge.length() - 0.01), BATH.middle + way * (edge.length() + 0.01));
+                assert!(solid(inside, level) && solid(outside, level), "at {level:.3}, {edge}: not in the wall");
+                // And all the way in from it to the middle is water, until
+                // the wall begins.
+                let open = (1..20).map(|n| BATH.middle + way * edge.length() * n as f32 / 40.0).all(|at| !solid(at, level));
+                assert!(open, "at {level:.3}, {edge}: the wall reaches in past halfway");
+            }
+        }
+        assert!(top(BATH.middle).is_some_and(|floor| (floor - TUB_FLOOR).abs() < 0.02));
+        // And all of its floor is under the water, full: the floor toward
+        // each end and each side, a little in from the sheet's edge (the
+        // sides looked at off the middle, where the spout hangs over).
+        for edge in [Vec2::new(1.0, 0.0), Vec2::new(-1.0, 0.0), Vec2::new(-0.3, 0.6), Vec2::new(-0.3, -0.6)] {
+            let at = BATH.middle + edge * BATH.reach * Vec2::new(0.6, 1.0);
+            assert!(top(at).is_some_and(|floor| floor < BATH.full), "{at}");
+        }
+        // The spout's end is over its floor, high over the water full; and
+        // full is under its rim, 1.58 m up.
+        let under = top(BATH.spout.xz() + Vec2::new(0.0, -0.08)).unwrap();
+        assert!((under - TUB_FLOOR).abs() < 0.02, "{under}");
+        let spout = top(BATH.spout.xz()).unwrap();
+        assert!(spout > BATH.spout.y && spout < BATH.spout.y + 0.1, "{spout}");
+        assert!(BATH.full < 1.58 && BATH.spout.y > BATH.full + 0.5);
+        // Its water rises over three square metres at first and over four
+        // and a half nearly full, as the tub is that wide there.
+        let across = |level: f32| (tub_volume(level + 0.01) - tub_volume(level)) / 0.01;
+        assert!((across(TUB_FLOOR + 0.01) - 3.0).abs() < 0.1 && (across(1.25) - 4.6).abs() < 0.1);
     }
 }

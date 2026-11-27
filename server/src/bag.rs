@@ -63,12 +63,28 @@
 //! A thing that keeps things taken back off its plot takes what was in it
 //! into its owner's bag ([`bag::take_back`]), and is not taken back if that
 //! would not fit.
+//!
+//! **Piggy banks** (since later on 2026-11-27; Hajun: "for the piggybank,
+//! make a proximity thing similar to the cabinet/storage, but this time
+//! instead of items its coin. so u choose how much coin to put in the piggy
+//! bank and anyone can take it out or put more"): the coins in each on a
+//! plot ([`bag::Banked`]) are kept by whose plot it is, beside what works
+//! there ([`Workshop`]), and in a column of their own (`players.banked`).
+//! Anyone in the channel may put coins in or take them out
+//! ([`bag::Ask::Deposit`], `Withdraw`): with a database that is a deal, as a
+//! purchase is, one transaction that reads and writes the piggy bank's
+//! coins with theirs (`Bank::piggy`), answered in [`dealt`]; without one,
+//! done at once. It is told ([`bag::Tell::Banked`]) only to a device that
+//! asked ([`bag::Ask::Banked`]), as what works is, and whoever's coins
+//! changed is told by how many ([`bag::Tell::Coins`]). A piggy bank with
+//! coins in it, or coins on their way into it or out of it, is not taken
+//! back into the bag.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use bevy::prelude::*;
 use bevy_replicon::prelude::*;
-use roundtown_net::bag::{self, Bag, Paint, Paints, Standing, Workings};
+use roundtown_net::bag::{self, Bag, Banked, Paint, Paints, Standing, Workings};
 use roundtown_net::land::Lot;
 use roundtown_net::{Ask, Member, Tell};
 use serde::{Deserialize, Serialize};
@@ -136,10 +152,13 @@ pub(crate) struct Holds {
 }
 
 /// A purchase or a sale on its way to the database: the bag as it will be
-/// if it goes through, and the device that asked for it.
+/// if it goes through, and the device that asked for it; or coins on their
+/// way into a piggy bank or out of one, the bag as it is: whose plot it is
+/// on, its number there, and how many go in (less than none, out).
 struct Dealing {
     after: Bag,
     by: Entity,
+    piggy: Option<(u64, u32, i64)>,
 }
 
 impl Holds {
@@ -204,33 +223,49 @@ pub(crate) struct Colourers(HashSet<Entity>);
 struct Remembered(HashMap<u64, (Bag, Paints)>);
 
 /// What is at work on every plot ([`bag::Workings`]), by whose plot it is:
-/// what is kept in what keeps things there, and which lights are on. Read
-/// with everyone's land as the server starts ([`Workshop::kept`]), and the
-/// server's own from there, here or not: whoever is in a channel a plot is
-/// in may use it. Without a database, for as long as the server runs.
+/// what is kept in what keeps things there, and which lights are on; and
+/// the coins in its piggy banks ([`bag::Banked`]). Read with everyone's land
+/// as the server starts ([`Workshop::kept`]), and the server's own from
+/// there, here or not: whoever is in a channel a plot is in may use it.
+/// Without a database, for as long as the server runs. With one, the coins
+/// in a piggy bank are the database's word, as it last answered, and how
+/// many deals with each are on their way there is kept (`pending`).
 #[derive(Resource, Default)]
-pub(crate) struct Workshop(HashMap<u64, Workings>);
+pub(crate) struct Workshop {
+    works: HashMap<u64, Workings>,
+    banked: HashMap<u64, Banked>,
+    pending: HashMap<(u64, u32), u32>,
+}
 
 impl Workshop {
     /// What works on each of `lands`, as it was kept (`players.workings`),
-    /// put right by what stands on each ([`Workings::sane`]).
+    /// and the coins in their piggy banks (`players.banked`), put right by
+    /// what stands on each ([`Workings::sane`], [`Banked::sane`]).
     pub(crate) fn kept(lands: &[Land]) -> Self {
         let mut workshop = Workshop::default();
         for land in lands {
-            let Some(kept) = land.workings.as_deref() else {
-                continue;
-            };
-            let workings = match serde_json::from_str::<Workings>(kept) {
-                Ok(workings) => workings,
-                Err(error) => {
-                    warn!("what works on {}'s plot will not read ({error}): nothing", land.id);
-                    continue;
-                }
-            };
             let (bag, _) = read(0, Some(&land.bag));
-            let sane = workings.sane(&bag.stands);
-            if !sane.is_empty() {
-                workshop.0.insert(land.id, sane);
+            if let Some(kept) = land.workings.as_deref() {
+                match serde_json::from_str::<Workings>(kept) {
+                    Ok(workings) => {
+                        let sane = workings.sane(&bag.stands);
+                        if !sane.is_empty() {
+                            workshop.works.insert(land.id, sane);
+                        }
+                    }
+                    Err(error) => warn!("what works on {}'s plot will not read ({error}): nothing", land.id),
+                }
+            }
+            if let Some(kept) = land.banked.as_deref() {
+                match serde_json::from_str::<Banked>(kept) {
+                    Ok(banked) => {
+                        let sane = banked.sane(&bag.stands);
+                        if !sane.is_empty() {
+                            workshop.banked.insert(land.id, sane);
+                        }
+                    }
+                    Err(error) => warn!("the piggy banks on {}'s plot will not read ({error}): nothing", land.id),
+                }
             }
         }
         workshop
@@ -238,7 +273,35 @@ impl Workshop {
 
     /// What works on `who`'s plot: nothing, for one where nothing ever has.
     fn of(&self, who: u64) -> Workings {
-        self.0.get(&who).cloned().unwrap_or_default()
+        self.works.get(&who).cloned().unwrap_or_default()
+    }
+
+    /// The coins in the piggy banks on `who`'s plot: none, for one where
+    /// none ever were.
+    fn banked_of(&self, who: u64) -> Banked {
+        self.banked.get(&who).cloned().unwrap_or_default()
+    }
+
+    /// The piggy bank under `id` on `who`'s plot holds `coins` now.
+    fn bank(&mut self, who: u64, id: u32, coins: u32) {
+        let banked = self.banked.entry(who).or_default();
+        banked.set(id, coins);
+        if banked.is_empty() {
+            self.banked.remove(&who);
+        }
+    }
+
+    /// The coins in the piggy banks on `who`'s plot, as a piggy bank taken
+    /// back into the bag is to see them: with a piggy bank that coins are on
+    /// their way into or out of counted as holding some.
+    fn banked_for_taking(&self, who: u64) -> Banked {
+        let mut banked = self.banked_of(who);
+        for &(whose, id) in self.pending.keys() {
+            if whose == who && banked.of(id) == 0 {
+                banked.set(id, 1);
+            }
+        }
+        banked
     }
 }
 
@@ -248,14 +311,18 @@ fn kept_workings(workings: &Workings) -> String {
 }
 
 /// The devices that have asked to be told what works on plots
-/// ([`bag::Ask::Workings`]): those whose app knows how to show it.
+/// ([`bag::Ask::Workings`]): those whose app knows how to show it; and those
+/// that have asked to be told of piggy banks ([`bag::Ask::Banked`]).
 #[derive(Resource, Default)]
-pub(crate) struct Workers(HashSet<Entity>);
+pub(crate) struct Workers {
+    works: HashSet<Entity>,
+    banks: HashSet<Entity>,
+}
 
-/// The sinks whose tap has been run, by whose plot they are on and their
-/// number there, and when, by the server's own seconds: one run is told
-/// once, and another not until it has filled and drained
-/// ([`bag::SINK_SECS`]).
+/// The sinks and the bathtubs whose tap has been run, by whose plot they are
+/// on and their number there, and when, by the server's own seconds: one
+/// run is told once, and another not until it has filled and drained
+/// ([`bag::runs`]).
 #[derive(Resource, Default)]
 struct Running(HashMap<(u64, u32), f64>);
 
@@ -294,7 +361,8 @@ fn forget(
 ) {
     watchers.0.remove(&remove.entity);
     colourers.0.remove(&remove.entity);
-    workers.0.remove(&remove.entity);
+    workers.works.remove(&remove.entity);
+    workers.banks.remove(&remove.entity);
 }
 
 /// With no database, gives a body just made the bag its account had when it
@@ -338,6 +406,8 @@ enum Came {
     Works(u64),
     /// The tap of this sink on this person's plot has been run.
     Ran(u64, u32),
+    /// The coins in a piggy bank on this person's plot have changed.
+    Banked(u64),
     /// A purchase or a sale has gone to the database: answered when it has.
     Waits,
 }
@@ -388,7 +458,7 @@ fn act(
     let mut worked: Option<(u64, bool)> = None;
     let mut got = None;
     let came = match ask {
-        bag::Ask::Watch | bag::Ask::Colours | bag::Ask::Workings => Came::Nothing,
+        bag::Ask::Watch | bag::Ask::Colours | bag::Ask::Workings | bag::Ask::Banked => Came::Nothing,
         bag::Ask::Buy(kind) | bag::Ask::Sell(kind) => {
             let buying = matches!(ask, bag::Ask::Buy(_));
             let mut after = holds.bag.clone();
@@ -401,7 +471,7 @@ fn act(
                     let gems = i64::from(after.gems) - i64::from(holds.bag.gems);
                     let why = if buying { "bought a thing" } else { "sold a thing" };
                     bank.deal(who, amount, gems, why, kept(&after, &holds.paints));
-                    holds.dealing = Some(Dealing { after, by });
+                    holds.dealing = Some(Dealing { after, by, piggy: None });
                     return Came::Waits;
                 }
                 Ok(left) => {
@@ -426,11 +496,11 @@ fn act(
         // goes out, and what was kept in it comes with it, if it fits.
         bag::Ask::Take { id } => {
             let mut workings = workshop.of(who);
-            match bag::take_back(&mut holds.bag, &mut workings, *id) {
+            match bag::take_back(&mut holds.bag, &mut workings, &workshop.banked_for_taking(who), *id) {
                 Ok(()) => {
                     holds.paints.fit(&holds.bag.stands);
                     if workings != workshop.of(who) {
-                        workshop.0.insert(who, workings);
+                        workshop.works.insert(who, workings);
                         worked = Some((who, true));
                     }
                     Came::Plot
@@ -462,7 +532,7 @@ fn act(
                 .and_then(|stands| bag::stow(&mut holds.bag, &mut workings, &stands, *id, usize::from(*slot), kind, *count));
             match done {
                 Ok(()) => {
-                    workshop.0.insert(*whose, workings);
+                    workshop.works.insert(*whose, workings);
                     worked = Some((*whose, true));
                     Came::Works(*whose)
                 }
@@ -479,7 +549,7 @@ fn act(
                 .and_then(|stands| bag::unstow(&mut holds.bag, &mut workings, &stands, *id, usize::from(*slot)));
             match done {
                 Ok(stack) => {
-                    workshop.0.insert(*whose, workings);
+                    workshop.works.insert(*whose, workings);
                     worked = Some((*whose, true));
                     got = Some(stack);
                     Came::Works(*whose)
@@ -497,7 +567,7 @@ fn act(
                 .and_then(|stands| workings.switch(&stands, *id, *on));
             match done {
                 Ok(true) => {
-                    workshop.0.insert(*whose, workings);
+                    workshop.works.insert(*whose, workings);
                     worked = Some((*whose, false));
                     Came::Works(*whose)
                 }
@@ -509,13 +579,56 @@ fn act(
             }
         }
         bag::Ask::Run { who: whose, id } => {
-            let sink = plot_for(*whose, body, holds, towns).is_some_and(|stands| stands.iter().any(|stood| stood.id == *id && stood.kind == bag::SINK));
-            let idle = running.0.get(&(*whose, *id)).is_none_or(|&then| now - then >= bag::SINK_SECS);
-            if sink && idle {
+            let cycle = plot_for(*whose, body, holds, towns)
+                .and_then(|stands| stands.iter().find(|stood| stood.id == *id).and_then(|stood| bag::runs(&stood.kind)));
+            let idle = |cycle: f64| running.0.get(&(*whose, *id)).is_none_or(|&then| now - then >= cycle);
+            if cycle.is_some_and(idle) {
                 running.0.insert((*whose, *id), now);
                 Came::Ran(*whose, *id)
             } else {
                 Came::Nothing
+            }
+        }
+        bag::Ask::Deposit { who: whose, id, coins } | bag::Ask::Withdraw { who: whose, id, coins } => {
+            let into = matches!(ask, bag::Ask::Deposit { .. });
+            let mut banked = workshop.banked_of(*whose);
+            let done = plot_for(*whose, body, holds, towns).ok_or(bag::No::None).and_then(|stands| {
+                if into {
+                    bag::deposit(body.coins, &mut banked, &stands, *id, *coins)
+                } else {
+                    bag::withdraw(body.coins, &mut banked, &stands, *id, *coins)
+                }
+            });
+            let into = if into { i64::from(*coins) } else { -i64::from(*coins) };
+            match done {
+                Ok(_) if bank.kept() => {
+                    // The database's to do, which reads and writes the piggy
+                    // bank's coins in the same transaction: whoever else is
+                    // putting coins in or taking them out meanwhile is
+                    // counted too.
+                    let why = if into > 0 { "put coins in a piggy bank" } else { "took coins out of a piggy bank" };
+                    bank.piggy(who, *whose, *id, into, why);
+                    *workshop.pending.entry((*whose, *id)).or_insert(0) += 1;
+                    holds.dealing = Some(Dealing {
+                        after: holds.bag.clone(),
+                        by,
+                        piggy: Some((*whose, *id, into)),
+                    });
+                    return Came::Waits;
+                }
+                Ok(left) => {
+                    workshop.bank(*whose, *id, banked.of(*id));
+                    body.coins = left;
+                    if let Some(client) = body.client {
+                        tell(tells, client, Tell::Balance(left));
+                        tell(tells, client, Tell::Bag(bag::Tell::Coins(-into)));
+                    }
+                    Came::Banked(*whose)
+                }
+                Err(no) => {
+                    debug!("{who}: {ask:?} was not done: {no:?}");
+                    Came::Nothing
+                }
             }
         }
     };
@@ -592,8 +705,11 @@ fn tell_its_own(
             }),
         );
     }
-    if workers.0.contains(&device) {
+    if workers.works.contains(&device) {
         tell(tells, device, Tell::Bag(bag::Tell::Workings { who, workings: workshop.of(who) }));
+    }
+    if workers.banks.contains(&device) {
+        tell(tells, device, Tell::Bag(bag::Tell::Banked { who, banked: workshop.banked_of(who) }));
     }
 }
 
@@ -631,8 +747,11 @@ fn tell_of_a_plot(
             }),
         );
     }
-    if workers.0.contains(&device) {
+    if workers.works.contains(&device) {
         tell(tells, device, Tell::Bag(bag::Tell::Workings { who, workings: workshop.of(who) }));
+    }
+    if workers.banks.contains(&device) {
+        tell(tells, device, Tell::Bag(bag::Tell::Banked { who, banked: workshop.banked_of(who) }));
     }
 }
 
@@ -677,16 +796,20 @@ fn hear(
         let Ok(plays) = clients.get(client) else {
             continue;
         };
-        if matches!(asked, bag::Ask::Watch | bag::Ask::Colours | bag::Ask::Workings) {
+        if matches!(asked, bag::Ask::Watch | bag::Ask::Colours | bag::Ask::Workings | bag::Ask::Banked) {
             // Told from here on: its own bag and its channel's plots as it
             // sits down, which is now if it sits there already; and, having
-            // asked for them, their colours, and what works on them.
+            // asked for them, their colours, what works on them and the
+            // coins in their piggy banks.
             *watchers.0.entry(client).or_insert(0) += 1;
             if *asked == bag::Ask::Colours {
                 colourers.0.insert(client);
             }
             if *asked == bag::Ask::Workings {
-                workers.0.insert(client);
+                workers.works.insert(client);
+            }
+            if *asked == bag::Ask::Banked {
+                workers.banks.insert(client);
             }
             if let Some(&Plays(body)) = plays
                 && let Ok((body_of, ..)) = bodies.get(body)
@@ -740,7 +863,8 @@ fn hear(
 /// what came of something `who` asked of their bag (`came`), what stands on
 /// their plot and its colours being `plot`: everyone else what stands there
 /// and what of it is painted, as either changed; everyone, `who` too, what
-/// works on a plot whose workings changed, and that a sink was run.
+/// works on a plot whose workings changed, that a sink was run, and the
+/// coins in the piggy banks of a plot where they changed.
 #[allow(clippy::too_many_arguments)]
 fn tell_what_came(
     came: Came,
@@ -769,7 +893,7 @@ fn tell_what_came(
             let workings = workshop.of(whose);
             for (_, other) in towns.seated(channel) {
                 if let Some(device) = client_of(other)
-                    && workers.0.contains(&device)
+                    && workers.works.contains(&device)
                 {
                     tell(tells, device, Tell::Bag(bag::Tell::Workings { who: whose, workings: workings.clone() }));
                 }
@@ -778,9 +902,19 @@ fn tell_what_came(
         Came::Ran(whose, id) => {
             for (_, other) in towns.seated(channel) {
                 if let Some(device) = client_of(other)
-                    && workers.0.contains(&device)
+                    && workers.works.contains(&device)
                 {
                     tell(tells, device, Tell::Bag(bag::Tell::Ran { who: whose, id }));
+                }
+            }
+        }
+        Came::Banked(whose) => {
+            let banked = workshop.banked_of(whose);
+            for (_, other) in towns.seated(channel) {
+                if let Some(device) = client_of(other)
+                    && workers.banks.contains(&device)
+                {
+                    tell(tells, device, Tell::Bag(bag::Tell::Banked { who: whose, banked: banked.clone() }));
                 }
             }
         }
@@ -815,16 +949,33 @@ fn dealt(
         let Some(dealing) = holds.dealing.take() else {
             continue;
         };
+        let mut came = Vec::new();
+        if let Some((whose, id, _)) = dealing.piggy
+            && let Some(pending) = workshop.pending.get_mut(&(whose, id))
+        {
+            *pending -= 1;
+            if *pending == 0 {
+                workshop.pending.remove(&(whose, id));
+            }
+        }
         if let Some(left) = answered.left {
             holds.bag = dealing.after;
             body_of.coins = left;
             if let Some(client) = body_of.client {
                 tell(&mut tells, client, Tell::Balance(left));
             }
+            // Coins into a piggy bank or out: in it as the database says, and
+            // said to whoever's they were, and to the channel.
+            if let (Some((whose, id, into)), Some(now)) = (dealing.piggy, answered.bank) {
+                workshop.bank(whose, id, now);
+                if let Some(client) = body_of.client {
+                    tell(&mut tells, client, Tell::Bag(bag::Tell::Coins(-into)));
+                }
+                came.push(Came::Banked(whose));
+            }
         }
         answer(dealing.by, &body_of, &holds, (&mut watchers, &colourers, &workers), &workshop, &mut tells);
         let (who, room) = (member.id, body_of.room);
-        let mut came = Vec::new();
         while holds.dealing.is_none() {
             let Some((by, asked)) = holds.waiting.pop_front() else {
                 break;
@@ -846,13 +997,14 @@ fn dealt(
             came.push(one);
         }
         // What stands and its colours once, as they are after all of it;
-        // each change to what works, and each sink, as it came.
+        // each change to what works, each sink and each piggy bank, as it
+        // came.
         let plot = if came.contains(&Came::Plot) {
             Some(Came::Plot)
         } else {
             came.contains(&Came::Paint).then_some(Came::Paint)
         };
-        let rest = came.into_iter().filter(|came| matches!(came, Came::Works(_) | Came::Ran(..)));
+        let rest = came.into_iter().filter(|came| matches!(came, Came::Works(_) | Came::Ran(..) | Came::Banked(_)));
         let stood = (holds.bag.stands.clone(), holds.paints.0.clone());
         for one in plot.into_iter().chain(rest) {
             let told = (&*watchers, &*colourers, &*workers);
@@ -1055,7 +1207,7 @@ mod tests {
     /// The database's answer to a purchase or a sale, as its thread would
     /// give it.
     fn answer_the_deal(app: &mut App, left: Option<u32>) {
-        app.world_mut().write_message(Dealt { id: 100, left });
+        app.world_mut().write_message(Dealt { id: 100, left, bank: None });
         app.world_mut().run_system_once(dealt).unwrap();
         app.world_mut().resource_mut::<Messages<Dealt>>().clear();
     }
@@ -1480,7 +1632,7 @@ mod tests {
         ask(&mut app, devices[0], bag::Ask::Take { id: 1 });
         let owner = bag_of(&app, bodies[0]);
         assert_eq!((owner.count("hamburger"), owner.free("cabinet")), (2, 1));
-        assert!(app.world().resource::<Workshop>().0.get(&100).is_none_or(Workings::is_empty));
+        assert!(app.world().resource::<Workshop>().works.get(&100).is_none_or(Workings::is_empty));
         let second = told(&mut app, devices[1]);
         assert_eq!(plots_told(&second).0, [(100, 0)]);
         assert_eq!(workings_told(&second, 100), [Workings::default()]);
@@ -1539,6 +1691,20 @@ mod tests {
         ask(&mut app, devices[0], bag::Ask::Run { who: 100, id: 2 });
         ask(&mut app, devices[0], bag::Ask::Run { who: 100, id: 1 });
         assert_eq!(ran(&told(&mut app, devices[1])), 1);
+        // A bathtub runs as the sink does, and for longer: not again after
+        // the sink's while, again after its own.
+        give(&mut app, bodies[0], bag::BATH, 1);
+        ask(&mut app, devices[0], bag::Ask::Put { id: 3, kind: bag::BATH.into(), at: here() });
+        told(&mut app, devices[1]);
+        let bath = |told: &[Tell]| told.iter().filter(|tell| matches!(tell, Tell::Bag(bag::Tell::Ran { who: 100, id: 3 }))).count();
+        ask(&mut app, devices[1], bag::Ask::Run { who: 100, id: 3 });
+        assert_eq!(bath(&told(&mut app, devices[1])), 1);
+        app.world_mut().resource_mut::<Time>().advance_by(std::time::Duration::from_secs_f64(bag::SINK_SECS + 0.1));
+        ask(&mut app, devices[1], bag::Ask::Run { who: 100, id: 3 });
+        assert_eq!(bath(&told(&mut app, devices[1])), 0);
+        app.world_mut().resource_mut::<Time>().advance_by(std::time::Duration::from_secs_f64(bag::BATH_SECS - bag::SINK_SECS));
+        ask(&mut app, devices[1], bag::Ask::Run { who: 100, id: 3 });
+        assert_eq!(bath(&told(&mut app, devices[1])), 1);
     }
 
     #[test]
@@ -1555,19 +1721,152 @@ mod tests {
             ],
             lit: vec![4, 3],
         };
-        let land = |id: u64, workings: Option<String>| Land {
+        let land = |id: u64, workings: Option<String>, banked: Option<String>| Land {
             id,
             name: "someone".into(),
             look: "boy".into(),
             bag: kept(&bag, &Paints::default()),
             workings,
+            banked,
         };
-        let workshop = Workshop::kept(&[land(7, Some(kept_workings(&workings))), land(8, None), land(9, Some("{not json".into()))]);
+        // The coins in a piggy bank that stands, and in one under a number
+        // nothing stands under, or a cabinet: the first alone is kept.
+        let mut piggy = bag.clone();
+        piggy.take_in(bag::PIGGY, 1).unwrap();
+        piggy.put(5, bag::PIGGY, here()).unwrap();
+        let banked = Banked(vec![(3, 40), (5, 120), (6, 9)]);
+        let lands = [
+            land(7, Some(kept_workings(&workings)), None),
+            land(8, None, Some("{not json".into())),
+            land(9, Some("{not json".into()), None),
+            Land { bag: kept(&piggy, &Paints::default()), ..land(10, None, Some(serde_json::to_string(&banked).unwrap())) },
+        ];
+        let workshop = Workshop::kept(&lands);
         let seven = workshop.of(7);
         assert_eq!(seven.slots(3).len(), 8);
         assert_eq!(seven.slots(3)[1], Some(bag::Stack { kind: "doll".into(), count: 2 }));
         assert_eq!((seven.held.len(), seven.lit.clone()), (1, vec![4]));
         assert!(workshop.of(8).is_empty() && workshop.of(9).is_empty());
+        assert_eq!(workshop.banked_of(10), Banked(vec![(5, 120)]));
+        assert!(workshop.banked_of(7).is_empty() && workshop.banked_of(8).is_empty());
+    }
+
+    fn banked_told(told: &[Tell], who: u64) -> Vec<Banked> {
+        told.iter()
+            .filter_map(|tell| match tell {
+                Tell::Bag(bag::Tell::Banked { who: whose, banked }) if *whose == who => Some(banked.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn coins_of(app: &App, body: Entity) -> u32 {
+        app.world().get::<Body>(body).unwrap().coins
+    }
+
+    /// Whether `told` says the balance is `balance` and that it went up by
+    /// `by` out of a piggy bank (less than none, into one).
+    fn coins_told(told: &[Tell], balance: u32, by: i64) -> bool {
+        told.iter().any(|tell| matches!(tell, Tell::Balance(left) if *left == balance))
+            && told.iter().any(|tell| matches!(tell, Tell::Bag(bag::Tell::Coins(went)) if *went == by))
+    }
+
+    #[test]
+    fn anyone_in_the_channel_puts_coins_into_a_piggy_bank_and_takes_them_out_and_none_are_made_or_lost() {
+        let (mut app, bodies, devices) = town(3);
+        give(&mut app, bodies[0], bag::PIGGY, 1);
+        give(&mut app, bodies[0], "cabinet", 1);
+        for device in &devices[..2] {
+            ask(&mut app, *device, bag::Ask::Banked);
+        }
+        ask(&mut app, devices[0], bag::Ask::Put { id: 1, kind: bag::PIGGY.into(), at: here() });
+        ask(&mut app, devices[0], bag::Ask::Put { id: 2, kind: "cabinet".into(), at: here() });
+        for device in &devices {
+            told(&mut app, *device);
+        }
+        // The second puts 300 of their thousand into the first's piggy bank:
+        // told their balance and by how much it went, and both who asked
+        // what is in it; the third, who never asked, is not.
+        ask(&mut app, devices[1], bag::Ask::Deposit { who: 100, id: 1, coins: 300 });
+        assert_eq!(coins_of(&app, bodies[1]), 700);
+        assert_eq!(app.world().resource::<Workshop>().banked_of(100), Banked(vec![(1, 300)]));
+        let second = told(&mut app, devices[1]);
+        assert!(coins_told(&second, 700, -300), "{second:?}");
+        assert_eq!(banked_told(&second, 100), [Banked(vec![(1, 300)])]);
+        assert_eq!(banked_told(&told(&mut app, devices[0]), 100), [Banked(vec![(1, 300)])]);
+        assert!(banked_told(&told(&mut app, devices[2]), 100).is_empty());
+        // Not more than they have, nor into the cabinet, nor out of it more
+        // than is in it: nothing changes.
+        ask(&mut app, devices[1], bag::Ask::Deposit { who: 100, id: 1, coins: 701 });
+        ask(&mut app, devices[1], bag::Ask::Deposit { who: 100, id: 2, coins: 10 });
+        ask(&mut app, devices[2], bag::Ask::Withdraw { who: 100, id: 1, coins: 301 });
+        assert_eq!((coins_of(&app, bodies[1]), coins_of(&app, bodies[2])), (700, 1_000));
+        assert!(banked_told(&told(&mut app, devices[0]), 100).is_empty());
+        // The third takes 120 out, and the owner can not take back the piggy
+        // bank with the rest in it.
+        ask(&mut app, devices[2], bag::Ask::Withdraw { who: 100, id: 1, coins: 120 });
+        assert_eq!(coins_of(&app, bodies[2]), 1_120);
+        assert!(coins_told(&told(&mut app, devices[2]), 1_120, 120));
+        ask(&mut app, devices[0], bag::Ask::Take { id: 1 });
+        assert_eq!(bag_of(&app, bodies[0]).stands.len(), 2);
+        // The owner takes the rest out, and then it is taken back.
+        ask(&mut app, devices[0], bag::Ask::Withdraw { who: 100, id: 1, coins: 180 });
+        assert_eq!(coins_of(&app, bodies[0]), 1_180);
+        assert!(app.world().resource::<Workshop>().banked_of(100).is_empty());
+        ask(&mut app, devices[0], bag::Ask::Take { id: 1 });
+        assert_eq!(bag_of(&app, bodies[0]).stands.len(), 1);
+        // Every coin is where it was or in someone's balance.
+        let all: u32 = bodies.iter().map(|&body| coins_of(&app, body)).sum();
+        assert_eq!(all, 3_000);
+        // Away from the town, nobody's piggy bank.
+        give(&mut app, bodies[0], bag::PIGGY, 1);
+        ask(&mut app, devices[0], bag::Ask::Put { id: 3, kind: bag::PIGGY.into(), at: here() });
+        app.world_mut().get_mut::<Body>(bodies[1]).unwrap().room = Room::Arena(0);
+        ask(&mut app, devices[1], bag::Ask::Deposit { who: 100, id: 3, coins: 5 });
+        assert_eq!(coins_of(&app, bodies[1]), 700);
+    }
+
+    #[test]
+    fn with_a_database_coins_into_a_piggy_bank_are_a_deal_and_the_piggy_bank_is_as_the_database_answers() {
+        let (mut app, bodies, devices) = town(2);
+        let (sent, jobs) = std::sync::mpsc::channel();
+        let (_answers, done) = std::sync::mpsc::channel();
+        app.insert_resource(Bank::Database { jobs: sent, done: std::sync::Mutex::new(done) });
+        give(&mut app, bodies[0], bag::PIGGY, 1);
+        for device in &devices {
+            ask(&mut app, *device, bag::Ask::Banked);
+        }
+        ask(&mut app, devices[0], bag::Ask::Put { id: 1, kind: bag::PIGGY.into(), at: here() });
+        while jobs.try_recv().is_ok() {}
+        for device in &devices {
+            told(&mut app, *device);
+        }
+        // The guest puts 250 in: sent to the database, nothing changed yet,
+        // and the owner may not take the piggy bank back meanwhile.
+        ask(&mut app, devices[1], bag::Ask::Deposit { who: 100, id: 1, coins: 250 });
+        assert!(matches!(jobs.try_recv(), Ok(crate::accounts::Job::Piggy { id: 101, owner: 100, bank: 1, into: 250, .. })));
+        assert!(app.world().resource::<Workshop>().banked_of(100).is_empty());
+        ask(&mut app, devices[0], bag::Ask::Take { id: 1 });
+        assert_eq!(bag_of(&app, bodies[0]).stands.len(), 1);
+        // (Answered with the owner's own bag, and the piggy bank as it is.)
+        assert_eq!(banked_told(&told(&mut app, devices[0]), 100), [Banked::default()]);
+        // The database answers: in it as it says, the guest's balance as it
+        // says, and everyone told.
+        app.world_mut().write_message(Dealt { id: 101, left: Some(750), bank: Some(250) });
+        app.world_mut().run_system_once(dealt).unwrap();
+        assert_eq!((coins_of(&app, bodies[1]), app.world().resource::<Workshop>().banked_of(100)), (750, Banked(vec![(1, 250)])));
+        let guest = told(&mut app, devices[1]);
+        assert!(coins_told(&guest, 750, -250), "{guest:?}");
+        assert_eq!(banked_told(&told(&mut app, devices[0]), 100), [Banked(vec![(1, 250)])]);
+        assert!(app.world().resource::<Workshop>().pending.is_empty());
+        // Refused by the database: nothing changes.
+        ask(&mut app, devices[1], bag::Ask::Withdraw { who: 100, id: 1, coins: 50 });
+        assert!(matches!(jobs.try_recv(), Ok(crate::accounts::Job::Piggy { into: -50, .. })));
+        app.world_mut().resource_mut::<Messages<Dealt>>().clear();
+        app.world_mut().write_message(Dealt { id: 101, left: None, bank: None });
+        app.world_mut().run_system_once(dealt).unwrap();
+        assert_eq!((coins_of(&app, bodies[1]), app.world().resource::<Workshop>().banked_of(100)), (750, Banked(vec![(1, 250)])));
+        assert!(app.world().resource::<Workshop>().pending.is_empty());
     }
 
     #[test]

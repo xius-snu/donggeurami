@@ -453,12 +453,21 @@ fn note_edits(
                 // menu (`super::edit_pieces`), and is stood again where it
                 // stood, the bag saying it stands (`keep_mine`).
                 let all: Vec<u32> = stood.map(|stood| stood.id).into_iter().chain(walls.iter().copied()).chain(along.iter().map(|&(_, id)| id)).collect();
-                if !bag.has_room_for_what_is_in(&all) {
+                // Nor is any of it binned with coins in a piggy bank of it
+                // (since later on 2026-11-27): they are to be taken out
+                // first.
+                let ui = ui();
+                let refused = if bag.has_coins_in(&all) {
+                    Some(&ui.words.storage.not_empty)
+                } else {
+                    (!bag.has_room_for_what_is_in(&all)).then_some(&ui.words.storage.no_room)
+                };
+                if let Some(said_so) = refused {
                     bag.set_changed();
                     for line in &said {
                         commands.entity(line).despawn();
                     }
-                    hud::announce(&mut commands, None, &ui().words.storage.no_room, hud::CAPTION, SAID_SECS).insert(Said);
+                    hud::announce(&mut commands, None, said_so, hud::CAPTION, SAID_SECS).insert(Said);
                     continue;
                 }
                 if let Some(stood) = stood {

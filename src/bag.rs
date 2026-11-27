@@ -53,6 +53,15 @@
 //! ([`Taken`]); offline there is only your own plot, and it is done here.
 //! Taken back into the bag, a thing takes what was kept in it with it
 //! ([`Bag::take`]), and is not taken back if that would not fit.
+//!
+//! **Piggy banks** (since later on 2026-11-27; `rules::Banked`): the coins
+//! in each on a plot, yours ([`Bag::banked`]) and everyone else's in your
+//! channel ([`TheirBanked`]), the same way: anyone may put coins in or take
+//! them out ([`Bag::deposit`], [`Bag::withdraw`]), online asked of the
+//! server, whose word is what is in each and what your balance is, and by
+//! how much it changed ([`Coined`]); offline, on your own plot, done here
+//! with the coins this device has. A piggy bank with coins in it is not
+//! taken back into the bag.
 
 use std::collections::HashMap;
 
@@ -68,7 +77,7 @@ use crate::net::Online;
 
 pub(crate) mod panel;
 
-pub(crate) use rules::{Group, Paint, Paints, Stack, Standing, THINGS, Thing, Workings};
+pub(crate) use rules::{Banked, Group, Paint, Paints, Stack, Standing, THINGS, Thing, Workings};
 
 /// The file your bag is kept in, beside the town's save, and its version.
 const FILE: &str = "bag.json";
@@ -87,6 +96,8 @@ pub(crate) struct Bag {
     /// and which lights are on. Online the server's word as it last said,
     /// whoever changed it; offline this device's own.
     pub workings: Workings,
+    /// The coins in the piggy banks on your plot, the same way.
+    pub banked: Banked,
     /// How many things this connection has asked of the server about the
     /// bag, the highest number of them it has said it has answered, and
     /// which of them was the last purchase or sale, if one is still on its
@@ -98,16 +109,17 @@ pub(crate) struct Bag {
 
 impl Default for Bag {
     fn default() -> Self {
-        Self::holding(rules::Bag::new(), Paints::default(), Workings::default())
+        Self::holding(rules::Bag::new(), Paints::default(), Workings::default(), Banked::default())
     }
 }
 
 impl Bag {
-    fn holding(has: rules::Bag, paints: Paints, workings: Workings) -> Self {
+    fn holding(has: rules::Bag, paints: Paints, workings: Workings, banked: Banked) -> Self {
         Self {
             has,
             paints,
             workings,
+            banked,
             sent: 0,
             answered: 0,
             dealing: None,
@@ -148,7 +160,7 @@ impl Bag {
     /// whatever was kept in it (`rules::take_back`). Whether it was: not if
     /// what was kept in it would not fit in the bag.
     pub(crate) fn take(&mut self, online: bool, asks: &mut MessageWriter<Ask>, id: u32) -> bool {
-        if rules::take_back(&mut self.has, &mut self.workings, id).is_err() {
+        if rules::take_back(&mut self.has, &mut self.workings, &self.banked, id).is_err() {
             return false;
         }
         self.paints.fit(&self.has.stands);
@@ -169,6 +181,13 @@ impl Bag {
             }
         }
         kept.iter().all(|&(kind, count)| rules::thing(kind).is_none() || u32::from(self.has.room_for(kind)) >= count)
+    }
+
+    /// Whether a piggy bank among the things standing under these numbers
+    /// has coins in it: none of them is taken back into the bag until they
+    /// are taken out ([`rules::No::Banked`]).
+    pub(crate) fn has_coins_in(&self, ids: &[u32]) -> bool {
+        ids.iter().any(|&id| self.banked.of(id) > 0)
     }
 
     /// Puts `count` of `kind` out of the bag into slot `slot` of the thing
@@ -235,6 +254,71 @@ impl Bag {
     pub(crate) fn run(&mut self, me: Option<u64>, asks: &mut MessageWriter<Ask>, who: Option<u64>, id: u32) {
         if let Some(me) = me {
             self.ask(asks, rules::Ask::Run { who: who.unwrap_or(me), id });
+        }
+    }
+
+    /// Puts `coins` of your balance into the piggy bank standing under `id`
+    /// on `who`'s plot (`None`, yours): asked of the server online, as `me`,
+    /// whose word is what comes of it ([`Coined`], after your balance);
+    /// offline, on your own plot, done here by the rules, and said at once.
+    /// Whether it was done or asked.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn deposit(
+        &mut self,
+        me: Option<u64>,
+        asks: &mut MessageWriter<Ask>,
+        coined: &mut MessageWriter<Coined>,
+        balance: &mut Balance,
+        who: Option<u64>,
+        id: u32,
+        coins: u32,
+    ) -> bool {
+        match (me, who) {
+            (Some(me), _) => {
+                self.ask(asks, rules::Ask::Deposit { who: who.unwrap_or(me), id, coins });
+                true
+            }
+            (None, None) => {
+                let stands = self.has.stands.clone();
+                let Ok(left) = rules::deposit(balance.0, &mut self.banked, &stands, id, coins) else {
+                    return false;
+                };
+                balance.0 = left;
+                coined.write(Coined(-i64::from(coins)));
+                true
+            }
+            (None, Some(_)) => false,
+        }
+    }
+
+    /// Takes `coins` out of the piggy bank standing under `id` on `who`'s
+    /// plot into your balance, the same way.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn withdraw(
+        &mut self,
+        me: Option<u64>,
+        asks: &mut MessageWriter<Ask>,
+        coined: &mut MessageWriter<Coined>,
+        balance: &mut Balance,
+        who: Option<u64>,
+        id: u32,
+        coins: u32,
+    ) -> bool {
+        match (me, who) {
+            (Some(me), _) => {
+                self.ask(asks, rules::Ask::Withdraw { who: who.unwrap_or(me), id, coins });
+                true
+            }
+            (None, None) => {
+                let stands = self.has.stands.clone();
+                let Ok(after) = rules::withdraw(balance.0, &mut self.banked, &stands, id, coins) else {
+                    return false;
+                };
+                balance.0 = after;
+                coined.write(Coined(i64::from(coins)));
+                true
+            }
+            (None, Some(_)) => false,
         }
     }
 
@@ -320,9 +404,33 @@ impl Bag {
         self.has = rules::Bag::new();
         self.paints = Paints::default();
         self.workings = Workings::default();
+        self.banked = Banked::default();
         self.begin();
     }
 }
+
+/// The coins in the piggy banks on the plot of each of the others in your
+/// channel of the town, by who they are, as the server has said
+/// (`rules::Tell::Banked`). Nobody's offline.
+#[derive(Resource, Default, Debug)]
+pub(crate) struct TheirBanked(pub HashMap<u64, Banked>);
+
+impl TheirBanked {
+    /// The coins in the piggy banks on `who`'s plot (`None`, yours, out of
+    /// `bag`): none, for a plot the server has said nothing of.
+    pub(crate) fn of(&self, bag: &Bag, who: Option<u64>) -> Banked {
+        match who {
+            None => bag.banked.clone(),
+            Some(who) => self.0.get(&who).cloned().unwrap_or_default(),
+        }
+    }
+}
+
+/// So many coins have just come into your balance out of a piggy bank, or,
+/// less than none, gone into one: said by the server online
+/// (`rules::Tell::Coins`), and offline by whoever did it.
+#[derive(Message, Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) struct Coined(pub i64);
 
 /// What works on the plot of each of the others in your channel of the
 /// town, by who they are, as the server has said (`rules::Tell::Workings`).
@@ -374,8 +482,9 @@ pub(crate) enum Deal {
 }
 
 /// The file as written: the bag, what is painted of what stands (nothing,
-/// in a file written before 2026-11-22), and what works there (nothing, in
-/// one written before 2026-11-27).
+/// in a file written before 2026-11-22), what works there (nothing, in one
+/// written before 2026-11-27) and the coins in its piggy banks (none, in
+/// one written before they were).
 #[derive(Serialize, Deserialize)]
 struct Saved {
     version: u32,
@@ -384,6 +493,8 @@ struct Saved {
     paints: Paints,
     #[serde(default)]
     workings: Workings,
+    #[serde(default)]
+    banked: Banked,
 }
 
 /// Hearing what the server says of bags and doing what the panel asked:
@@ -392,23 +503,30 @@ struct Saved {
 pub(crate) struct BagSystems;
 
 pub(crate) fn plugin(app: &mut App) {
-    let (has, paints, workings) = load();
-    app.insert_resource(Bag::holding(has, paints, workings))
+    let (has, paints, workings, banked) = load();
+    app.insert_resource(Bag::holding(has, paints, workings, banked))
         .init_resource::<Theirs>()
         .init_resource::<TheirPaints>()
         .init_resource::<TheirWorkings>()
+        .init_resource::<TheirBanked>()
         .add_message::<Deal>()
         .add_message::<Taken>()
+        .add_message::<Coined>()
         .add_message::<Ran>()
         .add_systems(Update, (come_and_go, hear, deal, save).chain().in_set(BagSystems).after(crate::land::DeedSystems));
     panel::plugin(app);
 }
 
-/// The bag kept from the last run, what was painted of what stood and what
-/// worked there, put right if they were kept wrongly; with none, or one that
-/// will not read, what everyone begins with.
-fn load() -> (rules::Bag, Paints, Workings) {
-    let fresh = || (rules::Bag::new(), Paints::default(), Workings::default());
+/// What a file holds: the bag, what is painted, what works and the coins in
+/// piggy banks.
+type Held = (rules::Bag, Paints, Workings, Banked);
+
+/// The bag kept from the last run, what was painted of what stood, what
+/// worked there and the coins in its piggy banks, put right if they were
+/// kept wrongly; with none, or one that will not read, what everyone begins
+/// with.
+fn load() -> Held {
+    let fresh = || (rules::Bag::new(), Paints::default(), Workings::default(), Banked::default());
     let Some(path) = crate::map::data_file(FILE) else {
         return fresh();
     };
@@ -426,24 +544,25 @@ fn load() -> (rules::Bag, Paints, Workings) {
 }
 
 /// What a file held, as it may be.
-fn kept_right(saved: Saved) -> (rules::Bag, Paints, Workings) {
+fn kept_right(saved: Saved) -> Held {
     let bag = saved.bag.sane();
     let paints = saved.paints.sane(&bag.stands);
     let workings = saved.workings.sane(&bag.stands);
-    (bag, paints, workings)
+    let banked = saved.banked.sane(&bag.stands);
+    (bag, paints, workings, banked)
 }
 
 /// Keeps the bag for the next run whenever what is in it changes, what is
-/// painted or what works: written beside the file and renamed over it, as
-/// the profile is.
-fn save(bag: Res<Bag>, mut kept: Local<Option<(rules::Bag, Paints, Workings)>>) {
-    let same = |(has, paints, workings): &(rules::Bag, Paints, Workings)| *has == bag.has && *paints == bag.paints && *workings == bag.workings;
+/// painted, what works or the coins in its piggy banks: written beside the
+/// file and renamed over it, as the profile is.
+fn save(bag: Res<Bag>, mut kept: Local<Option<Held>>) {
+    let same = |(has, paints, workings, banked): &Held| *has == bag.has && *paints == bag.paints && *workings == bag.workings && *banked == bag.banked;
     if !bag.is_changed() || kept.as_ref().is_some_and(same) {
         return;
     }
     // What it was loaded as is what the file has.
     let loaded = kept.is_none() && bag.is_added();
-    *kept = Some((bag.has.clone(), bag.paints.clone(), bag.workings.clone()));
+    *kept = Some((bag.has.clone(), bag.paints.clone(), bag.workings.clone(), bag.banked.clone()));
     if loaded {
         return;
     }
@@ -455,6 +574,7 @@ fn save(bag: Res<Bag>, mut kept: Local<Option<(rules::Bag, Paints, Workings)>>) 
         bag: bag.has.clone(),
         paints: bag.paints.clone(),
         workings: bag.workings.clone(),
+        banked: bag.banked.clone(),
     };
     let written = path
         .parent()
@@ -472,7 +592,8 @@ fn save(bag: Res<Bag>, mut kept: Local<Option<(rules::Bag, Paints, Workings)>>) 
 
 /// As this device comes online, asks the server to tell it of bags from
 /// here on, its own first ([`rules::Ask::Watch`]), and of colours with
-/// them ([`rules::Ask::Colours`]), and what works ([`rules::Ask::Workings`]).
+/// them ([`rules::Ask::Colours`]), what works ([`rules::Ask::Workings`])
+/// and the coins in piggy banks ([`rules::Ask::Banked`]).
 /// Lets go of the land of whoever has no
 /// plot here any more, as whose each plot is changes (`land::Deeds`): what
 /// the server said of it is not said again when they are gone. And
@@ -480,12 +601,13 @@ fn save(bag: Res<Bag>, mut kept: Local<Option<(rules::Bag, Paints, Workings)>>) 
 /// own made-up land (`roundtown_net::premade`: the very land the server
 /// fills a plot with when no real person's does, so that a plot filled
 /// here is the same once it has spoken).
+#[allow(clippy::type_complexity)]
 fn come_and_go(
     online: Res<Online>,
     deeds: Res<Deeds>,
     mut was: Local<bool>,
     mut bag: ResMut<Bag>,
-    (mut theirs, mut their_paints, mut their_workings): (ResMut<Theirs>, ResMut<TheirPaints>, ResMut<TheirWorkings>),
+    (mut theirs, mut their_paints, mut their_workings, mut their_banked): (ResMut<Theirs>, ResMut<TheirPaints>, ResMut<TheirWorkings>, ResMut<TheirBanked>),
     mut asks: MessageWriter<Ask>,
 ) {
     let now = online.is();
@@ -497,8 +619,14 @@ fn come_and_go(
             bag.ask(&mut asks, rules::Ask::Watch);
             bag.ask(&mut asks, rules::Ask::Colours);
             bag.ask(&mut asks, rules::Ask::Workings);
-        } else if !their_workings.0.is_empty() {
-            their_workings.0.clear();
+            bag.ask(&mut asks, rules::Ask::Banked);
+        } else {
+            if !their_workings.0.is_empty() {
+                their_workings.0.clear();
+            }
+            if !their_banked.0.is_empty() {
+                their_banked.0.clear();
+            }
         }
     }
     if !(turned || deeds.is_changed()) {
@@ -516,6 +644,9 @@ fn come_and_go(
         }
         if their_workings.0.keys().any(|who| !deeds.has(*who)) {
             their_workings.0.retain(|who, _| deeds.has(*who));
+        }
+        if their_banked.0.keys().any(|who| !deeds.has(*who)) {
+            their_banked.0.retain(|who, _| deeds.has(*who));
         }
         return;
     }
@@ -542,16 +673,17 @@ fn made_up(deeds: &Deeds) -> (HashMap<u64, Vec<Standing>>, HashMap<u64, Vec<Pain
 }
 
 /// What the server says of bags: your own, what stands on the plots of the
-/// others in your channel, what is painted of either and what works there;
-/// what has come into your bag out of something that keeps things, and a
-/// sink run.
-#[allow(clippy::too_many_arguments)]
+/// others in your channel, what is painted of either, what works there and
+/// the coins in their piggy banks; what has come into your bag out of
+/// something that keeps things, a sink run, and coins into your balance out
+/// of a piggy bank or out of it into one.
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn hear(
     mut tells: MessageReader<Tell>,
     online: Res<Online>,
     mut bag: ResMut<Bag>,
-    (mut theirs, mut their_paints, mut their_workings): (ResMut<Theirs>, ResMut<TheirPaints>, ResMut<TheirWorkings>),
-    (mut taken, mut ran): (MessageWriter<Taken>, MessageWriter<Ran>),
+    (mut theirs, mut their_paints, mut their_workings, mut their_banked): (ResMut<Theirs>, ResMut<TheirPaints>, ResMut<TheirWorkings>, ResMut<TheirBanked>),
+    (mut taken, mut ran, mut coined): (MessageWriter<Taken>, MessageWriter<Ran>, MessageWriter<Coined>),
 ) {
     let me = online.me().map(|me| me.id);
     for tell in tells.read() {
@@ -598,6 +730,19 @@ fn hear(
                     who: (Some(*who) != me).then_some(*who),
                     id: *id,
                 });
+            }
+            rules::Tell::Banked { who, banked } if Some(*who) == me => {
+                if bag.banked != *banked {
+                    bag.banked = banked.clone();
+                }
+            }
+            rules::Tell::Banked { who, banked } => {
+                if their_banked.0.get(who) != Some(banked) {
+                    their_banked.0.insert(*who, banked.clone());
+                }
+            }
+            rules::Tell::Coins(by) => {
+                coined.write(Coined(*by));
             }
         }
     }
@@ -665,8 +810,10 @@ mod tests {
         world.init_resource::<Theirs>();
         world.init_resource::<TheirPaints>();
         world.init_resource::<TheirWorkings>();
+        world.init_resource::<TheirBanked>();
         world.init_resource::<Messages<Taken>>();
         world.init_resource::<Messages<Ran>>();
+        world.init_resource::<Messages<Coined>>();
         world.init_resource::<Deeds>();
         let me = Member {
             id: 7,
@@ -717,7 +864,7 @@ mod tests {
     fn online_a_purchase_is_asked_of_the_server_one_at_a_time_and_done_when_it_answers() {
         let mut world = world(true);
         world.run_system_once(come_and_go).unwrap();
-        assert_eq!(asked(&mut world), [rules::Ask::Watch, rules::Ask::Colours, rules::Ask::Workings]);
+        assert_eq!(asked(&mut world), [rules::Ask::Watch, rules::Ask::Colours, rules::Ask::Workings, rules::Ask::Banked]);
         world.write_message(Deal::Buy("singlebed"));
         world.write_message(Deal::Buy("cafechair"));
         world.run_system_once(deal).unwrap();
@@ -728,14 +875,14 @@ mod tests {
         assert!(world.resource::<Bag>().waits());
         assert_eq!((world.resource::<Bag>().has.count("singlebed"), balance(&mut world)), (0, 1_000));
         // The server's answer to the first things sent, the watch and the
-        // asks for colours and for what works, is not the purchase's: still
-        // waiting, and its bag passed over.
+        // asks for colours, for what works and for piggy banks, is not the
+        // purchase's: still waiting, and its bag passed over.
         let mut bought = rules::Bag::new();
         bought.buy("singlebed", 1_000).unwrap();
-        assert!(!world.resource_mut::<Bag>().heard(3, &rules::Bag::new()));
+        assert!(!world.resource_mut::<Bag>().heard(4, &rules::Bag::new()));
         assert!(world.resource::<Bag>().waits());
         // Its answer to the purchase is.
-        assert!(world.resource_mut::<Bag>().heard(4, &bought));
+        assert!(world.resource_mut::<Bag>().heard(5, &bought));
         assert!(!world.resource::<Bag>().waits());
         assert_eq!(world.resource::<Bag>().has.count("singlebed"), 1);
     }
@@ -761,7 +908,7 @@ mod tests {
         assert_eq!(world.resource::<Bag>().has.stands.len(), 1);
         // The answer to the lamp itself is the server's word: here, that it
         // would not have it.
-        assert!(world.resource_mut::<Bag>().heard(4, &rules::Bag::new()));
+        assert!(world.resource_mut::<Bag>().heard(5, &rules::Bag::new()));
         assert!(world.resource::<Bag>().has.stands.is_empty());
         // Taken back offline, nothing is asked.
         world.insert_resource(Online::default());
@@ -878,25 +1025,96 @@ mod tests {
         bag.take_in("lamp_with_shade", 1).unwrap();
         bag.put(4, "lamp_with_shade", here()).unwrap();
         let workings = Workings { held: Vec::new(), lit: vec![4] };
+        bag.take_in(rules::PIGGY, 1).unwrap();
+        bag.put(5, rules::PIGGY, here()).unwrap();
+        let banked = Banked(vec![(5, 77)]);
         let saved = Saved {
             version: VERSION,
             bag: bag.clone(),
             paints: paints.clone(),
             workings: workings.clone(),
+            banked: banked.clone(),
         };
         let text = serde_json::to_string(&saved).unwrap();
         let back: Saved = serde_json::from_str(&text).unwrap();
         assert_eq!(back.version, VERSION);
-        assert_eq!(kept_right(back), (bag.clone(), paints.clone(), workings));
+        assert_eq!(kept_right(back), (bag.clone(), paints.clone(), workings.clone(), banked));
         // A file from before there were colours reads as it did, with
-        // nothing painted, and one from before anything worked with nothing
-        // at work.
+        // nothing painted, one from before anything worked with nothing at
+        // work, and one from before piggy banks with no coins in any.
         let before = format!(r#"{{"version":{VERSION},"bag":{}}}"#, serde_json::to_string(&bag).unwrap());
         let back: Saved = serde_json::from_str(&before).unwrap();
-        assert_eq!(kept_right(back), (bag.clone(), Paints::default(), Workings::default()));
+        assert_eq!(kept_right(back), (bag.clone(), Paints::default(), Workings::default(), Banked::default()));
         let before = format!(r#"{{"version":{VERSION},"bag":{},"paints":{}}}"#, serde_json::to_string(&bag).unwrap(), serde_json::to_string(&paints).unwrap());
         let back: Saved = serde_json::from_str(&before).unwrap();
-        assert_eq!(kept_right(back), (bag, paints, Workings::default()));
+        assert_eq!(kept_right(back), (bag.clone(), paints.clone(), Workings::default(), Banked::default()));
+        let before = format!(
+            r#"{{"version":{VERSION},"bag":{},"paints":{},"workings":{}}}"#,
+            serde_json::to_string(&bag).unwrap(),
+            serde_json::to_string(&paints).unwrap(),
+            serde_json::to_string(&workings).unwrap()
+        );
+        let back: Saved = serde_json::from_str(&before).unwrap();
+        assert_eq!(kept_right(back), (bag, paints, workings, Banked::default()));
+    }
+
+    #[test]
+    fn coins_go_into_a_piggy_bank_here_offline_on_your_own_plot_and_are_asked_of_the_server_online() {
+        // Offline: forty of your thousand into your piggy bank and ten out,
+        // here and now, each said; none into anyone else's; and the piggy
+        // bank not taken back into the bag with coins in it.
+        let mut alone = world(false);
+        alone
+            .run_system_once(
+                |mut bag: ResMut<Bag>, mut asks: MessageWriter<Ask>, mut coined: MessageWriter<Coined>, mut me: Query<&mut Balance>| {
+                    let mut balance = me.single_mut().unwrap();
+                    bag.has.take_in(rules::PIGGY, 1).unwrap();
+                    assert!(bag.put(false, &mut asks, 1, rules::PIGGY, here()));
+                    assert!(bag.deposit(None, &mut asks, &mut coined, &mut balance, None, 1, 40));
+                    assert!(bag.withdraw(None, &mut asks, &mut coined, &mut balance, None, 1, 10));
+                    assert_eq!((balance.0, bag.banked.of(1)), (970, 30));
+                    assert!(!bag.deposit(None, &mut asks, &mut coined, &mut balance, Some(9), 1, 5));
+                    assert!(!bag.deposit(None, &mut asks, &mut coined, &mut balance, None, 1, 971));
+                    assert!(!bag.withdraw(None, &mut asks, &mut coined, &mut balance, None, 1, 31));
+                    assert!(bag.has_coins_in(&[2, 1]) && !bag.has_coins_in(&[2]));
+                    assert!(!bag.take(false, &mut asks, 1));
+                    assert!(bag.withdraw(None, &mut asks, &mut coined, &mut balance, None, 1, 30));
+                    assert!(bag.take(false, &mut asks, 1));
+                    assert_eq!(balance.0, 1_000);
+                },
+            )
+            .unwrap();
+        assert!(asked(&mut alone).is_empty());
+        let coined: Vec<Coined> = alone.resource_mut::<Messages<Coined>>().drain().collect();
+        assert_eq!(coined, [Coined(-40), Coined(10), Coined(30)]);
+        // Online: asked, of your own plot as you, of anyone else's as whose
+        // it is; nothing done here until the server says, and then as it
+        // says.
+        let mut world = world(true);
+        world.run_system_once(come_and_go).unwrap();
+        asked(&mut world);
+        world
+            .run_system_once(
+                |mut bag: ResMut<Bag>, mut asks: MessageWriter<Ask>, mut coined: MessageWriter<Coined>, mut me: Query<&mut Balance>| {
+                    let mut balance = me.single_mut().unwrap();
+                    assert!(bag.deposit(Some(7), &mut asks, &mut coined, &mut balance, Some(9), 4, 25));
+                    assert!(bag.withdraw(Some(7), &mut asks, &mut coined, &mut balance, None, 5, 3));
+                    assert_eq!(balance.0, 1_000);
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            asked(&mut world),
+            [rules::Ask::Deposit { who: 9, id: 4, coins: 25 }, rules::Ask::Withdraw { who: 7, id: 5, coins: 3 }]
+        );
+        world.write_message(Tell::Bag(rules::Tell::Banked { who: 9, banked: Banked(vec![(4, 25)]) }));
+        world.write_message(Tell::Bag(rules::Tell::Banked { who: 7, banked: Banked(vec![(5, 2)]) }));
+        world.write_message(Tell::Bag(rules::Tell::Coins(-25)));
+        world.run_system_once(hear).unwrap();
+        assert_eq!(world.resource::<Bag>().banked, Banked(vec![(5, 2)]));
+        assert_eq!(world.resource::<TheirBanked>().of(world.resource::<Bag>(), Some(9)), Banked(vec![(4, 25)]));
+        let coined: Vec<Coined> = world.resource_mut::<Messages<Coined>>().drain().collect();
+        assert_eq!(coined, [Coined(-25)]);
     }
 
     #[test]
@@ -983,20 +1201,20 @@ mod tests {
         let paint = rules::Ask::Paint { id: 1, part: "lampostbody".into(), colour: blue };
         assert_eq!(asked(&mut world), [rules::Ask::Put { id: 1, kind: LAMP.into(), at: here() }, paint]);
         assert_eq!(world.resource::<Bag>().paints.colour(1, "lampostbody"), Some(blue));
-        // The server's answer to the lamp, the fourth thing asked, has no
+        // The server's answer to the lamp, the fifth thing asked, has no
         // colour yet: passed over, a newer one being on its way.
         let mut stood = rules::Bag::new();
         stood.put(1, LAMP, here()).unwrap();
         let said = |asked, paints: Vec<Paint>| Tell::Bag(rules::Tell::Painted { who: 7, asked, paints });
-        world.write_message(Tell::Bag(rules::Tell::Yours { asked: 4, bag: stood.clone() }));
-        world.write_message(said(4, Vec::new()));
+        world.write_message(Tell::Bag(rules::Tell::Yours { asked: 5, bag: stood.clone() }));
+        world.write_message(said(5, Vec::new()));
         world.run_system_once(hear).unwrap();
         world.resource_mut::<Messages<Tell>>().clear();
         assert_eq!(world.resource::<Bag>().paints.colour(1, "lampostbody"), Some(blue));
         // Its answer to the paint is its word: here, another colour.
         let green = Paint { id: 1, part: "lampostbody".into(), colour: [0, 255, 0] };
-        world.write_message(Tell::Bag(rules::Tell::Yours { asked: 5, bag: stood }));
-        world.write_message(said(5, vec![green.clone()]));
+        world.write_message(Tell::Bag(rules::Tell::Yours { asked: 6, bag: stood }));
+        world.write_message(said(6, vec![green.clone()]));
         // And someone else's plot is theirs.
         world.write_message(Tell::Bag(rules::Tell::Painted { who: 8, asked: 0, paints: vec![green.clone()] }));
         world.run_system_once(hear).unwrap();

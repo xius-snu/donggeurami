@@ -100,10 +100,13 @@ pub(crate) enum Says {
     Light,
     /// A drop of water: a tap to run (`working`).
     Water,
+    /// A piggy bank with a coin over its slot: to put coins in and take
+    /// them out (`working`, `storage`).
+    Piggy,
 }
 
 impl Says {
-    pub(crate) const ALL: [Says; 6] = [Says::Dots, Says::Sit, Says::Lie, Says::Store, Says::Light, Says::Water];
+    pub(crate) const ALL: [Says; 7] = [Says::Dots, Says::Sit, Says::Lie, Says::Store, Says::Light, Says::Water, Says::Piggy];
 }
 
 /// A bubble in the world: the point of the world its tail's point is on,
@@ -404,6 +407,22 @@ fn mark_distance(says: Says, at: Vec2) -> f32 {
             let glint = stroke(at, v(-0.15, -0.12), v(-0.08, -0.3), 0.07);
             drop.max(-glint)
         }
+        // A piggy bank from the side, facing right: its round body, its
+        // snout, an ear, two legs and a curl of a tail; its eye and the slot
+        // on its back left white; and a coin over the slot. (A coin alone,
+        // drawn this small, read as a sign saying no entry.)
+        Says::Piggy => {
+            let body = ((at - v(-0.02, -0.06)) / v(0.5, 0.33)).length() - 1.0;
+            let body = body * 0.33;
+            let snout = rounded_box(at - v(0.5, -0.04), v(0.1, 0.11), 0.05);
+            let ear = hud::triangle_distance(at, v(0.16, 0.2), v(0.3, 0.42), v(0.36, 0.18));
+            let legs = rounded_box(at - v(-0.25, -0.38), v(0.075, 0.12), 0.04).min(rounded_box(at - v(0.2, -0.38), v(0.075, 0.12), 0.04));
+            let tail = stroke(at, v(-0.5, 0.0), v(-0.62, 0.1), 0.07);
+            let eye = at.distance(v(0.3, 0.04)) - 0.04;
+            let slot = rounded_box(at - v(-0.06, 0.2), v(0.15, 0.035), 0.03);
+            let coin = at.distance(v(-0.06, 0.52)) - 0.13;
+            body.min(snout).min(ear).min(legs).min(tail).max(-eye).max(-slot).min(coin)
+        }
     }
 }
 
@@ -526,6 +545,7 @@ mod tests {
                 Says::Store => Vec2::new(0.3, -0.2),
                 Says::Light => Vec2::new(0.0, 0.2),
                 Says::Water => Vec2::new(0.1, -0.2),
+                Says::Piggy => Vec2::new(-0.1, -0.12),
             };
             assert_eq!(at(&data, on_it.x, on_it.y), (0, 255), "{says:?}");
             // Nothing of a mark reaches the outline.
