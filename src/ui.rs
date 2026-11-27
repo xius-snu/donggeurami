@@ -1624,6 +1624,7 @@ pub(crate) struct StorageWords {
     pub added: String,
     pub bag_full: String,
     pub no_room: String,
+    pub current: String,
     pub put_in: String,
     pub take_out: String,
     pub how_many_coins: String,

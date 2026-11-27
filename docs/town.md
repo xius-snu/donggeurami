@@ -7,6 +7,33 @@
 > "above" or "below", or names another section in quotes, that section may be
 > in another file here: the table in `CLAUDE.md` says which.
 
+## The how-many bar dragged, and "Current Amount:" in the piggy bank (2026-11-28)
+
+Hajun, after APK 63: "also the slider in the piggy bank should be
+draggable. right now it just accepts tap"; and "also that piggy bank
+pannel, under "Piggy Bank" it should say "Current Amount:" and decrease
+thge size of the coin icon and the coin text slightly".
+
+- **The bar is dragged** (`storage`): the box that asks how many, the
+  piggy bank's and what keeps things' alike, drew its whole window again
+  each time the number changed (`Shown`, which held the number), and the
+  bar a finger was dragging went with it: the drag moved it once. Now the
+  window is drawn again for another box, not another number in it
+  (`frame`), and as the number changes its text, the bar's fill and knob
+  and the minus and the plus follow in place (`follow_the_count`), only
+  what differs written.
+- **"Current Amount:"** (`words.storage.current`) under the piggy bank's
+  name, over the coin and the number, which are smaller: the coin 9 and
+  the number 5.8 of the short side of the screen, from 11 and 7 (mine,
+  "slightly").
+- **Checked**: unit tests (634, one new: another number is the same frame,
+  another box is not); in the desktop build, hidden, by the throwaway
+  driver put back and taken out again: the bar pressed at a tenth of its
+  length and dragged by the mouse to nine tenths, in the piggy bank (900
+  of 1,000 coins went in, the number and the knob following the drag) and
+  in a cabinet (18 of 20 hamburgers), and the window with its new line
+  pictured. **Not checked**: a finger on a phone. In APK 64.
+
 ## The chandelier always on, the bathtub's tap, and the piggy bank (2026-11-27, late, into the 28th)
 
 Hajun, in three messages, while the round below was being built and after

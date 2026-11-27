@@ -18,11 +18,13 @@ spend nothing on those two unasked.
 
 As of 2026-11-28: `PROTOCOL_VERSION` 27 (since the 27th: what is
 said is a number, `chat::Said`, so **APK 61 and older are told to
-update**; APK 62 and later play on), **APK 63** (`versionCode`, built
+update**; APK 62 and later play on), **APK 64** (`versionCode`, built
 2026-11-28, not put on a phone from here, `docs/building.md`), the server
 deployed at 15:44:21 UTC on 2026-11-27 with everything in `server/` and
 `shared/` (an app built from this tree needs it: `docs/online.md`).
-**All of it committed and pushed, up to APK 63**: the bathtub's tap, the
+**All of it committed and pushed, up to APK 64**: pushes set up, Apple's
+and Google's (below); the piggy bank's bar dragged and "Current Amount:";
+the bathtub's tap, the
 piggy bank and the chandelier always on (`docs/town.md`); "My House:", net
 worth as 28.2K, and every panel opening on its first tab
 (`docs/house.md`); houses visited, rated
@@ -49,10 +51,14 @@ built it is not known here), is protocol 18: its build is told to update
 and stays offline until `ios-1.0.2-19` is built, whose tag is Hajun's to
 ask for. Apple warns that from April 2027 an upload needs Xcode 27
 (`docs/building.md`, APK 42).
-**Pushes need Hajun's keys first** (Firebase, Apple; `docs/house.md`,
-"Setting the pushes up": APKs 62 and 63 were built without `google-services.json`,
-and the VM has no keys), and **the next `ios-*` tag needs Push
-Notifications turned on for the App ID** (`IOS.md`, "Pushes").
+**Pushes are set up since 2026-11-28** (`docs/house.md`, "Setting the
+pushes up"): the App ID has Push Notifications, so the next iPhone build
+signs with push; `mobile/android/app/google-services.json` is in place
+(git-ignored), so APK 64 is the first to get Android push tokens (62 and
+63 have none); and the VM has both keys ("pushes go to iPhones and Android
+phones"), each accepted by Apple and Google in a send to a made-up device.
+A phone's token shows in the database's `push_tokens`; the journal says
+only what fails.
 
 ## This file, and where the rest is
 

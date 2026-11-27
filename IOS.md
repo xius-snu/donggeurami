@@ -348,7 +348,13 @@ tag**, at developer.apple.com: Identifiers, `town.donggeurami.app`, tick
 **Push Notifications**, save; Profiles, delete the App Store profile of
 `town.donggeurami.app`, for Codemagic's `fetch-signing-files --create` to
 make one with push in it. Otherwise the build stops at signing, the
-profile lacking the entitlement. The key the server pushes with is a Key of
+profile lacking the entitlement. **Done on 2026-11-28** (by an agent of
+Hajun's, from instructions written here), after a build started by hand
+in Codemagic on the 27th failed to archive: Push Notifications on (no
+Broadcast), the profile "Donggeurami Town ios_app_store ..." removed, and
+a key "RoundTown APNs" (Sandbox & Production, team scoped) made and put
+on the VM. Two older APNs keys of the account and an iOS Development
+profile "donggeurami", invalid since, were left as they were. The key the server pushes with is a Key of
 its own there (Keys, + , Apple Push Notifications service): `SERVER.md`,
 "Pushes". The code is type-checked here and has never run: ask for the
 phone's `log.txt` first ("Apple has given this phone its token", or why

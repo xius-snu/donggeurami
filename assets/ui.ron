@@ -1578,10 +1578,11 @@
         // into your bag, taken out of one ({name}, {count}); that your bag
         // has no room for more of it; and that a thing with too much in it
         // for your bag cannot be put away in it. The piggy bank, opened by
-        // its bubble: its two buttons, the box that asks how many coins and
-        // what is under the coin in it; said across the screen, coins put
-        // in ({count}) and coins taken out ({count}); and that one with
-        // coins in it cannot be put away in your bag.
+        // its bubble: the line under its name over how many coins are in
+        // it, its two buttons, the box that asks how many coins and what is
+        // under the coin in it; said across the screen, coins put in
+        // ({count}) and coins taken out ({count}); and that one with coins
+        // in it cannot be put away in your bag.
         storage: (
             choose: "Choose an item",
             nothing: "Nothing in your bag can go in here.",
@@ -1592,6 +1593,7 @@
             added: "{name} x{count} has been added to your inventory",
             bag_full: "You can't carry any more {name}.",
             no_room: "Your bag has no room for what is in it.",
+            current: "Current Amount:",
             put_in: "Put in",
             take_out: "Take out",
             how_many_coins: "How many coins?",

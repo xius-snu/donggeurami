@@ -126,10 +126,11 @@ const SAID_TEXT: f32 = 4.0;
 const WAIT_SECS: f32 = 1.5;
 /// The piggy bank's window, in shares of the short side of the screen: how
 /// wide what is under its title is, how big the coin there, and the number
-/// beside it, and how far under that its two buttons are.
+/// beside it (11 and 7 until Hajun had them "slightly" smaller, the night
+/// they were made), and how far under that its two buttons are.
 const PIGGY_WIDE: f32 = 52.0;
-const PIGGY_COIN: f32 = 11.0;
-const PIGGY_TEXT: f32 = 7.0;
+const PIGGY_COIN: f32 = 9.0;
+const PIGGY_TEXT: f32 = 5.8;
 const PIGGY_GAP: f32 = 3.0;
 
 /// How the slots of a thing of `kind` are laid out: so many rows, so many
@@ -242,6 +243,17 @@ struct Root;
 struct List;
 #[derive(Component)]
 pub(crate) struct Bar;
+
+/// What of a box that asks how many follows the number as it changes, in
+/// place, with nothing drawn again (`follow_the_count`): the number; the
+/// bar's fill and its knob. (Drawn again, the bar a finger was dragging
+/// went with it, and the drag after it: it only took a tap, Hajun found.)
+#[derive(Component)]
+struct Number;
+#[derive(Component)]
+struct BarFill;
+#[derive(Component)]
+struct Knob;
 
 /// The pictures drawn for the window: the plus in an empty slot, and the
 /// minus and the plus either side of how many; and the coin, the balance's
@@ -482,6 +494,81 @@ fn open(mut opens: MessageReader<Open>, mut chest: ResMut<Chest>, mut up: ResMut
     up.0 = true;
 }
 
+/// The box up over the window, whatever number is in it.
+fn frame(step: Step) -> Step {
+    match step {
+        Step::Counting { slot, kind, .. } => Step::Counting { slot, kind, count: 0 },
+        Step::Coins { into, .. } => Step::Coins { into, count: 0 },
+        other => other,
+    }
+}
+
+/// How many is being counted in the box up over the window, and the most it
+/// can be, if one is up; `coins` being what is in the piggy bank and your
+/// balance, for one.
+fn counting_now(step: Step, has: &rules::Bag, coins: Option<(u32, u32)>) -> Option<(u32, u32)> {
+    match step {
+        Step::Counting { kind, count, .. } => Some((u32::from(count), u32::from(most_of(has, kind)))),
+        Step::Coins { into, count } => coins.map(|(banked, balance)| (count, most_coins(into, banked, balance))),
+        _ => None,
+    }
+}
+
+/// What of a box that asks how many follows the number in place: its text,
+/// the bar's fill and knob, and the minus and the plus, with the mark on
+/// each.
+type Follows<'w, 's> = (
+    Query<'w, 's, &'static mut Text, With<Number>>,
+    Query<'w, 's, &'static mut Node, With<BarFill>>,
+    Query<'w, 's, &'static mut Node, (With<Knob>, Without<BarFill>)>,
+    Query<'w, 's, (&'static Tap, &'static mut Fill, &'static Children)>,
+    Query<'w, 's, &'static mut ImageNode>,
+);
+
+/// Shows `count` of from one to `most` in the box that asks how many, in
+/// place: the number, the bar as far along as it is, and the minus and the
+/// plus greyed at either end, as [`counting`] draws them. Only what differs
+/// is written.
+fn follow_the_count(count: u32, most: u32, (numbers, fills, knobs, steps, marks): &mut Follows) {
+    let share = Val::Percent(share_of(count, most) * 100.0);
+    let said = hud::money(count);
+    for mut text in numbers.iter_mut() {
+        if text.0 != said {
+            text.0.clone_from(&said);
+        }
+    }
+    for mut node in fills.iter_mut() {
+        if node.width != share {
+            node.width = share;
+        }
+    }
+    for mut node in knobs.iter_mut() {
+        if node.left != share {
+            node.left = share;
+        }
+    }
+    let colours = ui().colours.window;
+    for (tap, mut fill, children) in steps.iter_mut() {
+        let able = match tap {
+            Tap::Less => count > 1,
+            Tap::More => count < most,
+            _ => continue,
+        };
+        let lit = if able { colours.button_lit } else { colours.button };
+        if fill.lit != lit {
+            fill.lit = lit;
+        }
+        let mark = if able { colours.button_mark } else { colours.button_off };
+        for &child in children {
+            if let Ok(mut image) = marks.get_mut(child)
+                && image.color != mark
+            {
+                image.color = mark;
+            }
+        }
+    }
+}
+
 /// Shuts the window and whatever is up over it.
 fn shut(chest: &mut Chest, up: &mut DialogUp) {
     *chest = Chest::default();
@@ -661,7 +748,9 @@ fn shut_when_gone(
 /// many there are of what is being counted. It is drawn again only when this
 /// differs: a button drawn again between a finger going down on it and
 /// coming up is never pressed (seen online, someone else's doll coming into
-/// the cabinet as its "+" was pressed).
+/// the cabinet as its "+" was pressed). The number in a box that asks how
+/// many is not part of it ([`frame`]): as it changes, what shows it follows
+/// in place.
 #[derive(Clone, PartialEq, Debug)]
 struct Shown {
     kind: &'static str,
@@ -683,6 +772,7 @@ fn redraw(
     pieces: Query<(&Piece, Option<&Stood>, Option<&TheirPiece>)>,
     balance: Query<&Balance, With<Player>>,
     (assets, stock, pictures): (Res<AssetServer>, Res<Stock>, Res<Pictures>),
+    mut follows: Follows,
     mut drawn: Local<Option<Shown>>,
     mut commands: Commands,
 ) {
@@ -711,12 +801,17 @@ fn redraw(
     let shown = Shown {
         kind,
         slots: held.slots(id).to_vec(),
-        step: chest.step,
+        step: frame(chest.step),
         offered,
         coins,
     };
     let restyled = changed.is_changed() && !changed.is_added();
     if !restyled && !roots.is_empty() && drawn.as_ref() == Some(&shown) {
+        // The same but for the number in the box: that follows in place,
+        // and a finger dragging the bar goes on dragging it.
+        if let Some((count, most)) = counting_now(chest.step, &bag.has, coins) {
+            follow_the_count(count, most, &mut follows);
+        }
         return;
     }
     *drawn = Some(shown);
@@ -886,12 +981,23 @@ fn draw(commands: &mut Commands, view: &View) {
     }
 }
 
-/// What is under a piggy bank's title: the coin and how many coins are in
-/// it, large, and its two buttons, Put in, green, and Take out, each greyed
-/// while there is nothing to put in or take out.
+/// What is under a piggy bank's title: "Current Amount:" (Hajun's, the
+/// night it was made: "under "Piggy Bank" it should say "Current
+/// Amount:""), and under it the coin and how many coins are in it, large,
+/// and its two buttons, Put in, green, and Take out, each greyed while there
+/// is nothing to put in or take out.
 fn piggy(commands: &mut Commands, pane: Entity, view: &View, banked: u32, balance: u32) {
     let ui = ui();
     let words = &ui.words.storage;
+    commands.spawn((
+        ChildOf(pane),
+        Node {
+            margin: UiRect::top(Val::VMin(UNDER_TITLE)),
+            ..default()
+        },
+        Pickable::IGNORE,
+        children![window::words(words.current.clone(), window::HEADING, ui.colours.window.name)],
+    ));
     commands.spawn((
         ChildOf(pane),
         Node {
@@ -1184,7 +1290,7 @@ fn counting(commands: &mut Commands, root: Entity, view: &View, counted: &Counte
             ..default()
         },
         Pickable::IGNORE,
-        children![window::words(hud::money(count), NUMBER_TEXT, colours.name)],
+        children![(Number, window::words(hud::money(count), NUMBER_TEXT, colours.name))],
     ));
     step(commands, row, Tap::More, view.pictures.plus.clone(), count < most);
     // The bar: its whole length, how far along the number is, and a knob
@@ -1214,6 +1320,7 @@ fn counting(commands: &mut Commands, root: Entity, view: &View, counted: &Counte
                     BackgroundColor(storage.bar),
                     Pickable::IGNORE,
                     children![(
+                        BarFill,
                         Node {
                             width: Val::Percent(share * 100.0),
                             height: Val::Percent(100.0),
@@ -1225,6 +1332,7 @@ fn counting(commands: &mut Commands, root: Entity, view: &View, counted: &Counte
                     )],
                 ),
                 (
+                    Knob,
                     Node {
                         position_type: PositionType::Absolute,
                         left: Val::Percent(share * 100.0),
@@ -1312,6 +1420,28 @@ fn clear_said(time: Res<Time>, mut said: Query<(Entity, &mut Said)>, mut command
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_window_is_drawn_again_for_another_box_and_not_for_another_number_in_it() {
+        // A finger dragging the bar changes the number many times a second:
+        // the box's frame is the same throughout, and the number follows in
+        // place, so that the bar it is dragging is not drawn again under it.
+        let coins = |count| Step::Coins { into: true, count };
+        assert_eq!(frame(coins(1)), frame(coins(500)));
+        let things = |count| Step::Counting { slot: 2, kind: "doll", count };
+        assert_eq!(frame(things(1)), frame(things(9)));
+        // Another box, or another slot's, is another frame.
+        assert_ne!(frame(coins(1)), frame(Step::Coins { into: false, count: 1 }));
+        assert_ne!(frame(things(1)), frame(Step::Counting { slot: 3, kind: "doll", count: 1 }));
+        assert_ne!(frame(things(1)), frame(Step::Slots));
+        // What is counted, and the most it can be.
+        let mut has = rules::Bag::new();
+        has.take_in("doll", 4).unwrap();
+        assert_eq!(counting_now(things(3), &has, None), Some((3, 4)));
+        assert_eq!(counting_now(coins(25), &has, Some((10, 300))), Some((25, 300)));
+        assert_eq!(counting_now(Step::Coins { into: false, count: 2 }, &has, Some((10, 300))), Some((2, 10)));
+        assert_eq!(counting_now(Step::Slots, &has, Some((10, 300))), None);
+    }
 
     #[test]
     fn every_thing_that_keeps_things_is_laid_out_as_many_slots_as_it_keeps() {

@@ -7,6 +7,38 @@
 > "above" or "below", or names another section in quotes, that section may be
 > in another file here: the table in `CLAUDE.md` says which.
 
+## APK 64: Android pushes (the first APK with `google-services.json`); the piggy bank's bar dragged, "Current Amount:"
+
+2026-11-28, 02:03 here (17:03 UTC on the 27th). Asked for: "build and
+push", once pushes were set up on Apple's and Google's sites and both
+keys were on the VM (`docs/house.md`, "Setting the pushes up"), and after
+the how-many bar was made to follow a drag and "Current Amount:" put in
+the piggy bank (`docs/town.md`, at the top). The other session held
+still while it was built.
+
+- **Built with `google-services.json`** (Firebase project
+  `donggeurami-town`, git-ignored in `mobile/android/app/`): the Google
+  Services plugin applied, and `google_app_id`, `gcm_defaultSenderId`,
+  `project_id` and `google_api_key` in the APK's resources (`aapt dump
+  resources`), the file itself not in it. So this is the first APK that
+  is given an Android push token: the first time it is online in the
+  town, after asking leave to notify, it sends its token, which lands in
+  `push_tokens` against the account.
+- **The server**: nothing in `server/` or `shared/` changed since the
+  deploy at 15:44:21 UTC, so none; it has had both push keys since 16:53
+  UTC.
+- `versionCode` 64, read back with `aapt dump badging`. cargo ndk 2 m 40 s
+  (`release-android`), stripped from 208.7 MB to 115.2 MB,
+  `GameActivity_onCreate` and the ten `MainActivity` methods in it; Gradle
+  7 s. 140,563,850 bytes: 290 of the game's files under `assets/`, each the
+  same to the byte as the tree's; the library in it the same as the
+  stripped one. Every file under `assets/` (597) hashed before the library
+  was built and after Gradle: the same. `ui.ron` baked in as it was
+  ("Current Amount:" in the stripped library).
+- Before it: `cargo test -p roundtown_net` (311), `-p roundtown_server`
+  (144) and `--lib` (634) on the tree as built; the iPhone's type-check.
+- **Not put on a phone.** No `ios-*` tag.
+
 ## APK 63: the bathtub's tap, the piggy bank, the chandelier always on; "My House:" and every panel on its first tab
 
 2026-11-28, 01:14 here (16:14 UTC on the 27th). Asked for: "buuild apk

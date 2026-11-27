@@ -245,7 +245,13 @@ starts the server logs "pushes go to iPhones and Android phones", or which
 of them, or "nothing is pushed to anyone's phone". Without them every push
 it would have sent is logged instead ("a push to … with nothing set up to
 send it"). **Neither file goes in the repository** (`*.p8` and
-`google-services.json` are in `.gitignore`). Where Hajun gets them:
+`google-services.json` are in `.gitignore`). **Both keys are on the VM
+since 2026-11-28** ("pushes go to iPhones and Android phones" as it
+starts; `/etc/roundtown/env` before each kept as `env.bak-2026-11-28` and
+`-28b`). Each was tried that night by a request signed on the VM to a
+made-up device: Apple answered `BadDeviceToken` (a wrong key or team is
+`InvalidProviderToken`, 403), Google gave its access token and FCM answered
+`INVALID_ARGUMENT` for the token alone. Where Hajun gets them:
 `docs/house.md`, "Setting the pushes up".
 
 Three tables of its own, made as it starts after the accounts' and gone

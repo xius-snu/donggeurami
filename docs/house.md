@@ -187,6 +187,25 @@ Hajun, in one message with the quick chat's changes:
 
 ### Setting the pushes up (Hajun's, once)
 
+**Done on 2026-11-28**, all but the builds of step 4, by an agent of
+Hajun's from instructions written here. Apple: Push Notifications on, the
+App Store profile removed, a key "RoundTown APNs" (Sandbox & Production,
+team scoped). Firebase, on Hajun's Google account for the cloud: the
+project `donggeurami-town` on the free plan, Gemini and Analytics off, the
+Android app `town.donggeurami.app` with no SHA-1, FCM's API (V1) on and
+the old one off, `google-services.json` and the Admin SDK's key. Here:
+`google-services.json` put in `mobile/android/app/` (git-ignored; Gradle's
+`processReleaseGoogleServices` reads it, project `donggeurami-town`); both
+keys put on the VM, which was restarted at 16:49 and again at 16:53 UTC on
+the 27th, nobody on: "pushes go to iPhones and Android phones", this PC's
+account online after each; and each key tried by a request signed on the
+VM to a made-up device (Apple `BadDeviceToken`, FCM `INVALID_ARGUMENT`:
+both accepted the key). APK 64 is the first built with the file; left:
+the iPhone's next build. To see that a phone has its token, look in the
+database (`push_tokens`, against its account): the server logs nothing
+when one comes or a push goes through, only a failure ("Firebase said
+... to a push", "Google's sign-in said ...").
+
 None of this could be done from here: each needs Hajun's own accounts.
 
 1. **Firebase** (Android): at console.firebase.google.com, a project
