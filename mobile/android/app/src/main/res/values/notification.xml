@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- What a push about your house is tinted with: the gold of a rating's
+         stars (assets/ui.ron, colours.house.star). -->
+    <color name="notification">#FFCC33</color>
+</resources>

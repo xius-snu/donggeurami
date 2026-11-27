@@ -7,6 +7,18 @@
 > "above" or "below", or names another section in quotes, that section may be
 > in another file here: the table in `CLAUDE.md` says which.
 
+## The House tab (2026-11-27)
+
+A third tab along the panel's top, Material's house (`assets/icons/
+home.png`, white as the others are): your house's stats and ratings, and
+the board of the best rated houses, under two tabs of its own, the person
+and the leaderboard. Hajun's words, what it shows and how it is drawn are
+in `docs/house.md`; the tab is `src/friends/house.rs`, a module of the
+panel's that draws with its own pieces (`list`, `heading`, `note`, the
+`Tap` presses, the `Scrolled` lists, two more of them, `List::House` and
+`List::Board`), and the panel is drawn again whenever what the server said
+of houses changes while it shows that tab.
+
 ## A group is brought into one channel, and a reply sees a message off (2026-11-23)
 
 Hajun, with the town's plots (`docs/land.md`): "also need to think about

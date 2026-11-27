@@ -7,6 +7,11 @@ appcompat = "1.6.1"
 material = "1.10.0"
 # Must stay compatible with the `android-activity` crate pulled in by Bevy 0.19.
 gamesActivity = "4.4.0"
+# Pushes (since 2026-11-27, `src/push.rs`): Firebase Cloud Messaging, at a
+# version built for compileSdk 34 and minSdk 31 as this app is, and the
+# plugin that reads the project's google-services.json.
+firebaseMessaging = "24.0.0"
+googleServices = "4.4.2"
 
 [libraries]
 junit = { group = "junit", name = "junit", version.ref = "junit" }
@@ -15,6 +20,8 @@ espresso-core = { group = "androidx.test.espresso", name = "espresso-core", vers
 appcompat = { group = "androidx.appcompat", name = "appcompat", version.ref = "appcompat" }
 material = { group = "com.google.android.material", name = "material", version.ref = "material" }
 games-activity = { group = "androidx.games", name = "games-activity", version.ref = "gamesActivity" }
+firebase-messaging = { group = "com.google.firebase", name = "firebase-messaging", version.ref = "firebaseMessaging" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
+google-services = { id = "com.google.gms.google-services", version.ref = "googleServices" }

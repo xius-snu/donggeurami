@@ -37,6 +37,9 @@ pub(crate) fn plugin(app: &mut App, lands: Vec<crate::accounts::Land>) {
         towns.record(crate::bag::lot_kept(land.id, &land.name, &land.look, &land.bag));
     }
     info!("{} of {} accounts with a bag have something standing on their land", towns.lots.len(), lands.len());
+    // What is at work on each of those plots, which anyone in a channel it
+    // is in may use, its owner here or not (`bag::Workshop`).
+    app.insert_resource(crate::bag::Workshop::kept(&lands));
     app.insert_resource(towns)
         .add_visibility_filter::<InRoom>()
         .add_visibility_filter::<NotFor>();
@@ -336,6 +339,21 @@ impl Towns {
         }
     }
 
+    /// The land of `who` as last known, if anything stands on it: what
+    /// stands there whether or not they are here (`bag`, for what works
+    /// there, since 2026-11-27).
+    pub(crate) fn land_of(&self, who: u64) -> Option<&Lot> {
+        self.lots.get(&who)
+    }
+
+    /// Whether anything of `who` is in `channel`: a plot they have there,
+    /// in the town or away, or one kept for them, or their land filling
+    /// one. Whoever is in that channel may use what works on it.
+    pub(crate) fn has(&self, channel: u16, who: u64) -> bool {
+        let estate = self.channels.get(usize::from(channel)).and_then(|channel| channel.estate.as_ref());
+        estate.is_some_and(|estate| estate.has(who))
+    }
+
     /// The account `who` is no more: its land fills nothing from here on.
     pub(crate) fn forget(&mut self, who: u64) {
         self.lots.remove(&who);
@@ -493,6 +511,18 @@ impl Towns {
     /// How many are in each channel, those away in a game among them.
     pub(crate) fn counts(&self) -> Vec<usize> {
         self.channels.iter().map(Channel::count).collect()
+    }
+
+    /// Whose land is on `plot` of `channel`, to be visited and rated
+    /// (`house`, since 2026-11-27): `land::Estate::owner`.
+    pub(crate) fn owner_of(&self, channel: u16, plot: usize) -> Option<u64> {
+        self.channels.get(usize::from(channel))?.estate.as_ref()?.owner(plot)
+    }
+
+    /// The land of the account `who` as last known (`Towns::record`), if
+    /// anything stands on it.
+    pub(crate) fn land(&self, who: u64) -> Option<&Lot> {
+        self.lots.get(&who)
     }
 }
 

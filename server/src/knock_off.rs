@@ -44,7 +44,7 @@
 use std::sync::Arc;
 
 use bevy::prelude::*;
-use roundtown_net::knock_off::{self, Event, Floe, Game, Island, KnockRound, KnockStage, Loiter, STOOD_BACK};
+use roundtown_net::knock_off::{self, Event, Floe, Game, Hops, Island, KnockRound, KnockStage, Loiter, STOOD_BACK, may_hop};
 use roundtown_net::{Ask, Tell};
 
 use crate::tables::{Ctx, Rules, Table, name, yaw_of};
@@ -66,8 +66,11 @@ const UNWATCHED_PLAY_OUT: f32 = 10.0;
 
 /// A game of Knock Off at its table: the island it is played on, and
 /// whether the room has been sent it; the game, once it has begun; the
-/// computer's players strolling about the ice until then; and the round as
-/// the room was last sent it, to send again only when it changes.
+/// computer's players strolling about the ice until then, and hopping now
+/// and then all along (`knock_off::Hops`, since 2026-11-27); the round as
+/// the room was last sent it, to send again only when it changes; and the
+/// turn and stage the people's bodies were last stood where the game has
+/// them, as the server keeps them.
 pub(crate) struct KnockOff {
     seed: u64,
     island: Island,
@@ -75,7 +78,9 @@ pub(crate) struct KnockOff {
     island_sent: bool,
     game: Option<Game>,
     loiter: Loiter,
+    hops: Hops,
     sent: Option<KnockRound>,
+    stood: Option<(u16, KnockStage)>,
 }
 
 impl KnockOff {
@@ -92,7 +97,9 @@ impl KnockOff {
             island_sent: false,
             game: None,
             loiter: Loiter::new(seed ^ 0x6B6E_6F63_6B5F_6F66),
+            hops: Hops::new(seed ^ 0x686F_7073),
             sent: None,
+            stood: None,
         }
     }
 
@@ -185,7 +192,8 @@ impl Rules for KnockOff {
 
     /// The computer's players, as each comes out onto the ice, stand about
     /// on it and now and then stroll somewhere else on it, until the game
-    /// begins.
+    /// begins; and some of them hop now and then (`Hops`), how high sent as
+    /// their bodies are.
     fn idle(&mut self, _ctx: &mut Ctx, table: &mut Table, dt: f32) {
         let everyone = Self::everyone(table);
         for seat in 0..table.seats.len() {
@@ -193,6 +201,7 @@ impl Rules for KnockOff {
             if !it.computer || it.vacant {
                 if self.loiter.has(seat) {
                     self.loiter.leave(seat);
+                    self.hops.leave(seat);
                 }
                 continue;
             }
@@ -200,7 +209,8 @@ impl Rules for KnockOff {
                 self.loiter.enter(seat, table.at[seat].xz(), table.yaw[seat]);
             }
             if let Some((at, yaw)) = self.loiter.step(seat, &everyone, &self.floe, dt) {
-                table.at[seat] = Vec3::new(at.x, 0.0, at.y);
+                let lift = self.hops.step(seat, dt, true);
+                table.at[seat] = Vec3::new(at.x, lift, at.y);
                 table.yaw[seat] = yaw;
             }
         }
@@ -236,7 +246,7 @@ impl Rules for KnockOff {
     /// nobody, the table told how everyone came. Every person in the sea
     /// and none of them connected a while ([`UNWATCHED_PLAY_OUT`]), there
     /// is nobody to show the rest to, and it is played at once.
-    fn step(&mut self, ctx: &mut Ctx, table: &mut Table, _dt: f32) {
+    fn step(&mut self, ctx: &mut Ctx, table: &mut Table, dt: f32) {
         let Some(game) = &mut self.game else {
             return;
         };
@@ -245,13 +255,33 @@ impl Rules for KnockOff {
         // slides: each device plays the slide out itself and places every
         // body (`Frozen`), so where they are as they go would be sent to
         // nobody who looks; they are sent where it left them as the ice
-        // breaks.
-        if game.stage() != KnockStage::Slide {
+        // breaks. Hopping now and then, where hops are (`may_hop`): how high
+        // is sent as they are, and every device draws the hop.
+        let stage = game.stage();
+        for seat in 0..table.seats.len() {
+            if !table.seats[seat].computer {
+                continue;
+            }
+            let lift = self.hops.step(seat, dt, may_hop(stage) && game.in_play_at(seat));
+            if stage != KnockStage::Slide {
+                let (at, yaw) = game.at(seat);
+                table.at[seat] = at + Vec3::Y * if game.in_play_at(seat) { lift } else { 0.0 };
+                table.yaw[seat] = yaw;
+            }
+        }
+        // Each person's body as the server keeps it, where the game has
+        // them, as every stage but a slide begins: their device places it
+        // itself and says nothing of it while the game is played, but for a
+        // hop on the spot (since 2026-11-27), which has to be a move from
+        // where it stands; after a slide the server's had it where the last
+        // turn began, and took the hop for a leap across the ice.
+        if stage != KnockStage::Slide && self.stood != Some((game.turn(), stage)) {
+            self.stood = Some((game.turn(), stage));
             for seat in 0..table.seats.len() {
-                if table.seats[seat].computer {
+                let it = &table.seats[seat];
+                if it.person() && it.here() && game.in_play_at(seat) {
                     let (at, yaw) = game.at(seat);
-                    table.at[seat] = at;
-                    table.yaw[seat] = yaw;
+                    ctx.move_body(it.body, at, yaw);
                 }
             }
         }
@@ -558,8 +588,19 @@ mod tests {
                 assert_eq!(played.table.at, before_the_slide, "{round:?}");
             } else {
                 before_the_slide.clear();
+                // Where the game has them, a hop now and then over it.
                 for seat in (0..4).filter(|&seat| played.table.seats[seat].computer) {
-                    assert_eq!(played.table.at[seat], game.at(seat).0, "seat {seat}");
+                    let (sent, there) = (played.table.at[seat], game.at(seat).0);
+                    assert_eq!(sent.xz(), there.xz(), "seat {seat}");
+                    assert!(sent.y >= there.y && sent.y <= there.y + 1.7, "seat {seat}: {sent} over {there}");
+                }
+                // And the person's body as the server keeps it where the
+                // game has them, for a hop on the spot to be a move from
+                // there.
+                if game.in_play_at(0) && game.stage() != KnockStage::Slide {
+                    let body = played.table.seats[0].body;
+                    let kept = world.get::<roundtown_net::Spot>(body).expect("the person's body").translation();
+                    assert!(kept.xz().distance(game.at(0).0.xz()) < 0.02, "{kept} and {}", game.at(0).0);
                 }
             }
         }

@@ -283,7 +283,15 @@ pub const PROTOCOL_ID: u64 = u64::from_be_bytes(*b"DGRMTOWN");
 /// an app from before would play on the round island; its round says how big
 /// the ice is as a share of the island ([`knock_off::KnockRound::size`]),
 /// where it said how far it reached; and everyone begins where they stood.
-pub const PROTOCOL_VERSION: u32 = 26;
+///
+/// 27 since later that day (Hajun: "im gona disable custom text chat
+/// throughout the game in both minigames and in the lobby. there is only
+/// gona be quickchat with the chatbubble"): what someone said is a line
+/// typed or one of the things to say at a press, by its number
+/// ([`Tell::Said`], [`chat::Said`]), where it was the words alone, and the
+/// server passes on no line typed ([`chat::TYPED`]); with them, houses are
+/// visited and rated ([`house`], [`Ask::House`], [`Tell::House`]).
+pub const PROTOCOL_VERSION: u32 = 27;
 
 /// The UDP port the game server listens on. 443, where QUIC goes, because a
 /// network that lets any UDP through lets that through: school and office
@@ -1222,6 +1230,10 @@ pub mod nav;
 // 2026-11-20), and the made-up land that fills what is left.
 pub mod land;
 pub mod premade;
+
+// Visiting someone's house, rating it, and the board of the best (since
+// 2026-11-27).
+pub mod house;
 
 // The four games of 2026-11-18 (Hajun: "add these minigames: Blend In,
 // Knock Off, Bridge Race, Last Stand"): what they have in common, and each
@@ -4727,6 +4739,54 @@ pub mod chat {
     /// seconds of being in a fight.
     pub const CREDIT_SECS: f32 = 5.0;
 
+    /// Whether a line may be typed and said (since 2026-11-27, not; Hajun:
+    /// "im gona disable custom text chat throughout the game in both
+    /// minigames and in the lobby. there is only gona be quickchat with the
+    /// chatbubble"): the server passes on no line typed
+    /// ([`Ask::Chat`](super::Ask::Chat)), and the game puts up no box to
+    /// type one into, nor the keyboard that took it up. All of it is still
+    /// there: this one word brings it back, on both sides.
+    pub const TYPED: bool = false;
+
+    /// The most things to say at a press one list has ([`Quick`]): what a
+    /// device may ask the server to say by its number.
+    pub const QUICK_MOST: u8 = 16;
+
+    /// Which list of things to say at a press a line is from (the game's
+    /// `quick`): the town's, Hajun's, or the one for the games.
+    #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Hash, Debug)]
+    pub enum Lines {
+        Town,
+        Games,
+    }
+
+    /// One of the things to say at a press: which list, and which of it by
+    /// its number there (since 2026-11-27, when they became all there is to
+    /// say). The words are each device's own (`words.chat.quick` and
+    /// `quick_games` in its `assets/ui.ron`), so the server passes on the
+    /// number alone, which nobody can put words of their own into.
+    #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Hash, Debug)]
+    pub struct Quick {
+        pub lines: Lines,
+        pub line: u8,
+    }
+
+    impl Quick {
+        /// Whether it is one a list could have ([`QUICK_MOST`]).
+        pub fn sane(&self) -> bool {
+            self.line < QUICK_MOST
+        }
+    }
+
+    /// What someone said, as everyone in their room is told
+    /// ([`Tell::Said`](super::Tell::Said)): a line typed, while that may be
+    /// ([`TYPED`]), or one of the things to say at a press.
+    #[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug)]
+    pub enum Said {
+        Typed(String),
+        Quick(Quick),
+    }
+
     /// `typed` as a line to say, if it is one: something, once it is
     /// cleaned ([`text::clean`]: its letters put together, what the game
     /// does not write left out, the spaces round it trimmed), and no longer
@@ -5173,6 +5233,10 @@ pub mod bag {
         /// Not something that stands on a plot, or nowhere a thing may
         /// stand.
         Place,
+        /// Not food, for something only food goes in ([`Keeps::food_only`]).
+        Food,
+        /// A slot with something else in it ([`stow`]).
+        Taken,
     }
 
     /// Whether `at` is somewhere a thing may be said to stand: numbers, and
@@ -5291,6 +5355,315 @@ pub mod bag {
             }
             sane
         }
+    }
+
+    // ------------------------------------------- what works (2026-11-27)
+
+    /// What something that keeps things in it keeps, as a chest does (since
+    /// 2026-11-27; Hajun: "cabinets can have storage inventory that is like a
+    /// chest - u can put items in there, any anyone can open it and take it
+    /// out or put sth there"): how many slots it has, each holding so many
+    /// of one kind of thing, and whether only food goes in it.
+    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+    pub struct Keeps {
+        pub slots: u8,
+        pub food_only: bool,
+    }
+
+    /// What a thing of `kind` keeps, if it keeps anything: as Hajun has it,
+    /// "cabinet = 8 square slots (4 on left, 4 on right) barbeque = 3 square
+    /// slots but food only (1 row of 3) end table = 3 square slots (1 row of
+    /// 3) safe = 9 square slots (3 rows of 3, like a 3x3 square) dresser = 12
+    /// square slots (6 on left, 6 on right)". How the slots are laid out is
+    /// the game's to draw.
+    pub fn keeps(kind: &str) -> Option<Keeps> {
+        let (slots, food_only) = match kind {
+            "cabinet" => (8, false),
+            "barbecue" => (3, true),
+            "end_table" => (3, false),
+            "safe" => (9, false),
+            "dresser" => (12, false),
+            _ => return None,
+        };
+        Some(Keeps { slots, food_only })
+    }
+
+    /// What there is to own that is food, for the barbecue: what is eaten
+    /// and what is drunk (mine, 2026-11-27: Hajun's list has no food of its
+    /// own, and these four are the things on it that are).
+    pub const FOOD: [&str; 4] = ["hamburger", "fruit_bowl", "cup_of_tea", "wine_glass"];
+
+    /// Whether the thing that goes by `kind` is food ([`FOOD`]).
+    pub fn is_food(kind: &str) -> bool {
+        FOOD.contains(&kind)
+    }
+
+    /// The lights that are switched on and off by hand, and not by the
+    /// time of day (since 2026-11-27; Hajun: "lamp with shade (toggle light
+    /// on off rather than day/night) chandelier (toggle light on off rather
+    /// than day/night)"): off until someone switches one on.
+    pub const SWITCHED: [&str; 2] = ["lamp_with_shade", "chandelier"];
+
+    /// Whether a thing of `kind` is a light switched by hand ([`SWITCHED`]).
+    pub fn switched(kind: &str) -> bool {
+        SWITCHED.contains(&kind)
+    }
+
+    /// The sink, whose tap is run (since 2026-11-27; Hajun: "turn faucet on
+    /// for 5 second, water comes down the faucet, and water in the sink goes
+    /// up and up until its full, and then the faucet turns off
+    /// automatically"); and how long it is from its tap being run until it
+    /// is empty again and can be run once more, in seconds: five filling,
+    /// the rest full and draining away (the game's `working` draws it so).
+    pub const SINK: &str = "bathroom_sink";
+    pub const SINK_SECS: f64 = 12.0;
+
+    /// So many of one kind of thing, in one slot of something that keeps
+    /// things.
+    #[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug)]
+    pub struct Stack {
+        pub kind: String,
+        pub count: u16,
+    }
+
+    /// What is kept in one thing standing on a plot: the thing, by its
+    /// number ([`Standing::id`]), and each of its slots in order, empty or
+    /// with a [`Stack`] in it.
+    #[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug)]
+    pub struct Held {
+        pub id: u32,
+        pub slots: Vec<Option<Stack>>,
+    }
+
+    /// What is at work among what stands on one plot: what is kept in each
+    /// thing that keeps things ([`keeps`]), and which of its lights are
+    /// switched on ([`SWITCHED`]), each by its number. **Anyone in the
+    /// channel may put things in, take them out and switch the lights**, as
+    /// Hajun has it of the first; what is kept belongs to nobody while it is
+    /// kept, and comes into the bag of whoever takes it. Kept beside the bag
+    /// and not in it ([`Bag`] and [`Paints`] are said over the wire as they
+    /// were before, to apps from then), and by the server in a column of its
+    /// own, which it writes for an owner who is not here.
+    #[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug, Default)]
+    pub struct Workings {
+        pub held: Vec<Held>,
+        pub lit: Vec<u32>,
+    }
+
+    impl Workings {
+        /// The slots of the thing standing under `id`: none, for one that
+        /// has never had anything in it.
+        pub fn slots(&self, id: u32) -> &[Option<Stack>] {
+            self.held.iter().find(|held| held.id == id).map_or(&[], |held| held.slots.as_slice())
+        }
+
+        /// Whether anything is kept in the thing standing under `id`.
+        pub fn holds_anything(&self, id: u32) -> bool {
+            self.slots(id).iter().any(Option::is_some)
+        }
+
+        /// Whether the light standing under `id` is switched on.
+        pub fn is_lit(&self, id: u32) -> bool {
+            self.lit.contains(&id)
+        }
+
+        /// Whether nothing is kept anywhere and no light is on.
+        pub fn is_empty(&self) -> bool {
+            self.lit.is_empty() && self.held.iter().all(|held| held.slots.iter().all(Option::is_none))
+        }
+
+        /// The slots of the thing standing under `id`, `slots` of them, as
+        /// many empty ones made as it has never had.
+        fn slots_mut(&mut self, id: u32, slots: usize) -> &mut Vec<Option<Stack>> {
+            let at = match self.held.iter().position(|held| held.id == id) {
+                Some(at) => at,
+                None => {
+                    self.held.push(Held { id, slots: Vec::new() });
+                    self.held.len() - 1
+                }
+            };
+            let held = &mut self.held[at].slots;
+            if held.len() < slots {
+                held.resize(slots, None);
+            }
+            held
+        }
+
+        /// Switches the light standing under `id` among `stands` on or off.
+        /// Whether that changed it.
+        pub fn switch(&mut self, stands: &[Standing], id: u32, on: bool) -> Result<bool, No> {
+            let stood = stands.iter().find(|stood| stood.id == id).ok_or(No::None)?;
+            if !switched(&stood.kind) {
+                return Err(No::Place);
+            }
+            if on == self.is_lit(id) {
+                return Ok(false);
+            }
+            if on {
+                self.lit.push(id);
+                self.lit.sort_unstable();
+            } else {
+                self.lit.retain(|&lit| lit != id);
+            }
+            Ok(true)
+        }
+
+        /// Lets go of whatever of the thing standing under `id` there is
+        /// here, it being taken back into the bag: whether its light was
+        /// on, and what was kept in it, which goes with it.
+        pub fn let_go(&mut self, id: u32) -> Vec<Stack> {
+            self.lit.retain(|&lit| lit != id);
+            let Some(at) = self.held.iter().position(|held| held.id == id) else {
+                return Vec::new();
+            };
+            self.held.remove(at).slots.into_iter().flatten().collect()
+        }
+
+        /// What is at work as it may be, with whatever was kept wrongly put
+        /// right: only of what stands among `stands` and keeps things, or
+        /// is a light switched by hand; each thing once, with its own number
+        /// of slots, what is in a slot past them moved into an empty one if
+        /// there is one; and in each slot so many of a thing there is, as
+        /// many as one may own at the most, food where only food goes.
+        pub fn sane(self, stands: &[Standing]) -> Self {
+            let mut sane = Workings::default();
+            for held in self.held {
+                let Some(keeps) = stands.iter().find(|stood| stood.id == held.id).and_then(|stood| keeps(&stood.kind)) else {
+                    continue;
+                };
+                if sane.held.iter().any(|other| other.id == held.id) {
+                    continue;
+                }
+                let fits = |stack: &Stack| {
+                    thing(&stack.kind).is_some() && stack.count > 0 && (!keeps.food_only || is_food(&stack.kind))
+                };
+                let mut slots: Vec<Option<Stack>> = vec![None; usize::from(keeps.slots)];
+                let mut over = Vec::new();
+                for (at, stack) in held.slots.into_iter().enumerate() {
+                    let Some(mut stack) = stack.filter(fits) else {
+                        continue;
+                    };
+                    stack.count = stack.count.min(MOST_OF_A_KIND);
+                    match slots.get_mut(at) {
+                        Some(slot) => *slot = Some(stack),
+                        None => over.push(stack),
+                    }
+                }
+                for stack in over {
+                    if let Some(empty) = slots.iter_mut().find(|slot| slot.is_none()) {
+                        *empty = Some(stack);
+                    }
+                }
+                if slots.iter().any(Option::is_some) {
+                    sane.held.push(Held { id: held.id, slots });
+                }
+            }
+            sane.lit = self
+                .lit
+                .into_iter()
+                .filter(|&id| stands.iter().any(|stood| stood.id == id && switched(&stood.kind)))
+                .collect();
+            sane.lit.sort_unstable();
+            sane.lit.dedup();
+            sane
+        }
+    }
+
+    /// What the thing standing under `id` among `stands` keeps, if it is
+    /// there and keeps anything.
+    fn keeping(stands: &[Standing], id: u32) -> Result<Keeps, No> {
+        let stood = stands.iter().find(|stood| stood.id == id).ok_or(No::None)?;
+        keeps(&stood.kind).ok_or(No::Place)
+    }
+
+    /// Puts `count` of `kind` out of `bag` into slot `slot` of the thing
+    /// standing under `id` among `stands`, whose plot's workings are
+    /// `workings`: into an empty slot, or onto as many of the same there
+    /// already, up to as many as one may own; and food alone into what only
+    /// food goes in. The bag has to have them in it, not standing. Anyone's
+    /// bag, into anyone's thing (Hajun: "anyone can open it and take it out
+    /// or put sth there").
+    pub fn stow(bag: &mut Bag, workings: &mut Workings, stands: &[Standing], id: u32, slot: usize, kind: &str, count: u16) -> Result<(), No> {
+        thing(kind).ok_or(No::Unknown)?;
+        let keeps = keeping(stands, id)?;
+        if slot >= usize::from(keeps.slots) {
+            return Err(No::Place);
+        }
+        if keeps.food_only && !is_food(kind) {
+            return Err(No::Food);
+        }
+        if count == 0 || bag.free(kind) < count {
+            return Err(No::None);
+        }
+        let there = workings.slots(id).get(slot).cloned().flatten();
+        let now = match there {
+            None => count,
+            Some(stack) if stack.kind == kind => {
+                let now = u32::from(stack.count) + u32::from(count);
+                if now > u32::from(MOST_OF_A_KIND) {
+                    return Err(No::Full);
+                }
+                now as u16
+            }
+            Some(_) => return Err(No::Taken),
+        };
+        bag.give_up(kind, count)?;
+        workings.slots_mut(id, usize::from(keeps.slots))[slot] = Some(Stack {
+            kind: kind.to_string(),
+            count: now,
+        });
+        Ok(())
+    }
+
+    /// Takes what is in slot `slot` of the thing standing under `id` among
+    /// `stands` into `bag`, as much of it as the bag has room for, which may
+    /// be all of it: what came into the bag. Anyone may.
+    pub fn unstow(bag: &mut Bag, workings: &mut Workings, stands: &[Standing], id: u32, slot: usize) -> Result<Stack, No> {
+        let keeps = keeping(stands, id)?;
+        let Some(stack) = workings.slots(id).get(slot).cloned().flatten() else {
+            return Err(No::None);
+        };
+        let came = stack.count.min(bag.room_for(&stack.kind));
+        if came == 0 {
+            return Err(No::Full);
+        }
+        bag.take_in(&stack.kind, came)?;
+        let left = stack.count - came;
+        workings.slots_mut(id, usize::from(keeps.slots))[slot] = (left > 0).then(|| Stack {
+            kind: stack.kind.clone(),
+            count: left,
+        });
+        if !workings.holds_anything(id) {
+            workings.held.retain(|held| held.id != id);
+        }
+        Ok(Stack {
+            kind: stack.kind,
+            count: came,
+        })
+    }
+
+    /// Takes the thing standing under `id` back off the plot into `bag`
+    /// ([`Bag::take`]), and whatever is kept in it with it, if the bag has
+    /// room for all of that; its light, if it is one, goes out. Refused
+    /// ([`No::Full`]) with too much of a kind in it to fit, and nothing is
+    /// changed: what was kept in it is never lost.
+    pub fn take_back(bag: &mut Bag, workings: &mut Workings, id: u32) -> Result<(), No> {
+        let mut kept: Vec<(&str, u32)> = Vec::new();
+        for stack in workings.slots(id).iter().flatten() {
+            match kept.iter_mut().find(|(kind, _)| *kind == stack.kind) {
+                Some((_, count)) => *count += u32::from(stack.count),
+                None => kept.push((stack.kind.as_str(), u32::from(stack.count))),
+            }
+        }
+        if kept.iter().any(|&(kind, count)| thing(kind).is_some() && u32::from(bag.room_for(kind)) < count) {
+            return Err(No::Full);
+        }
+        bag.take(id)?;
+        for stack in workings.let_go(id) {
+            // A kind there is no longer is let go of, as the bag would.
+            let _ = bag.take_in(&stack.kind, stack.count);
+        }
+        Ok(())
     }
 
     /// One person's bag: their gems, how many of each kind of thing they
@@ -5436,6 +5809,37 @@ pub mod bag {
             if self.stands.len() == before { Err(No::None) } else { Ok(()) }
         }
 
+        /// Gives up `count` of `kind` out of the bag, put away in something
+        /// that keeps things ([`stow`]): it has to have that many in it, not
+        /// standing.
+        pub fn give_up(&mut self, kind: &str, count: u16) -> Result<(), No> {
+            if self.free(kind) < count {
+                return Err(No::None);
+            }
+            self.set(kind, self.count(kind) - count);
+            Ok(())
+        }
+
+        /// How many more of `kind` the bag has room for: as many as one may
+        /// own at the most, less those owned; none of a kind there is not.
+        pub fn room_for(&self, kind: &str) -> u16 {
+            if thing(kind).is_none() {
+                return 0;
+            }
+            MOST_OF_A_KIND.saturating_sub(self.count(kind))
+        }
+
+        /// Takes `count` of `kind` into the bag, taken out of something that
+        /// keeps things ([`unstow`]), if it has room for them all.
+        pub fn take_in(&mut self, kind: &str, count: u16) -> Result<(), No> {
+            thing(kind).ok_or(No::Unknown)?;
+            if self.room_for(kind) < count {
+                return Err(No::Full);
+            }
+            self.set(kind, self.count(kind) + count);
+            Ok(())
+        }
+
         /// A number for the next thing to stand on the plot: one more than
         /// the highest there.
         pub fn next_id(&self) -> u32 {
@@ -5496,6 +5900,26 @@ pub mod bag {
         /// has it again (since later on 2026-11-22; Hajun: "if u paint sth
         /// with the clear, it will clear that color to its original").
         Unpaint { id: u32, part: String },
+        /// Tell me what is at work on my plot and on the plots of my channel
+        /// ([`Tell::Workings`]): what is kept in what keeps things, and which
+        /// lights are on. Said once, on coming online, after [`Ask::Colours`],
+        /// by an app that knows how to show it (since 2026-11-27: one from
+        /// before never says it, and is never told).
+        Workings,
+        /// Put `count` of `kind` out of my bag into slot `slot` of the thing
+        /// standing under `id` on `who`'s plot, which keeps things
+        /// ([`stow`]): mine, or anyone's in my channel.
+        Stow { who: u64, id: u32, slot: u8, kind: String, count: u16 },
+        /// Take what is in slot `slot` of that thing into my bag
+        /// ([`unstow`]).
+        Unstow { who: u64, id: u32, slot: u8 },
+        /// Switch the light standing under `id` on `who`'s plot on or off
+        /// ([`Workings::switch`]).
+        Switch { who: u64, id: u32, on: bool },
+        /// Run the tap of the sink standing under `id` on `who`'s plot
+        /// ([`SINK`]): everyone in the channel is to see it fill
+        /// ([`Tell::Ran`]).
+        Run { who: u64, id: u32 },
     }
 
     /// Something told about a bag.
@@ -5522,6 +5946,217 @@ pub mod bag {
         /// ([`Tell::Theirs`]) and whenever they paint, and `asked` is
         /// nothing.
         Painted { who: u64, asked: u32, paints: Vec<Paint> },
+        /// What is at work on `who`'s plot, you or anyone else in your
+        /// channel, all of it ([`Workings`]): after what stands there and its
+        /// colours, as either is told, and whenever anyone in the channel
+        /// puts something into one of its things, takes something out or
+        /// switches a light. The server's word, whoever's plot it is. Only to
+        /// an app that asked ([`Ask::Workings`]).
+        Workings { who: u64, workings: Workings },
+        /// So many of a kind of thing have come into your bag, taken out of
+        /// something that keeps things ([`Ask::Unstow`]): for the game to say
+        /// so. After the [`Tell::Yours`] that has them in it.
+        Got(Stack),
+        /// The tap of the sink standing under `id` on `who`'s plot has been
+        /// run, by you or anyone else in your channel ([`Ask::Run`]): it
+        /// fills from now.
+        Ran { who: u64, id: u32 },
+    }
+
+    #[cfg(test)]
+    mod working_tests {
+        use super::*;
+
+        fn ground(x: f32) -> At {
+            At::Ground { x, y: 0.0, z: 0.0, yaw: 0.0 }
+        }
+
+        /// A bag with these things in it, these of them standing under the
+        /// numbers 1, 2, 3 and so on.
+        fn bag_with(owned: &[(&str, u16)], standing: &[&str]) -> Bag {
+            let mut bag = Bag { gems: 0, owned: Vec::new(), stands: Vec::new() };
+            for &(kind, count) in owned {
+                bag.take_in(kind, count).unwrap();
+            }
+            for (n, kind) in standing.iter().enumerate() {
+                bag.put(n as u32 + 1, kind, ground(n as f32)).unwrap();
+            }
+            bag
+        }
+
+        #[test]
+        fn what_keeps_things_keeps_as_many_as_hajun_said_and_the_barbecue_food_alone() {
+            let slots = |kind: &str| keeps(kind).map(|keeps| (keeps.slots, keeps.food_only));
+            assert_eq!(slots("cabinet"), Some((8, false)));
+            assert_eq!(slots("barbecue"), Some((3, true)));
+            assert_eq!(slots("end_table"), Some((3, false)));
+            assert_eq!(slots("safe"), Some((9, false)));
+            assert_eq!(slots("dresser"), Some((12, false)));
+            assert_eq!(slots("desk"), None);
+            // Every one of them, the food, the lights and the sink are things
+            // there are to own.
+            for kind in ["cabinet", "barbecue", "end_table", "safe", "dresser", SINK].into_iter().chain(FOOD).chain(SWITCHED) {
+                assert!(thing(kind).is_some(), "{kind}");
+            }
+            assert!(is_food("hamburger") && !is_food("streetlamp"));
+            assert!(switched("chandelier") && switched("lamp_with_shade") && !switched(LAMP));
+        }
+
+        #[test]
+        fn anyone_puts_things_in_and_takes_them_out_and_nothing_is_made_or_lost() {
+            let owner = bag_with(&[("cabinet", 1), ("barbecue", 1)], &["cabinet", "barbecue"]);
+            let stands = owner.stands.clone();
+            let mut works = Workings::default();
+            let mut guest = bag_with(&[("hamburger", 5), ("doll", 2)], &[]);
+            // Three hamburgers into the cabinet's second slot: out of the bag,
+            // into the slot.
+            stow(&mut guest, &mut works, &stands, 1, 1, "hamburger", 3).unwrap();
+            assert_eq!((guest.count("hamburger"), works.slots(1).len()), (2, 8));
+            assert_eq!(works.slots(1)[1], Some(Stack { kind: "hamburger".into(), count: 3 }));
+            // Onto them, two more; but not a doll, nor more than the bag has.
+            stow(&mut guest, &mut works, &stands, 1, 1, "hamburger", 2).unwrap();
+            assert_eq!(works.slots(1)[1].as_ref().map(|stack| stack.count), Some(5));
+            assert_eq!(stow(&mut guest, &mut works, &stands, 1, 1, "doll", 1), Err(No::Taken));
+            assert_eq!(stow(&mut guest, &mut works, &stands, 1, 0, "doll", 3), Err(No::None));
+            assert_eq!(stow(&mut guest, &mut works, &stands, 1, 0, "doll", 0), Err(No::None));
+            // Nowhere past its slots, in nothing that keeps things, and in
+            // nothing standing.
+            assert_eq!(stow(&mut guest, &mut works, &stands, 1, 8, "doll", 1), Err(No::Place));
+            assert_eq!(stow(&mut guest, &mut works, &stands, 7, 0, "doll", 1), Err(No::None));
+            // The barbecue takes food alone.
+            assert_eq!(stow(&mut guest, &mut works, &stands, 2, 0, "doll", 1), Err(No::Food));
+            assert_eq!(guest.count("doll"), 2);
+            // Someone else takes the five out: into their bag, the slot empty
+            // and the cabinet with nothing in it.
+            let mut taker = bag_with(&[], &[]);
+            assert_eq!(unstow(&mut taker, &mut works, &stands, 1, 1), Ok(Stack { kind: "hamburger".into(), count: 5 }));
+            assert_eq!(taker.count("hamburger"), 5);
+            assert!(!works.holds_anything(1) && works.is_empty());
+            assert_eq!(unstow(&mut taker, &mut works, &stands, 1, 1), Err(No::None));
+            // With room for some of it only, they take what fits and leave
+            // the rest.
+            let mut full = bag_with(&[("doll", MOST_OF_A_KIND - 1)], &[]);
+            stow(&mut guest, &mut works, &stands, 1, 4, "doll", 2).unwrap();
+            assert_eq!(unstow(&mut full, &mut works, &stands, 1, 4), Ok(Stack { kind: "doll".into(), count: 1 }));
+            assert_eq!(works.slots(1)[4], Some(Stack { kind: "doll".into(), count: 1 }));
+            assert_eq!(unstow(&mut full, &mut works, &stands, 1, 4), Err(No::Full));
+        }
+
+        #[test]
+        fn a_thing_taken_back_takes_what_is_kept_in_it_and_is_refused_where_that_would_not_fit() {
+            let mut owner = bag_with(&[("dresser", 1), ("chandelier", 1), ("cup_of_tea", 3)], &["dresser", "chandelier"]);
+            let stands = owner.stands.clone();
+            let mut works = Workings::default();
+            stow(&mut owner, &mut works, &stands, 1, 11, "cup_of_tea", 3).unwrap();
+            assert!(works.switch(&stands, 2, true).unwrap());
+            assert_eq!(owner.count("cup_of_tea"), 0);
+            take_back(&mut owner, &mut works, 1).unwrap();
+            assert_eq!((owner.count("cup_of_tea"), owner.free("dresser")), (3, 1));
+            assert!(works.held.is_empty() && works.is_lit(2));
+            take_back(&mut owner, &mut works, 2).unwrap();
+            assert!(works.is_empty());
+            // A safe with four cups in it and a bag with as many cups as
+            // may be owned: refused, and nothing changed.
+            let mut owner = bag_with(&[("safe", 1), ("cup_of_tea", MOST_OF_A_KIND)], &["safe"]);
+            let stands = owner.stands.clone();
+            let mut works = Workings::default();
+            stow(&mut owner, &mut works, &stands, 1, 0, "cup_of_tea", 4).unwrap();
+            owner.take_in("cup_of_tea", 4).unwrap();
+            let (before, kept) = (owner.clone(), works.clone());
+            assert_eq!(take_back(&mut owner, &mut works, 1), Err(No::Full));
+            assert_eq!((owner, works), (before, kept));
+        }
+
+        #[test]
+        fn a_light_is_switched_by_hand_and_only_a_light_that_is() {
+            let bag = bag_with(&[("lamp_with_shade", 1), ("chandelier", 1), (LAMP, 1)], &["lamp_with_shade", "chandelier", LAMP]);
+            let mut works = Workings::default();
+            assert_eq!(works.switch(&bag.stands, 1, true), Ok(true));
+            assert_eq!(works.switch(&bag.stands, 1, true), Ok(false));
+            assert_eq!(works.switch(&bag.stands, 2, true), Ok(true));
+            assert_eq!(works.lit, [1, 2]);
+            assert_eq!(works.switch(&bag.stands, 1, false), Ok(true));
+            assert!(!works.is_lit(1) && works.is_lit(2));
+            // The street lamp goes by the time of day, and nothing stands
+            // under 9.
+            assert_eq!(works.switch(&bag.stands, 3, true), Err(No::Place));
+            assert_eq!(works.switch(&bag.stands, 9, true), Err(No::None));
+        }
+
+        #[test]
+        fn what_is_at_work_is_put_right_as_it_is_read() {
+            let bag = bag_with(&[("cabinet", 1), ("barbecue", 1), ("lamp_with_shade", 1)], &["cabinet", "barbecue", "lamp_with_shade"]);
+            let stack = |kind: &str, count| Some(Stack { kind: kind.into(), count });
+            let mut slots = vec![None; 10];
+            slots[0] = stack("doll", 200);
+            slots[1] = stack("nothing_there_is", 2);
+            slots[9] = stack("globe", 1);
+            let kept = Workings {
+                held: vec![
+                    Held { id: 1, slots },
+                    Held { id: 1, slots: vec![stack("doll", 1)] },
+                    Held { id: 2, slots: vec![stack("doll", 1), stack("hamburger", 2)] },
+                    Held { id: 9, slots: vec![stack("doll", 1)] },
+                    Held { id: 3, slots: vec![stack("doll", 1)] },
+                ],
+                lit: vec![3, 3, 1, 9],
+            };
+            let sane = kept.sane(&bag.stands);
+            // The cabinet's eight slots: as many dolls as may be owned in the
+            // first, nothing of a kind there is not, and the globe from past
+            // its slots in the first empty one; the second cabinet entry
+            // gone. The barbecue's hamburgers and not its doll. Nothing of
+            // what does not stand, nor in the lamp, and only the lamp lit.
+            assert_eq!(sane.held.len(), 2);
+            assert_eq!(sane.slots(1).len(), 8);
+            assert_eq!(sane.slots(1)[0], stack("doll", MOST_OF_A_KIND));
+            assert_eq!(sane.slots(1)[1], stack("globe", 1));
+            assert_eq!(sane.slots(2), &[None, stack("hamburger", 2), None]);
+            assert_eq!(sane.lit, [3]);
+            // And as it was, as it is.
+            assert_eq!(sane.clone().sane(&bag.stands), sane);
+        }
+
+        #[test]
+        fn what_works_goes_over_the_wire_after_everything_an_app_from_before_knows() {
+            let number = |ask: Ask| postcard::to_allocvec(&ask).unwrap()[0];
+            assert_eq!(number(Ask::Unpaint { id: 1, part: "x".into() }), 7);
+            assert_eq!(number(Ask::Workings), 8);
+            assert_eq!(number(Ask::Stow { who: 1, id: 2, slot: 3, kind: "doll".into(), count: 4 }), 9);
+            assert_eq!(number(Ask::Unstow { who: 1, id: 2, slot: 3 }), 10);
+            assert_eq!(number(Ask::Switch { who: 1, id: 2, on: true }), 11);
+            assert_eq!(number(Ask::Run { who: 1, id: 2 }), 12);
+            let told = |tell: Tell| postcard::to_allocvec(&tell).unwrap()[0];
+            assert_eq!(told(Tell::Painted { who: 1, asked: 0, paints: Vec::new() }), 2);
+            let workings = Workings {
+                held: vec![Held { id: 4, slots: vec![None, Some(Stack { kind: "hamburger".into(), count: 3 })] }],
+                lit: vec![7],
+            };
+            let tell = Tell::Workings { who: u64::MAX, workings };
+            assert_eq!(told(tell.clone()), 3);
+            assert_eq!(postcard::from_bytes::<Tell>(&postcard::to_allocvec(&tell).unwrap()).unwrap(), tell);
+            assert_eq!(told(Tell::Got(Stack { kind: "doll".into(), count: 1 })), 4);
+            assert_eq!(told(Tell::Ran { who: 1, id: 2 }), 5);
+            for ask in [
+                Ask::Workings,
+                Ask::Stow { who: u64::MAX, id: 2, slot: 11, kind: "square_house_ten_floor".into(), count: 99 },
+                Ask::Unstow { who: 5, id: 2, slot: 0 },
+                Ask::Switch { who: 5, id: 3, on: false },
+                Ask::Run { who: 5, id: 9 },
+            ] {
+                let back: Ask = postcard::from_bytes(&postcard::to_allocvec(&ask).unwrap()).unwrap();
+                assert_eq!(back, ask);
+            }
+            // A plot with a hundred dressers, every slot full, is still one
+            // message, if a long one.
+            let full = Workings {
+                held: (0..MOST_STANDING as u32)
+                    .map(|id| Held { id, slots: vec![Some(Stack { kind: "square_house_roofless_ten_floor".into(), count: 99 }); 12] })
+                    .collect(),
+                lit: Vec::new(),
+            };
+            assert!(postcard::to_allocvec(&Tell::Workings { who: 1, workings: full }).unwrap().len() < 48_000);
+        }
     }
 }
 
@@ -5686,6 +6321,14 @@ pub enum Ask {
     /// from an app from before, which never says it, the car is the one
     /// everyone begins with ([`bag::CAR`]).
     Car(String),
+    /// Say this, one of the things to say at a press, to everyone in my
+    /// room ([`chat::Quick`], since 2026-11-27): as [`Ask::Chat`] says a
+    /// line typed, by its number alone. One that is no line a list could
+    /// have, or one too many too fast, is dropped.
+    Quick(chat::Quick),
+    /// Something about houses: visiting, rating, the board ([`house::Ask`],
+    /// since 2026-11-27).
+    House(house::Ask),
 }
 
 /// Someone in a channel of the town who is in their own car, as
@@ -5766,9 +6409,12 @@ pub enum Tell {
     /// ([`social::News`], since 2026-11-13).
     Social(social::News),
     /// Someone in your room has said this ([`Ask::Chat`], since
-    /// 2026-11-14), you among them: who, by their [`Member::id`], the name
-    /// they go by, and what they said.
-    Said { who: u64, name: String, text: String },
+    /// 2026-11-14; [`Ask::Quick`] since 2026-11-27), you among them: who, by
+    /// their [`Member::id`], the name they go by, and what they said: a line
+    /// typed, or one of the things to say at a press by its number
+    /// ([`chat::Said`], since 2026-11-27, protocol 27; the line typed alone
+    /// until then).
+    Said { who: u64, name: String, said: chat::Said },
     /// Something has happened in your game of Bridge Wars ([`chat::Feed`]).
     Feed(chat::Feed),
     /// You are back in the game of Bridge Wars you were in when your
@@ -5831,6 +6477,9 @@ pub enum Tell {
     /// here is in the one everyone begins with. Only to an app that asked
     /// ([`Ask::Cars`]). Last, since 2026-11-25, with no new protocol.
     Cars(Vec<Driver>),
+    /// Something about houses ([`house::Tell`], since 2026-11-27): only to
+    /// an app that asked ([`house::Ask::Watch`]).
+    House(house::Tell),
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
@@ -6196,11 +6845,22 @@ mod tests {
         // What a team bought is for that team alone; the rest for all.
         assert_eq!(Feed::Bought { by: 4, ware: Ware::HealPool, step: 1 }.only_for(), Some(arena_team(4)));
         assert_eq!(Feed::Fell { seat: 4 }.only_for(), None);
-        let said = Tell::Said { who: 9, name: "Bob".into(), text: "hello".into() };
-        let Tell::Said { who, name, text } = postcard::from_bytes(&postcard::to_allocvec(&said).unwrap()).unwrap() else {
+        let typed = chat::Said::Typed("hello".into());
+        let said = Tell::Said { who: 9, name: "Bob".into(), said: typed.clone() };
+        let Tell::Said { who, name, said } = postcard::from_bytes(&postcard::to_allocvec(&said).unwrap()).unwrap() else {
             panic!("not what was sent");
         };
-        assert_eq!((who, name.as_str(), text.as_str()), (9, "Bob", "hello"));
+        assert_eq!((who, name.as_str(), said), (9, "Bob", typed));
+        // One of the things to say at a press, by its number alone: a few
+        // bytes, whatever its words.
+        let quick = chat::Quick { lines: chat::Lines::Town, line: 7 };
+        assert!(quick.sane() && !chat::Quick { line: chat::QUICK_MOST, ..quick }.sane());
+        let bytes = postcard::to_allocvec(&Ask::Quick(quick)).unwrap();
+        assert!(bytes.len() <= 4, "{} bytes", bytes.len());
+        let Ask::Quick(back) = postcard::from_bytes(&bytes).unwrap() else {
+            panic!("not what was sent");
+        };
+        assert_eq!(back, quick);
         let Ask::Chat(back) = postcard::from_bytes(&postcard::to_allocvec(&Ask::Chat("hello".into())).unwrap()).unwrap()
         else {
             panic!("not what was sent");

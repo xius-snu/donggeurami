@@ -62,8 +62,11 @@ mod net;
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 mod pace;
 mod pass;
+mod push;
 mod quick;
 mod range;
+mod rating;
+mod speech;
 mod roads;
 mod safe;
 mod see_through;
@@ -89,6 +92,7 @@ mod knock_off;
 mod bridge_race;
 mod last_stand;
 mod working;
+mod storage;
 #[cfg(test)] mod race_bake;
 use island::{Island, Islands, Venue};
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
@@ -1378,8 +1382,18 @@ struct HudLayout {
 /// where the sword stands there, the smaller one beside the sword
 /// (`hud::ARENA_JUMP`, `hud::Layout::Arena`). Since 2026-11-18 Blend In
 /// has the town's, Bridge Race and Last Stand Bridge Wars' (Hajun:
-/// "similar controls and cam with bridge wars"), and Knock Off none at
-/// all, where nobody jumps: a button of no size, which no press is on.
+/// "similar controls and cam with bridge wars"), and since 2026-11-27 Knock
+/// Off the town's too, in its own place and as big (Hajun: "put jump button
+/// below the check button, jump button should be same size as jump button
+/// in the lobby"), where it had none.
+/// Where the jump button is for `layout` on `window`, and how big round:
+/// for the tests of the games' own buttons.
+#[cfg(test)]
+pub(crate) fn hud_layout_for(window: &Window, layout: hud::Layout) -> (Vec2, f32) {
+    let laid = hud_layout(window, layout);
+    (laid.jump_center, laid.jump_radius)
+}
+
 fn hud_layout(window: &Window, layout: hud::Layout) -> HudLayout {
     let width = window.width();
     let height = window.height();
@@ -1391,11 +1405,10 @@ fn hud_layout(window: &Window, layout: hud::Layout) -> HudLayout {
         height - height * (JUMP_BOTTOM_VH / 100.0),
     );
     let (jump_center, jump_radius) = match layout {
-        hud::Layout::Town | hud::Layout::BlendIn => {
+        hud::Layout::Town | hud::Layout::BlendIn | hud::Layout::KnockOff => {
             let jump_radius = vmin * (JUMP_SIZE_VMIN / 100.0) * 0.5;
             (corner - Vec2::splat(jump_radius), jump_radius)
         }
-        hud::Layout::KnockOff => (corner, 0.0),
         hud::Layout::Arena | hud::Layout::BridgeRace | hud::Layout::LastStand => {
             let (right, bottom, size) = hud::ARENA_JUMP;
             let jump_radius = vmin * (size / 100.0) * 0.5;
@@ -1483,9 +1496,11 @@ pub fn main() {
     // a thing in the world.
     bubble::plugin(&mut app);
     talk::plugin(&mut app);
-    // Sitting and lying down on what stands on the town's plots.
+    // Sitting and lying down on what stands on the town's plots; what there
+    // works, is switched and is run; and what keeps things, opened.
     rest::plugin(&mut app);
     working::plugin(&mut app);
+    storage::plugin(&mut app);
     resident::plugin(&mut app);
     // The House Builder in the town, and the game they ask you to play: the
     // shop to build with, and what is built.
@@ -1527,6 +1542,12 @@ pub fn main() {
     // of Bridge Wars says as it goes.
     chat::plugin(&mut app);
     quick::plugin(&mut app);
+    // What is said, over the head of whoever said it; rating the house of
+    // someone you visit; and where a phone is pushed word of yours (since
+    // 2026-11-27).
+    speech::plugin(&mut app);
+    rating::plugin(&mut app);
+    push::plugin(&mut app);
     safe::plugin(&mut app);
     // The sparks someone running fast, or leaping, leaves behind them.
     trail::plugin(&mut app);
@@ -2455,7 +2476,8 @@ fn update_jump_visual(
 /// you talk to (`talk`): what they say is along the bottom of the screen.
 /// And the jump button alone in a game of Bridge Wars, where the sword
 /// stands in its place (`hud::Layout::Arena`), and as there in Bridge Race
-/// and Last Stand; and in Knock Off, where nobody jumps.
+/// and Last Stand; and in Knock Off, whose bar has its own in the same
+/// place (`knock_off::screen`), faint while there is no hopping.
 fn hide_touch_hud(
     close_up: Res<CloseUp>,
     layout: Res<hud::Layout>,

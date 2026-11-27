@@ -40,6 +40,8 @@ Check button: Ready
 
 No direction picked = you stay where you are
 
+Jump button (under the check button, the lobby's size): jump any time, just for fun; not from when the aim's time is up until the slide is over. Everyone sees it, and some bots hop now and then
+
 
 
 ###### Collisions:

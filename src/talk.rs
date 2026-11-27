@@ -356,18 +356,11 @@ fn press(click: On<Pointer<Click>>, replies: Query<&Reply>, mut asks: MessageWri
     }
 }
 
-/// Keys, for desktop: E to talk to whoever the bubble is over; and talking,
-/// Enter for the first reply, Escape or E to say goodbye.
-fn keys(
-    keyboard: Res<ButtonInput<KeyCode>>,
-    prompt: Res<Prompt>,
-    conversation: Res<Conversation>,
-    mut asks: MessageWriter<Ask>,
-) {
+/// Keys, for desktop, talking: Enter for the first reply, Escape or E to
+/// say goodbye. (E to begin is a tap on the bubble, when it is the nearest
+/// you: `bubble::tap`, [`tapped`].)
+fn keys(keyboard: Res<ButtonInput<KeyCode>>, conversation: Res<Conversation>, mut asks: MessageWriter<Ask>) {
     if conversation.with.is_none() {
-        if prompt.over.is_some() && keyboard.just_pressed(KeyCode::KeyE) {
-            asks.write(Ask::Start);
-        }
         return;
     }
     if keyboard.any_just_pressed([KeyCode::Enter, KeyCode::NumpadEnter])

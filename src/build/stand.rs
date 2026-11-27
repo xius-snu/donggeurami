@@ -153,8 +153,8 @@ pub(crate) struct Mine;
 /// One of yours that stands, as far as the bag goes: its number there, and
 /// where the bag has it.
 #[derive(Component, Clone, Copy, PartialEq, Debug)]
-pub(super) struct Stood {
-    pub(super) id: u32,
+pub(crate) struct Stood {
+    pub(crate) id: u32,
     at: At,
 }
 
@@ -206,11 +206,23 @@ struct Displaced;
 /// in their bag, where that has it, and which plot of the town it was
 /// stood on.
 #[derive(Component, Clone, Copy, PartialEq, Debug)]
-struct TheirPiece {
-    who: u64,
-    id: u32,
+pub(crate) struct TheirPiece {
+    pub(crate) who: u64,
+    pub(crate) id: u32,
     at: At,
     plot: usize,
+}
+
+/// Whose a piece standing on a plot of the town is, and its number in their
+/// bag, by what it carries: `None` for yours ([`Stood`]), and someone
+/// else's in your channel by who they are ([`TheirPiece`]); nothing for a
+/// piece of House Builder's or one just out of your bag.
+pub(crate) fn owner_of(mine: Option<&Stood>, theirs: Option<&TheirPiece>) -> Option<(Option<u64>, u32)> {
+    match (mine, theirs) {
+        (Some(stood), _) => Some((None, stood.id)),
+        (None, Some(piece)) => Some((Some(piece.who), piece.id)),
+        (None, None) => None,
+    }
 }
 
 /// The line that says a piece has to stand on your land, while it is up.
@@ -366,6 +378,7 @@ fn note_edits(
     online: Res<Online>,
     mut bag: ResMut<Bag>,
     mut asks: MessageWriter<Ask>,
+    said: Query<Entity, With<Said>>,
     mut commands: Commands,
 ) {
     for &edit in edits.read() {
@@ -411,33 +424,52 @@ fn note_edits(
                 let Ok((piece, stood)) = mine.get(target) else {
                     continue;
                 };
-                if let Some(stood) = stood {
-                    bag.take(online.is(), &mut asks, stood.id);
-                }
                 let house = piece.def.mount == Mount::House;
-                if house {
-                    for (other, stood) in &mine {
-                        if let Some(stood) = stood.filter(|_| other.def.on_wall()) {
-                            bag.take(online.is(), &mut asks, stood.id);
-                        }
-                    }
-                }
-                // And what stood on its floors, upstairs or down, or on it:
-                // what rides in or on it, it having been picked up to be
-                // binned, and whatever stands in a house all the same. Into
-                // the bag, and out of the world at once, as it is.
+                // What stood on its floors, upstairs or down, or on it: what
+                // rides in or on it, it having been picked up to be binned,
+                // and whatever stands in a house all the same.
                 let inside = houses
                     .get(target)
                     .ok()
                     .filter(|_| house)
                     .map(|(house, rooms, bounds)| (house.compute_affine().inverse(), rooms, bounds.high.y));
-                for (thing, other, place, ghost, stood, rides) in &furniture {
-                    let rode = rides.is_some_and(|rides| rides.host == target);
-                    let stands_in = !ghost && inside.is_some_and(|(into, rooms, top)| rooms.hold(into.transform_point3(place.translation), top));
-                    if thing == target || other.def.on_wall() || !(rode || stands_in) {
-                        continue;
+                let along: Vec<(Entity, u32)> = furniture
+                    .iter()
+                    .filter(|&(thing, other, place, ghost, _, rides)| {
+                        let rode = rides.is_some_and(|rides| rides.host == target);
+                        let stands_in = !ghost && inside.is_some_and(|(into, rooms, top)| rooms.hold(into.transform_point3(place.translation), top));
+                        thing != target && !other.def.on_wall() && (rode || stands_in)
+                    })
+                    .map(|(thing, _, _, _, stood, _)| (thing, stood.id))
+                    .collect();
+                let walls: Vec<u32> = mine
+                    .iter()
+                    .filter(|_| house)
+                    .filter_map(|(other, stood)| stood.filter(|_| other.def.on_wall()).map(|stood| stood.id))
+                    .collect();
+                // Whatever is kept in any of it comes into the bag with it
+                // (since 2026-11-27): none of it is binned if that would not
+                // all fit. It goes out of the world all the same, by the
+                // menu (`super::edit_pieces`), and is stood again where it
+                // stood, the bag saying it stands (`keep_mine`).
+                let all: Vec<u32> = stood.map(|stood| stood.id).into_iter().chain(walls.iter().copied()).chain(along.iter().map(|&(_, id)| id)).collect();
+                if !bag.has_room_for_what_is_in(&all) {
+                    bag.set_changed();
+                    for line in &said {
+                        commands.entity(line).despawn();
                     }
+                    hud::announce(&mut commands, None, &ui().words.storage.no_room, hud::CAPTION, SAID_SECS).insert(Said);
+                    continue;
+                }
+                if let Some(stood) = stood {
                     bag.take(online.is(), &mut asks, stood.id);
+                }
+                for id in walls {
+                    bag.take(online.is(), &mut asks, id);
+                }
+                // Into the bag, and out of the world at once, as it is.
+                for (thing, id) in along {
+                    bag.take(online.is(), &mut asks, id);
                     commands.entity(thing).despawn();
                 }
             }

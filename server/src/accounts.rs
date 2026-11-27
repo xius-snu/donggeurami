@@ -101,6 +101,7 @@ CREATE TABLE IF NOT EXISTS messages (
 CREATE INDEX IF NOT EXISTS messages_receiver ON messages (receiver);
 ALTER TABLE players ADD COLUMN IF NOT EXISTS gems BIGINT NOT NULL DEFAULT 10 CHECK (gems >= 0);
 ALTER TABLE players ADD COLUMN IF NOT EXISTS bag TEXT;
+ALTER TABLE players ADD COLUMN IF NOT EXISTS workings TEXT;
 ";
 
 /// What is made once every account has its tag ([`give_tags`]): no two
@@ -239,13 +240,17 @@ pub(crate) struct Snapshot {
 }
 
 /// One account's land as it is kept: who, what they go by and how they
-/// look, and their bag's own document (`players.bag`).
+/// look, their bag's own document (`players.bag`), and what is at work
+/// among what stands on it (`players.workings`, since 2026-11-27: none
+/// until something is first put into something there or a light
+/// switched).
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Land {
     pub id: u64,
     pub name: String,
     pub look: String,
     pub bag: String,
+    pub workings: Option<String>,
 }
 
 /// One account, as far as its friends are concerned.
@@ -312,13 +317,14 @@ impl Snapshot {
             })
             .collect();
         let lands = db
-            .query("SELECT id, name, look, bag FROM players WHERE bag IS NOT NULL ORDER BY id", &[])?
+            .query("SELECT id, name, look, bag, workings FROM players WHERE bag IS NOT NULL ORDER BY id", &[])?
             .iter()
             .map(|row| Land {
                 id: account(row.get(0)),
                 name: row.get(1),
                 look: row.get(2),
                 bag: row.get(3),
+                workings: row.get(4),
             })
             .collect();
         Ok(Self {
@@ -453,6 +459,19 @@ impl Bank {
             let _ = jobs.send(Job::Bag { id, bag });
         }
     }
+
+    /// Keeps what is at work on the plot of the account `owner` as it is
+    /// now, `workings` (`bag`, since 2026-11-27), and with it, if it is
+    /// given, the bag of the account `bag.0` as it is now, `bag.1`: whoever
+    /// put something into one of its things or took something out, its
+    /// owner or anyone else, in one transaction, so that nothing is ever
+    /// in both or in neither. The game's loop has gone by it already.
+    /// Nothing comes back.
+    pub(crate) fn keep_workings(&self, owner: u64, workings: String, bag: Option<(u64, String)>) {
+        if let Self::Database { jobs, .. } = self {
+            let _ = jobs.send(Job::Workings { owner, workings, bag });
+        }
+    }
 }
 
 /// One player's account.
@@ -554,6 +573,11 @@ pub(crate) enum Job {
     Bag {
         id: u64,
         bag: String,
+    },
+    Workings {
+        owner: u64,
+        workings: String,
+        bag: Option<(u64, String)>,
     },
 }
 
@@ -667,6 +691,12 @@ fn work(url: &str, jobs: &Receiver<Job>, done: &Sender<Done>) {
                     error!("could not keep {id}'s bag");
                     None
                 }
+                Job::Workings { owner, bag, .. } => {
+                    // The same: the game's loop holds both until the server
+                    // starts again, and the next change is kept whole.
+                    error!("could not keep what works on {owner}'s plot, nor {:?}'s bag with it", bag.map(|(id, _)| id));
+                    None
+                }
             };
         }
         if let Some(answer) = answer
@@ -746,6 +776,21 @@ fn run(db: &mut Client, job: &Job) -> Result<Option<Done>, postgres::Error> {
         }
         Job::Bag { id, ref bag } => {
             db.execute("UPDATE players SET bag = $2 WHERE id = $1", &[&(id as i64), bag])?;
+            Ok(None)
+        }
+        Job::Workings {
+            owner,
+            ref workings,
+            ref bag,
+        } => {
+            // What works on the plot and the bag of whoever put something in
+            // or took it out, together or not at all.
+            let mut transaction = db.transaction()?;
+            transaction.execute("UPDATE players SET workings = $2 WHERE id = $1", &[&(owner as i64), workings])?;
+            if let Some((id, bag)) = bag {
+                transaction.execute("UPDATE players SET bag = $2 WHERE id = $1", &[&(*id as i64), bag])?;
+            }
+            transaction.commit()?;
             Ok(None)
         }
         Job::Charge {

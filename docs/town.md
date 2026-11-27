@@ -7,6 +7,186 @@
 > "above" or "below", or names another section in quotes, that section may be
 > in another file here: the table in `CLAUDE.md` says which.
 
+## What keeps things, the lights switched by hand, the toilet, the sink, and walking on the spot on the treadmill (2026-11-27)
+
+Hajun, in one message:
+
+> i want some updates to the proximity interactables in the
+> lobby/house/furnitures. first, cabinets can have storage inventory
+> that is like a chest - u can put items in there, any anyone can open it
+> and take it out or put sth there. cabinet = 8 square slots (4 on left,
+> 4 on right) barbeque = 3 square slots but food only (1 row of 3) end
+> table = 3 square slots (1 row of 3) safe = 9 square slots (3 rows of 3,
+> like a 3x3 square) dresser = 12 square slots (6 on left, 6 on right).
+> so when u click the proximity bubble, it just opens a closable small
+> popup that just shows text like "Cabinet" at top left, close button on
+> top right, and the square slots with small white plus icon in the
+> middle if theyre empty or the item + quantity on bottom right corner of
+> that square if there is an item and u press the plus and it brings up
+> another small popup on top where u can select which item from ur
+> inventory to add it, and then after u select it it shows another popup
+> for quantity and the when u press ok ur back to the first popup with
+> the Cabinet and when u click on an item, u get that item added to ur
+> inventory, and shows quick message like "_____ x1 has been added to
+> your inventory" sth like that. also i want updates on these
+> items/interactables: lamp with shade (toggle light on off rather than
+> day/night) chandelier (toggle light on off rather than day/night)
+> toilet = sit on toilet like a chair sink = (turn faucet on for 5
+> second, water comes down the faucet, and water in the sink goes up and
+> up until its full, and then the faucet turns off automatically)
+> running machine = (just fix - right now when ur walking on the running
+> machine and u reach the front, its like glitchy and u get glitched
+> backward constantly make it more natural)
+
+In APK 62 (built that evening, not put on a phone), and on the server
+deployed at 13:40:57 UTC that day with protocol 27, which made
+`players.workings` on the live database as it started (`docs/online.md`,
+at the top); committed with the two other sessions' work of that day.
+
+**What keeps things** (`roundtown_net::bag::keeps`, `stow`, `unstow`,
+`take_back`; the window `src/storage.rs`).
+
+- **Five things, each with its slots**, a slot so many of one kind of
+  thing: the cabinet 8, laid out as two rows of two on each side of a
+  gap, as its two doors are; the dresser 12, three rows of two on each
+  side, as its six drawers are; the safe 9, three rows of three; the end
+  table and the barbecue 3, one row (`storage::layout`, a test holds each
+  layout to its count). The barbecue takes food alone
+  (`bag::FOOD`: the hamburger, the fruit bowl, the cup of tea and the wine
+  glass).
+- **A bubble with a chest in it** stands over each within 1.5 m, as over
+  somewhere to sit, a thing in the world (`working::offer`, `bubble`); a
+  tap on it, or E on desktop, opens it.
+- **The window** is every window's (`window`): its name top left
+  ("Cabinet", the bag's name for it), the bare cross top right, the
+  slots under it, square cards: an empty one with a white plus, a full one
+  with the thing's picture and how many in its lower right corner. The
+  cross, a tap off it or Escape shuts it; so does its owner taking it
+  back, leaving the town, the car, and edit mode.
+- **The plus** puts up "Choose an item" over the window, the window
+  darkened behind it: what is in your bag, four to a row, in the order the
+  bag's window has it, each with how many and its name in its rarity's
+  colour (food alone for the barbecue; "Only food goes in here." with
+  none); a list that scrolls and is flicked as the bag's are. A thing
+  chosen puts up "How many?" over that: its picture and name, a minus and
+  a plus either side of the number, a bar under them to drag or press
+  along, from one to all you have of it, and OK, which puts them in and
+  goes back to the window. A tap on the dark round a box, or Escape, goes
+  back a box.
+- **A full slot tapped** puts all of it into your bag, as much as the bag
+  has room for (99 of a kind), and says so under the window: "Hamburger x3
+  has been added to your inventory" (`words.storage.added`); with no room
+  for more, "You can't carry any more Hamburger."
+- **Anyone's, by anyone in the channel**, on any plot there, its owner
+  here or not. What is put in comes out of your bag and belongs to nobody
+  while it is kept; whoever takes it out has it.
+- **Taken back into the bag** (the bin in edit mode), a thing brings what
+  was kept in it with it, and a house what was kept in what stood in it;
+  with too much of a kind in it for the bag, it is not binned: "Your bag
+  has no room for what is in it." (`stand::note_edits`; it goes out of the
+  world and is stood again where it was, the bag still having it there).
+  Moved, it keeps what is in it.
+- **Online it is the server's** (`server/src/bag.rs`, `Workshop`): the
+  window shows what the server says is in there, whoever put it there,
+  and a slot pressed waits for its answer (1.5 s at most). Offline there
+  is only your own plot, done on the device and kept in `bag.json`.
+
+**The two lights** (`lamps`, `working::Lit`, `keep_switches`). The lamp
+with shade and the chandelier have a bulb in their bubble; a tap switches
+the light on or off, by day or by night, for everyone in the channel, and
+it stays as it was left, its owner here or not. Off until someone switches
+it on, so the ones that were lit by night are dark until then. The
+chandelier's bubble hangs under it, 0.85 m under its foot, and comes up
+from the floor under it, within 2.2 m of its edge. A lamp switched on by
+day is the one light there is then (`lamps::cells`: the camera's cells
+are Bevy's own only while some light is on). Nothing of either model
+glows; the light is all of it.
+
+**The toilet** (`rest::spots`): one place to sit, on its lid, 0.35 m in
+from its front, as a chair is; its bubble the chair's. Nobody of the
+computer's sits there (`rest::residents_sit_on`).
+
+**The sink** (`working::fill_sinks`, `sink_at`). A drop of water in its
+bubble; a tap runs its tap, five seconds: water falls from the spout,
+reaches the basin in three tenths of a second, and the basin fills,
+quickly in the hollow round the drain, then over the back of its floor,
+up its slope and over all of it, as a basin with that floor fills at one
+rate (`volume`, `level_at`, its floor read off the model); full, the
+last of the water falls from the spout and the tap is off. It stands full
+four seconds and drains in three, and only then can it be run again. The
+water is a sheet over the whole basin at its height, the basin's own
+floor and walls hiding what of it is under them, and a stick from the
+spout, each see-through, each its own thing in the world and no part of
+the plot's shape. Everyone in the channel sees it run (`bag::Tell::Ran`);
+nothing of it is kept.
+
+**The treadmill** (`working::walk_on_the_spot`). Walking toward its
+handles, a body went at 2 m/s over the belt until, 1.07 m along, the top
+of it (1.6 m over a belt that rises toward the handles) met the underside
+of the console, and was put out of that wall a quarter of a metre square
+at a time (`island::LATTICE`): back to 0.78 and sideways, eight times a
+second, which was the glitch (seen in a trace of every frame). Now anyone
+on the belt goes no further along it than 0.75 m, where the body's front
+is 0.4 m short of the console: walking on, you walk on the spot there, the
+belt carrying you back as far as you go, and standing still it still
+carries you off. Seen by anyone else, someone on a belt walks by how they
+go over the belt (`working::belt_under`, `lobby::walk_from_motion`): on
+the spot, walking.
+
+**E on desktop** is now a tap on whichever bubble is nearest you
+(`bubble::tap`): `rest` and `talk` each answered E for itself, and a chair
+by a cabinet by someone to talk to would have had all three.
+
+**Calls that were mine.** The layouts' rows (Hajun said how many on each
+side and in rows for the others); which four things are food; that
+anything in the bag can be put in, houses and cars too; all of a slot at
+a tap, not one; a slot up to 99, the most of a kind; the minus, the plus
+and the bar to say how many, from one; the safe open to anyone like the
+rest; a binned thing bringing what is in it, and refused rather than
+anything lost; the line under the window, 2.6 s; the lights off until
+switched, kept as left, anyone switching; the chandelier's bubble under
+it; four seconds full and three draining, and the sink's look; the toilet
+nobody of the computer's; walking on the spot at 0.75; E for the nearest;
+no check by the server of how near someone is, only that they are in the
+town in a channel the plot is in.
+
+**Checked.** Tests: `cargo test -p roundtown_net` (310), `-p
+roundtown_server` (142), `--lib` (630), new ones among them for the
+slots, food, putting in and taking out, binning with and without room,
+the switches, what is kept read back and put right, the wire's numbers,
+the server telling the channel, the layouts, the bar, the lights going
+by their switches, the sink's fill and its basin read off the model, the
+belt's front, the toilet's place on its model, the new bubble pictures;
+clippy, nothing new. The desktop build, hidden, offline: a cabinet, a
+dresser, a barbecue and a safe on my plot, each window as above (the
+dresser three rows of two and two, the safe three by three, the barbecue
+offering the fruit bowl and the hamburger alone); three hamburgers put
+in with the plus twice, a doll, the three taken out with the line said;
+E opening the safe; a cabinet binned with a doll in it, the doll back in
+the bag; a safe with three hamburgers binned with 99 in the bag, refused
+and standing; the lamp with shade switched on by day, lit (250,000 lm)
+and off and on again; a chandelier in a Square House 2F by night, dark,
+then lighting the room; the sink's whole run in pictures; sat on the
+toilet at 1.14 m and up by Space where I stood; the street lamps by
+night as they were; a trace of a walk on the treadmill, at 0.76 m and
+still from there, legs walking. Two copies against a server on this PC
+with no database: the one's sink running and lamp lit seen on the
+other's screen; the other putting a doll into the first one's cabinet,
+switching its lamp off and taking the doll back, each seen on both; the
+first one's window putting a hamburger in and taking it out through the
+server, "Hamburger x1 has been added to your inventory" said from its
+answer.
+
+**Not checked.** A phone. A database: `players.workings` was made on a
+copy of the live database on the VM, and then on the live one by the
+deploy, but the transaction that writes it with a bag
+(`accounts::Job::Workings`) has run against no Postgres in a test: the
+first time will be someone's, live. Using what is on the plot of someone who is not here:
+the server reads such a plot as it reads one whose owner is here, out of
+the land it keeps (`Towns::land_of`), but only the second was in the
+tests and the runs. Binning a house with something kept in what stood in
+it (the same check as for one thing). Flicking a long "Choose an item".
+
 ## The places to rest and the treadmill's belt measured again, three times as big; only real people's bots (2026-11-25, afternoon)
 
 Hajun, having had the 56 downloads made three times their size, not two

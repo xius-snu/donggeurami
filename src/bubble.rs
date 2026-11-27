@@ -28,7 +28,14 @@
 //! by how far each dot is from each edge, and drawn again at every smaller
 //! size the picture is kept at, so that it is as clean far off as near:
 //! three dots (to talk, to open), someone sat on a chair, someone lying on
-//! a bed (`rest`).
+//! a bed (`rest`); and since 2026-11-27 a chest (something that keeps
+//! things), a bulb (a light switched by hand) and a drop of water (the
+//! sink's tap), for `working`.
+//!
+//! **E on desktop is a tap on the bubble nearest you** (since 2026-11-27,
+//! when there came to be three kinds of thing to use beside someone to
+//! talk to and somewhere to rest, each of which had answered E for itself:
+//! a chair by a cabinet by someone to talk to would have had all three).
 
 use bevy::asset::RenderAssetUsages;
 use bevy::image::{ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
@@ -87,6 +94,16 @@ pub(crate) enum Says {
     Sit,
     /// Someone lying on a bed: somewhere to lie down (`rest`).
     Lie,
+    /// A chest: something that keeps things, to open (`working`, `storage`).
+    Store,
+    /// A light bulb: a light to switch on or off (`working`).
+    Light,
+    /// A drop of water: a tap to run (`working`).
+    Water,
+}
+
+impl Says {
+    pub(crate) const ALL: [Says; 6] = [Says::Dots, Says::Sit, Says::Lie, Says::Store, Says::Light, Says::Water];
 }
 
 /// A bubble in the world: the point of the world its tail's point is on,
@@ -106,13 +123,12 @@ pub(crate) struct Tapped(pub(crate) Entity);
 #[derive(Resource, Default, PartialEq, Eq, Debug)]
 pub(crate) struct TookTap(pub(crate) bool);
 
-/// The bubbles' sheet and what each is drawn with, made once.
+/// The bubbles' sheet and what each is drawn with, made once: one for each
+/// of [`Says::ALL`], in its order.
 #[derive(Resource)]
 pub(crate) struct Looks {
     sheet: Handle<Mesh>,
-    dots: Handle<StandardMaterial>,
-    sit: Handle<StandardMaterial>,
-    lie: Handle<StandardMaterial>,
+    paints: Vec<Handle<StandardMaterial>>,
 }
 
 impl Looks {
@@ -121,11 +137,7 @@ impl Looks {
     /// nothing to look at until it has been turned to the camera
     /// ([`face_the_camera`]), the frame after.
     pub(crate) fn bubble(&self, says: Says, tip: Vec3, venue: Venue) -> impl Bundle {
-        let paint = match says {
-            Says::Dots => &self.dots,
-            Says::Sit => &self.sit,
-            Says::Lie => &self.lie,
-        };
+        let paint = &self.paints[Says::ALL.iter().position(|&one| one == says).unwrap_or(0)];
         (
             Bubble { tip, age: 0.0 },
             Name::new("Bubble"),
@@ -176,9 +188,7 @@ fn make_looks(mut meshes: ResMut<Assets<Mesh>>, mut images: ResMut<Assets<Image>
         })
     };
     let looks = Looks {
-        dots: paint(Says::Dots),
-        sit: paint(Says::Sit),
-        lie: paint(Says::Lie),
+        paints: Says::ALL.into_iter().map(&mut paint).collect(),
         sheet: meshes.add(Rectangle::new((RIGHT - LEFT) * RADIUS, (TOP - BOTTOM) * RADIUS)),
     };
     commands.insert_resource(looks);
@@ -241,19 +251,33 @@ fn face_the_camera(
 /// A tap on the world that lands on a bubble, or near enough to one: that
 /// bubble is told of ([`Tapped`]), and the tap is nobody else's
 /// ([`TookTap`], `EditMenu::swallow`). Not while a window is up, which
-/// every press is then for.
+/// every press is then for. And E on desktop: the bubble nearest you.
+#[allow(clippy::too_many_arguments)]
 fn tap(
     pointer: Res<EditPointer>,
-    dialog: Res<DialogUp>,
+    (dialog, keyboard): (Res<DialogUp>, Res<ButtonInput<KeyCode>>),
     windows: Query<&Window>,
     cameras: Query<(&Camera, &Transform), With<ThirdPersonCamera>>,
+    me: Query<&Transform, With<crate::Player>>,
     bubbles: Query<(Entity, &Bubble, &InheritedVisibility)>,
     mut menu: ResMut<EditMenu>,
     mut took: ResMut<TookTap>,
     mut tapped: MessageWriter<Tapped>,
 ) {
     took.set_if_neq(TookTap(false));
-    if !pointer.released || pointer.lost || pointer.travel > editor::TAP_SLOP || dialog.0 || bubbles.is_empty() {
+    if dialog.0 || bubbles.is_empty() {
+        return;
+    }
+    // Not the E that has just put a window away (a talk's goodbye).
+    if keyboard.just_pressed(KeyCode::KeyE)
+        && !dialog.is_changed()
+        && let Ok(you) = me.single()
+        && let Some(nearest) = nearest_to(you.translation, bubbles.iter().filter(|(.., shown)| shown.get()).map(|(entity, bubble, _)| (entity, bubble.tip)))
+    {
+        tapped.write(Tapped(nearest));
+        return;
+    }
+    if !pointer.released || pointer.lost || pointer.travel > editor::TAP_SLOP {
         return;
     }
     let (Ok(window), Ok((camera, eye))) = (windows.single(), cameras.single()) else {
@@ -280,6 +304,15 @@ fn tap(
         took.set_if_neq(TookTap(true));
         menu.swallow();
     }
+}
+
+/// Of `bubbles`, each with the point of its tail, the one whose point is
+/// nearest `you`.
+fn nearest_to(you: Vec3, bubbles: impl Iterator<Item = (Entity, Vec3)>) -> Option<Entity> {
+    bubbles
+        .map(|(entity, tip)| (tip.distance_squared(you), entity))
+        .min_by(|a, b| a.0.total_cmp(&b.0))
+        .map(|(_, entity)| entity)
 }
 
 // ------------------------------------------------------------- the picture
@@ -342,7 +375,43 @@ fn mark_distance(says: Says, at: Vec2) -> f32 {
             ],
             (v(-0.37, 0.06), 0.16),
         ),
+        // A chest, from the front: its box and its rounded lid, a line
+        // between them, and the clasp over that line left white.
+        Says::Store => {
+            let chest = rounded_box(at - v(0.0, -0.1), v(0.5, 0.34), 0.06).min(rounded_box(at - v(0.0, 0.26), v(0.5, 0.14), 0.12));
+            let seam = rounded_box(at - v(0.0, 0.12), v(0.56, 0.028), 0.0);
+            let clasp = rounded_box(at - v(0.0, 0.06), v(0.075, 0.1), 0.03);
+            chest.max(-seam).max(-clasp)
+        }
+        // A light bulb, lit: its glass, its neck and the two rings of its
+        // screw, and three rays over it.
+        Says::Light => {
+            let glass = at.distance(v(0.0, 0.16)) - 0.31;
+            let neck = rounded_box(at - v(0.0, -0.2), v(0.15, 0.1), 0.02);
+            let rings = rounded_box(at - v(0.0, -0.37), v(0.13, 0.035), 0.03).min(rounded_box(at - v(0.0, -0.47), v(0.09, 0.03), 0.03));
+            let rays = [(v(0.0, 0.6), v(0.0, 0.72)), (v(-0.4, 0.46), v(-0.5, 0.55)), (v(0.4, 0.46), v(0.5, 0.55))]
+                .into_iter()
+                .map(|(from, to)| stroke(at, from, to, 0.09))
+                .fold(f32::INFINITY, f32::min);
+            glass.min(neck).min(rings).min(rays)
+        }
+        // A drop of water, round below and coming to a point above, with a
+        // glint in it left white.
+        Says::Water => {
+            let round = at.distance(v(0.0, -0.17)) - 0.33;
+            let point = hud::triangle_distance(at, v(-0.29, -0.02), v(0.0, 0.6), v(0.29, -0.02));
+            let drop = round.min(point);
+            let glint = stroke(at, v(-0.15, -0.12), v(-0.08, -0.3), 0.07);
+            drop.max(-glint)
+        }
     }
+}
+
+/// How far `at` is from the edge of a box reaching `reach` each way from its
+/// middle, its corners rounded by `round`: less than nothing inside it.
+fn rounded_box(at: Vec2, reach: Vec2, round: f32) -> f32 {
+    let d = at.abs() - reach + Vec2::splat(round);
+    d.max(Vec2::ZERO).length() + d.x.max(d.y).min(0.0) - round
 }
 
 /// One size of the picture of a bubble that `says`, `wide` by `high` dots:
@@ -443,7 +512,7 @@ mod tests {
             let dot = (row * wide as usize + column) * 4;
             (data[dot], data[dot + 3])
         };
-        for says in [Says::Dots, Says::Sit, Says::Lie] {
+        for says in Says::ALL {
             let data = drawn(says, wide, high, 0.0);
             // Clear outside it, dark on its outline, white inside it away
             // from the mark, and dark on the mark.
@@ -454,6 +523,9 @@ mod tests {
                 Says::Dots => Vec2::ZERO,
                 Says::Sit => Vec2::new(-0.13, 0.47),
                 Says::Lie => Vec2::new(0.2, -0.02),
+                Says::Store => Vec2::new(0.3, -0.2),
+                Says::Light => Vec2::new(0.0, 0.2),
+                Says::Water => Vec2::new(0.1, -0.2),
             };
             assert_eq!(at(&data, on_it.x, on_it.y), (0, 255), "{says:?}");
             // Nothing of a mark reaches the outline.

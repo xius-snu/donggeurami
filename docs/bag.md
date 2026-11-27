@@ -10,6 +10,7 @@ first.
 
 ## Contents
 
+0. 2026-11-27: what is kept in what keeps things, and the lights switched by hand, beside the bag; a thing binned brings what was kept in it, or is not binned; server deployed, APK 62
 1. 2026-11-26: a thing dragged upstairs stays upstairs, kept over its floor, sliding along the walls and stopping at the stairwell; what hangs from a ceiling, a small thing and what comes out of the bag too; APK 61
 2. 2026-11-25, evening: each floor of a house painted by itself; the shop's things kind by kind, the commonest first, and yours the rarest first; APK 60
 3. 2026-11-25, morning: a new thing comes up square to its plot, however the plot is turned; APK 57
@@ -24,6 +25,34 @@ first.
 12. 2026-11-22, afternoon: the coins' number the gems' size and the gem the coin's; a price you cannot afford in red; the box on the bag's button; APK 47
 13. 2026-11-22, later: the shop after Hajun had looked at it (both buttons always, over the picture and see-through; the price under the name; All first shown; six categories with no scrolling); APK 46
 14. 2026-11-22: the bag, its window, gems, and buildings on your plot that everyone sees; APK 45
+
+## 2026-11-27: what is kept in what keeps things, beside the bag
+
+The whole of it, in Hajun's words, is `docs/town.md` at the top (the
+cabinet, the dresser, the safe, the end table and the barbecue keeping
+things, their window, the two lights switched by hand, the sink); the
+wire and the server, `docs/online.md` at the top. What of it is the
+bag's:
+
+- **What works on a plot** (`roundtown_net::bag::Workings`: what is kept
+  in each thing that keeps things, slot by slot, and which lights are on)
+  is kept beside the bag as the colours are, never in it: yours in
+  `bag::Bag::workings` (and in `bag.json`, a field read as nothing in a
+  file from before), everyone else's in your channel in `TheirWorkings`,
+  the server's word online for yours too, since anyone may change it.
+- **Putting in and taking out move things between bags**
+  (`bag::stow`, `unstow`; `Bag::give_up`, `room_for`, `take_in`): out of
+  the bag of whoever puts something in, into the bag of whoever takes it
+  out, never more of a kind than may be owned (99); nothing is made or
+  lost, a test holds it.
+- **A thing taken back into the bag brings what was kept in it**
+  (`bag::take_back`, used by the device and the server alike), its light
+  goes out, and if what was in it would not all fit, nothing is binned:
+  `Bag::has_room_for_what_is_in` asks it of everything the bin would take,
+  a house and what stood in it together, before any of it is taken
+  (`stand::note_edits`), and says "Your bag has no room for what is in it."
+- **Calls that were mine**: those above, and that anything in the bag can
+  be put in, a house or a car too.
 
 ## 2026-11-26: a thing dragged upstairs stays upstairs; APK 61
 

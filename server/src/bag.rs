@@ -42,17 +42,38 @@
 //! [`Colourers`]): after its own bag, each time that is said, and after
 //! what stands on anyone else's plot, and whenever they paint. An app from
 //! before there were colours never asks, and is told what it always was.
+//!
+//! **What works** (since 2026-11-27; Hajun: "cabinets can have storage
+//! inventory that is like a chest - u can put items in there, any anyone
+//! can open it and take it out or put sth there", the lamps "toggle light on
+//! off rather than day/night", the sink's tap run): what is kept in what
+//! keeps things on each plot, and which of its lights are on
+//! ([`bag::Workings`]), is the server's own, kept by whose plot it is
+//! ([`Workshop`]) whether or not they are here, and in a column of its own
+//! (`players.workings`), so that it can be written for someone who is not.
+//! **Anyone in a channel may use what works on any plot of it**
+//! ([`bag::Ask::Stow`], `Unstow`, `Switch`, `Run`): a thing put in comes out
+//! of their bag, and one taken out goes into it, the bag and the plot's
+//! workings written together (`Bank::keep_workings`). It is told
+//! ([`bag::Tell::Workings`]) only to a device that asked
+//! ([`bag::Ask::Workings`], [`Workers`]): after what stands on each plot it
+//! is told of, and to everyone in the channel whenever it changes; and
+//! whoever took something out is told what came ([`bag::Tell::Got`]). A
+//! sink run is told to the channel ([`bag::Tell::Ran`]) and kept by nobody.
+//! A thing that keeps things taken back off its plot takes what was in it
+//! into its owner's bag ([`bag::take_back`]), and is not taken back if that
+//! would not fit.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use bevy::prelude::*;
 use bevy_replicon::prelude::*;
-use roundtown_net::bag::{self, Bag, Paint, Paints, Standing};
+use roundtown_net::bag::{self, Bag, Paint, Paints, Standing, Workings};
 use roundtown_net::land::Lot;
 use roundtown_net::{Ask, Member, Tell};
 use serde::{Deserialize, Serialize};
 
-use crate::accounts::{Bank, Dealt, Record};
+use crate::accounts::{Bank, Dealt, Land, Record};
 use crate::players::{Account, Body, Everyone, Plays, Who, tell};
 use crate::rooms::{Room, Towns};
 
@@ -182,10 +203,69 @@ pub(crate) struct Colourers(HashSet<Entity>);
 #[derive(Resource, Default)]
 struct Remembered(HashMap<u64, (Bag, Paints)>);
 
+/// What is at work on every plot ([`bag::Workings`]), by whose plot it is:
+/// what is kept in what keeps things there, and which lights are on. Read
+/// with everyone's land as the server starts ([`Workshop::kept`]), and the
+/// server's own from there, here or not: whoever is in a channel a plot is
+/// in may use it. Without a database, for as long as the server runs.
+#[derive(Resource, Default)]
+pub(crate) struct Workshop(HashMap<u64, Workings>);
+
+impl Workshop {
+    /// What works on each of `lands`, as it was kept (`players.workings`),
+    /// put right by what stands on each ([`Workings::sane`]).
+    pub(crate) fn kept(lands: &[Land]) -> Self {
+        let mut workshop = Workshop::default();
+        for land in lands {
+            let Some(kept) = land.workings.as_deref() else {
+                continue;
+            };
+            let workings = match serde_json::from_str::<Workings>(kept) {
+                Ok(workings) => workings,
+                Err(error) => {
+                    warn!("what works on {}'s plot will not read ({error}): nothing", land.id);
+                    continue;
+                }
+            };
+            let (bag, _) = read(0, Some(&land.bag));
+            let sane = workings.sane(&bag.stands);
+            if !sane.is_empty() {
+                workshop.0.insert(land.id, sane);
+            }
+        }
+        workshop
+    }
+
+    /// What works on `who`'s plot: nothing, for one where nothing ever has.
+    fn of(&self, who: u64) -> Workings {
+        self.0.get(&who).cloned().unwrap_or_default()
+    }
+}
+
+/// What works on a plot as it is kept with its account (`players.workings`).
+fn kept_workings(workings: &Workings) -> String {
+    serde_json::to_string(workings).unwrap_or_default()
+}
+
+/// The devices that have asked to be told what works on plots
+/// ([`bag::Ask::Workings`]): those whose app knows how to show it.
+#[derive(Resource, Default)]
+pub(crate) struct Workers(HashSet<Entity>);
+
+/// The sinks whose tap has been run, by whose plot they are on and their
+/// number there, and when, by the server's own seconds: one run is told
+/// once, and another not until it has filled and drained
+/// ([`bag::SINK_SECS`]).
+#[derive(Resource, Default)]
+struct Running(HashMap<(u64, u32), f64>);
+
 pub(crate) fn plugin(app: &mut App) {
     app.init_resource::<Watchers>()
         .init_resource::<Colourers>()
         .init_resource::<Remembered>()
+        .init_resource::<Workshop>()
+        .init_resource::<Workers>()
+        .init_resource::<Running>()
         .add_observer(forget)
         .add_systems(
             PreUpdate,
@@ -206,9 +286,15 @@ pub(crate) fn plugin(app: &mut App) {
 }
 
 /// A device has gone: it is told nothing more.
-fn forget(remove: On<Remove, ConnectedClient>, mut watchers: ResMut<Watchers>, mut colourers: ResMut<Colourers>) {
+fn forget(
+    remove: On<Remove, ConnectedClient>,
+    mut watchers: ResMut<Watchers>,
+    mut colourers: ResMut<Colourers>,
+    mut workers: ResMut<Workers>,
+) {
     watchers.0.remove(&remove.entity);
     colourers.0.remove(&remove.entity);
+    workers.0.remove(&remove.entity);
 }
 
 /// With no database, gives a body just made the bag its account had when it
@@ -242,17 +328,48 @@ fn register(lands: Query<(&Account, &Holds), Or<(Changed<Holds>, Changed<Account
 enum Came {
     /// Nothing changed, or only what is owned.
     Nothing,
-    /// What stands on the plot changed.
+    /// What stands on the plot changed (and with it, maybe, what works
+    /// there: a thing that kept things taken back).
     Plot,
     /// What stands there is as it was, and painted another colour.
     Paint,
+    /// What works on this person's plot changed: something put into one of
+    /// its things or taken out, or a light switched.
+    Works(u64),
+    /// The tap of this sink on this person's plot has been run.
+    Ran(u64, u32),
     /// A purchase or a sale has gone to the database: answered when it has.
     Waits,
 }
 
+/// Who among the devices is told what besides their own bag: those that
+/// asked to be told of bags at all, of colours, and of what works.
+type Listeners<'a> = (&'a mut Watchers, &'a Colourers, &'a Workers);
+
+/// What a plot of the town is to someone using what works on it: what stands
+/// on `whose` plot, if `body` may use it: its own, or, in the town, that of
+/// someone whose land is in its channel, here or not, as the town last knew
+/// it (`Towns::land_of`); nothing anywhere else.
+fn plot_for(whose: u64, body: &Body, holds: &Holds, towns: &Towns) -> Option<Vec<Standing>> {
+    let Room::Town(channel) = body.room else {
+        return None;
+    };
+    if whose == body.who.0 {
+        return Some(holds.bag.stands.clone());
+    }
+    if !towns.has(channel, whose) {
+        return None;
+    }
+    towns.land_of(whose).map(|lot| lot.stands.clone())
+}
+
 /// Does `ask`, which the device `by` asked, to the bag `holds` of the body
 /// `body`: at once, but for a purchase or a sale with a database, which is
-/// sent there. Whatever is done at once is answered ([`answer`]).
+/// sent there. Whatever is done at once is answered ([`answer`]); and
+/// whatever was taken out of something that keeps things is said
+/// ([`bag::Tell::Got`]) after that answer. What works on any plot is the
+/// `workshop`'s, and a sink's run `running`'s, `now` by the server's own
+/// seconds.
 #[allow(clippy::too_many_arguments)]
 fn act(
     ask: &bag::Ask,
@@ -261,12 +378,17 @@ fn act(
     holds: &mut Holds,
     bank: &Bank,
     remembered: &mut Remembered,
-    (watchers, colourers): (&mut Watchers, &Colourers),
+    (towns, workshop, running, now): (&Towns, &mut Workshop, &mut Running, f64),
+    (watchers, colourers, workers): Listeners,
     tells: &mut MessageWriter<ToClients<Tell>>,
 ) -> Came {
     let who = body.who.0;
+    // What works on someone's plot, changed: kept, and with it the bag of
+    // whoever changed it if theirs changed too.
+    let mut worked: Option<(u64, bool)> = None;
+    let mut got = None;
     let came = match ask {
-        bag::Ask::Watch | bag::Ask::Colours => Came::Nothing,
+        bag::Ask::Watch | bag::Ask::Colours | bag::Ask::Workings => Came::Nothing,
         bag::Ask::Buy(kind) | bag::Ask::Sell(kind) => {
             let buying = matches!(ask, bag::Ask::Buy(_));
             let mut after = holds.bag.clone();
@@ -300,14 +422,25 @@ fn act(
                 Came::Nothing
             }
         },
-        bag::Ask::Take { id } => match holds.bag.take(*id) {
-            // Back in the bag, it is as it was made: its colours go.
-            Ok(()) => {
-                holds.paints.fit(&holds.bag.stands);
-                Came::Plot
+        // Back in the bag, it is as it was made: its colours go, its light
+        // goes out, and what was kept in it comes with it, if it fits.
+        bag::Ask::Take { id } => {
+            let mut workings = workshop.of(who);
+            match bag::take_back(&mut holds.bag, &mut workings, *id) {
+                Ok(()) => {
+                    holds.paints.fit(&holds.bag.stands);
+                    if workings != workshop.of(who) {
+                        workshop.0.insert(who, workings);
+                        worked = Some((who, true));
+                    }
+                    Came::Plot
+                }
+                Err(no) => {
+                    debug!("{who}: {ask:?} was not done: {no:?}");
+                    Came::Nothing
+                }
             }
-            Err(_) => Came::Nothing,
-        },
+        }
         bag::Ask::Paint { id, part, colour } => match holds.paints.set(&holds.bag.stands, *id, part, *colour) {
             Ok(()) => Came::Paint,
             Err(no) => {
@@ -322,27 +455,101 @@ fn act(
                 Came::Nothing
             }
         }
+        bag::Ask::Stow { who: whose, id, slot, kind, count } => {
+            let mut workings = workshop.of(*whose);
+            let done = plot_for(*whose, body, holds, towns)
+                .ok_or(bag::No::None)
+                .and_then(|stands| bag::stow(&mut holds.bag, &mut workings, &stands, *id, usize::from(*slot), kind, *count));
+            match done {
+                Ok(()) => {
+                    workshop.0.insert(*whose, workings);
+                    worked = Some((*whose, true));
+                    Came::Works(*whose)
+                }
+                Err(no) => {
+                    debug!("{who}: {ask:?} was not done: {no:?}");
+                    Came::Nothing
+                }
+            }
+        }
+        bag::Ask::Unstow { who: whose, id, slot } => {
+            let mut workings = workshop.of(*whose);
+            let done = plot_for(*whose, body, holds, towns)
+                .ok_or(bag::No::None)
+                .and_then(|stands| bag::unstow(&mut holds.bag, &mut workings, &stands, *id, usize::from(*slot)));
+            match done {
+                Ok(stack) => {
+                    workshop.0.insert(*whose, workings);
+                    worked = Some((*whose, true));
+                    got = Some(stack);
+                    Came::Works(*whose)
+                }
+                Err(no) => {
+                    debug!("{who}: {ask:?} was not done: {no:?}");
+                    Came::Nothing
+                }
+            }
+        }
+        bag::Ask::Switch { who: whose, id, on } => {
+            let mut workings = workshop.of(*whose);
+            let done = plot_for(*whose, body, holds, towns)
+                .ok_or(bag::No::None)
+                .and_then(|stands| workings.switch(&stands, *id, *on));
+            match done {
+                Ok(true) => {
+                    workshop.0.insert(*whose, workings);
+                    worked = Some((*whose, false));
+                    Came::Works(*whose)
+                }
+                Ok(false) => Came::Nothing,
+                Err(no) => {
+                    debug!("{who}: {ask:?} was not done: {no:?}");
+                    Came::Nothing
+                }
+            }
+        }
+        bag::Ask::Run { who: whose, id } => {
+            let sink = plot_for(*whose, body, holds, towns).is_some_and(|stands| stands.iter().any(|stood| stood.id == *id && stood.kind == bag::SINK));
+            let idle = running.0.get(&(*whose, *id)).is_none_or(|&then| now - then >= bag::SINK_SECS);
+            if sink && idle {
+                running.0.insert((*whose, *id), now);
+                Came::Ran(*whose, *id)
+            } else {
+                Came::Nothing
+            }
+        }
     };
-    if matches!(came, Came::Plot | Came::Paint) {
-        bank.keep_bag(who, kept(&holds.bag, &holds.paints));
+    match worked {
+        // What works there and the bag of whoever worked it, together.
+        Some((whose, bag_too)) => {
+            let workings = kept_workings(&workshop.of(whose));
+            bank.keep_workings(whose, workings, bag_too.then(|| (who, kept(&holds.bag, &holds.paints))));
+        }
+        None if matches!(came, Came::Plot | Came::Paint) => bank.keep_bag(who, kept(&holds.bag, &holds.paints)),
+        None => {}
     }
     if !bank.kept() {
         remembered.0.insert(who, (holds.bag.clone(), holds.paints.clone()));
     }
-    answer(by, body, holds, watchers, colourers, tells);
+    answer(by, body, holds, (watchers, colourers, workers), workshop, tells);
+    if let Some(stack) = got
+        && body.client == Some(by)
+    {
+        tell(tells, by, Tell::Bag(bag::Tell::Got(stack)));
+    }
     came
 }
 
 /// Tells the device `by` its bag as it stands, in answer to something it
 /// asked: one more of its asks answered; and, if it asked for colours, the
-/// colours on its plot after it. Not if it has gone, or is no longer the
-/// device playing this body.
+/// colours on its plot after it, and if it asked what works, what works
+/// there. Not if it has gone, or is no longer the device playing this body.
 fn answer(
     by: Entity,
     body: &Body,
     holds: &Holds,
-    watchers: &mut Watchers,
-    colourers: &Colourers,
+    (watchers, colourers, workers): Listeners,
+    workshop: &Workshop,
     tells: &mut MessageWriter<ToClients<Tell>>,
 ) {
     let Some(asked) = watchers.0.get_mut(&by) else {
@@ -350,14 +557,22 @@ fn answer(
     };
     *asked += 1;
     if body.client == Some(by) {
-        tell_its_own(by, *asked, body.who.0, holds, colourers, tells);
+        tell_its_own(by, *asked, body.who.0, holds, (colourers, workers), workshop, tells);
     }
 }
 
 /// Tells `device` its own bag as it stands, with `asked` of its asks
 /// answered, and after it, if it asked for colours, the colours on its
-/// plot, which is `who`'s.
-fn tell_its_own(device: Entity, asked: u32, who: u64, holds: &Holds, colourers: &Colourers, tells: &mut MessageWriter<ToClients<Tell>>) {
+/// plot, which is `who`'s; and, if it asked, what works there.
+fn tell_its_own(
+    device: Entity,
+    asked: u32,
+    who: u64,
+    holds: &Holds,
+    (colourers, workers): (&Colourers, &Workers),
+    workshop: &Workshop,
+    tells: &mut MessageWriter<ToClients<Tell>>,
+) {
     tell(
         tells,
         device,
@@ -377,16 +592,22 @@ fn tell_its_own(device: Entity, asked: u32, who: u64, holds: &Holds, colourers: 
             }),
         );
     }
+    if workers.0.contains(&device) {
+        tell(tells, device, Tell::Bag(bag::Tell::Workings { who, workings: workshop.of(who) }));
+    }
 }
 
 /// Tells `device` what stands on `who`'s plot, if `stands` says, and, if it
-/// asked for colours, what of it is painted.
+/// asked for colours, what of it is painted, and if it asked what works
+/// there, that.
+#[allow(clippy::too_many_arguments)]
 fn tell_of_a_plot(
     device: Entity,
     who: u64,
     stands: Option<&[Standing]>,
     paints: &[Paint],
-    colourers: &Colourers,
+    (colourers, workers): (&Colourers, &Workers),
+    workshop: &Workshop,
     tells: &mut MessageWriter<ToClients<Tell>>,
 ) {
     if let Some(stands) = stands {
@@ -409,6 +630,9 @@ fn tell_of_a_plot(
                 paints: paints.to_vec(),
             }),
         );
+    }
+    if workers.0.contains(&device) {
+        tell(tells, device, Tell::Bag(bag::Tell::Workings { who, workings: workshop.of(who) }));
     }
 }
 
@@ -438,10 +662,11 @@ fn hear(
     mut bodies: Query<(&mut Body, &mut Holds, &Member)>,
     mut towns: ResMut<Towns>,
     bank: Res<Bank>,
-    mut remembered: ResMut<Remembered>,
-    (mut watchers, mut colourers): (ResMut<Watchers>, ResMut<Colourers>),
+    (time, mut remembered, mut workshop, mut running): (Res<Time>, ResMut<Remembered>, ResMut<Workshop>, ResMut<Running>),
+    (mut watchers, mut colourers, mut workers): (ResMut<Watchers>, ResMut<Colourers>, ResMut<Workers>),
     mut tells: MessageWriter<ToClients<Tell>>,
 ) {
+    let now = time.elapsed_secs_f64();
     for ask in asks.read() {
         let Ask::Bag(asked) = &ask.message else {
             continue;
@@ -452,13 +677,16 @@ fn hear(
         let Ok(plays) = clients.get(client) else {
             continue;
         };
-        if matches!(asked, bag::Ask::Watch | bag::Ask::Colours) {
+        if matches!(asked, bag::Ask::Watch | bag::Ask::Colours | bag::Ask::Workings) {
             // Told from here on: its own bag and its channel's plots as it
             // sits down, which is now if it sits there already; and, having
-            // asked for them, their colours.
+            // asked for them, their colours, and what works on them.
             *watchers.0.entry(client).or_insert(0) += 1;
             if *asked == bag::Ask::Colours {
                 colourers.0.insert(client);
+            }
+            if *asked == bag::Ask::Workings {
+                workers.0.insert(client);
             }
             if let Some(&Plays(body)) = plays
                 && let Ok((body_of, ..)) = bodies.get(body)
@@ -486,28 +714,43 @@ fn hear(
             continue;
         }
         let (who, room) = (member.id, body_of.room);
-        let came = act(asked, client, &mut body_of, &mut holds, &bank, &mut remembered, (&mut watchers, &colourers), &mut tells);
-        if matches!(came, Came::Plot | Came::Paint) {
-            let stands = (came == Came::Plot).then(|| holds.bag.stands.clone());
-            let paints = holds.paints.0.clone();
-            tell_the_channel(&towns, room, body, who, stands, paints, (&watchers, &colourers), &bodies, &mut tells);
+        let came = act(
+            asked,
+            client,
+            &mut body_of,
+            &mut holds,
+            &bank,
+            &mut remembered,
+            (&towns, &mut workshop, &mut running, now),
+            (&mut watchers, &colourers, &workers),
+            &mut tells,
+        );
+        if came == Came::Plot {
+            // The town knows of it at once, for whoever uses what works
+            // there next (`plot_for`).
+            towns.record(holds.lot(member));
         }
+        let plot = (holds.bag.stands.clone(), holds.paints.0.clone());
+        let told = (&*watchers, &*colourers, &*workers);
+        tell_what_came(came, &towns, room, body, who, (&plot.0, &plot.1), told, &workshop, &bodies, &mut tells);
     }
 }
 
-/// Tells everyone else seated with `body` in a channel of the town, whose
-/// device asked to be told, what stands on its plot now, if `stands` says
-/// (it has changed), and those that asked for colours what of it is
-/// painted.
+/// Tells everyone in the channel of `body`, whose device asked to be told,
+/// what came of something `who` asked of their bag (`came`), what stands on
+/// their plot and its colours being `plot`: everyone else what stands there
+/// and what of it is painted, as either changed; everyone, `who` too, what
+/// works on a plot whose workings changed, and that a sink was run.
 #[allow(clippy::too_many_arguments)]
-fn tell_the_channel(
+fn tell_what_came(
+    came: Came,
     towns: &Towns,
     room: Room,
     body: Entity,
     who: u64,
-    stands: Option<Vec<Standing>>,
-    paints: Vec<Paint>,
-    (watchers, colourers): (&Watchers, &Colourers),
+    (stands, paints): (&[Standing], &[Paint]),
+    (watchers, colourers, workers): (&Watchers, &Colourers, &Workers),
+    workshop: &Workshop,
     bodies: &Query<(&mut Body, &mut Holds, &Member)>,
     tells: &mut MessageWriter<ToClients<Tell>>,
 ) {
@@ -515,8 +758,33 @@ fn tell_the_channel(
         return;
     };
     let client_of = |other: Entity| bodies.get(other).ok().and_then(|(other, ..)| other.client);
-    for device in others_watching(towns, channel, body, watchers, client_of) {
-        tell_of_a_plot(device, who, stands.as_deref(), &paints, colourers, tells);
+    match came {
+        Came::Plot | Came::Paint => {
+            let stands = (came == Came::Plot).then_some(stands);
+            for device in others_watching(towns, channel, body, watchers, client_of) {
+                tell_of_a_plot(device, who, stands, paints, (colourers, workers), workshop, tells);
+            }
+        }
+        Came::Works(whose) => {
+            let workings = workshop.of(whose);
+            for (_, other) in towns.seated(channel) {
+                if let Some(device) = client_of(other)
+                    && workers.0.contains(&device)
+                {
+                    tell(tells, device, Tell::Bag(bag::Tell::Workings { who: whose, workings: workings.clone() }));
+                }
+            }
+        }
+        Came::Ran(whose, id) => {
+            for (_, other) in towns.seated(channel) {
+                if let Some(device) = client_of(other)
+                    && workers.0.contains(&device)
+                {
+                    tell(tells, device, Tell::Bag(bag::Tell::Ran { who: whose, id }));
+                }
+            }
+        }
+        Came::Nothing | Came::Waits => {}
     }
 }
 
@@ -530,12 +798,13 @@ fn dealt(
     mut dealt: MessageReader<Dealt>,
     everyone: Res<Everyone>,
     mut bodies: Query<(&mut Body, &mut Holds, &Member)>,
-    towns: Res<Towns>,
+    mut towns: ResMut<Towns>,
     bank: Res<Bank>,
-    mut remembered: ResMut<Remembered>,
-    (mut watchers, colourers): (ResMut<Watchers>, Res<Colourers>),
+    (time, mut remembered, mut workshop, mut running): (Res<Time>, ResMut<Remembered>, ResMut<Workshop>, ResMut<Running>),
+    (mut watchers, colourers, workers): (ResMut<Watchers>, Res<Colourers>, Res<Workers>),
     mut tells: MessageWriter<ToClients<Tell>>,
 ) {
+    let now = time.elapsed_secs_f64();
     for answered in dealt.read() {
         let Some(&body) = everyone.0.get(&Who(answered.id)) else {
             continue;
@@ -553,21 +822,41 @@ fn dealt(
                 tell(&mut tells, client, Tell::Balance(left));
             }
         }
-        answer(dealing.by, &body_of, &holds, &mut watchers, &colourers, &mut tells);
+        answer(dealing.by, &body_of, &holds, (&mut watchers, &colourers, &workers), &workshop, &mut tells);
         let (who, room) = (member.id, body_of.room);
-        let (mut moved, mut painted) = (false, false);
+        let mut came = Vec::new();
         while holds.dealing.is_none() {
             let Some((by, asked)) = holds.waiting.pop_front() else {
                 break;
             };
-            let came = act(&asked, by, &mut body_of, &mut holds, &bank, &mut remembered, (&mut watchers, &colourers), &mut tells);
-            moved |= came == Came::Plot;
-            painted |= came == Came::Paint;
+            let one = act(
+                &asked,
+                by,
+                &mut body_of,
+                &mut holds,
+                &bank,
+                &mut remembered,
+                (&towns, &mut workshop, &mut running, now),
+                (&mut watchers, &colourers, &workers),
+                &mut tells,
+            );
+            if one == Came::Plot {
+                towns.record(holds.lot(member));
+            }
+            came.push(one);
         }
-        if moved || painted {
-            let stands = moved.then(|| holds.bag.stands.clone());
-            let paints = holds.paints.0.clone();
-            tell_the_channel(&towns, room, body, who, stands, paints, (&watchers, &colourers), &bodies, &mut tells);
+        // What stands and its colours once, as they are after all of it;
+        // each change to what works, and each sink, as it came.
+        let plot = if came.contains(&Came::Plot) {
+            Some(Came::Plot)
+        } else {
+            came.contains(&Came::Paint).then_some(Came::Paint)
+        };
+        let rest = came.into_iter().filter(|came| matches!(came, Came::Works(_) | Came::Ran(..)));
+        let stood = (holds.bag.stands.clone(), holds.paints.0.clone());
+        for one in plot.into_iter().chain(rest) {
+            let told = (&*watchers, &*colourers, &*workers);
+            tell_what_came(one, &towns, room, body, who, (&stood.0, &stood.1), told, &workshop, &bodies, &mut tells);
         }
     }
 }
@@ -584,17 +873,20 @@ fn dealt(
 /// while they were not here. And as a plot is filled with something else
 /// (`Towns::take_news`), everyone in the town there is told what stands
 /// on it now. A device that asked for colours is told those of each plot
-/// it is told of, its own too, after what stands there. Whose each plot
-/// is has been said already this tick (`players::tell_channels`).
+/// it is told of, its own too, after what stands there, and one that asked
+/// what works, what works there. Whose each plot is has been said already
+/// this tick (`players::tell_channels`).
 fn seat_news(
     mut towns: ResMut<Towns>,
     bodies: Query<(&Body, &Holds, &Member)>,
-    (watchers, colourers): (Res<Watchers>, Res<Colourers>),
+    (watchers, colourers, workers): (Res<Watchers>, Res<Colourers>, Res<Workers>),
+    workshop: Res<Workshop>,
     mut tells: MessageWriter<ToClients<Tell>>,
 ) {
     if !towns.has_sat() && !towns.has_news() {
         return;
     }
+    let listening = (&*colourers, &*workers);
     for (channel, newcomer) in towns.take_sat() {
         let Ok((body, holds, member)) = bodies.get(newcomer) else {
             continue;
@@ -608,12 +900,12 @@ fn seat_news(
         if let Some(client) = body.client
             && let Some(&asked) = watchers.0.get(&client)
         {
-            tell_its_own(client, asked, member.id, holds, &colourers, &mut tells);
+            tell_its_own(client, asked, member.id, holds, listening, &workshop, &mut tells);
             for ((_, theirs, other), _) in others() {
-                tell_of_a_plot(client, other.id, Some(&theirs.bag.stands), &theirs.paints.0, &colourers, &mut tells);
+                tell_of_a_plot(client, other.id, Some(&theirs.bag.stands), &theirs.paints.0, listening, &workshop, &mut tells);
             }
             for lot in towns.lots_in(channel) {
-                tell_of_a_plot(client, lot.who, Some(&lot.stands), &lot.paints, &colourers, &mut tells);
+                tell_of_a_plot(client, lot.who, Some(&lot.stands), &lot.paints, listening, &workshop, &mut tells);
             }
         }
         for ((other, ..), away) in others() {
@@ -621,7 +913,7 @@ fn seat_news(
                 && let Some(device) = other.client
                 && watchers.0.contains_key(&device)
             {
-                tell_of_a_plot(device, member.id, Some(&holds.bag.stands), &holds.paints.0, &colourers, &mut tells);
+                tell_of_a_plot(device, member.id, Some(&holds.bag.stands), &holds.paints.0, listening, &workshop, &mut tells);
             }
         }
     }
@@ -631,7 +923,7 @@ fn seat_news(
                 && let Some(device) = body.client
                 && watchers.0.contains_key(&device)
             {
-                tell_of_a_plot(device, lot.who, Some(&lot.stands), &lot.paints, &colourers, &mut tells);
+                tell_of_a_plot(device, lot.who, Some(&lot.stands), &lot.paints, listening, &workshop, &mut tells);
             }
         }
     }
@@ -704,7 +996,11 @@ mod tests {
             .init_resource::<Everyone>()
             .init_resource::<Watchers>()
             .init_resource::<Colourers>()
-            .init_resource::<Remembered>();
+            .init_resource::<Remembered>()
+            .init_resource::<Workshop>()
+            .init_resource::<Workers>()
+            .init_resource::<Running>()
+            .init_resource::<Time>();
         let (mut bodies, mut devices) = (Vec::new(), Vec::new());
         for n in 0..people {
             let body = app.world_mut().spawn_empty().id();
@@ -1116,6 +1412,162 @@ mod tests {
         let first = told(&mut app, devices[0]);
         let answers: Vec<u32> = painted(&first, 100).iter().map(|(asked, _)| *asked).collect();
         assert_eq!(answers, [5, 6], "{first:?}");
+    }
+
+    /// What `told` says works on `who`'s plot, each time it was said.
+    fn workings_told(told: &[Tell], who: u64) -> Vec<Workings> {
+        told.iter()
+            .filter_map(|tell| match tell {
+                Tell::Bag(bag::Tell::Workings { who: whose, workings }) if *whose == who => Some(workings.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Gives the body `body` `count` of `kind`, as if bought.
+    fn give(app: &mut App, body: Entity, kind: &str, count: u16) {
+        app.world_mut().get_mut::<Holds>(body).unwrap().bag.take_in(kind, count).unwrap();
+    }
+
+    #[test]
+    fn anyone_in_the_channel_puts_things_into_a_cabinet_and_takes_them_out_and_whoever_asked_is_told() {
+        let (mut app, bodies, devices) = town(3);
+        give(&mut app, bodies[0], "cabinet", 1);
+        give(&mut app, bodies[1], "hamburger", 5);
+        for device in &devices[..2] {
+            ask(&mut app, *device, bag::Ask::Workings);
+        }
+        ask(&mut app, devices[0], bag::Ask::Put { id: 1, kind: "cabinet".into(), at: here() });
+        for device in &devices {
+            told(&mut app, *device);
+        }
+        // The second puts three of their five hamburgers into the first's
+        // cabinet: out of their bag, into its third slot, and both of those
+        // who asked are told; the third, who never asked, is not.
+        ask(&mut app, devices[1], bag::Ask::Stow { who: 100, id: 1, slot: 2, kind: "hamburger".into(), count: 3 });
+        assert_eq!(bag_of(&app, bodies[1]).count("hamburger"), 2);
+        let kept = app.world().resource::<Workshop>().of(100);
+        assert_eq!(kept.slots(1)[2], Some(bag::Stack { kind: "hamburger".into(), count: 3 }));
+        for device in &devices[..2] {
+            assert_eq!(workings_told(&told(&mut app, *device), 100), [kept.clone()]);
+        }
+        assert!(workings_told(&told(&mut app, devices[2]), 100).is_empty());
+        // Not into a slot past its eight, nor more than they have: nothing
+        // changes, and only the answer is said.
+        ask(&mut app, devices[1], bag::Ask::Stow { who: 100, id: 1, slot: 8, kind: "hamburger".into(), count: 1 });
+        ask(&mut app, devices[1], bag::Ask::Stow { who: 100, id: 1, slot: 0, kind: "hamburger".into(), count: 3 });
+        assert_eq!(app.world().resource::<Workshop>().of(100), kept);
+        assert!(workings_told(&told(&mut app, devices[0]), 100).is_empty());
+        told(&mut app, devices[1]);
+        // The third takes them out: into their bag, said to them after
+        // their bag, and the cabinet empty for everyone who asked.
+        ask(&mut app, devices[2], bag::Ask::Unstow { who: 100, id: 1, slot: 2 });
+        assert_eq!(bag_of(&app, bodies[2]).count("hamburger"), 3);
+        let third = told(&mut app, devices[2]);
+        let got = third.iter().position(|tell| matches!(tell, Tell::Bag(bag::Tell::Got(stack)) if stack.kind == "hamburger" && stack.count == 3));
+        let answered = third.iter().position(|tell| matches!(tell, Tell::Bag(bag::Tell::Yours { .. })));
+        assert!(got.is_some() && answered < got, "{third:?}");
+        assert!(app.world().resource::<Workshop>().of(100).is_empty());
+        assert_eq!(workings_told(&told(&mut app, devices[0]), 100), [Workings::default()]);
+        // Nothing there to take: nothing said but the answer.
+        ask(&mut app, devices[2], bag::Ask::Unstow { who: 100, id: 1, slot: 2 });
+        assert!(!told(&mut app, devices[2]).iter().any(|tell| matches!(tell, Tell::Bag(bag::Tell::Got(_)))));
+        // The owner takes the cabinet back with two of the second's
+        // hamburgers in it: both come into the owner's bag, and everyone is
+        // told what stands there and what works there.
+        ask(&mut app, devices[1], bag::Ask::Stow { who: 100, id: 1, slot: 7, kind: "hamburger".into(), count: 2 });
+        told(&mut app, devices[1]);
+        ask(&mut app, devices[0], bag::Ask::Take { id: 1 });
+        let owner = bag_of(&app, bodies[0]);
+        assert_eq!((owner.count("hamburger"), owner.free("cabinet")), (2, 1));
+        assert!(app.world().resource::<Workshop>().0.get(&100).is_none_or(Workings::is_empty));
+        let second = told(&mut app, devices[1]);
+        assert_eq!(plots_told(&second).0, [(100, 0)]);
+        assert_eq!(workings_told(&second, 100), [Workings::default()]);
+    }
+
+    #[test]
+    fn only_someone_in_the_channel_of_a_plot_uses_what_works_on_it() {
+        let (mut app, bodies, devices) = town(2);
+        give(&mut app, bodies[0], "safe", 1);
+        give(&mut app, bodies[1], "doll", 1);
+        ask(&mut app, devices[0], bag::Ask::Put { id: 1, kind: "safe".into(), at: here() });
+        // Away in a game, the second may not put anything in the first's
+        // safe; back in the town, they may.
+        app.world_mut().get_mut::<Body>(bodies[1]).unwrap().room = Room::Arena(0);
+        ask(&mut app, devices[1], bag::Ask::Stow { who: 100, id: 1, slot: 0, kind: "doll".into(), count: 1 });
+        assert_eq!(bag_of(&app, bodies[1]).count("doll"), 1);
+        app.world_mut().get_mut::<Body>(bodies[1]).unwrap().room = Room::Town(0);
+        // Nor in the safe of someone whose land is in no channel of theirs.
+        ask(&mut app, devices[1], bag::Ask::Stow { who: 555, id: 1, slot: 0, kind: "doll".into(), count: 1 });
+        assert_eq!(bag_of(&app, bodies[1]).count("doll"), 1);
+        ask(&mut app, devices[1], bag::Ask::Stow { who: 100, id: 1, slot: 0, kind: "doll".into(), count: 1 });
+        assert_eq!(bag_of(&app, bodies[1]).count("doll"), 0);
+        assert!(app.world().resource::<Workshop>().of(100).holds_anything(1));
+    }
+
+    #[test]
+    fn a_light_switched_and_a_sink_run_are_told_to_everyone_in_the_channel_who_asked() {
+        let (mut app, bodies, devices) = town(2);
+        give(&mut app, bodies[0], "lamp_with_shade", 1);
+        give(&mut app, bodies[0], bag::SINK, 1);
+        for device in &devices {
+            ask(&mut app, *device, bag::Ask::Workings);
+        }
+        ask(&mut app, devices[0], bag::Ask::Put { id: 1, kind: "lamp_with_shade".into(), at: here() });
+        ask(&mut app, devices[0], bag::Ask::Put { id: 2, kind: bag::SINK.into(), at: here() });
+        for device in &devices {
+            told(&mut app, *device);
+        }
+        // The guest switches the owner's lamp on: kept, and told to both.
+        ask(&mut app, devices[1], bag::Ask::Switch { who: 100, id: 1, on: true });
+        assert!(app.world().resource::<Workshop>().of(100).is_lit(1));
+        for device in &devices {
+            assert_eq!(workings_told(&told(&mut app, *device), 100).last().map(|works| works.lit.clone()), Some(vec![1]));
+        }
+        // On again is nothing to say; the sink is no light.
+        ask(&mut app, devices[1], bag::Ask::Switch { who: 100, id: 1, on: true });
+        ask(&mut app, devices[1], bag::Ask::Switch { who: 100, id: 2, on: true });
+        assert!(workings_told(&told(&mut app, devices[0]), 100).is_empty());
+        // The sink run: told to both; run again while it fills, nothing.
+        let ran = |told: &[Tell]| told.iter().filter(|tell| matches!(tell, Tell::Bag(bag::Tell::Ran { who: 100, id: 2 }))).count();
+        ask(&mut app, devices[1], bag::Ask::Run { who: 100, id: 2 });
+        ask(&mut app, devices[0], bag::Ask::Run { who: 100, id: 2 });
+        assert_eq!((ran(&told(&mut app, devices[0])), ran(&told(&mut app, devices[1]))), (1, 1));
+        // Once it has filled and drained, it runs again; the lamp never runs.
+        app.world_mut().resource_mut::<Time>().advance_by(std::time::Duration::from_secs_f64(bag::SINK_SECS + 0.1));
+        ask(&mut app, devices[0], bag::Ask::Run { who: 100, id: 2 });
+        ask(&mut app, devices[0], bag::Ask::Run { who: 100, id: 1 });
+        assert_eq!(ran(&told(&mut app, devices[1])), 1);
+    }
+
+    #[test]
+    fn what_works_on_a_plot_is_read_as_the_server_starts_and_put_right() {
+        let mut bag = Bag::new();
+        bag.take_in("cabinet", 1).unwrap();
+        bag.take_in("chandelier", 1).unwrap();
+        bag.put(3, "cabinet", here()).unwrap();
+        bag.put(4, "chandelier", here()).unwrap();
+        let workings = Workings {
+            held: vec![
+                bag::Held { id: 3, slots: vec![None, Some(bag::Stack { kind: "doll".into(), count: 2 })] },
+                bag::Held { id: 9, slots: vec![Some(bag::Stack { kind: "doll".into(), count: 2 })] },
+            ],
+            lit: vec![4, 3],
+        };
+        let land = |id: u64, workings: Option<String>| Land {
+            id,
+            name: "someone".into(),
+            look: "boy".into(),
+            bag: kept(&bag, &Paints::default()),
+            workings,
+        };
+        let workshop = Workshop::kept(&[land(7, Some(kept_workings(&workings))), land(8, None), land(9, Some("{not json".into()))]);
+        let seven = workshop.of(7);
+        assert_eq!(seven.slots(3).len(), 8);
+        assert_eq!(seven.slots(3)[1], Some(bag::Stack { kind: "doll".into(), count: 2 }));
+        assert_eq!((seven.held.len(), seven.lit.clone()), (1, vec![4]));
+        assert!(workshop.of(8).is_empty() && workshop.of(9).is_empty());
     }
 
     #[test]

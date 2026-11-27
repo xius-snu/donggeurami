@@ -336,7 +336,7 @@ pub(crate) fn plugin(app: &mut App) {
 /// strikes, the jump button beside it, the five buttons for things to use,
 /// and the chat's keyboard, each where Bridge Wars has it. No plank: there
 /// is no bridge to build.
-pub(crate) fn spawn_bar(commands: &mut Commands, _assets: &AssetServer, images: &mut Assets<Image>) {
+pub(crate) fn spawn_bar(commands: &mut Commands, assets: &AssetServer, images: &mut Assets<Image>) {
     let colours = ui().colours;
     let (left, _right) = hud::game_bar(commands);
     commands.spawn((ChildOf(left), hud::name_plate()));
@@ -359,7 +359,13 @@ pub(crate) fn spawn_bar(commands: &mut Commands, _assets: &AssetServer, images: 
         let (right, bottom) = hud::slot_place(slot);
         commands.spawn((ChildOf(round), hud::utility_slot(slot, hud::beside_the_jump(right, bottom))));
     }
-    commands.spawn((ChildOf(round), hud::chat_button(images)));
+    // The chat's keyboard while lines may be typed, and since 2026-11-27
+    // a small speech bubble in its place (`quick`).
+    if roundtown_net::chat::TYPED {
+        commands.spawn((ChildOf(round), hud::chat_button(images)));
+    } else {
+        commands.spawn((ChildOf(round), hud::chat_spot(assets)));
+    }
 }
 
 /// What its score is called among the results: the file's

@@ -632,6 +632,8 @@ pub(crate) struct Colours {
     pub last_stand: LastStandColours,
     pub land: LandColours,
     pub bag: BagColours,
+    pub storage: StorageColours,
+    pub house: HouseColours,
 }
 
 /// The bag's colours (`bag`, since 2026-11-21): the colour each rarity's
@@ -703,6 +705,30 @@ impl BagColours {
             Rarity::Common => self.common,
         }
     }
+}
+
+/// The colours of what keeps things (`storage`, since 2026-11-27): each
+/// square slot of its window, lit under the pointer; the plus in an empty
+/// one; the number in a full one's corner and the stroke round it; and the
+/// bar that says how many are to go in, along its length and as far as the
+/// number.
+#[derive(Deserialize, Clone, Copy, PartialEq, Debug)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct StorageColours {
+    #[serde(deserialize_with = "colour")]
+    pub slot: Color,
+    #[serde(deserialize_with = "colour")]
+    pub slot_lit: Color,
+    #[serde(deserialize_with = "colour")]
+    pub plus: Color,
+    #[serde(deserialize_with = "colour")]
+    pub count: Color,
+    #[serde(deserialize_with = "colour")]
+    pub count_stroke: Color,
+    #[serde(deserialize_with = "colour")]
+    pub bar: Color,
+    #[serde(deserialize_with = "colour")]
+    pub bar_fill: Color,
 }
 
 /// The land's colours (`land`, since 2026-11-20): the words on the sign of
@@ -943,6 +969,38 @@ pub(crate) struct ChatColours {
     pub quick: Color,
     #[serde(deserialize_with = "colour")]
     pub quick_text: Color,
+    /// The bubble over the head of whoever said one of the things to say at
+    /// a press, and its words (`speech`, since 2026-11-27).
+    #[serde(deserialize_with = "colour")]
+    pub bubble: Color,
+    #[serde(deserialize_with = "colour")]
+    pub bubble_text: Color,
+}
+
+/// Houses' colours (`rating`, the House tab of the friends' panel; since
+/// 2026-11-27): a star given and one not, the stars along the bottom of
+/// the screen and the plate behind them, and the words to choose from in a
+/// rating, at rest, lit under the pointer and chosen, and the words on
+/// them, chosen and not.
+#[derive(Deserialize, Clone, Copy, PartialEq, Debug)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct HouseColours {
+    #[serde(deserialize_with = "colour")]
+    pub star: Color,
+    #[serde(deserialize_with = "colour")]
+    pub star_off: Color,
+    #[serde(deserialize_with = "colour")]
+    pub plate: Color,
+    #[serde(deserialize_with = "colour")]
+    pub word: Color,
+    #[serde(deserialize_with = "colour")]
+    pub word_lit: Color,
+    #[serde(deserialize_with = "colour")]
+    pub word_on: Color,
+    #[serde(deserialize_with = "colour")]
+    pub word_text: Color,
+    #[serde(deserialize_with = "colour")]
+    pub word_on_text: Color,
 }
 
 /// The windows (`window`): the friends' panel (`friends`, since
@@ -1449,6 +1507,46 @@ pub(crate) struct Words {
     pub last_stand: LastStandWords,
     pub land: LandWords,
     pub bag: BagWords,
+    pub storage: StorageWords,
+    pub house: HouseWords,
+}
+
+/// Houses' words (since 2026-11-27): rating one (`rating`), the line over
+/// the stars along the bottom (`{name}`, whose land it is), the words to
+/// choose from in a rating, in the order the server keeps them by, the
+/// line over them, the two buttons, and what is said across the screen as
+/// your rating is kept, as someone visits your house (`{name}`) and as
+/// someone rates it; and the House tab of the friends' panel: a house's
+/// title (`{name}`), its stats one by one, the heading over its ratings
+/// (`{count}`), what a house with none says, the board's heading
+/// (`{count}`), what an empty board says, the row of your own place
+/// further down, what is said with your house not rated yet, and while
+/// either is on its way.
+#[derive(Deserialize, PartialEq, Debug)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct HouseWords {
+    pub rate: String,
+    pub adjectives: Vec<String>,
+    pub pick_words: String,
+    pub cancel: String,
+    pub submit: String,
+    pub thanks: String,
+    pub visiting: String,
+    pub rated: String,
+    pub whose: String,
+    pub worth: String,
+    pub things: String,
+    pub visitors: String,
+    pub visitors_week: String,
+    pub ratings: String,
+    pub average: String,
+    pub ratings_heading: String,
+    pub no_ratings: String,
+    pub board_heading: String,
+    pub no_board: String,
+    pub your_place: String,
+    pub unrated: String,
+    pub waiting: String,
 }
 
 /// The bag's words (`bag::panel`, since 2026-11-21): the categories down
@@ -1501,6 +1599,29 @@ impl BagWords {
     pub(crate) fn name<'a>(&'a self, kind: &'a str) -> &'a str {
         self.names.iter().find(|(of, _)| of == kind).map_or(kind, |(_, name)| name.as_str())
     }
+}
+
+/// The words of what keeps things (`storage`, since 2026-11-27): the title
+/// of the box things to put in are chosen in; what it says with nothing in
+/// your bag that can go in, and with no food where only food goes; the box
+/// that asks how many, and its button; how many are in a slot, in its
+/// corner (`{count}`); and said across the screen, what has come into your
+/// bag (`{name}`, `{count}`; Hajun: "shows quick message like "_____ x1 has
+/// been added to your inventory""), that it has no room for more of it
+/// (`{name}`), and that a thing with too much in it for the bag cannot be
+/// put away in it.
+#[derive(Deserialize, PartialEq, Debug)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct StorageWords {
+    pub choose: String,
+    pub nothing: String,
+    pub no_food: String,
+    pub how_many: String,
+    pub ok: String,
+    pub count: String,
+    pub added: String,
+    pub bag_full: String,
+    pub no_room: String,
 }
 
 /// The land's words (`land`, since 2026-11-20): what the sign of a plot
@@ -1792,6 +1913,9 @@ pub(crate) struct LastStandWords {
 pub(crate) struct ChatWords {
     pub hint: String,
     pub quick: Vec<String>,
+    /// What the speech bubble offers to say in the games (since
+    /// 2026-11-27, when the box to type into was put away everywhere).
+    pub quick_games: Vec<String>,
     pub said: String,
     pub fell: String,
     pub knocked: String,

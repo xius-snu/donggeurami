@@ -57,17 +57,24 @@ use crate::{Dead, Player, ThirdPersonCamera, Venue};
 
 /// The buttons on the right, in shares of the short side of the screen
 /// from the right and the bottom of the box round the jump button
-/// (`hud::beside_the_jump`), each with its size: Ready under the rest, the
-/// down arrow over it, the bar of steps over that, its number over the bar,
-/// and the up arrow at the top; and the chat's keyboard to Ready's left.
-const READY: (f32, f32, f32) = (4.0, 0.0, 14.0);
-const DOWN: (f32, f32, f32) = (5.5, 16.5, 11.0);
-const BAR: (f32, f32) = (7.75, 29.0);
-const BAR_SIZE: (f32, f32) = (6.5, 16.0);
-const NUMBER: (f32, f32) = (5.0, 45.3);
+/// (`hud::beside_the_jump`), each with its size: since 2026-11-27 the jump
+/// button in its own place, as big as the town's (Hajun: "move the check
+/// and the strength thingy upwards, and put jump button below the check
+/// button, jump button should be same size as jump button in the lobby"),
+/// Ready over it, the down arrow over that, the bar of steps over that,
+/// its number over the bar, and the up arrow at the top, a little smaller
+/// each than they were, to stand no higher than nine tenths of the screen
+/// (mine); and the chat's keyboard, or its speech bubble, to Ready's left.
+/// Ready and the column were where the jump button is until then.
+const JUMP: (f32, f32) = (0.0, 0.0);
+const READY: (f32, f32, f32) = (4.5, 23.7, 13.0);
+const DOWN: (f32, f32, f32) = (6.0, 38.5, 10.0);
+const BAR: (f32, f32) = (7.75, 49.5);
+const BAR_SIZE: (f32, f32) = (6.5, 15.0);
+const NUMBER: (f32, f32) = (5.0, 64.8);
 const NUMBER_TEXT: f32 = 4.0;
-const UP: (f32, f32, f32) = (5.5, 51.0, 11.0);
-const CHAT: (f32, f32, f32) = (20.0, 2.5, 9.0);
+const UP: (f32, f32, f32) = (6.0, 70.5, 10.0);
+const CHAT: (f32, f32, f32) = (20.5, 25.5, 9.0);
 /// How much of a round button its picture fills, as the town's do.
 const PICTURE: f32 = 58.0;
 /// The gap between two steps of the bar.
@@ -124,6 +131,11 @@ const WON_SECS: f32 = 2.0;
 struct PowerArrow {
     up: bool,
 }
+
+/// The jump button: its arrow faint while there is no hopping (once the
+/// aim's time is up, and while everyone slides).
+#[derive(Component)]
+struct JumpButton;
 
 /// The Ready button.
 #[derive(Component)]
@@ -195,7 +207,7 @@ pub(super) fn plugin(app: &mut App) {
 }
 
 /// The buttons round the screen at a table of Knock Off.
-pub(super) fn spawn_bar(commands: &mut Commands, _assets: &AssetServer, images: &mut Assets<Image>) {
+pub(super) fn spawn_bar(commands: &mut Commands, assets: &AssetServer, images: &mut Assets<Image>) {
     let (left, _right) = hud::game_bar(commands);
     commands.spawn((ChildOf(left), hud::name_plate()));
     let colours = ui().colours;
@@ -216,6 +228,15 @@ pub(super) fn spawn_bar(commands: &mut Commands, _assets: &AssetServer, images: 
     let arrow = images.add(hud::jump_arrow());
     let tick = images.add(tick());
     commands.spawn(hud::round_the_jump()).with_children(|round| {
+        // The jump button, as the town's is, where the town's is; a finger
+        // on it takes no stick, which is taken anywhere else.
+        let (right, bottom) = JUMP;
+        round.spawn((
+            JumpButton,
+            PowerColumn,
+            hud::KeepsTheStickOff,
+            hud::jump_button(arrow.clone(), crate::JUMP_SIZE_VMIN, hud::beside_the_jump(right, bottom)),
+        ));
         let (right, bottom, size) = UP;
         round.spawn((PowerArrow { up: true }, PowerColumn, glyph_button(arrow.clone(), size, false, hud::beside_the_jump(right, bottom))));
         let (right, bottom, size) = DOWN;
@@ -271,8 +292,14 @@ pub(super) fn spawn_bar(commands: &mut Commands, _assets: &AssetServer, images: 
                 Pickable::IGNORE,
             ))
             .with_children(|number| stroked(number, PowerNumber, "0", NUMBER_TEXT, colours.text));
-        let (right, bottom, size) = CHAT;
-        round.spawn((hud::ChatButton, hud::round_button(images.add(hud::keyboard()), size, hud::beside_the_jump(right, bottom))));
+        // The chat's keyboard while lines may be typed, and since
+        // 2026-11-27 a small speech bubble in its place (`quick`).
+        if roundtown_net::chat::TYPED {
+            let (right, bottom, size) = CHAT;
+            round.spawn((hud::ChatButton, hud::round_button(images.add(hud::keyboard()), size, hud::beside_the_jump(right, bottom))));
+        } else {
+            round.spawn(hud::small_quick_button(assets, CHAT));
+        }
     });
 }
 
@@ -396,6 +423,8 @@ fn show_power(
     view: Res<TableView>,
     mut columns: Query<&mut Visibility, With<PowerColumn>>,
     mut glyphs: Query<(&ChildOf, &mut ImageNode), With<Glyph>>,
+    jumps: Query<&Children, With<JumpButton>>,
+    mut arrows_of_jumps: Query<&mut ImageNode, Without<Glyph>>,
     mut steps: Query<(&PowerStep, &mut BackgroundColor), (Without<ReadyButton>, Without<PowerArrow>)>,
     mut numbers: Query<(&mut Text, Has<Stroke>), With<PowerNumber>>,
     mut readies: Query<&mut BackgroundColor, (With<ReadyButton>, Without<PowerStep>, Without<PowerArrow>)>,
@@ -406,6 +435,21 @@ fn show_power(
         shown.set_if_neq(if up { Visibility::Inherited } else { Visibility::Hidden });
     }
     let mark = ui().colours.hud.button_mark;
+    // The jump button's arrow, faint where there is no hopping.
+    let hops = match knock.playing() {
+        None => true,
+        Some(round) => roundtown_net::knock_off::may_hop(round.stage) && !knock.sliding(),
+    };
+    let wanted = if hops { mark } else { mark.with_alpha(mark.alpha() * GLYPH_FAINT) };
+    for children in &jumps {
+        for child in children {
+            if let Ok(mut picture) = arrows_of_jumps.get_mut(*child)
+                && picture.color != wanted
+            {
+                picture.color = wanted;
+            }
+        }
+    }
     let lit = knock.aiming();
     let pressed = knock.aim.ready && knock.playing().is_some_and(|round| round.stage == KnockStage::Aim && knock.aim.turn == round.turn);
     for (parent, mut picture) in &mut glyphs {
@@ -1269,9 +1313,19 @@ mod tests {
     #[test]
     fn the_buttons_on_the_right_are_clear_of_each_other() {
         let round = |(right, bottom, size): (f32, f32, f32)| ((right, bottom), size);
-        hud::clear_of_each_other(&[round(READY), round(DOWN), round(UP), round(CHAT)]).expect("clear of each other");
+        let jump = ((JUMP.0, JUMP.1), crate::JUMP_SIZE_VMIN);
+        hud::clear_of_each_other(&[jump, round(READY), round(DOWN), round(UP), round(CHAT)]).expect("clear of each other");
         // The bar between the arrows, touching neither.
         assert!(BAR.1 > DOWN.1 + DOWN.2 + 0.5 && BAR.1 + BAR_SIZE.1 < NUMBER.1 && NUMBER.1 + NUMBER_TEXT < UP.1 + 0.5);
+        // The jump button the town's, under Ready, Ready under the column;
+        // and the whole of it under nine tenths of the screen's short side,
+        // from the jump button's place.
+        assert!(READY.1 > JUMP.1 + crate::JUMP_SIZE_VMIN && DOWN.1 > READY.1 + READY.2);
+        assert!(crate::JUMP_BOTTOM_VH + UP.1 + UP.2 <= 90.0, "{}", crate::JUMP_BOTTOM_VH + UP.1 + UP.2);
+        // Each over the middle of the jump button, give or take.
+        for (right, _, size) in [READY, DOWN, UP] {
+            assert!((right + size * 0.5 - crate::JUMP_SIZE_VMIN * 0.5).abs() < 0.6, "{right} {size}");
+        }
     }
 
     #[test]

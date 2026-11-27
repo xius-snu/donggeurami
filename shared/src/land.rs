@@ -679,6 +679,19 @@ impl Estate {
         }
     }
 
+    /// Whose land is on `plot`, to be visited and rated
+    /// (`crate::house`, since 2026-11-27): whoever of the channel has it,
+    /// here or away, or had it a moment ago, or whose land fills it. Real
+    /// land alone: a made-up lot, shown or not, is nobody's.
+    pub fn owner(&self, plot: usize) -> Option<u64> {
+        match self.slots.get(self.order.place(plot)?)? {
+            Slot::Held { who, .. } => Some(*who),
+            Slot::Left { lot, .. } => Some(lot.who),
+            Slot::Filled(lot) if !lot.premade() => Some(lot.who),
+            Slot::Filled(_) => None,
+        }
+    }
+
     /// Everyone of the channel who has a plot and has not gone: each
     /// plot, whose, and whether they are away from the town.
     pub fn held(&self) -> impl Iterator<Item = (usize, u64, bool)> + '_ {
@@ -809,6 +822,24 @@ mod tests {
         assert_eq!(plot_at(Vec2::new(-80.0, 30.0)), Some(0));
         assert_eq!(plot_at(Vec2::new(25.0, 100.0)), Some(1));
         assert_eq!(plot_at(Vec2::ZERO), None);
+    }
+
+    #[test]
+    fn a_plot_is_its_holder_s_or_its_filler_s_to_visit_and_a_made_up_one_nobody_s() {
+        // One of the channel, the land of two who are not, and made-up
+        // land on the rest.
+        let mut estate = Estate::open(7, vec![land(20, 3), land(30, 1)], Order::numbered());
+        assert_eq!(estate.owner(0), Some(7), "the holder's");
+        let owners: Vec<Option<u64>> = (0..PLOTS).map(|plot| estate.owner(plot)).collect();
+        assert!(owners.contains(&Some(20)) && owners.contains(&Some(30)));
+        assert_eq!(owners.iter().filter(|owner| owner.is_some()).count(), 3, "the made-up lots are nobody's");
+        // Gone a moment ago, it is still theirs; and someone coming takes
+        // the land of who is not here, which is then theirs.
+        estate.leave(7, Some(land(7, 2)), 10.0, true);
+        assert_eq!(estate.owner(0), Some(7));
+        let plot = estate.join(9, nobody_standing).unwrap();
+        assert_eq!(estate.owner(plot), Some(9));
+        assert_eq!(estate.owner(PLOTS), None);
     }
 
     #[test]

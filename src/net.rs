@@ -808,7 +808,9 @@ fn hear(
             | Tell::Bag(_)
             | Tell::Resting(_)
             | Tell::Plots(_)
-            | Tell::Cars(_) => {}
+            | Tell::Cars(_)
+            // Houses' (`rating`, `friends`).
+            | Tell::House(_) => {}
         }
     }
 }
@@ -883,14 +885,16 @@ fn tell_where_i_am(
     time: Res<Time>,
     online: Res<Online>,
     cars: car::Cars,
-    me: Query<(&Transform, &Venue, &Riding, Option<&Frozen>), With<Player>>,
+    me: Query<(&Transform, &Venue, &Riding, Option<&Frozen>, Has<crate::knock_off::Hopping>), With<Player>>,
     mut sent: Local<Sent>,
     mut moves: MessageWriter<Moved>,
 ) {
-    let Ok((at, &venue, riding, frozen)) = me.single() else {
+    let Ok((at, &venue, riding, frozen, hopping)) = me.single() else {
         return;
     };
-    let placed = frozen.is_some_and(|frozen| frozen.placed);
+    // A body a game places is the game's to say where it is; but for a hop
+    // on the spot in Knock Off (since 2026-11-27), which everyone is to see.
+    let placed = frozen.is_some_and(|frozen| frozen.placed) && !hopping;
     if !online.is() || online.venue != Some(venue) || placed {
         *sent = Sent::default();
         return;

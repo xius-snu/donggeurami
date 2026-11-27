@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- What the app may do beyond the ordinary, signed into it (since
+     2026-11-27): be pushed word of your house by Apple's Push Notification
+     service (src/push.rs). "production" is the service TestFlight's and the
+     store's builds go by. The App ID has to have Push Notifications turned
+     on, and the App Store profile has to be made after that, or signing
+     fails: IOS.md, "Pushes". -->
+<plist version="1.0">
+<dict>
+	<key>aps-environment</key>
+	<string>production</string>
+</dict>
+</plist>

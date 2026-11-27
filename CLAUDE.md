@@ -16,13 +16,17 @@ them (2026-11-19), Hajun likes Bridge Wars and Knock Off and had Bridge
 Race's and Last Stand's cards turned off (`games::OFF`, since APK 44):
 spend nothing on those two unasked.
 
-As of 2026-11-27: `PROTOCOL_VERSION` 26 (since 2026-11-27: Knock Off's
-island is sent with its table, so **APK 60 and older are told to
-update**; APK 61 and later play on), **APK 61** (`versionCode`, built
+As of 2026-11-27: `PROTOCOL_VERSION` 27 (since that evening: what is
+said is a number, `chat::Said`, so **APK 61 and older are told to
+update**; APK 62 and later play on), **APK 62** (`versionCode`, built
 2026-11-27, not put on a phone from here, `docs/building.md`), the server
-deployed at 10:16 UTC on 2026-11-27 with everything in `server/` and
+deployed at 13:40:57 UTC on 2026-11-27 with everything in `server/` and
 `shared/`.
-**All of it committed and pushed, up to APK 61**: Knock Off on an island
+**All of it committed and pushed, up to APK 62**: houses visited, rated
+and ranked, with pushes to phones (`docs/house.md`); quick chat only, with
+a bubble over the speaker's head (`docs/chat-and-text.md`); things used,
+storage, lights switched by hand, the sink (`docs/town.md`); Knock Off's
+jump; Knock Off on an island
 thrown for each table, everyone beginning where they stood
 (`docs/knock-off.md`); a thing dragged upstairs stays upstairs
 (`docs/bag.md`); the camera kept in a
@@ -42,6 +46,10 @@ built it is not known here), is protocol 18: its build is told to update
 and stays offline until `ios-1.0.2-19` is built, whose tag is Hajun's to
 ask for. Apple warns that from April 2027 an upload needs Xcode 27
 (`docs/building.md`, APK 42).
+**Pushes need Hajun's keys first** (Firebase, Apple; `docs/house.md`,
+"Setting the pushes up": APK 62 was built without `google-services.json`,
+and the VM has no keys), and **the next `ios-*` tag needs Push
+Notifications turned on for the App ID** (`IOS.md`, "Pushes").
 
 ## This file, and where the rest is
 
@@ -75,10 +83,11 @@ heading in one of these:
 | a map's model, collision | `docs/maps-and-collision.md` | "The islands are Blender models" |
 | the town's 48 plots, whose each is and what fills the rest (`land`, `roundtown_net::land`, `premade`, `server/src/rooms.rs`), the signs | `docs/land.md` | |
 | the bag: what you own, the shop, gems, buildings put down on your plot, a list flicked, edit mode and paint (`bag`, `build::stand`, `build::paint`, `customize`, `flick`, `server/src/bag.rs`) | `docs/bag.md` | |
-| fountain, music, town houses, town objects and their editor, the plots' residents (`resident`), talking, the bubble in the world (`bubble`), sitting and lying down (`rest`), what works (`working`) | `docs/town.md` | "The fountain runs", "The town has music", "The town's houses", "The town is data", "The town holds 32 players", "You can talk to anyone" |
+| fountain, music, town houses, town objects and their editor, the plots' residents (`resident`), talking, the bubble in the world (`bubble`), sitting and lying down (`rest`), what works and what keeps things (`working`, `storage`) | `docs/town.md` | "The fountain runs", "The town has music", "The town's houses", "The town is data", "The town holds 32 players", "You can talk to anyone" |
 | the buses, the car you drive | `docs/vehicles.md` | "The town's buses", "The car you drive" |
 | the camera | `docs/camera.md` | "The camera stands where you zoomed it" |
 | House Builder, the shop's pieces, `assets/mybuilds/` | `docs/house-builder.md`, `homebuildersgameevent.md` | "House Builder", "Building your house" |
+| houses visited and rated, the House tab, its board, pushes to phones (`house`, `rating`, `push`, `speech`'s neighbours; `server/src/house.rs`, `push.rs`) | `docs/house.md` | |
 | anything under `mobile/ios` | `IOS.md` | |
 
 `docs/bridge-wars.md` is long, a log with the newest work first: read its
@@ -155,8 +164,9 @@ to try again.
 - What gives off light at night is a list by material (`lamps::SOURCES`):
   street lamps' `lightbulb`, Bridge Wars' anchors' `spawn`; and two of the
   shop's things by kind, the Chandelier and the Lamp With Shade
-  (`lamps::BY_KIND`, since 2026-11-25). At most 24 point
-  lights (`MOST_LIT`), none by day.
+  (`lamps::BY_KIND`, since 2026-11-25), which since 2026-11-27 are
+  switched on and off by hand instead, by day too (`working::Lit`). At
+  most 24 point lights (`MOST_LIT`), none by day but those switched on.
 - See-through walls (`see_through.rs`) happen only inside a house, and
   never in the town since 2026-11-25 (Hajun's, `see_through::IN_THE_TOWN`,
   off: House Builder and Blend In only), with
@@ -380,11 +390,15 @@ to try again.
 - The chat (`src/chat.rs`, `server/src/chat.rs`), down the left in the
   town and in Bridge Wars: its words alone with a thin stroke, three
   lines in sight, none faded (`colours.chat.strengths`, all 1; other
-  numbers fade them by place), scrolled by a drag; the dark box and the box
-  to type into come only while a line is typed (the keyboard button). A
-  line goes to everyone in the room; nothing is kept or logged. No block
-  and no report yet, nor for friends' messages: both are wanted before a
-  release to the shops (`MULTIPLAYER.md`).
+  numbers fade them by place), scrolled by a drag. **Nothing is typed
+  since 2026-11-27** (Hajun's; `chat::TYPED`, off on both sides, the box
+  and the keyboard kept behind it): only the speech bubble's lines
+  (`src/quick.rs`: the town's eleven, Hajun's, and the games'), sent by
+  number and written in each phone's own words, in the chat and over the
+  speaker's head (`src/speech.rs`, a thing in the world, 5 s, within 30
+  m). A line goes to everyone in the room; nothing is kept or logged. No
+  block and no report yet for friends' messages: wanted before a release
+  to the shops (`MULTIPLAYER.md`).
 - Friends (`src/friends.rs`, `server/src/social.rs`) are the server's
   alone, none offline: a `#1000`-`#9999` tag after every name, requests,
   groups of up to four whose leader alone starts a game, messages that wait
@@ -432,8 +446,9 @@ to try again.
   first tab on it since APK 47, Hajun not liking the sack, `hud::SACK`;
   a face until then, which put you in
   the car), a speech bubble (a fan of things to say
-  at a press, `src/quick.rs`, `words.chat.quick`), a small keyboard over
-  it (the chat's box) and a fist (a punch; the car's reverse); the stick,
+  at a press, two columns, `src/quick.rs`, `words.chat.quick`; the small
+  keyboard over it is away since 2026-11-27, `chat::TYPED`) and a fist (a
+  punch; the car's reverse); the stick,
   whose middle is set where the finger first goes down, within half its
   radius. In your car the bag's button is put away and a door stands in
   its place, which gets you out (`hud::ExitButton`; half way down the
@@ -583,7 +598,7 @@ to try again.
   phone and in another on the next.
   Where the land is going is Hajun's to say (`docs/land.md`).
 - **You can sit and lie down** on a chair, a sofa or a bed on anyone's
-  plot, and lie in the bath (`src/rest.rs`, since APK 51, Hajun's; the
+  plot, lie in the bath and sit on the toilet (`src/rest.rs`, since APK 51, Hajun's; the
   things of 2026-11-25 since APK 56; not seen on a phone): a
   bubble over each place of one you stand within 1.5 m of, a tap, and you
   are there in its pose in a fifth of a second (`roundtown_net::Pose`:
@@ -595,7 +610,27 @@ to try again.
   to the camera, not a button on the screen, which Hajun turned down.
 - **Some things work** (`src/working.rs`, since APK 56, Hajun's ask, my
   numbers): a treadmill's belt carries whoever stands on it toward its
-  open end at 5 m/s, and the ceiling fan turns.
+  open end at 5 m/s, and the ceiling fan turns. Walked up to the belt's
+  front you walk on the spot there (since 2026-11-27).
+- **Things are used** (since 2026-11-27, Hajun's; APK 62, server deployed
+  13:40 UTC; not seen on a phone; `docs/town.md`): a bubble over the cabinet, the dresser, the
+  safe, the end table and the barbecue opens a window of slots, anyone's,
+  by anyone in the channel, the barbecue food alone (`src/storage.rs`,
+  `roundtown_net::bag::Workings`, the server's `players.workings`); over
+  the lamp with shade and the chandelier it switches them; over the sink
+  it runs its tap for everyone to see; the toilet is sat on. E on desktop
+  is a tap on the nearest bubble.
+- **Houses are visited and rated** (since 2026-11-27, Hajun's; APK 62,
+  deployed; not seen on a phone; `docs/house.md`): ten seconds on the plot of
+  someone else's land is a visit, told to its owner across their screen
+  or pushed to their phone ("{name} is visiting your house. Go say hi!");
+  fifteen offers five stars at the bottom middle (`src/rating.rs`), unless
+  that land as it stands was rated by you; a press opens the window (stars
+  by halves, up to 3 of 16 words, Cancel red left, Submit green right).
+  The friends' panel's third tab, the house (`src/friends/house.rs`): your
+  house's six stats and its ratings, and the board of the best hundred,
+  your own place under it for you alone. All of it the server's
+  (`server/src/house.rs`, its own tables; pushes `server/src/push.rs`).
 - You can talk to any AI (`src/talk.rs`), ride the four buses that go
   round the roads by the clock (`car.rs`, `roads.rs`: the way is read off
   the road's paint; 5.25 m/s, 10.5 on the open road, three quarters of
@@ -689,7 +724,8 @@ and the game is as that file has it. The rules both sides play by are
   team's upgrades (generator, swords, shields, heal pool, blindness trap,
   builder's speed). What everyone has is `Outfits` (`Kit`, `Upgrades`).
 - **Buttons** (`hud::Layout::Arena`): the sword where the jump button was,
-  jump beside it, the plank (building on and off), the chat's keyboard, and
+  jump beside it, the plank (building on and off), a small speech bubble
+  where the chat's keyboard was (since 2026-11-27, `hud::chat_spot`), and
   up to five for things to use, shown only when filled (`src/utility.rs`).
   What is aimed is held and dragged; a potion is a press, drunk for 1.6 s
   at half pace, put down by a press anywhere else.
@@ -789,7 +825,11 @@ server online and by the device offline.
   then all slide at once, the same to the bit on every device and the
   server; the ice shrinks toward its middle a twelfth of the island a
   turn, gone after turn 13. The last on it wins; the rest watch or
-  leave.
+  leave. A jump button under Ready, the town's size (since 2026-11-27,
+  APK 62 and deployed, never seen running): the town's jump while
+  the table waits, a hop on the spot once it is played, never from the
+  aim's end to the slide's end (`knock_off::may_hop`), seen by everyone,
+  the computer's players now and then (`knock_off::Hops`).
 - **Bridge Race** (the computer filling; one person is one against one,
   two or more two against two, people on one team first): two islands and
   the golden one. 10 m of bridge each to begin, 8 to 16 m to each team

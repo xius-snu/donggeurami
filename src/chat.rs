@@ -351,11 +351,15 @@ fn drawn_in(ink: &Ink, share: f32) -> Color {
     thinned(ink.colour, if ink.rim { share * share } else { share })
 }
 
-/// Something to say to the room you are in, as it was typed or chosen:
-/// the box's line, and what the big speech bubble offers (`quick`). Said
-/// by [`say`], if it is a line at all.
+/// Something to say to the room you are in: the box's line, as it was
+/// typed, while lines may be typed (`roundtown_net::chat::TYPED`, not since
+/// 2026-11-27), or one of the things the speech bubble offers (`quick`), by
+/// its number. Said by [`say`].
 #[derive(Message, Clone, Debug)]
-pub(crate) struct Say(pub(crate) String);
+pub(crate) enum Say {
+    Typed(String),
+    Quick(rules::Quick),
+}
 
 /// The chat hushed by a game (since 2026-11-18): while it is, the box a
 /// line is typed into cannot be taken up, and nothing is said, typed or
@@ -726,10 +730,27 @@ fn hear(
     me: Query<(&Venue, Option<&Team>), With<Player>>,
     others: Query<(&Member, &Team), With<Remote>>,
     mut log: ResMut<Log>,
+    mut spoke: MessageWriter<crate::speech::Spoke>,
 ) {
     let (here, mine) = me.single().map_or((None, None), |(&venue, team)| (Some(venue), team.map(|team| team.0)));
     for tell in tells.read() {
-        if let Tell::Said { who, name, text } = tell {
+        if let Tell::Said { who, name, said: what } = tell {
+            // In this phone's own words, one of the speech bubble's (a
+            // line it has no words for, from an app built after, is not
+            // written at all); and over the head of whoever said it, for
+            // anyone near to see (`speech`, since 2026-11-27).
+            let text = match what {
+                rules::Said::Typed(text) => text.clone(),
+                rules::Said::Quick(quick) => match crate::quick::words_of(*quick) {
+                    Some(text) => text,
+                    None => continue,
+                },
+            };
+            let text = &text;
+            spoke.write(crate::speech::Spoke {
+                who: Some(*who),
+                text: text.clone(),
+            });
             // Who is on which team: in a fight, by their seat, as its game
             // says each seat's team (`Fighting::teams`: Bridge Wars' seat
             // modulo four as ever, Bridge Race's two, Last Stand's none, so
@@ -1179,7 +1200,7 @@ fn act(
             return;
         }
         if name_box.entered() || enter || send {
-            says.write(Say(name_box.shown()));
+            says.write(Say::Typed(name_box.shown()));
             let_go(&mut typing, &mut name_box, &mut up);
             typing.draft.clear();
         } else if keyboard.just_pressed(KeyCode::Escape) {
@@ -1190,10 +1211,19 @@ fn act(
         return;
     }
     // Not with anything else up, nor where the chat is not shown, nor
-    // while a game has it hushed.
+    // while a game has it hushed; and not at all while nothing may be
+    // typed (`roundtown_net::chat::TYPED`, since 2026-11-27).
     let here = me.single().is_ok_and(|&venue| shown_on(venue));
     let by_key = enter || keyboard.just_pressed(KeyCode::KeyT);
-    if ((button && !shut) || by_key) && here && !hushed.0 && !up.0 && !name_box.up() && !signup.up() && !close_up.busy() {
+    if rules::TYPED
+        && ((button && !shut) || by_key)
+        && here
+        && !hushed.0
+        && !up.0
+        && !name_box.up()
+        && !signup.up()
+        && !close_up.busy()
+    {
         name_box.open_for(&typing.draft, rules::LONGEST);
         up.0 = true;
         typing.on = true;
@@ -1204,20 +1234,29 @@ fn act(
 /// Says what there is to say ([`Say`]), each if it is a line at all
 /// (`roundtown_net::chat::line`): online it is asked of the server, which
 /// tells everyone in your room, you among them; offline there is nobody to
-/// tell, and it is written here, under your own name. Nothing while a game
-/// has the chat hushed ([`Hushed`]).
+/// tell, and it is written here, under your own name, and over your head
+/// (`speech`). Nothing while a game has the chat hushed ([`Hushed`]). A
+/// line typed is said only while lines may be (`roundtown_net::chat::TYPED`);
+/// one of the speech bubble's, by its number online, in this phone's own
+/// words offline (`quick::words_of`).
 fn say(
     mut says: MessageReader<Say>,
     (online, fighting, hushed): (Res<Online>, Res<Fighting>, Res<Hushed>),
     me: Query<(&Name, &Venue, Option<&Team>), With<Player>>,
     mut log: ResMut<Log>,
     mut asks: MessageWriter<Ask>,
+    mut spoke: MessageWriter<crate::speech::Spoke>,
 ) {
-    for Say(typed) in says.read() {
+    for say in says.read() {
         if hushed.0 {
             continue;
         }
-        let Some(text) = rules::line(typed) else {
+        let text = match say {
+            Say::Typed(typed) if rules::TYPED => rules::line(typed),
+            Say::Typed(_) => None,
+            Say::Quick(quick) => crate::quick::words_of(*quick),
+        };
+        let Some(text) = text else {
             continue;
         };
         let Ok((name, &venue, team)) = me.single() else {
@@ -1227,8 +1266,12 @@ fn say(
             continue;
         }
         if online.is() {
-            asks.write(Ask::Chat(text));
+            asks.write(match say {
+                Say::Typed(_) => Ask::Chat(text),
+                Say::Quick(quick) => Ask::Quick(*quick),
+            });
         } else {
+            spoke.write(crate::speech::Spoke { who: None, text: text.clone() });
             // In a game, once its fight has begun, in your team's colour,
             // as your name is on its plate (`hud::colour_name`): in a fight
             // your seat's team as its game says (`Fighting::teams`: none in

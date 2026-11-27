@@ -219,6 +219,39 @@ second, which until then held every account to have no friends and to have
 earned nothing, as was so in 2026-11-13, now holds a copy to what starting
 up may change and no more.
 
+## Pushes
+
+Since 2026-11-27 (`docs/house.md`) the server pushes word of someone's house
+to their phone while the game is not open on it: by Apple's Push
+Notification service to an iPhone, by Google's Firebase Cloud Messaging to an
+Android phone (`server/src/push.rs`). Each push is a run of the VM's own
+`curl` (Ubuntu's, with HTTP/2, which Apple asks for; `curl -V` lists it),
+told everything on its standard input; the keys are signed in Rust.
+
+It needs, in `/etc/roundtown/` (root's, `chmod 640`, group `roundtown`),
+Firebase's service account as a JSON file and Apple's `.p8`, and in
+`/etc/roundtown/env`:
+
+```
+RT_FCM=/etc/roundtown/fcm.json
+RT_APNS_KEY=/etc/roundtown/AuthKey_XXXXXXXXXX.p8
+RT_APNS_KEY_ID=XXXXXXXXXX
+RT_APNS_TEAM=YYYYYYYYYY
+```
+
+(`RT_APNS_TOPIC`, the bundle id, is `town.donggeurami.app` unless set;
+`RT_APNS_SANDBOX=1` only for an app Xcode put on a phone itself.) As it
+starts the server logs "pushes go to iPhones and Android phones", or which
+of them, or "nothing is pushed to anyone's phone". Without them every push
+it would have sent is logged instead ("a push to … with nothing set up to
+send it"). **Neither file goes in the repository** (`*.p8` and
+`google-services.json` are in `.gitignore`). Where Hajun gets them:
+`docs/house.md`, "Setting the pushes up".
+
+Three tables of its own, made as it starts after the accounts' and gone
+with either account they name: `house_visits`, `house_ratings`,
+`push_tokens` (`server/src/house.rs`, `SCHEMA`). Nothing to migrate.
+
 ## When something is wrong
 
 - **Nobody can connect.** `systemctl status roundtown-server caddy`. `ufw

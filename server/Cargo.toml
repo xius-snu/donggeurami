@@ -34,3 +34,14 @@ tiny_http = "0.12"
 sha2 = "0.10"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+# Pushes to phones (`push`, since 2026-11-27): the bearers Apple's service
+# and Google's sign-in are given, signed in plain Rust, no C to cross-compile:
+# ES256 for Apple's `.p8` key, RS256 for Firebase's service account, each a
+# JWT in base64url. The HTTPS itself is the VM's own curl.
+p256 = { version = "0.13", default-features = false, features = ["ecdsa", "pkcs8", "pem", "std"] }
+rsa = { version = "0.9", default-features = false, features = ["std", "pem", "sha2"] }
+base64 = "0.22"
+
+[dev-dependencies]
+# Keys made afresh in the pushes' tests.
+rand_core = { version = "0.6", features = ["getrandom"] }

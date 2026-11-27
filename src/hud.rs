@@ -384,10 +384,12 @@ pub(crate) const HUSH_SECS: f32 = 0.25;
 /// person with a plus (`person_add`), a magnifying glass
 /// (`search`), two sheets (`content_copy`), an envelope (`mail`), a cross
 /// (`close`), a chevron (`arrow_back_ios_new`), a door (`logout`), and the
-/// group of three (`groups`), unused for twelve days until then.
-pub(crate) const ICONS: [&str; 16] = [
+/// group of three (`groups`), unused for twelve days until then. And since
+/// 2026-11-27 the House tab of the friends' panel's: Material's house
+/// (`home`), and the leaderboard's again, for its board.
+pub(crate) const ICONS: [&str; 18] = [
     "person", "settings", "gift", "social", "gamepad", "mood", "chat", "friends", "add_friend", "search", "copy", "mail",
-    "close", "back", "leave", "groups",
+    "close", "back", "leave", "groups", "home", "leaderboard",
 ];
 
 /// Every picture of the buttons that is read off a file ([`ICONS`], and
@@ -998,7 +1000,7 @@ fn restyle(
 fn spawn_bar(commands: &mut Commands, assets: &AssetServer, images: &mut Assets<Image>, layout: Layout, minimap: &Minimap) {
     match layout {
         Layout::Town => spawn_town_bar(commands, assets, images),
-        Layout::Arena => spawn_arena_bar(commands, images, minimap),
+        Layout::Arena => spawn_arena_bar(commands, assets, images, minimap),
         Layout::BlendIn => crate::blend_in::spawn_bar(commands, assets, images),
         Layout::KnockOff => crate::knock_off::spawn_bar(commands, assets, images),
         Layout::BridgeRace => crate::bridge_race::spawn_bar(commands, assets, images),
@@ -1083,6 +1085,27 @@ pub(crate) fn chat_button(images: &mut Assets<Image>) -> impl Bundle {
     (ChatButton, chat_steps_in(), round_button(images.add(keyboard()), size, beside_the_jump(right, bottom)))
 }
 
+/// A small speech bubble at `place` (its right and bottom offsets in the
+/// box round the jump button, and its size), which fans out what there is
+/// to say from beside it (`quick`, since 2026-11-27): where the chat's
+/// keyboard stood in the games, the keyboard being put away everywhere
+/// (`roundtown_net::chat::TYPED`). Its picture is the town's big bubble's.
+pub(crate) fn small_quick_button(assets: &AssetServer, place: (f32, f32, f32)) -> impl Bundle {
+    let (right, bottom, size) = place;
+    (
+        QuickChatButton,
+        crate::quick::FanFrom::beside(place),
+        round_button(assets.load("icons/social.png"), size, beside_the_jump(right, bottom)),
+    )
+}
+
+/// The small speech bubble where the chat's keyboard stood
+/// ([`CHAT_BUTTON`]) in Bridge Wars and the games played as it is,
+/// stepping in from an iPhone's island as the keyboard did.
+pub(crate) fn chat_spot(assets: &AssetServer) -> impl Bundle {
+    (chat_steps_in(), small_quick_button(assets, CHAT_BUTTON))
+}
+
 /// The box round the jump button, in the bottom right corner where the
 /// jump button is: the buttons about it are placed from its corner, in
 /// shares of the short side.
@@ -1130,7 +1153,7 @@ pub(crate) fn beside_the_jump(right: f32, bottom: f32) -> Node {
 /// the left of it, the plank over it, which turns building on and off
 /// (`bridge`), a small one over it, and the three dots over those, which
 /// does nothing yet.
-fn spawn_arena_bar(commands: &mut Commands, images: &mut Assets<Image>, minimap: &Minimap) {
+fn spawn_arena_bar(commands: &mut Commands, assets: &AssetServer, images: &mut Assets<Image>, minimap: &Minimap) {
     let colours = ui().colours;
     commands
         .spawn((
@@ -1210,9 +1233,15 @@ fn spawn_arena_bar(commands: &mut Commands, images: &mut Assets<Image>, minimap:
         }
         let (right, bottom) = ARENA_BRIDGE;
         round.spawn(bridge_button(images.add(plank()), beside_the_jump(right, bottom)));
-        // The chat: a line to type (`chat`), where the town has it.
-        let (right, bottom, size) = CHAT_BUTTON;
-        round.spawn((ChatButton, chat_steps_in(), round_button(images.add(keyboard()), size, beside_the_jump(right, bottom))));
+        // The chat: a line to type (`chat`), where the town has it, while
+        // lines may be typed; since 2026-11-27 a small speech bubble there
+        // instead, which fans out what there is to say (`quick`).
+        if roundtown_net::chat::TYPED {
+            let (right, bottom, size) = CHAT_BUTTON;
+            round.spawn((ChatButton, chat_steps_in(), round_button(images.add(keyboard()), size, beside_the_jump(right, bottom))));
+        } else {
+            round.spawn(chat_spot(assets));
+        }
         // The three dots, which showed the empty buttons, are not put up
         // ([`DOTS`]).
         if DOTS {
@@ -1639,9 +1668,14 @@ fn spawn_town_bar(commands: &mut Commands, assets: &AssetServer, images: &mut As
                 }
             }
         }
-        // The chat: a line to type (`chat`).
-        let (right, bottom, size) = CHAT_BUTTON;
-        round.spawn((ChatButton, chat_steps_in(), round_button(images.add(keyboard()), size, beside_the_jump(right, bottom))));
+        // The chat: a line to type (`chat`), while lines may be; not since
+        // 2026-11-27 (Hajun: "get rid of the keyboard icon above the chat
+        // bubble icon"), the speech bubble beside it being all there is to
+        // say (`quick`).
+        if roundtown_net::chat::TYPED {
+            let (right, bottom, size) = CHAT_BUTTON;
+            round.spawn((ChatButton, chat_steps_in(), round_button(images.add(keyboard()), size, beside_the_jump(right, bottom))));
+        }
         // The door out of your car, there while you are in it, where your
         // bag's button is while you are not ([`show_car_buttons`]).
         round.spawn((
@@ -3414,10 +3448,14 @@ mod tests {
             let buttons = if GIFT { 3 } else { 2 };
             for button in 0..buttons {
                 let middle = Vec2::new(side + SIDE_BUTTON * 0.5, EDGE + SIDE_INSET + SIDE_BUTTON * (button as f32 + 0.5) + 1.6 * button as f32);
-                for index in 0..quick::MOST {
-                    let (right, bottom) = quick::place(index);
+                // The town's fan, in its columns (`quick`, since
+                // 2026-11-27): each plate as wide as its column.
+                let fan = quick::FanFrom::town();
+                let widths = [26.0, 26.0];
+                for index in 0..2 * quick::ROWS {
+                    let (right, bottom) = quick::place(index, &fan, &widths);
                     let (from, under) = (crate::JUMP_RIGHT_VW * wide + right, 100.0 - crate::JUMP_BOTTOM_VH - bottom);
-                    let nearest = Vec2::new(middle.x.clamp(from, from + 40.0), middle.y.clamp(under - quick::HEIGHT, under));
+                    let nearest = Vec2::new(middle.x.clamp(from, from + widths[index / quick::ROWS]), middle.y.clamp(under - quick::HEIGHT, under));
                     let gap = nearest.distance(middle) - SIDE_BUTTON * 0.5;
                     assert!(gap >= 1.0, "{wide}: button {button} is {gap} from plate {index}, moved in {moved}");
                 }

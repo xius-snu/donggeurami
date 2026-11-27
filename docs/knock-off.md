@@ -6,13 +6,81 @@
 
 ## Contents
 
-1. 2026-11-27: every table its own island, thrown as blobmaker.app throws its blobs, and everyone begins where they stood; protocol 26, the server deployed, APK 61
-2. Later on the evening of 2026-11-18: the stick is taken anywhere on the screen but round the buttons
-3. The evening of 2026-11-18: every turn begins at power 1
-4. At the merge, 2026-11-18: the far player clear of the table's board, the game's name said low, the out panel clear of the chat's button
-5. Later still on 2026-11-18, after a play-test: the camera comes in as the ice breaks, a hit is felt, nothing stands over the play, the ice breaks into pieces, and whoever wins has a moment
-6. Later on 2026-11-18, after a check of it: the last person to leave is paid for their place online too, where you came is the game's own word for it, a device that comes back is held ready if it was, and every slide begins on every device the moment it begins
-7. Since 2026-11-18 Knock Off is a game people play, online and offline: four on a disc of ice in the sea, everyone aiming at once in secret and sliding at once, the ice breaking a metre a turn
+1. Later on 2026-11-27: a jump button, and the power column and Ready over it; everyone hops, the computer's players now and then; APK 62, deployed, never seen running
+2. 2026-11-27: every table its own island, thrown as blobmaker.app throws its blobs, and everyone begins where they stood; protocol 26, the server deployed, APK 61
+3. Later on the evening of 2026-11-18: the stick is taken anywhere on the screen but round the buttons
+4. The evening of 2026-11-18: every turn begins at power 1
+5. At the merge, 2026-11-18: the far player clear of the table's board, the game's name said low, the out panel clear of the chat's button
+6. Later still on 2026-11-18, after a play-test: the camera comes in as the ice breaks, a hit is felt, nothing stands over the play, the ice breaks into pieces, and whoever wins has a moment
+7. Later on 2026-11-18, after a check of it: the last person to leave is paid for their place online too, where you came is the game's own word for it, a device that comes back is held ready if it was, and every slide begins on every device the moment it begins
+8. Since 2026-11-18 Knock Off is a game people play, online and offline: four on a disc of ice in the sea, everyone aiming at once in secret and sliding at once, the ice breaking a metre a turn
+
+## Later on 2026-11-27: a jump button, and the power column and Ready over it; everyone hops, the computer's players now and then; APK 62, deployed, never seen running
+
+(Shipped by another session, roundtown-46, at Hajun's "build apk and push"
+that evening, after this one had ended: in APK 62 and on the server
+deployed at 13:40:57 UTC, protocol 27 being that session's; built and its
+tests passing, but **never seen running**, as below: `docs/building.md`,
+APK 62.)
+
+Hajun, after APK 61: "oh also i want to be able to jump in the knock off
+games. move the check and the strength thingy upwards, and put jump button
+below the check button, jump button should be same size as jump button in
+the lobby."; then "u should be able to jump all the time, but jump will
+not go through during the time when the timer is up and u are launched,
+but unblocked after again during any other time including choosing the
+direction stage. jump is just for fun not rly for changing the game
+mechanics."; and "and jump should be seen by other players too. and also
+some bots can jump somtimes". Everything not in his words is mine.
+
+- **The buttons** (`screen::spawn_bar`): the jump button in the town's own
+  place and as big (22 vmin, `hud::jump_button`), its touch the town's
+  (`hud_layout`, `Layout::KnockOff`, which had no jump); a finger on it
+  takes no stick (`hud::KeepsTheStickOff`). Ready over it, then the down
+  arrow, the bar and its number, and the up arrow, each a little smaller
+  (Ready 13, the arrows 10, the bar 15 tall) so that the top of the column
+  stands at nine tenths of the screen's short side at the most; the chat's
+  bubble to Ready's left. The jump's arrow is faint once the aim's time is
+  up and while everyone slides, and the button goes with the column once
+  you are out.
+- **While the table waits** a jump is the town's own (the body is free).
+  **Once the game is played** every body is the game's, so a jump is a hop
+  on the spot drawn over where the game has you, as high and as long as
+  the town's jump (1.64 m, 0.7 s; `roundtown_net::knock_off::hop_height`,
+  a test holds its numbers the game's), while everyone aims, as the ice
+  breaks and once it is over; **not** from the moment the aim's time is up
+  until the slide is over (`may_hop`): a press then is nothing, and a hop
+  under way lands as it would but is never drawn in a slide. Nothing of the
+  game goes by it.
+- **Seen by everyone**: your device says where you are while you hop and a
+  moment after (`knock_off::Hopping`, `net::tell_where_i_am`), as ordinary
+  moves; everyone else's draws the whole hop from the moment the server has
+  your body leave the ice (`HOP_SEEN`, 0.2 m). So that a hop is a move from
+  where you stand, the server keeps each person's body where the game has
+  them as every stage but a slide begins (`KnockOff::step`): after a slide
+  it had them where the last turn began, and would have taken a hop for a
+  leap across the ice and put the device back. Nothing new is sent, so no
+  protocol number for it.
+- **The computer's players hop now and then** (`knock_off::Hops`, one piece
+  for the server online and the device offline): four in ten never do; the
+  rest wait 3 to 14 s between hops on the whole, each wait thrown about
+  that, and now and then hop twice; while the table waits too (offline as a
+  jump of the body's own, online sent as their bodies are), never where a
+  person may not.
+- **Checked**: the rules' tests (50 of Knock Off's: a hop is the town's
+  jump; some of the computer's hop and some never, none where they may
+  not, one under way landing), the server's (11: the computer's bodies
+  sent where the game has them with a hop over it at the most, and the
+  person's body kept where the game has them), the game's (Knock Off's 29:
+  your hop at a press while you aim and down again a hop later, someone
+  else's seen as they leave the ice and drawn whole, nothing at a press once
+  the time is up, nothing in a slide, the computer's offline; the jump
+  button the town's; the buttons on the right clear of each other, the
+  column under nine tenths). The desktop build compiles.
+- **Not checked**: it running at all, hidden or otherwise: the build for
+  the scripted check was stopped by Claude Code, the PC being short of
+  memory, and not started again; nor online, nor on a phone. The server's
+  side needs a deploy and the app an APK; neither done.
 
 ## 2026-11-27: every table its own island, thrown as blobmaker.app throws its blobs, and everyone begins where they stood; protocol 26, the server deployed, APK 61
 

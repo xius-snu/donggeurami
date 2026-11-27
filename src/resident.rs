@@ -672,6 +672,7 @@ fn find(plan: &Plan, who: u64, island: &Island, plots: &Plots, pieces: &Pieces, 
         // to it from, and nobody on it.
         let places: Vec<(Entity, usize, Vec3)> = on_it
             .iter()
+            .filter(|(_, of, ..)| rest::residents_sit_on(of.def.kind))
             .flat_map(|&(piece, of, at, _)| {
                 rest::spots(of.def.kind)
                     .iter()

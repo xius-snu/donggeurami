@@ -48,9 +48,15 @@
 //! with shade"): each is one material on a picture of many colours, with
 //! no part of it a bulb to find, so each is lit by what it is
 //! ([`BY_KIND`]): a light inside the box its model fills, a third of the way
-//! up a chandelier and in a lamp's shade, from dusk to dawn as every lamp
-//! is, and among the [`MOST_LIT`] nearest the camera as every lamp is.
-//! Nothing of either glows.
+//! up a chandelier and in a lamp's shade, and among the [`MOST_LIT`]
+//! nearest the camera as every lamp is. Nothing of either glows. **Each is
+//! switched on and off by hand** (since 2026-11-27; Hajun: "lamp with shade
+//! (toggle light on off rather than day/night)", and the chandelier the
+//! same): lit while it is switched on, by day too, and dark while it is
+//! not, by night too (`working::Lit`, the bubble over it), off until
+//! someone switches it on. The street lamps and the anchors go by the time
+//! of day as they did; a lamp switched on by day is the one light there is
+//! then, and the day costs what it did until one is.
 
 use bevy::gltf::GltfMaterialName;
 use bevy::light::cluster::ClusterConfig;
@@ -192,10 +198,13 @@ pub(crate) const BY_KIND: [Lit; 2] = [
     },
 ];
 
-/// A lamp's light, and how much of it there is when it is on, in lumens.
+/// A lamp's light, how much of it there is when it is on, in lumens, and
+/// whether it is switched by hand (`working::Lit`, on the piece it is in)
+/// rather than on by night.
 #[derive(Component)]
 struct Lamp {
     lumens: f32,
+    by_hand: bool,
 }
 
 /// A mesh of bulbs, which glows while the lamps are on, this brightly.
@@ -244,7 +253,10 @@ fn find_bulbs(
         if let Some(at) = light_in(&corners, lit.up) {
             commands.spawn((
                 ChildOf(ready.entity),
-                Lamp { lumens: lit.lumens },
+                Lamp {
+                    lumens: lit.lumens,
+                    by_hand: true,
+                },
                 PointLight {
                     color: LAMP_COLOR,
                     intensity: 0.0,
@@ -287,7 +299,10 @@ fn find_bulbs(
         for middle in lamps_of(&world) {
             commands.spawn((
                 ChildOf(part),
-                Lamp { lumens: source.lumens },
+                Lamp {
+                    lumens: source.lumens,
+                    by_hand: false,
+                },
                 PointLight {
                     color: source.color,
                     intensity: 0.0,
@@ -349,45 +364,59 @@ fn lamps_of(bulbs: &[Vec3]) -> Vec<Vec3> {
     boxes.into_iter().map(|(low, high)| (low + high) * 0.5).collect()
 }
 
-/// Turns the lamps on and off with the time of day: each bulb's glow, and the
-/// light of the nearest [`MOST_LIT`] lamps to the camera on the island you are
-/// on. Only what has changed is written.
+/// How far on a lamp is, from 0 to 1: one switched by hand all the way
+/// while it is switched on (`switched`, `None` for a piece that has not
+/// been said to be either yet, which is off), and the rest as far as the
+/// lamps are on at this time of day (`lamps`).
+fn strength(by_hand: bool, switched: Option<bool>, lamps: f32) -> f32 {
+    if by_hand {
+        if switched == Some(true) { 1.0 } else { 0.0 }
+    } else {
+        lamps
+    }
+}
+
+/// Turns the lamps on and off: each bulb's glow and the street lamps' and
+/// anchors' light with the time of day, the chandelier's and the lamp with
+/// shade's by their switches; the light of the nearest [`MOST_LIT`] lamps
+/// that are on to the camera on the island you are on. Only what has
+/// changed is written.
+#[allow(clippy::too_many_arguments)]
 fn light_the_lamps(
     daylight: Res<Daylight>,
     cameras: Query<&GlobalTransform, With<ThirdPersonCamera>>,
     mut grids: Query<&mut ClusterConfig, With<ThirdPersonCamera>>,
     mut lamps: Query<(Entity, &Lamp, &ChildOf, &GlobalTransform, &mut PointLight, &mut Visibility)>,
-    drawn: Query<&InheritedVisibility>,
+    (drawn, switches): (Query<&InheritedVisibility>, Query<&crate::working::Lit>),
     bulbs: Query<(&MeshMaterial3d<StandardMaterial>, &Bulb)>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut nearest: Local<Vec<(f32, Entity)>>,
 ) {
     let on = daylight.lamps;
+    let lamp_on = |lamp: &Lamp, parent: Entity| strength(lamp.by_hand, switches.get(parent).ok().map(|lit| lit.0), on);
     nearest.clear();
-    if on > 0.0 {
-        let eye = cameras.single().map(GlobalTransform::translation).unwrap_or_default();
-        nearest.extend(
-            lamps
-                .iter()
-                .filter(|(_, _, bulb, ..)| drawn.get(bulb.parent()).is_ok_and(|drawn| drawn.get()))
-                .map(|(lamp, _, _, place, ..)| (place.translation().distance_squared(eye), lamp)),
-        );
-        nearest.sort_unstable_by(|a, b| a.0.total_cmp(&b.0));
-        nearest.truncate(MOST_LIT);
-    }
+    let eye = cameras.single().map(GlobalTransform::translation).unwrap_or_default();
+    nearest.extend(
+        lamps
+            .iter()
+            .filter(|(_, source, bulb, ..)| lamp_on(source, bulb.parent()) > 0.0 && drawn.get(bulb.parent()).is_ok_and(|drawn| drawn.get()))
+            .map(|(lamp, _, _, place, ..)| (place.translation().distance_squared(eye), lamp)),
+    );
+    nearest.sort_unstable_by(|a, b| a.0.total_cmp(&b.0));
+    nearest.truncate(MOST_LIT);
     for mut grid in &mut grids {
         if let Some(cells) = cells(nearest.len(), &grid) {
             *grid = cells;
         }
     }
-    for (lamp, source, _, _, mut light, mut visibility) in &mut lamps {
+    for (lamp, source, parent, _, mut light, mut visibility) in &mut lamps {
         let lit = nearest.iter().any(|&(_, near)| near == lamp);
         visibility.set_if_neq(if lit {
             Visibility::Inherited
         } else {
             Visibility::Hidden
         });
-        let intensity = source.lumens * on;
+        let intensity = source.lumens * lamp_on(source, parent.parent());
         if lit && light.intensity != intensity {
             light.intensity = intensity;
         }
@@ -481,6 +510,24 @@ mod tests {
         assert_eq!(light_in(&corners, 0.35), Some(Vec3::new(0.0, 0.7, 0.0)));
         assert_eq!(light_in(&corners, 0.75), Some(Vec3::new(0.0, 1.5, 0.0)));
         assert_eq!(light_in(&[], 0.5), None);
+    }
+
+    #[test]
+    fn the_chandelier_and_the_lamp_with_shade_go_by_their_switches_and_the_rest_by_the_time_of_day() {
+        // Switched on, lit by day; switched off, or never said to be
+        // either, dark by night.
+        assert_eq!(strength(true, Some(true), 0.0), 1.0);
+        assert_eq!(strength(true, Some(false), 1.0), 0.0);
+        assert_eq!(strength(true, None, 1.0), 0.0);
+        // A street lamp as far on as the evening is.
+        assert_eq!(strength(false, None, 0.4), 0.4);
+        assert_eq!(strength(false, Some(true), 0.0), 0.0);
+        // The two lit by what they are are the two switched by hand.
+        let mut by_kind: Vec<&str> = BY_KIND.iter().map(|lit| lit.kind).collect();
+        let mut switched = roundtown_net::bag::SWITCHED.to_vec();
+        by_kind.sort_unstable();
+        switched.sort_unstable();
+        assert_eq!(by_kind, switched);
     }
 
     #[test]

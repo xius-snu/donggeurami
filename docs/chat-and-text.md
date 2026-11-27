@@ -7,6 +7,75 @@
 > "above" or "below", or names another section in quotes, that section may be
 > in another file here: the table in `CLAUDE.md` says which.
 
+## Quick chat only, a bubble over the head (2026-11-27)
+
+In APK 62, and on the server deployed at 13:40:57 UTC that day (protocol
+27, which tells APK 61 and older to update; `docs/building.md`).
+
+Hajun, with houses' visits and ratings (`docs/house.md`): "get rid of the
+keyboard icon above the chat bubble icon -> im gona disable custom text
+chat throughout the game in both minigames and in the lobby. there is only
+gona be quickchat with the chatbubble. and also i want it so that the
+quickchat not only put the text in the global chat, but also as a small
+textbubble that appears above the player's head that other people can see
+if they are nearby. and for the quick chat texts in the lobby, use these
+texts: Hi! Nice house! Follow me! Add friend? Thanks! Give me money. No.
+Ok. Yes. Bye! Wanna play?"
+
+- **Nothing is typed, anywhere** (`roundtown_net::chat::TYPED`, false; the
+  rule's own word, on both sides): no keyboard over the speech bubble in
+  the town, none in Bridge Wars or at the four games' tables, Enter and T
+  open nothing on desktop, and **the server passes on no typed line**
+  (`server/src/chat.rs`), whatever an app sends. The box, the keyboard and
+  the server's side of it are all still there: the one word brings them
+  back.
+- **What is said is a number** (`Ask::Quick(chat::Quick)`: which list, the
+  town's or the games', and which of it), and every phone writes it in its
+  own words (`quick::words_of`, `words.chat.quick` and `quick_games`), in
+  the chat and over the head of whoever said it. `Tell::Said` carries a
+  `chat::Said`, typed or quick, where it carried the words: **protocol 27**.
+  A number a phone has no words for (from an app built later, with more
+  lines) is written nowhere. Rate-limited as a typed line was, and hushed
+  where a game hushes the chat (Blend In).
+- **The town's lines are Hajun's eleven**, in his order. **The games' are
+  mine**: Hi!, Good luck!, Nice!, Help!, Follow me!, Thanks!, Sorry!,
+  Oops!, Wow!, Good game!, Bye!. Blend In, though played on the town's map,
+  says the games'. Sixteen at the most in either (`chat::QUICK_MOST`).
+- **The fan** (`quick`): eleven plates do not fit in one column up the
+  screen, so they stand in columns of six (`ROWS`), the first nearest the
+  bubble as before, the next column to its left, every plate of a column as
+  wide as its widest words (measured with the game's fonts before they are
+  laid out, `em_width`), the town's leaning in over the bubble as before.
+- **In the games, where there was no speech bubble**, a small one stands
+  where the keyboard stood (`hud::chat_spot` at `CHAT_BUTTON` in Bridge
+  Wars, Bridge Race and Last Stand; `hud::small_quick_button` at Knock
+  Off's own place), its fan going up from its foot and to its left
+  (`quick::FanFrom::beside`). Blend In keeps the town's big bubble.
+- **The bubble over the head** (`src/speech.rs`): whatever is said comes up
+  over the head of whoever said it (yours too, offline as well), over their
+  name, for five seconds, popping up and away; something else they say
+  takes its place. Seen within 30 m of them, on their island. **A thing in
+  the world**, as every bubble is since Hajun turned down ones drawn on the
+  screen: a white balloon with a tail, its words drawn into it in the
+  game's fonts (`balloon`, as the plot signs' words are), turned to the
+  camera, unlit (`colours.chat.bubble`, `bubble_text`). Longer words go on
+  over lines of nine ems, four at the most (for typed lines, were they
+  back).
+
+**Mine**: the games' list; that Blend In says it; the columns and their
+widths; the small bubble's place and its fan; the bubble's look (white,
+dark words, a tail, 0.23 m to the em, its tail 0.45 m over the name's
+foot), five seconds, 30 m; your own bubble over your own head.
+
+**Checked**: the game's tests (Hajun's eleven in the file, both lists lines
+anyone could type and none twice, a number with no words saying nothing;
+the plates clear of the town's buttons and on the screen, the games'
+plates left of their bubble; the balloon as big as its words with its tail
+and every letter inside it, Hangul drawn, long lines wrapped; the pop);
+the shared crate's (a quick line is four bytes over the wire); and two
+copies against a server on this PC (below, in `docs/house.md`'s entry).
+**Not checked**: a phone.
+
 ## Three lines in sight
 
 Later on the night of 2026-11-15, Hajun, having had the two lines and a

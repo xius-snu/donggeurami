@@ -69,6 +69,10 @@ use crate::window::{
     SMALL_BUTTON, STATUS, TAB_ICON, TITLE as POPUP_TITLE, WIDTH, avatar, picture, words,
 };
 
+// The third tab, the house (since 2026-11-27): your house's stats and
+// ratings, and the board of the best.
+mod house;
+
 // The panel's own look is every window's now (`window`, since 2026-11-14,
 // when Hajun asked for it everywhere): its size and padding, its tabs, its
 // cross, its headings and rows, its round buttons and the boxes that come
@@ -161,6 +165,8 @@ enum Tab {
     #[default]
     Friends,
     Mail,
+    /// The house (`house`, since 2026-11-27).
+    House,
 }
 
 /// What is up over the panel.
@@ -207,6 +213,8 @@ enum Tap {
     Answer(u64, bool),
     Leave,
     Kick(u64),
+    /// Something of the House tab's (`house`).
+    House(house::HouseTap),
 }
 
 /// The presses on the panel since they were last acted on ([`act`]), each
@@ -251,6 +259,8 @@ struct Scrolled {
     friends: f32,
     mail: f32,
     found: f32,
+    house: f32,
+    board: f32,
 }
 
 /// The lists that scroll.
@@ -259,6 +269,9 @@ enum List {
     Friends,
     Mail,
     Found,
+    /// A house's ratings, and the board (`house`).
+    House,
+    Board,
 }
 
 /// The root of the panel, over the whole screen.
@@ -285,6 +298,7 @@ struct HudBadge;
 struct BadgeCount;
 
 pub(crate) fn plugin(app: &mut App) {
+    house::plugin(app);
     app.init_resource::<Friends>()
         .init_resource::<Panel>()
         .init_resource::<Pressed>()
@@ -603,7 +617,7 @@ fn act(
     mut up: ResMut<DialogUp>,
     (online, close_up, keyboard): (Res<Online>, Res<CloseUp>, Res<ButtonInput<KeyCode>>),
     mut clipboard: ResMut<Clipboard>,
-    mut notice: ResMut<Notice>,
+    (mut notice, mut house): (ResMut<Notice>, ResMut<house::HouseView>),
     mut asks: MessageWriter<Ask>,
 ) {
     if pressed.open {
@@ -705,6 +719,7 @@ fn act(
             Tap::Answer(mail, yes) => ask(Act::Answer { mail, yes }),
             Tap::Leave => ask(Act::LeaveGroup),
             Tap::Kick(id) => ask(Act::Kick(id)),
+            Tap::House(tap) => house.tap(tap),
         }
     }
 }
@@ -794,6 +809,10 @@ struct View<'a> {
     scrolled: &'a Scrolled,
     /// The window, in logical pixels.
     window: Vec2,
+    /// What the server said of houses, for the House tab, and the star
+    /// its ratings are drawn with.
+    house: &'a house::HouseView,
+    star: Option<Handle<Image>>,
 }
 
 /// Puts the panel up while it is open, and draws it again whenever what it
@@ -812,6 +831,7 @@ fn redraw(
     roots: Query<Entity, With<Root>>,
     assets: Res<AssetServer>,
     time: Res<Time>,
+    (house, star): (Res<house::HouseView>, Option<Res<builder::StarImage>>),
     (mut was_online, mut drawn_for): (Local<bool>, Local<f32>),
     mut commands: Commands,
 ) {
@@ -829,7 +849,12 @@ fn redraw(
         && panel.tab == Tab::Friends
         && panel.over.is_none()
         && friends.friends.iter().any(|card| matches!(card.presence, Presence::Offline { since } if since != 0));
-    let stale = panel.is_changed() || friends.is_changed() || (changed.is_changed() && !changed.is_added()) || came_or_went || aged;
+    let stale = panel.is_changed()
+        || friends.is_changed()
+        || (house.is_changed() && panel.tab == Tab::House)
+        || (changed.is_changed() && !changed.is_added())
+        || came_or_went
+        || aged;
     if !stale && !roots.is_empty() {
         return;
     }
@@ -848,6 +873,8 @@ fn redraw(
         typed: if name_box.up() { name_box.text() } else { "" },
         scrolled: &scrolled,
         window: Vec2::new(window.width(), window.height()),
+        house: &house,
+        star: star.map(|star| star.0.clone()),
     };
     draw(&mut commands, &assets, &view);
 }
@@ -1040,6 +1067,7 @@ fn draw(commands: &mut Commands, assets: &AssetServer, view: &View) -> Entity {
     match view.panel.tab {
         Tab::Friends => friends_tab(commands, assets, panel, view),
         Tab::Mail => mail_tab(commands, assets, panel, view),
+        Tab::House => house::tab(commands, assets, panel, view),
     }
     match view.panel.over {
         Some(Over::Add) => add_friend(commands, assets, panel, view),
@@ -1070,7 +1098,11 @@ fn draw(commands: &mut Commands, assets: &AssetServer, view: &View) -> Entity {
 fn header(commands: &mut Commands, assets: &AssetServer, panel: Entity, view: &View) {
     // Clear of the cross on the corner.
     let row = commands.spawn((ChildOf(panel), window::header())).id();
-    for (tab, image, waiting) in [(Tab::Friends, "friends", 0), (Tab::Mail, "mail", view.friends.inbox.len())] {
+    for (tab, image, waiting) in [
+        (Tab::Friends, "friends", 0),
+        (Tab::Mail, "mail", view.friends.inbox.len()),
+        (Tab::House, "home", 0),
+    ] {
         let shown = view.panel.tab == tab;
         let button = commands.spawn((ChildOf(row), Tap::Show(tab), window::tab(shown))).id();
         let mark = commands
@@ -1670,6 +1702,8 @@ fn remember_scroll(lists: Query<(&List, &ScrollPosition), Changed<ScrollPosition
             List::Friends => &mut scrolled.friends,
             List::Mail => &mut scrolled.mail,
             List::Found => &mut scrolled.found,
+            List::House => &mut scrolled.house,
+            List::Board => &mut scrolled.board,
         };
         *kept = at.y;
     }
@@ -2001,6 +2035,7 @@ mod tests {
         world.init_resource::<Friends>();
         world.init_resource::<NameBox>();
         world.init_resource::<Notice>();
+        world.init_resource::<house::HouseView>();
         world.init_resource::<CloseUp>();
         world.init_resource::<ButtonInput<KeyCode>>();
         world.init_resource::<Clipboard>();

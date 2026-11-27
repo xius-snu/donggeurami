@@ -21,7 +21,10 @@
 //! and the stool one to sit on, the armchair one to sit back in, the L
 //! shaped couch three, two along it and one on the end that comes forward,
 //! the bed two to lie on, and the bathtub one, lying along it
-//! ([`Spot::turn`]: each body faces as its piece does, but there).
+//! ([`Spot::turn`]: each body faces as its piece does, but there). **And
+//! the toilet one to sit on** (since 2026-11-27; Hajun: "toilet = sit on
+//! toilet like a chair"), on its lid, which is down; nobody of the
+//! computer's sits there ([`residents_sit_on`]).
 //!
 //! **The bubbles** ([`offer`]): come within [`REACH`] of such a thing, on
 //! its floor, and a bubble stands over each of its places that is free and
@@ -179,6 +182,10 @@ const BIG_BED: [Spot; 2] = [
     spot(Pose::Lie, Vec3::new(-0.14, 1.52, 1.3), Vec3::new(-0.14, 2.76, 1.3)),
     spot(Pose::Lie, Vec3::new(1.76, 1.52, 1.3), Vec3::new(1.76, 2.76, 1.3)),
 ];
+/// The toilet, its lid down: a seat 0.87 m high and 0.97 deep in front of
+/// its tank, which rises from 0.03 m behind its origin; sat on 0.35 m in
+/// from its front, as a chair is.
+const TOILET: [Spot; 1] = [spot(Pose::Sit, Vec3::new(0.0, 0.87, -0.585), Vec3::new(0.0, 2.1, -0.585))];
 /// Hajun's bathtub, lain in along its length, the head toward its left end
 /// (its -X), which slopes up from 1.4 m out: on its floor, 0.17 m up.
 const BATHTUB: [Spot; 1] = [Spot {
@@ -203,8 +210,15 @@ pub(crate) fn spots(kind: &str) -> &'static [Spot] {
         "couch" => &L_COUCH,
         "bed" => &BIG_BED,
         "bathtub" => &BATHTUB,
+        "toilet" => &TOILET,
         _ => &[],
     }
+}
+
+/// Whether the computer's people sit and lie on a piece of this kind, as
+/// you may (`resident`): everywhere but on the toilet (mine, 2026-11-27).
+pub(crate) fn residents_sit_on(kind: &str) -> bool {
+    kind != "toilet"
 }
 
 /// How high over a place's surface a body resting like this is put: one
@@ -516,17 +530,16 @@ fn offer(
 
 // ------------------------------------------------------ resting, and up
 
-/// A tap on a bubble over somewhere to rest, or E on desktop for the
-/// nearest of them: you are there, in its pose from standing, and the
-/// server is told for everyone else in your channel.
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+/// A tap on a bubble over somewhere to rest, or E on desktop with it the
+/// nearest bubble (`bubble::tap`): you are there, in its pose from
+/// standing, and the server is told for everyone else in your channel.
+#[allow(clippy::type_complexity)]
 fn sit(
     mut tapped: MessageReader<Tapped>,
-    keyboard: Res<ButtonInput<KeyCode>>,
-    bubbles: Query<(Entity, &Place, &Bubble)>,
+    bubbles: Query<&Place, With<Bubble>>,
     pieces: Query<(&Piece, &Transform), (Without<Ghost>, Without<Player>)>,
     mut me: Query<(Entity, &mut Transform, &mut PlayerJump, &mut WalkCycle, Has<Resting>), With<Player>>,
-    (online, dialog): (Res<Online>, Res<DialogUp>),
+    online: Res<Online>,
     mut asks: MessageWriter<Ask>,
     mut commands: Commands,
 ) {
@@ -534,13 +547,7 @@ fn sit(
         tapped.clear();
         return;
     };
-    let mut place = tapped.read().find_map(|&Tapped(bubble)| bubbles.get(bubble).ok().map(|(_, place, _)| *place));
-    if place.is_none() && !dialog.0 && keyboard.just_pressed(KeyCode::KeyE) {
-        place = bubbles
-            .iter()
-            .min_by(|a, b| a.2.tip.distance(body.translation).total_cmp(&b.2.tip.distance(body.translation)))
-            .map(|(_, place, _)| *place);
-    }
+    let place = tapped.read().find_map(|&Tapped(bubble)| bubbles.get(bubble).ok().copied());
     let Some(place) = place.filter(|_| !rests) else {
         return;
     };
@@ -702,7 +709,7 @@ mod tests {
 
     /// Every piece with somewhere to rest, how many places each, and how
     /// one rests there.
-    const RESTED_ON: [(&str, usize, Pose); 11] = [
+    const RESTED_ON: [(&str, usize, Pose); 12] = [
         ("cafechair", 1, Pose::Sit),
         ("softcouch", 2, Pose::Lounge),
         ("singlebed", 1, Pose::Lie),
@@ -714,6 +721,7 @@ mod tests {
         ("couch", 3, Pose::Lounge),
         ("bed", 2, Pose::Lie),
         ("bathtub", 1, Pose::Lie),
+        ("toilet", 1, Pose::Sit),
     ];
 
     #[test]

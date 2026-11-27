@@ -337,6 +337,23 @@ review is typically 24–48 hours.
 
 ---
 
+## Pushes (since 2026-11-27)
+
+The app asks Apple for a push token (`src/push.rs`, `mod ios`): a delegate
+of its own for UIKit, winit setting none, and `UNUserNotificationCenter`'s
+question, the first time you stand in the town online. It is signed with
+`aps-environment` (`mobile/ios/RoundTown.entitlements`, named by
+`project.yml`'s `CODE_SIGN_ENTITLEMENTS`), so **before the next `ios-*`
+tag**, at developer.apple.com: Identifiers, `town.donggeurami.app`, tick
+**Push Notifications**, save; Profiles, delete the App Store profile of
+`town.donggeurami.app`, for Codemagic's `fetch-signing-files --create` to
+make one with push in it. Otherwise the build stops at signing, the
+profile lacking the entitlement. The key the server pushes with is a Key of
+its own there (Keys, + , Apple Push Notifications service): `SERVER.md`,
+"Pushes". The code is type-checked here and has never run: ask for the
+phone's `log.txt` first ("Apple has given this phone its token", or why
+not).
+
 ## When it breaks
 
 | Symptom | Cause |

@@ -596,21 +596,27 @@ pub(crate) fn model(look: &str) -> &'static str {
 /// being carried along by the car, so that a rider stands still on it. A
 /// body going faster than a walk, running in Bridge Wars (`arena`), reads
 /// as more than a walk, and its legs swing the faster for it
-/// (`animate_walk`).
+/// (`animate_walk`). On a treadmill's belt, what counts is how far it went
+/// over the belt (since 2026-11-27, `working::belt_under`): on the spot at
+/// its front, walking; carried off it, standing.
+#[allow(clippy::type_complexity)]
 fn walk_from_motion(
     time: Res<Time>,
     cars: Query<&Driven>,
-    mut bodies: Query<(&Transform, Option<&Riding>, &mut WalkFromMotion, &mut WalkCycle)>,
+    pieces: Query<(&crate::build::Piece, &Transform, &Venue), Without<crate::build::Ghost>>,
+    mut bodies: Query<(&Transform, Option<&Venue>, Option<&Riding>, &mut WalkFromMotion, &mut WalkCycle), Without<crate::build::Piece>>,
 ) {
     let dt = time.delta_secs();
-    for (transform, riding, mut seen, mut walk) in &mut bodies {
+    let belts = crate::working::belts(&pieces);
+    for (transform, venue, riding, mut seen, mut walk) in &mut bodies {
         let on = riding.and_then(|riding| riding.0);
         let here = match on.and_then(|car| cars.get(car).ok()) {
             Some(car) => car.now.inward(transform.translation),
             None => transform.translation,
         };
+        let belt = venue.filter(|_| on.is_none()).and_then(|&venue| crate::working::belt_under(&belts, transform.translation, venue));
         let moved = if seen.on == on {
-            here.xz().distance(seen.last.xz())
+            (here.xz() - seen.last.xz() - belt.map_or(Vec2::ZERO, |carries| carries.xz() * dt)).length()
         } else {
             0.0
         };

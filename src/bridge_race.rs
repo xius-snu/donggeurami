@@ -287,7 +287,7 @@ pub(crate) fn plugin(app: &mut App) {
 /// fills toward the next grant of bridge ([`show::next_grant`]), the five
 /// buttons for things to use (the dynamite), and the chat's keyboard, each
 /// where Bridge Wars has it.
-pub(crate) fn spawn_bar(commands: &mut Commands, _assets: &AssetServer, images: &mut Assets<Image>) {
+pub(crate) fn spawn_bar(commands: &mut Commands, assets: &AssetServer, images: &mut Assets<Image>) {
     let (left, right) = hud::game_bar(commands);
     commands.spawn((ChildOf(left), hud::name_plate()));
     map::spawn(commands, right, images);
@@ -307,7 +307,13 @@ pub(crate) fn spawn_bar(commands: &mut Commands, _assets: &AssetServer, images: 
     commands.spawn((ChildOf(round), hud::bridge_button(images.add(hud::plank()), hud::beside_the_jump(right, bottom))));
     // Over the plank button, on its rim, taking no press of its own.
     commands.spawn((ChildOf(round), show::next_grant(images, right, bottom)));
-    commands.spawn((ChildOf(round), hud::chat_button(images)));
+    // The chat's keyboard while lines may be typed, and since 2026-11-27
+    // a small speech bubble in its place (`quick`).
+    if roundtown_net::chat::TYPED {
+        commands.spawn((ChildOf(round), hud::chat_button(images)));
+    } else {
+        commands.spawn((ChildOf(round), hud::chat_spot(assets)));
+    }
 }
 
 /// What its score is called among the results: the file's

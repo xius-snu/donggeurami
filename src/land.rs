@@ -1439,6 +1439,35 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn the_square_the_server_takes_for_each_plot_is_the_map_s() {
+        // Who visits whose house is the server's to tell, by each plot's
+        // square (`roundtown_net::house::on_plot`, since 2026-11-27): what
+        // it goes by, having no map, is what the map says.
+        use roundtown_net::house::{PLOT_HALF, TURNS, on_plot, plot_under};
+        let plots = plots();
+        let of_seat = in_order(&plots);
+        for (seat, &plot) in of_seat.iter().enumerate() {
+            let plot = &plots[plot];
+            let corners = plot.corners;
+            for (index, corner) in corners.iter().enumerate() {
+                // Every side as long as the server has it.
+                let side = corner.distance(corners[(index + 1) % 4]);
+                assert!((side - 2.0 * PLOT_HALF).abs() < 0.01, "plot {}: a side of {side}", seat + 1);
+                // Each corner, a hand in, on it; a hand out, on none.
+                let out = *corner - plot.middle;
+                assert!(on_plot(seat, plot.middle + out * 0.98), "plot {}: inside its corner", seat + 1);
+                assert_eq!(plot_under(plot.middle + out * 1.03), None, "plot {}: past its corner", seat + 1);
+            }
+            // Turned as the server has it, to a quarter turn.
+            let edge = corners[1] - corners[0];
+            let turn = edge.y.atan2(edge.x).to_degrees().rem_euclid(90.0);
+            let written = TURNS[seat].rem_euclid(90.0);
+            let off = (turn - written).abs();
+            assert!(off.min(90.0 - off) < 0.05, "plot {}: turned {turn}, written {written}", seat + 1);
+        }
+    }
+
+    #[test]
     fn right_is_east_to_someone_looking_north() {
         assert_eq!(right_of(Vec2::new(0.0, -1.0)), Vec2::new(1.0, 0.0));
         assert_eq!(right_of(Vec2::new(1.0, 0.0)), Vec2::new(0.0, 1.0));

@@ -63,8 +63,10 @@ use std::sync::Arc;
 use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
 use bevy::prelude::*;
 use bevy_replicon::prelude::Remote;
-use roundtown_net::knock_off::{self as rules, Ending, Floe, Game, Island, KnockRound, KnockStage, Loiter, ROOM, STOOD_BACK, Slide};
-use roundtown_net::{Ask as NetAsk, Member, Minigame, Venue};
+use roundtown_net::knock_off::{
+    self as rules, Ending, Floe, Game, Hops, Island, KnockRound, KnockStage, Loiter, ROOM, STOOD_BACK, Slide, hop_height, hop_secs, may_hop,
+};
+use roundtown_net::{Ask as NetAsk, Member, Minigame, Spot, Venue};
 
 use crate::clock::TownClock;
 use crate::lobby::{self, Whereabouts};
@@ -176,6 +178,23 @@ const START_POWER: u8 = 1;
 /// How far under the ice's top, or out past its edge, you have gone into
 /// the sea while the game waits, in metres, to be stood back on your spot.
 const FELL_IN: f32 = 0.3;
+/// How high over the ice someone else's body has to be, as the server
+/// sends it, to be seen hopping while the game is played, in metres: the
+/// hop is begun here as they leave the ice, and drawn whole as a hop is
+/// ([`rules::hop_height`]), not stepped as each of their updates comes.
+const HOP_SEEN: f32 = 0.2;
+/// How long after your hop on the spot lands your device goes on saying
+/// where you are, in seconds: so that the server, and everyone, has you
+/// back on the ice before it falls silent again, and your next hop is seen
+/// leaving it.
+const HOP_TAIL: f32 = 0.2;
+
+/// Your body hopping on the spot while the game is played (and a moment
+/// after it lands, [`HOP_TAIL`]): your device says where it is to the
+/// server for as long, as it does of a body it moves itself
+/// (`net::tell_where_i_am`), and everyone sees the hop.
+#[derive(Component, Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) struct Hopping;
 
 /// Knock Off on this device, while you sit at one of its tables: your seat,
 /// whose the table is, the round as it is drawn, and everything kept
@@ -217,6 +236,13 @@ struct Knock {
     /// The bodies this has put its marks on (`Frozen`, `Dead`, `Landing`),
     /// to take them off again.
     marked: Vec<Entity>,
+    /// Per seat, when the hop on the spot it is drawn in began (by the time
+    /// that passes, `Time<Real>`), if it is hopping; and online whether the
+    /// server had their body off the ice last frame, so that a hop is seen
+    /// as it leaves it. Offline, the computer's players' own hops (`Hops`).
+    hop_began: Vec<Option<f64>>,
+    seen_high: Vec<bool>,
+    bot_hops: Option<Hops>,
     /// Where you came, once you are out and it is known; and whether you
     /// have pressed Watch on the panel saying so, or Leave, offline, where
     /// the rest of the game is played out first, for your place to be
@@ -383,7 +409,8 @@ pub(crate) fn plugin(app: &mut App) {
                 .in_set(KnockSystems)
                 .after(crate::read_player_input),
         )
-        .add_systems(Update, (keep_apart, place).chain().after(crate::move_bodies).before(crate::animate_walk));
+        .add_systems(Update, (keep_apart, place).chain().after(crate::move_bodies).before(crate::animate_walk))
+        .add_systems(Update, hop_offline_bots.after(KnockSystems).after(crate::ai::steer).before(crate::move_bodies));
     ice::plugin(app);
     screen::plugin(app);
 }
@@ -661,7 +688,7 @@ fn enter(
     }
     for &body in &knock.marked {
         if let Ok(mut body) = commands.get_entity(body) {
-            body.try_remove::<(Frozen, Dead, Landing)>();
+            body.try_remove::<(Frozen, Dead, Landing, Hopping)>();
         }
     }
     *pressed = Pressed::default();
@@ -899,7 +926,8 @@ fn loiter_offline(
             loiter.enter(seat, spot, turn.to_euler(EulerRot::YXZ).0);
         }
         if let Some((spot, yaw)) = loiter.step(seat, &everyone, &floe, time.delta_secs()) {
-            let to = Transform::from_xyz(spot.x, 0.0, spot.y).with_rotation(Quat::from_rotation_y(yaw));
+            // How high it is, its own: a hop under way ([`hop_offline_bots`]).
+            let to = Transform::from_xyz(spot.x, at.translation.y, spot.y).with_rotation(Quat::from_rotation_y(yaw));
             at.set_if_neq(to);
         }
     }
@@ -1439,12 +1467,15 @@ fn pose(round: &KnockRound, played: Option<&Played>, seat: usize, clock: f64, fa
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn place(
     time: Res<Time>,
+    real: Res<Time<Real>>,
     clock: Res<TownClock>,
     view: Res<TableView>,
+    controls: Res<TouchControls>,
     mut knock: ResMut<Knock>,
-    me: Query<Entity, With<Player>>,
+    me: Query<(Entity, Has<Hopping>), With<Player>>,
     remotes: Query<(Entity, &Member), With<Remote>>,
     computers: Query<(Entity, &ComputerSeat)>,
+    spots: Query<&Spot, With<Remote>>,
     mut bodies: Query<(&mut Transform, Has<Frozen>, Option<&Landing>, Has<Dead>)>,
     mut splashes: MessageWriter<ice::Splashed>,
     mut met: MessageWriter<ice::Met>,
@@ -1501,7 +1532,21 @@ fn place(
         }
         knock.placed_in = Some(stage);
     }
-    let by_seat = bodies_by_seat(&knock, &view, me.single().ok(), &remotes, &computers);
+    let by_seat = bodies_by_seat(&knock, &view, me.single().ok().map(|(you, _)| you), &remotes, &computers);
+    let lifts = hops(&mut knock, &round, &by_seat, &spots, controls.jump_just_pressed, real.elapsed_secs_f64(), time.delta_secs());
+    // Your device says where you are while you hop, and a moment after.
+    if let (Ok((you, hopping)), Some(mine)) = (me.single(), knock.seat.map(usize::from)) {
+        let began = knock.hop_began.get(mine).copied().flatten();
+        let saying = began.is_some_and(|began| real.elapsed_secs_f64() - began < f64::from(hop_secs() + HOP_TAIL));
+        if saying && !hopping {
+            commands.entity(you).insert(Hopping);
+            if !knock.marked.contains(&you) {
+                knock.marked.push(you);
+            }
+        } else if !saying && hopping {
+            commands.entity(you).remove::<Hopping>();
+        }
+    }
     for seat in 0..seats {
         let Some(body) = by_seat.get(seat).copied().flatten() else {
             continue;
@@ -1554,7 +1599,8 @@ fn place(
                 // Having won, hopping, arms up.
                 let won_for = (now - round.since) as f32 - HOP_FROM;
                 let hop = if cheer && won_for > 0.0 { HOP * (won_for * PI / HOP_SECS).sin().abs() } else { 0.0 };
-                let wanted = Transform::from_translation(at - Vec3::Y * sink + Vec3::Y * hop).with_rotation(Quat::from_rotation_y(yaw));
+                let lift = if sliding { 0.0 } else { lifts.get(seat).copied().unwrap_or(0.0) };
+                let wanted = Transform::from_translation(at - Vec3::Y * sink + Vec3::Y * (hop + lift)).with_rotation(Quat::from_rotation_y(yaw));
                 transform.set_if_neq(wanted);
                 if dead {
                     commands.entity(body).remove::<Dead>();
@@ -1600,6 +1646,87 @@ fn place(
     }
     if let Some(speed) = shaken {
         knock.shake = Some((ice::SHAKE_SECS, ice::shake_for(speed)));
+    }
+}
+
+
+/// How high over where the game has them each seat is hopping now, in
+/// metres, while the game is played (Hajun, 2026-11-27: "u should be able
+/// to jump all the time, but jump will not go through during the time when
+/// the timer is up and u are launched ... jump is just for fun", "and jump
+/// should be seen by other players too. and also some bots can jump
+/// somtimes"): yours from the jump button (`jumped`) where hops are
+/// (`rules::may_hop`), one at a time; everyone else's online as the server
+/// has their body leave the ice ([`HOP_SEEN`]); the computer's offline as
+/// this device has them hop (`Hops`, the server's own online). Each drawn as
+/// a hop is, from when it began (`now`, by the time that passes); none in a
+/// slide.
+fn hops(knock: &mut Knock, round: &KnockRound, by_seat: &[Option<Entity>], spots: &Query<&Spot, With<Remote>>, jumped: bool, now: f64, dt: f32) -> Vec<f32> {
+    let seats = round.start.len();
+    if knock.hop_began.len() != seats {
+        knock.hop_began = vec![None; seats];
+        knock.seen_high = vec![false; seats];
+    }
+    let sliding = knock.sliding() || round.stage == KnockStage::Slide;
+    let may = may_hop(round.stage) && !sliding;
+    let on_ice = |seat: usize| round.out.get(seat).is_some_and(Option::is_none) && round.start.get(seat).copied().flatten().is_some();
+    let landed = |began: Option<f64>| began.is_none_or(|began| now - began >= f64::from(hop_secs()));
+    if let Some(mine) = knock.seat.map(usize::from)
+        && jumped
+        && may
+        && on_ice(mine)
+        && landed(knock.hop_began.get(mine).copied().flatten())
+    {
+        knock.hop_began[mine] = Some(now);
+    }
+    let mut lifts = vec![0.0; seats];
+    if knock.online {
+        for seat in 0..seats {
+            if Some(seat as u8) == knock.seat {
+                continue;
+            }
+            let high = by_seat.get(seat).copied().flatten().and_then(|body| spots.get(body).ok()).is_some_and(|spot| spot.translation().y > HOP_SEEN);
+            if high && !knock.seen_high[seat] && !sliding && on_ice(seat) && landed(knock.hop_began[seat]) {
+                knock.hop_began[seat] = Some(now);
+            }
+            knock.seen_high[seat] = high;
+        }
+    } else {
+        let hops = knock.bot_hops.get_or_insert_with(|| Hops::new(fastrand::u64(..)));
+        for (seat, lift) in lifts.iter_mut().enumerate() {
+            if Some(seat as u8) != knock.seat {
+                *lift = hops.step(seat, dt, may && on_ice(seat));
+            }
+        }
+    }
+    for (seat, lift) in lifts.iter_mut().enumerate() {
+        if let Some(began) = knock.hop_began[seat] {
+            *lift = lift.max(hop_height((now - began) as f32));
+        }
+    }
+    if sliding {
+        lifts.fill(0.0);
+    }
+    lifts
+}
+
+/// Offline, while the table waits, the computer's players hop now and then
+/// as the server's do online (`Hops`), each hop a jump of the body's own
+/// (`Intent::jump`), as yours is: after their steering has had its say
+/// this frame, which would have it none.
+fn hop_offline_bots(time: Res<Time>, view: Res<TableView>, mut knock: ResMut<Knock>, mut computers: Query<(&ComputerSeat, &Venue, &mut crate::Intent)>) {
+    if knock.online || knock.seat.is_none() || knock.game.is_some() || view.playing() || view.over() {
+        return;
+    }
+    let hops = knock.bot_hops.get_or_insert_with(|| Hops::new(fastrand::u64(..)));
+    for (seat, venue, mut intent) in &mut computers {
+        if *venue != Venue::KnockOff {
+            continue;
+        }
+        hops.step(usize::from(seat.0), time.delta_secs(), true);
+        if hops.rising(usize::from(seat.0)) {
+            intent.jump = true;
+        }
     }
 }
 
@@ -1752,6 +1879,75 @@ mod tests {
         round.places = vec![Some(3), Some(0), Some(0), Some(0)];
         knock.round = Some(round.clone());
         assert_eq!(camera_target(&knock), Fit::Ice(round.size));
+    }
+
+    #[test]
+    fn a_hop_is_the_town_s_jump_where_hops_are_and_never_in_a_slide() {
+        use bevy::ecs::system::RunSystemOnce;
+        // As high and as long as the town's jump.
+        assert_eq!((rules::HOP_SPEED, rules::HOP_RISE_PULL, rules::HOP_FALL_PULL), (crate::JUMP_SPEED, crate::GRAVITY, crate::FALL_GRAVITY));
+        let mut world = World::new();
+        // Online, in seat 1; seat 2 someone else, as the server has them.
+        let mut knock = Knock::sit(1, true);
+        knock.round = Some(round(KnockStage::Aim));
+        world.insert_resource(knock);
+        let them = world.spawn((Remote, Spot::of(Vec3::new(-5.0, 0.0, 5.0), Quat::IDENTITY))).id();
+        let by_seat = vec![None, None, Some(them), None];
+        let step = move |world: &mut World, jumped: bool, now: f64| -> Vec<f32> {
+            let by_seat = by_seat.clone();
+            world
+                .run_system_once(move |mut knock: ResMut<Knock>, spots: Query<&Spot, With<Remote>>| {
+                    let round = knock.round.clone().expect("a round");
+                    hops(&mut knock, &round, &by_seat, &spots, jumped, now, 1.0 / 60.0)
+                })
+                .expect("hops")
+        };
+        // Nobody hops until someone does.
+        assert_eq!(step(&mut world, false, 10.0), vec![0.0; 4]);
+        // You, while you aim: up, and down again a hop later.
+        step(&mut world, true, 10.0);
+        let up = step(&mut world, false, 10.2);
+        assert!((up[1] - rules::hop_height(0.2)).abs() < 1e-4 && up[1] > 1.0, "{up:?}");
+        assert_eq!(step(&mut world, false, 10.0 + f64::from(rules::hop_secs()) + 0.01)[1], 0.0);
+        // Someone else, as their body leaves the ice as the server has it:
+        // the whole hop, from then.
+        world.entity_mut(them).insert(Spot::of(Vec3::new(-5.0, 0.4, 5.0), Quat::IDENTITY));
+        step(&mut world, false, 20.0);
+        let theirs = step(&mut world, false, 20.3);
+        assert!((theirs[2] - rules::hop_height(0.3)).abs() < 1e-4, "{theirs:?}");
+        // Still up a moment later: the same hop, not another.
+        world.entity_mut(them).insert(Spot::of(Vec3::new(-5.0, 1.2, 5.0), Quat::IDENTITY));
+        assert!((step(&mut world, false, 20.4)[2] - rules::hop_height(0.4)).abs() < 1e-4);
+        // Once the aim's time is up, a press is nothing; in a slide nobody
+        // is drawn off the ice.
+        let mut shown = round(KnockStage::Reveal);
+        shown.launches = vec![(0.0, 0.0); 4];
+        world.resource_mut::<Knock>().round = Some(shown);
+        step(&mut world, true, 30.0);
+        assert_eq!(step(&mut world, false, 30.2)[1], 0.0);
+        world.resource_mut::<Knock>().round = Some(round(KnockStage::Aim));
+        step(&mut world, true, 40.0);
+        let mut sliding = round(KnockStage::Slide);
+        sliding.launches = vec![(0.0, 0.0); 4];
+        world.resource_mut::<Knock>().round = Some(sliding);
+        assert_eq!(step(&mut world, false, 40.2), vec![0.0; 4]);
+        // Offline, the computer's hop now and then, and never in a slide.
+        let mut knock = Knock::sit(0, false);
+        knock.round = Some(round(KnockStage::Aim));
+        world.insert_resource(knock);
+        let mut highest = 0.0f32;
+        for frame in 0..(60 * 120) {
+            highest = highest.max(step(&mut world, false, 100.0 + f64::from(frame) / 60.0).iter().copied().fold(0.0, f32::max));
+        }
+        assert!(highest > 1.0 && highest < 1.7, "{highest}");
+    }
+
+    #[test]
+    fn the_jump_button_is_the_town_s_in_knock_off_and_takes_a_press() {
+        let window = Window::default();
+        let (town, knock) = (crate::hud_layout_for(&window, crate::hud::Layout::Town), crate::hud_layout_for(&window, crate::hud::Layout::KnockOff));
+        assert_eq!((knock.0, knock.1), (town.0, town.1));
+        assert!(knock.1 > 10.0);
     }
 
     #[test]

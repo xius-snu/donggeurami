@@ -35,6 +35,9 @@
 //! * `RT_ARENA_PURSE`: how many of each thing the generators make everyone
 //!   in a game of Bridge Wars begins its fight holding, for trying the shops
 //!   out. Never on a server real players use.
+//! * `RT_APNS_KEY`, `RT_APNS_KEY_ID`, `RT_APNS_TEAM` (and `RT_APNS_TOPIC`,
+//!   `RT_APNS_SANDBOX`), `RT_FCM`: Apple's and Google's keys for pushing to
+//!   phones (since 2026-11-27, [`push`]). Without them nothing is pushed.
 
 mod accounts;
 mod arena;
@@ -43,8 +46,12 @@ mod builder;
 mod chat;
 mod clock;
 mod fees;
+// Visits, ratings and the board of houses, and pushes to phones (since
+// 2026-11-27).
+mod house;
 mod login;
 mod players;
+mod push;
 mod rooms;
 mod social;
 mod stats;
@@ -174,6 +181,9 @@ fn main() {
     builder::plugin(&mut app);
     arena::plugin(&mut app);
     chat::plugin(&mut app);
+    // After the accounts', whose tables its own name.
+    push::plugin(&mut app);
+    house::plugin(&mut app, config.db.clone());
     clock::plugin(&mut app);
     stats::plugin(&mut app);
     app.add_systems(Startup, listen);

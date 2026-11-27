@@ -51,6 +51,7 @@
 
 mod computer;
 mod floe;
+mod hop;
 mod loiter;
 mod slide;
 
@@ -63,6 +64,7 @@ use serde::{Deserialize, Serialize};
 
 pub use computer::{PERSONAS, Persona};
 pub use floe::{AREA_RADIUS, Floe, POINTS, RIM, STOOD_BACK};
+pub use hop::{HOP_FALL_PULL, HOP_RISE_PULL, HOP_SPEED, Hops, hop_height, hop_secs, may_hop};
 pub use loiter::{Loiter, ROOM};
 pub use slide::{Ending, Hit, Slide};
 

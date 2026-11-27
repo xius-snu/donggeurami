@@ -281,9 +281,10 @@ struct StarRow;
 #[derive(Component)]
 struct StarButton(u8);
 
-/// The star the rating buttons are made of.
+/// The star the rating buttons are made of; since 2026-11-27 a house's
+/// rating's too (`rating`, `friends`).
 #[derive(Resource)]
-struct StarImage(Handle<Image>);
+pub(crate) struct StarImage(pub(crate) Handle<Image>);
 
 /// A button's colour at rest, and lit up while it is under the pointer or
 /// held.

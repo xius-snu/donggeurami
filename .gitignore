@@ -34,3 +34,10 @@ assets/cars/previews/
 # Blender's copy of a .blend as it was before its last save: never kept
 # (2026-11-25, Hajun: "ye remove them and ignore blend1").
 *.blend1
+
+# Firebase's settings for the Android app (2026-11-27, pushes; docs/house.md),
+# which its console gives: kept on this PC, the repository being public. The
+# server's keys for pushing (Firebase's service account, Apple's .p8) are kept
+# on the VM alone, never here.
+mobile/android/app/google-services.json
+*.p8

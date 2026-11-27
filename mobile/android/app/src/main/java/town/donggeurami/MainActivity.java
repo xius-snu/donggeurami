@@ -1,8 +1,12 @@
 package town.donggeurami;
 
+import android.Manifest;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
+import android.content.pm.PackageManager;
 import android.graphics.Matrix;
 import android.os.Build;
 import android.os.Bundle;
@@ -24,6 +28,7 @@ import androidx.core.view.WindowInsetsCompat;
 import androidx.core.view.WindowInsetsControllerCompat;
 
 import com.google.androidgamesdk.GameActivity;
+import com.google.firebase.messaging.FirebaseMessaging;
 
 import java.nio.charset.StandardCharsets;
 
@@ -59,6 +64,100 @@ public class MainActivity extends GameActivity {
         mSurfaceView.addOnLayoutChangeListener(
                 (view, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) ->
                         drawSmaller(right - left, bottom - top));
+        makeChannel();
+        askForToken();
+    }
+
+    /**
+     * Word of your house while the game is not open (since 2026-11-27,
+     * {@code src/push.rs}): this phone's token from Firebase, handed to the
+     * game a byte at a time, by numbers alone, as everything goes between
+     * the two; and whether the game wants the phone asked, now, whether
+     * word may be shown (Android 13's POST_NOTIFICATIONS).
+     */
+    private static native void pushTokenBegin();
+
+    private static native void pushTokenByte(int b);
+
+    private static native void pushTokenEnd();
+
+    private static native int pushWanted();
+
+    /** The channel the game's pushes come under, and the code its ask goes by. */
+    private static final String PUSH_CHANNEL = "house";
+    private static final int ASK_TO_SHOW = 27;
+
+    /**
+     * The channel the game's pushes come under ({@code server/src/push.rs}
+     * names it), which the phone's settings show by its name. Nothing that
+     * goes wrong here may stop the game.
+     */
+    private void makeChannel() {
+        try {
+            NotificationChannel channel = new NotificationChannel(
+                    PUSH_CHANNEL, "Your house", NotificationManager.IMPORTANCE_DEFAULT);
+            channel.setDescription("Someone visiting your house, or rating it");
+            NotificationManager manager = getSystemService(NotificationManager.class);
+            if (manager != null) {
+                manager.createNotificationChannel(channel);
+            }
+        } catch (Throwable ignored) {
+            // No channel: Firebase makes one of its own.
+        }
+    }
+
+    /**
+     * Asks Firebase for this phone's token and hands it to the game, which
+     * tells the server. With no Firebase in this build (no
+     * google-services.json, {@code app/build.gradle}) there is none, and the
+     * game goes on without; the phone's log says so ({@code adb logcat -s
+     * Donggeurami}).
+     */
+    private void askForToken() {
+        try {
+            FirebaseMessaging.getInstance().getToken().addOnCompleteListener(task -> {
+                if (task.isSuccessful() && task.getResult() != null) {
+                    handToken(task.getResult());
+                } else {
+                    Log.w("Donggeurami", "Firebase gave no push token", task.getException());
+                }
+            });
+        } catch (Throwable error) {
+            Log.i("Donggeurami", "no Firebase in this build: no push token (" + error + ")");
+        }
+    }
+
+    /** Hands {@code token} to the game, a byte at a time. */
+    private static void handToken(String token) {
+        try {
+            byte[] bytes = token.getBytes(StandardCharsets.UTF_8);
+            pushTokenBegin();
+            for (byte b : bytes) {
+                pushTokenByte(b & 0xff);
+            }
+            pushTokenEnd();
+        } catch (Throwable ignored) {
+            // The game goes on without it.
+        }
+    }
+
+    /**
+     * Asks the phone whether the game may show word of your house, if the
+     * game wants it asked now and it has not been allowed: from Android 13
+     * on, which asks; before that it is allowed already. Android shows the
+     * question again if it was turned down once, and never after twice.
+     */
+    private void askToShowIfWanted() {
+        try {
+            if (pushWanted() != 1 || Build.VERSION.SDK_INT < 33) {
+                return;
+            }
+            if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                requestPermissions(new String[] {Manifest.permission.POST_NOTIFICATIONS}, ASK_TO_SHOW);
+            }
+        } catch (Throwable ignored) {
+            // Not asked: the game goes on.
+        }
     }
 
     /**
@@ -215,6 +314,7 @@ public class MainActivity extends GameActivity {
     private void poll() {
         takeClip();
         tellSafeInsets();
+        askToShowIfWanted();
     }
 
     /**

@@ -7,6 +7,57 @@
 > "above" or "below", or names another section in quotes, that section may be
 > in another file here: the table in `CLAUDE.md` says which.
 
+## APK 62: houses visited and rated, pushes, quick chat only; things used; Knock Off's jump; protocol 27
+
+2026-11-27, 22:38 here (13:38 UTC). Asked for: "build apk and push", after
+houses' visits and ratings, the House tab, pushes and quick chat only with
+a bubble over the speaker's head (`docs/house.md`, `docs/chat-and-text.md`,
+at the top), which change what is sent (`Tell::Said` carries a
+`chat::Said`), so `PROTOCOL_VERSION` 27. The tree held two other sessions'
+work too, both finished and their harnesses out: storage in five things,
+lights switched by hand, the toilet, the sink and the treadmill's front
+(`docs/town.md`, `docs/bag.md`, at the top; it said so by message, and asked
+for one shared commit), and Knock Off's jump (`docs/knock-off.md`, at the
+top; its session had ended, its work building and its tests passing). All of
+it is in this build, and in one commit.
+
+- **The server deployed with protocol 27** at 13:40:57 UTC, from this tree
+  (sha1 `ec30d171`, the same on the VM as built here); the one before kept
+  as `roundtown-server.prev-2026-11-27b` (`4aeeffba`, protocol 26, of 10:16
+  UTC). Before: nobody connected since 11:11 UTC (Hajun at Knock Off); the
+  database changes tried on the VM's own Postgres against scratch databases
+  first (`SERVER.md`, "The database": the accounts' two tests, one on an
+  empty database and one on a copy of the live accounts, and houses' new
+  one on the copy, `house::tests::the_database_keeps_visits_ratings_and_
+  tokens`; all passed, the scratch databases dropped). At its start it made
+  `house_visits`, `house_ratings`, `push_tokens` and `players.workings` on
+  the live database: "0 ratings, 0 houses visited and 0 push tokens kept",
+  and "nothing is pushed to anyone's phone" (no keys yet). After: this PC's
+  own account (`똥#3690`, a scratch folder with copies of `device.id` and
+  `profile.json` alone, the same `device.id` by sha1) came online, hidden,
+  "connected", "online as 똥", the town's clock the server's to within 16
+  ms; the journal clean. **APK 61 and older are told to update from here
+  on; APK 62 is the first that plays online.**
+- `versionCode` 62, read back with `aapt dump badging`. cargo ndk 4 m 40 s
+  (`release-android`), stripped from 208.6 MB to 115.2 MB,
+  `GameActivity_onCreate` and the ten `MainActivity` methods in it (the four
+  new: `pushTokenBegin`, `pushTokenByte`, `pushTokenEnd`, `pushWanted`);
+  Gradle 22 s. 140,479,106 bytes: 290 of the game's files under `assets/`,
+  each the same to the byte as the tree's; the library in it the same as the
+  stripped one; Firebase Messaging 24.0.0's classes, its permissions and
+  `POST_NOTIFICATIONS`; the icon `drawable/ic_notification`, the colour and
+  the channel "house" named in the manifest. Every file under `assets/`
+  (597) hashed before the library was built and after Gradle: the same.
+  `ui.ron` baked in as it was (`grep -a "Rate {name}'s house"` on the
+  stripped library). **Built without `google-services.json`**: it plays as
+  APK 61 did and better, but is never given a push token until an APK is
+  built with Hajun's Firebase settings in place (`docs/house.md`).
+- Before it: `cargo test -p roundtown_net` (310), `-p roundtown_server`
+  (142) and `--lib` (630) on the tree as built; clippy on the three crates,
+  nothing new in the new code; the iPhone's type-check.
+- **Not put on a phone.** No `ios-*` tag (Hajun's to ask for, and it now
+  needs Push Notifications on the App ID first: `IOS.md`, "Pushes").
+
 ## APK 61: Knock Off on an island thrown for each table, everyone beginning where they stood; a thing dragged upstairs stays upstairs; protocol 26
 
 2026-11-27, 19:13 here (10:13 UTC). Asked for: "ye build apk and push",

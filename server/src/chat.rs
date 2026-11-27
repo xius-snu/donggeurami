@@ -3,6 +3,14 @@
 //! the main lobby ... everyone in the lobby should see the message with your
 //! name tag followed by your text, like chat on a Minecraft server").
 //!
+//! **Since 2026-11-27 nothing typed is passed on** (Hajun: "im gona disable
+//! custom text chat throughout the game in both minigames and in the lobby.
+//! there is only gona be quickchat with the chatbubble"; `chat::TYPED`):
+//! only one of the things to say at a press, by its number
+//! ([`Ask::Quick`]), whose words each device has of its own, so that
+//! nobody can put words of their own into it, whatever their app sends.
+//! It goes as a typed line went, below.
+//!
 //! A device says a line ([`Ask::Chat`]); if it is one ([`chat::line`]:
 //! short, and of what the game writes, English, Korean and Vietnamese, as
 //! `roundtown_net::text` has it) and its speaker has not said too many too fast
@@ -61,8 +69,16 @@ fn hear(
 ) {
     let now = time.elapsed_secs_f64();
     for ask in asks.read() {
-        let Ask::Chat(text) = &ask.message else {
-            continue;
+        // A line typed, while one may be (`chat::TYPED`, not since
+        // 2026-11-27), or one of the things to say at a press, by its
+        // number.
+        let said = match &ask.message {
+            Ask::Chat(text) if chat::TYPED => match chat::line(text) {
+                Some(text) => chat::Said::Typed(text),
+                None => continue,
+            },
+            Ask::Quick(quick) if quick.sane() => chat::Said::Quick(*quick),
+            _ => continue,
         };
         let Some(client) = ask.client_id.entity() else {
             continue;
@@ -71,9 +87,6 @@ fn hear(
             continue;
         };
         let Ok((speaker, member)) = bodies.get(body) else {
-            continue;
-        };
-        let Some(text) = chat::line(text) else {
             continue;
         };
         if tables.as_ref().is_some_and(|tables| tables.hushed(speaker.room)) {
@@ -98,7 +111,7 @@ fn hear(
                     Tell::Said {
                         who: member.id,
                         name: member.name.clone(),
-                        text: text.clone(),
+                        said: said.clone(),
                     },
                 );
                 heard += 1;

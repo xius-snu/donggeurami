@@ -149,7 +149,11 @@ pub(crate) fn spawn_bar(commands: &mut Commands, assets: &AssetServer, images: &
         ForTheChat,
         hud::round_button(assets.load("icons/social.png"), quick_size, hud::beside_the_jump(quick_right, quick_bottom)),
     ));
-    commands.spawn((ChildOf(round), ForTheChat, hud::chat_button(images)));
+    // The chat's keyboard, while lines may be typed (not since 2026-11-27:
+    // the speech bubble beside it is all there is to say, `quick`).
+    if roundtown_net::chat::TYPED {
+        commands.spawn((ChildOf(round), ForTheChat, hud::chat_button(images)));
+    }
     let (right_of, bottom) = FIST;
     let sword = images.add(hud::sword());
     let reverse = images.add(hud::jump_arrow());

@@ -594,7 +594,10 @@ fn hear(
             | Ask::Resting
             | Ask::Rest(_)
             | Ask::Cars
-            | Ask::Car(_) => {}
+            | Ask::Car(_)
+            // What is said at a press (`chat`), and about houses (`house`).
+            | Ask::Quick(_)
+            | Ask::House(_) => {}
         }
     }
 }

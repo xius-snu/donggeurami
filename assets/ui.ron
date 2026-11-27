@@ -428,6 +428,10 @@
             send_off: "#ffffff59",
             quick: "#666666cc",
             quick_text: "#ffffff",
+            // The bubble that comes up over the head of whoever said one
+            // of those, for everyone near to see, and its words.
+            bubble: "#ffffffeb",
+            bubble_text: "#262626",
         ),
 
         // The four games of 2026-11-18 (Blend In, Knock Off, Bridge Race,
@@ -613,6 +617,35 @@
             // ground, for as long as edit mode is on: as see-through as
             // its last two digits say.
             editing_edge: "#ffffffb3",
+        ),
+        // What keeps things, opened by its bubble: each square slot, lit
+        // under the pointer; the plus in an empty one; the number in a full
+        // one's corner, and the dark stroke round it; and the bar that says
+        // how many, along its whole length and as far as the number.
+        storage: (
+            slot: "#12121280",
+            slot_lit: "#55555580",
+            plus: "#ffffff",
+            count: "#ffffff",
+            count_stroke: "#000000b3",
+            bar: "#ffffff33",
+            bar_fill: "#1db81d",
+        ),
+        // Houses: a star given and one not given, in the stars along the
+        // bottom of the screen on someone's plot and in the rating's
+        // window; the plate behind the stars along the bottom; and the
+        // words to choose from in a rating, at rest, lit under the
+        // pointer, and chosen, and the words on them, not chosen and
+        // chosen.
+        house: (
+            star: "#ffcc33",
+            star_off: "#ffffff66",
+            plate: "#66666673",
+            word: "#ffffff1f",
+            word_lit: "#ffffff38",
+            word_on: "#ffcc33",
+            word_text: "#ffffff",
+            word_on_text: "#262626",
         ),
     ),
     // The font is Inter (since 2026-11-13; Bevy's own, plain ASCII, until
@@ -992,17 +1025,38 @@
         // fireball, dynamite); {name} bought {ware} for your team (the
         // upgrade shop's own name for it); and {name} broke {team}'s
         // anchor. Every name is drawn in its team's colour.
-        // quick is what the big speech bubble by the jump button offers
-        // to say at a press, the first nearest the bubble: up to six, each
-        // a line anyone could type (80 letters at the most, or 40 in
-        // Korean). More than six, the rest are left out.
+        // quick is what the speech bubble by the jump button offers to say
+        // at a press in the town, and quick_games what it offers in the
+        // games: up to sixteen each, each a line anyone could type (80
+        // letters at the most, or 40 in Korean). The server passes each
+        // on by its place in the list, and every phone says it in its own
+        // words: put a new one at the end, and change one only for what
+        // means the same, or a phone built before shows the old words.
         chat: (
             hint: "Type a message",
             quick: [
-                "Hello!",
+                "Hi!",
+                "Nice house!",
                 "Follow me!",
-                "Anyone for Bridge Wars?",
+                "Add friend?",
                 "Thanks!",
+                "Give me money.",
+                "No.",
+                "Ok.",
+                "Yes.",
+                "Bye!",
+                "Wanna play?",
+            ],
+            quick_games: [
+                "Hi!",
+                "Good luck!",
+                "Nice!",
+                "Help!",
+                "Follow me!",
+                "Thanks!",
+                "Sorry!",
+                "Oops!",
+                "Wow!",
                 "Good game!",
                 "Bye!",
             ],
@@ -1514,6 +1568,80 @@
                 ("imola", "Imola"),
                 ("yang", "Yang"),
             ],
+        ),
+        // What keeps things (the cabinet, the dresser, the safe, the end
+        // table and the barbecue), opened by its bubble: the title of the
+        // box things to put in are chosen in; what it says with nothing in
+        // your bag that can go in, and in the barbecue with no food; the
+        // box that asks how many, and its button; how many are in a slot,
+        // in its corner ({count}). Said across the screen: what has come
+        // into your bag, taken out of one ({name}, {count}); that your bag
+        // has no room for more of it; and that a thing with too much in it
+        // for your bag cannot be put away in it.
+        storage: (
+            choose: "Choose an item",
+            nothing: "Nothing in your bag can go in here.",
+            no_food: "Only food goes in here.",
+            how_many: "How many?",
+            ok: "OK",
+            count: "{count}",
+            added: "{name} x{count} has been added to your inventory",
+            bag_full: "You can't carry any more {name}.",
+            no_room: "Your bag has no room for what is in it.",
+        ),
+        // Houses. Rating one: over the stars along the bottom of the
+        // screen on someone's plot ({name} is whose); the words to choose
+        // from in the rating's window, up to three, sixteen of them, which
+        // the server keeps by their place in this list (put none before
+        // another, change one only for what means the same); the line over
+        // them, and the window's two buttons. Said across the screen: your
+        // rating is kept, someone ({name}) visits your house (the push to
+        // a phone says the same, and is the server's to say), someone has
+        // rated it. The House tab of the friends' panel: a house's title
+        // ({name}), its stats, the heading over its ratings ({count}), a
+        // house with none, the board's heading ({count}), an empty board,
+        // your own place on its last row, a house of yours not rated yet,
+        // and what stands there while either is on its way.
+        house: (
+            rate: "Rate {name}'s house",
+            adjectives: [
+                "Cute",
+                "Cool",
+                "Interesting",
+                "Pretty",
+                "Fancy",
+                "Good view",
+                "Amazing",
+                "Ugly",
+                "Cozy",
+                "Creative",
+                "Unique",
+                "Spacious",
+                "Colorful",
+                "Relaxing",
+                "Messy",
+                "Boring",
+            ],
+            pick_words: "Pick up to 3 words",
+            cancel: "Cancel",
+            submit: "Submit",
+            thanks: "Thanks for rating!",
+            visiting: "{name} is visiting your house. Go say hi!",
+            rated: "Someone just rated your house!",
+            whose: "{name}'s house",
+            worth: "Net worth",
+            things: "Objects",
+            visitors: "Visitors",
+            visitors_week: "Past 7 days",
+            ratings: "Ratings",
+            average: "Average",
+            ratings_heading: "Ratings ({count})",
+            no_ratings: "No ratings yet.",
+            board_heading: "Top {count} houses",
+            no_board: "No house has been rated yet.",
+            your_place: "You",
+            unrated: "Your house has not been rated yet.",
+            waiting: "Loading...",
         ),
     ),
     // The car you drive (the face button, or C on desktop): every number of

@@ -7,6 +7,74 @@
 > "above" or "below", or names another section in quotes, that section may be
 > in another file here: the table in `CLAUDE.md` says which.
 
+## Protocol 27: what is said is a number; houses; pushes (2026-11-27)
+
+- **`PROTOCOL_VERSION` 27**: `Tell::Said` carries a `chat::Said` (a line
+  typed, or `chat::Quick`, which list and which of it) where it carried
+  the words, and the server passes on no typed line (`chat::TYPED`);
+  `Ask::Quick` says one of the speech bubble's (`docs/chat-and-text.md`).
+  **APK 61 and older are told to update**: deployed at 13:40:57 UTC on
+  2026-11-27 with APK 62, at Hajun's "build apk and push", a peer
+  session's storage work in `shared/` and `server/` going with it
+  (`docs/building.md`, APK 62).
+- **Houses**: `Ask::House(house::Ask)` and `Tell::House(house::Tell)`, last
+  of each; the server tells only a device that has asked
+  (`house::Ask::Watch`, said on coming online). `docs/house.md`.
+- **Pushes**: the server's own (`server/src/push.rs`), by the VM's curl,
+  with keys of Hajun's that are not there yet; `SERVER.md`, "Pushes".
+- **The website's privacy policy** (`../donggeurami-town/privacy.html`) is
+  changed for all of it, dated 27 November: visits and ratings, the
+  notification token, Firebase in the Android app, Apple and Google
+  delivering, quick chat only. Pushed with APK 62, at Hajun's "build apk
+  and push".
+
+## What works on a plot: five more asks and three more tells at the end of the bag's (2026-11-27)
+
+What it is: `docs/town.md`, at the top (what keeps things, the lights
+switched by hand, the sink). Nothing of it needs a protocol of its own;
+it went out with protocol 27, above: **deployed at 13:40:57 UTC on
+2026-11-27**, the server making `players.workings` on the live database as
+it started; in APK 62.
+
+- **`bag::Ask`** gets `Workings` (8 on the wire: tell me what works),
+  `Stow { who, id, slot, kind, count }` (9), `Unstow { who, id, slot }`
+  (10), `Switch { who, id, on }` (11) and `Run { who, id }` (12), `who`
+  being whose plot, the asker's own or anyone's in their channel;
+  **`bag::Tell`** gets `Workings { who, workings }` (3: what is kept in
+  each thing there and which lights are on, `bag::Workings`), `Got(Stack)`
+  (4: what came into your bag, after the `Yours` that has it) and
+  `Ran { who, id }` (5). A test of the rules holds the numbers. `Bag` and
+  `Paints` are as they were on the wire.
+- **Only to a device that asked.** A device says `Workings` once as it
+  comes online, after `Watch` and `Colours` (`bag::come_and_go`), and is
+  told what works on its own plot after each answer about its bag, on
+  each plot it is told of, and to everyone of the channel whenever anyone
+  changes it (`server/src/bag.rs`, `Workers`). An app from before never
+  asks and is told nothing of it; binning a thing with something kept in
+  it from such an app brings what was in it into its bag all the same
+  (the server's `take_back`).
+- **The server's own** (`Workshop`, by whose plot): read with everyone's
+  land as it starts, and written by it for an owner who is not here, in a
+  column of its own, **`players.workings`** (`ALTER TABLE ... ADD COLUMN
+  IF NOT EXISTS workings TEXT`, beside `bag`): what is kept and which
+  lights are on, JSON. Something put in or taken out writes the plot's
+  workings and the bag of whoever did it in one transaction
+  (`accounts::Job::Workings`); a light, the workings alone. Each ask is
+  answered as a bag's are (`Yours`), in its turn behind a purchase at the
+  database. The server checks the thing is there and of the kind, and that
+  whoever asks is in the town in a channel the plot is in; not how near.
+- **A sink run** is told to the channel and kept by nobody; one run is
+  told once until it has filled and drained (`bag::SINK_SECS`, 12 s, by
+  the server's clock).
+- Checked against a server on this PC with no database (`docs/town.md`).
+  The column was made first on a copy of the live database on the VM
+  (with the house tables, by the session that deployed, the database's
+  own tests passing there), then on the live one by the deploy. **The
+  transaction that writes it with a bag has run against no Postgres in a
+  test**: the first time is someone's, live. The binary before this one
+  (`roundtown-server.prev-2026-11-27b`), rolled back to, would read
+  `players.workings` as nothing and leave it.
+
 ## The website: a support page and a privacy policy, on GitHub Pages
 
 2026-11-24. Hajun's: "i need a quick privacy policy and or support page

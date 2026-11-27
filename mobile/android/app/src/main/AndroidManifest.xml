@@ -4,6 +4,10 @@
     <!-- Playing online: without it Android refuses every connection, the game
          server's UDP included. -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Word of your house while the game is not open (since 2026-11-27):
+         someone visiting it, someone rating it. Asked for from Android 13
+         on, the first time you stand in the town online (src/push.rs). -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
         android:label="동그라미타운"
@@ -11,6 +15,18 @@
         android:allowBackup="false"
         android:theme="@style/Theme.Donggeurami"
         android:hardwareAccelerated="true">
+        <!-- A push from Firebase while the game is not open: the house on
+             it, white as Android draws it, the gold of the stars round it,
+             under the channel MainActivity makes. -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_icon"
+            android:resource="@drawable/ic_notification" />
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_color"
+            android:resource="@color/notification" />
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_channel_id"
+            android:value="house" />
         <activity
             android:name=".MainActivity"
             android:exported="true"

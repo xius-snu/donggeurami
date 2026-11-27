@@ -259,6 +259,13 @@ fn shown(tab: Tab, sort: Sort, has: &roundtown_net::bag::Bag) -> Vec<(&'static T
     shown
 }
 
+/// What is in the bag `has`, each with how many of it, in the order the
+/// window shows what you own: for what keeps things to be chosen from
+/// (`storage`, since 2026-11-27).
+pub(crate) fn in_your_bag(has: &roundtown_net::bag::Bag) -> Vec<(&'static Thing, u16)> {
+    shown(Tab::Inventory, Sort::All, has)
+}
+
 /// The window: whether it is up, which tab, which category of each tab,
 /// and, in the shop, the thing whose two buttons are up.
 #[derive(Resource, Debug)]
