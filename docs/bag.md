@@ -10,19 +10,122 @@ first.
 
 ## Contents
 
-1. 2026-11-25, evening: each floor of a house painted by itself; the shop's things kind by kind, the commonest first, and yours the rarest first; APK 60
-2. 2026-11-25, morning: a new thing comes up square to its plot, however the plot is turned; APK 57
-3. 2026-11-25, that night: the bin takes what is in a house, small things onto tops, what is in the way by its shape, the painting on a wall; APK 56
-4. 2026-11-25, later: everything on Hajun's list in the shop, 118 things: the cars, 17 houses, 59 things for a house; prices in gems; a seventh rarity; what hangs from a ceiling, and two things that light a room; the gifts to two accounts; server deployed, APK 55
-5. 2026-11-25: Hajun's list of rarities filled in with the 22 other cars, the 56 downloaded things and Hajun's cabinet, bathtub and end table; the list alone, nothing in the game (all of it in the game the same night, above)
-6. 2026-11-23: edit mode said along the top and round the plot, the edit button beating at a tap on a thing, the hint turned off; APK 52
-7. 2026-11-22, late: a spot of the colour chosen in its window, a hint at edit mode for someone tapping at a thing, and a house's walls numbered the same on every device, so that its doors are in the same wall for everyone; APK 51
-8. 2026-11-22, night: paint taken off with a cross, the colours used along the window's foot, the one button moved up, a tap away letting go, things dragged through each other with a grey tick, a house taking what is in it along, smaller menu buttons set by the thing as drawn, and two faults of see-through (things deaf to a tap, eyes fading); server deployed, APK 50
-9. 2026-11-22, evening: edit mode and its three buttons by the left edge, the paintbrush and the colour window, paint kept by the server and seen by everyone, the car's door where the bag's button is; server deployed, APK 49
-10. 2026-11-22, after that: a list flicked goes on by itself as a phone's does, and a swipe across the window changes its tab; APK 48
-11. 2026-11-22, afternoon: the coins' number the gems' size and the gem the coin's; a price you cannot afford in red; the box on the bag's button; APK 47
-12. 2026-11-22, later: the shop after Hajun had looked at it (both buttons always, over the picture and see-through; the price under the name; All first shown; six categories with no scrolling); APK 46
-13. 2026-11-22: the bag, its window, gems, and buildings on your plot that everyone sees; APK 45
+1. 2026-11-26: a thing dragged upstairs stays upstairs, kept over its floor, sliding along the walls and stopping at the stairwell; what hangs from a ceiling, a small thing and what comes out of the bag too; APK 61
+2. 2026-11-25, evening: each floor of a house painted by itself; the shop's things kind by kind, the commonest first, and yours the rarest first; APK 60
+3. 2026-11-25, morning: a new thing comes up square to its plot, however the plot is turned; APK 57
+4. 2026-11-25, that night: the bin takes what is in a house, small things onto tops, what is in the way by its shape, the painting on a wall; APK 56
+5. 2026-11-25, later: everything on Hajun's list in the shop, 118 things: the cars, 17 houses, 59 things for a house; prices in gems; a seventh rarity; what hangs from a ceiling, and two things that light a room; the gifts to two accounts; server deployed, APK 55
+6. 2026-11-25: Hajun's list of rarities filled in with the 22 other cars, the 56 downloaded things and Hajun's cabinet, bathtub and end table; the list alone, nothing in the game (all of it in the game the same night, above)
+7. 2026-11-23: edit mode said along the top and round the plot, the edit button beating at a tap on a thing, the hint turned off; APK 52
+8. 2026-11-22, late: a spot of the colour chosen in its window, a hint at edit mode for someone tapping at a thing, and a house's walls numbered the same on every device, so that its doors are in the same wall for everyone; APK 51
+9. 2026-11-22, night: paint taken off with a cross, the colours used along the window's foot, the one button moved up, a tap away letting go, things dragged through each other with a grey tick, a house taking what is in it along, smaller menu buttons set by the thing as drawn, and two faults of see-through (things deaf to a tap, eyes fading); server deployed, APK 50
+10. 2026-11-22, evening: edit mode and its three buttons by the left edge, the paintbrush and the colour window, paint kept by the server and seen by everyone, the car's door where the bag's button is; server deployed, APK 49
+11. 2026-11-22, after that: a list flicked goes on by itself as a phone's does, and a swipe across the window changes its tab; APK 48
+12. 2026-11-22, afternoon: the coins' number the gems' size and the gem the coin's; a price you cannot afford in red; the box on the bag's button; APK 47
+13. 2026-11-22, later: the shop after Hajun had looked at it (both buttons always, over the picture and see-through; the price under the name; All first shown; six categories with no scrolling); APK 46
+14. 2026-11-22: the bag, its window, gems, and buildings on your plot that everyone sees; APK 45
+
+## 2026-11-26: a thing dragged upstairs stays upstairs; APK 61
+
+Hajun: "one annoying thing i noticed. im on second floor, and im moving a
+furniture like stove around the floor, and as it goes near the
+corner/edge near the wall, it falls down to the ground. so i need to be
+so careful so it doesnt fall. fix this."
+
+**Why it fell.** A thing dragged with the hand stood on the floor under
+the point it stands by (`build::floor_under`), and a floor is the box of
+a house's `Floor` object. An upper floor's box ends at the inner faces of
+its walls, and in the Square House 2F at the edge of its stairwell as
+well (the strip two metres wide along one wall, from 5.5 to 3.5 m off the
+middle in the house's own space; in the houses of three floors and more
+the hole the stairs come up through is inside the box). Taken that far
+(the stove's point is near its middle), it stood on whatever was under
+that point: the ground floor, at the foot of the wall or down the
+stairwell, or the land outside. A thing dragged goes no more than a step
+up, so from there it could not be dragged back, and stayed down.
+
+**What it does now.** On an upper floor of a house, a floor more than a
+step over the plot's own ground, whatever is dragged is kept to that
+floor (`build::upstairs`, `kept_to`, `Storey::pull_in`): the whole of it
+over the floor, as the whole of it is kept on the plot. Taken past a wall
+it stops flush against it and slides along it as the finger goes on; into
+a corner, against both walls; at the stairwell, at its edge. And so:
+
+- **What hangs from a ceiling** (`build::drag_hung`) is kept over its
+  floor and hangs from its ceiling. Over the 2F's stairwell it went out
+  over the stairwell and hung lower, from the roof where it comes down.
+- **A small thing** (`PieceDef::small`) goes up onto the tops of only
+  what stands on its own floor (`build::one_floor`), the land and a ground
+  floor being one. Upstairs, a finger over the floor above a desk on the
+  ground floor took a mug down through the floor onto that desk.
+- **What comes out of the bag upstairs** (`build::comes_up`, `hung_up`)
+  comes up on that floor, the whole of it over it: facing the stairwell it
+  came up down in it, on the stairs.
+- On the land and a ground floor nothing changes: a thing still goes out
+  through a wall onto the land, and in again a step up. An upper floor
+  modelled as more than one box, an L, is one floor (none of Hajun's is).
+
+**Calls that were mine.**
+
+- Kept over the floor and sliding along its walls, rather than going on
+  past them, at the floor's height, with a grey tick: past an upper
+  floor's walls there is nothing to put it down on.
+- Down a floor only by way of the bag, as it goes up one (since APK 50).
+- A small thing does not go up onto a top on another floor either: off
+  the lawn onto a roof terrace's table, or through a roof onto a desk
+  upstairs, as a finger over the house could take it until now, after
+  which it would have been kept up there.
+- What is already down stays where it is; a thing standing out over the
+  2F's stairwell is pulled onto the floor the first time it is dragged.
+
+**Not done.** In the houses of three floors and more, and the roof
+terraces, the hole the stairs come up through is inside the floor's box:
+a thing can still be dragged out over it and put down there in the air,
+as before (the made-up lots' checker looks for that; the game does not).
+Standing at the very edge of the stairwell and facing it, a thing out of
+the bag comes up where you stand, as it does facing a wall. Found, not
+touched: a chandelier upstairs in the Square House 2F has a grey tick
+wherever it is (it hangs from the sloping roof, which the sides of its
+box cut into), before and after alike.
+
+**Checked.** Unit tests, new:
+`build::tests::a_thing_dragged_upstairs_stays_upstairs_however_near_the_walls_the_finger_takes_it`
+(the 2F's floors, the house turned an eighth: the stove square to the
+house and turned three other ways, taken past each wall, into the
+corners, over the stairwell and off the plot, the whole of it over the
+upper floor every time; flush against the wall, in the corner, at the
+stairwell's edge; on the ground floor out onto the land and back),
+`upstairs_is_a_floor_over_a_house_s_ground_floor_and_an_l_shaped_one_is_one_floor`,
+`something_hung_upstairs_stays_upstairs_over_the_stairwell_and_past_the_walls`,
+`a_thing_brought_out_upstairs_comes_up_on_that_floor_and_not_down_the_stairwell`;
+all four fail with the keeping turned off. The game's whole suite
+(`cargo test --lib`, 602). In the desktop build, hidden and offline, on
+plot 1 with a Square House 2F, by a throwaway driver dragging with the
+mouse (taken out again), each the old way, by a throwaway switch also
+taken out, and the new:
+
+- the stove pushed 3.5 m past a wall upstairs: the old way out on the
+  land past the wall, and dragged back in, on the ground floor; now flush
+  against the wall's inner face, upstairs, the tick green, back in the
+  room upstairs, flush in a corner against both walls, and put down there;
+- the stove past the stairwell's edge: the old way down on the ground
+  floor in the stairs, the tick grey; now at the edge, green;
+- the chandelier over the stairwell: the old way out over it, 2 m lower;
+  now at its edge (grey both ways, as said);
+- a mug upstairs over a desk on the ground floor: the old way onto that
+  desk; now on the upper floor where the finger meets it;
+- the stove and the mug out of the bag facing the stairwell: the old way
+  on the stairs, 2.6 m under the floor, grey; now at the edge, green;
+- on the ground floor, the stove dragged out through a wall onto the
+  land: the same both ways.
+
+**Not checked.** A phone; a finger rather than the mouse; the houses of
+three floors and more and the roof terraces in the running game (the
+unit tests' rule is the same for them). Device only: nothing is sent
+differently, nothing for the server, protocol 25 still. Not committed,
+no APK: Hajun asked for the fix alone. Committed and built into APK 61 on
+2026-11-27, with Knock Off's islands (`docs/knock-off.md`), at his "ye
+build apk and push" (`docs/building.md`); not put on a phone.
 
 ## 2026-11-25, evening: each floor painted by itself; the shop's order; APK 60
 

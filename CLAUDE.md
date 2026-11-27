@@ -548,7 +548,11 @@ to try again.
   thing goes where the finger takes it, through whatever stands there,
   and the tick of its menu is grey where it cannot stand
   (`build::drag_freely`, `mark_misfits`; House Builder's pieces are
-  carried as they were); a tap anywhere else lets go of it, put down if
+  carried as they were); on an upper floor of a house it is kept over
+  that floor, sliding along its walls, and never goes down off it
+  (Hajun's), nor does a small thing go onto a top on another floor
+  (mine; `build::upstairs`, since 2026-11-26); a tap anywhere else lets
+  go of it, put down if
   it can stand there and put back where it stood if not
   (`editor::Edit::Away`, `stand::PutBack`); and a house picked up takes
   what stands in it along (`stand::Rides`). **With the brush a tap paints

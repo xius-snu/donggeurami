@@ -1318,10 +1318,7 @@ fn hangs(island: &Island, at: Vec3, bounds: Bounds, turn: Quat) -> bool {
 fn ceiling_over(island: &Island, storeys: &[Storey], spot: Vec2, reach: f32) -> Option<f32> {
     let floor = storeys
         .iter()
-        .filter(|storey| {
-            let at = storey.into.transform_point3(Vec3::new(spot.x, 0.0, spot.y));
-            at.x >= storey.low.x && at.x <= storey.high.x && at.z >= storey.low.z && at.z <= storey.high.z
-        })
+        .filter(|storey| storey.under(spot))
         .map(|storey| storey.top)
         .filter(|&top| top <= reach)
         .reduce(f32::max)?;
@@ -1334,6 +1331,46 @@ fn ceiling_over(island: &Island, storeys: &[Storey], spot: Vec2, reach: f32) -> 
 fn hang_at(island: &Island, storeys: &[Storey], spot: Vec3, bounds: Bounds, turn: Quat, reach: f32) -> Option<Vec3> {
     let ceiling = ceiling_over(island, storeys, middle_of(spot, bounds, turn), reach)?;
     Some(spot.with_y(ceiling - bounds.high.y))
+}
+
+/// Where a piece of `bounds`, turned by `turn`, that hangs from a ceiling
+/// comes up out of the bag for someone standing at `you` who would have it
+/// at `spot`: from the ceiling over the floor they stand on ([`hang_at`]);
+/// on an upper floor of a house ([`upstairs`], since 2026-11-26), the whole
+/// of it over that floor and from its ceiling, as a drag would leave it
+/// ([`drag_hung`]). With no ceiling there, at `spot`, for its tick to be
+/// grey.
+fn hung_up(island: &Island, yard: Option<Yard>, storeys: &[Storey], you: Vec3, spot: Vec3, bounds: Bounds, turn: Quat) -> Vec3 {
+    let reach = you.y + crate::LAND_STEP_UP;
+    let floor = yard.map(|yard| upstairs(yard, storeys, you.xz(), reach)).unwrap_or_default();
+    let (spot, under) = match floor.is_empty() {
+        true => (spot, storeys),
+        false => (kept_to(&floor, spot, bounds, turn), floor.as_slice()),
+    };
+    hang_at(island, under, spot, bounds, turn, reach).unwrap_or(spot)
+}
+
+/// Where a piece of `bounds`, turned by `turn`, hung from a ceiling at
+/// `from` on your plot `yard` ends up dragged toward `to`: where the finger
+/// takes it, the whole of it on the plot, its top against the ceiling
+/// there; with no ceiling there, at the height it was, for its tick to be
+/// grey (`mark_misfits`). Under the ceiling of the storey it is in: the
+/// floor under its foot, or a step up from it, as a house's lowest floor is
+/// from the ground it came out over, and never over its own top, which
+/// would be the floor over the ceiling it hangs from. Over an upper floor
+/// of a house, the whole of it over that floor and from its ceiling
+/// ([`upstairs`], since 2026-11-26): never out over the Square House 2F's
+/// stairwell, hung from whatever is over the ground floor there, the roof
+/// where it comes down low, or a stair with an underside.
+fn drag_hung(island: &Island, yard: Yard, storeys: &[Storey], from: Vec3, to: Vec3, bounds: Bounds, turn: Quat) -> Vec3 {
+    let spot = yard.pull_in(Vec3::new(to.x, from.y, to.z), bounds, turn);
+    let reach = (from.y + bounds.low.y + crate::LAND_STEP_UP).min(from.y + bounds.high.y);
+    let floor = upstairs(yard, storeys, middle_of(from, bounds, turn), reach);
+    let (spot, under) = match floor.is_empty() {
+        true => (spot, storeys),
+        false => (kept_to(&floor, spot, bounds, turn), floor.as_slice()),
+    };
+    hang_at(island, under, spot, bounds, turn, reach).unwrap_or(spot)
 }
 
 /// Whether a piece of `bounds`, turned by `turn` and standing at `at`, is in
@@ -1380,6 +1417,96 @@ struct Storey {
     low: Vec3,
     high: Vec3,
     top: f32,
+}
+
+impl Storey {
+    /// Whether `spot`, across the ground, is over it.
+    fn under(&self, spot: Vec2) -> bool {
+        let at = self.into.transform_point3(Vec3::new(spot.x, 0.0, spot.y));
+        at.x >= self.low.x && at.x <= self.high.x && at.z >= self.low.z && at.z <= self.high.z
+    }
+
+    /// Where a piece of `bounds`, turned by `turn`, that would stand at `at`
+    /// stands with the whole of its footprint over this floor: there, or as
+    /// little further in as it takes, along each of the house's own two
+    /// ways; one too big for it, in its middle that way. As high as `at`.
+    fn pull_in(&self, at: Vec3, bounds: Bounds, turn: Quat) -> Vec3 {
+        let (low, high) = (bounds.low, bounds.high);
+        let corners = [(low.x, low.z), (high.x, low.z), (high.x, high.z), (low.x, high.z)]
+            .map(|(x, z)| self.into.transform_vector3(turn * Vec3::new(x, 0.0, z)));
+        let here = self.into.transform_point3(at);
+        let inside = |axis: usize| {
+            let (least, most) = corners
+                .iter()
+                .fold((f32::INFINITY, f32::NEG_INFINITY), |(least, most), corner| (least.min(corner[axis]), most.max(corner[axis])));
+            let (from, to) = (self.low[axis] - least, self.high[axis] - most);
+            if from <= to { here[axis].clamp(from, to) } else { (from + to) * 0.5 }
+        };
+        self.into.inverse().transform_point3(Vec3::new(inside(0), here.y, inside(2))).with_y(at.y)
+    }
+}
+
+/// How near in height two boxes of a house's floors are to be one floor, in
+/// metres: what an L-shaped floor modelled as two comes to.
+const ONE_FLOOR: f32 = 0.01;
+
+/// The upper floor of a house that something at `spot`, on a floor no
+/// higher than `reach`, stands on: the floor under it ([`floor_under`]),
+/// where that is more than a step over the plot's own ground, as every
+/// floor over a house's ground floor is; each box of it, at its height in
+/// that house. None on the land or a house's ground floor.
+///
+/// **Nothing dragged comes down off an upper floor** (since 2026-11-26;
+/// Hajun: "im on second floor, and im moving a furniture like stove around
+/// the floor, and as it goes near the corner/edge near the wall, it falls
+/// down to the ground. so i need to be so careful so it doesnt fall. fix
+/// this."): such a floor's box ends at the inner faces of the walls, and in
+/// the Square House 2F at the edge of the stairwell, and a thing taken past
+/// it as far as the point it stands by (the stove's is near its middle)
+/// stood on whatever was under that, the ground floor or the land, which it
+/// could not be dragged back up from. Now the whole of it is kept over its
+/// floor ([`kept_to`]), as the whole of it is on the plot. What hangs from
+/// a ceiling is kept over its floor too, and a small thing goes up onto the
+/// tops of only what stands on its floor (`edit_pieces`).
+fn upstairs(yard: Yard, storeys: &[Storey], spot: Vec2, reach: f32) -> Vec<Storey> {
+    let Some(floor) = storeys
+        .iter()
+        .filter(|storey| storey.top <= reach && storey.under(spot))
+        .max_by(|a, b| a.top.total_cmp(&b.top))
+    else {
+        return Vec::new();
+    };
+    if floor.top - yard.ground <= crate::LAND_STEP_UP {
+        return Vec::new();
+    }
+    storeys
+        .iter()
+        .filter(|storey| storey.into == floor.into && (storey.top - floor.top).abs() < ONE_FLOOR)
+        .copied()
+        .collect()
+}
+
+/// Whether two floors, as [`upstairs`] has them, are one: the one upper
+/// floor of the one house, or neither, the land and a ground floor being
+/// one.
+fn one_floor(a: &[Storey], b: &[Storey]) -> bool {
+    match (a.first(), b.first()) {
+        (Some(a), Some(b)) => a.into == b.into && (a.top - b.top).abs() < ONE_FLOOR,
+        (None, None) => true,
+        _ => false,
+    }
+}
+
+/// Where a piece of `bounds`, turned by `turn`, that would stand at `at`
+/// stands kept to the upper floor `floor` ([`upstairs`]): the whole of its
+/// footprint over the nearest box of it ([`Storey::pull_in`]). As high as
+/// `at`.
+fn kept_to(floor: &[Storey], at: Vec3, bounds: Bounds, turn: Quat) -> Vec3 {
+    floor
+        .iter()
+        .map(|storey| storey.pull_in(at, bounds, turn))
+        .min_by(|a, b| a.xz().distance_squared(at.xz()).total_cmp(&b.xz().distance_squared(at.xz())))
+        .unwrap_or(at)
 }
 
 /// Every house that is down or being put down, with its floors: where it
@@ -1464,10 +1591,7 @@ fn onto(point: Vec3, normal: Vec3, bounds: Bounds) -> Option<Vec3> {
 fn floor_under(yard: Yard, storeys: &[Storey], spot: Vec2, reach: f32) -> f32 {
     storeys
         .iter()
-        .filter(|storey| {
-            let at = storey.into.transform_point3(Vec3::new(spot.x, 0.0, spot.y));
-            at.x >= storey.low.x && at.x <= storey.high.x && at.z >= storey.low.z && at.z <= storey.high.z
-        })
+        .filter(|storey| storey.under(spot))
         .map(|storey| storey.top)
         .filter(|&top| top <= reach)
         .fold(yard.ground, f32::max)
@@ -1483,7 +1607,9 @@ fn floor_under(yard: Yard, storeys: &[Storey], spot: Vec2, reach: f32) -> f32 {
 /// ([`floor_under`]: the land, or a floor of the house no more than a step
 /// up from where it is), through whatever else stands in between; and then
 /// snapped into line with whatever among `stops` it has come up to, if it
-/// is `clear` to stand there.
+/// is `clear` to stand there. On an upper floor of a house, on that floor,
+/// the whole of it over it, however near the walls or past them the finger
+/// goes ([`upstairs`], since 2026-11-26): it slides along them.
 #[allow(clippy::too_many_arguments)]
 fn drag_freely(
     yard: Yard,
@@ -1496,7 +1622,11 @@ fn drag_freely(
     clear: impl Fn(Vec3) -> bool,
 ) -> Vec3 {
     let reach = from.y + crate::LAND_STEP_UP;
-    let on_its_floor = |spot: Vec3| spot.with_y(floor_under(yard, storeys, spot.xz(), reach));
+    let upstairs = upstairs(yard, storeys, from.xz(), reach);
+    let on_its_floor = |spot: Vec3| match upstairs.first() {
+        Some(floor) => kept_to(&upstairs, spot, bounds, turn).with_y(floor.top),
+        None => spot.with_y(floor_under(yard, storeys, spot.xz(), reach)),
+    };
     let at = on_its_floor(yard.pull_in(Vec3::new(goal.x, from.y, goal.y), bounds, turn));
     snaps(at, turn, bounds, stops)
         .into_iter()
@@ -2013,7 +2143,7 @@ fn place_fresh(
                         .unwrap_or(spot)
                 } else {
                     islands.get(venue).map_or(spot, |island| {
-                        ahead_of(island, yard, me.translation, spot, *bounds, turn)
+                        comes_up(island, yard, &storeys_in(&houses, venue), me.translation, spot, *bounds, turn)
                     })
                 };
                 *transform = Transform::from_translation(at).with_rotation(turn);
@@ -2025,12 +2155,9 @@ fn place_fresh(
                 let turn = facing(-ahead, yard);
                 let spot = me.translation + ahead * (PLAYER_RADIUS + IN_FRONT - bounds.low.z);
                 let spot = yard.map_or(spot, |yard| yard.pull_in(spot, *bounds, turn));
-                let storeys = storeys_in(&houses, venue);
-                let reach = me.translation.y + crate::LAND_STEP_UP;
-                let at = islands
-                    .get(venue)
-                    .and_then(|island| hang_at(island, &storeys, spot, *bounds, turn, reach))
-                    .unwrap_or(spot);
+                let at = islands.get(venue).map_or(spot, |island| {
+                    hung_up(island, yard, &storeys_in(&houses, venue), me.translation, spot, *bounds, turn)
+                });
                 *transform = Transform::from_translation(at).with_rotation(turn);
             }
             Mount::Door | Mount::Window | Mount::Hanging => {
@@ -2120,13 +2247,32 @@ fn others_on(hung: &Hung, wall: Entity, piece: Entity) -> Vec<(OnWall, Span, boo
         .collect()
 }
 
+/// Where a piece of `bounds`, turned by `turn`, comes up out of the bag for
+/// someone standing at `you` who would have it at `spot`: [`ahead_of`] them;
+/// and on an upper floor of a house in `storeys` ([`upstairs`], since
+/// 2026-11-26), on nothing more than a step under that floor, never down
+/// the stairwell in front of them, and the whole of it over the floor, as a
+/// drag would leave it.
+fn comes_up(island: &Island, yard: Option<Yard>, storeys: &[Storey], you: Vec3, spot: Vec3, bounds: Bounds, turn: Quat) -> Vec3 {
+    let floor = yard
+        .map(|yard| upstairs(yard, storeys, you.xz(), you.y + crate::LAND_STEP_UP))
+        .unwrap_or_default();
+    let lowest = floor.first().map(|storey| storey.top - crate::LAND_STEP_UP);
+    let at = ahead_of(island, yard, you, spot, bounds, turn, lowest);
+    match floor.first() {
+        Some(storey) => kept_to(&floor, at, bounds, turn).with_y(at.y.max(storey.top)),
+        None => at,
+    }
+}
+
 /// Where a piece of `bounds`, turned by `turn`, comes up for someone standing
 /// at `you` who would have it at `spot`: carried from them toward there as far
 /// as the floor goes and no walls are in the way, then back toward them until
 /// the whole of it is clear of the walls too — facing a wall, in the room
 /// rather than through it. In a `yard`, the whole of it inside the yard
-/// besides: as near where it would have come up as that leaves it.
-fn ahead_of(island: &Island, yard: Option<Yard>, you: Vec3, spot: Vec3, bounds: Bounds, turn: Quat) -> Vec3 {
+/// besides: as near where it would have come up as that leaves it. On
+/// nothing lower than `lowest`, if that is said ([`comes_up`]).
+fn ahead_of(island: &Island, yard: Option<Yard>, you: Vec3, spot: Vec3, bounds: Bounds, turn: Quat, lowest: Option<f32>) -> Vec3 {
     let point = Bounds {
         low: Vec3::ZERO,
         high: Vec3::ZERO,
@@ -2141,6 +2287,7 @@ fn ahead_of(island: &Island, yard: Option<Yard>, you: Vec3, spot: Vec3, bounds: 
         .filter_map(|at| {
             island
                 .floor(at, you.y + crate::LAND_STEP_UP)
+                .filter(|&y| lowest.is_none_or(|lowest| y >= lowest))
                 .map(|y| Vec3::new(at.x, y, at.y))
         })
         .find(|&at| inside(at) && !walled(island, at, bounds, turn))
@@ -2701,11 +2848,21 @@ fn edit_pieces(
                 // hangs over.
                 let storeys = yard.map(|_| storeys_on(&pieces, &rooms, venue)).unwrap_or_default();
                 // And for a small thing, the meshes of what else stands
-                // there on a floor, whose tops it may go up onto.
+                // there on a floor, whose tops it may go up onto: what
+                // stands on the floor it is on (the land and a ground floor
+                // being one), never on another, as a finger over an upper
+                // floor meets a table under it, through that floor, and over
+                // a house's roof the things upstairs in it (since 2026-11-26).
+                let floor_of = |at: Vec3| {
+                    yard.map(|yard| upstairs(yard, &storeys, at.xz(), at.y + crate::LAND_STEP_UP))
+                        .unwrap_or_default()
+                };
                 let tops: HashSet<Entity> = pieces
                     .get(target)
-                    .is_ok_and(|(_, piece, ..)| piece.def.small)
-                    .then(|| {
+                    .ok()
+                    .filter(|(_, piece, ..)| piece.def.small)
+                    .map(|(_, _, own, ..)| {
+                        let its_floor = floor_of(own.translation);
                         pieces
                             .iter()
                             .filter(|&(entity, piece, place, .., on, ghost)| {
@@ -2714,6 +2871,7 @@ fn edit_pieces(
                                     && on == Some(&venue)
                                     && piece.def.mount == Mount::Floor
                                     && yard.is_some_and(|yard| yard.holds(place.translation.xz(), 1.0))
+                                    && one_floor(&its_floor, &floor_of(place.translation))
                             })
                             .flat_map(|(entity, ..)| children.iter_descendants(entity))
                             .collect()
@@ -2762,23 +2920,14 @@ fn edit_pieces(
                             transform.translation = at;
                         }
                     }
-                    // Where the finger takes it, the whole of it on your
-                    // plot, its top against the ceiling there; with no
-                    // ceiling there, at the height it was, for its tick to
-                    // be grey (`mark_misfits`). Under the ceiling of the
-                    // storey it is in: the floor under its foot, or a step
-                    // up from it, as a house's lowest floor is from the
-                    // ground it came out over, and never over its own top,
-                    // which would be the floor over the ceiling it hangs
-                    // from.
+                    // Where the finger takes it, its top against the
+                    // ceiling there ([`drag_hung`]).
                     Mount::Ceiling => {
                         let (Some(to), Some(island), Some(&bounds), Some(yard)) = (to, islands.get(venue), bounds, yard) else {
                             continue;
                         };
                         let (from, turn) = (transform.translation, transform.rotation);
-                        let spot = yard.pull_in(Vec3::new(to.x, from.y, to.z), bounds, turn);
-                        let reach = (from.y + bounds.low.y + crate::LAND_STEP_UP).min(from.y + bounds.high.y);
-                        let at = hang_at(island, &storeys, spot, bounds, turn, reach).unwrap_or(spot);
+                        let at = drag_hung(island, yard, &storeys, from, to, bounds, turn);
                         if transform.translation != at {
                             transform.translation = at;
                         }
@@ -4787,13 +4936,234 @@ mod tests {
         assert!(close(under(Vec2::new(-9.0, 9.0), 0.27), 0.27));
         assert!(close(under(in_house(2.0, 0.0), 0.27), 0.37));
         assert!(close(under(in_house(-2.0, 0.0), 0.37), 0.37));
-        // Upstairs it stays upstairs for as long as the upper floor is
-        // under it, and off the edge of that it is down on the one below.
+        // From upstairs, the upper floor for as long as it is under the
+        // spot, and off the edge of it the one below; which a thing
+        // dragged upstairs is never let go down to (the test after this).
         assert!(close(under(in_house(-2.0, 0.0), 3.37), 3.37));
         assert!(close(under(in_house(2.0, 0.0), 3.37), 0.37));
         // And out of the house from in it: the land again.
         assert!(close(under(Vec2::new(-9.0, 9.0), 0.37), 0.27));
     }
+
+    /// The Square House 2F's floors as its model has them, the ground floor
+    /// out under its walls, 12 m across, and the upper floor inside them
+    /// but for the stairwell along one wall, from 3.5 m to that side of its
+    /// middle; the house turned an eighth of a turn, as on a crooked plot,
+    /// on a plot whose ground is 0.27 up. The plot, where the house stands,
+    /// and its floors.
+    fn two_floors() -> (Yard, Affine3A, [Storey; 2]) {
+        let yard = Yard { ground: 0.27, ..plot() };
+        let house = Affine3A::from_rotation_translation(Quat::from_rotation_y(FRAC_PI_4), Vec3::new(1.0, 0.27, -2.0));
+        let storey = |low: Vec3, high: Vec3| Storey {
+            into: house.inverse(),
+            low,
+            high,
+            top: 0.27 + high.y,
+        };
+        let storeys = [
+            storey(Vec3::new(-6.0, 0.0, -6.0), Vec3::new(6.0, 0.1, 6.0)),
+            storey(Vec3::new(-3.5, 5.0, -5.5), Vec3::new(5.5, 5.1, 5.5)),
+        ];
+        (yard, house, storeys)
+    }
+
+    /// The Square House 2F's floors and the slabs of them, a flat ceiling
+    /// over its upper floor, and in its stairwell a stair with an underside,
+    /// as a staircase open beneath would have (Hajun's has none: what is
+    /// over his stairwell is the roof).
+    fn two_floors_built() -> (Yard, Affine3A, [Storey; 2], Island) {
+        let (yard, house, storeys) = two_floors();
+        let mut shape = block(Vec3::new(-20.0, -1.0, -20.0), Vec3::new(20.0, 0.27, 20.0));
+        for (low, high) in [
+            (Vec3::new(-6.0, 0.0, -6.0), Vec3::new(6.0, 0.1, 6.0)),
+            (Vec3::new(-3.5, 5.0, -5.5), Vec3::new(5.5, 5.1, 5.5)),
+            (Vec3::new(-6.0, 10.0, -6.0), Vec3::new(6.0, 10.1, 6.0)),
+            (Vec3::new(-5.5, 2.4, -4.25), Vec3::new(-3.5, 2.6, 4.25)),
+        ] {
+            shape.extend(block(low, high).into_iter().map(|tri| tri.map(|corner| house.transform_point3(corner))));
+        }
+        (yard, house, storeys, Island::new_for_tests(&shape))
+    }
+
+    /// Hajun's stove, as its model has it: its origin off its middle.
+    const STOVE: Bounds = Bounds {
+        low: Vec3::new(-0.675, 0.0, -0.98),
+        high: Vec3::new(0.675, 2.02, 0.675),
+    };
+
+    #[test]
+    fn a_thing_dragged_upstairs_stays_upstairs_however_near_the_walls_the_finger_takes_it() {
+        // Hajun, 2026-11-26: "im on second floor, and im moving a furniture
+        // like stove around the floor, and as it goes near the corner/edge
+        // near the wall, it falls down to the ground. so i need to be so
+        // careful so it doesnt fall. fix this."
+        let (yard, house, storeys) = two_floors();
+        let in_house = |x: f32, y: f32, z: f32| house.transform_point3(Vec3::new(x, y, z));
+        let own = |at: Vec3| house.inverse().transform_point3(at);
+        let upstairs_at = 0.27 + 5.1;
+        let close = |a: f32, b: f32| (a - b).abs() < 1e-3;
+        // Upstairs, and every corner of it over the upper floor.
+        let over_the_floor = |at: Vec3, turn: Quat| {
+            let (low, high) = (STOVE.low, STOVE.high);
+            close(at.y, upstairs_at)
+                && [(low.x, low.z), (high.x, low.z), (high.x, high.z), (low.x, high.z)].iter().all(|&(x, z)| {
+                    let corner = own(at + turn * Vec3::new(x, 0.0, z));
+                    corner.x >= -3.5 - 1e-3 && corner.x <= 5.5 + 1e-3 && corner.z >= -5.5 - 1e-3 && corner.z <= 5.5 + 1e-3
+                })
+        };
+        // Square to the house, turned with the plot's edges, and crooked
+        // to it; dragged from the middle of the upper floor up to a wall,
+        // past it, into a corner and past that, over the stairwell, and off
+        // the plot altogether: upstairs every time, the whole of it over
+        // the floor, where its middle past the floor's edge had it down on
+        // the ground floor or out on the land.
+        let goals = [
+            in_house(5.2, 5.1, 0.0),
+            in_house(9.0, 5.1, 0.3),
+            in_house(5.3, 5.1, -5.4),
+            in_house(8.0, 5.1, -8.0),
+            in_house(-4.0, 5.1, 1.0),
+            in_house(-9.0, 5.1, 6.0),
+            Vec3::new(40.0, 0.0, 40.0),
+            Vec3::new(-40.0, 0.0, 3.0),
+        ];
+        for turn in [Quat::from_rotation_y(FRAC_PI_4), Quat::from_rotation_y(-FRAC_PI_4), Quat::IDENTITY, Quat::from_rotation_y(1.0)] {
+            for goal in goals {
+                let at = drag_freely(yard, in_house(1.0, 5.1, 0.0), goal.xz(), STOVE, turn, &[], &storeys, |_| true);
+                assert!(over_the_floor(at, turn), "turned {turn:?}, to {goal}: at {at}, {} in the house", own(at));
+            }
+        }
+        // Square to the house: flush against the wall it was taken past,
+        // as near the finger along it as that leaves it; in the corner,
+        // against both; at the edge of the stairwell; and within the floor,
+        // where the finger asks, as ever.
+        let turn = Quat::from_rotation_y(FRAC_PI_4);
+        let drag = |goal: Vec3| own(drag_freely(yard, in_house(1.0, 5.1, 0.0), goal.xz(), STOVE, turn, &[], &storeys, |_| true));
+        let at = drag(in_house(9.0, 5.1, 0.3));
+        assert!(close(at.x, 5.5 - 0.675) && close(at.z, 0.3), "{at}");
+        let at = drag(in_house(8.0, 5.1, -8.0));
+        assert!(close(at.x, 5.5 - 0.675) && close(at.z, -5.5 + 0.98), "{at}");
+        let at = drag(in_house(-4.0, 5.1, 1.0));
+        assert!(close(at.x, -3.5 + 0.675) && close(at.z, 1.0), "{at}");
+        let at = drag(in_house(2.0, 5.1, -1.5));
+        assert!(close(at.x, 2.0) && close(at.z, -1.5) && close(at.y, 5.1), "{at}");
+        // On the ground floor, as before: out through the wall onto the
+        // land, and in again onto the floor, a step up.
+        let drag = |from: Vec3, goal: Vec3| drag_freely(yard, from, goal.xz(), STOVE, turn, &[], &storeys, |_| true);
+        let out = drag(in_house(1.0, 0.1, 0.0), in_house(8.0, 0.1, 0.0));
+        assert!(close(out.y, 0.27) && close(own(out).x, 8.0), "{out}");
+        let back = drag(out, in_house(1.0, 0.1, 0.0));
+        assert!(close(back.y, 0.37) && close(own(back).x, 1.0), "{back}");
+    }
+
+    #[test]
+    fn upstairs_is_a_floor_over_a_house_s_ground_floor_and_an_l_shaped_one_is_one_floor() {
+        let (yard, house, storeys) = two_floors();
+        let in_house = |x: f32, y: f32, z: f32| house.transform_point3(Vec3::new(x, y, z));
+        let floor_of = |at: Vec3| upstairs(yard, &storeys, at.xz(), at.y + crate::LAND_STEP_UP);
+        // The land and the ground floor: nothing to keep to, and one.
+        let (land, ground) = (floor_of(Vec3::new(-9.0, 0.27, 9.0)), floor_of(in_house(1.0, 0.1, 0.0)));
+        assert!(land.is_empty() && ground.is_empty());
+        assert!(one_floor(&land, &ground));
+        // The upper floor, and a desk's top on it: the one floor, and not
+        // a table's top on the ground floor under it, which a finger over
+        // the upper floor meets through it.
+        let up = floor_of(in_house(1.0, 5.1, 0.0));
+        assert_eq!(up.len(), 1);
+        assert!((up[0].top - 5.37).abs() < 1e-4);
+        assert!(one_floor(&up, &floor_of(in_house(-2.0, 6.4, 3.0))));
+        assert!(!one_floor(&up, &floor_of(in_house(1.0, 1.4, 0.0))));
+        assert!(!one_floor(&up, &ground));
+
+        // An upper floor modelled as two boxes, an L: the one floor, and a
+        // thing dragged along it goes from one wing into the other, and
+        // round the corner the L has not, along the wing nearer the finger.
+        let storey = |low: Vec3, high: Vec3| Storey {
+            into: house.inverse(),
+            low,
+            high,
+            top: 0.27 + high.y,
+        };
+        let l = [
+            storey(Vec3::new(-6.0, 0.0, -6.0), Vec3::new(6.0, 0.1, 6.0)),
+            storey(Vec3::new(-5.5, 5.0, 0.0), Vec3::new(5.5, 5.1, 5.5)),
+            storey(Vec3::new(0.0, 5.0, -5.5), Vec3::new(5.5, 5.1, 0.0)),
+        ];
+        let floor_of = |at: Vec3| upstairs(yard, &l, at.xz(), at.y + crate::LAND_STEP_UP);
+        let wing = floor_of(in_house(-3.0, 5.1, 3.0));
+        assert_eq!(wing.len(), 2);
+        assert!(one_floor(&wing, &floor_of(in_house(3.0, 5.1, -3.0))));
+        let turn = Quat::from_rotation_y(FRAC_PI_4);
+        let own = |at: Vec3| house.inverse().transform_point3(at);
+        let drag = |goal: Vec3| own(drag_freely(yard, in_house(-3.0, 5.1, 3.0), goal.xz(), STOVE, turn, &[], &l, |_| true));
+        let at = drag(in_house(3.0, 5.1, -3.0));
+        assert!((at - Vec3::new(3.0, 5.1, -3.0)).length() < 1e-3, "{at}");
+        let at = drag(in_house(-3.0, 5.1, -1.0));
+        assert!((at - Vec3::new(-3.0, 5.1, 0.98)).length() < 1e-3, "{at}");
+    }
+
+    /// A lamp a metre square and a metre high, its origin under its middle,
+    /// to hang from a ceiling.
+    const LAMP: Bounds = Bounds {
+        low: Vec3::new(-0.5, 0.0, -0.5),
+        high: Vec3::new(0.5, 1.0, 0.5),
+    };
+
+    #[test]
+    fn something_hung_upstairs_stays_upstairs_over_the_stairwell_and_past_the_walls() {
+        let (yard, house, storeys, island) = two_floors_built();
+        let in_house = |x: f32, y: f32, z: f32| house.transform_point3(Vec3::new(x, y, z));
+        let own = |at: Vec3| house.inverse().transform_point3(at);
+        let close = |a: Vec3, b: Vec3| (a - b).length() < 1e-3;
+        let turn = Quat::from_rotation_y(FRAC_PI_4);
+        // Hung from the ceiling over the upper floor, its top against it,
+        // ten metres up; moved about under it.
+        let from = in_house(1.0, 9.0, 0.0);
+        let drag = |to: Vec3| own(drag_hung(&island, yard, &storeys, from, to, LAMP, turn));
+        assert!(close(drag(in_house(2.0, 9.0, 1.0)), Vec3::new(2.0, 9.0, 1.0)));
+        // Over the stairwell: at its edge, from that ceiling still; where by
+        // the floor under its middle, the ground floor, it hung from what
+        // is over that there, the stair, under 3 m up.
+        let reach = from.y + crate::LAND_STEP_UP;
+        let was = hang_at(&island, &storeys, in_house(-4.5, 9.0, 0.0), LAMP, turn, reach);
+        assert!(was.is_some_and(|was| was.y < 3.0), "{was:?}");
+        let at = drag(in_house(-4.5, 9.0, 0.0));
+        assert!(close(at, Vec3::new(-3.0, 9.0, 0.0)), "{at}");
+        // Past a wall: against it, inside.
+        let at = drag(in_house(8.0, 9.0, -2.0));
+        assert!(close(at, Vec3::new(5.0, 9.0, -2.0)), "{at}");
+        // Brought out upstairs facing the stairwell: the same.
+        let you = in_house(-2.4, 5.1, 0.0);
+        let at = own(hung_up(&island, Some(yard), &storeys, you, in_house(-4.4, 5.1, 0.0), LAMP, turn));
+        assert!(close(at, Vec3::new(-3.0, 9.0, 0.0)), "{at}");
+        // And on the ground floor, as before: from the ceiling over it.
+        let at = own(hung_up(&island, Some(yard), &storeys, in_house(1.0, 0.1, 0.0), in_house(2.0, 0.1, 0.0), LAMP, turn));
+        assert!(close(at, Vec3::new(2.0, 4.0, 0.0)), "{at}");
+    }
+
+    #[test]
+    fn a_thing_brought_out_upstairs_comes_up_on_that_floor_and_not_down_the_stairwell() {
+        let (yard, house, storeys, island) = two_floors_built();
+        let in_house = |x: f32, y: f32, z: f32| house.transform_point3(Vec3::new(x, y, z));
+        let own = |at: Vec3| house.inverse().transform_point3(at);
+        let turn = Quat::from_rotation_y(FRAC_PI_4);
+        // Upstairs near the stairwell, facing it.
+        let (you, spot) = (in_house(-2.4, 5.1, 0.0), in_house(-4.6, 5.1, 0.0));
+        // Bound by nothing, as it was, and as House Builder's pieces still
+        // are: down there, on the stairs.
+        let there = ahead_of(&island, Some(yard), you, spot, STOVE, turn, None);
+        assert!(own(there).y < 3.0, "{}", own(there));
+        // On your plot of the town: on your floor, the whole of it over it,
+        // at the edge of the stairwell.
+        let at = own(comes_up(&island, Some(yard), &storeys, you, spot, STOVE, turn));
+        assert!((at - Vec3::new(-3.5 + 0.675, 5.1, 0.0)).length() < 1e-3, "{at}");
+        // On the ground floor and the land, as before.
+        let (you, spot) = (in_house(1.0, 0.1, 0.0), in_house(3.0, 0.1, 0.0));
+        assert_eq!(comes_up(&island, Some(yard), &storeys, you, spot, STOVE, turn), ahead_of(&island, Some(yard), you, spot, STOVE, turn, None));
+        let (you, spot) = (in_house(9.0, 0.0, 0.0), in_house(11.0, 0.0, 0.0));
+        assert_eq!(comes_up(&island, Some(yard), &storeys, you, spot, STOVE, turn), ahead_of(&island, Some(yard), you, spot, STOVE, turn, None));
+    }
+
 
     #[test]
     fn a_house_s_walls_are_numbered_the_same_however_little_their_corners_are_off() {
