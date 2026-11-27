@@ -26,11 +26,25 @@
 //! While the table waits the computer's players come out onto the ice one
 //! at a time, as Bridge Wars' come into its waiting room, and stand about
 //! on it, now and then strolling somewhere else on it
-//! (`knock_off::Loiter`, the device's own offline), until the game stands
-//! everyone on their spot.
+//! (`knock_off::Loiter`, the device's own offline), out of everyone's way,
+//! until the game begins, everyone where they stood.
+//!
+//! **The island is thrown as the table opens** (since 2026-11-27, Hajun:
+//! "each game, a truly random shape of island forms"): from a seed of the
+//! table's own, which the server throws from nothing anyone chose
+//! (`tables::open_table`), sent the table's room from the first frame on
+//! (`knock_off::Island`), so that everyone walks about on it while the table
+//! waits and every device plays every slide on it. **Nobody is stood on a
+//! spot as the game begins** (Hajun: "wherever ur last position was (or
+//! nearest surface position before falling into the water if u fell into the
+//! water at the start time) is your starting position"): each begins where
+//! their device last said they stood, the computer's players where they
+//! strolled to, on the ice and nobody on anyone (`knock_off::settle`).
+
+use std::sync::Arc;
 
 use bevy::prelude::*;
-use roundtown_net::knock_off::{self, Event, Game, KnockRound, KnockStage, Loiter};
+use roundtown_net::knock_off::{self, Event, Floe, Game, Island, KnockRound, KnockStage, Loiter, STOOD_BACK};
 use roundtown_net::{Ask, Tell};
 
 use crate::tables::{Ctx, Rules, Table, name, yaw_of};
@@ -50,26 +64,45 @@ const PLAYED_OUT: f64 = 86_400.0;
 /// A few seconds first, for a connection that is only lost a moment.
 const UNWATCHED_PLAY_OUT: f32 = 10.0;
 
-/// A game of Knock Off at its table: the game, once it has begun; the
+/// A game of Knock Off at its table: the island it is played on, and
+/// whether the room has been sent it; the game, once it has begun; the
 /// computer's players strolling about the ice until then; and the round as
 /// the room was last sent it, to send again only when it changes.
 pub(crate) struct KnockOff {
     seed: u64,
+    island: Island,
+    floe: Arc<Floe>,
+    island_sent: bool,
     game: Option<Game>,
     loiter: Loiter,
     sent: Option<KnockRound>,
 }
 
 impl KnockOff {
-    /// The game at a new table, numbered as `table` is, its dice thrown from
-    /// `seed`.
+    /// The game at a new table, numbered as `table` is, its dice and its
+    /// island thrown from `seed`.
     pub(crate) fn new(_table: &Table, seed: u64) -> Self {
+        let island = Island {
+            seed: seed.rotate_left(29) ^ 0x4973_6C61_6E64_2121,
+        };
         Self {
             seed,
+            floe: Arc::new(island.floe()),
+            island,
+            island_sent: false,
             game: None,
             loiter: Loiter::new(seed ^ 0x6B6E_6F63_6B5F_6F66),
             sent: None,
         }
+    }
+
+    /// Where everyone but `seat` stands at the table now (whoever is seated
+    /// there and has not gone): for a body put somewhere to keep clear of.
+    fn others(table: &Table, seat: usize) -> Vec<Vec2> {
+        (0..table.seats.len())
+            .filter(|&other| other != seat && !table.seats[other].vacant && !table.seats[other].gone)
+            .map(|other| table.at[other].xz())
+            .collect()
     }
 
     /// Carries out what a step of the game came to: whoever went in is out
@@ -142,9 +175,12 @@ impl KnockOff {
 }
 
 impl Rules for KnockOff {
-    fn waiting_spot(&mut self, _table: &Table, seat: usize) -> (Vec3, f32) {
-        let (at, turn) = knock_off::arrival(seat);
-        (at, yaw_of(turn))
+    /// Out on the seat's own side of the island ([`knock_off::waiting_spot`]),
+    /// or the nearest spot to it clear of everyone already there.
+    fn waiting_spot(&mut self, table: &Table, seat: usize) -> (Vec3, f32) {
+        let (at, turn) = knock_off::waiting_spot(seat, &self.floe);
+        let at = self.floe.free_spot(at.xz(), &Self::others(table, seat), 1.0, STOOD_BACK, knock_off::ROOM);
+        (Vec3::new(at.x, 0.0, at.y), yaw_of(turn))
     }
 
     /// The computer's players, as each comes out onto the ice, stand about
@@ -163,21 +199,26 @@ impl Rules for KnockOff {
             if !self.loiter.has(seat) {
                 self.loiter.enter(seat, table.at[seat].xz(), table.yaw[seat]);
             }
-            if let Some((at, yaw)) = self.loiter.step(seat, &everyone, dt) {
+            if let Some((at, yaw)) = self.loiter.step(seat, &everyone, &self.floe, dt) {
                 table.at[seat] = Vec3::new(at.x, 0.0, at.y);
                 table.yaw[seat] = yaw;
             }
         }
     }
 
-    /// Everyone on their spot, facing the middle, and the first turn's aim
-    /// begins: by the clock every device has for the town's, which the whole
-    /// game goes by from here.
+    /// Everyone where they stood as the countdown ended (a person where
+    /// their device last said, the computer's players where they strolled
+    /// to), on the ice and nobody on anyone, facing the middle, and the first
+    /// turn's aim begins: by the clock every device has for the town's, which
+    /// the whole game goes by from here.
     fn begin(&mut self, ctx: &mut Ctx, table: &mut Table) {
         self.loiter.clear();
         let people: Vec<bool> = table.seats.iter().map(|it| it.person()).collect();
-        let mut game = Game::new(table.seats.len(), &people, self.seed);
-        let events = game.begin(ctx.clock);
+        let standing: Vec<Option<Vec2>> = (0..table.seats.len())
+            .map(|seat| (!table.seats[seat].vacant && !table.seats[seat].gone).then(|| table.at[seat].xz()))
+            .collect();
+        let mut game = Game::new(table.seats.len(), &people, self.seed, Arc::clone(&self.floe));
+        let events = game.begin(ctx.clock, &standing);
         for seat in 0..table.seats.len() {
             let (at, yaw) = game.at(seat);
             ctx.place(table, seat, at, yaw);
@@ -227,8 +268,9 @@ impl Rules for KnockOff {
 
     /// Each person's aim as it changes, and their word that they are ready;
     /// and before the game, someone who has gone into the sea stood back on
-    /// their spot (they wade there, with no jump to climb out by: Knock Off
-    /// has none). A skip (`RT_ALLOW_SKIP`) is the table's alone, for its
+    /// the ice, the nearest spot to where their device last said they were,
+    /// clear of everyone (they wade there, with no jump to climb out by:
+    /// Knock Off has none). A skip (`RT_ALLOW_SKIP`) is the table's alone, for its
     /// wait and its countdown (mine): in play Ready is the game's own skip,
     /// and a tap on the board meant for the countdown that lands as play
     /// begins is to end nobody's aim, as it ended everyone's when a skip in
@@ -240,8 +282,12 @@ impl Rules for KnockOff {
             }
             (Ask::KnockOff(knock_off::Ask::Ready), Some(game)) => game.ready(seat),
             (Ask::Respawn, None) => {
-                let (at, yaw) = self.waiting_spot(table, seat);
-                ctx.place(table, seat, at, yaw);
+                let Some(last) = table.at.get(seat).copied() else {
+                    return;
+                };
+                let back = self.floe.free_spot(last.xz(), &Self::others(table, seat), 1.0, STOOD_BACK, knock_off::ROOM);
+                let yaw = table.yaw.get(seat).copied().unwrap_or(0.0);
+                ctx.place(table, seat, Vec3::new(back.x, 0.0, back.y), yaw);
             }
             _ => {}
         }
@@ -273,7 +319,13 @@ impl Rules for KnockOff {
         }
     }
 
+    /// The island, once, from the first frame the table is open; and the
+    /// round whenever it changes, once the game has begun.
     fn show(&mut self, commands: &mut Commands, table: &Table) {
+        if !self.island_sent {
+            commands.entity(table.shown).insert(self.island);
+            self.island_sent = true;
+        }
         let Some(game) = &self.game else {
             return;
         };
@@ -318,7 +370,8 @@ mod tests {
 
     /// A table of four seats, `people` of them people's (each a body in the
     /// table's room with a device), the rest the computer's, its game made
-    /// from `seed`: as it is the moment its countdown is over.
+    /// from `seed`, everyone standing where they arrived on its island: as
+    /// it is the moment its countdown is over.
     fn table(people: usize, seed: u64) -> (World, Vec<Entity>) {
         let mut world = World::new();
         world.insert_resource(Config {
@@ -334,6 +387,7 @@ mod tests {
         world.init_resource::<Messages<ToClients<Tell>>>();
         let shown = world.spawn_empty().id();
         let mut table = Table::new(Minigame::KnockOff, 0, shown, seed).expect("Knock Off is played at tables");
+        let mut rules = KnockOff::new(&table, seed);
         let room = Room::Table(Minigame::KnockOff, 0);
         let mut clients = Vec::new();
         for seat in 0..4 {
@@ -348,13 +402,16 @@ mod tests {
             it.gone = false;
             it.computer = seat >= people;
             it.member = member.clone();
+            let (at, yaw) = rules.waiting_spot(&table, seat);
+            table.at[seat] = at;
+            table.yaw[seat] = yaw;
+            let it = &mut table.seats[seat];
             if seat < people {
                 let client = world.spawn_empty().id();
-                let (at, turn) = knock_off::arrival(seat);
                 it.body = world
                     .spawn((
                         member.clone(),
-                        Spot::of(at, turn),
+                        Spot::of(at, Quat::from_rotation_y(yaw)),
                         Venue::KnockOff,
                         InRoom(room),
                         Body::person(client, Who(member.id), room, seat as u8, None, 950, 0.0),
@@ -365,7 +422,6 @@ mod tests {
         }
         table.size = 4;
         table.stage = Stage::Playing { elapsed: 0.0 };
-        let rules = KnockOff::new(&table, seed);
         world.insert_resource(Played { rules, table, clock: CLOCK });
         (world, clients)
     }
@@ -446,7 +502,7 @@ mod tests {
     fn a_table_of_one_person_and_the_computer_is_played_from_go_to_its_end() {
         let (mut world, clients) = table(1, 7);
         act(&mut world, |rules, ctx, table| rules.begin(ctx, table));
-        // Everyone on their spot as the game begins: the person told so,
+        // Everyone where they stood as the game begins: the person told so,
         // the computer's players where the table sends their bodies.
         let said = told(&mut world);
         assert!(
@@ -454,9 +510,10 @@ mod tests {
             "{said:?}"
         );
         {
-            let table = &world.resource::<Played>().table;
+            let played = world.resource::<Played>();
             for seat in 1..4 {
-                assert!((table.at[seat] - knock_off::arrival(seat).0).length() < 1e-4, "seat {seat}");
+                let (spot, _) = knock_off::waiting_spot(seat, &played.rules.floe);
+                assert!((played.table.at[seat] - spot).length() < 1e-4, "seat {seat}");
             }
         }
         frame(&mut world, 1.0 / 60.0);
@@ -746,12 +803,96 @@ mod tests {
         for _ in 0..(60 * 40) {
             act(&mut world, |rules, ctx, table| rules.idle(ctx, table, 1.0 / 60.0));
             let table = &world.resource::<Played>().table;
+            let floe = &world.resource::<Played>().rules.floe;
             for seat in 1..4 {
                 let at = table.at[seat];
-                assert!(at.xz().length() < knock_off::RADIUS - 1.0, "seat {seat} off toward the edge: {at}");
+                assert!(floe.depth(at.xz(), 1.0) > 0.0, "seat {seat} off the ice: {at}");
                 moved[seat] |= at.distance(start[seat]) > 0.5;
+                for other in 0..seat {
+                    assert!(at.distance(table.at[other]) > knock_off::ROOM - 0.1, "seat {seat} on seat {other}");
+                }
             }
         }
         assert_eq!(moved, [false, true, true, true], "{moved:?}");
     }
+
+    #[test]
+    fn the_island_is_sent_as_the_table_opens_and_everyone_begins_where_they_stood() {
+        let (mut world, clients) = table(2, 21);
+        // The island, from the first frame the table is shown, before any
+        // round: what every device makes its ice from.
+        act(&mut world, |rules, ctx, table| {
+            table.stage = Stage::Waiting { since_join: 0.0, coming: None };
+            rules.show(ctx.commands, table);
+        });
+        world.flush();
+        let (shown, floe) = {
+            let played = world.resource::<Played>();
+            (played.table.shown, Arc::clone(&played.rules.floe))
+        };
+        let island = *world.get::<Island>(shown).expect("the island is sent");
+        assert_eq!(island.floe(), *floe);
+        assert!(world.get::<KnockRound>(shown).is_none());
+        // Seat 0 walked well in; seat 1 walked off into the sea; the
+        // computer's two strolled onto the very same spot.
+        let middle = floe.middle(1.0);
+        let off = Vec2::X * (floe.reach_toward(Vec2::X) + 1.5);
+        // Along the way out from the island's own middle to the point of
+        // its outline furthest from its deepest spot: ice all the way.
+        let far = floe.rim().iter().copied().max_by(|a, b| a.distance_squared(middle).total_cmp(&b.distance_squared(middle))).expect("an outline");
+        let together = far * 0.6;
+        {
+            let table = &mut world.resource_mut::<Played>().into_inner().table;
+            table.at[0] = Vec3::new(middle.x, 0.0, middle.y);
+            table.at[1] = Vec3::new(off.x, -1.0, off.y);
+            table.at[2] = Vec3::new(together.x, 0.0, together.y);
+            table.at[3] = Vec3::new(together.x, 0.0, together.y);
+            table.stage = Stage::Playing { elapsed: 0.0 };
+        }
+        told(&mut world);
+        act(&mut world, |rules, ctx, table| rules.begin(ctx, table));
+        frame(&mut world, 1.0 / 60.0);
+        let round = sent_round(&world).expect("the round");
+        let start: Vec<Vec2> = round.start.iter().map(|at| at.map(|(x, z)| Vec2::new(x, z)).expect("on the ice")).collect();
+        if together.distance(middle) > 2.0 * knock_off::ROOM {
+            assert_eq!(start[0], middle);
+        }
+        assert!(floe.depth(start[1], 1.0) >= STOOD_BACK * 0.97 && start[1].distance(off) < 1.5 + STOOD_BACK + 1.0, "{}", start[1]);
+        assert!(start[2].distance(start[3]) >= knock_off::ROOM, "{} {}", start[2], start[3]);
+        // Each person told where they begin, there.
+        let said = told(&mut world);
+        for seat in 0..2 {
+            let placed = said.iter().find_map(|(client, tell)| match tell {
+                Tell::Arrive { venue: Venue::KnockOff, spot: Some(spot), .. } if *client == clients[seat] => Some(spot.translation().xz()),
+                _ => None,
+            });
+            // (A spot is sent to the centimetre.)
+            assert!(placed.is_some_and(|placed| placed.distance(start[seat]) < 0.01), "seat {seat}: {placed:?}, {said:?}");
+        }
+    }
+
+    #[test]
+    fn whoever_walks_into_the_sea_before_the_game_is_stood_back_where_they_went_in() {
+        let (mut world, clients) = table(2, 8);
+        let floe = Arc::clone(&world.resource::<Played>().rules.floe);
+        let way = Vec2::new(-0.6, 0.8);
+        let off = way * (floe.reach_toward(way) + 0.8);
+        {
+            let table = &mut world.resource_mut::<Played>().into_inner().table;
+            table.stage = Stage::Waiting { since_join: 0.0, coming: None };
+            table.at[1] = Vec3::new(off.x, -0.6, off.y);
+        }
+        act(&mut world, |rules, ctx, table| rules.hear(ctx, table, 1, &Ask::Respawn));
+        let said = told(&mut world);
+        let back = said
+            .iter()
+            .find_map(|(client, tell)| match tell {
+                Tell::Arrive { spot: Some(spot), .. } if *client == clients[1] => Some(spot.translation().xz()),
+                _ => None,
+            })
+            .expect("stood back");
+        assert!(floe.depth(back, 1.0) >= STOOD_BACK * 0.97, "{back}");
+        assert!(back.distance(off) < 0.8 + STOOD_BACK + 1.0, "{off} to {back}");
+    }
 }
+

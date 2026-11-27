@@ -1069,12 +1069,18 @@ fn host(
             Happened::Counting => info!("{game:?}: every seat taken, counting down"),
             Happened::Begun => {
                 // Everyone where their seat arrives, as the server's stubs
-                // stand them: the game moves them from there.
-                if let Ok((you, ..)) = seating.me.single() {
-                    lobby::put(&mut seating.bodies, &mut seating.orbit, you, venue, starting_place(venue, 0));
-                }
-                for &(seat, body) in &hosted.bodies {
-                    lobby::put(&mut seating.bodies, &mut seating.orbit, body, venue, starting_place(venue, seat));
+                // stand them: the game moves them from there. But Knock
+                // Off's, where everyone begins where they stood (since
+                // 2026-11-27, Hajun: "wherever ur last position was ... is
+                // your starting position"), and its game takes them from
+                // there (`knock_off::play_offline`).
+                if game != Minigame::KnockOff {
+                    if let Ok((you, ..)) = seating.me.single() {
+                        lobby::put(&mut seating.bodies, &mut seating.orbit, you, venue, starting_place(venue, 0));
+                    }
+                    for &(seat, body) in &hosted.bodies {
+                        lobby::put(&mut seating.bodies, &mut seating.orbit, body, venue, starting_place(venue, seat));
+                    }
                 }
                 info!("{game:?}: begun");
             }

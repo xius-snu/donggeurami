@@ -20,9 +20,11 @@
 //! as its arrow was long, whatever the steps (a step it stops within is cut
 //! to what it had left), so that the arrow drawn while aiming never lies.
 
+use std::sync::Arc;
+
 use bevy::math::{Vec2, Vec3};
 
-use super::{BODY, BOUNCE, FALL, ICE, ON_THE_LINE, SLIDE_MOST, STEP, STOPPED, SUNK};
+use super::{BODY, BOUNCE, FALL, Floe, ICE, ON_THE_LINE, SLIDE_MOST, STEP, STOPPED, SUNK};
 
 /// The most steps a slide is played for before it is over whatever is
 /// still moving: [`SLIDE_MOST`] of them.
@@ -105,7 +107,14 @@ pub struct Ending {
 #[derive(Clone, Debug)]
 pub struct Slide {
     discs: Vec<Disc>,
-    radius: f32,
+    /// The island, and how big its ice is ([`super::size_in`]): a body is
+    /// on it while [`Floe::holds`] says so, asked as it is here, by the
+    /// island at its whole size and each body's middle made as much bigger
+    /// as the ice is smaller (`grow`), its slack ([`ON_THE_LINE`]) with it.
+    floe: Arc<Floe>,
+    size: f32,
+    grow: f32,
+    slack: f32,
     /// How many steps it has gone, and at which of them it was over
     /// (stepped on after that, only whatever went over moves, dropping).
     steps: u32,
@@ -119,9 +128,9 @@ impl Slide {
     /// whoever is out already), each setting off at their launch
     /// (`launches`, by seat, a velocity across the ice in metres a second;
     /// one missing, or anything not a number in it, is standing still),
-    /// on ice that reaches `radius` from the middle. Anyone already past
-    /// its edge goes over as it begins.
-    pub fn new(start: &[Option<Vec2>], launches: &[Vec2], radius: f32) -> Self {
+    /// on `floe` at `size` (a share of the whole island; none is no ice).
+    /// Anyone already past its edge goes over as it begins.
+    pub fn new(start: &[Option<Vec2>], launches: &[Vec2], floe: &Arc<Floe>, size: f32) -> Self {
         let discs = start
             .iter()
             .enumerate()
@@ -133,9 +142,13 @@ impl Slide {
                 }
             })
             .collect();
+        let grow = if size > 0.0 { 1.0 / size } else { 0.0 };
         let mut slide = Self {
             discs,
-            radius,
+            floe: Arc::clone(floe),
+            size,
+            grow,
+            slack: ON_THE_LINE * grow,
             steps: 0,
             done: false,
             done_at: 0,
@@ -148,8 +161,8 @@ impl Slide {
 
     /// A slide played out to its end: where everyone came to rest, who went
     /// over and when, and how long it took.
-    pub fn play_out(start: &[Option<Vec2>], launches: &[Vec2], radius: f32) -> Ending {
-        let mut slide = Self::new(start, launches, radius);
+    pub fn play_out(start: &[Option<Vec2>], launches: &[Vec2], floe: &Arc<Floe>, size: f32) -> Ending {
+        let mut slide = Self::new(start, launches, floe, size);
         while !slide.done {
             slide.step();
         }
@@ -257,12 +270,12 @@ impl Slide {
 
     /// Whatever on the ice has its middle past the edge goes over, this
     /// step (by more than a hair, [`ON_THE_LINE`]); on ice that is all gone,
-    /// everything does.
+    /// everything does. The very sum [`Floe::holds`] does.
     fn edge(&mut self) {
-        let edge_squared = (self.radius + ON_THE_LINE) * (self.radius + ON_THE_LINE);
         let steps = self.steps;
+        let gone = self.size.is_nan() || self.size <= 0.0;
         for disc in &mut self.discs {
-            if disc.place == Place::On && (self.radius <= 0.0 || disc.x * disc.x + disc.z * disc.z > edge_squared) {
+            if disc.place == Place::On && (gone || !self.floe.holds_whole(disc.x * self.grow, disc.z * self.grow, self.slack)) {
                 disc.place = Place::Over(steps);
             }
         }
@@ -413,6 +426,11 @@ mod tests {
     use crate::bots::Dice;
     use crate::knock_off::{METRES_A_POWER, MOST_POWER, RADIUS, launch};
 
+    /// A round island `radius` out, at its whole size.
+    fn ice(radius: f32) -> Arc<Floe> {
+        Arc::new(Floe::round(radius))
+    }
+
     /// Every number of a slide as it stands, as bits: two slides that give
     /// the same are the same to the bit.
     fn bits(slide: &Slide) -> Vec<u32> {
@@ -430,7 +448,7 @@ mod tests {
             for way in [Vec2::X, Vec2::NEG_Y, Vec2::new(0.6, 0.8), Vec2::new(-0.28, 0.96)] {
                 // From the far side, so that even the most stays on.
                 let from = -way * 13.0;
-                let ending = Slide::play_out(&[Some(from)], &[launch(way, power)], 40.0);
+                let ending = Slide::play_out(&[Some(from)], &[launch(way, power)], &ice(40.0), 1.0);
                 let went = ending.at[0].expect("on the ice").distance(from);
                 let meant = f32::from(power) * METRES_A_POWER;
                 assert!((went - meant).abs() < 0.02 * meant, "power {power} went {went} m, not {meant}");
@@ -444,7 +462,7 @@ mod tests {
             }
         }
         // Standing still, it stays, and that is over at once.
-        let ending = Slide::play_out(&[Some(Vec2::new(3.0, -2.0))], &[Vec2::ZERO], RADIUS);
+        let ending = Slide::play_out(&[Some(Vec2::new(3.0, -2.0))], &[Vec2::ZERO], &ice(RADIUS), 1.0);
         assert_eq!(ending.at[0], Some(Vec2::new(3.0, -2.0)));
         assert_eq!(ending.secs, 0.0);
     }
@@ -459,7 +477,7 @@ mod tests {
             // The one at the other, give or take; the other going anywhere.
             let at = (other - one).normalize() + Vec2::new(dice.bell(), dice.bell()) * 0.15;
             let launches = [launch(at, 3 + (dice.roll() * 8.0) as u8), Vec2::new(dice.between(-3.0, 3.0), dice.between(-3.0, 3.0))];
-            let mut slide = Slide::new(&[Some(one), Some(other)], &launches, 100.0);
+            let mut slide = Slide::new(&[Some(one), Some(other)], &launches, &ice(100.0), 1.0);
             let both = |slide: &Slide| slide.velocity(0).unwrap() + slide.velocity(1).unwrap();
             while !slide.done() {
                 // What the two would have between them after the ice had
@@ -487,7 +505,7 @@ mod tests {
     fn a_body_hitting_one_standing_head_on_hands_it_nearly_all_its_speed() {
         // One sliding at another standing still, straight at it: just
         // before they meet, and just after.
-        let mut slide = Slide::new(&[Some(Vec2::new(-5.0, 0.0)), Some(Vec2::ZERO)], &[launch(Vec2::X, 6), Vec2::ZERO], RADIUS);
+        let mut slide = Slide::new(&[Some(Vec2::new(-5.0, 0.0)), Some(Vec2::ZERO)], &[launch(Vec2::X, 6), Vec2::ZERO], &ice(RADIUS), 1.0);
         let mut coming = 0.0;
         while slide.hits().is_empty() {
             coming = slide.velocity(0).unwrap().x;
@@ -507,7 +525,7 @@ mod tests {
         // two touch.
         let meet = |arriving: f32| {
             let speed = (arriving * arriving + 2.0 * ICE * 0.8).sqrt();
-            let mut slide = Slide::new(&[Some(Vec2::new(-2.0, 0.0)), Some(Vec2::ZERO)], &[Vec2::new(speed, 0.0), Vec2::ZERO], RADIUS);
+            let mut slide = Slide::new(&[Some(Vec2::new(-2.0, 0.0)), Some(Vec2::ZERO)], &[Vec2::new(speed, 0.0), Vec2::ZERO], &ice(RADIUS), 1.0);
             while !slide.done() {
                 slide.step();
             }
@@ -532,8 +550,8 @@ mod tests {
         // stepping it by the clock steps it while whoever went in drops.
         let start = [Some(Vec2::new(8.0, 0.0)), Some(Vec2::new(10.5, 0.0))];
         let launches = [launch(Vec2::X, 4), Vec2::ZERO];
-        let ending = Slide::play_out(&start, &launches, RADIUS);
-        let mut slide = Slide::new(&start, &launches, RADIUS);
+        let ending = Slide::play_out(&start, &launches, &ice(RADIUS), 1.0);
+        let mut slide = Slide::new(&start, &launches, &ice(RADIUS), 1.0);
         slide.step_to(SLIDE_MOST * 2.0);
         assert!(slide.time() > ending.secs + 1.0, "{} s, over at {} s", slide.time(), ending.secs);
         assert_eq!(slide.ending(), ending);
@@ -553,7 +571,7 @@ mod tests {
                 }
             }
             let launches: Vec<Vec2> = (0..4).map(|_| Vec2::new(dice.between(-14.0, 14.0), dice.between(-14.0, 14.0))).collect();
-            let mut slide = Slide::new(&start, &launches, RADIUS);
+            let mut slide = Slide::new(&start, &launches, &ice(RADIUS), 1.0);
             for _ in 0..MOST_STEPS {
                 slide.step();
                 for one in 0..4 {
@@ -579,7 +597,7 @@ mod tests {
         // along the same line, which would have hit it on the ice.
         let start = [Some(Vec2::new(8.0, 0.0)), Some(Vec2::new(10.5, 0.0)), Some(Vec2::new(2.0, 0.0))];
         let launches = [launch(Vec2::X, 4), Vec2::ZERO, launch(Vec2::X, 10)];
-        let mut slide = Slide::new(&start, &launches, RADIUS);
+        let mut slide = Slide::new(&start, &launches, &ice(RADIUS), 1.0);
         while !slide.done() {
             slide.step();
         }
@@ -622,14 +640,16 @@ mod tests {
                 .map(|seat| (seat != 3 || dice.roll() < 0.7).then(|| Vec2::new(dice.between(-8.0, 8.0), dice.between(-8.0, 8.0))))
                 .collect();
             let launches: Vec<Vec2> = (0..4).map(|_| Vec2::new(dice.between(-15.0, 15.0), dice.between(-15.0, 15.0))).collect();
-            let radius = dice.between(3.0, 12.0);
-            let (mut one, mut other) = (Slide::new(&start, &launches, radius), Slide::new(&start, &launches, radius));
+            // On an island thrown for it, at a size thrown too.
+            let floe = Arc::new(Floe::thrown(dice.roll().to_bits().into()));
+            let size = dice.between(0.25, 1.0);
+            let (mut one, mut other) = (Slide::new(&start, &launches, &floe, size), Slide::new(&start, &launches, &floe, size));
             for _ in 0..MOST_STEPS + 30 {
                 one.step();
                 other.step();
                 assert_eq!(bits(&one), bits(&other));
             }
-            assert_eq!(Slide::play_out(&start, &launches, radius), Slide::play_out(&start, &launches, radius));
+            assert_eq!(Slide::play_out(&start, &launches, &floe, size), Slide::play_out(&start, &launches, &floe, size));
         }
         // And a slide written down to the bit, four sliding into a pile in
         // the middle: what it came to on the machine the game was made on,
@@ -644,7 +664,7 @@ mod tests {
             launch(Vec2::new(1.0, 1.1), 5),
             launch(Vec2::new(1.0, -0.8), 7),
         ];
-        let mut slide = Slide::new(&start, &launches, RADIUS);
+        let mut slide = Slide::new(&start, &launches, &ice(RADIUS), 1.0);
         while !slide.done() {
             slide.step();
         }
@@ -692,8 +712,8 @@ mod tests {
                     _ => Vec2::new(dice.between(-16.0, 16.0), dice.between(-16.0, 16.0)),
                 })
                 .collect();
-            let radius = [RADIUS, 3.0, 0.75, 0.0][(dice.roll() * 4.0) as usize];
-            let mut slide = Slide::new(&start, &launches, radius);
+            let size = [1.0, 0.25, 0.0625, 0.0][(dice.roll() * 4.0) as usize];
+            let mut slide = Slide::new(&start, &launches, &ice(RADIUS), size);
             for _ in 0..MOST_STEPS + 10 {
                 slide.step();
             }
@@ -709,10 +729,10 @@ mod tests {
 
     #[test]
     fn whoever_stands_past_the_edge_as_it_begins_goes_over_and_all_go_on_no_ice() {
-        let ending = Slide::play_out(&[Some(Vec2::new(5.0, 0.0)), Some(Vec2::new(1.0, 0.0)), None], &[], 3.0);
+        let ending = Slide::play_out(&[Some(Vec2::new(5.0, 0.0)), Some(Vec2::new(1.0, 0.0)), None], &[], &ice(3.0), 1.0);
         assert_eq!(ending.at, vec![None, Some(Vec2::new(1.0, 0.0)), None]);
         assert_eq!(ending.fell, vec![Some(0.0), None, None]);
-        let ending = Slide::play_out(&[Some(Vec2::ZERO), Some(Vec2::new(0.3, 0.0))], &[], 0.0);
+        let ending = Slide::play_out(&[Some(Vec2::ZERO), Some(Vec2::new(0.3, 0.0))], &[], &ice(RADIUS), 0.0);
         assert_eq!(ending.at, vec![None, None]);
     }
 }

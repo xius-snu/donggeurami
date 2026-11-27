@@ -6,12 +6,167 @@
 
 ## Contents
 
-1. Later on the evening of 2026-11-18: the stick is taken anywhere on the screen but round the buttons
-2. The evening of 2026-11-18: every turn begins at power 1
-3. At the merge, 2026-11-18: the far player clear of the table's board, the game's name said low, the out panel clear of the chat's button
-4. Later still on 2026-11-18, after a play-test: the camera comes in as the ice breaks, a hit is felt, nothing stands over the play, the ice breaks into pieces, and whoever wins has a moment
-5. Later on 2026-11-18, after a check of it: the last person to leave is paid for their place online too, where you came is the game's own word for it, a device that comes back is held ready if it was, and every slide begins on every device the moment it begins
-6. Since 2026-11-18 Knock Off is a game people play, online and offline: four on a disc of ice in the sea, everyone aiming at once in secret and sliding at once, the ice breaking a metre a turn
+1. 2026-11-27: every table its own island, thrown as blobmaker.app throws its blobs, and everyone begins where they stood; protocol 26, the server deployed, APK 61
+2. Later on the evening of 2026-11-18: the stick is taken anywhere on the screen but round the buttons
+3. The evening of 2026-11-18: every turn begins at power 1
+4. At the merge, 2026-11-18: the far player clear of the table's board, the game's name said low, the out panel clear of the chat's button
+5. Later still on 2026-11-18, after a play-test: the camera comes in as the ice breaks, a hit is felt, nothing stands over the play, the ice breaks into pieces, and whoever wins has a moment
+6. Later on 2026-11-18, after a check of it: the last person to leave is paid for their place online too, where you came is the game's own word for it, a device that comes back is held ready if it was, and every slide begins on every device the moment it begins
+7. Since 2026-11-18 Knock Off is a game people play, online and offline: four on a disc of ice in the sea, everyone aiming at once in secret and sliding at once, the ice breaking a metre a turn
+
+## 2026-11-27: every table its own island, thrown as blobmaker.app throws its blobs, and everyone begins where they stood; protocol 26, the server deployed, APK 61
+
+Hajun: "in the knock off minigame. right now, it always forms the same
+shape of island (circle). i want it to be so that each game, a truly
+random shape of island forms. check out blobmaker.app, and set both the
+two sliders all the way to the right side and click random generate, i
+want that kind of style of shape to be generated each game (truly random
+based on code, not just selecting from a pre-generateed random array).
+also i dont want fixed starting positions. i want it so that in the
+"waiting phase" right now where u can move around freely - that is when u
+choose ur starting position, and when the game start, wherever ur last
+position was (or nearest surface position before falling into the water
+if u fell into the water at the start time) is your starting position, so
+collision matters during waiting period too so u cant start on top of
+each other." Then, asked "Should I build APK 61 and deploy?": "ye build
+apk and push". `PROTOCOL_VERSION` 26: **the server deployed at 10:16 UTC
+on 2026-11-27, and APK 60 and older are told to update; APK 61 is the
+first that plays online** (`docs/building.md`). Everything below not in
+his words is mine.
+
+- **Blobmaker's own way, read off its page.** The fetching tool could not
+  reach blobmaker.app (refused), but this PC could: its page's script
+  (`component---src-pages-index-js-*.js`, read on 2026-11-27) makes a blob
+  of `complexity` points (its first slider, 3 to 12) a whole turn apart,
+  each as far out as `100 - (12.5 * contrast - 0.01)` to `100` of 100 at
+  random (`Math.random()`, its second slider, 1 to 8), and draws the
+  closed curve d3's `curveBasisClosed` pulls through them (a closed cubic
+  B-spline, near each point, never through it). Both sliders right: twelve
+  points, each anywhere from 0.01 to 100 of 100 out. The island is that,
+  to the letter (`roundtown_net::knock_off::Floe`, `shared/src/knock_off/floe.rs`):
+  twelve points, each `0.0001` to `1` of the most out, the same curve, 16
+  points of outline to a span (192 round it), every shape a new throw
+  from a seed, never one of a list.
+- **As much ice every game** (mine): blobmaker's blobs come any size in
+  its box; every island is made as big as the disc 10 m out
+  (`AREA_RADIUS`, 314 m², the disc of 12 m was 452). An island of
+  blobmaker's reaches about 1.5 times further from its middle than the
+  disc as big as it, and the camera fits it by how far it reaches: as big
+  as the disc of 12, it would have stood everyone half as far again off.
+  Over 200 whole games of the computer's players on thrown islands, a game
+  lasts 5.8 turns on average, 6 the median (6.7 and 6 on the disc), every
+  kind wins 10 to 38% of its games (12 to 36%), and with two left 5.0% of
+  turns end in the sea by one's own move alone (4.0%).
+- **Thrown for its table, the same everywhere.** The server throws the
+  seed as the table opens, from the table's own (`fastrand`, from
+  nothing anyone chose), and sends it to the table's room from the first
+  frame, before anyone has sat down (`knock_off::Island`, a component on
+  the table's entity, registered after `KnockRound`: hence protocol 26).
+  Every device makes the very outline from it, to the bit: it is made by
+  `+ - * /` and the square root alone, the points' ways out written down
+  rather than worked out with `cos` and `sin`, and whether a body is on it
+  is asked by `+ - * /` alone (`Floe::holds`, a side of the outline found
+  by a number that rises with the angle, `turn_of`, in buckets). A test
+  pins three thrown islands' bits and the round one's
+  (`an_island_is_made_alike_to_the_bit_on_every_machine`). Offline, the
+  device throws its own as you sit down. Every outline is checked to be
+  seen whole from its middle (star-shaped), and thrown again if not: of
+  4,000 thrown in a simulation of the page's own sums, none was not.
+- **The ice breaks toward the middle it was thrown round** (mine): the
+  same outline made smaller, a twelfth of the island a turn, as the disc
+  broke (12, 11 ... 3, 2.25, 1.5, 0.75 m and none, now as shares:
+  `size_in`, `size_after`; the round's `radius`/`next_radius` are
+  `size`/`next_size`). What is left always lies within what was, and the
+  game still ends by the thirteenth turn. (Eroding the edge a metre a turn
+  instead would cut arms off into islands of their own and leave the
+  middle round by the fifth turn.)
+- **What is drawn**: the island's model (`iceisland.glb`) is kept for its
+  ice material, its disc put away; the outline, 3 m deep, is drawn under
+  it in that material (`ice::shape_the_island`, `island_mesh`), and is
+  what everyone walks on while the table waits (`Islands::reshape`, a
+  closed solid, its top a fan from its middle). The cracks, the darker
+  band of ice that will break, the moon's sheen by night, and the pieces
+  the band breaks into go round the outline, each piece as long as the
+  outline is there; an arrow is dashed past where the slide would first
+  leave the ice, a bay of sea crossed included (`Floe::leaves`).
+- **The camera** (mine): from your seat's side as before, as steep, fitted
+  to the outline (every other point of it, 2 m of sea out) where it was
+  fitted to a circle, centred across the screen on the island, and coming
+  in as it breaks to what is left (never round less than 3.5 m of ice).
+  An island lying across the screen is fitted from nearer than one lying
+  along it: of the three the test tries, the last turns are 1.9 to 3.1
+  times nearer than the first (2.5 on the round island).
+- **Arriving** (mine): round the island's deepest spot
+  (`Floe::middle`), out from it toward your seat's side 7/12 of how deep
+  that spot is (`waiting_spot`; on the round island 7 m out, where the
+  disc stood everyone), and clear of anyone there already. Along the
+  seat's side from the island's own middle, as on the disc, put someone
+  in a bay 0.6 m from the sea in the first run.
+- **While the table waits, nobody walks through anybody**: your device
+  keeps your body 1.2 m from every other at the table (`keep_apart`, two of
+  the slide's bodies, `ROOM`, so that wherever you stop you can begin; a
+  0.3 m gap between two bodies standing as close as can be); the
+  computer's players stop short of whoever is in their way, step back out
+  of the way of whoever walks into them, never off the ice, and stroll
+  only where there is ice all the way (`Loiter`, its throws as before).
+  Walked off into the sea, you are stood back on the ice at the nearest
+  spot to where you went in, half a body in (0.3 m, `STOOD_BACK`), clear
+  of everyone (it was your seat's spot): offline by the device, online by
+  the server from where your device last said you were (`Ask::Respawn` as
+  before). While a device has not yet been sent its table's island, its
+  body is held where the server stood it (`find_the_island`).
+- **Where everyone begins** (Hajun's words above): where they stood as the
+  countdown ended (`Game::begin(clock, standing)`, `settle`): a person
+  where their device last said (the server's copy, `Table::at`), the
+  computer's players where they strolled to; in the sea, or on the way
+  into it, the nearest spot on the ice 0.3 m in; on top of someone (two
+  devices can each have its own body clear of where it last saw the
+  other's), pushed apart half each and kept on the ice; nobody anywhere,
+  on their arrival spot. Offline the device does it, online the server,
+  and the round says where everyone begins, as it always did.
+- **The computer's players** weigh how deep in from the next turn's edge
+  a slide leaves each (`Floe::depth`) where they weighed how far in from a
+  circle; "whoever stands nearest the edge" is by that; "the middle" is the
+  ice's deepest spot.
+- **Checked**: the rules' tests (296, 48 of Knock Off's: every island as
+  big as the disc and seen whole from its middle, no two seeds alike, one
+  seed one island to the bit, whether a spot is on it is what its outline
+  says at every size, what is left within what was, someone off it stood
+  back near where they went in, a free spot, a slide leaving it where its
+  steps would, the round island the disc; the stroll never crossing the
+  sea, a body walked into stepping aside and one strolling stopping short;
+  everyone beginning where they stood, in the sea on the ice, on top of
+  each other apart; nobody setting out for the sea on purpose on thrown
+  islands); the server's (131: the island sent before the first round,
+  the begin from where everyone stood and each person told where, one
+  walked into the sea stood back where they went in; the stroll on the
+  ice and apart); the game's (604: the camera on the whole of any island
+  between what stands at the edges, coming in as it breaks; the island a
+  closed solid 3 m deep, walkable to its outline; the band between the two
+  outlines; cracks and pieces round any outline). **In the desktop build,
+  hidden** (`RT_BACKGROUND=1`), by a throwaway driver taken out again,
+  offline three times (16:9 by day twice, a phone's 852 by 393 with a
+  59-point hole each side by night): three islands drawn, the cracks, the
+  band, the pieces and the sheen round each; put in the sea and stood back
+  0.30 to 0.46 m in; put 0.3 m from one of the computer's, 1.20 apart 0.6 s
+  later; a whole game begun exactly where I stood (0.0 m off). **Two hidden
+  copies against a server on this PC** (port 5491): the same island on
+  both; each walked off the edge at a walk and was stood back 0.2 to 0.4 m
+  in, 0.7 m from where it went in; each walked into the body nearest it for
+  four seconds and was never nearer than 1.20 m; each began within 5 mm of
+  where it last stood (a spot goes to the centimetre); every slide of an
+  eight-turn game the same to the bit on both devices as the server played
+  it; the same results on both. Pictures and logs in that session's
+  scratchpad (`runs/`).
+- **Not checked**: a phone (Android or iPhone; nothing behind `target_os`
+  was touched); the VM; real accounts; walking by the stick (the driver
+  moved the body at a walking pace itself); the frame rate on a phone (the
+  island is built once a table; a computer player's whole turn of thinking
+  is 1.4 ms in a release build on this PC).
+- **Seen, not changed**: the stick's disc, bottom left, can stand over the
+  tip of a long island (the camera keeps the top, the bottom and the sides
+  clear, not the stick's corner); and in one run at 16:9 the out panel's
+  line ran under its Leave button.
 
 ## Later on the evening of 2026-11-18: the stick is taken anywhere on the screen but round the buttons
 

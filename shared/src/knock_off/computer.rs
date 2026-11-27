@@ -32,10 +32,11 @@
 //! leaving before then, it thinks again without them ([`Mind::replan`]).
 
 use std::f32::consts::TAU;
+use std::sync::Arc;
 
 use bevy::math::Vec2;
 
-use super::{BODY, METRES_A_POWER, MOST_POWER, ON_THE_LINE, launch};
+use super::{AREA_RADIUS, BODY, Floe, METRES_A_POWER, MOST_POWER, launch};
 use crate::bots::Dice;
 use crate::knock_off::{Ending, Slide};
 
@@ -348,8 +349,9 @@ pub(super) struct Habits([f32; 5]);
 
 impl Habits {
     /// The player in `seat`, standing `at`, set off at `launch`, with
-    /// everyone standing as `stand` has them.
-    pub(super) fn saw(&mut self, seat: usize, at: Vec2, launch: Vec2, stand: &[Option<Vec2>]) {
+    /// everyone standing as `stand` has them and the middle of the ice
+    /// ([`Floe::middle`]) at `middle`.
+    pub(super) fn saw(&mut self, seat: usize, at: Vec2, launch: Vec2, stand: &[Option<Vec2>], middle: Vec2) {
         for seen in &mut self.0 {
             *seen *= REMEMBERS;
         }
@@ -362,7 +364,7 @@ impl Habits {
         let alike = |along: Option<Vec2>| along.map_or(0.0, |along| ((way.dot(along) + 1.0) * 0.5).powi(8));
         let to_nearest = nearest_to(seat, at, stand).and_then(|there| (there - at).try_normalize());
         let at_nearest = alike(to_nearest);
-        let to_middle = alike((-at).try_normalize().filter(|_| at.length() > 0.5));
+        let to_middle = alike((middle - at).try_normalize().filter(|_| at.distance(middle) > 0.5));
         let out_of_the_way = to_nearest.map_or(0.0, |to| alike(Some(to.perp())).max(alike(Some(-to.perp()))).max(alike(Some(-to))));
         let anything = 0.15;
         let all = at_nearest + to_middle + out_of_the_way + anything;
@@ -433,7 +435,10 @@ struct Guess {
 struct Thinking {
     me: usize,
     start: Vec<Option<Vec2>>,
-    radius: f32,
+    /// The island, how big its ice is this turn, and how big once it has
+    /// broken at its end ([`super::size_in`]).
+    floe: Arc<Floe>,
+    size: f32,
     next: f32,
     moves: Vec<Move>,
     guesses: Vec<Guess>,
@@ -491,15 +496,15 @@ impl Mind {
     /// A turn's aim begins, `since`, `secs` long: it throws who it is this
     /// turn and when it will make up its mind ([`Mind::decides_at`]), and
     /// lays out what it will weigh, for the player in `me` with everyone
-    /// standing as `stand` has them (none for whoever is out), on ice
-    /// reaching `radius` that will reach `next` once the turn is over.
+    /// standing as `stand` has them (none for whoever is out), on `floe`'s
+    /// ice at `size` that will be `next` once the turn is over.
     #[allow(clippy::too_many_arguments)]
-    pub(super) fn plan(&mut self, me: usize, stand: &[Option<Vec2>], radius: f32, next: f32, habits: &[Habits], since: f64, secs: f32) {
+    pub(super) fn plan(&mut self, me: usize, stand: &[Option<Vec2>], floe: &Arc<Floe>, size: f32, next: f32, habits: &[Habits], since: f64, secs: f32) {
         self.temper = Temper::throw(self.persona, &mut self.dice);
         let (soonest, latest) = self.persona.decides;
         self.decides_at = since + f64::from(secs * self.dice.around(soonest, latest).clamp(0.03, 0.97));
         self.decided = false;
-        self.lay_out(me, stand, radius, next, habits);
+        self.lay_out(me, stand, floe, size, next, habits);
     }
 
     /// Someone has left the game while it thinks ([`super::Game::leave`]): if it has not
@@ -510,26 +515,28 @@ impl Mind {
     /// past where they stood, toward the edge, and a way out of the way of nobody is no
     /// way to weigh. Once it has made up its mind it keeps its aim, as a person who has
     /// said they are ready keeps theirs.
-    pub(super) fn replan(&mut self, me: usize, stand: &[Option<Vec2>], radius: f32, next: f32, habits: &[Habits]) {
+    pub(super) fn replan(&mut self, me: usize, stand: &[Option<Vec2>], floe: &Arc<Floe>, size: f32, next: f32, habits: &[Habits]) {
         if self.decided {
             return;
         }
-        self.lay_out(me, stand, radius, next, habits);
+        self.lay_out(me, stand, floe, size, next, habits);
     }
 
     /// Lays out what it weighs this turn, from the start: every move, and every guess at
     /// how the turn will go, none of them played out yet.
-    fn lay_out(&mut self, me: usize, stand: &[Option<Vec2>], radius: f32, next: f32, habits: &[Habits]) {
-        let moves = self.moves(me, stand, radius, habits);
+    fn lay_out(&mut self, me: usize, stand: &[Option<Vec2>], floe: &Arc<Floe>, size: f32, next: f32, habits: &[Habits]) {
+        let moves = self.moves(me, stand, floe, size, next, habits);
         // The fewer are left, the harder it thinks: each guess is cheaper to
         // play out, and each counts for more.
         let left = stand.iter().flatten().count().max(1);
         let reads = self.temper.reads * 4 / left;
-        let guesses: Vec<Guess> = (0..reads.max(1)).map(|_| self.guess(me, stand, habits)).collect();
+        let middle = floe.middle(size);
+        let guesses: Vec<Guess> = (0..reads.max(1)).map(|_| self.guess(me, stand, habits, middle)).collect();
         self.thinking = Some(Thinking {
             me,
             start: stand.to_vec(),
-            radius,
+            floe: Arc::clone(floe),
+            size,
             next,
             scores: vec![0.0; moves.len()],
             moves,
@@ -550,8 +557,8 @@ impl Mind {
             let (guess, move_) = (&thinking.guesses[guess], thinking.moves[which]);
             thinking.launches.copy_from_slice(&guess.launches);
             thinking.launches[thinking.me] = shaken(move_.way, move_.power, guess.turned, guess.harder);
-            let ending = Slide::play_out(&thinking.start, &thinking.launches, thinking.radius);
-            thinking.scores[which] += judge(thinking.me, &thinking.start, &ending, thinking.next, &self.temper);
+            let ending = Slide::play_out(&thinking.start, &thinking.launches, &thinking.floe, thinking.size);
+            thinking.scores[which] += judge(thinking.me, &thinking.start, &ending, &thinking.floe, thinking.next, &self.temper);
             thinking.played += 1;
             *budget -= 1;
         }
@@ -588,13 +595,14 @@ impl Mind {
         (self.dice.bell() * self.temper.wobble, self.temper.overdoes + self.dice.bell() * self.temper.misjudges)
     }
 
-    /// Every move it weighs this turn, for the player in `me` on ice
-    /// reaching `radius`: staying put; at each of the others, as far as just
-    /// reaches them and some way further, and the same at where it guesses
-    /// they will be; for the middle, about as far as it is; and out of the
-    /// way of whoever is nearest, aside either way or back, as far as the ice
-    /// leaves room for. The powers are thrown about each.
-    fn moves(&mut self, me: usize, stand: &[Option<Vec2>], radius: f32, habits: &[Habits]) -> Vec<Move> {
+    /// Every move it weighs this turn, for the player in `me` on `floe`'s ice
+    /// at `size`, `next` once it has broken: staying put; at each of the
+    /// others, as far as just reaches them and some way further, and the same
+    /// at where it guesses they will be; for the middle of the ice that will
+    /// be left ([`Floe::middle`], its deepest spot), about as far as it is;
+    /// and out of the way of whoever is nearest, aside either way or back, as
+    /// far as the ice leaves room for. The powers are thrown about each.
+    fn moves(&mut self, me: usize, stand: &[Option<Vec2>], floe: &Floe, size: f32, next: f32, habits: &[Habits]) -> Vec<Move> {
         let temper = self.temper;
         let dice = &mut self.dice;
         let here = stand.get(me).copied().flatten().unwrap_or(Vec2::ZERO);
@@ -605,7 +613,12 @@ impl Mind {
             .filter_map(|(seat, there)| there.map(|there| (seat, there)))
             .collect();
         let nearest = others.iter().min_by(|a, b| a.1.distance_squared(here).total_cmp(&b.1.distance_squared(here))).map(|&(seat, _)| seat);
-        let edgiest = others.iter().max_by(|a, b| a.1.length_squared().total_cmp(&b.1.length_squared())).map(|&(seat, _)| seat);
+        let edgiest = others
+            .iter()
+            .map(|&(seat, there)| (seat, floe.depth(there, size)))
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(seat, _)| seat);
+        let middle = floe.middle(size);
         let mut moves = vec![Move {
             way: Vec2::ZERO,
             power: 0,
@@ -640,7 +653,7 @@ impl Mind {
             for extra in [dice.around(0.3, 2.0), dice.around(2.0, 4.5), dice.around(4.5, 8.0)] {
                 add(there - here, touching(far) + extra, lean);
             }
-            if let Some(lead) = lead(seat, there, stand, habits, dice) {
+            if let Some(lead) = lead(seat, there, stand, habits, dice, middle) {
                 let far = lead.distance(here);
                 if far > 1e-3 {
                     for extra in [dice.around(0.5, 2.5), dice.around(2.5, 6.0)] {
@@ -649,19 +662,22 @@ impl Mind {
                 }
             }
         }
-        // For the middle from anywhere but the middle itself, where there is
-        // no way to it: how near is near enough is thrown each turn.
-        let out = here.length();
+        // For the middle of what will be left from anywhere but the middle
+        // itself, where there is no way to it: how near is near enough is
+        // thrown each turn.
+        let to_middle = floe.middle(next) - here;
+        let out = to_middle.length();
         if out > dice.around(0.2, 0.6) {
             for extra in [-1.0, 0.0, 1.0] {
-                add(-here, out / METRES_A_POWER + extra + 0.3 * dice.bell(), temper.middle);
+                add(to_middle, out / METRES_A_POWER + extra + 0.3 * dice.bell(), temper.middle);
             }
         }
         if let Some(there) = nearest.and_then(|seat| stand[seat]) {
             let back = (here - there).try_normalize().unwrap_or(Vec2::X);
             let aside = back.perp();
-            // Nobody steps four metres aside on a floe six across.
-            let room = (radius / 8.0).clamp(0.3, 1.0);
+            // Nobody steps four metres aside on a floe six across: as much
+            // room as the disc as big as the ice.
+            let room = (AREA_RADIUS * size / 8.0).clamp(0.3, 1.0);
             for power in [dice.around(1.0, 3.0), dice.around(3.0, 5.5)] {
                 add(aside, power * room, 0.0);
                 add(-aside, power * room, 0.0);
@@ -674,18 +690,19 @@ impl Mind {
     /// A guess at how this turn goes for the player in `me`: what everyone
     /// else does, each as they have been seen to, and how far its own hand
     /// is off.
-    fn guess(&mut self, me: usize, stand: &[Option<Vec2>], habits: &[Habits]) -> Guess {
+    fn guess(&mut self, me: usize, stand: &[Option<Vec2>], habits: &[Habits], middle: Vec2) -> Guess {
         let (turned, harder) = self.miss();
         Guess {
-            launches: self.others(me, stand, habits),
+            launches: self.others(me, stand, habits, middle),
             turned,
             harder,
         }
     }
 
     /// What everyone but the player in `me` does this turn, as a guess,
-    /// each as they have been seen to: their launches, by seat, its own none.
-    fn others(&mut self, me: usize, stand: &[Option<Vec2>], habits: &[Habits]) -> Vec<Vec2> {
+    /// each as they have been seen to, the middle of the ice being `middle`:
+    /// their launches, by seat, its own none.
+    fn others(&mut self, me: usize, stand: &[Option<Vec2>], habits: &[Habits], middle: Vec2) -> Vec<Vec2> {
         let dice = &mut self.dice;
         let in_play = stand.iter().flatten().count();
         let mut launches = vec![Vec2::ZERO; stand.len()];
@@ -704,7 +721,7 @@ impl Mind {
                     }
                     None => Vec2::ZERO,
                 },
-                TO_MIDDLE => launch(-at, power(at.length() / METRES_A_POWER + 0.5 * dice.bell())),
+                TO_MIDDLE => launch(middle - at, power(at.distance(middle) / METRES_A_POWER + 0.5 * dice.bell())),
                 OUT_OF_THE_WAY => match nearest_to(seat, at, stand).and_then(|there| (at - there).try_normalize()) {
                     // Aside, either way, more often than back.
                     Some(back) => {
@@ -748,29 +765,28 @@ fn shaken(way: Vec2, power: u8, turned: f32, harder: f32) -> Vec2 {
 /// they have slid a while, by one of the things they have been seen to do,
 /// thrown as likely as each has been ([`Habits::odds`], as its guesses of
 /// the whole turn are): some way toward whoever is nearest them, or toward
-/// the middle. None if the throw is standing still, getting out of the way
-/// or anything at all.
-fn lead(seat: usize, there: Vec2, stand: &[Option<Vec2>], habits: &[Habits], dice: &mut Dice) -> Option<Vec2> {
+/// the middle of the ice, `middle`. None if the throw is standing still,
+/// getting out of the way or anything at all.
+fn lead(seat: usize, there: Vec2, stand: &[Option<Vec2>], habits: &[Habits], dice: &mut Dice, middle: Vec2) -> Option<Vec2> {
     let odds = habits[seat].odds(stand.iter().flatten().count());
     let share = dice.around(0.2, 0.5);
     match pick(dice, &odds) {
         AT_NEAREST => nearest_to(seat, there, stand).map(|target| there + (target - there) * share),
-        TO_MIDDLE => Some(there * (1.0 - share)),
+        TO_MIDDLE => Some(there + (middle - there) * share),
         _ => None,
     }
 }
 
 /// How a slide came out for the player in `me`, as it weighs it: so much
 /// for each of the others in the sea or standing where the ice will break
-/// (it will take them, as the game's own break does: past the line by more
-/// than [`ON_THE_LINE`]), and for leaving the rest near the edge; so much
+/// (it will take them, as the game's own break does: off `floe`'s ice at
+/// `next`, [`Floe::holds`]), and for leaving the rest near the edge; so much
 /// off for being one of those itself, and otherwise so much for standing
 /// well inside the next turn's ice, and for being the one left.
-fn judge(me: usize, start: &[Option<Vec2>], ending: &Ending, next: f32, temper: &Temper) -> f32 {
-    let edge = next + ON_THE_LINE;
-    let gone = |seat: usize| ending.at[seat].is_none_or(|at| next <= 0.0 || at.length_squared() > edge * edge);
+fn judge(me: usize, start: &[Option<Vec2>], ending: &Ending, floe: &Floe, next: f32, temper: &Temper) -> f32 {
+    let gone = |seat: usize| ending.at[seat].is_none_or(|at| !floe.holds(at, next));
     let safety = |seat: usize| {
-        let margin = ending.at[seat].map_or(0.0, |at| next - at.length());
+        let margin = ending.at[seat].map_or(0.0, |at| floe.depth(at, next));
         if margin > 0.0 { margin / (margin + temper.cushion) } else { 0.0 }
     };
     let mut score = 0.0;
@@ -810,23 +826,32 @@ fn judge(me: usize, start: &[Option<Vec2>], ending: &Ending, next: f32, temper: 
 mod tests {
     use std::time::Instant;
 
-    use super::*;
+    use bevy::math::Vec3Swizzles;
 
-    /// What a computer player of `kind` in seat 0 does from `stand`, on ice
-    /// reaching `radius` and then `next`, over so many minds of it, nothing
-    /// having been seen of anyone yet: how many times it stands still, goes
-    /// at someone, goes for the middle, gets out of the way, or anything
-    /// else.
-    fn what_it_does(kind: &'static Persona, stand: &[Option<Vec2>], radius: f32, next: f32, minds: u64) -> [u32; 5] {
+    use super::*;
+    use crate::knock_off::{RADIUS, size_after, waiting_spot};
+
+    /// The round island 12 m out, as the game was played on until
+    /// 2026-11-27.
+    fn round() -> Arc<Floe> {
+        Arc::new(Floe::round(RADIUS))
+    }
+
+    /// What a computer player of `kind` in seat 0 does from `stand`, on
+    /// `floe`'s ice at `size` and then `next`, over so many minds of it,
+    /// nothing having been seen of anyone yet: how many times it stands
+    /// still, goes at someone, goes for the middle, gets out of the way, or
+    /// anything else.
+    fn what_it_does(kind: &'static Persona, stand: &[Option<Vec2>], floe: &Arc<Floe>, size: f32, next: f32, minds: u64) -> [u32; 5] {
         let habits = vec![Habits::default(); stand.len()];
         let here = stand[0].unwrap();
         let mut done = [0u32; 5];
         for seed in 0..minds {
             let mut mind = Mind::new(kind, seed * 7919 + 13);
-            mind.plan(0, stand, radius, next, &habits, 0.0, AIM_SECS);
+            mind.plan(0, stand, floe, size, next, &habits, 0.0, AIM_SECS);
             let (way, power) = mind.decide();
             let at_someone = stand.iter().skip(1).flatten().map(|there| (*there - here).normalize().dot(way)).fold(-1.0f32, f32::max);
-            let to_middle = (-here).try_normalize().map_or(-1.0, |to| to.dot(way));
+            let to_middle = (floe.middle(next) - here).try_normalize().map_or(-1.0, |to| to.dot(way));
             let which = match () {
                 _ if power == 0 => 0,
                 _ if at_someone > 0.95 => 1,
@@ -849,7 +874,7 @@ mod tests {
         let stand = [Some(Vec2::new(2.0, 0.5)), Some(Vec2::new(-2.0, -0.5))];
         let done = |name: &str| {
             let kind = PERSONAS.iter().find(|kind| kind.name == name).unwrap();
-            let done = what_it_does(kind, &stand, 7.0, 6.0, 100);
+            let done = what_it_does(kind, &stand, &round(), 7.0 / RADIUS, 6.0 / RADIUS, 100);
             println!("{name:<8} still {:>3} at them {:>3} middle {:>3} out of the way {:>3} else {:>3}", done[0], done[1], done[2], done[3], done[4]);
             done
         };
@@ -861,7 +886,7 @@ mod tests {
         assert!(brawler[1] > 2 * turtle[1] + 10, "the brawler {brawler:?}, the turtle {turtle:?}");
         // And nobody stands still to be hit, much.
         for kind in &PERSONAS {
-            assert!(what_it_does(kind, &stand, 7.0, 6.0, 100)[0] < 25, "{}", kind.name);
+            assert!(what_it_does(kind, &stand, &round(), 7.0 / RADIUS, 6.0 / RADIUS, 100)[0] < 25, "{}", kind.name);
         }
     }
 
@@ -869,26 +894,30 @@ mod tests {
     fn on_the_first_turn_nobody_slides_off_the_ice_on_purpose() {
         // Everyone on their spot as a game begins: whatever each does, it
         // does not set out for the sea, though its hand may carry it there.
-        let stand: Vec<Option<Vec2>> = (0..4)
-            .map(|seat| {
-                let at = crate::knock_off::arrival(seat).0;
-                Some(Vec2::new(at.x, at.z))
-            })
-            .collect();
-        for kind in &PERSONAS {
-            let habits = vec![Habits::default(); 4];
-            let mut outward = 0;
-            for seed in 0..60 {
-                let mut mind = Mind::new(kind, seed + 1);
-                mind.plan(0, &stand, 12.0, 11.0, &habits, 0.0, 12.0);
-                let (way, power) = mind.decide();
-                let here = stand[0].unwrap();
-                // Out from where it stands, and further than the ice goes.
-                if way.dot(here.normalize()) > 0.5 && f32::from(power) * METRES_A_POWER > 12.0 - here.length() + 3.0 {
-                    outward += 1;
+        // On the round island, and on islands of blobmaker's, everyone where
+        // they arrive.
+        let floes: Vec<Arc<Floe>> = std::iter::once(round()).chain((0..6).map(|seed| Arc::new(Floe::thrown(seed + 100)))).collect();
+        for (which, floe) in floes.iter().enumerate() {
+            let stand: Vec<Option<Vec2>> = (0..4).map(|seat| Some(waiting_spot(seat, floe).0.xz())).collect();
+            let here = stand[0].unwrap();
+            let out = (here - floe.middle(1.0)).normalize_or_zero();
+            for kind in &PERSONAS {
+                let habits = vec![Habits::default(); 4];
+                let mut outward = 0;
+                for seed in 0..60 {
+                    let mut mind = Mind::new(kind, seed + 1);
+                    mind.plan(0, &stand, floe, 1.0, size_after(1), &habits, 0.0, 12.0);
+                    let (way, power) = mind.decide();
+                    // Out from where it stands, away from the middle, and a
+                    // slide alone that would take it 3 m past the edge.
+                    let reach = f32::from(power) * METRES_A_POWER;
+                    if power > 0 && way.dot(out) > 0.5 && floe.leaves(here, way, reach, 1.0).is_some_and(|left| reach - left > 3.0) {
+                        outward += 1;
+                    }
                 }
+                // (The wildcard, all over the place, now and then a fourth.)
+                assert!(outward <= 4, "island {which}, {}: {outward} of 60 set out for the sea", kind.name);
             }
-            assert!(outward <= 3, "{}: {outward} of 60 set out for the sea", kind.name);
         }
     }
 
@@ -904,7 +933,7 @@ mod tests {
         for seed in 0..20 {
             let mut mind = Mind::new(counter, seed);
             let began = Instant::now();
-            mind.plan(0, &stand, 9.0, 8.0, &habits, 0.0, AIM_SECS);
+            mind.plan(0, &stand, &round(), 9.0 / RADIUS, 8.0 / RADIUS, &habits, 0.0, AIM_SECS);
             mind.decide();
             took.push(began.elapsed().as_secs_f64());
         }
@@ -920,22 +949,18 @@ mod tests {
 
     #[test]
     fn thinking_again_without_someone_leaves_nothing_of_them() {
-        let stand: Vec<Option<Vec2>> = (0..4)
-            .map(|seat| {
-                let at = crate::knock_off::arrival(seat).0;
-                Some(Vec2::new(at.x, at.z))
-            })
-            .collect();
+        let floe = round();
+        let stand: Vec<Option<Vec2>> = (0..4).map(|seat| Some(waiting_spot(seat, &floe).0.xz())).collect();
         let habits = vec![Habits::default(); 4];
         let mut left = stand.clone();
         left[0] = None;
         for kind in &PERSONAS {
             let mut mind = Mind::new(kind, 17);
-            mind.plan(1, &stand, 12.0, 11.0, &habits, 100.0, AIM_SECS);
+            mind.plan(1, &stand, &floe, 1.0, size_after(1), &habits, 100.0, AIM_SECS);
             let (when, temper) = (mind.decides_at, mind.temper);
             let mut budget = 5;
             mind.ponder(&mut budget);
-            mind.replan(1, &left, 12.0, 11.0, &habits);
+            mind.replan(1, &left, &floe, 1.0, size_after(1), &habits);
             // Who it is this turn, and when it makes up its mind, as they were.
             assert_eq!((mind.decides_at, mind.temper, mind.decided), (when, temper, false), "{}", kind.name);
             let thinking = mind.thinking.as_ref().unwrap();
@@ -946,7 +971,7 @@ mod tests {
             assert!(thinking.guesses.iter().all(|guess| guess.launches[0] == Vec2::ZERO), "{}", kind.name);
             // Once it has made up its mind, it keeps it.
             mind.decide();
-            mind.replan(1, &stand, 12.0, 11.0, &habits);
+            mind.replan(1, &stand, &floe, 1.0, size_after(1), &habits);
             assert!(mind.decided && mind.thinking.is_none(), "{}", kind.name);
         }
     }
@@ -958,7 +983,7 @@ mod tests {
         let stand = [Some(Vec2::new(5.0, 0.0)), Some(Vec2::new(5.0 - 2.12, 2.12)), Some(Vec2::new(-6.0, 0.0))];
         let seen = |launch: Vec2| {
             let mut habits = Habits::default();
-            habits.saw(0, stand[0].unwrap(), launch, &stand);
+            habits.saw(0, stand[0].unwrap(), launch, &stand, Vec2::ZERO);
             habits.0
         };
         let mostly = |seen: [f32; 5]| (0..5).max_by(|&a, &b| seen[a].total_cmp(&seen[b])).unwrap();
@@ -971,8 +996,8 @@ mod tests {
         assert!(mostly(aside) == OUT_OF_THE_WAY && aside[OUT_OF_THE_WAY] > 0.8, "{aside:?}");
         // What was seen lately counts most.
         let mut habits = Habits::default();
-        habits.saw(0, stand[0].unwrap(), Vec2::ZERO, &stand);
-        habits.saw(0, stand[0].unwrap(), Vec2::new(-6.0, 6.0), &stand);
+        habits.saw(0, stand[0].unwrap(), Vec2::ZERO, &stand, Vec2::ZERO);
+        habits.saw(0, stand[0].unwrap(), Vec2::new(-6.0, 6.0), &stand, Vec2::ZERO);
         assert!(habits.0[STILL] < 1.0 && habits.0[AT_NEAREST] > 0.6, "{:?}", habits.0);
         // With fewer left, going at someone is guessed likelier.
         assert!(habits.odds(2)[AT_NEAREST] > habits.odds(4)[AT_NEAREST]);

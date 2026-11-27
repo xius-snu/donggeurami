@@ -2441,13 +2441,16 @@ mod tests {
         assert_eq!(server.body(body).room, room);
         assert_eq!(server.world.get::<Venue>(body), Some(&Venue::KnockOff));
         assert_eq!(server.world.get::<ClientRoom>(client), Some(&ClientRoom(room)));
+        // On the table's own island (since 2026-11-27), sent its room from
+        // the first frame: out on the seat's side of it.
+        let shown = server.table(KNOCK_OFF, 0).shown;
+        let island = *server.world.get::<knock_off::Island>(shown).expect("the island is sent");
         let spot = server.world.get::<Spot>(body).expect("a spot").translation();
-        assert!((spot - knock_off::arrival(0).0).length() < 0.02, "{spot}");
+        assert!((spot - knock_off::waiting_spot(0, &island.floe()).0).length() < 0.02, "{spot}");
         assert!(matches!(
             server.heard(client)[..],
             [Tell::Balance(950), Tell::Entered { .. }, Tell::Arrive { venue: Venue::KnockOff, seat: 0, .. }]
         ));
-        let shown = server.table(KNOCK_OFF, 0).shown;
         let board = server.world.get::<Board>(shown).expect("the board").clone();
         assert_eq!((board.stage, board.left, board.people, board.seats), (table::Stage::Waiting, 10, 1, 4));
         // Nobody else comes: ten seconds after them, the computer, for the

@@ -7,6 +7,41 @@
 > "above" or "below", or names another section in quotes, that section may be
 > in another file here: the table in `CLAUDE.md` says which.
 
+## APK 61: Knock Off on an island thrown for each table, everyone beginning where they stood; a thing dragged upstairs stays upstairs; protocol 26
+
+2026-11-27, 19:13 here (10:13 UTC). Asked for: "ye build apk and push",
+in answer to "Should I build APK 61 and deploy?" after Knock Off's
+islands (`docs/knock-off.md`, at the top), which change what is sent
+(`knock_off::Island`), so `PROTOCOL_VERSION` 26. The tree held another
+session's work too, finished on 2026-11-26 and left uncommitted at
+Hajun's word then ("fix this", the fix alone): a thing dragged upstairs
+stays upstairs (`docs/bag.md`, at the top), device only; its harness was
+out of the code. It is in this build. Two commits, its first.
+
+- **The server deployed with protocol 26** at 10:16:18 UTC, from this
+  tree (sha1 `4aeeffba`, the same on the VM as built here; no warnings);
+  the one before kept as `roundtown-server.prev-2026-11-27` (`2d857b5d`,
+  the binary of 06:32 UTC on 2026-11-25). Before: nobody connected since
+  10:12:06 (`bunnihajun`, Hajun's phone, in and out of the town all
+  morning). After: "3 accounts ... 3 bags kept"; this PC's own account
+  (`똥#3690`, a scratch folder with copies of `device.id` and
+  `profile.json` alone, the same `device.id` by sha1) came online, hidden,
+  "connected", "online as 똥", the town's clock the server's to within
+  8 ms; the journal clean. **APK 60 and older are told to update from
+  here on; APK 61 is the first that plays online.**
+- `versionCode` 61 (it was already 61 in the tree, uncommitted), read back
+  with `aapt dump badging`. cargo ndk 4 m 13 s (`release-android`),
+  stripped from 202.4 MB to 110.0 MB, `GameActivity_onCreate` and the six
+  `MainActivity` methods in it; Gradle 21 s. 134,025,810 bytes: 289 of the
+  game's files under `assets/`, each the same to the byte as the tree's,
+  and Android's two baseline profiles; the library in it the same as the
+  stripped one. Every file under `assets/` (596) hashed before the library
+  was built and after Gradle: the same. `ui.ron` baked in as it was.
+- Before it: `cargo test -p roundtown_net` (296), `-p roundtown_server`
+  (131) and `--lib` (604) on the tree as built, but for a comment. The
+  build's five warnings are the five there were before.
+- **Not put on a phone.**
+
 ## APK 60: the camera kept in a house; each floor painted by itself; the bag by kind and rarity
 
 2026-11-25, 23:36 here (14:36 UTC). Asked for: "build apk and push",

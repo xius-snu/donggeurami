@@ -275,7 +275,15 @@ pub const PROTOCOL_ID: u64 = u64::from_be_bytes(*b"DGRMTOWN");
 /// stand everyone's land on another plot than the server has them on.
 /// And with it [`Tell::Plots`], whose every plot of the channel is, and a
 /// group gathered into one channel ([`social::Outcome::Gathered`]).
-pub const PROTOCOL_VERSION: u32 = 25;
+///
+/// 26 since 2026-11-27 (Hajun: "each game, a truly random shape of island
+/// forms ... i dont want fixed starting positions"): Knock Off is played on
+/// an island thrown for its table ([`knock_off::Island`], a component sent
+/// its room, registered after [`knock_off::KnockRound`]), whose every slide
+/// an app from before would play on the round island; its round says how big
+/// the ice is as a share of the island ([`knock_off::KnockRound::size`]),
+/// where it said how far it reached; and everyone begins where they stood.
+pub const PROTOCOL_VERSION: u32 = 26;
 
 /// The UDP port the game server listens on. 443, where QUIC goes, because a
 /// network that lets any UDP through lets that through: school and office
@@ -8114,14 +8122,17 @@ mod tests {
     }
 
     #[test]
-    fn knock_off_begins_with_everyone_on_the_diagonals_facing_the_middle() {
+    fn knock_off_is_arrived_at_on_the_diagonals_facing_the_middle() {
+        // Where a seat stands before its table's island is known (since
+        // 2026-11-27 the game stands it on the island as it comes,
+        // `knock_off::waiting_spot`): 7 m out, as on the disc of 12 m it was.
         let spots: Vec<(Vec3, Quat)> = (0..4).map(|seat| arrival(Venue::KnockOff, seat)).collect();
-        // Well inside the ice.
-        let (ring, ice) = (knock_off::START_RING, knock_off::RADIUS);
+        let (ring, ice) = (7.0, knock_off::RADIUS);
         assert!(ring < ice - 2.0, "{ring} m out, the ice {ice}");
         for (seat, &(at, turn)) in spots.iter().enumerate() {
             assert_eq!(arrival(Venue::KnockOff, seat), knock_off::arrival(seat));
-            assert!((at.xz().length() - knock_off::START_RING).abs() < 1e-4, "seat {seat} at {at}");
+            assert!((at.xz().length() - ring).abs() < 1e-4, "seat {seat} at {at}");
+            assert!(at.xz().normalize().distance(knock_off::side(seat)) < 1e-5, "seat {seat} at {at}");
             assert_eq!(at.y, 0.0);
             // On a diagonal: as far across as along.
             assert!((at.x.abs() - at.z.abs()).abs() < 1e-4, "seat {seat} at {at}");

@@ -580,7 +580,7 @@ fn plate(
     };
     let ui = ui();
     let words = &ui.words.knock_off;
-    let title = if round.next_radius <= 0.0 {
+    let title = if round.next_size <= 0.0 {
         words.last_turn.clone()
     } else {
         fill(&words.turn, &[("turn", &round.turn.to_string())])
@@ -704,7 +704,7 @@ fn headlines(
             if round.turn == 1 && news(GO_SECS) {
                 low(hud::announce(&mut commands, Some(&words.how), &words.go, GO_TEXT, GO_SECS), true);
             } else if round.turn > 1 && knock.in_play() && news(TURN_SECS) {
-                let title = if round.next_radius <= 0.0 {
+                let title = if round.next_size <= 0.0 {
                     words.last_turn_headline.clone()
                 } else {
                     fill(&words.turn, &[("turn", &round.turn.to_string())])
@@ -1284,8 +1284,8 @@ mod tests {
             stage: KnockStage::Break,
             since: 0.0,
             until: 1.0,
-            radius: 11.0,
-            next_radius: 10.0,
+            size: 11.0 / 12.0,
+            next_size: 10.0 / 12.0,
             start: vec![None, Some((1.0, 1.0)), None, Some((10.8, 0.0))],
             launches: Vec::new(),
             ready: vec![false; 4],
@@ -1398,15 +1398,15 @@ mod tests {
             stage: KnockStage::Slide,
             since: 100.0,
             until: 106.0,
-            radius: 3.0,
-            next_radius: 2.25,
+            size: 3.0 / 12.0,
+            next_size: 2.25 / 12.0,
             start: vec![Some((-1.0, 0.0)), Some((1.2, 0.0)), None, None],
             launches: vec![(11.0, 0.0), (-9.0, 0.0), (0.0, 0.0), (0.0, 0.0)],
             ready: vec![false; 4],
             out: vec![None; 4],
             places: vec![None; 4],
         };
-        let mut played = super::super::Played::of(&round, round.since);
+        let mut played = super::super::Played::of(&round, round.since, &std::sync::Arc::new(roundtown_net::knock_off::Floe::round(roundtown_net::knock_off::RADIUS)));
         assert_eq!((played.ending.by[0], played.ending.by[1]), (Some(1), Some(0)), "{:?}", played.ending);
         let (Some(a), Some(b)) = (played.ending.fell[0], played.ending.fell[1]) else {
             panic!("both in: {:?}", played.ending);

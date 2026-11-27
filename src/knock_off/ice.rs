@@ -18,16 +18,22 @@
 //!   followed.
 //! * **The ice that will break**: while everyone aims, a thin dark ring of
 //!   cracks on the ice where it will break at the end of the turn
-//!   (`next_radius`), with short cracks running out from it to the edge,
+//!   (`next_size`), with short cracks running out from it to the edge,
 //!   and the band from there to the edge darker, as thin ice is. By night
 //!   the ice that will stay has the moon on it, so that the bodies on it
 //!   stand out and the band does too.
-//! * **The ice breaking**: the island's model narrowed across the ground to
-//!   the ice that is left (its land's `Transform.scale`, x and z, put back as
-//!   the game ends), while the band breaks into pieces of the ice's own
-//!   material, of every size, the crack running round the rim from where it
-//!   began and each piece tipping outward into the sea as it reaches it. From
-//!   3 m down the island is a small floe.
+//! * **The ice breaking**: the island narrowed across the ground toward its
+//!   middle to the ice that is left (its land's `Transform.scale`, x and z,
+//!   put back as the game ends), while the band breaks into pieces of the
+//!   ice's own material, of every size, the crack running round the rim from
+//!   where it began and each piece tipping outward into the sea as it
+//!   reaches it. From a quarter of it down the island is a small floe.
+//! * **The island itself** (since 2026-11-27): the table's own outline
+//!   (`rules::Floe`), its ice 3 m deep in the ice's own material off Hajun's
+//!   `iceisland.glb`, whose own disc is put away; and the shape everyone
+//!   walks about on while the table waits (`Islands::reshape`). Every ring
+//!   that was round the disc (the cracks, the band of ice that will break,
+//!   the moon's sheen, the pieces) is round the outline now.
 //! * **A splash** where anyone goes into the sea, and a small one where some
 //!   of the pieces do: a ring spreading on the water and drops thrown up out
 //!   of it, gone within the break.
@@ -50,11 +56,11 @@ use bevy::asset::RenderAssetUsages;
 use bevy::light::{NotShadowCaster, NotShadowReceiver};
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
-use roundtown_net::knock_off::{self as rules, KnockStage};
+use roundtown_net::knock_off::{self as rules, Floe, KnockStage};
 
 use super::{Knock, KnockSystems, bodies_by_seat, seat_colour, winner_on_the_ice};
 use crate::clock::TownClock;
-use crate::island::Land;
+use crate::island::{Islands, Land};
 use crate::sky::Daylight;
 use crate::table::{ComputerSeat, InTable, TableView};
 use crate::ui::{UiChanged, ui};
@@ -214,28 +220,40 @@ struct Trail {
     mesh: Handle<Mesh>,
 }
 
-/// The cracks, and where they were drawn for: the radius and the turn.
+/// The cracks, and what they were drawn for: the turn, how big the ice
+/// will be once it breaks, and the island.
 #[derive(Component)]
 struct Cracks {
-    built: Option<(u16, f32)>,
+    built: Option<(u16, f32, u64)>,
     mesh: Handle<Mesh>,
 }
 
-/// The band of ice that will break, and what it was built for: from where
-/// to the edge.
+/// The band of ice that will break, and what it was built for: from how big
+/// the ice will be to how big it is, and the island.
 #[derive(Component)]
 struct ThinIce {
-    built: Option<(f32, f32)>,
+    built: Option<(f32, f32, u64)>,
     mesh: Handle<Mesh>,
 }
 
-/// The moon on the ice that will stay, by night, and how far it was built
-/// out.
+/// The moon on the ice that will stay, by night, and what it was built
+/// for: how big that ice is, and the island.
 #[derive(Component)]
 struct Sheen {
-    built: Option<f32>,
+    built: Option<(f32, u64)>,
     mesh: Handle<Mesh>,
 }
+
+/// The table's island's own ice, under the island's model (whose own disc
+/// is put away), and which island it was shaped for.
+#[derive(Component)]
+struct IslandIce {
+    island: u64,
+}
+
+/// How deep the island's ice goes under its top, in metres: as deep as
+/// Hajun's disc was, its sides down into the sea.
+const ICE_DEEP: f32 = rules::SUNK;
 
 /// The ring of gold at the feet of whoever won.
 #[derive(Component)]
@@ -399,6 +417,7 @@ pub(super) fn plugin(app: &mut App) {
             Update,
             (
                 put_up.after(KnockSystems),
+                shape_the_island.after(KnockSystems).before(crate::move_bodies),
                 (find_the_ice, recolour, arrows, feet_rings, trails, cracks, thin_ice, break_off, splash, burst, celebrate)
                     .chain()
                     .after(super::place)
@@ -557,12 +576,12 @@ fn put_up(
 }
 
 /// The ice's own material, off its model, for the pieces that break off
-/// it, once the model is there.
+/// it and the island's own ice, once the model is there.
 fn find_the_ice(
     mut look: ResMut<IceLook>,
     lands: Query<(Entity, &Venue), With<Land>>,
     children: Query<&Children>,
-    materials: Query<&MeshMaterial3d<StandardMaterial>>,
+    materials: Query<&MeshMaterial3d<StandardMaterial>, Without<IslandIce>>,
 ) {
     if look.found_ice {
         return;
@@ -617,18 +636,6 @@ fn recolour(changed: Res<UiChanged>, daylight: Res<Daylight>, look: Res<IceLook>
     paint(&look.sheen, Color::linear_rgb(moon.red * strength, moon.green * strength, moon.blue * strength));
 }
 
-/// Where a slide from `at` along `way` (of length one) leaves ice reaching
-/// `radius`, in metres along it, if it goes `reach` and stops past the
-/// edge: where its middle crosses it.
-fn leaves_the_ice(at: Vec2, way: Vec2, reach: f32, radius: f32) -> Option<f32> {
-    if (at + way * reach).length() <= radius {
-        return None;
-    }
-    let along = at.dot(way);
-    let inside = at.length_squared() - radius * radius;
-    Some((-along + (along * along - inside).max(0.0).sqrt()).max(0.0))
-}
-
 /// Your arrow while you aim, and everyone's while they are shown: from the
 /// feet, as long as the slide would go on an empty island, the ring where
 /// it would stop, or past the edge, dashes and a cross; put away as
@@ -640,6 +647,7 @@ fn arrows(
 ) {
     let round = knock.playing();
     let sliding = knock.sliding();
+    let floe = knock.floe.clone();
     for (mut arrow, mut place, mut shown) in &mut arrows {
         let seat = arrow.seat;
         let start = round.and_then(|round| round.start.get(seat).copied().flatten()).map(|(x, z)| Vec2::new(x, z));
@@ -649,22 +657,23 @@ fn arrows(
         let wanted = match (round, start) {
             (Some(round), Some(at)) if in_play => match round.stage {
                 KnockStage::Aim if knock.seat == Some(seat as u8) && knock.aim.turn == round.turn => {
-                    (knock.aim.power > 0 && knock.aim.way != Vec2::ZERO).then(|| (at, knock.aim.way, rules::reach(knock.aim.power), round.radius))
+                    (knock.aim.power > 0 && knock.aim.way != Vec2::ZERO).then(|| (at, knock.aim.way, rules::reach(knock.aim.power), round.size))
                 }
                 KnockStage::Reveal if !sliding => {
                     let launch = round.launches.get(seat).map_or(Vec2::ZERO, |&(x, z)| Vec2::new(x, z));
                     let speed = launch.length();
-                    (speed > 1e-3).then(|| (at, launch / speed, speed * speed / (2.0 * rules::ICE), round.radius))
+                    (speed > 1e-3).then(|| (at, launch / speed, speed * speed / (2.0 * rules::ICE), round.size))
                 }
                 _ => None,
             },
             _ => None,
         };
-        let Some((at, way, reach, radius)) = wanted else {
+        let (Some((at, way, reach, size)), Some(floe)) = (wanted, &floe) else {
             shown.set_if_neq(Visibility::Hidden);
             continue;
         };
-        let sea = leaves_the_ice(at, way, reach, radius);
+        // Where its middle first leaves the ice, if it would.
+        let sea = floe.leaves(at, way, reach, size);
         let same = arrow.built.is_some_and(|(built, left)| {
             (built - reach).abs() <= 1e-3
                 && match (left, sea) {
@@ -763,18 +772,19 @@ fn cracks(knock: Res<Knock>, mut cracks: Query<(&mut Cracks, &mut Visibility)>, 
     let wanted = knock
         .playing()
         .filter(|round| matches!(round.stage, KnockStage::Aim | KnockStage::Reveal | KnockStage::Slide))
-        .filter(|round| round.next_radius < round.radius - 0.01)
-        .map(|round| (round.turn, round.next_radius, round.radius));
+        .filter(|round| round.next_size < round.size - 1e-3)
+        .map(|round| (round.turn, round.next_size, round.size))
+        .zip(knock.floe.as_ref().zip(knock.island));
     for (mut cracked, mut shown) in &mut cracks {
-        let Some((turn, next, now)) = wanted else {
+        let Some(((turn, next, now), (floe, island))) = wanted else {
             shown.set_if_neq(Visibility::Hidden);
             continue;
         };
-        if cracked.built != Some((turn, next)) {
-            if meshes.insert(&cracked.mesh, crack_mesh(next, now, u64::from(turn))).is_err() {
+        if cracked.built != Some((turn, next, island)) {
+            if meshes.insert(&cracked.mesh, crack_mesh(floe, next, now, u64::from(turn) ^ island)).is_err() {
                 warn!("Knock Off: the cracks have lost their mesh");
             }
-            cracked.built = Some((turn, next));
+            cracked.built = Some((turn, next, island));
         }
         shown.set_if_neq(Visibility::Inherited);
     }
@@ -794,40 +804,191 @@ fn thin_ice(
     mut meshes: ResMut<Assets<Mesh>>,
 ) {
     let round = knock.playing();
+    let island = knock.floe.as_ref().zip(knock.island);
     let doomed = round
         .filter(|round| matches!(round.stage, KnockStage::Aim | KnockStage::Reveal | KnockStage::Slide))
-        .filter(|round| round.next_radius < round.radius - 0.01)
-        .map(|round| (round.next_radius.max(0.0), round.radius));
+        .filter(|round| round.next_size < round.size - 1e-3)
+        .map(|round| (round.next_size.max(0.0), round.size))
+        .zip(island);
     for (mut band, mut shown) in &mut bands {
-        let Some((inside, edge)) = doomed else {
+        let Some(((inside, edge), (floe, island))) = doomed else {
             shown.set_if_neq(Visibility::Hidden);
             continue;
         };
-        if band.built != Some((inside, edge)) {
-            if meshes.insert(&band.mesh, annulus(inside, edge, 0.0)).is_err() {
+        if band.built != Some((inside, edge, island)) {
+            if meshes.insert(&band.mesh, band_mesh(floe, inside, edge)).is_err() {
                 warn!("Knock Off: the thin ice has lost its mesh");
             }
-            band.built = Some((inside, edge));
+            band.built = Some((inside, edge, island));
         }
         shown.set_if_neq(Visibility::Inherited);
     }
     // The ice that stays: all of it while the table waits, and from the
     // first turn on what will be left once this turn's edge has gone.
-    let stays = round.map_or(rules::RADIUS, |round| round.next_radius);
-    let lit = knock.seat.is_some() && daylight.lamps > 0.02 && stays > 0.05;
+    let stays = round.map_or(1.0, |round| round.next_size);
+    let lit = knock.seat.is_some() && daylight.lamps > 0.02 && stays > 0.005;
     for (mut sheen, mut shown) in &mut sheens {
-        if !lit {
+        let Some((floe, island)) = island.filter(|_| lit) else {
             shown.set_if_neq(Visibility::Hidden);
             continue;
-        }
-        if sheen.built != Some(stays) {
-            if meshes.insert(&sheen.mesh, annulus(0.0, stays, 0.0)).is_err() {
+        };
+        if sheen.built != Some((stays, island)) {
+            if meshes.insert(&sheen.mesh, band_mesh(floe, 0.0, stays)).is_err() {
                 warn!("Knock Off: the sheen has lost its mesh");
             }
-            sheen.built = Some(stays);
+            sheen.built = Some((stays, island));
         }
         shown.set_if_neq(Visibility::Inherited);
     }
+}
+
+/// The table's island, shaped as it comes ([`Knock::floe`]): its own ice
+/// under the island's model, in the ice's own material, the model's disc
+/// put away; and the shape everyone walks about on while the table waits,
+/// in place of the disc's, the frame it comes, before anyone moves on it.
+/// Away from the tables, the last island stays as it was, drawn nowhere.
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+fn shape_the_island(
+    knock: Res<Knock>,
+    look: Res<IceLook>,
+    lands: Query<(Entity, &Venue), With<Land>>,
+    children: Query<&Children>,
+    mut models: Query<&mut Visibility, (With<Mesh3d>, Without<IslandIce>)>,
+    mut ices: Query<(Entity, &IslandIce, &mut Mesh3d, &mut MeshMaterial3d<StandardMaterial>)>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut islands: ResMut<Islands>,
+    mut commands: Commands,
+) {
+    let Some(land) = lands.iter().find(|(_, venue)| **venue == Venue::KnockOff).map(|(land, _)| land) else {
+        return;
+    };
+    // The model's own disc, put away for good once there is an island.
+    let shaped = !ices.is_empty() || knock.island.is_some();
+    if shaped {
+        for part in children.iter_descendants(land) {
+            if let Ok(mut shown) = models.get_mut(part) {
+                shown.set_if_neq(Visibility::Hidden);
+            }
+        }
+    }
+    for (_, _, _, mut material) in &mut ices {
+        if material.0 != look.ice {
+            material.0 = look.ice.clone();
+        }
+    }
+    let (Some(floe), Some(island)) = (&knock.floe, knock.island) else {
+        return;
+    };
+    if ices.iter().any(|(_, ice, ..)| ice.island == island) {
+        return;
+    }
+    let mesh = meshes.add(island_mesh(floe));
+    match ices.iter_mut().next() {
+        Some((entity, _, mut drawn, _)) => {
+            drawn.0 = mesh;
+            commands.entity(entity).insert(IslandIce { island });
+        }
+        None => {
+            commands.spawn((
+                ChildOf(land),
+                IslandIce { island },
+                Mesh3d(mesh),
+                MeshMaterial3d(look.ice.clone()),
+                Transform::default(),
+                Visibility::Inherited,
+                Name::new("Knock Off: the table's island"),
+            ));
+        }
+    }
+    islands.reshape(Venue::KnockOff, island_triangles(floe), &[]);
+    info!("Knock Off: the island shaped, {:#x}", island);
+}
+
+/// Every triangle of the island's ice at its whole size, across the ground
+/// round the middle of the world, its top at 0 and [`ICE_DEEP`] deep: its
+/// top, facing up, a fan from the middle it was thrown round (every point
+/// of its outline can be seen from there); its bottom, facing down; and its
+/// sides, facing out.
+fn island_triangles(floe: &Floe) -> Vec<[Vec3; 3]> {
+    let rim = floe.rim();
+    let count = rim.len();
+    let (top, bottom) = (|at: Vec2| Vec3::new(at.x, 0.0, at.y), |at: Vec2| Vec3::new(at.x, -ICE_DEEP, at.y));
+    let mut corners = Vec::with_capacity(count * 4);
+    for i in 0..count {
+        let (a, b) = (rim[i], rim[(i + 1) % count]);
+        corners.push([Vec3::ZERO, top(b), top(a)]);
+        corners.push([Vec3::new(0.0, -ICE_DEEP, 0.0), bottom(a), bottom(b)]);
+        corners.push([top(a), top(b), bottom(a)]);
+        corners.push([top(b), bottom(b), bottom(a)]);
+    }
+    corners
+}
+
+/// The island's ice as it is drawn: its top, flat, lit as the ice is;
+/// its sides, smooth round the outline; and its bottom. Its colour is its
+/// material's, the model's own ice.
+fn island_mesh(floe: &Floe) -> Mesh {
+    let rim = floe.rim();
+    let count = rim.len();
+    let mut positions: Vec<[f32; 3]> = Vec::with_capacity(count * 4 + 2);
+    let mut normals: Vec<[f32; 3]> = Vec::with_capacity(count * 4 + 2);
+    let mut uvs: Vec<[f32; 2]> = Vec::with_capacity(count * 4 + 2);
+    let mut indices: Vec<u32> = Vec::with_capacity(count * 12);
+    let across = 2.0 * floe.furthest().max(1.0);
+    let uv = |at: Vec2| [at.x / across + 0.5, at.y / across + 0.5];
+    // The top: the middle, and every point of the outline.
+    positions.push([0.0, 0.0, 0.0]);
+    normals.push([0.0, 1.0, 0.0]);
+    uvs.push([0.5, 0.5]);
+    for &at in rim {
+        positions.push([at.x, 0.0, at.y]);
+        normals.push([0.0, 1.0, 0.0]);
+        uvs.push(uv(at));
+    }
+    for i in 0..count as u32 {
+        let (a, b) = (1 + i, 1 + (i + 1) % count as u32);
+        indices.extend([0, b, a]);
+    }
+    // The sides: each point of the outline twice, at the top and down at
+    // the bottom, facing out from both sides it is between.
+    let sides = positions.len() as u32;
+    for i in 0..count {
+        let (before, after) = (rim[(i + count - 1) % count], rim[(i + 1) % count]);
+        let out = |from: Vec2, to: Vec2| {
+            let along = (to - from).normalize_or(Vec2::X);
+            Vec2::new(along.y, -along.x)
+        };
+        let facing = (out(before, rim[i]) + out(rim[i], after)).normalize_or(rim[i].normalize_or(Vec2::X));
+        for y in [0.0, -ICE_DEEP] {
+            positions.push([rim[i].x, y, rim[i].y]);
+            normals.push([facing.x, 0.0, facing.y]);
+            uvs.push(uv(rim[i]));
+        }
+    }
+    for i in 0..count as u32 {
+        let j = (i + 1) % count as u32;
+        let (top_i, bottom_i, top_j, bottom_j) = (sides + 2 * i, sides + 2 * i + 1, sides + 2 * j, sides + 2 * j + 1);
+        indices.extend([top_i, top_j, bottom_i, top_j, bottom_j, bottom_i]);
+    }
+    // The bottom.
+    let under = positions.len() as u32;
+    positions.push([0.0, -ICE_DEEP, 0.0]);
+    normals.push([0.0, -1.0, 0.0]);
+    uvs.push([0.5, 0.5]);
+    for &at in rim {
+        positions.push([at.x, -ICE_DEEP, at.y]);
+        normals.push([0.0, -1.0, 0.0]);
+        uvs.push(uv(at));
+    }
+    for i in 0..count as u32 {
+        let (a, b) = (under + 1 + i, under + 1 + (i + 1) % count as u32);
+        indices.extend([under, a, b]);
+    }
+    Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default())
+        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
+        .with_inserted_indices(Indices::U32(indices))
 }
 
 /// The ice breaking at the end of a turn: the island's model narrowed to
@@ -850,12 +1011,12 @@ fn break_off(
     mut commands: Commands,
 ) {
     let round = knock.playing();
-    let reach = match round {
-        Some(round) if matches!(round.stage, KnockStage::Break | KnockStage::Over) => round.next_radius,
-        Some(round) => round.radius,
-        None => rules::RADIUS,
+    let size = match round {
+        Some(round) if matches!(round.stage, KnockStage::Break | KnockStage::Over) => round.next_size,
+        Some(round) => round.size,
+        None => 1.0,
     };
-    let across = (reach / rules::RADIUS).max(0.02);
+    let across = size.max(0.02);
     for (venue, mut land) in &mut lands {
         if *venue == Venue::KnockOff {
             let scale = Vec3::new(across, 1.0, across);
@@ -868,17 +1029,18 @@ fn break_off(
     if let Some(round) = round.filter(|round| round.stage == KnockStage::Break)
         && *broke != Some(round.turn)
         && let Ok(root) = roots.single()
+        && let Some(floe) = &knock.floe
     {
         *broke = Some(round.turn);
-        let (outer, inner) = (round.radius, round.next_radius.max(0.0));
+        let (outer, inner) = (round.size, round.next_size.max(0.0));
         let mut dice = fastrand::Rng::with_seed(u64::from(round.turn) * 7919);
-        let middle = ((outer + inner) * 0.5).max(0.3);
         let began = dice.f32() * TAU;
-        for (from, to) in pieces_round(middle, &mut dice) {
-            let gap = (PIECE_GAP * 0.5 / outer.max(0.3)).min((to - from) * 0.2);
-            let (from, to) = (began + from + gap, began + to - gap);
+        for (from, to) in pieces_round(floe, (outer + inner) * 0.5, began, &mut dice) {
+            let out = floe.reach_toward(Vec2::from_angle((from + to) * 0.5)) * outer;
+            let gap = (PIECE_GAP * 0.5 / out.max(0.3)).min((to - from) * 0.2);
+            let (from, to) = (from + gap, to - gap);
             let deep = SLAB_DEEP.0 + (SLAB_DEEP.1 - SLAB_DEEP.0) * dice.f32();
-            let (mesh, centre) = piece_mesh(inner, outer, from, to, deep, &mut dice);
+            let (mesh, centre) = piece_mesh(floe, inner, outer, from, to, deep, &mut dice);
             let half_way = (from + to) * 0.5;
             // How far round the rim from where the crack began: it gets
             // there in its time, and the piece goes.
@@ -935,20 +1097,25 @@ fn break_off(
     }
 }
 
-/// The pieces a ring breaks into, `middle` metres out: from where to where
-/// round it each one is, in radians from where the crack began, each its
-/// own length ([`PIECE_LONG`]), and the last never a sliver.
-fn pieces_round(middle: f32, dice: &mut fastrand::Rng) -> Vec<(f32, f32)> {
+/// The pieces the band of `floe` round its outline at `middle` (a share of
+/// the island, between the ice that breaks and what is left) breaks into:
+/// from where to where round it each one is, in radians from +x toward +z,
+/// all the way round from `began`, where the crack began; each its own
+/// length along the band ([`PIECE_LONG`]), as far round the island as that
+/// is where the band is (further round where the outline comes in close,
+/// nearer where it reaches out), and the last never a sliver.
+fn pieces_round(floe: &Floe, middle: f32, began: f32, dice: &mut fastrand::Rng) -> Vec<(f32, f32)> {
+    let out = |angle: f32| (floe.reach_toward(Vec2::from_angle(angle)) * middle).max(0.3);
     let mut pieces = Vec::new();
     let mut from = 0.0;
     while from < TAU - 1e-3 {
         let long = PIECE_LONG.0 + (PIECE_LONG.1 - PIECE_LONG.0) * dice.f32();
-        let mut to = from + (long / middle).min(TAU * 0.4);
-        if TAU - to < 0.4 * PIECE_LONG.0 / middle {
+        let mut to = from + (long / out(began + from)).min(TAU * 0.4);
+        if TAU - to < 0.4 * PIECE_LONG.0 / out(began + to.min(TAU)) {
             to = TAU;
         }
         let to = to.min(TAU);
-        pieces.push((from, to));
+        pieces.push((began + from, began + to));
         from = to;
     }
     pieces
@@ -1377,15 +1544,17 @@ fn trail_mesh(points: &VecDeque<(f32, Vec2)>, now: f32, colour: Color) -> Mesh {
 /// wandering a little either way of its line, thrown from `dice`; built
 /// round its own middle, which is returned (across the ground) for it to
 /// be put there and to tip about.
-fn piece_mesh(inner: f32, outer: f32, from: f32, to: f32, deep: f32, dice: &mut fastrand::Rng) -> (Mesh, Vec2) {
-    let steps = (((to - from) * outer / 0.6).ceil() as usize).clamp(2, 12);
+fn piece_mesh(floe: &Floe, inner: f32, outer: f32, from: f32, to: f32, deep: f32, dice: &mut fastrand::Rng) -> (Mesh, Vec2) {
+    let reach = |angle: f32| floe.reach_toward(Vec2::from_angle(angle));
+    let steps = (((to - from) * reach((from + to) * 0.5) * outer / 0.6).ceil() as usize).clamp(2, 12);
     let angles: Vec<f32> = (0..=steps).map(|k| from + (to - from) * k as f32 / steps as f32).collect();
-    let outside: Vec<Vec2> = angles.iter().map(|&angle| Vec2::from_angle(angle) * outer).collect();
+    let outside: Vec<Vec2> = angles.iter().map(|&angle| Vec2::from_angle(angle) * reach(angle) * outer).collect();
     let inside: Vec<Vec2> = angles
         .iter()
         .map(|&angle| {
-            let jag = if inner > 0.3 { (dice.f32() - 0.5) * 2.0 * PIECE_JAG } else { 0.0 };
-            Vec2::from_angle(angle) * (inner + jag).clamp(0.0, outer - 0.1)
+            let (out, edge) = (reach(angle) * inner, reach(angle) * outer);
+            let jag = if out > 0.3 { (dice.f32() - 0.5) * 2.0 * PIECE_JAG } else { 0.0 };
+            Vec2::from_angle(angle) * (out + jag).clamp(0.0, (edge - 0.1).max(0.0))
         })
         .collect();
     let middle = outside.iter().chain(&inside).copied().sum::<Vec2>() / (2 * (steps + 1)) as f32;
@@ -1410,31 +1579,43 @@ fn piece_mesh(inner: f32, outer: f32, from: f32, to: f32, deep: f32, dice: &mut 
     (solid.mesh(), middle)
 }
 
-/// The cracks round the ice where it will break, `radius` out on ice
-/// reaching `edge`: a ring of them that wanders a little either side of
-/// the line, and short ones running out from it toward the edge, thrown
-/// from `seed` (the turn's) so that each turn's are their own; on ice that
-/// will be gone, cracks running out from the middle.
-fn crack_mesh(radius: f32, edge: f32, seed: u64) -> Mesh {
+/// The cracks round `floe`'s ice where it will break, its outline at
+/// `next` (a share of the island) on ice at `size`: a ring of them along it
+/// that wanders a little either side of the line, and short ones running
+/// out from it toward the edge, thrown from `seed` (the turn's and the
+/// island's) so that each turn's are their own; on ice that will be gone,
+/// cracks running out from the middle.
+fn crack_mesh(floe: &Floe, next: f32, size: f32, seed: u64) -> Mesh {
     let mut dice = fastrand::Rng::with_seed(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ 0x6372_6163);
     let mut sheet = Sheet::default();
-    if radius > 0.3 {
-        let steps = ((radius * TAU / 0.45).ceil() as usize).max(12);
-        let points: Vec<Vec2> = (0..steps)
-            .map(|k| {
-                let angle = k as f32 / steps as f32 * TAU;
-                Vec2::from_angle(angle) * (radius + (dice.f32() - 0.5) * 2.0 * CRACK_WANDER)
-            })
-            .collect();
-        for k in 0..steps {
-            sheet.line(points[k], points[(k + 1) % steps], CRACK_WIDE);
+    let reach = |way: Vec2| floe.reach_toward(way);
+    if floe.deepest(next) > 0.15 {
+        // Along the outline, a point every 0.45 m or so, each wandering.
+        let line: Vec<Vec2> = floe.rim_at(next).collect();
+        let mut points = Vec::new();
+        for k in 0..line.len() {
+            let (a, b) = (line[k], line[(k + 1) % line.len()]);
+            let pieces = (a.distance(b) / 0.45).ceil().max(1.0) as usize;
+            for piece in 0..pieces {
+                points.push(a.lerp(b, piece as f32 / pieces as f32));
+            }
+        }
+        let wander = CRACK_WANDER.min(0.25 * floe.deepest(next));
+        let points: Vec<Vec2> = points.into_iter().map(|at| at + at.normalize_or_zero() * (dice.f32() - 0.5) * 2.0 * wander).collect();
+        let steps = points.len().max(3);
+        if points.len() >= 3 {
+            for k in 0..steps {
+                sheet.line(points[k], points[(k + 1) % steps], CRACK_WIDE);
+            }
         }
         // Short cracks out from it, toward the edge.
         let runs = (steps / 4).max(4);
         for _ in 0..runs {
-            let from = points[dice.usize(..steps)];
+            let Some(&from) = points.get(dice.usize(..points.len().max(1))) else {
+                break;
+            };
             let out = from.normalize_or(Vec2::X);
-            let room = (edge - from.length()).max(0.0);
+            let room = (reach(out) * size - from.length()).max(0.0);
             let long = (CRACK_OUT * (0.4 + dice.f32() * 0.6)).min(room * 0.8);
             if long > 0.1 {
                 let bend = out.perp() * (dice.f32() - 0.5) * long * 0.6;
@@ -1447,10 +1628,28 @@ fn crack_mesh(radius: f32, edge: f32, seed: u64) -> Mesh {
         // Nothing will be left: cracks from the middle out.
         for k in 0..7 {
             let angle = (k as f32 + dice.f32() * 0.6) * TAU / 7.0;
-            let out = Vec2::from_angle(angle) * edge * 0.9;
+            let way = Vec2::from_angle(angle);
+            let out = way * reach(way) * size * 0.9;
             let middle = out * 0.5 + out.perp() * (dice.f32() - 0.5) * 0.3;
             sheet.line(Vec2::ZERO, middle, CRACK_WIDE);
             sheet.line(middle, out, CRACK_WIDE * 0.7);
+        }
+    }
+    sheet.mesh()
+}
+
+/// The band of `floe`'s ice from its outline at `inner` to its outline at
+/// `outer` (shares of the island), lying on it: the ice that will break
+/// off, or, from none, all of the ice at `outer`.
+fn band_mesh(floe: &Floe, inner: f32, outer: f32) -> Mesh {
+    let mut sheet = Sheet::default();
+    let rim = floe.rim();
+    for k in 0..rim.len() {
+        let (a, b) = (rim[k], rim[(k + 1) % rim.len()]);
+        if inner > 0.0 {
+            sheet.quad(a * inner, a * outer, b * outer, b * inner);
+        } else {
+            sheet.triangle(Vec2::ZERO, a * outer, b * outer);
         }
     }
     sheet.mesh()
@@ -1641,45 +1840,91 @@ mod tests {
     }
 
     #[test]
-    fn a_slide_leaves_the_ice_where_its_middle_crosses_the_edge() {
-        // From 7 m out, straight out: 5 m along.
-        let at = Vec2::new(7.0, 0.0);
-        assert_eq!(leaves_the_ice(at, Vec2::X, 4.0, 12.0), None);
-        assert!((leaves_the_ice(at, Vec2::X, 8.0, 12.0).unwrap() - 5.0).abs() < 1e-4);
-        // Straight across: 19 m along.
-        assert!((leaves_the_ice(at, -Vec2::X, 22.0, 12.0).unwrap() - 19.0).abs() < 1e-4);
-        assert_eq!(leaves_the_ice(at, -Vec2::X, 18.0, 12.0), None);
-    }
-
-    #[test]
     fn the_cracks_lie_where_the_ice_will_break_and_never_past_its_edge() {
-        for turn in 1..=rules::LAST_TURN {
-            let (next, now) = (rules::radius_after(turn), rules::radius_in(turn));
-            let mesh = crack_mesh(next, now, u64::from(turn));
-            let all = triangles(&mesh);
-            assert!(!all.is_empty(), "turn {turn}");
-            for at in all.iter().flatten() {
-                assert!(at.length() <= now + CRACK_WANDER + CRACK_WIDE, "turn {turn}: {at}");
+        for seed in 0..12 {
+            let floe = Floe::thrown(seed);
+            for turn in 1..=rules::LAST_TURN {
+                let (next, now) = (rules::size_after(turn), rules::size_in(turn));
+                let mesh = crack_mesh(&floe, next, now, u64::from(turn));
+                let all = triangles(&mesh);
+                assert!(!all.is_empty(), "seed {seed} turn {turn}");
+                for at in all.iter().flatten() {
+                    // On the ice there is now, but for how far a crack wanders
+                    // and how wide it is.
+                    assert!(floe.depth(*at, now) > -(CRACK_WANDER + CRACK_WIDE), "seed {seed} turn {turn}: {at}");
+                }
             }
         }
     }
 
     #[test]
+    fn the_band_that_will_break_is_the_ice_between_the_two_outlines() {
+        for seed in 0..12 {
+            let floe = Floe::thrown(seed);
+            let (inner, outer) = (rules::size_after(3), rules::size_in(3));
+            let band = triangles(&band_mesh(&floe, inner, outer));
+            assert!(!band.is_empty());
+            // Its middle is on the ice there is, and not on what is left.
+            for [a, b, c] in band.iter().step_by(7) {
+                let middle = (*a + *b + *c) / 3.0;
+                assert!(floe.depth(middle, outer) > -1e-3 && floe.depth(middle, inner) < 1e-3, "seed {seed}: {middle}");
+            }
+            // Facing up, as everything lying on the ice is.
+            for [a, b, c] in &band {
+                assert!((*b - *a).perp_dot(*c - *a) <= 1e-6, "seed {seed}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_island_is_its_outline_three_metres_deep_closed_and_facing_out() {
+        let floe = Floe::thrown(4);
+        let corners = island_triangles(&floe);
+        let shape = crate::island::Island::new(&corners);
+        // Ice to stand on, at its top, on the outline's side of it; sea past.
+        for k in 0..64 {
+            let way = Vec2::from_angle(k as f32 * TAU / 64.0);
+            let edge = floe.reach_toward(way);
+            assert_eq!(shape.floor(way * (edge - 0.05), 1.0), Some(0.0), "{way}");
+            assert_eq!(shape.floor(way * (edge + 0.05), 1.0), None, "{way}");
+        }
+        // Closed: each side of every triangle is a side of another, the
+        // other way round.
+        let mut sides = std::collections::HashMap::new();
+        for [a, b, c] in &corners {
+            for (from, to) in [(a, b), (b, c), (c, a)] {
+                let key = |at: &Vec3| (at.x.to_bits(), at.y.to_bits(), at.z.to_bits());
+                *sides.entry((key(from), key(to))).or_insert(0) += 1;
+            }
+        }
+        for ((from, to), count) in &sides {
+            assert_eq!(sides.get(&(*to, *from)), Some(count), "an open side");
+        }
+        // As drawn: a mesh with something in it, every corner with a normal.
+        let mesh = island_mesh(&floe);
+        assert!(!triangles(&mesh).is_empty());
+        assert_eq!(mesh.count_vertices(), 4 * floe.rim().len() + 2);
+    }
+
+    #[test]
     fn the_ice_breaks_into_pieces_of_every_size_that_go_all_the_way_round() {
+        let floe = Floe::thrown(11);
         for turn in 1..=rules::LAST_TURN {
-            let (inner, outer) = (rules::radius_after(turn), rules::radius_in(turn));
-            let middle = ((outer + inner) * 0.5).max(0.3);
+            let (inner, outer) = (rules::size_after(turn), rules::size_in(turn));
+            let middle = (outer + inner) * 0.5;
             let mut dice = fastrand::Rng::with_seed(u64::from(turn));
-            let pieces = pieces_round(middle, &mut dice);
+            let began = 1.3;
+            let pieces = pieces_round(&floe, middle, began, &mut dice);
             assert!(pieces.len() >= 2, "turn {turn}");
             // Round the whole rim, one after another, none a sliver.
-            assert_eq!(pieces[0].0, 0.0);
-            assert!((pieces.last().unwrap().1 - TAU).abs() < 1e-4, "turn {turn}");
+            assert_eq!(pieces[0].0, began);
+            assert!((pieces.last().unwrap().1 - began - TAU).abs() < 1e-4, "turn {turn}");
             for pair in pieces.windows(2) {
                 assert_eq!(pair[0].1, pair[1].0);
             }
-            let lengths: Vec<f32> = pieces.iter().map(|(from, to)| (to - from) * middle).collect();
-            assert!(lengths.iter().all(|&long| long > 0.3 * PIECE_LONG.0), "turn {turn}: {lengths:?}");
+            let out = |angle: f32| (floe.reach_toward(Vec2::from_angle(angle)) * middle).max(0.3);
+            let lengths: Vec<f32> = pieces.iter().map(|(from, to)| (to - from) * out((from + to) * 0.5)).collect();
+            assert!(lengths.iter().all(|&long| long > 0.2 * PIECE_LONG.0), "turn {turn}: {lengths:?}");
             if pieces.len() > 6 {
                 let (least, most) = lengths.iter().fold((f32::MAX, 0.0f32), |(least, most), &long| (least.min(long), most.max(long)));
                 assert!(most > 1.5 * least, "turn {turn}: all alike, {lengths:?}");
@@ -1687,7 +1932,7 @@ mod tests {
             // And each piece is solid, never a mesh with nothing in it,
             // facing out all round.
             let (from, to) = pieces[0];
-            let (mesh, middle) = piece_mesh(inner, outer, from, to, 0.6, &mut dice);
+            let (mesh, middle) = piece_mesh(&floe, inner, outer, from, to, 0.6, &mut dice);
             let Some(bevy::mesh::VertexAttributeValues::Float32x3(points)) = mesh.attribute(Mesh::ATTRIBUTE_POSITION) else {
                 panic!("positions");
             };
@@ -1704,7 +1949,9 @@ mod tests {
                 let turning = (b - a).cross(c - a);
                 assert!(turning.dot(facing) >= -1e-6, "turn {turn}: a face turned inward");
             }
-            assert!(middle.length() > inner * 0.8 && middle.length() < outer + 0.01, "turn {turn}: {middle}");
+            let way = middle.normalize_or(Vec2::X);
+            let edge = floe.reach_toward(way);
+            assert!(middle.length() > edge * inner * 0.8 - 0.2 && middle.length() < edge * outer + 0.05, "turn {turn}: {middle}");
         }
     }
 

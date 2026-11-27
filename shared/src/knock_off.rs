@@ -26,8 +26,9 @@
 //!    the ice has stopped, bouncing off each other; whoever's middle passes
 //!    the edge goes into the sea and is out ([`Slide`]: the same on every
 //!    machine to the bit, from the same start).
-//! 4. **Break** ([`BREAK`], mine): the edge of the ice breaks off, a metre
-//!    a turn ([`radius_in`]), and takes whoever stands on what breaks.
+//! 4. **Break** ([`BREAK`], mine): the edge of the ice breaks off, a twelfth
+//!    of the island a turn ([`size_in`]), and takes whoever stands on what
+//!    breaks.
 //!
 //! until one is left, who wins ("You keep going until last player surviving
 //! is the winner"), or nobody. Places go by when you went in, the last first:
@@ -35,34 +36,51 @@
 //! that of two who knock each other in, whoever stayed on longer comes
 //! first (mine); those the ice broke under after it, together; whoever went
 //! in at the very same moment sharing a place ([`table::split`] pays them).
+//!
+//! **The island is thrown afresh for every table** (since 2026-11-27, Hajun:
+//! "each game, a truly random shape of island forms. check out blobmaker.app,
+//! and set both the two sliders all the way to the right side"): a [`Floe`],
+//! made from a seed the server throws as the table opens and sends its room
+//! ([`Island`]), so that everyone walks about on it while the table waits.
+//! **Nobody is stood on a spot as the game begins** (Hajun: "i dont want
+//! fixed starting positions ... wherever ur last position was (or nearest
+//! surface position before falling into the water if u fell into the water
+//! at the start time) is your starting position, so collision matters during
+//! waiting period too so u cant start on top of each other"): each begins
+//! where they stood as the countdown ended ([`Game::begin`], [`settle`]).
 
 mod computer;
+mod floe;
 mod loiter;
 mod slide;
 
 use std::f32::consts::TAU;
+use std::sync::Arc;
 
 use bevy::prelude::*;
 use bevy_replicon::prelude::*;
 use serde::{Deserialize, Serialize};
 
 pub use computer::{PERSONAS, Persona};
-pub use loiter::Loiter;
+pub use floe::{AREA_RADIUS, Floe, POINTS, RIM, STOOD_BACK};
+pub use loiter::{Loiter, ROOM};
 pub use slide::{Ending, Hit, Slide};
 
 use crate::bots::Dice;
 use crate::table;
 use computer::{Habits, Mind};
 
-/// How far the ice reaches from the middle of the island, in metres: Hajun's
-/// `iceisland.glb` is a disc of ice 24 m across round the origin, its top at
-/// 0 (a test in the game reads it off the map). A body whose middle is
-/// further out than this has gone over.
+/// How far the ice reached from the middle while the island was a disc
+/// (Hajun's `iceisland.glb`, 24 m across, until 2026-11-27), in metres: the
+/// size the ice's breaking is counted against, a twelfth of it a turn
+/// ([`size_in`]), and where a seat stands before its island is known
+/// ([`arrival`]).
 pub const RADIUS: f32 = 12.0;
 
-/// How far from the middle everyone stands as a game begins, in metres: on
-/// the diagonals, facing the middle ([`arrival`]).
-pub const START_RING: f32 = 7.0;
+/// How far out from the deepest spot of the ice toward its own side
+/// ([`side`]) each seat arrives while the table waits, as a share of how deep
+/// that spot is ([`waiting_spot`]): 7 m out on the disc of 12 it was.
+const ARRIVING: f32 = 7.0 / 12.0;
 
 /// How far out from its middle a body reaches as it slides and hits, in
 /// metres: everyone is a disc this wide either way (mine: a little wider
@@ -125,14 +143,15 @@ pub const SETTLE: f32 = 0.6;
 pub const BREAK: f32 = 1.2;
 
 /// The last turn there is: at its end the ice is gone, and whoever is on it
-/// goes in with it ([`radius_in`]).
+/// goes in with it ([`size_in`]).
 pub const LAST_TURN: u16 = 13;
 
 /// How far past the edge of the ice someone's middle may be and they still
 /// stand, in metres, in a slide and as the ice breaks: a millimetre, so that
-/// whoever stands right on the line (as everyone who never moves stands on
-/// the one it breaks along after the fifth turn, 7 m out) is not put in the
-/// sea by how one sum was rounded.
+/// whoever stands right on the line (as everyone who never moved stood on
+/// the one it broke along after the fifth turn, while the island was a disc
+/// and everyone began 7 m out) is not put in the sea by how one sum was
+/// rounded.
 const ON_THE_LINE: f32 = 0.001;
 
 /// How many of the computer's moves its players play out, all of them
@@ -143,27 +162,30 @@ const ON_THE_LINE: f32 = 0.001;
 /// its mind, it weighs then.
 const THINK_A_STEP: usize = 24;
 
-/// How far the ice reaches during `turn` (counted from 1), in metres: 12 the
-/// first turn, a metre less each turn after to 3 in the tenth, then three
-/// quarters of a metre less each turn to none (mine: the island's edge
-/// cracks and breaks off at the end of every turn, as the shrinking ice of
-/// the penguin games does, so that every game ends, and ends with everyone
-/// close together). Before the first turn, the whole island.
-pub fn radius_in(turn: u16) -> f32 {
+/// How big the ice is during `turn` (counted from 1), as a share of the
+/// whole island, its outline made smaller toward its middle ([`Floe`]): the
+/// whole of it the first turn, a twelfth less each turn after to three
+/// twelfths in the tenth, then a sixteenth of a twelfth less each turn to
+/// none (mine: the island's edge cracks and breaks off at the end of every
+/// turn, as the shrinking ice of the penguin games does, so that every game
+/// ends, and ends with everyone close together). As the disc of 12 m it was
+/// until 2026-11-27 broke: 12, 11 ... 3, 2.25, 1.5, 0.75 m out, and none.
+/// Before the first turn, the whole island.
+pub fn size_in(turn: u16) -> f32 {
     match turn {
-        0..=1 => RADIUS,
-        2..=10 => RADIUS + 1.0 - f32::from(turn),
-        11 => 2.25,
-        12 => 1.5,
-        13 => 0.75,
+        0..=1 => 1.0,
+        2..=10 => f32::from(13 - turn) / RADIUS,
+        11 => 2.25 / RADIUS,
+        12 => 1.5 / RADIUS,
+        13 => 0.75 / RADIUS,
         _ => 0.0,
     }
 }
 
-/// How far the ice reaches once `turn` is over and the edge has broken off:
-/// what the next turn is played on.
-pub fn radius_after(turn: u16) -> f32 {
-    radius_in(turn.saturating_add(1))
+/// How big the ice is once `turn` is over and the edge has broken off: what
+/// the next turn is played on.
+pub fn size_after(turn: u16) -> f32 {
+    size_in(turn.saturating_add(1))
 }
 
 /// How fast a slide of `power` sets off, in metres a second: as fast as the
@@ -230,20 +252,118 @@ pub enum Tell {
 }
 
 /// Registers this game's own replicated components, after the board
-/// ([`table::Board`]): what everyone in a game sees of it ([`KnockRound`]).
+/// ([`table::Board`]): what everyone in a game sees of it ([`KnockRound`]),
+/// and the island it is played on ([`Island`], since 2026-11-27).
 pub fn register(app: &mut App) {
-    app.replicate::<KnockRound>();
+    app.replicate::<KnockRound>().replicate::<Island>();
 }
 
-/// Where the player in `seat` stands as they arrive on the game's venue, and which way they
-/// face: [`START_RING`] out from the middle on one of the diagonals, an eighth of the turn
-/// round from +Z and a quarter on from one seat to the next, facing the middle.
+/// The island a table of Knock Off is played on, on the entity its room is
+/// sent, beside the board ([`table::Board`]), from the moment the table opens:
+/// the seed its outline is thrown from ([`Floe::thrown`]), which the server
+/// throws as the table opens, nobody choosing it. Every device makes the
+/// very island the server plays on from it, to the bit, for everyone to walk
+/// about on while the table waits and to play every slide on. Eight bytes.
+#[derive(Component, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Island {
+    pub seed: u64,
+}
+
+impl Island {
+    /// Its outline.
+    pub fn floe(&self) -> Floe {
+        Floe::thrown(self.seed)
+    }
+}
+
+/// Which way from the middle of the island the player in `seat` is, as they arrive and as
+/// the camera looks over it from their side (of length one): one of the diagonals, an
+/// eighth of the turn round from +Z and a quarter on from one seat to the next.
+pub fn side(seat: usize) -> Vec2 {
+    (Quat::from_rotation_y(seat_angle(seat)) * Vec3::Z).xz()
+}
+
+/// The turn about the upright that puts +Z out on `seat`'s side ([`side`]) and points -Z
+/// from there at the middle.
+fn seat_angle(seat: usize) -> f32 {
+    TAU / 8.0 + (seat % SHAPE.most) as f32 * TAU / 4.0
+}
+
+/// Where the player in `seat` stands as they arrive on the game's venue before its island
+/// is known, and which way they face: 7 m out on their side, as on the disc of 12 m the
+/// island was until 2026-11-27, facing the middle. The game stands them on its island as
+/// it comes ([`waiting_spot`]).
 pub fn arrival(seat: usize) -> (Vec3, Quat) {
-    let angle = TAU / 8.0 + (seat % SHAPE.most) as f32 * TAU / 4.0;
-    // A turn of `angle` puts +Z out where the seat stands, and points -Z
-    // from there at the middle.
-    let turn = Quat::from_rotation_y(angle);
-    (turn * Vec3::new(0.0, 0.0, START_RING), turn)
+    let turn = Quat::from_rotation_y(seat_angle(seat));
+    (turn * Vec3::new(0.0, 0.0, ARRIVING * RADIUS), turn)
+}
+
+/// Where the player in `seat` stands as they arrive on `floe` while its table waits, and
+/// which way they face: round the deepest spot of the ice ([`Floe::middle`]), out from it
+/// toward their own side ([`side`]) [`ARRIVING`] of as far as it is deep, facing the
+/// middle (mine): so on the ice however it is shaped, at least a third as deep in as its
+/// deepest, the four seats apart, and on the round island 7 m out, where the disc stood
+/// everyone. (Along their side from the island's own middle, as on the disc, put some in
+/// a bay a hand's breadth from the sea.) From there they walk where they like: nobody is
+/// stood anywhere as the game begins ([`Game::begin`]).
+pub fn waiting_spot(seat: usize, floe: &Floe) -> (Vec3, Quat) {
+    let at = floe.middle(1.0) + side(seat) * floe.deepest(1.0) * ARRIVING;
+    (Vec3::new(at.x, 0.0, at.y), Quat::from_rotation_y(seat_angle(seat)))
+}
+
+/// Where everyone begins as play begins (Hajun, 2026-11-27: "i dont want fixed starting
+/// positions. i want it so that in the "waiting phase" right now where u can move around
+/// freely - that is when u choose ur starting position, and when the game start, wherever
+/// ur last position was (or nearest surface position before falling into the water if u
+/// fell into the water at the start time) is your starting position, so collision matters
+/// during waiting period too so u cant start on top of each other"), on `floe` whole, by
+/// seat, from where each stood as the countdown ended (`standing`; none, or nothing that is
+/// a number, for a seat nobody stood anywhere in, who is put on their [`waiting_spot`]):
+/// where they stood, if that is on the ice; if not (in the sea, or on their way into it),
+/// the nearest spot on it, [`STOOD_BACK`] in from the edge; and nobody on top of anyone,
+/// bodies [`BODY`] out either way, those who overlap (as two devices can each have its own
+/// body clear of where it last saw the other's) pushed apart, half each, and kept on the
+/// ice, or, where there is no room, the later seat put on the nearest spot clear of the
+/// rest. This machine's own sums: the server works it out and sends it, and so does the
+/// device offline.
+pub fn settle(floe: &Floe, standing: &[Option<Vec2>], seats: usize) -> Vec<Vec2> {
+    let clear = 2.0 * BODY + 0.002;
+    let mut at: Vec<Vec2> = (0..seats)
+        .map(|seat| {
+            let stood = standing.get(seat).copied().flatten().filter(|at| at.is_finite());
+            let at = stood.unwrap_or_else(|| waiting_spot(seat, floe).0.xz());
+            floe.nearest_inside(at, 1.0, if floe.holds(at, 1.0) { 0.0 } else { STOOD_BACK })
+        })
+        .collect();
+    for _ in 0..24 {
+        let mut moved = false;
+        for one in 0..seats {
+            for other in one + 1..seats {
+                let apart = at[other] - at[one];
+                let far = apart.length();
+                if far >= clear {
+                    continue;
+                }
+                moved = true;
+                let way = apart.try_normalize().unwrap_or_else(|| side(other) - side(one)).normalize_or(Vec2::X);
+                let push = (clear - far) * 0.5;
+                at[one] = floe.nearest_inside(at[one] - way * push, 1.0, 0.0);
+                at[other] = floe.nearest_inside(at[other] + way * push, 1.0, 0.0);
+            }
+        }
+        if !moved {
+            return at;
+        }
+    }
+    // No room where they stood: each in turn put on the nearest spot clear
+    // of those before them.
+    for seat in 1..seats {
+        if at[..seat].iter().any(|before| before.distance(at[seat]) < clear) {
+            let before: Vec<Vec2> = at[..seat].to_vec();
+            at[seat] = floe.free_spot(at[seat], &before, 1.0, STOOD_BACK, clear);
+        }
+    }
+    at
 }
 
 /// What each seat is paid, from how the game came out (`results.places`, `scores`, `total`);
@@ -296,10 +416,11 @@ pub struct KnockRound {
     /// began.
     pub since: f64,
     pub until: f64,
-    /// How far the ice reaches now, in metres, and how far once this turn's
-    /// break is over (drawn as cracks where it will break).
-    pub radius: f32,
-    pub next_radius: f32,
+    /// How big the ice is now, as a share of the whole island ([`size_in`]),
+    /// and how big once this turn's break is over (drawn as cracks where it
+    /// will break). The island itself is the table's ([`Island`]).
+    pub size: f32,
+    pub next_size: f32,
     /// Where each seat stood as this turn began, across the ground (x, z):
     /// the slide starts from here. None for whoever is out. While the ice
     /// breaks, where the slide left everyone, those it takes too (their
@@ -349,10 +470,10 @@ pub enum Event {
     /// last hit them in this turn's slide, if anyone did ("Mochi knocked
     /// Dubu in").
     Fell { seat: usize, by: Option<usize>, broke: bool },
-    /// The edge of the ice begins to break off: once it has, it reaches
-    /// `radius`, the next turn's ice. Whoever stands on what breaks goes in
-    /// with it ([`Event::Fell`], `broke`, just after).
-    Breaks { radius: f32 },
+    /// The edge of the ice begins to break off: once it has, it is `size`
+    /// of the island ([`size_in`]), the next turn's ice. Whoever stands on
+    /// what breaks goes in with it ([`Event::Fell`], `broke`, just after).
+    Breaks { size: f32 },
     /// It is over: `first` came first, the one left on the ice, or whoever
     /// went in last (several, only if at the very same moment).
     Over { first: Vec<usize> },
@@ -366,6 +487,8 @@ pub enum Event {
 /// behind the clock every device reads what it is sent by.
 #[derive(Clone, Debug)]
 pub struct Game {
+    /// The island it is played on.
+    floe: Arc<Floe>,
     /// Each seat's, by seat: a person's (true) or the computer's.
     people: Vec<bool>,
     stage: KnockStage,
@@ -375,8 +498,8 @@ pub struct Game {
     now: f64,
     since: f64,
     until: f64,
-    /// How far the ice reaches this turn.
-    radius: f32,
+    /// How big the ice is this turn ([`size_in`]).
+    size: f32,
     /// Where each seat stands across the ice as this turn began (while the
     /// ice breaks, as the slide left them); none once out.
     stand: Vec<Option<Vec2>>,
@@ -408,10 +531,11 @@ pub struct Game {
 }
 
 impl Game {
-    /// A new game at a table of `seats` seats (four; fewer works), `people[seat]` false for
-    /// the computer's, whose players are each one of [`PERSONAS`], no two alike, thrown from
-    /// `seed`: the same seed, the same game. Nothing happens until [`Game::begin`].
-    pub fn new(seats: usize, people: &[bool], seed: u64) -> Self {
+    /// A new game at a table of `seats` seats (four; fewer works) on `floe`, `people[seat]`
+    /// false for the computer's, whose players are each one of [`PERSONAS`], no two alike,
+    /// thrown from `seed`: the same seed on the same island, the same game. Nothing happens
+    /// until [`Game::begin`].
+    pub fn new(seats: usize, people: &[bool], seed: u64, floe: Arc<Floe>) -> Self {
         let mut dice = Dice::new(seed);
         // The computer's kinds, shuffled: each seat of theirs takes the next.
         let mut kinds: Vec<usize> = (0..PERSONAS.len()).collect();
@@ -424,17 +548,19 @@ impl Game {
         let minds = (0..seats)
             .map(|seat| (!people[seat]).then(|| Mind::new(&PERSONAS[kinds.next().unwrap_or(0)], seed ^ (seat as u64 + 1).wrapping_mul(0xA24B_AED4_963E_E407))))
             .collect();
-        let stand: Vec<Option<Vec2>> = (0..seats).map(|seat| Some(arrival(seat).0.xz())).collect();
+        let stand: Vec<Option<Vec2>> = (0..seats).map(|seat| Some(waiting_spot(seat, &floe).0.xz())).collect();
+        let middle = floe.middle(1.0);
         Self {
             last: stand.iter().map(|at| at.map_or(Vec3::ZERO, |at| Vec3::new(at.x, 0.0, at.y))).collect(),
-            yaw: stand.iter().map(|at| at.map_or(0.0, |at| facing(-at).unwrap_or(0.0))).collect(),
+            yaw: stand.iter().map(|at| at.map_or(0.0, |at| facing(middle - at).unwrap_or(0.0))).collect(),
             stand,
+            floe,
             stage: KnockStage::Aim,
             turn: 0,
             now: 0.0,
             since: 0.0,
             until: 0.0,
-            radius: RADIUS,
+            size: 1.0,
             aims: vec![(Vec2::ZERO, 0); seats],
             ready: vec![false; seats],
             out: vec![None; seats],
@@ -449,9 +575,12 @@ impl Game {
     }
 
     /// The countdown is over, at `clock` (by the clock every step after is
-    /// told the time by, [`Game::step`]): everyone stands on their spot
-    /// ([`arrival`]), facing the middle, and the first turn's aim begins.
-    pub fn begin(&mut self, clock: f64) -> Vec<Event> {
+    /// told the time by, [`Game::step`]): everyone begins where they stood as
+    /// it ended (`standing`, by seat: none, or a seat missing, for anyone who
+    /// stood nowhere, put on their [`waiting_spot`]), on the ice and nobody on
+    /// top of anyone ([`settle`]), facing the middle; and the first turn's aim
+    /// begins.
+    pub fn begin(&mut self, clock: f64, standing: &[Option<Vec2>]) -> Vec<Event> {
         let mut events = Vec::new();
         if self.turn != 0 {
             return events;
@@ -461,12 +590,12 @@ impl Game {
         self.since = clock;
         self.until = clock;
         self.turn = 1;
-        self.radius = radius_in(1);
-        for seat in 0..seats {
+        self.size = size_in(1);
+        let settled = settle(&self.floe, standing, seats);
+        for (seat, &at) in settled.iter().enumerate() {
             if self.out[seat].is_none() {
-                let at = arrival(seat).0;
-                self.stand[seat] = Some(at.xz());
-                self.last[seat] = at;
+                self.stand[seat] = Some(at);
+                self.last[seat] = Vec3::new(at.x, 0.0, at.y);
             }
         }
         if self.in_play() <= 1 {
@@ -578,12 +707,12 @@ impl Game {
             _ => {}
         }
         if self.stage == KnockStage::Aim && self.turn != 0 {
-            let next = radius_after(self.turn);
+            let next = size_after(self.turn);
             for other in 0..self.people.len() {
                 if self.out[other].is_none()
                     && let Some(mind) = &mut self.minds[other]
                 {
-                    mind.replan(other, &self.stand, self.radius, next, &self.habits);
+                    mind.replan(other, &self.stand, &self.floe, self.size, next, &self.habits);
                 }
             }
         }
@@ -659,20 +788,21 @@ impl Game {
         self.launches.clear();
         self.slide = None;
         self.ending = None;
+        let middle = self.floe.middle(self.size);
         for seat in 0..seats {
             if let Some(at) = self.stand[seat]
-                && let Some(yaw) = facing(-at)
+                && let Some(yaw) = facing(middle - at)
             {
                 self.yaw[seat] = yaw;
             }
         }
-        let next = radius_after(self.turn);
+        let next = size_after(self.turn);
         for seat in 0..seats {
             if self.out[seat].is_some() {
                 continue;
             }
             if let Some(mind) = &mut self.minds[seat] {
-                mind.plan(seat, &self.stand, self.radius, next, &self.habits, self.since, secs);
+                mind.plan(seat, &self.stand, &self.floe, self.size, next, &self.habits, self.since, secs);
             }
         }
         self.aim_may_end(self.since);
@@ -717,7 +847,7 @@ impl Game {
             .collect();
         for seat in 0..seats {
             if let Some(at) = self.stand[seat].filter(|_| self.out[seat].is_none()) {
-                self.habits[seat].saw(seat, at, self.launches[seat], &self.stand);
+                self.habits[seat].saw(seat, at, self.launches[seat], &self.stand, self.floe.middle(self.size));
                 if let Some(yaw) = facing(self.launches[seat]) {
                     self.yaw[seat] = yaw;
                 }
@@ -735,11 +865,11 @@ impl Game {
     /// as it goes.
     fn slide_begins(&mut self, events: &mut Vec<Event>) {
         let start: Vec<Option<Vec2>> = (0..self.people.len()).map(|seat| self.stand[seat].filter(|_| self.out[seat].is_none())).collect();
-        let ending = Slide::play_out(&start, &self.launches, self.radius);
+        let ending = Slide::play_out(&start, &self.launches, &self.floe, self.size);
         self.stage = KnockStage::Slide;
         self.since = self.until;
         self.until = self.since + f64::from(ending.secs + SETTLE);
-        self.slide = Some(Slide::new(&start, &self.launches, self.radius));
+        self.slide = Some(Slide::new(&start, &self.launches, &self.floe, self.size));
         self.ending = Some(ending);
         events.push(Event::Slide);
     }
@@ -785,7 +915,7 @@ impl Game {
         // seen into the sea where they went, however few steps it was
         // stepped by (a frame that stalled may have gone past all of it).
         self.slide_on(events);
-        let ending = self.ending.take().unwrap_or_else(|| Slide::new(&self.stand, &[], self.radius).ending());
+        let ending = self.ending.take().unwrap_or_else(|| Slide::new(&self.stand, &[], &self.floe, self.size).ending());
         // Catching up with whatever the clock did not get to.
         let fell = (0..self.people.len()).filter_map(|seat| ending.fell[seat].map(|when| (when, seat, ending.by[seat]))).collect();
         self.fell(fell, events);
@@ -812,12 +942,12 @@ impl Game {
         self.stage = KnockStage::Break;
         self.since = self.until;
         self.until = self.since + f64::from(BREAK);
-        let next = radius_after(self.turn);
-        events.push(Event::Breaks { radius: next });
+        let next = size_after(self.turn);
+        events.push(Event::Breaks { size: next });
         for seat in 0..self.people.len() {
             if let Some(at) = self.stand[seat]
                 && self.out[seat].is_none()
-                && (next <= 0.0 || at.length_squared() > (next + ON_THE_LINE) * (next + ON_THE_LINE))
+                && !self.floe.holds(at, next)
             {
                 self.out[seat] = Some(self.turn);
                 // After every fall of the slide, and before whoever leaves
@@ -831,7 +961,7 @@ impl Game {
     /// The ice has broken: whoever it took is in the sea, and the next turn
     /// begins; or, with one left or nobody, the game is over.
     fn broken(&mut self, events: &mut Vec<Event>) {
-        self.radius = radius_after(self.turn);
+        self.size = size_after(self.turn);
         for seat in 0..self.people.len() {
             if self.out[seat].is_some() && self.stand[seat].take().is_some() {
                 self.last[seat].y = -SUNK;
@@ -903,8 +1033,8 @@ impl Game {
             stage: self.stage,
             since: self.since,
             until: self.until,
-            radius: self.radius,
-            next_radius: if self.stage == KnockStage::Over { self.radius } else { radius_after(self.turn) },
+            size: self.size,
+            next_size: if self.stage == KnockStage::Over { self.size } else { size_after(self.turn) },
             start: self.stand.iter().map(|at| at.map(|at| (at.x, at.y))).collect(),
             launches: if shown { self.launches.iter().map(|launch| (launch.x, launch.y)).collect() } else { Vec::new() },
             ready: if self.stage == KnockStage::Aim { self.ready.clone() } else { vec![false; self.ready.len()] },
@@ -954,6 +1084,23 @@ mod tests {
     /// since 1970, as the server's would be.
     const CLOCK: f64 = 1_795_000_000.0;
 
+    /// The round island 12 m out the game was played on until 2026-11-27:
+    /// what the turns are tried on, everyone's spot where it was, 7 m out.
+    fn round() -> Arc<Floe> {
+        Arc::new(Floe::round(RADIUS))
+    }
+
+    /// A game on the round island.
+    fn on_the_disc(seats: usize, people: &[bool], seed: u64) -> Game {
+        Game::new(seats, people, seed, round())
+    }
+
+    /// A game on an island of blobmaker's, thrown from the game's own seed:
+    /// what whole games are played on, as they are at the tables.
+    fn on_a_blob(seats: usize, people: &[bool], seed: u64) -> Game {
+        Game::new(seats, people, seed, Arc::new(Floe::thrown(seed ^ 0xF10E)))
+    }
+
     /// Steps `game` on once, `dt` seconds on by its clock from the last
     /// time it was told it.
     fn tick(game: &mut Game, dt: f64) -> Vec<Event> {
@@ -986,16 +1133,19 @@ mod tests {
     }
 
     #[test]
-    fn the_ice_breaks_a_metre_a_turn_and_then_to_nothing() {
-        let radii: Vec<f32> = (1..=LAST_TURN + 1).map(radius_in).collect();
-        assert_eq!(radii, [12.0, 11.0, 10.0, 9.0, 8.0, 7.0, 6.0, 5.0, 4.0, 3.0, 2.25, 1.5, 0.75, 0.0]);
-        assert_eq!(radius_in(0), RADIUS);
-        assert_eq!(radius_after(LAST_TURN), 0.0);
-        assert_eq!(radius_after(u16::MAX), 0.0);
+    fn the_ice_breaks_a_twelfth_a_turn_and_then_to_nothing() {
+        // As the disc of 12 m broke, a metre a turn and then by threes of
+        // quarters.
+        let sizes: Vec<f32> = (1..=LAST_TURN + 1).map(|turn| size_in(turn) * RADIUS).collect();
+        assert_eq!(sizes, [12.0, 11.0, 10.0, 9.0, 8.0, 7.0, 6.0, 5.0, 4.0, 3.0, 2.25, 1.5, 0.75, 0.0]);
+        assert_eq!(size_in(0), 1.0);
+        assert_eq!(size_after(LAST_TURN), 0.0);
+        assert_eq!(size_after(u16::MAX), 0.0);
         for turn in 1..=LAST_TURN {
-            assert!(radius_after(turn) < radius_in(turn), "turn {turn}");
+            assert!(size_after(turn) < size_in(turn), "turn {turn}");
         }
-        // The arrow is as long as the slide; ten all but crosses the island.
+        // The arrow is as long as the slide; ten all but crosses the round
+        // island, and goes most of the way across one of blobmaker's.
         assert_eq!(reach(10), 10.0 * METRES_A_POWER);
         assert!(reach(MOST_POWER) > 1.8 * RADIUS && reach(MOST_POWER) < 2.0 * RADIUS);
         assert_eq!(reach(200), reach(MOST_POWER));
@@ -1010,20 +1160,21 @@ mod tests {
     fn turns_run_aim_reveal_slide_break_one_after_another() {
         // Two people and two of the computer's; the people are ready at
         // once, and aim nowhere.
-        let mut game = Game::new(4, &[true, false, true, false], 3);
+        let mut game = on_the_disc(4, &[true, false, true, false], 3);
         assert_eq!(game.round().turn, 0);
         assert_eq!(game.step(CLOCK - 0.1), vec![]);
-        let begun = game.begin(CLOCK);
+        let begun = game.begin(CLOCK, &[]);
         assert_eq!(begun, vec![Event::Aim { turn: 1 }]);
         let round = game.round();
         assert_eq!((round.stage, round.since, round.until), (KnockStage::Aim, CLOCK, CLOCK + f64::from(FIRST_AIM)));
-        assert_eq!((round.radius, round.next_radius), (12.0, 11.0));
-        // Everyone on their spot, facing the middle.
+        assert_eq!((round.size, round.next_size), (1.0, 11.0 / 12.0));
+        // Nobody stood anywhere: everyone on their spot, facing the middle.
         for seat in 0..4 {
             let (at, yaw) = game.at(seat);
-            assert_eq!(at, arrival(seat).0);
+            assert_eq!(at, waiting_spot(seat, &game.floe).0);
             let facing = Quat::from_rotation_y(yaw) * Vec3::NEG_Z;
-            assert!(facing.xz().distance(-at.xz().normalize()) < 1e-4, "seat {seat} faces {facing}");
+            let middle = game.floe.middle(1.0);
+            assert!(facing.xz().distance((middle - at.xz()).normalize()) < 1e-4, "seat {seat} faces {facing}");
         }
         // The stages go by in order, each beginning as the last ended.
         let mut seen = Vec::new();
@@ -1051,6 +1202,7 @@ mod tests {
         }
         assert!(game.outcome().is_some(), "never over: {seen:?}");
         let turns = game.turn();
+        assert_eq!(game.floe.middle(1.0), Floe::round(RADIUS).middle(1.0));
         for (index, &(turn, stage)) in seen.iter().enumerate() {
             let expected = [KnockStage::Reveal, KnockStage::Slide, KnockStage::Break, KnockStage::Aim][index % 4];
             if (turn, stage) == (turns, KnockStage::Over) {
@@ -1063,9 +1215,66 @@ mod tests {
     }
 
     #[test]
+    fn everyone_begins_where_they_stood_on_the_ice_and_nobody_on_anyone() {
+        for seed in 0..80 {
+            let floe = Arc::new(Floe::thrown(seed));
+            let middle = floe.middle(1.0);
+            let deep = floe.deepest(1.0);
+            // Seat 0 well in; seat 1 two metres out in the sea; seats 2 and 3
+            // on top of each other, as two devices each clear of where it
+            // last saw the other can be.
+            let way = Vec2::from_angle(seed as f32 * 0.7);
+            let off = way * (floe.reach_toward(way) + 2.0);
+            let standing = [
+                Some(middle - Vec2::new(0.5 * deep, 0.0)),
+                Some(off),
+                Some(middle + Vec2::new(0.4 * deep, 0.05)),
+                Some(middle + Vec2::new(0.45 * deep, 0.0)),
+            ];
+            let mut game = Game::new(4, &[true, true, false, false], seed, Arc::clone(&floe));
+            game.begin(CLOCK, &standing);
+            let start: Vec<Vec2> = game.round().start.iter().map(|at| at.map(|(x, z)| Vec2::new(x, z)).expect("on the ice")).collect();
+            // Where they stood, if that was on the ice and on nobody (seat 1
+            // stood back on the ice by them would be on them).
+            if start[1].distance(standing[0].unwrap()) >= 2.0 * BODY + 0.01 {
+                assert_eq!(start[0], standing[0].unwrap(), "seed {seed}");
+            }
+            // In the sea: the nearest spot on the ice, a little in.
+            assert!(floe.depth(start[1], 1.0) >= STOOD_BACK * 0.97, "seed {seed}: {}", start[1]);
+            assert!(start[1].distance(off) < 2.0 + STOOD_BACK + 0.8, "seed {seed}: {off} to {}", start[1]);
+            // On top of each other: pushed apart, half each, a little.
+            for seat in [2, 3] {
+                assert!(start[seat].distance(standing[seat].unwrap()) < 2.0 * BODY, "seed {seed}: seat {seat} moved to {}", start[seat]);
+            }
+            for one in 0..4 {
+                assert!(floe.holds(start[one], 1.0), "seed {seed}: seat {one} off the ice at {}", start[one]);
+                for other in one + 1..4 {
+                    assert!(start[one].distance(start[other]) >= 2.0 * BODY, "seed {seed}: {one} and {other} on each other");
+                }
+                // The game has them where it says.
+                assert_eq!(game.at(one).0, Vec3::new(start[one].x, 0.0, start[one].y));
+            }
+        }
+        // All four on the very same spot, and nobody anywhere: each on the
+        // ice, apart.
+        for seed in 0..40 {
+            let floe = Arc::new(Floe::thrown(seed + 900));
+            for standing in [vec![Some(floe.middle(1.0)); 4], vec![], vec![None, Some(Vec2::new(f32::NAN, 0.0))]] {
+                let at = settle(&floe, &standing, 4);
+                for one in 0..4 {
+                    assert!(floe.holds(at[one], 1.0), "seed {seed}: {standing:?}");
+                    for other in one + 1..4 {
+                        assert!(at[one].distance(at[other]) >= 2.0 * BODY, "seed {seed}: {standing:?} {at:?}");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn nobody_s_aim_is_in_the_round_before_the_reveal() {
-        let mut game = Game::new(4, &[true, true, false, false], 5);
-        game.begin(CLOCK);
+        let mut game = on_the_disc(4, &[true, true, false, false], 5);
+        game.begin(CLOCK, &[]);
         game.aim(0, Vec2::new(-1.0, -1.0), 4);
         game.aim(1, Vec2::new(0.0, 1.0), 12);
         run(&mut game, 0.05, 5.0);
@@ -1074,8 +1283,8 @@ mod tests {
         assert!(round.launches.is_empty(), "{round:?}");
         // Nothing in it moves, whoever aimed what, and the computer's
         // players face the middle however they have made up their minds.
-        let mut other = Game::new(4, &[true, true, false, false], 5);
-        other.begin(CLOCK);
+        let mut other = on_the_disc(4, &[true, true, false, false], 5);
+        other.begin(CLOCK, &[]);
         run(&mut other, 0.05, 5.0);
         let theirs = other.round();
         assert_eq!((round.start.clone(), round.out.clone()), (theirs.start.clone(), theirs.out.clone()));
@@ -1103,8 +1312,8 @@ mod tests {
 
     #[test]
     fn the_aim_ends_early_only_once_every_person_is_ready() {
-        let mut game = Game::new(4, &[true, false, true, false], 8);
-        game.begin(CLOCK);
+        let mut game = on_the_disc(4, &[true, false, true, false], 8);
+        game.begin(CLOCK, &[]);
         run(&mut game, 0.1, 1.0);
         game.ready(0);
         // One of two: the aim goes on.
@@ -1128,15 +1337,15 @@ mod tests {
         assert_eq!(game.round().since, when);
         assert!(when < CLOCK + f64::from(FIRST_AIM) - 5.0);
         // A person who never says so holds it to its time.
-        let mut game = Game::new(4, &[true, false, false, false], 8);
-        game.begin(CLOCK);
+        let mut game = on_the_disc(4, &[true, false, false, false], 8);
+        game.begin(CLOCK, &[]);
         run_to(&mut game, KnockStage::Reveal, 0.1);
         assert!((game.round().since - (CLOCK + f64::from(FIRST_AIM))).abs() < 0.11);
         // The computer alone: over once the last of them has made up its
         // mind, which is a while, and never the whole of it.
         for seed in 0..20 {
-            let mut game = Game::new(4, &[false; 4], seed);
-            game.begin(CLOCK);
+            let mut game = on_the_disc(4, &[false; 4], seed);
+            game.begin(CLOCK, &[]);
             run_to(&mut game, KnockStage::Reveal, 0.05);
             let took = game.round().since - CLOCK;
             assert!(took > 1.0 && took < f64::from(FIRST_AIM) - 0.3, "seed {seed}: {took} s");
@@ -1147,8 +1356,8 @@ mod tests {
     fn standing_still_the_ice_takes_everyone_and_they_share_first() {
         // Four people who never aim: on their spots, 7 m out, until the
         // ice breaks to 6 m at the end of the sixth turn and takes them all.
-        let mut game = Game::new(4, &[true; 4], 1);
-        let mut events = game.begin(CLOCK);
+        let mut game = on_the_disc(4, &[true; 4], 1);
+        let mut events = game.begin(CLOCK, &[]);
         events.extend(run(&mut game, 0.1, 1000.0));
         let (places, scores, total) = game.outcome().expect("over");
         assert_eq!(game.turn(), 6);
@@ -1169,16 +1378,16 @@ mod tests {
         // Two people who have kept to the middle of the last floe, touching,
         // standing still: the ice gives out under both at the end of the last
         // turn, at the same moment, and they share first.
-        let mut game = Game::new(4, &[true; 4], 12);
-        game.begin(CLOCK);
+        let mut game = on_the_disc(4, &[true; 4], 12);
+        game.begin(CLOCK, &[]);
         game.leave(2);
         game.leave(3);
         game.turn = LAST_TURN;
-        game.radius = radius_in(LAST_TURN);
+        game.size = size_in(LAST_TURN);
         game.stand[0] = Some(Vec2::new(0.6, 0.0));
         game.stand[1] = Some(Vec2::new(-0.6, 0.0));
         let events = run(&mut game, 0.1, 100.0);
-        assert!(events.contains(&Event::Breaks { radius: 0.0 }), "{events:?}");
+        assert!(events.contains(&Event::Breaks { size: 0.0 }), "{events:?}");
         assert!(events.contains(&Event::Fell { seat: 0, by: None, broke: true }) && events.contains(&Event::Fell { seat: 1, by: None, broke: true }));
         let (places, scores, _) = game.outcome().expect("over");
         assert_eq!(game.turn(), LAST_TURN);
@@ -1188,8 +1397,8 @@ mod tests {
 
     #[test]
     fn places_go_by_when_you_went_in_last_first() {
-        let mut game = Game::new(4, &[true; 4], 2);
-        game.begin(CLOCK);
+        let mut game = on_the_disc(4, &[true; 4], 2);
+        game.begin(CLOCK, &[]);
         // Seat 3 leaves in the first turn's aim, and is out in it.
         game.leave(3);
         assert_eq!(game.round().out, vec![None, None, None, Some(1)]);
@@ -1224,8 +1433,8 @@ mod tests {
     fn of_two_who_go_in_in_one_slide_whoever_stayed_on_longer_comes_first() {
         // The last two slide off the ice in the same slide, one from nearer
         // the edge than the other: the further one lasts longer and wins.
-        let mut game = Game::new(2, &[true, true], 9);
-        game.begin(CLOCK);
+        let mut game = on_the_disc(2, &[true, true], 9);
+        game.begin(CLOCK, &[]);
         game.aim(0, arrival(0).0.xz(), MOST_POWER);
         game.aim(1, arrival(1).0.xz(), 2 * MOST_POWER / 3);
         let events = run(&mut game, 0.05, 100.0);
@@ -1234,8 +1443,8 @@ mod tests {
         assert_eq!(game.outcome().unwrap().0, vec![1, 0]);
         assert_eq!(events.last(), Some(&Event::Over { first: vec![1] }));
         // And two who go in at the very same moment share it.
-        let mut game = Game::new(2, &[true, true], 9);
-        game.begin(CLOCK);
+        let mut game = on_the_disc(2, &[true, true], 9);
+        game.begin(CLOCK, &[]);
         game.aim(0, arrival(0).0.xz(), MOST_POWER);
         game.aim(1, arrival(1).0.xz(), MOST_POWER);
         run(&mut game, 0.05, 100.0);
@@ -1244,8 +1453,8 @@ mod tests {
 
     #[test]
     fn the_last_to_leave_but_one_leaves_the_game_to_them() {
-        let mut game = Game::new(4, &[true, false, true, false], 4);
-        game.begin(CLOCK);
+        let mut game = on_the_disc(4, &[true, false, true, false], 4);
+        game.begin(CLOCK, &[]);
         run(&mut game, 0.1, 0.5);
         // Two go (the game minds nobody's seat over another's); the two
         // people left play on.
@@ -1270,8 +1479,8 @@ mod tests {
         // Seat 0 slides at seat 1 hard; seat 1 leaves as everyone slides:
         // the slide is played as it began, everyone's devices playing the
         // same, and seat 1 is gone at its end.
-        let mut game = Game::new(4, &[true, true, true, true], 6);
-        game.begin(CLOCK);
+        let mut game = on_the_disc(4, &[true, true, true, true], 6);
+        game.begin(CLOCK, &[]);
         game.aim(0, arrival(1).0.xz() - arrival(0).0.xz(), 6);
         for seat in 0..4 {
             game.ready(seat);
@@ -1292,8 +1501,8 @@ mod tests {
         // to 11 at the end of the turn, and it takes them; the third, the
         // one left on it, leaves as it breaks. They went in last of the
         // three, and come first.
-        let mut game = Game::new(3, &[true; 3], 7);
-        game.begin(CLOCK);
+        let mut game = on_the_disc(3, &[true; 3], 7);
+        game.begin(CLOCK, &[]);
         game.aim(0, arrival(0).0.xz(), 2);
         game.aim(1, arrival(1).0.xz(), 2);
         for seat in 0..3 {
@@ -1312,8 +1521,8 @@ mod tests {
         assert_eq!(prizes(&results, &[true; 3]), vec![35, 35, 130]);
         // With more left on the ice, whoever leaves as it breaks places
         // below those still on it, and above whoever it took.
-        let mut game = Game::new(4, &[true; 4], 7);
-        game.begin(CLOCK);
+        let mut game = on_the_disc(4, &[true; 4], 7);
+        game.begin(CLOCK, &[]);
         game.aim(0, arrival(0).0.xz(), 2);
         for seat in 0..4 {
             game.ready(seat);
@@ -1332,8 +1541,8 @@ mod tests {
         // A person and three of the computer's on their spots; the person
         // leaves before any of the computer's has made up its mind.
         for seed in 0..20 {
-            let mut game = Game::new(4, &[true, false, false, false], seed);
-            game.begin(CLOCK);
+            let mut game = on_the_disc(4, &[true, false, false, false], seed);
+            game.begin(CLOCK, &[]);
             tick(&mut game, 0.05);
             let when: Vec<Option<f64>> = (0..4).map(|seat| game.minds[seat].as_ref().map(|mind| mind.decides_at())).collect();
             game.leave(0);
@@ -1361,8 +1570,8 @@ mod tests {
             stage: KnockStage::Slide,
             since: CLOCK + 600.123,
             until: CLOCK + 605.456,
-            radius: 0.75,
-            next_radius: 0.0,
+            size: 0.0625,
+            next_size: 0.0,
             start: vec![Some((-3.21, 4.56)); 4],
             launches: vec![(-12.3, 4.5); 4],
             ready: vec![true; 4],
@@ -1373,8 +1582,8 @@ mod tests {
         assert!(bytes.len() <= 120, "{} bytes", bytes.len());
         assert_eq!(postcard::from_bytes::<KnockRound>(&bytes).unwrap(), round);
         // And as everyone aims, less: nobody's launch, nobody's place.
-        let mut game = Game::new(4, &[true, false, false, false], 1);
-        game.begin(CLOCK);
+        let mut game = on_the_disc(4, &[true, false, false, false], 1);
+        game.begin(CLOCK, &[]);
         let bytes = postcard::to_allocvec(&game.round()).unwrap();
         assert!(bytes.len() <= 80, "{} bytes", bytes.len());
         // What is asked and told, as small.
@@ -1401,9 +1610,9 @@ mod tests {
         // everyone's is the outcome's. One rule, the game's, for the panel
         // that says where you came and for the results.
         for seed in 0..80 {
-            let mut game = Game::new(4, &[true, false, true, false], seed);
+            let mut game = on_a_blob(4, &[true, false, true, false], seed);
             let mut dice = Dice::new(seed ^ 0x5EED);
-            game.begin(CLOCK);
+            game.begin(CLOCK, &[]);
             let mut left = [false; 4];
             let mut aimed = 0;
             let mut said: Vec<Option<u8>> = vec![None; 4];
@@ -1459,8 +1668,8 @@ mod tests {
     #[test]
     fn a_device_playing_the_slide_from_the_round_comes_out_where_the_game_does() {
         for seed in 20..30 {
-            let mut game = Game::new(4, &[false; 4], seed);
-            game.begin(CLOCK);
+            let mut game = on_a_blob(4, &[false; 4], seed);
+            game.begin(CLOCK, &[]);
             let mut slides = 0;
             for _ in 0..100_000 {
                 if game.outcome().is_some() {
@@ -1474,7 +1683,7 @@ mod tests {
                     let round = game.round();
                     let start: Vec<Option<Vec2>> = round.start.iter().map(|at| at.map(|(x, z)| Vec2::new(x, z))).collect();
                     let launches: Vec<Vec2> = round.launches.iter().map(|&(x, z)| Vec2::new(x, z)).collect();
-                    let mut device = Slide::new(&start, &launches, round.radius);
+                    let mut device = Slide::new(&start, &launches, &game.floe, round.size);
                     let mut clock = round.since + 0.013;
                     while clock < round.until {
                         clock += 1.0 / 57.0;
@@ -1531,8 +1740,8 @@ mod tests {
     /// step, the stage it is at began by that time and ends after it: the
     /// game is where the clock is.
     fn told_by(seed: u64, mut clock: impl FnMut(u32) -> f64) -> Told {
-        let mut game = Game::new(4, &[false; 4], seed);
-        let mut events = game.begin(CLOCK);
+        let mut game = on_a_blob(4, &[false; 4], seed);
+        let mut events = game.begin(CLOCK, &[]);
         let mut thought = Duration::ZERO;
         let mut reveals = Vec::new();
         for step in 1..1_000_000 {
@@ -1816,8 +2025,8 @@ mod tests {
         }
         // A stall longer than a whole game: over in that one step, as it
         // would have come out.
-        let mut game = Game::new(4, &[false; 4], 41);
-        let mut events = game.begin(CLOCK);
+        let mut game = on_a_blob(4, &[false; 4], 41);
+        let mut events = game.begin(CLOCK, &[]);
         events.extend(game.step(CLOCK + 3600.0));
         assert!(game.outcome().is_some());
         let even = told(41, 1.0 / 30.0);
@@ -1825,8 +2034,8 @@ mod tests {
         assert_eq!(Some(game.round()), even.ended);
         // A clock put back a little holds the game where it was, and one
         // that is not a number is not heard.
-        let mut game = Game::new(4, &[false; 4], 2);
-        game.begin(CLOCK);
+        let mut game = on_a_blob(4, &[false; 4], 2);
+        game.begin(CLOCK, &[]);
         game.step(CLOCK + 2.0);
         let round = game.round();
         game.step(CLOCK + 1.5);
@@ -1854,7 +2063,7 @@ mod tests {
                     if *event == Event::Reveal
                         && let Some(round) = reveals.next()
                     {
-                        println!("  turn {} on {} m: {}", round.turn, round.radius, moves_of(round, &game.kinds));
+                        println!("  turn {} on {:.0}% of it: {}", round.turn, round.size * 100.0, moves_of(round, &game.kinds));
                     } else if !matches!(event, Event::Slide | Event::Aim { .. }) {
                         println!("  {event:?}");
                     }

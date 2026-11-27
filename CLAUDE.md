@@ -16,13 +16,16 @@ them (2026-11-19), Hajun likes Bridge Wars and Knock Off and had Bridge
 Race's and Last Stand's cards turned off (`games::OFF`, since APK 44):
 spend nothing on those two unasked.
 
-As of 2026-11-25: `PROTOCOL_VERSION` 25 (since 2026-11-23: a seat of the
-town is one of its 48 plots, so **APK 51 and older are told to update**;
-APK 52 and later play on), **APK 60** (`versionCode`, built 2026-11-25,
-not put on a phone from here, `docs/building.md`), the server deployed at
-06:32 UTC on 2026-11-25 with everything in `server/` and `shared/` (since
-changed by a comment in `shared/` alone).
-**All of it committed and pushed, up to APK 60**: the camera kept in a
+As of 2026-11-27: `PROTOCOL_VERSION` 26 (since 2026-11-27: Knock Off's
+island is sent with its table, so **APK 60 and older are told to
+update**; APK 61 and later play on), **APK 61** (`versionCode`, built
+2026-11-27, not put on a phone from here, `docs/building.md`), the server
+deployed at 10:16 UTC on 2026-11-27 with everything in `server/` and
+`shared/`.
+**All of it committed and pushed, up to APK 61**: Knock Off on an island
+thrown for each table, everyone beginning where they stood
+(`docs/knock-off.md`); a thing dragged upstairs stays upstairs
+(`docs/bag.md`); the camera kept in a
 house in the town with you, nothing see-through there, and nearer
 (`docs/camera.md`); each floor of a house painted by itself, and the bag
 by kind and rarity (`docs/bag.md`); the land (`docs/land.md`: whoever is here and real people's
@@ -773,13 +776,19 @@ server online and by the device offline.
   strike blinds, 4 s and 3 more
   each time. A point for finding, one for staying hidden; everyone hides
   once.
-- **Knock Off** (four seats, the computer filling them): a 12 m disc of ice
-  in the sea. Everyone aims at once in secret (12 s, then 10: the stick
+- **Knock Off** (four seats, the computer filling them): an island of ice
+  in the sea thrown afresh for every table (since 2026-11-27, Hajun's:
+  blobmaker.app's way with both its sliders right, `knock_off::Floe`, as
+  much ice as a disc 10 m out), its seed sent the table's room
+  (`knock_off::Island`). While the table waits nobody walks through
+  anybody, and everyone begins where they stood as the countdown ended
+  (in the sea, on the nearest ice: `knock_off::settle`). Everyone aims at
+  once in secret (12 s, then 10: the stick
   for the way, taken anywhere on the screen but round the buttons
   (`stick_anywhere`), up and down for power 1 to 10, from 1 each turn),
   then all slide at once, the same to the bit on every device and the
-  server; the ice's edge breaks a
-  metre a turn, gone after turn 13. The last on it wins; the rest watch or
+  server; the ice shrinks toward its middle a twelfth of the island a
+  turn, gone after turn 13. The last on it wins; the rest watch or
   leave.
 - **Bridge Race** (the computer filling; one person is one against one,
   two or more two against two, people on one team first): two islands and

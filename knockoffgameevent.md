@@ -1,16 +1,18 @@
 @Turn, Event
 
-Before   Join for 50 coins. 10 s after the last player joins, bots fill up to 4 players. Then a 5 s countdown
+Before   Join for 50 coins. Every table gets its own island: a random blob thrown for it (blobmaker.app, both sliders all the way right), as much ice as a circle 20m across. Walk about on it while the table waits: nobody walks through anybody (1.2m apart), and walking into the sea stands you back on the nearest ice. 10 s after the last player joins, bots fill up to 4 players. Then a 5 s countdown
 
-Turn 1   Ice radius 12m. 12 s to aim
+Start   Everyone starts where they stand as the countdown ends (in the sea: on the nearest ice)
 
-Turn 2-10   The ice loses 1m after every turn (11m, 10m ... 3m). 10 s to aim
+Turn 1   The whole island. 12 s to aim
 
-Turn 11   Ice radius 2.25m
+Turn 2-10   The island shrinks toward its middle by 1/12 of its first size after every turn (11/12, 10/12 ... 3/12). 10 s to aim
 
-Turn 12   Ice radius 1.5m
+Turn 11   2.25/12 of the island
 
-Turn 13   Ice radius 0.75m. Last turn: after it the ice is gone
+Turn 12   1.5/12 of the island
+
+Turn 13   0.75/12 of the island. Last turn: after it the ice is gone
 
 End   The last player on the ice wins. (Most games end around turn 6)
 
@@ -24,7 +26,7 @@ End   The last player on the ice wins. (Most games end around turn 6)
 
 3. Slide (up to 6 s): everyone slides at once and bumps into each other. Past the edge = out
 
-4. Ice breaks (1.2 s): the darker outer ring falls into the sea, with anyone standing on it
+4. Ice breaks (1.2 s): the darker outer band falls into the sea, with anyone standing on it
 
 
 
@@ -32,7 +34,7 @@ End   The last player on the ice wins. (Most games end around turn 6)
 
 Joystick (touch anywhere on the screen): direction
 
-Up / down arrows: power 1-10 (starts at 1 every turn). Each power = 2.2m of slide, so power 10 = 22m (almost across the island)
+Up / down arrows: power 1-10 (starts at 1 every turn). Each power = 2.2m of slide, so power 10 = 22m (across most of an island)
 
 Check button: Ready
 
