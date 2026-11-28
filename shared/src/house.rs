@@ -49,13 +49,17 @@ pub const VISIT_SECS: f32 = 10.0;
 pub const RATE_SECS: f32 = 15.0;
 
 /// How long after a visit that counted the same visitor counts again on the
-/// same house, and its owner is told again, in seconds. Mine.
-pub const VISIT_AGAIN: f64 = 3_600.0;
+/// same house, and its owner is told again, in seconds: five minutes, so
+/// that a friend come back is told of again and someone stepping on and off
+/// the edge is not (Hajun, 2026-11-28, of the hour it was: "too much"; "5
+/// minutes instead of an hour").
+pub const VISIT_AGAIN: f64 = 300.0;
 
-/// The least time between two pushes to one owner about visits, in seconds:
-/// three friends arriving together buzz a phone once (mine). Each visit
-/// counts all the same.
-pub const VISIT_PUSH_GAP: f64 = 120.0;
+/// The least time between two pushes to one owner about visits, in seconds.
+/// None since 2026-11-28 (it was two minutes, which Hajun found "too much"):
+/// three friends arriving together are three pushes, each with its name.
+/// Each visit counts all the same.
+pub const VISIT_PUSH_GAP: f64 = 0.0;
 
 /// How long an offer to rate stands once its visitor has walked off the
 /// plot, in seconds: a rating sent just as they went, or as the plot was

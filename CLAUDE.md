@@ -20,8 +20,11 @@ As of 2026-11-28: `PROTOCOL_VERSION` 27 (since the 27th: what is
 said is a number, `chat::Said`, so **APK 61 and older are told to
 update**; APK 62 and later play on), **APK 64** (`versionCode`, built
 2026-11-28, not put on a phone from here, `docs/building.md`), the server
-deployed at 15:44:21 UTC on 2026-11-27 with everything in `server/` and
-`shared/` (an app built from this tree needs it: `docs/online.md`).
+deployed at 05:37:38 UTC on 2026-11-28 with everything in `server/` and
+`shared/` (an app built from this tree needs it: `docs/online.md`); since
+APK 64, committed and the server's alone: a visit counts and tells again
+after five minutes, not an hour, and every visit is pushed
+(`docs/house.md`).
 **All of it committed and pushed, up to APK 64**: pushes set up, Apple's
 and Google's (below); the piggy bank's bar dragged and "Current Amount:";
 the bathtub's tap, the

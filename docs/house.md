@@ -6,6 +6,39 @@
 > how things stand; the quick chat's half of the same day is in
 > `docs/chat-and-text.md`.
 
+## A visit tells again after five minutes, and every visit is pushed (2026-11-28)
+
+Hajun, told the rules (a visit counted and told once an hour for each
+visitor and house, an owner's phone pushed about visits at most every two
+minutes): "The once an hour rule and 2 minute limit is too much i think,
+what would be the minimum"; offered both off (a push every time someone
+steps off and on again, and the visitor counts with it) or five minutes and
+no limit to an owner, "yep do that 5 minutes instead of an hour."
+
+- **The same visitor counts, and tells, again on the same house five
+  minutes on** (`house::VISIT_AGAIN` 300, from 3,600): a friend who goes
+  and comes back is told of again; someone stepping on and off the plot's
+  edge is not, nor counted again in the visitors.
+- **No least time between pushes to one owner** (`house::VISIT_PUSH_GAP`
+  0, from 120; the mechanism kept behind it): three friends arriving
+  together are three pushes, each with its name.
+- Unchanged: ten seconds on foot together is a visit; nothing pushed to an
+  app that is open (told across the screen instead); ratings as they were.
+  The visitor counts stay one number with the pushes (mine: offered keeping
+  the stats to once an hour apart from the pushes, not asked for).
+
+Checked: `cargo test -p roundtown_net` (311) and `-p roundtown_server`
+(144; the test of what is kept read back as the server starts now has its
+visitor a minute back, not ten). **The server's alone**: nothing sent
+changed, protocol 27 still, no APK. Deployed at 05:37:38 UTC (sha1
+1c8cf09d, the same on the VM; the one before, ffadb090, kept as
+`roundtown-server.prev-2026-11-28`; nobody connected, Hajun's two test
+accounts having left at 05:25; "pushes go to iPhones and Android phones"
+as it started; this PC's own account came online after, journal clean).
+Seen in the journal before it: his two accounts' visits to each other
+logged, a token each in `push_tokens` (one Android, one iPhone), and no
+push refused by Apple or Google. Not checked: a push seen arriving.
+
 ## "My House:" over your stats, and net worth as 28.2K (later on 2026-11-27)
 
 Hajun, after APK 62: "in the house page, in my house stat page, i need text
@@ -91,6 +124,7 @@ Hajun, in one message with the quick chat's changes:
   visitor counts again on the same house only an hour on**
   (`VISIT_AGAIN`), and **an owner's phone is pushed about visits at most
   once every two minutes** (`VISIT_PUSH_GAP`; every visit still counts).
+  (Five minutes and no limit since 2026-11-28, above.)
 - **Fifteen seconds there offers the stars** (`RATE_SECS`, `Tell::House
   (MayRate)`), unless the visitor has rated that land as it stands: the
   server keeps with every rating a print of what stands on the plot and
@@ -240,7 +274,8 @@ None of this could be done from here: each needs Hajun's own accounts.
   average weighted toward three stars over three ratings; ties by more
   ratings, then the older account.
 - **A visit counts once an hour** for the same visitor and house; pushes
-  about visits at most every two minutes to one owner; nothing pushed to
+  about visits at most every two minutes to one owner (five minutes and
+  none since 2026-11-28, Hajun's); nothing pushed to
   an owner whose app is open (told across the screen instead), and the
   same words across the screen ("Someone just rated your house!" there,
   the push's second sentence being about opening the app).

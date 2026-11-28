@@ -826,12 +826,12 @@ mod tests {
     }
 
     #[test]
-    fn a_visitor_counts_once_an_hour_and_the_week_goes_back_seven_days() {
+    fn a_visitor_counts_once_in_five_minutes_and_the_week_goes_back_seven_days() {
         let mut houses = Houses::default();
         let day = 86_400.0;
         assert!(houses.visit(1, 2, 1_000.0));
-        assert!(!houses.visit(1, 2, 1_000.0 + house::VISIT_AGAIN - 1.0), "the same hour");
-        assert!(houses.visit(1, 2, 1_000.0 + house::VISIT_AGAIN), "an hour on");
+        assert!(!houses.visit(1, 2, 1_000.0 + house::VISIT_AGAIN - 1.0), "the same five minutes");
+        assert!(houses.visit(1, 2, 1_000.0 + house::VISIT_AGAIN), "five minutes on");
         assert!(houses.visit(1, 3, 2_000.0), "someone else");
         assert!(houses.visit(4, 2, 2_000.0), "another house");
         assert_eq!(houses.visits_of(1, 3_000.0), (3, 3));
@@ -971,14 +971,14 @@ mod tests {
         let kept = Kept {
             ratings: vec![(10, 1, given(9, unix - 50.0))],
             visits: vec![(1, 40)],
-            recent: vec![(1, 2, unix - 2.0 * 86_400.0), (1, 3, unix - 600.0)],
+            recent: vec![(1, 2, unix - 2.0 * 86_400.0), (1, 3, unix - 60.0)],
             tokens: vec![(1, Platform::Ios, "aa".into())],
         };
         let mut houses = Houses::from_kept(kept, unix);
         assert_eq!(houses.visits_of(1, unix), (40, 2));
         assert_eq!(houses.rated(10, 1), Some(77));
         assert!(houses.tokens.contains_key(&1));
-        // Someone who counted ten minutes ago does not count again yet.
+        // Someone who counted a minute ago does not count again yet.
         assert!(!houses.visit(1, 3, unix));
         assert!(houses.visit(1, 2, unix));
     }
